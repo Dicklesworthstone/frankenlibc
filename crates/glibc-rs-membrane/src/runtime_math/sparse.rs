@@ -55,7 +55,7 @@ impl SparseRecoveryController {
     }
 
     /// Observe one probe-anomaly vector (masked to executed probes).
-    pub fn observe(&mut self, observed_mask: u16, anomalies: [bool; Probe::COUNT], adverse: bool) {
+    pub fn observe(&mut self, observed_mask: u32, anomalies: [bool; Probe::COUNT], adverse: bool) {
         if observed_mask == 0 {
             return;
         }
@@ -65,7 +65,7 @@ impl SparseRecoveryController {
         let mut n_obs = 0u32;
 
         for i in 0..Probe::COUNT {
-            let bit = 1u16 << i;
+            let bit = 1u32 << i;
             if (observed_mask & bit) == 0 {
                 continue;
             }
@@ -187,6 +187,12 @@ const A: [[f64; LATENT_CAUSES]; Probe::COUNT] = [
     [0.22, 0.56, 0.06, 0.16, 0.04, 0.16], // MeanField
     [0.06, 0.12, 0.10, 0.14, 0.68, 0.08], // Padic
     [0.24, 0.22, 0.06, 0.14, 0.04, 0.62], // Symplectic
+    [0.10, 0.14, 0.52, 0.20, 0.06, 0.08], // HigherTopos
+    [0.16, 0.38, 0.10, 0.30, 0.04, 0.14], // CommitmentAudit
+    [0.28, 0.36, 0.12, 0.42, 0.06, 0.12], // Changepoint
+    [0.18, 0.48, 0.14, 0.22, 0.08, 0.10], // Conformal
+    [0.22, 0.34, 0.16, 0.28, 0.10, 0.14], // LossMinimizer
+    [0.20, 0.30, 0.12, 0.36, 0.06, 0.18], // Coupling
 ];
 
 #[cfg(test)]

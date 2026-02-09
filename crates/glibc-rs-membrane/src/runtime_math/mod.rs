@@ -13,14 +13,19 @@
 
 pub mod bandit;
 pub mod barrier;
+pub mod changepoint;
 pub mod cohomology;
 pub mod commitment_audit;
+pub mod conformal;
 pub mod control;
+pub mod coupling;
 pub mod cvar;
 pub mod design;
 pub mod eprocess;
+pub mod equivariant;
 pub mod fusion;
 pub mod higher_topos;
+pub mod loss_minimizer;
 pub mod pareto;
 pub mod risk;
 pub mod sparse;
@@ -47,12 +52,19 @@ use crate::tropical_latency::{PipelinePath, TROPICAL_METRICS, TropicalLatencyCom
 
 use self::bandit::ConstrainedBanditRouter;
 use self::barrier::BarrierOracle;
+use self::changepoint::{ChangepointController, ChangepointState};
 use self::cohomology::CohomologyMonitor;
+use self::commitment_audit::{AuditState, CommitmentAuditController};
+use self::conformal::{ConformalRiskController, ConformalState};
 use self::control::PrimalDualController;
+use self::coupling::{CouplingController, CouplingState};
 use self::cvar::{DroCvarController, TailState};
 use self::design::{OptimalDesignController, Probe, ProbePlan};
 use self::eprocess::{AnytimeEProcessMonitor, SequentialState};
+use self::equivariant::{EquivariantState, EquivariantTransportController};
 use self::fusion::KernelFusionController;
+use self::higher_topos::{HigherToposController, ToposState};
+use self::loss_minimizer::{LossMinimizationController, LossState};
 use self::pareto::ParetoController;
 use self::risk::ConformalRiskEngine;
 use self::sparse::{SparseRecoveryController, SparseState};
@@ -208,6 +220,22 @@ pub struct RuntimeKernelSnapshot {
     pub symplectic_energy: f64,
     /// Symplectic admissibility violation count.
     pub symplectic_violation_count: u64,
+    /// Higher-topos descent violation rate (EWMA, 0..1).
+    pub topos_violation_rate: f64,
+    /// Higher-topos descent violation count.
+    pub topos_violation_count: u64,
+    /// Commitment audit martingale process value.
+    pub audit_martingale_value: f64,
+    /// Commitment audit replay detection count.
+    pub audit_replay_count: u64,
+    /// Bayesian change-point posterior short-run-length mass (0..1).
+    pub changepoint_posterior_short_mass: f64,
+    /// Bayesian change-point detection count.
+    pub changepoint_count: u64,
+    /// Conformal prediction empirical coverage (0..1).
+    pub conformal_empirical_coverage: f64,
+    /// Conformal prediction coverage violation count.
+    pub conformal_violation_count: u64,
     /// Design-kernel identifiability score (0..1e6).
     pub design_identifiability_ppm: u32,
     /// Number of heavy probes selected in the current budgeted plan.
@@ -224,6 +252,14 @@ pub struct RuntimeKernelSnapshot {
     pub sparse_residual_ewma: f64,
     /// Sparse-recovery critical detections.
     pub sparse_critical_count: u64,
+    /// Equivariant controller alignment score (higher is more symmetric/stable).
+    pub equivariant_alignment_ppm: u32,
+    /// Equivariant drift detections.
+    pub equivariant_drift_count: u64,
+    /// Equivariant fractured-state detections.
+    pub equivariant_fractured_count: u64,
+    /// Most active runtime orbit class.
+    pub equivariant_dominant_orbit: u8,
     /// Robust fusion bonus currently applied to risk.
     pub fusion_bonus_ppm: u32,
     /// Fusion entropy (0..1000) over signal trust weights.
@@ -259,6 +295,13 @@ pub struct RuntimeMathKernel {
     symplectic: Mutex<SymplecticReductionController>,
     design: Mutex<OptimalDesignController>,
     sparse: Mutex<SparseRecoveryController>,
+    equivariant: Mutex<EquivariantTransportController>,
+    topos: Mutex<HigherToposController>,
+    audit: Mutex<CommitmentAuditController>,
+    changepoint: Mutex<ChangepointController>,
+    conformal: Mutex<ConformalRiskController>,
+    loss_minimizer: Mutex<LossMinimizationController>,
+    coupling: Mutex<CouplingController>,
     fusion: Mutex<KernelFusionController>,
     cached_risk_bonus_ppm: AtomicU64,
     cached_oracle_bias: [AtomicU8; ApiFamily::COUNT],
@@ -279,6 +322,15 @@ pub struct RuntimeMathKernel {
     cached_design_expected_ns: AtomicU64,
     cached_design_selected: AtomicU8,
     cached_sparse_state: AtomicU8,
+    cached_equivariant_state: AtomicU8,
+    cached_equivariant_alignment_ppm: AtomicU64,
+    cached_equivariant_orbit: AtomicU8,
+    cached_topos_state: AtomicU8,
+    cached_audit_state: AtomicU8,
+    cached_changepoint_state: AtomicU8,
+    cached_conformal_state: AtomicU8,
+    cached_loss_minimizer_state: AtomicU8,
+    cached_coupling_state: AtomicU8,
     cached_fusion_bonus_ppm: AtomicU64,
     cached_fusion_entropy_milli: AtomicU64,
     cached_fusion_drift_ppm: AtomicU64,
@@ -314,6 +366,13 @@ impl RuntimeMathKernel {
             symplectic: Mutex::new(SymplecticReductionController::new()),
             design: Mutex::new(OptimalDesignController::new()),
             sparse: Mutex::new(SparseRecoveryController::new()),
+            equivariant: Mutex::new(EquivariantTransportController::new()),
+            topos: Mutex::new(HigherToposController::new()),
+            audit: Mutex::new(CommitmentAuditController::new()),
+            changepoint: Mutex::new(ChangepointController::new()),
+            conformal: Mutex::new(ConformalRiskController::new()),
+            loss_minimizer: Mutex::new(LossMinimizationController::new()),
+            coupling: Mutex::new(CouplingController::new()),
             fusion: Mutex::new(KernelFusionController::new()),
             cached_risk_bonus_ppm: AtomicU64::new(0),
             cached_oracle_bias: std::array::from_fn(|_| AtomicU8::new(1)),
@@ -334,6 +393,15 @@ impl RuntimeMathKernel {
             cached_design_expected_ns: AtomicU64::new(0),
             cached_design_selected: AtomicU8::new(Probe::COUNT as u8),
             cached_sparse_state: AtomicU8::new(0),
+            cached_equivariant_state: AtomicU8::new(0),
+            cached_equivariant_alignment_ppm: AtomicU64::new(0),
+            cached_equivariant_orbit: AtomicU8::new(0),
+            cached_topos_state: AtomicU8::new(0),
+            cached_audit_state: AtomicU8::new(0),
+            cached_changepoint_state: AtomicU8::new(0),
+            cached_conformal_state: AtomicU8::new(0),
+            cached_loss_minimizer_state: AtomicU8::new(0),
+            cached_coupling_state: AtomicU8::new(0),
             cached_fusion_bonus_ppm: AtomicU64::new(0),
             cached_fusion_entropy_milli: AtomicU64::new(0),
             cached_fusion_drift_ppm: AtomicU64::new(0),
@@ -445,6 +513,55 @@ impl RuntimeMathKernel {
             2 => 40_000u32,  // Focused
             _ => 0u32,       // Calibrating/Stable
         };
+        let equivariant_bonus = match self.cached_equivariant_state.load(Ordering::Relaxed) {
+            3 => 160_000u32, // Fractured cross-family symmetry
+            2 => 60_000u32,  // Drift
+            _ => 0u32,       // Calibrating/Aligned
+        };
+        // Higher-topos descent: locale/catalog coherence violation
+        // signals i18n fallback chain corruption.
+        let topos_bonus = match self.cached_topos_state.load(Ordering::Relaxed) {
+            3 => 110_000u32, // Incoherent — sustained descent violation
+            2 => 45_000u32,  // DescentViolation
+            _ => 0u32,       // Calibrating/Coherent
+        };
+        // Commitment audit: martingale-based tamper detection for
+        // session/accounting traces.
+        let audit_bonus = match self.cached_audit_state.load(Ordering::Relaxed) {
+            3 => 130_000u32, // TamperDetected — martingale alarm
+            2 => 55_000u32,  // Anomalous — martingale warning
+            _ => 0u32,       // Calibrating/Consistent
+        };
+        // Bayesian change-point: posterior mass on short run-lengths
+        // signals abrupt shift in adverse-rate regime.
+        let changepoint_bonus = match self.cached_changepoint_state.load(Ordering::Relaxed) {
+            3 => 140_000u32, // ChangePoint — high posterior short mass
+            2 => 50_000u32,  // Drift — moderate posterior shift
+            _ => 0u32,       // Calibrating/Stable
+        };
+        // Conformal prediction: empirical coverage dropping below
+        // finite-sample guarantee indicates distribution shift.
+        let conformal_bonus = match self.cached_conformal_state.load(Ordering::Relaxed) {
+            3 => 120_000u32, // CoverageFailure — severe miscoverage
+            2 => 45_000u32,  // Undercoverage — coverage drifting
+            _ => 0u32,       // Calibrating/Covered
+        };
+        // Decision-theoretic loss minimizer: cost explosion across all
+        // action categories signals a fundamentally adversarial regime.
+        let loss_min_bonus = match self.cached_loss_minimizer_state.load(Ordering::Relaxed) {
+            4 => 160_000u32, // CostExplosion — all actions losing
+            3 => 50_000u32,  // DenyBiased — deny is cheapest (suspicious)
+            2 => 35_000u32,  // RepairBiased — repairs dominating
+            _ => 0u32,       // Calibrating/Balanced
+        };
+        // Probabilistic coupling: strict/hardened divergence beyond
+        // Hoeffding concentration bound signals mode inconsistency.
+        let coupling_bonus = match self.cached_coupling_state.load(Ordering::Relaxed) {
+            4 => 170_000u32, // CertificationFailure — modes incompatible
+            3 => 65_000u32,  // Diverged — significant disagreement
+            2 => 30_000u32,  // Drifting — mild disagreement
+            _ => 0u32,       // Calibrating/Coupled
+        };
         let fusion_bonus = self.cached_fusion_bonus_ppm.load(Ordering::Relaxed) as u32;
         let pre_design_risk_ppm = base_risk_ppm
             .saturating_add(sampled_bonus)
@@ -462,6 +579,13 @@ impl RuntimeMathKernel {
             .saturating_add(padic_bonus)
             .saturating_add(symplectic_bonus)
             .saturating_add(sparse_bonus)
+            .saturating_add(equivariant_bonus)
+            .saturating_add(topos_bonus)
+            .saturating_add(audit_bonus)
+            .saturating_add(changepoint_bonus)
+            .saturating_add(conformal_bonus)
+            .saturating_add(loss_min_bonus)
+            .saturating_add(coupling_bonus)
             .saturating_add(fusion_bonus)
             .min(1_000_000);
 
@@ -541,6 +665,9 @@ impl RuntimeMathKernel {
         if self.cached_sparse_state.load(Ordering::Relaxed) >= 4 {
             profile = ValidationProfile::Full;
         }
+        if self.cached_equivariant_state.load(Ordering::Relaxed) >= 3 {
+            profile = ValidationProfile::Full;
+        }
 
         // Pareto kernel contributes a mode-aware latency/risk tradeoff with
         // explicit regret accounting. Merge conservatively with existing profile.
@@ -598,6 +725,52 @@ impl RuntimeMathKernel {
         }
     }
 
+    /// Return the current contextual check ordering for a given family/context.
+    ///
+    /// This is intentionally lightweight and is used by hot validation paths
+    /// (notably pointer validation) to execute stage order selected by the
+    /// online check oracle.
+    #[must_use]
+    pub fn check_ordering(
+        &self,
+        family: ApiFamily,
+        aligned: bool,
+        recent_page: bool,
+    ) -> [CheckStage; 7] {
+        let ctx = CheckContext {
+            family: family as u8,
+            aligned,
+            recent_page,
+        };
+        let oracle = self.sampled_oracle.lock();
+        *oracle.get_ordering(&ctx)
+    }
+
+    /// Feed exact stage-exit outcomes for the contextual check oracle.
+    ///
+    /// This closes the loop between runtime-selected ordering and real pipeline
+    /// exits so the oracle learns from true hot-path behavior.
+    pub fn note_check_order_outcome(
+        &self,
+        family: ApiFamily,
+        aligned: bool,
+        recent_page: bool,
+        ordering_used: &[CheckStage; 7],
+        exit_stage: Option<usize>,
+    ) {
+        let mode = crate::config::safety_level();
+        let ctx = CheckContext {
+            family: family as u8,
+            aligned,
+            recent_page,
+        };
+        let mut oracle = self.sampled_oracle.lock();
+        oracle.report_outcome(&ctx, ordering_used, exit_stage);
+        let refreshed = *oracle.get_ordering(&ctx);
+        let bias = oracle_bias_from_ordering(&refreshed, mode);
+        self.cached_oracle_bias[usize::from(family as u8)].store(bias, Ordering::Relaxed);
+    }
+
     /// Feed observed runtime outcome back into online controllers.
     pub fn observe_validation_result(
         &self,
@@ -607,7 +780,7 @@ impl RuntimeMathKernel {
         adverse: bool,
     ) {
         let mode = crate::config::safety_level();
-        let probe_mask = self.cached_probe_mask.load(Ordering::Relaxed) as u16;
+        let probe_mask = self.cached_probe_mask.load(Ordering::Relaxed) as u32;
         self.risk.observe(family, adverse);
         self.router
             .observe(family, profile, estimated_cost_ns, adverse);
@@ -633,6 +806,12 @@ impl RuntimeMathKernel {
         let mut mfg_anomaly = None;
         let mut padic_anomaly = None;
         let mut symplectic_anomaly = None;
+        let mut topos_anomaly = None;
+        let mut audit_anomaly = None;
+        let mut changepoint_anomaly = None;
+        let mut conformal_anomaly = None;
+        let mut loss_minimizer_anomaly = None;
+        let mut coupling_anomaly = None;
 
         // Feed tropical latency compositor with per-path observations.
         {
@@ -889,6 +1068,176 @@ impl RuntimeMathKernel {
                 .store(sympl_code, Ordering::Relaxed);
         }
 
+        // Feed higher-topos descent controller with locale-scope proxies.
+        // We map (family, adverse) to a scope/result/depth observation:
+        // scope_hash from family index, result_hash from risk_bound_ppm,
+        // fallback_depth from profile (Full = deeper fallback).
+        if ProbePlan::includes_mask(probe_mask, Probe::HigherTopos) {
+            let scope_hash = (family as u64).wrapping_mul(0x9e3779b97f4a7c15) ^ estimated_cost_ns;
+            let result_hash = u64::from(risk_bound_ppm).wrapping_mul(0x517cc1b727220a95);
+            let fallback_depth = if matches!(profile, ValidationProfile::Full) {
+                2u8
+            } else {
+                0u8
+            };
+            let topos_code = {
+                let mut topos = self.topos.lock();
+                topos.observe(scope_hash, result_hash, fallback_depth);
+                let state = topos.state();
+                topos_anomaly = Some(matches!(
+                    state,
+                    ToposState::DescentViolation | ToposState::Incoherent
+                ));
+                match state {
+                    ToposState::Calibrating => 0u8,
+                    ToposState::Coherent => 1u8,
+                    ToposState::DescentViolation => 2u8,
+                    ToposState::Incoherent => 3u8,
+                }
+            };
+            self.cached_topos_state.store(topos_code, Ordering::Relaxed);
+        }
+
+        // Feed commitment audit controller with session state transitions.
+        // We encode (family, profile) as state indices and use risk_bound_ppm
+        // XOR'd with estimated_cost_ns as a transition fingerprint.
+        if ProbePlan::includes_mask(probe_mask, Probe::CommitmentAudit) {
+            let from_state = family as u32;
+            let to_state = (family as u32).wrapping_mul(3).wrapping_add(profile as u32);
+            let transition_hash =
+                u64::from(risk_bound_ppm) ^ estimated_cost_ns.wrapping_mul(0x6c62272e07bb0142);
+            let audit_code = {
+                let mut audit = self.audit.lock();
+                audit.observe_transition(from_state, to_state, transition_hash);
+                let state = audit.state();
+                audit_anomaly = Some(matches!(
+                    state,
+                    AuditState::Anomalous | AuditState::TamperDetected
+                ));
+                match state {
+                    AuditState::Calibrating => 0u8,
+                    AuditState::Consistent => 1u8,
+                    AuditState::Anomalous => 2u8,
+                    AuditState::TamperDetected => 3u8,
+                }
+            };
+            self.cached_audit_state.store(audit_code, Ordering::Relaxed);
+        }
+
+        // Feed Bayesian change-point detector with adverse indicator.
+        // The run-length posterior tracks abrupt shifts in failure rates
+        // that gradual EWMA smoothers miss entirely.
+        if ProbePlan::includes_mask(probe_mask, Probe::Changepoint) {
+            let cp_code = {
+                let mut cp = self.changepoint.lock();
+                cp.observe(adverse);
+                let state = cp.state();
+                changepoint_anomaly = Some(matches!(
+                    state,
+                    ChangepointState::Drift | ChangepointState::ChangePoint
+                ));
+                match state {
+                    ChangepointState::Calibrating => 0u8,
+                    ChangepointState::Stable => 1u8,
+                    ChangepointState::Drift => 2u8,
+                    ChangepointState::ChangePoint => 3u8,
+                }
+            };
+            self.cached_changepoint_state
+                .store(cp_code, Ordering::Relaxed);
+        }
+
+        // Feed conformal risk controller with risk score as nonconformity score.
+        // The distribution-free coverage guarantee detects when the runtime
+        // risk distribution has shifted beyond finite-sample bounds.
+        if ProbePlan::includes_mask(probe_mask, Probe::Conformal) {
+            let conf_code = {
+                let score = f64::from(risk_bound_ppm) / 1_000_000.0;
+                let mut conf = self.conformal.lock();
+                conf.observe(score);
+                let state = conf.state();
+                conformal_anomaly = Some(matches!(
+                    state,
+                    ConformalState::Undercoverage | ConformalState::CoverageFailure
+                ));
+                match state {
+                    ConformalState::Calibrating => 0u8,
+                    ConformalState::Covered => 1u8,
+                    ConformalState::Undercoverage => 2u8,
+                    ConformalState::CoverageFailure => 3u8,
+                }
+            };
+            self.cached_conformal_state
+                .store(conf_code, Ordering::Relaxed);
+        }
+
+        // Feed decision-theoretic loss minimizer with action/outcome data.
+        // The proper scoring framework learns which membrane action minimizes
+        // expected regret across the current operational regime.
+        if ProbePlan::includes_mask(probe_mask, Probe::LossMinimizer) {
+            let action_code = match (profile, adverse) {
+                (ValidationProfile::Fast, false) => 0u8,  // Allow
+                (ValidationProfile::Full, false) => 1u8,  // FullValidate
+                (_, true) if mode.heals_enabled() => 2u8, // Repair
+                (_, true) => 3u8,                         // Deny
+            };
+            let lm_code = {
+                let mut lm = self.loss_minimizer.lock();
+                lm.observe(action_code, adverse, estimated_cost_ns);
+                let state = lm.state();
+                loss_minimizer_anomaly = Some(matches!(
+                    state,
+                    LossState::DenyBiased | LossState::CostExplosion
+                ));
+                match state {
+                    LossState::Calibrating => 0u8,
+                    LossState::Balanced => 1u8,
+                    LossState::RepairBiased => 2u8,
+                    LossState::DenyBiased => 3u8,
+                    LossState::CostExplosion => 4u8,
+                }
+            };
+            self.cached_loss_minimizer_state
+                .store(lm_code, Ordering::Relaxed);
+        }
+
+        // Feed probabilistic coupling controller with strict/hardened action pair.
+        // We infer the "other mode" action from current risk level to simulate
+        // what the opposite mode would have chosen.
+        if ProbePlan::includes_mask(probe_mask, Probe::Coupling) {
+            let strict_action = if risk_bound_ppm >= 500_000 {
+                3u8 // Deny
+            } else if risk_bound_ppm >= 200_000 {
+                1u8 // FullValidate
+            } else {
+                0u8 // Allow
+            };
+            let hardened_action = if risk_bound_ppm >= 500_000 {
+                2u8 // Repair (hardened heals instead of deny)
+            } else if risk_bound_ppm >= 150_000 {
+                1u8 // FullValidate (lower threshold)
+            } else {
+                0u8 // Allow
+            };
+            let cp_code = {
+                let mut cp = self.coupling.lock();
+                cp.observe(strict_action, hardened_action, adverse);
+                let state = cp.state();
+                coupling_anomaly = Some(matches!(
+                    state,
+                    CouplingState::Diverged | CouplingState::CertificationFailure
+                ));
+                match state {
+                    CouplingState::Calibrating => 0u8,
+                    CouplingState::Coupled => 1u8,
+                    CouplingState::Drifting => 2u8,
+                    CouplingState::Diverged => 3u8,
+                    CouplingState::CertificationFailure => 4u8,
+                }
+            };
+            self.cached_coupling_state.store(cp_code, Ordering::Relaxed);
+        }
+
         let mut anomaly_vec = [false; Probe::COUNT];
         if let Some(flag) = spectral_anomaly {
             anomaly_vec[Probe::Spectral as usize] = flag;
@@ -923,6 +1272,24 @@ impl RuntimeMathKernel {
         if let Some(flag) = symplectic_anomaly {
             anomaly_vec[Probe::Symplectic as usize] = flag;
         }
+        if let Some(flag) = topos_anomaly {
+            anomaly_vec[Probe::HigherTopos as usize] = flag;
+        }
+        if let Some(flag) = audit_anomaly {
+            anomaly_vec[Probe::CommitmentAudit as usize] = flag;
+        }
+        if let Some(flag) = changepoint_anomaly {
+            anomaly_vec[Probe::Changepoint as usize] = flag;
+        }
+        if let Some(flag) = conformal_anomaly {
+            anomaly_vec[Probe::Conformal as usize] = flag;
+        }
+        if let Some(flag) = loss_minimizer_anomaly {
+            anomaly_vec[Probe::LossMinimizer as usize] = flag;
+        }
+        if let Some(flag) = coupling_anomaly {
+            anomaly_vec[Probe::Coupling as usize] = flag;
+        }
 
         // Feed sparse-recovery latent controller with executed-probe anomalies.
         {
@@ -941,6 +1308,37 @@ impl RuntimeMathKernel {
                 .store(sparse_code, Ordering::Relaxed);
         }
 
+        // Feed equivariant transport controller (always-on, O(1)):
+        // tracks cross-family symmetry breaking under mode/profile actions.
+        let equivariant_anomaly = {
+            let (eq_code, eq_summary) = {
+                let mut eq = self.equivariant.lock();
+                eq.observe(
+                    family,
+                    mode,
+                    profile,
+                    estimated_cost_ns,
+                    adverse,
+                    risk_bound_ppm,
+                );
+                let summary = eq.summary();
+                let code = match summary.state {
+                    EquivariantState::Calibrating => 0u8,
+                    EquivariantState::Aligned => 1u8,
+                    EquivariantState::Drift => 2u8,
+                    EquivariantState::Fractured => 3u8,
+                };
+                (code, summary)
+            };
+            self.cached_equivariant_state
+                .store(eq_code, Ordering::Relaxed);
+            self.cached_equivariant_alignment_ppm
+                .store(u64::from(eq_summary.alignment_ppm), Ordering::Relaxed);
+            self.cached_equivariant_orbit
+                .store(eq_summary.dominant_orbit, Ordering::Relaxed);
+            eq_code >= 2
+        };
+
         // Feed robust fusion controller from current anomaly severity vector.
         {
             let severity = [
@@ -956,6 +1354,13 @@ impl RuntimeMathKernel {
                 self.cached_padic_state.load(Ordering::Relaxed),                           // 0..3
                 self.cached_symplectic_state.load(Ordering::Relaxed),                      // 0..3
                 self.cached_sparse_state.load(Ordering::Relaxed),                          // 0..4
+                self.cached_equivariant_state.load(Ordering::Relaxed),                     // 0..3
+                self.cached_topos_state.load(Ordering::Relaxed),                           // 0..3
+                self.cached_audit_state.load(Ordering::Relaxed),                           // 0..3
+                self.cached_changepoint_state.load(Ordering::Relaxed),                     // 0..3
+                self.cached_conformal_state.load(Ordering::Relaxed),                       // 0..3
+                self.cached_loss_minimizer_state.load(Ordering::Relaxed),                  // 0..4
+                self.cached_coupling_state.load(Ordering::Relaxed),                        // 0..4
             ];
             let summary = {
                 let mut fusion = self.fusion.lock();
@@ -1007,6 +1412,21 @@ impl RuntimeMathKernel {
             if let Some(flag) = symplectic_anomaly {
                 design.record_probe(Probe::Symplectic, flag);
             }
+            if let Some(flag) = topos_anomaly {
+                design.record_probe(Probe::HigherTopos, flag);
+            }
+            if let Some(flag) = audit_anomaly {
+                design.record_probe(Probe::CommitmentAudit, flag);
+            }
+            if let Some(flag) = changepoint_anomaly {
+                design.record_probe(Probe::Changepoint, flag);
+            }
+            if let Some(flag) = conformal_anomaly {
+                design.record_probe(Probe::Conformal, flag);
+            }
+            // Equivariant cohesion currently reuses large-deviation channel
+            // for design identifiability updates.
+            design.record_probe(Probe::LargeDeviations, equivariant_anomaly);
         }
 
         // Feed allocator frees into primal-dual quarantine controller.
@@ -1018,23 +1438,25 @@ impl RuntimeMathKernel {
             }
         }
 
-        // Feed coarse observations into contextual check oracle for future
-        // ordering bias (full precision context is refreshed in sampled path).
-        let ctx = CheckContext {
-            family: family as u8,
-            aligned: estimated_cost_ns <= 16 && !adverse,
-            recent_page: !adverse,
-        };
-        let exit_stage = if adverse {
-            Some(3)
-        } else if matches!(profile, ValidationProfile::Fast) {
-            Some(1)
-        } else {
-            None
-        };
-        let mut oracle = self.sampled_oracle.lock();
-        let ordering_used = *oracle.get_ordering(&ctx);
-        oracle.report_outcome(&ctx, &ordering_used, exit_stage);
+        // For non-pointer families we only have coarse stage-exit information.
+        // PointerValidation feeds exact stage exits via `note_check_order_outcome`.
+        if !matches!(family, ApiFamily::PointerValidation) {
+            let ctx = CheckContext {
+                family: family as u8,
+                aligned: estimated_cost_ns <= 16 && !adverse,
+                recent_page: !adverse,
+            };
+            let exit_stage = if adverse {
+                Some(3)
+            } else if matches!(profile, ValidationProfile::Fast) {
+                Some(1)
+            } else {
+                None
+            };
+            let mut oracle = self.sampled_oracle.lock();
+            let ordering_used = *oracle.get_ordering(&ctx);
+            oracle.report_outcome(&ctx, &ordering_used, exit_stage);
+        }
     }
 
     /// Record overlap information for cross-shard consistency checks.
@@ -1073,8 +1495,13 @@ impl RuntimeMathKernel {
         let mfg_summary = self.mfg.lock().summary();
         let padic_summary = self.padic.lock().summary();
         let symplectic_summary = self.symplectic.lock().summary();
+        let topos_summary = self.topos.lock().summary();
+        let audit_summary = self.audit.lock().summary();
+        let changepoint_summary = self.changepoint.lock().summary();
+        let conformal_summary = self.conformal.lock().summary();
         let design_summary = self.design.lock().summary();
         let sparse_summary = self.sparse.lock().summary();
+        let equivariant_summary = self.equivariant.lock().summary();
         RuntimeKernelSnapshot {
             decisions: self.decisions.load(Ordering::Relaxed),
             consistency_faults: self.cohomology.fault_count(),
@@ -1108,6 +1535,14 @@ impl RuntimeMathKernel {
             padic_drift_count: padic_summary.drift_count,
             symplectic_energy: symplectic_summary.hamiltonian_energy,
             symplectic_violation_count: symplectic_summary.violation_count,
+            topos_violation_rate: topos_summary.violation_rate,
+            topos_violation_count: topos_summary.violation_count,
+            audit_martingale_value: audit_summary.martingale_value,
+            audit_replay_count: audit_summary.replay_count,
+            changepoint_posterior_short_mass: changepoint_summary.posterior_short_mass,
+            changepoint_count: changepoint_summary.change_point_count,
+            conformal_empirical_coverage: conformal_summary.empirical_coverage,
+            conformal_violation_count: conformal_summary.violation_count,
             design_identifiability_ppm: design_summary.identifiability_ppm,
             design_selected_probes: design_summary.selected_count,
             design_budget_ns: design_summary.budget_ns,
@@ -1116,6 +1551,10 @@ impl RuntimeMathKernel {
             sparse_l1_energy: sparse_summary.l1_energy,
             sparse_residual_ewma: sparse_summary.residual_ewma,
             sparse_critical_count: sparse_summary.critical_count,
+            equivariant_alignment_ppm: equivariant_summary.alignment_ppm,
+            equivariant_drift_count: equivariant_summary.drift_count,
+            equivariant_fractured_count: equivariant_summary.fractured_count,
+            equivariant_dominant_orbit: self.cached_equivariant_orbit.load(Ordering::Relaxed),
             fusion_bonus_ppm: self.cached_fusion_bonus_ppm.load(Ordering::Relaxed) as u32,
             fusion_entropy_milli: self.cached_fusion_entropy_milli.load(Ordering::Relaxed) as u32,
             fusion_drift_ppm: self.cached_fusion_drift_ppm.load(Ordering::Relaxed) as u32,
@@ -1279,5 +1718,21 @@ mod tests {
         let snap = kernel.snapshot(SafetyLevel::Hardened);
         assert!(snap.decisions <= 2);
         assert!(snap.full_validation_trigger_ppm > 0);
+    }
+
+    #[test]
+    fn explicit_oracle_feedback_updates_bias_cache() {
+        let kernel = RuntimeMathKernel::new();
+        let ordering = kernel.check_ordering(ApiFamily::PointerValidation, true, true);
+        kernel.note_check_order_outcome(
+            ApiFamily::PointerValidation,
+            true,
+            true,
+            &ordering,
+            Some(1),
+        );
+        let bias = kernel.cached_oracle_bias[usize::from(ApiFamily::PointerValidation as u8)]
+            .load(Ordering::Relaxed);
+        assert!(bias <= 2);
     }
 }

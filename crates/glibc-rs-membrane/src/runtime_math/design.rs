@@ -26,10 +26,16 @@ pub enum Probe {
     MeanField = 8,
     Padic = 9,
     Symplectic = 10,
+    HigherTopos = 11,
+    CommitmentAudit = 12,
+    Changepoint = 13,
+    Conformal = 14,
+    LossMinimizer = 15,
+    Coupling = 16,
 }
 
 impl Probe {
-    pub const COUNT: usize = 11;
+    pub const COUNT: usize = 17;
     pub const ALL: [Self; Self::COUNT] = [
         Self::Spectral,
         Self::RoughPath,
@@ -42,23 +48,29 @@ impl Probe {
         Self::MeanField,
         Self::Padic,
         Self::Symplectic,
+        Self::HigherTopos,
+        Self::CommitmentAudit,
+        Self::Changepoint,
+        Self::Conformal,
+        Self::LossMinimizer,
+        Self::Coupling,
     ];
 
     #[must_use]
-    pub const fn bit(self) -> u16 {
-        1u16 << (self as u8)
+    pub const fn bit(self) -> u32 {
+        1u32 << (self as u8)
     }
 
     #[must_use]
-    pub const fn all_mask() -> u16 {
-        (1u16 << Self::COUNT) - 1
+    pub const fn all_mask() -> u32 {
+        (1u32 << Self::COUNT) - 1
     }
 }
 
 /// Selected probe plan for the current runtime regime.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ProbePlan {
-    pub mask: u16,
+    pub mask: u32,
     pub budget_ns: u64,
     pub expected_cost_ns: u64,
 }
@@ -75,7 +87,7 @@ impl ProbePlan {
     }
 
     #[must_use]
-    pub const fn includes_mask(mask: u16, probe: Probe) -> bool {
+    pub const fn includes_mask(mask: u32, probe: Probe) -> bool {
         (mask & probe.bit()) != 0
     }
 }
@@ -139,9 +151,9 @@ impl OptimalDesignController {
             budget_ns = (budget_ns * 3) / 4;
         }
 
-        let mut mask = 0u16;
+        let mut mask = 0u32;
         let mut expected_cost_ns = 0u64;
-        let add_probe = |mask: &mut u16, expected_cost_ns: &mut u64, probe: Probe| {
+        let add_probe = |mask: &mut u32, expected_cost_ns: &mut u64, probe: Probe| {
             let bit = probe.bit();
             if (*mask & bit) == 0 {
                 *mask |= bit;
@@ -301,6 +313,12 @@ fn probe_cost_ns(probe: Probe) -> u64 {
         Probe::MeanField => 12,
         Probe::Padic => 10,
         Probe::Symplectic => 10,
+        Probe::HigherTopos => 12,
+        Probe::CommitmentAudit => 10,
+        Probe::Changepoint => 8,
+        Probe::Conformal => 10,
+        Probe::LossMinimizer => 6,
+        Probe::Coupling => 8,
     }
 }
 
@@ -317,6 +335,12 @@ fn probe_features(probe: Probe) -> [f64; LATENT_DIM] {
         Probe::MeanField => [0.5, 0.6, 0.2, 0.9],
         Probe::Padic => [0.4, 0.5, 0.7, 0.4],
         Probe::Symplectic => [0.6, 0.7, 0.2, 0.9],
+        Probe::HigherTopos => [0.3, 0.4, 0.8, 0.6],
+        Probe::CommitmentAudit => [0.5, 0.8, 0.3, 0.7],
+        Probe::Changepoint => [0.7, 0.6, 0.2, 0.8],
+        Probe::Conformal => [0.4, 0.9, 0.3, 0.5],
+        Probe::LossMinimizer => [0.5, 0.7, 0.4, 0.6],
+        Probe::Coupling => [0.6, 0.5, 0.3, 0.7],
     }
 }
 
