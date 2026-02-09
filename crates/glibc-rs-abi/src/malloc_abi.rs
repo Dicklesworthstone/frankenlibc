@@ -78,9 +78,16 @@ pub(crate) fn known_remaining(addr: usize) -> Option<usize> {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn malloc(size: usize) -> *mut c_void {
     let req = size.max(1);
+    let (aligned, recent_page, ordering) = allocator_stage_context(req);
     let (_, decision) = runtime_policy::decide(ApiFamily::Allocator, req, req, true, false, 0);
 
     if matches!(decision.action, MembraneAction::Deny) {
+        record_allocator_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Arena)),
+        );
         runtime_policy::observe(
             ApiFamily::Allocator,
             decision.profile,
@@ -100,6 +107,16 @@ pub unsafe extern "C" fn malloc(size: usize) -> *mut c_void {
         runtime_policy::scaled_cost(8, req),
         out.is_null(),
     );
+    record_allocator_stage_outcome(
+        &ordering,
+        aligned,
+        recent_page,
+        if out.is_null() {
+            Some(stage_index(&ordering, CheckStage::Arena))
+        } else {
+            None
+        },
+    );
     out
 }
 
@@ -118,13 +135,26 @@ pub unsafe extern "C" fn malloc(size: usize) -> *mut c_void {
 /// `realloc`, and must not have been freed already.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn free(ptr: *mut c_void) {
+    let (aligned, recent_page, ordering) = allocator_stage_context(ptr as usize);
     if ptr.is_null() {
+        record_allocator_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Null)),
+        );
         return;
     }
 
     let (_, decision) =
         runtime_policy::decide(ApiFamily::Allocator, ptr as usize, 0, true, false, 0);
     if matches!(decision.action, MembraneAction::Deny) {
+        record_allocator_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Arena)),
+        );
         runtime_policy::observe(ApiFamily::Allocator, decision.profile, 6, true);
         return;
     }
@@ -164,6 +194,16 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
     }
 
     runtime_policy::observe(ApiFamily::Allocator, decision.profile, 20, adverse);
+    record_allocator_stage_outcome(
+        &ordering,
+        aligned,
+        recent_page,
+        if adverse {
+            Some(stage_index(&ordering, CheckStage::Arena))
+        } else {
+            None
+        },
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -180,17 +220,30 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
 /// Caller must eventually `free` the returned pointer exactly once.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn calloc(nmemb: usize, size: usize) -> *mut c_void {
+    let (aligned, recent_page, ordering) = allocator_stage_context(size);
     let total = match nmemb.checked_mul(size) {
         Some(t) => t.max(1),
         None => {
             let (_, decision) = runtime_policy::decide(ApiFamily::Allocator, 0, 0, true, false, 0);
             runtime_policy::observe(ApiFamily::Allocator, decision.profile, 4, true);
+            record_allocator_stage_outcome(
+                &ordering,
+                aligned,
+                recent_page,
+                Some(stage_index(&ordering, CheckStage::Bounds)),
+            );
             return std::ptr::null_mut();
         }
     };
 
     let (_, decision) = runtime_policy::decide(ApiFamily::Allocator, total, total, true, false, 0);
     if matches!(decision.action, MembraneAction::Deny) {
+        record_allocator_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Arena)),
+        );
         runtime_policy::observe(
             ApiFamily::Allocator,
             decision.profile,
@@ -214,6 +267,16 @@ pub unsafe extern "C" fn calloc(nmemb: usize, size: usize) -> *mut c_void {
         decision.profile,
         runtime_policy::scaled_cost(10, total),
         out.is_null(),
+    );
+    record_allocator_stage_outcome(
+        &ordering,
+        aligned,
+        recent_page,
+        if out.is_null() {
+            Some(stage_index(&ordering, CheckStage::Arena))
+        } else {
+            None
+        },
     );
     out
 }
@@ -244,9 +307,16 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
         return std::ptr::null_mut();
     }
 
+    let (aligned, recent_page, ordering) = allocator_stage_context(ptr as usize);
     let (_, decision) =
         runtime_policy::decide(ApiFamily::Allocator, ptr as usize, size, true, false, 0);
     if matches!(decision.action, MembraneAction::Deny) {
+        record_allocator_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Arena)),
+        );
         runtime_policy::observe(
             ApiFamily::Allocator,
             decision.profile,
@@ -267,6 +337,12 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
             if safety_level().heals_enabled() {
                 let policy = global_healing_policy();
                 policy.record(&HealingAction::ReallocAsMalloc { size });
+                record_allocator_stage_outcome(
+                    &ordering,
+                    aligned,
+                    recent_page,
+                    Some(stage_index(&ordering, CheckStage::Arena)),
+                );
                 runtime_policy::observe(
                     ApiFamily::Allocator,
                     decision.profile,
@@ -276,6 +352,12 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
                 return unsafe { malloc(size) };
             }
             // Strict mode: cannot determine old size; treat as malloc
+            record_allocator_stage_outcome(
+                &ordering,
+                aligned,
+                recent_page,
+                Some(stage_index(&ordering, CheckStage::Arena)),
+            );
             runtime_policy::observe(
                 ApiFamily::Allocator,
                 decision.profile,
@@ -293,6 +375,12 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
             p
         }
         None => {
+            record_allocator_stage_outcome(
+                &ordering,
+                aligned,
+                recent_page,
+                Some(stage_index(&ordering, CheckStage::Arena)),
+            );
             runtime_policy::observe(
                 ApiFamily::Allocator,
                 decision.profile,
@@ -320,6 +408,7 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
         runtime_policy::scaled_cost(18, size),
         false,
     );
+    record_allocator_stage_outcome(&ordering, aligned, recent_page, None);
     new_ptr.cast()
 }
 
@@ -341,14 +430,27 @@ pub unsafe extern "C" fn posix_memalign(
     alignment: usize,
     size: usize,
 ) -> c_int {
+    let (aligned, recent_page, ordering) = allocator_stage_context(size);
     // Requirements: alignment power of 2, multiple of sizeof(void*)
     if !alignment.is_power_of_two() || !alignment.is_multiple_of(std::mem::size_of::<usize>()) {
+        record_allocator_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Bounds)),
+        );
         return EINVAL;
     }
 
     let req = size.max(1);
     let (_, decision) = runtime_policy::decide(ApiFamily::Allocator, req, req, true, false, 0);
     if matches!(decision.action, MembraneAction::Deny) {
+        record_allocator_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Arena)),
+        );
         runtime_policy::observe(
             ApiFamily::Allocator,
             decision.profile,
@@ -368,6 +470,7 @@ pub unsafe extern "C" fn posix_memalign(
                 runtime_policy::scaled_cost(12, req),
                 false,
             );
+            record_allocator_stage_outcome(&ordering, aligned, recent_page, None);
             0
         }
         None => {
@@ -376,6 +479,12 @@ pub unsafe extern "C" fn posix_memalign(
                 decision.profile,
                 runtime_policy::scaled_cost(12, req),
                 true,
+            );
+            record_allocator_stage_outcome(
+                &ordering,
+                aligned,
+                recent_page,
+                Some(stage_index(&ordering, CheckStage::Arena)),
             );
             ENOMEM
         }
@@ -395,14 +504,27 @@ pub unsafe extern "C" fn posix_memalign(
 /// Caller must eventually `free` the returned pointer exactly once.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn memalign(alignment: usize, size: usize) -> *mut c_void {
+    let (aligned, recent_page, ordering) = allocator_stage_context(size);
     if !alignment.is_power_of_two() {
         glibc_rs_core::errno::set_errno(EINVAL);
+        record_allocator_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Bounds)),
+        );
         return std::ptr::null_mut();
     }
 
     let req = size.max(1);
     let (_, decision) = runtime_policy::decide(ApiFamily::Allocator, req, req, true, false, 0);
     if matches!(decision.action, MembraneAction::Deny) {
+        record_allocator_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Arena)),
+        );
         runtime_policy::observe(
             ApiFamily::Allocator,
             decision.profile,
@@ -421,6 +543,7 @@ pub unsafe extern "C" fn memalign(alignment: usize, size: usize) -> *mut c_void 
                 runtime_policy::scaled_cost(12, req),
                 false,
             );
+            record_allocator_stage_outcome(&ordering, aligned, recent_page, None);
             ptr.cast()
         }
         None => {
@@ -430,6 +553,12 @@ pub unsafe extern "C" fn memalign(alignment: usize, size: usize) -> *mut c_void 
                 decision.profile,
                 runtime_policy::scaled_cost(12, req),
                 true,
+            );
+            record_allocator_stage_outcome(
+                &ordering,
+                aligned,
+                recent_page,
+                Some(stage_index(&ordering, CheckStage::Arena)),
             );
             std::ptr::null_mut()
         }
@@ -451,15 +580,28 @@ pub unsafe extern "C" fn memalign(alignment: usize, size: usize) -> *mut c_void 
 /// Caller must eventually `free` the returned pointer exactly once.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn aligned_alloc(alignment: usize, size: usize) -> *mut c_void {
+    let (aligned, recent_page, ordering) = allocator_stage_context(size);
     // Requirements: alignment power of 2, size multiple of alignment
     if !alignment.is_power_of_two() || !size.is_multiple_of(alignment) {
         glibc_rs_core::errno::set_errno(EINVAL);
+        record_allocator_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Bounds)),
+        );
         return std::ptr::null_mut();
     }
 
     let req = size.max(1);
     let (_, decision) = runtime_policy::decide(ApiFamily::Allocator, req, req, true, false, 0);
     if matches!(decision.action, MembraneAction::Deny) {
+        record_allocator_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Arena)),
+        );
         runtime_policy::observe(
             ApiFamily::Allocator,
             decision.profile,
@@ -478,6 +620,7 @@ pub unsafe extern "C" fn aligned_alloc(alignment: usize, size: usize) -> *mut c_
                 runtime_policy::scaled_cost(12, req),
                 false,
             );
+            record_allocator_stage_outcome(&ordering, aligned, recent_page, None);
             ptr.cast()
         }
         None => {
@@ -487,6 +630,12 @@ pub unsafe extern "C" fn aligned_alloc(alignment: usize, size: usize) -> *mut c_
                 decision.profile,
                 runtime_policy::scaled_cost(12, req),
                 true,
+            );
+            record_allocator_stage_outcome(
+                &ordering,
+                aligned,
+                recent_page,
+                Some(stage_index(&ordering, CheckStage::Arena)),
             );
             std::ptr::null_mut()
         }
