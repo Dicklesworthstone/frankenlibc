@@ -263,11 +263,11 @@ pub unsafe extern "C" fn memset(dst: *mut c_void, c: c_int, n: usize) -> *mut c_
         return dst;
     }
 
-    let byte = c as u8;
-
     // SAFETY: `fill_len` is either original `n` (strict) or clamped to known bounds.
+    // We use `write_bytes` instead of delegating to core::memset because creating a
+    // &mut [u8] slice over potentially uninitialized memory is UB in Rust.
     unsafe {
-        std::ptr::write_bytes(dst.cast::<u8>(), byte, fill_len);
+        std::ptr::write_bytes(dst.cast::<u8>(), c as u8, fill_len);
     }
     runtime_policy::observe(
         ApiFamily::StringMemory,
@@ -317,7 +317,7 @@ pub unsafe extern "C" fn memcmp(s1: *const c_void, s2: *const c_void, n: usize) 
         return 0;
     }
 
-    let (cmp_len, clamped) = maybe_clamp_copy_len(
+    let (cmp_len, _clamped) = maybe_clamp_copy_len(
         n,
         Some(s1 as usize),
         Some(s2 as usize),
@@ -328,26 +328,12 @@ pub unsafe extern "C" fn memcmp(s1: *const c_void, s2: *const c_void, n: usize) 
     unsafe {
         let a = std::slice::from_raw_parts(s1.cast::<u8>(), cmp_len);
         let b = std::slice::from_raw_parts(s2.cast::<u8>(), cmp_len);
-        for i in 0..cmp_len {
-            let diff = (a[i] as c_int) - (b[i] as c_int);
-            if diff != 0 {
-                runtime_policy::observe(
-                    ApiFamily::StringMemory,
-                    decision.profile,
-                    runtime_policy::scaled_cost(6, cmp_len),
-                    clamped,
-                );
-                return diff;
-            }
+        match glibc_rs_core::string::mem::memcmp(a, b, cmp_len) {
+            std::cmp::Ordering::Equal => 0,
+            std::cmp::Ordering::Less => -1,
+            std::cmp::Ordering::Greater => 1,
         }
     }
-    runtime_policy::observe(
-        ApiFamily::StringMemory,
-        decision.profile,
-        runtime_policy::scaled_cost(6, cmp_len),
-        clamped,
-    );
-    0
 }
 
 // ---------------------------------------------------------------------------
@@ -392,21 +378,81 @@ pub unsafe extern "C" fn memchr(s: *const c_void, c: c_int, n: usize) -> *mut c_
         mode.heals_enabled() || matches!(decision.action, MembraneAction::Repair(_)),
     );
 
-    let needle = c as u8;
+    // SAFETY: `scan_len` is either original `n` or clamped by known bounds.
+    unsafe {
+        let bytes = std::slice::from_raw_parts(s.cast::<u8>(), scan_len);
+        if let Some(idx) = glibc_rs_core::string::mem::memchr(bytes, c as u8, scan_len) {
+            runtime_policy::observe(
+                ApiFamily::StringMemory,
+                decision.profile,
+                runtime_policy::scaled_cost(6, scan_len),
+                clamped,
+            );
+            return (s as *mut u8).add(idx).cast();
+        }
+    }
+    runtime_policy::observe(
+        ApiFamily::StringMemory,
+        decision.profile,
+        runtime_policy::scaled_cost(6, scan_len),
+        clamped,
+    );
+    std::ptr::null_mut()
+}
+
+// ---------------------------------------------------------------------------
+// memrchr
+// ---------------------------------------------------------------------------
+
+/// POSIX `memrchr` (GNU extension) -- locates last occurrence of byte `c` in first `n` bytes of `s`.
+///
+/// Returns pointer to the matching byte, or null if not found.
+///
+/// # Safety
+///
+/// Caller must ensure `s` is valid for `n` bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn memrchr(s: *const c_void, c: c_int, n: usize) -> *mut c_void {
+    if n == 0 || s.is_null() {
+        return std::ptr::null_mut();
+    }
+
+    let (mode, decision) = runtime_policy::decide(
+        ApiFamily::StringMemory,
+        s as usize,
+        n,
+        false,
+        known_remaining(s as usize).is_none(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(
+            ApiFamily::StringMemory,
+            decision.profile,
+            runtime_policy::scaled_cost(6, n),
+            true,
+        );
+        return std::ptr::null_mut();
+    }
+
+    let (scan_len, clamped) = maybe_clamp_copy_len(
+        n,
+        Some(s as usize),
+        None,
+        mode.heals_enabled() || matches!(decision.action, MembraneAction::Repair(_)),
+    );
 
     // SAFETY: `scan_len` is either original `n` or clamped by known bounds.
     unsafe {
         let bytes = std::slice::from_raw_parts(s.cast::<u8>(), scan_len);
-        for (i, &byte) in bytes.iter().enumerate() {
-            if byte == needle {
-                runtime_policy::observe(
-                    ApiFamily::StringMemory,
-                    decision.profile,
-                    runtime_policy::scaled_cost(6, scan_len),
-                    clamped,
-                );
-                return (s as *mut u8).add(i).cast();
-            }
+        if let Some(idx) = glibc_rs_core::string::mem::memrchr(bytes, c as u8, scan_len) {
+            runtime_policy::observe(
+                ApiFamily::StringMemory,
+                decision.profile,
+                runtime_policy::scaled_cost(6, scan_len),
+                clamped,
+            );
+            return (s as *mut u8).add(idx).cast();
         }
     }
     runtime_policy::observe(
@@ -1250,7 +1296,7 @@ pub unsafe extern "C" fn strtok(s: *mut c_char, delim: *const c_char) -> *mut c_
     // SAFETY: Thread-local access; strtok is specified as non-reentrant per POSIX.
     let (token, adverse, work) = unsafe {
         let saved = STRTOK_SAVE.get();
-        let mut current = if s.is_null() { saved } else { s };
+        let current = if s.is_null() { saved } else { s };
         let mut work = 0usize;
 
         if current.is_null() {
@@ -1262,41 +1308,71 @@ pub unsafe extern "C" fn strtok(s: *mut c_char, delim: *const c_char) -> *mut c_
             } else {
                 None
             };
-            let mut remaining = bound.unwrap_or(usize::MAX);
 
-            // Skip leading delimiters
-            while remaining > 0 && *current != 0 && is_delim(*current, delim) {
-                current = current.add(1);
-                remaining = remaining.saturating_sub(1);
-                work += 1;
-            }
+            // Determine a safe scan limit for finding delimiters
 
-            if remaining == 0 || *current == 0 {
-                STRTOK_SAVE.set(std::ptr::null_mut());
-                if remaining == 0 {
-                    record_truncation(bound.unwrap_or(work), work);
-                }
-                (std::ptr::null_mut(), remaining == 0, work)
+            let (scan_limit, terminated) = scan_c_string(current, bound);
+
+            // In hardened mode, we effectively clamp the slice to the known bound or the next null.
+
+            // Only include the terminator byte in the slice if it was actually found.
+
+            let slice_len = if terminated {
+                scan_limit + 1
             } else {
-                // Find end of token
-                let token_start = current;
-                while remaining > 0 && *current != 0 && !is_delim(*current, delim) {
-                    current = current.add(1);
-                    remaining = remaining.saturating_sub(1);
-                    work += 1;
-                }
+                scan_limit
+            };
 
-                if remaining == 0 {
-                    STRTOK_SAVE.set(std::ptr::null_mut());
-                    record_truncation(bound.unwrap_or(work), work);
-                    (token_start, true, work)
-                } else if *current != 0 {
-                    *current = 0;
-                    STRTOK_SAVE.set(current.add(1));
+            let s_slice = std::slice::from_raw_parts_mut(current as *mut u8, slice_len);
+
+            // We also need a slice for delim.
+
+            // Warning: `delim` might be unbounded. We scan it safely.
+
+            let delim_bound = if repair {
+                known_remaining(delim as usize)
+            } else {
+                None
+            };
+
+            let (delim_len, delim_terminated) = scan_c_string(delim, delim_bound);
+
+            let delim_slice_len = if delim_terminated {
+                delim_len + 1
+            } else {
+                delim_len
+            };
+
+            let delim_slice = std::slice::from_raw_parts(delim as *const u8, delim_slice_len);
+
+            // Core `strtok` returns (start_idx, token_len). It modifies s_slice in place.
+
+            match glibc_rs_core::string::strtok::strtok(s_slice, delim_slice) {
+                Some((start, len)) => {
+                    let token_start = current.add(start);
+                    let token_end_idx = start + len;
+                    // strtok puts a NUL at token_end_idx. The next token starts after that NUL.
+                    // If we are at the end of the slice (NUL was already there), save_ptr is end.
+                    // But core's strtok writes NUL if needed.
+                    // We need to advance save pointer.
+                    // The core logic doesn't return the "next" position directly, but we can infer it:
+                    // it is token_start + len + 1.
+
+                    let next_pos = if token_end_idx + 1 < s_slice.len() {
+                        token_end_idx + 1
+                    } else {
+                        token_end_idx // End of string
+                    };
+
+                    // Update save pointer
+                    STRTOK_SAVE.set(current.add(next_pos));
+                    work = next_pos; // Approximate work
                     (token_start, false, work)
-                } else {
+                }
+                None => {
                     STRTOK_SAVE.set(std::ptr::null_mut());
-                    (token_start, false, work)
+                    work = scan_limit;
+                    (std::ptr::null_mut(), false, work)
                 }
             }
         }
@@ -1311,20 +1387,115 @@ pub unsafe extern "C" fn strtok(s: *mut c_char, delim: *const c_char) -> *mut c_
     token
 }
 
-/// Check if character `c` is in the delimiter set `delim`.
+// ---------------------------------------------------------------------------
+// strtok_r
+// ---------------------------------------------------------------------------
+
+/// POSIX `strtok_r` -- reentrant version of `strtok`.
 ///
 /// # Safety
 ///
-/// `delim` must be a valid null-terminated string.
-unsafe fn is_delim(c: c_char, delim: *const c_char) -> bool {
+/// Caller must ensure `s` (if non-null) and `delim` are valid null-terminated strings.
+/// `saveptr` must be a valid pointer to a `char *`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn strtok_r(
+    s: *mut c_char,
+    delim: *const c_char,
+    saveptr: *mut *mut c_char,
+) -> *mut c_char {
+    if delim.is_null() || saveptr.is_null() {
+        return std::ptr::null_mut();
+    }
+
+    let addr_hint = if s.is_null() {
+        unsafe { *saveptr as usize }
+    } else {
+        s as usize
+    };
+
+    // Membrane decision logic similar to strtok
+    let (mode, decision) = runtime_policy::decide(
+        ApiFamily::StringMemory,
+        addr_hint,
+        0,
+        true,
+        known_remaining(addr_hint).is_none() && known_remaining(delim as usize).is_none(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::StringMemory, decision.profile, 8, true);
+        return std::ptr::null_mut();
+    }
+
+    let repair = repair_enabled(mode.heals_enabled(), decision.action);
+
     unsafe {
-        let mut i = 0usize;
-        while *delim.add(i) != 0 {
-            if c == *delim.add(i) {
-                return true;
-            }
-            i += 1;
+        let current = if s.is_null() { *saveptr } else { s };
+
+        if current.is_null() {
+            *saveptr = std::ptr::null_mut();
+            return std::ptr::null_mut();
         }
-        false
+
+        let bound = if repair {
+            known_remaining(current as usize)
+        } else {
+            None
+        };
+
+        let (scan_limit, terminated) = scan_c_string(current, bound);
+
+        // Create slice covering the string up to the terminator (or bound)
+
+        let slice_len = if terminated {
+            scan_limit + 1
+        } else {
+            scan_limit
+        };
+
+        let s_slice = std::slice::from_raw_parts_mut(current as *mut u8, slice_len);
+
+        let delim_bound = if repair {
+            known_remaining(delim as usize)
+        } else {
+            None
+        };
+
+        let (delim_len, delim_terminated) = scan_c_string(delim, delim_bound);
+
+        let delim_slice_len = if delim_terminated {
+            delim_len + 1
+        } else {
+            delim_len
+        };
+
+        let delim_slice = std::slice::from_raw_parts(delim as *const u8, delim_slice_len);
+
+        // Core `strtok_r` returns (start, len, next_offset) relative to the slice start (0)
+
+        match glibc_rs_core::string::strtok::strtok_r(s_slice, delim_slice, 0) {
+            Some((start, _len, next_offset)) => {
+                let token = current.add(start);
+                *saveptr = current.add(next_offset);
+
+                runtime_policy::observe(
+                    ApiFamily::StringMemory,
+                    decision.profile,
+                    runtime_policy::scaled_cost(8, next_offset),
+                    false,
+                );
+                token
+            }
+            None => {
+                *saveptr = std::ptr::null_mut();
+                runtime_policy::observe(
+                    ApiFamily::StringMemory,
+                    decision.profile,
+                    runtime_policy::scaled_cost(8, scan_limit),
+                    false,
+                );
+                std::ptr::null_mut()
+            }
+        }
     }
 }

@@ -8,9 +8,9 @@
 //! In test mode, this module is suppressed to avoid shadowing the system allocator
 //! (which would cause infinite recursion in the test binary itself).
 
-use std::ffi::c_void;
-use std::sync::OnceLock;
+use std::ffi::{c_int, c_void};
 
+use glibc_rs_core::errno::{EINVAL, ENOMEM};
 use glibc_rs_membrane::arena::{AllocationArena, FreeResult};
 use glibc_rs_membrane::config::safety_level;
 use glibc_rs_membrane::heal::{HealingAction, global_healing_policy};
@@ -18,27 +18,19 @@ use glibc_rs_membrane::runtime_math::{ApiFamily, MembraneAction};
 
 use crate::runtime_policy;
 
-/// Global allocation arena instance.
-///
-/// All `malloc`/`free`/`calloc`/`realloc` operations go through this arena,
-/// which provides generational tracking, fingerprint integrity, and quarantine.
-pub(crate) fn global_arena() -> &'static AllocationArena {
-    static ARENA: OnceLock<AllocationArena> = OnceLock::new();
-    ARENA.get_or_init(AllocationArena::new)
+/// Access to the global allocation arena from the pipeline.
+fn arena() -> &'static AllocationArena {
+    &crate::membrane_state::global_pipeline().arena
 }
 
 /// Remaining bytes in a known live allocation at `addr`.
 #[must_use]
 pub(crate) fn known_remaining(addr: usize) -> Option<usize> {
-    let slot = global_arena().lookup(addr)?;
-    if !slot.state.is_live() {
-        return None;
+    use glibc_rs_membrane::ptr_validator::ValidationOutcome;
+    match crate::membrane_state::global_pipeline().validate(addr) {
+        ValidationOutcome::CachedValid(abs) | ValidationOutcome::Validated(abs) => abs.remaining,
+        _ => None,
     }
-    let end = slot.user_base.saturating_add(slot.user_size);
-    if addr < slot.user_base || addr >= end {
-        return None;
-    }
-    Some(end.saturating_sub(addr))
 }
 
 // ---------------------------------------------------------------------------
@@ -68,7 +60,7 @@ pub unsafe extern "C" fn malloc(size: usize) -> *mut c_void {
         return std::ptr::null_mut();
     }
 
-    let out: *mut c_void = match global_arena().allocate(req) {
+    let out: *mut c_void = match crate::membrane_state::global_pipeline().allocate(req) {
         Some(ptr) => ptr.cast(),
         None => std::ptr::null_mut(),
     };
@@ -108,7 +100,7 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
     }
 
     let mut adverse = false;
-    let result = global_arena().free(ptr.cast());
+    let (result, _drained) = arena().free(ptr.cast());
 
     match result {
         FreeResult::Freed => {}
@@ -178,8 +170,9 @@ pub unsafe extern "C" fn calloc(nmemb: usize, size: usize) -> *mut c_void {
         return std::ptr::null_mut();
     }
 
-    let out: *mut c_void = match global_arena().allocate(total) {
+    let out: *mut c_void = match arena().allocate(total) {
         Some(ptr) => {
+            crate::membrane_state::global_pipeline().register_allocation(ptr as usize, total);
             // SAFETY: ptr is valid for `total` bytes from the arena allocate contract.
             unsafe { std::ptr::write_bytes(ptr, 0, total) };
             ptr.cast()
@@ -233,7 +226,7 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
         return std::ptr::null_mut();
     }
 
-    let arena = global_arena();
+    let arena = arena();
 
     // Look up old allocation to get its size
     let old_addr = ptr as usize;
@@ -265,7 +258,10 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
 
     // Allocate new block
     let new_ptr = match arena.allocate(size) {
-        Some(p) => p,
+        Some(p) => {
+            crate::membrane_state::global_pipeline().register_allocation(p as usize, size);
+            p
+        }
         None => {
             runtime_policy::observe(
                 ApiFamily::Allocator,
@@ -287,7 +283,7 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
     }
 
     // Free old block
-    arena.free(ptr.cast());
+    let _ = crate::membrane_state::global_pipeline().free(ptr.cast());
     runtime_policy::observe(
         ApiFamily::Allocator,
         decision.profile,
@@ -295,4 +291,174 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
         false,
     );
     new_ptr.cast()
+}
+
+// ---------------------------------------------------------------------------
+// posix_memalign
+// ---------------------------------------------------------------------------
+
+/// POSIX `posix_memalign` -- allocates `size` bytes of memory with specified alignment.
+///
+/// Stores the address of the allocated memory in `*memptr`.
+/// Returns 0 on success, or an error code (EINVAL, ENOMEM) on failure.
+///
+/// # Safety
+///
+/// `memptr` must be a valid pointer to a `*mut c_void`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn posix_memalign(
+    memptr: *mut *mut c_void,
+    alignment: usize,
+    size: usize,
+) -> c_int {
+    // Requirements: alignment power of 2, multiple of sizeof(void*)
+    if !alignment.is_power_of_two() || !alignment.is_multiple_of(std::mem::size_of::<usize>()) {
+        return EINVAL;
+    }
+
+    let req = size.max(1);
+    let (_, decision) = runtime_policy::decide(ApiFamily::Allocator, req, req, true, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(
+            ApiFamily::Allocator,
+            decision.profile,
+            runtime_policy::scaled_cost(8, req),
+            true,
+        );
+        return ENOMEM;
+    }
+
+    match crate::membrane_state::global_pipeline().allocate_aligned(req, alignment) {
+        Some(ptr) => {
+            // SAFETY: caller guarantees `memptr` points to writable `*mut c_void`.
+            unsafe { *memptr = ptr.cast() };
+            runtime_policy::observe(
+                ApiFamily::Allocator,
+                decision.profile,
+                runtime_policy::scaled_cost(12, req),
+                false,
+            );
+            0
+        }
+        None => {
+            runtime_policy::observe(
+                ApiFamily::Allocator,
+                decision.profile,
+                runtime_policy::scaled_cost(12, req),
+                true,
+            );
+            ENOMEM
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// memalign
+// ---------------------------------------------------------------------------
+
+/// Legacy `memalign` -- allocates `size` bytes of memory with specified alignment.
+///
+/// Returns a pointer to the allocated memory, or null on failure.
+///
+/// # Safety
+///
+/// Caller must eventually `free` the returned pointer exactly once.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn memalign(alignment: usize, size: usize) -> *mut c_void {
+    if !alignment.is_power_of_two() {
+        glibc_rs_core::errno::set_errno(EINVAL);
+        return std::ptr::null_mut();
+    }
+
+    let req = size.max(1);
+    let (_, decision) = runtime_policy::decide(ApiFamily::Allocator, req, req, true, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(
+            ApiFamily::Allocator,
+            decision.profile,
+            runtime_policy::scaled_cost(8, req),
+            true,
+        );
+        return std::ptr::null_mut();
+    }
+
+    match arena().allocate_aligned(req, alignment) {
+        Some(ptr) => {
+            crate::membrane_state::global_pipeline().register_allocation(ptr as usize, req);
+            runtime_policy::observe(
+                ApiFamily::Allocator,
+                decision.profile,
+                runtime_policy::scaled_cost(12, req),
+                false,
+            );
+            ptr.cast()
+        }
+        None => {
+            glibc_rs_core::errno::set_errno(ENOMEM);
+            runtime_policy::observe(
+                ApiFamily::Allocator,
+                decision.profile,
+                runtime_policy::scaled_cost(12, req),
+                true,
+            );
+            std::ptr::null_mut()
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// aligned_alloc
+// ---------------------------------------------------------------------------
+
+/// C11 `aligned_alloc` -- allocates `size` bytes of memory with specified alignment.
+///
+/// `alignment` must be a valid alignment supported by the implementation.
+/// `size` must be a multiple of `alignment`.
+/// Returns a pointer to the allocated memory, or null on failure.
+///
+/// # Safety
+///
+/// Caller must eventually `free` the returned pointer exactly once.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn aligned_alloc(alignment: usize, size: usize) -> *mut c_void {
+    // Requirements: alignment power of 2, size multiple of alignment
+    if !alignment.is_power_of_two() || !size.is_multiple_of(alignment) {
+        glibc_rs_core::errno::set_errno(EINVAL);
+        return std::ptr::null_mut();
+    }
+
+    let req = size.max(1);
+    let (_, decision) = runtime_policy::decide(ApiFamily::Allocator, req, req, true, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(
+            ApiFamily::Allocator,
+            decision.profile,
+            runtime_policy::scaled_cost(8, req),
+            true,
+        );
+        return std::ptr::null_mut();
+    }
+
+    match arena().allocate_aligned(req, alignment) {
+        Some(ptr) => {
+            crate::membrane_state::global_pipeline().register_allocation(ptr as usize, req);
+            runtime_policy::observe(
+                ApiFamily::Allocator,
+                decision.profile,
+                runtime_policy::scaled_cost(12, req),
+                false,
+            );
+            ptr.cast()
+        }
+        None => {
+            glibc_rs_core::errno::set_errno(ENOMEM);
+            runtime_policy::observe(
+                ApiFamily::Allocator,
+                decision.profile,
+                runtime_policy::scaled_cost(12, req),
+                true,
+            );
+            std::ptr::null_mut()
+        }
+    }
 }

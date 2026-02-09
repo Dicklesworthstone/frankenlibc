@@ -1,3 +1,6 @@
+// All extern "C" ABI exports accept raw pointers from C callers; the membrane
+// validates at runtime, so per-function safety docs would be redundant boilerplate.
+#![allow(clippy::missing_safety_doc)]
 //! # glibc-rs-abi
 //!
 //! ABI-compatible extern "C" boundary layer for glibc_rust.
@@ -21,6 +24,7 @@
 #[macro_use]
 mod macros;
 
+mod membrane_state;
 mod runtime_policy;
 
 // Bootstrap ABI modules (Phase 1 - implemented)
@@ -30,7 +34,11 @@ mod runtime_policy;
 #[cfg(not(test))]
 pub mod malloc_abi;
 #[cfg(not(test))]
+pub mod stdlib_abi;
+#[cfg(not(test))]
 pub mod string_abi;
+#[cfg(not(test))]
+pub mod wchar_abi;
 
 // Stub ABI modules (Phase 2+ - pending implementation)
 pub mod ctype_abi;
@@ -50,8 +58,11 @@ pub mod resource_abi;
 pub mod setjmp_abi;
 pub mod signal_abi;
 pub mod socket_abi;
+#[cfg(not(test))]
 pub mod stdio_abi;
-pub mod stdlib_abi;
 pub mod termios_abi;
 pub mod time_abi;
+#[cfg(not(test))]
 pub mod unistd_abi;
+
+pub mod util;
