@@ -12,6 +12,7 @@ use std::ffi::{c_int, c_void};
 
 use glibc_rs_core::errno::{EINVAL, ENOMEM};
 use glibc_rs_membrane::arena::{AllocationArena, FreeResult};
+use glibc_rs_membrane::check_oracle::CheckStage;
 use glibc_rs_membrane::config::safety_level;
 use glibc_rs_membrane::heal::{HealingAction, global_healing_policy};
 use glibc_rs_membrane::runtime_math::{ApiFamily, MembraneAction};
@@ -21,6 +22,35 @@ use crate::runtime_policy;
 /// Access to the global allocation arena from the pipeline.
 fn arena() -> &'static AllocationArena {
     &crate::membrane_state::global_pipeline().arena
+}
+
+#[inline]
+fn stage_index(ordering: &[CheckStage; 7], stage: CheckStage) -> usize {
+    ordering.iter().position(|s| *s == stage).unwrap_or(0)
+}
+
+#[inline]
+fn allocator_stage_context(addr_hint: usize) -> (bool, bool, [CheckStage; 7]) {
+    let aligned = (addr_hint & 0x7) == 0;
+    let recent_page = addr_hint != 0 && known_remaining(addr_hint).is_some();
+    let ordering = runtime_policy::check_ordering(ApiFamily::Allocator, aligned, recent_page);
+    (aligned, recent_page, ordering)
+}
+
+#[inline]
+fn record_allocator_stage_outcome(
+    ordering: &[CheckStage; 7],
+    aligned: bool,
+    recent_page: bool,
+    exit_stage: Option<usize>,
+) {
+    runtime_policy::note_check_order_outcome(
+        ApiFamily::Allocator,
+        aligned,
+        recent_page,
+        ordering,
+        exit_stage,
+    );
 }
 
 /// Remaining bytes in a known live allocation at `addr`.
