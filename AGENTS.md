@@ -170,6 +170,8 @@ Runtime decision law (per call):
 Current live extensions:
 - `runtime_math/eprocess.rs` — anytime-valid sequential alarming (e-values).
 - `runtime_math/cvar.rs` — distributionally-robust CVaR tail-risk guard.
+- `hji_reachability.rs` — HJI differential game safety certificates (math #15).
+- `mean_field_game.rs` — mean-field Nash equilibrium congestion controller (math #19).
 
 Developer transparency remains mandatory:
 - contributors write normal Rust APIs/tests/policies,
@@ -229,6 +231,8 @@ Rules:
 - `persistence.rs` — 0-dimensional Vietoris-Rips persistent homology for topological anomaly detection (math #23)
 - `schrodinger_bridge.rs` — entropy-regularized optimal transport regime-transition detector (math #20)
 - `large_deviations.rs` — Cramér rate-function rare-event monitor (math #22)
+- `hji_reachability.rs` — Hamilton-Jacobi-Isaacs differential game reachability controller (math #15)
+- `mean_field_game.rs` — Mean-field game Nash equilibrium contention controller (math #19)
 
 ### glibc-rs-core (Safe Implementations)
 - `string/` — mem*, str*, wide string functions

@@ -25,17 +25,19 @@ Legend:
 
 | Family | Representative APIs | Status |
 |---|---|---|
-| memory ops | `memcpy`, `memmove`, `memset`, `memcmp`, `memchr`, `memrchr` | IN_PROGRESS |
-| string ops | `strlen`, `strcmp`, `strncpy`, `strstr`, `strtok`, `strtok_r`, `strchr`, `strrchr`, `strcpy`, `strcat`, `strncat`, `strncmp` | IN_PROGRESS |
-| wide string ops | `wcslen`, `wcscpy`, `wcscmp` | IN_PROGRESS |
-| allocator boundary | `malloc`, `free`, `realloc`, `calloc` | IN_PROGRESS |
+| memory ops | `memcpy`, `memmove`, `memset`, `memcmp`, `memchr`, `memrchr` | DONE |
+| string ops | `strlen`, `strcmp`, `strncpy`, `strstr`, `strtok`, `strtok_r`, `strchr`, `strrchr`, `strcpy`, `strcat`, `strncat`, `strncmp` | DONE |
+| wide string ops | `wcslen`, `wcscpy`, `wcscmp`, `wcsncpy`, `wcscat`, `wcsncmp`, `wcschr`, `wcsrchr`, `wcsstr` | IN_PROGRESS |
+| wide memory ops | `wmemcpy`, `wmemmove`, `wmemset`, `wmemcmp`, `wmemchr` | DONE |
+| stdlib ops | `atoi`, `strtol`, `strtoul`, `exit`, `atexit`, `qsort`, `bsearch` | DONE |
+| allocator boundary | `malloc`, `free`, `realloc`, `calloc` | DONE |
 
 ## Mode-Specific Parity Matrix
 
 | Family | Strict Mode | Hardened Mode | Status |
 |---|---|---|---|
-| memory ops | host-glibc differential parity | policy-validated clamp/truncate/deny | IN_PROGRESS |
-| string ops | host-glibc differential parity | termination-safe repair paths | IN_PROGRESS |
+| memory ops | host-glibc differential parity | policy-validated clamp/truncate/deny | DONE |
+| string ops | host-glibc differential parity | termination-safe repair paths | DONE |
 | allocator boundary | host-glibc parity for defined behavior | temporal/provenance repair policies | IN_PROGRESS |
 
 ## Runtime Math Kernel Matrix
@@ -44,9 +46,9 @@ Legend:
 |---|---|---|
 | `runtime_math::risk` | online risk upper bound per API family (`risk_upper_bound_ppm`) | IN_PROGRESS |
 | `runtime_math::bandit` | constrained `Fast` vs `Full` validation-depth routing | IN_PROGRESS |
-| `runtime_math::control` | primal-dual runtime threshold tuning | IN_PROGRESS |
+| `runtime_math::control` | primal-dual runtime threshold tuning | DONE |
 | `runtime_math::pareto` | mode-aware latency/risk Pareto profile selection + cumulative regret tracking + per-family hard regret caps | IN_PROGRESS |
-| `runtime_math::barrier` | constant-time admissibility guard | IN_PROGRESS |
+| `runtime_math::barrier` | constant-time admissibility guard | DONE |
 | `runtime_math::cohomology` | overlap-consistency fault detection for sharded metadata | IN_PROGRESS |
 | `runtime_math::eprocess` | anytime-valid sequential testing (e-value alarms) per API family | DONE |
 | `runtime_math::cvar` | distributionally-robust CVaR tail-risk control with runtime alarm gating | DONE |
@@ -59,6 +61,8 @@ Legend:
 | persistent homology detector (`persistence`) | 0-dimensional Vietoris-Rips persistent homology for topological anomaly detection — sees data *shape* invisible to all statistical methods | DONE |
 | Schrödinger bridge controller (`schrodinger_bridge`) | entropic optimal transport (Sinkhorn-Knopp) between action policy and equilibrium — canonical information-theoretic regime transition distance (Cuturi 2013, Léonard 2014) | DONE |
 | large-deviations monitor (`large_deviations`) | Cramér rate function (binary KL divergence) for exact exponential failure probability bounds — strictly dominates Hoeffding/CLT | DONE |
+| HJI reachability controller (`hji_reachability`) | Hamilton-Jacobi-Isaacs differential game reachability — value-iteration safety certificates with worst-case adversary (Isaacs 1965, Mitchell/Tomlin 2005) | DONE |
+| mean-field game contention controller (`mean_field_game`) | Lasry-Lions mean-field Nash equilibrium via Picard fixed-point — congestion collapse detection for validation resource contention (Lasry-Lions 2006, Huang-Malhamé-Caines 2006) | DONE |
 | pointer validator integration | runtime-math decisions affect bloom-miss/deep-check behavior | DONE |
 | allocator integration | runtime-math routing active at `malloc/free/realloc/calloc` ABI boundary | IN_PROGRESS |
 | string/memory integration | runtime-math routing active for bootstrap `<string.h>` entrypoints (`mem*`, `strlen`, `strcmp`, `strcpy`, `strncpy`, `strcat`, `strncat`, `strchr`, `strrchr`, `strstr`, `strtok`) | IN_PROGRESS |
@@ -146,11 +150,11 @@ Legend:
 | barrier invariance | barrier-certificate proof artifacts + runtime checks | PLANNED |
 | robust-radius guarantee | Wasserstein robustness reports + constraint audits | PLANNED |
 | concurrent linearizability | mechanized concurrency proof notes + stress evidence | PLANNED |
-| HJI viability | viability-kernel artifacts + adversarial trace audits | PLANNED |
+| HJI viability | viability-kernel artifacts + adversarial trace audits | IN_PROGRESS |
 | sheaf consistency detection | cohomology diagnostics + inconsistency replay cases | PLANNED |
 | combinatorial interaction coverage | covering-array/matroid campaign proofs | PLANNED |
 | probabilistic coupling bounds | coupled-trace divergence certificates + concentration reports | PLANNED |
-| mean-field stability | equilibrium/stability reports + contention replay evidence | PLANNED |
+| mean-field stability | equilibrium/stability reports + contention replay evidence | IN_PROGRESS |
 | entropic transition safety | Schrödinger-bridge transport-cost/overshoot reports | PLANNED |
 | SOS invariant synthesis | SDP outputs + certificate validation artifacts | PLANNED |
 | large-deviation catastrophe bounds | rare-event estimation reports + threshold audits | PLANNED |
@@ -190,13 +194,17 @@ Legend:
 7. Sequential-statistical guardrails are partially wired in runtime code; calibration evidence remains pending.
 8. Bootstrap string/memory + allocator boundary implementations exist; initial strict/hardened fixture evidence is now committed (`tests/conformance/fixtures/membrane_mode_split.json`), full differential campaign remains pending.
 8. Core allocator subsystem (size classes, thread cache, large allocator, MallocState) implemented with 50+ tests.
-9. All string functions (mem*, str*, strtok, strtok_r, wide) implemented with comprehensive tests.
-10. Tropical latency compositor live — min-plus algebra for provable worst-case pipeline bounds (math item #25).
+9. Stdlib numeric conversion (`atoi`, `atol`, `strtol`, `strtoul`), process control (`exit`, `atexit`), and sorting (`qsort`, `bsearch`) implemented with core logic and ABI membrane integration.
+10. All string functions (mem*, str*, strtok, strtok_r, wide) implemented with comprehensive tests.
+11. Tropical latency compositor live — min-plus algebra for provable worst-case pipeline bounds (math item #25).
 11. Spectral phase monitor live — Marchenko-Pastur/Tracy-Widom eigenvalue edge detection for regime changes (math item #31).
 12. Rough-path signature monitor live — truncated depth-3 path signatures in T(R^4) for universal noncommutative feature extraction (math items #24, #29).
 13. Persistent homology detector live — 0-dimensional Vietoris-Rips persistent homology for topological anomaly detection (math item #23).
 14. Schrödinger bridge controller live — entropic optimal transport (Sinkhorn-Knopp) for canonical regime transition detection (math item #20).
 15. Large-deviations monitor live — Cramér rate function (binary KL divergence) for exact exponential catastrophic failure probability bounds (math item #22).
+16. HJI reachability controller live — Hamilton-Jacobi-Isaacs value iteration on 64-state discrete game grid (4×4×4: risk/latency/adverse_rate), controller vs adversary minimax safety certificates (math item #15).
+17. Mean-field game contention controller live — Lasry-Lions Nash equilibrium via Picard fixed-point with logit best response, congestion collapse detection for validation resource contention (math item #19).
+18. String/Memory ABI fully wired — `memset`, `memcmp`, `memchr`, `strtok`, `strtok_r`, `memrchr` now delegate to `glibc-rs-core` safe implementations after membrane validation; `memcpy` and `memmove` retain local logic due to strict aliasing constraints.
 
 ## Update Policy
 
