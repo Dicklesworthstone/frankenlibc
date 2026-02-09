@@ -2,6 +2,7 @@
 //!
 //! This crate introduces the first version of a Transparent Safety Membrane (TSM)
 //! substrate at the libc ABI boundary.
+#![allow(clippy::missing_safety_doc)]
 
 pub mod safety;
 
@@ -69,6 +70,122 @@ pub unsafe extern "C" fn glibc_rust_memcpy_preview(
     }
 
     dst
+}
+
+/// Preview entrypoint for TSM-mediated malloc.
+///
+/// Allocates memory via system allocator and registers it with the membrane.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn glibc_rust_malloc_preview(size: usize) -> *mut c_void {
+    if size == 0 {
+        return std::ptr::null_mut();
+    }
+
+    // Use system allocator for preview
+    let layout = match std::alloc::Layout::from_size_align(size, 16) {
+        Ok(l) => l,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    let ptr = unsafe { std::alloc::alloc(layout) }.cast::<c_void>();
+
+    if !ptr.is_null() {
+        global_registry().register_allocation(ptr, size, 1);
+    }
+
+    ptr
+}
+
+/// Preview entrypoint for TSM-mediated free.
+///
+/// Frees memory via system allocator and updates membrane state.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn glibc_rust_free_preview(ptr: *mut c_void, size_hint: usize) {
+    if ptr.is_null() {
+        return;
+    }
+
+    let registry = global_registry();
+    let facts = classify_pointer(registry, ptr);
+
+    if facts.temporal == safety::TemporalState::Valid {
+        registry.mark_freed(ptr);
+        // We need the size to deallocate safely with Rust allocator.
+        // In real TSM, we track it. Here we use the hint or lookup.
+        let size = facts.remaining.unwrap_or(size_hint);
+        if size > 0 {
+            let layout = std::alloc::Layout::from_size_align(size, 16).unwrap();
+            unsafe { std::alloc::dealloc(ptr.cast::<u8>(), layout) };
+        }
+    }
+}
+
+/// Preview entrypoint for TSM-mediated calloc.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn glibc_rust_calloc_preview(nmemb: usize, size: usize) -> *mut c_void {
+    let total = match nmemb.checked_mul(size) {
+        Some(t) => t,
+        None => return std::ptr::null_mut(),
+    };
+    if total == 0 {
+        return std::ptr::null_mut();
+    }
+
+    let layout = match std::alloc::Layout::from_size_align(total, 16) {
+        Ok(l) => l,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    let ptr = unsafe { std::alloc::alloc_zeroed(layout) }.cast::<c_void>();
+
+    if !ptr.is_null() {
+        global_registry().register_allocation(ptr, total, 1);
+    }
+    ptr
+}
+
+/// Preview entrypoint for TSM-mediated realloc.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn glibc_rust_realloc_preview(
+    ptr: *mut c_void,
+    new_size: usize,
+    old_size_hint: usize,
+) -> *mut c_void {
+    if ptr.is_null() {
+        return unsafe { glibc_rust_malloc_preview(new_size) };
+    }
+    if new_size == 0 {
+        unsafe { glibc_rust_free_preview(ptr, old_size_hint) };
+        return std::ptr::null_mut();
+    }
+
+    let registry = global_registry();
+    let _facts = classify_pointer(registry, ptr);
+
+    // If we don't know the size, we can't safely realloc with Rust allocator API
+    // because `realloc` requires old layout.
+    // We rely on old_size_hint if metadata is missing/partial.
+    let old_size = if let Some(meta) = registry.lookup_containing(ptr) {
+        meta.len
+    } else {
+        old_size_hint
+    };
+
+    if old_size == 0 {
+        return std::ptr::null_mut(); // Cannot realloc unknown ptr safely in preview
+    }
+
+    let old_layout = match std::alloc::Layout::from_size_align(old_size, 16) {
+        Ok(l) => l,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    let new_ptr =
+        unsafe { std::alloc::realloc(ptr.cast::<u8>(), old_layout, new_size) }.cast::<c_void>();
+
+    if !new_ptr.is_null() {
+        registry.mark_freed(ptr); // Mark old as freed (even if same addr, conceptually new generation)
+        registry.register_allocation(new_ptr, new_size, 2);
+    }
+
+    new_ptr
 }
 
 #[cfg(test)]
