@@ -8,6 +8,7 @@
 
 use std::sync::OnceLock;
 
+use glibc_rs_membrane::check_oracle::CheckStage;
 use glibc_rs_membrane::config::{SafetyLevel, safety_level};
 use glibc_rs_membrane::runtime_math::{
     ApiFamily, RuntimeContext, RuntimeDecision, RuntimeMathKernel, ValidationProfile,
@@ -48,6 +49,25 @@ pub(crate) fn observe(
     adverse: bool,
 ) {
     kernel().observe_validation_result(family, profile, estimated_cost_ns, adverse);
+}
+
+#[must_use]
+pub(crate) fn check_ordering(
+    family: ApiFamily,
+    aligned: bool,
+    recent_page: bool,
+) -> [CheckStage; 7] {
+    kernel().check_ordering(family, aligned, recent_page)
+}
+
+pub(crate) fn note_check_order_outcome(
+    family: ApiFamily,
+    aligned: bool,
+    recent_page: bool,
+    ordering_used: &[CheckStage; 7],
+    exit_stage: Option<usize>,
+) {
+    kernel().note_check_order_outcome(family, aligned, recent_page, ordering_used, exit_stage);
 }
 
 #[must_use]

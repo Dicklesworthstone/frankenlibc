@@ -23,6 +23,27 @@ GLIBC_2.2.5 {
         calloc;
         realloc;
 
+        /* math operations */
+        sin;
+        cos;
+        tan;
+        asin;
+        acos;
+        atan;
+        atan2;
+        exp;
+        log;
+        log10;
+        pow;
+        fabs;
+        ceil;
+        floor;
+        round;
+        fmod;
+        erf;
+        tgamma;
+        lgamma;
+
     local:
         *;
 };

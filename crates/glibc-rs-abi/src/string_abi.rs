@@ -7,6 +7,7 @@
 
 use std::ffi::{c_char, c_int, c_void};
 
+use glibc_rs_membrane::check_oracle::CheckStage;
 use glibc_rs_membrane::heal::{HealingAction, global_healing_policy};
 use glibc_rs_membrane::runtime_math::{ApiFamily, MembraneAction};
 
@@ -48,6 +49,44 @@ fn record_truncation(requested: usize, truncated: usize) {
         requested,
         truncated,
     });
+}
+
+#[inline]
+fn stage_index(ordering: &[CheckStage; 7], stage: CheckStage) -> usize {
+    ordering.iter().position(|s| *s == stage).unwrap_or(0)
+}
+
+#[inline]
+fn stage_context_one(addr: usize) -> (bool, bool, [CheckStage; 7]) {
+    let aligned = (addr & 0x7) == 0;
+    let recent_page = addr != 0 && known_remaining(addr).is_some();
+    let ordering = runtime_policy::check_ordering(ApiFamily::StringMemory, aligned, recent_page);
+    (aligned, recent_page, ordering)
+}
+
+#[inline]
+fn stage_context_two(addr1: usize, addr2: usize) -> (bool, bool, [CheckStage; 7]) {
+    let aligned = ((addr1 | addr2) & 0x7) == 0;
+    let recent_page = (addr1 != 0 && known_remaining(addr1).is_some())
+        || (addr2 != 0 && known_remaining(addr2).is_some());
+    let ordering = runtime_policy::check_ordering(ApiFamily::StringMemory, aligned, recent_page);
+    (aligned, recent_page, ordering)
+}
+
+#[inline]
+fn record_string_stage_outcome(
+    ordering: &[CheckStage; 7],
+    aligned: bool,
+    recent_page: bool,
+    exit_stage: Option<usize>,
+) {
+    runtime_policy::note_check_order_outcome(
+        ApiFamily::StringMemory,
+        aligned,
+        recent_page,
+        ordering,
+        exit_stage,
+    );
 }
 
 /// Scan a C string with an optional hard bound.
@@ -92,10 +131,21 @@ unsafe fn scan_c_string(ptr: *const c_char, bound: Option<usize>) -> (usize, boo
 /// Caller must ensure `src` and `dst` are valid for `n` bytes and do not overlap.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn memcpy(dst: *mut c_void, src: *const c_void, n: usize) -> *mut c_void {
+    let aligned = ((dst as usize) | (src as usize)) & 0x7 == 0;
+    let recent_page = (!dst.is_null() && known_remaining(dst as usize).is_some())
+        || (!src.is_null() && known_remaining(src as usize).is_some());
+    let ordering = runtime_policy::check_ordering(ApiFamily::StringMemory, aligned, recent_page);
+
     if n == 0 {
         return dst;
     }
     if dst.is_null() || src.is_null() {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Null)),
+        );
         return std::ptr::null_mut();
     }
 
@@ -108,6 +158,12 @@ pub unsafe extern "C" fn memcpy(dst: *mut c_void, src: *const c_void, n: usize) 
         0,
     );
     if matches!(decision.action, MembraneAction::Deny) {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Arena)),
+        );
         runtime_policy::observe(
             ApiFamily::StringMemory,
             decision.profile,
@@ -124,6 +180,12 @@ pub unsafe extern "C" fn memcpy(dst: *mut c_void, src: *const c_void, n: usize) 
         mode.heals_enabled() || matches!(decision.action, MembraneAction::Repair(_)),
     );
     if copy_len == 0 {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Bounds)),
+        );
         runtime_policy::observe(
             ApiFamily::StringMemory,
             decision.profile,
@@ -137,6 +199,7 @@ pub unsafe extern "C" fn memcpy(dst: *mut c_void, src: *const c_void, n: usize) 
     unsafe {
         std::ptr::copy_nonoverlapping(src.cast::<u8>(), dst.cast::<u8>(), copy_len);
     }
+    record_string_stage_outcome(&ordering, aligned, recent_page, None);
     runtime_policy::observe(
         ApiFamily::StringMemory,
         decision.profile,
@@ -157,10 +220,21 @@ pub unsafe extern "C" fn memcpy(dst: *mut c_void, src: *const c_void, n: usize) 
 /// Caller must ensure `src` and `dst` are valid for `n` bytes.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn memmove(dst: *mut c_void, src: *const c_void, n: usize) -> *mut c_void {
+    let aligned = ((dst as usize) | (src as usize)) & 0x7 == 0;
+    let recent_page = (!dst.is_null() && known_remaining(dst as usize).is_some())
+        || (!src.is_null() && known_remaining(src as usize).is_some());
+    let ordering = runtime_policy::check_ordering(ApiFamily::StringMemory, aligned, recent_page);
+
     if n == 0 {
         return dst;
     }
     if dst.is_null() || src.is_null() {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Null)),
+        );
         return std::ptr::null_mut();
     }
 
@@ -173,6 +247,12 @@ pub unsafe extern "C" fn memmove(dst: *mut c_void, src: *const c_void, n: usize)
         0,
     );
     if matches!(decision.action, MembraneAction::Deny) {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Arena)),
+        );
         runtime_policy::observe(
             ApiFamily::StringMemory,
             decision.profile,
@@ -189,6 +269,12 @@ pub unsafe extern "C" fn memmove(dst: *mut c_void, src: *const c_void, n: usize)
         mode.heals_enabled() || matches!(decision.action, MembraneAction::Repair(_)),
     );
     if copy_len == 0 {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Bounds)),
+        );
         runtime_policy::observe(
             ApiFamily::StringMemory,
             decision.profile,
@@ -202,6 +288,7 @@ pub unsafe extern "C" fn memmove(dst: *mut c_void, src: *const c_void, n: usize)
     unsafe {
         std::ptr::copy(src.cast::<u8>(), dst.cast::<u8>(), copy_len);
     }
+    record_string_stage_outcome(&ordering, aligned, recent_page, None);
     runtime_policy::observe(
         ApiFamily::StringMemory,
         decision.profile,
@@ -222,10 +309,20 @@ pub unsafe extern "C" fn memmove(dst: *mut c_void, src: *const c_void, n: usize)
 /// Caller must ensure `dst` is valid for `n` bytes.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn memset(dst: *mut c_void, c: c_int, n: usize) -> *mut c_void {
+    let aligned = (dst as usize) & 0x7 == 0;
+    let recent_page = !dst.is_null() && known_remaining(dst as usize).is_some();
+    let ordering = runtime_policy::check_ordering(ApiFamily::StringMemory, aligned, recent_page);
+
     if n == 0 {
         return dst;
     }
     if dst.is_null() {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Null)),
+        );
         return std::ptr::null_mut();
     }
 
@@ -238,6 +335,12 @@ pub unsafe extern "C" fn memset(dst: *mut c_void, c: c_int, n: usize) -> *mut c_
         0,
     );
     if matches!(decision.action, MembraneAction::Deny) {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Arena)),
+        );
         runtime_policy::observe(
             ApiFamily::StringMemory,
             decision.profile,
@@ -254,6 +357,12 @@ pub unsafe extern "C" fn memset(dst: *mut c_void, c: c_int, n: usize) -> *mut c_
         mode.heals_enabled() || matches!(decision.action, MembraneAction::Repair(_)),
     );
     if fill_len == 0 {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Bounds)),
+        );
         runtime_policy::observe(
             ApiFamily::StringMemory,
             decision.profile,
@@ -269,6 +378,7 @@ pub unsafe extern "C" fn memset(dst: *mut c_void, c: c_int, n: usize) -> *mut c_
     unsafe {
         std::ptr::write_bytes(dst.cast::<u8>(), c as u8, fill_len);
     }
+    record_string_stage_outcome(&ordering, aligned, recent_page, None);
     runtime_policy::observe(
         ApiFamily::StringMemory,
         decision.profile,
@@ -291,11 +401,18 @@ pub unsafe extern "C" fn memset(dst: *mut c_void, c: c_int, n: usize) -> *mut c_
 /// Caller must ensure `s1` and `s2` are valid for `n` bytes.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn memcmp(s1: *const c_void, s2: *const c_void, n: usize) -> c_int {
+    let (aligned, recent_page, ordering) = stage_context_two(s1 as usize, s2 as usize);
     if n == 0 {
         return 0;
     }
     if s1.is_null() || s2.is_null() {
         // Membrane: null pointer in memcmp is UB in C. Return safe default.
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Null)),
+        );
         return 0;
     }
 
@@ -308,6 +425,12 @@ pub unsafe extern "C" fn memcmp(s1: *const c_void, s2: *const c_void, n: usize) 
         0,
     );
     if matches!(decision.action, MembraneAction::Deny) {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Arena)),
+        );
         runtime_policy::observe(
             ApiFamily::StringMemory,
             decision.profile,
@@ -323,9 +446,24 @@ pub unsafe extern "C" fn memcmp(s1: *const c_void, s2: *const c_void, n: usize) 
         Some(s2 as usize),
         mode.heals_enabled() || matches!(decision.action, MembraneAction::Repair(_)),
     );
+    if cmp_len == 0 {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Bounds)),
+        );
+        runtime_policy::observe(
+            ApiFamily::StringMemory,
+            decision.profile,
+            runtime_policy::scaled_cost(6, n),
+            true,
+        );
+        return 0;
+    }
 
     // SAFETY: `cmp_len` is either original `n` or clamped by known safe bounds.
-    unsafe {
+    let out = unsafe {
         let a = std::slice::from_raw_parts(s1.cast::<u8>(), cmp_len);
         let b = std::slice::from_raw_parts(s2.cast::<u8>(), cmp_len);
         match glibc_rs_core::string::mem::memcmp(a, b, cmp_len) {
@@ -333,7 +471,20 @@ pub unsafe extern "C" fn memcmp(s1: *const c_void, s2: *const c_void, n: usize) 
             std::cmp::Ordering::Less => -1,
             std::cmp::Ordering::Greater => 1,
         }
-    }
+    };
+    record_string_stage_outcome(
+        &ordering,
+        aligned,
+        recent_page,
+        Some(stage_index(&ordering, CheckStage::Bounds)),
+    );
+    runtime_policy::observe(
+        ApiFamily::StringMemory,
+        decision.profile,
+        runtime_policy::scaled_cost(6, cmp_len),
+        cmp_len < n,
+    );
+    out
 }
 
 // ---------------------------------------------------------------------------
@@ -349,7 +500,16 @@ pub unsafe extern "C" fn memcmp(s1: *const c_void, s2: *const c_void, n: usize) 
 /// Caller must ensure `s` is valid for `n` bytes.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn memchr(s: *const c_void, c: c_int, n: usize) -> *mut c_void {
+    let (aligned, recent_page, ordering) = stage_context_one(s as usize);
     if n == 0 || s.is_null() {
+        if s.is_null() {
+            record_string_stage_outcome(
+                &ordering,
+                aligned,
+                recent_page,
+                Some(stage_index(&ordering, CheckStage::Null)),
+            );
+        }
         return std::ptr::null_mut();
     }
 
@@ -362,6 +522,12 @@ pub unsafe extern "C" fn memchr(s: *const c_void, c: c_int, n: usize) -> *mut c_
         0,
     );
     if matches!(decision.action, MembraneAction::Deny) {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Arena)),
+        );
         runtime_policy::observe(
             ApiFamily::StringMemory,
             decision.profile,
@@ -377,11 +543,32 @@ pub unsafe extern "C" fn memchr(s: *const c_void, c: c_int, n: usize) -> *mut c_
         None,
         mode.heals_enabled() || matches!(decision.action, MembraneAction::Repair(_)),
     );
+    if scan_len == 0 {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Bounds)),
+        );
+        runtime_policy::observe(
+            ApiFamily::StringMemory,
+            decision.profile,
+            runtime_policy::scaled_cost(6, n),
+            true,
+        );
+        return std::ptr::null_mut();
+    }
 
     // SAFETY: `scan_len` is either original `n` or clamped by known bounds.
     unsafe {
         let bytes = std::slice::from_raw_parts(s.cast::<u8>(), scan_len);
         if let Some(idx) = glibc_rs_core::string::mem::memchr(bytes, c as u8, scan_len) {
+            record_string_stage_outcome(
+                &ordering,
+                aligned,
+                recent_page,
+                Some(stage_index(&ordering, CheckStage::Bounds)),
+            );
             runtime_policy::observe(
                 ApiFamily::StringMemory,
                 decision.profile,
@@ -391,6 +578,12 @@ pub unsafe extern "C" fn memchr(s: *const c_void, c: c_int, n: usize) -> *mut c_
             return (s as *mut u8).add(idx).cast();
         }
     }
+    record_string_stage_outcome(
+        &ordering,
+        aligned,
+        recent_page,
+        Some(stage_index(&ordering, CheckStage::Bounds)),
+    );
     runtime_policy::observe(
         ApiFamily::StringMemory,
         decision.profile,
@@ -413,7 +606,16 @@ pub unsafe extern "C" fn memchr(s: *const c_void, c: c_int, n: usize) -> *mut c_
 /// Caller must ensure `s` is valid for `n` bytes.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn memrchr(s: *const c_void, c: c_int, n: usize) -> *mut c_void {
+    let (aligned, recent_page, ordering) = stage_context_one(s as usize);
     if n == 0 || s.is_null() {
+        if s.is_null() {
+            record_string_stage_outcome(
+                &ordering,
+                aligned,
+                recent_page,
+                Some(stage_index(&ordering, CheckStage::Null)),
+            );
+        }
         return std::ptr::null_mut();
     }
 
@@ -426,6 +628,12 @@ pub unsafe extern "C" fn memrchr(s: *const c_void, c: c_int, n: usize) -> *mut c
         0,
     );
     if matches!(decision.action, MembraneAction::Deny) {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Arena)),
+        );
         runtime_policy::observe(
             ApiFamily::StringMemory,
             decision.profile,
@@ -441,11 +649,32 @@ pub unsafe extern "C" fn memrchr(s: *const c_void, c: c_int, n: usize) -> *mut c
         None,
         mode.heals_enabled() || matches!(decision.action, MembraneAction::Repair(_)),
     );
+    if scan_len == 0 {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Bounds)),
+        );
+        runtime_policy::observe(
+            ApiFamily::StringMemory,
+            decision.profile,
+            runtime_policy::scaled_cost(6, n),
+            true,
+        );
+        return std::ptr::null_mut();
+    }
 
     // SAFETY: `scan_len` is either original `n` or clamped by known bounds.
     unsafe {
         let bytes = std::slice::from_raw_parts(s.cast::<u8>(), scan_len);
         if let Some(idx) = glibc_rs_core::string::mem::memrchr(bytes, c as u8, scan_len) {
+            record_string_stage_outcome(
+                &ordering,
+                aligned,
+                recent_page,
+                Some(stage_index(&ordering, CheckStage::Bounds)),
+            );
             runtime_policy::observe(
                 ApiFamily::StringMemory,
                 decision.profile,
@@ -455,6 +684,12 @@ pub unsafe extern "C" fn memrchr(s: *const c_void, c: c_int, n: usize) -> *mut c
             return (s as *mut u8).add(idx).cast();
         }
     }
+    record_string_stage_outcome(
+        &ordering,
+        aligned,
+        recent_page,
+        Some(stage_index(&ordering, CheckStage::Bounds)),
+    );
     runtime_policy::observe(
         ApiFamily::StringMemory,
         decision.profile,
@@ -475,8 +710,18 @@ pub unsafe extern "C" fn memrchr(s: *const c_void, c: c_int, n: usize) -> *mut c
 /// Caller must ensure `s` points to a valid null-terminated string.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn strlen(s: *const c_char) -> usize {
+    let aligned = (s as usize) & 0x7 == 0;
+    let recent_page = !s.is_null() && known_remaining(s as usize).is_some();
+    let ordering = runtime_policy::check_ordering(ApiFamily::StringMemory, aligned, recent_page);
+
     if s.is_null() {
         // Membrane: null pointer in strlen is UB in C. Return safe default.
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Null)),
+        );
         return 0;
     }
 
@@ -489,6 +734,12 @@ pub unsafe extern "C" fn strlen(s: *const c_char) -> usize {
         0,
     );
     if matches!(decision.action, MembraneAction::Deny) {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Arena)),
+        );
         runtime_policy::observe(ApiFamily::StringMemory, decision.profile, 6, true);
         return 0;
     }
@@ -500,6 +751,12 @@ pub unsafe extern "C" fn strlen(s: *const c_char) -> usize {
         unsafe {
             for i in 0..limit {
                 if *s.add(i) == 0 {
+                    record_string_stage_outcome(
+                        &ordering,
+                        aligned,
+                        recent_page,
+                        Some(stage_index(&ordering, CheckStage::Bounds)),
+                    );
                     runtime_policy::observe(
                         ApiFamily::StringMemory,
                         decision.profile,
@@ -515,6 +772,12 @@ pub unsafe extern "C" fn strlen(s: *const c_char) -> usize {
             truncated: limit,
         };
         global_healing_policy().record(&action);
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Bounds)),
+        );
         runtime_policy::observe(
             ApiFamily::StringMemory,
             decision.profile,
@@ -530,6 +793,12 @@ pub unsafe extern "C" fn strlen(s: *const c_char) -> usize {
         while *s.add(len) != 0 {
             len += 1;
         }
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Bounds)),
+        );
         runtime_policy::observe(
             ApiFamily::StringMemory,
             decision.profile,
@@ -551,7 +820,14 @@ pub unsafe extern "C" fn strlen(s: *const c_char) -> usize {
 /// Caller must ensure both `s1` and `s2` point to valid null-terminated strings.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn strcmp(s1: *const c_char, s2: *const c_char) -> c_int {
+    let (aligned, recent_page, ordering) = stage_context_two(s1 as usize, s2 as usize);
     if s1.is_null() || s2.is_null() {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Null)),
+        );
         return 0;
     }
 
@@ -564,6 +840,12 @@ pub unsafe extern "C" fn strcmp(s1: *const c_char, s2: *const c_char) -> c_int {
         0,
     );
     if matches!(decision.action, MembraneAction::Deny) {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Arena)),
+        );
         runtime_policy::observe(ApiFamily::StringMemory, decision.profile, 6, true);
         return 0;
     }
@@ -611,6 +893,12 @@ pub unsafe extern "C" fn strcmp(s1: *const c_char, s2: *const c_char) -> c_int {
     if adverse {
         record_truncation(cmp_bound.unwrap_or(span), span);
     }
+    record_string_stage_outcome(
+        &ordering,
+        aligned,
+        recent_page,
+        Some(stage_index(&ordering, CheckStage::Bounds)),
+    );
     runtime_policy::observe(
         ApiFamily::StringMemory,
         decision.profile,
@@ -632,7 +920,14 @@ pub unsafe extern "C" fn strcmp(s1: *const c_char, s2: *const c_char) -> c_int {
 /// and that the buffers do not overlap.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn strcpy(dst: *mut c_char, src: *const c_char) -> *mut c_char {
+    let (aligned, recent_page, ordering) = stage_context_two(dst as usize, src as usize);
     if dst.is_null() || src.is_null() {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Null)),
+        );
         return dst;
     }
 
@@ -645,6 +940,12 @@ pub unsafe extern "C" fn strcpy(dst: *mut c_char, src: *const c_char) -> *mut c_
         0,
     );
     if matches!(decision.action, MembraneAction::Deny) {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Arena)),
+        );
         runtime_policy::observe(ApiFamily::StringMemory, decision.profile, 7, true);
         return std::ptr::null_mut();
     }
@@ -715,6 +1016,12 @@ pub unsafe extern "C" fn strcpy(dst: *mut c_char, src: *const c_char) -> *mut c_
         runtime_policy::scaled_cost(8, copied_len),
         adverse,
     );
+    record_string_stage_outcome(
+        &ordering,
+        aligned,
+        recent_page,
+        Some(stage_index(&ordering, CheckStage::Bounds)),
+    );
     dst
 }
 
@@ -731,7 +1038,16 @@ pub unsafe extern "C" fn strcpy(dst: *mut c_char, src: *const c_char) -> *mut c_
 /// Caller must ensure `dst` is at least `n` bytes and `src` is a valid string.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn strncpy(dst: *mut c_char, src: *const c_char, n: usize) -> *mut c_char {
+    let (aligned, recent_page, ordering) = stage_context_two(dst as usize, src as usize);
     if dst.is_null() || src.is_null() || n == 0 {
+        if dst.is_null() || src.is_null() {
+            record_string_stage_outcome(
+                &ordering,
+                aligned,
+                recent_page,
+                Some(stage_index(&ordering, CheckStage::Null)),
+            );
+        }
         return dst;
     }
 
@@ -744,6 +1060,12 @@ pub unsafe extern "C" fn strncpy(dst: *mut c_char, src: *const c_char, n: usize)
         0,
     );
     if matches!(decision.action, MembraneAction::Deny) {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Arena)),
+        );
         runtime_policy::observe(
             ApiFamily::StringMemory,
             decision.profile,
@@ -759,6 +1081,21 @@ pub unsafe extern "C" fn strncpy(dst: *mut c_char, src: *const c_char, n: usize)
         Some(dst as usize),
         repair_enabled(mode.heals_enabled(), decision.action),
     );
+    if copy_len == 0 {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Bounds)),
+        );
+        runtime_policy::observe(
+            ApiFamily::StringMemory,
+            decision.profile,
+            runtime_policy::scaled_cost(8, n),
+            true,
+        );
+        return dst;
+    }
 
     // SAFETY: bounded by copy_len, which is either n or clamped in hardened mode.
     unsafe {
@@ -782,6 +1119,12 @@ pub unsafe extern "C" fn strncpy(dst: *mut c_char, src: *const c_char, n: usize)
         runtime_policy::scaled_cost(8, copy_len),
         clamped,
     );
+    record_string_stage_outcome(
+        &ordering,
+        aligned,
+        recent_page,
+        Some(stage_index(&ordering, CheckStage::Bounds)),
+    );
     dst
 }
 
@@ -797,7 +1140,14 @@ pub unsafe extern "C" fn strncpy(dst: *mut c_char, src: *const c_char, n: usize)
 /// including null terminator, and that the buffers do not overlap.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn strcat(dst: *mut c_char, src: *const c_char) -> *mut c_char {
+    let (aligned, recent_page, ordering) = stage_context_two(dst as usize, src as usize);
     if dst.is_null() || src.is_null() {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Null)),
+        );
         return dst;
     }
 
@@ -810,6 +1160,12 @@ pub unsafe extern "C" fn strcat(dst: *mut c_char, src: *const c_char) -> *mut c_
         0,
     );
     if matches!(decision.action, MembraneAction::Deny) {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Arena)),
+        );
         runtime_policy::observe(ApiFamily::StringMemory, decision.profile, 8, true);
         return std::ptr::null_mut();
     }
@@ -892,6 +1248,12 @@ pub unsafe extern "C" fn strcat(dst: *mut c_char, src: *const c_char) -> *mut c_
         runtime_policy::scaled_cost(9, work),
         adverse,
     );
+    record_string_stage_outcome(
+        &ordering,
+        aligned,
+        recent_page,
+        Some(stage_index(&ordering, CheckStage::Bounds)),
+    );
     dst
 }
 
@@ -909,7 +1271,16 @@ pub unsafe extern "C" fn strcat(dst: *mut c_char, src: *const c_char) -> *mut c_
 /// (up to `strlen(dst) + n + 1` bytes).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn strncat(dst: *mut c_char, src: *const c_char, n: usize) -> *mut c_char {
+    let (aligned, recent_page, ordering) = stage_context_two(dst as usize, src as usize);
     if dst.is_null() || src.is_null() || n == 0 {
+        if dst.is_null() || src.is_null() {
+            record_string_stage_outcome(
+                &ordering,
+                aligned,
+                recent_page,
+                Some(stage_index(&ordering, CheckStage::Null)),
+            );
+        }
         return dst;
     }
 
@@ -922,6 +1293,12 @@ pub unsafe extern "C" fn strncat(dst: *mut c_char, src: *const c_char, n: usize)
         0,
     );
     if matches!(decision.action, MembraneAction::Deny) {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Arena)),
+        );
         runtime_policy::observe(
             ApiFamily::StringMemory,
             decision.profile,
@@ -1012,6 +1389,12 @@ pub unsafe extern "C" fn strncat(dst: *mut c_char, src: *const c_char, n: usize)
         runtime_policy::scaled_cost(9, work),
         adverse,
     );
+    record_string_stage_outcome(
+        &ordering,
+        aligned,
+        recent_page,
+        Some(stage_index(&ordering, CheckStage::Bounds)),
+    );
     dst
 }
 
@@ -1029,7 +1412,14 @@ pub unsafe extern "C" fn strncat(dst: *mut c_char, src: *const c_char, n: usize)
 /// Caller must ensure `s` is a valid null-terminated string.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn strchr(s: *const c_char, c: c_int) -> *mut c_char {
+    let (aligned, recent_page, ordering) = stage_context_one(s as usize);
     if s.is_null() {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Null)),
+        );
         return std::ptr::null_mut();
     }
 
@@ -1043,6 +1433,12 @@ pub unsafe extern "C" fn strchr(s: *const c_char, c: c_int) -> *mut c_char {
         0,
     );
     if matches!(decision.action, MembraneAction::Deny) {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Arena)),
+        );
         runtime_policy::observe(ApiFamily::StringMemory, decision.profile, 6, true);
         return std::ptr::null_mut();
     }
@@ -1076,6 +1472,12 @@ pub unsafe extern "C" fn strchr(s: *const c_char, c: c_int) -> *mut c_char {
     if adverse {
         record_truncation(bound.unwrap_or(span), span);
     }
+    record_string_stage_outcome(
+        &ordering,
+        aligned,
+        recent_page,
+        Some(stage_index(&ordering, CheckStage::Bounds)),
+    );
     runtime_policy::observe(
         ApiFamily::StringMemory,
         decision.profile,
@@ -1098,7 +1500,14 @@ pub unsafe extern "C" fn strchr(s: *const c_char, c: c_int) -> *mut c_char {
 /// Caller must ensure `s` is a valid null-terminated string.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn strrchr(s: *const c_char, c: c_int) -> *mut c_char {
+    let (aligned, recent_page, ordering) = stage_context_one(s as usize);
     if s.is_null() {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Null)),
+        );
         return std::ptr::null_mut();
     }
 
@@ -1112,6 +1521,12 @@ pub unsafe extern "C" fn strrchr(s: *const c_char, c: c_int) -> *mut c_char {
         0,
     );
     if matches!(decision.action, MembraneAction::Deny) {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Arena)),
+        );
         runtime_policy::observe(ApiFamily::StringMemory, decision.profile, 6, true);
         return std::ptr::null_mut();
     }
@@ -1144,6 +1559,12 @@ pub unsafe extern "C" fn strrchr(s: *const c_char, c: c_int) -> *mut c_char {
     if adverse {
         record_truncation(bound.unwrap_or(span), span);
     }
+    record_string_stage_outcome(
+        &ordering,
+        aligned,
+        recent_page,
+        Some(stage_index(&ordering, CheckStage::Bounds)),
+    );
     runtime_policy::observe(
         ApiFamily::StringMemory,
         decision.profile,
@@ -1167,10 +1588,23 @@ pub unsafe extern "C" fn strrchr(s: *const c_char, c: c_int) -> *mut c_char {
 /// Caller must ensure both `haystack` and `needle` are valid null-terminated strings.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn strstr(haystack: *const c_char, needle: *const c_char) -> *mut c_char {
+    let (aligned, recent_page, ordering) = stage_context_two(haystack as usize, needle as usize);
     if haystack.is_null() {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Null)),
+        );
         return std::ptr::null_mut();
     }
     if needle.is_null() {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Null)),
+        );
         return haystack as *mut c_char;
     }
 
@@ -1183,6 +1617,12 @@ pub unsafe extern "C" fn strstr(haystack: *const c_char, needle: *const c_char) 
         0,
     );
     if matches!(decision.action, MembraneAction::Deny) {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Arena)),
+        );
         runtime_policy::observe(ApiFamily::StringMemory, decision.profile, 10, true);
         return std::ptr::null_mut();
     }
@@ -1243,6 +1683,12 @@ pub unsafe extern "C" fn strstr(haystack: *const c_char, needle: *const c_char) 
             work,
         );
     }
+    record_string_stage_outcome(
+        &ordering,
+        aligned,
+        recent_page,
+        Some(stage_index(&ordering, CheckStage::Bounds)),
+    );
     runtime_policy::observe(
         ApiFamily::StringMemory,
         decision.profile,
@@ -1273,7 +1719,14 @@ thread_local! {
 /// reentrant usage.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn strtok(s: *mut c_char, delim: *const c_char) -> *mut c_char {
+    let (aligned, recent_page, ordering) = stage_context_two(s as usize, delim as usize);
     if delim.is_null() {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Null)),
+        );
         return std::ptr::null_mut();
     }
 
@@ -1287,6 +1740,12 @@ pub unsafe extern "C" fn strtok(s: *mut c_char, delim: *const c_char) -> *mut c_
         0,
     );
     if matches!(decision.action, MembraneAction::Deny) {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Arena)),
+        );
         runtime_policy::observe(ApiFamily::StringMemory, decision.profile, 8, true);
         return std::ptr::null_mut();
     }
@@ -1384,6 +1843,12 @@ pub unsafe extern "C" fn strtok(s: *mut c_char, delim: *const c_char) -> *mut c_
         runtime_policy::scaled_cost(8, work),
         adverse,
     );
+    record_string_stage_outcome(
+        &ordering,
+        aligned,
+        recent_page,
+        Some(stage_index(&ordering, CheckStage::Bounds)),
+    );
     token
 }
 
@@ -1403,7 +1868,14 @@ pub unsafe extern "C" fn strtok_r(
     delim: *const c_char,
     saveptr: *mut *mut c_char,
 ) -> *mut c_char {
+    let (aligned, recent_page, ordering) = stage_context_two(s as usize, delim as usize);
     if delim.is_null() || saveptr.is_null() {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Null)),
+        );
         return std::ptr::null_mut();
     }
 
@@ -1423,6 +1895,12 @@ pub unsafe extern "C" fn strtok_r(
         0,
     );
     if matches!(decision.action, MembraneAction::Deny) {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Arena)),
+        );
         runtime_policy::observe(ApiFamily::StringMemory, decision.profile, 8, true);
         return std::ptr::null_mut();
     }
@@ -1434,6 +1912,18 @@ pub unsafe extern "C" fn strtok_r(
 
         if current.is_null() {
             *saveptr = std::ptr::null_mut();
+            runtime_policy::observe(
+                ApiFamily::StringMemory,
+                decision.profile,
+                runtime_policy::scaled_cost(8, 0),
+                false,
+            );
+            record_string_stage_outcome(
+                &ordering,
+                aligned,
+                recent_page,
+                Some(stage_index(&ordering, CheckStage::Null)),
+            );
             return std::ptr::null_mut();
         }
 
@@ -1484,6 +1974,12 @@ pub unsafe extern "C" fn strtok_r(
                     runtime_policy::scaled_cost(8, next_offset),
                     false,
                 );
+                record_string_stage_outcome(
+                    &ordering,
+                    aligned,
+                    recent_page,
+                    Some(stage_index(&ordering, CheckStage::Bounds)),
+                );
                 token
             }
             None => {
@@ -1493,6 +1989,12 @@ pub unsafe extern "C" fn strtok_r(
                     decision.profile,
                     runtime_policy::scaled_cost(8, scan_limit),
                     false,
+                );
+                record_string_stage_outcome(
+                    &ordering,
+                    aligned,
+                    recent_page,
+                    Some(stage_index(&ordering, CheckStage::Bounds)),
                 );
                 std::ptr::null_mut()
             }
