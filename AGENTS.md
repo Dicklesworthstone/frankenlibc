@@ -162,9 +162,14 @@ Mandatory live modules in `glibc-rs-membrane/src/runtime_math/`:
 3. `control.rs` — primal-dual threshold controller for full-check/repair triggers.
 4. `barrier.rs` — constant-time admissibility guard.
 5. `cohomology.rs` — overlap-consistency monitor for sharded metadata.
+6. `pareto.rs` — mode-aware latency/risk Pareto selector with cumulative regret tracking and per-family hard regret caps.
 
 Runtime decision law (per call):
-`mode + context + risk + budget + barrier + consistency -> Allow | FullValidate | Repair | Deny`.
+`mode + context + risk + budget + pareto + barrier + consistency -> Allow | FullValidate | Repair | Deny`.
+
+Current live extensions:
+- `runtime_math/eprocess.rs` — anytime-valid sequential alarming (e-values).
+- `runtime_math/cvar.rs` — distributionally-robust CVaR tail-risk guard.
 
 Developer transparency remains mandatory:
 - contributors write normal Rust APIs/tests/policies,
@@ -212,6 +217,18 @@ Rules:
 - `runtime_math/control.rs` — threshold controller
 - `runtime_math/barrier.rs` — admissibility oracle
 - `runtime_math/cohomology.rs` — shard-overlap consistency monitor
+- `runtime_math/pareto.rs` — latency/risk frontier + regret accounting
+- `runtime_math/eprocess.rs` — anytime-valid sequential risk monitor (e-values)
+- `runtime_math/cvar.rs` — distributionally-robust CVaR tail controller
+- `risk_engine.rs` — conformal risk scoring per API family (sampled, feeds cached bonus)
+- `check_oracle.rs` — Thompson sampling contextual bandit for validation stage ordering
+- `quarantine_controller.rs` — primal-dual quarantine depth optimizer
+- `tropical_latency.rs` — min-plus algebra worst-case latency bounds (math #25)
+- `spectral_monitor.rs` — Marchenko-Pastur/Tracy-Widom phase transition detection (math #31)
+- `rough_path.rs` — truncated depth-3 path signatures for universal noncommutative feature extraction (math #24, #29)
+- `persistence.rs` — 0-dimensional Vietoris-Rips persistent homology for topological anomaly detection (math #23)
+- `schrodinger_bridge.rs` — entropy-regularized optimal transport regime-transition detector (math #20)
+- `large_deviations.rs` — Cramér rate-function rare-event monitor (math #22)
 
 ### glibc-rs-core (Safe Implementations)
 - `string/` — mem*, str*, wide string functions
@@ -239,6 +256,7 @@ Rules:
 
 ### glibc-rs-abi (ABI Boundary)
 - `macros.rs` — Helper macros for ABI declarations
+- `runtime_policy.rs` — shared runtime-kernel gate for ABI entrypoints
 - `*_abi.rs` — One file per function family
 - `version_scripts/libc.map` — GNU ld version script
 

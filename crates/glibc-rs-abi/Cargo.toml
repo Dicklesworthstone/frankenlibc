@@ -15,6 +15,6 @@ unsafe_code = "allow"
 [dependencies]
 glibc-rs-membrane = { workspace = true }
 glibc-rs-core = { workspace = true }
+libc = { workspace = true }
 
 [dev-dependencies]
-libc = { workspace = true }

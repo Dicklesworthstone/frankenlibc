@@ -21,6 +21,8 @@
 #[macro_use]
 mod macros;
 
+mod runtime_policy;
+
 // Bootstrap ABI modules (Phase 1 - implemented)
 // Gated behind cfg(not(test)) because these modules export #[no_mangle] symbols
 // (malloc, free, memcpy, strlen, ...) that would shadow the system allocator and
@@ -40,7 +42,9 @@ pub mod inet_abi;
 pub mod io_abi;
 pub mod locale_abi;
 pub mod math_abi;
+#[cfg(not(test))]
 pub mod pthread_abi;
+#[cfg(not(test))]
 pub mod resolv_abi;
 pub mod resource_abi;
 pub mod setjmp_abi;

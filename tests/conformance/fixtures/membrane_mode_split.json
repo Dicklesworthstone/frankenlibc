@@ -1,0 +1,43 @@
+{
+  "version": "v1",
+  "family": "membrane/mode-split",
+  "captured_at": "2026-02-09T00:00:00Z",
+  "cases": [
+    {
+      "name": "strict_memcpy_overflow_ub",
+      "function": "memcpy",
+      "spec_section": "TSM strict memcpy",
+      "inputs": { "src": [1, 2, 3, 4], "dst_len": 2, "n": 4 },
+      "expected_output": "UB",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "hardened_memcpy_overflow_clamped",
+      "function": "memcpy",
+      "spec_section": "TSM hardened memcpy",
+      "inputs": { "src": [1, 2, 3, 4], "dst_len": 2, "n": 4 },
+      "expected_output": "[1, 2]",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "strict_strlen_unterminated_ub",
+      "function": "strlen",
+      "spec_section": "TSM strict strlen",
+      "inputs": { "s": [70, 79, 79] },
+      "expected_output": "UB",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "hardened_strlen_unterminated_truncated",
+      "function": "strlen",
+      "spec_section": "TSM hardened strlen",
+      "inputs": { "s": [70, 79, 79] },
+      "expected_output": "3",
+      "expected_errno": 0,
+      "mode": "hardened"
+    }
+  ]
+}

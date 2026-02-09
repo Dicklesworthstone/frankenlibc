@@ -14,14 +14,31 @@ use std::sync::OnceLock;
 use glibc_rs_membrane::arena::{AllocationArena, FreeResult};
 use glibc_rs_membrane::config::safety_level;
 use glibc_rs_membrane::heal::{HealingAction, global_healing_policy};
+use glibc_rs_membrane::runtime_math::{ApiFamily, MembraneAction};
+
+use crate::runtime_policy;
 
 /// Global allocation arena instance.
 ///
 /// All `malloc`/`free`/`calloc`/`realloc` operations go through this arena,
 /// which provides generational tracking, fingerprint integrity, and quarantine.
-fn global_arena() -> &'static AllocationArena {
+pub(crate) fn global_arena() -> &'static AllocationArena {
     static ARENA: OnceLock<AllocationArena> = OnceLock::new();
     ARENA.get_or_init(AllocationArena::new)
+}
+
+/// Remaining bytes in a known live allocation at `addr`.
+#[must_use]
+pub(crate) fn known_remaining(addr: usize) -> Option<usize> {
+    let slot = global_arena().lookup(addr)?;
+    if !slot.state.is_live() {
+        return None;
+    }
+    let end = slot.user_base.saturating_add(slot.user_size);
+    if addr < slot.user_base || addr >= end {
+        return None;
+    }
+    Some(end.saturating_sub(addr))
 }
 
 // ---------------------------------------------------------------------------
@@ -38,19 +55,30 @@ fn global_arena() -> &'static AllocationArena {
 /// Caller must eventually `free` the returned pointer exactly once.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn malloc(size: usize) -> *mut c_void {
-    if size == 0 {
-        // POSIX allows returning either null or a unique pointer for size 0.
-        // We return a minimal allocation for consistency.
-        return match global_arena().allocate(1) {
-            Some(ptr) => ptr.cast(),
-            None => std::ptr::null_mut(),
-        };
+    let req = size.max(1);
+    let (_, decision) = runtime_policy::decide(ApiFamily::Allocator, req, req, true, false, 0);
+
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(
+            ApiFamily::Allocator,
+            decision.profile,
+            runtime_policy::scaled_cost(8, req),
+            true,
+        );
+        return std::ptr::null_mut();
     }
 
-    match global_arena().allocate(size) {
+    let out: *mut c_void = match global_arena().allocate(req) {
         Some(ptr) => ptr.cast(),
         None => std::ptr::null_mut(),
-    }
+    };
+    runtime_policy::observe(
+        ApiFamily::Allocator,
+        decision.profile,
+        runtime_policy::scaled_cost(8, req),
+        out.is_null(),
+    );
+    out
 }
 
 // ---------------------------------------------------------------------------
@@ -72,6 +100,14 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
         return;
     }
 
+    let (_, decision) =
+        runtime_policy::decide(ApiFamily::Allocator, ptr as usize, 0, true, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Allocator, decision.profile, 6, true);
+        return;
+    }
+
+    let mut adverse = false;
     let result = global_arena().free(ptr.cast());
 
     match result {
@@ -80,8 +116,10 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
             // Buffer overflow was detected -- the canary after the allocation was
             // corrupted. In strict mode we still free (damage is done). Metrics
             // are recorded by the arena.
+            adverse = true;
         }
         FreeResult::DoubleFree => {
+            adverse = true;
             if safety_level().heals_enabled() {
                 let policy = global_healing_policy();
                 policy.record(&HealingAction::IgnoreDoubleFree);
@@ -90,6 +128,7 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
             // A real glibc would abort, but our membrane prioritizes defined behavior.
         }
         FreeResult::ForeignPointer => {
+            adverse = true;
             if safety_level().heals_enabled() {
                 let policy = global_healing_policy();
                 policy.record(&HealingAction::IgnoreForeignFree);
@@ -98,8 +137,11 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
         }
         FreeResult::InvalidPointer => {
             // Pointer is in an invalid state. Ignore to avoid undefined behavior.
+            adverse = true;
         }
     }
+
+    runtime_policy::observe(ApiFamily::Allocator, decision.profile, 20, adverse);
 }
 
 // ---------------------------------------------------------------------------
@@ -117,29 +159,40 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn calloc(nmemb: usize, size: usize) -> *mut c_void {
     let total = match nmemb.checked_mul(size) {
-        Some(t) => t,
-        None => return std::ptr::null_mut(), // Overflow
+        Some(t) => t.max(1),
+        None => {
+            let (_, decision) = runtime_policy::decide(ApiFamily::Allocator, 0, 0, true, false, 0);
+            runtime_policy::observe(ApiFamily::Allocator, decision.profile, 4, true);
+            return std::ptr::null_mut();
+        }
     };
 
-    if total == 0 {
-        return match global_arena().allocate(1) {
-            Some(ptr) => {
-                // SAFETY: ptr is valid for at least 1 byte from the arena.
-                unsafe { std::ptr::write_bytes(ptr, 0, 1) };
-                ptr.cast()
-            }
-            None => std::ptr::null_mut(),
-        };
+    let (_, decision) = runtime_policy::decide(ApiFamily::Allocator, total, total, true, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(
+            ApiFamily::Allocator,
+            decision.profile,
+            runtime_policy::scaled_cost(8, total),
+            true,
+        );
+        return std::ptr::null_mut();
     }
 
-    match global_arena().allocate(total) {
+    let out: *mut c_void = match global_arena().allocate(total) {
         Some(ptr) => {
             // SAFETY: ptr is valid for `total` bytes from the arena allocate contract.
             unsafe { std::ptr::write_bytes(ptr, 0, total) };
             ptr.cast()
         }
         None => std::ptr::null_mut(),
-    }
+    };
+    runtime_policy::observe(
+        ApiFamily::Allocator,
+        decision.profile,
+        runtime_policy::scaled_cost(10, total),
+        out.is_null(),
+    );
+    out
 }
 
 // ---------------------------------------------------------------------------
@@ -168,6 +221,18 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
         return std::ptr::null_mut();
     }
 
+    let (_, decision) =
+        runtime_policy::decide(ApiFamily::Allocator, ptr as usize, size, true, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(
+            ApiFamily::Allocator,
+            decision.profile,
+            runtime_policy::scaled_cost(8, size),
+            true,
+        );
+        return std::ptr::null_mut();
+    }
+
     let arena = global_arena();
 
     // Look up old allocation to get its size
@@ -179,9 +244,21 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
             if safety_level().heals_enabled() {
                 let policy = global_healing_policy();
                 policy.record(&HealingAction::ReallocAsMalloc { size });
+                runtime_policy::observe(
+                    ApiFamily::Allocator,
+                    decision.profile,
+                    runtime_policy::scaled_cost(6, size),
+                    true,
+                );
                 return unsafe { malloc(size) };
             }
             // Strict mode: cannot determine old size; treat as malloc
+            runtime_policy::observe(
+                ApiFamily::Allocator,
+                decision.profile,
+                runtime_policy::scaled_cost(6, size),
+                true,
+            );
             return unsafe { malloc(size) };
         }
     };
@@ -189,7 +266,15 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
     // Allocate new block
     let new_ptr = match arena.allocate(size) {
         Some(p) => p,
-        None => return std::ptr::null_mut(),
+        None => {
+            runtime_policy::observe(
+                ApiFamily::Allocator,
+                decision.profile,
+                runtime_policy::scaled_cost(12, size),
+                true,
+            );
+            return std::ptr::null_mut();
+        }
     };
 
     // Copy old data (up to the smaller of old and new sizes)
@@ -203,6 +288,11 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
 
     // Free old block
     arena.free(ptr.cast());
-
+    runtime_policy::observe(
+        ApiFamily::Allocator,
+        decision.profile,
+        runtime_policy::scaled_cost(18, size),
+        false,
+    );
     new_ptr.cast()
 }

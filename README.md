@@ -335,12 +335,17 @@ The math stack is not just documentation or offline CI proof. It now has a runti
 - `runtime_math::control` updates thresholds with a primal-dual budget controller.
 - `runtime_math::barrier` enforces constant-time admissibility gates.
 - `runtime_math::cohomology` detects overlap-consistency faults across metadata shards.
+- `runtime_math::pareto` enforces mode-aware latency/risk frontier selection with cumulative regret tracking and hard per-family regret caps.
+- `runtime_math::eprocess` runs anytime-valid sequential testing (e-process alarms) per API family.
+- `runtime_math::cvar` enforces distributionally-robust CVaR tail guards to prevent heavy-tail latency regimes from silently degrading safety routing.
+- `schrodinger_bridge` runs entropy-regularized optimal transport (Sinkhorn) to detect policy-regime transport drift.
+- `large_deviations` applies Cramér-rate rare-event monitoring for catastrophic adverse-sequence budgeting.
 - `risk_engine` (sampled conformal alarm model) now contributes live risk bonuses in runtime.
 - `check_oracle` (sampled contextual stage-order oracle) now contributes live profile bias in runtime.
 - `quarantine_controller` (primal-dual queue-depth control) now updates/publishes live quarantine depth.
 
 Per-call decision law:
-`mode + context + risk + control limits + barrier + consistency -> Allow | FullValidate | Repair | Deny`.
+`mode + context + risk + eprocess + cvar + control limits + pareto + barrier + consistency -> Allow | FullValidate | Repair | Deny`.
 
 Pragmatic constraint:
 - hot-path logic stays compact and deterministic,
@@ -348,8 +353,11 @@ Pragmatic constraint:
 - runtime executes only low-overhead control kernels.
 
 Current integration status:
-- fused runtime math is active in pointer-validation flow now,
-- allocator/string/pthread/resolver family-level integration is staged next.
+- fused runtime math is active in pointer-validation flow,
+- allocator routing is active at `malloc/free/realloc/calloc`,
+- string/memory routing is active across bootstrap `<string.h>` entrypoints (`mem*`, `strlen`, `strcmp`, `strcpy`, `strncpy`, `strcat`, `strncat`, `strchr`, `strrchr`, `strstr`, `strtok`),
+- threading routing is active in bootstrap `pthread_*` entrypoints (`pthread_self/equal/create/join/detach`),
+- resolver routing is active in bootstrap `<netdb.h>` entrypoints (`getaddrinfo/freeaddrinfo/getnameinfo/gai_strerror`).
 
 ---
 
@@ -458,11 +466,13 @@ glibc_rust's correctness is proven, not assumed.
 # Run the full conformance suite
 cargo test -p glibc-rs-harness
 
-# Run differential tests against host glibc
-cargo test -p glibc-rs-harness -- --differential
+# Verify fixture packs (strict + hardened) and emit a report
+cargo run -p glibc-rs-harness --bin harness -- verify \
+  --fixture tests/conformance/fixtures \
+  --report /tmp/glibc_rust_conformance.md
 
 # Run healing oracle tests (hardened mode)
-cargo test -p glibc-rs-harness -- --healing
+cargo run -p glibc-rs-harness --bin harness -- verify-membrane --mode hardened
 ```
 
 ### How it works
@@ -554,7 +564,7 @@ A: glibc_rust replaces glibc specifically. On musl systems, you'd use `LD_PRELOA
 A: The membrane adds 24 bytes per allocation (16-byte fingerprint + 8-byte canary) plus ~128KB for the bloom filter and TLS caches. For most programs, this is negligible.
 
 **Q: Is the math stack required to understand the code?**
-A: No. Runtime uses compact control kernels with plain interfaces (`risk`, `bandit`, `control`, `barrier`, `cohomology`), while heavy theorem/proof machinery stays offline. Day-to-day code is ordinary Rust.
+A: No. Runtime uses compact control kernels with plain interfaces (`risk`, `bandit`, `control`, `pareto`, `barrier`, `cohomology`), while heavy theorem/proof machinery stays offline. Day-to-day code is ordinary Rust.
 
 ---
 

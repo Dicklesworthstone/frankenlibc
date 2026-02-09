@@ -54,12 +54,22 @@ impl SafetyLevel {
 
 static GLOBAL_LEVEL: OnceLock<SafetyLevel> = OnceLock::new();
 
+fn parse_runtime_mode_env(raw: &str) -> SafetyLevel {
+    match raw.to_ascii_lowercase().as_str() {
+        "strict" | "default" | "abi" => SafetyLevel::Strict,
+        "hardened" | "repair" | "tsm" | "full" => SafetyLevel::Hardened,
+        // Runtime contract is strict|hardened only. Keep benchmark-only `Off`
+        // reachable via direct API use in tests/bench code, not env parsing.
+        _ => SafetyLevel::Strict,
+    }
+}
+
 /// Get the configured safety level (reads env var on first call, caches thereafter).
 #[must_use]
 pub fn safety_level() -> SafetyLevel {
     *GLOBAL_LEVEL.get_or_init(|| {
         std::env::var("GLIBC_RUST_MODE")
-            .map(|v| SafetyLevel::from_str_loose(&v))
+            .map(|v| parse_runtime_mode_env(&v))
             .unwrap_or_default()
     })
 }
@@ -83,6 +93,16 @@ mod tests {
         assert_eq!(SafetyLevel::from_str_loose("off"), SafetyLevel::Off);
         assert_eq!(SafetyLevel::from_str_loose("none"), SafetyLevel::Off);
         assert_eq!(SafetyLevel::from_str_loose("bogus"), SafetyLevel::Strict);
+    }
+
+    #[test]
+    fn runtime_mode_parser_is_strict_or_hardened_only() {
+        assert_eq!(parse_runtime_mode_env("strict"), SafetyLevel::Strict);
+        assert_eq!(parse_runtime_mode_env("hardened"), SafetyLevel::Hardened);
+        assert_eq!(parse_runtime_mode_env("repair"), SafetyLevel::Hardened);
+        assert_eq!(parse_runtime_mode_env("off"), SafetyLevel::Strict);
+        assert_eq!(parse_runtime_mode_env("none"), SafetyLevel::Strict);
+        assert_eq!(parse_runtime_mode_env("bogus"), SafetyLevel::Strict);
     }
 
     #[test]

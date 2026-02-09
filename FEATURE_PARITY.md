@@ -34,9 +34,9 @@ Legend:
 
 | Family | Strict Mode | Hardened Mode | Status |
 |---|---|---|---|
-| memory ops | host-glibc differential parity | policy-validated clamp/truncate/deny | PLANNED |
-| string ops | host-glibc differential parity | termination-safe repair paths | PLANNED |
-| allocator boundary | host-glibc parity for defined behavior | temporal/provenance repair policies | PLANNED |
+| memory ops | host-glibc differential parity | policy-validated clamp/truncate/deny | IN_PROGRESS |
+| string ops | host-glibc differential parity | termination-safe repair paths | IN_PROGRESS |
+| allocator boundary | host-glibc parity for defined behavior | temporal/provenance repair policies | IN_PROGRESS |
 
 ## Runtime Math Kernel Matrix
 
@@ -45,18 +45,25 @@ Legend:
 | `runtime_math::risk` | online risk upper bound per API family (`risk_upper_bound_ppm`) | IN_PROGRESS |
 | `runtime_math::bandit` | constrained `Fast` vs `Full` validation-depth routing | IN_PROGRESS |
 | `runtime_math::control` | primal-dual runtime threshold tuning | IN_PROGRESS |
+| `runtime_math::pareto` | mode-aware latency/risk Pareto profile selection + cumulative regret tracking + per-family hard regret caps | IN_PROGRESS |
 | `runtime_math::barrier` | constant-time admissibility guard | IN_PROGRESS |
 | `runtime_math::cohomology` | overlap-consistency fault detection for sharded metadata | IN_PROGRESS |
+| `runtime_math::eprocess` | anytime-valid sequential testing (e-value alarms) per API family | DONE |
+| `runtime_math::cvar` | distributionally-robust CVaR tail-risk control with runtime alarm gating | DONE |
 | sampled conformal risk fusion (`risk_engine`) | sampled high-order conformal alarm/full-check signal feeds live risk bonus | DONE |
 | sampled stage-order oracle fusion (`check_oracle`) | sampled contextual ordering feeds cached runtime profile bias | DONE |
 | quarantine controller fusion (`quarantine_controller`) | allocator observations feed primal-dual quarantine depth publication | DONE |
 | tropical latency compositor (`tropical_latency`) | min-plus (tropical) algebra for provable worst-case pipeline latency bounds | DONE |
 | spectral phase monitor (`spectral_monitor`) | Marchenko-Pastur / Tracy-Widom random matrix theory phase transition detection | DONE |
+| rough-path signature monitor (`rough_path`) | truncated depth-3 path signatures (Terry Lyons theory) for universal noncommutative feature extraction — captures ALL moments + temporal ordering | DONE |
+| persistent homology detector (`persistence`) | 0-dimensional Vietoris-Rips persistent homology for topological anomaly detection — sees data *shape* invisible to all statistical methods | DONE |
+| Schrödinger bridge controller (`schrodinger_bridge`) | entropic optimal transport (Sinkhorn-Knopp) between action policy and equilibrium — canonical information-theoretic regime transition distance (Cuturi 2013, Léonard 2014) | DONE |
+| large-deviations monitor (`large_deviations`) | Cramér rate function (binary KL divergence) for exact exponential failure probability bounds — strictly dominates Hoeffding/CLT | DONE |
 | pointer validator integration | runtime-math decisions affect bloom-miss/deep-check behavior | DONE |
-| allocator integration | runtime-math routing at `malloc/free/realloc` boundary | PLANNED |
-| string/memory integration | runtime-math routing for copy/string families | PLANNED |
-| pthread/futex integration | runtime-math routing for wait/lock/cancel edges | PLANNED |
-| resolver/NSS integration | runtime-math routing for retry/cache/poisoning decisions | PLANNED |
+| allocator integration | runtime-math routing active at `malloc/free/realloc/calloc` ABI boundary | IN_PROGRESS |
+| string/memory integration | runtime-math routing active for bootstrap `<string.h>` entrypoints (`mem*`, `strlen`, `strcmp`, `strcpy`, `strncpy`, `strcat`, `strncat`, `strchr`, `strrchr`, `strstr`, `strtok`) | IN_PROGRESS |
+| pthread/futex integration | runtime-math routing for wait/lock/cancel edges | IN_PROGRESS |
+| resolver/NSS integration | runtime-math routing for retry/cache/poisoning decisions | IN_PROGRESS |
 
 ## Reverse Core Coverage Matrix
 
@@ -147,8 +154,8 @@ Legend:
 | entropic transition safety | Schrödinger-bridge transport-cost/overshoot reports | PLANNED |
 | SOS invariant synthesis | SDP outputs + certificate validation artifacts | PLANNED |
 | large-deviation catastrophe bounds | rare-event estimation reports + threshold audits | PLANNED |
-| topological anomaly detection | persistent-homology summaries + detection benchmarks | PLANNED |
-| rough-signature feature stability | perturbation-stability reports + model-input audits | PLANNED |
+| topological anomaly detection | persistent-homology summaries + detection benchmarks | IN_PROGRESS |
+| rough-signature feature stability | perturbation-stability reports + model-input audits | IN_PROGRESS |
 | tropical latency composition | min-plus envelope proofs + end-to-end bound reports | IN_PROGRESS |
 | online optimizer convergence | primal-dual/ADMM convergence diagnostics + rollback logs | PLANNED |
 | coalgebraic stream bisimulation | minimized stream-machine proofs + protocol replay logs | PLANNED |
@@ -181,11 +188,15 @@ Legend:
 5. No formal proof artifacts are committed yet.
 6. Runtime math kernel is live in membrane and pointer validation; cross-family ABI wiring remains incomplete.
 7. Sequential-statistical guardrails are partially wired in runtime code; calibration evidence remains pending.
-8. Bootstrap string/memory + allocator boundary implementations exist; strict/hardened parity evidence remains pending.
+8. Bootstrap string/memory + allocator boundary implementations exist; initial strict/hardened fixture evidence is now committed (`tests/conformance/fixtures/membrane_mode_split.json`), full differential campaign remains pending.
 8. Core allocator subsystem (size classes, thread cache, large allocator, MallocState) implemented with 50+ tests.
 9. All string functions (mem*, str*, strtok, strtok_r, wide) implemented with comprehensive tests.
 10. Tropical latency compositor live — min-plus algebra for provable worst-case pipeline bounds (math item #25).
 11. Spectral phase monitor live — Marchenko-Pastur/Tracy-Widom eigenvalue edge detection for regime changes (math item #31).
+12. Rough-path signature monitor live — truncated depth-3 path signatures in T(R^4) for universal noncommutative feature extraction (math items #24, #29).
+13. Persistent homology detector live — 0-dimensional Vietoris-Rips persistent homology for topological anomaly detection (math item #23).
+14. Schrödinger bridge controller live — entropic optimal transport (Sinkhorn-Knopp) for canonical regime transition detection (math item #20).
+15. Large-deviations monitor live — Cramér rate function (binary KL divergence) for exact exponential catastrophic failure probability bounds (math item #22).
 
 ## Update Policy
 

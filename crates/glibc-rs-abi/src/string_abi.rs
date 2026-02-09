@@ -7,6 +7,80 @@
 
 use std::ffi::{c_char, c_int, c_void};
 
+use glibc_rs_membrane::heal::{HealingAction, global_healing_policy};
+use glibc_rs_membrane::runtime_math::{ApiFamily, MembraneAction};
+
+use crate::malloc_abi::known_remaining;
+use crate::runtime_policy;
+
+fn maybe_clamp_copy_len(
+    requested: usize,
+    src_addr: Option<usize>,
+    dst_addr: Option<usize>,
+    enable_repair: bool,
+) -> (usize, bool) {
+    if !enable_repair || requested == 0 {
+        return (requested, false);
+    }
+
+    let src_remaining = src_addr.and_then(known_remaining);
+    let dst_remaining = dst_addr.and_then(known_remaining);
+    let action = global_healing_policy().heal_copy_bounds(requested, src_remaining, dst_remaining);
+    match action {
+        HealingAction::ClampSize {
+            requested: _,
+            clamped,
+        } => {
+            global_healing_policy().record(&action);
+            (clamped, true)
+        }
+        _ => (requested, false),
+    }
+}
+
+#[inline]
+fn repair_enabled(heals_enabled: bool, action: MembraneAction) -> bool {
+    heals_enabled || matches!(action, MembraneAction::Repair(_))
+}
+
+fn record_truncation(requested: usize, truncated: usize) {
+    global_healing_policy().record(&HealingAction::TruncateWithNull {
+        requested,
+        truncated,
+    });
+}
+
+/// Scan a C string with an optional hard bound.
+///
+/// Returns `(len, terminated)` where:
+/// - `len` is the byte length before the first NUL or before the bound.
+/// - `terminated` indicates whether a NUL byte was observed.
+///
+/// # Safety
+///
+/// `ptr` must be valid to read up to the discovered length (and bound when given).
+unsafe fn scan_c_string(ptr: *const c_char, bound: Option<usize>) -> (usize, bool) {
+    match bound {
+        Some(limit) => {
+            for i in 0..limit {
+                // SAFETY: caller provides validity for bounded read.
+                if unsafe { *ptr.add(i) } == 0 {
+                    return (i, true);
+                }
+            }
+            (limit, false)
+        }
+        None => {
+            let mut i = 0usize;
+            // SAFETY: caller guarantees valid NUL-terminated string in unbounded mode.
+            while unsafe { *ptr.add(i) } != 0 {
+                i += 1;
+            }
+            (i, true)
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // memcpy
 // ---------------------------------------------------------------------------
@@ -25,11 +99,50 @@ pub unsafe extern "C" fn memcpy(dst: *mut c_void, src: *const c_void, n: usize) 
         return std::ptr::null_mut();
     }
 
-    // SAFETY: Caller contract for memcpy guarantees validity.
-    // Membrane validation will be wired here.
-    unsafe {
-        std::ptr::copy_nonoverlapping(src.cast::<u8>(), dst.cast::<u8>(), n);
+    let (mode, decision) = runtime_policy::decide(
+        ApiFamily::StringMemory,
+        dst as usize,
+        n,
+        true,
+        known_remaining(dst as usize).is_none() && known_remaining(src as usize).is_none(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(
+            ApiFamily::StringMemory,
+            decision.profile,
+            runtime_policy::scaled_cost(7, n),
+            true,
+        );
+        return std::ptr::null_mut();
     }
+
+    let (copy_len, clamped) = maybe_clamp_copy_len(
+        n,
+        Some(src as usize),
+        Some(dst as usize),
+        mode.heals_enabled() || matches!(decision.action, MembraneAction::Repair(_)),
+    );
+    if copy_len == 0 {
+        runtime_policy::observe(
+            ApiFamily::StringMemory,
+            decision.profile,
+            runtime_policy::scaled_cost(7, n),
+            clamped,
+        );
+        return dst;
+    }
+
+    // SAFETY: `copy_len` is either original `n` (strict) or clamped to known bounds.
+    unsafe {
+        std::ptr::copy_nonoverlapping(src.cast::<u8>(), dst.cast::<u8>(), copy_len);
+    }
+    runtime_policy::observe(
+        ApiFamily::StringMemory,
+        decision.profile,
+        runtime_policy::scaled_cost(7, copy_len),
+        clamped,
+    );
     dst
 }
 
@@ -51,10 +164,50 @@ pub unsafe extern "C" fn memmove(dst: *mut c_void, src: *const c_void, n: usize)
         return std::ptr::null_mut();
     }
 
-    // SAFETY: Caller contract for memmove guarantees validity; copy handles overlap.
-    unsafe {
-        std::ptr::copy(src.cast::<u8>(), dst.cast::<u8>(), n);
+    let (mode, decision) = runtime_policy::decide(
+        ApiFamily::StringMemory,
+        dst as usize,
+        n,
+        true,
+        known_remaining(dst as usize).is_none() && known_remaining(src as usize).is_none(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(
+            ApiFamily::StringMemory,
+            decision.profile,
+            runtime_policy::scaled_cost(8, n),
+            true,
+        );
+        return std::ptr::null_mut();
     }
+
+    let (copy_len, clamped) = maybe_clamp_copy_len(
+        n,
+        Some(src as usize),
+        Some(dst as usize),
+        mode.heals_enabled() || matches!(decision.action, MembraneAction::Repair(_)),
+    );
+    if copy_len == 0 {
+        runtime_policy::observe(
+            ApiFamily::StringMemory,
+            decision.profile,
+            runtime_policy::scaled_cost(8, n),
+            clamped,
+        );
+        return dst;
+    }
+
+    // SAFETY: memmove handles overlap. `copy_len` may be clamped in hardened mode.
+    unsafe {
+        std::ptr::copy(src.cast::<u8>(), dst.cast::<u8>(), copy_len);
+    }
+    runtime_policy::observe(
+        ApiFamily::StringMemory,
+        decision.profile,
+        runtime_policy::scaled_cost(8, copy_len),
+        clamped,
+    );
     dst
 }
 
@@ -76,12 +229,52 @@ pub unsafe extern "C" fn memset(dst: *mut c_void, c: c_int, n: usize) -> *mut c_
         return std::ptr::null_mut();
     }
 
+    let (mode, decision) = runtime_policy::decide(
+        ApiFamily::StringMemory,
+        dst as usize,
+        n,
+        true,
+        known_remaining(dst as usize).is_none(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(
+            ApiFamily::StringMemory,
+            decision.profile,
+            runtime_policy::scaled_cost(6, n),
+            true,
+        );
+        return std::ptr::null_mut();
+    }
+
+    let (fill_len, clamped) = maybe_clamp_copy_len(
+        n,
+        None,
+        Some(dst as usize),
+        mode.heals_enabled() || matches!(decision.action, MembraneAction::Repair(_)),
+    );
+    if fill_len == 0 {
+        runtime_policy::observe(
+            ApiFamily::StringMemory,
+            decision.profile,
+            runtime_policy::scaled_cost(6, n),
+            clamped,
+        );
+        return dst;
+    }
+
     let byte = c as u8;
 
-    // SAFETY: Caller contract for memset guarantees dst is valid for n bytes.
+    // SAFETY: `fill_len` is either original `n` (strict) or clamped to known bounds.
     unsafe {
-        std::ptr::write_bytes(dst.cast::<u8>(), byte, n);
+        std::ptr::write_bytes(dst.cast::<u8>(), byte, fill_len);
     }
+    runtime_policy::observe(
+        ApiFamily::StringMemory,
+        decision.profile,
+        runtime_policy::scaled_cost(6, fill_len),
+        clamped,
+    );
     dst
 }
 
@@ -106,17 +299,54 @@ pub unsafe extern "C" fn memcmp(s1: *const c_void, s2: *const c_void, n: usize) 
         return 0;
     }
 
-    // SAFETY: Caller guarantees both pointers are valid for n bytes.
+    let (mode, decision) = runtime_policy::decide(
+        ApiFamily::StringMemory,
+        s1 as usize,
+        n,
+        false,
+        known_remaining(s1 as usize).is_none() && known_remaining(s2 as usize).is_none(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(
+            ApiFamily::StringMemory,
+            decision.profile,
+            runtime_policy::scaled_cost(6, n),
+            true,
+        );
+        return 0;
+    }
+
+    let (cmp_len, clamped) = maybe_clamp_copy_len(
+        n,
+        Some(s1 as usize),
+        Some(s2 as usize),
+        mode.heals_enabled() || matches!(decision.action, MembraneAction::Repair(_)),
+    );
+
+    // SAFETY: `cmp_len` is either original `n` or clamped by known safe bounds.
     unsafe {
-        let a = std::slice::from_raw_parts(s1.cast::<u8>(), n);
-        let b = std::slice::from_raw_parts(s2.cast::<u8>(), n);
-        for i in 0..n {
+        let a = std::slice::from_raw_parts(s1.cast::<u8>(), cmp_len);
+        let b = std::slice::from_raw_parts(s2.cast::<u8>(), cmp_len);
+        for i in 0..cmp_len {
             let diff = (a[i] as c_int) - (b[i] as c_int);
             if diff != 0 {
+                runtime_policy::observe(
+                    ApiFamily::StringMemory,
+                    decision.profile,
+                    runtime_policy::scaled_cost(6, cmp_len),
+                    clamped,
+                );
                 return diff;
             }
         }
     }
+    runtime_policy::observe(
+        ApiFamily::StringMemory,
+        decision.profile,
+        runtime_policy::scaled_cost(6, cmp_len),
+        clamped,
+    );
     0
 }
 
@@ -137,17 +367,54 @@ pub unsafe extern "C" fn memchr(s: *const c_void, c: c_int, n: usize) -> *mut c_
         return std::ptr::null_mut();
     }
 
+    let (mode, decision) = runtime_policy::decide(
+        ApiFamily::StringMemory,
+        s as usize,
+        n,
+        false,
+        known_remaining(s as usize).is_none(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(
+            ApiFamily::StringMemory,
+            decision.profile,
+            runtime_policy::scaled_cost(6, n),
+            true,
+        );
+        return std::ptr::null_mut();
+    }
+
+    let (scan_len, clamped) = maybe_clamp_copy_len(
+        n,
+        Some(s as usize),
+        None,
+        mode.heals_enabled() || matches!(decision.action, MembraneAction::Repair(_)),
+    );
+
     let needle = c as u8;
 
-    // SAFETY: Caller guarantees s is valid for n bytes.
+    // SAFETY: `scan_len` is either original `n` or clamped by known bounds.
     unsafe {
-        let bytes = std::slice::from_raw_parts(s.cast::<u8>(), n);
+        let bytes = std::slice::from_raw_parts(s.cast::<u8>(), scan_len);
         for (i, &byte) in bytes.iter().enumerate() {
             if byte == needle {
+                runtime_policy::observe(
+                    ApiFamily::StringMemory,
+                    decision.profile,
+                    runtime_policy::scaled_cost(6, scan_len),
+                    clamped,
+                );
                 return (s as *mut u8).add(i).cast();
             }
         }
     }
+    runtime_policy::observe(
+        ApiFamily::StringMemory,
+        decision.profile,
+        runtime_policy::scaled_cost(6, scan_len),
+        clamped,
+    );
     std::ptr::null_mut()
 }
 
@@ -167,12 +434,62 @@ pub unsafe extern "C" fn strlen(s: *const c_char) -> usize {
         return 0;
     }
 
-    // SAFETY: Caller guarantees s is a valid null-terminated string.
+    let (mode, decision) = runtime_policy::decide(
+        ApiFamily::StringMemory,
+        s as usize,
+        0,
+        false,
+        known_remaining(s as usize).is_none(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::StringMemory, decision.profile, 6, true);
+        return 0;
+    }
+
+    if (mode.heals_enabled() || matches!(decision.action, MembraneAction::Repair(_)))
+        && let Some(limit) = known_remaining(s as usize)
+    {
+        // SAFETY: bounded scan within known allocation extent.
+        unsafe {
+            for i in 0..limit {
+                if *s.add(i) == 0 {
+                    runtime_policy::observe(
+                        ApiFamily::StringMemory,
+                        decision.profile,
+                        runtime_policy::scaled_cost(7, i),
+                        false,
+                    );
+                    return i;
+                }
+            }
+        }
+        let action = HealingAction::TruncateWithNull {
+            requested: limit.saturating_add(1),
+            truncated: limit,
+        };
+        global_healing_policy().record(&action);
+        runtime_policy::observe(
+            ApiFamily::StringMemory,
+            decision.profile,
+            runtime_policy::scaled_cost(7, limit),
+            true,
+        );
+        return limit;
+    }
+
+    // SAFETY: strict mode preserves libc-like raw scan semantics.
     unsafe {
         let mut len = 0usize;
         while *s.add(len) != 0 {
             len += 1;
         }
+        runtime_policy::observe(
+            ApiFamily::StringMemory,
+            decision.profile,
+            runtime_policy::scaled_cost(7, len),
+            false,
+        );
         len
     }
 }
@@ -192,18 +509,69 @@ pub unsafe extern "C" fn strcmp(s1: *const c_char, s2: *const c_char) -> c_int {
         return 0;
     }
 
-    // SAFETY: Caller guarantees both pointers are valid null-terminated strings.
-    unsafe {
+    let (mode, decision) = runtime_policy::decide(
+        ApiFamily::StringMemory,
+        s1 as usize,
+        0,
+        false,
+        known_remaining(s1 as usize).is_none() && known_remaining(s2 as usize).is_none(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::StringMemory, decision.profile, 6, true);
+        return 0;
+    }
+
+    let repair = repair_enabled(mode.heals_enabled(), decision.action);
+    let lhs_bound = if repair {
+        known_remaining(s1 as usize)
+    } else {
+        None
+    };
+    let rhs_bound = if repair {
+        known_remaining(s2 as usize)
+    } else {
+        None
+    };
+    let cmp_bound = match (lhs_bound, rhs_bound) {
+        (Some(a), Some(b)) => Some(a.min(b)),
+        _ => None,
+    };
+
+    // SAFETY: strict mode follows libc semantics; hardened mode bounds reads.
+    let (result, adverse, span) = unsafe {
         let mut i = 0usize;
+        let mut adverse_local = false;
         loop {
+            if let Some(limit) = cmp_bound
+                && i >= limit
+            {
+                adverse_local = true;
+                break (0, adverse_local, i);
+            }
             let a = *s1.add(i) as u8;
             let b = *s2.add(i) as u8;
             if a != b || a == 0 {
-                return (a as c_int) - (b as c_int);
+                break (
+                    (a as c_int) - (b as c_int),
+                    adverse_local,
+                    i.saturating_add(1),
+                );
             }
             i += 1;
         }
+    };
+
+    if adverse {
+        record_truncation(cmp_bound.unwrap_or(span), span);
     }
+    runtime_policy::observe(
+        ApiFamily::StringMemory,
+        decision.profile,
+        runtime_policy::scaled_cost(7, span),
+        adverse,
+    );
+    result
 }
 
 // ---------------------------------------------------------------------------
@@ -222,18 +590,85 @@ pub unsafe extern "C" fn strcpy(dst: *mut c_char, src: *const c_char) -> *mut c_
         return dst;
     }
 
-    // SAFETY: Caller guarantees dst has enough space and no overlap.
-    unsafe {
-        let mut i = 0usize;
-        loop {
-            let ch = *src.add(i);
-            *dst.add(i) = ch;
-            if ch == 0 {
-                break;
-            }
-            i += 1;
-        }
+    let (mode, decision) = runtime_policy::decide(
+        ApiFamily::StringMemory,
+        dst as usize,
+        0,
+        true,
+        known_remaining(dst as usize).is_none() && known_remaining(src as usize).is_none(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::StringMemory, decision.profile, 7, true);
+        return std::ptr::null_mut();
     }
+
+    let repair = repair_enabled(mode.heals_enabled(), decision.action);
+    let src_bound = if repair {
+        known_remaining(src as usize)
+    } else {
+        None
+    };
+    let dst_bound = if repair {
+        known_remaining(dst as usize)
+    } else {
+        None
+    };
+
+    // SAFETY: strict mode follows libc semantics; hardened mode bounds reads/writes.
+    let (copied_len, adverse) = unsafe {
+        let (src_len, src_terminated) = scan_c_string(src, src_bound);
+        let requested = src_len.saturating_add(1);
+        if repair {
+            match dst_bound {
+                Some(0) => {
+                    record_truncation(requested, 0);
+                    (0, true)
+                }
+                Some(limit) => {
+                    let max_payload = limit.saturating_sub(1);
+                    let copy_payload = src_len.min(max_payload);
+                    if copy_payload > 0 {
+                        std::ptr::copy_nonoverlapping(src, dst, copy_payload);
+                    }
+                    *dst.add(copy_payload) = 0;
+                    let truncated = !src_terminated || copy_payload < src_len;
+                    if truncated {
+                        record_truncation(requested, copy_payload);
+                    }
+                    (copy_payload.saturating_add(1), truncated)
+                }
+                None => {
+                    let mut i = 0usize;
+                    loop {
+                        let ch = *src.add(i);
+                        *dst.add(i) = ch;
+                        if ch == 0 {
+                            break (i.saturating_add(1), false);
+                        }
+                        i += 1;
+                    }
+                }
+            }
+        } else {
+            let mut i = 0usize;
+            loop {
+                let ch = *src.add(i);
+                *dst.add(i) = ch;
+                if ch == 0 {
+                    break (i.saturating_add(1), false);
+                }
+                i += 1;
+            }
+        }
+    };
+
+    runtime_policy::observe(
+        ApiFamily::StringMemory,
+        decision.profile,
+        runtime_policy::scaled_cost(8, copied_len),
+        adverse,
+    );
     dst
 }
 
@@ -254,25 +689,53 @@ pub unsafe extern "C" fn strncpy(dst: *mut c_char, src: *const c_char, n: usize)
         return dst;
     }
 
-    // SAFETY: Caller guarantees dst is valid for n bytes and src is valid.
+    let (mode, decision) = runtime_policy::decide(
+        ApiFamily::StringMemory,
+        dst as usize,
+        n,
+        true,
+        known_remaining(dst as usize).is_none() && known_remaining(src as usize).is_none(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(
+            ApiFamily::StringMemory,
+            decision.profile,
+            runtime_policy::scaled_cost(8, n),
+            true,
+        );
+        return std::ptr::null_mut();
+    }
+
+    let (copy_len, clamped) = maybe_clamp_copy_len(
+        n,
+        Some(src as usize),
+        Some(dst as usize),
+        repair_enabled(mode.heals_enabled(), decision.action),
+    );
+
+    // SAFETY: bounded by copy_len, which is either n or clamped in hardened mode.
     unsafe {
         let mut i = 0usize;
-        // Copy src until null or n bytes
-        while i < n {
+        while i < copy_len {
             let ch = *src.add(i);
             *dst.add(i) = ch;
+            i += 1;
             if ch == 0 {
-                i += 1;
                 break;
             }
-            i += 1;
         }
-        // Pad remainder with null bytes
-        while i < n {
+        while i < copy_len {
             *dst.add(i) = 0;
             i += 1;
         }
     }
+    runtime_policy::observe(
+        ApiFamily::StringMemory,
+        decision.profile,
+        runtime_policy::scaled_cost(8, copy_len),
+        clamped,
+    );
     dst
 }
 
@@ -292,24 +755,97 @@ pub unsafe extern "C" fn strcat(dst: *mut c_char, src: *const c_char) -> *mut c_
         return dst;
     }
 
-    // SAFETY: Caller guarantees dst has sufficient space.
-    unsafe {
-        // Find end of dst
-        let mut dst_len = 0usize;
-        while *dst.add(dst_len) != 0 {
-            dst_len += 1;
-        }
-        // Copy src
-        let mut i = 0usize;
-        loop {
-            let ch = *src.add(i);
-            *dst.add(dst_len + i) = ch;
-            if ch == 0 {
-                break;
-            }
-            i += 1;
-        }
+    let (mode, decision) = runtime_policy::decide(
+        ApiFamily::StringMemory,
+        dst as usize,
+        0,
+        true,
+        known_remaining(dst as usize).is_none() && known_remaining(src as usize).is_none(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::StringMemory, decision.profile, 8, true);
+        return std::ptr::null_mut();
     }
+
+    let repair = repair_enabled(mode.heals_enabled(), decision.action);
+    let dst_bound = if repair {
+        known_remaining(dst as usize)
+    } else {
+        None
+    };
+    let src_bound = if repair {
+        known_remaining(src as usize)
+    } else {
+        None
+    };
+
+    // SAFETY: strict mode preserves raw strcat behavior; hardened mode bounds writes.
+    let (work, adverse) = unsafe {
+        let (dst_len, dst_terminated) = scan_c_string(dst.cast_const(), dst_bound);
+        let (src_len, src_terminated) = scan_c_string(src, src_bound);
+        if repair {
+            match dst_bound {
+                Some(0) => {
+                    record_truncation(src_len.saturating_add(1), 0);
+                    (0, true)
+                }
+                Some(limit) => {
+                    if !dst_terminated {
+                        *dst.add(limit.saturating_sub(1)) = 0;
+                        record_truncation(limit, limit.saturating_sub(1));
+                        (limit, true)
+                    } else {
+                        let available = limit.saturating_sub(dst_len.saturating_add(1));
+                        let copy_payload = src_len.min(available);
+                        if copy_payload > 0 {
+                            std::ptr::copy_nonoverlapping(src, dst.add(dst_len), copy_payload);
+                        }
+                        *dst.add(dst_len.saturating_add(copy_payload)) = 0;
+                        let truncated = !src_terminated || copy_payload < src_len;
+                        if truncated {
+                            record_truncation(src_len.saturating_add(1), copy_payload);
+                        }
+                        (
+                            dst_len.saturating_add(copy_payload).saturating_add(1),
+                            truncated,
+                        )
+                    }
+                }
+                None => {
+                    let mut d = dst_len;
+                    let mut s = 0usize;
+                    loop {
+                        let ch = *src.add(s);
+                        *dst.add(d) = ch;
+                        if ch == 0 {
+                            break (d.saturating_add(1), false);
+                        }
+                        d += 1;
+                        s += 1;
+                    }
+                }
+            }
+        } else {
+            let mut d = dst_len;
+            let mut s = 0usize;
+            loop {
+                let ch = *src.add(s);
+                *dst.add(d) = ch;
+                if ch == 0 {
+                    break (d.saturating_add(1), false);
+                }
+                d += 1;
+                s += 1;
+            }
+        }
+    };
+    runtime_policy::observe(
+        ApiFamily::StringMemory,
+        decision.profile,
+        runtime_policy::scaled_cost(9, work),
+        adverse,
+    );
     dst
 }
 
@@ -331,26 +867,105 @@ pub unsafe extern "C" fn strncat(dst: *mut c_char, src: *const c_char, n: usize)
         return dst;
     }
 
-    // SAFETY: Caller guarantees dst has sufficient space.
-    unsafe {
-        // Find end of dst
-        let mut dst_len = 0usize;
-        while *dst.add(dst_len) != 0 {
-            dst_len += 1;
-        }
-        // Copy at most n bytes from src
-        let mut i = 0usize;
-        while i < n {
-            let ch = *src.add(i);
-            if ch == 0 {
-                break;
-            }
-            *dst.add(dst_len + i) = ch;
-            i += 1;
-        }
-        // Always null-terminate
-        *dst.add(dst_len + i) = 0;
+    let (mode, decision) = runtime_policy::decide(
+        ApiFamily::StringMemory,
+        dst as usize,
+        n,
+        true,
+        known_remaining(dst as usize).is_none() && known_remaining(src as usize).is_none(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(
+            ApiFamily::StringMemory,
+            decision.profile,
+            runtime_policy::scaled_cost(9, n),
+            true,
+        );
+        return std::ptr::null_mut();
     }
+
+    let repair = repair_enabled(mode.heals_enabled(), decision.action);
+    let dst_bound = if repair {
+        known_remaining(dst as usize)
+    } else {
+        None
+    };
+    let src_bound = if repair {
+        known_remaining(src as usize)
+    } else {
+        None
+    };
+
+    // SAFETY: strict mode preserves raw strncat behavior; hardened mode bounds writes.
+    let (work, adverse) = unsafe {
+        let (dst_len, dst_terminated) = scan_c_string(dst.cast_const(), dst_bound);
+        let src_scan_bound = src_bound.map(|v| v.min(n));
+        let (src_len, src_terminated) = scan_c_string(src, src_scan_bound);
+        if repair {
+            match dst_bound {
+                Some(0) => {
+                    record_truncation(n.saturating_add(1), 0);
+                    (0, true)
+                }
+                Some(limit) => {
+                    if !dst_terminated {
+                        *dst.add(limit.saturating_sub(1)) = 0;
+                        record_truncation(limit, limit.saturating_sub(1));
+                        (limit, true)
+                    } else {
+                        let available = limit.saturating_sub(dst_len.saturating_add(1));
+                        let copy_payload = src_len.min(available);
+                        if copy_payload > 0 {
+                            std::ptr::copy_nonoverlapping(src, dst.add(dst_len), copy_payload);
+                        }
+                        *dst.add(dst_len.saturating_add(copy_payload)) = 0;
+                        let truncated = (!src_terminated && src_scan_bound == Some(src_len))
+                            || copy_payload < src_len
+                            || src_len == n;
+                        if truncated {
+                            record_truncation(n.saturating_add(1), copy_payload);
+                        }
+                        (
+                            dst_len.saturating_add(copy_payload).saturating_add(1),
+                            truncated,
+                        )
+                    }
+                }
+                None => {
+                    let mut i = 0usize;
+                    while i < n {
+                        let ch = *src.add(i);
+                        if ch == 0 {
+                            break;
+                        }
+                        *dst.add(dst_len + i) = ch;
+                        i += 1;
+                    }
+                    *dst.add(dst_len + i) = 0;
+                    (dst_len.saturating_add(i).saturating_add(1), false)
+                }
+            }
+        } else {
+            let mut i = 0usize;
+            while i < n {
+                let ch = *src.add(i);
+                if ch == 0 {
+                    break;
+                }
+                *dst.add(dst_len + i) = ch;
+                i += 1;
+            }
+            *dst.add(dst_len + i) = 0;
+            (dst_len.saturating_add(i).saturating_add(1), false)
+        }
+    };
+    runtime_policy::observe(
+        ApiFamily::StringMemory,
+        decision.profile,
+        runtime_policy::scaled_cost(9, work),
+        adverse,
+    );
     dst
 }
 
@@ -373,21 +988,55 @@ pub unsafe extern "C" fn strchr(s: *const c_char, c: c_int) -> *mut c_char {
     }
 
     let target = c as c_char;
+    let (mode, decision) = runtime_policy::decide(
+        ApiFamily::StringMemory,
+        s as usize,
+        0,
+        false,
+        known_remaining(s as usize).is_none(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::StringMemory, decision.profile, 6, true);
+        return std::ptr::null_mut();
+    }
 
-    // SAFETY: Caller guarantees s is a valid null-terminated string.
-    unsafe {
+    let bound = if repair_enabled(mode.heals_enabled(), decision.action) {
+        known_remaining(s as usize)
+    } else {
+        None
+    };
+
+    // SAFETY: strict mode preserves raw strchr behavior; hardened mode bounds scan.
+    let (out, adverse, span) = unsafe {
         let mut i = 0usize;
         loop {
+            if let Some(limit) = bound
+                && i >= limit
+            {
+                break (std::ptr::null_mut(), true, i);
+            }
             let ch = *s.add(i);
             if ch == target {
-                return s.add(i) as *mut c_char;
+                break (s.add(i) as *mut c_char, false, i.saturating_add(1));
             }
             if ch == 0 {
-                return std::ptr::null_mut();
+                break (std::ptr::null_mut(), false, i.saturating_add(1));
             }
             i += 1;
         }
+    };
+
+    if adverse {
+        record_truncation(bound.unwrap_or(span), span);
     }
+    runtime_policy::observe(
+        ApiFamily::StringMemory,
+        decision.profile,
+        runtime_policy::scaled_cost(6, span),
+        adverse,
+    );
+    out
 }
 
 // ---------------------------------------------------------------------------
@@ -408,22 +1057,53 @@ pub unsafe extern "C" fn strrchr(s: *const c_char, c: c_int) -> *mut c_char {
     }
 
     let target = c as c_char;
-    let mut result: *mut c_char = std::ptr::null_mut();
+    let (mode, decision) = runtime_policy::decide(
+        ApiFamily::StringMemory,
+        s as usize,
+        0,
+        false,
+        known_remaining(s as usize).is_none(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::StringMemory, decision.profile, 6, true);
+        return std::ptr::null_mut();
+    }
 
-    // SAFETY: Caller guarantees s is a valid null-terminated string.
-    unsafe {
+    let bound = if repair_enabled(mode.heals_enabled(), decision.action) {
+        known_remaining(s as usize)
+    } else {
+        None
+    };
+    // SAFETY: strict mode preserves raw strrchr behavior; hardened mode bounds scan.
+    let (result, adverse, span) = unsafe {
+        let mut result_local: *mut c_char = std::ptr::null_mut();
         let mut i = 0usize;
         loop {
+            if let Some(limit) = bound
+                && i >= limit
+            {
+                break (result_local, true, i);
+            }
             let ch = *s.add(i);
             if ch == target {
-                result = s.add(i) as *mut c_char;
+                result_local = s.add(i) as *mut c_char;
             }
             if ch == 0 {
-                break;
+                break (result_local, false, i.saturating_add(1));
             }
             i += 1;
         }
+    };
+    if adverse {
+        record_truncation(bound.unwrap_or(span), span);
     }
+    runtime_policy::observe(
+        ApiFamily::StringMemory,
+        decision.profile,
+        runtime_policy::scaled_cost(6, span),
+        adverse,
+    );
     result
 }
 
@@ -448,26 +1128,82 @@ pub unsafe extern "C" fn strstr(haystack: *const c_char, needle: *const c_char) 
         return haystack as *mut c_char;
     }
 
-    // SAFETY: Caller guarantees both are valid null-terminated strings.
-    unsafe {
-        // Empty needle matches immediately
-        if *needle == 0 {
-            return haystack as *mut c_char;
+    let (mode, decision) = runtime_policy::decide(
+        ApiFamily::StringMemory,
+        haystack as usize,
+        0,
+        false,
+        known_remaining(haystack as usize).is_none() && known_remaining(needle as usize).is_none(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::StringMemory, decision.profile, 10, true);
+        return std::ptr::null_mut();
+    }
+
+    let repair = repair_enabled(mode.heals_enabled(), decision.action);
+    let hay_bound = if repair {
+        known_remaining(haystack as usize)
+    } else {
+        None
+    };
+    let needle_bound = if repair {
+        known_remaining(needle as usize)
+    } else {
+        None
+    };
+
+    // SAFETY: strict mode preserves raw strstr behavior; hardened mode bounds scan.
+    let (out, adverse, work) = unsafe {
+        let (needle_len, needle_terminated) = scan_c_string(needle, needle_bound);
+        let (hay_len, hay_terminated) = scan_c_string(haystack, hay_bound);
+        let mut out_local = std::ptr::null_mut();
+        let mut work_local = 0usize;
+
+        if needle_len == 0 {
+            out_local = haystack as *mut c_char;
+            work_local = 1;
+        } else if hay_len >= needle_len {
+            let mut h = 0usize;
+            while h + needle_len <= hay_len {
+                let mut n = 0usize;
+                while n < needle_len && *haystack.add(h + n) == *needle.add(n) {
+                    n += 1;
+                }
+                if n == needle_len {
+                    out_local = haystack.add(h) as *mut c_char;
+                    work_local = h.saturating_add(needle_len);
+                    break;
+                }
+                h += 1;
+                work_local = h.saturating_add(needle_len);
+            }
+        } else {
+            work_local = hay_len;
         }
 
-        let mut h = 0usize;
-        while *haystack.add(h) != 0 {
-            let mut n = 0usize;
-            while *needle.add(n) != 0 && *haystack.add(h + n) == *needle.add(n) {
-                n += 1;
-            }
-            if *needle.add(n) == 0 {
-                return haystack.add(h) as *mut c_char;
-            }
-            h += 1;
-        }
+        (
+            out_local,
+            !hay_terminated || !needle_terminated,
+            work_local.max(needle_len),
+        )
+    };
+
+    if adverse {
+        record_truncation(
+            hay_bound
+                .unwrap_or(work)
+                .saturating_add(needle_bound.unwrap_or(0)),
+            work,
+        );
     }
-    std::ptr::null_mut()
+    runtime_policy::observe(
+        ApiFamily::StringMemory,
+        decision.profile,
+        runtime_policy::scaled_cost(10, work),
+        adverse,
+    );
+    out
 }
 
 // ---------------------------------------------------------------------------
@@ -495,40 +1231,84 @@ pub unsafe extern "C" fn strtok(s: *mut c_char, delim: *const c_char) -> *mut c_
         return std::ptr::null_mut();
     }
 
+    let addr_hint = if s.is_null() { 0 } else { s as usize };
+    let (mode, decision) = runtime_policy::decide(
+        ApiFamily::StringMemory,
+        addr_hint,
+        0,
+        true,
+        known_remaining(addr_hint).is_none() && known_remaining(delim as usize).is_none(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::StringMemory, decision.profile, 8, true);
+        return std::ptr::null_mut();
+    }
+
+    let repair = repair_enabled(mode.heals_enabled(), decision.action);
+
     // SAFETY: Thread-local access; strtok is specified as non-reentrant per POSIX.
-    unsafe {
+    let (token, adverse, work) = unsafe {
         let saved = STRTOK_SAVE.get();
         let mut current = if s.is_null() { saved } else { s };
+        let mut work = 0usize;
 
         if current.is_null() {
-            return std::ptr::null_mut();
-        }
-
-        // Skip leading delimiters
-        while *current != 0 && is_delim(*current, delim) {
-            current = current.add(1);
-        }
-
-        if *current == 0 {
             STRTOK_SAVE.set(std::ptr::null_mut());
-            return std::ptr::null_mut();
-        }
-
-        // Find end of token
-        let token_start = current;
-        while *current != 0 && !is_delim(*current, delim) {
-            current = current.add(1);
-        }
-
-        if *current != 0 {
-            *current = 0;
-            STRTOK_SAVE.set(current.add(1));
+            (std::ptr::null_mut(), false, work)
         } else {
-            STRTOK_SAVE.set(std::ptr::null_mut());
-        }
+            let bound = if repair {
+                known_remaining(current as usize)
+            } else {
+                None
+            };
+            let mut remaining = bound.unwrap_or(usize::MAX);
 
-        token_start
-    }
+            // Skip leading delimiters
+            while remaining > 0 && *current != 0 && is_delim(*current, delim) {
+                current = current.add(1);
+                remaining = remaining.saturating_sub(1);
+                work += 1;
+            }
+
+            if remaining == 0 || *current == 0 {
+                STRTOK_SAVE.set(std::ptr::null_mut());
+                if remaining == 0 {
+                    record_truncation(bound.unwrap_or(work), work);
+                }
+                (std::ptr::null_mut(), remaining == 0, work)
+            } else {
+                // Find end of token
+                let token_start = current;
+                while remaining > 0 && *current != 0 && !is_delim(*current, delim) {
+                    current = current.add(1);
+                    remaining = remaining.saturating_sub(1);
+                    work += 1;
+                }
+
+                if remaining == 0 {
+                    STRTOK_SAVE.set(std::ptr::null_mut());
+                    record_truncation(bound.unwrap_or(work), work);
+                    (token_start, true, work)
+                } else if *current != 0 {
+                    *current = 0;
+                    STRTOK_SAVE.set(current.add(1));
+                    (token_start, false, work)
+                } else {
+                    STRTOK_SAVE.set(std::ptr::null_mut());
+                    (token_start, false, work)
+                }
+            }
+        }
+    };
+
+    runtime_policy::observe(
+        ApiFamily::StringMemory,
+        decision.profile,
+        runtime_policy::scaled_cost(8, work),
+        adverse,
+    );
+    token
 }
 
 /// Check if character `c` is in the delimiter set `delim`.
