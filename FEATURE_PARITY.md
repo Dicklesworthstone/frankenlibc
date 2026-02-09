@@ -51,6 +51,8 @@ Legend:
 | `runtime_math::barrier` | constant-time admissibility guard | DONE |
 | `runtime_math::cohomology` | overlap-consistency fault detection for sharded metadata | IN_PROGRESS |
 | `runtime_math::design` | D-optimal heavy-probe selection under strict/hardened budget with online identifiability tracking | DONE |
+| `runtime_math::sparse` | online L1 sparse-recovery latent-cause inference from executed-probe anomaly vectors, with focused/diffuse/critical state gating | DONE |
+| `runtime_math::fusion` | adaptive robust weighted fusion over heterogeneous kernel severities with online entropy/drift telemetry and fused risk bonus | DONE |
 | `runtime_math::eprocess` | anytime-valid sequential testing (e-value alarms) per API family | DONE |
 | `runtime_math::cvar` | distributionally-robust CVaR tail-risk control with runtime alarm gating | DONE |
 | sampled conformal risk fusion (`risk_engine`) | sampled high-order conformal alarm/full-check signal feeds live risk bonus | DONE |
@@ -64,6 +66,8 @@ Legend:
 | large-deviations monitor (`large_deviations`) | Cramér rate function (binary KL divergence) for exact exponential failure probability bounds — strictly dominates Hoeffding/CLT | DONE |
 | HJI reachability controller (`hji_reachability`) | Hamilton-Jacobi-Isaacs differential game reachability — value-iteration safety certificates with worst-case adversary (Isaacs 1965, Mitchell/Tomlin 2005) | DONE |
 | mean-field game contention controller (`mean_field_game`) | Lasry-Lions mean-field Nash equilibrium via Picard fixed-point — congestion collapse detection for validation resource contention (Lasry-Lions 2006, Huang-Malhamé-Caines 2006) | DONE |
+| p-adic valuation error calculus (`padic_valuation`) | Non-Archimedean p-adic valuation for floating-point exceptional regime control — detects denormal/overflow/NaN regimes via ultrametric distance (math #40) | DONE |
+| symplectic reduction IPC guard (`symplectic_reduction`) | GIT/symplectic reduction for System V IPC admissibility — moment-map deadlock detection + Marsden-Weinstein quotient stability (math #39) | DONE |
 | pointer validator integration | runtime-math decisions affect bloom-miss/deep-check behavior | DONE |
 | allocator integration | runtime-math routing active at `malloc/free/realloc/calloc` ABI boundary | IN_PROGRESS |
 | string/memory integration | runtime-math routing active for bootstrap `<string.h>` entrypoints (`mem*`, `strlen`, `strcmp`, `strcpy`, `strncpy`, `strcat`, `strncat`, `strchr`, `strrchr`, `strstr`, `strtok`) | IN_PROGRESS |
@@ -207,6 +211,10 @@ Legend:
 17. Mean-field game contention controller live — Lasry-Lions Nash equilibrium via Picard fixed-point with logit best response, congestion collapse detection for validation resource contention (math item #19).
 18. String/Memory ABI fully wired — `memset`, `memcmp`, `memchr`, `strtok`, `strtok_r`, `memrchr` now delegate to `glibc-rs-core` safe implementations after membrane validation; `memcpy` and `memmove` retain local logic due to strict aliasing constraints.
 19. D-optimal probe scheduler live — runtime selection of heavy monitors via information-gain-per-cost budgeting with identifiability feedback in hot-path decisioning (math item #41).
+20. Sparse latent-cause recovery live — runtime ISTA-based L1 controller infers concentrated vs diffuse fault sources from probe anomaly vectors and feeds strict/hardened risk escalation (math item #41 sparse recovery component).
+21. Robust fusion controller live — online multiplicative-weights fusion computes `fusion_bonus_ppm` from cross-kernel severities, reducing double-counted noise while accelerating coherent multi-signal escalation.
+21. P-adic valuation error calculus live — non-Archimedean ultrametric regime detection for floating-point exceptional paths (denormal/overflow/NaN), with p-adic distance metric and regime-indexed guard tables (math item #40).
+22. Symplectic reduction IPC guard live — GIT/symplectic moment-map admissibility for System V IPC resource requests, Marsden-Weinstein quotient deadlock detection, and stability certificates (math item #39).
 
 ## Update Policy
 
