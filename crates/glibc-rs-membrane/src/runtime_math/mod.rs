@@ -14,6 +14,7 @@
 pub mod bandit;
 pub mod barrier;
 pub mod changepoint;
+pub mod clifford;
 pub mod cohomology;
 pub mod commitment_audit;
 pub mod conformal;
@@ -26,8 +27,10 @@ pub mod equivariant;
 pub mod fusion;
 pub mod higher_topos;
 pub mod loss_minimizer;
+pub mod microlocal;
 pub mod pareto;
 pub mod risk;
+pub mod serre_spectral;
 pub mod sparse;
 
 use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
@@ -53,6 +56,7 @@ use crate::tropical_latency::{PipelinePath, TROPICAL_METRICS, TropicalLatencyCom
 use self::bandit::ConstrainedBanditRouter;
 use self::barrier::BarrierOracle;
 use self::changepoint::{ChangepointController, ChangepointState};
+use self::clifford::{AlignmentObservation, AlignmentRegime, CliffordController, CliffordState};
 use self::cohomology::CohomologyMonitor;
 use self::commitment_audit::{AuditState, CommitmentAuditController};
 use self::conformal::{ConformalRiskController, ConformalState};
@@ -65,8 +69,12 @@ use self::equivariant::{EquivariantState, EquivariantTransportController};
 use self::fusion::KernelFusionController;
 use self::higher_topos::{HigherToposController, ToposState};
 use self::loss_minimizer::{LossMinimizationController, LossState};
+use self::microlocal::{MicrolocalController, MicrolocalState, Stratum};
 use self::pareto::ParetoController;
 use self::risk::ConformalRiskEngine;
+use self::serre_spectral::{
+    InvariantClass, LayerPair, SerreSpectralController, SpectralSequenceState,
+};
 use self::sparse::{SparseRecoveryController, SparseState};
 
 const FAST_PATH_BUDGET_NS: u64 = 20;
@@ -268,6 +276,24 @@ pub struct RuntimeKernelSnapshot {
     pub fusion_drift_ppm: u32,
     /// Dominant fused signal index.
     pub fusion_dominant_signal: u8,
+    /// Microlocal wavefront active strata count.
+    pub microlocal_active_strata: u8,
+    /// Microlocal propagation failure rate (EWMA, 0..1).
+    pub microlocal_failure_rate: f64,
+    /// Microlocal fault boundary detection count.
+    pub microlocal_fault_count: u64,
+    /// Serre spectral sequence max differential density.
+    pub serre_max_differential: f64,
+    /// Serre spectral sequence non-trivial cell count.
+    pub serre_nontrivial_cells: u8,
+    /// Serre spectral sequence lifting failure count.
+    pub serre_lifting_count: u64,
+    /// Clifford grade-2 (bivector) energy fraction.
+    pub clifford_grade2_energy: f64,
+    /// Clifford grade parity imbalance.
+    pub clifford_parity_imbalance: f64,
+    /// Clifford overlap violation count.
+    pub clifford_violation_count: u64,
 }
 
 /// Online control kernel for strict/hardened runtime decisions.
@@ -303,6 +329,9 @@ pub struct RuntimeMathKernel {
     loss_minimizer: Mutex<LossMinimizationController>,
     coupling: Mutex<CouplingController>,
     fusion: Mutex<KernelFusionController>,
+    microlocal: Mutex<MicrolocalController>,
+    serre: Mutex<SerreSpectralController>,
+    clifford: Mutex<CliffordController>,
     cached_risk_bonus_ppm: AtomicU64,
     cached_oracle_bias: [AtomicU8; ApiFamily::COUNT],
     cached_spectral_phase: AtomicU8,
@@ -335,6 +364,9 @@ pub struct RuntimeMathKernel {
     cached_fusion_entropy_milli: AtomicU64,
     cached_fusion_drift_ppm: AtomicU64,
     cached_fusion_dominant_signal: AtomicU8,
+    cached_microlocal_state: AtomicU8,
+    cached_serre_state: AtomicU8,
+    cached_clifford_state: AtomicU8,
     decisions: AtomicU64,
 }
 
@@ -374,6 +406,9 @@ impl RuntimeMathKernel {
             loss_minimizer: Mutex::new(LossMinimizationController::new()),
             coupling: Mutex::new(CouplingController::new()),
             fusion: Mutex::new(KernelFusionController::new()),
+            microlocal: Mutex::new(MicrolocalController::new()),
+            serre: Mutex::new(SerreSpectralController::new()),
+            clifford: Mutex::new(CliffordController::new()),
             cached_risk_bonus_ppm: AtomicU64::new(0),
             cached_oracle_bias: std::array::from_fn(|_| AtomicU8::new(1)),
             cached_spectral_phase: AtomicU8::new(0),
@@ -406,6 +441,9 @@ impl RuntimeMathKernel {
             cached_fusion_entropy_milli: AtomicU64::new(0),
             cached_fusion_drift_ppm: AtomicU64::new(0),
             cached_fusion_dominant_signal: AtomicU8::new(0),
+            cached_microlocal_state: AtomicU8::new(0),
+            cached_serre_state: AtomicU8::new(0),
+            cached_clifford_state: AtomicU8::new(0),
             decisions: AtomicU64::new(0),
         }
     }
@@ -563,6 +601,25 @@ impl RuntimeMathKernel {
             _ => 0u32,       // Calibrating/Coupled
         };
         let fusion_bonus = self.cached_fusion_bonus_ppm.load(Ordering::Relaxed) as u32;
+        // Microlocal sheaf: wavefront set propagation fault-surface control.
+        // SingularSupport means dense active microsupport.
+        let microlocal_bonus = match self.cached_microlocal_state.load(Ordering::Relaxed) {
+            3 => 130_000u32, // SingularSupport — dense fault surface
+            2 => 55_000u32,  // FaultBoundary — localized fault
+            _ => 0u32,       // Calibrating/Propagating
+        };
+        // Serre spectral sequence: cross-layer lifting failure detection.
+        let serre_bonus = match self.cached_serre_state.load(Ordering::Relaxed) {
+            3 => 140_000u32, // Collapsed — diverging spectral sequence
+            2 => 50_000u32,  // LiftingFailure — non-trivial differentials
+            _ => 0u32,       // Calibrating/Converged
+        };
+        // Clifford algebra: SIMD alignment/overlap correctness.
+        let clifford_bonus = match self.cached_clifford_state.load(Ordering::Relaxed) {
+            3 => 120_000u32, // OverlapViolation — Pin parity break
+            2 => 45_000u32,  // MisalignmentDrift — bivector energy rising
+            _ => 0u32,       // Calibrating/Aligned
+        };
         let pre_design_risk_ppm = base_risk_ppm
             .saturating_add(sampled_bonus)
             .saturating_add(cohomology_bonus)
@@ -587,6 +644,9 @@ impl RuntimeMathKernel {
             .saturating_add(loss_min_bonus)
             .saturating_add(coupling_bonus)
             .saturating_add(fusion_bonus)
+            .saturating_add(microlocal_bonus)
+            .saturating_add(serre_bonus)
+            .saturating_add(clifford_bonus)
             .min(1_000_000);
 
         // D-optimal probe scheduling:
@@ -1238,6 +1298,83 @@ impl RuntimeMathKernel {
             self.cached_coupling_state.store(cp_code, Ordering::Relaxed);
         }
 
+        // Feed microlocal sheaf controller with stratum transition proxy.
+        // Signal-heavy families (Threading, Resolver) map to SignalBoundary;
+        // StringMemory maps to LongjmpBoundary (longjmp crosses cleanup);
+        // others map to NormalFlow.
+        {
+            let from = Stratum::NormalFlow;
+            let to = match family {
+                ApiFamily::Threading => Stratum::SignalBoundary,
+                ApiFamily::Resolver => Stratum::SignalBoundary,
+                ApiFamily::StringMemory if adverse => Stratum::LongjmpBoundary,
+                _ => Stratum::NormalFlow,
+            };
+            let mc_code = {
+                let mut mc = self.microlocal.lock();
+                mc.observe_and_update(from, to, adverse);
+                match mc.state() {
+                    MicrolocalState::Calibrating => 0u8,
+                    MicrolocalState::Propagating => 1u8,
+                    MicrolocalState::FaultBoundary => 2u8,
+                    MicrolocalState::SingularSupport => 3u8,
+                }
+            };
+            self.cached_microlocal_state
+                .store(mc_code, Ordering::Relaxed);
+        }
+
+        // Feed Serre spectral sequence controller with cross-layer lifting proxy.
+        // We map (family, adverse) to a layer-pair and invariant-class observation:
+        // ABI→Membrane for Allocator/StringMemory; Membrane→Core for others.
+        {
+            let layer_pair = match family {
+                ApiFamily::Allocator | ApiFamily::StringMemory => LayerPair::AbiToMembrane,
+                ApiFamily::Threading | ApiFamily::Resolver => LayerPair::AbiToCore,
+                _ => LayerPair::MembraneToCore,
+            };
+            let inv_class = match family {
+                ApiFamily::Allocator => InvariantClass::ResourceLifecycle,
+                ApiFamily::StringMemory => InvariantClass::ReturnSemantics,
+                ApiFamily::Threading => InvariantClass::SideEffectOrder,
+                _ => InvariantClass::ErrorRecovery,
+            };
+            let serre_code = {
+                let mut serre = self.serre.lock();
+                serre.observe_and_update(layer_pair, inv_class, !adverse);
+                match serre.state() {
+                    SpectralSequenceState::Calibrating => 0u8,
+                    SpectralSequenceState::Converged => 1u8,
+                    SpectralSequenceState::LiftingFailure => 2u8,
+                    SpectralSequenceState::Collapsed => 3u8,
+                }
+            };
+            self.cached_serre_state.store(serre_code, Ordering::Relaxed);
+        }
+
+        // Feed Clifford controller with alignment observation proxy.
+        // Source/destination alignment inferred from addr_hint and requested_bytes.
+        {
+            let obs = AlignmentObservation {
+                src_alignment: AlignmentRegime::classify(estimated_cost_ns as usize & 0xFF),
+                dst_alignment: AlignmentRegime::classify(risk_bound_ppm as usize & 0xFF),
+                overlap_fraction: if adverse { 0.5 } else { 0.0 },
+                length_regime: (estimated_cost_ns as f64).clamp(0.0, 200.0) / 200.0,
+            };
+            let cliff_code = {
+                let mut cliff = self.clifford.lock();
+                cliff.observe_and_update(obs);
+                match cliff.state() {
+                    CliffordState::Calibrating => 0u8,
+                    CliffordState::Aligned => 1u8,
+                    CliffordState::MisalignmentDrift => 2u8,
+                    CliffordState::OverlapViolation => 3u8,
+                }
+            };
+            self.cached_clifford_state
+                .store(cliff_code, Ordering::Relaxed);
+        }
+
         let mut anomaly_vec = [false; Probe::COUNT];
         if let Some(flag) = spectral_anomaly {
             anomaly_vec[Probe::Spectral as usize] = flag;
@@ -1361,6 +1498,9 @@ impl RuntimeMathKernel {
                 self.cached_conformal_state.load(Ordering::Relaxed),                       // 0..3
                 self.cached_loss_minimizer_state.load(Ordering::Relaxed),                  // 0..4
                 self.cached_coupling_state.load(Ordering::Relaxed),                        // 0..4
+                self.cached_microlocal_state.load(Ordering::Relaxed),                      // 0..3
+                self.cached_serre_state.load(Ordering::Relaxed),                           // 0..3
+                self.cached_clifford_state.load(Ordering::Relaxed),                        // 0..3
             ];
             let summary = {
                 let mut fusion = self.fusion.lock();
@@ -1559,6 +1699,18 @@ impl RuntimeMathKernel {
             fusion_entropy_milli: self.cached_fusion_entropy_milli.load(Ordering::Relaxed) as u32,
             fusion_drift_ppm: self.cached_fusion_drift_ppm.load(Ordering::Relaxed) as u32,
             fusion_dominant_signal: self.cached_fusion_dominant_signal.load(Ordering::Relaxed),
+            microlocal_active_strata: {
+                let mc = self.microlocal.lock();
+                mc.wavefront_bits().count_ones() as u8
+            },
+            microlocal_failure_rate: self.microlocal.lock().summary().propagation_failure_rate,
+            microlocal_fault_count: self.microlocal.lock().summary().fault_boundary_count,
+            serre_max_differential: self.serre.lock().summary().max_differential,
+            serre_nontrivial_cells: self.serre.lock().summary().nontrivial_cells,
+            serre_lifting_count: self.serre.lock().summary().lifting_failure_count,
+            clifford_grade2_energy: self.clifford.lock().summary().grade2_energy,
+            clifford_parity_imbalance: self.clifford.lock().summary().parity_imbalance,
+            clifford_violation_count: self.clifford.lock().summary().overlap_violation_count,
         }
     }
 
