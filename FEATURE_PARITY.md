@@ -50,6 +50,7 @@ Legend:
 | `runtime_math::pareto` | mode-aware latency/risk Pareto profile selection + cumulative regret tracking + per-family hard regret caps | IN_PROGRESS |
 | `runtime_math::barrier` | constant-time admissibility guard | DONE |
 | `runtime_math::cohomology` | overlap-consistency fault detection for sharded metadata | IN_PROGRESS |
+| `runtime_math::design` | D-optimal heavy-probe selection under strict/hardened budget with online identifiability tracking | DONE |
 | `runtime_math::eprocess` | anytime-valid sequential testing (e-value alarms) per API family | DONE |
 | `runtime_math::cvar` | distributionally-robust CVaR tail-risk control with runtime alarm gating | DONE |
 | sampled conformal risk fusion (`risk_engine`) | sampled high-order conformal alarm/full-check signal feeds live risk bonus | DONE |
@@ -205,6 +206,7 @@ Legend:
 16. HJI reachability controller live — Hamilton-Jacobi-Isaacs value iteration on 64-state discrete game grid (4×4×4: risk/latency/adverse_rate), controller vs adversary minimax safety certificates (math item #15).
 17. Mean-field game contention controller live — Lasry-Lions Nash equilibrium via Picard fixed-point with logit best response, congestion collapse detection for validation resource contention (math item #19).
 18. String/Memory ABI fully wired — `memset`, `memcmp`, `memchr`, `strtok`, `strtok_r`, `memrchr` now delegate to `glibc-rs-core` safe implementations after membrane validation; `memcpy` and `memmove` retain local logic due to strict aliasing constraints.
+19. D-optimal probe scheduler live — runtime selection of heavy monitors via information-gain-per-cost budgeting with identifiability feedback in hot-path decisioning (math item #41).
 
 ## Update Policy
 

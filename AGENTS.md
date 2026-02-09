@@ -163,13 +163,15 @@ Mandatory live modules in `glibc-rs-membrane/src/runtime_math/`:
 4. `barrier.rs` — constant-time admissibility guard.
 5. `cohomology.rs` — overlap-consistency monitor for sharded metadata.
 6. `pareto.rs` — mode-aware latency/risk Pareto selector with cumulative regret tracking and per-family hard regret caps.
+7. `design.rs` — runtime D-optimal probe scheduler under strict/hardened budget constraints.
 
 Runtime decision law (per call):
-`mode + context + risk + budget + pareto + barrier + consistency -> Allow | FullValidate | Repair | Deny`.
+`mode + context + risk + budget + pareto + design + barrier + consistency -> Allow | FullValidate | Repair | Deny`.
 
 Current live extensions:
 - `runtime_math/eprocess.rs` — anytime-valid sequential alarming (e-values).
 - `runtime_math/cvar.rs` — distributionally-robust CVaR tail-risk guard.
+- `runtime_math/design.rs` — D-optimal heavy-probe selection with online identifiability tracking.
 - `hji_reachability.rs` — HJI differential game safety certificates (math #15).
 - `mean_field_game.rs` — mean-field Nash equilibrium congestion controller (math #19).
 
@@ -222,6 +224,7 @@ Rules:
 - `runtime_math/pareto.rs` — latency/risk frontier + regret accounting
 - `runtime_math/eprocess.rs` — anytime-valid sequential risk monitor (e-values)
 - `runtime_math/cvar.rs` — distributionally-robust CVaR tail controller
+- `runtime_math/design.rs` — D-optimal probe scheduling + identifiability control
 - `risk_engine.rs` — conformal risk scoring per API family (sampled, feeds cached bonus)
 - `check_oracle.rs` — Thompson sampling contextual bandit for validation stage ordering
 - `quarantine_controller.rs` — primal-dual quarantine depth optimizer
