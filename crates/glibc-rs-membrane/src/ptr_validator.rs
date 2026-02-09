@@ -11,9 +11,10 @@
 //!
 //! Fast exits at each stage. Budget: Fast mode <20ns, Full mode <200ns.
 
-use crate::arena::{AllocationArena, ArenaSlot};
+use crate::arena::{AllocationArena, ArenaSlot, FreeResult};
 use crate::bloom::PointerBloomFilter;
 use crate::config::safety_level;
+use crate::fingerprint::CANARY_SIZE;
 use crate::galois::PointerAbstraction;
 use crate::metrics::{MembraneMetrics, global_metrics};
 use crate::page_oracle::PageOracle;
@@ -240,6 +241,40 @@ impl ValidationPipeline {
     pub fn register_allocation(&self, user_base: usize, user_size: usize) {
         self.bloom.insert(user_base);
         self.page_oracle.insert(user_base, user_size);
+    }
+
+    /// Allocate memory and register it with the safety model.
+    pub fn allocate(&self, size: usize) -> Option<*mut u8> {
+        let ptr = self.arena.allocate(size)?;
+        self.register_allocation(ptr as usize, size);
+        Some(ptr)
+    }
+
+    /// Allocate aligned memory and register it with the safety model.
+    pub fn allocate_aligned(&self, size: usize, align: usize) -> Option<*mut u8> {
+        let ptr = self.arena.allocate_aligned(size, align)?;
+        self.register_allocation(ptr as usize, size);
+        Some(ptr)
+    }
+
+    /// Deregister an allocation from backing structures (PageOracle only).
+    pub fn deregister_allocation(&self, user_base: usize, user_size: usize) {
+        self.page_oracle.remove(user_base, user_size);
+    }
+
+    /// Free an allocation and update the safety model.
+    ///
+    /// This handles the actual freeing in the arena and updates the page oracle
+    /// for any blocks that were fully deallocated (drained from quarantine).
+    pub fn free(&self, ptr: *mut u8) -> FreeResult {
+        let (result, drained) = self.arena.free(ptr);
+
+        for entry in drained {
+            let user_size = entry.total_size - entry.align - CANARY_SIZE;
+            self.deregister_allocation(entry.user_base, user_size);
+        }
+
+        result
     }
 
     fn abstraction_from_slot(&self, addr: usize, slot: &ArenaSlot) -> PointerAbstraction {

@@ -29,35 +29,47 @@ pub struct PageOracle {
 
 /// A 512-byte bitmap covering PAGES_PER_L2 pages.
 struct L2Bitmap {
-    /// Atomic byte array for lock-free bit operations.
-    bits: Box<[AtomicU8; PAGES_PER_L2 / 8]>,
+    /// Atomic byte array for lock-free refcounting (one byte per page).
+    counts: Box<[AtomicU8; PAGES_PER_L2]>,
 }
 
 impl L2Bitmap {
     fn new() -> Self {
-        // Initialize all bits to 0
-        let bits: Vec<AtomicU8> = (0..PAGES_PER_L2 / 8).map(|_| AtomicU8::new(0)).collect();
-        let bits_array: Box<[AtomicU8; PAGES_PER_L2 / 8]> =
-            bits.into_boxed_slice().try_into().expect("correct size");
-        Self { bits: bits_array }
+        // Initialize all counts to 0
+        let counts: Vec<AtomicU8> = (0..PAGES_PER_L2).map(|_| AtomicU8::new(0)).collect();
+        let counts_array: Box<[AtomicU8; PAGES_PER_L2]> =
+            counts.into_boxed_slice().try_into().expect("correct size");
+        Self {
+            counts: counts_array,
+        }
     }
 
     fn set(&self, page_within_chunk: usize) {
-        let byte_idx = page_within_chunk / 8;
-        let bit_idx = page_within_chunk % 8;
-        self.bits[byte_idx].fetch_or(1 << bit_idx, Ordering::Relaxed);
+        // Saturating increment
+        let _ = self.counts[page_within_chunk].fetch_update(
+            Ordering::Relaxed,
+            Ordering::Relaxed,
+            |x| Some(if x == 255 { 255 } else { x + 1 }),
+        );
     }
 
     fn get(&self, page_within_chunk: usize) -> bool {
-        let byte_idx = page_within_chunk / 8;
-        let bit_idx = page_within_chunk % 8;
-        self.bits[byte_idx].load(Ordering::Relaxed) & (1 << bit_idx) != 0
+        self.counts[page_within_chunk].load(Ordering::Relaxed) > 0
     }
 
     fn clear(&self, page_within_chunk: usize) {
-        let byte_idx = page_within_chunk / 8;
-        let bit_idx = page_within_chunk % 8;
-        self.bits[byte_idx].fetch_and(!(1 << bit_idx), Ordering::Relaxed);
+        // Saturating decrement
+        let _ = self.counts[page_within_chunk].fetch_update(
+            Ordering::Relaxed,
+            Ordering::Relaxed,
+            |x| {
+                match x {
+                    0 => Some(0),     // Should not happen if balanced
+                    255 => Some(255), // Saturated, sticky
+                    _ => Some(x - 1),
+                }
+            },
+        );
     }
 }
 

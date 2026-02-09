@@ -12,7 +12,7 @@
 use parking_lot::Mutex;
 use std::collections::VecDeque;
 
-use crate::fingerprint::{AllocationFingerprint, CANARY_SIZE, FINGERPRINT_SIZE, TOTAL_OVERHEAD};
+use crate::fingerprint::{AllocationFingerprint, CANARY_SIZE, FINGERPRINT_SIZE};
 use crate::lattice::SafetyState;
 
 /// Maximum quarantine queue size in bytes.
@@ -41,10 +41,11 @@ pub struct ArenaSlot {
 
 /// Entry in the quarantine queue.
 #[derive(Debug, Clone, Copy)]
-struct QuarantineEntry {
-    user_base: usize,
-    raw_base: usize,
-    total_size: usize,
+pub struct QuarantineEntry {
+    pub(crate) user_base: usize,
+    pub(crate) raw_base: usize,
+    pub(crate) total_size: usize,
+    pub(crate) align: usize,
 }
 
 /// A single shard of the arena.
@@ -97,36 +98,63 @@ impl AllocationArena {
     /// Returns the user-visible pointer (past the fingerprint header).
     /// Returns None if the system allocator fails.
     pub fn allocate(&self, user_size: usize) -> Option<*mut u8> {
-        let total_size = user_size.checked_add(TOTAL_OVERHEAD)?;
+        self.allocate_aligned(user_size, 16)
+    }
+
+    /// Allocate memory with fingerprint header, canary, and specific alignment.
+    ///
+    /// Alignment must be a power of 2.
+    /// Returns the user-visible pointer (past the fingerprint header).
+    pub fn allocate_aligned(&self, user_size: usize, align: usize) -> Option<*mut u8> {
+        // Ensure alignment is at least 16 (for fingerprint) and power of 2
+        let align = align.max(16);
+        if !align.is_power_of_two() {
+            return None;
+        }
+
+        // We need user_base to be aligned to `align`.
+        // The fingerprint header sits at `user_base - FINGERPRINT_SIZE`.
+        // The raw allocation starts at `raw_base`.
+        // We need `user_base >= raw_base + FINGERPRINT_SIZE`.
+        // We choose `offset = align` (since align >= 16 >= FINGERPRINT_SIZE).
+        // So `user_base = raw_base + align`.
+        // This ensures `user_base` is aligned (since raw_base is aligned)
+        // and there is enough space for the header.
+        // Unused gap: `[raw_base, raw_base + align - FINGERPRINT_SIZE)`.
+
+        let offset = align;
+        let total_size = offset.checked_add(user_size)?.checked_add(CANARY_SIZE)?;
+
         let generation = self
             .next_generation
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
         // Allocate raw memory via system allocator
-        let layout = std::alloc::Layout::from_size_align(total_size, 16).ok()?;
-        // SAFETY: Layout is valid (size > 0, alignment is 16).
+        let layout = std::alloc::Layout::from_size_align(total_size, align).ok()?;
+        // SAFETY: Layout is valid.
         let raw_ptr = unsafe { std::alloc::alloc(layout) };
         if raw_ptr.is_null() {
             return None;
         }
 
         let raw_base = raw_ptr as usize;
-        let user_base = raw_base + FINGERPRINT_SIZE;
+        let user_base = raw_base + offset;
 
-        // Write fingerprint header
+        // Write fingerprint header at `user_base - FINGERPRINT_SIZE`
         let fp = AllocationFingerprint::compute(user_base, user_size as u32, generation);
         let fp_bytes = fp.to_bytes();
-        // SAFETY: raw_ptr is valid for total_size bytes; first FINGERPRINT_SIZE bytes are header.
+        // SAFETY: raw_ptr is valid for total_size. Header location is within [raw_base, raw_base + offset).
         unsafe {
-            std::ptr::copy_nonoverlapping(fp_bytes.as_ptr(), raw_ptr, FINGERPRINT_SIZE);
+            let header_ptr = (user_base - FINGERPRINT_SIZE) as *mut u8;
+            std::ptr::copy_nonoverlapping(fp_bytes.as_ptr(), header_ptr, FINGERPRINT_SIZE);
         }
 
         // Write trailing canary
         let canary = fp.canary();
         let canary_bytes = canary.to_bytes();
-        // SAFETY: canary sits at raw_base + FINGERPRINT_SIZE + user_size.
+        // SAFETY: canary sits at user_base + user_size. Valid since total_size = offset + user_size + CANARY_SIZE.
         unsafe {
-            let canary_ptr = raw_ptr.add(FINGERPRINT_SIZE + user_size);
+            let canary_ptr = (user_base as *mut u8).add(user_size);
             std::ptr::copy_nonoverlapping(canary_bytes.as_ptr(), canary_ptr, CANARY_SIZE);
         }
 
@@ -157,24 +185,24 @@ impl AllocationArena {
 
     /// Free a membrane-managed allocation.
     ///
-    /// Returns the action taken.
-    pub fn free(&self, user_ptr: *mut u8) -> FreeResult {
+    /// Returns the action taken and any drained quarantine entries.
+    pub fn free(&self, user_ptr: *mut u8) -> (FreeResult, Vec<QuarantineEntry>) {
         let user_base = user_ptr as usize;
         let shard_idx = self.shard_for(user_base);
         let mut shard = self.shards[shard_idx].lock();
 
         let Some(&slot_idx) = shard.addr_to_slot.get(&user_base) else {
-            return FreeResult::ForeignPointer;
+            return (FreeResult::ForeignPointer, Vec::new());
         };
 
         let slot = &mut shard.slots[slot_idx];
 
         match slot.state {
             SafetyState::Freed | SafetyState::Quarantined => {
-                return FreeResult::DoubleFree;
+                return (FreeResult::DoubleFree, Vec::new());
             }
             SafetyState::Invalid => {
-                return FreeResult::InvalidPointer;
+                return (FreeResult::InvalidPointer, Vec::new());
             }
             _ => {}
         }
@@ -188,23 +216,26 @@ impl AllocationArena {
             .next_generation
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
-        let total_size = slot.user_size + TOTAL_OVERHEAD;
         let raw_base = slot.raw_base;
+        let offset = user_base - raw_base;
+        let total_size = offset + slot.user_size + CANARY_SIZE;
+        let align = offset;
 
         shard.quarantine.push_back(QuarantineEntry {
             user_base,
             raw_base,
             total_size,
+            align,
         });
         shard.quarantine_bytes += total_size;
 
         // Drain quarantine if over limit
-        self.drain_quarantine(&mut shard);
+        let drained = self.drain_quarantine(&mut shard);
 
         if canary_ok {
-            FreeResult::Freed
+            (FreeResult::Freed, drained)
         } else {
-            FreeResult::FreedWithCanaryCorruption
+            (FreeResult::FreedWithCanaryCorruption, drained)
         }
     }
 
@@ -273,7 +304,9 @@ impl AllocationArena {
         expected_canary.verify(&actual)
     }
 
-    fn drain_quarantine(&self, shard: &mut ArenaShard) {
+    fn drain_quarantine(&self, shard: &mut ArenaShard) -> Vec<QuarantineEntry> {
+        let mut drained = Vec::new();
+
         while shard.quarantine_bytes > QUARANTINE_MAX_BYTES
             || shard.quarantine.len() > QUARANTINE_MAX_ENTRIES
         {
@@ -282,22 +315,32 @@ impl AllocationArena {
             };
 
             // Mark slot as Freed (no longer quarantined)
+
             if let Some(&slot_idx) = shard.addr_to_slot.get(&entry.user_base) {
                 shard.slots[slot_idx].state = SafetyState::Freed;
+
                 shard.addr_to_slot.remove(&entry.user_base);
+
                 shard.free_list.push(slot_idx);
             }
 
             // Actually release memory
-            let layout =
-                std::alloc::Layout::from_size_align(entry.total_size, 16).expect("valid layout");
+
+            let layout = std::alloc::Layout::from_size_align(entry.total_size, entry.align)
+                .expect("valid layout");
+
             // SAFETY: raw_base was allocated with this layout via std::alloc::alloc.
+
             unsafe {
                 std::alloc::dealloc(entry.raw_base as *mut u8, layout);
             }
 
             shard.quarantine_bytes -= entry.total_size;
+
+            drained.push(entry);
         }
+
+        drained
     }
 }
 
@@ -338,7 +381,7 @@ mod tests {
             std::ptr::write_bytes(ptr, 0xAB, 256);
         }
 
-        let result = arena.free(ptr);
+        let (result, _) = arena.free(ptr);
         assert_eq!(result, FreeResult::Freed);
     }
 
@@ -347,10 +390,10 @@ mod tests {
         let arena = AllocationArena::new();
         let ptr = arena.allocate(64).expect("allocation should succeed");
 
-        let first = arena.free(ptr);
+        let (first, _) = arena.free(ptr);
         assert_eq!(first, FreeResult::Freed);
 
-        let second = arena.free(ptr);
+        let (second, _) = arena.free(ptr);
         assert_eq!(second, FreeResult::DoubleFree);
     }
 
@@ -358,7 +401,7 @@ mod tests {
     fn foreign_pointer_detected() {
         let arena = AllocationArena::new();
         let local = 42u64;
-        let result = arena.free(std::ptr::addr_of!(local) as *mut u8);
+        let (result, _) = arena.free(std::ptr::addr_of!(local) as *mut u8);
         assert_eq!(result, FreeResult::ForeignPointer);
     }
 
@@ -399,7 +442,7 @@ mod tests {
             std::ptr::write_bytes(canary_ptr, 0xFF, CANARY_SIZE);
         }
 
-        let result = arena.free(ptr);
+        let (result, _) = arena.free(ptr);
         assert_eq!(result, FreeResult::FreedWithCanaryCorruption);
     }
 
@@ -413,7 +456,7 @@ mod tests {
         let s2 = arena.lookup(p2 as usize).unwrap();
         assert!(s2.generation > s1.generation);
 
-        arena.free(p1);
-        arena.free(p2);
+        let _ = arena.free(p1);
+        let _ = arena.free(p2);
     }
 }
