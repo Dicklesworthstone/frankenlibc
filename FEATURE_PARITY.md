@@ -44,6 +44,12 @@ Legend:
 | inet ops | `htons`, `htonl`, `ntohs`, `ntohl`, `inet_pton`, `inet_ntop`, `inet_addr` | DONE |
 | locale ops | `setlocale`, `localeconv` | DONE |
 | termios ops | `tcgetattr`, `tcsetattr`, `cfgetispeed`, `cfgetospeed`, `cfsetispeed`, `cfsetospeed`, `tcdrain`, `tcflush`, `tcflow`, `tcsendbreak` | DONE |
+| dlfcn ops | `dlopen`, `dlsym`, `dlclose`, `dlerror` | DONE |
+| stdio file ops | `fopen`, `fclose`, `fread`, `fwrite`, `fgets`, `fputs`, `fgetc`, `fputc`, `fseek`, `ftell`, `rewind`, `feof`, `ferror`, `clearerr`, `ungetc`, `fileno`, `setvbuf`, `setbuf`, `fflush`, `fprintf`, `printf`, `sprintf`, `snprintf`, `perror`, `putchar`, `puts`, `getchar` | DONE |
+| process ops | `fork`, `_exit`, `execve`, `execvp`, `waitpid`, `wait` | DONE |
+| virtual memory ops | `mmap`, `munmap`, `mprotect`, `msync`, `madvise` | DONE |
+| pthread sync ops | `pthread_mutex_init`, `pthread_mutex_destroy`, `pthread_mutex_lock`, `pthread_mutex_trylock`, `pthread_mutex_unlock`, `pthread_cond_init`, `pthread_cond_destroy`, `pthread_cond_wait`, `pthread_cond_signal`, `pthread_cond_broadcast`, `pthread_rwlock_init`, `pthread_rwlock_destroy`, `pthread_rwlock_rdlock`, `pthread_rwlock_wrlock`, `pthread_rwlock_unlock` | DONE |
+| poll ops | `poll`, `ppoll`, `select`, `pselect` | DONE |
 
 ## Mode-Specific Parity Matrix
 
@@ -53,6 +59,11 @@ Legend:
 | string ops | host-glibc differential parity | termination-safe repair paths | DONE |
 | math ops | strict IEEE-style scalar behavior (no membrane rewrite) | non-finite sanitization only when repair action is selected | DONE |
 | allocator boundary | host-glibc parity for defined behavior | temporal/provenance repair policies | IN_PROGRESS |
+| stdio file ops | host-glibc parity for file stream ops | invalid mode repair, buffering fallbacks | DONE |
+| process ops | host-glibc parity for fork/exec/wait | exit status clamping, wait options sanitization | DONE |
+| virtual memory ops | host-glibc parity for mmap/mprotect | invalid prot→PROT_READ, missing visibility→MAP_PRIVATE, invalid msync→MS_ASYNC, unknown madvise→MADV_NORMAL | DONE |
+| pthread sync ops | host-glibc parity for mutex/cond/rwlock | EBUSY destroy→force-unlock+retry, EPERM unlock→silent ignore | DONE |
+| poll ops | host-glibc parity for poll/select | nfds clamping for oversized values | DONE |
 
 ## Runtime Math Kernel Matrix
 
@@ -96,17 +107,26 @@ Legend:
 | nerve complex monitor (`nerve_complex`) | Čech nerve theorem correlation coherence — Betti number (β₀ connected components, β₁ 1-cycles) tracking on controller correlation graph, union-find component counting, Euler characteristic cycle detection | DONE |
 | Wasserstein drift monitor (`wasserstein_drift`) | 1-Wasserstein (Earth Mover's) distance on severity histograms — closed-form CDF difference computation, ordinal metric awareness (severity magnitude), per-controller drift profiling (Kantorovich-Rubinstein 1958) | DONE |
 | kernel MMD monitor (`kernel_mmd`) | Maximum Mean Discrepancy (Gretton et al. 2012) with RBF kernel — RKHS embedding, mean-embedding approximation with variance correction, distribution-free two-sample testing for joint distributional shifts | DONE |
+| Stein discrepancy monitor (`stein_discrepancy`) | Kernelized Stein Discrepancy (Liu, Lee, Jordan 2016) goodness-of-fit testing — KL-divergence between live empirical and calibration-frozen reference models, per-controller divergence profiling, regime shift detection | DONE |
+| POMDP repair controller (`pomdp_repair`) | Constrained POMDP belief-space optimal repair policy — risk-conditioned action selection with belief state tracking for latent hazard estimation | DONE |
+| K-theory contract monitor (`ktheory`) | Algebraic K-theory contract drift detection — K₀/K₁ group element tracking for cross-family compatibility obligation monitoring | DONE |
+| SOS invariant synthesizer (`sos_invariant`) | Sum-of-squares polynomial Lyapunov certificate synthesis — SDP-relaxed invariant verification for controller stability under stress | DONE |
 | pointer validator integration | runtime-math decisions affect bloom-miss/deep-check behavior and adaptive stage ordering | DONE |
 | allocator integration | runtime-math routing active across allocator ABI (`malloc`, `free`, `calloc`, `realloc`, `posix_memalign`, `memalign`, `aligned_alloc`) with exact check-order stage outcome feedback | DONE |
 | string/memory integration | runtime-math routing active for bootstrap `<string.h>` entrypoints (`mem*`, `strlen`, `strcmp`, `strcpy`, `strncpy`, `strcat`, `strncat`, `strchr`, `strrchr`, `strstr`, `strtok`, `strtok_r`) with exact stage-outcome feedback on `memcpy`, `memmove`, `memset`, `memcmp`, `memchr`, `memrchr`, `strlen`, `strcmp`, `strcpy`, `strncpy`, `strcat`, `strncat`, `strchr`, `strrchr`, `strstr`, `strtok`, `strtok_r` | IN_PROGRESS |
 | math/fenv integration | runtime-math routing active for bootstrap `<math.h>` entrypoints (`sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2`, `exp`, `log`, `log10`, `pow`, `fabs`, `ceil`, `floor`, `round`, `fmod`, `erf`, `tgamma`, `lgamma`) | DONE |
-| pthread/futex integration | runtime-math routing for wait/lock/cancel edges | IN_PROGRESS |
+| stdio integration | runtime-math routing active for `<stdio.h>` entrypoints (`fopen`, `fclose`, `fread`, `fwrite`, `fgets`, `fputs`, `fgetc`, `fputc`, `fseek`, `ftell`, `fflush`, `fprintf`, `printf`, `sprintf`, `snprintf`, `perror`) under `ApiFamily::Stdio` with stream registry, buffered I/O, and full printf format engine | DONE |
+| pthread/futex integration | runtime-math routing active for mutex (`init`, `destroy`, `lock`, `trylock`, `unlock`), cond (`init`, `destroy`, `wait`, `signal`, `broadcast`), rwlock (`init`, `destroy`, `rdlock`, `wrlock`, `unlock`) under `ApiFamily::Threading` with null-check validation + hardened EBUSY/EPERM repair | DONE |
+| process integration | runtime-math routing active for `fork`, `_exit`, `execve`, `execvp`, `waitpid`, `wait` under `ApiFamily::Process` with strict/hardened exit-status clamping and wait-options sanitization | DONE |
+| virtual memory integration | runtime-math routing active for `mmap`, `munmap`, `mprotect`, `msync`, `madvise` under `ApiFamily::VirtualMemory` with strict/hardened prot/flags/advice validation + repair | DONE |
+| poll integration | runtime-math routing active for `poll`, `ppoll`, `select`, `pselect` under `ApiFamily::Poll` with strict/hardened nfds clamping | DONE |
 | resolver/NSS integration | runtime-math routing active for bootstrap resolver ABI (`getaddrinfo`, `freeaddrinfo`, `getnameinfo`) with exact check-order stage outcomes; full NSS/cache/poisoning campaign still pending | IN_PROGRESS |
 | unistd/POSIX integration | runtime-math routing active for `<unistd.h>` entrypoints (`read`, `write`, `close`, `lseek`, `stat`, `access`, `getcwd`, `chdir`, `unlink`, `link`, `symlink`, `readlink`, `fsync`, `sleep`) under `ApiFamily::IoFd` with strict/hardened whence/mode/path validation + repair | DONE |
 | socket integration | runtime-math routing active for `<sys/socket.h>` entrypoints (`socket`, `bind`, `listen`, `accept`, `connect`, `send`, `recv`, `sendto`, `recvfrom`, `shutdown`, `setsockopt`, `getsockopt`, `getpeername`, `getsockname`) under `ApiFamily::Socket` with strict/hardened AF/type/how validation + repair | DONE |
 | inet integration | runtime-math routing active for `<arpa/inet.h>` entrypoints (`htons`, `htonl`, `ntohs`, `ntohl`, `inet_pton`, `inet_ntop`, `inet_addr`) under `ApiFamily::Inet` | DONE |
 | locale integration | runtime-math routing active for `<locale.h>` entrypoints (`setlocale`, `localeconv`) under `ApiFamily::Locale` with strict/hardened locale validation + C-locale fallback repair | DONE |
 | termios integration | runtime-math routing active for `<termios.h>` entrypoints (`tcgetattr`, `tcsetattr`, `cfget*speed`, `cfset*speed`, `tcdrain`, `tcflush`, `tcflow`, `tcsendbreak`) under `ApiFamily::Termios` with strict/hardened optional_actions/queue/flow validation + repair | DONE |
+| dlfcn integration | runtime-math routing active for `<dlfcn.h>` entrypoints (`dlopen`, `dlsym`, `dlclose`, `dlerror`) under `ApiFamily::Loader` with strict/hardened flag validation + RTLD_NOW fallback repair, thread-local dlerror state | DONE |
 
 ## Reverse Core Coverage Matrix
 
@@ -115,8 +135,8 @@ Legend:
 | loader/symbol/IFUNC | global compatibility drift | resolver automata + compatibility witness ledgers | PLANNED |
 | allocator | temporal/provenance corruption | allocator policy tables + admissibility guards | IN_PROGRESS |
 | hot string/memory kernels | overlap/alignment/dispatch edge faults | regime classifier + certified kernel routing tables | IN_PROGRESS |
-| futex/pthread/cancellation | race/starvation/timeout inconsistency | transition kernels + fairness budgets | PLANNED |
-| stdio/parser/locale formatting | parser-state explosion + locale divergence | generated parser/transducer tables | PLANNED |
+| futex/pthread/cancellation | race/starvation/timeout inconsistency | transition kernels + fairness budgets | IN_PROGRESS |
+| stdio/parser/locale formatting | parser-state explosion + locale divergence | generated parser/transducer tables | IN_PROGRESS |
 | signal/setjmp transfer | invalid non-local transitions | admissible jump/signal/cancel transition matrices | PLANNED |
 | time/timezone/rt timers | discontinuity/overrun semantic drift | temporal transition DAGs + timing envelopes | PLANNED |
 | nss/resolv/nscd/sunrpc | poisoning/retry/cache instability | deterministic lookup DAGs + calibrated anomaly thresholds | PLANNED |
@@ -259,6 +279,10 @@ Legend:
 26. Conformal risk controller live — split conformal prediction (Vovk et al. 2005) with sliding-window calibration (256 entries), conformal p-values, EWMA coverage tracking, distribution-free finite-sample miscoverage detection (math item #27).
 27. Five new POSIX function families ported: `<unistd.h>` (27 entrypoints), `<sys/socket.h>` (14 entrypoints), `<arpa/inet.h>` (7 entrypoints), `<locale.h>` (2 entrypoints), `<termios.h>` (10 entrypoints). All routed through the RuntimeMathKernel via new ApiFamily variants (Socket=13, Locale=14, Termios=15, Inet=16). Core modules provide pure-Rust validators and constants; ABI modules wrap libc with membrane gating.
 28. Six new runtime math monitors integrated: Malliavin sensitivity, Fisher-Rao information geometry, matrix concentration (Bernstein), Čech nerve complex, Wasserstein drift, kernel MMD. Total test count: 792 (up from 608).
+29. `<dlfcn.h>` ABI fully wired — `dlopen`, `dlsym`, `dlclose`, `dlerror` with membrane gating under `ApiFamily::Loader`, thread-local error state, flag validation via core, hardened mode RTLD_NOW fallback.
+30. Stein discrepancy monitor fixed — replaced mean-score-norm KSD (broken for deterministic inputs) with KL divergence D(current||reference) between live EWMA and calibration-frozen models; all 7 tests pass.
+31. Five additional runtime math monitors verified: Stein discrepancy (KSD goodness-of-fit), POMDP repair (belief-space policy), K-theory (contract drift), SOS invariant (Lyapunov synthesis). Total test count: 792.
+32. POSIX Batch 3: stdio file ops (27 ABI entrypoints wired via stream registry), process control (6 entrypoints under `ApiFamily::Process=17`: fork, _exit, execve, execvp, waitpid, wait), virtual memory (5 entrypoints under `ApiFamily::VirtualMemory=18`: mmap, munmap, mprotect, msync, madvise), pthread sync (15 entrypoints extending `ApiFamily::Threading`: mutex init/destroy/lock/trylock/unlock, cond init/destroy/wait/signal/broadcast, rwlock init/destroy/rdlock/wrlock/unlock), I/O multiplexing (4 entrypoints under `ApiFamily::Poll=19`: poll, ppoll, select, pselect). ApiFamily::COUNT expanded from 17 to 20. Total test count: 897.
 
 ## Update Policy
 
