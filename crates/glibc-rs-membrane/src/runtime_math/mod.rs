@@ -69,6 +69,7 @@ pub mod rademacher_complexity;
 pub mod renewal_theory;
 pub mod risk;
 pub mod serre_spectral;
+pub mod sobol;
 pub mod sos_barrier;
 pub mod sos_invariant;
 pub mod sparse;

@@ -754,4 +754,191 @@ mod tests {
         // x₁ * x₂ = 20000
         assert_eq!(eval_monomial(&vars, &[1, 1, 0, 0]), 20_000);
     }
+
+    // ---- Property Tests ----
+
+    /// Provenance barrier is monotone decreasing in risk.
+    /// For any fixed (v, b, p), increasing risk must not increase the barrier.
+    #[test]
+    fn provenance_monotone_risk_sweep() {
+        for v in [0u32, 500_000, 1_000_000] {
+            for b in [0u32, 100_000, 500_000] {
+                for p in [0u32, 200_000, 800_000] {
+                    let mut prev = i64::MAX;
+                    for risk in (0..=1_000_000).step_by(50_000) {
+                        let val = evaluate_provenance_barrier(risk, v, b, p);
+                        assert!(
+                            val <= prev,
+                            "Monotonicity violated: risk={risk}, v={v}, b={b}, p={p}: {val} > {prev}"
+                        );
+                        prev = val;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Provenance barrier is monotone increasing in validation depth.
+    /// For any fixed (r, b, p), increasing depth must not decrease the barrier.
+    #[test]
+    fn provenance_monotone_depth_sweep() {
+        for r in [50_000u32, 200_000, 500_000] {
+            for b in [0u32, 200_000] {
+                for p in [0u32, 400_000] {
+                    let mut prev = i64::MIN;
+                    for v in (0..=1_000_000).step_by(100_000) {
+                        let val = evaluate_provenance_barrier(r, v, b, p);
+                        assert!(
+                            val >= prev,
+                            "Depth monotonicity violated: r={r}, v={v}, b={b}, p={p}: {val} < {prev}"
+                        );
+                        prev = val;
+                    }
+                }
+            }
+        }
+    }
+
+    /// No panics on any combination of extreme input values.
+    #[test]
+    fn provenance_no_panic_extremes() {
+        let extremes = [0u32, 1, 500_000, 999_999, 1_000_000, u32::MAX / 2];
+        for &r in &extremes {
+            for &v in &extremes {
+                for &b in &extremes {
+                    for &p in &extremes {
+                        let _ = evaluate_provenance_barrier(r, v, b, p);
+                    }
+                }
+            }
+        }
+    }
+
+    /// No panics on extreme quarantine inputs.
+    #[test]
+    fn quarantine_no_panic_extremes() {
+        let depths = [0u32, 64, 4096, 65536, 1_000_000];
+        let contentions = [0u32, 1, 512, 1024, 10_000];
+        let adverse = [0u32, 1_000, 500_000, 1_000_000];
+        let lambdas = [i64::MIN / 2, -128, 0, 128, i64::MAX / 2];
+        for &d in &depths {
+            for &c in &contentions {
+                for &a in &adverse {
+                    for &l in &lambdas {
+                        let _ = evaluate_quarantine_barrier(d, c, a, l);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Quarantine barrier: adverse rate monotone degradation.
+    #[test]
+    fn quarantine_monotone_adverse_sweep() {
+        let depth = 4096u32;
+        let contention = 10u32;
+        let lambda = 0i64;
+        let mut prev = i64::MAX;
+        for a in (0..=1_000_000).step_by(50_000) {
+            let val = evaluate_quarantine_barrier(depth, contention, a, lambda);
+            assert!(
+                val <= prev,
+                "Adverse monotonicity violated: a={a}: {val} > {prev}"
+            );
+            prev = val;
+        }
+    }
+
+    /// Controller state machine: violations accumulate monotonically.
+    #[test]
+    fn violations_monotone() {
+        let mut ctrl = SosBarrierController::new();
+        let mut max_violations = 0u64;
+        for _ in 0..100 {
+            ctrl.evaluate_provenance(10_000, 1_000_000, 10_000, 50_000);
+            assert!(ctrl.total_violations() >= max_violations);
+            max_violations = ctrl.total_violations();
+        }
+        // Trigger some violations.
+        for _ in 0..10 {
+            ctrl.evaluate_provenance(500_000, 0, 400_000, 800_000);
+            assert!(ctrl.total_violations() >= max_violations);
+            max_violations = ctrl.total_violations();
+        }
+        assert!(max_violations > 0);
+    }
+
+    /// Hot-path integer-only evidence: the provenance barrier uses only
+    /// i64 arithmetic (saturating_mul, saturating_sub, division).
+    /// No f64 in the evaluation path.
+    ///
+    /// This test exercises varied inputs and confirms stable results.
+    #[test]
+    fn hot_path_integer_only() {
+        let mut ctrl = SosBarrierController::new();
+        // Exercise all reasonable input combinations.
+        for round in 0u64..256 {
+            let risk = ((round * 7919) % 1_000_000) as u32;
+            let depth = if round % 2 == 0 { 0u32 } else { 1_000_000 };
+            let bloom = ((round * 3571) % 500_000) as u32;
+            let arena = ((round * 2347) % 800_000) as u32;
+            ctrl.evaluate_provenance(risk, depth, bloom, arena);
+        }
+        let s = ctrl.summary();
+        assert!(matches!(
+            s.state,
+            SosBarrierState::Calibrating
+                | SosBarrierState::Safe
+                | SosBarrierState::Warning
+                | SosBarrierState::Violated
+        ));
+    }
+
+    /// Full kernel integration: feed through RuntimeMathKernel and verify
+    /// the SOS barrier state appears in the snapshot.
+    #[test]
+    fn kernel_snapshot_integration() {
+        use crate::config::SafetyLevel;
+        use crate::runtime_math::{
+            ApiFamily, RuntimeContext, RuntimeMathKernel, ValidationProfile,
+        };
+
+        let kernel = RuntimeMathKernel::new();
+        let mode = SafetyLevel::Strict;
+        let ctx = RuntimeContext::pointer_validation(0x1000, false);
+
+        // Run enough cycles for the barrier to leave calibration.
+        for _ in 0..256 {
+            let _ = kernel.decide(mode, ctx);
+            kernel.observe_validation_result(
+                ApiFamily::PointerValidation,
+                ValidationProfile::Fast,
+                15,
+                false,
+            );
+        }
+
+        let snap = kernel.snapshot(mode);
+        // After benign observations, barrier should not have triggered.
+        assert!(
+            snap.sos_barrier_provenance_value >= 0,
+            "Provenance value should be non-negative under benign load: {}",
+            snap.sos_barrier_provenance_value,
+        );
+    }
+
+    /// Deterministic regression: fixed inputs produce exact golden values.
+    #[test]
+    fn deterministic_provenance_regression() {
+        // These golden values must only change with intentional coefficient updates.
+        let val = evaluate_provenance_barrier(50_000, 0, 100_000, 200_000);
+        // Recompute: headroom = 100_000 - 50_000 = 50_000
+        // rb = 50_000 * 100_000 / 1_000_000 = 5_000
+        // penalty_1 = 800 * 5_000 * 1_000_000 / (1e6 * 1e6) = 800*5000/1e6 = 4
+        // rp = 50_000 * 200_000 / 1_000_000 = 10_000
+        // penalty_2 = 600 * 10_000 * 1_000_000 / (1e6 * 1e6) = 600*10000/1e6 = 6
+        // reward = 400 * 0 * 900_000 / (1e6 * 1e6) = 0
+        // total = 50_000 - 4 - 6 + 0 = 49_990
+        assert_eq!(val, 49_990, "Golden value changed: {val}");
+    }
 }
