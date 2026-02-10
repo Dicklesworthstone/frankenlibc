@@ -13,6 +13,7 @@
 
 pub mod admm_budget;
 pub mod alpha_investing;
+pub mod approachability;
 pub mod atiyah_bott;
 pub mod azuma_hoeffding;
 pub mod bandit;
@@ -50,6 +51,7 @@ pub mod ito_quadratic_variation;
 pub mod kernel_mmd;
 pub mod ktheory;
 pub mod lempel_ziv;
+pub mod localization_chooser;
 pub mod loss_minimizer;
 pub mod lyapunov_stability;
 pub mod malliavin_sensitivity;
@@ -67,6 +69,7 @@ pub mod rademacher_complexity;
 pub mod renewal_theory;
 pub mod risk;
 pub mod serre_spectral;
+pub mod sos_barrier;
 pub mod sos_invariant;
 pub mod sparse;
 pub mod spectral_gap;
@@ -154,6 +157,7 @@ use self::risk::ConformalRiskEngine;
 use self::serre_spectral::{
     InvariantClass, LayerPair, SerreSpectralController, SpectralSequenceState,
 };
+use self::sos_barrier::{SosBarrierController, SosBarrierState};
 use self::sos_invariant::{SosInvariantController, SosState};
 use self::sparse::{SparseRecoveryController, SparseState};
 use self::spectral_gap::{SpectralGapMonitor, SpectralGapState};
@@ -168,7 +172,7 @@ const FULL_PATH_BUDGET_NS: u64 = 200;
 /// Number of base severity signals fed from hot-path cached atomics.
 const BASE_SEVERITY_LEN: usize = 25;
 /// Number of meta-controller severity signals appended after the base set.
-const META_SEVERITY_LEN: usize = 35;
+const META_SEVERITY_LEN: usize = 36;
 /// Compile-time assertion: fusion::SIGNALS == BASE + META severity slots.
 const _: () = assert!(
     fusion::SIGNALS == BASE_SEVERITY_LEN + META_SEVERITY_LEN,
@@ -449,6 +453,12 @@ pub struct RuntimeKernelSnapshot {
     pub sos_max_stress: f64,
     /// SOS invariant violation event count.
     pub sos_violation_count: u64,
+    /// SOS barrier provenance certificate value (ppm, negative = violation).
+    pub sos_barrier_provenance_value: i64,
+    /// SOS barrier quarantine certificate value (milli-units, negative = violation).
+    pub sos_barrier_quarantine_value: i64,
+    /// SOS barrier total violation count.
+    pub sos_barrier_violations: u64,
     /// ADMM primal-dual gap (0..∞, lower is better).
     pub admm_primal_dual_gap: f64,
     /// ADMM constraint violation count.
@@ -650,6 +660,7 @@ pub struct RuntimeMathKernel {
     operator_norm: Mutex<OperatorNormMonitor>,
     pomdp: Mutex<PomdpRepairController>,
     sos: Mutex<SosInvariantController>,
+    sos_barrier: Mutex<SosBarrierController>,
     provenance: Mutex<ProvenanceInfoController>,
     grobner: Mutex<GrobnerNormalizerController>,
     grothendieck: Mutex<GrothendieckGlueController>,
@@ -726,6 +737,7 @@ pub struct RuntimeMathKernel {
     cached_operator_norm_state: AtomicU8,
     cached_pomdp_state: AtomicU8,
     cached_sos_state: AtomicU8,
+    cached_sos_barrier_state: AtomicU8,
     cached_provenance_state: AtomicU8,
     cached_grobner_state: AtomicU8,
     cached_grothendieck_state: AtomicU8,
@@ -819,6 +831,7 @@ impl RuntimeMathKernel {
             operator_norm: Mutex::new(OperatorNormMonitor::new()),
             pomdp: Mutex::new(PomdpRepairController::new()),
             sos: Mutex::new(SosInvariantController::new()),
+            sos_barrier: Mutex::new(SosBarrierController::new()),
             provenance: Mutex::new(ProvenanceInfoController::new()),
             grobner: Mutex::new(GrobnerNormalizerController::new()),
             grothendieck: Mutex::new(GrothendieckGlueController::new()),
@@ -895,6 +908,7 @@ impl RuntimeMathKernel {
             cached_operator_norm_state: AtomicU8::new(0),
             cached_pomdp_state: AtomicU8::new(0),
             cached_sos_state: AtomicU8::new(0),
+            cached_sos_barrier_state: AtomicU8::new(0),
             cached_provenance_state: AtomicU8::new(0),
             cached_grobner_state: AtomicU8::new(0),
             cached_grothendieck_state: AtomicU8::new(0),
@@ -1516,6 +1530,12 @@ impl RuntimeMathKernel {
             profile = ValidationProfile::Full;
         }
         if self.cached_equivariant_state.load(Ordering::Relaxed) >= 3 {
+            profile = ValidationProfile::Full;
+        }
+        // SOS barrier certificate: if the barrier evaluator reports Warning or
+        // Violated, force full validation. This is the runtime embodiment of
+        // the offline SOS safety proof — monotone escalation only.
+        if self.cached_sos_barrier_state.load(Ordering::Relaxed) >= 2 {
             profile = ValidationProfile::Full;
         }
 
@@ -2603,6 +2623,31 @@ impl RuntimeMathKernel {
                 self.cached_sos_state.store(sos_code, Ordering::Relaxed);
             }
 
+            // Feed SOS barrier certificate evaluator (cadence-gated).
+            // Evaluates provenance + quarantine barriers using cached signals.
+            {
+                let barrier_code = {
+                    let mut barrier = self.sos_barrier.lock();
+                    // Provenance barrier: use cached risk and profile.
+                    let risk_ppm = self.cached_risk_bonus_ppm.load(Ordering::Relaxed) as u32;
+                    let depth_ppm = if profile.requires_full() { 1_000_000u32 } else { 0u32 };
+                    barrier.evaluate_provenance(risk_ppm, depth_ppm, 0, 0);
+                    // Quarantine barrier: evaluate on cadence.
+                    if barrier.is_quarantine_cadence() {
+                        let depth = current_depth() as u32;
+                        barrier.evaluate_quarantine(depth, 0, risk_ppm, 0);
+                    }
+                    match barrier.state() {
+                        SosBarrierState::Calibrating => 0u8,
+                        SosBarrierState::Safe => 1u8,
+                        SosBarrierState::Warning => 2u8,
+                        SosBarrierState::Violated => 3u8,
+                    }
+                };
+                self.cached_sos_barrier_state
+                    .store(barrier_code, Ordering::Relaxed);
+            }
+
             // Feed spectral-sequence obstruction detector.
             // Tracks d² ≈ 0 (exactness) across tracked controller pairs.
             {
@@ -3162,6 +3207,7 @@ impl RuntimeMathKernel {
                 severity[57] = self.cached_dispersion_state.load(Ordering::Relaxed); // 0..3
                 severity[58] = self.cached_birkhoff_state.load(Ordering::Relaxed); // 0..3
                 severity[59] = self.cached_alpha_investing_state.load(Ordering::Relaxed); // 0..3
+                severity[60] = self.cached_sos_barrier_state.load(Ordering::Relaxed); // 0..3
                 let summary = {
                     let mut fusion = self.fusion.lock();
                     fusion.observe(severity, adverse, mode)
@@ -3312,6 +3358,7 @@ impl RuntimeMathKernel {
         let atiyah_bott_summary = self.atiyah_bott.lock().summary();
         let pomdp_summary = self.pomdp.lock().summary();
         let sos_summary = self.sos.lock().summary();
+        let sos_barrier_summary = self.sos_barrier.lock().summary();
         let admm_summary = self.admm.lock().summary();
         let obstruction_summary = self.obstruction.lock().summary();
         let operator_norm_summary = self.operator_norm.lock().summary();
@@ -3431,6 +3478,10 @@ impl RuntimeMathKernel {
             pomdp_divergence_count: pomdp_summary.divergence_count,
             sos_max_stress: sos_summary.max_stress_fraction,
             sos_violation_count: sos_summary.violation_event_count,
+            sos_barrier_provenance_value: sos_barrier_summary.provenance_value,
+            sos_barrier_quarantine_value: sos_barrier_summary.quarantine_value,
+            sos_barrier_violations: sos_barrier_summary.provenance_violations
+                + sos_barrier_summary.quarantine_violations,
             admm_primal_dual_gap: admm_summary.primal_dual_gap,
             admm_violation_count: admm_summary.violation_count,
             obstruction_norm: obstruction_summary.obstruction_norm,
