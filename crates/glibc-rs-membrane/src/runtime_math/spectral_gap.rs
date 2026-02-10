@@ -91,6 +91,13 @@ const ALPHA: f64 = 0.03;
 /// Warmup observations.
 const WARMUP: u32 = 40;
 
+/// Cadence for the expensive per-controller second-eigenvalue computation.
+///
+/// Rationale: `second_eigenvalue()` runs a 20-iteration power method; doing it
+/// for all N controllers on every observation is too costly for strict-mode
+/// hot paths.
+const SAMPLE_INTERVAL: u32 = 16;
+
 /// |lambda_2| above which the chain is classified as SlowMixing.
 const SLOW_MIXING_THRESHOLD: f64 = 0.85;
 
@@ -271,22 +278,27 @@ impl SpectralGapMonitor {
         };
 
         if self.count > 1 {
-            let mut max_lam2 = 0.0_f64;
-            let mut sum_lam2 = 0.0_f64;
-
+            // Always update transition matrices (cheap).
             for (i, tracker) in self.trackers.iter_mut().enumerate() {
                 let from = (self.prev_severity[i] as usize).min(K - 1);
                 let to = (severity[i] as usize).min(K - 1);
                 tracker.update(from, to, alpha);
-
-                let lam2 = tracker.second_eigenvalue();
-                max_lam2 = max_lam2.max(lam2);
-                sum_lam2 += lam2;
             }
 
-            let mean_lam2 = sum_lam2 / N as f64;
-            self.max_second_eigenvalue += alpha * (max_lam2 - self.max_second_eigenvalue);
-            self.mean_second_eigenvalue += alpha * (mean_lam2 - self.mean_second_eigenvalue);
+            // Heavy eigenvalue estimate is cadence-only.
+            if self.count.is_multiple_of(SAMPLE_INTERVAL) {
+                let mut max_lam2 = 0.0_f64;
+                let mut sum_lam2 = 0.0_f64;
+                for tracker in self.trackers.iter() {
+                    let lam2 = tracker.second_eigenvalue();
+                    max_lam2 = max_lam2.max(lam2);
+                    sum_lam2 += lam2;
+                }
+
+                let mean_lam2 = sum_lam2 / N as f64;
+                self.max_second_eigenvalue += alpha * (max_lam2 - self.max_second_eigenvalue);
+                self.mean_second_eigenvalue += alpha * (mean_lam2 - self.mean_second_eigenvalue);
+            }
         }
 
         self.prev_severity = *severity;

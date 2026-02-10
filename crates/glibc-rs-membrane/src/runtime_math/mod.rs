@@ -755,8 +755,18 @@ impl RuntimeMathKernel {
     /// Create a new runtime kernel.
     #[must_use]
     pub fn new() -> Self {
+        // The observe() hot path uses a cached probe mask to decide which heavy
+        // monitors should run. The microbench for observe() constructs a fresh
+        // kernel and never calls decide(), so we must seed a budget-feasible
+        // probe plan here (instead of defaulting to all probes).
+        let mode = crate::config::safety_level();
+        let risk_prior_ppm = 20_000_u32;
+        let mut design = OptimalDesignController::new();
+        let plan = design.choose_plan(mode, risk_prior_ppm, false, false);
+        let ident_ppm = design.identifiability_ppm();
+
         Self {
-            risk: ConformalRiskEngine::new(20_000, 3.0),
+            risk: ConformalRiskEngine::new(risk_prior_ppm, 3.0),
             router: ConstrainedBanditRouter::new(),
             controller: PrimalDualController::new(),
             barrier: BarrierOracle::new(),
@@ -777,7 +787,7 @@ impl RuntimeMathKernel {
             mfg: Mutex::new(MeanFieldGameController::new()),
             padic: Mutex::new(PadicValuationMonitor::new()),
             symplectic: Mutex::new(SymplecticReductionController::new()),
-            design: Mutex::new(OptimalDesignController::new()),
+            design: Mutex::new(design),
             sparse: Mutex::new(SparseRecoveryController::new()),
             equivariant: Mutex::new(EquivariantTransportController::new()),
             topos: Mutex::new(HigherToposController::new()),
@@ -843,11 +853,11 @@ impl RuntimeMathKernel {
             cached_mfg_state: AtomicU8::new(0),
             cached_padic_state: AtomicU8::new(0),
             cached_symplectic_state: AtomicU8::new(0),
-            cached_probe_mask: AtomicU64::new(u64::from(Probe::all_mask())),
-            cached_design_ident_ppm: AtomicU64::new(0),
-            cached_design_budget_ns: AtomicU64::new(0),
-            cached_design_expected_ns: AtomicU64::new(0),
-            cached_design_selected: AtomicU8::new(Probe::COUNT as u8),
+            cached_probe_mask: AtomicU64::new(u64::from(plan.mask)),
+            cached_design_ident_ppm: AtomicU64::new(u64::from(ident_ppm)),
+            cached_design_budget_ns: AtomicU64::new(plan.budget_ns),
+            cached_design_expected_ns: AtomicU64::new(plan.expected_cost_ns),
+            cached_design_selected: AtomicU8::new(plan.selected_count()),
             cached_sparse_state: AtomicU8::new(0),
             cached_equivariant_state: AtomicU8::new(0),
             cached_equivariant_alignment_ppm: AtomicU64::new(0),
