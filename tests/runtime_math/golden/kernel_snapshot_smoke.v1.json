@@ -134,6 +134,16 @@
       "    transfer_entropy_mean_te: 0.0,",
       "    hodge_inconsistency_ratio: 0.0,",
       "    hodge_curl_energy: 0.0,",
+      "    doob_drift_rate: 0.0,",
+      "    doob_max_drift: 0.0,",
+      "    fano_mean_mi: 0.0,",
+      "    fano_mean_bound: 0.5,",
+      "    dobrushin_max_contraction: 0.0,",
+      "    dobrushin_mean_contraction: 0.0,",
+      "    coupling_divergence_bound: 1.0,",
+      "    coupling_certification_margin: -0.95,",
+      "    loss_recommended_action: 1,",
+      "    loss_cost_explosion_count: 0,",
       "}"
     ]
   },
@@ -257,6 +267,16 @@
       "    transfer_entropy_mean_te: 0.0,",
       "    hodge_inconsistency_ratio: 0.0,",
       "    hodge_curl_energy: 0.0,",
+      "    doob_drift_rate: 0.0,",
+      "    doob_max_drift: 0.0,",
+      "    fano_mean_mi: 0.0,",
+      "    fano_mean_bound: 0.5,",
+      "    dobrushin_max_contraction: 0.0,",
+      "    dobrushin_mean_contraction: 0.0,",
+      "    coupling_divergence_bound: 1.0,",
+      "    coupling_certification_margin: -0.95,",
+      "    loss_recommended_action: 1,",
+      "    loss_cost_explosion_count: 0,",
       "}"
     ]
   }

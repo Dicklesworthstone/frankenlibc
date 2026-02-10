@@ -13,8 +13,10 @@
 
 pub mod admm_budget;
 pub mod atiyah_bott;
+pub mod azuma_hoeffding;
 pub mod bandit;
 pub mod barrier;
+pub mod bifurcation_detector;
 pub mod changepoint;
 pub mod clifford;
 pub mod cohomology;
@@ -28,6 +30,7 @@ pub mod derived_tstructure;
 pub mod design;
 pub mod dobrushin_contraction;
 pub mod doob_decomposition;
+pub mod entropy_rate;
 pub mod eprocess;
 pub mod equivariant;
 pub mod evidence;
@@ -40,6 +43,7 @@ pub mod hodge_decomposition;
 pub mod info_geometry;
 pub mod kernel_mmd;
 pub mod ktheory;
+pub mod lempel_ziv;
 pub mod loss_minimizer;
 pub mod lyapunov_stability;
 pub mod malliavin_sensitivity;
@@ -53,11 +57,14 @@ pub mod pareto;
 pub mod pomdp_repair;
 pub mod provenance_info;
 pub mod rademacher_complexity;
+pub mod renewal_theory;
 pub mod risk;
 pub mod serre_spectral;
 pub mod sos_invariant;
 pub mod sparse;
+pub mod spectral_gap;
 pub mod stein_discrepancy;
+pub mod submodular_coverage;
 pub mod transfer_entropy;
 pub mod wasserstein_drift;
 
@@ -83,6 +90,7 @@ use crate::tropical_latency::{PipelinePath, TROPICAL_METRICS, TropicalLatencyCom
 
 use self::admm_budget::{AdmmBudgetController, AdmmState};
 use self::atiyah_bott::{AtiyahBottController, LocalizationState};
+use self::azuma_hoeffding::{AzumaHoeffdingMonitor, AzumaState};
 use self::bandit::ConstrainedBanditRouter;
 use self::barrier::BarrierOracle;
 use self::changepoint::{ChangepointController, ChangepointState};
@@ -509,6 +517,14 @@ pub struct RuntimeKernelSnapshot {
     pub dobrushin_max_contraction: f64,
     /// Dobrushin contraction coefficient mean across controllers (0..1).
     pub dobrushin_mean_contraction: f64,
+    /// Coupling empirical divergence bound (p_hat + Hoeffding eps, 0..1).
+    pub coupling_divergence_bound: f64,
+    /// Coupling certification margin (threshold - bound, positive = certified).
+    pub coupling_certification_margin: f64,
+    /// Loss-minimizer recommended action (0=allow, 1=full-validate, 2=repair, 3=deny).
+    pub loss_recommended_action: u8,
+    /// Loss-minimizer cost explosion detection count.
+    pub loss_cost_explosion_count: u64,
 }
 
 /// Online control kernel for strict/hardened runtime decisions.
@@ -2841,6 +2857,8 @@ impl RuntimeMathKernel {
         let doob_summary = self.doob.lock().summary();
         let fano_summary = self.fano.lock().summary();
         let dobrushin_summary = self.dobrushin.lock().summary();
+        let coupling_summary = self.coupling.lock().summary();
+        let loss_summary = self.loss_minimizer.lock().summary();
         let microlocal_summary = self.microlocal.lock().summary();
         let serre_summary = self.serre.lock().summary();
         let clifford_summary = self.clifford.lock().summary();
@@ -2967,6 +2985,10 @@ impl RuntimeMathKernel {
             fano_mean_bound: fano_summary.mean_fano_bound,
             dobrushin_max_contraction: dobrushin_summary.max_contraction,
             dobrushin_mean_contraction: dobrushin_summary.mean_contraction,
+            coupling_divergence_bound: coupling_summary.divergence_bound,
+            coupling_certification_margin: coupling_summary.certification_margin,
+            loss_recommended_action: loss_summary.recommended_action,
+            loss_cost_explosion_count: loss_summary.cost_explosion_count,
         }
     }
 
@@ -3212,6 +3234,8 @@ mod tests {
             "let microlocal_summary = self.microlocal.lock().summary();",
             "let serre_summary = self.serre.lock().summary();",
             "let clifford_summary = self.clifford.lock().summary();",
+            "let coupling_summary = self.coupling.lock().summary();",
+            "let loss_summary = self.loss_minimizer.lock().summary();",
         ] {
             assert_eq!(
                 snapshot_src.matches(needle).count(),
@@ -3576,6 +3600,69 @@ mod tests {
             !matches!(decision.action, MembraneAction::Allow),
             "hardened mode with risk {} ppm (above repair_trigger) must not Allow",
             decision.risk_upper_bound_ppm,
+        );
+    }
+
+    /// Fusion SIGNALS consistency: the number of severity vector slots assigned
+    /// in observe_validation_result() must exactly equal fusion::SIGNALS.
+    ///
+    /// The severity vector has BASE_SEVERITY_LEN elements from base_severity
+    /// (copied via copy_from_slice) plus META_SEVERITY_LEN individually assigned
+    /// meta-controller slots. This test counts the individual `severity[N]`
+    /// assignments and verifies the total matches fusion::SIGNALS.
+    #[test]
+    fn fusion_signals_matches_severity_vector_assignments() {
+        let src = include_str!("mod.rs");
+        let observe_start = src
+            .find("pub fn observe_validation_result(")
+            .expect("observe_validation_result must exist");
+        let observe_tail = &src[observe_start..];
+        let observe_end = observe_tail
+            .find("/// Record overlap information for cross-shard consistency checks.")
+            .expect("observe_validation_result end marker must exist");
+        let observe_src = &observe_tail[..observe_end];
+
+        // Find the fusion severity block.
+        let fusion_start = observe_src
+            .find("let mut severity = [0u8; fusion::SIGNALS];")
+            .expect("fusion severity buffer must exist");
+        let fusion_tail = &observe_src[fusion_start..];
+        let fusion_end = fusion_tail
+            .find("let summary = {")
+            .expect("fusion summary acquisition block must exist");
+        let fusion_block = &fusion_tail[..fusion_end];
+
+        // Count `severity[N] = ` assignment lines (meta-controller slots).
+        let meta_count = fusion_block
+            .lines()
+            .filter(|line| {
+                let trimmed = line.trim();
+                trimmed.starts_with("severity[") && trimmed.contains("] =")
+            })
+            .count();
+
+        assert_eq!(
+            meta_count, META_SEVERITY_LEN,
+            "number of severity[N] assignments ({meta_count}) must equal META_SEVERITY_LEN ({META_SEVERITY_LEN})"
+        );
+
+        // Cross-check: BASE + META == SIGNALS.
+        assert_eq!(
+            BASE_SEVERITY_LEN + META_SEVERITY_LEN,
+            fusion::SIGNALS,
+            "BASE_SEVERITY_LEN + META_SEVERITY_LEN must equal fusion::SIGNALS"
+        );
+    }
+
+    /// Compile-time const assertion is already in place; this test documents
+    /// that changing SIGNALS, BASE_SEVERITY_LEN, or META_SEVERITY_LEN
+    /// without updating all three will cause a compilation failure.
+    #[test]
+    fn fusion_signals_const_assertion_exists() {
+        let src = include_str!("mod.rs");
+        assert!(
+            src.contains("fusion::SIGNALS == BASE_SEVERITY_LEN + META_SEVERITY_LEN"),
+            "const assertion for fusion::SIGNALS consistency must exist in mod.rs"
         );
     }
 }

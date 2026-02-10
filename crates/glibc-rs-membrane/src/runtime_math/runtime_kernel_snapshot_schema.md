@@ -130,3 +130,13 @@ This document defines the stable schema for `RuntimeKernelSnapshot` as emitted b
 | `transfer_entropy_mean_te` | `f64` | dimensionless | finite f64 (no NaN/Inf) | Transfer entropy mean pairwise TE. |
 | `hodge_inconsistency_ratio` | `f64` | dimensionless | 0..1 | Hodge decomposition inconsistency ratio (0..1, 0 = coherent). |
 | `hodge_curl_energy` | `f64` | dimensionless | finite f64 (no NaN/Inf) | Hodge decomposition curl energy (squared cycle residual). |
+| `doob_drift_rate` | `f64` | dimensionless | finite f64 (no NaN/Inf) | Doob decomposition smoothed drift rate (mean |E[Xₙ₊₁|Xₙ] − Xₙ| across controllers). |
+| `doob_max_drift` | `f64` | dimensionless | >=0 | Doob decomposition max per-controller cumulative predictable drift magnitude (|Aₙ|). |
+| `fano_mean_mi` | `f64` | bits | >=0 | Fano mutual information bound mean MI across controllers (bits). |
+| `fano_mean_bound` | `f64` | dimensionless | 0..1 | Fano error lower bound mean across controllers (0..1, higher = less predictable). |
+| `dobrushin_max_contraction` | `f64` | dimensionless | 0..1 | Dobrushin contraction coefficient max across controllers (0..1). |
+| `dobrushin_mean_contraction` | `f64` | dimensionless | 0..1 | Dobrushin contraction coefficient mean across controllers (0..1). |
+| `coupling_divergence_bound` | `f64` | dimensionless | 0..1 | Coupling empirical divergence bound (`p_hat + eps`, clamped). |
+| `coupling_certification_margin` | `f64` | dimensionless | finite f64 (no NaN/Inf) | Coupling certification margin (`threshold - bound`); positive indicates certified. |
+| `loss_recommended_action` | `u8` | enum | 0..3 | Loss-minimizer recommended action (0=allow, 1=full-validate, 2=repair, 3=deny). |
+| `loss_cost_explosion_count` | `u64` | count | >=0 | Loss-minimizer cost explosion detection count. |
