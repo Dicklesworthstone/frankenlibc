@@ -17,6 +17,8 @@ pub mod azuma_hoeffding;
 pub mod bandit;
 pub mod barrier;
 pub mod bifurcation_detector;
+pub mod birkhoff_ergodic;
+pub mod borel_cantelli;
 pub mod changepoint;
 pub mod clifford;
 pub mod cohomology;
@@ -28,6 +30,7 @@ pub mod covering_array;
 pub mod cvar;
 pub mod derived_tstructure;
 pub mod design;
+pub mod dispersion_index;
 pub mod dobrushin_contraction;
 pub mod doob_decomposition;
 pub mod entropy_rate;
@@ -40,7 +43,9 @@ pub mod grobner_normalizer;
 pub mod grothendieck_glue;
 pub mod higher_topos;
 pub mod hodge_decomposition;
+pub mod hurst_exponent;
 pub mod info_geometry;
+pub mod ito_quadratic_variation;
 pub mod kernel_mmd;
 pub mod ktheory;
 pub mod lempel_ziv;
@@ -52,6 +57,7 @@ pub mod microlocal;
 pub mod nerve_complex;
 pub mod obstruction_detector;
 pub mod operator_norm;
+pub mod ornstein_uhlenbeck;
 pub mod pac_bayes;
 pub mod pareto;
 pub mod pomdp_repair;
@@ -93,6 +99,9 @@ use self::atiyah_bott::{AtiyahBottController, LocalizationState};
 use self::azuma_hoeffding::{AzumaHoeffdingMonitor, AzumaState};
 use self::bandit::ConstrainedBanditRouter;
 use self::barrier::BarrierOracle;
+use self::bifurcation_detector::{BifurcationDetector, BifurcationState};
+use self::birkhoff_ergodic::{BirkhoffErgodicMonitor, ErgodicState};
+use self::borel_cantelli::{BorelCantelliMonitor, BorelCantelliState};
 use self::changepoint::{ChangepointController, ChangepointState};
 use self::clifford::{AlignmentObservation, AlignmentRegime, CliffordController, CliffordState};
 use self::cohomology::CohomologyMonitor;
@@ -104,8 +113,10 @@ use self::covering_array::{CoverageState, CoveringArrayController};
 use self::cvar::{DroCvarController, TailState};
 use self::derived_tstructure::{TStructureController, TStructureState};
 use self::design::{OptimalDesignController, Probe, ProbePlan};
+use self::dispersion_index::{DispersionIndexMonitor, DispersionState};
 use self::dobrushin_contraction::{DobrushinContractionMonitor, DobrushinState};
 use self::doob_decomposition::{DoobDecompositionMonitor, DoobState};
+use self::entropy_rate::{EntropyRateMonitor, EntropyRateState};
 use self::eprocess::{AnytimeEProcessMonitor, SequentialState};
 use self::equivariant::{EquivariantState, EquivariantTransportController};
 use self::fano_bound::{FanoBoundMonitor, FanoState};
@@ -116,9 +127,12 @@ use self::grothendieck_glue::{
 };
 use self::higher_topos::{HigherToposController, ToposState};
 use self::hodge_decomposition::{HodgeDecompositionMonitor, HodgeState};
+use self::hurst_exponent::{HurstExponentMonitor, HurstState};
 use self::info_geometry::{GeometryState, InfoGeometryMonitor};
+use self::ito_quadratic_variation::{ItoQuadraticVariationMonitor, ItoQvState};
 use self::kernel_mmd::{KernelMmdMonitor, MmdState};
 use self::ktheory::{KTheoryController, KTheoryState};
+use self::lempel_ziv::{LempelZivMonitor, LempelZivState};
 use self::loss_minimizer::{LossMinimizationController, LossState};
 use self::lyapunov_stability::{LyapunovStabilityMonitor, LyapunovState};
 use self::malliavin_sensitivity::{MalliavSensitivity, SensitivityState};
@@ -127,18 +141,22 @@ use self::microlocal::{MicrolocalController, MicrolocalState, Stratum};
 use self::nerve_complex::{NerveComplexMonitor, NerveState};
 use self::obstruction_detector::{ObstructionDetector, ObstructionState};
 use self::operator_norm::{OperatorNormMonitor, StabilityState};
+use self::ornstein_uhlenbeck::{OrnsteinUhlenbeckMonitor, OuState};
 use self::pac_bayes::{PacBayesMonitor, PacBayesState};
 use self::pareto::ParetoController;
 use self::pomdp_repair::{PomdpRepairController, PomdpState};
 use self::provenance_info::{ProvenanceInfoController, ProvenanceState};
 use self::rademacher_complexity::{RademacherComplexityMonitor, RademacherState};
+use self::renewal_theory::{RenewalState, RenewalTheoryMonitor};
 use self::risk::ConformalRiskEngine;
 use self::serre_spectral::{
     InvariantClass, LayerPair, SerreSpectralController, SpectralSequenceState,
 };
 use self::sos_invariant::{SosInvariantController, SosState};
 use self::sparse::{SparseRecoveryController, SparseState};
+use self::spectral_gap::{SpectralGapMonitor, SpectralGapState};
 use self::stein_discrepancy::{SteinDiscrepancyMonitor, SteinState};
+use self::submodular_coverage::{SubmodularCoverageMonitor, SubmodularState};
 use self::transfer_entropy::{TransferEntropyMonitor, TransferEntropyState};
 use self::wasserstein_drift::{DriftState, WassersteinDriftMonitor};
 
@@ -148,7 +166,7 @@ const FULL_PATH_BUDGET_NS: u64 = 200;
 /// Number of base severity signals fed from hot-path cached atomics.
 const BASE_SEVERITY_LEN: usize = 25;
 /// Number of meta-controller severity signals appended after the base set.
-const META_SEVERITY_LEN: usize = 21;
+const META_SEVERITY_LEN: usize = 34;
 /// Compile-time assertion: fusion::SIGNALS == BASE + META severity slots.
 const _: () = assert!(
     fusion::SIGNALS == BASE_SEVERITY_LEN + META_SEVERITY_LEN,
@@ -517,6 +535,42 @@ pub struct RuntimeKernelSnapshot {
     pub dobrushin_max_contraction: f64,
     /// Dobrushin contraction coefficient mean across controllers (0..1).
     pub dobrushin_mean_contraction: f64,
+    /// Azuma-Hoeffding max exceedance ratio (0..∞, >1 = bounds violated).
+    pub azuma_max_exceedance: f64,
+    /// Azuma-Hoeffding mean exceedance ratio across controllers.
+    pub azuma_mean_exceedance: f64,
+    /// Renewal theory max age ratio across controllers (0..∞).
+    pub renewal_max_age_ratio: f64,
+    /// Renewal theory mean inter-arrival time.
+    pub renewal_mean_time: f64,
+    /// Lempel-Ziv max complexity ratio across controllers (0..1+).
+    pub lz_max_complexity_ratio: f64,
+    /// Lempel-Ziv mean complexity ratio across controllers.
+    pub lz_mean_complexity_ratio: f64,
+    /// Ito quadratic variation max per step (realized volatility).
+    pub ito_qv_max_per_step: f64,
+    /// Ito quadratic variation mean per step.
+    pub ito_qv_mean_per_step: f64,
+    /// Borel-Cantelli max exceedance rate across controllers (0..1).
+    pub borel_cantelli_max_rate: f64,
+    /// Borel-Cantelli mean exceedance rate across controllers (0..1).
+    pub borel_cantelli_mean_rate: f64,
+    /// Ornstein-Uhlenbeck min θ across controllers (negative = explosive).
+    pub ou_min_theta: f64,
+    /// Ornstein-Uhlenbeck mean θ across controllers.
+    pub ou_mean_theta: f64,
+    /// Hurst exponent max across controllers (0..1, 0.5 = independent).
+    pub hurst_max: f64,
+    /// Hurst exponent mean across controllers.
+    pub hurst_mean: f64,
+    /// Dispersion index max across controllers (Var/Mean, 1 = Poisson).
+    pub dispersion_max: f64,
+    /// Dispersion index mean across controllers.
+    pub dispersion_mean: f64,
+    /// Birkhoff ergodic max convergence gap across controllers (0..1+).
+    pub birkhoff_max_gap: f64,
+    /// Birkhoff ergodic mean convergence gap across controllers.
+    pub birkhoff_mean_gap: f64,
     /// Coupling empirical divergence bound (p_hat + Hoeffding eps, 0..1).
     pub coupling_divergence_bound: f64,
     /// Coupling certification margin (threshold - bound, positive = certified).
@@ -525,6 +579,22 @@ pub struct RuntimeKernelSnapshot {
     pub loss_recommended_action: u8,
     /// Loss-minimizer cost explosion detection count.
     pub loss_cost_explosion_count: u64,
+    /// Spectral gap max |λ₂| across controllers (0..1, lower = faster mixing).
+    pub spectral_gap_max_eigenvalue: f64,
+    /// Spectral gap mean |λ₂| across controllers (0..1).
+    pub spectral_gap_mean_eigenvalue: f64,
+    /// Submodular coverage ratio under budget (0..1, higher = better).
+    pub submodular_coverage_ratio: f64,
+    /// Submodular selected stage count under budget.
+    pub submodular_selected_stages: u8,
+    /// Bifurcation max lag-1 autocorrelation (sensitivity) across controllers (0..1).
+    pub bifurcation_max_sensitivity: f64,
+    /// Bifurcation mean sensitivity across controllers (0..1).
+    pub bifurcation_mean_sensitivity: f64,
+    /// Shannon entropy rate of severity process (bits, 0..log₂K).
+    pub entropy_rate_bits: f64,
+    /// Normalized entropy rate ratio (0..1, 0=deterministic, 1=IID uniform).
+    pub entropy_rate_ratio: f64,
 }
 
 /// Online control kernel for strict/hardened runtime decisions.
@@ -590,6 +660,19 @@ pub struct RuntimeMathKernel {
     doob: Mutex<DoobDecompositionMonitor>,
     fano: Mutex<FanoBoundMonitor>,
     dobrushin: Mutex<DobrushinContractionMonitor>,
+    azuma: Mutex<AzumaHoeffdingMonitor>,
+    renewal: Mutex<RenewalTheoryMonitor>,
+    lempel_ziv: Mutex<LempelZivMonitor>,
+    spectral_gap: Mutex<SpectralGapMonitor>,
+    submodular: Mutex<SubmodularCoverageMonitor>,
+    bifurcation: Mutex<BifurcationDetector>,
+    entropy_rate: Mutex<EntropyRateMonitor>,
+    ito_qv: Mutex<ItoQuadraticVariationMonitor>,
+    borel_cantelli: Mutex<BorelCantelliMonitor>,
+    ornstein_uhlenbeck: Mutex<OrnsteinUhlenbeckMonitor>,
+    hurst: Mutex<HurstExponentMonitor>,
+    dispersion: Mutex<DispersionIndexMonitor>,
+    birkhoff: Mutex<BirkhoffErgodicMonitor>,
     cached_risk_bonus_ppm: AtomicU64,
     cached_oracle_bias: [AtomicU8; ApiFamily::COUNT],
     cached_spectral_phase: AtomicU8,
@@ -652,6 +735,19 @@ pub struct RuntimeMathKernel {
     cached_doob_state: AtomicU8,
     cached_fano_state: AtomicU8,
     cached_dobrushin_state: AtomicU8,
+    cached_azuma_state: AtomicU8,
+    cached_renewal_state: AtomicU8,
+    cached_lz_state: AtomicU8,
+    cached_spectral_gap_state: AtomicU8,
+    cached_submodular_state: AtomicU8,
+    cached_bifurcation_state: AtomicU8,
+    cached_entropy_rate_state: AtomicU8,
+    cached_ito_qv_state: AtomicU8,
+    cached_borel_cantelli_state: AtomicU8,
+    cached_ou_state: AtomicU8,
+    cached_hurst_state: AtomicU8,
+    cached_dispersion_state: AtomicU8,
+    cached_birkhoff_state: AtomicU8,
     decisions: AtomicU64,
 }
 
@@ -721,6 +817,19 @@ impl RuntimeMathKernel {
             doob: Mutex::new(DoobDecompositionMonitor::new()),
             fano: Mutex::new(FanoBoundMonitor::new()),
             dobrushin: Mutex::new(DobrushinContractionMonitor::new()),
+            azuma: Mutex::new(AzumaHoeffdingMonitor::new()),
+            renewal: Mutex::new(RenewalTheoryMonitor::new()),
+            lempel_ziv: Mutex::new(LempelZivMonitor::new()),
+            spectral_gap: Mutex::new(SpectralGapMonitor::new()),
+            submodular: Mutex::new(SubmodularCoverageMonitor::new()),
+            bifurcation: Mutex::new(BifurcationDetector::new()),
+            entropy_rate: Mutex::new(EntropyRateMonitor::new()),
+            ito_qv: Mutex::new(ItoQuadraticVariationMonitor::new()),
+            borel_cantelli: Mutex::new(BorelCantelliMonitor::new()),
+            ornstein_uhlenbeck: Mutex::new(OrnsteinUhlenbeckMonitor::new()),
+            hurst: Mutex::new(HurstExponentMonitor::new()),
+            dispersion: Mutex::new(DispersionIndexMonitor::new()),
+            birkhoff: Mutex::new(BirkhoffErgodicMonitor::new()),
             cached_risk_bonus_ppm: AtomicU64::new(0),
             cached_oracle_bias: std::array::from_fn(|_| AtomicU8::new(1)),
             cached_spectral_phase: AtomicU8::new(0),
@@ -783,6 +892,19 @@ impl RuntimeMathKernel {
             cached_doob_state: AtomicU8::new(0),
             cached_fano_state: AtomicU8::new(0),
             cached_dobrushin_state: AtomicU8::new(0),
+            cached_azuma_state: AtomicU8::new(0),
+            cached_renewal_state: AtomicU8::new(0),
+            cached_lz_state: AtomicU8::new(0),
+            cached_spectral_gap_state: AtomicU8::new(0),
+            cached_submodular_state: AtomicU8::new(0),
+            cached_bifurcation_state: AtomicU8::new(0),
+            cached_entropy_rate_state: AtomicU8::new(0),
+            cached_ito_qv_state: AtomicU8::new(0),
+            cached_borel_cantelli_state: AtomicU8::new(0),
+            cached_ou_state: AtomicU8::new(0),
+            cached_hurst_state: AtomicU8::new(0),
+            cached_dispersion_state: AtomicU8::new(0),
+            cached_birkhoff_state: AtomicU8::new(0),
             decisions: AtomicU64::new(0),
         }
     }
@@ -1137,6 +1259,69 @@ impl RuntimeMathKernel {
             2 => 55_000u32,  // SlowMixing — chain mixing slowly
             _ => 0u32,       // Calibrating/Ergodic
         };
+        // Azuma-Hoeffding: concentration bound violation on noise component.
+        // Explosive means severity jumps exceed bounded-difference assumption.
+        let azuma_bonus = match self.cached_azuma_state.load(Ordering::Relaxed) {
+            3 => 170_000u32, // Explosive — Azuma bounds violated
+            2 => 60_000u32,  // Diffuse — approaching bounds
+            _ => 0u32,       // Calibrating/Concentrated
+        };
+        // Renewal theory: inter-arrival time of return-to-healthy.
+        // Stale means the system is stuck in high severity without recovering.
+        let renewal_bonus = match self.cached_renewal_state.load(Ordering::Relaxed) {
+            3 => 140_000u32, // Stale — system stuck, recovery overdue
+            2 => 50_000u32,  // Aging — recovery taking longer than expected
+            _ => 0u32,       // Calibrating/Renewing
+        };
+        // Lempel-Ziv complexity: algorithmic compressibility of severity.
+        // Repetitive means stuck/looping; Entropic means loss of structure.
+        let lz_bonus = match self.cached_lz_state.load(Ordering::Relaxed) {
+            2 => 110_000u32, // Repetitive — stuck in pattern
+            3 => 80_000u32,  // Entropic — near-random, lost structure
+            _ => 0u32,       // Calibrating/Structured
+        };
+        // Ito quadratic variation: realized volatility of severity noise.
+        // Volatile means severity transitions are erratic; Frozen means deterministic.
+        let ito_qv_bonus = match self.cached_ito_qv_state.load(Ordering::Relaxed) {
+            3 => 130_000u32, // Volatile — noise is exploding
+            2 => 45_000u32,  // Frozen — process stuck/deterministic
+            _ => 0u32,       // Calibrating/Stable
+        };
+        // Borel-Cantelli recurrence: tail event persistence classification.
+        // Absorbing means stuck in failure; Recurrent means failures persist.
+        let borel_cantelli_bonus = match self.cached_borel_cantelli_state.load(Ordering::Relaxed) {
+            3 => 150_000u32, // Absorbing — stuck in exceedance
+            2 => 55_000u32,  // Recurrent — persistent exceedances
+            _ => 0u32,       // Calibrating/Transient
+        };
+        // Ornstein-Uhlenbeck mean reversion: equilibrium attraction strength.
+        // Explosive means severity diverges from mean; Diffusing means random walk.
+        let ou_bonus = match self.cached_ou_state.load(Ordering::Relaxed) {
+            3 => 160_000u32, // Explosive — mean-diverging
+            2 => 50_000u32,  // Diffusing — random walk, no restoring force
+            _ => 0u32,       // Calibrating/Stable
+        };
+        // Hurst exponent: long-range dependence in severity process.
+        // Persistent means failures cluster at multiple time scales beyond EWMA reach.
+        let hurst_bonus = match self.cached_hurst_state.load(Ordering::Relaxed) {
+            2 => 120_000u32, // Persistent — long-range clustering
+            3 => 80_000u32,  // AntiPersistent — self-correcting oscillations
+            _ => 0u32,       // Calibrating/Independent
+        };
+        // Index of dispersion: alarm clustering vs independence.
+        // Clustered means failures come in correlated bursts (common-cause).
+        let dispersion_bonus = match self.cached_dispersion_state.load(Ordering::Relaxed) {
+            2 => 130_000u32, // Clustered — overdispersed, cascading failures
+            3 => 60_000u32,  // Underdispersed — unnaturally regular
+            _ => 0u32,       // Calibrating/Poisson
+        };
+        // Birkhoff ergodic convergence: time-average convergence rate.
+        // NonErgodic means the system is trapped in a subset of states.
+        let birkhoff_bonus = match self.cached_birkhoff_state.load(Ordering::Relaxed) {
+            3 => 150_000u32, // NonErgodic — trapped in states
+            2 => 55_000u32,  // SlowConvergence — near non-ergodic boundary
+            _ => 0u32,       // Calibrating/Ergodic
+        };
         // Provenance info-theoretic: fingerprint entropy degradation signals
         // collision resistance loss in the allocation integrity subsystem.
         let provenance_bonus = match self.cached_provenance_state.load(Ordering::Relaxed) {
@@ -1212,6 +1397,15 @@ impl RuntimeMathKernel {
             .saturating_add(doob_bonus)
             .saturating_add(fano_bonus)
             .saturating_add(dobrushin_bonus)
+            .saturating_add(azuma_bonus)
+            .saturating_add(renewal_bonus)
+            .saturating_add(lz_bonus)
+            .saturating_add(ito_qv_bonus)
+            .saturating_add(borel_cantelli_bonus)
+            .saturating_add(ou_bonus)
+            .saturating_add(hurst_bonus)
+            .saturating_add(dispersion_bonus)
+            .saturating_add(birkhoff_bonus)
             .min(1_000_000);
 
         let ident_ppm = self.cached_design_ident_ppm.load(Ordering::Relaxed) as u32;
@@ -2659,8 +2853,224 @@ impl RuntimeMathKernel {
                 .store(dob_code, Ordering::Relaxed);
         }
 
+        // Feed Azuma-Hoeffding concentration monitor.
+        // Tracks whether severity noise exceeds bounded-difference bounds.
+        {
+            let azuma_code = {
+                let mut az = self.azuma.lock();
+                az.observe_and_update(&base_severity);
+                match az.state() {
+                    AzumaState::Calibrating => 0u8,
+                    AzumaState::Concentrated => 1u8,
+                    AzumaState::Diffuse => 2u8,
+                    AzumaState::Explosive => 3u8,
+                }
+            };
+            self.cached_azuma_state.store(azuma_code, Ordering::Relaxed);
+        }
+
+        // Feed renewal theory monitor.
+        // Tracks inter-arrival times of severity recovery events.
+        {
+            let renewal_code = {
+                let mut rn = self.renewal.lock();
+                rn.observe_and_update(&base_severity);
+                match rn.state() {
+                    RenewalState::Calibrating => 0u8,
+                    RenewalState::Renewing => 1u8,
+                    RenewalState::Aging => 2u8,
+                    RenewalState::Stale => 3u8,
+                }
+            };
+            self.cached_renewal_state
+                .store(renewal_code, Ordering::Relaxed);
+        }
+
+        // Feed Lempel-Ziv complexity monitor.
+        // Tracks algorithmic complexity of severity sequence.
+        {
+            let lz_code = {
+                let mut lz = self.lempel_ziv.lock();
+                lz.observe_and_update(&base_severity);
+                match lz.state() {
+                    LempelZivState::Calibrating => 0u8,
+                    LempelZivState::Structured => 1u8,
+                    LempelZivState::Repetitive => 2u8,
+                    LempelZivState::Entropic => 3u8,
+                }
+            };
+            self.cached_lz_state.store(lz_code, Ordering::Relaxed);
+        }
+
+        // Feed spectral gap mixing time monitor.
+        // Tracks Markov chain spectral gap and mixing time bounds.
+        {
+            let sg_code = {
+                let mut sg = self.spectral_gap.lock();
+                sg.observe_and_update(&base_severity);
+                match sg.state() {
+                    SpectralGapState::Calibrating => 0u8,
+                    SpectralGapState::RapidMixing => 1u8,
+                    SpectralGapState::SlowMixing => 2u8,
+                    SpectralGapState::Metastable => 3u8,
+                }
+            };
+            self.cached_spectral_gap_state
+                .store(sg_code, Ordering::Relaxed);
+        }
+
+        // Feed submodular coverage monitor.
+        // Tracks validation stage coverage ratio under budget constraints.
+        {
+            let sub_code = {
+                let mut sc = self.submodular.lock();
+                sc.observe_and_update(&base_severity);
+                match sc.state() {
+                    SubmodularState::Calibrating => 0u8,
+                    SubmodularState::Sufficient => 1u8,
+                    SubmodularState::Marginal => 2u8,
+                    SubmodularState::Insufficient => 3u8,
+                }
+            };
+            self.cached_submodular_state
+                .store(sub_code, Ordering::Relaxed);
+        }
+
+        // Feed bifurcation proximity detector.
+        // Tracks critical slowing down via lag-1 autocorrelation.
+        {
+            let bif_code = {
+                let mut bd = self.bifurcation.lock();
+                bd.observe_and_update(&base_severity);
+                match bd.state() {
+                    BifurcationState::Calibrating => 0u8,
+                    BifurcationState::Stable => 1u8,
+                    BifurcationState::Approaching => 2u8,
+                    BifurcationState::Critical => 3u8,
+                }
+            };
+            self.cached_bifurcation_state
+                .store(bif_code, Ordering::Relaxed);
+        }
+
+        // Feed entropy rate complexity monitor.
+        // Tracks Shannon entropy rate of the severity process.
+        {
+            let er_code = {
+                let mut er = self.entropy_rate.lock();
+                er.observe_and_update(&base_severity);
+                match er.state() {
+                    EntropyRateState::Calibrating => 0u8,
+                    EntropyRateState::LowComplexity => 1u8,
+                    EntropyRateState::ModerateComplexity => 2u8,
+                    EntropyRateState::HighComplexity => 3u8,
+                }
+            };
+            self.cached_entropy_rate_state
+                .store(er_code, Ordering::Relaxed);
+        }
+
+        // Feed Ito quadratic variation monitor.
+        // Tracks realized volatility of the severity martingale component.
+        {
+            let ito_code = {
+                let mut ito = self.ito_qv.lock();
+                ito.observe_and_update(&base_severity);
+                match ito.state() {
+                    ItoQvState::Calibrating => 0u8,
+                    ItoQvState::Stable => 1u8,
+                    ItoQvState::Frozen => 2u8,
+                    ItoQvState::Volatile => 3u8,
+                }
+            };
+            self.cached_ito_qv_state.store(ito_code, Ordering::Relaxed);
+        }
+
+        // Feed Borel-Cantelli recurrence monitor.
+        // Classifies whether severity exceedances are transient or recurrent.
+        {
+            let bc_code = {
+                let mut bc = self.borel_cantelli.lock();
+                bc.observe_and_update(&base_severity);
+                match bc.state() {
+                    BorelCantelliState::Calibrating => 0u8,
+                    BorelCantelliState::Transient => 1u8,
+                    BorelCantelliState::Recurrent => 2u8,
+                    BorelCantelliState::Absorbing => 3u8,
+                }
+            };
+            self.cached_borel_cantelli_state
+                .store(bc_code, Ordering::Relaxed);
+        }
+
+        // Feed Ornstein-Uhlenbeck mean reversion monitor.
+        // Estimates mean-reversion speed θ of the severity process.
+        {
+            let ou_code = {
+                let mut ou = self.ornstein_uhlenbeck.lock();
+                ou.observe_and_update(&base_severity);
+                match ou.state() {
+                    OuState::Calibrating => 0u8,
+                    OuState::Stable => 1u8,
+                    OuState::Diffusing => 2u8,
+                    OuState::Explosive => 3u8,
+                }
+            };
+            self.cached_ou_state.store(ou_code, Ordering::Relaxed);
+        }
+
+        // Feed Hurst exponent R/S analysis monitor.
+        // Detects long-range dependence in severity sequences.
+        {
+            let hurst_code = {
+                let mut h = self.hurst.lock();
+                h.observe_and_update(&base_severity);
+                match h.state() {
+                    HurstState::Calibrating => 0u8,
+                    HurstState::Independent => 1u8,
+                    HurstState::Persistent => 2u8,
+                    HurstState::AntiPersistent => 3u8,
+                }
+            };
+            self.cached_hurst_state.store(hurst_code, Ordering::Relaxed);
+        }
+
+        // Feed index of dispersion alarm clustering monitor.
+        // Detects whether alarms are independent, clustered, or regular.
+        {
+            let disp_code = {
+                let mut d = self.dispersion.lock();
+                d.observe_and_update(&base_severity);
+                match d.state() {
+                    DispersionState::Calibrating => 0u8,
+                    DispersionState::Poisson => 1u8,
+                    DispersionState::Clustered => 2u8,
+                    DispersionState::Underdispersed => 3u8,
+                }
+            };
+            self.cached_dispersion_state
+                .store(disp_code, Ordering::Relaxed);
+        }
+
+        // Feed Birkhoff ergodic convergence monitor.
+        // Tracks whether time-average of severity converges to ensemble average.
+        {
+            let birk_code = {
+                let mut b = self.birkhoff.lock();
+                b.observe_and_update(&base_severity);
+                match b.state() {
+                    ErgodicState::Calibrating => 0u8,
+                    ErgodicState::Ergodic => 1u8,
+                    ErgodicState::SlowConvergence => 2u8,
+                    ErgodicState::NonErgodic => 3u8,
+                }
+            };
+            self.cached_birkhoff_state
+                .store(birk_code, Ordering::Relaxed);
+        }
+
         // Feed robust fusion controller from extended severity vector.
-        // Includes the 25 base controller signals plus 21 meta-controller states.
+        // Includes the 25 base controller signals plus META_SEVERITY_LEN meta-controller states.
         {
             let mut severity = [0u8; fusion::SIGNALS];
             severity[..BASE_SEVERITY_LEN].copy_from_slice(&base_severity);
@@ -2687,6 +3097,19 @@ impl RuntimeMathKernel {
             severity[43] = self.cached_doob_state.load(Ordering::Relaxed); // 0..3
             severity[44] = self.cached_fano_state.load(Ordering::Relaxed); // 0..3
             severity[45] = self.cached_dobrushin_state.load(Ordering::Relaxed); // 0..3
+            severity[46] = self.cached_azuma_state.load(Ordering::Relaxed); // 0..3
+            severity[47] = self.cached_renewal_state.load(Ordering::Relaxed); // 0..3
+            severity[48] = self.cached_lz_state.load(Ordering::Relaxed); // 0..3
+            severity[49] = self.cached_spectral_gap_state.load(Ordering::Relaxed); // 0..3
+            severity[50] = self.cached_submodular_state.load(Ordering::Relaxed); // 0..3
+            severity[51] = self.cached_bifurcation_state.load(Ordering::Relaxed); // 0..3
+            severity[52] = self.cached_entropy_rate_state.load(Ordering::Relaxed); // 0..3
+            severity[53] = self.cached_ito_qv_state.load(Ordering::Relaxed); // 0..3
+            severity[54] = self.cached_borel_cantelli_state.load(Ordering::Relaxed); // 0..3
+            severity[55] = self.cached_ou_state.load(Ordering::Relaxed); // 0..3
+            severity[56] = self.cached_hurst_state.load(Ordering::Relaxed); // 0..3
+            severity[57] = self.cached_dispersion_state.load(Ordering::Relaxed); // 0..3
+            severity[58] = self.cached_birkhoff_state.load(Ordering::Relaxed); // 0..3
             let summary = {
                 let mut fusion = self.fusion.lock();
                 fusion.observe(severity, adverse, mode)
@@ -2857,6 +3280,19 @@ impl RuntimeMathKernel {
         let doob_summary = self.doob.lock().summary();
         let fano_summary = self.fano.lock().summary();
         let dobrushin_summary = self.dobrushin.lock().summary();
+        let azuma_summary = self.azuma.lock().summary();
+        let renewal_summary = self.renewal.lock().summary();
+        let lz_summary = self.lempel_ziv.lock().summary();
+        let spectral_gap_summary = self.spectral_gap.lock().summary();
+        let submodular_summary = self.submodular.lock().summary();
+        let bifurcation_summary = self.bifurcation.lock().summary();
+        let entropy_rate_summary = self.entropy_rate.lock().summary();
+        let ito_qv_summary = self.ito_qv.lock().summary();
+        let borel_cantelli_summary = self.borel_cantelli.lock().summary();
+        let ou_summary = self.ornstein_uhlenbeck.lock().summary();
+        let hurst_summary = self.hurst.lock().summary();
+        let dispersion_summary = self.dispersion.lock().summary();
+        let birkhoff_summary = self.birkhoff.lock().summary();
         let coupling_summary = self.coupling.lock().summary();
         let loss_summary = self.loss_minimizer.lock().summary();
         let microlocal_summary = self.microlocal.lock().summary();
@@ -2985,10 +3421,36 @@ impl RuntimeMathKernel {
             fano_mean_bound: fano_summary.mean_fano_bound,
             dobrushin_max_contraction: dobrushin_summary.max_contraction,
             dobrushin_mean_contraction: dobrushin_summary.mean_contraction,
+            azuma_max_exceedance: azuma_summary.max_exceedance,
+            azuma_mean_exceedance: azuma_summary.mean_exceedance,
+            renewal_max_age_ratio: renewal_summary.max_age_ratio,
+            renewal_mean_time: renewal_summary.mean_renewal_time,
+            lz_max_complexity_ratio: lz_summary.max_complexity_ratio,
+            lz_mean_complexity_ratio: lz_summary.mean_complexity_ratio,
+            ito_qv_max_per_step: ito_qv_summary.max_qv_per_step,
+            ito_qv_mean_per_step: ito_qv_summary.mean_qv_per_step,
+            borel_cantelli_max_rate: borel_cantelli_summary.max_exceedance_rate,
+            borel_cantelli_mean_rate: borel_cantelli_summary.mean_exceedance_rate,
+            ou_min_theta: ou_summary.min_theta,
+            ou_mean_theta: ou_summary.mean_theta,
+            hurst_max: hurst_summary.max_hurst,
+            hurst_mean: hurst_summary.mean_hurst,
+            dispersion_max: dispersion_summary.max_dispersion,
+            dispersion_mean: dispersion_summary.mean_dispersion,
+            birkhoff_max_gap: birkhoff_summary.max_convergence_gap,
+            birkhoff_mean_gap: birkhoff_summary.mean_convergence_gap,
             coupling_divergence_bound: coupling_summary.divergence_bound,
             coupling_certification_margin: coupling_summary.certification_margin,
             loss_recommended_action: loss_summary.recommended_action,
             loss_cost_explosion_count: loss_summary.cost_explosion_count,
+            spectral_gap_max_eigenvalue: spectral_gap_summary.max_second_eigenvalue,
+            spectral_gap_mean_eigenvalue: spectral_gap_summary.mean_second_eigenvalue,
+            submodular_coverage_ratio: submodular_summary.coverage_ratio,
+            submodular_selected_stages: submodular_summary.selected_stages,
+            bifurcation_max_sensitivity: bifurcation_summary.max_sensitivity,
+            bifurcation_mean_sensitivity: bifurcation_summary.mean_sensitivity,
+            entropy_rate_bits: entropy_rate_summary.entropy_rate_bits,
+            entropy_rate_ratio: entropy_rate_summary.entropy_rate_ratio,
         }
     }
 
