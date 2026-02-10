@@ -30,6 +30,10 @@ scripts/check_module_inventory.sh
 echo "PASS"
 echo ""
 
+echo "--- module wiring checklist ---"
+scripts/check_module_wiring.sh || echo "WARN: wiring gaps found (non-blocking)"
+echo ""
+
 echo "--- snapshot gate (runtime_math golden) ---"
 scripts/snapshot_gate.sh
 echo "PASS"
