@@ -39,6 +39,11 @@ Legend:
 | io ops | `dup`, `dup2`, `pipe`, `fcntl` | DONE |
 | resource ops | `getrlimit`, `setrlimit` | DONE |
 | dirent ops | `opendir`, `readdir`, `closedir` | DONE |
+| unistd ops | `read`, `write`, `close`, `lseek`, `getpid`, `getppid`, `getuid`, `geteuid`, `getgid`, `getegid`, `isatty`, `access`, `getcwd`, `chdir`, `fchdir`, `unlink`, `rmdir`, `link`, `symlink`, `readlink`, `stat`, `fstat`, `lstat`, `fsync`, `fdatasync`, `sleep`, `usleep` | DONE |
+| socket ops | `socket`, `bind`, `listen`, `accept`, `connect`, `send`, `recv`, `sendto`, `recvfrom`, `shutdown`, `setsockopt`, `getsockopt`, `getpeername`, `getsockname` | DONE |
+| inet ops | `htons`, `htonl`, `ntohs`, `ntohl`, `inet_pton`, `inet_ntop`, `inet_addr` | DONE |
+| locale ops | `setlocale`, `localeconv` | DONE |
+| termios ops | `tcgetattr`, `tcsetattr`, `cfgetispeed`, `cfgetospeed`, `cfsetispeed`, `cfsetospeed`, `tcdrain`, `tcflush`, `tcflow`, `tcsendbreak` | DONE |
 
 ## Mode-Specific Parity Matrix
 
@@ -97,6 +102,11 @@ Legend:
 | math/fenv integration | runtime-math routing active for bootstrap `<math.h>` entrypoints (`sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2`, `exp`, `log`, `log10`, `pow`, `fabs`, `ceil`, `floor`, `round`, `fmod`, `erf`, `tgamma`, `lgamma`) | DONE |
 | pthread/futex integration | runtime-math routing for wait/lock/cancel edges | IN_PROGRESS |
 | resolver/NSS integration | runtime-math routing active for bootstrap resolver ABI (`getaddrinfo`, `freeaddrinfo`, `getnameinfo`) with exact check-order stage outcomes; full NSS/cache/poisoning campaign still pending | IN_PROGRESS |
+| unistd/POSIX integration | runtime-math routing active for `<unistd.h>` entrypoints (`read`, `write`, `close`, `lseek`, `stat`, `access`, `getcwd`, `chdir`, `unlink`, `link`, `symlink`, `readlink`, `fsync`, `sleep`) under `ApiFamily::IoFd` with strict/hardened whence/mode/path validation + repair | DONE |
+| socket integration | runtime-math routing active for `<sys/socket.h>` entrypoints (`socket`, `bind`, `listen`, `accept`, `connect`, `send`, `recv`, `sendto`, `recvfrom`, `shutdown`, `setsockopt`, `getsockopt`, `getpeername`, `getsockname`) under `ApiFamily::Socket` with strict/hardened AF/type/how validation + repair | DONE |
+| inet integration | runtime-math routing active for `<arpa/inet.h>` entrypoints (`htons`, `htonl`, `ntohs`, `ntohl`, `inet_pton`, `inet_ntop`, `inet_addr`) under `ApiFamily::Inet` | DONE |
+| locale integration | runtime-math routing active for `<locale.h>` entrypoints (`setlocale`, `localeconv`) under `ApiFamily::Locale` with strict/hardened locale validation + C-locale fallback repair | DONE |
+| termios integration | runtime-math routing active for `<termios.h>` entrypoints (`tcgetattr`, `tcsetattr`, `cfget*speed`, `cfset*speed`, `tcdrain`, `tcflush`, `tcflow`, `tcsendbreak`) under `ApiFamily::Termios` with strict/hardened optional_actions/queue/flow validation + repair | DONE |
 
 ## Reverse Core Coverage Matrix
 
@@ -247,6 +257,8 @@ Legend:
 24. Commitment-audit controller live — hash-chain commitments (SipHash), replay ring buffer (128 entries), supermartingale sequential hypothesis test with anytime-valid tamper detection for session/accounting traces (math item #44).
 25. Bayesian change-point detector live — Adams & MacKay (2007) online Bayesian change-point detection with truncated run-length posterior (256-horizon), Beta-Bernoulli conjugate model, geometric hazard function, drift/shift/stable classification (math item #6).
 26. Conformal risk controller live — split conformal prediction (Vovk et al. 2005) with sliding-window calibration (256 entries), conformal p-values, EWMA coverage tracking, distribution-free finite-sample miscoverage detection (math item #27).
+27. Five new POSIX function families ported: `<unistd.h>` (27 entrypoints), `<sys/socket.h>` (14 entrypoints), `<arpa/inet.h>` (7 entrypoints), `<locale.h>` (2 entrypoints), `<termios.h>` (10 entrypoints). All routed through the RuntimeMathKernel via new ApiFamily variants (Socket=13, Locale=14, Termios=15, Inet=16). Core modules provide pure-Rust validators and constants; ABI modules wrap libc with membrane gating.
+28. Six new runtime math monitors integrated: Malliavin sensitivity, Fisher-Rao information geometry, matrix concentration (Bernstein), Čech nerve complex, Wasserstein drift, kernel MMD. Total test count: 792 (up from 608).
 
 ## Update Policy
 
