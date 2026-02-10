@@ -251,6 +251,15 @@ Rules:
 - `runtime_math/commitment_audit.rs` — Commitment-algebra + martingale-audit tamper-evident session traces (math #44)
 - `runtime_math/changepoint.rs` — Bayesian online change-point detection (Adams & MacKay 2007) with Beta-Bernoulli conjugate model (math #6)
 - `runtime_math/conformal.rs` — Split conformal prediction risk controller (Vovk et al. 2005) with finite-sample coverage guarantees (math #27)
+- `runtime_math/ktheory.rs` — K-theory transport ABI compatibility controller (Atiyah-Singer families index, math #34)
+- `runtime_math/covering_array.rs` — Covering-array matroid conformance interaction coverage scheduler (math #17)
+- `runtime_math/derived_tstructure.rs` — Derived-category t-structure bootstrap ordering invariant controller (math #38)
+- `runtime_math/atiyah_bott.rs` — Atiyah-Bott fixed-point localization meta-controller for hot-path anomaly concentration detection (math #35)
+- `runtime_math/pomdp_repair.rs` — Constrained POMDP repair policy controller with Bayesian belief tracking and Bellman value iteration (math #8)
+- `runtime_math/sos_invariant.rs` — Sum-of-squares polynomial invariant runtime guard for cross-controller coherence verification (math #21)
+- `runtime_math/provenance_info.rs` — Information-theoretic provenance tag monitor with Shannon/Rényi/min-entropy collision bounds (math #11)
+- `runtime_math/grobner_normalizer.rs` — Gröbner-basis constraint normalizer for confluent controller-state consistency verification (math #30)
+- `runtime_math/grothendieck_glue.rs` — Grothendieck site cocycle/descent/stackification coherence monitor for NSS/resolv/locale source gluing (math #33)
 
 ### glibc-rs-core (Safe Implementations)
 - `string/` — mem*, str*, wide string functions

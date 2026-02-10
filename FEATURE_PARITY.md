@@ -143,7 +143,7 @@ Legend:
 | noncommutative-concurrency risk engine | `nptl`, allocator/thread hot paths | contention-spectrum bounds + operator-stability controls | PLANNED |
 | Serre-invariant transport engine | cross-layer subsystem towers | spectral-page witnesses + extension-obstruction diagnostics | PLANNED |
 | Grothendieck-coherence engine | cross-layer runtime + ABI/ISA compatibility glue | site/topos reconciliation + descent/stackification certificates | PLANNED |
-| families-index engine | cross-variant compatibility transport | index-zero ledgers + incompatibility localization traces | PLANNED |
+| families-index engine | cross-variant compatibility transport | index-zero ledgers + incompatibility localization traces | IN_PROGRESS |
 | equivariant-localization engine | proof/benchmark symmetry reductions | fixed-point compressed obligations + bounded-error certificates | PLANNED |
 | Clifford-kernel engine | `string/memory` SIMD overlap/alignment surfaces | kernel normal forms + Spin/Pin guard witnesses | PLANNED |
 
@@ -156,7 +156,7 @@ Legend:
 | deterministic replay theorem | reproducibility campaign logs | PLANNED |
 | sequential regression control | e-process monitoring reports | PLANNED |
 | drift detection reliability | change-point validation reports | PLANNED |
-| CPOMDP admissibility | policy feasibility certificates + replay logs | PLANNED |
+| CPOMDP admissibility | policy feasibility certificates + replay logs | IN_PROGRESS |
 | CHC/CEGAR convergence | abstraction refinement logs + resolved counterexamples | PLANNED |
 | superoptimization soundness | SMT equivalence certificates per accepted rewrite | PLANNED |
 | tail-risk control | EVT/CVaR reports for p99/p999 slices | PLANNED |
@@ -165,11 +165,11 @@ Legend:
 | concurrent linearizability | mechanized concurrency proof notes + stress evidence | PLANNED |
 | HJI viability | viability-kernel artifacts + adversarial trace audits | IN_PROGRESS |
 | sheaf consistency detection | cohomology diagnostics + inconsistency replay cases | PLANNED |
-| combinatorial interaction coverage | covering-array/matroid campaign proofs | PLANNED |
+| combinatorial interaction coverage | covering-array/matroid campaign proofs | IN_PROGRESS |
 | probabilistic coupling bounds | coupled-trace divergence certificates + concentration reports | PLANNED |
 | mean-field stability | equilibrium/stability reports + contention replay evidence | IN_PROGRESS |
 | entropic transition safety | Schrödinger-bridge transport-cost/overshoot reports | PLANNED |
-| SOS invariant synthesis | SDP outputs + certificate validation artifacts | PLANNED |
+| SOS invariant synthesis | SDP outputs + certificate validation artifacts | IN_PROGRESS |
 | large-deviation catastrophe bounds | rare-event estimation reports + threshold audits | PLANNED |
 | topological anomaly detection | persistent-homology summaries + detection benchmarks | IN_PROGRESS |
 | rough-signature feature stability | perturbation-stability reports + model-input audits | IN_PROGRESS |
@@ -192,9 +192,10 @@ Legend:
 | arithmetic compatibility integrity | invariant ledgers + drift/fracture threshold audits | PLANNED |
 | Serre spectral convergence integrity | page-wise witness ledgers + extension-obstruction replay reports | PLANNED |
 | Grothendieck descent coherence | site/topos/descent certificates + nongluable-case diagnostics | PLANNED |
-| families-index nullity | index ledgers + localized nonzero-index defect reports | PLANNED |
-| Atiyah-Bott localization conservativity | fixed-point/full-obligation equivalence reports + error bounds | PLANNED |
+| families-index nullity | index ledgers + localized nonzero-index defect reports | IN_PROGRESS |
+| Atiyah-Bott localization conservativity | fixed-point/full-obligation equivalence reports + error bounds | IN_PROGRESS |
 | Clifford kernel equivalence | regime-partition proofs + cross-ISA witness bundles | PLANNED |
+| derived t-structure bootstrap ordering | t-structure filtration proofs + orthogonality violation traces | IN_PROGRESS |
 
 ## Gap Summary
 

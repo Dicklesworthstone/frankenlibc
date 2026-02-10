@@ -30,5 +30,9 @@ name = "membrane_bench"
 harness = false
 
 [[bench]]
+name = "runtime_math_bench"
+harness = false
+
+[[bench]]
 name = "stdio_bench"
 harness = false
