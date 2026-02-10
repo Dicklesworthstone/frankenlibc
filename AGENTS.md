@@ -280,6 +280,23 @@ Rules:
 - `runtime_math/serre_spectral.rs` — Serre spectral sequence methods for cross-layer consistency defect detection between ABI/membrane/core (math #32)
 - `runtime_math/stein_discrepancy.rs` — Kernelized Stein Discrepancy for distribution-free goodness-of-fit testing of controller state deviation
 - `runtime_math/transfer_entropy.rs` — Directed information-theoretic causality detection between controllers via Schreiber's transfer entropy
+- `runtime_math/azuma_hoeffding.rs` — Azuma-Hoeffding martingale concentration monitor (math #18)
+- `runtime_math/bifurcation_detector.rs` — Bifurcation proximity detector for controller regime shifts
+- `runtime_math/birkhoff_ergodic.rs` — Birkhoff ergodic convergence monitor for stalled time-average mixing
+- `runtime_math/borel_cantelli.rs` — Borel-Cantelli recurrence monitor (transient vs recurrent adverse events)
+- `runtime_math/dispersion_index.rs` — Fisher index-of-dispersion monitor (Poisson vs clustered vs underdispersed alarms)
+- `runtime_math/dobrushin_contraction.rs` — Dobrushin contraction coefficient monitor (empirical mixing)
+- `runtime_math/doob_decomposition.rs` — Doob decomposition martingale monitor (predictable drift vs noise)
+- `runtime_math/entropy_rate.rs` — Shannon entropy-rate monitor for temporal complexity
+- `runtime_math/evidence.rs` — Runtime evidence symbol record format and systematic ring buffer (bd-kom / bd-1es)
+- `runtime_math/fano_bound.rs` — Fano mutual information bound monitor for predictability lower bounds
+- `runtime_math/hurst_exponent.rs` — Hurst exponent (R/S) monitor for long-range dependence
+- `runtime_math/ito_quadratic_variation.rs` — Ito quadratic variation monitor for volatility / burstiness
+- `runtime_math/lempel_ziv.rs` — Lempel-Ziv complexity monitor for sequence compressibility
+- `runtime_math/ornstein_uhlenbeck.rs` — Ornstein-Uhlenbeck mean-reversion monitor
+- `runtime_math/renewal_theory.rs` — Renewal theory monitor for inter-arrival dynamics
+- `runtime_math/spectral_gap.rs` — Spectral gap mixing-time monitor (lambda_2)
+- `runtime_math/submodular_coverage.rs` — Submodular validation stage coverage monitor
 
 ### glibc-rs-core (Safe Implementations)
 - `string/` — mem*, str*, wide string functions

@@ -88,7 +88,10 @@ declare -A SNAP_PREFIX=(
     [entropy_rate]="entropy_rate_"
     [ito_quadratic_variation]="ito_qv_"
     [borel_cantelli]="borel_cantelli_"
+    [dispersion_index]="dispersion_"
     [ornstein_uhlenbeck]="ou_"
+    [hurst_exponent]="hurst_"
+    [birkhoff_ergodic]="birkhoff_"
 )
 
 # Hot-path modules (lock-free access in decide())
