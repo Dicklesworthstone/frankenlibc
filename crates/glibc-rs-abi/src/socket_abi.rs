@@ -31,11 +31,12 @@ pub unsafe extern "C" fn socket(domain: c_int, sock_type: c_int, protocol: c_int
         return -1;
     }
 
+    // In strict mode, reject unknown address families early.
+    // In hardened mode, let the kernel decide (it may support AF values we don't enumerate).
     if !socket_core::valid_address_family(domain) && !mode.heals_enabled() {
         unsafe { set_abi_errno(errno::EAFNOSUPPORT) };
         runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
         return -1;
-        // hardened: let the kernel decide
     }
 
     if !socket_core::valid_socket_type(sock_type) && !mode.heals_enabled() {

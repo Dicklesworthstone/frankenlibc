@@ -38,9 +38,7 @@ pub unsafe extern "C" fn tcgetattr(fd: c_int, termios_p: *mut libc::termios) -> 
 
     let rc = unsafe { libc::tcgetattr(fd, termios_p) };
     let adverse = rc != 0;
-    if adverse {
-        unsafe { set_abi_errno(errno::ENOTTY) };
-    }
+    // libc sets errno on failure (EBADF, ENOTTY, etc.) — do not overwrite.
     runtime_policy::observe(ApiFamily::Termios, decision.profile, 10, adverse);
     rc
 }
@@ -82,9 +80,7 @@ pub unsafe extern "C" fn tcsetattr(
 
     let rc = unsafe { libc::tcsetattr(fd, act, termios_p) };
     let adverse = rc != 0;
-    if adverse {
-        unsafe { set_abi_errno(errno::ENOTTY) };
-    }
+    // libc sets errno on failure (EBADF, ENOTTY, EINTR, etc.) — do not overwrite.
     runtime_policy::observe(ApiFamily::Termios, decision.profile, 10, adverse);
     rc
 }

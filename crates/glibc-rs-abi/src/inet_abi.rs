@@ -7,6 +7,7 @@ use std::ffi::{c_char, c_int, c_void};
 
 use glibc_rs_core::errno;
 use glibc_rs_core::inet as inet_core;
+use glibc_rs_core::socket::{AF_INET, AF_INET6};
 use glibc_rs_membrane::runtime_math::{ApiFamily, MembraneAction};
 
 use crate::runtime_policy;
@@ -79,8 +80,8 @@ pub unsafe extern "C" fn inet_pton(af: c_int, src: *const c_char, dst: *mut c_vo
     let src_bytes = unsafe { std::ffi::CStr::from_ptr(src) }.to_bytes();
 
     let dst_size = match af {
-        2 => 4,   // AF_INET
-        10 => 16, // AF_INET6
+        AF_INET => 4,
+        AF_INET6 => 16,
         _ => {
             unsafe { set_abi_errno(errno::EAFNOSUPPORT) };
             runtime_policy::observe(ApiFamily::Inet, decision.profile, 5, true);
@@ -121,8 +122,8 @@ pub unsafe extern "C" fn inet_ntop(
     }
 
     let src_size = match af {
-        2 => 4,   // AF_INET
-        10 => 16, // AF_INET6
+        AF_INET => 4,
+        AF_INET6 => 16,
         _ => {
             unsafe { set_abi_errno(errno::EAFNOSUPPORT) };
             runtime_policy::observe(ApiFamily::Inet, decision.profile, 5, true);

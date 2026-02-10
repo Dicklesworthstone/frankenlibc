@@ -290,3 +290,316 @@ pub unsafe extern "C" fn pthread_detach(thread: libc::pthread_t) -> c_int {
     runtime_policy::observe(ApiFamily::Threading, decision.profile, 8, adverse);
     if adverse { libc::ESRCH } else { 0 }
 }
+
+// ===========================================================================
+// Mutex operations
+// ===========================================================================
+
+/// POSIX `pthread_mutex_init`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pthread_mutex_init(
+    mutex: *mut libc::pthread_mutex_t,
+    attr: *const libc::pthread_mutexattr_t,
+) -> c_int {
+    if mutex.is_null() {
+        return libc::EINVAL;
+    }
+    let (_, decision) =
+        runtime_policy::decide(ApiFamily::Threading, mutex as usize, 0, true, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Threading, decision.profile, 10, true);
+        return libc::EPERM;
+    }
+
+    let rc = unsafe { libc::pthread_mutex_init(mutex, attr) };
+    let adverse = rc != 0;
+    runtime_policy::observe(ApiFamily::Threading, decision.profile, 10, adverse);
+    rc
+}
+
+/// POSIX `pthread_mutex_destroy`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pthread_mutex_destroy(mutex: *mut libc::pthread_mutex_t) -> c_int {
+    if mutex.is_null() {
+        return libc::EINVAL;
+    }
+    let (mode, decision) =
+        runtime_policy::decide(ApiFamily::Threading, mutex as usize, 0, true, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Threading, decision.profile, 10, true);
+        return libc::EPERM;
+    }
+
+    let rc = unsafe { libc::pthread_mutex_destroy(mutex) };
+
+    // Hardened: if EBUSY, force-unlock then retry destroy.
+    if rc == libc::EBUSY && mode.heals_enabled() {
+        let _ = unsafe { libc::pthread_mutex_unlock(mutex) };
+        let rc2 = unsafe { libc::pthread_mutex_destroy(mutex) };
+        runtime_policy::observe(ApiFamily::Threading, decision.profile, 15, rc2 != 0);
+        return rc2;
+    }
+
+    runtime_policy::observe(ApiFamily::Threading, decision.profile, 10, rc != 0);
+    rc
+}
+
+/// POSIX `pthread_mutex_lock`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pthread_mutex_lock(mutex: *mut libc::pthread_mutex_t) -> c_int {
+    if mutex.is_null() {
+        return libc::EINVAL;
+    }
+    let (_, decision) =
+        runtime_policy::decide(ApiFamily::Threading, mutex as usize, 0, true, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Threading, decision.profile, 12, true);
+        return libc::EPERM;
+    }
+
+    let rc = unsafe { libc::pthread_mutex_lock(mutex) };
+    runtime_policy::observe(ApiFamily::Threading, decision.profile, 12, rc != 0);
+    rc
+}
+
+/// POSIX `pthread_mutex_trylock`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pthread_mutex_trylock(mutex: *mut libc::pthread_mutex_t) -> c_int {
+    if mutex.is_null() {
+        return libc::EINVAL;
+    }
+    let (_, decision) =
+        runtime_policy::decide(ApiFamily::Threading, mutex as usize, 0, true, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Threading, decision.profile, 8, true);
+        return libc::EPERM;
+    }
+
+    let rc = unsafe { libc::pthread_mutex_trylock(mutex) };
+    // EBUSY is not adverse — it's normal for trylock.
+    let adverse = rc != 0 && rc != libc::EBUSY;
+    runtime_policy::observe(ApiFamily::Threading, decision.profile, 8, adverse);
+    rc
+}
+
+/// POSIX `pthread_mutex_unlock`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pthread_mutex_unlock(mutex: *mut libc::pthread_mutex_t) -> c_int {
+    if mutex.is_null() {
+        return libc::EINVAL;
+    }
+    let (mode, decision) =
+        runtime_policy::decide(ApiFamily::Threading, mutex as usize, 0, true, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Threading, decision.profile, 8, true);
+        return libc::EPERM;
+    }
+
+    let rc = unsafe { libc::pthread_mutex_unlock(mutex) };
+
+    // Hardened: EPERM (not owner) → silently ignore.
+    if rc == libc::EPERM && mode.heals_enabled() {
+        runtime_policy::observe(ApiFamily::Threading, decision.profile, 8, false);
+        return 0;
+    }
+
+    runtime_policy::observe(ApiFamily::Threading, decision.profile, 8, rc != 0);
+    rc
+}
+
+// ===========================================================================
+// Condition variable operations
+// ===========================================================================
+
+/// POSIX `pthread_cond_init`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pthread_cond_init(
+    cond: *mut libc::pthread_cond_t,
+    attr: *const libc::pthread_condattr_t,
+) -> c_int {
+    if cond.is_null() {
+        return libc::EINVAL;
+    }
+    let (_, decision) =
+        runtime_policy::decide(ApiFamily::Threading, cond as usize, 0, true, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Threading, decision.profile, 10, true);
+        return libc::EPERM;
+    }
+
+    let rc = unsafe { libc::pthread_cond_init(cond, attr) };
+    runtime_policy::observe(ApiFamily::Threading, decision.profile, 10, rc != 0);
+    rc
+}
+
+/// POSIX `pthread_cond_destroy`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pthread_cond_destroy(cond: *mut libc::pthread_cond_t) -> c_int {
+    if cond.is_null() {
+        return libc::EINVAL;
+    }
+    let (_, decision) =
+        runtime_policy::decide(ApiFamily::Threading, cond as usize, 0, true, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Threading, decision.profile, 10, true);
+        return libc::EPERM;
+    }
+
+    let rc = unsafe { libc::pthread_cond_destroy(cond) };
+    runtime_policy::observe(ApiFamily::Threading, decision.profile, 10, rc != 0);
+    rc
+}
+
+/// POSIX `pthread_cond_wait`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pthread_cond_wait(
+    cond: *mut libc::pthread_cond_t,
+    mutex: *mut libc::pthread_mutex_t,
+) -> c_int {
+    if cond.is_null() || mutex.is_null() {
+        return libc::EINVAL;
+    }
+    let (_, decision) =
+        runtime_policy::decide(ApiFamily::Threading, cond as usize, 0, true, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Threading, decision.profile, 20, true);
+        return libc::EPERM;
+    }
+
+    let rc = unsafe { libc::pthread_cond_wait(cond, mutex) };
+    runtime_policy::observe(ApiFamily::Threading, decision.profile, 20, rc != 0);
+    rc
+}
+
+/// POSIX `pthread_cond_signal`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pthread_cond_signal(cond: *mut libc::pthread_cond_t) -> c_int {
+    if cond.is_null() {
+        return libc::EINVAL;
+    }
+    let (_, decision) =
+        runtime_policy::decide(ApiFamily::Threading, cond as usize, 0, true, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Threading, decision.profile, 8, true);
+        return libc::EPERM;
+    }
+
+    let rc = unsafe { libc::pthread_cond_signal(cond) };
+    runtime_policy::observe(ApiFamily::Threading, decision.profile, 8, rc != 0);
+    rc
+}
+
+/// POSIX `pthread_cond_broadcast`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pthread_cond_broadcast(cond: *mut libc::pthread_cond_t) -> c_int {
+    if cond.is_null() {
+        return libc::EINVAL;
+    }
+    let (_, decision) =
+        runtime_policy::decide(ApiFamily::Threading, cond as usize, 0, true, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Threading, decision.profile, 10, true);
+        return libc::EPERM;
+    }
+
+    let rc = unsafe { libc::pthread_cond_broadcast(cond) };
+    runtime_policy::observe(ApiFamily::Threading, decision.profile, 10, rc != 0);
+    rc
+}
+
+// ===========================================================================
+// Reader-writer lock operations
+// ===========================================================================
+
+/// POSIX `pthread_rwlock_init`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pthread_rwlock_init(
+    rwlock: *mut libc::pthread_rwlock_t,
+    attr: *const libc::pthread_rwlockattr_t,
+) -> c_int {
+    if rwlock.is_null() {
+        return libc::EINVAL;
+    }
+    let (_, decision) =
+        runtime_policy::decide(ApiFamily::Threading, rwlock as usize, 0, true, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Threading, decision.profile, 10, true);
+        return libc::EPERM;
+    }
+
+    let rc = unsafe { libc::pthread_rwlock_init(rwlock, attr) };
+    runtime_policy::observe(ApiFamily::Threading, decision.profile, 10, rc != 0);
+    rc
+}
+
+/// POSIX `pthread_rwlock_destroy`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pthread_rwlock_destroy(rwlock: *mut libc::pthread_rwlock_t) -> c_int {
+    if rwlock.is_null() {
+        return libc::EINVAL;
+    }
+    let (_, decision) =
+        runtime_policy::decide(ApiFamily::Threading, rwlock as usize, 0, true, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Threading, decision.profile, 10, true);
+        return libc::EPERM;
+    }
+
+    let rc = unsafe { libc::pthread_rwlock_destroy(rwlock) };
+    runtime_policy::observe(ApiFamily::Threading, decision.profile, 10, rc != 0);
+    rc
+}
+
+/// POSIX `pthread_rwlock_rdlock`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pthread_rwlock_rdlock(rwlock: *mut libc::pthread_rwlock_t) -> c_int {
+    if rwlock.is_null() {
+        return libc::EINVAL;
+    }
+    let (_, decision) =
+        runtime_policy::decide(ApiFamily::Threading, rwlock as usize, 0, true, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Threading, decision.profile, 12, true);
+        return libc::EPERM;
+    }
+
+    let rc = unsafe { libc::pthread_rwlock_rdlock(rwlock) };
+    runtime_policy::observe(ApiFamily::Threading, decision.profile, 12, rc != 0);
+    rc
+}
+
+/// POSIX `pthread_rwlock_wrlock`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pthread_rwlock_wrlock(rwlock: *mut libc::pthread_rwlock_t) -> c_int {
+    if rwlock.is_null() {
+        return libc::EINVAL;
+    }
+    let (_, decision) =
+        runtime_policy::decide(ApiFamily::Threading, rwlock as usize, 0, true, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Threading, decision.profile, 12, true);
+        return libc::EPERM;
+    }
+
+    let rc = unsafe { libc::pthread_rwlock_wrlock(rwlock) };
+    runtime_policy::observe(ApiFamily::Threading, decision.profile, 12, rc != 0);
+    rc
+}
+
+/// POSIX `pthread_rwlock_unlock`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pthread_rwlock_unlock(rwlock: *mut libc::pthread_rwlock_t) -> c_int {
+    if rwlock.is_null() {
+        return libc::EINVAL;
+    }
+    let (_, decision) =
+        runtime_policy::decide(ApiFamily::Threading, rwlock as usize, 0, true, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Threading, decision.profile, 8, true);
+        return libc::EPERM;
+    }
+
+    let rc = unsafe { libc::pthread_rwlock_unlock(rwlock) };
+    runtime_policy::observe(ApiFamily::Threading, decision.profile, 8, rc != 0);
+    rc
+}

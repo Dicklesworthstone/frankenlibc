@@ -1,3 +1,4 @@
+#![feature(c_variadic)]
 // All extern "C" ABI exports accept raw pointers from C callers; the membrane
 // validates at runtime, so per-function safety docs would be redundant boilerplate.
 #![allow(clippy::missing_safety_doc)]
@@ -57,6 +58,12 @@ pub mod inet_abi;
 pub mod io_abi;
 #[cfg(not(test))]
 pub mod locale_abi;
+#[cfg(not(test))]
+pub mod mmap_abi;
+#[cfg(not(test))]
+pub mod poll_abi;
+#[cfg(not(test))]
+pub mod process_abi;
 #[cfg(not(test))]
 pub mod pthread_abi;
 #[cfg(not(test))]
