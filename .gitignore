@@ -8,3 +8,23 @@ Cargo.lock
 
 # bv (beads viewer) local config and caches
 .bv/
+
+# Profiling and benchmark data
+perf.data
+perf.data.*
+*.profraw
+flamegraph*.svg
+scripts/perf_baseline.json
+
+# Local scratch DBs
+storage.sqlite3
+storage.sqlite3-*
+
+# Build artifacts
+a.out
+
+# Beads history snapshots
+.beads/.br_history/
+
+# bv graph output
+--graph-format.svg
