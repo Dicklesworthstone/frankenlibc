@@ -26,8 +26,12 @@ pub mod covering_array;
 pub mod cvar;
 pub mod derived_tstructure;
 pub mod design;
+pub mod dobrushin_contraction;
+pub mod doob_decomposition;
 pub mod eprocess;
 pub mod equivariant;
+pub mod evidence;
+pub mod fano_bound;
 pub mod fusion;
 pub mod grobner_normalizer;
 pub mod grothendieck_glue;
@@ -92,8 +96,11 @@ use self::covering_array::{CoverageState, CoveringArrayController};
 use self::cvar::{DroCvarController, TailState};
 use self::derived_tstructure::{TStructureController, TStructureState};
 use self::design::{OptimalDesignController, Probe, ProbePlan};
+use self::dobrushin_contraction::{DobrushinContractionMonitor, DobrushinState};
+use self::doob_decomposition::{DoobDecompositionMonitor, DoobState};
 use self::eprocess::{AnytimeEProcessMonitor, SequentialState};
 use self::equivariant::{EquivariantState, EquivariantTransportController};
+use self::fano_bound::{FanoBoundMonitor, FanoState};
 use self::fusion::KernelFusionController;
 use self::grobner_normalizer::{GrobnerNormalizerController, GrobnerState};
 use self::grothendieck_glue::{
@@ -129,6 +136,16 @@ use self::wasserstein_drift::{DriftState, WassersteinDriftMonitor};
 
 const FAST_PATH_BUDGET_NS: u64 = 20;
 const FULL_PATH_BUDGET_NS: u64 = 200;
+
+/// Number of base severity signals fed from hot-path cached atomics.
+const BASE_SEVERITY_LEN: usize = 25;
+/// Number of meta-controller severity signals appended after the base set.
+const META_SEVERITY_LEN: usize = 21;
+/// Compile-time assertion: fusion::SIGNALS == BASE + META severity slots.
+const _: () = assert!(
+    fusion::SIGNALS == BASE_SEVERITY_LEN + META_SEVERITY_LEN,
+    "fusion::SIGNALS must equal BASE_SEVERITY_LEN + META_SEVERITY_LEN"
+);
 
 /// Runtime API family used for online control decisions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -480,6 +497,18 @@ pub struct RuntimeKernelSnapshot {
     pub hodge_inconsistency_ratio: f64,
     /// Hodge decomposition curl energy (squared cycle residual).
     pub hodge_curl_energy: f64,
+    /// Doob decomposition smoothed drift rate (0..∞).
+    pub doob_drift_rate: f64,
+    /// Doob decomposition max per-controller cumulative drift magnitude.
+    pub doob_max_drift: f64,
+    /// Fano mutual information bound mean MI across controllers (nats).
+    pub fano_mean_mi: f64,
+    /// Fano error lower bound (0..1, higher = less predictable).
+    pub fano_mean_bound: f64,
+    /// Dobrushin contraction coefficient max across controllers (0..1).
+    pub dobrushin_max_contraction: f64,
+    /// Dobrushin contraction coefficient mean across controllers (0..1).
+    pub dobrushin_mean_contraction: f64,
 }
 
 /// Online control kernel for strict/hardened runtime decisions.
@@ -542,6 +571,9 @@ pub struct RuntimeMathKernel {
     rademacher: Mutex<RademacherComplexityMonitor>,
     transfer_entropy: Mutex<TransferEntropyMonitor>,
     hodge: Mutex<HodgeDecompositionMonitor>,
+    doob: Mutex<DoobDecompositionMonitor>,
+    fano: Mutex<FanoBoundMonitor>,
+    dobrushin: Mutex<DobrushinContractionMonitor>,
     cached_risk_bonus_ppm: AtomicU64,
     cached_oracle_bias: [AtomicU8; ApiFamily::COUNT],
     cached_spectral_phase: AtomicU8,
@@ -601,6 +633,9 @@ pub struct RuntimeMathKernel {
     cached_rademacher_state: AtomicU8,
     cached_transfer_entropy_state: AtomicU8,
     cached_hodge_state: AtomicU8,
+    cached_doob_state: AtomicU8,
+    cached_fano_state: AtomicU8,
+    cached_dobrushin_state: AtomicU8,
     decisions: AtomicU64,
 }
 
@@ -667,6 +702,9 @@ impl RuntimeMathKernel {
             rademacher: Mutex::new(RademacherComplexityMonitor::new()),
             transfer_entropy: Mutex::new(TransferEntropyMonitor::new()),
             hodge: Mutex::new(HodgeDecompositionMonitor::new()),
+            doob: Mutex::new(DoobDecompositionMonitor::new()),
+            fano: Mutex::new(FanoBoundMonitor::new()),
+            dobrushin: Mutex::new(DobrushinContractionMonitor::new()),
             cached_risk_bonus_ppm: AtomicU64::new(0),
             cached_oracle_bias: std::array::from_fn(|_| AtomicU8::new(1)),
             cached_spectral_phase: AtomicU8::new(0),
@@ -726,6 +764,9 @@ impl RuntimeMathKernel {
             cached_rademacher_state: AtomicU8::new(0),
             cached_transfer_entropy_state: AtomicU8::new(0),
             cached_hodge_state: AtomicU8::new(0),
+            cached_doob_state: AtomicU8::new(0),
+            cached_fano_state: AtomicU8::new(0),
+            cached_dobrushin_state: AtomicU8::new(0),
             decisions: AtomicU64::new(0),
         }
     }
@@ -1059,6 +1100,27 @@ impl RuntimeMathKernel {
             2 => 50_000u32,  // Inconsistent — some cyclic structure
             _ => 0u32,       // Calibrating/Coherent
         };
+        // Doob decomposition: systematic non-random drift in severity process.
+        // Runaway means the predictable component dominates — severity worsening.
+        let doob_bonus = match self.cached_doob_state.load(Ordering::Relaxed) {
+            3 => 150_000u32, // Runaway — strong systematic drift
+            2 => 50_000u32,  // Drifting — moderate non-random trend
+            _ => 0u32,       // Calibrating/Stationary
+        };
+        // Fano bound: information-theoretic error lower bound.
+        // Opaque means the severity process is inherently unpredictable.
+        let fano_bonus = match self.cached_fano_state.load(Ordering::Relaxed) {
+            3 => 120_000u32, // Opaque — nearly i.i.d., no temporal structure
+            2 => 45_000u32,  // Uncertain — reduced predictability
+            _ => 0u32,       // Calibrating/Predictable
+        };
+        // Dobrushin contraction: Markov chain mixing/ergodicity failure.
+        // NonMixing means the severity chain cannot recover from perturbations.
+        let dobrushin_bonus = match self.cached_dobrushin_state.load(Ordering::Relaxed) {
+            3 => 160_000u32, // NonMixing — chain trapped, no recovery
+            2 => 55_000u32,  // SlowMixing — chain mixing slowly
+            _ => 0u32,       // Calibrating/Ergodic
+        };
         // Provenance info-theoretic: fingerprint entropy degradation signals
         // collision resistance loss in the allocation integrity subsystem.
         let provenance_bonus = match self.cached_provenance_state.load(Ordering::Relaxed) {
@@ -1131,6 +1193,9 @@ impl RuntimeMathKernel {
             .saturating_add(rademacher_bonus)
             .saturating_add(transfer_entropy_bonus)
             .saturating_add(hodge_bonus)
+            .saturating_add(doob_bonus)
+            .saturating_add(fano_bonus)
+            .saturating_add(dobrushin_bonus)
             .min(1_000_000);
 
         let ident_ppm = self.cached_design_ident_ppm.load(Ordering::Relaxed) as u32;
@@ -2233,7 +2298,7 @@ impl RuntimeMathKernel {
         // Build base 25-element severity vector from cached controller states.
         // This is consumed by Atiyah-Bott (localization), SOS (invariant guard),
         // and the robust fusion controller.
-        let base_severity: [u8; 25] = [
+        let base_severity: [u8; BASE_SEVERITY_LEN] = [
             self.cached_spectral_phase.load(Ordering::Relaxed), // 0..2
             self.cached_signature_state.load(Ordering::Relaxed), // 0..2
             self.cached_topological_state.load(Ordering::Relaxed), // 0..2
@@ -2529,11 +2594,60 @@ impl RuntimeMathKernel {
             self.cached_hodge_state.store(hodge_code, Ordering::Relaxed);
         }
 
-        // Feed robust fusion controller from extended severity vector.
-        // Includes the 25 base controller signals plus 18 meta-controller states.
+        // Feed Doob decomposition martingale monitor.
+        // Tracks systematic (non-random) drift in the severity process.
         {
-            let mut severity = [0u8; 43];
-            severity[..25].copy_from_slice(&base_severity);
+            let doob_code = {
+                let mut dm = self.doob.lock();
+                dm.observe_and_update(&base_severity);
+                match dm.state() {
+                    DoobState::Calibrating => 0u8,
+                    DoobState::Stationary => 1u8,
+                    DoobState::Drifting => 2u8,
+                    DoobState::Runaway => 3u8,
+                }
+            };
+            self.cached_doob_state.store(doob_code, Ordering::Relaxed);
+        }
+
+        // Feed Fano mutual information bound monitor.
+        // Tracks information-theoretic error lower bound on severity prediction.
+        {
+            let fano_code = {
+                let mut fm = self.fano.lock();
+                fm.observe_and_update(&base_severity);
+                match fm.state() {
+                    FanoState::Calibrating => 0u8,
+                    FanoState::Predictable => 1u8,
+                    FanoState::Uncertain => 2u8,
+                    FanoState::Opaque => 3u8,
+                }
+            };
+            self.cached_fano_state.store(fano_code, Ordering::Relaxed);
+        }
+
+        // Feed Dobrushin contraction coefficient monitor.
+        // Tracks Markov chain mixing/ergodicity of the severity process.
+        {
+            let dob_code = {
+                let mut dc = self.dobrushin.lock();
+                dc.observe_and_update(&base_severity);
+                match dc.state() {
+                    DobrushinState::Calibrating => 0u8,
+                    DobrushinState::Ergodic => 1u8,
+                    DobrushinState::SlowMixing => 2u8,
+                    DobrushinState::NonMixing => 3u8,
+                }
+            };
+            self.cached_dobrushin_state
+                .store(dob_code, Ordering::Relaxed);
+        }
+
+        // Feed robust fusion controller from extended severity vector.
+        // Includes the 25 base controller signals plus 21 meta-controller states.
+        {
+            let mut severity = [0u8; fusion::SIGNALS];
+            severity[..BASE_SEVERITY_LEN].copy_from_slice(&base_severity);
             severity[25] = self.cached_atiyah_bott_state.load(Ordering::Relaxed); // 0..3
             severity[26] = self.cached_pomdp_state.load(Ordering::Relaxed); // 0..3
             severity[27] = self.cached_sos_state.load(Ordering::Relaxed); // 0..3
@@ -2554,6 +2668,9 @@ impl RuntimeMathKernel {
             severity[40] = self.cached_rademacher_state.load(Ordering::Relaxed); // 0..3
             severity[41] = self.cached_transfer_entropy_state.load(Ordering::Relaxed); // 0..3
             severity[42] = self.cached_hodge_state.load(Ordering::Relaxed); // 0..3
+            severity[43] = self.cached_doob_state.load(Ordering::Relaxed); // 0..3
+            severity[44] = self.cached_fano_state.load(Ordering::Relaxed); // 0..3
+            severity[45] = self.cached_dobrushin_state.load(Ordering::Relaxed); // 0..3
             let summary = {
                 let mut fusion = self.fusion.lock();
                 fusion.observe(severity, adverse, mode)
@@ -2721,6 +2838,9 @@ impl RuntimeMathKernel {
         let rademacher_summary = self.rademacher.lock().summary();
         let transfer_entropy_summary = self.transfer_entropy.lock().summary();
         let hodge_summary = self.hodge.lock().summary();
+        let doob_summary = self.doob.lock().summary();
+        let fano_summary = self.fano.lock().summary();
+        let dobrushin_summary = self.dobrushin.lock().summary();
         let microlocal_summary = self.microlocal.lock().summary();
         let serre_summary = self.serre.lock().summary();
         let clifford_summary = self.clifford.lock().summary();
@@ -2841,6 +2961,12 @@ impl RuntimeMathKernel {
             transfer_entropy_mean_te: transfer_entropy_summary.mean_te,
             hodge_inconsistency_ratio: hodge_summary.inconsistency_ratio,
             hodge_curl_energy: hodge_summary.curl_energy,
+            doob_drift_rate: doob_summary.drift_rate,
+            doob_max_drift: doob_summary.max_drift,
+            fano_mean_mi: fano_summary.mean_mi,
+            fano_mean_bound: fano_summary.mean_fano_bound,
+            dobrushin_max_contraction: dobrushin_summary.max_contraction,
+            dobrushin_mean_contraction: dobrushin_summary.mean_contraction,
         }
     }
 
@@ -3146,7 +3272,7 @@ mod tests {
         let observe_src = &observe_tail[..observe_end];
 
         let base_start = observe_src
-            .find("let base_severity: [u8; 25] = [")
+            .find("let base_severity: [u8; BASE_SEVERITY_LEN] = [")
             .expect("base_severity literal must exist");
         let base_tail = &observe_src[base_start..];
         let base_end = base_tail
@@ -3159,7 +3285,7 @@ mod tests {
         );
 
         let fusion_start = observe_src
-            .find("let mut severity = [0u8; 43];")
+            .find("let mut severity = [0u8; fusion::SIGNALS];")
             .expect("fusion severity buffer must exist");
         let fusion_tail = &observe_src[fusion_start..];
         let fusion_end = fusion_tail
@@ -3288,5 +3414,168 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// Decision-law invariant: the hard-gate cascade in decide() must follow
+    /// exactly this order: barrier → full_validation_trigger → repair_trigger → Allow.
+    ///
+    /// This is the *conservatism guarantee*: no soft heuristic (oracle bias,
+    /// tropical pressure, Pareto, design probes, etc.) can override a hard gate.
+    /// The test verifies source structure rather than runtime behavior so it
+    /// cannot be invalidated by changing cached atomic values.
+    #[test]
+    fn decide_hard_gate_cascade_order_is_invariant() {
+        let src = include_str!("mod.rs");
+        let decide_start = src
+            .find(
+                "pub fn decide(&self, mode: SafetyLevel, ctx: RuntimeContext) -> RuntimeDecision {",
+            )
+            .expect("decide must exist");
+        let decide_tail = &src[decide_start..];
+        let decide_end = decide_tail
+            .find("/// Return the current contextual check ordering for a given family/context.")
+            .expect("decide end marker must exist");
+        let decide_src = &decide_tail[..decide_end];
+
+        // The action determination block must appear after the barrier check.
+        let barrier_pos = decide_src
+            .find("let admissible = self")
+            .expect("barrier admissibility check must exist");
+        let action_block = &decide_src[barrier_pos..];
+
+        // Hard gate 1: barrier non-admissible is checked FIRST.
+        let gate1 = action_block
+            .find("if !admissible {")
+            .expect("barrier hard gate must exist");
+
+        // Hard gate 2: full_validation_trigger_ppm checked second.
+        let gate2 = action_block
+            .find("risk_upper_bound_ppm >= limits.full_validation_trigger_ppm")
+            .expect("full_validation_trigger hard gate must exist");
+
+        // Hard gate 3: repair_trigger_ppm checked third.
+        let gate3 = action_block
+            .find("risk_upper_bound_ppm >= limits.repair_trigger_ppm")
+            .expect("repair_trigger hard gate must exist");
+
+        // Hard gate 4: Allow is the final else (lowest priority).
+        let gate4 = action_block
+            .find("MembraneAction::Allow")
+            .expect("Allow fallthrough must exist");
+
+        assert!(
+            gate1 < gate2,
+            "barrier gate must precede full_validation_trigger gate"
+        );
+        assert!(
+            gate2 < gate3,
+            "full_validation_trigger gate must precede repair_trigger gate"
+        );
+        assert!(
+            gate3 < gate4,
+            "repair_trigger gate must precede Allow fallthrough"
+        );
+
+        // No `.lock()` calls between barrier check and action determination.
+        let hard_gate_region = &action_block[..gate4 + "MembraneAction::Allow".len()];
+        assert!(
+            !hard_gate_region.contains(".lock()"),
+            "hard-gate action cascade must not acquire any mutex locks"
+        );
+    }
+
+    /// Decision-law invariant (behavioral): barrier non-admissibility always
+    /// produces Deny (strict) or Repair(ReturnSafeDefault) (hardened), never
+    /// Allow or FullValidate, regardless of risk level or soft heuristic state.
+    #[test]
+    fn decide_barrier_non_admissible_always_denies_or_repairs() {
+        let kernel = RuntimeMathKernel::new();
+
+        // Trigger barrier failure via oversized request.
+        // Strict max = 128 MiB, hardened max = 256 MiB; use 512 MiB to exceed both.
+        let oversized_ctx = RuntimeContext {
+            family: ApiFamily::Allocator,
+            addr_hint: 0x1000,
+            requested_bytes: 512 * 1024 * 1024,
+            is_write: false,
+            contention_hint: 0,
+            bloom_negative: false,
+        };
+
+        // Strict mode: barrier fail -> Deny.
+        let strict_decision = kernel.decide(SafetyLevel::Strict, oversized_ctx);
+        assert_eq!(
+            strict_decision.action,
+            MembraneAction::Deny,
+            "barrier non-admissible in strict mode must produce Deny"
+        );
+
+        // Hardened mode: barrier fail -> Repair(ReturnSafeDefault).
+        let hardened_decision = kernel.decide(SafetyLevel::Hardened, oversized_ctx);
+        assert_eq!(
+            hardened_decision.action,
+            MembraneAction::Repair(HealingAction::ReturnSafeDefault),
+            "barrier non-admissible in hardened mode must produce Repair(ReturnSafeDefault)"
+        );
+    }
+
+    /// Decision-law invariant (behavioral): when risk is driven above
+    /// full_validation_trigger_ppm, the action is never Allow.
+    #[test]
+    fn decide_high_risk_never_allows() {
+        let kernel = RuntimeMathKernel::new();
+
+        // Pump cached risk bonus to maximum to force risk above all thresholds.
+        kernel
+            .cached_risk_bonus_ppm
+            .store(950_000, Ordering::Relaxed);
+
+        let ctx = RuntimeContext {
+            family: ApiFamily::PointerValidation,
+            addr_hint: 0x1000,
+            requested_bytes: 64,
+            is_write: false,
+            contention_hint: 0,
+            bloom_negative: false,
+        };
+
+        for mode in [SafetyLevel::Strict, SafetyLevel::Hardened] {
+            let decision = kernel.decide(mode, ctx);
+            assert_ne!(
+                decision.action,
+                MembraneAction::Allow,
+                "high risk ({} ppm) in {mode:?} must not produce Allow",
+                decision.risk_upper_bound_ppm,
+            );
+        }
+    }
+
+    /// Decision-law invariant (behavioral): in hardened mode, risk above
+    /// repair_trigger_ppm produces Repair or stronger, never Allow.
+    #[test]
+    fn decide_hardened_repair_trigger_never_allows() {
+        let kernel = RuntimeMathKernel::new();
+
+        // Use a moderate bonus that exceeds hardened repair_trigger (140k base)
+        // but doesn't necessarily exceed strict full_validation_trigger (220k).
+        kernel
+            .cached_risk_bonus_ppm
+            .store(200_000, Ordering::Relaxed);
+
+        let ctx = RuntimeContext {
+            family: ApiFamily::StringMemory,
+            addr_hint: 0x2000,
+            requested_bytes: 128,
+            is_write: true,
+            contention_hint: 0,
+            bloom_negative: false,
+        };
+
+        let decision = kernel.decide(SafetyLevel::Hardened, ctx);
+        assert!(
+            !matches!(decision.action, MembraneAction::Allow),
+            "hardened mode with risk {} ppm (above repair_trigger) must not Allow",
+            decision.risk_upper_bound_ppm,
+        );
     }
 }
