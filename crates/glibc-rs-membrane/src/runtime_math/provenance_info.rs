@@ -175,13 +175,14 @@ impl ProvenanceInfoController {
     /// The controller tracks the empirical distribution and estimates
     /// Shannon, Rényi, and min-entropy to detect degradation.
     pub fn observe_bytes(&mut self, bytes: &[u8]) {
+        let prev_window = self.observations / ENTROPY_WINDOW as u64;
         for &b in bytes {
             self.histogram[b as usize] += 1;
             self.observations += 1;
         }
 
-        // Periodically re-estimate entropy.
-        if self.observations.is_multiple_of(ENTROPY_WINDOW as u64) {
+        // Re-estimate entropy whenever we cross a window boundary.
+        if self.observations / ENTROPY_WINDOW as u64 > prev_window {
             self.update_entropy();
         }
     }

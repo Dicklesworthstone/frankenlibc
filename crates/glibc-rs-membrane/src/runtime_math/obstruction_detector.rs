@@ -203,12 +203,13 @@ impl ObstructionDetector {
             // Product of deviations (empirical cross-term).
             let cross = d1[i] * d1[j];
 
-            // Update covariance estimate.
-            self.cov[k] += alpha * (cross - self.cov[k]);
-
             // d₂(i,j) = instantaneous cross − expected covariance.
             // When the correlation structure holds, d₂ ≈ 0.
+            // Must compute d₂ BEFORE updating covariance to avoid attenuation.
             let d2_val = cross - self.cov[k];
+
+            // Update covariance estimate.
+            self.cov[k] += alpha * (cross - self.cov[k]);
             self.last_pair_obstruction[k] = d2_val.abs();
 
             d2_frobenius_sq += d2_val * d2_val;

@@ -242,14 +242,16 @@ const GROBNER_BASIS: [GrobnerConstraint; NUM_CONSTRAINTS] = [
         constant: 0,
         bound: 1,
     },
-    // C11: Total linear energy: Σ_i s_i ≤ 3N (cannot have all controllers maxed).
+    // C11: Risk-adjacent energy cap: risk + bridge + changepoint + hji ≤ 10.
+    // The four primary risk/regime detectors can't all be at max simultaneously
+    // (max sum = 12, so ≤ 10 means at most 2 may reach level 3).
     GrobnerConstraint {
         linear: [(0, 1), (1, 1), (2, 1), (3, 1)],
         num_linear: 4,
         quadratic: [(0, 0, 0), (0, 0, 0)],
         num_quadratic: 0,
         constant: 0,
-        bound: 10, // at most 10 among first 4 (avg 2.5)
+        bound: 10,
     },
 ];
 
