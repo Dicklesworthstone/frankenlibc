@@ -96,6 +96,9 @@ declare -A SNAP_PREFIX=(
     [serre_spectral]="serre_"
     [loss_minimizer]="loss_"
     [coupling]="coupling_"
+    [dobrushin_contraction]="dobrushin_"
+    [doob_decomposition]="doob_"
+    [fano_bound]="fano_"
     [hodge_decomposition]="hodge_"
     [rademacher_complexity]="rademacher_"
     [transfer_entropy]="transfer_entropy"
@@ -114,8 +117,8 @@ snapshot_fn_range=$(grep -n 'pub fn snapshot.*RuntimeKernelSnapshot' "$MOD_RS" |
 TMPDIR=$(mktemp -d)
 trap 'rm -rf "$TMPDIR"' EXIT
 
-sed -n "${struct_range},+250p" "$MOD_RS" > "$TMPDIR/struct.txt"
-sed -n "${snap_struct_range},+250p" "$MOD_RS" > "$TMPDIR/snap_struct.txt"
+sed -n "${struct_range},+350p" "$MOD_RS" > "$TMPDIR/struct.txt"
+sed -n "${snap_struct_range},+350p" "$MOD_RS" > "$TMPDIR/snap_struct.txt"
 if [[ -n "$observe_range" ]]; then
     sed -n "${observe_range},$((observe_range + 1300))p" "$MOD_RS" > "$TMPDIR/observe.txt"
 else
