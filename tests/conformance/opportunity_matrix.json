@@ -56,7 +56,8 @@
       "effort": 3.0,
       "score": 3.3,
       "rationale": "Eliminates 2 stubs blocking L1 transition. C/POSIX locale is well-defined, implementation is bounded.",
-      "status": "eligible"
+      "status": "eligible",
+      "lever_category": "stub_elimination"
     },
     {
       "id": "opp-002",
@@ -68,7 +69,8 @@
       "effort": 2.0,
       "score": 2.8,
       "rationale": "Eliminates 4 stubs blocking L1. Numeric-only backend is feasible but DNS requires significant work.",
-      "status": "eligible"
+      "status": "eligible",
+      "lever_category": "stub_elimination"
     },
     {
       "id": "opp-003",
@@ -80,7 +82,8 @@
       "effort": 1.0,
       "score": 2.8,
       "rationale": "Required for L2 transition. ELF relocation + symbol lookup is complex but well-documented.",
-      "status": "eligible"
+      "status": "eligible",
+      "lever_category": "callthrough_removal"
     },
     {
       "id": "opp-004",
@@ -92,7 +95,8 @@
       "effort": 2.0,
       "score": 3.6,
       "rationale": "Eliminates 5+ call-throughs from hotpath. Futex mutex is well-understood (musl, bionic precedent).",
-      "status": "eligible"
+      "status": "eligible",
+      "lever_category": "callthrough_removal"
     },
     {
       "id": "opp-005",
@@ -104,7 +108,8 @@
       "effort": 1.0,
       "score": 3.1,
       "rationale": "Eliminates 3 critical call-throughs. TLS handoff is the hard part.",
-      "status": "eligible"
+      "status": "eligible",
+      "lever_category": "callthrough_removal"
     },
     {
       "id": "opp-006",
@@ -116,7 +121,8 @@
       "effort": 4.0,
       "score": 3.0,
       "rationale": "Current Rust std implementations are already good. Marginal gain from explicit AVX2/AVX-512.",
-      "status": "eligible"
+      "status": "eligible",
+      "lever_category": "simd_acceleration"
     },
     {
       "id": "opp-007",
@@ -128,7 +134,8 @@
       "effort": 0.0,
       "score": 3.1,
       "rationale": "Critical for L3 (full replacement) but very high effort. Assembly-level bootstrap required.",
-      "status": "eligible"
+      "status": "eligible",
+      "lever_category": "subsystem_implementation"
     },
     {
       "id": "opp-008",
@@ -140,7 +147,8 @@
       "effort": 4.0,
       "score": 2.8,
       "rationale": "Simple to implement but low call frequency. Nice L1 hygiene improvement.",
-      "status": "eligible"
+      "status": "eligible",
+      "lever_category": "stub_elimination"
     },
     {
       "id": "opp-009",
@@ -152,7 +160,8 @@
       "effort": 1.0,
       "score": 2.3,
       "rationale": "Required for L3 but complex. File parsing + caching + thread safety.",
-      "status": "eligible"
+      "status": "eligible",
+      "lever_category": "subsystem_implementation"
     },
     {
       "id": "opp-010",
@@ -164,7 +173,8 @@
       "effort": 1.0,
       "score": 2.3,
       "rationale": "Required for L3. UDP DNS with timeout/retry is well-specified but needs careful implementation.",
-      "status": "eligible"
+      "status": "eligible",
+      "lever_category": "subsystem_implementation"
     },
     {
       "id": "opp-011",
@@ -176,7 +186,8 @@
       "effort": 5.0,
       "score": 3.0,
       "rationale": "Already Implemented. 256-byte lookup table could improve branch prediction for ASCII classification.",
-      "status": "eligible"
+      "status": "eligible",
+      "lever_category": "cache_optimization"
     },
     {
       "id": "opp-012",
@@ -188,7 +199,8 @@
       "effort": 0.0,
       "score": 2.6,
       "rationale": "Required for L3. FILE* reimplementation is massive (30 symbols). Very high effort offsets high impact.",
-      "status": "eligible"
+      "status": "eligible",
+      "lever_category": "subsystem_implementation"
     }
   ],
   "deferred": [],

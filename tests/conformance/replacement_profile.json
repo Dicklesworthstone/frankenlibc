@@ -96,6 +96,7 @@
       "dlfcn_abi",
       "signal_abi",
       "io_abi",
+      "stdlib_abi",
       "time_abi",
       "termios_abi",
       "resource_abi",
@@ -118,13 +119,14 @@
       "dlfcn_abi": {"count": 4, "functions": ["dlopen", "dlsym", "dlclose"]},
       "signal_abi": {"count": 4, "functions": ["signal", "raise", "kill", "sigaction"]},
       "termios_abi": {"count": 10, "functions": ["tcgetattr", "tcsetattr", "cfgetispeed", "cfgetospeed", "cfsetispeed", "cfsetospeed", "tcdrain", "tcflush", "tcflow", "tcsendbreak"]},
-      "io_abi": {"count": 4, "functions": ["dup", "dup2", "pipe", "fcntl"]},
+      "io_abi": {"count": 0, "functions": []},
+      "stdlib_abi": {"count": 3, "functions": ["getenv", "setenv", "unsetenv"]},
       "time_abi": {"count": 3, "functions": ["clock_gettime"]},
       "resource_abi": {"count": 3, "functions": ["getrlimit", "setrlimit"]},
       "dirent_abi": {"count": 2, "functions": ["open", "close"]},
       "process_abi": {"count": 1, "functions": ["execvp"]}
     },
-    "total_call_throughs": 86,
+    "total_call_throughs": 85,
     "note": "process_abi.rs has 1 call-through (execvp) plus raw syscalls. dirent_abi uses libc::open/close which are technically call-throughs."
   }
 }

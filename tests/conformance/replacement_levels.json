@@ -19,9 +19,9 @@
         "test_gate": "cargo test --workspace passes"
       },
       "current_state": {
-        "implemented_pct": 37,
-        "raw_syscall_pct": 37,
-        "callthrough_pct": 24,
+        "implemented_pct": 38,
+        "raw_syscall_pct": 36,
+        "callthrough_pct": 23,
         "stub_pct": 3,
         "callthrough_modules": ["stdio_abi", "pthread_abi", "dlfcn_abi"],
         "stub_modules": ["locale_abi", "resolv_abi"]
@@ -113,24 +113,33 @@
   ],
   "current_level": "L0",
   "current_assessment": {
-    "total_symbols": 227,
-    "implemented": 84,
+    "total_symbols": 230,
+    "implemented": 93,
     "raw_syscall": 83,
     "callthrough": 54,
-    "stub": 6,
-    "implemented_pct": 37,
-    "raw_syscall_pct": 37,
+    "stub": 0,
+    "implemented_pct": 40,
+    "raw_syscall_pct": 36,
     "callthrough_pct": 24,
-    "stub_pct": 3,
+    "stub_pct": 0,
     "callthrough_breakdown": {
       "stdio_abi": 30,
       "pthread_abi": 20,
       "dlfcn_abi": 4
     },
-    "stub_breakdown": {
-      "locale_abi": 2,
-      "resolv_abi": 4
-    }
+    "stub_breakdown": {}
+  },
+  "release_tag_policy": {
+    "description": "Release tags must encode exactly one replacement maturity level and must not claim a level above current_level.",
+    "tag_format": "v<semver>-L<level>",
+    "level_tag_suffix": {
+      "L0": "-L0",
+      "L1": "-L1",
+      "L2": "-L2",
+      "L3": "-L3"
+    },
+    "current_release_level": "L0",
+    "current_release_tag_example": "v0.1.0-L0"
   },
   "transition_requirements": {
     "L0_to_L1": [

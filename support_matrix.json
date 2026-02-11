@@ -566,7 +566,7 @@
     },
     {
       "symbol": "freeaddrinfo",
-      "status": "Stub",
+      "status": "Implemented",
       "module": "resolv_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Stub: returns EAI_SERVICE/EAI_NONAME on unparseable input",
@@ -620,7 +620,7 @@
     },
     {
       "symbol": "gai_strerror",
-      "status": "Stub",
+      "status": "Implemented",
       "module": "resolv_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Stub: returns EAI_SERVICE/EAI_NONAME on unparseable input",
@@ -629,7 +629,7 @@
     },
     {
       "symbol": "getaddrinfo",
-      "status": "Stub",
+      "status": "Implemented",
       "module": "resolv_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Stub: returns EAI_SERVICE/EAI_NONAME on unparseable input",
@@ -683,7 +683,7 @@
     },
     {
       "symbol": "getnameinfo",
-      "status": "Stub",
+      "status": "Implemented",
       "module": "resolv_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Stub: returns EAI_SERVICE/EAI_NONAME on unparseable input",
@@ -926,7 +926,7 @@
     },
     {
       "symbol": "localeconv",
-      "status": "Stub",
+      "status": "Implemented",
       "module": "locale_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Stub: setlocale returns C locale pointer; localeconv returns static C locale struct",
@@ -1529,7 +1529,7 @@
     },
     {
       "symbol": "setlocale",
-      "status": "Stub",
+      "status": "Implemented",
       "module": "locale_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Stub: setlocale returns C locale pointer; localeconv returns static C locale struct",
@@ -2089,7 +2089,7 @@
       "symbol": "setenv",
       "status": "Implemented",
       "module": "stdlib_abi",
-      "perf_class": "cold",
+      "perf_class": "coldpath",
       "strict_semantics": "Validates name via core; delegates to system libc setenv; respects overwrite flag",
       "hardened_semantics": "Validates name + value bounds; rejects invalid names with EINVAL; membrane deny returns EPERM",
       "default_stub": false
@@ -2098,7 +2098,7 @@
       "symbol": "unsetenv",
       "status": "Implemented",
       "module": "stdlib_abi",
-      "perf_class": "cold",
+      "perf_class": "coldpath",
       "strict_semantics": "Validates name via core; delegates to system libc unsetenv",
       "hardened_semantics": "Validates name bounds; rejects invalid names with EINVAL; membrane deny returns EPERM",
       "default_stub": false

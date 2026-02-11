@@ -52,32 +52,6 @@
       },
       {
         "rank": 3,
-        "module": "resolv_abi",
-        "symbols_remaining": 4,
-        "status": "Stub",
-        "perf_class": "coldpath",
-        "severity_weight": 3.0,
-        "workloads_blocked": 4,
-        "per_symbol_score": 12.0,
-        "total_urgency": 48.0,
-        "implementation_bead": "bd-66s (stub wave 2)",
-        "note": "Highest per-symbol score overall. Small symbol count makes this high-ROI."
-      },
-      {
-        "rank": 4,
-        "module": "locale_abi",
-        "symbols_remaining": 2,
-        "status": "Stub",
-        "perf_class": "coldpath",
-        "severity_weight": 3.0,
-        "workloads_blocked": 2,
-        "per_symbol_score": 6.0,
-        "total_urgency": 12.0,
-        "implementation_bead": "bd-3pe (locale phase-1)",
-        "note": "Only 2 symbols. C/POSIX locale implementation is bounded and well-defined."
-      },
-      {
-        "rank": 5,
         "module": "dlfcn_abi",
         "symbols_remaining": 4,
         "status": "GlibcCallThrough",
@@ -92,21 +66,14 @@
     ]
   },
   "symbol_ranking": {
-    "description": "All 60 non-implemented symbols ranked by priority score (severity_weight * workloads_blocked). Higher score = implement first.",
+    "description": "All 54 non-implemented symbols ranked by priority score (severity_weight * workloads_blocked). Higher score = implement first.",
     "tiers": [
       {
         "tier": "T1_critical",
         "criteria": "status == Stub",
         "description": "Stub symbols returning error/no-op. Blocks workload functionality entirely.",
-        "symbols": [
-          {"symbol": "getaddrinfo", "module": "resolv_abi", "status": "Stub", "perf_class": "coldpath", "score": 12.0},
-          {"symbol": "getnameinfo", "module": "resolv_abi", "status": "Stub", "perf_class": "coldpath", "score": 12.0},
-          {"symbol": "freeaddrinfo", "module": "resolv_abi", "status": "Stub", "perf_class": "coldpath", "score": 12.0},
-          {"symbol": "gai_strerror", "module": "resolv_abi", "status": "Stub", "perf_class": "coldpath", "score": 12.0},
-          {"symbol": "setlocale", "module": "locale_abi", "status": "Stub", "perf_class": "coldpath", "score": 6.0},
-          {"symbol": "localeconv", "module": "locale_abi", "status": "Stub", "perf_class": "coldpath", "score": 6.0}
-        ],
-        "count": 6
+        "symbols": [],
+        "count": 0
       },
       {
         "tier": "T2_hotpath",
@@ -198,41 +165,41 @@
   },
   "burn_down": {
     "description": "Burn-down tracking for stub/callthrough remediation waves.",
-    "total_non_implemented": 60,
+    "total_non_implemented": 54,
     "by_status": {
-      "Stub": 6,
+      "Stub": 0,
       "GlibcCallThrough": 54
     },
     "by_perf_class": {
       "strict_hotpath": 20,
-      "coldpath": 40
+      "coldpath": 34
     },
     "wave_plan": [
       {"wave": 1, "bead": "bd-z84", "module": "pthread_abi", "scope": "mutex core (lock/unlock/trylock/init/destroy)", "symbols": 5, "status": "in_progress"},
       {"wave": 2, "bead": "bd-yos", "module": "pthread_abi", "scope": "thread bootstrap (create/join/detach)", "symbols": 3, "status": "planned"},
-      {"wave": 3, "bead": "bd-66s", "module": "resolv_abi", "scope": "getaddrinfo/getnameinfo numeric+files", "symbols": 4, "status": "planned"},
-      {"wave": 4, "bead": "bd-3pe", "module": "locale_abi", "scope": "C/POSIX locale (setlocale/localeconv)", "symbols": 2, "status": "planned"},
+      {"wave": 3, "bead": "bd-66s", "module": "resolv_abi", "scope": "getaddrinfo/getnameinfo numeric+files", "symbols": 0, "status": "complete", "note": "4 symbols implemented, removed from non-implemented count"},
+      {"wave": 4, "bead": "bd-3pe", "module": "locale_abi", "scope": "C/POSIX locale (setlocale/localeconv)", "symbols": 0, "status": "complete", "note": "2 symbols implemented, removed from non-implemented count"},
       {"wave": 5, "bead": "bd-3rn", "module": "dlfcn_abi", "scope": "rtld phase-1 (dlopen/dlclose/dlsym/dlerror)", "symbols": 4, "status": "planned"},
       {"wave": 6, "bead": null, "module": "pthread_abi", "scope": "rwlock + condvar remaining", "symbols": 12, "status": "unscheduled"},
       {"wave": 7, "bead": null, "module": "stdio_abi", "scope": "FILE* full reimplementation", "symbols": 30, "status": "unscheduled"}
     ],
     "waves_in_progress": 1,
     "symbols_in_progress": 5,
-    "symbols_planned": 13,
+    "symbols_planned": 7,
     "symbols_unscheduled": 42
   },
   "summary": {
-    "total_non_implemented": 60,
-    "stubs": 6,
+    "total_non_implemented": 54,
+    "stubs": 0,
     "callthroughs": 54,
-    "modules_affected": 5,
+    "modules_affected": 3,
     "tier_counts": {
-      "T1_critical": 6,
+      "T1_critical": 0,
       "T2_hotpath": 20,
       "T3_coldpath": 34
     },
-    "highest_per_symbol_score": {"symbol": "getaddrinfo", "score": 12.0},
+    "highest_per_symbol_score": {"symbol": "pthread_mutex_lock", "score": 8.0},
     "highest_total_urgency": {"module": "stdio_abi", "urgency": 210.0},
-    "most_impactful_quick_win": {"module": "resolv_abi", "reason": "4 stubs, 4 workloads blocked, highest per-symbol score"}
+    "most_impactful_quick_win": {"module": "dlfcn_abi", "reason": "4 callthroughs, small scope, critical for L2 transition"}
   }
 }

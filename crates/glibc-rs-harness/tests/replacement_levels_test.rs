@@ -8,6 +8,8 @@
 //! 5. Gate criteria monotonically tighten across levels.
 //! 6. Transition requirements reference consecutive levels.
 //! 7. The CI gate script exists and is executable.
+//! 8. README replacement-level claim matches current_level.
+//! 9. Release tag policy is aligned with current_level.
 //!
 //! Run: cargo test -p glibc-rs-harness --test replacement_levels_test
 
@@ -34,6 +36,11 @@ fn load_matrix() -> serde_json::Value {
     let path = workspace_root().join("support_matrix.json");
     let content = std::fs::read_to_string(&path).expect("support_matrix.json should exist");
     serde_json::from_str(&content).expect("support_matrix.json should be valid JSON")
+}
+
+fn load_readme() -> String {
+    let path = workspace_root().join("README.md");
+    std::fs::read_to_string(&path).expect("README.md should exist")
 }
 
 #[test]
@@ -330,6 +337,79 @@ fn percentages_consistent() {
         assessment["callthrough_pct"].as_u64().unwrap(),
     );
     check_pct("stub", stub, assessment["stub_pct"].as_u64().unwrap());
+}
+
+#[test]
+fn claim_drift_guard_consistent_with_readme_and_release_policy() {
+    let lvl = load_levels();
+    let readme = load_readme();
+
+    let levels = lvl["levels"].as_array().unwrap();
+    let current = lvl["current_level"].as_str().unwrap_or("");
+    let current_entry = levels
+        .iter()
+        .find(|e| e["level"].as_str() == Some(current))
+        .expect("current_level must exist in levels[]");
+    let current_name = current_entry["name"]
+        .as_str()
+        .expect("current level must have a name");
+
+    let expected_claim =
+        format!("Declared replacement level claim: **{current} — {current_name}**.");
+    assert!(
+        readme.contains(&expected_claim),
+        "README replacement-level claim line missing/stale: {expected_claim}"
+    );
+    assert_eq!(
+        readme
+            .matches("Declared replacement level claim: **")
+            .count(),
+        1,
+        "README must contain exactly one replacement-level claim line"
+    );
+
+    let policy = lvl["release_tag_policy"]
+        .as_object()
+        .expect("release_tag_policy must be an object");
+    assert!(
+        policy.contains_key("tag_format")
+            && policy["tag_format"]
+                .as_str()
+                .map(|s| !s.is_empty())
+                .unwrap_or(false),
+        "release_tag_policy.tag_format must be a non-empty string"
+    );
+
+    let suffixes = policy["level_tag_suffix"]
+        .as_object()
+        .expect("release_tag_policy.level_tag_suffix must be an object");
+    for lid in ["L0", "L1", "L2", "L3"] {
+        let expected = format!("-{lid}");
+        let actual = suffixes
+            .get(lid)
+            .and_then(|v| v.as_str())
+            .unwrap_or("<missing>");
+        assert_eq!(
+            actual, expected,
+            "release_tag_policy.level_tag_suffix.{lid} must equal {expected}"
+        );
+    }
+
+    let claimed_release_level = policy["current_release_level"].as_str().unwrap_or("");
+    assert_eq!(
+        claimed_release_level, current,
+        "release_tag_policy.current_release_level must match current_level"
+    );
+
+    let example = policy["current_release_tag_example"].as_str().unwrap_or("");
+    assert!(
+        !example.is_empty(),
+        "release_tag_policy.current_release_tag_example must be non-empty"
+    );
+    assert!(
+        example.ends_with(&format!("-{current}")),
+        "current_release_tag_example must end with -{current}, got {example}"
+    );
 }
 
 #[test]

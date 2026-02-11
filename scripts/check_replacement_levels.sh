@@ -7,6 +7,7 @@
 #   3. Current assessment matches support_matrix.json counts.
 #   4. Level status progression is consistent (achieved < in_progress < planned < roadmap).
 #   5. Gate criteria thresholds are monotonically tightening.
+#   6. README claim and release-tag policy do not drift above current_level.
 #
 # Exit codes:
 #   0 — all checks pass
@@ -16,6 +17,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LEVELS="${ROOT}/tests/conformance/replacement_levels.json"
 MATRIX="${ROOT}/support_matrix.json"
+README="${ROOT}/README.md"
 
 failures=0
 
@@ -296,6 +298,88 @@ if [[ "${mono_errs}" -gt 0 ]]; then
     failures=$((failures + 1))
 else
     echo "PASS: Gate criteria monotonically tighten across levels"
+fi
+echo ""
+
+# ---------------------------------------------------------------------------
+# Check 6: README + release tag claim drift
+# ---------------------------------------------------------------------------
+echo "--- Check 6: Claim drift (README + release tags) ---"
+
+claim_check=$(python3 -c "
+import json
+import re
+
+with open('${LEVELS}') as f:
+    lvl = json.load(f)
+with open('${README}', encoding='utf-8') as f:
+    readme = f.read()
+
+errors = []
+levels = lvl.get('levels', [])
+level_map = {entry.get('level'): entry for entry in levels}
+current = lvl.get('current_level', '')
+if not current:
+    errors.append('current_level is missing')
+entry = level_map.get(current, {})
+name = entry.get('name', '')
+if not name:
+    errors.append(f'current_level={current} not found in levels[]')
+
+expected_claim = f'Declared replacement level claim: **{current} — {name}**.'
+if expected_claim not in readme:
+    errors.append('README replacement-level claim line is missing or stale')
+claim_matches = re.findall(r'Declared replacement level claim: \\*\\*(L[0-3]) — ([^*]+)\\*\\*\\.', readme)
+if len(claim_matches) != 1:
+    errors.append(f'Expected exactly one replacement-level claim line in README, found {len(claim_matches)}')
+
+policy = lvl.get('release_tag_policy')
+if not isinstance(policy, dict):
+    errors.append('release_tag_policy missing or invalid')
+else:
+    tag_format = policy.get('tag_format', '')
+    if not tag_format:
+        errors.append('release_tag_policy.tag_format missing')
+    suffixes = policy.get('level_tag_suffix')
+    if not isinstance(suffixes, dict):
+        errors.append('release_tag_policy.level_tag_suffix missing or invalid')
+    else:
+        for lid in ['L0', 'L1', 'L2', 'L3']:
+            expected_suffix = f'-{lid}'
+            actual_suffix = suffixes.get(lid)
+            if actual_suffix != expected_suffix:
+                errors.append(
+                    f'release_tag_policy.level_tag_suffix.{lid}={actual_suffix!r} expected {expected_suffix!r}'
+                )
+
+    claimed_release_level = policy.get('current_release_level', '')
+    if claimed_release_level != current:
+        errors.append(
+            f'release_tag_policy.current_release_level={claimed_release_level!r} must match current_level={current!r}'
+        )
+
+    example = policy.get('current_release_tag_example', '')
+    required_suffix = f'-{current}'
+    if not example:
+        errors.append('release_tag_policy.current_release_tag_example missing')
+    elif not example.endswith(required_suffix):
+        errors.append(
+            f'current_release_tag_example={example!r} must end with {required_suffix!r}'
+        )
+
+print(f'CLAIM_ERRORS={len(errors)}')
+for e in errors:
+    print(f'  {e}')
+")
+
+claim_errs=$(echo "${claim_check}" | grep '^CLAIM_ERRORS=' | cut -d= -f2)
+
+if [[ "${claim_errs}" -gt 0 ]]; then
+    echo "FAIL: ${claim_errs} claim drift error(s):"
+    echo "${claim_check}" | grep '  '
+    failures=$((failures + 1))
+else
+    echo "PASS: README and release-tag policy are aligned to current_level"
 fi
 echo ""
 

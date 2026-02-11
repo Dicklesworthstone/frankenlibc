@@ -44,16 +44,13 @@
       "guarantee": "All exported symbols are self-contained. Zero host glibc dependency. Every symbol either runs native Rust code or issues raw Linux syscalls.",
       "status": "planned",
       "blockers": {
-        "total_symbols_to_migrate": 60,
+        "total_symbols_to_migrate": 54,
         "GlibcCallThrough_remaining": {
           "stdio_abi": 30,
           "pthread_abi": 20,
           "dlfcn_abi": 4
         },
-        "Stub_remaining": {
-          "locale_abi": 2,
-          "resolv_abi": 4
-        },
+        "Stub_remaining": {},
         "milestone_beads": [
           {"bead": "bd-z84", "title": "Futex mutex core", "migrates": "pthread_mutex_* (part of 20)"},
           {"bead": "bd-yos", "title": "Thread bootstrap", "migrates": "pthread_create/join/detach (part of 20)"},
@@ -69,16 +66,16 @@
   "current_assessment": {
     "total_symbols": 230,
     "interpose_ready": 230,
-    "replace_ready": 170,
-    "replace_blocked": 60,
+    "replace_ready": 176,
+    "replace_blocked": 54,
     "symbol_distribution": {
-      "Implemented": 87,
+      "Implemented": 93,
       "RawSyscall": 83,
       "GlibcCallThrough": 54,
-      "Stub": 6
+      "Stub": 0
     },
     "interpose_pct": 100,
-    "replace_pct": 74
+    "replace_pct": 77
   },
   "naming_convention": {
     "interpose": {

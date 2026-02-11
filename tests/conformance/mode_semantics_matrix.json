@@ -6,12 +6,21 @@
     "strict": {
       "description": "ABI-compatible, POSIX-correct semantics. No healing. Errors match libc behavior. Performance target: <20ns overhead.",
       "heals_enabled": false,
-      "env_values": ["strict", "default", "abi"]
+      "env_values": [
+        "strict",
+        "default",
+        "abi"
+      ]
     },
     "hardened": {
       "description": "TSM repair mode. Validates AND applies healing. Safety over conformance. Performance target: <200ns overhead.",
       "heals_enabled": true,
-      "env_values": ["hardened", "repair", "tsm", "full"]
+      "env_values": [
+        "hardened",
+        "repair",
+        "tsm",
+        "full"
+      ]
     }
   },
   "env_variable": "GLIBC_RUST_MODE",
@@ -21,7 +30,18 @@
       "api_family_enum": "Allocator",
       "module": "malloc_abi",
       "heals_call_sites": 3,
-      "symbols": ["malloc", "free", "calloc", "realloc", "posix_memalign", "aligned_alloc", "memalign", "pvalloc", "valloc", "malloc_usable_size"],
+      "symbols": [
+        "malloc",
+        "free",
+        "calloc",
+        "realloc",
+        "posix_memalign",
+        "aligned_alloc",
+        "memalign",
+        "pvalloc",
+        "valloc",
+        "malloc_usable_size"
+      ],
       "strict_behavior": {
         "double_free": "Silently ignored (no crash)",
         "foreign_ptr_free": "Silently ignored",
@@ -42,7 +62,27 @@
       "api_family_enum": "StringMemory",
       "module": "string_abi",
       "heals_call_sites": 17,
-      "symbols": ["memcpy", "memmove", "memset", "memcmp", "memchr", "strcpy", "strncpy", "strcat", "strncat", "strcmp", "strncmp", "strlen", "strnlen", "strchr", "strrchr", "strstr", "strtok_r", "strerror_r", "strerror"],
+      "symbols": [
+        "memcpy",
+        "memmove",
+        "memset",
+        "memcmp",
+        "memchr",
+        "strcpy",
+        "strncpy",
+        "strcat",
+        "strncat",
+        "strcmp",
+        "strncmp",
+        "strlen",
+        "strnlen",
+        "strchr",
+        "strrchr",
+        "strstr",
+        "strtok_r",
+        "strerror_r",
+        "strerror"
+      ],
       "strict_behavior": {
         "buffer_overflow": "Proceeds (undefined behavior, raw passthrough)",
         "null_pointer": "Deny, returns error/NULL",
@@ -61,7 +101,25 @@
       "api_family_enum": "StringMemory",
       "module": "wchar_abi",
       "heals_call_sites": 14,
-      "symbols": ["wcslen", "wcscpy", "wcsncpy", "wcscat", "wcsncat", "wcscmp", "wcsncmp", "wcschr", "wcsrchr", "wcsstr", "wmemcpy", "wmemmove", "wmemset", "wmemcmp", "wmemchr", "wcstol", "wcstoul"],
+      "symbols": [
+        "wcslen",
+        "wcscpy",
+        "wcsncpy",
+        "wcscat",
+        "wcsncat",
+        "wcscmp",
+        "wcsncmp",
+        "wcschr",
+        "wcsrchr",
+        "wcsstr",
+        "wmemcpy",
+        "wmemmove",
+        "wmemset",
+        "wmemcmp",
+        "wmemchr",
+        "wcstol",
+        "wcstoul"
+      ],
       "strict_behavior": {
         "buffer_overflow": "Proceeds (raw passthrough)",
         "unbounded_scan": "Raw unbounded scan",
@@ -78,7 +136,21 @@
       "api_family_enum": "Stdio",
       "module": "stdio_abi",
       "heals_call_sites": 2,
-      "symbols": ["fopen", "fclose", "fread", "fwrite", "fprintf", "sprintf", "snprintf", "fgets", "fputs", "fflush", "fseek", "ftell", "rewind"],
+      "symbols": [
+        "fopen",
+        "fclose",
+        "fread",
+        "fwrite",
+        "fprintf",
+        "sprintf",
+        "snprintf",
+        "fgets",
+        "fputs",
+        "fflush",
+        "fseek",
+        "ftell",
+        "rewind"
+      ],
       "strict_behavior": {
         "invalid_stream": "Returns error/NULL per POSIX",
         "buffer_overflow": "Proceeds as-is"
@@ -92,15 +164,30 @@
       "family": "Stdlib",
       "api_family_enum": "Stdlib",
       "module": "stdlib_abi",
-      "heals_call_sites": 4,
-      "symbols": ["atoi", "atol", "atoll", "strtol", "strtoul", "strtoll", "strtoull"],
+      "heals_call_sites": 10,
+      "symbols": [
+        "atoi",
+        "atol",
+        "atoll",
+        "strtol",
+        "strtoul",
+        "strtoll",
+        "strtoull",
+        "getenv",
+        "setenv",
+        "unsetenv"
+      ],
       "strict_behavior": {
         "unbounded_parse": "Raw unbounded scan of input string",
-        "overflow": "Returns LONG_MAX/LONG_MIN per POSIX"
+        "overflow": "Returns LONG_MAX/LONG_MIN per POSIX",
+        "invalid_env_name": "Returns NULL/-1, sets EINVAL",
+        "unterminated_name": "Scans unbounded (standard behavior)"
       },
       "hardened_behavior": {
         "unbounded_parse": "Bounded to known allocation via repair_enabled()",
-        "overflow": "Same POSIX limits, but scan is bounds-limited"
+        "overflow": "Same POSIX limits, but scan is bounds-limited",
+        "invalid_env_name": "Returns NULL/-1, sets EINVAL (same validation)",
+        "unterminated_name": "Refuses unterminated name within known bounds"
       }
     },
     {
@@ -108,7 +195,28 @@
       "api_family_enum": "MathFenv",
       "module": "math_abi",
       "heals_call_sites": 3,
-      "symbols": ["sin", "cos", "tan", "asin", "acos", "atan", "atan2", "exp", "log", "log2", "log10", "pow", "sqrt", "ceil", "floor", "round", "fabs", "fmod", "remainder", "fma"],
+      "symbols": [
+        "sin",
+        "cos",
+        "tan",
+        "asin",
+        "acos",
+        "atan",
+        "atan2",
+        "exp",
+        "log",
+        "log2",
+        "log10",
+        "pow",
+        "sqrt",
+        "ceil",
+        "floor",
+        "round",
+        "fabs",
+        "fmod",
+        "remainder",
+        "fma"
+      ],
       "strict_behavior": {
         "denied": "Returns NaN",
         "non_finite_result": "Returns raw result (NaN/Inf as-is)",
@@ -116,7 +224,7 @@
       },
       "hardened_behavior": {
         "denied": "Returns 0.0 (safe default)",
-        "non_finite_result": "Healed: NaN→0.0, Inf→f64::MAX/MIN",
+        "non_finite_result": "Healed: NaN\u21920.0, Inf\u2192f64::MAX/MIN",
         "domain_error": "Returns 0.0 via heal_non_finite()"
       }
     },
@@ -124,8 +232,21 @@
       "family": "Threading",
       "api_family_enum": "Threading",
       "module": "pthread_abi",
-      "heals_call_sites": 2,
-      "symbols": ["pthread_create", "pthread_join", "pthread_detach", "pthread_mutex_init", "pthread_mutex_lock", "pthread_mutex_unlock", "pthread_mutex_destroy", "pthread_cond_init", "pthread_cond_wait", "pthread_cond_signal", "pthread_cond_broadcast", "pthread_cond_destroy"],
+      "heals_call_sites": 0,
+      "symbols": [
+        "pthread_create",
+        "pthread_join",
+        "pthread_detach",
+        "pthread_mutex_init",
+        "pthread_mutex_lock",
+        "pthread_mutex_unlock",
+        "pthread_mutex_destroy",
+        "pthread_cond_init",
+        "pthread_cond_wait",
+        "pthread_cond_signal",
+        "pthread_cond_broadcast",
+        "pthread_cond_destroy"
+      ],
       "strict_behavior": {
         "EBUSY_destroy": "Returns EBUSY error",
         "EPERM_unlock": "Returns EPERM error"
@@ -140,7 +261,20 @@
       "api_family_enum": "Socket",
       "module": "socket_abi",
       "heals_call_sites": 3,
-      "symbols": ["socket", "bind", "listen", "accept", "connect", "send", "recv", "sendto", "recvfrom", "setsockopt", "getsockopt", "shutdown"],
+      "symbols": [
+        "socket",
+        "bind",
+        "listen",
+        "accept",
+        "connect",
+        "send",
+        "recv",
+        "sendto",
+        "recvfrom",
+        "setsockopt",
+        "getsockopt",
+        "shutdown"
+      ],
       "strict_behavior": {
         "invalid_domain": "Returns -1, sets EAFNOSUPPORT",
         "invalid_type": "Returns -1, sets EINVAL",
@@ -157,7 +291,12 @@
       "api_family_enum": "Poll",
       "module": "poll_abi",
       "heals_call_sites": 4,
-      "symbols": ["poll", "ppoll", "select", "pselect"],
+      "symbols": [
+        "poll",
+        "ppoll",
+        "select",
+        "pselect"
+      ],
       "strict_behavior": {
         "invalid_nfds": "Returns -1, sets EINVAL",
         "invalid_select_nfds": "Returns -1, sets EINVAL"
@@ -172,7 +311,14 @@
       "api_family_enum": "VirtualMemory",
       "module": "mmap_abi",
       "heals_call_sites": 4,
-      "symbols": ["mmap", "munmap", "mprotect", "msync", "madvise", "mremap"],
+      "symbols": [
+        "mmap",
+        "munmap",
+        "mprotect",
+        "msync",
+        "madvise",
+        "mremap"
+      ],
       "strict_behavior": {
         "invalid_prot": "Returns MAP_FAILED, sets EINVAL",
         "invalid_flags": "Returns error per POSIX",
@@ -189,7 +335,18 @@
       "api_family_enum": "IoFd",
       "module": "io_abi",
       "heals_call_sites": 1,
-      "symbols": ["open", "close", "read", "write", "lseek", "dup", "dup2", "pipe", "fcntl", "ioctl"],
+      "symbols": [
+        "open",
+        "close",
+        "read",
+        "write",
+        "lseek",
+        "dup",
+        "dup2",
+        "pipe",
+        "fcntl",
+        "ioctl"
+      ],
       "strict_behavior": {
         "invalid_fd": "Returns -1, sets EBADF",
         "bounds_violation": "Proceeds as-is"
@@ -204,7 +361,18 @@
       "api_family_enum": "Time",
       "module": "time_abi",
       "heals_call_sites": 3,
-      "symbols": ["time", "gettimeofday", "clock_gettime", "clock_getres", "nanosleep", "clock_nanosleep", "localtime_r", "gmtime_r", "mktime", "strftime"],
+      "symbols": [
+        "time",
+        "gettimeofday",
+        "clock_gettime",
+        "clock_getres",
+        "nanosleep",
+        "clock_nanosleep",
+        "localtime_r",
+        "gmtime_r",
+        "mktime",
+        "strftime"
+      ],
       "strict_behavior": {
         "invalid_clock": "Returns -1, sets EINVAL",
         "null_buffer": "Returns error",
@@ -221,7 +389,18 @@
       "api_family_enum": "Termios",
       "module": "termios_abi",
       "heals_call_sites": 3,
-      "symbols": ["tcgetattr", "tcsetattr", "tcsendbreak", "tcdrain", "tcflush", "tcflow", "cfgetispeed", "cfgetospeed", "cfsetispeed", "cfsetospeed"],
+      "symbols": [
+        "tcgetattr",
+        "tcsetattr",
+        "tcsendbreak",
+        "tcdrain",
+        "tcflush",
+        "tcflow",
+        "cfgetispeed",
+        "cfgetospeed",
+        "cfsetispeed",
+        "cfsetospeed"
+      ],
       "strict_behavior": {
         "invalid_action": "Returns -1, sets EINVAL",
         "invalid_queue": "Returns -1, sets EINVAL",
@@ -238,7 +417,12 @@
       "api_family_enum": "Loader",
       "module": "dlfcn_abi",
       "heals_call_sites": 1,
-      "symbols": ["dlopen", "dlclose", "dlsym", "dlerror"],
+      "symbols": [
+        "dlopen",
+        "dlclose",
+        "dlsym",
+        "dlerror"
+      ],
       "strict_behavior": {
         "invalid_flags": "Returns NULL, sets dlerror"
       },
@@ -251,7 +435,15 @@
       "api_family_enum": "IoFd",
       "module": "dirent_abi",
       "heals_call_sites": 3,
-      "symbols": ["opendir", "readdir", "readdir_r", "closedir", "rewinddir", "seekdir", "telldir"],
+      "symbols": [
+        "opendir",
+        "readdir",
+        "readdir_r",
+        "closedir",
+        "rewinddir",
+        "seekdir",
+        "telldir"
+      ],
       "strict_behavior": {
         "null_dir": "Returns NULL/error",
         "invalid_loc": "Proceeds as-is",
@@ -268,7 +460,11 @@
       "api_family_enum": "Stdlib",
       "module": "resource_abi",
       "heals_call_sites": 1,
-      "symbols": ["getrlimit", "setrlimit", "getrusage"],
+      "symbols": [
+        "getrlimit",
+        "setrlimit",
+        "getrusage"
+      ],
       "strict_behavior": {
         "invalid_limit": "Returns -1, sets EINVAL"
       },
@@ -281,7 +477,16 @@
       "api_family_enum": "Process",
       "module": "process_abi",
       "heals_call_sites": 2,
-      "symbols": ["fork", "execve", "execvp", "waitpid", "wait", "_exit", "getpid", "getppid"],
+      "symbols": [
+        "fork",
+        "execve",
+        "execvp",
+        "waitpid",
+        "wait",
+        "_exit",
+        "getpid",
+        "getppid"
+      ],
       "strict_behavior": {
         "invalid_envp": "Proceeds as-is (raw passthrough)",
         "invalid_wait_options": "Returns -1, sets EINVAL"
@@ -296,7 +501,10 @@
       "api_family_enum": "Locale",
       "module": "locale_abi",
       "heals_call_sites": 1,
-      "symbols": ["setlocale", "localeconv"],
+      "symbols": [
+        "setlocale",
+        "localeconv"
+      ],
       "strict_behavior": {
         "invalid_category": "Returns NULL"
       },
@@ -309,7 +517,12 @@
       "api_family_enum": "Resolver",
       "module": "resolv_abi",
       "heals_call_sites": 2,
-      "symbols": ["getaddrinfo", "freeaddrinfo", "getnameinfo", "gai_strerror"],
+      "symbols": [
+        "getaddrinfo",
+        "freeaddrinfo",
+        "getnameinfo",
+        "gai_strerror"
+      ],
       "strict_behavior": {
         "invalid_hints": "Returns EAI_BADFLAGS/EAI_FAMILY",
         "buffer_overflow": "Proceeds as-is"
@@ -324,7 +537,27 @@
       "api_family_enum": "IoFd",
       "module": "unistd_abi",
       "heals_call_sites": 4,
-      "symbols": ["access", "getcwd", "chdir", "chown", "fchown", "link", "unlink", "rmdir", "symlink", "readlink", "truncate", "ftruncate", "sysconf", "pathconf", "fpathconf", "getuid", "geteuid", "getgid", "getegid"],
+      "symbols": [
+        "access",
+        "getcwd",
+        "chdir",
+        "chown",
+        "fchown",
+        "link",
+        "unlink",
+        "rmdir",
+        "symlink",
+        "readlink",
+        "truncate",
+        "ftruncate",
+        "sysconf",
+        "pathconf",
+        "fpathconf",
+        "getuid",
+        "geteuid",
+        "getgid",
+        "getegid"
+      ],
       "strict_behavior": {
         "buffer_overflow": "Proceeds as-is",
         "invalid_path": "Returns -1, sets errno",
@@ -339,8 +572,8 @@
   ],
   "summary": {
     "total_families": 20,
-    "families_with_healing": 20,
-    "total_heals_call_sites": 77,
+    "families_with_healing": 19,
+    "total_heals_call_sites": 81,
     "healing_actions": [
       "ClampSize",
       "TruncateWithNull",
