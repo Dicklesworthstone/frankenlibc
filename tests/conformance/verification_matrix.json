@@ -2300,8 +2300,8 @@
       "bead_id": "bd-30h",
       "title": "Packaging: define artifacts + guarantee levels (Interpose vs Replace)",
       "priority": 1,
-      "status": "open",
-      "assignee": null,
+      "status": "closed",
+      "assignee": "BronzeTower",
       "labels": [
         "critique",
         "docs"
@@ -2335,15 +2335,15 @@
       },
       "coverage": {
         "unit_tests": {
-          "status": "missing",
-          "artifacts": ""
+          "status": "complete",
+          "artifacts": "scripts/check_packaging.sh; cargo test -p glibc-rs-harness --test packaging_test -- --nocapture"
         },
         "e2e_scripts": {
           "status": "not_required"
         },
         "structured_logs": {
-          "status": "missing",
-          "artifacts": ""
+          "status": "partial",
+          "artifacts": "tests/conformance/log_schema.json"
         },
         "perf_evidence": {
           "status": "not_required"
@@ -2352,42 +2352,45 @@
           "status": "not_required"
         },
         "golden_artifacts": {
-          "status": "missing",
-          "artifacts": ""
+          "status": "partial",
+          "artifacts": "tests/conformance/packaging_spec.json; support_matrix.json"
         }
       },
       "coverage_summary": {
-        "overall": "missing",
+        "overall": "partial",
         "required": 3,
-        "complete": 0,
-        "partial": 0,
-        "missing": 3
+        "complete": 1,
+        "partial": 2,
+        "missing": 0
       },
       "row": {
         "bead_id": "bd-30h",
         "stream": "docs",
-        "status": "missing",
+        "status": "partial",
         "unit_cmds": [
-          "cargo test -p glibc-rs-harness --test parity_report_drift_test"
+          "scripts/check_packaging.sh",
+          "scripts/check_support_matrix_drift.sh",
+          "cargo test -p glibc-rs-harness --test packaging_test -- --nocapture"
         ],
         "e2e_cmds": [],
         "expected_assertions": [
-          "docs snapshots and support-matrix report remain aligned"
+          "README artifact commands match packaging spec and real interpose output",
+          "support_matrix artifact applicability map matches packaging contracts",
+          "packaging harness tests pass"
         ],
         "log_schema_refs": [
           "tests/conformance/log_schema.json"
         ],
         "artifact_paths": [
-          "tests/cve_arena/results/bd-30h/trace.jsonl",
-          "tests/cve_arena/results/bd-30h/artifact_index.json"
+          "README.md",
+          "support_matrix.json",
+          "scripts/check_packaging.sh",
+          "crates/glibc-rs-harness/tests/packaging_test.rs",
+          "tests/conformance/packaging_spec.json"
         ],
         "perf_proof_refs": [],
-        "close_blockers": [
-          "missing_unit",
-          "missing_logs",
-          "missing_golden_artifacts"
-        ],
-        "notes": "Auto-backfilled row for bd-30h; refine commands/artifacts as implementation evidence lands."
+        "close_blockers": [],
+        "notes": "Closed 2026-02-11 after README/artifact contract alignment and packaging gate hardening. Commands validated in bead notes."
       }
     },
     {
