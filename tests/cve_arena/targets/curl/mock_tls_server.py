@@ -23,7 +23,6 @@ import argparse
 import os
 import socket
 import ssl
-import struct
 import subprocess
 import sys
 import tempfile
