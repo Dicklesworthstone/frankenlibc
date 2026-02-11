@@ -52,6 +52,12 @@ Support-matrix applicability rule:
 - `Implemented` + `RawSyscall` symbols apply to both artifacts.
 - `GlibcCallThrough` + `Stub` symbols apply to `Interpose` only.
 
+## Declared Replacement Level (Machine-Checked)
+
+Source of truth: `tests/conformance/replacement_levels.json`.
+Declared replacement level claim: **L0 — Interpose**.
+Release tag format: `v<semver>-L<level>` (for example `v0.1.0-L0` at current level).
+
 ---
 
 ## The Problem
