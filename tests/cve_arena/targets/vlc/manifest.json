@@ -1,0 +1,34 @@
+{
+  "cve_id": "CVE-2024-46461",
+  "test_name": "vlc_mms_integer_overflow_heap_overflow",
+  "category": "external",
+  "software": "vlc",
+  "software_version": "3.0.20",
+  "description": "Integer overflow in VLC MMS access module length calculation causes undersized heap allocation and subsequent buffer overflow",
+  "cwe_ids": ["CWE-190", "CWE-122"],
+  "cvss_score": 7.5,
+  "build_cmd": "docker build -t cve-arena-vlc .",
+  "run_cmd": "./trigger.sh",
+  "ld_preload_mode": true,
+  "expected_stock": {
+    "crashes": true,
+    "signal": "SIGSEGV",
+    "description": "Integer overflow in packet_count * packet_size truncates to small value on 32-bit; malloc allocates tiny buffer; memcpy writes full data amount past buffer boundary causing heap corruption and SIGSEGV"
+  },
+  "expected_tsm": {
+    "crashes": false,
+    "exit_code": 0,
+    "healing_actions": [
+      "ClampSize",
+      "ReallocAsMalloc"
+    ],
+    "description": "Allocation fingerprint detects the write past the canary boundary after the undersized malloc; ClampSize healing prevents the overflow from corrupting adjacent memory; the membrane's size validation catches the suspicious allocation pattern (very small alloc followed by very large write)"
+  },
+  "tsm_features_tested": [
+    "allocation_fingerprint",
+    "canary_verification",
+    "heap_overflow_detection",
+    "clamp_size_healing",
+    "integer_overflow_resilience"
+  ]
+}

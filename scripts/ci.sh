@@ -49,4 +49,13 @@ scripts/perf_gate.sh
 echo "PASS"
 echo ""
 
+echo "--- CVE Arena regression gate ---"
+if [ -f scripts/cve_arena_gate.sh ]; then
+    scripts/cve_arena_gate.sh
+    echo "PASS"
+else
+    echo "SKIP (cve_arena_gate.sh not found)"
+fi
+echo ""
+
 echo "=== All gates passed ==="

@@ -1,0 +1,22 @@
+{
+  "cve_id": "CVE-2024-2961",
+  "test_name": "iconv_iso2022cn_ext_buffer_overflow",
+  "category": "glibc-internal",
+  "description": "iconv() writes up to 8 bytes past the output buffer when converting to ISO-2022-CN-EXT",
+  "cwe_ids": ["CWE-787"],
+  "cvss_score": 8.8,
+  "build_cmd": "cc -o trigger trigger.c -Wall -Wextra",
+  "run_cmd": "./trigger",
+  "expected_stock": {
+    "crashes": true,
+    "signal": "SIGSEGV",
+    "description": "Heap corruption from 8-byte overwrite past output buffer; may crash at free() or silently corrupt adjacent allocations enabling code execution"
+  },
+  "expected_tsm": {
+    "crashes": false,
+    "exit_code": 0,
+    "healing_actions": ["ClampSize"],
+    "description": "Trailing canary detects overflow at free(); ClampSize would prevent the overwrite in iconv's internal memcpy; bounds computation catches the out-of-range write"
+  },
+  "tsm_features_tested": ["canary", "bounds_checking", "clamp_size"]
+}

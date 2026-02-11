@@ -1,0 +1,23 @@
+{
+  "cve_id": "CVE-2024-33599",
+  "test_name": "nscd_netgroup_cache_memory_corruption_suite",
+  "category": "glibc-internal",
+  "description": "Suite of four nscd netgroup cache vulnerabilities: stack overflow, NULL deref, metadata corruption, and uninitialized memory use",
+  "cwe_ids": ["CWE-121", "CWE-476", "CWE-787", "CWE-908"],
+  "cvss_score": 7.6,
+  "build_cmd": "cc -o trigger trigger.c -Wall -Wextra",
+  "run_cmd": "./trigger",
+  "related_cves": ["CVE-2024-33599", "CVE-2024-33600", "CVE-2024-33601", "CVE-2024-33602"],
+  "expected_stock": {
+    "crashes": true,
+    "signal": "SIGSEGV",
+    "description": "Stack overflow from oversized netgroup response; NULL dereference on not-found; cache metadata corruption enabling cache poisoning; information disclosure via uninitialized memory"
+  },
+  "expected_tsm": {
+    "crashes": false,
+    "exit_code": 0,
+    "healing_actions": ["ClampSize", "ReturnSafeDefault"],
+    "description": "Trailing canary detects overflows at free(); ReturnSafeDefault prevents NULL dereference; ClampSize limits oversized copies; quarantine scrub prevents stale data leakage"
+  },
+  "tsm_features_tested": ["canary", "bounds_checking", "clamp_size", "return_safe_default", "quarantine"]
+}

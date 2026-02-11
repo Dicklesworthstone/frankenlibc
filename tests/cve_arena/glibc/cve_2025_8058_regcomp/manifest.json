@@ -1,0 +1,22 @@
+{
+  "cve_id": "CVE-2025-8058",
+  "test_name": "regcomp_double_free_on_alloc_failure",
+  "category": "glibc-internal",
+  "description": "regcomp() double-frees internal buffers when allocation fails during regex compilation",
+  "cwe_ids": ["CWE-415"],
+  "cvss_score": 5.5,
+  "build_cmd": "cc -o trigger trigger.c -Wall -Wextra",
+  "run_cmd": "./trigger",
+  "expected_stock": {
+    "crashes": true,
+    "signal": "SIGABRT",
+    "description": "glibc detects double free in tcache and aborts; older versions suffer silent heap corruption enabling arbitrary write"
+  },
+  "expected_tsm": {
+    "crashes": false,
+    "exit_code": 0,
+    "healing_actions": ["IgnoreDoubleFree"],
+    "description": "Generational arena detects freed generation; IgnoreDoubleFree absorbs the second free; allocation fingerprint confirms legitimate pointer"
+  },
+  "tsm_features_tested": ["generational_arena", "quarantine", "ignore_double_free", "allocation_fingerprints"]
+}

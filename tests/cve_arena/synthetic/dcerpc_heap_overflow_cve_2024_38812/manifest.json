@@ -1,0 +1,38 @@
+{
+  "cve_id": "CVE-2024-38812 (synthetic)",
+  "original_cve": "CVE-2024-38812",
+  "test_name": "dcerpc_heap_overflow_cve_2024_38812",
+  "category": "synthetic",
+  "description": "DCERPC-style heap buffer overflow from confused length fields: parser allocates buffer with one packet length but copies data using a larger second length, causing heap overflow (modeled on VMware vCenter DCERPC handler bug)",
+  "cwe_ids": ["CWE-122"],
+  "cvss_score": 9.8,
+  "build_cmd": "cc -o trigger trigger.c -Wall -Wextra",
+  "run_cmd": "./trigger",
+  "expected_stock": {
+    "crashes": true,
+    "signal": "SIGABRT",
+    "description": "memcpy overflows heap buffer by 192 bytes (alloc_len=64, copy_len=256); heap metadata (chunk size, fd/bk pointers) is silently corrupted; free() may trigger glibc heap consistency check abort or silently corrupt the free list; subsequent allocations may return attacker-controlled memory"
+  },
+  "expected_tsm": {
+    "crashes": false,
+    "exit_code": 0,
+    "healing_actions": [
+      "ClampSize",
+      "FreedWithCanaryCorruption"
+    ],
+    "description": "ClampSize intercepts the memcpy call and clamps copy_len to the known allocation bounds via remaining_from(); if the overflow is not prevented proactively, the 8-byte trailing canary detects corruption at free() time and reports FreedWithCanaryCorruption; heap integrity is maintained"
+  },
+  "tsm_features_tested": [
+    "ClampSize",
+    "TrailingCanary",
+    "BoundsComputation",
+    "AllocationFingerprints"
+  ],
+  "packet_structure": {
+    "magic": "0xDA7A",
+    "alloc_len": 64,
+    "copy_len": 256,
+    "overflow_bytes": 192,
+    "fill_pattern": "0xCC"
+  }
+}

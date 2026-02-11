@@ -1,0 +1,223 @@
+{
+    "$schema": "https://json-schema.org/draft-07/schema#",
+    "$id": "https://github.com/nickel-org/glibc_rust/tests/cve_arena/manifest_schema.json",
+    "title": "CVE Arena Test Manifest",
+    "description": "Schema for manifest.json files in CVE Arena test directories. Each CVE reproduction test must include a manifest that describes how to build, run, and evaluate the test against both stock glibc and glibc_rust.",
+    "type": "object",
+    "required": [
+        "cve_id",
+        "test_name",
+        "category",
+        "description",
+        "build_cmd",
+        "run_cmd_stock",
+        "run_cmd_tsm",
+        "expected_stock_behavior",
+        "expected_tsm_behavior",
+        "tsm_features_tested",
+        "cwe_ids"
+    ],
+    "properties": {
+        "cve_id": {
+            "type": "string",
+            "description": "The CVE identifier (e.g., 'CVE-2024-2961').",
+            "pattern": "^CVE-\\d{4}-\\d{4,}$",
+            "examples": ["CVE-2024-2961", "CVE-2023-4911"]
+        },
+        "test_name": {
+            "type": "string",
+            "description": "A short, filesystem-safe name for this specific test case. Multiple tests can target the same CVE with different trigger vectors.",
+            "pattern": "^[a-z0-9_]+$",
+            "minLength": 1,
+            "maxLength": 64,
+            "examples": ["iconv_overflow", "looney_tunables_envp", "double_free_fastbin"]
+        },
+        "category": {
+            "type": "string",
+            "description": "The test category. 'glibc-internal' tests exercise bugs in glibc's own code paths. 'external' tests exercise vulnerabilities in programs that use glibc (curl, redis, etc.). 'synthetic' tests are hand-crafted to exercise specific TSM features.",
+            "enum": ["glibc-internal", "external", "synthetic"]
+        },
+        "description": {
+            "type": "string",
+            "description": "Human-readable description of what this test does and what vulnerability it targets.",
+            "minLength": 10,
+            "maxLength": 1024
+        },
+        "build_cmd": {
+            "type": ["string", "null"],
+            "description": "Shell command to compile the trigger program. Executed in the test directory. Set to null if no build step is needed (e.g., script-based triggers).",
+            "examples": [
+                "gcc -o trigger trigger.c -O0 -fno-stack-protector",
+                "gcc -o trigger trigger.c -liconv",
+                null
+            ]
+        },
+        "run_cmd_stock": {
+            "type": "string",
+            "description": "Shell command to run the trigger with stock glibc. Executed in the test directory. Should not include LD_PRELOAD or GLIBC_RUST_MODE settings.",
+            "minLength": 1,
+            "examples": [
+                "./trigger",
+                "./trigger < payload.bin",
+                "python3 trigger.py"
+            ]
+        },
+        "run_cmd_tsm": {
+            "type": "string",
+            "description": "Shell command to run the trigger with glibc_rust. The runner sets LD_PRELOAD and GLIBC_RUST_MODE=hardened automatically, so this command should be the same as run_cmd_stock unless additional TSM-specific arguments are needed.",
+            "minLength": 1,
+            "examples": [
+                "./trigger",
+                "./trigger < payload.bin",
+                "python3 trigger.py"
+            ]
+        },
+        "expected_stock_behavior": {
+            "type": "object",
+            "description": "Expected behavior when running with stock (unpatched) glibc.",
+            "required": ["crashes"],
+            "properties": {
+                "crashes": {
+                    "type": "boolean",
+                    "description": "Whether the trigger is expected to crash under stock glibc."
+                },
+                "signal": {
+                    "type": ["string", "null"],
+                    "description": "Expected termination signal (e.g., 'SIGSEGV', 'SIGABRT'). Null if no signal expected.",
+                    "enum": [null, "SIGSEGV", "SIGABRT", "SIGBUS", "SIGFPE", "SIGILL", "SIGSYS", "SIGKILL"],
+                    "default": null
+                },
+                "exit_code": {
+                    "type": ["integer", "null"],
+                    "description": "Expected exit code. Null means any exit code is acceptable. 139 = SIGSEGV (128+11), 134 = SIGABRT (128+6).",
+                    "minimum": 0,
+                    "maximum": 255,
+                    "default": null
+                }
+            },
+            "additionalProperties": false
+        },
+        "expected_tsm_behavior": {
+            "type": "object",
+            "description": "Expected behavior when running with glibc_rust in hardened mode.",
+            "required": ["crashes", "exit_code"],
+            "properties": {
+                "crashes": {
+                    "type": "boolean",
+                    "description": "Whether the trigger is expected to crash under glibc_rust. Should be false for properly handled CVEs."
+                },
+                "exit_code": {
+                    "type": "integer",
+                    "description": "Expected exit code under glibc_rust. 0 means the vulnerability was silently prevented.",
+                    "minimum": 0,
+                    "maximum": 255
+                },
+                "healing_actions": {
+                    "type": "array",
+                    "description": "List of TSM healing actions expected to fire.",
+                    "items": {
+                        "type": "string",
+                        "enum": [
+                            "ClampSize",
+                            "TruncateWithNull",
+                            "IgnoreDoubleFree",
+                            "IgnoreForeignFree",
+                            "ReallocAsMalloc",
+                            "ReturnSafeDefault",
+                            "UpgradeToSafeVariant"
+                        ]
+                    },
+                    "uniqueItems": true,
+                    "default": []
+                }
+            },
+            "additionalProperties": false
+        },
+        "tsm_features_tested": {
+            "type": "array",
+            "description": "List of TSM/membrane features that this CVE test exercises. Used for coverage tracking.",
+            "items": {
+                "type": "string",
+                "examples": [
+                    "ptr_validator",
+                    "arena_quarantine",
+                    "heal_copy_bounds",
+                    "heal_string_bounds",
+                    "tls_cache",
+                    "galois_field_tagging",
+                    "grobner_classification",
+                    "sobol_sampling",
+                    "sos_barrier"
+                ]
+            },
+            "uniqueItems": true,
+            "minItems": 1
+        },
+        "cwe_ids": {
+            "type": "array",
+            "description": "CWE identifiers for the vulnerability class(es) this test covers.",
+            "items": {
+                "type": "string",
+                "pattern": "^CWE-\\d+$",
+                "examples": ["CWE-122", "CWE-787", "CWE-416", "CWE-190"]
+            },
+            "uniqueItems": true,
+            "minItems": 1
+        },
+        "cvss_score": {
+            "type": "number",
+            "description": "CVSS v3.1 base score for the vulnerability. Used for prioritization and reporting.",
+            "minimum": 0.0,
+            "maximum": 10.0,
+            "default": 0.0
+        },
+        "references": {
+            "type": "array",
+            "description": "URLs to advisories, write-ups, or patches related to this CVE.",
+            "items": {
+                "type": "string",
+                "format": "uri"
+            },
+            "default": []
+        },
+        "requires_root": {
+            "type": "boolean",
+            "description": "Whether this test requires root privileges inside the container. Most tests should not.",
+            "default": false
+        },
+        "requires_network": {
+            "type": "boolean",
+            "description": "Whether this test requires network access. The Docker container runs with --network=none by default.",
+            "default": false
+        },
+        "min_glibc_version": {
+            "type": ["string", "null"],
+            "description": "Minimum glibc version required for the vulnerability to be present. Format: 'X.Y' (e.g., '2.35').",
+            "pattern": "^\\d+\\.\\d+$",
+            "default": null
+        },
+        "max_glibc_version": {
+            "type": ["string", "null"],
+            "description": "Maximum glibc version where the vulnerability is present (patched in later versions). Null means still unpatched or not version-bounded.",
+            "pattern": "^\\d+\\.\\d+$",
+            "default": null
+        },
+        "architecture": {
+            "type": "array",
+            "description": "CPU architectures where this CVE is reproducible.",
+            "items": {
+                "type": "string",
+                "enum": ["x86_64", "aarch64", "i686", "armv7"]
+            },
+            "default": ["x86_64"],
+            "uniqueItems": true
+        },
+        "timeout_seconds": {
+            "type": "integer",
+            "description": "Per-test timeout override. If not specified, the runner's default timeout (30s) is used.",
+            "minimum": 1,
+            "maximum": 300
+        }
+    },
+    "additionalProperties": false
+}

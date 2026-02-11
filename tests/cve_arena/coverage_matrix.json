@@ -1,0 +1,120 @@
+{
+  "version": "v1",
+  "generated_at": "2026-02-10T00:00:00Z",
+  "description": "TSM feature-to-CVE coverage matrix (machine-readable)",
+  "features": {
+    "ClampSize": {
+      "description": "Clamps oversized length/size parameters to fit within known allocation bounds",
+      "cves": [
+        {"cve_id": "CVE-2024-2961", "software": "glibc iconv", "cvss": 8.8, "cwe": "CWE-120"},
+        {"cve_id": "CVE-2023-6779", "software": "glibc syslog", "cvss": 6.5, "cwe": "CWE-190"},
+        {"cve_id": "CVE-2023-6780", "software": "glibc syslog", "cvss": 5.3, "cwe": "CWE-190"},
+        {"cve_id": "CVE-2024-33599", "software": "glibc nscd", "cvss": 7.6, "cwe": "CWE-121"},
+        {"cve_id": "CVE-2024-46461", "software": "VLC MMS", "cvss": 7.5, "cwe": "CWE-190"},
+        {"cve_id": "CVE-2024-38812", "software": "VMware vCenter (synthetic)", "cvss": 9.8, "cwe": "CWE-122"}
+      ],
+      "count": 6,
+      "min_cvss": 5.3,
+      "max_cvss": 9.8,
+      "mean_cvss": 7.5
+    },
+    "CanaryDetection": {
+      "description": "Detects heap buffer overflows via trailing canary verification at free()",
+      "cves": [
+        {"cve_id": "CVE-2024-2961", "software": "glibc iconv", "cvss": 8.8, "cwe": "CWE-120"},
+        {"cve_id": "CVE-2023-6246", "software": "glibc syslog", "cvss": 8.4, "cwe": "CWE-122"},
+        {"cve_id": "CVE-2021-3156", "software": "sudo", "cvss": 7.8, "cwe": "CWE-122"},
+        {"cve_id": "CVE-2024-56406", "software": "Perl tr///", "cvss": 8.6, "cwe": "CWE-122"},
+        {"cve_id": "CVE-2024-38812", "software": "VMware vCenter (synthetic)", "cvss": 9.8, "cwe": "CWE-122"}
+      ],
+      "count": 5,
+      "min_cvss": 7.8,
+      "max_cvss": 9.8,
+      "mean_cvss": 8.7
+    },
+    "GenerationalArena": {
+      "description": "Detects use-after-free via generation counter mismatch and quarantine queue",
+      "cves": [
+        {"cve_id": "CVE-2025-49844", "software": "Redis", "cvss": 10.0, "cwe": "CWE-416"},
+        {"cve_id": "CVE-2024-6197", "software": "curl", "cvss": 7.5, "cwe": "CWE-416"},
+        {"cve_id": "CVE-2024-24990", "software": "nginx QUIC (synthetic)", "cvss": 7.5, "cwe": "CWE-416"}
+      ],
+      "count": 3,
+      "min_cvss": 7.5,
+      "max_cvss": 10.0,
+      "mean_cvss": 8.3
+    },
+    "IgnoreDoubleFree": {
+      "description": "Silently absorbs double-free operations, logging the event",
+      "cves": [
+        {"cve_id": "CVE-2025-8058", "software": "glibc regcomp", "cvss": 5.5, "cwe": "CWE-415"}
+      ],
+      "count": 1,
+      "min_cvss": 5.5,
+      "max_cvss": 5.5,
+      "mean_cvss": 5.5
+    },
+    "IgnoreForeignFree": {
+      "description": "Rejects free() on pointers not owned by the arena",
+      "cves": [
+        {"cve_id": "CVE-2024-6197", "software": "curl", "cvss": 7.5, "cwe": "CWE-416"}
+      ],
+      "count": 1,
+      "min_cvss": 7.5,
+      "max_cvss": 7.5,
+      "mean_cvss": 7.5
+    },
+    "ReturnSafeDefault": {
+      "description": "Returns safe default values for operations on invalid/null pointers",
+      "cves": [
+        {"cve_id": "CVE-2024-33600", "software": "glibc nscd", "cvss": 7.5, "cwe": "CWE-476"},
+        {"cve_id": "CVE-2024-33602", "software": "glibc nscd", "cvss": 5.9, "cwe": "CWE-908"}
+      ],
+      "count": 2,
+      "min_cvss": 5.9,
+      "max_cvss": 7.5,
+      "mean_cvss": 6.7
+    },
+    "UpgradeToSafeVariant": {
+      "description": "Replaces known-unsafe function patterns with safe equivalents",
+      "cves": [
+        {"cve_id": "CVE-2024-23113", "software": "Fortinet FortiOS (synthetic)", "cvss": 9.8, "cwe": "CWE-134"}
+      ],
+      "count": 1,
+      "min_cvss": 9.8,
+      "max_cvss": 9.8,
+      "mean_cvss": 9.8
+    },
+    "AllocationFingerprints": {
+      "description": "SipHash-based integrity verification of allocation metadata",
+      "cves": [
+        {"cve_id": "CVE-2024-33601", "software": "glibc nscd", "cvss": 6.5, "cwe": "CWE-787"}
+      ],
+      "count": 1,
+      "min_cvss": 6.5,
+      "max_cvss": 6.5,
+      "mean_cvss": 6.5
+    }
+  },
+  "summary": {
+    "total_cves": 16,
+    "total_features": 8,
+    "categories": {
+      "glibc-internal": 8,
+      "external": 5,
+      "synthetic": 3
+    },
+    "cwe_distribution": {
+      "CWE-122": 5,
+      "CWE-416": 3,
+      "CWE-190": 3,
+      "CWE-120": 1,
+      "CWE-121": 1,
+      "CWE-134": 1,
+      "CWE-415": 1,
+      "CWE-476": 1,
+      "CWE-787": 1,
+      "CWE-908": 1
+    }
+  }
+}

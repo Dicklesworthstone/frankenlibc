@@ -1,0 +1,34 @@
+{
+  "cve_id": "CVE-2024-56406",
+  "test_name": "perl_tr_transliteration_heap_overflow",
+  "category": "external",
+  "software": "perl",
+  "software_version": "5.38.2",
+  "description": "Heap buffer overflow in Perl tr/// transliteration operator when processing wide Unicode characters with byte-range mappings",
+  "cwe_ids": ["CWE-122", "CWE-787"],
+  "cvss_score": 8.6,
+  "build_cmd": "docker build -t cve-arena-perl .",
+  "run_cmd": "./trigger.sh",
+  "ld_preload_mode": true,
+  "expected_stock": {
+    "crashes": true,
+    "signal": "SIGSEGV",
+    "description": "tr/// output buffer size is calculated before encoding change; actual write exceeds allocation boundary, corrupting adjacent heap metadata and causing SIGSEGV or SIGABRT on next allocation"
+  },
+  "expected_tsm": {
+    "crashes": false,
+    "exit_code": 0,
+    "healing_actions": [
+      "ClampSize",
+      "TruncateWithNull"
+    ],
+    "description": "Allocation fingerprint canary at end of buffer detects the overflow write; ClampSize healing prevents the write from exceeding the allocated region; TruncateWithNull ensures string termination at the clamped boundary"
+  },
+  "tsm_features_tested": [
+    "allocation_fingerprint",
+    "canary_verification",
+    "heap_overflow_detection",
+    "clamp_size_healing",
+    "truncate_with_null"
+  ]
+}

@@ -1,0 +1,44 @@
+{
+  "cve_id": "CVE-2024-23113 (synthetic)",
+  "original_cve": "CVE-2024-23113",
+  "test_name": "format_string_cve_2024_23113",
+  "category": "synthetic",
+  "description": "Format string vulnerability: user-controlled input passed directly as printf format string, enabling stack data leakage, crash, and arbitrary memory write (modeled on Fortinet FortiOS FGFM daemon bug)",
+  "cwe_ids": ["CWE-134"],
+  "cvss_score": 9.8,
+  "build_cmd": "cc -o trigger trigger.c -Wall -Wextra",
+  "run_cmd": "./trigger",
+  "expected_stock": {
+    "crashes": true,
+    "signal": "SIGSEGV",
+    "description": "Attack 1 leaks stack data via %x specifiers; Attack 2 crashes via %s dereferencing invalid stack pointers; Attack 3 writes to memory via %n or crashes/aborts"
+  },
+  "expected_tsm": {
+    "crashes": false,
+    "exit_code": 0,
+    "healing_actions": [
+      "UpgradeToSafeVariant"
+    ],
+    "description": "UpgradeToSafeVariant detects untrusted format string in printf-family call; rewrites the call to treat user input as a plain string argument (snprintf(buf, sz, \"%s\", input)); all three attack vectors are neutralized without crash"
+  },
+  "tsm_features_tested": [
+    "UpgradeToSafeVariant"
+  ],
+  "attack_vectors": [
+    {
+      "name": "info_leak",
+      "payload": "%08x.%08x.%08x.%08x",
+      "effect": "Leaks 16 bytes of stack data"
+    },
+    {
+      "name": "crash",
+      "payload": "%s%s%s%s%s%s%s%s",
+      "effect": "Dereferences invalid stack pointers causing SIGSEGV"
+    },
+    {
+      "name": "write",
+      "payload": "AAAA%n",
+      "effect": "Writes byte count to stack-derived address"
+    }
+  ]
+}

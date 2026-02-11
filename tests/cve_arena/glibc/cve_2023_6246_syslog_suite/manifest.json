@@ -1,0 +1,23 @@
+{
+  "cve_id": "CVE-2023-6246",
+  "test_name": "syslog_heap_overflow_suite",
+  "category": "glibc-internal",
+  "description": "Suite of three __vsyslog_internal() heap overflows: crafted ident overflow, off-by-one reallocation, and integer overflow in size calculation",
+  "cwe_ids": ["CWE-787", "CWE-131", "CWE-190"],
+  "cvss_score": 8.4,
+  "build_cmd": "cc -o trigger trigger.c -Wall -Wextra",
+  "run_cmd": "./trigger",
+  "related_cves": ["CVE-2023-6246", "CVE-2023-6779", "CVE-2023-6780"],
+  "expected_stock": {
+    "crashes": true,
+    "signal": "SIGSEGV",
+    "description": "Heap corruption from ident string overflow, off-by-one newline write, or integer-overflow-induced undersized allocation; demonstrated as local root escalation via su/sudo"
+  },
+  "expected_tsm": {
+    "crashes": false,
+    "exit_code": 0,
+    "healing_actions": ["ClampSize", "TruncateWithNull"],
+    "description": "Trailing canary detects all three overflow variants at free(); ClampSize prevents oversized writes; TruncateWithNull safely truncates long ident strings"
+  },
+  "tsm_features_tested": ["canary", "bounds_checking", "clamp_size", "truncate_with_null"]
+}

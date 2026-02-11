@@ -1,0 +1,39 @@
+{
+  "cve_id": "CVE-2024-24990 (synthetic)",
+  "original_cve": "CVE-2024-24990",
+  "test_name": "quic_uaf_cve_2024_24990",
+  "category": "synthetic",
+  "description": "QUIC-style use-after-free: event-driven server frees connection context while stream cleanup handlers still hold dangling pointers; subsequent stream cleanup dereferences freed memory enabling type confusion and function pointer hijack (modeled on nginx QUIC module bug)",
+  "cwe_ids": ["CWE-416"],
+  "cvss_score": 7.5,
+  "build_cmd": "cc -o trigger trigger.c -Wall -Wextra",
+  "run_cmd": "./trigger",
+  "expected_stock": {
+    "crashes": true,
+    "signal": "SIGSEGV",
+    "description": "Freed connection memory is immediately reused by attacker-controlled allocation; stream cleanup reads attacker-placed magic value and fake function pointer (0xDEADBEEF) from the reused memory; calling the corrupted on_close pointer would redirect execution to an attacker-controlled address; process crashes on the function pointer call or exhibits undefined behavior"
+  },
+  "expected_tsm": {
+    "crashes": false,
+    "exit_code": 0,
+    "healing_actions": [
+      "ReturnSafeDefault",
+      "IgnoreDoubleFree"
+    ],
+    "description": "Generational arena detects generation mismatch when stream cleanup dereferences the freed connection pointer (100% detection probability via monotonic generation counter); quarantine queue holds the freed connection memory for up to 64MB/65536 entries preventing immediate reuse by attacker allocation; bloom filter provides O(1) pre-check returning false for freed pointers; access is blocked and ReturnSafeDefault provides a null/safe connection context"
+  },
+  "tsm_features_tested": [
+    "GenerationalArena",
+    "QuarantineQueue",
+    "BloomFilter",
+    "PageOracle",
+    "ReturnSafeDefault",
+    "AllocationFingerprints"
+  ],
+  "uaf_sequence": {
+    "step_1_allocate": "Connection created with CONN_MAGIC_ALIVE (0xC044A11E), 3 streams created with back-pointers",
+    "step_2_free": "Connection freed (magic set to CONN_MAGIC_DEAD 0xDEADC044), streams NOT notified",
+    "step_3_reuse": "Attacker allocates same-size buffer, fills with CONN_MAGIC_REUSE (0x0BEF0BEF) and fake function pointer 0xDEADBEEF",
+    "step_4_access": "Stream cleanup dereferences dangling conn pointer, reads attacker magic and fake on_close pointer"
+  }
+}

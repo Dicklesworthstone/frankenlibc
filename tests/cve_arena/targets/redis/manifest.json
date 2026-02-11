@@ -1,0 +1,34 @@
+{
+  "cve_id": "CVE-2025-49844",
+  "test_name": "redis_lua_gc_use_after_free",
+  "category": "external",
+  "software": "redis",
+  "software_version": "7.4.0",
+  "description": "Use-after-free in Redis embedded Lua interpreter GC allows RCE via crafted EVAL script",
+  "cwe_ids": ["CWE-416"],
+  "cvss_score": 10.0,
+  "build_cmd": "docker build -t cve-arena-redis .",
+  "run_cmd": "./trigger.sh",
+  "ld_preload_mode": true,
+  "expected_stock": {
+    "crashes": true,
+    "signal": "SIGSEGV",
+    "description": "Lua GC frees userdata while still referenced on eval stack; subsequent access dereferences freed memory leading to SIGSEGV or arbitrary code execution"
+  },
+  "expected_tsm": {
+    "crashes": false,
+    "exit_code": 0,
+    "healing_actions": [
+      "IgnoreDoubleFree",
+      "ReturnSafeDefault"
+    ],
+    "description": "Generational arena detects generation mismatch on stale userdata pointer; quarantine prevents reallocation of freed slot; healing engine returns safe default for the invalid access"
+  },
+  "tsm_features_tested": [
+    "generational_arena",
+    "quarantine_queue",
+    "generation_mismatch_detection",
+    "use_after_free_healing",
+    "allocation_fingerprint"
+  ]
+}

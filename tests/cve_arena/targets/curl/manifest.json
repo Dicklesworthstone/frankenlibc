@@ -1,0 +1,33 @@
+{
+  "cve_id": "CVE-2024-6197",
+  "test_name": "curl_asn1_stack_use_after_free",
+  "category": "external",
+  "software": "curl",
+  "software_version": "8.6.0",
+  "description": "Stack use-after-free in libcurl ASN.1 certificate parser via crafted TLS server certificate",
+  "cwe_ids": ["CWE-416", "CWE-825"],
+  "cvss_score": 7.5,
+  "build_cmd": "docker build -t cve-arena-curl .",
+  "run_cmd": "./trigger.sh",
+  "ld_preload_mode": true,
+  "expected_stock": {
+    "crashes": true,
+    "signal": "SIGSEGV",
+    "description": "ASN.1 parser stores stack buffer address in pointer field; free() called on stack address corrupts allocator metadata causing SIGSEGV or arbitrary write"
+  },
+  "expected_tsm": {
+    "crashes": false,
+    "exit_code": 0,
+    "healing_actions": [
+      "IgnoreForeignFree"
+    ],
+    "description": "Bloom filter pre-check identifies the stack address as not belonging to any arena allocation; IgnoreForeignFree healing silently drops the invalid free() call; page oracle confirms address is in stack region not heap"
+  },
+  "tsm_features_tested": [
+    "bloom_filter_precheck",
+    "page_oracle",
+    "foreign_free_detection",
+    "ignore_foreign_free_healing",
+    "stack_vs_heap_discrimination"
+  ]
+}
