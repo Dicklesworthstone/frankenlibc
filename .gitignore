@@ -5,6 +5,12 @@ Cargo.lock
 *.swo
 *~
 .DS_Store
+._*
+
+# Stray image files at repo root (downloads dropped in wrong dir)
+/*.jpeg
+/*.jpg
+/*.png
 
 # bv (beads viewer) local config and caches
 .bv/
