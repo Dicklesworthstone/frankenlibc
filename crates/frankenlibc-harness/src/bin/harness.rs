@@ -1,14 +1,14 @@
-//! CLI entrypoint for glibc_rust conformance harness.
+//! CLI entrypoint for frankenlibc conformance harness.
 
 use std::path::PathBuf;
 use std::process::Command as ProcCommand;
 
 use clap::{Parser, Subcommand};
 
-/// Conformance tooling for glibc_rust.
+/// Conformance tooling for frankenlibc.
 #[derive(Debug, Parser)]
 #[command(name = "glibc-rs-harness")]
-#[command(about = "Conformance testing harness for glibc_rust")]
+#[command(about = "Conformance testing harness for frankenlibc")]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -199,7 +199,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             fixture_paths.sort();
 
             for path in fixture_paths {
-                match glibc_rs_harness::FixtureSet::from_file(&path) {
+                match frankenlibc_harness::FixtureSet::from_file(&path) {
                     Ok(set) => fixture_sets.push(set),
                     Err(err) => eprintln!("Skipping {}: {}", path.display(), err),
                 }
@@ -210,7 +210,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             #[cfg(feature = "asupersync-tooling")]
             let (mut results, suite) = {
-                let run = glibc_rs_harness::asupersync_orchestrator::run_fixture_verification(
+                let run = frankenlibc_harness::asupersync_orchestrator::run_fixture_verification(
                     "fixture-verify",
                     &fixture_sets,
                 );
@@ -219,9 +219,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             #[cfg(not(feature = "asupersync-tooling"))]
             let mut results = {
-                let strict_runner = glibc_rs_harness::TestRunner::new("fixture-verify", "strict");
+                let strict_runner = frankenlibc_harness::TestRunner::new("fixture-verify", "strict");
                 let hardened_runner =
-                    glibc_rs_harness::TestRunner::new("fixture-verify", "hardened");
+                    frankenlibc_harness::TestRunner::new("fixture-verify", "hardened");
 
                 let mut results = Vec::new();
                 for set in &fixture_sets {
@@ -241,9 +241,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .then_with(|| a.passed.cmp(&b.passed))
             });
 
-            let summary = glibc_rs_harness::verify::VerificationSummary::from_results(results);
-            let report_doc = glibc_rs_harness::ConformanceReport {
-                title: String::from("glibc_rust Conformance Report"),
+            let summary = frankenlibc_harness::verify::VerificationSummary::from_results(results);
+            let report_doc = frankenlibc_harness::ConformanceReport {
+                title: String::from("frankenlibc Conformance Report"),
                 mode: String::from("strict+hardened"),
                 timestamp: timestamp
                     .unwrap_or_else(|| format!("{:?}", std::time::SystemTime::now())),
@@ -277,7 +277,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             output_md,
             output_json,
         } => {
-            let matrix = glibc_rs_harness::traceability::TraceabilityMatrix::new();
+            let matrix = frankenlibc_harness::traceability::TraceabilityMatrix::new();
             std::fs::write(&output_md, matrix.to_markdown())?;
             let json = serde_json::to_string_pretty(&matrix.to_markdown())?;
             std::fs::write(&output_json, json)?;
@@ -291,7 +291,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             support_matrix,
             output,
         } => {
-            let report = glibc_rs_harness::RealityReport::from_support_matrix_path(&support_matrix)
+            let report = frankenlibc_harness::RealityReport::from_support_matrix_path(&support_matrix)
                 .map_err(|err| format!("failed generating reality report: {err}"))?;
             let body = report.to_json();
             if let Some(path) = output {
@@ -309,16 +309,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             if mode != "strict" && mode != "hardened" {
                 return Err(format!("Unsupported mode '{mode}', expected strict|hardened").into());
             }
-            let mut suite = glibc_rs_harness::healing_oracle::HealingOracleSuite::new();
-            suite.add(glibc_rs_harness::healing_oracle::HealingOracleCase {
+            let mut suite = frankenlibc_harness::healing_oracle::HealingOracleSuite::new();
+            suite.add(frankenlibc_harness::healing_oracle::HealingOracleCase {
                 id: String::from("double-free"),
-                condition: glibc_rs_harness::healing_oracle::UnsafeCondition::DoubleFree,
+                condition: frankenlibc_harness::healing_oracle::UnsafeCondition::DoubleFree,
                 expected_healing: String::from("IgnoreDoubleFree"),
                 strict_expected: String::from("No repair"),
             });
-            suite.add(glibc_rs_harness::healing_oracle::HealingOracleCase {
+            suite.add(frankenlibc_harness::healing_oracle::HealingOracleCase {
                 id: String::from("foreign-free"),
-                condition: glibc_rs_harness::healing_oracle::UnsafeCondition::ForeignFree,
+                condition: frankenlibc_harness::healing_oracle::UnsafeCondition::ForeignFree,
                 expected_healing: String::from("IgnoreForeignFree"),
                 strict_expected: String::from("No repair"),
             });
@@ -340,15 +340,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             ansi,
             width,
         } => {
-            let report = glibc_rs_harness::evidence_decode::decode_evidence_file(&input, epoch_id)?;
+            let report = frankenlibc_harness::evidence_decode::decode_evidence_file(&input, epoch_id)?;
 
             let out = match format.to_ascii_lowercase().as_str() {
                 "json" => serde_json::to_string_pretty(&report)?,
-                "plain" => glibc_rs_harness::evidence_decode_render::render_plain(&report),
+                "plain" => frankenlibc_harness::evidence_decode_render::render_plain(&report),
                 "ftui" => {
                     #[cfg(feature = "frankentui-ui")]
                     {
-                        glibc_rs_harness::evidence_decode_render::render_ftui(&report, ansi, width)
+                        frankenlibc_harness::evidence_decode_render::render_ftui(&report, ansi, width)
                     }
 
                     #[cfg(not(feature = "frankentui-ui"))]
@@ -356,7 +356,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         let _ = ansi;
                         let _ = width;
                         eprintln!("note: enable `frankentui-ui` feature for ftui rendering");
-                        glibc_rs_harness::evidence_decode_render::render_plain(&report)
+                        frankenlibc_harness::evidence_decode_render::render_plain(&report)
                     }
                 }
                 other => {
@@ -382,7 +382,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             steps,
         } => {
             let seed = parse_seed(&seed)?;
-            let mode = glibc_rs_harness::kernel_snapshot::SnapshotMode::from_str_loose(&mode)
+            let mode = frankenlibc_harness::kernel_snapshot::SnapshotMode::from_str_loose(&mode)
                 .ok_or_else(|| {
                     format!("Unsupported mode '{mode}', expected strict|hardened|both")
                 })?;
@@ -392,7 +392,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
 
             let fixture =
-                glibc_rs_harness::kernel_snapshot::build_kernel_snapshot_fixture(seed, steps, mode);
+                frankenlibc_harness::kernel_snapshot::build_kernel_snapshot_fixture(seed, steps, mode);
             let body = serde_json::to_string_pretty(&fixture)?;
             std::fs::write(&output, body)?;
             eprintln!("Wrote kernel snapshot fixture to {}", output.display());
@@ -406,10 +406,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             width,
         } => {
             let golden_body = std::fs::read_to_string(&golden)?;
-            let golden_fixture: glibc_rs_harness::kernel_snapshot::RuntimeKernelSnapshotFixtureV1 =
+            let golden_fixture: frankenlibc_harness::kernel_snapshot::RuntimeKernelSnapshotFixtureV1 =
                 serde_json::from_str(&golden_body)?;
 
-            let current_fixture: glibc_rs_harness::kernel_snapshot::RuntimeKernelSnapshotFixtureV1 =
+            let current_fixture: frankenlibc_harness::kernel_snapshot::RuntimeKernelSnapshotFixtureV1 =
                 if current.exists() {
                     let current_body = std::fs::read_to_string(&current)?;
                     serde_json::from_str(&current_body)?
@@ -420,17 +420,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         golden_fixture.scenario.seed,
                         golden_fixture.scenario.steps
                     );
-                    glibc_rs_harness::kernel_snapshot::build_kernel_snapshot_fixture(
+                    frankenlibc_harness::kernel_snapshot::build_kernel_snapshot_fixture(
                         golden_fixture.scenario.seed,
                         golden_fixture.scenario.steps,
-                        glibc_rs_harness::kernel_snapshot::SnapshotMode::Both,
+                        frankenlibc_harness::kernel_snapshot::SnapshotMode::Both,
                     )
                 };
 
-            let mode = glibc_rs_harness::snapshot_diff::DiffMode::from_str_loose(&mode)
+            let mode = frankenlibc_harness::snapshot_diff::DiffMode::from_str_loose(&mode)
                 .ok_or_else(|| format!("Unsupported mode '{mode}', expected strict|hardened"))?;
 
-            let report = glibc_rs_harness::snapshot_diff::diff_kernel_snapshots(
+            let report = frankenlibc_harness::snapshot_diff::diff_kernel_snapshots(
                 &golden_fixture,
                 &current_fixture,
                 mode,
@@ -441,14 +441,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let _ = width;
 
             #[cfg(feature = "frankentui-ui")]
-            let out = glibc_rs_harness::snapshot_diff::render_ftui(&report, ansi, width);
+            let out = frankenlibc_harness::snapshot_diff::render_ftui(&report, ansi, width);
 
             #[cfg(not(feature = "frankentui-ui"))]
             let out = {
                 if ansi {
                     eprintln!("note: enable `frankentui-ui` feature for ANSI rendering");
                 }
-                glibc_rs_harness::snapshot_diff::render_plain(&report)
+                frankenlibc_harness::snapshot_diff::render_plain(&report)
             };
 
             print!("{out}");
@@ -478,12 +478,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let strict = run_kernel_mode_subprocess(&exe, "strict", cfg)?;
             let hardened = run_kernel_mode_subprocess(&exe, "hardened", cfg)?;
 
-            let report = glibc_rs_harness::kernel_regression_report::KernelRegressionReport {
+            let report = frankenlibc_harness::kernel_regression_report::KernelRegressionReport {
                 strict,
                 hardened,
             };
             let md =
-                glibc_rs_harness::kernel_regression_report::render_regression_markdown(&report);
+                frankenlibc_harness::kernel_regression_report::render_regression_markdown(&report);
             let json = serde_json::to_string_pretty(&report)?;
 
             if let Some(path) = output {
@@ -505,7 +505,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             iters,
             trend_stride,
         } => {
-            use glibc_rs_membrane::config::SafetyLevel;
+            use frankenlibc_membrane::config::SafetyLevel;
 
             let expected = match mode.to_ascii_lowercase().as_str() {
                 "strict" => SafetyLevel::Strict,
@@ -518,10 +518,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             };
             let seed_num = parse_seed(&seed)?;
 
-            let cfg = glibc_rs_harness::kernel_regression_report::ModeRunConfig {
+            let cfg = frankenlibc_harness::kernel_regression_report::ModeRunConfig {
                 seed: seed_num,
                 steps,
-                microbench: glibc_rs_harness::kernel_regression_report::MicrobenchConfig {
+                microbench: frankenlibc_harness::kernel_regression_report::MicrobenchConfig {
                     warmup_iters,
                     sample_count: samples,
                     sample_iters: iters,
@@ -530,7 +530,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             };
 
             let metrics =
-                glibc_rs_harness::kernel_regression_report::collect_mode_metrics(expected, cfg)
+                frankenlibc_harness::kernel_regression_report::collect_mode_metrics(expected, cfg)
                     .map_err(|e| format!("kernel regression mode run failed: {e}"))?;
 
             let body = serde_json::to_string_pretty(&metrics)?;
@@ -555,7 +555,7 @@ fn run_kernel_mode_subprocess(
     exe: &std::path::Path,
     mode: &str,
     cfg: KernelRegressionCliConfig,
-) -> Result<glibc_rs_harness::kernel_regression_report::KernelModeMetrics, Box<dyn std::error::Error>>
+) -> Result<frankenlibc_harness::kernel_regression_report::KernelModeMetrics, Box<dyn std::error::Error>>
 {
     let output = ProcCommand::new(exe)
         .arg("kernel-regression-mode")
@@ -581,7 +581,7 @@ fn run_kernel_mode_subprocess(
         return Err(format!("kernel-regression-mode failed for mode={mode}: {stderr}").into());
     }
 
-    let metrics: glibc_rs_harness::kernel_regression_report::KernelModeMetrics =
+    let metrics: frankenlibc_harness::kernel_regression_report::KernelModeMetrics =
         serde_json::from_slice(&output.stdout)?;
     Ok(metrics)
 }

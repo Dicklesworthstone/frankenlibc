@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "description": "Canonical structured log schema for glibc_rust test/e2e/perf workflows. All log lines must be JSONL (one JSON object per line) conforming to this schema.",
+  "description": "Canonical structured log schema for frankenlibc test/e2e/perf workflows. All log lines must be JSONL (one JSON object per line) conforming to this schema.",
   "required_fields": {
     "timestamp": {
       "type": "string",

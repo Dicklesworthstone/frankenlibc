@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "bead": "bd-4ia",
-  "description": "Stub priority ranking for glibc_rust remediation. Ranks non-implemented symbols (Stub + GlibcCallThrough) by severity and workload impact to guide implementation priority. Feeds next-wave implementation beads.",
+  "description": "Stub priority ranking for frankenlibc remediation. Ranks non-implemented symbols (Stub + GlibcCallThrough) by severity and workload impact to guide implementation priority. Feeds next-wave implementation beads.",
   "scoring": {
     "description": "Per-symbol priority score combining status severity and workload impact.",
     "formula": "score = severity_weight * workloads_blocked",
@@ -161,7 +161,7 @@
     },
     "collection_script": "scripts/ld_preload_smoke.sh",
     "output_path": "tests/cve_arena/results/stub_traces/",
-    "note": "Dynamic trace collection requires LD_PRELOAD of libglibc_rs_abi.so against target binary. Static ranking (this file) is used until dynamic data is available."
+    "note": "Dynamic trace collection requires LD_PRELOAD of libfrankenlibc_abi.so against target binary. Static ranking (this file) is used until dynamic data is available."
   },
   "burn_down": {
     "description": "Burn-down tracking for stub/callthrough remediation waves.",

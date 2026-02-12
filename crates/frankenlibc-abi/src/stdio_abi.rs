@@ -15,10 +15,10 @@ use std::ffi::{CStr, c_char, c_int, c_void};
 use std::os::raw::c_long;
 use std::sync::{Mutex, OnceLock};
 
-use glibc_rs_core::errno;
-use glibc_rs_core::stdio::{BufMode, OpenFlags, StdioStream, flags_to_oflags, parse_mode};
-use glibc_rs_membrane::heal::{HealingAction, global_healing_policy};
-use glibc_rs_membrane::runtime_math::{ApiFamily, MembraneAction};
+use frankenlibc_core::errno;
+use frankenlibc_core::stdio::{BufMode, OpenFlags, StdioStream, flags_to_oflags, parse_mode};
+use frankenlibc_membrane::heal::{HealingAction, global_healing_policy};
+use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
 use crate::malloc_abi::known_remaining;
 use crate::runtime_policy;
@@ -992,7 +992,7 @@ pub unsafe extern "C" fn perror(s: *const c_char) {
 // printf / fprintf / sprintf / snprintf
 // ---------------------------------------------------------------------------
 
-use glibc_rs_core::stdio::{
+use frankenlibc_core::stdio::{
     FormatSegment, LengthMod, Precision, Width, format_char, format_float, format_pointer,
     format_signed, format_str, format_unsigned, parse_format_string,
 };

@@ -8,7 +8,7 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-MOD_RS="$REPO_ROOT/crates/glibc-rs-membrane/src/runtime_math/mod.rs"
+MOD_RS="$REPO_ROOT/crates/frankenlibc-membrane/src/runtime_math/mod.rs"
 LEDGER="$REPO_ROOT/tests/runtime_math/runtime_math_linkage.v1.json"
 
 if [[ ! -f "$MOD_RS" ]]; then

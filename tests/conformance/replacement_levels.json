@@ -1,13 +1,13 @@
 {
   "schema_version": 1,
   "bead": "bd-2bu",
-  "description": "Replacement maturity model for glibc_rust. Defines four levels from LD_PRELOAD interposition to full standalone replacement, with measurable gate criteria for each level transition.",
+  "description": "Replacement maturity model for frankenlibc. Defines four levels from LD_PRELOAD interposition to full standalone replacement, with measurable gate criteria for each level transition.",
   "levels": [
     {
       "level": "L0",
       "name": "Interpose",
       "description": "LD_PRELOAD interposition over host glibc. Call-throughs to host glibc allowed for all modules. Primary value: membrane validation + structured logging on top of host libc.",
-      "deployment": "LD_PRELOAD=libglibc_rs_abi.so",
+      "deployment": "LD_PRELOAD=libfrankenlibc_abi.so",
       "host_glibc_required": true,
       "gate_criteria": {
         "max_callthrough_pct": 100,
@@ -32,7 +32,7 @@
       "level": "L1",
       "name": "Hardened Interpose",
       "description": "LD_PRELOAD with hardened mode active. All call-throughs validated by membrane. Healing actions applied for safety-critical APIs. Stubs eliminated — all symbols either Implemented, RawSyscall, or GlibcCallThrough.",
-      "deployment": "GLIBC_RUST_MODE=hardened LD_PRELOAD=libglibc_rs_abi.so",
+      "deployment": "FRANKENLIBC_MODE=hardened LD_PRELOAD=libfrankenlibc_abi.so",
       "host_glibc_required": true,
       "gate_criteria": {
         "max_callthrough_pct": 30,

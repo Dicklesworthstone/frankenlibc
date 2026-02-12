@@ -1,4 +1,4 @@
-//! Transparent Safety Membrane (TSM) for glibc_rust.
+//! Transparent Safety Membrane (TSM) for frankenlibc.
 //!
 //! This crate implements the core innovation: a validation pipeline that sits
 //! between C ABI entry points and safe Rust implementations. It dynamically

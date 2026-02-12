@@ -20,7 +20,7 @@ echo "fixture_dir=${FIXTURE_DIR}"
 echo "golden_dir=${GOLDEN_DIR}"
 
 # Fixed timestamp keeps golden outputs byte-stable across runs.
-cargo run -q -p glibc-rs-harness --bin harness -- verify \
+cargo run -q -p frankenlibc-harness --bin harness -- verify \
   --fixture "${FIXTURE_DIR}" \
   --report "${REPORT_MD}" \
   --timestamp "1970-01-01T00:00:00Z"

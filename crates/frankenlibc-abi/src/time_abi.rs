@@ -1,13 +1,13 @@
 //! ABI layer for `<time.h>` functions.
 //!
 //! Syscalls (`clock_gettime`, etc.) are invoked via `libc`. Pure arithmetic
-//! (broken-down conversion) delegates to `glibc_rs_core::time`.
+//! (broken-down conversion) delegates to `frankenlibc_core::time`.
 
 use std::ffi::c_int;
 
-use glibc_rs_core::errno;
-use glibc_rs_core::time as time_core;
-use glibc_rs_membrane::runtime_math::{ApiFamily, MembraneAction};
+use frankenlibc_core::errno;
+use frankenlibc_core::time as time_core;
+use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
 use crate::runtime_policy;
 

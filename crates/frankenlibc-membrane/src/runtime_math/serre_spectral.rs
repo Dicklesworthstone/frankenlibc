@@ -25,7 +25,7 @@
 //!
 //! ## Runtime Application
 //!
-//! The glibc_rust layered architecture forms a fibration:
+//! The frankenlibc layered architecture forms a fibration:
 //!
 //! ```text
 //! Core (fiber F) → Membrane (total space E) → ABI (base B)

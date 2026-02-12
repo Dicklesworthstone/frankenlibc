@@ -4,8 +4,8 @@
 //! so numeric exceptional regimes (NaN/Inf/denormal patterns) participate
 //! in the same strict/hardened control loop as memory and concurrency paths.
 
-use glibc_rs_membrane::config::SafetyLevel;
-use glibc_rs_membrane::runtime_math::{ApiFamily, MembraneAction};
+use frankenlibc_membrane::config::SafetyLevel;
+use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
 use crate::runtime_policy;
 
@@ -103,97 +103,97 @@ fn binary_entry(x: f64, y: f64, base_cost_ns: u64, f: fn(f64, f64) -> f64) -> f6
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sin(x: f64) -> f64 {
-    unary_entry(x, 5, glibc_rs_core::math::sin)
+    unary_entry(x, 5, frankenlibc_core::math::sin)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn cos(x: f64) -> f64 {
-    unary_entry(x, 5, glibc_rs_core::math::cos)
+    unary_entry(x, 5, frankenlibc_core::math::cos)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tan(x: f64) -> f64 {
-    unary_entry(x, 6, glibc_rs_core::math::tan)
+    unary_entry(x, 6, frankenlibc_core::math::tan)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn asin(x: f64) -> f64 {
-    unary_entry(x, 6, glibc_rs_core::math::asin)
+    unary_entry(x, 6, frankenlibc_core::math::asin)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn acos(x: f64) -> f64 {
-    unary_entry(x, 6, glibc_rs_core::math::acos)
+    unary_entry(x, 6, frankenlibc_core::math::acos)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn atan(x: f64) -> f64 {
-    unary_entry(x, 5, glibc_rs_core::math::atan)
+    unary_entry(x, 5, frankenlibc_core::math::atan)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn atan2(y: f64, x: f64) -> f64 {
-    binary_entry(y, x, 6, glibc_rs_core::math::atan2)
+    binary_entry(y, x, 6, frankenlibc_core::math::atan2)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn exp(x: f64) -> f64 {
-    unary_entry(x, 6, glibc_rs_core::math::exp)
+    unary_entry(x, 6, frankenlibc_core::math::exp)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn log(x: f64) -> f64 {
-    unary_entry(x, 6, glibc_rs_core::math::log)
+    unary_entry(x, 6, frankenlibc_core::math::log)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn log10(x: f64) -> f64 {
-    unary_entry(x, 6, glibc_rs_core::math::log10)
+    unary_entry(x, 6, frankenlibc_core::math::log10)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn pow(x: f64, y: f64) -> f64 {
-    binary_entry(x, y, 8, glibc_rs_core::math::pow)
+    binary_entry(x, y, 8, frankenlibc_core::math::pow)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn fabs(x: f64) -> f64 {
-    unary_entry(x, 4, glibc_rs_core::math::fabs)
+    unary_entry(x, 4, frankenlibc_core::math::fabs)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ceil(x: f64) -> f64 {
-    unary_entry(x, 4, glibc_rs_core::math::ceil)
+    unary_entry(x, 4, frankenlibc_core::math::ceil)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn floor(x: f64) -> f64 {
-    unary_entry(x, 4, glibc_rs_core::math::floor)
+    unary_entry(x, 4, frankenlibc_core::math::floor)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn round(x: f64) -> f64 {
-    unary_entry(x, 4, glibc_rs_core::math::round)
+    unary_entry(x, 4, frankenlibc_core::math::round)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn fmod(x: f64, y: f64) -> f64 {
-    binary_entry(x, y, 6, glibc_rs_core::math::fmod)
+    binary_entry(x, y, 6, frankenlibc_core::math::fmod)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn erf(x: f64) -> f64 {
-    unary_entry(x, 9, glibc_rs_core::math::erf)
+    unary_entry(x, 9, frankenlibc_core::math::erf)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tgamma(x: f64) -> f64 {
-    unary_entry(x, 11, glibc_rs_core::math::tgamma)
+    unary_entry(x, 11, frankenlibc_core::math::tgamma)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lgamma(x: f64) -> f64 {
-    unary_entry(x, 10, glibc_rs_core::math::lgamma)
+    unary_entry(x, 10, frankenlibc_core::math::lgamma)
 }
 
 #[cfg(test)]

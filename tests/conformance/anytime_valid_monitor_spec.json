@@ -4,7 +4,7 @@
   "description": "Anytime-valid monitor standard: codifies the e-process alarming policy, alpha-wealth budget contracts, and false-alarm control guarantees for the runtime_math monitor ensemble. Ensures alerting remains valid under optional stopping.",
   "eprocess_policy": {
     "description": "Per-API-family e-process monitor using likelihood-ratio statistics. Tracks adverse outcomes against a null adverse-rate budget, producing warning/alarm states consumed by the decision controller.",
-    "implementation": "crates/glibc-rs-membrane/src/runtime_math/eprocess.rs",
+    "implementation": "crates/frankenlibc-membrane/src/runtime_math/eprocess.rs",
     "parameters": {
       "null_budget_p0": {
         "value": 0.02,
@@ -56,7 +56,7 @@
   },
   "alpha_investing_policy": {
     "description": "Alpha-Investing FDR controller (Foster & Stine 2008). Controls compound false discovery rate across the monitor ensemble by maintaining a wealth budget that governs alarm acceptance aggressiveness.",
-    "implementation": "crates/glibc-rs-membrane/src/runtime_math/alpha_investing.rs",
+    "implementation": "crates/frankenlibc-membrane/src/runtime_math/alpha_investing.rs",
     "parameters": {
       "initial_wealth_milli": {
         "value": 500,
@@ -217,7 +217,7 @@
     ],
     "crash_bundle_ref": "tests/conformance/crash_bundle_spec.json",
     "log_schema_ref": "tests/conformance/log_schema.json",
-    "evidence_system_ref": "crates/glibc-rs-membrane/src/runtime_math/evidence.rs"
+    "evidence_system_ref": "crates/frankenlibc-membrane/src/runtime_math/evidence.rs"
   },
   "summary": {
     "eprocess_parameters": 5,

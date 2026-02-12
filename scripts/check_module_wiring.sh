@@ -13,7 +13,7 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-MOD_RS="$REPO_ROOT/crates/glibc-rs-membrane/src/runtime_math/mod.rs"
+MOD_RS="$REPO_ROOT/crates/frankenlibc-membrane/src/runtime_math/mod.rs"
 
 if [[ ! -f "$MOD_RS" ]]; then
     echo "ERROR: runtime_math/mod.rs not found" >&2
@@ -150,7 +150,7 @@ fi
 # Combine observe + resample for searching
 cat "$TMPDIR/observe.txt" "$TMPDIR/resample.txt" > "$TMPDIR/combined_observe.txt"
 
-fusion_rs="$REPO_ROOT/crates/glibc-rs-membrane/src/runtime_math/fusion.rs"
+fusion_rs="$REPO_ROOT/crates/frankenlibc-membrane/src/runtime_math/fusion.rs"
 if [[ -f "$fusion_rs" ]]; then
     cp "$fusion_rs" "$TMPDIR/fusion.txt"
 else

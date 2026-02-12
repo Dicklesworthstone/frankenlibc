@@ -1,18 +1,18 @@
 {
   "schema_version": 1,
   "bead": "bd-30h",
-  "description": "Packaging specification for glibc_rust build artifacts. Defines two products (Interpose and Replace), their build commands, deployment models, and symbol-level guarantee contracts.",
+  "description": "Packaging specification for frankenlibc build artifacts. Defines two products (Interpose and Replace), their build commands, deployment models, and symbol-level guarantee contracts.",
   "artifacts": {
     "interpose": {
       "name": "Interpose",
-      "artifact_name": "libglibc_rs_abi.so",
+      "artifact_name": "libfrankenlibc_abi.so",
       "description": "LD_PRELOAD-safe shared library that interposes over host glibc. Call-throughs to host glibc are allowed for unimplemented subsystems. Primary value: transparent safety membrane + structured logging.",
-      "build_command": "cargo build -p glibc-rs-abi --release",
-      "output_path": "target/release/libglibc_rs_abi.so",
-      "deployment": "LD_PRELOAD=target/release/libglibc_rs_abi.so <program>",
+      "build_command": "cargo build -p frankenlibc-abi --release",
+      "output_path": "target/release/libfrankenlibc_abi.so",
+      "deployment": "LD_PRELOAD=target/release/libfrankenlibc_abi.so <program>",
       "deployment_modes": {
-        "strict": "GLIBC_RUST_MODE=strict LD_PRELOAD=target/release/libglibc_rs_abi.so <program>",
-        "hardened": "GLIBC_RUST_MODE=hardened LD_PRELOAD=target/release/libglibc_rs_abi.so <program>"
+        "strict": "FRANKENLIBC_MODE=strict LD_PRELOAD=target/release/libfrankenlibc_abi.so <program>",
+        "hardened": "FRANKENLIBC_MODE=hardened LD_PRELOAD=target/release/libfrankenlibc_abi.so <program>"
       },
       "host_glibc_required": true,
       "allowed_statuses": [
@@ -28,19 +28,19 @@
       "cargo_features": [],
       "cargo_profile": "release",
       "crate_type": "cdylib",
-      "version_script": "crates/glibc-rs-abi/version_scripts/libc.map",
+      "version_script": "crates/frankenlibc-abi/version_scripts/libc.map",
       "guarantee": "All exported symbols are safe to call. Membrane validates inputs. Unimplemented symbols delegate to host glibc or return deterministic stub errors."
     },
     "replace": {
       "name": "Replace",
-      "artifact_name": "libglibc_rs_replace.so",
+      "artifact_name": "libfrankenlibc_replace.so",
       "description": "Standalone replacement library with zero host glibc dependency for core primitives. All symbols are either natively implemented or use raw syscalls. Suitable for containers and minimal environments.",
-      "build_command": "cargo build -p glibc-rs-abi --release --features=standalone",
-      "output_path": "target/release/libglibc_rs_replace.so",
+      "build_command": "cargo build -p frankenlibc-abi --release --features=standalone",
+      "output_path": "target/release/libfrankenlibc_replace.so",
       "deployment": "Direct link as system libc or LD_PRELOAD (no host glibc call-throughs)",
       "deployment_modes": {
         "strict": "Direct link or LD_PRELOAD; strict mode is default",
-        "hardened": "GLIBC_RUST_MODE=hardened with direct link or LD_PRELOAD"
+        "hardened": "FRANKENLIBC_MODE=hardened with direct link or LD_PRELOAD"
       },
       "host_glibc_required": false,
       "allowed_statuses": [
@@ -56,7 +56,7 @@
       ],
       "cargo_profile": "release",
       "crate_type": "cdylib",
-      "version_script": "crates/glibc-rs-abi/version_scripts/libc.map",
+      "version_script": "crates/frankenlibc-abi/version_scripts/libc.map",
       "guarantee": "All exported symbols are self-contained. Zero host glibc dependency. Every symbol either runs native Rust code or issues raw Linux syscalls.",
       "status": "planned",
       "blockers": {
@@ -123,14 +123,14 @@
   },
   "naming_convention": {
     "interpose": {
-      "so_name": "libglibc_rs_abi.so",
-      "install_path": "/usr/lib/glibc-rust/libglibc_rs_abi.so",
-      "env_activation": "LD_PRELOAD=/usr/lib/glibc-rust/libglibc_rs_abi.so"
+      "so_name": "libfrankenlibc_abi.so",
+      "install_path": "/usr/lib/frankenlibc/libfrankenlibc_abi.so",
+      "env_activation": "LD_PRELOAD=/usr/lib/frankenlibc/libfrankenlibc_abi.so"
     },
     "replace": {
-      "so_name": "libglibc_rs_replace.so",
-      "install_path": "/usr/lib/glibc-rust/libglibc_rs_replace.so",
-      "system_link": "ln -sf /usr/lib/glibc-rust/libglibc_rs_replace.so /lib/x86_64-linux-gnu/libc.so.6"
+      "so_name": "libfrankenlibc_replace.so",
+      "install_path": "/usr/lib/frankenlibc/libfrankenlibc_replace.so",
+      "system_link": "ln -sf /usr/lib/frankenlibc/libfrankenlibc_replace.so /lib/x86_64-linux-gnu/libc.so.6"
     }
   },
   "feature_gates": {

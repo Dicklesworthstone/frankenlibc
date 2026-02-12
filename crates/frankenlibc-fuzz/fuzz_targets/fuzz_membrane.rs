@@ -7,7 +7,7 @@ fuzz_target!(|data: &[u8]| {
         return;
     }
 
-    let pipeline = glibc_rs_membrane::ptr_validator::ValidationPipeline::new();
+    let pipeline = frankenlibc_membrane::ptr_validator::ValidationPipeline::new();
 
     for chunk in data.chunks(8) {
         if chunk.len() < 8 {

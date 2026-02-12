@@ -8,7 +8,7 @@ fuzz_target!(|data: &[u8]| {
         return;
     }
 
-    let arena = glibc_rs_membrane::ptr_validator::ValidationPipeline::new();
+    let arena = frankenlibc_membrane::ptr_validator::ValidationPipeline::new();
     let mut allocations = Vec::new();
 
     for chunk in data.chunks(4) {

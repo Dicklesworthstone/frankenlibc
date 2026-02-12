@@ -8,8 +8,8 @@
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
-use glibc_rs_membrane::config::{SafetyLevel, safety_level};
-use glibc_rs_membrane::{
+use frankenlibc_membrane::config::{SafetyLevel, safety_level};
+use frankenlibc_membrane::{
     ApiFamily, MembraneAction, RuntimeContext, RuntimeDecision, RuntimeMathKernel,
 };
 use serde::{Deserialize, Serialize};
@@ -457,8 +457,8 @@ impl ActionStatsBuilder {
     fn observe(&mut self, d: RuntimeDecision) {
         self.decisions = self.decisions.saturating_add(1);
         match d.profile {
-            glibc_rs_membrane::ValidationProfile::Fast => self.profile_fast += 1,
-            glibc_rs_membrane::ValidationProfile::Full => self.profile_full += 1,
+            frankenlibc_membrane::ValidationProfile::Fast => self.profile_fast += 1,
+            frankenlibc_membrane::ValidationProfile::Full => self.profile_full += 1,
         }
         match d.action {
             MembraneAction::Allow => self.action_allow += 1,

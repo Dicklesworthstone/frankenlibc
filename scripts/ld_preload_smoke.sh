@@ -13,8 +13,8 @@ BIN_DIR="${RUN_DIR}/bin"
 TIMEOUT_SECONDS="${TIMEOUT_SECONDS:-10}"
 
 LIB_CANDIDATES=(
-  "${ROOT}/target/release/libglibc_rs_abi.so"
-  "/data/tmp/cargo-target/release/libglibc_rs_abi.so"
+  "${ROOT}/target/release/libfrankenlibc_abi.so"
+  "/data/tmp/cargo-target/release/libfrankenlibc_abi.so"
 )
 
 LIB_PATH=""
@@ -28,8 +28,8 @@ done
 mkdir -p "${RUN_DIR}" "${BIN_DIR}"
 
 if [[ -z "${LIB_PATH}" ]]; then
-  echo "ld_preload_smoke: building glibc-rs-abi release artifact..."
-  cargo build -p glibc-rs-abi --release
+  echo "ld_preload_smoke: building frankenlibc-abi release artifact..."
+  cargo build -p frankenlibc-abi --release
   for candidate in "${LIB_CANDIDATES[@]}"; do
     if [[ -f "${candidate}" ]]; then
       LIB_PATH="${candidate}"
@@ -39,7 +39,7 @@ if [[ -z "${LIB_PATH}" ]]; then
 fi
 
 if [[ -z "${LIB_PATH}" ]]; then
-  echo "ld_preload_smoke: could not locate libglibc_rs_abi.so" >&2
+  echo "ld_preload_smoke: could not locate libfrankenlibc_abi.so" >&2
   exit 2
 fi
 
@@ -99,7 +99,7 @@ run_case() {
 
   set +e
   timeout "${TIMEOUT_SECONDS}" \
-    env GLIBC_RUST_MODE="${mode}" LD_PRELOAD="${LIB_PATH}" "$@" \
+    env FRANKENLIBC_MODE="${mode}" LD_PRELOAD="${LIB_PATH}" "$@" \
     > "${case_dir}/stdout.txt" 2> "${case_dir}/stderr.txt"
   local rc=$?
   set -e
@@ -126,7 +126,7 @@ run_suite_for_mode() {
 
   run_case "${mode}" "coreutils_ls" /bin/ls -la /tmp || mode_failed=1
   run_case "${mode}" "coreutils_cat" /bin/cat /etc/hosts || mode_failed=1
-  run_case "${mode}" "coreutils_echo" /bin/echo "glibc_rust_smoke" || mode_failed=1
+  run_case "${mode}" "coreutils_echo" /bin/echo "frankenlibc_smoke" || mode_failed=1
   run_case "${mode}" "coreutils_env" /usr/bin/env || mode_failed=1
 
   run_case "${mode}" "integration_link_test" "${INTEGRATION_BIN}" || mode_failed=1

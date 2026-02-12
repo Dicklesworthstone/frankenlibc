@@ -14,7 +14,7 @@ use std::path::Path;
 use serde::Serialize;
 use thiserror::Error;
 
-use glibc_rs_membrane::runtime_math::evidence::{
+use frankenlibc_membrane::runtime_math::evidence::{
     EVIDENCE_RECORD_SIZE, EVIDENCE_SYMBOL_SIZE_T, EvidenceRecordError, EvidenceSymbolRecord,
     FLAG_REPAIR, FLAG_SYSTEMATIC, derive_repair_schedule_v1,
 };
@@ -355,11 +355,11 @@ fn compact_record_error(e: EvidenceRecordError) -> &'static str {
 mod tests {
     use super::*;
 
-    use glibc_rs_membrane::config::SafetyLevel;
-    use glibc_rs_membrane::runtime_math::evidence::{
+    use frankenlibc_membrane::config::SafetyLevel;
+    use frankenlibc_membrane::runtime_math::evidence::{
         PAYLOAD_OFFSET, derive_repair_symbol_count_v1, encode_xor_repair_payload_v1,
     };
-    use glibc_rs_membrane::runtime_math::{ApiFamily, MembraneAction, ValidationProfile};
+    use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction, ValidationProfile};
 
     type Payload = [u8; EVIDENCE_SYMBOL_SIZE_T];
 

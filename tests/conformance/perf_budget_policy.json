@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "bead": "bd-2r0",
-  "description": "Performance budget enforcement policy for glibc_rust. Defines latency budgets by perf_class, variance guardrails, repeat-run policy, and temporary waiver mechanism. Cross-references support_matrix.json perf_class assignments.",
+  "description": "Performance budget enforcement policy for frankenlibc. Defines latency budgets by perf_class, variance guardrails, repeat-run policy, and temporary waiver mechanism. Cross-references support_matrix.json perf_class assignments.",
   "budgets": {
     "strict_hotpath": {
       "description": "Called >= 1M/sec in typical workloads. Membrane overhead must not dominate.",
@@ -28,7 +28,7 @@
     "outlier_policy": "Drop highest and lowest of N>=3 runs, report median of remaining",
     "max_coefficient_of_variation_pct": 15,
     "high_cv_action": "Warn and increase repeat runs to max_repeat_runs before failing",
-    "cpu_pinning": "Recommended via GLIBC_RUST_BENCH_PIN=1 for reproducibility",
+    "cpu_pinning": "Recommended via FRANKENLIBC_BENCH_PIN=1 for reproducibility",
     "load_guard": {
       "enabled": true,
       "max_load_factor": 0.85,
@@ -60,7 +60,7 @@
       "justification": "Initial baseline establishment. strict budgets not yet met for runtime_math/membrane internal benchmarks. ABI-level symbol benchmarks not yet wired to enforcement.",
       "expires_at": "2026-05-11",
       "scope": "target_violation_only",
-      "note": "perf_gate.sh runs with GLIBC_RUST_PERF_ALLOW_TARGET_VIOLATION=1 by default"
+      "note": "perf_gate.sh runs with FRANKENLIBC_PERF_ALLOW_TARGET_VIOLATION=1 by default"
     }
   ],
   "current_assessment": {

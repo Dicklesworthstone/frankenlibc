@@ -1124,5 +1124,5 @@
     "linkage_status"
   ],
   "schema_version": "v1",
-  "source_mod_rs": "crates/glibc-rs-membrane/src/runtime_math/mod.rs"
+  "source_mod_rs": "crates/frankenlibc-membrane/src/runtime_math/mod.rs"
 }

@@ -10,7 +10,7 @@ use std::ptr;
 
 use crate::malloc_abi::known_remaining;
 use crate::runtime_policy;
-use glibc_rs_membrane::runtime_math::{ApiFamily, MembraneAction};
+use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
 #[inline]
 unsafe fn set_abi_errno(val: c_int) {
@@ -76,7 +76,7 @@ pub unsafe extern "C" fn atoi(nptr: *const c_char) -> c_int {
 
     let (len, _terminated) = unsafe { scan_c_string(nptr, bound) };
     let slice = unsafe { std::slice::from_raw_parts(nptr as *const u8, len) };
-    let result = glibc_rs_core::stdlib::atoi(slice);
+    let result = frankenlibc_core::stdlib::atoi(slice);
 
     runtime_policy::observe(
         ApiFamily::Stdlib,
@@ -118,7 +118,7 @@ pub unsafe extern "C" fn atol(nptr: *const c_char) -> c_long {
 
     let (len, _terminated) = unsafe { scan_c_string(nptr, bound) };
     let slice = unsafe { std::slice::from_raw_parts(nptr as *const u8, len) };
-    let result = glibc_rs_core::stdlib::atol(slice);
+    let result = frankenlibc_core::stdlib::atol(slice);
 
     runtime_policy::observe(
         ApiFamily::Stdlib,
@@ -179,7 +179,7 @@ pub unsafe extern "C" fn strtol(
     let (len, _terminated) = unsafe { scan_c_string(nptr, bound) };
     let slice = unsafe { std::slice::from_raw_parts(nptr as *const u8, len) };
 
-    let (val, consumed, _status) = glibc_rs_core::stdlib::conversion::strtol_impl(slice, base);
+    let (val, consumed, _status) = frankenlibc_core::stdlib::conversion::strtol_impl(slice, base);
 
     if !endptr.is_null() {
         unsafe {
@@ -247,7 +247,7 @@ pub unsafe extern "C" fn strtoul(
     let (len, _terminated) = unsafe { scan_c_string(nptr, bound) };
     let slice = unsafe { std::slice::from_raw_parts(nptr as *const u8, len) };
 
-    let (val, consumed, _status) = glibc_rs_core::stdlib::conversion::strtoul_impl(slice, base);
+    let (val, consumed, _status) = frankenlibc_core::stdlib::conversion::strtoul_impl(slice, base);
 
     if !endptr.is_null() {
         unsafe {
@@ -273,7 +273,7 @@ pub unsafe extern "C" fn strtoul(
 pub unsafe extern "C" fn exit(status: c_int) -> ! {
     let (_, decision) = runtime_policy::decide(ApiFamily::Stdlib, 0, 0, false, true, 0);
     runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 100, false);
-    glibc_rs_core::stdlib::exit(status)
+    frankenlibc_core::stdlib::exit(status)
 }
 
 // ---------------------------------------------------------------------------
@@ -291,7 +291,7 @@ pub unsafe extern "C" fn atexit(func: Option<unsafe extern "C" fn()>) -> c_int {
     let res = match func {
         Some(f) => {
             let safe_f: extern "C" fn() = unsafe { std::mem::transmute(f) };
-            glibc_rs_core::stdlib::atexit(safe_f)
+            frankenlibc_core::stdlib::atexit(safe_f)
         }
         None => -1,
     };
@@ -341,7 +341,7 @@ pub unsafe extern "C" fn qsort(
     // SAFETY: We validated base for total_bytes.
     let slice = unsafe { std::slice::from_raw_parts_mut(base as *mut u8, total_bytes) };
 
-    glibc_rs_core::stdlib::sort::qsort(slice, size, wrapper);
+    frankenlibc_core::stdlib::sort::qsort(slice, size, wrapper);
 
     runtime_policy::observe(
         ApiFamily::Stdlib,
@@ -404,7 +404,7 @@ pub unsafe extern "C" fn bsearch(
     let slice = unsafe { std::slice::from_raw_parts(base as *const u8, total_bytes) };
     let key_slice = unsafe { std::slice::from_raw_parts(key as *const u8, size) };
 
-    let result = glibc_rs_core::stdlib::sort::bsearch(key_slice, slice, size, wrapper);
+    let result = frankenlibc_core::stdlib::sort::bsearch(key_slice, slice, size, wrapper);
 
     runtime_policy::observe(
         ApiFamily::Stdlib,
@@ -460,7 +460,7 @@ pub unsafe extern "C" fn getenv(name: *const c_char) -> *mut c_char {
     }
 
     let name_slice = unsafe { std::slice::from_raw_parts(name as *const u8, len) };
-    if !glibc_rs_core::stdlib::valid_env_name(name_slice) {
+    if !frankenlibc_core::stdlib::valid_env_name(name_slice) {
         runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 5, true);
         return ptr::null_mut();
     }
@@ -524,7 +524,7 @@ pub unsafe extern "C" fn setenv(
     }
 
     let name_slice = unsafe { std::slice::from_raw_parts(name as *const u8, name_len) };
-    if !glibc_rs_core::stdlib::valid_env_name(name_slice) {
+    if !frankenlibc_core::stdlib::valid_env_name(name_slice) {
         runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 5, true);
         unsafe { set_abi_errno(libc::EINVAL) };
         return -1;
@@ -591,7 +591,7 @@ pub unsafe extern "C" fn unsetenv(name: *const c_char) -> c_int {
     }
 
     let name_slice = unsafe { std::slice::from_raw_parts(name as *const u8, name_len) };
-    if !glibc_rs_core::stdlib::valid_env_name(name_slice) {
+    if !frankenlibc_core::stdlib::valid_env_name(name_slice) {
         runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 5, true);
         unsafe { set_abi_errno(libc::EINVAL) };
         return -1;

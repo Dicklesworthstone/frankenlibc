@@ -10,12 +10,12 @@
 
 use std::ffi::{c_int, c_void};
 
-use glibc_rs_core::errno::{EINVAL, ENOMEM};
-use glibc_rs_membrane::arena::{AllocationArena, FreeResult};
-use glibc_rs_membrane::check_oracle::CheckStage;
-use glibc_rs_membrane::config::safety_level;
-use glibc_rs_membrane::heal::{HealingAction, global_healing_policy};
-use glibc_rs_membrane::runtime_math::{ApiFamily, MembraneAction};
+use frankenlibc_core::errno::{EINVAL, ENOMEM};
+use frankenlibc_membrane::arena::{AllocationArena, FreeResult};
+use frankenlibc_membrane::check_oracle::CheckStage;
+use frankenlibc_membrane::config::safety_level;
+use frankenlibc_membrane::heal::{HealingAction, global_healing_policy};
+use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
 use crate::runtime_policy;
 
@@ -58,7 +58,7 @@ fn record_allocator_stage_outcome(
 /// Returns `None` if the pipeline is not yet initialized (reentrant guard).
 #[must_use]
 pub(crate) fn known_remaining(addr: usize) -> Option<usize> {
-    use glibc_rs_membrane::ptr_validator::ValidationOutcome;
+    use frankenlibc_membrane::ptr_validator::ValidationOutcome;
     let pipeline = crate::membrane_state::try_global_pipeline()?;
     match pipeline.validate(addr) {
         ValidationOutcome::CachedValid(abs) | ValidationOutcome::Validated(abs) => abs.remaining,
@@ -509,7 +509,7 @@ pub unsafe extern "C" fn posix_memalign(
 pub unsafe extern "C" fn memalign(alignment: usize, size: usize) -> *mut c_void {
     let (aligned, recent_page, ordering) = allocator_stage_context(size);
     if !alignment.is_power_of_two() {
-        glibc_rs_core::errno::set_errno(EINVAL);
+        frankenlibc_core::errno::set_errno(EINVAL);
         record_allocator_stage_outcome(
             &ordering,
             aligned,
@@ -550,7 +550,7 @@ pub unsafe extern "C" fn memalign(alignment: usize, size: usize) -> *mut c_void 
             ptr.cast()
         }
         None => {
-            glibc_rs_core::errno::set_errno(ENOMEM);
+            frankenlibc_core::errno::set_errno(ENOMEM);
             runtime_policy::observe(
                 ApiFamily::Allocator,
                 decision.profile,
@@ -586,7 +586,7 @@ pub unsafe extern "C" fn aligned_alloc(alignment: usize, size: usize) -> *mut c_
     let (aligned, recent_page, ordering) = allocator_stage_context(size);
     // Requirements: alignment power of 2, size multiple of alignment
     if !alignment.is_power_of_two() || !size.is_multiple_of(alignment) {
-        glibc_rs_core::errno::set_errno(EINVAL);
+        frankenlibc_core::errno::set_errno(EINVAL);
         record_allocator_stage_outcome(
             &ordering,
             aligned,
@@ -627,7 +627,7 @@ pub unsafe extern "C" fn aligned_alloc(alignment: usize, size: usize) -> *mut c_
             ptr.cast()
         }
         None => {
-            glibc_rs_core::errno::set_errno(ENOMEM);
+            frankenlibc_core::errno::set_errno(ENOMEM);
             runtime_policy::observe(
                 ApiFamily::Allocator,
                 decision.profile,

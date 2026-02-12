@@ -10,7 +10,7 @@ use std::cell::RefCell;
 use std::ffi::{c_char, c_int};
 use std::ptr;
 
-use glibc_rs_membrane::runtime_math::{ApiFamily, MembraneAction};
+use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
 use crate::runtime_policy;
 
@@ -23,7 +23,7 @@ struct PwdStorage {
     /// Cached file content.
     file_cache: Option<Vec<u8>>,
     /// Parsed entries for iteration.
-    entries: Vec<glibc_rs_core::pwd::Passwd>,
+    entries: Vec<frankenlibc_core::pwd::Passwd>,
     /// Current iteration index for getpwent.
     iter_idx: usize,
 }
@@ -48,7 +48,7 @@ impl PwdStorage {
 
     /// Populate the C struct from a parsed entry.
     /// Returns a pointer to the thread-local `libc::passwd`.
-    fn fill_from(&mut self, entry: &glibc_rs_core::pwd::Passwd) -> *mut libc::passwd {
+    fn fill_from(&mut self, entry: &frankenlibc_core::pwd::Passwd) -> *mut libc::passwd {
         // Build a buffer: name\0passwd\0gecos\0dir\0shell\0
         self.buf.clear();
         let name_off = 0;
@@ -94,7 +94,7 @@ fn do_getpwnam(name: &[u8]) -> *mut libc::passwd {
         let mut storage = cell.borrow_mut();
         storage.ensure_loaded();
         let content = storage.file_cache.clone().unwrap_or_default();
-        match glibc_rs_core::pwd::lookup_by_name(&content, name) {
+        match frankenlibc_core::pwd::lookup_by_name(&content, name) {
             Some(entry) => storage.fill_from(&entry),
             None => ptr::null_mut(),
         }
@@ -107,7 +107,7 @@ fn do_getpwuid(uid: u32) -> *mut libc::passwd {
         let mut storage = cell.borrow_mut();
         storage.ensure_loaded();
         let content = storage.file_cache.clone().unwrap_or_default();
-        match glibc_rs_core::pwd::lookup_by_uid(&content, uid) {
+        match frankenlibc_core::pwd::lookup_by_uid(&content, uid) {
             Some(entry) => storage.fill_from(&entry),
             None => ptr::null_mut(),
         }
@@ -156,7 +156,7 @@ pub unsafe extern "C" fn setpwent() {
         let mut storage = cell.borrow_mut();
         storage.ensure_loaded();
         let content = storage.file_cache.clone().unwrap_or_default();
-        storage.entries = glibc_rs_core::pwd::parse_all(&content);
+        storage.entries = frankenlibc_core::pwd::parse_all(&content);
         storage.iter_idx = 0;
     });
 }
@@ -181,7 +181,7 @@ pub unsafe extern "C" fn getpwent() -> *mut libc::passwd {
         if storage.entries.is_empty() && storage.iter_idx == 0 {
             storage.ensure_loaded();
             let content = storage.file_cache.clone().unwrap_or_default();
-            storage.entries = glibc_rs_core::pwd::parse_all(&content);
+            storage.entries = frankenlibc_core::pwd::parse_all(&content);
         }
 
         if storage.iter_idx >= storage.entries.len() {
@@ -225,7 +225,7 @@ pub unsafe extern "C" fn getpwnam_r(
     let name_bytes = name_cstr.to_bytes();
 
     let content = std::fs::read("/etc/passwd").unwrap_or_default();
-    let entry = match glibc_rs_core::pwd::lookup_by_name(&content, name_bytes) {
+    let entry = match frankenlibc_core::pwd::lookup_by_name(&content, name_bytes) {
         Some(e) => e,
         None => {
             runtime_policy::observe(ApiFamily::Resolver, decision.profile, 15, false);
@@ -261,7 +261,7 @@ pub unsafe extern "C" fn getpwuid_r(
     }
 
     let content = std::fs::read("/etc/passwd").unwrap_or_default();
-    let entry = match glibc_rs_core::pwd::lookup_by_uid(&content, uid) {
+    let entry = match frankenlibc_core::pwd::lookup_by_uid(&content, uid) {
         Some(e) => e,
         None => {
             runtime_policy::observe(ApiFamily::Resolver, decision.profile, 15, false);
@@ -281,7 +281,7 @@ pub unsafe extern "C" fn getpwuid_r(
 /// `pwd`, `buf`, `result` must be valid writable pointers. `buflen` must
 /// reflect the actual size of the `buf` allocation.
 unsafe fn fill_passwd_r(
-    entry: &glibc_rs_core::pwd::Passwd,
+    entry: &frankenlibc_core::pwd::Passwd,
     pwd: *mut libc::passwd,
     buf: *mut c_char,
     buflen: libc::size_t,

@@ -1,4 +1,4 @@
-//! Structured logging contract for glibc_rust test/e2e/perf workflows.
+//! Structured logging contract for frankenlibc test/e2e/perf workflows.
 //!
 //! Bead: `bd-144`
 //!

@@ -1,10 +1,10 @@
 //! Raw Linux x86_64 syscall veneer.
 //!
 //! Provides zero-dependency raw syscall primitives using inline assembly,
-//! plus typed wrappers for the syscalls needed by glibc_rust ABI entrypoints.
+//! plus typed wrappers for the syscalls needed by frankenlibc ABI entrypoints.
 //!
 //! This module eliminates the dependency on `libc::syscall()` for the critical
-//! path, which is essential since glibc_rust IS the libc replacement.
+//! path, which is essential since frankenlibc IS the libc replacement.
 //!
 //! # Architecture
 //!

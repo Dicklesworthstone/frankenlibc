@@ -18,7 +18,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-ABI_SRC="${ROOT}/crates/glibc-rs-abi/src"
+ABI_SRC="${ROOT}/crates/frankenlibc-abi/src"
 PROFILE_DEF="${ROOT}/tests/conformance/replacement_profile.json"
 MODE="${1:-interpose}"
 

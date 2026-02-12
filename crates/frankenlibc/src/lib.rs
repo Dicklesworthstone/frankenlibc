@@ -1,4 +1,4 @@
-//! glibc_rust core crate.
+//! frankenlibc core crate.
 //!
 //! This crate introduces the first version of a Transparent Safety Membrane (TSM)
 //! substrate at the libc ABI boundary.

@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "bead": "bd-1ik",
-  "description": "Opportunity matrix for glibc_rust optimization work. Scores hotspots on three dimensions (impact, confidence, effort) to produce a composite score. Only items scoring >= 2.0 proceed to implementation. Items below threshold remain deferred unless manually justified with a waiver.",
+  "description": "Opportunity matrix for frankenlibc optimization work. Scores hotspots on three dimensions (impact, confidence, effort) to produce a composite score. Only items scoring >= 2.0 proceed to implementation. Items below threshold remain deferred unless manually justified with a waiver.",
   "scoring": {
     "dimensions": {
       "impact": {

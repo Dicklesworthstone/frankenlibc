@@ -74,7 +74,7 @@ echo "=== Support Matrix Drift Check (bd-3rf) ==="
 echo ""
 
 echo "--- Step 1: canonical reality report matches harness output ---"
-generated_json="$(cargo run --quiet -p glibc-rs-harness --bin harness -- reality-report --support-matrix "$MATRIX")"
+generated_json="$(cargo run --quiet -p frankenlibc-harness --bin harness -- reality-report --support-matrix "$MATRIX")"
 
 python3 - "$REPORT" "$generated_json" <<'PY'
 import json

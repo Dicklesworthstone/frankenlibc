@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# CI quality gates for glibc_rust.
+# CI quality gates for frankenlibc.
 set -euo pipefail
 
-echo "=== glibc_rust CI ==="
+echo "=== frankenlibc CI ==="
 echo ""
 
 echo "--- cargo fmt --check ---"
@@ -25,12 +25,12 @@ cargo test --workspace
 echo "PASS"
 echo ""
 
-echo "--- cargo build -p glibc-rs-abi --release ---"
-cargo build -p glibc-rs-abi --release
+echo "--- cargo build -p frankenlibc-abi --release ---"
+cargo build -p frankenlibc-abi --release
 echo "PASS"
 echo ""
 
-if [[ "${GLIBC_RUST_EXTENDED_GATES:-0}" == "1" ]]; then
+if [[ "${FRANKENLIBC_EXTENDED_GATES:-0}" == "1" ]]; then
     echo "--- hard rule audit (no forbidden math on strict fast path) ---"
     scripts/hard_rule_audit.sh
     echo "PASS"
@@ -189,7 +189,7 @@ if [[ "${GLIBC_RUST_EXTENDED_GATES:-0}" == "1" ]]; then
     fi
     echo ""
 else
-    echo "SKIP extended gates (set GLIBC_RUST_EXTENDED_GATES=1 to run full policy/perf/snapshot checks)"
+    echo "SKIP extended gates (set FRANKENLIBC_EXTENDED_GATES=1 to run full policy/perf/snapshot checks)"
     echo ""
 fi
 

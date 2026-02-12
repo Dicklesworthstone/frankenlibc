@@ -13,7 +13,7 @@
 
 #[cfg(target_arch = "x86_64")]
 mod x86_64_tests {
-    use glibc_rs_core::syscall::*;
+    use frankenlibc_core::syscall::*;
 
     // -----------------------------------------------------------------
     // Constants (matching kernel headers, no libc dependency)

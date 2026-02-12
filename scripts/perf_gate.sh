@@ -9,15 +9,15 @@ set -euo pipefail
 
 BASELINE_FILE="${BASELINE_FILE:-scripts/perf_baseline.json}"
 # Default to a tolerant bound to avoid flakiness on shared/dev machines.
-# Tighten locally by setting GLIBC_RUST_PERF_MAX_REGRESSION_PCT.
-MAX_REGRESSION_PCT="${GLIBC_RUST_PERF_MAX_REGRESSION_PCT:-15}"
-ALLOW_TARGET_VIOLATION="${GLIBC_RUST_PERF_ALLOW_TARGET_VIOLATION:-1}"
+# Tighten locally by setting FRANKENLIBC_PERF_MAX_REGRESSION_PCT.
+MAX_REGRESSION_PCT="${FRANKENLIBC_PERF_MAX_REGRESSION_PCT:-15}"
+ALLOW_TARGET_VIOLATION="${FRANKENLIBC_PERF_ALLOW_TARGET_VIOLATION:-1}"
 # If the machine is heavily oversubscribed, nanosecond-scale regressions become
 # dominated by scheduler noise. Default: skip perf gating under extreme load.
-SKIP_OVERLOADED="${GLIBC_RUST_PERF_SKIP_OVERLOADED:-1}"
-MAX_LOAD_FACTOR="${GLIBC_RUST_PERF_MAX_LOAD_FACTOR:-0.85}"
+SKIP_OVERLOADED="${FRANKENLIBC_PERF_SKIP_OVERLOADED:-1}"
+MAX_LOAD_FACTOR="${FRANKENLIBC_PERF_MAX_LOAD_FACTOR:-0.85}"
 # Optional: run the per-kernel suite (can be enabled once baseline entries exist).
-ENABLE_KERNEL_SUITE="${GLIBC_RUST_PERF_ENABLE_KERNEL_SUITE:-0}"
+ENABLE_KERNEL_SUITE="${FRANKENLIBC_PERF_ENABLE_KERNEL_SUITE:-0}"
 
 if [[ ! -f "${BASELINE_FILE}" ]]; then
   echo "perf_gate: missing baseline file: ${BASELINE_FILE}" >&2
@@ -116,21 +116,21 @@ run_mode() {
 
   # Pin if supported by bench binaries (best-effort).
   out_rt="$(
-    GLIBC_RUST_BENCH_PIN=1 GLIBC_RUST_MODE="$mode" \
-      cargo bench -p glibc-rs-bench --bench runtime_math_bench 2>/dev/null \
+    FRANKENLIBC_BENCH_PIN=1 FRANKENLIBC_MODE="$mode" \
+      cargo bench -p frankenlibc-bench --bench runtime_math_bench 2>/dev/null \
       | rg '^RUNTIME_MATH_BENCH ' || true
   )"
 
   out_mem="$(
-    GLIBC_RUST_BENCH_PIN=1 GLIBC_RUST_MODE="$mode" \
-      cargo bench -p glibc-rs-bench --bench membrane_bench 2>/dev/null \
+    FRANKENLIBC_BENCH_PIN=1 FRANKENLIBC_MODE="$mode" \
+      cargo bench -p frankenlibc-bench --bench membrane_bench 2>/dev/null \
       | rg '^MEMBRANE_BENCH ' || true
   )"
 
   if [[ "${ENABLE_KERNEL_SUITE}" == "1" ]]; then
     out_kernels="$(
-      GLIBC_RUST_BENCH_PIN=1 GLIBC_RUST_MODE="$mode" \
-        cargo bench -p glibc-rs-bench --bench runtime_math_kernels_bench 2>/dev/null \
+      FRANKENLIBC_BENCH_PIN=1 FRANKENLIBC_MODE="$mode" \
+        cargo bench -p frankenlibc-bench --bench runtime_math_kernels_bench 2>/dev/null \
         | rg '^RUNTIME_MATH_KERNEL_BENCH ' || true
     )"
   else

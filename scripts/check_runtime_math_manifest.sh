@@ -4,8 +4,8 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-MOD_RS="$REPO_ROOT/crates/glibc-rs-membrane/src/runtime_math/mod.rs"
-CARGO_TOML="$REPO_ROOT/crates/glibc-rs-membrane/Cargo.toml"
+MOD_RS="$REPO_ROOT/crates/frankenlibc-membrane/src/runtime_math/mod.rs"
+CARGO_TOML="$REPO_ROOT/crates/frankenlibc-membrane/Cargo.toml"
 MANIFEST="$REPO_ROOT/tests/runtime_math/production_kernel_manifest.v1.json"
 
 if [[ ! -f "$MOD_RS" ]]; then
@@ -43,7 +43,7 @@ fi
 
 # Feature sanity
 if ! grep -q '^\[features\]' "$CARGO_TOML"; then
-    echo "ERROR: crates/glibc-rs-membrane/Cargo.toml missing [features] section"
+    echo "ERROR: crates/frankenlibc-membrane/Cargo.toml missing [features] section"
     status=1
 fi
 if ! grep -q '^default = \["runtime-math-production"\]' "$CARGO_TOML"; then

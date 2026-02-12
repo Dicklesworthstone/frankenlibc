@@ -29,8 +29,8 @@ GLIBC_2.2.5 {
         iconv_close;
 
         /* startup */
-        __glibc_rs_startup_phase0;
-        __glibc_rs_startup_snapshot;
+        __frankenlibc_startup_phase0;
+        __frankenlibc_startup_snapshot;
 
         /* passwd database */
         getpwnam;

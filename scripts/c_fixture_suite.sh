@@ -19,8 +19,8 @@ BIN_DIR="${RUN_DIR}/bin"
 TIMEOUT_SECONDS="${TIMEOUT_SECONDS:-10}"
 
 LIB_CANDIDATES=(
-  "${ROOT}/target/release/libglibc_rs_abi.so"
-  "/data/tmp/cargo-target/release/libglibc_rs_abi.so"
+  "${ROOT}/target/release/libfrankenlibc_abi.so"
+  "/data/tmp/cargo-target/release/libfrankenlibc_abi.so"
 )
 
 LIB_PATH=""
@@ -35,8 +35,8 @@ mkdir -p "${RUN_DIR}" "${BIN_DIR}"
 
 # Build library if needed
 if [[ -z "${LIB_PATH}" ]]; then
-  echo "c_fixture_suite: building glibc-rs-abi release artifact..."
-  cargo build -p glibc-rs-abi --release
+  echo "c_fixture_suite: building frankenlibc-abi release artifact..."
+  cargo build -p frankenlibc-abi --release
   for candidate in "${LIB_CANDIDATES[@]}"; do
     if [[ -f "${candidate}" ]]; then
       LIB_PATH="${candidate}"
@@ -46,7 +46,7 @@ if [[ -z "${LIB_PATH}" ]]; then
 fi
 
 if [[ -z "${LIB_PATH}" ]]; then
-  echo "c_fixture_suite: could not locate libglibc_rs_abi.so" >&2
+  echo "c_fixture_suite: could not locate libfrankenlibc_abi.so" >&2
   exit 2
 fi
 
@@ -109,7 +109,7 @@ run_fixture() {
 
   set +e
   timeout "${TIMEOUT_SECONDS}" \
-    env GLIBC_RUST_MODE="${mode}" LD_PRELOAD="${LIB_PATH}" "${bin}" \
+    env FRANKENLIBC_MODE="${mode}" LD_PRELOAD="${LIB_PATH}" "${bin}" \
     > "${case_dir}/stdout.txt" 2> "${case_dir}/stderr.txt"
   local rc=$?
   set -e

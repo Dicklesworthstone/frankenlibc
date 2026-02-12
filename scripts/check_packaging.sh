@@ -345,7 +345,7 @@ if [[ -f "${ARTIFACT}" ]]; then
     size=$(stat -c%s "${ARTIFACT}" 2>/dev/null || stat -f%z "${ARTIFACT}" 2>/dev/null || echo "?")
     echo "PASS: ${ARTIFACT} exists (${size} bytes)"
 else
-    echo "WARN: ${ARTIFACT} not found (run 'cargo build -p glibc-rs-abi --release' to produce it)"
+    echo "WARN: ${ARTIFACT} not found (run 'cargo build -p frankenlibc-abi --release' to produce it)"
 fi
 echo ""
 
@@ -389,7 +389,7 @@ if interpose_deploy.startswith('LD_PRELOAD='):
         errors.append(f'Missing README deployment prefix: {preload_prefix}')
 
 hardened_deploy = interpose.get('deployment_modes', {}).get('hardened', '')
-if hardened_deploy.startswith('GLIBC_RUST_MODE=hardened'):
+if hardened_deploy.startswith('FRANKENLIBC_MODE=hardened'):
     hardened_prefix = hardened_deploy.split(' ', 1)[0]
     if hardened_prefix not in readme:
         errors.append(f'Missing README hardened prefix: {hardened_prefix}')

@@ -8,9 +8,9 @@
 
 use std::sync::atomic::{AtomicPtr, AtomicU8, Ordering as AtomicOrdering};
 
-use glibc_rs_membrane::check_oracle::CheckStage;
-use glibc_rs_membrane::config::{SafetyLevel, safety_level};
-use glibc_rs_membrane::runtime_math::{
+use frankenlibc_membrane::check_oracle::CheckStage;
+use frankenlibc_membrane::config::{SafetyLevel, safety_level};
+use frankenlibc_membrane::runtime_math::{
     ApiFamily, RuntimeContext, RuntimeDecision, RuntimeMathKernel, ValidationProfile,
 };
 
@@ -75,7 +75,7 @@ fn kernel() -> Option<&'static RuntimeMathKernel> {
 /// Default passthrough decision used during kernel initialization (reentrant guard).
 fn passthrough_decision() -> RuntimeDecision {
     RuntimeDecision {
-        action: glibc_rs_membrane::runtime_math::MembraneAction::Allow,
+        action: frankenlibc_membrane::runtime_math::MembraneAction::Allow,
         profile: ValidationProfile::Fast,
         policy_id: 0,
         risk_upper_bound_ppm: 0,

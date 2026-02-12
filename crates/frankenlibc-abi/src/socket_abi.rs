@@ -2,13 +2,13 @@
 //!
 //! All socket operations are thin wrappers around `libc` syscalls with
 //! membrane validation gating. Input validation (address family, socket
-//! type, shutdown mode) delegates to `glibc_rs_core::socket`.
+//! type, shutdown mode) delegates to `frankenlibc_core::socket`.
 
 use std::ffi::{c_int, c_void};
 
-use glibc_rs_core::errno;
-use glibc_rs_core::socket as socket_core;
-use glibc_rs_membrane::runtime_math::{ApiFamily, MembraneAction};
+use frankenlibc_core::errno;
+use frankenlibc_core::socket as socket_core;
+use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
 use crate::runtime_policy;
 

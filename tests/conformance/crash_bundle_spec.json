@@ -188,7 +188,7 @@
       }
     ],
     "log_schema_ref": "tests/conformance/log_schema.json",
-    "evidence_system_ref": "crates/glibc-rs-membrane/src/runtime_math/evidence.rs",
+    "evidence_system_ref": "crates/frankenlibc-membrane/src/runtime_math/evidence.rs",
     "artifact_kinds_used": ["backtrace", "snapshot", "log"]
   },
   "summary": {

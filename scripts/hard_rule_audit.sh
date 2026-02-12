@@ -16,7 +16,7 @@
 
 set -euo pipefail
 
-MOD_RS="crates/glibc-rs-membrane/src/runtime_math/mod.rs"
+MOD_RS="crates/frankenlibc-membrane/src/runtime_math/mod.rs"
 
 if [[ ! -f "$MOD_RS" ]]; then
     echo "ERROR: $MOD_RS not found. Run from workspace root."

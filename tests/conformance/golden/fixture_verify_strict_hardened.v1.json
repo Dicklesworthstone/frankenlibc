@@ -1,5 +1,5 @@
 {
-  "title": "glibc_rust Conformance Report",
+  "title": "frankenlibc Conformance Report",
   "mode": "strict+hardened",
   "timestamp": "1970-01-01T00:00:00Z",
   "summary": {

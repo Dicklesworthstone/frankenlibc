@@ -6,11 +6,11 @@
 
 use std::ffi::{c_char, c_int, c_void};
 
-use glibc_rs_core::errno;
-use glibc_rs_core::syscall;
-use glibc_rs_core::unistd as unistd_core;
-use glibc_rs_membrane::heal::{HealingAction, global_healing_policy};
-use glibc_rs_membrane::runtime_math::{ApiFamily, MembraneAction};
+use frankenlibc_core::errno;
+use frankenlibc_core::syscall;
+use frankenlibc_core::unistd as unistd_core;
+use frankenlibc_membrane::heal::{HealingAction, global_healing_policy};
+use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
 use crate::malloc_abi::known_remaining;
 use crate::runtime_policy;

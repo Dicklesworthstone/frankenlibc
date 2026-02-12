@@ -11,8 +11,8 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-MOD_RS="$REPO_ROOT/crates/glibc-rs-membrane/src/runtime_math/mod.rs"
-RT_DIR="$REPO_ROOT/crates/glibc-rs-membrane/src/runtime_math"
+MOD_RS="$REPO_ROOT/crates/frankenlibc-membrane/src/runtime_math/mod.rs"
+RT_DIR="$REPO_ROOT/crates/frankenlibc-membrane/src/runtime_math"
 
 if [[ ! -f "$MOD_RS" ]]; then
     echo "ERROR: runtime_math/mod.rs not found" >&2

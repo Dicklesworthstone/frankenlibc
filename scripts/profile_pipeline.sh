@@ -145,9 +145,9 @@ profile_target() {
     local cpu_data="${CPU_DIR}/${slug}.perf.data"
     local cpu_top5="${CPU_DIR}/${slug}.top5.txt"
 
-    append_cmd "GLIBC_RUST_MODE=${MODE} CARGO_PROFILE_BENCH_DEBUG=true cargo flamegraph -F ${PROFILE_FREQ} -p glibc-rs-bench --bench ${bench} --deterministic -o ${cpu_svg} -- --bench --profile-time ${PROFILE_TIME} --exact ${bench_id}"
-    GLIBC_RUST_MODE="${MODE}" CARGO_PROFILE_BENCH_DEBUG=true \
-        cargo flamegraph -F "${PROFILE_FREQ}" -p glibc-rs-bench --bench "${bench}" --deterministic \
+    append_cmd "FRANKENLIBC_MODE=${MODE} CARGO_PROFILE_BENCH_DEBUG=true cargo flamegraph -F ${PROFILE_FREQ} -p frankenlibc-bench --bench ${bench} --deterministic -o ${cpu_svg} -- --bench --profile-time ${PROFILE_TIME} --exact ${bench_id}"
+    FRANKENLIBC_MODE="${MODE}" CARGO_PROFILE_BENCH_DEBUG=true \
+        cargo flamegraph -F "${PROFILE_FREQ}" -p frankenlibc-bench --bench "${bench}" --deterministic \
         -o "${cpu_svg}" -- \
         --bench --profile-time "${PROFILE_TIME}" --exact "${bench_id}"
 
@@ -160,17 +160,17 @@ profile_target() {
 
     local alloc_data="${ALLOC_DIR}/${slug}.perf.data"
     local alloc_top5="${ALLOC_DIR}/${slug}.top5.txt"
-    append_cmd "perf record -F ${PROFILE_FREQ} -g -o ${alloc_data} -- env GLIBC_RUST_MODE=${MODE} ${CARGO_BIN} bench -p glibc-rs-bench --bench ${bench} -- --profile-time ${PROFILE_TIME} --exact ${bench_id}"
+    append_cmd "perf record -F ${PROFILE_FREQ} -g -o ${alloc_data} -- env FRANKENLIBC_MODE=${MODE} ${CARGO_BIN} bench -p frankenlibc-bench --bench ${bench} -- --profile-time ${PROFILE_TIME} --exact ${bench_id}"
     perf record -F "${PROFILE_FREQ}" -g -o "${alloc_data}" -- \
-        env GLIBC_RUST_MODE="${MODE}" "${CARGO_BIN}" bench -p glibc-rs-bench --bench "${bench}" -- \
+        env FRANKENLIBC_MODE="${MODE}" "${CARGO_BIN}" bench -p frankenlibc-bench --bench "${bench}" -- \
             --profile-time "${PROFILE_TIME}" --exact "${bench_id}" >/dev/null
     extract_alloc_top5 "${alloc_data}" "${alloc_top5}"
 
     local syscall_raw="${SYSCALL_DIR}/${slug}.strace.txt"
     local syscall_top5="${SYSCALL_DIR}/${slug}.top5.txt"
-    append_cmd "strace -f -qq -c -o ${syscall_raw} env GLIBC_RUST_MODE=${MODE} ${CARGO_BIN} bench -p glibc-rs-bench --bench ${bench} -- --profile-time ${PROFILE_TIME} --exact ${bench_id}"
+    append_cmd "strace -f -qq -c -o ${syscall_raw} env FRANKENLIBC_MODE=${MODE} ${CARGO_BIN} bench -p frankenlibc-bench --bench ${bench} -- --profile-time ${PROFILE_TIME} --exact ${bench_id}"
     strace -f -qq -c -o "${syscall_raw}" \
-        env GLIBC_RUST_MODE="${MODE}" "${CARGO_BIN}" bench -p glibc-rs-bench --bench "${bench}" -- \
+        env FRANKENLIBC_MODE="${MODE}" "${CARGO_BIN}" bench -p frankenlibc-bench --bench "${bench}" -- \
             --profile-time "${PROFILE_TIME}" --exact "${bench_id}" >/dev/null 2>&1
     extract_syscall_top5 "${syscall_raw}" "${syscall_top5}"
 

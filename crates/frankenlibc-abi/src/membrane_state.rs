@@ -10,7 +10,7 @@
 
 use std::sync::atomic::{AtomicPtr, AtomicU8, Ordering};
 
-use glibc_rs_membrane::ptr_validator::ValidationPipeline;
+use frankenlibc_membrane::ptr_validator::ValidationPipeline;
 
 const STATE_UNINIT: u8 = 0;
 const STATE_INITIALIZING: u8 = 1;

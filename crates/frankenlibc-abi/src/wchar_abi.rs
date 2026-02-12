@@ -5,8 +5,8 @@
 //!
 use std::ffi::c_int;
 
-use glibc_rs_membrane::heal::{HealingAction, global_healing_policy};
-use glibc_rs_membrane::runtime_math::{ApiFamily, MembraneAction};
+use frankenlibc_membrane::heal::{HealingAction, global_healing_policy};
+use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
 use crate::malloc_abi::known_remaining;
 use crate::runtime_policy;

@@ -1,7 +1,7 @@
 {
   "census_version": 1,
   "generated_utc": "2026-02-11T19:14:29Z",
-  "workspace_root": "/data/projects/glibc_rust",
+  "workspace_root": "/data/projects/frankenlibc",
   "total_todo_occurrences": 15,
   "total_unique_stub_symbols": 14,
   "total_abi_exports": 247,
@@ -10,7 +10,7 @@
     {
       "symbol": "longjmp",
       "abi_module": null,
-      "core_location": "crates/glibc-rs-core/src/setjmp/mod.rs:31",
+      "core_location": "crates/frankenlibc-core/src/setjmp/mod.rs:31",
       "stub_type": "todo!",
       "stub_message": "POSIX longjmp: implementation pending (requires unsafe for real impl",
       "support_matrix_status": null,
@@ -24,7 +24,7 @@
     {
       "symbol": "setjmp",
       "abi_module": null,
-      "core_location": "crates/glibc-rs-core/src/setjmp/mod.rs:21",
+      "core_location": "crates/frankenlibc-core/src/setjmp/mod.rs:21",
       "stub_type": "todo!",
       "stub_message": "POSIX setjmp: implementation pending (requires unsafe for real impl",
       "support_matrix_status": null,
@@ -38,7 +38,7 @@
     {
       "symbol": "rand",
       "abi_module": null,
-      "core_location": "crates/glibc-rs-core/src/stdlib/random.rs:5",
+      "core_location": "crates/frankenlibc-core/src/stdlib/random.rs:5",
       "stub_type": "todo!",
       "stub_message": "",
       "support_matrix_status": null,
@@ -52,7 +52,7 @@
     {
       "symbol": "srand",
       "abi_module": null,
-      "core_location": "crates/glibc-rs-core/src/stdlib/random.rs:8",
+      "core_location": "crates/frankenlibc-core/src/stdlib/random.rs:8",
       "stub_type": "todo!",
       "stub_message": "",
       "support_matrix_status": null,
@@ -65,8 +65,8 @@
     },
     {
       "symbol": "tcgetattr",
-      "abi_module": "crates/glibc-rs-abi/src/termios_abi.rs",
-      "core_location": "crates/glibc-rs-core/src/termios/mod.rs:295",
+      "abi_module": "crates/frankenlibc-abi/src/termios_abi.rs",
+      "core_location": "crates/frankenlibc-core/src/termios/mod.rs:295",
       "stub_type": "todo!",
       "stub_message": "POSIX tcgetattr: implementation pending",
       "support_matrix_status": "RawSyscall",
@@ -79,8 +79,8 @@
     },
     {
       "symbol": "tcsetattr",
-      "abi_module": "crates/glibc-rs-abi/src/termios_abi.rs",
-      "core_location": "crates/glibc-rs-core/src/termios/mod.rs:303",
+      "abi_module": "crates/frankenlibc-abi/src/termios_abi.rs",
+      "core_location": "crates/frankenlibc-core/src/termios/mod.rs:303",
       "stub_type": "todo!",
       "stub_message": "POSIX tcsetattr: implementation pending",
       "support_matrix_status": "RawSyscall",
@@ -93,8 +93,8 @@
     },
     {
       "symbol": "pthread_detach",
-      "abi_module": "crates/glibc-rs-abi/src/pthread_abi.rs",
-      "core_location": "crates/glibc-rs-core/src/pthread/thread.rs:41",
+      "abi_module": "crates/frankenlibc-abi/src/pthread_abi.rs",
+      "core_location": "crates/frankenlibc-core/src/pthread/thread.rs:41",
       "stub_type": "todo!",
       "stub_message": "POSIX pthread_detach: implementation pending",
       "support_matrix_status": "GlibcCallThrough",
@@ -108,7 +108,7 @@
     {
       "symbol": "pthread_exit",
       "abi_module": null,
-      "core_location": "crates/glibc-rs-core/src/pthread/thread.rs:48",
+      "core_location": "crates/frankenlibc-core/src/pthread/thread.rs:48",
       "stub_type": "todo!",
       "stub_message": "POSIX pthread_exit: implementation pending",
       "support_matrix_status": null,
@@ -122,7 +122,7 @@
     {
       "symbol": "pthread_getspecific",
       "abi_module": null,
-      "core_location": "crates/glibc-rs-core/src/pthread/tls.rs:32",
+      "core_location": "crates/frankenlibc-core/src/pthread/tls.rs:32",
       "stub_type": "todo!",
       "stub_message": "POSIX pthread_getspecific: implementation pending",
       "support_matrix_status": null,
@@ -135,8 +135,8 @@
     },
     {
       "symbol": "pthread_join",
-      "abi_module": "crates/glibc-rs-abi/src/pthread_abi.rs",
-      "core_location": "crates/glibc-rs-core/src/pthread/thread.rs:34",
+      "abi_module": "crates/frankenlibc-abi/src/pthread_abi.rs",
+      "core_location": "crates/frankenlibc-core/src/pthread/thread.rs:34",
       "stub_type": "todo!",
       "stub_message": "POSIX pthread_join: implementation pending",
       "support_matrix_status": "GlibcCallThrough",
@@ -150,7 +150,7 @@
     {
       "symbol": "pthread_key_create",
       "abi_module": null,
-      "core_location": "crates/glibc-rs-core/src/pthread/tls.rs:17",
+      "core_location": "crates/frankenlibc-core/src/pthread/tls.rs:17",
       "stub_type": "todo!",
       "stub_message": "POSIX pthread_key_create: implementation pending",
       "support_matrix_status": null,
@@ -164,7 +164,7 @@
     {
       "symbol": "pthread_key_delete",
       "abi_module": null,
-      "core_location": "crates/glibc-rs-core/src/pthread/tls.rs:24",
+      "core_location": "crates/frankenlibc-core/src/pthread/tls.rs:24",
       "stub_type": "todo!",
       "stub_message": "POSIX pthread_key_delete: implementation pending",
       "support_matrix_status": null,
@@ -177,8 +177,8 @@
     },
     {
       "symbol": "pthread_self",
-      "abi_module": "crates/glibc-rs-abi/src/pthread_abi.rs",
-      "core_location": "crates/glibc-rs-core/src/pthread/thread.rs:55",
+      "abi_module": "crates/frankenlibc-abi/src/pthread_abi.rs",
+      "core_location": "crates/frankenlibc-core/src/pthread/thread.rs:55",
       "stub_type": "todo!",
       "stub_message": "POSIX pthread_self: implementation pending",
       "support_matrix_status": "GlibcCallThrough",
@@ -192,7 +192,7 @@
     {
       "symbol": "pthread_setspecific",
       "abi_module": null,
-      "core_location": "crates/glibc-rs-core/src/pthread/tls.rs:39",
+      "core_location": "crates/frankenlibc-core/src/pthread/tls.rs:39",
       "stub_type": "todo!",
       "stub_message": "POSIX pthread_setspecific: implementation pending",
       "support_matrix_status": null,
@@ -258,63 +258,63 @@
   "missing_from_abi_and_matrix": [
     {
       "symbol": "longjmp",
-      "core_location": "crates/glibc-rs-core/src/setjmp/mod.rs:31",
+      "core_location": "crates/frankenlibc-core/src/setjmp/mod.rs:31",
       "risk_category": "setjmp",
       "call_family": "setjmp",
       "note": "Has core stub with todo!() but no ABI export and not in support matrix"
     },
     {
       "symbol": "pthread_exit",
-      "core_location": "crates/glibc-rs-core/src/pthread/thread.rs:48",
+      "core_location": "crates/frankenlibc-core/src/pthread/thread.rs:48",
       "risk_category": "threading",
       "call_family": "pthread",
       "note": "Has core stub with todo!() but no ABI export and not in support matrix"
     },
     {
       "symbol": "pthread_getspecific",
-      "core_location": "crates/glibc-rs-core/src/pthread/tls.rs:32",
+      "core_location": "crates/frankenlibc-core/src/pthread/tls.rs:32",
       "risk_category": "threading",
       "call_family": "pthread",
       "note": "Has core stub with todo!() but no ABI export and not in support matrix"
     },
     {
       "symbol": "pthread_key_create",
-      "core_location": "crates/glibc-rs-core/src/pthread/tls.rs:17",
+      "core_location": "crates/frankenlibc-core/src/pthread/tls.rs:17",
       "risk_category": "threading",
       "call_family": "pthread",
       "note": "Has core stub with todo!() but no ABI export and not in support matrix"
     },
     {
       "symbol": "pthread_key_delete",
-      "core_location": "crates/glibc-rs-core/src/pthread/tls.rs:24",
+      "core_location": "crates/frankenlibc-core/src/pthread/tls.rs:24",
       "risk_category": "threading",
       "call_family": "pthread",
       "note": "Has core stub with todo!() but no ABI export and not in support matrix"
     },
     {
       "symbol": "pthread_setspecific",
-      "core_location": "crates/glibc-rs-core/src/pthread/tls.rs:39",
+      "core_location": "crates/frankenlibc-core/src/pthread/tls.rs:39",
       "risk_category": "threading",
       "call_family": "pthread",
       "note": "Has core stub with todo!() but no ABI export and not in support matrix"
     },
     {
       "symbol": "rand",
-      "core_location": "crates/glibc-rs-core/src/stdlib/random.rs:5",
+      "core_location": "crates/frankenlibc-core/src/stdlib/random.rs:5",
       "risk_category": "stdlib",
       "call_family": "stdlib",
       "note": "Has core stub with todo!() but no ABI export and not in support matrix"
     },
     {
       "symbol": "setjmp",
-      "core_location": "crates/glibc-rs-core/src/setjmp/mod.rs:21",
+      "core_location": "crates/frankenlibc-core/src/setjmp/mod.rs:21",
       "risk_category": "setjmp",
       "call_family": "setjmp",
       "note": "Has core stub with todo!() but no ABI export and not in support matrix"
     },
     {
       "symbol": "srand",
-      "core_location": "crates/glibc-rs-core/src/stdlib/random.rs:8",
+      "core_location": "crates/frankenlibc-core/src/stdlib/random.rs:8",
       "risk_category": "stdlib",
       "call_family": "stdlib",
       "note": "Has core stub with todo!() but no ABI export and not in support matrix"

@@ -7,9 +7,9 @@
 use std::ffi::c_int;
 use std::os::raw::c_long;
 
-use glibc_rs_core::poll as poll_core;
-use glibc_rs_membrane::heal::{HealingAction, global_healing_policy};
-use glibc_rs_membrane::runtime_math::{ApiFamily, MembraneAction};
+use frankenlibc_core::poll as poll_core;
+use frankenlibc_membrane::heal::{HealingAction, global_healing_policy};
+use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
 use crate::runtime_policy;
 

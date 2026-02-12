@@ -1,6 +1,6 @@
-# AGENTS.md — glibc_rust
+# AGENTS.md — FrankenLibC
 
-> Guidelines for AI coding agents working in the glibc_rust workspace.
+> Guidelines for AI coding agents working in the FrankenLibC workspace.
 
 ---
 
@@ -48,11 +48,11 @@ If I tell you to do something, even if it goes against what follows below, YOU M
 
 ## Project Description
 
-**glibc_rust** is a clean-room, memory-safe Rust reimplementation of glibc targeting full POSIX coverage plus GNU extensions. It produces an ABI-compatible `libc.so` that can be used as a drop-in replacement for glibc.
+**FrankenLibC** is a clean-room, memory-safe Rust reimplementation of glibc targeting full POSIX coverage plus GNU extensions. It produces an ABI-compatible `libc.so` that can be used as a drop-in replacement for glibc.
 
 ### The Core Innovation: Transparent Safety Membrane (TSM)
 
-C code thinks it has full control over raw pointers, but behind the ABI boundary, glibc_rust dynamically validates, sanitizes, and mechanically fixes invalid operations so memory unsafety cannot happen through libc calls.
+C code thinks it has full control over raw pointers, but behind the ABI boundary, FrankenLibC dynamically validates, sanitizes, and mechanically fixes invalid operations so memory unsafety cannot happen through libc calls.
 
 **TSM Pipeline:**
 1. **Validate:** Classify incoming pointers/regions/fd/context via fingerprints, bloom filters, arena lookups, and canary checks.
@@ -73,7 +73,7 @@ C code thinks it has full control over raw pointers, but behind the ABI boundary
 ## Workspace Structure
 
 ```
-glibc_rust/
+FrankenLibC/
 ├── Cargo.toml                    # Workspace root
 ├── rust-toolchain.toml           # nightly
 ├── build.rs                      # Version metadata
@@ -86,12 +86,12 @@ glibc_rust/
 ├── legacy_glibc_code/            # Reference only — never translate line-by-line
 │   └── glibc/
 ├── crates/
-│   ├── glibc-rs-membrane/        # THE INNOVATION — validation pipeline
-│   ├── glibc-rs-core/            # Safe Rust implementations (#![deny(unsafe_code)])
-│   ├── glibc-rs-abi/             # extern "C" cdylib boundary (produces libc.so)
-│   ├── glibc-rs-harness/         # Conformance testing framework
-│   ├── glibc-rs-bench/           # Criterion benchmarks
-│   └── glibc-rs-fuzz/            # cargo-fuzz targets
+│   ├── frankenlibc-membrane/        # THE INNOVATION — validation pipeline
+│   ├── frankenlibc-core/            # Safe Rust implementations (#![deny(unsafe_code)])
+│   ├── frankenlibc-abi/             # extern "C" cdylib boundary (produces libc.so)
+│   ├── frankenlibc-harness/         # Conformance testing framework
+│   ├── frankenlibc-bench/           # Criterion benchmarks
+│   └── frankenlibc-fuzz/            # cargo-fuzz targets
 ├── tests/
 │   ├── conformance/fixtures/     # Reference fixture JSONs
 │   └── integration/              # C program link tests
@@ -118,7 +118,7 @@ These are build/test tooling roles, NOT runtime libc dependencies.
 
 - `strict` (default): strict ABI-compatible behavior, no repair rewrites.
 - `hardened`: TSM repair behavior for invalid/unsafe patterns.
-- Runtime selection is process-level and immutable after init (`GLIBC_RUST_MODE=strict|hardened`).
+- Runtime selection is process-level and immutable after init (`FRANKENLIBC_MODE=strict|hardened`).
 
 ### Safety State Lattice
 
@@ -156,7 +156,7 @@ Fast exits at each stage. Budget target: strict overhead <20ns/call, hardened ov
 
 The advanced math stack must execute in runtime via compact control kernels, not only offline reports.
 
-Mandatory live modules in `glibc-rs-membrane/src/runtime_math/`:
+Mandatory live modules in `frankenlibc-membrane/src/runtime_math/`:
 1. `risk.rs` — online conformal-style risk upper bounds per API family.
 2. `bandit.rs` — constrained routing of `Fast` vs `Full` validation profiles.
 3. `control.rs` — primal-dual threshold controller for full-check/repair triggers.
@@ -192,12 +192,12 @@ Developer transparency remains mandatory:
 
 | Crate | Policy | Notes |
 |-------|--------|-------|
-| `glibc-rs-core` | `#![deny(unsafe_code)]` | Safe Rust only. SIMD modules get `#[allow(unsafe_code)]` with per-block `// SAFETY:` comments. |
-| `glibc-rs-membrane` | `#![deny(unsafe_code)]` | Arena/fingerprint modules get `#[allow(unsafe_code)]` for raw pointer ops. Every unsafe block must have `// SAFETY:` comment. |
-| `glibc-rs-abi` | `#![allow(unsafe_code)]` | ABI boundary is inherently unsafe. Every function body is minimal: validate via membrane, delegate to core. |
-| `glibc-rs-harness` | `#![forbid(unsafe_code)]` | Test harness never needs unsafe. |
-| `glibc-rs-bench` | `#![allow(unsafe_code)]` | Benchmarks call extern "C" functions. |
-| `glibc-rs-fuzz` | `#![allow(unsafe_code)]` | Fuzz harnesses call extern "C" functions. |
+| `frankenlibc-core` | `#![deny(unsafe_code)]` | Safe Rust only. SIMD modules get `#[allow(unsafe_code)]` with per-block `// SAFETY:` comments. |
+| `frankenlibc-membrane` | `#![deny(unsafe_code)]` | Arena/fingerprint modules get `#[allow(unsafe_code)]` for raw pointer ops. Every unsafe block must have `// SAFETY:` comment. |
+| `frankenlibc-abi` | `#![allow(unsafe_code)]` | ABI boundary is inherently unsafe. Every function body is minimal: validate via membrane, delegate to core. |
+| `frankenlibc-harness` | `#![forbid(unsafe_code)]` | Test harness never needs unsafe. |
+| `frankenlibc-bench` | `#![allow(unsafe_code)]` | Benchmarks call extern "C" functions. |
+| `frankenlibc-fuzz` | `#![allow(unsafe_code)]` | Fuzz harnesses call extern "C" functions. |
 
 Rules:
 1. Unsafe is permitted only in explicitly documented boundary modules.
@@ -209,7 +209,7 @@ Rules:
 
 ## Module Inventory
 
-### glibc-rs-membrane (Safety Substrate)
+### frankenlibc-membrane (Safety Substrate)
 - `lattice.rs` — SafetyState enum with join/meet lattice operations
 - `galois.rs` — Galois connection: C flat model <-> rich safety model
 - `fingerprint.rs` — SipHash allocation fingerprints (16-byte header + 8-byte canary)
@@ -306,7 +306,7 @@ Rules:
 - `runtime_math/approachability.rs` — Blackwell approachability controller (multi-objective safe-set convergence for routing decisions)
 - `runtime_math/redundancy_tuner.rs` — Adaptive redundancy tuner (e-process + evidence ledger) for RaptorQ overhead_percent control
 
-### glibc-rs-core (Safe Implementations)
+### frankenlibc-core (Safe Implementations)
 - `string/` — mem*, str*, wide string functions
 - `stdlib/` — conversion, sort, env, random, exit
 - `stdio/` — printf engine, scanf, file I/O, buffering
@@ -330,13 +330,13 @@ Rules:
 - `iconv/` — character encoding conversion
 - `io/` — low-level I/O
 
-### glibc-rs-abi (ABI Boundary)
+### frankenlibc-abi (ABI Boundary)
 - `macros.rs` — Helper macros for ABI declarations
 - `runtime_policy.rs` — shared runtime-kernel gate for ABI entrypoints
 - `*_abi.rs` — One file per function family
 - `version_scripts/libc.map` — GNU ld version script
 
-### glibc-rs-harness (Conformance Testing)
+### frankenlibc-harness (Conformance Testing)
 - `runner.rs` — Test execution engine
 - `capture.rs` — Host libc fixture capture
 - `verify.rs` — Output comparison

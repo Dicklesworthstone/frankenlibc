@@ -89,7 +89,7 @@ run_case() {
   set +e
   (
     cd "${ROOT}"
-    env GLIBC_RUST_MODE="${mode}" bash -lc "${cmd}"
+    env FRANKENLIBC_MODE="${mode}" bash -lc "${cmd}"
   ) >"${stdout_file}" 2>"${stderr_file}"
   local rc=$?
   set -e
@@ -114,9 +114,9 @@ run_case() {
 
 # Mode-aware runtime math checks.
 CASES=(
-  "loss_minimizer_tests:::cargo test -p glibc-rs-membrane runtime_math::loss_minimizer::tests:: -- --nocapture"
-  "evidence_payload_test:::cargo test -p glibc-rs-membrane runtime_math::evidence::tests::encode_decision_payload_embeds_loss_evidence_block -- --exact"
-  "snapshot_fields_test:::cargo test -p glibc-rs-membrane runtime_math::tests::evidence_snapshot_fields_present -- --exact"
+  "loss_minimizer_tests:::cargo test -p frankenlibc-membrane runtime_math::loss_minimizer::tests:: -- --nocapture"
+  "evidence_payload_test:::cargo test -p frankenlibc-membrane runtime_math::evidence::tests::encode_decision_payload_embeds_loss_evidence_block -- --exact"
+  "snapshot_fields_test:::cargo test -p frankenlibc-membrane runtime_math::tests::evidence_snapshot_fields_present -- --exact"
 )
 
 for mode in strict hardened; do

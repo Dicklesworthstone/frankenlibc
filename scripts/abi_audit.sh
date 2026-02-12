@@ -11,8 +11,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-OUR_LIB="${PROJECT_ROOT}/target/release/libglibc_rs_abi.so"
-ALT_LIB="/data/tmp/cargo-target/release/libglibc_rs_abi.so"
+OUR_LIB="${PROJECT_ROOT}/target/release/libfrankenlibc_abi.so"
+ALT_LIB="/data/tmp/cargo-target/release/libfrankenlibc_abi.so"
 HOST_LIB="/usr/lib/x86_64-linux-gnu/libc.so.6"
 MATRIX_OUT="${PROJECT_ROOT}/support_matrix.json"
 
@@ -40,7 +40,7 @@ if [[ ! -f "${OUR_LIB}" ]] && [[ -f "${ALT_LIB}" ]]; then
 fi
 
 if [[ ! -f "${OUR_LIB}" ]]; then
-  echo "ERROR: Library not found. Build with: cargo build --release -p glibc-rs-abi" >&2
+  echo "ERROR: Library not found. Build with: cargo build --release -p frankenlibc-abi" >&2
   exit 1
 fi
 

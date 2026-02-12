@@ -2,12 +2,12 @@
 # Compare ABI symbols between our libc.so and host libc.
 set -euo pipefail
 
-OUR_LIB="${1:-target/release/libglibc_rs_abi.so}"
+OUR_LIB="${1:-target/release/libfrankenlibc_abi.so}"
 HOST_LIB="${2:-/usr/lib/x86_64-linux-gnu/libc.so.6}"
 
 if [ ! -f "${OUR_LIB}" ]; then
     echo "ERROR: Our library not found at ${OUR_LIB}"
-    echo "Build with: cargo build --release -p glibc-rs-abi"
+    echo "Build with: cargo build --release -p frankenlibc-abi"
     exit 1
 fi
 

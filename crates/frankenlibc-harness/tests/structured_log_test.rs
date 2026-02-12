@@ -11,7 +11,7 @@
 
 use std::path::{Path, PathBuf};
 
-use glibc_rs_harness::structured_log::{
+use frankenlibc_harness::structured_log::{
     ArtifactIndex, LogEmitter, LogEntry, LogLevel, Outcome, validate_log_file, validate_log_line,
 };
 

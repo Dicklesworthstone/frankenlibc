@@ -74,7 +74,7 @@
         "stream": "docs",
         "status": "complete",
         "unit_cmds": [
-          "cargo test -p glibc-rs-harness --test parity_report_drift_test"
+          "cargo test -p frankenlibc-harness --test parity_report_drift_test"
         ],
         "e2e_cmds": [
           "scripts/check_support_matrix_drift.sh"
@@ -97,7 +97,7 @@
         "stream": "e2e",
         "status": "complete",
         "unit_cmds": [
-          "cargo test -p glibc-rs-harness --test e2e_suite_test"
+          "cargo test -p frankenlibc-harness --test e2e_suite_test"
         ],
         "e2e_cmds": [
           "scripts/e2e_suite.sh smoke",
@@ -147,8 +147,8 @@
         "stream": "stubs",
         "status": "complete",
         "unit_cmds": [
-          "cargo test -p glibc-rs-harness --test stub_contract_test",
-          "cargo test -p glibc-rs-harness --test stub_guard_test"
+          "cargo test -p frankenlibc-harness --test stub_contract_test",
+          "cargo test -p frankenlibc-harness --test stub_guard_test"
         ],
         "e2e_cmds": [
           "scripts/check_stub_contracts.sh",
@@ -173,8 +173,8 @@
         "stream": "math",
         "status": "complete",
         "unit_cmds": [
-          "cargo test -p glibc-rs-membrane runtime_math::loss_minimizer::tests:: -- --nocapture",
-          "cargo test -p glibc-rs-membrane runtime_math::evidence::tests::encode_decision_payload_embeds_loss_evidence_block -- --exact"
+          "cargo test -p frankenlibc-membrane runtime_math::loss_minimizer::tests:: -- --nocapture",
+          "cargo test -p frankenlibc-membrane runtime_math::evidence::tests::encode_decision_payload_embeds_loss_evidence_block -- --exact"
         ],
         "e2e_cmds": [
           "scripts/bd35a_evidence_run.sh"
@@ -201,7 +201,7 @@
         "stream": "perf",
         "status": "partial",
         "unit_cmds": [
-          "cargo test -p glibc-rs-bench --no-run"
+          "cargo test -p frankenlibc-bench --no-run"
         ],
         "e2e_cmds": [
           "scripts/perf_gate.sh"
@@ -288,76 +288,76 @@
   "artifact_catalog": {
     "test_files": {
       "harness_integration_tests": [
-        "/data/projects/glibc_rust/crates/glibc-rs-harness/tests/stub_guard_test.rs"
+        "/data/projects/frankenlibc/crates/frankenlibc-harness/tests/stub_guard_test.rs"
       ],
       "c_integration_tests": [
-        "/data/projects/glibc_rust/tests/integration/link_test.c"
+        "/data/projects/frankenlibc/tests/integration/link_test.c"
       ]
     },
     "scripts": {
       "ci_gates": [
-        "/data/projects/glibc_rust/scripts/perf_gate.sh",
-        "/data/projects/glibc_rust/scripts/snapshot_gate.sh",
-        "/data/projects/glibc_rust/scripts/check_module_inventory.sh",
-        "/data/projects/glibc_rust/scripts/check_module_wiring.sh",
-        "/data/projects/glibc_rust/scripts/cve_arena_gate.sh",
-        "/data/projects/glibc_rust/scripts/check_snapshot_coverage.sh",
-        "/data/projects/glibc_rust/scripts/conformance_golden_gate.sh",
-        "/data/projects/glibc_rust/scripts/ci.sh",
-        "/data/projects/glibc_rust/scripts/check_runtime_math_linkage.sh",
-        "/data/projects/glibc_rust/scripts/check_stub_guard.sh"
+        "/data/projects/frankenlibc/scripts/perf_gate.sh",
+        "/data/projects/frankenlibc/scripts/snapshot_gate.sh",
+        "/data/projects/frankenlibc/scripts/check_module_inventory.sh",
+        "/data/projects/frankenlibc/scripts/check_module_wiring.sh",
+        "/data/projects/frankenlibc/scripts/cve_arena_gate.sh",
+        "/data/projects/frankenlibc/scripts/check_snapshot_coverage.sh",
+        "/data/projects/frankenlibc/scripts/conformance_golden_gate.sh",
+        "/data/projects/frankenlibc/scripts/ci.sh",
+        "/data/projects/frankenlibc/scripts/check_runtime_math_linkage.sh",
+        "/data/projects/frankenlibc/scripts/check_stub_guard.sh"
       ],
       "census_and_audit": [
-        "/data/projects/glibc_rust/scripts/hard_rule_audit.sh",
-        "/data/projects/glibc_rust/scripts/abi_audit.sh",
-        "/data/projects/glibc_rust/scripts/stub_census.sh"
+        "/data/projects/frankenlibc/scripts/hard_rule_audit.sh",
+        "/data/projects/frankenlibc/scripts/abi_audit.sh",
+        "/data/projects/frankenlibc/scripts/stub_census.sh"
       ],
       "e2e_smoke": [
-        "/data/projects/glibc_rust/scripts/ld_preload_smoke.sh"
+        "/data/projects/frankenlibc/scripts/ld_preload_smoke.sh"
       ],
       "update_and_utility": [
-        "/data/projects/glibc_rust/scripts/extract_symbols.sh",
-        "/data/projects/glibc_rust/scripts/compare_abi.sh",
-        "/data/projects/glibc_rust/scripts/bench_compare.sh",
-        "/data/projects/glibc_rust/scripts/update_golden_snapshots.sh",
-        "/data/projects/glibc_rust/scripts/profile_pipeline.sh",
-        "/data/projects/glibc_rust/scripts/update_conformance_golden.sh"
+        "/data/projects/frankenlibc/scripts/extract_symbols.sh",
+        "/data/projects/frankenlibc/scripts/compare_abi.sh",
+        "/data/projects/frankenlibc/scripts/bench_compare.sh",
+        "/data/projects/frankenlibc/scripts/update_golden_snapshots.sh",
+        "/data/projects/frankenlibc/scripts/profile_pipeline.sh",
+        "/data/projects/frankenlibc/scripts/update_conformance_golden.sh"
       ]
     },
     "conformance_fixtures": [
-      "/data/projects/glibc_rust/tests/conformance/fixtures/memcpy_strict.json",
-      "/data/projects/glibc_rust/tests/conformance/fixtures/strlen_strict.json",
-      "/data/projects/glibc_rust/tests/conformance/fixtures/membrane_mode_split.json",
-      "/data/projects/glibc_rust/tests/conformance/fixtures/string_memory_full.json",
-      "/data/projects/glibc_rust/tests/conformance/fixtures/wide_string.json",
-      "/data/projects/glibc_rust/tests/conformance/fixtures/wide_string_ops.json",
-      "/data/projects/glibc_rust/tests/conformance/fixtures/stdlib_conversion.json",
-      "/data/projects/glibc_rust/tests/conformance/fixtures/string_ops.json",
-      "/data/projects/glibc_rust/tests/conformance/fixtures/allocator.json",
-      "/data/projects/glibc_rust/tests/conformance/fixtures/iconv_phase1.json",
-      "/data/projects/glibc_rust/tests/conformance/fixtures/stdlib_numeric.json",
-      "/data/projects/glibc_rust/tests/conformance/fixtures/wide_memory.json",
-      "/data/projects/glibc_rust/tests/conformance/fixtures/stdlib_sort.json"
+      "/data/projects/frankenlibc/tests/conformance/fixtures/memcpy_strict.json",
+      "/data/projects/frankenlibc/tests/conformance/fixtures/strlen_strict.json",
+      "/data/projects/frankenlibc/tests/conformance/fixtures/membrane_mode_split.json",
+      "/data/projects/frankenlibc/tests/conformance/fixtures/string_memory_full.json",
+      "/data/projects/frankenlibc/tests/conformance/fixtures/wide_string.json",
+      "/data/projects/frankenlibc/tests/conformance/fixtures/wide_string_ops.json",
+      "/data/projects/frankenlibc/tests/conformance/fixtures/stdlib_conversion.json",
+      "/data/projects/frankenlibc/tests/conformance/fixtures/string_ops.json",
+      "/data/projects/frankenlibc/tests/conformance/fixtures/allocator.json",
+      "/data/projects/frankenlibc/tests/conformance/fixtures/iconv_phase1.json",
+      "/data/projects/frankenlibc/tests/conformance/fixtures/stdlib_numeric.json",
+      "/data/projects/frankenlibc/tests/conformance/fixtures/wide_memory.json",
+      "/data/projects/frankenlibc/tests/conformance/fixtures/stdlib_sort.json"
     ],
     "golden_artifacts": [
-      "/data/projects/glibc_rust/tests/conformance/golden/fixture_verify_strict_hardened.v1.md",
-      "/data/projects/glibc_rust/tests/conformance/golden/fixture_verify_strict_hardened.v1.json",
-      "/data/projects/glibc_rust/tests/conformance/golden/fixture_verify_strict_hardened.v1.suite.json",
-      "/data/projects/glibc_rust/tests/conformance/golden/sha256sums.txt"
+      "/data/projects/frankenlibc/tests/conformance/golden/fixture_verify_strict_hardened.v1.md",
+      "/data/projects/frankenlibc/tests/conformance/golden/fixture_verify_strict_hardened.v1.json",
+      "/data/projects/frankenlibc/tests/conformance/golden/fixture_verify_strict_hardened.v1.suite.json",
+      "/data/projects/frankenlibc/tests/conformance/golden/sha256sums.txt"
     ],
     "benchmarks": [
-      "/data/projects/glibc_rust/crates/glibc-rs-bench/benches/string_bench.rs",
-      "/data/projects/glibc_rust/crates/glibc-rs-bench/benches/malloc_bench.rs",
-      "/data/projects/glibc_rust/crates/glibc-rs-bench/benches/membrane_bench.rs",
-      "/data/projects/glibc_rust/crates/glibc-rs-bench/benches/stdio_bench.rs",
-      "/data/projects/glibc_rust/crates/glibc-rs-bench/benches/runtime_math_bench.rs",
-      "/data/projects/glibc_rust/crates/glibc-rs-bench/benches/runtime_math_kernels_bench.rs"
+      "/data/projects/frankenlibc/crates/frankenlibc-bench/benches/string_bench.rs",
+      "/data/projects/frankenlibc/crates/frankenlibc-bench/benches/malloc_bench.rs",
+      "/data/projects/frankenlibc/crates/frankenlibc-bench/benches/membrane_bench.rs",
+      "/data/projects/frankenlibc/crates/frankenlibc-bench/benches/stdio_bench.rs",
+      "/data/projects/frankenlibc/crates/frankenlibc-bench/benches/runtime_math_bench.rs",
+      "/data/projects/frankenlibc/crates/frankenlibc-bench/benches/runtime_math_kernels_bench.rs"
     ],
     "fuzz_targets": [
-      "/data/projects/glibc_rust/crates/glibc-rs-fuzz/fuzz_targets/fuzz_string.rs",
-      "/data/projects/glibc_rust/crates/glibc-rs-fuzz/fuzz_targets/fuzz_malloc.rs",
-      "/data/projects/glibc_rust/crates/glibc-rs-fuzz/fuzz_targets/fuzz_membrane.rs",
-      "/data/projects/glibc_rust/crates/glibc-rs-fuzz/fuzz_targets/fuzz_printf.rs"
+      "/data/projects/frankenlibc/crates/frankenlibc-fuzz/fuzz_targets/fuzz_string.rs",
+      "/data/projects/frankenlibc/crates/frankenlibc-fuzz/fuzz_targets/fuzz_malloc.rs",
+      "/data/projects/frankenlibc/crates/frankenlibc-fuzz/fuzz_targets/fuzz_membrane.rs",
+      "/data/projects/frankenlibc/crates/frankenlibc-fuzz/fuzz_targets/fuzz_printf.rs"
     ],
     "cve_arena": {
       "glibc_internal": [],
@@ -413,7 +413,7 @@
       "coverage": {
         "unit_tests": {
           "status": "complete",
-          "artifacts": "cargo test -p glibc-rs-harness --test anytime_valid_monitor_test (8 passed)"
+          "artifacts": "cargo test -p frankenlibc-harness --test anytime_valid_monitor_test (8 passed)"
         },
         "e2e_scripts": {
           "status": "not_required"
@@ -445,7 +445,7 @@
         "stream": "math",
         "status": "complete",
         "unit_cmds": [
-          "cargo test -p glibc-rs-harness --test anytime_valid_monitor_test -- --nocapture"
+          "cargo test -p frankenlibc-harness --test anytime_valid_monitor_test -- --nocapture"
         ],
         "e2e_cmds": [
           "scripts/check_anytime_valid_monitor.sh"
@@ -541,7 +541,7 @@
         "stream": "stubs",
         "status": "missing",
         "unit_cmds": [
-          "cargo test -p glibc-rs-harness --test stub_contract_test"
+          "cargo test -p frankenlibc-harness --test stub_contract_test"
         ],
         "e2e_cmds": [
           "scripts/check_stub_guard.sh"
@@ -608,7 +608,7 @@
       "coverage": {
         "unit_tests": {
           "status": "complete",
-          "artifacts": "cargo test -p glibc-rs-harness --test opportunity_matrix_test (7 passed)"
+          "artifacts": "cargo test -p frankenlibc-harness --test opportunity_matrix_test (7 passed)"
         },
         "e2e_scripts": {
           "status": "not_required"
@@ -641,7 +641,7 @@
         "stream": "perf",
         "status": "complete",
         "unit_cmds": [
-          "cargo test -p glibc-rs-harness --test opportunity_matrix_test -- --nocapture"
+          "cargo test -p frankenlibc-harness --test opportunity_matrix_test -- --nocapture"
         ],
         "e2e_cmds": [
           "scripts/check_opportunity_matrix.sh"
@@ -940,7 +940,7 @@
         "stream": "stubs",
         "status": "missing",
         "unit_cmds": [
-          "cargo test -p glibc-rs-harness --test stub_contract_test"
+          "cargo test -p frankenlibc-harness --test stub_contract_test"
         ],
         "e2e_cmds": [
           "scripts/check_stub_guard.sh"
@@ -1104,7 +1104,7 @@
       "coverage": {
         "unit_tests": {
           "status": "complete",
-          "artifacts": "cargo test -p glibc-rs-harness --test parity_report_drift_test; cargo test -p glibc-rs-harness --test packaging_test"
+          "artifacts": "cargo test -p frankenlibc-harness --test parity_report_drift_test; cargo test -p frankenlibc-harness --test packaging_test"
         },
         "e2e_scripts": {
           "status": "complete",
@@ -1139,7 +1139,7 @@
         "stream": "docs",
         "status": "complete",
         "unit_cmds": [
-          "cargo test -p glibc-rs-harness --test parity_report_drift_test"
+          "cargo test -p frankenlibc-harness --test parity_report_drift_test"
         ],
         "e2e_cmds": [
           "scripts/check_support_matrix_drift.sh"
@@ -1202,7 +1202,7 @@
       "coverage": {
         "unit_tests": {
           "status": "complete",
-          "artifacts": "cargo test -p glibc-rs-harness --test one_lever_discipline_test (7 pass)"
+          "artifacts": "cargo test -p frankenlibc-harness --test one_lever_discipline_test (7 pass)"
         },
         "e2e_scripts": {
           "status": "complete",
@@ -1236,7 +1236,7 @@
         "stream": "perf",
         "status": "complete",
         "unit_cmds": [
-          "cargo test -p glibc-rs-harness --test one_lever_discipline_test"
+          "cargo test -p frankenlibc-harness --test one_lever_discipline_test"
         ],
         "e2e_cmds": [
           "bash scripts/check_one_lever_discipline.sh"
@@ -1254,7 +1254,7 @@
           "tests/conformance/one_lever_discipline.json",
           "tests/conformance/opportunity_matrix.json",
           "scripts/check_one_lever_discipline.sh",
-          "crates/glibc-rs-harness/tests/one_lever_discipline_test.rs"
+          "crates/frankenlibc-harness/tests/one_lever_discipline_test.rs"
         ],
         "perf_proof_refs": [],
         "close_blockers": [],
@@ -1402,7 +1402,7 @@
       "coverage": {
         "unit_tests": {
           "status": "complete",
-          "artifacts": "cargo test -p glibc-rs-harness --test symbol_drift_test (6 passed) + parity_report_drift_test (2 passed)"
+          "artifacts": "cargo test -p frankenlibc-harness --test symbol_drift_test (6 passed) + parity_report_drift_test (2 passed)"
         },
         "e2e_scripts": {
           "status": "not_required"
@@ -1434,8 +1434,8 @@
         "stream": "docs",
         "status": "complete",
         "unit_cmds": [
-          "cargo test -p glibc-rs-harness --test symbol_drift_test -- --nocapture",
-          "cargo test -p glibc-rs-harness --test parity_report_drift_test -- --nocapture"
+          "cargo test -p frankenlibc-harness --test symbol_drift_test -- --nocapture",
+          "cargo test -p frankenlibc-harness --test parity_report_drift_test -- --nocapture"
         ],
         "e2e_cmds": [
           "scripts/check_symbol_drift.sh"
@@ -1496,7 +1496,7 @@
       "coverage": {
         "unit_tests": {
           "status": "complete",
-          "artifacts": "cargo test -p glibc-rs-harness --test isomorphism_proof_test (7 passed)"
+          "artifacts": "cargo test -p frankenlibc-harness --test isomorphism_proof_test (7 passed)"
         },
         "e2e_scripts": {
           "status": "not_required"
@@ -1529,7 +1529,7 @@
         "stream": "perf",
         "status": "complete",
         "unit_cmds": [
-          "cargo test -p glibc-rs-harness --test isomorphism_proof_test -- --nocapture"
+          "cargo test -p frankenlibc-harness --test isomorphism_proof_test -- --nocapture"
         ],
         "e2e_cmds": [
           "scripts/check_isomorphism_proof.sh"
@@ -1592,7 +1592,7 @@
       "coverage": {
         "unit_tests": {
           "status": "complete",
-          "artifacts": "cargo test -p glibc-rs-harness --test replacement_levels_test (9 passed)"
+          "artifacts": "cargo test -p frankenlibc-harness --test replacement_levels_test (9 passed)"
         },
         "e2e_scripts": {
           "status": "not_required"
@@ -1624,7 +1624,7 @@
         "stream": "docs",
         "status": "complete",
         "unit_cmds": [
-          "cargo test -p glibc-rs-harness --test replacement_levels_test -- --nocapture"
+          "cargo test -p frankenlibc-harness --test replacement_levels_test -- --nocapture"
         ],
         "e2e_cmds": [
           "scripts/check_replacement_levels.sh"
@@ -1684,7 +1684,7 @@
       "coverage": {
         "unit_tests": {
           "status": "complete",
-          "artifacts": "cargo test -p glibc-rs-harness --test e2e_suite_test (5 passed)"
+          "artifacts": "cargo test -p frankenlibc-harness --test e2e_suite_test (5 passed)"
         },
         "e2e_scripts": {
           "status": "complete",
@@ -1717,7 +1717,7 @@
         "stream": "e2e",
         "status": "complete",
         "unit_cmds": [
-          "cargo test -p glibc-rs-harness --test e2e_suite_test -- --nocapture"
+          "cargo test -p frankenlibc-harness --test e2e_suite_test -- --nocapture"
         ],
         "e2e_cmds": [
           "scripts/e2e_suite.sh smoke",
@@ -1780,7 +1780,7 @@
       "coverage": {
         "unit_tests": {
           "status": "complete",
-          "artifacts": "cargo test -p glibc_rust_conformance execute_iconv_case"
+          "artifacts": "cargo test -p frankenlibc_conformance execute_iconv_case"
         },
         "e2e_scripts": {
           "status": "complete",
@@ -1814,7 +1814,7 @@
         "stream": "stubs",
         "status": "complete",
         "unit_cmds": [
-          "cargo test -p glibc_rust_conformance execute_iconv_case"
+          "cargo test -p frankenlibc_conformance execute_iconv_case"
         ],
         "e2e_cmds": [
           "scripts/update_conformance_golden.sh",
@@ -1877,7 +1877,7 @@
       "coverage": {
         "unit_tests": {
           "status": "complete",
-          "artifacts": "cargo test -p glibc-rs-harness --test perf_budget_test (8 passed)"
+          "artifacts": "cargo test -p frankenlibc-harness --test perf_budget_test (8 passed)"
         },
         "e2e_scripts": {
           "status": "not_required"
@@ -1910,7 +1910,7 @@
         "stream": "perf",
         "status": "complete",
         "unit_cmds": [
-          "cargo test -p glibc-rs-harness --test perf_budget_test -- --nocapture"
+          "cargo test -p frankenlibc-harness --test perf_budget_test -- --nocapture"
         ],
         "e2e_cmds": [
           "scripts/check_perf_budget.sh"
@@ -2008,7 +2008,7 @@
         "stream": "stubs",
         "status": "missing",
         "unit_cmds": [
-          "cargo test -p glibc-rs-harness --test stub_contract_test"
+          "cargo test -p frankenlibc-harness --test stub_contract_test"
         ],
         "e2e_cmds": [
           "scripts/check_stub_guard.sh"
@@ -2075,7 +2075,7 @@
       "coverage": {
         "unit_tests": {
           "status": "complete",
-          "artifacts": "cargo test -p glibc-rs-harness --test perf_baseline_test (8 passed)"
+          "artifacts": "cargo test -p frankenlibc-harness --test perf_baseline_test (8 passed)"
         },
         "e2e_scripts": {
           "status": "not_required"
@@ -2108,7 +2108,7 @@
         "stream": "perf",
         "status": "complete",
         "unit_cmds": [
-          "cargo test -p glibc-rs-harness --test perf_baseline_test -- --nocapture"
+          "cargo test -p frankenlibc-harness --test perf_baseline_test -- --nocapture"
         ],
         "e2e_cmds": [
           "scripts/check_perf_baseline.sh"
@@ -2172,7 +2172,7 @@
       "coverage": {
         "unit_tests": {
           "status": "complete",
-          "artifacts": "cargo test -p glibc-rs-harness --test math_governance_test (8 passed)"
+          "artifacts": "cargo test -p frankenlibc-harness --test math_governance_test (8 passed)"
         },
         "e2e_scripts": {
           "status": "not_required"
@@ -2204,7 +2204,7 @@
         "stream": "math",
         "status": "complete",
         "unit_cmds": [
-          "cargo test -p glibc-rs-harness --test math_governance_test -- --nocapture"
+          "cargo test -p frankenlibc-harness --test math_governance_test -- --nocapture"
         ],
         "e2e_cmds": [
           "scripts/check_math_governance.sh"
@@ -2264,7 +2264,7 @@
       "coverage": {
         "unit_tests": {
           "status": "complete",
-          "artifacts": "scripts/check_packaging.sh; cargo test -p glibc-rs-harness --test packaging_test -- --nocapture"
+          "artifacts": "scripts/check_packaging.sh; cargo test -p frankenlibc-harness --test packaging_test -- --nocapture"
         },
         "e2e_scripts": {
           "status": "not_required"
@@ -2298,7 +2298,7 @@
         "unit_cmds": [
           "scripts/check_packaging.sh",
           "scripts/check_support_matrix_drift.sh",
-          "cargo test -p glibc-rs-harness --test packaging_test -- --nocapture"
+          "cargo test -p frankenlibc-harness --test packaging_test -- --nocapture"
         ],
         "e2e_cmds": [],
         "expected_assertions": [
@@ -2313,7 +2313,7 @@
           "README.md",
           "support_matrix.json",
           "scripts/check_packaging.sh",
-          "crates/glibc-rs-harness/tests/packaging_test.rs",
+          "crates/frankenlibc-harness/tests/packaging_test.rs",
           "tests/conformance/packaging_spec.json"
         ],
         "perf_proof_refs": [],
@@ -2363,7 +2363,7 @@
       "coverage": {
         "unit_tests": {
           "status": "complete",
-          "artifacts": "cargo test -p glibc-rs-harness --test matrix_drift_test (6 pass)"
+          "artifacts": "cargo test -p frankenlibc-harness --test matrix_drift_test (6 pass)"
         },
         "e2e_scripts": {
           "status": "complete",
@@ -2396,7 +2396,7 @@
         "stream": "docs",
         "status": "complete",
         "unit_cmds": [
-          "cargo test -p glibc-rs-harness --test matrix_drift_test"
+          "cargo test -p frankenlibc-harness --test matrix_drift_test"
         ],
         "e2e_cmds": [
           "scripts/check_matrix_drift.sh"
@@ -2410,7 +2410,7 @@
           "tests/conformance/log_schema.json"
         ],
         "artifact_paths": [
-          "crates/glibc-rs-harness/tests/matrix_drift_test.rs",
+          "crates/frankenlibc-harness/tests/matrix_drift_test.rs",
           "scripts/check_matrix_drift.sh"
         ],
         "perf_proof_refs": [],
@@ -2460,7 +2460,7 @@
       "coverage": {
         "unit_tests": {
           "status": "complete",
-          "artifacts": "cargo test -p glibc-rs-harness --test matrix_dashboard_test (5 pass)"
+          "artifacts": "cargo test -p frankenlibc-harness --test matrix_dashboard_test (5 pass)"
         },
         "e2e_scripts": {
           "status": "complete",
@@ -2493,7 +2493,7 @@
         "stream": "docs",
         "status": "complete",
         "unit_cmds": [
-          "cargo test -p glibc-rs-harness --test matrix_dashboard_test"
+          "cargo test -p frankenlibc-harness --test matrix_dashboard_test"
         ],
         "e2e_cmds": [
           "scripts/matrix_dashboard.sh"
@@ -2507,7 +2507,7 @@
           "tests/conformance/log_schema.json"
         ],
         "artifact_paths": [
-          "crates/glibc-rs-harness/tests/matrix_dashboard_test.rs",
+          "crates/frankenlibc-harness/tests/matrix_dashboard_test.rs",
           "scripts/matrix_dashboard.sh"
         ],
         "perf_proof_refs": [],
@@ -2685,7 +2685,7 @@
         "stream": "perf",
         "status": "complete",
         "unit_cmds": [
-          "cargo test -p glibc-rs-bench --no-run"
+          "cargo test -p frankenlibc-bench --no-run"
         ],
         "e2e_cmds": [
           "scripts/perf_gate.sh"
@@ -2748,7 +2748,7 @@
       "coverage": {
         "unit_tests": {
           "status": "complete",
-          "artifacts": "cargo test -p glibc-rs-harness --test c_fixture_suite_test (7 passed)"
+          "artifacts": "cargo test -p frankenlibc-harness --test c_fixture_suite_test (7 passed)"
         },
         "e2e_scripts": {
           "status": "complete",
@@ -2782,7 +2782,7 @@
         "stream": "e2e",
         "status": "complete",
         "unit_cmds": [
-          "cargo test -p glibc-rs-harness --test c_fixture_suite_test -- --nocapture"
+          "cargo test -p frankenlibc-harness --test c_fixture_suite_test -- --nocapture"
         ],
         "e2e_cmds": [
           "scripts/check_c_fixture_suite.sh"
@@ -2845,11 +2845,11 @@
       "coverage": {
         "unit_tests": {
           "status": "complete",
-          "artifacts": "cargo test -p glibc-rs-harness --test verification_matrix_test (9 pass)"
+          "artifacts": "cargo test -p frankenlibc-harness --test verification_matrix_test (9 pass)"
         },
         "e2e_scripts": {
           "status": "complete",
-          "artifacts": "cargo test -p glibc-rs-harness --test matrix_drift_test (6 pass)"
+          "artifacts": "cargo test -p frankenlibc-harness --test matrix_drift_test (6 pass)"
         },
         "structured_logs": {
           "status": "complete",
@@ -2878,10 +2878,10 @@
         "stream": "docs",
         "status": "complete",
         "unit_cmds": [
-          "cargo test -p glibc-rs-harness --test verification_matrix_test"
+          "cargo test -p frankenlibc-harness --test verification_matrix_test"
         ],
         "e2e_cmds": [
-          "cargo test -p glibc-rs-harness --test matrix_drift_test"
+          "cargo test -p frankenlibc-harness --test matrix_drift_test"
         ],
         "expected_assertions": [
           "all entries have valid schema",
@@ -2939,11 +2939,11 @@
       "coverage": {
         "unit_tests": {
           "status": "complete",
-          "artifacts": "cargo test -p glibc-rs-core --lib locale (14 tests)"
+          "artifacts": "cargo test -p frankenlibc-core --lib locale (14 tests)"
         },
         "e2e_scripts": {
           "status": "complete",
-          "artifacts": "cargo test -p glibc-rs-harness --test stub_priority_test (7 pass), --test packaging_test (9 pass)"
+          "artifacts": "cargo test -p frankenlibc-harness --test stub_priority_test (7 pass), --test packaging_test (9 pass)"
         },
         "structured_logs": {
           "status": "complete",
@@ -2973,13 +2973,13 @@
         "stream": "stubs",
         "status": "complete",
         "unit_cmds": [
-          "cargo test -p glibc-rs-core --lib locale",
-          "cargo test -p glibc-rs-harness --test stub_priority_test",
-          "cargo test -p glibc-rs-harness --test packaging_test",
-          "cargo test -p glibc-rs-harness --test replacement_levels_test"
+          "cargo test -p frankenlibc-core --lib locale",
+          "cargo test -p frankenlibc-harness --test stub_priority_test",
+          "cargo test -p frankenlibc-harness --test packaging_test",
+          "cargo test -p frankenlibc-harness --test replacement_levels_test"
         ],
         "e2e_cmds": [
-          "cargo test -p glibc-rs-harness"
+          "cargo test -p frankenlibc-harness"
         ],
         "expected_assertions": [
           "14 core locale tests pass",
@@ -2991,8 +2991,8 @@
           "tests/conformance/log_schema.json"
         ],
         "artifact_paths": [
-          "crates/glibc-rs-core/src/locale/mod.rs",
-          "crates/glibc-rs-abi/src/locale_abi.rs",
+          "crates/frankenlibc-core/src/locale/mod.rs",
+          "crates/frankenlibc-abi/src/locale_abi.rs",
           "support_matrix.json",
           "tests/conformance/packaging_spec.json",
           "tests/conformance/replacement_levels.json",
@@ -3005,7 +3005,7 @@
     },
     {
       "bead_id": "bd-3qq",
-      "title": "EPIC: HA1zgq Critique Response (Make glibc_rust real + honest + fast)",
+      "title": "EPIC: HA1zgq Critique Response (Make frankenlibc real + honest + fast)",
       "priority": 0,
       "status": "open",
       "assignee": null,
@@ -3243,7 +3243,7 @@
       "coverage": {
         "unit_tests": {
           "status": "complete",
-          "artifacts": "cargo test -p glibc-rs-harness --test changepoint_drift_test (7 passed)"
+          "artifacts": "cargo test -p frankenlibc-harness --test changepoint_drift_test (7 passed)"
         },
         "e2e_scripts": {
           "status": "not_required"
@@ -3275,7 +3275,7 @@
         "stream": "math",
         "status": "complete",
         "unit_cmds": [
-          "cargo test -p glibc-rs-harness --test changepoint_drift_test -- --nocapture"
+          "cargo test -p frankenlibc-harness --test changepoint_drift_test -- --nocapture"
         ],
         "e2e_cmds": [
           "scripts/check_changepoint_drift.sh"
@@ -3337,7 +3337,7 @@
       "coverage": {
         "unit_tests": {
           "status": "complete",
-          "artifacts": "cargo test -p glibc-rs-harness --test math_value_proof_test (8 passed)"
+          "artifacts": "cargo test -p frankenlibc-harness --test math_value_proof_test (8 passed)"
         },
         "e2e_scripts": {
           "status": "not_required"
@@ -3370,7 +3370,7 @@
         "stream": "math",
         "status": "complete",
         "unit_cmds": [
-          "cargo test -p glibc-rs-harness --test math_value_proof_test -- --nocapture"
+          "cargo test -p frankenlibc-harness --test math_value_proof_test -- --nocapture"
         ],
         "e2e_cmds": [
           "scripts/check_math_value_proof.sh"
@@ -3433,7 +3433,7 @@
       "coverage": {
         "unit_tests": {
           "status": "complete",
-          "artifacts": "cargo test -p glibc-rs-harness --test workload_matrix_test (6 passed)"
+          "artifacts": "cargo test -p frankenlibc-harness --test workload_matrix_test (6 passed)"
         },
         "e2e_scripts": {
           "status": "complete",
@@ -3466,7 +3466,7 @@
         "stream": "e2e",
         "status": "complete",
         "unit_cmds": [
-          "cargo test -p glibc-rs-harness --test workload_matrix_test -- --nocapture"
+          "cargo test -p frankenlibc-harness --test workload_matrix_test -- --nocapture"
         ],
         "e2e_cmds": [
           "scripts/check_workload_matrix.sh"
@@ -3527,7 +3527,7 @@
       "coverage": {
         "unit_tests": {
           "status": "complete",
-          "artifacts": "cargo test -p glibc-rs-harness --test stub_priority_test (7 passed)"
+          "artifacts": "cargo test -p frankenlibc-harness --test stub_priority_test (7 passed)"
         },
         "e2e_scripts": {
           "status": "complete",
@@ -3561,7 +3561,7 @@
         "stream": "e2e",
         "status": "complete",
         "unit_cmds": [
-          "cargo test -p glibc-rs-harness --test stub_priority_test -- --nocapture"
+          "cargo test -p frankenlibc-harness --test stub_priority_test -- --nocapture"
         ],
         "e2e_cmds": [
           "scripts/check_stub_priority.sh"
@@ -3624,7 +3624,7 @@
       "coverage": {
         "unit_tests": {
           "status": "complete",
-          "artifacts": "cargo test -p glibc-rs-harness --test closure_gate_test (7 passed)"
+          "artifacts": "cargo test -p frankenlibc-harness --test closure_gate_test (7 passed)"
         },
         "e2e_scripts": {
           "status": "complete",
@@ -3657,7 +3657,7 @@
         "stream": "syscall",
         "status": "complete",
         "unit_cmds": [
-          "cargo test -p glibc-rs-harness --test closure_gate_test -- --nocapture"
+          "cargo test -p frankenlibc-harness --test closure_gate_test -- --nocapture"
         ],
         "e2e_cmds": [
           "scripts/check_closure_gate.sh"
@@ -3720,7 +3720,7 @@
       "coverage": {
         "unit_tests": {
           "status": "complete",
-          "artifacts": "cargo test -p glibc-rs-harness --test math_retirement_test (9 passed)"
+          "artifacts": "cargo test -p frankenlibc-harness --test math_retirement_test (9 passed)"
         },
         "e2e_scripts": {
           "status": "not_required"
@@ -3752,7 +3752,7 @@
         "stream": "math",
         "status": "complete",
         "unit_cmds": [
-          "cargo test -p glibc-rs-harness --test math_retirement_test -- --nocapture"
+          "cargo test -p frankenlibc-harness --test math_retirement_test -- --nocapture"
         ],
         "e2e_cmds": [
           "scripts/check_math_retirement.sh"
@@ -3813,11 +3813,11 @@
       "coverage": {
         "unit_tests": {
           "status": "complete",
-          "artifacts": "cargo test -p glibc-rs-core --lib resolv (35 tests)"
+          "artifacts": "cargo test -p frankenlibc-core --lib resolv (35 tests)"
         },
         "e2e_scripts": {
           "status": "complete",
-          "artifacts": "cargo test -p glibc-rs-harness --test stub_priority_test (7 pass), --test packaging_test (9 pass), --test replacement_levels_test (9 pass)"
+          "artifacts": "cargo test -p frankenlibc-harness --test stub_priority_test (7 pass), --test packaging_test (9 pass), --test replacement_levels_test (9 pass)"
         },
         "structured_logs": {
           "status": "complete",
@@ -3847,13 +3847,13 @@
         "stream": "stubs",
         "status": "complete",
         "unit_cmds": [
-          "cargo test -p glibc-rs-core --lib resolv",
-          "cargo test -p glibc-rs-harness --test stub_priority_test",
-          "cargo test -p glibc-rs-harness --test packaging_test",
-          "cargo test -p glibc-rs-harness --test replacement_levels_test"
+          "cargo test -p frankenlibc-core --lib resolv",
+          "cargo test -p frankenlibc-harness --test stub_priority_test",
+          "cargo test -p frankenlibc-harness --test packaging_test",
+          "cargo test -p frankenlibc-harness --test replacement_levels_test"
         ],
         "e2e_cmds": [
-          "cargo test -p glibc-rs-harness"
+          "cargo test -p frankenlibc-harness"
         ],
         "expected_assertions": [
           "35 core resolv unit tests pass",
@@ -3865,7 +3865,7 @@
           "tests/conformance/log_schema.json"
         ],
         "artifact_paths": [
-          "crates/glibc-rs-core/src/resolv/mod.rs",
+          "crates/frankenlibc-core/src/resolv/mod.rs",
           "support_matrix.json",
           "tests/conformance/packaging_spec.json",
           "tests/conformance/replacement_levels.json",
@@ -3917,7 +3917,7 @@
       "coverage": {
         "unit_tests": {
           "status": "complete",
-          "artifacts": "cargo test -p glibc-rs-harness --test crash_bundle_test (9 passed)"
+          "artifacts": "cargo test -p frankenlibc-harness --test crash_bundle_test (9 passed)"
         },
         "e2e_scripts": {
           "status": "not_required"
@@ -3949,7 +3949,7 @@
         "stream": "math",
         "status": "complete",
         "unit_cmds": [
-          "cargo test -p glibc-rs-harness --test crash_bundle_test -- --nocapture"
+          "cargo test -p frankenlibc-harness --test crash_bundle_test -- --nocapture"
         ],
         "e2e_cmds": [
           "scripts/check_crash_bundle.sh"
@@ -4040,7 +4040,7 @@
         "stream": "stubs",
         "status": "complete",
         "unit_cmds": [
-          "cargo test -p glibc-rs-core -- stdlib::env"
+          "cargo test -p frankenlibc-core -- stdlib::env"
         ],
         "e2e_cmds": [],
         "expected_assertions": [
@@ -4051,8 +4051,8 @@
           "tests/conformance/log_schema.json"
         ],
         "artifact_paths": [
-          "crates/glibc-rs-core/src/stdlib/env.rs",
-          "crates/glibc-rs-abi/src/stdlib_abi.rs",
+          "crates/frankenlibc-core/src/stdlib/env.rs",
+          "crates/frankenlibc-abi/src/stdlib_abi.rs",
           "support_matrix.json"
         ],
         "perf_proof_refs": [],
@@ -4232,8 +4232,8 @@
         "stream": "syscall",
         "status": "complete",
         "unit_cmds": [
-          "cargo test -p glibc-rs-core -- syscall",
-          "cargo test -p glibc-rs-core --test syscall_veneer_test"
+          "cargo test -p frankenlibc-core -- syscall",
+          "cargo test -p frankenlibc-core --test syscall_veneer_test"
         ],
         "e2e_cmds": [],
         "expected_assertions": [
@@ -4243,9 +4243,9 @@
           "tests/conformance/log_schema.json"
         ],
         "artifact_paths": [
-          "crates/glibc-rs-core/src/syscall/mod.rs",
-          "crates/glibc-rs-core/src/syscall/raw.rs",
-          "crates/glibc-rs-core/tests/syscall_veneer_test.rs"
+          "crates/frankenlibc-core/src/syscall/mod.rs",
+          "crates/frankenlibc-core/src/syscall/raw.rs",
+          "crates/frankenlibc-core/tests/syscall_veneer_test.rs"
         ],
         "perf_proof_refs": [],
         "close_blockers": [],
@@ -4323,8 +4323,8 @@
         "stream": "syscall",
         "status": "complete",
         "unit_cmds": [
-          "cargo test -p glibc-rs-core",
-          "cargo check -p glibc-rs-abi"
+          "cargo test -p frankenlibc-core",
+          "cargo check -p frankenlibc-abi"
         ],
         "e2e_cmds": [],
         "expected_assertions": [
@@ -4334,9 +4334,9 @@
           "tests/conformance/log_schema.json"
         ],
         "artifact_paths": [
-          "crates/glibc-rs-abi/src/unistd_abi.rs",
-          "crates/glibc-rs-abi/src/io_abi.rs",
-          "crates/glibc-rs-abi/src/mmap_abi.rs"
+          "crates/frankenlibc-abi/src/unistd_abi.rs",
+          "crates/frankenlibc-abi/src/io_abi.rs",
+          "crates/frankenlibc-abi/src/mmap_abi.rs"
         ],
         "perf_proof_refs": [],
         "close_blockers": [],
@@ -4524,7 +4524,7 @@
         "stream": "math",
         "status": "missing",
         "unit_cmds": [
-          "cargo test -p glibc-rs-membrane runtime_math::loss_minimizer::tests:: -- --nocapture"
+          "cargo test -p frankenlibc-membrane runtime_math::loss_minimizer::tests:: -- --nocapture"
         ],
         "e2e_cmds": [
           "scripts/check_runtime_math_linkage.sh"
@@ -4629,7 +4629,7 @@
         "stream": "e2e",
         "status": "complete",
         "unit_cmds": [
-          "cargo test -p glibc-rs-harness --test e2e_suite_test"
+          "cargo test -p frankenlibc-harness --test e2e_suite_test"
         ],
         "e2e_cmds": [
           "scripts/e2e_suite.sh smoke"
@@ -4819,7 +4819,7 @@
         "stream": "math",
         "status": "missing",
         "unit_cmds": [
-          "cargo test -p glibc-rs-membrane runtime_math::loss_minimizer::tests:: -- --nocapture"
+          "cargo test -p frankenlibc-membrane runtime_math::loss_minimizer::tests:: -- --nocapture"
         ],
         "e2e_cmds": [],
         "expected_assertions": [
@@ -4882,7 +4882,7 @@
       "coverage": {
         "unit_tests": {
           "status": "complete",
-          "artifacts": "cargo test -p glibc-rs-harness --test mode_semantics_test (8 passed)"
+          "artifacts": "cargo test -p frankenlibc-harness --test mode_semantics_test (8 passed)"
         },
         "e2e_scripts": {
           "status": "not_required"
@@ -4914,7 +4914,7 @@
         "stream": "docs",
         "status": "complete",
         "unit_cmds": [
-          "cargo test -p glibc-rs-harness --test mode_semantics_test -- --nocapture"
+          "cargo test -p frankenlibc-harness --test mode_semantics_test -- --nocapture"
         ],
         "e2e_cmds": [
           "scripts/check_mode_semantics.sh"

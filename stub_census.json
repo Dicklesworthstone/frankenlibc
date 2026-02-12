@@ -1,12 +1,12 @@
 {
   "census_version": 1,
   "generated_utc": "2026-02-11T12:00:00Z",
-  "methodology": "Manual trace from todo!() locations in glibc-rs-core through extern C exports in glibc-rs-abi to support_matrix.json status fields. Each stub was checked for whether the ABI layer actually calls into the core stub, or has its own independent implementation.",
+  "methodology": "Manual trace from todo!() locations in frankenlibc-core through extern C exports in frankenlibc-abi to support_matrix.json status fields. Each stub was checked for whether the ABI layer actually calls into the core stub, or has its own independent implementation.",
   "stubs": [
     {
       "symbol": "iconv_open",
       "abi_module": "iconv_abi.rs",
-      "core_location": "crates/glibc-rs-core/src/iconv/mod.rs:15",
+      "core_location": "crates/frankenlibc-core/src/iconv/mod.rs:15",
       "stub_type": "todo!",
       "stub_message": "POSIX iconv_open: implementation pending",
       "core_fn_signature": "pub fn iconv_open(_tocode: &[u8], _fromcode: &[u8]) -> Option<IconvDescriptor>",
@@ -21,7 +21,7 @@
     {
       "symbol": "iconv",
       "abi_module": "iconv_abi.rs",
-      "core_location": "crates/glibc-rs-core/src/iconv/mod.rs:27",
+      "core_location": "crates/frankenlibc-core/src/iconv/mod.rs:27",
       "stub_type": "todo!",
       "stub_message": "POSIX iconv: implementation pending",
       "core_fn_signature": "pub fn iconv(_cd: &mut IconvDescriptor, _inbuf: &[u8], _outbuf: &mut [u8]) -> Result<(usize, usize, usize), i32>",
@@ -36,7 +36,7 @@
     {
       "symbol": "iconv_close",
       "abi_module": "iconv_abi.rs",
-      "core_location": "crates/glibc-rs-core/src/iconv/mod.rs:34",
+      "core_location": "crates/frankenlibc-core/src/iconv/mod.rs:34",
       "stub_type": "todo!",
       "stub_message": "POSIX iconv_close: implementation pending",
       "core_fn_signature": "pub fn iconv_close(_cd: IconvDescriptor) -> i32",
@@ -51,7 +51,7 @@
     {
       "symbol": "setjmp",
       "abi_module": "setjmp_abi.rs",
-      "core_location": "crates/glibc-rs-core/src/setjmp/mod.rs:21",
+      "core_location": "crates/frankenlibc-core/src/setjmp/mod.rs:21",
       "stub_type": "todo!",
       "stub_message": "POSIX setjmp: implementation pending (requires unsafe for real impl)",
       "core_fn_signature": "pub fn setjmp(_env: &mut JmpBuf) -> i32",
@@ -66,7 +66,7 @@
     {
       "symbol": "longjmp",
       "abi_module": "setjmp_abi.rs",
-      "core_location": "crates/glibc-rs-core/src/setjmp/mod.rs:31",
+      "core_location": "crates/frankenlibc-core/src/setjmp/mod.rs:31",
       "stub_type": "todo!",
       "stub_message": "POSIX longjmp: implementation pending (requires unsafe for real impl)",
       "core_fn_signature": "pub fn longjmp(_env: &JmpBuf, _val: i32) -> !",
@@ -81,7 +81,7 @@
     {
       "symbol": "tcgetattr",
       "abi_module": "termios_abi.rs",
-      "core_location": "crates/glibc-rs-core/src/termios/mod.rs:295",
+      "core_location": "crates/frankenlibc-core/src/termios/mod.rs:295",
       "stub_type": "todo!",
       "stub_message": "POSIX tcgetattr: implementation pending",
       "core_fn_signature": "pub fn tcgetattr(_fd: i32, _termios: &mut Termios) -> i32",
@@ -97,7 +97,7 @@
     {
       "symbol": "tcsetattr",
       "abi_module": "termios_abi.rs",
-      "core_location": "crates/glibc-rs-core/src/termios/mod.rs:303",
+      "core_location": "crates/frankenlibc-core/src/termios/mod.rs:303",
       "stub_type": "todo!",
       "stub_message": "POSIX tcsetattr: implementation pending",
       "core_fn_signature": "pub fn tcsetattr(_fd: i32, _optional_actions: i32, _termios: &Termios) -> i32",
@@ -113,7 +113,7 @@
     {
       "symbol": "getaddrinfo",
       "abi_module": "resolv_abi.rs",
-      "core_location": "crates/glibc-rs-core/src/resolv/mod.rs:29",
+      "core_location": "crates/frankenlibc-core/src/resolv/mod.rs:29",
       "stub_type": "todo!",
       "stub_message": "POSIX getaddrinfo: implementation pending",
       "core_fn_signature": "pub fn getaddrinfo(_node: Option<&[u8]>, _service: Option<&[u8]>, _hints: Option<&AddrInfo>) -> Result<Vec<AddrInfo>, i32>",
@@ -129,7 +129,7 @@
     {
       "symbol": "getnameinfo",
       "abi_module": "resolv_abi.rs",
-      "core_location": "crates/glibc-rs-core/src/resolv/mod.rs:36",
+      "core_location": "crates/frankenlibc-core/src/resolv/mod.rs:36",
       "stub_type": "todo!",
       "stub_message": "POSIX getnameinfo: implementation pending",
       "core_fn_signature": "pub fn getnameinfo(_addr: &[u8], _flags: i32) -> Result<(Vec<u8>, Vec<u8>), i32>",
@@ -145,7 +145,7 @@
     {
       "symbol": "pthread_key_create",
       "abi_module": "pthread_abi.rs",
-      "core_location": "crates/glibc-rs-core/src/pthread/tls.rs:17",
+      "core_location": "crates/frankenlibc-core/src/pthread/tls.rs:17",
       "stub_type": "todo!",
       "stub_message": "POSIX pthread_key_create: implementation pending",
       "core_fn_signature": "pub fn pthread_key_create(_key: &mut PthreadKey, _destructor: Option<fn(u64)>) -> i32",
@@ -160,7 +160,7 @@
     {
       "symbol": "pthread_key_delete",
       "abi_module": "pthread_abi.rs",
-      "core_location": "crates/glibc-rs-core/src/pthread/tls.rs:24",
+      "core_location": "crates/frankenlibc-core/src/pthread/tls.rs:24",
       "stub_type": "todo!",
       "stub_message": "POSIX pthread_key_delete: implementation pending",
       "core_fn_signature": "pub fn pthread_key_delete(_key: PthreadKey) -> i32",
@@ -175,7 +175,7 @@
     {
       "symbol": "pthread_getspecific",
       "abi_module": "pthread_abi.rs",
-      "core_location": "crates/glibc-rs-core/src/pthread/tls.rs:32",
+      "core_location": "crates/frankenlibc-core/src/pthread/tls.rs:32",
       "stub_type": "todo!",
       "stub_message": "POSIX pthread_getspecific: implementation pending",
       "core_fn_signature": "pub fn pthread_getspecific(_key: PthreadKey) -> u64",
@@ -190,7 +190,7 @@
     {
       "symbol": "pthread_setspecific",
       "abi_module": "pthread_abi.rs",
-      "core_location": "crates/glibc-rs-core/src/pthread/tls.rs:39",
+      "core_location": "crates/frankenlibc-core/src/pthread/tls.rs:39",
       "stub_type": "todo!",
       "stub_message": "POSIX pthread_setspecific: implementation pending",
       "core_fn_signature": "pub fn pthread_setspecific(_key: PthreadKey, _value: u64) -> i32",
@@ -205,7 +205,7 @@
     {
       "symbol": "pthread_create",
       "abi_module": "pthread_abi.rs",
-      "core_location": "crates/glibc-rs-core/src/pthread/thread.rs:26",
+      "core_location": "crates/frankenlibc-core/src/pthread/thread.rs:26",
       "stub_type": "todo!",
       "stub_message": "POSIX pthread_create: implementation pending",
       "core_fn_signature": "pub fn pthread_create(_thread: &mut PthreadT, _attr: Option<&PthreadAttr>, _start_routine: fn() -> u64) -> i32",
@@ -221,7 +221,7 @@
     {
       "symbol": "pthread_join",
       "abi_module": "pthread_abi.rs",
-      "core_location": "crates/glibc-rs-core/src/pthread/thread.rs:34",
+      "core_location": "crates/frankenlibc-core/src/pthread/thread.rs:34",
       "stub_type": "todo!",
       "stub_message": "POSIX pthread_join: implementation pending",
       "core_fn_signature": "pub fn pthread_join(_thread: PthreadT) -> Result<u64, i32>",
@@ -237,7 +237,7 @@
     {
       "symbol": "pthread_detach",
       "abi_module": "pthread_abi.rs",
-      "core_location": "crates/glibc-rs-core/src/pthread/thread.rs:41",
+      "core_location": "crates/frankenlibc-core/src/pthread/thread.rs:41",
       "stub_type": "todo!",
       "stub_message": "POSIX pthread_detach: implementation pending",
       "core_fn_signature": "pub fn pthread_detach(_thread: PthreadT) -> i32",
@@ -253,7 +253,7 @@
     {
       "symbol": "pthread_exit",
       "abi_module": "pthread_abi.rs",
-      "core_location": "crates/glibc-rs-core/src/pthread/thread.rs:48",
+      "core_location": "crates/frankenlibc-core/src/pthread/thread.rs:48",
       "stub_type": "todo!",
       "stub_message": "POSIX pthread_exit: implementation pending",
       "core_fn_signature": "pub fn pthread_exit(_retval: u64) -> !",
@@ -268,7 +268,7 @@
     {
       "symbol": "pthread_self",
       "abi_module": "pthread_abi.rs",
-      "core_location": "crates/glibc-rs-core/src/pthread/thread.rs:55",
+      "core_location": "crates/frankenlibc-core/src/pthread/thread.rs:55",
       "stub_type": "todo!",
       "stub_message": "POSIX pthread_self: implementation pending",
       "core_fn_signature": "pub fn pthread_self() -> PthreadT",
@@ -284,7 +284,7 @@
     {
       "symbol": "rand",
       "abi_module": "stdlib_abi.rs",
-      "core_location": "crates/glibc-rs-core/src/stdlib/random.rs:5",
+      "core_location": "crates/frankenlibc-core/src/stdlib/random.rs:5",
       "stub_type": "todo!",
       "stub_message": null,
       "core_fn_signature": "pub fn rand() -> i32",
@@ -299,7 +299,7 @@
     {
       "symbol": "srand",
       "abi_module": "stdlib_abi.rs",
-      "core_location": "crates/glibc-rs-core/src/stdlib/random.rs:8",
+      "core_location": "crates/frankenlibc-core/src/stdlib/random.rs:8",
       "stub_type": "todo!",
       "stub_message": null,
       "core_fn_signature": "pub fn srand(_seed: u32)",
@@ -314,7 +314,7 @@
     {
       "symbol": "getenv",
       "abi_module": "stdlib_abi.rs",
-      "core_location": "crates/glibc-rs-core/src/stdlib/env.rs:5",
+      "core_location": "crates/frankenlibc-core/src/stdlib/env.rs:5",
       "stub_type": "todo!",
       "stub_message": null,
       "core_fn_signature": "pub fn getenv(_name: &[u8]) -> Option<&'static [u8]>",
@@ -329,7 +329,7 @@
     {
       "symbol": "setenv",
       "abi_module": "stdlib_abi.rs",
-      "core_location": "crates/glibc-rs-core/src/stdlib/env.rs:8",
+      "core_location": "crates/frankenlibc-core/src/stdlib/env.rs:8",
       "stub_type": "todo!",
       "stub_message": null,
       "core_fn_signature": "pub fn setenv(_name: &[u8], _value: &[u8], _overwrite: bool) -> i32",
@@ -488,6 +488,6 @@
         "inconsistencies": 0
       }
     },
-    "key_finding": "NONE of the 22 todo!() stubs in glibc-rs-core are reachable from the ABI-exported symbols. In every case where an ABI export exists, the ABI layer has its own independent implementation that bypasses the core stub entirely. The core stubs represent an earlier design phase and are now dead code. However, 10 symbols have incorrect status classifications in support_matrix.json."
+    "key_finding": "NONE of the 22 todo!() stubs in frankenlibc-core are reachable from the ABI-exported symbols. In every case where an ABI export exists, the ABI layer has its own independent implementation that bypasses the core stub entirely. The core stubs represent an earlier design phase and are now dead code. However, 10 symbols have incorrect status classifications in support_matrix.json."
   }
 }

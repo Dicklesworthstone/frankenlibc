@@ -8,7 +8,7 @@
 # 4. Artifact index is generated and valid.
 #
 # Note: Many E2E scenarios are expected to timeout/fail during the interpose
-# phase of glibc_rust development. This gate verifies the *infrastructure*
+# phase of frankenlibc development. This gate verifies the *infrastructure*
 # works, not that all programs pass. As more symbols are implemented, the
 # pass rate will increase.
 #

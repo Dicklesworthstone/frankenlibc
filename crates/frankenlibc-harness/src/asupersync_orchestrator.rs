@@ -15,7 +15,7 @@ use std::time::Instant;
 
 use asupersync_conformance::logging::{ConformanceTestLogger, with_test_logger};
 use asupersync_conformance::{Checkpoint, SuiteResult, SuiteTestResult, TestCategory, TestResult};
-use glibc_rust_conformance::execute_fixture_case;
+use frankenlibc_conformance::execute_fixture_case;
 use serde_json::json;
 
 use crate::diff;

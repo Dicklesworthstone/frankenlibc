@@ -1,14 +1,14 @@
 //! ABI layer for `<arpa/inet.h>` functions.
 //!
 //! Byte-order conversions are pure compute (no syscalls). Address parsing
-//! delegates to `glibc_rs_core::inet` safe implementations.
+//! delegates to `frankenlibc_core::inet` safe implementations.
 
 use std::ffi::{c_char, c_int, c_void};
 
-use glibc_rs_core::errno;
-use glibc_rs_core::inet as inet_core;
-use glibc_rs_core::socket::{AF_INET, AF_INET6};
-use glibc_rs_membrane::runtime_math::{ApiFamily, MembraneAction};
+use frankenlibc_core::errno;
+use frankenlibc_core::inet as inet_core;
+use frankenlibc_core::socket::{AF_INET, AF_INET6};
+use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
 use crate::runtime_policy;
 

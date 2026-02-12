@@ -1,4 +1,4 @@
-//! Benchmark support for glibc_rust.
+//! Benchmark support for frankenlibc.
 //!
 //! Individual benchmarks live in the `benches/` directory and use
 //! the Criterion framework.

@@ -1,5 +1,5 @@
 {
-  "runtime_name": "glibc-rs-harness:fixture-verify",
+  "runtime_name": "frankenlibc-harness:fixture-verify",
   "total": 91,
   "passed": 91,
   "failed": 0,

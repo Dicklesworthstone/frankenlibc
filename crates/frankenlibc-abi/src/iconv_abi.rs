@@ -13,9 +13,9 @@ use std::ffi::{CStr, c_char, c_int, c_void};
 use std::slice;
 use std::sync::{Mutex, OnceLock};
 
-use glibc_rs_core::errno;
-use glibc_rs_core::iconv::{self, IconvDescriptor};
-use glibc_rs_membrane::runtime_math::{ApiFamily, MembraneAction};
+use frankenlibc_core::errno;
+use frankenlibc_core::iconv::{self, IconvDescriptor};
+use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
 use crate::runtime_policy;
 

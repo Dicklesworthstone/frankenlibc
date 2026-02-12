@@ -15,15 +15,15 @@ use std::cell::RefCell;
 use std::time::{Duration, Instant};
 
 use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
-use glibc_rs_membrane::config::safety_level;
-use glibc_rs_membrane::runtime_math::approachability::ApproachabilityController;
-use glibc_rs_membrane::runtime_math::bandit::ConstrainedBanditRouter;
-use glibc_rs_membrane::runtime_math::barrier::BarrierOracle;
-use glibc_rs_membrane::runtime_math::control::ControlLimits;
-use glibc_rs_membrane::runtime_math::design::OptimalDesignController;
-use glibc_rs_membrane::runtime_math::pareto::ParetoController;
-use glibc_rs_membrane::runtime_math::risk::ConformalRiskEngine;
-use glibc_rs_membrane::{ApiFamily, RuntimeContext, SafetyLevel, ValidationProfile};
+use frankenlibc_membrane::config::safety_level;
+use frankenlibc_membrane::runtime_math::approachability::ApproachabilityController;
+use frankenlibc_membrane::runtime_math::bandit::ConstrainedBanditRouter;
+use frankenlibc_membrane::runtime_math::barrier::BarrierOracle;
+use frankenlibc_membrane::runtime_math::control::ControlLimits;
+use frankenlibc_membrane::runtime_math::design::OptimalDesignController;
+use frankenlibc_membrane::runtime_math::pareto::ParetoController;
+use frankenlibc_membrane::runtime_math::risk::ConformalRiskEngine;
+use frankenlibc_membrane::{ApiFamily, RuntimeContext, SafetyLevel, ValidationProfile};
 
 #[derive(Default)]
 struct BenchStats {

@@ -7,8 +7,8 @@ use std::cell::RefCell;
 use std::time::{Duration, Instant};
 
 use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
-use glibc_rs_membrane::config::safety_level;
-use glibc_rs_membrane::ptr_validator::ValidationPipeline;
+use frankenlibc_membrane::config::safety_level;
+use frankenlibc_membrane::ptr_validator::ValidationPipeline;
 
 #[derive(Default)]
 struct BenchStats {
@@ -91,9 +91,9 @@ fn bench_membrane(c: &mut Criterion) {
 
     let mode = safety_level();
     let mode_label = match mode {
-        glibc_rs_membrane::SafetyLevel::Strict => "strict",
-        glibc_rs_membrane::SafetyLevel::Hardened => "hardened",
-        glibc_rs_membrane::SafetyLevel::Off => "off",
+        frankenlibc_membrane::SafetyLevel::Strict => "strict",
+        frankenlibc_membrane::SafetyLevel::Hardened => "hardened",
+        frankenlibc_membrane::SafetyLevel::Off => "off",
     };
 
     let mut group = c.benchmark_group("membrane");

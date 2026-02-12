@@ -3,7 +3,7 @@
 use crate::fixtures::FixtureSet;
 use crate::verify::VerificationResult;
 use crate::{FixtureCase, diff};
-use glibc_rust_conformance::execute_fixture_case;
+use frankenlibc_conformance::execute_fixture_case;
 
 /// Runs a fixture set and collects verification results.
 pub struct TestRunner {

@@ -23,7 +23,7 @@
       ]
     }
   },
-  "env_variable": "GLIBC_RUST_MODE",
+  "env_variable": "FRANKENLIBC_MODE",
   "families": [
     {
       "family": "Allocator",

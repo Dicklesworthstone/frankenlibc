@@ -2,13 +2,13 @@
 //!
 //! Terminal attribute manipulation via `ioctl`/`libc` syscalls.
 //! Pure-logic helpers (baud rate extraction, cfmakeraw) delegate
-//! to `glibc_rs_core::termios`.
+//! to `frankenlibc_core::termios`.
 
 use std::ffi::c_int;
 
-use glibc_rs_core::errno;
-use glibc_rs_core::termios as termios_core;
-use glibc_rs_membrane::runtime_math::{ApiFamily, MembraneAction};
+use frankenlibc_core::errno;
+use frankenlibc_core::termios as termios_core;
+use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
 use crate::runtime_policy;
 

@@ -2,12 +2,12 @@
 //!
 //! Dynamic linker interface: `dlopen`, `dlsym`, `dlclose`, `dlerror`.
 //! Delegates to system `libdl` via `libc`, with membrane validation
-//! and flag checking via `glibc_rs_core::dlfcn`.
+//! and flag checking via `frankenlibc_core::dlfcn`.
 
 use std::ffi::{c_char, c_int, c_void};
 
-use glibc_rs_core::dlfcn as dlfcn_core;
-use glibc_rs_membrane::runtime_math::{ApiFamily, MembraneAction};
+use frankenlibc_core::dlfcn as dlfcn_core;
+use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
 use crate::runtime_policy;
 

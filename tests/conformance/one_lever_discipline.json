@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "bead": "bd-22p",
-  "description": "One-lever discipline guard for glibc_rust optimization work. Each optimization bead must reference exactly one lever category. Multi-lever submissions are flagged for split. This enforces the 'single optimization lever per iteration' rule from the extreme optimization loop (PROPOSED_ARCHITECTURE.md Section 6).",
+  "description": "One-lever discipline guard for frankenlibc optimization work. Each optimization bead must reference exactly one lever category. Multi-lever submissions are flagged for split. This enforces the 'single optimization lever per iteration' rule from the extreme optimization loop (PROPOSED_ARCHITECTURE.md Section 6).",
   "lever_categories": {
     "description": "Taxonomy of optimization levers. Each optimization opportunity must be classified under exactly one category.",
     "categories": {
@@ -48,7 +48,7 @@
       "Multi-lever beads must be split or carry a justification_waiver"
     ],
     "gate_script": "scripts/check_one_lever_discipline.sh",
-    "integration_test": "cargo test -p glibc-rs-harness --test one_lever_discipline_test"
+    "integration_test": "cargo test -p frankenlibc-harness --test one_lever_discipline_test"
   },
   "summary": {
     "total_categories": 8,

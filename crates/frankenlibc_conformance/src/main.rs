@@ -1,19 +1,19 @@
-//! CLI entrypoint for glibc_rust conformance tooling.
+//! CLI entrypoint for frankenlibc conformance tooling.
 
 use std::fs;
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 
-use glibc_rust_conformance::{
+use frankenlibc_conformance::{
     build_traceability_artifact, capture_memcpy_fixture_set, render_diff_report,
     render_verification_markdown, verify_memcpy_fixture_set,
 };
 
-/// CLI for traceability/diff tooling around glibc_rust conformance.
+/// CLI for traceability/diff tooling around frankenlibc conformance.
 #[derive(Debug, Parser)]
 #[command(name = "glibc-rust-conformance")]
-#[command(about = "Conformance tooling for glibc_rust")]
+#[command(about = "Conformance tooling for frankenlibc")]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -46,7 +46,7 @@ enum Command {
         #[arg(long)]
         output: PathBuf,
     },
-    /// Verify glibc_rust preview memcpy against a fixture set.
+    /// Verify frankenlibc preview memcpy against a fixture set.
     Verify {
         /// Input fixture path.
         #[arg(long)]

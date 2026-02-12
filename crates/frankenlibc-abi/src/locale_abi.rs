@@ -5,8 +5,8 @@
 
 use std::ffi::{CStr, c_char, c_int};
 
-use glibc_rs_core::locale as locale_core;
-use glibc_rs_membrane::runtime_math::{ApiFamily, MembraneAction};
+use frankenlibc_core::locale as locale_core;
+use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
 use crate::runtime_policy;
 

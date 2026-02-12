@@ -5,7 +5,7 @@
 //! - stable ordering
 //! - seed + step count included for reproducibility
 
-use glibc_rs_membrane::{ApiFamily, RuntimeContext, RuntimeMathKernel, SafetyLevel};
+use frankenlibc_membrane::{ApiFamily, RuntimeContext, RuntimeMathKernel, SafetyLevel};
 use serde::{Deserialize, Serialize};
 
 const FIXTURE_VERSION: &str = "v1";

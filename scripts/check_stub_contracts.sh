@@ -17,7 +17,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 CONTRACTS="${ROOT}/tests/conformance/stub_contracts.json"
 MATRIX="${ROOT}/support_matrix.json"
-ABI_SRC="${ROOT}/crates/glibc-rs-abi/src"
+ABI_SRC="${ROOT}/crates/frankenlibc-abi/src"
 
 failures=0
 

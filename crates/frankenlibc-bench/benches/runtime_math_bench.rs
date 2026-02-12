@@ -16,8 +16,8 @@ use std::cell::RefCell;
 use std::time::{Duration, Instant};
 
 use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
-use glibc_rs_membrane::config::safety_level;
-use glibc_rs_membrane::{ApiFamily, MembraneAction, RuntimeContext, RuntimeMathKernel};
+use frankenlibc_membrane::config::safety_level;
+use frankenlibc_membrane::{ApiFamily, MembraneAction, RuntimeContext, RuntimeMathKernel};
 
 #[derive(Default)]
 struct BenchStats {
@@ -128,9 +128,9 @@ fn bench_runtime_math(c: &mut Criterion) {
 
     let mode = safety_level();
     let mode_label = match mode {
-        glibc_rs_membrane::SafetyLevel::Strict => "strict",
-        glibc_rs_membrane::SafetyLevel::Hardened => "hardened",
-        glibc_rs_membrane::SafetyLevel::Off => "off",
+        frankenlibc_membrane::SafetyLevel::Strict => "strict",
+        frankenlibc_membrane::SafetyLevel::Hardened => "hardened",
+        frankenlibc_membrane::SafetyLevel::Off => "off",
     };
 
     // Fixed input context (deterministic).
@@ -169,7 +169,7 @@ fn bench_runtime_math(c: &mut Criterion) {
         for _ in 0..10_000 {
             kernel.observe_validation_result(
                 ApiFamily::PointerValidation,
-                glibc_rs_membrane::ValidationProfile::Fast,
+                frankenlibc_membrane::ValidationProfile::Fast,
                 12,
                 false,
             );
@@ -184,7 +184,7 @@ fn bench_runtime_math(c: &mut Criterion) {
                 for _ in 0..iters {
                     kernel.observe_validation_result(
                         ApiFamily::PointerValidation,
-                        glibc_rs_membrane::ValidationProfile::Fast,
+                        frankenlibc_membrane::ValidationProfile::Fast,
                         12,
                         false,
                     );

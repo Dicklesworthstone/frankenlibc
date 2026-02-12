@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Stub census: deterministic static inventory of todo!/unimplemented!/panic!
-# placeholders in the glibc_rust workspace, cross-referenced against the
+# placeholders in the frankenlibc workspace, cross-referenced against the
 # support matrix and ABI exports.
 #
 # Deliverable for bd-2vb.
@@ -10,8 +10,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT="${ROOT}/tests/conformance/stub_census.json"
 MATRIX="${ROOT}/support_matrix.json"
-ABI_SRC="${ROOT}/crates/glibc-rs-abi/src"
-CORE_SRC="${ROOT}/crates/glibc-rs-core/src"
+ABI_SRC="${ROOT}/crates/frankenlibc-abi/src"
+CORE_SRC="${ROOT}/crates/frankenlibc-core/src"
 
 timestamp_utc="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 

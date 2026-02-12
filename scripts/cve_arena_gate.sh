@@ -74,7 +74,7 @@ if [[ "${SKIP_RUN}" != "1" ]]; then
         echo "cve_arena_gate: running CVE arena tests via cargo..."
         mkdir -p "${RESULTS_DIR}"
         set +e
-        cargo test -p glibc-rs-membrane --test 'cve_arena*' -- --test-threads=1 2>&1 | \
+        cargo test -p frankenlibc-membrane --test 'cve_arena*' -- --test-threads=1 2>&1 | \
             tee "${RESULTS_DIR}/cargo_test_output.log"
         CARGO_RC=${PIPESTATUS[0]}
         set -e

@@ -10,7 +10,7 @@ fn bench_memcpy_sizes(c: &mut Criterion) {
         let src = vec![0xABu8; size];
         group.throughput(Throughput::Bytes(size as u64));
 
-        group.bench_with_input(BenchmarkId::new("glibc_rust", size), &size, |b, &sz| {
+        group.bench_with_input(BenchmarkId::new("frankenlibc", size), &size, |b, &sz| {
             b.iter(|| {
                 let mut dst = vec![0u8; sz];
                 // TODO: call glibc-rs-abi memcpy when wired

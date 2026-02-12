@@ -3,7 +3,7 @@
 use std::sync::{Arc, Barrier, Mutex};
 use std::time::Duration;
 
-use glibc_rs_abi::pthread_abi::{
+use frankenlibc_abi::pthread_abi::{
     pthread_mutex_branch_counters_for_tests, pthread_mutex_destroy, pthread_mutex_init,
     pthread_mutex_lock, pthread_mutex_reset_state_for_tests, pthread_mutex_trylock,
     pthread_mutex_unlock,

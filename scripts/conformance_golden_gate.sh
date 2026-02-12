@@ -37,7 +37,7 @@ echo "fixture_dir=${FIXTURE_DIR}"
 echo "golden_dir=${GOLDEN_DIR}"
 echo "out_dir=${OUT_DIR}"
 
-cargo run -q -p glibc-rs-harness --bin harness -- verify \
+cargo run -q -p frankenlibc-harness --bin harness -- verify \
   --fixture "${FIXTURE_DIR}" \
   --report "${OUT_MD}" \
   --timestamp "1970-01-01T00:00:00Z"

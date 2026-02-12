@@ -1,12 +1,12 @@
 //! ABI layer for `<ctype.h>` character classification and conversion.
 //!
 //! Pure compute — no pointers, no syscalls, no healing needed.
-//! Each function masks the input to u8, delegates to `glibc_rs_core::ctype`,
+//! Each function masks the input to u8, delegates to `frankenlibc_core::ctype`,
 //! and feeds the membrane kernel for online control telemetry.
 
 use std::ffi::c_int;
 
-use glibc_rs_membrane::runtime_math::{ApiFamily, MembraneAction};
+use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
 use crate::runtime_policy;
 
@@ -44,55 +44,55 @@ fn convert(c: c_int, f: fn(u8) -> u8) -> c_int {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn isalpha(c: c_int) -> c_int {
-    classify(c, glibc_rs_core::ctype::is_alpha)
+    classify(c, frankenlibc_core::ctype::is_alpha)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn isdigit(c: c_int) -> c_int {
-    classify(c, glibc_rs_core::ctype::is_digit)
+    classify(c, frankenlibc_core::ctype::is_digit)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn isalnum(c: c_int) -> c_int {
-    classify(c, glibc_rs_core::ctype::is_alnum)
+    classify(c, frankenlibc_core::ctype::is_alnum)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn isspace(c: c_int) -> c_int {
-    classify(c, glibc_rs_core::ctype::is_space)
+    classify(c, frankenlibc_core::ctype::is_space)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn isupper(c: c_int) -> c_int {
-    classify(c, glibc_rs_core::ctype::is_upper)
+    classify(c, frankenlibc_core::ctype::is_upper)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn islower(c: c_int) -> c_int {
-    classify(c, glibc_rs_core::ctype::is_lower)
+    classify(c, frankenlibc_core::ctype::is_lower)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn isprint(c: c_int) -> c_int {
-    classify(c, glibc_rs_core::ctype::is_print)
+    classify(c, frankenlibc_core::ctype::is_print)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ispunct(c: c_int) -> c_int {
-    classify(c, glibc_rs_core::ctype::is_punct)
+    classify(c, frankenlibc_core::ctype::is_punct)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn isxdigit(c: c_int) -> c_int {
-    classify(c, glibc_rs_core::ctype::is_xdigit)
+    classify(c, frankenlibc_core::ctype::is_xdigit)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn toupper(c: c_int) -> c_int {
-    convert(c, glibc_rs_core::ctype::to_upper)
+    convert(c, frankenlibc_core::ctype::to_upper)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tolower(c: c_int) -> c_int {
-    convert(c, glibc_rs_core::ctype::to_lower)
+    convert(c, frankenlibc_core::ctype::to_lower)
 }

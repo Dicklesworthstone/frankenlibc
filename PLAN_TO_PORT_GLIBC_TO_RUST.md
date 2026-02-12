@@ -27,7 +27,7 @@ This project must leverage:
 ## Runtime Mode Contract
 
 Mode selection:
-- `GLIBC_RUST_MODE=strict|hardened`
+- `FRANKENLIBC_MODE=strict|hardened`
 - default: `strict`
 - mode is process-level and immutable after initialization
 
@@ -56,7 +56,7 @@ running in production through compact online control kernels.
 
 We are no longer "offline-only math." Runtime must carry real mathematical controllers.
 
-### Control-plane modules (in `glibc-rs-membrane`)
+### Control-plane modules (in `frankenlibc-membrane`)
 
 1. `risk`:
 - online conformal-style risk upper bounds per API family.
@@ -88,7 +88,7 @@ with:
 - hardened mode enabling deterministic repair under bounded risk/latency budgets.
 
 Implementation status (now):
-- live in `glibc-rs-membrane` for pointer validation,
+- live in `frankenlibc-membrane` for pointer validation,
 - sampled conformal (`risk_engine`), contextual ordering (`check_oracle`), and
   primal-dual quarantine (`quarantine_controller`) are fused into runtime decisions.
 

@@ -6,10 +6,10 @@
 
 use std::ffi::{c_int, c_void};
 
-use glibc_rs_core::mmap;
-use glibc_rs_core::syscall;
-use glibc_rs_membrane::heal::{HealingAction, global_healing_policy};
-use glibc_rs_membrane::runtime_math::{ApiFamily, MembraneAction};
+use frankenlibc_core::mmap;
+use frankenlibc_core::syscall;
+use frankenlibc_membrane::heal::{HealingAction, global_healing_policy};
+use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
 use crate::runtime_policy;
 

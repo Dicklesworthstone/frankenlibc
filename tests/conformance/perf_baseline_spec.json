@@ -8,8 +8,8 @@
       {
         "id": "runtime_math",
         "description": "RuntimeMathKernel decision and observation overhead.",
-        "crate": "glibc-rs-bench",
-        "command": "cargo bench -p glibc-rs-bench --bench runtime_math_bench",
+        "crate": "frankenlibc-bench",
+        "command": "cargo bench -p frankenlibc-bench --bench runtime_math_bench",
         "output_prefix": "RUNTIME_MATH_BENCH",
         "benchmarks": [
           {"name": "decide", "description": "Per-call overhead of RuntimeMathKernel::decide()"},
@@ -18,8 +18,8 @@
         ],
         "modes": ["strict", "hardened"],
         "env_vars": {
-          "GLIBC_RUST_MODE": "<mode>",
-          "GLIBC_RUST_BENCH_PIN": "1"
+          "FRANKENLIBC_MODE": "<mode>",
+          "FRANKENLIBC_BENCH_PIN": "1"
         },
         "criterion_config": {
           "sample_size": 100,
@@ -31,16 +31,16 @@
       {
         "id": "membrane",
         "description": "Pointer validation pipeline overhead per stage.",
-        "crate": "glibc-rs-bench",
-        "command": "cargo bench -p glibc-rs-bench --bench membrane_bench",
+        "crate": "frankenlibc-bench",
+        "command": "cargo bench -p frankenlibc-bench --bench membrane_bench",
         "output_prefix": "MEMBRANE_BENCH",
         "benchmarks": [
           {"name": "validate_known", "description": "Hot-path validation for known-safe pointers"}
         ],
         "modes": ["strict", "hardened"],
         "env_vars": {
-          "GLIBC_RUST_MODE": "<mode>",
-          "GLIBC_RUST_BENCH_PIN": "1"
+          "FRANKENLIBC_MODE": "<mode>",
+          "FRANKENLIBC_BENCH_PIN": "1"
         },
         "criterion_config": {
           "sample_size": 100,
@@ -52,8 +52,8 @@
       {
         "id": "string",
         "description": "String/memory function benchmarks across size variants.",
-        "crate": "glibc-rs-bench",
-        "command": "cargo bench -p glibc-rs-bench --bench string_bench",
+        "crate": "frankenlibc-bench",
+        "command": "cargo bench -p frankenlibc-bench --bench string_bench",
         "output_prefix": "STRING_BENCH",
         "benchmarks": [
           {"name": "memcpy_16", "description": "memcpy 16 bytes"},
@@ -67,8 +67,8 @@
         ],
         "modes": ["strict", "hardened"],
         "env_vars": {
-          "GLIBC_RUST_MODE": "<mode>",
-          "GLIBC_RUST_BENCH_PIN": "1"
+          "FRANKENLIBC_MODE": "<mode>",
+          "FRANKENLIBC_BENCH_PIN": "1"
         },
         "criterion_config": {
           "sample_size": 100,
@@ -81,8 +81,8 @@
       {
         "id": "malloc",
         "description": "Allocator hot-path benchmarks.",
-        "crate": "glibc-rs-bench",
-        "command": "cargo bench -p glibc-rs-bench --bench malloc_bench",
+        "crate": "frankenlibc-bench",
+        "command": "cargo bench -p frankenlibc-bench --bench malloc_bench",
         "output_prefix": "MALLOC_BENCH",
         "benchmarks": [
           {"name": "alloc_free_cycle", "description": "Single malloc+free cycle"},
@@ -90,8 +90,8 @@
         ],
         "modes": ["strict", "hardened"],
         "env_vars": {
-          "GLIBC_RUST_MODE": "<mode>",
-          "GLIBC_RUST_BENCH_PIN": "1"
+          "FRANKENLIBC_MODE": "<mode>",
+          "FRANKENLIBC_BENCH_PIN": "1"
         },
         "criterion_config": {
           "sample_size": 100,
@@ -136,16 +136,16 @@
     "description": "Procedure for regenerating baselines deterministically.",
     "prerequisites": [
       "Machine is not under heavy load (load < 0.85 * nproc).",
-      "CPU pinning enabled: GLIBC_RUST_BENCH_PIN=1.",
+      "CPU pinning enabled: FRANKENLIBC_BENCH_PIN=1.",
       "No other benchmark or CI tasks running.",
       "All workspace changes committed (clean git state)."
     ],
     "command_sequence": [
-      "export GLIBC_RUST_BENCH_PIN=1",
-      "cargo bench -p glibc-rs-bench --bench runtime_math_bench 2>&1 | tee /tmp/bench_runtime_math.txt",
-      "cargo bench -p glibc-rs-bench --bench membrane_bench 2>&1 | tee /tmp/bench_membrane.txt",
-      "cargo bench -p glibc-rs-bench --bench string_bench 2>&1 | tee /tmp/bench_string.txt",
-      "cargo bench -p glibc-rs-bench --bench malloc_bench 2>&1 | tee /tmp/bench_malloc.txt"
+      "export FRANKENLIBC_BENCH_PIN=1",
+      "cargo bench -p frankenlibc-bench --bench runtime_math_bench 2>&1 | tee /tmp/bench_runtime_math.txt",
+      "cargo bench -p frankenlibc-bench --bench membrane_bench 2>&1 | tee /tmp/bench_membrane.txt",
+      "cargo bench -p frankenlibc-bench --bench string_bench 2>&1 | tee /tmp/bench_string.txt",
+      "cargo bench -p frankenlibc-bench --bench malloc_bench 2>&1 | tee /tmp/bench_malloc.txt"
     ],
     "extraction": "Parse RUNTIME_MATH_BENCH/MEMBRANE_BENCH/STRING_BENCH/MALLOC_BENCH lines for p50_ns_op values.",
     "validation": {

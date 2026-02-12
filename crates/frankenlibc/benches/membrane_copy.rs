@@ -15,7 +15,7 @@ fn benchmark_memcpy_paths(c: &mut Criterion) {
                 let mut dst = vec![0_u8; size];
                 // SAFETY: Benchmark uses valid non-overlapping buffers.
                 unsafe {
-                    glibc_rust::glibc_rust_memcpy_preview(
+                    frankenlibc::glibc_rust_memcpy_preview(
                         dst.as_mut_ptr().cast::<c_void>(),
                         src.as_ptr().cast::<c_void>(),
                         black_box(size),

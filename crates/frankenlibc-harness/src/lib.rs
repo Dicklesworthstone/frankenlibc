@@ -1,4 +1,4 @@
-//! Conformance testing harness for glibc_rust.
+//! Conformance testing harness for frankenlibc.
 //!
 //! This crate provides:
 //! - Fixture capture: record host glibc behavior as JSON reference data

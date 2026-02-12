@@ -2,7 +2,7 @@
 # check_module_inventory.sh — Drift detector for AGENTS.md vs runtime_math code
 #
 # Compares the runtime_math module inventory in AGENTS.md against the actual
-# `pub mod` declarations in crates/glibc-rs-membrane/src/runtime_math/mod.rs.
+# `pub mod` declarations in crates/frankenlibc-membrane/src/runtime_math/mod.rs.
 #
 # Exit 0 if in sync, exit 1 if drift detected.
 #
@@ -13,7 +13,7 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 AGENTS_MD="$REPO_ROOT/AGENTS.md"
-MOD_RS="$REPO_ROOT/crates/glibc-rs-membrane/src/runtime_math/mod.rs"
+MOD_RS="$REPO_ROOT/crates/frankenlibc-membrane/src/runtime_math/mod.rs"
 
 if [[ ! -f "$AGENTS_MD" ]]; then
     echo "ERROR: AGENTS.md not found at $AGENTS_MD" >&2
@@ -26,9 +26,9 @@ fi
 
 # --- Extract runtime_math module names from AGENTS.md Module Inventory ---
 # Matches lines like:  - `runtime_math/foo.rs` — description
-# in the section between "### glibc-rs-membrane" and "### glibc-rs-core"
+# in the section between "### frankenlibc-membrane" and "### frankenlibc-core"
 agents_modules=$(
-    sed -n '/^### glibc-rs-membrane/,/^### glibc-rs-core/p' "$AGENTS_MD" \
+    sed -n '/^### frankenlibc-membrane/,/^### frankenlibc-core/p' "$AGENTS_MD" \
     | grep -oP '`runtime_math/\K[a-z_]+(?=\.rs`)' \
     | grep -v '^mod$' \
     | sort -u
@@ -53,7 +53,7 @@ if [[ -n "$agents_only" ]]; then
     echo ""
     while IFS= read -r mod; do
         # Check if it exists as a top-level membrane module
-        top_level="$REPO_ROOT/crates/glibc-rs-membrane/src/${mod}.rs"
+        top_level="$REPO_ROOT/crates/frankenlibc-membrane/src/${mod}.rs"
         if [[ -f "$top_level" ]]; then
             echo "  $mod  (exists as top-level membrane module — AGENTS.md path is wrong)"
         else
@@ -74,11 +74,11 @@ if [[ -n "$code_only" ]]; then
     echo ""
     if [[ "${1:-}" == "--fix" ]]; then
         echo "=== Suggested AGENTS.md additions ==="
-        echo "(Add these to the '### glibc-rs-membrane (Safety Substrate)' section)"
+        echo "(Add these to the '### frankenlibc-membrane (Safety Substrate)' section)"
         echo ""
         while IFS= read -r mod; do
             # Try to extract the module doc comment
-            mod_file="$REPO_ROOT/crates/glibc-rs-membrane/src/runtime_math/${mod}.rs"
+            mod_file="$REPO_ROOT/crates/frankenlibc-membrane/src/runtime_math/${mod}.rs"
             desc=""
             if [[ -f "$mod_file" ]]; then
                 desc=$(head -5 "$mod_file" | grep -oP '//!?\s*\K.*' | head -1)

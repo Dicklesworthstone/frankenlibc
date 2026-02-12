@@ -8,7 +8,7 @@
 typedef int (*startup_main_fn_t)(int, char **, char **);
 typedef void (*startup_hook_fn_t)(void);
 
-extern int __glibc_rs_startup_phase0(startup_main_fn_t main, int argc, char **ubp_av,
+extern int __frankenlibc_startup_phase0(startup_main_fn_t main, int argc, char **ubp_av,
                                      startup_hook_fn_t init, startup_hook_fn_t fini,
                                      startup_hook_fn_t rtld_fini, void *stack_end)
     __attribute__((weak));
@@ -58,12 +58,12 @@ static int test_startup_happy_path(void) {
 
     (void)envp;
 
-    if (!__glibc_rs_startup_phase0) {
-        fprintf(stderr, "FAIL: __glibc_rs_startup_phase0 not resolved (check LD_PRELOAD)\n");
+    if (!__frankenlibc_startup_phase0) {
+        fprintf(stderr, "FAIL: __frankenlibc_startup_phase0 not resolved (check LD_PRELOAD)\n");
         return 1;
     }
 
-    int rc = __glibc_rs_startup_phase0(fake_main, 2, argv, hook_init, hook_fini,
+    int rc = __frankenlibc_startup_phase0(fake_main, 2, argv, hook_init, hook_fini,
                                        hook_rtld_fini, (void *)auxv);
     if (rc != 37) {
         fprintf(stderr, "FAIL: __libc_start_main rc=%d expected=37\n", rc);
@@ -87,7 +87,7 @@ static int test_startup_rejects_null_main(void) {
     unsigned long auxv[] = {0UL, 0UL};
 
     errno = 0;
-    int rc = __glibc_rs_startup_phase0(NULL, 1, argv, hook_init, hook_fini, hook_rtld_fini,
+    int rc = __frankenlibc_startup_phase0(NULL, 1, argv, hook_init, hook_fini, hook_rtld_fini,
                                        (void *)auxv);
     if (rc != -1) {
         fprintf(stderr, "FAIL: null-main rc=%d expected=-1\n", rc);

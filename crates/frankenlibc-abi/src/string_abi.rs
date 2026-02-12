@@ -7,9 +7,9 @@
 
 use std::ffi::{c_char, c_int, c_void};
 
-use glibc_rs_membrane::check_oracle::CheckStage;
-use glibc_rs_membrane::heal::{HealingAction, global_healing_policy};
-use glibc_rs_membrane::runtime_math::{ApiFamily, MembraneAction};
+use frankenlibc_membrane::check_oracle::CheckStage;
+use frankenlibc_membrane::heal::{HealingAction, global_healing_policy};
+use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
 use crate::malloc_abi::known_remaining;
 use crate::runtime_policy;
@@ -466,7 +466,7 @@ pub unsafe extern "C" fn memcmp(s1: *const c_void, s2: *const c_void, n: usize) 
     let out = unsafe {
         let a = std::slice::from_raw_parts(s1.cast::<u8>(), cmp_len);
         let b = std::slice::from_raw_parts(s2.cast::<u8>(), cmp_len);
-        match glibc_rs_core::string::mem::memcmp(a, b, cmp_len) {
+        match frankenlibc_core::string::mem::memcmp(a, b, cmp_len) {
             std::cmp::Ordering::Equal => 0,
             std::cmp::Ordering::Less => -1,
             std::cmp::Ordering::Greater => 1,
@@ -562,7 +562,7 @@ pub unsafe extern "C" fn memchr(s: *const c_void, c: c_int, n: usize) -> *mut c_
     // SAFETY: `scan_len` is either original `n` or clamped by known bounds.
     unsafe {
         let bytes = std::slice::from_raw_parts(s.cast::<u8>(), scan_len);
-        if let Some(idx) = glibc_rs_core::string::mem::memchr(bytes, c as u8, scan_len) {
+        if let Some(idx) = frankenlibc_core::string::mem::memchr(bytes, c as u8, scan_len) {
             record_string_stage_outcome(
                 &ordering,
                 aligned,
@@ -668,7 +668,7 @@ pub unsafe extern "C" fn memrchr(s: *const c_void, c: c_int, n: usize) -> *mut c
     // SAFETY: `scan_len` is either original `n` or clamped by known bounds.
     unsafe {
         let bytes = std::slice::from_raw_parts(s.cast::<u8>(), scan_len);
-        if let Some(idx) = glibc_rs_core::string::mem::memrchr(bytes, c as u8, scan_len) {
+        if let Some(idx) = frankenlibc_core::string::mem::memrchr(bytes, c as u8, scan_len) {
             record_string_stage_outcome(
                 &ordering,
                 aligned,
@@ -1806,7 +1806,7 @@ pub unsafe extern "C" fn strtok(s: *mut c_char, delim: *const c_char) -> *mut c_
 
             // Core `strtok` returns (start_idx, token_len). It modifies s_slice in place.
 
-            match glibc_rs_core::string::strtok::strtok(s_slice, delim_slice) {
+            match frankenlibc_core::string::strtok::strtok(s_slice, delim_slice) {
                 Some((start, len)) => {
                     let token_start = current.add(start);
                     let token_end_idx = start + len;
@@ -1963,7 +1963,7 @@ pub unsafe extern "C" fn strtok_r(
 
         // Core `strtok_r` returns (start, len, next_offset) relative to the slice start (0)
 
-        match glibc_rs_core::string::strtok::strtok_r(s_slice, delim_slice, 0) {
+        match frankenlibc_core::string::strtok::strtok_r(s_slice, delim_slice, 0) {
             Some((start, _len, next_offset)) => {
                 let token = current.add(start);
                 *saveptr = current.add(next_offset);

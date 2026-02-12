@@ -8,7 +8,7 @@
 #
 # Each scenario runs in both strict and hardened modes.
 # Emits JSONL structured logs per the bd-144 contract.
-# Supports deterministic replay via GLIBC_RUST_E2E_SEED and pinned env.
+# Supports deterministic replay via FRANKENLIBC_E2E_SEED and pinned env.
 #
 # Usage:
 #   bash scripts/e2e_suite.sh                   # run all scenarios
@@ -26,7 +26,7 @@ SUITE_VERSION="1"
 SCENARIO_CLASS="${1:-all}"
 MODE_FILTER="${2:-all}"
 TIMEOUT_SECONDS="${TIMEOUT_SECONDS:-10}"
-E2E_SEED="${GLIBC_RUST_E2E_SEED:-42}"
+E2E_SEED="${FRANKENLIBC_E2E_SEED:-42}"
 RUN_ID="e2e-v${SUITE_VERSION}-$(date -u +%Y%m%dT%H%M%SZ)-s${E2E_SEED}"
 OUT_DIR="${ROOT}/target/e2e_suite/${RUN_ID}"
 LOG_FILE="${OUT_DIR}/trace.jsonl"
@@ -36,8 +36,8 @@ INDEX_FILE="${OUT_DIR}/artifact_index.json"
 # Library resolution
 # ---------------------------------------------------------------------------
 LIB_CANDIDATES=(
-    "${ROOT}/target/release/libglibc_rs_abi.so"
-    "/data/tmp/cargo-target/release/libglibc_rs_abi.so"
+    "${ROOT}/target/release/libfrankenlibc_abi.so"
+    "/data/tmp/cargo-target/release/libfrankenlibc_abi.so"
 )
 
 LIB_PATH=""
@@ -49,8 +49,8 @@ for candidate in "${LIB_CANDIDATES[@]}"; do
 done
 
 if [[ -z "${LIB_PATH}" ]]; then
-    echo "e2e_suite: building glibc-rs-abi release artifact..."
-    cargo build -p glibc-rs-abi --release 2>/dev/null
+    echo "e2e_suite: building frankenlibc-abi release artifact..."
+    cargo build -p frankenlibc-abi --release 2>/dev/null
     for candidate in "${LIB_CANDIDATES[@]}"; do
         if [[ -f "${candidate}" ]]; then
             LIB_PATH="${candidate}"
@@ -60,7 +60,7 @@ if [[ -z "${LIB_PATH}" ]]; then
 fi
 
 if [[ -z "${LIB_PATH}" ]]; then
-    echo "e2e_suite: could not locate libglibc_rs_abi.so" >&2
+    echo "e2e_suite: could not locate libfrankenlibc_abi.so" >&2
     exit 2
 fi
 
@@ -132,8 +132,8 @@ run_e2e_case() {
 
     set +e
     timeout "${TIMEOUT_SECONDS}" \
-        env GLIBC_RUST_MODE="${mode}" \
-            GLIBC_RUST_E2E_SEED="${E2E_SEED}" \
+        env FRANKENLIBC_MODE="${mode}" \
+            FRANKENLIBC_E2E_SEED="${E2E_SEED}" \
             LD_PRELOAD="${LIB_PATH}" \
             "$@" \
         > "${case_dir}/stdout.txt" 2> "${case_dir}/stderr.txt"
@@ -191,7 +191,7 @@ run_smoke() {
 
     run_e2e_case "${mode}" "smoke" "coreutils_ls" /bin/ls -la /tmp || failed=1
     run_e2e_case "${mode}" "smoke" "coreutils_cat" /bin/cat /etc/hosts || failed=1
-    run_e2e_case "${mode}" "smoke" "coreutils_echo" /bin/echo "glibc_rust_e2e_smoke" || failed=1
+    run_e2e_case "${mode}" "smoke" "coreutils_echo" /bin/echo "frankenlibc_e2e_smoke" || failed=1
     run_e2e_case "${mode}" "smoke" "coreutils_env" /usr/bin/env || failed=1
     run_e2e_case "${mode}" "smoke" "integration_link" "${integ_bin}" || failed=1
 
@@ -208,7 +208,7 @@ run_smoke() {
 run_stress() {
     local mode="$1"
     local failed=0
-    local iterations="${GLIBC_RUST_E2E_STRESS_ITERS:-5}"
+    local iterations="${FRANKENLIBC_E2E_STRESS_ITERS:-5}"
 
     local integ_bin="${OUT_DIR}/bin/link_test"
     mkdir -p "$(dirname "${integ_bin}")"

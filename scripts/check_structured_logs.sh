@@ -67,7 +67,7 @@ echo ""
 # ---------------------------------------------------------------------------
 echo "--- Check 2: structured_log module tests ---"
 
-if cargo test -p glibc-rs-harness --lib -- structured_log 2>&1 | tail -5 | grep -q "test result: ok"; then
+if cargo test -p frankenlibc-harness --lib -- structured_log 2>&1 | tail -5 | grep -q "test result: ok"; then
     echo "PASS: structured_log unit tests pass"
 else
     echo "FAIL: structured_log unit tests failed"

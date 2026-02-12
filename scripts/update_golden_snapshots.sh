@@ -18,7 +18,7 @@ echo "=== update_golden_snapshots ==="
 echo "golden_dir=${GOLDEN_DIR}"
 
 # Parameters define the canonical golden scenario.
-cargo run -q -p glibc-rs-harness --bin harness -- snapshot-kernel \
+cargo run -q -p frankenlibc-harness --bin harness -- snapshot-kernel \
   --output "${SNAPSHOT_FILE}" \
   --mode both \
   --seed 0xDEAD_BEEF \

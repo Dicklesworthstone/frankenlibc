@@ -1,8 +1,8 @@
 {
   "benchmark_commands": [
     "scripts/perf_gate.sh",
-    "cargo bench -p glibc-rs-bench --bench runtime_math_bench",
-    "cargo bench -p glibc-rs-bench --bench membrane_bench"
+    "cargo bench -p frankenlibc-bench --bench runtime_math_bench",
+    "cargo bench -p frankenlibc-bench --bench membrane_bench"
   ],
   "default_feature_set": [
     "runtime-math-production"
@@ -92,5 +92,5 @@
   },
   "research_only_modules": [],
   "schema_version": "v1",
-  "source_mod_rs": "crates/glibc-rs-membrane/src/runtime_math/mod.rs"
+  "source_mod_rs": "crates/frankenlibc-membrane/src/runtime_math/mod.rs"
 }

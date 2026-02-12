@@ -1,15 +1,15 @@
 //! ABI layer for `<dirent.h>` functions (`opendir`, `readdir`, `closedir`).
 //!
 //! Manages stateful `DIR` streams backed by `SYS_getdents64` via `libc`.
-//! Parsing of raw kernel dirent buffers delegates to `glibc_rs_core::dirent`.
+//! Parsing of raw kernel dirent buffers delegates to `frankenlibc_core::dirent`.
 
 use std::collections::HashMap;
 use std::ffi::{c_char, c_int, c_void};
 use std::sync::Mutex;
 
-use glibc_rs_core::dirent as dirent_core;
-use glibc_rs_core::errno;
-use glibc_rs_membrane::runtime_math::{ApiFamily, MembraneAction};
+use frankenlibc_core::dirent as dirent_core;
+use frankenlibc_core::errno;
+use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
 use crate::runtime_policy;
 

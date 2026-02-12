@@ -4,7 +4,7 @@
 #![allow(clippy::missing_safety_doc)]
 //! # glibc-rs-abi
 //!
-//! ABI-compatible extern "C" boundary layer for glibc_rust.
+//! ABI-compatible extern "C" boundary layer for frankenlibc.
 //!
 //! This crate produces a `cdylib` (`libc.so`) that exposes POSIX/C standard library
 //! functions via `extern "C"` symbols. Each function passes through the membrane

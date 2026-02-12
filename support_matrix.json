@@ -1,7 +1,7 @@
 {
   "version": 2,
   "generated_at_utc": "2026-02-11T19:17:31Z",
-  "library": "/data/tmp/cargo-target/release/libglibc_rs_abi.so",
+  "library": "/data/tmp/cargo-target/release/libfrankenlibc_abi.so",
   "total_exported": 250,
   "taxonomy": {
     "Implemented": "Native Rust code owns the entire operation. No host libc dependency. Full test coverage required.",

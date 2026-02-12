@@ -1,15 +1,15 @@
-# glibc_rust
+# FrankenLibC
 
 **Safety-focused glibc interposition layer in Rust with incremental replacement kernels.**
 
-C programs call `malloc`, `memcpy`, `strlen`, `printf` every microsecond and trust that nothing goes wrong. glibc_rust places a Transparent Safety Membrane at that ABI boundary and incrementally replaces host-libc behavior with Rust-owned implementations, raw syscall veneers, and deterministic fallback contracts.
+C programs call `malloc`, `memcpy`, `strlen`, `printf` every microsecond and trust that nothing goes wrong. FrankenLibC places a Transparent Safety Membrane at that ABI boundary and incrementally replaces host-libc behavior with Rust-owned implementations, raw syscall veneers, and deterministic fallback contracts.
 
 ```bash
 # Interpose libc for a single process
-LD_PRELOAD=/usr/lib/glibc-rust/libglibc_rs_abi.so ./my_program
+LD_PRELOAD=/usr/lib/frankenlibc/libfrankenlibc_abi.so ./my_program
 
 # Or go hardened: catch and repair unsafe operations instead of crashing
-GLIBC_RUST_MODE=hardened LD_PRELOAD=/usr/lib/glibc-rust/libglibc_rs_abi.so ./my_program
+FRANKENLIBC_MODE=hardened LD_PRELOAD=/usr/lib/frankenlibc/libfrankenlibc_abi.so ./my_program
 ```
 
 ---
@@ -40,8 +40,8 @@ Source of truth: `tests/conformance/packaging_spec.json`.
 
 | Artifact | Build command | Output path | Host glibc required | Allowed statuses | Replacement level |
 |---|---|---|---|---|---|
-| `Interpose` | `cargo build -p glibc-rs-abi --release` | `target/release/libglibc_rs_abi.so` | Yes | `Implemented`, `RawSyscall`, `GlibcCallThrough`, `Stub` | `L0`, `L1` |
-| `Replace` (planned) | `cargo build -p glibc-rs-abi --release --features=standalone` | `target/release/libglibc_rs_replace.so` | No | `Implemented`, `RawSyscall` | `L2`, `L3` |
+| `Interpose` | `cargo build -p frankenlibc-abi --release` | `target/release/libfrankenlibc_abi.so` | Yes | `Implemented`, `RawSyscall`, `GlibcCallThrough`, `Stub` | `L0`, `L1` |
+| `Replace` (planned) | `cargo build -p frankenlibc-abi --release --features=standalone` | `target/release/libfrankenlibc_replace.so` | No | `Implemented`, `RawSyscall` | `L2`, `L3` |
 
 Support-matrix applicability rule:
 - `Implemented` + `RawSyscall` symbols apply to both artifacts.
@@ -168,7 +168,7 @@ These 29 subsystems = **1,640,126 lines (88.1%)** of the total codebase.
 
 ## The Solution
 
-glibc_rust provides a **Transparent Safety Membrane** (TSM) behind a glibc-compatible ABI and classifies each exported symbol as `Implemented`, `RawSyscall`, `GlibcCallThrough`, or `Stub`. The membrane validates every pointer, checks bounds, and tracks allocation lifetimes at the C ABI boundary.
+FrankenLibC provides a **Transparent Safety Membrane** (TSM) behind a glibc-compatible ABI and classifies each exported symbol as `Implemented`, `RawSyscall`, `GlibcCallThrough`, or `Stub`. The membrane validates every pointer, checks bounds, and tracks allocation lifetimes at the C ABI boundary.
 
 Two runtime modes let you choose your trade-off:
 
@@ -177,9 +177,9 @@ Two runtime modes let you choose your trade-off:
 | **`strict`** (default) | ABI-compatible semantics for currently supported symbols. No repairs. | <20ns/call | Compatibility mode for validated workloads |
 | **`hardened`** | Catches and repairs unsafe operations | <200ns/call | Security-critical deployments |
 
-## Why glibc_rust?
+## Why FrankenLibC?
 
-| Feature | glibc | musl | glibc_rust |
+| Feature | glibc | musl | FrankenLibC |
 |---------|-------|------|------------|
 | Full POSIX + GNU extensions | Yes | Partial | In progress (see current reality snapshot) |
 | ABI compatible (symbol versions) | -- | No | Partial (classified ABI surface with version script) |
@@ -197,26 +197,26 @@ Two runtime modes let you choose your trade-off:
 
 ```bash
 # 1. Build the Interpose artifact
-cargo build --release -p glibc-rs-abi
+cargo build --release -p frankenlibc-abi
 
-# 2. Run a candidate program with glibc_rust interposed
-LD_PRELOAD=target/release/libglibc_rs_abi.so ls -la
+# 2. Run a candidate program with FrankenLibC interposed
+LD_PRELOAD=target/release/libfrankenlibc_abi.so ls -la
 
 # 3. Enable hardened mode to catch unsafe patterns
-GLIBC_RUST_MODE=hardened LD_PRELOAD=target/release/libglibc_rs_abi.so ./legacy_c_server
+FRANKENLIBC_MODE=hardened LD_PRELOAD=target/release/libfrankenlibc_abi.so ./legacy_c_server
 
 # 4. Check what the membrane caught
-cat /tmp/glibc_rust_metrics.log
+cat /tmp/FrankenLibC_metrics.log
 # membrane.validations: 14823901
 # membrane.heals.clamp_size: 3
 # membrane.heals.ignore_double_free: 1
 # membrane.denials: 0
 
 # 5. Run conformance tests against host glibc
-cargo test -p glibc-rs-harness
+cargo test -p frankenlibc-harness
 
 # 6. Benchmark membrane overhead
-cargo bench -p glibc-rs-bench
+cargo bench -p frankenlibc-bench
 ```
 
 ---
@@ -225,7 +225,7 @@ cargo bench -p glibc-rs-bench
 
 ### 1. The ABI is the contract
 
-glibc_rust targets glibc ABI compatibility for the currently exported/classified symbol set, including version tags (`GLIBC_2.2.5`, `GLIBC_2.14`, etc.) and calling conventions. If the ABI contract breaks, nothing else matters.
+FrankenLibC targets glibc ABI compatibility for the currently exported/classified symbol set, including version tags (`GLIBC_2.2.5`, `GLIBC_2.14`, etc.) and calling conventions. If the ABI contract breaks, nothing else matters.
 
 ### 2. Safety is structural, not aspirational
 
@@ -250,22 +250,22 @@ Every safety decision the membrane makes is auditable. Validation counts, repair
 ### From source (recommended)
 
 ```bash
-git clone https://github.com/anthropics/glibc_rust.git
-cd glibc_rust
-cargo build --release -p glibc-rs-abi
-# Output: target/release/libglibc_rs_abi.so
+git clone https://github.com/anthropics/FrankenLibC.git
+cd FrankenLibC
+cargo build --release -p frankenlibc-abi
+# Output: target/release/libfrankenlibc_abi.so
 ```
 
 ### System-wide install
 
 ```bash
-sudo install -m 755 target/release/libglibc_rs_abi.so /usr/lib/glibc-rust/libglibc_rs_abi.so
+sudo install -m 755 target/release/libfrankenlibc_abi.so /usr/lib/frankenlibc/libfrankenlibc_abi.so
 ```
 
 ### Per-process use
 
 ```bash
-LD_PRELOAD=/usr/lib/glibc-rust/libglibc_rs_abi.so ./your_program
+LD_PRELOAD=/usr/lib/frankenlibc/libfrankenlibc_abi.so ./your_program
 ```
 
 ### Requirements
@@ -282,7 +282,7 @@ LD_PRELOAD=/usr/lib/glibc-rust/libglibc_rs_abi.so ./your_program
 **1. Build:**
 
 ```bash
-cargo build --release -p glibc-rs-abi
+cargo build --release -p frankenlibc-abi
 ```
 
 **2. Verify conformance:**
@@ -300,25 +300,25 @@ scripts/ci.sh
 For the heavier policy/perf/snapshot suite, opt in explicitly:
 
 ```bash
-GLIBC_RUST_EXTENDED_GATES=1 scripts/ci.sh
+FRANKENLIBC_EXTENDED_GATES=1 scripts/ci.sh
 ```
 
 **3. Run a program in strict mode (default):**
 
 ```bash
-LD_PRELOAD=target/release/libglibc_rs_abi.so ./my_app
+LD_PRELOAD=target/release/libfrankenlibc_abi.so ./my_app
 ```
 
 **4. Run a program in hardened mode:**
 
 ```bash
-GLIBC_RUST_MODE=hardened LD_PRELOAD=target/release/libglibc_rs_abi.so ./my_app
+FRANKENLIBC_MODE=hardened LD_PRELOAD=target/release/libfrankenlibc_abi.so ./my_app
 ```
 
 **5. Benchmark overhead:**
 
 ```bash
-cargo bench -p glibc-rs-bench
+cargo bench -p frankenlibc-bench
 ```
 
 Reproducible hotspot pipeline (CPU + alloc + syscall) for critical benchmarks:
@@ -366,12 +366,12 @@ scripts/profile_pipeline.sh
 
 | Crate | Role | Unsafe Policy |
 |-------|------|---------------|
-| `glibc-rs-membrane` | TSM validation pipeline, lattice, arena, bloom filter, fingerprints | `#![deny(unsafe_code)]` with scoped exceptions |
-| `glibc-rs-core` | Safe Rust implementations of all libc functions | `#![deny(unsafe_code)]` |
-| `glibc-rs-abi` | `extern "C"` cdylib producing `libglibc_rs_abi.so` | `#![allow(unsafe_code)]` (ABI boundary) |
-| `glibc-rs-harness` | Conformance testing framework | `#![forbid(unsafe_code)]` |
-| `glibc-rs-bench` | Criterion benchmarks | `#![allow(unsafe_code)]` |
-| `glibc-rs-fuzz` | cargo-fuzz targets | `#![allow(unsafe_code)]` |
+| `frankenlibc-membrane` | TSM validation pipeline, lattice, arena, bloom filter, fingerprints | `#![deny(unsafe_code)]` with scoped exceptions |
+| `frankenlibc-core` | Safe Rust implementations of all libc functions | `#![deny(unsafe_code)]` |
+| `frankenlibc-abi` | `extern "C"` cdylib producing `libfrankenlibc_abi.so` | `#![allow(unsafe_code)]` (ABI boundary) |
+| `frankenlibc-harness` | Conformance testing framework | `#![forbid(unsafe_code)]` |
+| `frankenlibc-bench` | Criterion benchmarks | `#![allow(unsafe_code)]` |
+| `frankenlibc-fuzz` | cargo-fuzz targets | `#![allow(unsafe_code)]` |
 
 ### Membrane Internals
 
@@ -453,7 +453,7 @@ This project must leverage:
 - `/dp/asupersync` for deterministic conformance orchestration and traceability/reporting primitives.
 - `/dp/frankentui` for deterministic diff/snapshot-oriented harness output and TUI-driven analysis tooling.
 
-These are build/test tooling dependencies only, not production runtime dependencies of `libglibc_rs_abi.so`.
+These are build/test tooling dependencies only, not production runtime dependencies of `libfrankenlibc_abi.so`.
 
 ---
 
@@ -463,7 +463,7 @@ These are build/test tooling dependencies only, not production runtime dependenc
 
 ```bash
 # No env var needed -- strict is the default
-LD_PRELOAD=target/release/libglibc_rs_abi.so ./my_app
+LD_PRELOAD=target/release/libfrankenlibc_abi.so ./my_app
 ```
 
 - ABI-compatible for the currently supported/classified symbol set
@@ -474,7 +474,7 @@ LD_PRELOAD=target/release/libglibc_rs_abi.so ./my_app
 ### `hardened`
 
 ```bash
-GLIBC_RUST_MODE=hardened LD_PRELOAD=target/release/libglibc_rs_abi.so ./my_app
+FRANKENLIBC_MODE=hardened LD_PRELOAD=target/release/libfrankenlibc_abi.so ./my_app
 ```
 
 - Catches and repairs unsafe operations instead of allowing corruption
@@ -511,16 +511,16 @@ For per-symbol strict/hardened semantics and status, inspect `support_matrix.jso
 
 ## Conformance Testing
 
-glibc_rust correctness is validated through fixture-driven conformance and drift gates.
+FrankenLibC correctness is validated through fixture-driven conformance and drift gates.
 
 ```bash
 # Run the full conformance suite
-cargo test -p glibc-rs-harness
+cargo test -p frankenlibc-harness
 
 # Verify fixture packs (strict + hardened) and emit a report
-cargo run -p glibc-rs-harness --bin harness -- verify \
+cargo run -p frankenlibc-harness --bin harness -- verify \
   --fixture tests/conformance/fixtures \
-  --report /tmp/glibc_rust_conformance.md
+  --report /tmp/FrankenLibC_conformance.md
 
 # Regenerate deterministic strict+hardened conformance goldens + checksums
 scripts/update_conformance_golden.sh
@@ -535,13 +535,13 @@ scripts/snapshot_gate.sh
 TIMEOUT_SECONDS=10 scripts/ld_preload_smoke.sh
 
 # Run healing oracle tests (hardened mode)
-cargo run -p glibc-rs-harness --bin harness -- verify-membrane --mode hardened
+cargo run -p frankenlibc-harness --bin harness -- verify-membrane --mode hardened
 ```
 
 ### How it works
 
 1. **Fixture capture**: Run test vectors against host glibc, serialize inputs + outputs as JSON
-2. **Fixture verify**: Run same vectors against glibc_rust, compare outputs bit-for-bit
+2. **Fixture verify**: Run same vectors against FrankenLibC, compare outputs bit-for-bit
 3. **Traceability**: Every test maps to a POSIX/C11 spec section
 4. **Healing oracle**: Intentionally trigger unsafe conditions, verify repair behavior
 5. **Benchmark gate**: No regressions allowed; membrane overhead must stay within budget
@@ -551,12 +551,12 @@ cargo run -p glibc-rs-harness --bin harness -- verify-membrane --mode hardened
 ## Benchmarks
 
 ```bash
-cargo bench -p glibc-rs-bench
+cargo bench -p frankenlibc-bench
 ```
 
 Measured overhead of the membrane validation pipeline on hot-path operations:
 
-| Operation | glibc | glibc_rust strict | glibc_rust hardened |
+| Operation | glibc | FrankenLibC strict | FrankenLibC hardened |
 |-----------|-------|-------------------|---------------------|
 | `malloc(64)` | 18ns | 29ns (+11ns) | 85ns (+67ns) |
 | `free` | 14ns | 22ns (+8ns) | 71ns (+57ns) |
@@ -575,25 +575,25 @@ Strict mode overhead is dominated by the TLS cache lookup. Hardened mode adds fi
 The program's existing libc initialization ran before `LD_PRELOAD` took effect. Use `LD_LIBRARY_PATH` with a symlink named `libc.so.6` instead:
 
 ```bash
-mkdir -p /tmp/glibc-rust-lib
-ln -sf $(realpath target/release/libglibc_rs_abi.so) /tmp/glibc-rust-lib/libc.so.6
-LD_LIBRARY_PATH=/tmp/glibc-rust-lib ./my_app
+mkdir -p /tmp/frankenlibc-lib
+ln -sf $(realpath target/release/libfrankenlibc_abi.so) /tmp/frankenlibc-lib/libc.so.6
+LD_LIBRARY_PATH=/tmp/frankenlibc-lib ./my_app
 ```
 
 ### Thread-local storage errors
 
-Some programs with complex TLS layouts may conflict with the membrane's TLS cache. Set `GLIBC_RUST_TLS_CACHE=0` to disable the cache (increases overhead but resolves conflicts).
+Some programs with complex TLS layouts may conflict with the membrane's TLS cache. Set `FRANKENLIBC_TLS_CACHE=0` to disable the cache (increases overhead but resolves conflicts).
 
 ### `dlopen` returns `NULL` for shared libraries
 
-Ensure the version script (`libc.map`) covers all symbols the loaded library expects. Run with `GLIBC_RUST_LOG=debug` to see which symbol lookup failed.
+Ensure the version script (`libc.map`) covers all symbols the loaded library expects. Run with `FRANKENLIBC_LOG=debug` to see which symbol lookup failed.
 
 ### Hardened mode repairs too aggressively
 
 Specific repair policies can be disabled per API family:
 
 ```bash
-GLIBC_RUST_DISABLE_HEAL=clamp_size,ignore_double_free ./my_app
+FRANKENLIBC_DISABLE_HEAL=clamp_size,ignore_double_free ./my_app
 ```
 
 ### Benchmark regressions after update
@@ -601,7 +601,7 @@ GLIBC_RUST_DISABLE_HEAL=clamp_size,ignore_double_free ./my_app
 Run the full benchmark suite and compare against the committed baseline:
 
 ```bash
-cargo bench -p glibc-rs-bench -- --baseline committed
+cargo bench -p frankenlibc-bench -- --baseline committed
 ```
 
 ---
@@ -615,13 +615,13 @@ A: For controlled workloads that stay within the currently supported symbol set,
 A: It protects against memory safety bugs that flow through libc calls -- which is a large and important class. It does not protect against bugs in application code that never calls libc (e.g., stack buffer overflows within a function).
 
 **Q: How does this compare to AddressSanitizer?**
-A: ASan instruments your compiled code and catches bugs at dev time. glibc_rust operates at the libc boundary and runs in production. They're complementary: ASan for development, glibc_rust for deployed binaries.
+A: ASan instruments your compiled code and catches bugs at dev time. FrankenLibC operates at the libc boundary and runs in production. They're complementary: ASan for development, FrankenLibC for deployed binaries.
 
 **Q: What happens if strict mode encounters an invalid pointer?**
 A: The same thing that happens in glibc -- undefined behavior for the caller. Strict mode does not add safety; it provides ABI compatibility. Use hardened mode if you want safety.
 
 **Q: Can I run this on musl-based systems?**
-A: glibc_rust replaces glibc specifically. On musl systems, you'd use `LD_PRELOAD` but may encounter symbol version mismatches since musl doesn't use glibc's versioning scheme.
+A: FrankenLibC replaces glibc specifically. On musl systems, you'd use `LD_PRELOAD` but may encounter symbol version mismatches since musl doesn't use glibc's versioning scheme.
 
 **Q: What's the memory overhead?**
 A: The membrane adds 24 bytes per allocation (16-byte fingerprint + 8-byte canary) plus ~128KB for the bloom filter and TLS caches. For most programs, this is negligible.

@@ -15,7 +15,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MATRIX="${ROOT}/support_matrix.json"
-ABI_SRC="${ROOT}/crates/glibc-rs-abi/src"
+ABI_SRC="${ROOT}/crates/frankenlibc-abi/src"
 
 failures=0
 

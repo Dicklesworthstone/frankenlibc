@@ -1,8 +1,8 @@
 {
     "$schema": "https://json-schema.org/draft-07/schema#",
-    "$id": "https://github.com/nickel-org/glibc_rust/tests/cve_arena/manifest_schema.json",
+    "$id": "https://github.com/nickel-org/frankenlibc/tests/cve_arena/manifest_schema.json",
     "title": "CVE Arena Test Manifest",
-    "description": "Schema for manifest.json files in CVE Arena test directories. Each CVE reproduction test must include a manifest that describes how to build, run, and evaluate the test against both stock glibc and glibc_rust.",
+    "description": "Schema for manifest.json files in CVE Arena test directories. Each CVE reproduction test must include a manifest that describes how to build, run, and evaluate the test against both stock glibc and frankenlibc.",
     "type": "object",
     "required": [
         "cve_id",
@@ -54,7 +54,7 @@
         },
         "run_cmd_stock": {
             "type": "string",
-            "description": "Shell command to run the trigger with stock glibc. Executed in the test directory. Should not include LD_PRELOAD or GLIBC_RUST_MODE settings.",
+            "description": "Shell command to run the trigger with stock glibc. Executed in the test directory. Should not include LD_PRELOAD or FRANKENLIBC_MODE settings.",
             "minLength": 1,
             "examples": [
                 "./trigger",
@@ -64,7 +64,7 @@
         },
         "run_cmd_tsm": {
             "type": "string",
-            "description": "Shell command to run the trigger with glibc_rust. The runner sets LD_PRELOAD and GLIBC_RUST_MODE=hardened automatically, so this command should be the same as run_cmd_stock unless additional TSM-specific arguments are needed.",
+            "description": "Shell command to run the trigger with frankenlibc. The runner sets LD_PRELOAD and FRANKENLIBC_MODE=hardened automatically, so this command should be the same as run_cmd_stock unless additional TSM-specific arguments are needed.",
             "minLength": 1,
             "examples": [
                 "./trigger",
@@ -99,16 +99,16 @@
         },
         "expected_tsm_behavior": {
             "type": "object",
-            "description": "Expected behavior when running with glibc_rust in hardened mode.",
+            "description": "Expected behavior when running with frankenlibc in hardened mode.",
             "required": ["crashes", "exit_code"],
             "properties": {
                 "crashes": {
                     "type": "boolean",
-                    "description": "Whether the trigger is expected to crash under glibc_rust. Should be false for properly handled CVEs."
+                    "description": "Whether the trigger is expected to crash under frankenlibc. Should be false for properly handled CVEs."
                 },
                 "exit_code": {
                     "type": "integer",
-                    "description": "Expected exit code under glibc_rust. 0 means the vulnerability was silently prevented.",
+                    "description": "Expected exit code under frankenlibc. 0 means the vulnerability was silently prevented.",
                     "minimum": 0,
                     "maximum": 255
                 },

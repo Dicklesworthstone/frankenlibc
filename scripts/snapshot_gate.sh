@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Golden snapshot regression gate for runtime_math telemetry.
 #
-# Generates deterministic kernel snapshots via glibc-rs-harness and verifies
+# Generates deterministic kernel snapshots via frankenlibc-harness and verifies
 # sha256 against the committed golden set under tests/runtime_math/golden/.
 set -euo pipefail
 
@@ -30,7 +30,7 @@ echo "golden_dir=${GOLDEN_DIR}"
 echo "out_dir=${OUT_DIR}"
 
 # Keep parameters in sync with tests/runtime_math/golden/kernel_snapshot_smoke.v1.json.
-cargo run -q -p glibc-rs-harness --bin harness -- snapshot-kernel \
+cargo run -q -p frankenlibc-harness --bin harness -- snapshot-kernel \
   --output "${OUT_SNAPSHOT}" \
   --mode both \
   --seed 0xDEAD_BEEF \

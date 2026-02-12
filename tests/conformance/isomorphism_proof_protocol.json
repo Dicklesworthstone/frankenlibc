@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "bead": "bd-2bd",
-  "description": "Isomorphism proof protocol for glibc_rust optimizations. Defines a standardized checklist that must be completed before any optimization lever can be merged. Each proof artifact demonstrates that the optimized implementation is behaviorally isomorphic to the original.",
+  "description": "Isomorphism proof protocol for frankenlibc optimizations. Defines a standardized checklist that must be completed before any optimization lever can be merged. Each proof artifact demonstrates that the optimized implementation is behaviorally isomorphic to the original.",
   "proof_categories": {
     "ordering": {
       "description": "Sort stability, comparison transitivity, and element ordering guarantees. Applies to qsort, bsearch, and any function with ordering semantics.",
@@ -87,7 +87,7 @@
       "functions": ["memcpy"],
       "categories": ["memory_semantics", "side_effects"],
       "golden_commands": [
-        "cargo test -p glibc-rs-harness --test memcpy_golden -- --exact",
+        "cargo test -p frankenlibc-harness --test memcpy_golden -- --exact",
         "scripts/run_golden_vectors.sh memcpy"
       ],
       "golden_hash": "blake3:abc123...",

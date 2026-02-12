@@ -1,12 +1,12 @@
 //! ABI layer for `<sys/resource.h>` functions (`getrlimit`, `setrlimit`).
 //!
-//! Validates via `glibc_rs_core::resource` helpers, then calls `libc`.
+//! Validates via `frankenlibc_core::resource` helpers, then calls `libc`.
 
 use std::ffi::c_int;
 
-use glibc_rs_core::errno;
-use glibc_rs_core::resource as res_core;
-use glibc_rs_membrane::runtime_math::{ApiFamily, MembraneAction};
+use frankenlibc_core::errno;
+use frankenlibc_core::resource as res_core;
+use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
 use crate::runtime_policy;
 

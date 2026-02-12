@@ -10,7 +10,7 @@ use std::cell::RefCell;
 use std::ffi::{c_char, c_int};
 use std::ptr;
 
-use glibc_rs_membrane::runtime_math::{ApiFamily, MembraneAction};
+use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
 use crate::runtime_policy;
 
@@ -24,7 +24,7 @@ struct GrpStorage {
     /// Cached file content.
     file_cache: Option<Vec<u8>>,
     /// Parsed entries for iteration.
-    entries: Vec<glibc_rs_core::grp::Group>,
+    entries: Vec<frankenlibc_core::grp::Group>,
     /// Current iteration index for getgrent.
     iter_idx: usize,
 }
@@ -48,7 +48,7 @@ impl GrpStorage {
     }
 
     /// Populate the C struct from a parsed entry.
-    fn fill_from(&mut self, entry: &glibc_rs_core::grp::Group) -> *mut libc::group {
+    fn fill_from(&mut self, entry: &frankenlibc_core::grp::Group) -> *mut libc::group {
         // Build buffer: name\0passwd\0member0\0member1\0...
         self.buf.clear();
         let name_off = 0;
@@ -98,7 +98,7 @@ fn do_getgrnam(name: &[u8]) -> *mut libc::group {
         let mut storage = cell.borrow_mut();
         storage.ensure_loaded();
         let content = storage.file_cache.clone().unwrap_or_default();
-        match glibc_rs_core::grp::lookup_by_name(&content, name) {
+        match frankenlibc_core::grp::lookup_by_name(&content, name) {
             Some(entry) => storage.fill_from(&entry),
             None => ptr::null_mut(),
         }
@@ -110,7 +110,7 @@ fn do_getgrgid(gid: u32) -> *mut libc::group {
         let mut storage = cell.borrow_mut();
         storage.ensure_loaded();
         let content = storage.file_cache.clone().unwrap_or_default();
-        match glibc_rs_core::grp::lookup_by_gid(&content, gid) {
+        match frankenlibc_core::grp::lookup_by_gid(&content, gid) {
             Some(entry) => storage.fill_from(&entry),
             None => ptr::null_mut(),
         }
@@ -159,7 +159,7 @@ pub unsafe extern "C" fn setgrent() {
         let mut storage = cell.borrow_mut();
         storage.ensure_loaded();
         let content = storage.file_cache.clone().unwrap_or_default();
-        storage.entries = glibc_rs_core::grp::parse_all(&content);
+        storage.entries = frankenlibc_core::grp::parse_all(&content);
         storage.iter_idx = 0;
     });
 }
@@ -183,7 +183,7 @@ pub unsafe extern "C" fn getgrent() -> *mut libc::group {
         if storage.entries.is_empty() && storage.iter_idx == 0 {
             storage.ensure_loaded();
             let content = storage.file_cache.clone().unwrap_or_default();
-            storage.entries = glibc_rs_core::grp::parse_all(&content);
+            storage.entries = frankenlibc_core::grp::parse_all(&content);
         }
 
         if storage.iter_idx >= storage.entries.len() {
@@ -222,7 +222,7 @@ pub unsafe extern "C" fn getgrnam_r(
     // SAFETY: name is non-null.
     let name_cstr = unsafe { std::ffi::CStr::from_ptr(name) };
     let content = std::fs::read("/etc/group").unwrap_or_default();
-    let entry = match glibc_rs_core::grp::lookup_by_name(&content, name_cstr.to_bytes()) {
+    let entry = match frankenlibc_core::grp::lookup_by_name(&content, name_cstr.to_bytes()) {
         Some(e) => e,
         None => {
             runtime_policy::observe(ApiFamily::Resolver, decision.profile, 15, false);
@@ -258,7 +258,7 @@ pub unsafe extern "C" fn getgrgid_r(
     }
 
     let content = std::fs::read("/etc/group").unwrap_or_default();
-    let entry = match glibc_rs_core::grp::lookup_by_gid(&content, gid) {
+    let entry = match frankenlibc_core::grp::lookup_by_gid(&content, gid) {
         Some(e) => e,
         None => {
             runtime_policy::observe(ApiFamily::Resolver, decision.profile, 15, false);
@@ -280,7 +280,7 @@ pub unsafe extern "C" fn getgrgid_r(
 /// `grp`, `buf`, `result` must be valid writable pointers. `buflen` must
 /// reflect the actual size of the `buf` allocation.
 unsafe fn fill_group_r(
-    entry: &glibc_rs_core::grp::Group,
+    entry: &frankenlibc_core::grp::Group,
     grp: *mut libc::group,
     buf: *mut c_char,
     buflen: libc::size_t,

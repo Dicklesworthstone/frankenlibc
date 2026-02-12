@@ -4,7 +4,7 @@
   "description": "Change-point drift policy: codifies the BOCPD integration for regime-shift-aware control routing. Defines freeze/escalate policies under detected regime shifts, thresholds for drift and change-point detection, and integration with the anytime-valid monitor ensemble.",
   "bocpd_parameters": {
     "description": "Bayesian Online Change-Point Detection (Adams & MacKay 2007) parameters. Maintains posterior over run-length r_t with Beta-Bernoulli conjugate model and geometric hazard prior.",
-    "implementation": "crates/glibc-rs-membrane/src/runtime_math/changepoint.rs",
+    "implementation": "crates/frankenlibc-membrane/src/runtime_math/changepoint.rs",
     "parameters": {
       "warmup_count": {
         "value": 32,
@@ -177,7 +177,7 @@
         "ewma_tracks_adverse_rate",
         "default_impl_matches_new"
       ],
-      "location": "crates/glibc-rs-membrane/src/runtime_math/changepoint.rs (module tests)"
+      "location": "crates/frankenlibc-membrane/src/runtime_math/changepoint.rs (module tests)"
     }
   },
   "summary": {

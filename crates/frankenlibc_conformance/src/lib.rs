@@ -1,4 +1,4 @@
-//! Conformance and parity tooling for glibc_rust.
+//! Conformance and parity tooling for frankenlibc.
 
 use std::ffi::{CString, c_char, c_int, c_void};
 
@@ -56,13 +56,13 @@ pub fn build_traceability_artifact() -> TraceabilityArtifact {
             .test(
                 "TSM-1",
                 "decide_copy_repairs_when_exceeding_known_bounds",
-                "crates/glibc_rust/src/safety/membrane.rs",
+                "crates/frankenlibc/src/safety/membrane.rs",
                 1,
             )
             .test(
                 "TSM-2",
                 "decide_copy_denies_when_pointer_non_live",
-                "crates/glibc_rust/src/safety/membrane.rs",
+                "crates/frankenlibc/src/safety/membrane.rs",
                 1,
             )
             .build();
@@ -138,7 +138,7 @@ pub struct VerificationCaseResult {
     pub name: String,
     /// Expected destination bytes.
     pub expected_dst: Vec<u8>,
-    /// Actual destination bytes from glibc_rust.
+    /// Actual destination bytes from frankenlibc.
     pub actual_dst: Vec<u8>,
     /// Whether this case passed.
     pub passed: bool,
@@ -250,7 +250,7 @@ fn execute_qsort_case(
     // Call core implementation
     let mut impl_base = base_orig.clone();
     // Core qsort expects Fn
-    glibc_rs_core::stdlib::sort::qsort(&mut impl_base, 1, |a, b| (a[0] as i32) - (b[0] as i32));
+    frankenlibc_core::stdlib::sort::qsort(&mut impl_base, 1, |a, b| (a[0] as i32) - (b[0] as i32));
     let impl_output = format!("{:?}", impl_base);
 
     if strict {
@@ -309,7 +309,7 @@ fn execute_bsearch_case(
     let strict = mode_is_strict(mode);
 
     // Core implementation
-    let result = glibc_rs_core::stdlib::sort::bsearch(&key_vec, &base, 1, |k, e| {
+    let result = frankenlibc_core::stdlib::sort::bsearch(&key_vec, &base, 1, |k, e| {
         (k[0] as i32) - (e[0] as i32)
     });
     let impl_output = if result.is_some() { "FOUND" } else { "NULL" };
@@ -359,7 +359,7 @@ pub fn capture_memcpy_fixture_set() -> MemcpyFixtureSet {
     }
 }
 
-/// Verify fixture set against current glibc_rust preview memcpy entrypoint.
+/// Verify fixture set against current frankenlibc preview memcpy entrypoint.
 #[must_use]
 pub fn verify_memcpy_fixture_set(fixture: &MemcpyFixtureSet) -> VerificationReport {
     let cases: Vec<VerificationCaseResult> = fixture
@@ -369,7 +369,7 @@ pub fn verify_memcpy_fixture_set(fixture: &MemcpyFixtureSet) -> VerificationRepo
             let mut dst = vec![0_u8; case.dst_len];
             // SAFETY: Case vectors are intentionally valid and bounded.
             unsafe {
-                glibc_rust::glibc_rust_memcpy_preview(
+                frankenlibc::glibc_rust_memcpy_preview(
                     dst.as_mut_ptr().cast::<c_void>(),
                     case.src.as_ptr().cast::<c_void>(),
                     case.requested_len,
@@ -400,7 +400,7 @@ pub fn verify_memcpy_fixture_set(fixture: &MemcpyFixtureSet) -> VerificationRepo
 #[must_use]
 pub fn render_verification_markdown(report: &VerificationReport) -> String {
     let mut output = String::new();
-    output.push_str("# glibc_rust memcpy verification\n\n");
+    output.push_str("# frankenlibc memcpy verification\n\n");
     output.push_str(&format!("- passed: {}\n", report.passed));
     output.push_str(&format!("- failed: {}\n\n", report.failed));
     output.push_str("| case | status |\n");
@@ -587,7 +587,7 @@ fn execute_memcpy_case(
 
     let defined = requested_len <= src.len() && requested_len <= dst_len;
     let mut impl_dst = vec![0_u8; dst_len];
-    let _copied = glibc_rs_core::string::mem::memcpy(&mut impl_dst, &src, requested_len);
+    let _copied = frankenlibc_core::string::mem::memcpy(&mut impl_dst, &src, requested_len);
     let impl_output = format!("{impl_dst:?}");
 
     if strict && !defined {
@@ -660,7 +660,7 @@ fn execute_memmove_case(
 
     let defined = requested_len <= src.len() && requested_len <= dst_len;
     let mut impl_dst = vec![0_u8; dst_len];
-    glibc_rs_core::string::mem::memmove(&mut impl_dst, &src, requested_len);
+    frankenlibc_core::string::mem::memmove(&mut impl_dst, &src, requested_len);
     let impl_output = format!("{impl_dst:?}");
 
     if strict && !defined {
@@ -719,7 +719,7 @@ fn execute_strlen_case(
     }
 
     let has_nul = bytes.contains(&0);
-    let impl_len = glibc_rs_core::string::str::strlen(&bytes);
+    let impl_len = frankenlibc_core::string::str::strlen(&bytes);
     let impl_output = impl_len.to_string();
 
     if strict && !has_nul {
@@ -793,7 +793,7 @@ fn execute_memset_case(
 
     let defined = n <= dst_len;
     let mut impl_dst = vec![0_u8; dst_len];
-    glibc_rs_core::string::mem::memset(&mut impl_dst, c as u8, n);
+    frankenlibc_core::string::mem::memset(&mut impl_dst, c as u8, n);
     let impl_output = format!("{impl_dst:?}");
 
     if strict && !defined {
@@ -860,7 +860,7 @@ fn execute_memcmp_case(
     }
 
     let defined = n <= s1.len() && n <= s2.len();
-    let ordering = glibc_rs_core::string::mem::memcmp(&s1, &s2, n);
+    let ordering = frankenlibc_core::string::mem::memcmp(&s1, &s2, n);
     let impl_val = match ordering {
         core::cmp::Ordering::Less => -1,
         core::cmp::Ordering::Equal => 0,
@@ -937,7 +937,7 @@ fn execute_memchr_case(
     }
 
     let defined = n <= s.len();
-    let impl_val = glibc_rs_core::string::mem::memchr(&s, c as u8, n);
+    let impl_val = frankenlibc_core::string::mem::memchr(&s, c as u8, n);
     let impl_output = format!("{impl_val:?}");
 
     if strict && !defined {
@@ -1008,7 +1008,7 @@ fn execute_memrchr_case(
     }
 
     let defined = n <= s.len();
-    let impl_val = glibc_rs_core::string::mem::memrchr(&s, c as u8, n);
+    let impl_val = frankenlibc_core::string::mem::memrchr(&s, c as u8, n);
     let impl_output = format!("{impl_val:?}");
 
     if strict && !defined {
@@ -1067,7 +1067,7 @@ fn execute_strcmp_case(
     }
 
     let defined = s1.contains(&0) && s2.contains(&0);
-    let impl_val = glibc_rs_core::string::str::strcmp(&s1, &s2);
+    let impl_val = frankenlibc_core::string::str::strcmp(&s1, &s2);
 
     if strict && !defined {
         return Ok(DifferentialExecution {
@@ -1160,7 +1160,7 @@ fn execute_strcpy_case(
     // defined = dst_len > src_len. So it fits.
 
     if defined {
-        glibc_rs_core::string::str::strcpy(&mut impl_dst, &src);
+        frankenlibc_core::string::str::strcpy(&mut impl_dst, &src);
     } else if hardened && dst_len > 0 {
         let copy_len = src_len.min(dst_len.saturating_sub(1));
         impl_dst[..copy_len].copy_from_slice(&src[..copy_len]);
@@ -1223,7 +1223,7 @@ fn execute_strncpy_case(
 
     let mut impl_dst = vec![0_u8; dst_len];
     if defined {
-        glibc_rs_core::string::str::strncpy(&mut impl_dst, &src, n);
+        frankenlibc_core::string::str::strncpy(&mut impl_dst, &src, n);
     } else if hardened {
         let effective_n = n.min(dst_len);
         // strncpy uses src until null or n. src_len is index of null.
@@ -1321,7 +1321,7 @@ fn execute_strcat_case(
     }
 
     if defined {
-        glibc_rs_core::string::str::strcat(&mut impl_dst, &src);
+        frankenlibc_core::string::str::strcat(&mut impl_dst, &src);
     } else if hardened {
         // Calculate effective length in the initialized buffer
         let current_len = impl_dst
@@ -1428,7 +1428,7 @@ fn execute_strncat_case(
     }
 
     if defined {
-        glibc_rs_core::string::str::strncat(&mut impl_dst, &src, n);
+        frankenlibc_core::string::str::strncat(&mut impl_dst, &src, n);
     }
     let impl_output = format!("{impl_dst:?}");
 
@@ -1494,7 +1494,7 @@ fn execute_strchr_case(
     let defined = s.contains(&0);
 
     let impl_val = if defined {
-        glibc_rs_core::string::str::strchr(&s, c as u8)
+        frankenlibc_core::string::str::strchr(&s, c as u8)
     } else {
         None
     };
@@ -1554,7 +1554,7 @@ fn execute_strrchr_case(
     let defined = s.contains(&0);
 
     let impl_val = if defined {
-        glibc_rs_core::string::str::strrchr(&s, c as u8)
+        frankenlibc_core::string::str::strrchr(&s, c as u8)
     } else {
         None
     };
@@ -1619,7 +1619,7 @@ fn execute_strstr_case(
     let defined = hay.contains(&0) && needle.contains(&0);
 
     let impl_val = if defined {
-        glibc_rs_core::string::str::strstr(&hay, &needle)
+        frankenlibc_core::string::str::strstr(&hay, &needle)
     } else {
         None
     };
@@ -1676,7 +1676,7 @@ fn execute_wcslen_case(
     }
 
     let has_nul = s.contains(&0);
-    let impl_len = glibc_rs_core::string::wide::wcslen(&s);
+    let impl_len = frankenlibc_core::string::wide::wcslen(&s);
     let impl_output = impl_len.to_string();
 
     if strict && !has_nul {
@@ -1755,7 +1755,7 @@ fn execute_wcscpy_case(
 
     let mut impl_dst = vec![0u32; dst_len];
     if defined {
-        glibc_rs_core::string::wide::wcscpy(&mut impl_dst, &src);
+        frankenlibc_core::string::wide::wcscpy(&mut impl_dst, &src);
     } else if hardened && dst_len > 0 {
         // Deterministic repair: clamp to fit and force a trailing NUL.
         let copy_len = src_len.min(dst_len.saturating_sub(1));
@@ -1823,7 +1823,7 @@ fn execute_wcscmp_case(
         });
     }
 
-    let impl_output = glibc_rs_core::string::wide::wcscmp(&s1, &s2)
+    let impl_output = frankenlibc_core::string::wide::wcscmp(&s1, &s2)
         .signum()
         .to_string();
 
@@ -1873,7 +1873,7 @@ fn execute_wcsncmp_case(
         return Err(format!("unsupported mode: {mode}"));
     }
 
-    let impl_output = glibc_rs_core::string::wide::wcsncmp(&s1, &s2, n)
+    let impl_output = frankenlibc_core::string::wide::wcsncmp(&s1, &s2, n)
         .signum()
         .to_string();
     let host_output = run_host_wcsncmp(&s1, &s2, n)?.to_string();
@@ -1923,10 +1923,10 @@ fn execute_wcsncpy_case(
 
     let mut impl_dst = vec![0u32; dst_len];
     if defined {
-        glibc_rs_core::string::wide::wcsncpy(&mut impl_dst, &src, n);
+        frankenlibc_core::string::wide::wcsncpy(&mut impl_dst, &src, n);
     } else if hardened {
         let effective_n = n.min(dst_len);
-        let src_len = glibc_rs_core::string::wide::wcslen(&src);
+        let src_len = frankenlibc_core::string::wide::wcslen(&src);
         let copy_len = src_len.min(effective_n);
         impl_dst[..copy_len].copy_from_slice(&src[..copy_len]);
         if copy_len < effective_n {
@@ -1995,8 +1995,8 @@ fn execute_wcscat_case(
         return Err(format!("unsupported mode: {mode}"));
     }
 
-    let dst_len_input = glibc_rs_core::string::wide::wcslen(&dst_init);
-    let src_len = glibc_rs_core::string::wide::wcslen(&src);
+    let dst_len_input = frankenlibc_core::string::wide::wcslen(&dst_init);
+    let src_len = frankenlibc_core::string::wide::wcslen(&src);
     let defined = dst_init.contains(&0) && src.contains(&0) && (dst_len_input + src_len < dst_cap);
 
     if strict && !defined {
@@ -2018,10 +2018,10 @@ fn execute_wcscat_case(
     }
 
     if defined {
-        glibc_rs_core::string::wide::wcscat(&mut impl_dst, &src);
+        frankenlibc_core::string::wide::wcscat(&mut impl_dst, &src);
     } else if hardened {
         // Calculate effective length in the initialized buffer
-        let current_len = glibc_rs_core::string::wide::wcslen(&impl_dst);
+        let current_len = frankenlibc_core::string::wide::wcslen(&impl_dst);
 
         if current_len < dst_cap {
             let avail = dst_cap.saturating_sub(current_len).saturating_sub(1);
@@ -2101,7 +2101,7 @@ fn execute_wcschr_case(
     }
 
     let impl_val = if defined {
-        glibc_rs_core::string::wide::wcschr(&s, c)
+        frankenlibc_core::string::wide::wcschr(&s, c)
     } else {
         None
     };
@@ -2158,7 +2158,7 @@ fn execute_wcsrchr_case(
     }
 
     let impl_val = if defined {
-        glibc_rs_core::string::wide::wcsrchr(&s, c)
+        frankenlibc_core::string::wide::wcsrchr(&s, c)
     } else {
         None
     };
@@ -2214,7 +2214,7 @@ fn execute_wcsstr_case(
     }
 
     let impl_val = if defined {
-        glibc_rs_core::string::wide::wcsstr(&hay, &needle)
+        frankenlibc_core::string::wide::wcsstr(&hay, &needle)
     } else {
         None
     };
@@ -2259,7 +2259,7 @@ fn execute_wmemcpy_case(
     }
 
     let mut impl_dst = vec![0u32; dst_len];
-    glibc_rs_core::string::wide::wmemmove(&mut impl_dst, &src, n);
+    frankenlibc_core::string::wide::wmemmove(&mut impl_dst, &src, n);
     let impl_output = format!("{impl_dst:?}");
     let host_output = format!("{:?}", run_host_wmemcpy(&src, dst_len, n)?);
 
@@ -2297,7 +2297,7 @@ fn execute_wmemmove_case(
     }
 
     let mut impl_dst = vec![0u32; dst_len];
-    glibc_rs_core::string::wide::wmemmove(&mut impl_dst, &src, n);
+    frankenlibc_core::string::wide::wmemmove(&mut impl_dst, &src, n);
     let impl_output = format!("{impl_dst:?}");
     let host_output = format!("{:?}", run_host_wmemmove(&src, dst_len, n)?);
 
@@ -2334,7 +2334,7 @@ fn execute_wmemset_case(
     }
 
     let mut impl_dst = vec![0u32; dst_len];
-    glibc_rs_core::string::wide::wmemset(&mut impl_dst, c, n);
+    frankenlibc_core::string::wide::wmemset(&mut impl_dst, c, n);
     let impl_output = format!("{impl_dst:?}");
     let host_output = format!("{:?}", run_host_wmemset(dst_len, c, n)?);
 
@@ -2369,7 +2369,7 @@ fn execute_wmemcmp_case(
         return Err(format!("unsupported mode: {mode}"));
     }
 
-    let impl_output = glibc_rs_core::string::wide::wmemcmp(&s1, &s2, n).to_string();
+    let impl_output = frankenlibc_core::string::wide::wmemcmp(&s1, &s2, n).to_string();
     let host_output = run_host_wmemcmp(&s1, &s2, n)?.to_string();
     Ok(DifferentialExecution {
         host_parity: host_output == impl_output,
@@ -2408,7 +2408,7 @@ fn execute_wmemchr_case(
         return Err(format!("unsupported mode: {mode}"));
     }
 
-    let impl_output = format!("{:?}", glibc_rs_core::string::wide::wmemchr(&s, c, n));
+    let impl_output = format!("{:?}", frankenlibc_core::string::wide::wmemchr(&s, c, n));
     let host_output = format!("{:?}", run_host_wmemchr(&s, c, n)?);
     Ok(DifferentialExecution {
         host_parity: host_output == impl_output,
@@ -2440,10 +2440,10 @@ fn execute_malloc_case(
     }
 
     let size = parse_usize(inputs, "size")?;
-    let impl_ptr = unsafe { glibc_rust::glibc_rust_malloc_preview(size) };
+    let impl_ptr = unsafe { frankenlibc::glibc_rust_malloc_preview(size) };
     let impl_valid = size == 0 || !impl_ptr.is_null();
     if !impl_ptr.is_null() {
-        unsafe { glibc_rust::glibc_rust_free_preview(impl_ptr, size.max(1)) };
+        unsafe { frankenlibc::glibc_rust_free_preview(impl_ptr, size.max(1)) };
     }
 
     let host_valid = run_host_malloc(size);
@@ -2477,16 +2477,16 @@ fn execute_free_case(
     if ptr_val == 0 {
         unsafe {
             libc::free(std::ptr::null_mut());
-            glibc_rust::glibc_rust_free_preview(std::ptr::null_mut(), 0);
+            frankenlibc::glibc_rust_free_preview(std::ptr::null_mut(), 0);
         }
     } else {
         let host_ptr = unsafe { libc::malloc(ptr_val.max(1)) };
         if !host_ptr.is_null() {
             unsafe { libc::free(host_ptr) };
         }
-        let impl_ptr = unsafe { glibc_rust::glibc_rust_malloc_preview(ptr_val.max(1)) };
+        let impl_ptr = unsafe { frankenlibc::glibc_rust_malloc_preview(ptr_val.max(1)) };
         if !impl_ptr.is_null() {
-            unsafe { glibc_rust::glibc_rust_free_preview(impl_ptr, ptr_val.max(1)) };
+            unsafe { frankenlibc::glibc_rust_free_preview(impl_ptr, ptr_val.max(1)) };
         }
     }
     Ok(DifferentialExecution {
@@ -2532,7 +2532,7 @@ fn execute_calloc_case(
     let size = parse_usize(inputs, "size")?;
     let total = nmemb.checked_mul(size).unwrap_or(0);
 
-    let impl_ptr = unsafe { glibc_rust::glibc_rust_calloc_preview(nmemb, size) };
+    let impl_ptr = unsafe { frankenlibc::glibc_rust_calloc_preview(nmemb, size) };
     let impl_valid = total == 0 || !impl_ptr.is_null();
     let impl_zeroed = if impl_ptr.is_null() || total == 0 {
         true
@@ -2542,7 +2542,7 @@ fn execute_calloc_case(
         probe.iter().all(|&b| b == 0)
     };
     if !impl_ptr.is_null() {
-        unsafe { glibc_rust::glibc_rust_free_preview(impl_ptr, total.max(1)) };
+        unsafe { frankenlibc::glibc_rust_free_preview(impl_ptr, total.max(1)) };
     }
 
     let (host_valid, host_zeroed) = run_host_calloc(nmemb, size);
@@ -2604,21 +2604,21 @@ fn execute_realloc_case(
     let old_size = parse_usize_any(inputs, &["old_size", "old_size_hint"]).unwrap_or(ptr_val);
 
     let impl_valid = if ptr_val == 0 {
-        let ptr = unsafe { glibc_rust::glibc_rust_realloc_preview(std::ptr::null_mut(), size, 0) };
+        let ptr = unsafe { frankenlibc::glibc_rust_realloc_preview(std::ptr::null_mut(), size, 0) };
         let valid = size == 0 || !ptr.is_null();
         if !ptr.is_null() {
-            unsafe { glibc_rust::glibc_rust_free_preview(ptr, size.max(1)) };
+            unsafe { frankenlibc::glibc_rust_free_preview(ptr, size.max(1)) };
         }
         valid
     } else {
-        let src = unsafe { glibc_rust::glibc_rust_malloc_preview(old_size.max(1)) };
+        let src = unsafe { frankenlibc::glibc_rust_malloc_preview(old_size.max(1)) };
         if src.is_null() {
             false
         } else {
-            let ptr = unsafe { glibc_rust::glibc_rust_realloc_preview(src, size, old_size.max(1)) };
+            let ptr = unsafe { frankenlibc::glibc_rust_realloc_preview(src, size, old_size.max(1)) };
             let valid = size == 0 || !ptr.is_null();
             if !ptr.is_null() {
-                unsafe { glibc_rust::glibc_rust_free_preview(ptr, size.max(1)) };
+                unsafe { frankenlibc::glibc_rust_free_preview(ptr, size.max(1)) };
             }
             valid
         }
@@ -2655,7 +2655,7 @@ fn execute_atoi_case(
     }
 
     let has_nul = s.contains(&0);
-    let impl_val = glibc_rs_core::stdlib::atoi(&s[..s.len().saturating_sub(1)]);
+    let impl_val = frankenlibc_core::stdlib::atoi(&s[..s.len().saturating_sub(1)]);
     let impl_output = impl_val.to_string();
 
     if strict && !has_nul {
@@ -2700,7 +2700,7 @@ fn execute_atol_case(
     }
 
     let has_nul = s.contains(&0);
-    let impl_val = glibc_rs_core::stdlib::atol(&s[..s.len().saturating_sub(1)]);
+    let impl_val = frankenlibc_core::stdlib::atol(&s[..s.len().saturating_sub(1)]);
     let impl_output = impl_val.to_string();
 
     if strict && !has_nul {
@@ -2746,7 +2746,7 @@ fn execute_strtol_case(
     }
 
     let has_nul = s.contains(&0);
-    let (impl_val, _len) = glibc_rs_core::stdlib::strtol(&s[..s.len().saturating_sub(1)], base);
+    let (impl_val, _len) = frankenlibc_core::stdlib::strtol(&s[..s.len().saturating_sub(1)], base);
     let impl_output = impl_val.to_string();
 
     if strict && !has_nul {
@@ -2792,7 +2792,7 @@ fn execute_strtoul_case(
     }
 
     let has_nul = s.contains(&0);
-    let (impl_val, _len) = glibc_rs_core::stdlib::strtoul(&s[..s.len().saturating_sub(1)], base);
+    let (impl_val, _len) = frankenlibc_core::stdlib::strtoul(&s[..s.len().saturating_sub(1)], base);
     let impl_output = impl_val.to_string();
 
     if strict && !has_nul {
@@ -2889,13 +2889,13 @@ fn run_host_iconv_case(
 }
 
 fn run_impl_iconv_case(tocode: &str, fromcode: &str, input: &[u8], out_len: usize) -> String {
-    let Some(mut cd) = glibc_rs_core::iconv::iconv_open(tocode.as_bytes(), fromcode.as_bytes())
+    let Some(mut cd) = frankenlibc_core::iconv::iconv_open(tocode.as_bytes(), fromcode.as_bytes())
     else {
-        return format_iconv_open_error(glibc_rs_core::iconv::ICONV_EINVAL);
+        return format_iconv_open_error(frankenlibc_core::iconv::ICONV_EINVAL);
     };
 
     let mut output = vec![0u8; out_len];
-    let rendered = match glibc_rs_core::iconv::iconv(&mut cd, input, &mut output) {
+    let rendered = match frankenlibc_core::iconv::iconv(&mut cd, input, &mut output) {
         Ok(result) => {
             let in_left = input.len().saturating_sub(result.in_consumed);
             let out_left = out_len.saturating_sub(result.out_written);
@@ -2909,7 +2909,7 @@ fn run_impl_iconv_case(tocode: &str, fromcode: &str, input: &[u8], out_len: usiz
             format_iconv_error(err.code, in_left, out_left, &output)
         }
     };
-    let _ = glibc_rs_core::iconv::iconv_close(cd);
+    let _ = frankenlibc_core::iconv::iconv_close(cd);
     rendered
 }
 
