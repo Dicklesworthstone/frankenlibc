@@ -1,0 +1,1142 @@
+{
+  "schema_version": "v1",
+  "bead": "bd-2k6b",
+  "generated_at": "2026-02-12T22:18:57Z",
+  "description": "Runtime math module classification matrix joining governance tiers, decision-law linkage status, manifest routing, and retirement transition notes.",
+  "sources": {
+    "governance": "tests/conformance/math_governance.json",
+    "linkage": "tests/runtime_math/runtime_math_linkage.v1.json",
+    "manifest": "tests/runtime_math/production_kernel_manifest.v1.json",
+    "retirement_policy": "tests/conformance/math_retirement_policy.json"
+  },
+  "classification_enum": [
+    "production_core",
+    "production_monitor",
+    "research"
+  ],
+  "linkage_status_enum": [
+    "Production",
+    "ResearchOnly"
+  ],
+  "modules": [
+    {
+      "module": "admm_budget",
+      "classification": "research",
+      "linkage_status": "Production",
+      "in_production_manifest": true,
+      "in_research_only_manifest": false,
+      "rationale": "Online ADMM for joint resource optimization",
+      "rationale_ref": "tests/conformance/math_governance.json#/classifications/research/41/rationale",
+      "decision_target": "RuntimeMathKernel::decide via cached admm_budget controller state",
+      "decision_target_ref": "tests/runtime_math/runtime_math_linkage.v1.json#/modules/admm_budget/decision_target",
+      "transition": {
+        "target_stage": "research_only",
+        "wave": 2,
+        "note": "Advanced optimization solvers. Production decisions use simpler barrier+control+bandit path. These add analytical depth but not safety-critical functionality."
+      }
+    },
+    {
+      "module": "alpha_investing",
+      "classification": "production_monitor",
+      "linkage_status": "Production",
+      "in_production_manifest": true,
+      "in_research_only_manifest": false,
+      "rationale": "Alpha-Investing FDR controller; wealth-based alarm acceptance",
+      "rationale_ref": "tests/conformance/math_governance.json#/classifications/production_monitor/4/rationale",
+      "decision_target": "RuntimeMathKernel::observe_validation_result sequential FDR wealth update",
+      "decision_target_ref": "tests/runtime_math/runtime_math_linkage.v1.json#/modules/alpha_investing/decision_target",
+      "transition": {
+        "target_stage": "production",
+        "wave": "",
+        "note": "Production-tier controller retained in default runtime-math-production feature set."
+      }
+    },
+    {
+      "module": "approachability",
+      "classification": "research",
+      "linkage_status": "Production",
+      "in_production_manifest": true,
+      "in_research_only_manifest": false,
+      "rationale": "Blackwell approachability; multi-objective routing convergence",
+      "rationale_ref": "tests/conformance/math_governance.json#/classifications/research/42/rationale",
+      "decision_target": "RuntimeMathKernel::decide multi-objective safe-set projection",
+      "decision_target_ref": "tests/runtime_math/runtime_math_linkage.v1.json#/modules/approachability/decision_target",
+      "transition": {
+        "target_stage": "research_only",
+        "wave": 2,
+        "note": "Advanced optimization solvers. Production decisions use simpler barrier+control+bandit path. These add analytical depth but not safety-critical functionality."
+      }
+    },
+    {
+      "module": "atiyah_bott",
+      "classification": "research",
+      "linkage_status": "Production",
+      "in_production_manifest": true,
+      "in_research_only_manifest": false,
+      "rationale": "Atiyah-Bott fixed-point localization; hot path compression",
+      "rationale_ref": "tests/conformance/math_governance.json#/classifications/research/11/rationale",
+      "decision_target": "RuntimeMathKernel::decide via cached atiyah_bott controller state",
+      "decision_target_ref": "tests/runtime_math/runtime_math_linkage.v1.json#/modules/atiyah_bott/decision_target",
+      "transition": {
+        "target_stage": "research_only",
+        "wave": 1,
+        "note": "Most abstract mathematical theory. No direct decision linkage to ABI-level safety. All use cached state that can fall back to conservative defaults."
+      }
+    },
+    {
+      "module": "azuma_hoeffding",
+      "classification": "production_monitor",
+      "linkage_status": "Production",
+      "in_production_manifest": true,
+      "in_research_only_manifest": false,
+      "rationale": "Martingale concentration monitor; detects noise exceeding bounds",
+      "rationale_ref": "tests/conformance/math_governance.json#/classifications/production_monitor/3/rationale",
+      "decision_target": "RuntimeMathKernel::decide via cached azuma_hoeffding controller state",
+      "decision_target_ref": "tests/runtime_math/runtime_math_linkage.v1.json#/modules/azuma_hoeffding/decision_target",
+      "transition": {
+        "target_stage": "production",
+        "wave": "",
+        "note": "Production-tier controller retained in default runtime-math-production feature set."
+      }
+    },
+    {
+      "module": "bandit",
+      "classification": "production_core",
+      "linkage_status": "Production",
+      "in_production_manifest": true,
+      "in_research_only_manifest": false,
+      "rationale": "Constrained bandit router for validation depth selection; hot-path caching",
+      "rationale_ref": "tests/conformance/math_governance.json#/classifications/production_core/1/rationale",
+      "decision_target": "RuntimeMathKernel::decide constrained routing of Fast vs Full validation",
+      "decision_target_ref": "tests/runtime_math/runtime_math_linkage.v1.json#/modules/bandit/decision_target",
+      "transition": {
+        "target_stage": "production",
+        "wave": "",
+        "note": "Production-tier controller retained in default runtime-math-production feature set."
+      }
+    },
+    {
+      "module": "barrier",
+      "classification": "production_core",
+      "linkage_status": "Production",
+      "in_production_manifest": true,
+      "in_research_only_manifest": false,
+      "rationale": "Safety admissibility filter; constant-time guard for safe set enforcement",
+      "rationale_ref": "tests/conformance/math_governance.json#/classifications/production_core/0/rationale",
+      "decision_target": "RuntimeMathKernel::decide admissibility gate",
+      "decision_target_ref": "tests/runtime_math/runtime_math_linkage.v1.json#/modules/barrier/decision_target",
+      "transition": {
+        "target_stage": "production",
+        "wave": "",
+        "note": "Production-tier controller retained in default runtime-math-production feature set."
+      }
+    },
+    {
+      "module": "bifurcation_detector",
+      "classification": "research",
+      "linkage_status": "Production",
+      "in_production_manifest": true,
+      "in_research_only_manifest": false,
+      "rationale": "Critical slowing down; universal early warning for bifurcations",
+      "rationale_ref": "tests/conformance/math_governance.json#/classifications/research/34/rationale",
+      "decision_target": "RuntimeMathKernel::decide via cached bifurcation_detector controller state",
+      "decision_target_ref": "tests/runtime_math/runtime_math_linkage.v1.json#/modules/bifurcation_detector/decision_target",
+      "transition": {
+        "target_stage": "research_only",
+        "wave": 3,
+        "note": "Dynamical systems monitors. Useful for research characterization but not required for safe runtime decisions."
+      }
+    },
+    {
+      "module": "birkhoff_ergodic",
+      "classification": "research",
+      "linkage_status": "Production",
+      "in_production_manifest": true,
+      "in_research_only_manifest": false,
+      "rationale": "Birkhoff ergodic convergence; detects non-ergodic state trapping",
+      "rationale_ref": "tests/conformance/math_governance.json#/classifications/research/16/rationale",
+      "decision_target": "RuntimeMathKernel::decide via cached birkhoff_ergodic controller state",
+      "decision_target_ref": "tests/runtime_math/runtime_math_linkage.v1.json#/modules/birkhoff_ergodic/decision_target",
+      "transition": {
+        "target_stage": "research_only",
+        "wave": 3,
+        "note": "Dynamical systems monitors. Useful for research characterization but not required for safe runtime decisions."
+      }
+    },
+    {
+      "module": "borel_cantelli",
+      "classification": "production_monitor",
+      "linkage_status": "Production",
+      "in_production_manifest": true,
+      "in_research_only_manifest": false,
+      "rationale": "Recurrence monitor; classifies transient vs recurrent exceedances",
+      "rationale_ref": "tests/conformance/math_governance.json#/classifications/production_monitor/10/rationale",
+      "decision_target": "RuntimeMathKernel::decide via cached borel_cantelli controller state",
+      "decision_target_ref": "tests/runtime_math/runtime_math_linkage.v1.json#/modules/borel_cantelli/decision_target",
+      "transition": {
+        "target_stage": "production",
+        "wave": "",
+        "note": "Production-tier controller retained in default runtime-math-production feature set."
+      }
+    },
+    {
+      "module": "changepoint",
+      "classification": "production_monitor",
+      "linkage_status": "Production",
+      "in_production_manifest": true,
+      "in_research_only_manifest": false,
+      "rationale": "Bayesian online change-point detection; eliminates threshold drift",
+      "rationale_ref": "tests/conformance/math_governance.json#/classifications/production_monitor/0/rationale",
+      "decision_target": "RuntimeMathKernel::decide via cached changepoint controller state",
+      "decision_target_ref": "tests/runtime_math/runtime_math_linkage.v1.json#/modules/changepoint/decision_target",
+      "transition": {
+        "target_stage": "production",
+        "wave": "",
+        "note": "Production-tier controller retained in default runtime-math-production feature set."
+      }
+    },
+    {
+      "module": "clifford",
+      "classification": "research",
+      "linkage_status": "Production",
+      "in_production_manifest": true,
+      "in_research_only_manifest": false,
+      "rationale": "Clifford/geometric algebra SIMD alignment; Spin/Pin symmetry",
+      "rationale_ref": "tests/conformance/math_governance.json#/classifications/research/5/rationale",
+      "decision_target": "RuntimeMathKernel::decide via cached clifford controller state",
+      "decision_target_ref": "tests/runtime_math/runtime_math_linkage.v1.json#/modules/clifford/decision_target",
+      "transition": {
+        "target_stage": "research_only",
+        "wave": 1,
+        "note": "Most abstract mathematical theory. No direct decision linkage to ABI-level safety. All use cached state that can fall back to conservative defaults."
+      }
+    },
+    {
+      "module": "cohomology",
+      "classification": "research",
+      "linkage_status": "Production",
+      "in_production_manifest": true,
+      "in_research_only_manifest": false,
+      "rationale": "Incremental overlap-consistency monitor; cocycle-like constraints",
+      "rationale_ref": "tests/conformance/math_governance.json#/classifications/research/9/rationale",
+      "decision_target": "RuntimeMathKernel::decide overlap-consistency fault budget",
+      "decision_target_ref": "tests/runtime_math/runtime_math_linkage.v1.json#/modules/cohomology/decision_target",
+      "transition": {
+        "target_stage": "research_only",
+        "wave": 1,
+        "note": "Most abstract mathematical theory. No direct decision linkage to ABI-level safety. All use cached state that can fall back to conservative defaults."
+      }
+    },
+    {
+      "module": "commitment_audit",
+      "classification": "production_core",
+      "linkage_status": "Production",
+      "in_production_manifest": true,
+      "in_research_only_manifest": false,
+      "rationale": "Tamper-evident hash-chain session traces; commitment algebra",
+      "rationale_ref": "tests/conformance/math_governance.json#/classifications/production_core/10/rationale",
+      "decision_target": "RuntimeMathKernel::decide via cached commitment_audit controller state",
+      "decision_target_ref": "tests/runtime_math/runtime_math_linkage.v1.json#/modules/commitment_audit/decision_target",
+      "transition": {
+        "target_stage": "production",
+        "wave": "",
+        "note": "Production-tier controller retained in default runtime-math-production feature set."
+      }
+    },
+    {
+      "module": "conformal",
+      "classification": "production_core",
+      "linkage_status": "Production",
+      "in_production_manifest": true,
+      "in_research_only_manifest": false,
+      "rationale": "Split conformal prediction for finite-sample decision guarantees",
+      "rationale_ref": "tests/conformance/math_governance.json#/classifications/production_core/8/rationale",
+      "decision_target": "RuntimeMathKernel::decide via cached conformal controller state",
+      "decision_target_ref": "tests/runtime_math/runtime_math_linkage.v1.json#/modules/conformal/decision_target",
+      "transition": {
+        "target_stage": "production",
+        "wave": "",
+        "note": "Production-tier controller retained in default runtime-math-production feature set."
+      }
+    },
+    {
+      "module": "control",
+      "classification": "production_core",
+      "linkage_status": "Production",
+      "in_production_manifest": true,
+      "in_research_only_manifest": false,
+      "rationale": "Primal-dual runtime controller adjusting latency/safety thresholds",
+      "rationale_ref": "tests/conformance/math_governance.json#/classifications/production_core/2/rationale",
+      "decision_target": "RuntimeMathKernel::decide primal-dual trigger control for full-check and repair",
+      "decision_target_ref": "tests/runtime_math/runtime_math_linkage.v1.json#/modules/control/decision_target",
+      "transition": {
+        "target_stage": "production",
+        "wave": "",
+        "note": "Production-tier controller retained in default runtime-math-production feature set."
+      }
+    },
+    {
+      "module": "coupling",
+      "classification": "research",
+      "linkage_status": "Production",
+      "in_production_manifest": true,
+      "in_research_only_manifest": false,
+      "rationale": "Optimal probabilistic coupling; strict/hardened decision alignment",
+      "rationale_ref": "tests/conformance/math_governance.json#/classifications/research/29/rationale",
+      "decision_target": "RuntimeMathKernel::decide via cached coupling controller state",
+      "decision_target_ref": "tests/runtime_math/runtime_math_linkage.v1.json#/modules/coupling/decision_target",
+      "transition": {
+        "target_stage": "research_only",
+        "wave": 4,
+        "note": "Statistical learning and information-theoretic monitors. Provide deep analytical power but production decisions do not depend on them."
+      }
+    },
+    {
+      "module": "covering_array",
+      "classification": "production_monitor",
+      "linkage_status": "Production",
+      "in_production_manifest": true,
+      "in_research_only_manifest": false,
+      "rationale": "t-wise interaction coverage for conformance scheduling",
+      "rationale_ref": "tests/conformance/math_governance.json#/classifications/production_monitor/7/rationale",
+      "decision_target": "RuntimeMathKernel::decide via cached covering_array controller state",
+      "decision_target_ref": "tests/runtime_math/runtime_math_linkage.v1.json#/modules/covering_array/decision_target",
+      "transition": {
+        "target_stage": "production",
+        "wave": "",
+        "note": "Production-tier controller retained in default runtime-math-production feature set."
+      }
+    },
+    {
+      "module": "cvar",
+      "classification": "production_monitor",
+      "linkage_status": "Production",
+      "in_production_manifest": true,
+      "in_research_only_manifest": false,
+      "rationale": "Distributionally-robust CVaR tail controller; heavy-tail protection",
+      "rationale_ref": "tests/conformance/math_governance.json#/classifications/production_monitor/2/rationale",
+      "decision_target": "RuntimeMathKernel::decide via cached cvar controller state",
+      "decision_target_ref": "tests/runtime_math/runtime_math_linkage.v1.json#/modules/cvar/decision_target",
+      "transition": {
+        "target_stage": "production",
+        "wave": "",
+        "note": "Production-tier controller retained in default runtime-math-production feature set."
+      }
+    },
+    {
+      "module": "derived_tstructure",
+      "classification": "research",
+      "linkage_status": "Production",
+      "in_production_manifest": true,
+      "in_research_only_manifest": false,
+      "rationale": "Derived-category t-structure bootstrap ordering",
+      "rationale_ref": "tests/conformance/math_governance.json#/classifications/research/6/rationale",
+      "decision_target": "RuntimeMathKernel::decide via cached derived_tstructure controller state",
+      "decision_target_ref": "tests/runtime_math/runtime_math_linkage.v1.json#/modules/derived_tstructure/decision_target",
+      "transition": {
+        "target_stage": "research_only",
+        "wave": 1,
+        "note": "Most abstract mathematical theory. No direct decision linkage to ABI-level safety. All use cached state that can fall back to conservative defaults."
+      }
+    },
+    {
+      "module": "design",
+      "classification": "research",
+      "linkage_status": "Production",
+      "in_production_manifest": true,
+      "in_research_only_manifest": false,
+      "rationale": "Runtime optimal experimental design; budget-feasible probe selection",
+      "rationale_ref": "tests/conformance/math_governance.json#/classifications/research/40/rationale",
+      "decision_target": "RuntimeMathKernel::resample_high_order_kernels D-optimal probe scheduling",
+      "decision_target_ref": "tests/runtime_math/runtime_math_linkage.v1.json#/modules/design/decision_target",
+      "transition": {
+        "target_stage": "research_only",
+        "wave": 2,
+        "note": "Advanced optimization solvers. Production decisions use simpler barrier+control+bandit path. These add analytical depth but not safety-critical functionality."
+      }
+    },
+    {
+      "module": "dispersion_index",
+      "classification": "production_monitor",
+      "linkage_status": "Production",
+      "in_production_manifest": true,
+      "in_research_only_manifest": false,
+      "rationale": "Dispersion index for monitoring variance-to-mean ratio",
+      "rationale_ref": "tests/conformance/math_governance.json#/classifications/production_monitor/9/rationale",
+      "decision_target": "RuntimeMathKernel::decide via cached dispersion_index controller state",
+      "decision_target_ref": "tests/runtime_math/runtime_math_linkage.v1.json#/modules/dispersion_index/decision_target",
+      "transition": {
+        "target_stage": "production",
+        "wave": "",
+        "note": "Production-tier controller retained in default runtime-math-production feature set."
+      }
+    },
+    {
+      "module": "dobrushin_contraction",
+      "classification": "research",
+      "linkage_status": "Production",
+      "in_production_manifest": true,
+      "in_research_only_manifest": false,
+      "rationale": "Dobrushin contraction coefficient; Markov chain ergodicity loss",
+      "rationale_ref": "tests/conformance/math_governance.json#/classifications/research/37/rationale",
+      "decision_target": "RuntimeMathKernel::decide via cached dobrushin_contraction controller state",
+      "decision_target_ref": "tests/runtime_math/runtime_math_linkage.v1.json#/modules/dobrushin_contraction/decision_target",
+      "transition": {
+        "target_stage": "research_only",
+        "wave": 3,
+        "note": "Dynamical systems monitors. Useful for research characterization but not required for safe runtime decisions."
+      }
+    },
+    {
+      "module": "doob_decomposition",
+      "classification": "production_monitor",
+      "linkage_status": "Production",
+      "in_production_manifest": true,
+      "in_research_only_manifest": false,
+      "rationale": "Separates systematic drift from pure noise in monitoring",
+      "rationale_ref": "tests/conformance/math_governance.json#/classifications/production_monitor/11/rationale",
+      "decision_target": "RuntimeMathKernel::decide via cached doob_decomposition controller state",
+      "decision_target_ref": "tests/runtime_math/runtime_math_linkage.v1.json#/modules/doob_decomposition/decision_target",
+      "transition": {
+        "target_stage": "production",
+        "wave": "",
+        "note": "Production-tier controller retained in default runtime-math-production feature set."
+      }
+    },
+    {
+      "module": "entropy_rate",
+      "classification": "research",
+      "linkage_status": "Production",
+      "in_production_manifest": true,
+      "in_research_only_manifest": false,
+      "rationale": "Shannon entropy rate for stationary Markov chains",
+      "rationale_ref": "tests/conformance/math_governance.json#/classifications/research/22/rationale",
+      "decision_target": "RuntimeMathKernel::decide via cached entropy_rate controller state",
+      "decision_target_ref": "tests/runtime_math/runtime_math_linkage.v1.json#/modules/entropy_rate/decision_target",
+      "transition": {
+        "target_stage": "research_only",
+        "wave": 4,
+        "note": "Statistical learning and information-theoretic monitors. Provide deep analytical power but production decisions do not depend on them."
+      }
+    },
+    {
+      "module": "eprocess",
+      "classification": "production_monitor",
+      "linkage_status": "Production",
+      "in_production_manifest": true,
+      "in_research_only_manifest": false,
+      "rationale": "Anytime-valid e-process monitor for online drift alarms",
+      "rationale_ref": "tests/conformance/math_governance.json#/classifications/production_monitor/1/rationale",
+      "decision_target": "RuntimeMathKernel::decide via cached eprocess controller state",
+      "decision_target_ref": "tests/runtime_math/runtime_math_linkage.v1.json#/modules/eprocess/decision_target",
+      "transition": {
+        "target_stage": "production",
+        "wave": "",
+        "note": "Production-tier controller retained in default runtime-math-production feature set."
+      }
+    },
+    {
+      "module": "equivariant",
+      "classification": "research",
+      "linkage_status": "Production",
+      "in_production_manifest": true,
+      "in_research_only_manifest": false,
+      "rationale": "Equivariant transport controller; representation stability",
+      "rationale_ref": "tests/conformance/math_governance.json#/classifications/research/10/rationale",
+      "decision_target": "RuntimeMathKernel::decide via cached equivariant controller state",
+      "decision_target_ref": "tests/runtime_math/runtime_math_linkage.v1.json#/modules/equivariant/decision_target",
+      "transition": {
+        "target_stage": "research_only",
+        "wave": 1,
+        "note": "Most abstract mathematical theory. No direct decision linkage to ABI-level safety. All use cached state that can fall back to conservative defaults."
+      }
+    },
+    {
+      "module": "evidence",
+      "classification": "production_core",
+      "linkage_status": "Production",
+      "in_production_manifest": true,
+      "in_research_only_manifest": false,
+      "rationale": "Runtime evidence symbol record format; systematic ring buffer for logging",
+      "rationale_ref": "tests/conformance/math_governance.json#/classifications/production_core/5/rationale",
+      "decision_target": "RuntimeMathKernel::decide and observe_validation_result evidence emission",
+      "decision_target_ref": "tests/runtime_math/runtime_math_linkage.v1.json#/modules/evidence/decision_target",
+      "transition": {
+        "target_stage": "production",
+        "wave": "",
+        "note": "Production-tier controller retained in default runtime-math-production feature set."
+      }
+    },
+    {
+      "module": "fano_bound",
+      "classification": "research",
+      "linkage_status": "Production",
+      "in_production_manifest": true,
+      "in_research_only_manifest": false,
+      "rationale": "Fano inequality; information-theoretic prediction error lower bound",
+      "rationale_ref": "tests/conformance/math_governance.json#/classifications/research/24/rationale",
+      "decision_target": "RuntimeMathKernel::decide via cached fano_bound controller state",
+      "decision_target_ref": "tests/runtime_math/runtime_math_linkage.v1.json#/modules/fano_bound/decision_target",
+      "transition": {
+        "target_stage": "research_only",
+        "wave": 4,
+        "note": "Statistical learning and information-theoretic monitors. Provide deep analytical power but production decisions do not depend on them."
+      }
+    },
+    {
+      "module": "fusion",
+      "classification": "production_core",
+      "linkage_status": "Production",
+      "in_production_manifest": true,
+      "in_research_only_manifest": false,
+      "rationale": "Runtime robust signal fusion controller; aggregates 64+ monitor outputs",
+      "rationale_ref": "tests/conformance/math_governance.json#/classifications/production_core/4/rationale",
+      "decision_target": "RuntimeMathKernel::decide robust fusion over severity channels",
+      "decision_target_ref": "tests/runtime_math/runtime_math_linkage.v1.json#/modules/fusion/decision_target",
+      "transition": {
+        "target_stage": "production",
+        "wave": "",
+        "note": "Production-tier controller retained in default runtime-math-production feature set."
+      }
+    },
+    {
+      "module": "grobner_normalizer",
+      "classification": "research",
+      "linkage_status": "Production",
+      "in_production_manifest": true,
+      "in_research_only_manifest": false,
+      "rationale": "Grobner-basis constraint normalization; confluent polynomial division",
+      "rationale_ref": "tests/conformance/math_governance.json#/classifications/research/13/rationale",
+      "decision_target": "RuntimeMathKernel::decide via cached grobner_normalizer controller state",
+      "decision_target_ref": "tests/runtime_math/runtime_math_linkage.v1.json#/modules/grobner_normalizer/decision_target",
+      "transition": {
+        "target_stage": "research_only",
+        "wave": 2,
+        "note": "Advanced optimization solvers. Production decisions use simpler barrier+control+bandit path. These add analytical depth but not safety-critical functionality."
+      }
+    },
+    {
+      "module": "grothendieck_glue",
+      "classification": "research",
+      "linkage_status": "Production",
+      "in_production_manifest": true,
+      "in_research_only_manifest": false,
+      "rationale": "Topos theory descent/stackification; local-to-global coherence",
+      "rationale_ref": "tests/conformance/math_governance.json#/classifications/research/0/rationale",
+      "decision_target": "RuntimeMathKernel::decide via cached grothendieck_glue controller state",
+      "decision_target_ref": "tests/runtime_math/runtime_math_linkage.v1.json#/modules/grothendieck_glue/decision_target",
+      "transition": {
+        "target_stage": "research_only",
+        "wave": 1,
+        "note": "Most abstract mathematical theory. No direct decision linkage to ABI-level safety. All use cached state that can fall back to conservative defaults."
+      }
+    },
+    {
+      "module": "higher_topos",
+      "classification": "research",
+      "linkage_status": "Production",
+      "in_production_manifest": true,
+      "in_research_only_manifest": false,
+      "rationale": "Higher-topos internal logic descent; locale fallback chain",
+      "rationale_ref": "tests/conformance/math_governance.json#/classifications/research/1/rationale",
+      "decision_target": "RuntimeMathKernel::decide via cached higher_topos controller state",
+      "decision_target_ref": "tests/runtime_math/runtime_math_linkage.v1.json#/modules/higher_topos/decision_target",
+      "transition": {
+        "target_stage": "research_only",
+        "wave": 1,
+        "note": "Most abstract mathematical theory. No direct decision linkage to ABI-level safety. All use cached state that can fall back to conservative defaults."
+      }
+    },
+    {
+      "module": "hodge_decomposition",
+      "classification": "research",
+      "linkage_status": "Production",
+      "in_production_manifest": true,
+      "in_research_only_manifest": false,
+      "rationale": "Combinatorial Hodge decomposition; gradient/curl/harmonic separation",
+      "rationale_ref": "tests/conformance/math_governance.json#/classifications/research/7/rationale",
+      "decision_target": "RuntimeMathKernel::decide via cached hodge_decomposition controller state",
+      "decision_target_ref": "tests/runtime_math/runtime_math_linkage.v1.json#/modules/hodge_decomposition/decision_target",
+      "transition": {
+        "target_stage": "research_only",
+        "wave": 1,
+        "note": "Most abstract mathematical theory. No direct decision linkage to ABI-level safety. All use cached state that can fall back to conservative defaults."
+      }
+    },
+    {
+      "module": "hurst_exponent",
+      "classification": "research",
+      "linkage_status": "Production",
+      "in_production_manifest": true,
+      "in_research_only_manifest": false,
+      "rationale": "Rescaled range (R/S); persistent trends vs independence",
+      "rationale_ref": "tests/conformance/math_governance.json#/classifications/research/21/rationale",
+      "decision_target": "RuntimeMathKernel::decide via cached hurst_exponent controller state",
+      "decision_target_ref": "tests/runtime_math/runtime_math_linkage.v1.json#/modules/hurst_exponent/decision_target",
+      "transition": {
+        "target_stage": "research_only",
+        "wave": 4,
+        "note": "Statistical learning and information-theoretic monitors. Provide deep analytical power but production decisions do not depend on them."
+      }
+    },
+    {
+      "module": "info_geometry",
+      "classification": "research",
+      "linkage_status": "Production",
+      "in_production_manifest": true,
+      "in_research_only_manifest": false,
+      "rationale": "Fisher-Rao geodesic distance; structural regime shift detection",
+      "rationale_ref": "tests/conformance/math_governance.json#/classifications/research/26/rationale",
+      "decision_target": "RuntimeMathKernel::decide via cached info_geometry controller state",
+      "decision_target_ref": "tests/runtime_math/runtime_math_linkage.v1.json#/modules/info_geometry/decision_target",
+      "transition": {
+        "target_stage": "research_only",
+        "wave": 4,
+        "note": "Statistical learning and information-theoretic monitors. Provide deep analytical power but production decisions do not depend on them."
+      }
+    },
+    {
+      "module": "ito_quadratic_variation",
+      "classification": "research",
+      "linkage_status": "Production",
+      "in_production_manifest": true,
+      "in_research_only_manifest": false,
+      "rationale": "Ito quadratic variation; realized volatility tracking",
+      "rationale_ref": "tests/conformance/math_governance.json#/classifications/research/35/rationale",
+      "decision_target": "RuntimeMathKernel::decide via cached ito_quadratic_variation controller state",
+      "decision_target_ref": "tests/runtime_math/runtime_math_linkage.v1.json#/modules/ito_quadratic_variation/decision_target",
+      "transition": {
+        "target_stage": "research_only",
+        "wave": 3,
+        "note": "Dynamical systems monitors. Useful for research characterization but not required for safe runtime decisions."
+      }
+    },
+    {
+      "module": "kernel_mmd",
+      "classification": "research",
+      "linkage_status": "Production",
+      "in_production_manifest": true,
+      "in_research_only_manifest": false,
+      "rationale": "Maximum Mean Discrepancy; universal nonparametric two-sample test",
+      "rationale_ref": "tests/conformance/math_governance.json#/classifications/research/27/rationale",
+      "decision_target": "RuntimeMathKernel::decide via cached kernel_mmd controller state",
+      "decision_target_ref": "tests/runtime_math/runtime_math_linkage.v1.json#/modules/kernel_mmd/decision_target",
+      "transition": {
+        "target_stage": "research_only",
+        "wave": 4,
+        "note": "Statistical learning and information-theoretic monitors. Provide deep analytical power but production decisions do not depend on them."
+      }
+    },
+    {
+      "module": "ktheory",
+      "classification": "research",
+      "linkage_status": "Production",
+      "in_production_manifest": true,
+      "in_research_only_manifest": false,
+      "rationale": "K-theory transport ABI compatibility; topological obstruction detection",
+      "rationale_ref": "tests/conformance/math_governance.json#/classifications/research/4/rationale",
+      "decision_target": "RuntimeMathKernel::decide ABI transport compatibility pressure",
+      "decision_target_ref": "tests/runtime_math/runtime_math_linkage.v1.json#/modules/ktheory/decision_target",
+      "transition": {
+        "target_stage": "research_only",
+        "wave": 1,
+        "note": "Most abstract mathematical theory. No direct decision linkage to ABI-level safety. All use cached state that can fall back to conservative defaults."
+      }
+    },
+    {
+      "module": "lempel_ziv",
+      "classification": "research",
+      "linkage_status": "Production",
+      "in_production_manifest": true,
+      "in_research_only_manifest": false,
+      "rationale": "LZ76 complexity; compressibility analysis for anomalous patterns",
+      "rationale_ref": "tests/conformance/math_governance.json#/classifications/research/23/rationale",
+      "decision_target": "RuntimeMathKernel::decide via cached lempel_ziv controller state",
+      "decision_target_ref": "tests/runtime_math/runtime_math_linkage.v1.json#/modules/lempel_ziv/decision_target",
+      "transition": {
+        "target_stage": "research_only",
+        "wave": 4,
+        "note": "Statistical learning and information-theoretic monitors. Provide deep analytical power but production decisions do not depend on them."
+      }
+    },
+    {
+      "module": "localization_chooser",
+      "classification": "research",
+      "linkage_status": "Production",
+      "in_production_manifest": true,
+      "in_research_only_manifest": false,
+      "rationale": "Localization-based policy arm selection; fixed-point weights",
+      "rationale_ref": "tests/conformance/math_governance.json#/classifications/research/12/rationale",
+      "decision_target": "RuntimeMathKernel::decide localization policy selection for concentrated anomaly regimes",
+      "decision_target_ref": "tests/runtime_math/runtime_math_linkage.v1.json#/modules/localization_chooser/decision_target",
+      "transition": {
+        "target_stage": "research_only",
+        "wave": 1,
+        "note": "Most abstract mathematical theory. No direct decision linkage to ABI-level safety. All use cached state that can fall back to conservative defaults."
+      }
+    },
+    {
+      "module": "loss_minimizer",
+      "classification": "production_core",
+      "linkage_status": "Production",
+      "in_production_manifest": true,
+      "in_research_only_manifest": false,
+      "rationale": "Decision-theoretic expected-loss minimization; per-family loss matrices",
+      "rationale_ref": "tests/conformance/math_governance.json#/classifications/production_core/7/rationale",
+      "decision_target": "RuntimeMathKernel::decide via cached loss_minimizer controller state",
+      "decision_target_ref": "tests/runtime_math/runtime_math_linkage.v1.json#/modules/loss_minimizer/decision_target",
+      "transition": {
+        "target_stage": "production",
+        "wave": "",
+        "note": "Production-tier controller retained in default runtime-math-production feature set."
+      }
+    },
+    {
+      "module": "lyapunov_stability",
+      "classification": "research",
+      "linkage_status": "Production",
+      "in_production_manifest": true,
+      "in_research_only_manifest": false,
+      "rationale": "Maximal Lyapunov exponent; chaotic/divergent ensemble dynamics",
+      "rationale_ref": "tests/conformance/math_governance.json#/classifications/research/18/rationale",
+      "decision_target": "RuntimeMathKernel::decide via cached lyapunov_stability controller state",
+      "decision_target_ref": "tests/runtime_math/runtime_math_linkage.v1.json#/modules/lyapunov_stability/decision_target",
+      "transition": {
+        "target_stage": "research_only",
+        "wave": 3,
+        "note": "Dynamical systems monitors. Useful for research characterization but not required for safe runtime decisions."
+      }
+    },
+    {
+      "module": "malliavin_sensitivity",
+      "classification": "research",
+      "linkage_status": "Production",
+      "in_production_manifest": true,
+      "in_research_only_manifest": false,
+      "rationale": "Discrete Malliavin calculus; sensitivity to state perturbations",
+      "rationale_ref": "tests/conformance/math_governance.json#/classifications/research/36/rationale",
+      "decision_target": "RuntimeMathKernel::decide via cached malliavin_sensitivity controller state",
+      "decision_target_ref": "tests/runtime_math/runtime_math_linkage.v1.json#/modules/malliavin_sensitivity/decision_target",
+      "transition": {
+        "target_stage": "research_only",
+        "wave": 3,
+        "note": "Dynamical systems monitors. Useful for research characterization but not required for safe runtime decisions."
+      }
+    },
+    {
+      "module": "matrix_concentration",
+      "classification": "research",
+      "linkage_status": "Production",
+      "in_production_manifest": true,
+      "in_research_only_manifest": false,
+      "rationale": "Matrix Bernstein inequality; spectral bounds on ensemble covariance",
+      "rationale_ref": "tests/conformance/math_governance.json#/classifications/research/28/rationale",
+      "decision_target": "RuntimeMathKernel::decide via cached matrix_concentration controller state",
+      "decision_target_ref": "tests/runtime_math/runtime_math_linkage.v1.json#/modules/matrix_concentration/decision_target",
+      "transition": {
+        "target_stage": "research_only",
+        "wave": 4,
+        "note": "Statistical learning and information-theoretic monitors. Provide deep analytical power but production decisions do not depend on them."
+      }
+    },
+    {
+      "module": "microlocal",
+      "classification": "research",
+      "linkage_status": "Production",
+      "in_production_manifest": true,
+      "in_research_only_manifest": false,
+      "rationale": "Kashiwara-Schapira microlocal sheaf propagation; fault-surface control",
+      "rationale_ref": "tests/conformance/math_governance.json#/classifications/research/3/rationale",
+      "decision_target": "RuntimeMathKernel::decide via cached microlocal controller state",
+      "decision_target_ref": "tests/runtime_math/runtime_math_linkage.v1.json#/modules/microlocal/decision_target",
+      "transition": {
+        "target_stage": "research_only",
+        "wave": 1,
+        "note": "Most abstract mathematical theory. No direct decision linkage to ABI-level safety. All use cached state that can fall back to conservative defaults."
+      }
+    },
+    {
+      "module": "nerve_complex",
+      "classification": "research",
+      "linkage_status": "Production",
+      "in_production_manifest": true,
+      "in_research_only_manifest": false,
+      "rationale": "Cech nerve theorem; Betti numbers for structural fragmentation",
+      "rationale_ref": "tests/conformance/math_governance.json#/classifications/research/8/rationale",
+      "decision_target": "RuntimeMathKernel::decide via cached nerve_complex controller state",
+      "decision_target_ref": "tests/runtime_math/runtime_math_linkage.v1.json#/modules/nerve_complex/decision_target",
+      "transition": {
+        "target_stage": "research_only",
+        "wave": 1,
+        "note": "Most abstract mathematical theory. No direct decision linkage to ABI-level safety. All use cached state that can fall back to conservative defaults."
+      }
+    },
+    {
+      "module": "obstruction_detector",
+      "classification": "research",
+      "linkage_status": "Production",
+      "in_production_manifest": true,
+      "in_research_only_manifest": false,
+      "rationale": "Spectral-sequence obstruction detector; cross-layer defects",
+      "rationale_ref": "tests/conformance/math_governance.json#/classifications/research/43/rationale",
+      "decision_target": "RuntimeMathKernel::decide via cached obstruction_detector controller state",
+      "decision_target_ref": "tests/runtime_math/runtime_math_linkage.v1.json#/modules/obstruction_detector/decision_target",
+      "transition": {
+        "target_stage": "research_only",
+        "wave": 4,
+        "note": "Statistical learning and information-theoretic monitors. Provide deep analytical power but production decisions do not depend on them."
+      }
+    },
+    {
+      "module": "operator_norm",
+      "classification": "research",
+      "linkage_status": "Production",
+      "in_production_manifest": true,
+      "in_research_only_manifest": false,
+      "rationale": "Online power iteration for spectral radius; emergent instability",
+      "rationale_ref": "tests/conformance/math_governance.json#/classifications/research/19/rationale",
+      "decision_target": "RuntimeMathKernel::decide via cached operator_norm controller state",
+      "decision_target_ref": "tests/runtime_math/runtime_math_linkage.v1.json#/modules/operator_norm/decision_target",
+      "transition": {
+        "target_stage": "research_only",
+        "wave": 3,
+        "note": "Dynamical systems monitors. Useful for research characterization but not required for safe runtime decisions."
+      }
+    },
+    {
+      "module": "ornstein_uhlenbeck",
+      "classification": "research",
+      "linkage_status": "Production",
+      "in_production_manifest": true,
+      "in_research_only_manifest": false,
+      "rationale": "OU mean-reversion estimator; loss of equilibrium tendency",
+      "rationale_ref": "tests/conformance/math_governance.json#/classifications/research/17/rationale",
+      "decision_target": "RuntimeMathKernel::decide via cached ornstein_uhlenbeck controller state",
+      "decision_target_ref": "tests/runtime_math/runtime_math_linkage.v1.json#/modules/ornstein_uhlenbeck/decision_target",
+      "transition": {
+        "target_stage": "research_only",
+        "wave": 3,
+        "note": "Dynamical systems monitors. Useful for research characterization but not required for safe runtime decisions."
+      }
+    },
+    {
+      "module": "pac_bayes",
+      "classification": "research",
+      "linkage_status": "Production",
+      "in_production_manifest": true,
+      "in_research_only_manifest": false,
+      "rationale": "PAC-Bayes generalization bound; finite-sample ensemble prediction error",
+      "rationale_ref": "tests/conformance/math_governance.json#/classifications/research/30/rationale",
+      "decision_target": "RuntimeMathKernel::decide via cached pac_bayes controller state",
+      "decision_target_ref": "tests/runtime_math/runtime_math_linkage.v1.json#/modules/pac_bayes/decision_target",
+      "transition": {
+        "target_stage": "research_only",
+        "wave": 4,
+        "note": "Statistical learning and information-theoretic monitors. Provide deep analytical power but production decisions do not depend on them."
+      }
+    },
+    {
+      "module": "pareto",
+      "classification": "production_monitor",
+      "linkage_status": "Production",
+      "in_production_manifest": true,
+      "in_research_only_manifest": false,
+      "rationale": "Latency-risk Pareto controller with online regret accounting",
+      "rationale_ref": "tests/conformance/math_governance.json#/classifications/production_monitor/5/rationale",
+      "decision_target": "RuntimeMathKernel::decide latency/risk Pareto selector",
+      "decision_target_ref": "tests/runtime_math/runtime_math_linkage.v1.json#/modules/pareto/decision_target",
+      "transition": {
+        "target_stage": "production",
+        "wave": "",
+        "note": "Production-tier controller retained in default runtime-math-production feature set."
+      }
+    },
+    {
+      "module": "policy_table",
+      "classification": "production_core",
+      "linkage_status": "Production",
+      "in_production_manifest": true,
+      "in_research_only_manifest": false,
+      "rationale": "Proof-carrying policy table loader/verifier; deterministic init-time",
+      "rationale_ref": "tests/conformance/math_governance.json#/classifications/production_core/6/rationale",
+      "decision_target": "RuntimeMathKernel::decide proof-carrying policy table lookup",
+      "decision_target_ref": "tests/runtime_math/runtime_math_linkage.v1.json#/modules/policy_table/decision_target",
+      "transition": {
+        "target_stage": "production",
+        "wave": "",
+        "note": "Production-tier controller retained in default runtime-math-production feature set."
+      }
+    },
+    {
+      "module": "pomdp_repair",
+      "classification": "research",
+      "linkage_status": "Production",
+      "in_production_manifest": true,
+      "in_research_only_manifest": false,
+      "rationale": "Constrained POMDP repair policy; point-based value iteration",
+      "rationale_ref": "tests/conformance/math_governance.json#/classifications/research/38/rationale",
+      "decision_target": "RuntimeMathKernel::decide via cached pomdp_repair controller state",
+      "decision_target_ref": "tests/runtime_math/runtime_math_linkage.v1.json#/modules/pomdp_repair/decision_target",
+      "transition": {
+        "target_stage": "research_only",
+        "wave": 2,
+        "note": "Advanced optimization solvers. Production decisions use simpler barrier+control+bandit path. These add analytical depth but not safety-critical functionality."
+      }
+    },
+    {
+      "module": "provenance_info",
+      "classification": "production_core",
+      "linkage_status": "Production",
+      "in_production_manifest": true,
+      "in_research_only_manifest": false,
+      "rationale": "Information-theoretic provenance tag design with collision bounds",
+      "rationale_ref": "tests/conformance/math_governance.json#/classifications/production_core/11/rationale",
+      "decision_target": "RuntimeMathKernel::decide via cached provenance_info controller state",
+      "decision_target_ref": "tests/runtime_math/runtime_math_linkage.v1.json#/modules/provenance_info/decision_target",
+      "transition": {
+        "target_stage": "production",
+        "wave": "",
+        "note": "Production-tier controller retained in default runtime-math-production feature set."
+      }
+    },
+    {
+      "module": "rademacher_complexity",
+      "classification": "research",
+      "linkage_status": "Production",
+      "in_production_manifest": true,
+      "in_research_only_manifest": false,
+      "rationale": "Data-dependent generalization bound; capacity of severity space",
+      "rationale_ref": "tests/conformance/math_governance.json#/classifications/research/31/rationale",
+      "decision_target": "RuntimeMathKernel::decide via cached rademacher_complexity controller state",
+      "decision_target_ref": "tests/runtime_math/runtime_math_linkage.v1.json#/modules/rademacher_complexity/decision_target",
+      "transition": {
+        "target_stage": "research_only",
+        "wave": 4,
+        "note": "Statistical learning and information-theoretic monitors. Provide deep analytical power but production decisions do not depend on them."
+      }
+    },
+    {
+      "module": "redundancy_tuner",
+      "classification": "production_core",
+      "linkage_status": "Production",
+      "in_production_manifest": true,
+      "in_research_only_manifest": false,
+      "rationale": "Adaptive redundancy tuner; anytime-valid loss/corruption monitoring",
+      "rationale_ref": "tests/conformance/math_governance.json#/classifications/production_core/9/rationale",
+      "decision_target": "RuntimeMathKernel::observe_validation_result evidence redundancy overhead tuning",
+      "decision_target_ref": "tests/runtime_math/runtime_math_linkage.v1.json#/modules/redundancy_tuner/decision_target",
+      "transition": {
+        "target_stage": "production",
+        "wave": "",
+        "note": "Production-tier controller retained in default runtime-math-production feature set."
+      }
+    },
+    {
+      "module": "renewal_theory",
+      "classification": "production_monitor",
+      "linkage_status": "Production",
+      "in_production_manifest": true,
+      "in_research_only_manifest": false,
+      "rationale": "Inter-arrival time monitoring for recovery capability tracking",
+      "rationale_ref": "tests/conformance/math_governance.json#/classifications/production_monitor/12/rationale",
+      "decision_target": "RuntimeMathKernel::decide via cached renewal_theory controller state",
+      "decision_target_ref": "tests/runtime_math/runtime_math_linkage.v1.json#/modules/renewal_theory/decision_target",
+      "transition": {
+        "target_stage": "production",
+        "wave": "",
+        "note": "Production-tier controller retained in default runtime-math-production feature set."
+      }
+    },
+    {
+      "module": "risk",
+      "classification": "production_core",
+      "linkage_status": "Production",
+      "in_production_manifest": true,
+      "in_research_only_manifest": false,
+      "rationale": "Conformal online risk envelope; conservative upper-bound ppm estimator",
+      "rationale_ref": "tests/conformance/math_governance.json#/classifications/production_core/3/rationale",
+      "decision_target": "RuntimeMathKernel::decide sampled risk envelope computation",
+      "decision_target_ref": "tests/runtime_math/runtime_math_linkage.v1.json#/modules/risk/decision_target",
+      "transition": {
+        "target_stage": "production",
+        "wave": "",
+        "note": "Production-tier controller retained in default runtime-math-production feature set."
+      }
+    },
+    {
+      "module": "serre_spectral",
+      "classification": "research",
+      "linkage_status": "Production",
+      "in_production_manifest": true,
+      "in_research_only_manifest": false,
+      "rationale": "Serre spectral sequence invariant lifting; cross-layer consistency",
+      "rationale_ref": "tests/conformance/math_governance.json#/classifications/research/2/rationale",
+      "decision_target": "RuntimeMathKernel::decide via cached serre_spectral controller state",
+      "decision_target_ref": "tests/runtime_math/runtime_math_linkage.v1.json#/modules/serre_spectral/decision_target",
+      "transition": {
+        "target_stage": "research_only",
+        "wave": 1,
+        "note": "Most abstract mathematical theory. No direct decision linkage to ABI-level safety. All use cached state that can fall back to conservative defaults."
+      }
+    },
+    {
+      "module": "sobol",
+      "classification": "production_monitor",
+      "linkage_status": "Production",
+      "in_production_manifest": true,
+      "in_research_only_manifest": false,
+      "rationale": "Low-discrepancy probe scheduling for validation coverage",
+      "rationale_ref": "tests/conformance/math_governance.json#/classifications/production_monitor/6/rationale",
+      "decision_target": "RuntimeMathKernel::resample_high_order_kernels deterministic low-discrepancy sequencing",
+      "decision_target_ref": "tests/runtime_math/runtime_math_linkage.v1.json#/modules/sobol/decision_target",
+      "transition": {
+        "target_stage": "production",
+        "wave": "",
+        "note": "Production-tier controller retained in default runtime-math-production feature set."
+      }
+    },
+    {
+      "module": "sos_barrier",
+      "classification": "research",
+      "linkage_status": "Production",
+      "in_production_manifest": true,
+      "in_research_only_manifest": false,
+      "rationale": "SOS polynomial evaluator for pre-computed barrier certificates",
+      "rationale_ref": "tests/conformance/math_governance.json#/classifications/research/14/rationale",
+      "decision_target": "RuntimeMathKernel::decide polynomial barrier certificate evaluation",
+      "decision_target_ref": "tests/runtime_math/runtime_math_linkage.v1.json#/modules/sos_barrier/decision_target",
+      "transition": {
+        "target_stage": "research_only",
+        "wave": 2,
+        "note": "Advanced optimization solvers. Production decisions use simpler barrier+control+bandit path. These add analytical depth but not safety-critical functionality."
+      }
+    },
+    {
+      "module": "sos_invariant",
+      "classification": "research",
+      "linkage_status": "Production",
+      "in_production_manifest": true,
+      "in_research_only_manifest": false,
+      "rationale": "SOS polynomial invariant guard for nonlinear cross-controller invariants",
+      "rationale_ref": "tests/conformance/math_governance.json#/classifications/research/15/rationale",
+      "decision_target": "RuntimeMathKernel::decide via cached sos_invariant controller state",
+      "decision_target_ref": "tests/runtime_math/runtime_math_linkage.v1.json#/modules/sos_invariant/decision_target",
+      "transition": {
+        "target_stage": "research_only",
+        "wave": 2,
+        "note": "Advanced optimization solvers. Production decisions use simpler barrier+control+bandit path. These add analytical depth but not safety-critical functionality."
+      }
+    },
+    {
+      "module": "sparse",
+      "classification": "research",
+      "linkage_status": "Production",
+      "in_production_manifest": true,
+      "in_research_only_manifest": false,
+      "rationale": "Online L1-regularized sparse recovery (ISTA); latent fault inference",
+      "rationale_ref": "tests/conformance/math_governance.json#/classifications/research/39/rationale",
+      "decision_target": "RuntimeMathKernel::observe_validation_result latent fault-source concentration updates",
+      "decision_target_ref": "tests/runtime_math/runtime_math_linkage.v1.json#/modules/sparse/decision_target",
+      "transition": {
+        "target_stage": "research_only",
+        "wave": 2,
+        "note": "Advanced optimization solvers. Production decisions use simpler barrier+control+bandit path. These add analytical depth but not safety-critical functionality."
+      }
+    },
+    {
+      "module": "spectral_gap",
+      "classification": "research",
+      "linkage_status": "Production",
+      "in_production_manifest": true,
+      "in_research_only_manifest": false,
+      "rationale": "Spectral gap via Cheeger inequality; slow mixing/metastability",
+      "rationale_ref": "tests/conformance/math_governance.json#/classifications/research/20/rationale",
+      "decision_target": "RuntimeMathKernel::decide via cached spectral_gap controller state",
+      "decision_target_ref": "tests/runtime_math/runtime_math_linkage.v1.json#/modules/spectral_gap/decision_target",
+      "transition": {
+        "target_stage": "research_only",
+        "wave": 3,
+        "note": "Dynamical systems monitors. Useful for research characterization but not required for safe runtime decisions."
+      }
+    },
+    {
+      "module": "stein_discrepancy",
+      "classification": "research",
+      "linkage_status": "Production",
+      "in_production_manifest": true,
+      "in_research_only_manifest": false,
+      "rationale": "Kernelized Stein Discrepancy; distribution-free goodness-of-fit",
+      "rationale_ref": "tests/conformance/math_governance.json#/classifications/research/33/rationale",
+      "decision_target": "RuntimeMathKernel::decide via cached stein_discrepancy controller state",
+      "decision_target_ref": "tests/runtime_math/runtime_math_linkage.v1.json#/modules/stein_discrepancy/decision_target",
+      "transition": {
+        "target_stage": "research_only",
+        "wave": 4,
+        "note": "Statistical learning and information-theoretic monitors. Provide deep analytical power but production decisions do not depend on them."
+      }
+    },
+    {
+      "module": "submodular_coverage",
+      "classification": "production_monitor",
+      "linkage_status": "Production",
+      "in_production_manifest": true,
+      "in_research_only_manifest": false,
+      "rationale": "Submodular validation stage coverage; greedy approximation",
+      "rationale_ref": "tests/conformance/math_governance.json#/classifications/production_monitor/8/rationale",
+      "decision_target": "RuntimeMathKernel::decide via cached submodular_coverage controller state",
+      "decision_target_ref": "tests/runtime_math/runtime_math_linkage.v1.json#/modules/submodular_coverage/decision_target",
+      "transition": {
+        "target_stage": "production",
+        "wave": "",
+        "note": "Production-tier controller retained in default runtime-math-production feature set."
+      }
+    },
+    {
+      "module": "transfer_entropy",
+      "classification": "research",
+      "linkage_status": "Production",
+      "in_production_manifest": true,
+      "in_research_only_manifest": false,
+      "rationale": "Schreiber transfer entropy; directed causality between controllers",
+      "rationale_ref": "tests/conformance/math_governance.json#/classifications/research/25/rationale",
+      "decision_target": "RuntimeMathKernel::decide via cached transfer_entropy controller state",
+      "decision_target_ref": "tests/runtime_math/runtime_math_linkage.v1.json#/modules/transfer_entropy/decision_target",
+      "transition": {
+        "target_stage": "research_only",
+        "wave": 4,
+        "note": "Statistical learning and information-theoretic monitors. Provide deep analytical power but production decisions do not depend on them."
+      }
+    },
+    {
+      "module": "wasserstein_drift",
+      "classification": "research",
+      "linkage_status": "Production",
+      "in_production_manifest": true,
+      "in_research_only_manifest": false,
+      "rationale": "1-Wasserstein distance for distributional shift detection",
+      "rationale_ref": "tests/conformance/math_governance.json#/classifications/research/32/rationale",
+      "decision_target": "RuntimeMathKernel::decide via cached wasserstein_drift controller state",
+      "decision_target_ref": "tests/runtime_math/runtime_math_linkage.v1.json#/modules/wasserstein_drift/decision_target",
+      "transition": {
+        "target_stage": "research_only",
+        "wave": 4,
+        "note": "Statistical learning and information-theoretic monitors. Provide deep analytical power but production decisions do not depend on them."
+      }
+    }
+  ],
+  "summary": {
+    "total_modules": 69,
+    "classification_counts": {
+      "research": 44,
+      "production_monitor": 13,
+      "production_core": 12
+    },
+    "linkage_status_counts": {
+      "Production": 69,
+      "ResearchOnly": 0
+    },
+    "production_manifest_modules": 69,
+    "research_only_manifest_modules": 0,
+    "research_modules_currently_in_production_manifest": 44
+  }
+}

@@ -100,6 +100,11 @@ if [[ "${FRANKENLIBC_EXTENDED_GATES:-0}" == "1" ]]; then
     echo "PASS"
     echo ""
 
+    echo "--- runtime_math classification matrix gate ---"
+    scripts/check_runtime_math_classification_matrix.sh
+    echo "PASS"
+    echo ""
+
     echo "--- math retirement gate ---"
     scripts/check_math_retirement.sh
     echo "PASS"

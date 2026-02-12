@@ -90,6 +90,7 @@
     "production_kernel": "Current runtime ships all listed runtime_math modules in the production membrane path; manifest is authoritative input for future pruning/gating waves.",
     "research_kernel": "No modules are classified ResearchOnly in v1. Research-only migration is introduced by subsequent governance beads."
   },
+  "classification_matrix_ref": "tests/runtime_math/runtime_math_classification_matrix.v1.json",
   "research_only_modules": [],
   "schema_version": "v1",
   "source_mod_rs": "crates/frankenlibc-membrane/src/runtime_math/mod.rs"
