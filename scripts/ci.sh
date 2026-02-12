@@ -51,6 +51,11 @@ if [[ "${FRANKENLIBC_EXTENDED_GATES:-0}" == "1" ]]; then
     echo "PASS"
     echo ""
 
+    echo "--- runtime_math profile gates (production vs research) ---"
+    scripts/check_runtime_math_profile_gates.sh
+    echo "PASS"
+    echo ""
+
     echo "--- expected-loss matrix policy artifact check ---"
     scripts/check_expected_loss_matrix.sh
     echo "PASS"

@@ -22,6 +22,11 @@
 
 #![deny(unsafe_code)]
 
+#[cfg(not(feature = "runtime-math-production"))]
+compile_error!(
+    "frankenlibc-membrane requires the `runtime-math-production` feature (runtime math kernel is mandatory)."
+);
+
 pub mod arena;
 pub mod bloom;
 pub mod check_oracle;
