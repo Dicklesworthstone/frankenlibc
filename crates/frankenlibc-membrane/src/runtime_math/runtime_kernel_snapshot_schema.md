@@ -2,7 +2,7 @@
 
 This document defines the stable schema for `RuntimeKernelSnapshot` as emitted by `RuntimeMathKernel::snapshot(...)`.
 
-- Schema version constant: `RUNTIME_KERNEL_SNAPSHOT_SCHEMA_VERSION = 1`
+- Schema version constant: `RUNTIME_KERNEL_SNAPSHOT_SCHEMA_VERSION = 2`
 
 ## Stability Policy
 

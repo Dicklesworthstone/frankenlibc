@@ -4176,6 +4176,24 @@ mod tests {
     }
 
     #[test]
+    fn runtime_kernel_snapshot_schema_doc_matches_constant() {
+        let doc = include_str!("runtime_kernel_snapshot_schema.md");
+        let needle = "Schema version constant:";
+        let line = doc
+            .lines()
+            .find(|line| line.contains(needle))
+            .expect("schema doc must include a schema version constant line");
+        let expected = format!(
+            "RUNTIME_KERNEL_SNAPSHOT_SCHEMA_VERSION = {}",
+            RUNTIME_KERNEL_SNAPSHOT_SCHEMA_VERSION
+        );
+        assert!(
+            line.contains(&expected),
+            "schema doc drift: expected `{expected}` line, got: {line}"
+        );
+    }
+
+    #[test]
     fn hardened_can_escalate_to_full() {
         let kernel = RuntimeMathKernel::new();
         let decision = kernel.decide(
