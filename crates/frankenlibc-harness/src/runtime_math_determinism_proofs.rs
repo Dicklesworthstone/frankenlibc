@@ -15,7 +15,7 @@
 use crate::structured_log::{LogEmitter, LogEntry, LogLevel, Outcome, StreamKind};
 use frankenlibc_membrane::runtime_math::RUNTIME_KERNEL_SNAPSHOT_SCHEMA_VERSION;
 use frankenlibc_membrane::{
-    ApiFamily, MembraneAction, RuntimeContext, RuntimeMathKernel, SafetyLevel, ValidationProfile,
+    ApiFamily, MembraneAction, RuntimeContext, RuntimeMathKernel, SafetyLevel,
 };
 use serde::Serialize;
 use std::path::Path;
@@ -605,4 +605,3 @@ fn rel_path(root: &Path, path: &Path) -> String {
         .display()
         .to_string()
 }
-
