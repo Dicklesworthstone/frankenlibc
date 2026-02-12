@@ -49,6 +49,26 @@ pub enum Outcome {
     Timeout,
 }
 
+/// Evidence stream / workflow domain.
+///
+/// This helps unify log aggregation across unit, conformance, e2e, perf, and release workflows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum StreamKind {
+    Unit,
+    Conformance,
+    E2e,
+    Perf,
+    Release,
+}
+
+/// Membrane validation profile (depth) selected by runtime policy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ValidationProfile {
+    Fast,
+    Full,
+}
+
 /// Canonical structured log entry.
 ///
 /// Required fields: `timestamp`, `trace_id`, `level`, `event`.
@@ -65,19 +85,43 @@ pub struct LogEntry {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bead_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub stream: Option<StreamKind>,
+    /// Pipeline step / gate name (e.g. `ci`, `e2e_suite`, `perf_gate`, `closure_gate`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gate: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub mode: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub api_family: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub symbol: Option<String>,
+    /// Optional span id for multi-component traces under one `trace_id`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub span_id: Option<String>,
+    /// Optional parent span id.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent_span_id: Option<String>,
+    /// Validation profile selected by runtime policy (when applicable).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile: Option<ValidationProfile>,
+    /// Healing action applied (hardened mode) when applicable. Keep this as a string so new
+    /// actions do not require schema churn; stable families should still use a bounded vocab.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub healing_action: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub decision: Option<Decision>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub outcome: Option<Outcome>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub errno: Option<i32>,
+    /// Exit code for external processes/scripts when relevant.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exit_code: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub latency_ns: Option<u64>,
+    /// Wall-clock duration for a higher-level gate step (milliseconds).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub artifact_refs: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -94,13 +138,21 @@ impl LogEntry {
             level,
             event: event.into(),
             bead_id: None,
+            stream: None,
+            gate: None,
             mode: None,
             api_family: None,
             symbol: None,
+            span_id: None,
+            parent_span_id: None,
+            profile: None,
+            healing_action: None,
             decision: None,
             outcome: None,
             errno: None,
+            exit_code: None,
             latency_ns: None,
+            duration_ms: None,
             artifact_refs: None,
             details: None,
         }
@@ -110,6 +162,20 @@ impl LogEntry {
     #[must_use]
     pub fn with_bead(mut self, bead_id: impl Into<String>) -> Self {
         self.bead_id = Some(bead_id.into());
+        self
+    }
+
+    /// Set the evidence stream kind.
+    #[must_use]
+    pub fn with_stream(mut self, stream: StreamKind) -> Self {
+        self.stream = Some(stream);
+        self
+    }
+
+    /// Set the pipeline step / gate name.
+    #[must_use]
+    pub fn with_gate(mut self, gate: impl Into<String>) -> Self {
+        self.gate = Some(gate.into());
         self
     }
 
@@ -125,6 +191,28 @@ impl LogEntry {
     pub fn with_api(mut self, family: impl Into<String>, symbol: impl Into<String>) -> Self {
         self.api_family = Some(family.into());
         self.symbol = Some(symbol.into());
+        self
+    }
+
+    /// Set span identifiers (optional).
+    #[must_use]
+    pub fn with_span(mut self, span_id: impl Into<String>, parent_span_id: Option<String>) -> Self {
+        self.span_id = Some(span_id.into());
+        self.parent_span_id = parent_span_id;
+        self
+    }
+
+    /// Set validation profile.
+    #[must_use]
+    pub fn with_profile(mut self, profile: ValidationProfile) -> Self {
+        self.profile = Some(profile);
+        self
+    }
+
+    /// Set healing action.
+    #[must_use]
+    pub fn with_healing_action(mut self, action: impl Into<String>) -> Self {
+        self.healing_action = Some(action.into());
         self
     }
 
@@ -149,10 +237,24 @@ impl LogEntry {
         self
     }
 
+    /// Set exit code.
+    #[must_use]
+    pub fn with_exit_code(mut self, exit_code: i32) -> Self {
+        self.exit_code = Some(exit_code);
+        self
+    }
+
     /// Set latency in nanoseconds.
     #[must_use]
     pub fn with_latency_ns(mut self, ns: u64) -> Self {
         self.latency_ns = Some(ns);
+        self
+    }
+
+    /// Set duration in milliseconds.
+    #[must_use]
+    pub fn with_duration_ms(mut self, ms: u64) -> Self {
+        self.duration_ms = Some(ms);
         self
     }
 
@@ -416,6 +518,28 @@ pub fn validate_log_line(
         });
     }
 
+    // Validate stream enum if present
+    if let Some(stream) = obj.get("stream").and_then(|v| v.as_str())
+        && !["unit", "conformance", "e2e", "perf", "release"].contains(&stream)
+    {
+        errors.push(LogValidationError {
+            line_number,
+            field: "stream".to_string(),
+            message: format!("invalid stream: '{stream}'"),
+        });
+    }
+
+    // Validate profile enum if present
+    if let Some(profile) = obj.get("profile").and_then(|v| v.as_str())
+        && !["Fast", "Full"].contains(&profile)
+    {
+        errors.push(LogValidationError {
+            line_number,
+            field: "profile".to_string(),
+            message: format!("invalid profile: '{profile}'"),
+        });
+    }
+
     // Validate trace_id format: should contain ::
     if let Some(trace_id) = obj.get("trace_id").and_then(|v| v.as_str())
         && !trace_id.contains("::")
@@ -508,6 +632,8 @@ mod tests {
         assert_eq!(parsed["event"], "test_start");
         // Optional fields should be absent
         assert!(parsed.get("bead_id").is_none());
+        assert!(parsed.get("stream").is_none());
+        assert!(parsed.get("gate").is_none());
         assert!(parsed.get("mode").is_none());
     }
 
@@ -515,25 +641,39 @@ mod tests {
     fn log_entry_with_all_optional_fields() {
         let entry = LogEntry::new("bd-test::run-1::002", LogLevel::Error, "test_failure")
             .with_bead("bd-144")
+            .with_stream(StreamKind::E2e)
+            .with_gate("e2e_suite")
             .with_mode("hardened")
             .with_api("malloc", "realloc")
+            .with_span("span-1", None)
+            .with_profile(ValidationProfile::Full)
+            .with_healing_action("ClampSize")
             .with_outcome(Outcome::Fail)
             .with_decision(Decision::Deny)
             .with_errno(12)
+            .with_exit_code(1)
             .with_latency_ns(150)
+            .with_duration_ms(2)
             .with_artifacts(vec!["path/to/backtrace".to_string()])
             .with_details(serde_json::json!({"expected": "non-null"}));
 
         let json = entry.to_jsonl().unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed["bead_id"], "bd-144");
+        assert_eq!(parsed["stream"], "e2e");
+        assert_eq!(parsed["gate"], "e2e_suite");
         assert_eq!(parsed["mode"], "hardened");
         assert_eq!(parsed["api_family"], "malloc");
         assert_eq!(parsed["symbol"], "realloc");
+        assert_eq!(parsed["span_id"], "span-1");
+        assert_eq!(parsed["profile"], "Full");
+        assert_eq!(parsed["healing_action"], "ClampSize");
         assert_eq!(parsed["outcome"], "fail");
         assert_eq!(parsed["decision"], "Deny");
         assert_eq!(parsed["errno"], 12);
+        assert_eq!(parsed["exit_code"], 1);
         assert_eq!(parsed["latency_ns"], 150);
+        assert_eq!(parsed["duration_ms"], 2);
         assert!(parsed["artifact_refs"].is_array());
         assert!(parsed["details"].is_object());
     }

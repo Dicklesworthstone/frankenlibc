@@ -1,6 +1,26 @@
 {
-  "schema_version": 1,
-  "description": "Canonical structured log schema for frankenlibc test/e2e/perf workflows. All log lines must be JSONL (one JSON object per line) conforming to this schema.",
+  "schema_version": 2,
+  "description": "Canonical structured log schema for frankenlibc unit/conformance/e2e/perf/release workflows. All log lines must be JSONL (one JSON object per line) conforming to this schema.",
+  "compatibility_policy": {
+    "principle": "Backwards-compatible by default",
+    "rules": [
+      "New optional fields may be added within schema_version=2 without breaking existing emitters/consumers.",
+      "Required fields must not change without a schema_version bump.",
+      "Enum vocabularies should only expand (never rename) within a schema_version.",
+      "Emitters may add extra fields not listed here inside `details` (preferred) or as top-level fields during migrations; validators should be tolerant unless a gate explicitly opts into strictness."
+    ]
+  },
+  "emitter_checklist": [
+    "Emit one JSON object per line (JSONL), no trailing commas.",
+    "Always include: timestamp, trace_id, level, event.",
+    "trace_id must be stable for the run and follow <bead_id>::<run_id>::<seq>.",
+    "Prefer setting bead_id explicitly even though it can be derived from trace_id.",
+    "Set stream and gate for joinable aggregation across workflows.",
+    "When applicable, set mode (strict|hardened), api_family, and symbol.",
+    "On membrane-related events, set decision and profile; on repairs set healing_action.",
+    "On failures, set outcome=fail and include artifact_refs pointing to diffs/backtraces/reports.",
+    "Put large/variable payloads in details (object) rather than inventing many ad-hoc top-level keys."
+  ],
   "required_fields": {
     "timestamp": {
       "type": "string",
@@ -27,6 +47,15 @@
       "type": "string",
       "description": "Bead that owns this test/verification run"
     },
+    "stream": {
+      "type": "string",
+      "enum": ["unit", "conformance", "e2e", "perf", "release"],
+      "description": "Evidence stream / workflow domain"
+    },
+    "gate": {
+      "type": "string",
+      "description": "Pipeline step / gate name (e.g., ci, e2e_suite, perf_gate, closure_gate)"
+    },
     "mode": {
       "type": "string",
       "enum": ["strict", "hardened"],
@@ -39,6 +68,23 @@
     "symbol": {
       "type": "string",
       "description": "Specific ABI symbol being tested (e.g., memcpy, malloc, strlen)"
+    },
+    "span_id": {
+      "type": "string",
+      "description": "Optional span id for multi-component traces under one trace_id"
+    },
+    "parent_span_id": {
+      "type": "string",
+      "description": "Optional parent span id"
+    },
+    "profile": {
+      "type": "string",
+      "enum": ["Fast", "Full"],
+      "description": "Membrane validation profile selected by runtime policy"
+    },
+    "healing_action": {
+      "type": "string",
+      "description": "Healing action applied (hardened mode) when applicable"
     },
     "decision": {
       "type": "string",
@@ -54,9 +100,17 @@
       "type": "integer",
       "description": "errno value observed (0 = success)"
     },
+    "exit_code": {
+      "type": "integer",
+      "description": "Exit code for external processes/scripts when relevant"
+    },
     "latency_ns": {
       "type": "integer",
       "description": "Operation latency in nanoseconds"
+    },
+    "duration_ms": {
+      "type": "integer",
+      "description": "Wall-clock duration for a higher-level gate step (milliseconds)"
     },
     "artifact_refs": {
       "type": "array",
@@ -110,6 +164,8 @@
       "level": "info",
       "event": "test_start",
       "bead_id": "bd-144",
+      "stream": "unit",
+      "gate": "structured_log_test",
       "mode": "strict",
       "api_family": "string",
       "symbol": "memcpy"
@@ -120,6 +176,8 @@
       "level": "info",
       "event": "validation_pass",
       "bead_id": "bd-144",
+      "stream": "unit",
+      "gate": "structured_log_test",
       "mode": "strict",
       "api_family": "string",
       "symbol": "memcpy",
@@ -136,6 +194,8 @@
       "level": "error",
       "event": "test_failure",
       "bead_id": "bd-144",
+      "stream": "e2e",
+      "gate": "e2e_suite",
       "mode": "hardened",
       "api_family": "malloc",
       "symbol": "realloc",

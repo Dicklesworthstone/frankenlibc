@@ -39,6 +39,14 @@ fn log_schema_exists_and_valid() {
     let schema: serde_json::Value =
         serde_json::from_str(&content).expect("log_schema.json should be valid JSON");
 
+    let schema_version = schema["schema_version"]
+        .as_u64()
+        .expect("schema_version must be an integer");
+    assert!(
+        schema_version >= 2,
+        "Expected log schema_version >= 2, got {schema_version}"
+    );
+
     // Required top-level keys
     for key in [
         "schema_version",
