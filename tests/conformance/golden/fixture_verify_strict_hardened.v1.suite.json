@@ -1,7 +1,7 @@
 {
   "runtime_name": "glibc-rs-harness:fixture-verify",
-  "total": 84,
-  "passed": 84,
+  "total": 91,
+  "passed": 91,
   "failed": 0,
   "skipped": 0,
   "duration_ms": 2,
@@ -400,6 +400,638 @@
             "inputs": {
               "ptr_val": 0,
               "size": 32
+            }
+          }
+        }
+      ]
+    },
+    {
+      "test_id": "fixture-verify::iconv/phase1::iconv::hardened::hardened_utf16le_to_utf8",
+      "test_name": "hardened_utf16le_to_utf8",
+      "category": "IO",
+      "expected": "ok nonrev=0 in_left=0 out_left=1 out=[226, 130, 172]",
+      "result": {
+        "passed": true,
+        "message": null,
+        "checkpoints": [
+          {
+            "name": "meta",
+            "data": {
+              "case": "hardened_utf16le_to_utf8",
+              "family": "iconv/phase1",
+              "function": "iconv",
+              "mode": "hardened",
+              "spec_section": "TSM hardened iconv",
+              "trace_id": "fixture-verify::iconv/phase1::iconv::hardened::hardened_utf16le_to_utf8"
+            }
+          },
+          {
+            "name": "inputs",
+            "data": {
+              "expected_errno": 0,
+              "inputs": {
+                "fromcode": "UTF-16LE",
+                "input": [
+                  172,
+                  32
+                ],
+                "out_len": 4,
+                "tocode": "UTF-8"
+              }
+            }
+          },
+          {
+            "name": "execution",
+            "data": {
+              "diff": null,
+              "host_output": "SKIP",
+              "host_parity": true,
+              "impl_output": "ok nonrev=0 in_left=0 out_left=1 out=[226, 130, 172]",
+              "note": null,
+              "notes": []
+            }
+          }
+        ],
+        "duration_ms": 0
+      },
+      "events": [
+        {
+          "kind": "Phase",
+          "name": "execute",
+          "timestamp_ms": 0,
+          "details": null
+        },
+        {
+          "kind": "Checkpoint",
+          "name": "fixture.meta",
+          "timestamp_ms": 0,
+          "details": {
+            "campaign": "fixture-verify",
+            "case": "hardened_utf16le_to_utf8",
+            "family": "iconv/phase1",
+            "function": "iconv",
+            "mode": "hardened",
+            "spec_section": "TSM hardened iconv",
+            "trace_id": "fixture-verify::iconv/phase1::iconv::hardened::hardened_utf16le_to_utf8"
+          }
+        },
+        {
+          "kind": "Checkpoint",
+          "name": "fixture.inputs",
+          "timestamp_ms": 0,
+          "details": {
+            "expected_errno": 0,
+            "inputs": {
+              "fromcode": "UTF-16LE",
+              "input": [
+                172,
+                32
+              ],
+              "out_len": 4,
+              "tocode": "UTF-8"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "test_id": "fixture-verify::iconv/phase1::iconv::strict::strict_e2big_preserves_progress",
+      "test_name": "strict_e2big_preserves_progress",
+      "category": "IO",
+      "expected": "err errno=7 in_left=1 out_left=1 out=[65, 0]",
+      "result": {
+        "passed": true,
+        "message": null,
+        "checkpoints": [
+          {
+            "name": "meta",
+            "data": {
+              "case": "strict_e2big_preserves_progress",
+              "family": "iconv/phase1",
+              "function": "iconv",
+              "mode": "strict",
+              "spec_section": "POSIX iconv",
+              "trace_id": "fixture-verify::iconv/phase1::iconv::strict::strict_e2big_preserves_progress"
+            }
+          },
+          {
+            "name": "inputs",
+            "data": {
+              "expected_errno": 7,
+              "inputs": {
+                "fromcode": "UTF-8",
+                "input": [
+                  65,
+                  66
+                ],
+                "out_len": 3,
+                "tocode": "UTF-16LE"
+              }
+            }
+          },
+          {
+            "name": "execution",
+            "data": {
+              "diff": null,
+              "host_output": "err errno=7 in_left=1 out_left=1 out=[65, 0]",
+              "host_parity": true,
+              "impl_output": "err errno=7 in_left=1 out_left=1 out=[65, 0]",
+              "note": null,
+              "notes": []
+            }
+          }
+        ],
+        "duration_ms": 0
+      },
+      "events": [
+        {
+          "kind": "Phase",
+          "name": "execute",
+          "timestamp_ms": 0,
+          "details": null
+        },
+        {
+          "kind": "Checkpoint",
+          "name": "fixture.meta",
+          "timestamp_ms": 0,
+          "details": {
+            "campaign": "fixture-verify",
+            "case": "strict_e2big_preserves_progress",
+            "family": "iconv/phase1",
+            "function": "iconv",
+            "mode": "strict",
+            "spec_section": "POSIX iconv",
+            "trace_id": "fixture-verify::iconv/phase1::iconv::strict::strict_e2big_preserves_progress"
+          }
+        },
+        {
+          "kind": "Checkpoint",
+          "name": "fixture.inputs",
+          "timestamp_ms": 0,
+          "details": {
+            "expected_errno": 7,
+            "inputs": {
+              "fromcode": "UTF-8",
+              "input": [
+                65,
+                66
+              ],
+              "out_len": 3,
+              "tocode": "UTF-16LE"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "test_id": "fixture-verify::iconv/phase1::iconv::strict::strict_eilseq_invalid_utf8",
+      "test_name": "strict_eilseq_invalid_utf8",
+      "category": "IO",
+      "expected": "err errno=84 in_left=2 out_left=8 out=[]",
+      "result": {
+        "passed": true,
+        "message": null,
+        "checkpoints": [
+          {
+            "name": "meta",
+            "data": {
+              "case": "strict_eilseq_invalid_utf8",
+              "family": "iconv/phase1",
+              "function": "iconv",
+              "mode": "strict",
+              "spec_section": "POSIX iconv",
+              "trace_id": "fixture-verify::iconv/phase1::iconv::strict::strict_eilseq_invalid_utf8"
+            }
+          },
+          {
+            "name": "inputs",
+            "data": {
+              "expected_errno": 84,
+              "inputs": {
+                "fromcode": "UTF-8",
+                "input": [
+                  195,
+                  40
+                ],
+                "out_len": 8,
+                "tocode": "UTF-16LE"
+              }
+            }
+          },
+          {
+            "name": "execution",
+            "data": {
+              "diff": null,
+              "host_output": "err errno=84 in_left=2 out_left=8 out=[]",
+              "host_parity": true,
+              "impl_output": "err errno=84 in_left=2 out_left=8 out=[]",
+              "note": null,
+              "notes": []
+            }
+          }
+        ],
+        "duration_ms": 0
+      },
+      "events": [
+        {
+          "kind": "Phase",
+          "name": "execute",
+          "timestamp_ms": 0,
+          "details": null
+        },
+        {
+          "kind": "Checkpoint",
+          "name": "fixture.meta",
+          "timestamp_ms": 0,
+          "details": {
+            "campaign": "fixture-verify",
+            "case": "strict_eilseq_invalid_utf8",
+            "family": "iconv/phase1",
+            "function": "iconv",
+            "mode": "strict",
+            "spec_section": "POSIX iconv",
+            "trace_id": "fixture-verify::iconv/phase1::iconv::strict::strict_eilseq_invalid_utf8"
+          }
+        },
+        {
+          "kind": "Checkpoint",
+          "name": "fixture.inputs",
+          "timestamp_ms": 0,
+          "details": {
+            "expected_errno": 84,
+            "inputs": {
+              "fromcode": "UTF-8",
+              "input": [
+                195,
+                40
+              ],
+              "out_len": 8,
+              "tocode": "UTF-16LE"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "test_id": "fixture-verify::iconv/phase1::iconv::strict::strict_einval_incomplete_utf8",
+      "test_name": "strict_einval_incomplete_utf8",
+      "category": "IO",
+      "expected": "err errno=22 in_left=2 out_left=8 out=[]",
+      "result": {
+        "passed": true,
+        "message": null,
+        "checkpoints": [
+          {
+            "name": "meta",
+            "data": {
+              "case": "strict_einval_incomplete_utf8",
+              "family": "iconv/phase1",
+              "function": "iconv",
+              "mode": "strict",
+              "spec_section": "POSIX iconv",
+              "trace_id": "fixture-verify::iconv/phase1::iconv::strict::strict_einval_incomplete_utf8"
+            }
+          },
+          {
+            "name": "inputs",
+            "data": {
+              "expected_errno": 22,
+              "inputs": {
+                "fromcode": "UTF-8",
+                "input": [
+                  226,
+                  130
+                ],
+                "out_len": 8,
+                "tocode": "UTF-16LE"
+              }
+            }
+          },
+          {
+            "name": "execution",
+            "data": {
+              "diff": null,
+              "host_output": "err errno=22 in_left=2 out_left=8 out=[]",
+              "host_parity": true,
+              "impl_output": "err errno=22 in_left=2 out_left=8 out=[]",
+              "note": null,
+              "notes": []
+            }
+          }
+        ],
+        "duration_ms": 0
+      },
+      "events": [
+        {
+          "kind": "Phase",
+          "name": "execute",
+          "timestamp_ms": 0,
+          "details": null
+        },
+        {
+          "kind": "Checkpoint",
+          "name": "fixture.meta",
+          "timestamp_ms": 0,
+          "details": {
+            "campaign": "fixture-verify",
+            "case": "strict_einval_incomplete_utf8",
+            "family": "iconv/phase1",
+            "function": "iconv",
+            "mode": "strict",
+            "spec_section": "POSIX iconv",
+            "trace_id": "fixture-verify::iconv/phase1::iconv::strict::strict_einval_incomplete_utf8"
+          }
+        },
+        {
+          "kind": "Checkpoint",
+          "name": "fixture.inputs",
+          "timestamp_ms": 0,
+          "details": {
+            "expected_errno": 22,
+            "inputs": {
+              "fromcode": "UTF-8",
+              "input": [
+                226,
+                130
+              ],
+              "out_len": 8,
+              "tocode": "UTF-16LE"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "test_id": "fixture-verify::iconv/phase1::iconv::strict::strict_latin1_to_utf8_multibyte",
+      "test_name": "strict_latin1_to_utf8_multibyte",
+      "category": "IO",
+      "expected": "ok nonrev=0 in_left=0 out_left=1 out=[72, 195, 169]",
+      "result": {
+        "passed": true,
+        "message": null,
+        "checkpoints": [
+          {
+            "name": "meta",
+            "data": {
+              "case": "strict_latin1_to_utf8_multibyte",
+              "family": "iconv/phase1",
+              "function": "iconv",
+              "mode": "strict",
+              "spec_section": "POSIX iconv",
+              "trace_id": "fixture-verify::iconv/phase1::iconv::strict::strict_latin1_to_utf8_multibyte"
+            }
+          },
+          {
+            "name": "inputs",
+            "data": {
+              "expected_errno": 0,
+              "inputs": {
+                "fromcode": "ISO-8859-1",
+                "input": [
+                  72,
+                  233
+                ],
+                "out_len": 4,
+                "tocode": "UTF-8"
+              }
+            }
+          },
+          {
+            "name": "execution",
+            "data": {
+              "diff": null,
+              "host_output": "ok nonrev=0 in_left=0 out_left=1 out=[72, 195, 169]",
+              "host_parity": true,
+              "impl_output": "ok nonrev=0 in_left=0 out_left=1 out=[72, 195, 169]",
+              "note": null,
+              "notes": []
+            }
+          }
+        ],
+        "duration_ms": 0
+      },
+      "events": [
+        {
+          "kind": "Phase",
+          "name": "execute",
+          "timestamp_ms": 0,
+          "details": null
+        },
+        {
+          "kind": "Checkpoint",
+          "name": "fixture.meta",
+          "timestamp_ms": 0,
+          "details": {
+            "campaign": "fixture-verify",
+            "case": "strict_latin1_to_utf8_multibyte",
+            "family": "iconv/phase1",
+            "function": "iconv",
+            "mode": "strict",
+            "spec_section": "POSIX iconv",
+            "trace_id": "fixture-verify::iconv/phase1::iconv::strict::strict_latin1_to_utf8_multibyte"
+          }
+        },
+        {
+          "kind": "Checkpoint",
+          "name": "fixture.inputs",
+          "timestamp_ms": 0,
+          "details": {
+            "expected_errno": 0,
+            "inputs": {
+              "fromcode": "ISO-8859-1",
+              "input": [
+                72,
+                233
+              ],
+              "out_len": 4,
+              "tocode": "UTF-8"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "test_id": "fixture-verify::iconv/phase1::iconv::strict::strict_unsupported_encoding",
+      "test_name": "strict_unsupported_encoding",
+      "category": "IO",
+      "expected": "open_err errno=22",
+      "result": {
+        "passed": true,
+        "message": null,
+        "checkpoints": [
+          {
+            "name": "meta",
+            "data": {
+              "case": "strict_unsupported_encoding",
+              "family": "iconv/phase1",
+              "function": "iconv",
+              "mode": "strict",
+              "spec_section": "POSIX iconv",
+              "trace_id": "fixture-verify::iconv/phase1::iconv::strict::strict_unsupported_encoding"
+            }
+          },
+          {
+            "name": "inputs",
+            "data": {
+              "expected_errno": 22,
+              "inputs": {
+                "fromcode": "UTF-8",
+                "input": [
+                  65
+                ],
+                "out_len": 8,
+                "tocode": "UTF-32"
+              }
+            }
+          },
+          {
+            "name": "execution",
+            "data": {
+              "diff": "strict host parity mismatch: host=ok nonrev=0 in_left=0 out_left=0 out=[255, 254, 0, 0, 65, 0, 0, 0], impl=open_err errno=22\nstrict host parity mismatch for iconv conversion",
+              "host_output": "ok nonrev=0 in_left=0 out_left=0 out=[255, 254, 0, 0, 65, 0, 0, 0]",
+              "host_parity": false,
+              "impl_output": "open_err errno=22",
+              "note": "strict host parity mismatch for iconv conversion",
+              "notes": [
+                "strict host parity mismatch: host=ok nonrev=0 in_left=0 out_left=0 out=[255, 254, 0, 0, 65, 0, 0, 0], impl=open_err errno=22",
+                "strict host parity mismatch for iconv conversion"
+              ]
+            }
+          }
+        ],
+        "duration_ms": 0
+      },
+      "events": [
+        {
+          "kind": "Phase",
+          "name": "execute",
+          "timestamp_ms": 0,
+          "details": null
+        },
+        {
+          "kind": "Checkpoint",
+          "name": "fixture.meta",
+          "timestamp_ms": 0,
+          "details": {
+            "campaign": "fixture-verify",
+            "case": "strict_unsupported_encoding",
+            "family": "iconv/phase1",
+            "function": "iconv",
+            "mode": "strict",
+            "spec_section": "POSIX iconv",
+            "trace_id": "fixture-verify::iconv/phase1::iconv::strict::strict_unsupported_encoding"
+          }
+        },
+        {
+          "kind": "Checkpoint",
+          "name": "fixture.inputs",
+          "timestamp_ms": 0,
+          "details": {
+            "expected_errno": 22,
+            "inputs": {
+              "fromcode": "UTF-8",
+              "input": [
+                65
+              ],
+              "out_len": 8,
+              "tocode": "UTF-32"
+            }
+          }
+        },
+        {
+          "kind": "Checkpoint",
+          "name": "fixture.diff",
+          "timestamp_ms": 0,
+          "details": {
+            "diff": "strict host parity mismatch: host=ok nonrev=0 in_left=0 out_left=0 out=[255, 254, 0, 0, 65, 0, 0, 0], impl=open_err errno=22\nstrict host parity mismatch for iconv conversion"
+          }
+        }
+      ]
+    },
+    {
+      "test_id": "fixture-verify::iconv/phase1::iconv::strict::strict_utf8_to_utf16le_basic",
+      "test_name": "strict_utf8_to_utf16le_basic",
+      "category": "IO",
+      "expected": "ok nonrev=0 in_left=0 out_left=4 out=[65, 0, 66, 0]",
+      "result": {
+        "passed": true,
+        "message": null,
+        "checkpoints": [
+          {
+            "name": "meta",
+            "data": {
+              "case": "strict_utf8_to_utf16le_basic",
+              "family": "iconv/phase1",
+              "function": "iconv",
+              "mode": "strict",
+              "spec_section": "POSIX iconv",
+              "trace_id": "fixture-verify::iconv/phase1::iconv::strict::strict_utf8_to_utf16le_basic"
+            }
+          },
+          {
+            "name": "inputs",
+            "data": {
+              "expected_errno": 0,
+              "inputs": {
+                "fromcode": "UTF-8",
+                "input": [
+                  65,
+                  66
+                ],
+                "out_len": 8,
+                "tocode": "UTF-16LE"
+              }
+            }
+          },
+          {
+            "name": "execution",
+            "data": {
+              "diff": null,
+              "host_output": "ok nonrev=0 in_left=0 out_left=4 out=[65, 0, 66, 0]",
+              "host_parity": true,
+              "impl_output": "ok nonrev=0 in_left=0 out_left=4 out=[65, 0, 66, 0]",
+              "note": null,
+              "notes": []
+            }
+          }
+        ],
+        "duration_ms": 0
+      },
+      "events": [
+        {
+          "kind": "Phase",
+          "name": "execute",
+          "timestamp_ms": 0,
+          "details": null
+        },
+        {
+          "kind": "Checkpoint",
+          "name": "fixture.meta",
+          "timestamp_ms": 0,
+          "details": {
+            "campaign": "fixture-verify",
+            "case": "strict_utf8_to_utf16le_basic",
+            "family": "iconv/phase1",
+            "function": "iconv",
+            "mode": "strict",
+            "spec_section": "POSIX iconv",
+            "trace_id": "fixture-verify::iconv/phase1::iconv::strict::strict_utf8_to_utf16le_basic"
+          }
+        },
+        {
+          "kind": "Checkpoint",
+          "name": "fixture.inputs",
+          "timestamp_ms": 0,
+          "details": {
+            "expected_errno": 0,
+            "inputs": {
+              "fromcode": "UTF-8",
+              "input": [
+                65,
+                66
+              ],
+              "out_len": 8,
+              "tocode": "UTF-16LE"
             }
           }
         }

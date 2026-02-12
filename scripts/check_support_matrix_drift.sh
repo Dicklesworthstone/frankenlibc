@@ -76,12 +76,12 @@ echo ""
 echo "--- Step 1: canonical reality report matches harness output ---"
 generated_json="$(cargo run --quiet -p glibc-rs-harness --bin harness -- reality-report --support-matrix "$MATRIX")"
 
-python3 - "$REPORT" <<'PY' <<<"$generated_json"
+python3 - "$REPORT" "$generated_json" <<'PY'
 import json
 import sys
 
 canonical_path = sys.argv[1]
-generated = json.loads(sys.stdin.read())
+generated = json.loads(sys.argv[2])
 with open(canonical_path, "r", encoding="utf-8") as fh:
     canonical = json.load(fh)
 

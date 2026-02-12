@@ -2,15 +2,15 @@
 
 ## Current Reality
 
-Source of truth for implementation parity is `tests/conformance/reality_report.v1.json` (generated `2026-02-11T03:14:20Z`).
-Reality snapshot: total_exported=227, implemented=84, raw_syscall=83, glibc_call_through=54, stub=6.
+Source of truth for implementation parity is `tests/conformance/reality_report.v1.json` (generated `2026-02-11T19:14:41Z`).
+Reality snapshot: total_exported=250, implemented=113, raw_syscall=83, glibc_call_through=54, stub=0.
 Counts below reflect that generated snapshot and will change as matrix drift fixes land.
 
-Current exported ABI surface is **227 symbols**, classified as:
-- `Implemented`: 84
+Current exported ABI surface is **250 symbols**, classified as:
+- `Implemented`: 113
 - `RawSyscall`: 83
 - `GlibcCallThrough`: 54
-- `Stub`: 6
+- `Stub`: 0
 
 This means the current artifact is a **hybrid interposition profile** (mixed Rust-owned behavior, raw syscalls, host-glibc delegation, and deterministic stubs), not a full replacement profile.
 
@@ -38,20 +38,15 @@ Legend:
 
 | Taxonomy | Primary modules |
 |---|---|
-| `Implemented` | `string_abi`, `wchar_abi`, `math_abi`, `stdlib_abi`, `malloc_abi`, `ctype_abi`, `inet_abi`, `errno_abi` |
+| `Implemented` | `string_abi`, `wchar_abi`, `math_abi`, `stdlib_abi`, `malloc_abi`, `ctype_abi`, `inet_abi`, `errno_abi`, `resolv_abi`, `locale_abi`, `iconv_abi` |
 | `RawSyscall` | `unistd_abi`, `socket_abi`, `termios_abi`, `time_abi`, `dirent_abi`, `process_abi`, `poll_abi`, `io_abi`, `mmap_abi`, `resource_abi`, `signal_abi` |
 | `GlibcCallThrough` | `stdio_abi`, `pthread_abi`, `dlfcn_abi` |
-| `Stub` | `resolv_abi`, `locale_abi` |
+| `Stub` | none (current exported surface) |
 
 ## Deterministic Stub Surface
 
 Current stubbed symbols (explicit deterministic contracts):
-- `freeaddrinfo`
-- `gai_strerror`
-- `getaddrinfo`
-- `getnameinfo`
-- `localeconv`
-- `setlocale`
+- none
 
 ## Mode-Specific Parity Matrix
 

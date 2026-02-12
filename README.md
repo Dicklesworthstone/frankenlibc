@@ -16,28 +16,23 @@ GLIBC_RUST_MODE=hardened LD_PRELOAD=/usr/lib/glibc-rust/libglibc_rs_abi.so ./my_
 
 ## Current Implementation Reality (Machine-Generated)
 
-Source of truth: `tests/conformance/reality_report.v1.json` (generated `2026-02-11T03:14:20Z`).
-Reality snapshot: total_exported=227, implemented=84, raw_syscall=83, glibc_call_through=54, stub=6.
+Source of truth: `tests/conformance/reality_report.v1.json` (generated `2026-02-11T19:14:41Z`).
+Reality snapshot: total_exported=250, implemented=113, raw_syscall=83, glibc_call_through=54, stub=0.
 Counts below reflect that generated snapshot and will change as matrix drift fixes land.
 
 Current implementation is **hybrid interposition**, not full replacement. Exported symbols are classified into four support-taxonomy states:
 
 | Status | Count | Share | Meaning |
 |---|---:|---:|---|
-| `Implemented` | 84 | 37% | Native Rust implementation owns behavior |
-| `RawSyscall` | 83 | 37% | ABI entrypoint marshals directly to Linux syscalls |
-| `GlibcCallThrough` | 54 | 24% | Delegates to host glibc after membrane checks |
-| `Stub` | 6 | 3% | Deterministic fallback contract (documented) |
+| `Implemented` | 113 | 45% | Native Rust implementation owns behavior |
+| `RawSyscall` | 83 | 33% | ABI entrypoint marshals directly to Linux syscalls |
+| `GlibcCallThrough` | 54 | 22% | Delegates to host glibc after membrane checks |
+| `Stub` | 0 | 0% | Deterministic fallback contract (documented) |
 
-Total currently classified exports: **227**.
+Total currently classified exports: **250**.
 
 Known stubs:
-- `freeaddrinfo`
-- `gai_strerror`
-- `getaddrinfo`
-- `getnameinfo`
-- `localeconv`
-- `setlocale`
+- _none in current exported surface_
 
 ## Packaging Artifacts (Interpose vs Replace)
 
@@ -504,10 +499,10 @@ GLIBC_RUST_MODE=hardened LD_PRELOAD=target/release/libglibc_rs_abi.so ./my_app
 
 | Taxonomy | Primary Families/Modules |
 |---|---|
-| `Implemented` | `string_abi`, `wchar_abi`, `math_abi`, `malloc_abi`, `stdlib_abi`, `ctype_abi`, `inet_abi`, `errno_abi` |
+| `Implemented` | `string_abi`, `wchar_abi`, `math_abi`, `malloc_abi`, `stdlib_abi`, `ctype_abi`, `inet_abi`, `errno_abi`, `resolv_abi`, `locale_abi` |
 | `RawSyscall` | `unistd_abi`, `socket_abi`, `termios_abi`, `time_abi`, `dirent_abi`, `process_abi`, `poll_abi`, `io_abi`, `mmap_abi`, `resource_abi`, `signal_abi` |
 | `GlibcCallThrough` | `stdio_abi`, `pthread_abi`, `dlfcn_abi` |
-| `Stub` | `resolv_abi` + `locale_abi` (`getaddrinfo`, `getnameinfo`, `freeaddrinfo`, `gai_strerror`, `setlocale`, `localeconv`) |
+| `Stub` | none (current exported surface) |
 
 For exact counts, stub surface, and snapshot timestamp, inspect `tests/conformance/reality_report.v1.json`.
 For per-symbol strict/hardened semantics and status, inspect `support_matrix.json` directly.

@@ -42,6 +42,16 @@
       "tests": 5,
       "compile_flags": ["-O2", "-Wall", "-Wextra"],
       "link_flags": ["-pthread"]
+    },
+    {
+      "id": "fixture_startup",
+      "source": "tests/integration/fixture_startup.c",
+      "description": "Controlled startup bootstrap path: __libc_start_main callback flow and argument validation.",
+      "covered_symbols": ["__glibc_rs_startup_phase0"],
+      "covered_modules": ["startup_abi"],
+      "tests": 2,
+      "compile_flags": ["-O2", "-Wall", "-Wextra"],
+      "link_flags": []
     }
   ],
   "execution": {
@@ -54,17 +64,17 @@
     "output_dir": "target/c_fixture_suite/"
   },
   "coverage_summary": {
-    "total_fixtures": 4,
-    "total_tests": 23,
-    "covered_symbols": 26,
-    "covered_modules": ["malloc_abi", "string_abi", "unistd_abi", "pthread_abi"],
+    "total_fixtures": 5,
+    "total_tests": 25,
+    "covered_symbols": 27,
+    "covered_modules": ["malloc_abi", "string_abi", "unistd_abi", "pthread_abi", "startup_abi"],
     "required_by_acceptance": ["malloc", "free", "realloc", "memcpy", "memmove", "strlen", "read", "write", "open", "close", "pthread_mutex_lock", "pthread_mutex_unlock", "pthread_mutex_init", "pthread_mutex_destroy", "pthread_mutex_trylock"]
   },
   "summary": {
-    "total_fixtures": 4,
-    "total_tests": 23,
-    "modules_covered": 4,
-    "symbols_covered": 26,
+    "total_fixtures": 5,
+    "total_tests": 25,
+    "modules_covered": 5,
+    "symbols_covered": 27,
     "execution_modes": 2
   }
 }

@@ -1,6 +1,6 @@
 //! Conformance and parity tooling for glibc_rust.
 
-use std::ffi::{c_int, c_void};
+use std::ffi::{CString, c_char, c_int, c_void};
 
 use serde::{Deserialize, Serialize};
 
@@ -216,6 +216,7 @@ pub fn execute_fixture_case(
         "atol" => execute_atol_case(inputs, mode),
         "strtol" => execute_strtol_case(inputs, mode),
         "strtoul" => execute_strtoul_case(inputs, mode),
+        "iconv" => execute_iconv_case(inputs, mode),
         "qsort" => execute_qsort_case(inputs, mode),
         "bsearch" => execute_bsearch_case(inputs, mode),
         other => Err(format!("unsupported function: {other}")),
@@ -530,6 +531,15 @@ fn parse_string(inputs: &serde_json::Value, key: &str) -> Result<String, String>
         .and_then(serde_json::Value::as_str)
         .map(ToOwned::to_owned)
         .ok_or_else(|| format!("missing string field '{key}'"))
+}
+
+fn parse_string_any(inputs: &serde_json::Value, keys: &[&str]) -> Result<String, String> {
+    for key in keys {
+        if let Ok(value) = parse_string(inputs, key) {
+            return Ok(value);
+        }
+    }
+    Err(format!("missing string field from alternatives: {keys:?}"))
 }
 
 fn parse_c_bytes_any(inputs: &serde_json::Value, keys: &[&str]) -> Result<Vec<u8>, String> {
@@ -2807,6 +2817,140 @@ fn execute_strtoul_case(
     })
 }
 
+fn format_iconv_open_error(errno: i32) -> String {
+    format!("open_err errno={errno}")
+}
+
+fn format_iconv_success(
+    non_reversible: usize,
+    in_left: usize,
+    out_left: usize,
+    out: &[u8],
+) -> String {
+    format!("ok nonrev={non_reversible} in_left={in_left} out_left={out_left} out={out:?}")
+}
+
+fn format_iconv_error(errno: i32, in_left: usize, out_left: usize, out: &[u8]) -> String {
+    format!("err errno={errno} in_left={in_left} out_left={out_left} out={out:?}")
+}
+
+fn run_host_iconv_case(
+    tocode: &str,
+    fromcode: &str,
+    input: &[u8],
+    out_len: usize,
+) -> Result<String, String> {
+    const ICONV_ERROR_VALUE: usize = usize::MAX;
+
+    let tocode_c = CString::new(tocode).map_err(|_| "tocode contains interior NUL".to_string())?;
+    let fromcode_c =
+        CString::new(fromcode).map_err(|_| "fromcode contains interior NUL".to_string())?;
+
+    // SAFETY: writing errno is thread-local and valid for this process.
+    unsafe {
+        *libc::__errno_location() = 0;
+    }
+    // SAFETY: tocode/fromcode are valid C strings.
+    let cd = unsafe { libc::iconv_open(tocode_c.as_ptr(), fromcode_c.as_ptr()) };
+    if (cd as usize) == ICONV_ERROR_VALUE {
+        // SAFETY: reading errno is valid in this thread.
+        let host_errno = unsafe { *libc::__errno_location() };
+        return Ok(format_iconv_open_error(host_errno));
+    }
+
+    let mut input_buf = input.to_vec();
+    let mut in_ptr = input_buf.as_mut_ptr().cast::<c_char>();
+    let mut in_left = input_buf.len();
+    let mut output = vec![0u8; out_len];
+    let mut out_ptr = output.as_mut_ptr().cast::<c_char>();
+    let mut out_left = output.len();
+
+    // SAFETY: writing errno is thread-local and valid for this process.
+    unsafe {
+        *libc::__errno_location() = 0;
+    }
+    // SAFETY: iconv descriptor is valid; pointers/lengths are derived from owned buffers.
+    let rc = unsafe { libc::iconv(cd, &mut in_ptr, &mut in_left, &mut out_ptr, &mut out_left) };
+    // SAFETY: reading errno is valid in this thread.
+    let host_errno = unsafe { *libc::__errno_location() };
+    // SAFETY: descriptor came from successful iconv_open.
+    unsafe {
+        libc::iconv_close(cd);
+    }
+
+    let written = out_len.saturating_sub(out_left);
+    output.truncate(written);
+
+    if rc == ICONV_ERROR_VALUE {
+        Ok(format_iconv_error(host_errno, in_left, out_left, &output))
+    } else {
+        Ok(format_iconv_success(rc, in_left, out_left, &output))
+    }
+}
+
+fn run_impl_iconv_case(tocode: &str, fromcode: &str, input: &[u8], out_len: usize) -> String {
+    let Some(mut cd) = glibc_rs_core::iconv::iconv_open(tocode.as_bytes(), fromcode.as_bytes())
+    else {
+        return format_iconv_open_error(glibc_rs_core::iconv::ICONV_EINVAL);
+    };
+
+    let mut output = vec![0u8; out_len];
+    let rendered = match glibc_rs_core::iconv::iconv(&mut cd, input, &mut output) {
+        Ok(result) => {
+            let in_left = input.len().saturating_sub(result.in_consumed);
+            let out_left = out_len.saturating_sub(result.out_written);
+            output.truncate(result.out_written);
+            format_iconv_success(result.non_reversible, in_left, out_left, &output)
+        }
+        Err(err) => {
+            let in_left = input.len().saturating_sub(err.in_consumed);
+            let out_left = out_len.saturating_sub(err.out_written);
+            output.truncate(err.out_written);
+            format_iconv_error(err.code, in_left, out_left, &output)
+        }
+    };
+    let _ = glibc_rs_core::iconv::iconv_close(cd);
+    rendered
+}
+
+fn execute_iconv_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    let strict = mode_is_strict(mode);
+    let hardened = mode_is_hardened(mode);
+    if !strict && !hardened {
+        return Err(format!("unsupported mode: {mode}"));
+    }
+
+    let tocode = parse_string_any(inputs, &["tocode", "to"])?;
+    let fromcode = parse_string_any(inputs, &["fromcode", "from"])?;
+    let input = parse_u8_vec_any(inputs, &["input", "inbuf", "src"])?;
+    let out_len = parse_usize_any(inputs, &["out_len", "dst_len", "outbytesleft"])?;
+
+    let impl_output = run_impl_iconv_case(&tocode, &fromcode, &input, out_len);
+
+    if strict {
+        let host_output = run_host_iconv_case(&tocode, &fromcode, &input, out_len)?;
+        let host_parity = host_output == impl_output;
+        let note =
+            (!host_parity).then(|| "strict host parity mismatch for iconv conversion".to_string());
+        return Ok(DifferentialExecution {
+            host_output,
+            impl_output,
+            host_parity,
+            note,
+        });
+    }
+
+    Ok(DifferentialExecution {
+        host_output: String::from("SKIP"),
+        impl_output,
+        host_parity: true,
+        note: None,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2856,5 +3000,50 @@ mod tests {
         assert_eq!(result.host_output, "UB");
         assert_eq!(result.impl_output, "3");
         assert!(!result.host_parity);
+    }
+
+    #[test]
+    fn execute_iconv_case_strict_success() {
+        let inputs = serde_json::json!({
+            "tocode": "UTF-16LE",
+            "fromcode": "UTF-8",
+            "input": [65, 66],
+            "out_len": 8
+        });
+        let result = execute_fixture_case("iconv", &inputs, "strict")
+            .expect("iconv execution should succeed");
+        assert_eq!(
+            result.impl_output,
+            "ok nonrev=0 in_left=0 out_left=4 out=[65, 0, 66, 0]"
+        );
+    }
+
+    #[test]
+    fn execute_iconv_case_strict_e2big() {
+        let inputs = serde_json::json!({
+            "tocode": "UTF-16LE",
+            "fromcode": "UTF-8",
+            "input": [65, 66],
+            "out_len": 3
+        });
+        let result = execute_fixture_case("iconv", &inputs, "strict")
+            .expect("iconv execution should succeed");
+        assert_eq!(
+            result.impl_output,
+            "err errno=7 in_left=1 out_left=1 out=[65, 0]"
+        );
+    }
+
+    #[test]
+    fn execute_iconv_case_unsupported_encoding() {
+        let inputs = serde_json::json!({
+            "tocode": "UTF-32",
+            "fromcode": "UTF-8",
+            "input": [65],
+            "out_len": 8
+        });
+        let result = execute_fixture_case("iconv", &inputs, "strict")
+            .expect("iconv execution should succeed");
+        assert_eq!(result.impl_output, "open_err errno=22");
     }
 }

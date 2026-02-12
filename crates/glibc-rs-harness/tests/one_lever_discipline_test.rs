@@ -25,25 +25,20 @@ fn workspace_root() -> PathBuf {
 
 fn load_discipline() -> serde_json::Value {
     let path = workspace_root().join("tests/conformance/one_lever_discipline.json");
-    let content =
-        std::fs::read_to_string(&path).expect("one_lever_discipline.json should exist");
+    let content = std::fs::read_to_string(&path).expect("one_lever_discipline.json should exist");
     serde_json::from_str(&content).expect("one_lever_discipline.json should be valid JSON")
 }
 
 fn load_opportunity_matrix() -> serde_json::Value {
     let path = workspace_root().join("tests/conformance/opportunity_matrix.json");
-    let content =
-        std::fs::read_to_string(&path).expect("opportunity_matrix.json should exist");
+    let content = std::fs::read_to_string(&path).expect("opportunity_matrix.json should exist");
     serde_json::from_str(&content).expect("opportunity_matrix.json should be valid JSON")
 }
 
 #[test]
 fn spec_exists_and_valid() {
     let spec = load_discipline();
-    assert!(
-        spec["schema_version"].is_number(),
-        "Missing schema_version"
-    );
+    assert!(spec["schema_version"].is_number(), "Missing schema_version");
     assert!(
         spec["lever_categories"].is_object(),
         "Missing lever_categories"
@@ -52,22 +47,14 @@ fn spec_exists_and_valid() {
         spec["lever_categories"]["categories"].is_object(),
         "Missing lever_categories.categories"
     );
-    assert!(
-        spec["enforcement"].is_object(),
-        "Missing enforcement"
-    );
-    assert!(
-        spec["summary"].is_object(),
-        "Missing summary"
-    );
+    assert!(spec["enforcement"].is_object(), "Missing enforcement");
+    assert!(spec["summary"].is_object(), "Missing summary");
 }
 
 #[test]
 fn categories_have_required_fields() {
     let spec = load_discipline();
-    let cats = spec["lever_categories"]["categories"]
-        .as_object()
-        .unwrap();
+    let cats = spec["lever_categories"]["categories"].as_object().unwrap();
 
     assert!(!cats.is_empty(), "No categories defined");
 
@@ -76,24 +63,16 @@ fn categories_have_required_fields() {
             cat["description"].is_string(),
             "{name}: missing description"
         );
-        assert!(
-            cat["examples"].is_array(),
-            "{name}: missing examples"
-        );
+        assert!(cat["examples"].is_array(), "{name}: missing examples");
         let examples = cat["examples"].as_array().unwrap();
-        assert!(
-            !examples.is_empty(),
-            "{name}: examples array is empty"
-        );
+        assert!(!examples.is_empty(), "{name}: examples array is empty");
     }
 }
 
 #[test]
 fn summary_consistent() {
     let spec = load_discipline();
-    let cats = spec["lever_categories"]["categories"]
-        .as_object()
-        .unwrap();
+    let cats = spec["lever_categories"]["categories"].as_object().unwrap();
     let summary = &spec["summary"];
 
     let total = summary["total_categories"].as_u64().unwrap() as usize;
@@ -130,9 +109,7 @@ fn all_entries_have_valid_lever_category() {
         let eid = entry["id"].as_str().unwrap_or("?");
         match entry["lever_category"].as_str() {
             None => missing.push(eid.to_string()),
-            Some(cat) if !valid_cats.contains(cat) => {
-                invalid.push(format!("{eid}: '{cat}'"))
-            }
+            Some(cat) if !valid_cats.contains(cat) => invalid.push(format!("{eid}: '{cat}'")),
             _ => {}
         }
     }
@@ -156,10 +133,9 @@ fn no_multi_lever_beads_without_waiver() {
 
     let mut bead_levers: HashMap<String, HashSet<String>> = HashMap::new();
     for entry in entries {
-        if let (Some(bead), Some(lever)) = (
-            entry["bead_id"].as_str(),
-            entry["lever_category"].as_str(),
-        ) {
+        if let (Some(bead), Some(lever)) =
+            (entry["bead_id"].as_str(), entry["lever_category"].as_str())
+        {
             bead_levers
                 .entry(bead.to_string())
                 .or_default()
@@ -172,14 +148,10 @@ fn no_multi_lever_beads_without_waiver() {
         if levers.len() > 1 {
             // Check for waiver
             let has_waiver = entries.iter().any(|e| {
-                e["bead_id"].as_str() == Some(bead)
-                    && e["justification_waiver"].is_string()
+                e["bead_id"].as_str() == Some(bead) && e["justification_waiver"].is_string()
             });
             if !has_waiver {
-                violations.push(format!(
-                    "{bead}: {:?}",
-                    levers.iter().collect::<Vec<_>>()
-                ));
+                violations.push(format!("{bead}: {:?}", levers.iter().collect::<Vec<_>>()));
             }
         }
     }
@@ -195,7 +167,10 @@ fn no_multi_lever_beads_without_waiver() {
 fn gate_script_exists_and_executable() {
     let root = workspace_root();
     let script = root.join("scripts/check_one_lever_discipline.sh");
-    assert!(script.exists(), "scripts/check_one_lever_discipline.sh must exist");
+    assert!(
+        script.exists(),
+        "scripts/check_one_lever_discipline.sh must exist"
+    );
 
     #[cfg(unix)]
     {
@@ -227,9 +202,6 @@ fn taxonomy_covers_standard_types() {
     ];
 
     for r in &required {
-        assert!(
-            cats.contains(*r),
-            "Missing required category: {r}"
-        );
+        assert!(cats.contains(*r), "Missing required category: {r}");
     }
 }

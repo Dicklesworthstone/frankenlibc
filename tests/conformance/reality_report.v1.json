@@ -1,18 +1,11 @@
 {
-  "generated_at_utc": "2026-02-11T03:14:20Z",
-  "total_exported": 227,
+  "generated_at_utc": "2026-02-11T19:17:31Z",
+  "total_exported": 250,
   "counts": {
-    "implemented": 84,
+    "implemented": 113,
     "raw_syscall": 83,
     "glibc_call_through": 54,
-    "stub": 6
+    "stub": 0
   },
-  "stubs": [
-    "freeaddrinfo",
-    "gai_strerror",
-    "getaddrinfo",
-    "getnameinfo",
-    "localeconv",
-    "setlocale"
-  ]
+  "stubs": []
 }

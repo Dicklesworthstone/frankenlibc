@@ -15,8 +15,16 @@
         "hardened": "GLIBC_RUST_MODE=hardened LD_PRELOAD=target/release/libglibc_rs_abi.so <program>"
       },
       "host_glibc_required": true,
-      "allowed_statuses": ["Implemented", "RawSyscall", "GlibcCallThrough", "Stub"],
-      "replacement_levels": ["L0", "L1"],
+      "allowed_statuses": [
+        "Implemented",
+        "RawSyscall",
+        "GlibcCallThrough",
+        "Stub"
+      ],
+      "replacement_levels": [
+        "L0",
+        "L1"
+      ],
       "cargo_features": [],
       "cargo_profile": "release",
       "crate_type": "cdylib",
@@ -35,9 +43,17 @@
         "hardened": "GLIBC_RUST_MODE=hardened with direct link or LD_PRELOAD"
       },
       "host_glibc_required": false,
-      "allowed_statuses": ["Implemented", "RawSyscall"],
-      "replacement_levels": ["L2", "L3"],
-      "cargo_features": ["standalone"],
+      "allowed_statuses": [
+        "Implemented",
+        "RawSyscall"
+      ],
+      "replacement_levels": [
+        "L2",
+        "L3"
+      ],
+      "cargo_features": [
+        "standalone"
+      ],
       "cargo_profile": "release",
       "crate_type": "cdylib",
       "version_script": "crates/glibc-rs-abi/version_scripts/libc.map",
@@ -52,30 +68,58 @@
         },
         "Stub_remaining": {},
         "milestone_beads": [
-          {"bead": "bd-z84", "title": "Futex mutex core", "migrates": "pthread_mutex_* (part of 20)"},
-          {"bead": "bd-yos", "title": "Thread bootstrap", "migrates": "pthread_create/join/detach (part of 20)"},
-          {"bead": "bd-747", "title": "Stub wave 1: getenv/setenv", "migrates": "environment APIs"},
-          {"bead": "bd-66s", "title": "Stub wave 2: resolver numeric", "migrates": "resolv_abi (4 stubs)"},
-          {"bead": "bd-3pe", "title": "Locale phase-1", "migrates": "locale_abi (2 stubs)"},
-          {"bead": "bd-3rn", "title": "rtld phase-1", "migrates": "dlfcn_abi (4 call-throughs)"},
-          {"bead": "bd-qwm", "title": "CRT phase-0", "migrates": "bootstrap (_start)"}
+          {
+            "bead": "bd-z84",
+            "title": "Futex mutex core",
+            "migrates": "pthread_mutex_* (part of 20)"
+          },
+          {
+            "bead": "bd-yos",
+            "title": "Thread bootstrap",
+            "migrates": "pthread_create/join/detach (part of 20)"
+          },
+          {
+            "bead": "bd-747",
+            "title": "Stub wave 1: getenv/setenv",
+            "migrates": "environment APIs"
+          },
+          {
+            "bead": "bd-66s",
+            "title": "Stub wave 2: resolver numeric",
+            "migrates": "resolv_abi (4 stubs)"
+          },
+          {
+            "bead": "bd-3pe",
+            "title": "Locale phase-1",
+            "migrates": "locale_abi (2 stubs)"
+          },
+          {
+            "bead": "bd-3rn",
+            "title": "rtld phase-1",
+            "migrates": "dlfcn_abi (4 call-throughs)"
+          },
+          {
+            "bead": "bd-qwm",
+            "title": "CRT phase-0",
+            "migrates": "bootstrap (_start)"
+          }
         ]
       }
     }
   },
   "current_assessment": {
-    "total_symbols": 230,
-    "interpose_ready": 230,
-    "replace_ready": 176,
+    "total_symbols": 250,
+    "interpose_ready": 250,
+    "replace_ready": 196,
     "replace_blocked": 54,
     "symbol_distribution": {
-      "Implemented": 93,
+      "Implemented": 113,
       "RawSyscall": 83,
       "GlibcCallThrough": 54,
       "Stub": 0
     },
     "interpose_pct": 100,
-    "replace_pct": 77
+    "replace_pct": 78
   },
   "naming_convention": {
     "interpose": {
@@ -96,23 +140,29 @@
     },
     "standalone": {
       "description": "Future feature gate for Replace artifact. When enabled, GlibcCallThrough symbols must have native implementations and Stub symbols must be eliminated.",
-      "features": ["standalone"],
+      "features": [
+        "standalone"
+      ],
       "compile_time_enforcement": "cfg(feature = \"standalone\") gates should reject GlibcCallThrough dispatch at compile time",
       "status": "planned"
     },
     "runtime-math-production": {
       "description": "Enables production-tier runtime_math modules (barrier, bandit, control, risk, etc.).",
-      "features": ["runtime-math-production"],
+      "features": [
+        "runtime-math-production"
+      ],
       "applies_to": "both"
     },
     "runtime-math-research": {
       "description": "Enables research-tier runtime_math modules (alien artifact modules).",
-      "features": ["runtime-math-research"],
+      "features": [
+        "runtime-math-research"
+      ],
       "applies_to": "both"
     }
   },
   "matrix_applicability": {
     "description": "Every symbol in support_matrix.json applies to the Interpose artifact. Only Implemented and RawSyscall symbols apply to the Replace artifact.",
-    "rule": "If status in (Implemented, RawSyscall) → applies to both. If status in (GlibcCallThrough, Stub) → Interpose only."
+    "rule": "If status in (Implemented, RawSyscall) \u2192 applies to both. If status in (GlibcCallThrough, Stub) \u2192 Interpose only."
   }
 }

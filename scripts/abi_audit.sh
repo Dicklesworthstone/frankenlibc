@@ -102,11 +102,14 @@ MOD_HARDENED[time_abi]="Raw syscall; defaults invalid clock_id to CLOCK_REALTIME
 MOD_STRICT[pthread_abi]="Delegates to host glibc pthread; preserves host semantics"
 MOD_HARDENED[pthread_abi]="Host glibc pthread delegation; hardened membrane validates mutex/cond state"
 
-MOD_STRICT[resolv_abi]="Stub: returns EAI_SERVICE/EAI_NONAME on unparseable input"
-MOD_HARDENED[resolv_abi]="Stub with safe defaults: unparseable port to 0, invalid host to localhost"
+MOD_STRICT[resolv_abi]="Bootstrap resolver implementation: numeric getaddrinfo/getnameinfo + gai_strerror/freeaddrinfo with deterministic EAI_* failures"
+MOD_HARDENED[resolv_abi]="Resolver with deterministic repairs: invalid host/service normalized to safe defaults, evidence emitted"
 
-MOD_STRICT[locale_abi]="Stub: setlocale returns C locale pointer; localeconv returns static C locale struct"
-MOD_HARDENED[locale_abi]="Stub; no mode difference (always returns C locale safe default)"
+MOD_STRICT[locale_abi]="Bootstrap locale implementation: setlocale supports C/POSIX and localeconv returns static C locale struct"
+MOD_HARDENED[locale_abi]="Locale implementation with hardened fallback to C locale defaults on invalid input"
+
+MOD_STRICT[iconv_abi]="Phase-1 iconv implementation for UTF-8/ISO-8859-1/UTF-16LE with deterministic errno semantics"
+MOD_HARDENED[iconv_abi]="Phase-1 iconv with hardened membrane routing; deterministic bounds/error behavior"
 
 MOD_STRICT[dlfcn_abi]="Delegates to host glibc dlopen/dlsym/dlclose/dlerror; preserves host semantics"
 MOD_HARDENED[dlfcn_abi]="Host glibc delegation; hardened membrane validates path strings"
@@ -128,6 +131,9 @@ MOD_HARDENED[poll_abi]="Raw syscall; clamps nfds to tracked pollfd array bounds"
 
 MOD_STRICT[process_abi]="Raw Linux syscall for process control; POSIX errno on failure"
 MOD_HARDENED[process_abi]="Raw syscall; validates argv/envp pointer arrays before execve"
+
+MOD_STRICT[startup_abi]="Phase-0 startup skeleton for controlled fixtures; validates argc/argv/envp and captures auxv/secure-mode invariants"
+MOD_HARDENED[startup_abi]="Phase-0 startup with hardened membrane routing; deterministic startup invariant capture for fixture binaries"
 
 MOD_STRICT[unknown]="Unclassified symbol defaulting to Stub contract"
 MOD_HARDENED[unknown]="Unclassified symbol; evidence emitted on every call"
@@ -156,8 +162,8 @@ for s in wcslen wcscpy wcsncpy wcscat wcscmp wcsncmp \
   SYM_PERF[$s]="strict_hotpath"
 done
 
-# stdlib_abi: Implemented (safe Rust)
-for s in atoi atol strtol strtoul exit atexit qsort bsearch; do
+# stdlib_abi: Implemented (safe Rust + validated bootstrap env management)
+for s in atoi atol strtol strtoul exit atexit qsort bsearch getenv setenv unsetenv; do
   SYM_STATUS[$s]="Implemented"
   SYM_MODULE[$s]="stdlib_abi"
   SYM_PERF[$s]="coldpath"
@@ -250,17 +256,24 @@ for s in pthread_self pthread_equal pthread_create pthread_join pthread_detach \
   SYM_PERF[$s]="strict_hotpath"
 done
 
-# resolv_abi: Stub (thin wrappers)
+# resolv_abi: Implemented (bootstrap numeric resolver path)
 for s in getaddrinfo freeaddrinfo getnameinfo gai_strerror; do
-  SYM_STATUS[$s]="Stub"
+  SYM_STATUS[$s]="Implemented"
   SYM_MODULE[$s]="resolv_abi"
   SYM_PERF[$s]="coldpath"
 done
 
-# locale_abi: Stub
+# locale_abi: Implemented (bootstrap C/POSIX locale)
 for s in setlocale localeconv; do
-  SYM_STATUS[$s]="Stub"
+  SYM_STATUS[$s]="Implemented"
   SYM_MODULE[$s]="locale_abi"
+  SYM_PERF[$s]="coldpath"
+done
+
+# iconv_abi: Implemented (phase-1 charset conversion)
+for s in iconv_open iconv iconv_close; do
+  SYM_STATUS[$s]="Implemented"
+  SYM_MODULE[$s]="iconv_abi"
   SYM_PERF[$s]="coldpath"
 done
 
@@ -314,6 +327,13 @@ for s in fork _exit execve execvp waitpid wait; do
   SYM_PERF[$s]="coldpath"
 done
 
+# startup_abi: Implemented (phase-0 startup skeleton for controlled fixtures)
+for s in __libc_start_main __glibc_rs_startup_phase0 __glibc_rs_startup_snapshot; do
+  SYM_STATUS[$s]="Implemented"
+  SYM_MODULE[$s]="startup_abi"
+  SYM_PERF[$s]="coldpath"
+done
+
 # Data symbols (stdio globals)
 for s in stdin stdout stderr; do
   SYM_STATUS[$s]="GlibcCallThrough"
@@ -364,6 +384,11 @@ default_stub=0
   echo "    \"mode_contract\": {"
   echo "      \"strict\": \"POSIX-correct error semantics. Membrane validates but never silently rewrites. ABI-compatible.\","
   echo "      \"hardened\": \"TSM repair enabled. Membrane applies deterministic healing (clamp, truncate, safe-default). Logs HealingAction.\""
+  echo "    },"
+  echo "    \"artifact_applicability\": {"
+  echo "      \"Interpose\": [\"Implemented\", \"RawSyscall\", \"GlibcCallThrough\", \"Stub\"],"
+  echo "      \"Replace\": [\"Implemented\", \"RawSyscall\"],"
+  echo "      \"rule\": \"Implemented+RawSyscall apply to both artifacts; GlibcCallThrough+Stub are Interpose-only.\""
   echo "    }"
   echo "  },"
   echo "  \"symbols\": ["

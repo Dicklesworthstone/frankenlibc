@@ -531,24 +531,24 @@ fn entries_have_non_empty_backfill_rows() {
             }
         }
 
-        if row["unit_cmds"].as_array().map_or(true, |v| v.is_empty()) {
+        if row["unit_cmds"].as_array().is_none_or(|v| v.is_empty()) {
             errors.push(format!("{}: row.unit_cmds is empty", bead_id));
         }
         if row["expected_assertions"]
             .as_array()
-            .map_or(true, |v| v.is_empty())
+            .is_none_or(|v| v.is_empty())
         {
             errors.push(format!("{}: row.expected_assertions is empty", bead_id));
         }
         if row["log_schema_refs"]
             .as_array()
-            .map_or(true, |v| v.is_empty())
+            .is_none_or(|v| v.is_empty())
         {
             errors.push(format!("{}: row.log_schema_refs is empty", bead_id));
         }
         if row["artifact_paths"]
             .as_array()
-            .map_or(true, |v| v.is_empty())
+            .is_none_or(|v| v.is_empty())
         {
             errors.push(format!("{}: row.artifact_paths is empty", bead_id));
         }

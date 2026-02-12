@@ -1,40 +1,12 @@
 {
   "census_version": 1,
-  "generated_utc": "2026-02-11T18:38:35Z",
+  "generated_utc": "2026-02-11T19:14:29Z",
   "workspace_root": "/data/projects/glibc_rust",
-  "total_todo_occurrences": 18,
-  "total_unique_stub_symbols": 16,
-  "total_abi_exports": 227,
-  "total_matrix_symbols": 230,
+  "total_todo_occurrences": 15,
+  "total_unique_stub_symbols": 14,
+  "total_abi_exports": 247,
+  "total_matrix_symbols": 249,
   "stubs": [
-    {
-      "symbol": "iconv_close",
-      "abi_module": null,
-      "core_location": "crates/glibc-rs-core/src/iconv/mod.rs:34",
-      "stub_type": "todo!",
-      "stub_message": "POSIX iconv_close: implementation pending",
-      "support_matrix_status": null,
-      "in_support_matrix": false,
-      "has_abi_export": false,
-      "abi_calls_core_stub": false,
-      "reachable_from_abi": false,
-      "risk_category": "other",
-      "call_family": "other"
-    },
-    {
-      "symbol": "iconv_open",
-      "abi_module": null,
-      "core_location": "crates/glibc-rs-core/src/iconv/mod.rs:15",
-      "stub_type": "todo!",
-      "stub_message": "POSIX iconv_open: implementation pending",
-      "support_matrix_status": null,
-      "in_support_matrix": false,
-      "has_abi_export": false,
-      "abi_calls_core_stub": false,
-      "reachable_from_abi": false,
-      "risk_category": "other",
-      "call_family": "other"
-    },
     {
       "symbol": "longjmp",
       "abi_module": null,
@@ -285,20 +257,6 @@
   ],
   "missing_from_abi_and_matrix": [
     {
-      "symbol": "iconv_close",
-      "core_location": "crates/glibc-rs-core/src/iconv/mod.rs:34",
-      "risk_category": "other",
-      "call_family": "other",
-      "note": "Has core stub with todo!() but no ABI export and not in support matrix"
-    },
-    {
-      "symbol": "iconv_open",
-      "core_location": "crates/glibc-rs-core/src/iconv/mod.rs:15",
-      "risk_category": "other",
-      "call_family": "other",
-      "note": "Has core stub with todo!() but no ABI export and not in support matrix"
-    },
-    {
       "symbol": "longjmp",
       "core_location": "crates/glibc-rs-core/src/setjmp/mod.rs:31",
       "risk_category": "setjmp",
@@ -364,18 +322,16 @@
   ],
   "summary": {
     "reachable_stubs": 0,
-    "unreachable_stubs": 16,
+    "unreachable_stubs": 14,
     "matrix_inconsistencies": 7,
-    "missing_symbols": 11,
+    "missing_symbols": 9,
     "by_risk_category": {
-      "other": 2,
       "setjmp": 2,
       "stdlib": 2,
       "terminal": 2,
       "threading": 8
     },
     "by_call_family": {
-      "other": 2,
       "pthread": 8,
       "setjmp": 2,
       "stdlib": 2,

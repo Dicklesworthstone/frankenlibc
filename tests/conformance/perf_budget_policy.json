@@ -64,21 +64,20 @@
     }
   ],
   "current_assessment": {
-    "total_symbols": 230,
-    "strict_hotpath_count": 71,
+    "total_symbols": 250,
+    "strict_hotpath_count": 70,
     "hardened_hotpath_count": 0,
-    "coldpath_count": 159,
+    "coldpath_count": 180,
     "strict_hotpath_by_module": {
       "errno_abi": 1,
       "malloc_abi": 7,
       "ctype_abi": 11,
       "string_abi": 17,
       "pthread_abi": 20,
-      "wchar_abi": 14,
-      "stdlib_abi": 1
+      "wchar_abi": 14
     },
     "strict_hotpath_by_status": {
-      "Implemented": 51,
+      "Implemented": 50,
       "GlibcCallThrough": 20
     },
     "benchmark_coverage": {
@@ -458,11 +457,6 @@
         "symbol": "pthread_self",
         "module": "pthread_abi",
         "status": "GlibcCallThrough"
-      },
-      {
-        "symbol": "getenv",
-        "module": "stdlib_abi",
-        "status": "Implemented"
       }
     ]
   }

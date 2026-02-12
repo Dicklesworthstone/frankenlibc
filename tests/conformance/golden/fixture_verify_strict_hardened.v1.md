@@ -2,8 +2,8 @@
 
 - Mode: strict+hardened
 - Timestamp: 1970-01-01T00:00:00Z
-- Total: 84
-- Passed: 84
+- Total: 91
+- Passed: 91
 - Failed: 0
 
 | Case | Spec | Status |
@@ -27,6 +27,7 @@
 | hardened_strcat_overflow | TSM hardened strcat | PASS |
 | hardened_strcpy_overflow | TSM hardened strcpy | PASS |
 | hardened_strlen_unterminated_truncated | TSM hardened strlen | PASS |
+| hardened_utf16le_to_utf8 | TSM hardened iconv | PASS |
 | hardened_wcscpy_overflow | TSM hardened wcscpy | PASS |
 | hello | POSIX.1-2017 strlen | PASS |
 | malloc_basic | POSIX malloc | PASS |
@@ -44,6 +45,10 @@
 | strcmp_equal | POSIX strcmp | PASS |
 | strcmp_less | POSIX strcmp | PASS |
 | strcpy_basic | POSIX strcpy | PASS |
+| strict_e2big_preserves_progress | POSIX iconv | PASS |
+| strict_eilseq_invalid_utf8 | POSIX iconv | PASS |
+| strict_einval_incomplete_utf8 | POSIX iconv | PASS |
+| strict_latin1_to_utf8_multibyte | POSIX iconv | PASS |
 | strict_memchr_found | POSIX memchr | PASS |
 | strict_memcmp_equal | POSIX memcmp | PASS |
 | strict_memcmp_less | POSIX memcmp | PASS |
@@ -59,6 +64,8 @@
 | strict_strncpy_basic | POSIX strncpy | PASS |
 | strict_strrchr_found | POSIX strrchr | PASS |
 | strict_strstr_found | POSIX strstr | PASS |
+| strict_unsupported_encoding | POSIX iconv | PASS |
+| strict_utf8_to_utf16le_basic | POSIX iconv | PASS |
 | strict_wcscat_basic | ISO C wcscat | PASS |
 | strict_wcschr_found | ISO C wcschr | PASS |
 | strict_wcschr_not_found | ISO C wcschr | PASS |
