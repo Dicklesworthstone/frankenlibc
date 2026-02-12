@@ -80,6 +80,7 @@ pub(crate) fn known_remaining(addr: usize) -> Option<usize> {
 /// Caller must eventually `free` the returned pointer exactly once.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn malloc(size: usize) -> *mut c_void {
+    let _trace_scope = runtime_policy::entrypoint_scope("malloc");
     let req = size.max(1);
     let (aligned, recent_page, ordering) = allocator_stage_context(req);
     let (_, decision) = runtime_policy::decide(ApiFamily::Allocator, req, req, true, false, 0);
@@ -138,6 +139,7 @@ pub unsafe extern "C" fn malloc(size: usize) -> *mut c_void {
 /// `realloc`, and must not have been freed already.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn free(ptr: *mut c_void) {
+    let _trace_scope = runtime_policy::entrypoint_scope("free");
     let (aligned, recent_page, ordering) = allocator_stage_context(ptr as usize);
     if ptr.is_null() {
         record_allocator_stage_outcome(
@@ -223,6 +225,7 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
 /// Caller must eventually `free` the returned pointer exactly once.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn calloc(nmemb: usize, size: usize) -> *mut c_void {
+    let _trace_scope = runtime_policy::entrypoint_scope("calloc");
     let (aligned, recent_page, ordering) = allocator_stage_context(size);
     let total = match nmemb.checked_mul(size) {
         Some(t) => t.max(1),
@@ -299,6 +302,7 @@ pub unsafe extern "C" fn calloc(nmemb: usize, size: usize) -> *mut c_void {
 /// `ptr` must be null or a pointer previously returned by `malloc`/`calloc`/`realloc`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
+    let _trace_scope = runtime_policy::entrypoint_scope("realloc");
     // realloc(NULL, size) == malloc(size)
     if ptr.is_null() {
         return unsafe { malloc(size) };
@@ -433,6 +437,7 @@ pub unsafe extern "C" fn posix_memalign(
     alignment: usize,
     size: usize,
 ) -> c_int {
+    let _trace_scope = runtime_policy::entrypoint_scope("posix_memalign");
     let (aligned, recent_page, ordering) = allocator_stage_context(size);
     // Requirements: alignment power of 2, multiple of sizeof(void*)
     if !alignment.is_power_of_two() || !alignment.is_multiple_of(std::mem::size_of::<usize>()) {
@@ -507,6 +512,7 @@ pub unsafe extern "C" fn posix_memalign(
 /// Caller must eventually `free` the returned pointer exactly once.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn memalign(alignment: usize, size: usize) -> *mut c_void {
+    let _trace_scope = runtime_policy::entrypoint_scope("memalign");
     let (aligned, recent_page, ordering) = allocator_stage_context(size);
     if !alignment.is_power_of_two() {
         frankenlibc_core::errno::set_errno(EINVAL);
@@ -583,6 +589,7 @@ pub unsafe extern "C" fn memalign(alignment: usize, size: usize) -> *mut c_void 
 /// Caller must eventually `free` the returned pointer exactly once.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn aligned_alloc(alignment: usize, size: usize) -> *mut c_void {
+    let _trace_scope = runtime_policy::entrypoint_scope("aligned_alloc");
     let (aligned, recent_page, ordering) = allocator_stage_context(size);
     // Requirements: alignment power of 2, size multiple of alignment
     if !alignment.is_power_of_two() || !size.is_multiple_of(alignment) {
