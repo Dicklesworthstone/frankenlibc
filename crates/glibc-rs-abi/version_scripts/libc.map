@@ -23,6 +23,33 @@ GLIBC_2.2.5 {
         calloc;
         realloc;
 
+        /* iconv */
+        iconv_open;
+        iconv;
+        iconv_close;
+
+        /* startup */
+        __glibc_rs_startup_phase0;
+        __glibc_rs_startup_snapshot;
+
+        /* passwd database */
+        getpwnam;
+        getpwuid;
+        getpwent;
+        setpwent;
+        endpwent;
+        getpwnam_r;
+        getpwuid_r;
+
+        /* group database */
+        getgrnam;
+        getgrgid;
+        getgrent;
+        setgrent;
+        endgrent;
+        getgrnam_r;
+        getgrgid_r;
+
         /* math operations */
         sin;
         cos;
