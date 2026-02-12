@@ -132,6 +132,11 @@ fn run_one_case(
     let duration_ms = start.elapsed().as_millis() as u64;
 
     let verification = VerificationResult {
+        trace_id: trace_id.clone(),
+        campaign: campaign.to_string(),
+        family: set.family.clone(),
+        symbol: case.function.clone(),
+        mode: exec_mode.to_string(),
         case_name: display_case_name.clone(),
         spec_section: case.spec_section.clone(),
         passed: evidence.passed,

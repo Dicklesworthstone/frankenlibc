@@ -4,7 +4,7 @@
   "passed": 91,
   "failed": 0,
   "skipped": 0,
-  "duration_ms": 2,
+  "duration_ms": 3,
   "results": [
     {
       "test_id": "fixture-verify::allocator::calloc::strict::calloc_basic",

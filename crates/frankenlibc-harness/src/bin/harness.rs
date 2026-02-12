@@ -234,8 +234,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             // Stabilize report ordering for reproducible golden-output hashing.
             results.sort_by(|a, b| {
-                a.case_name
-                    .cmp(&b.case_name)
+                a.family
+                    .cmp(&b.family)
+                    .then_with(|| a.symbol.cmp(&b.symbol))
+                    .then_with(|| a.mode.cmp(&b.mode))
+                    .then_with(|| a.case_name.cmp(&b.case_name))
                     .then_with(|| a.spec_section.cmp(&b.spec_section))
                     .then_with(|| a.expected.cmp(&b.expected))
                     .then_with(|| a.actual.cmp(&b.actual))

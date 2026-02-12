@@ -36,7 +36,20 @@ impl TestRunner {
                 } else {
                     case.name.clone()
                 };
+                let trace_id = format!(
+                    "{campaign}::{family}::{symbol}::{mode}::{case_name}",
+                    campaign = self.campaign.as_str(),
+                    family = fixture_set.family.as_str(),
+                    symbol = case.function.as_str(),
+                    mode = self.mode.as_str(),
+                    case_name = case.name.as_str()
+                );
                 VerificationResult {
+                    trace_id,
+                    campaign: self.campaign.clone(),
+                    family: fixture_set.family.clone(),
+                    symbol: case.function.clone(),
+                    mode: self.mode.clone(),
                     case_name,
                     spec_section: case.spec_section.clone(),
                     passed: actual == case.expected_output,
@@ -111,6 +124,9 @@ mod tests {
         let strict = TestRunner::new("smoke", "strict").run(&fixture);
         assert_eq!(strict.len(), 1);
         assert!(strict[0].passed);
+        assert_eq!(strict[0].symbol, "memcpy");
+        assert_eq!(strict[0].mode, "strict");
+        assert!(strict[0].trace_id.contains("smoke::"));
     }
 
     #[test]
@@ -131,6 +147,8 @@ mod tests {
         let hardened = TestRunner::new("smoke", "hardened").run(&fixture);
         assert_eq!(hardened.len(), 1);
         assert!(hardened[0].passed);
+        assert_eq!(hardened[0].symbol, "strlen");
+        assert_eq!(hardened[0].mode, "hardened");
     }
 
     #[test]
@@ -151,11 +169,13 @@ mod tests {
         assert_eq!(strict.len(), 1);
         assert!(strict[0].passed);
         assert_eq!(strict[0].case_name, "len_both [strict]");
+        assert_eq!(strict[0].mode, "strict");
 
         let hardened = TestRunner::new("both", "hardened").run(&fixture);
         assert_eq!(hardened.len(), 1);
         assert!(hardened[0].passed);
         assert_eq!(hardened[0].case_name, "len_both [hardened]");
+        assert_eq!(hardened[0].mode, "hardened");
     }
 
     #[test]
@@ -175,6 +195,7 @@ mod tests {
         let strict = TestRunner::new("ub", "strict").run(&fixture);
         assert_eq!(strict.len(), 1);
         assert!(strict[0].passed);
+        assert_eq!(strict[0].symbol, "memcpy");
     }
 
     #[test]
@@ -194,5 +215,6 @@ mod tests {
         let hardened = TestRunner::new("hard", "hardened").run(&fixture);
         assert_eq!(hardened.len(), 1);
         assert!(hardened[0].passed);
+        assert_eq!(hardened[0].symbol, "strlen");
     }
 }

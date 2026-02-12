@@ -577,15 +577,50 @@ pub fn validate_log_line(
     }
 
     // Decision explainability contract:
-    // if `decision` is present, all explainability fields must be present too.
-    if obj.get("decision").is_some() {
+    // Only enforce explainability on explicit decision events (not on incidental
+    // "decision" annotations attached to other events like "test_failure").
+    let is_runtime_decision_event = obj
+        .get("event")
+        .and_then(|v| v.as_str())
+        .is_some_and(|e| e == "runtime_decision");
+
+    if is_runtime_decision_event {
+        match obj.get("symbol").and_then(|v| v.as_str()) {
+            Some(sym) if !sym.trim().is_empty() => {}
+            _ => errors.push(LogValidationError {
+                line_number,
+                field: "symbol".to_string(),
+                message: "runtime_decision events must include non-empty symbol".to_string(),
+            }),
+        }
+
+        match obj.get("span_id").and_then(|v| v.as_str()) {
+            Some(span) if !span.trim().is_empty() => {}
+            _ => errors.push(LogValidationError {
+                line_number,
+                field: "span_id".to_string(),
+                message: "runtime_decision events must include non-empty span_id".to_string(),
+            }),
+        }
+
+        if obj.get("decision").is_none() {
+            errors.push(LogValidationError {
+                line_number,
+                field: "decision".to_string(),
+                message: "runtime_decision events must include decision".to_string(),
+            });
+        }
+    }
+
+    if is_runtime_decision_event && obj.get("decision").is_some() {
         match obj.get("controller_id").and_then(|v| v.as_str()) {
             Some(controller) if !controller.trim().is_empty() => {}
             _ => errors.push(LogValidationError {
                 line_number,
                 field: "controller_id".to_string(),
                 message:
-                    "decision events must include non-empty controller_id explainability".to_string(),
+                    "runtime_decision events must include non-empty controller_id explainability"
+                        .to_string(),
             }),
         }
 
@@ -599,15 +634,19 @@ pub fn validate_log_line(
             None => errors.push(LogValidationError {
                 line_number,
                 field: "decision_action".to_string(),
-                message: "decision events must include decision_action explainability".to_string(),
+                message: "runtime_decision events must include decision_action explainability"
+                    .to_string(),
             }),
         }
 
-        if !obj.get("risk_inputs").is_some_and(serde_json::Value::is_object) {
+        if !obj
+            .get("risk_inputs")
+            .is_some_and(serde_json::Value::is_object)
+        {
             errors.push(LogValidationError {
                 line_number,
                 field: "risk_inputs".to_string(),
-                message: "decision events must include risk_inputs object".to_string(),
+                message: "runtime_decision events must include risk_inputs object".to_string(),
             });
         }
     }

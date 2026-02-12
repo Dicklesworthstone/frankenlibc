@@ -5,6 +5,20 @@ use serde::{Deserialize, Serialize};
 /// Result of verifying a single fixture case.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VerificationResult {
+    /// Stable trace identifier for this execution.
+    ///
+    /// Contract:
+    /// - deterministic within a run
+    /// - includes enough context to locate the failing symbol without re-running
+    pub trace_id: String,
+    /// Campaign name (e.g. `fixture-verify`).
+    pub campaign: String,
+    /// Fixture family (e.g. `string/strlen`).
+    pub family: String,
+    /// ABI symbol/function under test (e.g. `memcpy`).
+    pub symbol: String,
+    /// Execution mode (`strict` or `hardened`).
+    pub mode: String,
     /// Name of the test case.
     pub case_name: String,
     /// POSIX/C spec section reference.

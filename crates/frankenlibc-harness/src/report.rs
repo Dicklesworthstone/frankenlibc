@@ -31,13 +31,13 @@ impl ConformanceReport {
         out.push_str(&format!("- Passed: {}\n", self.summary.passed));
         out.push_str(&format!("- Failed: {}\n\n", self.summary.failed));
 
-        out.push_str("| Case | Spec | Status |\n");
-        out.push_str("|------|------|--------|\n");
+        out.push_str("| Trace | Family | Symbol | Mode | Case | Spec | Status |\n");
+        out.push_str("|-------|--------|--------|------|------|------|--------|\n");
         for r in &self.summary.results {
             let status = if r.passed { "PASS" } else { "FAIL" };
             out.push_str(&format!(
-                "| {} | {} | {} |\n",
-                r.case_name, r.spec_section, status
+                "| `{}` | {} | {} | {} | {} | {} | {} |\n",
+                r.trace_id, r.family, r.symbol, r.mode, r.case_name, r.spec_section, status
             ));
         }
         out
@@ -47,6 +47,160 @@ impl ConformanceReport {
     #[must_use]
     pub fn to_json(&self) -> String {
         serde_json::to_string_pretty(self).unwrap_or_else(|e| format!("{{\"error\": \"{e}\"}}"))
+    }
+}
+
+/// Missing-link diagnostic for decision traceability aggregation.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DecisionTraceFinding {
+    pub trace_id: String,
+    pub symbol: Option<String>,
+    pub reason: String,
+}
+
+/// Aggregated explainability report over JSONL structured logs.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DecisionTraceReport {
+    pub total_events: usize,
+    pub decision_events: usize,
+    pub explainable_decision_events: usize,
+    pub missing_explainability: usize,
+    pub findings: Vec<DecisionTraceFinding>,
+}
+
+impl DecisionTraceReport {
+    /// Build an explainability report from JSONL content.
+    #[must_use]
+    pub fn from_jsonl_str(jsonl: &str) -> Self {
+        let mut report = Self {
+            total_events: 0,
+            decision_events: 0,
+            explainable_decision_events: 0,
+            missing_explainability: 0,
+            findings: Vec::new(),
+        };
+
+        for (line_no, raw) in jsonl.lines().enumerate() {
+            let line = raw.trim();
+            if line.is_empty() {
+                continue;
+            }
+            report.total_events += 1;
+
+            let value: serde_json::Value = match serde_json::from_str(line) {
+                Ok(v) => v,
+                Err(err) => {
+                    report.missing_explainability += 1;
+                    report.findings.push(DecisionTraceFinding {
+                        trace_id: "<invalid-json>".to_string(),
+                        symbol: None,
+                        reason: format!("line {} invalid JSON: {}", line_no + 1, err),
+                    });
+                    continue;
+                }
+            };
+
+            let Some(obj) = value.as_object() else {
+                report.missing_explainability += 1;
+                report.findings.push(DecisionTraceFinding {
+                    trace_id: "<invalid-object>".to_string(),
+                    symbol: None,
+                    reason: format!("line {} is not a JSON object", line_no + 1),
+                });
+                continue;
+            };
+
+            let is_runtime_decision_event = obj
+                .get("event")
+                .and_then(|v| v.as_str())
+                .is_some_and(|e| e == "runtime_decision");
+            if !is_runtime_decision_event {
+                continue;
+            }
+            report.decision_events += 1;
+
+            let trace_id = obj
+                .get("trace_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("<missing-trace-id>")
+                .to_string();
+            let symbol = obj
+                .get("symbol")
+                .and_then(|v| v.as_str())
+                .map(ToString::to_string);
+
+            if obj.get("decision").is_none() {
+                report.missing_explainability += 1;
+                report.findings.push(DecisionTraceFinding {
+                    trace_id,
+                    symbol,
+                    reason: "missing fields: decision".to_string(),
+                });
+                continue;
+            }
+
+            let mut missing = Vec::new();
+            if obj
+                .get("trace_id")
+                .and_then(|v| v.as_str())
+                .is_none_or(str::is_empty)
+            {
+                missing.push("trace_id");
+            }
+            if obj
+                .get("symbol")
+                .and_then(|v| v.as_str())
+                .is_none_or(str::is_empty)
+            {
+                missing.push("symbol");
+            }
+            if obj
+                .get("span_id")
+                .and_then(|v| v.as_str())
+                .is_none_or(str::is_empty)
+            {
+                missing.push("span_id");
+            }
+            if obj
+                .get("controller_id")
+                .and_then(|v| v.as_str())
+                .is_none_or(str::is_empty)
+            {
+                missing.push("controller_id");
+            }
+            if obj
+                .get("decision_action")
+                .and_then(|v| v.as_str())
+                .is_none_or(str::is_empty)
+            {
+                missing.push("decision_action");
+            }
+            if !obj
+                .get("risk_inputs")
+                .is_some_and(serde_json::Value::is_object)
+            {
+                missing.push("risk_inputs");
+            }
+
+            if missing.is_empty() {
+                report.explainable_decision_events += 1;
+            } else {
+                report.missing_explainability += 1;
+                report.findings.push(DecisionTraceFinding {
+                    trace_id,
+                    symbol,
+                    reason: format!("missing fields: {}", missing.join(", ")),
+                });
+            }
+        }
+
+        report
+    }
+
+    /// True when every decision event has complete explainability context.
+    #[must_use]
+    pub const fn fully_explainable(&self) -> bool {
+        self.missing_explainability == 0
     }
 }
 
@@ -156,7 +310,7 @@ impl RealityReport {
 
 #[cfg(test)]
 mod tests {
-    use super::{RealityCounts, RealityReport};
+    use super::{DecisionTraceReport, RealityCounts, RealityReport};
 
     fn sample_matrix(symbol_rows: &str, total_exported: u64) -> String {
         format!(
@@ -229,5 +383,30 @@ mod tests {
 
         let err = RealityReport::from_support_matrix_json_str(&json).unwrap_err();
         assert!(err.contains("does not match symbols[] length"));
+    }
+
+    #[test]
+    fn decision_trace_report_flags_missing_explainability() {
+        let jsonl = r#"{"timestamp":"2026-02-12T00:00:00Z","trace_id":"bd-33p.2::run::001","level":"error","event":"runtime_decision","decision":"Deny","symbol":"malloc","controller_id":"runtime_math_kernel.v1","decision_action":"Deny"}"#;
+        let report = DecisionTraceReport::from_jsonl_str(jsonl);
+        assert_eq!(report.total_events, 1);
+        assert_eq!(report.decision_events, 1);
+        assert_eq!(report.explainable_decision_events, 0);
+        assert_eq!(report.missing_explainability, 1);
+        assert!(!report.fully_explainable());
+        assert_eq!(report.findings.len(), 1);
+        assert!(report.findings[0].reason.contains("risk_inputs"));
+    }
+
+    #[test]
+    fn decision_trace_report_accepts_complete_decision_chain() {
+        let jsonl = r#"{"timestamp":"2026-02-12T00:00:00Z","trace_id":"bd-33p.2::run::002","span_id":"abi::malloc::decision::0000000000000001","parent_span_id":"abi::malloc::entry::0000000000000001","level":"info","event":"runtime_decision","symbol":"malloc","decision":"FullValidate","controller_id":"runtime_math_kernel.v1","decision_action":"FullValidate","risk_inputs":{"requested_bytes":128,"bloom_negative":false}}"#;
+        let report = DecisionTraceReport::from_jsonl_str(jsonl);
+        assert_eq!(report.total_events, 1);
+        assert_eq!(report.decision_events, 1);
+        assert_eq!(report.explainable_decision_events, 1);
+        assert_eq!(report.missing_explainability, 0);
+        assert!(report.fully_explainable());
+        assert!(report.findings.is_empty());
     }
 }

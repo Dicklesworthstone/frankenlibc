@@ -113,6 +113,23 @@ with open('${logfile}') as f:
             if field not in obj:
                 print(f'  line {i}: missing required field: {field}')
                 errors += 1
+        if obj.get('event') == 'runtime_decision':
+            for field in ['decision', 'symbol', 'span_id']:
+                if field not in obj or not str(obj.get(field, '')).strip():
+                    print(f'  line {i}: runtime_decision event missing required field: {field}')
+                    errors += 1
+            if 'decision' not in obj:
+                continue
+            for field in ['controller_id', 'decision_action', 'risk_inputs']:
+                if field not in obj:
+                    print(f'  line {i}: runtime_decision event missing explainability field: {field}')
+                    errors += 1
+            if 'decision_action' in obj and obj['decision_action'] not in ['Allow', 'FullValidate', 'Repair', 'Deny']:
+                print(f\"  line {i}: invalid decision_action: {obj['decision_action']}\")
+                errors += 1
+            if 'risk_inputs' in obj and not isinstance(obj['risk_inputs'], dict):
+                print(f'  line {i}: risk_inputs must be an object')
+                errors += 1
 print(f'LINE_ERRORS={errors}')
 " 2>&1)
         file_errors=$(echo "${line_errors}" | grep 'LINE_ERRORS=' | cut -d= -f2)

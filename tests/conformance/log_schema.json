@@ -18,7 +18,7 @@
     "Set stream and gate for joinable aggregation across workflows.",
     "When applicable, set mode (strict|hardened), api_family, and symbol.",
     "On membrane-related events, set decision and profile; on repairs set healing_action.",
-    "If decision is set, always include controller_id, decision_action, and risk_inputs object.",
+    "On runtime_decision events (event=runtime_decision), always include controller_id, decision_action, and risk_inputs object.",
     "On failures, set outcome=fail and include artifact_refs pointing to diffs/backtraces/reports.",
     "Put large/variable payloads in details (object) rather than inventing many ad-hoc top-level keys."
   ],

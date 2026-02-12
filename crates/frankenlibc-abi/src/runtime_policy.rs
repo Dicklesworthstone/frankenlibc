@@ -161,7 +161,9 @@ fn fallback_trace_context() -> TraceContext {
 }
 
 fn active_trace_context() -> TraceContext {
-    TRACE_CONTEXT.with(|slot| slot.get()).unwrap_or_else(fallback_trace_context)
+    TRACE_CONTEXT
+        .with(|slot| slot.get())
+        .unwrap_or_else(fallback_trace_context)
 }
 
 fn record_last_explainability(mode: SafetyLevel, ctx: RuntimeContext, decision: RuntimeDecision) {
@@ -333,7 +335,22 @@ mod tests {
     #[test]
     fn scoped_trace_context_carries_symbol_into_explainability() {
         let _scope = entrypoint_scope("malloc");
-        let (_mode, decision) = decide(ApiFamily::Allocator, 0x1234, 64, true, false, 7);
+        let decision = RuntimeDecision {
+            action: MembraneAction::FullValidate,
+            profile: ValidationProfile::Full,
+            policy_id: 42,
+            risk_upper_bound_ppm: 123_456,
+            evidence_seqno: 9,
+        };
+        let ctx = RuntimeContext {
+            family: ApiFamily::Allocator,
+            addr_hint: 0x1234,
+            requested_bytes: 64,
+            is_write: true,
+            contention_hint: 7,
+            bloom_negative: false,
+        };
+        record_last_explainability(SafetyLevel::Strict, ctx, decision);
         let explain = take_last_explainability().expect("explainability should be recorded");
 
         assert_eq!(explain.symbol, "malloc");
@@ -349,7 +366,22 @@ mod tests {
 
     #[test]
     fn missing_scope_uses_fallback_context() {
-        let (_mode, _decision) = decide(ApiFamily::IoFd, 0, 0, false, true, 0);
+        let decision = RuntimeDecision {
+            action: MembraneAction::Allow,
+            profile: ValidationProfile::Fast,
+            policy_id: 0,
+            risk_upper_bound_ppm: 0,
+            evidence_seqno: 0,
+        };
+        let ctx = RuntimeContext {
+            family: ApiFamily::IoFd,
+            addr_hint: 0,
+            requested_bytes: 0,
+            is_write: false,
+            contention_hint: 0,
+            bloom_negative: true,
+        };
+        record_last_explainability(SafetyLevel::Strict, ctx, decision);
         let explain = take_last_explainability().expect("fallback explainability should exist");
 
         assert_eq!(explain.symbol, TRACE_UNKNOWN_SYMBOL);
@@ -361,19 +393,16 @@ mod tests {
     #[test]
     fn nested_scope_restores_previous_context() {
         let _outer = entrypoint_scope("outer_symbol");
-        let (_mode, _decision) = decide(ApiFamily::Stdlib, 1, 2, false, false, 0);
-        let outer_explain = take_last_explainability().expect("outer explainability");
-        assert_eq!(outer_explain.symbol, "outer_symbol");
+        let outer_ctx = active_trace_context();
+        assert_eq!(outer_ctx.symbol, "outer_symbol");
 
         {
             let _inner = entrypoint_scope("inner_symbol");
-            let (_mode, _decision) = decide(ApiFamily::Stdlib, 1, 2, false, false, 0);
-            let inner_explain = take_last_explainability().expect("inner explainability");
-            assert_eq!(inner_explain.symbol, "inner_symbol");
+            let inner_ctx = active_trace_context();
+            assert_eq!(inner_ctx.symbol, "inner_symbol");
         }
 
-        let (_mode, _decision) = decide(ApiFamily::Stdlib, 1, 2, false, false, 0);
-        let restored = take_last_explainability().expect("restored explainability");
-        assert_eq!(restored.symbol, "outer_symbol");
+        let restored_ctx = active_trace_context();
+        assert_eq!(restored_ctx.symbol, "outer_symbol");
     }
 }
