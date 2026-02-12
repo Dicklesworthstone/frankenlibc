@@ -1128,6 +1128,7 @@ mod tests {
             action: MembraneAction::Allow,
             policy_id: 7,
             risk_upper_bound_ppm: 99,
+            evidence_seqno: 0,
         };
         let p = encode_decision_payload_v1(SafetyLevel::Strict, ctx, decision, 17, false, None);
         assert_eq!(&p[0..4], b"EVP1");
@@ -1157,6 +1158,7 @@ mod tests {
             action: MembraneAction::Repair(HealingAction::UpgradeToSafeVariant),
             policy_id: 11,
             risk_upper_bound_ppm: 250_000,
+            evidence_seqno: 0,
         };
         let loss = LossEvidenceV1 {
             posterior_adverse_ppm: 720_000,
