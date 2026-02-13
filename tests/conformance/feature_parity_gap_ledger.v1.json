@@ -1,0 +1,3951 @@
+{
+  "bead": "bd-w2c3.1.1",
+  "deltas": [
+    {
+      "actual": {
+        "sum_counts_equals_total": true,
+        "support_count_sum": 250,
+        "support_total_exported": 250,
+        "symbols_count_equals_total": true
+      },
+      "delta_id": "machine.support_classification_complete",
+      "expected": {
+        "sum_counts_equals_total": true,
+        "symbols_count_equals_total": true
+      },
+      "message": "support_matrix classification completeness",
+      "provenance": [
+        {
+          "path": "support_matrix.json"
+        }
+      ],
+      "status": "ok"
+    },
+    {
+      "actual": {
+        "reality_counts": {
+          "glibc_call_through": 49,
+          "implemented": 118,
+          "raw_syscall": 83,
+          "stub": 0
+        },
+        "reality_total": 250
+      },
+      "delta_id": "machine.support_vs_reality",
+      "expected": {
+        "support_counts": {
+          "glibc_call_through": 54,
+          "implemented": 113,
+          "raw_syscall": 83,
+          "stub": 0
+        },
+        "support_total": 250
+      },
+      "message": "support_matrix and reality_report should agree",
+      "provenance": [
+        {
+          "path": "support_matrix.json"
+        },
+        {
+          "path": "tests/conformance/reality_report.v1.json"
+        }
+      ],
+      "status": "drift"
+    },
+    {
+      "actual": {
+        "replacement_counts": {
+          "glibc_call_through": 54,
+          "implemented": 113,
+          "raw_syscall": 83,
+          "stub": 0
+        },
+        "replacement_total": 250
+      },
+      "delta_id": "machine.replacement_vs_reality",
+      "expected": {
+        "reality_counts": {
+          "glibc_call_through": 49,
+          "implemented": 118,
+          "raw_syscall": 83,
+          "stub": 0
+        },
+        "reality_total": 250
+      },
+      "message": "replacement_levels current_assessment should match reality_report",
+      "provenance": [
+        {
+          "path": "tests/conformance/replacement_levels.json"
+        },
+        {
+          "path": "tests/conformance/reality_report.v1.json"
+        }
+      ],
+      "status": "drift"
+    },
+    {
+      "actual": {
+        "status": "DONE"
+      },
+      "delta_id": "macro.fp-macro-targets-3a739065b069",
+      "expected": {
+        "status": "DONE"
+      },
+      "message": "derived from support_matrix classification coverage",
+      "provenance": [
+        {
+          "line": 28,
+          "path": "FEATURE_PARITY.md"
+        }
+      ],
+      "row_id": "fp-macro-targets-3a739065b069",
+      "status": "ok"
+    },
+    {
+      "actual": {
+        "status": "IN_PROGRESS"
+      },
+      "delta_id": "macro.fp-macro-targets-fa7a23e18f01",
+      "expected": {
+        "status": "IN_PROGRESS"
+      },
+      "message": "derived from reality_report callthrough/stub counts",
+      "provenance": [
+        {
+          "line": 29,
+          "path": "FEATURE_PARITY.md"
+        }
+      ],
+      "row_id": "fp-macro-targets-fa7a23e18f01",
+      "status": "ok"
+    }
+  ],
+  "gaps": [
+    {
+      "gap_id": "fp-macro-targets-fa7a23e18f01",
+      "kind": "feature_parity_row_status",
+      "primary_key": "POSIX/GNU replacement completeness",
+      "provenance": {
+        "line": 29,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "macro_targets",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "gap_id": "fp-macro-targets-7b75050a0f03",
+      "kind": "feature_parity_row_status",
+      "primary_key": "ABI symbol/version fidelity",
+      "provenance": {
+        "line": 30,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "macro_targets",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "gap_id": "fp-macro-targets-025864627e97",
+      "kind": "feature_parity_row_status",
+      "primary_key": "Strict mode conformance",
+      "provenance": {
+        "line": 31,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "macro_targets",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "gap_id": "fp-macro-targets-b1b8d5acbeff",
+      "kind": "feature_parity_row_status",
+      "primary_key": "Hardened mode safety",
+      "provenance": {
+        "line": 32,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "macro_targets",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "gap_id": "fp-macro-targets-b1983d62901c",
+      "kind": "feature_parity_row_status",
+      "primary_key": "Transparent Safety Membrane enforcement",
+      "provenance": {
+        "line": 33,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "macro_targets",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "gap_id": "fp-macro-targets-556631616b22",
+      "kind": "feature_parity_row_status",
+      "primary_key": "Conformance harness",
+      "provenance": {
+        "line": 34,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "macro_targets",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "gap_id": "fp-macro-targets-1e330b896784",
+      "kind": "feature_parity_row_status",
+      "primary_key": "Benchmark gates",
+      "provenance": {
+        "line": 35,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "macro_targets",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "gap_id": "fp-runtime-math-3781ffdeb99f",
+      "kind": "feature_parity_row_status",
+      "primary_key": "`runtime_math::risk`",
+      "provenance": {
+        "line": 69,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "runtime_math",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "gap_id": "fp-runtime-math-3e7761feb3e4",
+      "kind": "feature_parity_row_status",
+      "primary_key": "`runtime_math::pareto`",
+      "provenance": {
+        "line": 72,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "runtime_math",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "gap_id": "fp-runtime-math-8ff0b9637eb6",
+      "kind": "feature_parity_row_status",
+      "primary_key": "`runtime_math::cohomology`",
+      "provenance": {
+        "line": 74,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "runtime_math",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "gap_id": "fp-runtime-math-69775144f57d",
+      "kind": "feature_parity_row_status",
+      "primary_key": "string/memory integration",
+      "provenance": {
+        "line": 113,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "runtime_math",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "gap_id": "fp-runtime-math-a94b6554ba63",
+      "kind": "feature_parity_row_status",
+      "primary_key": "resolver/NSS integration",
+      "provenance": {
+        "line": 120,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "runtime_math",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "gap_id": "fp-reverse-core-0191894bf973",
+      "kind": "feature_parity_row_status",
+      "primary_key": "loader/symbol/IFUNC",
+      "provenance": {
+        "line": 132,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "reverse_core",
+      "status": "PLANNED"
+    },
+    {
+      "gap_id": "fp-reverse-core-311e99aff4d6",
+      "kind": "feature_parity_row_status",
+      "primary_key": "allocator",
+      "provenance": {
+        "line": 133,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "reverse_core",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "gap_id": "fp-reverse-core-a30cbdd5d2da",
+      "kind": "feature_parity_row_status",
+      "primary_key": "hot string/memory kernels",
+      "provenance": {
+        "line": 134,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "reverse_core",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "gap_id": "fp-reverse-core-422dc81789ec",
+      "kind": "feature_parity_row_status",
+      "primary_key": "futex/pthread/cancellation",
+      "provenance": {
+        "line": 135,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "reverse_core",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "gap_id": "fp-reverse-core-bbe405ff4f84",
+      "kind": "feature_parity_row_status",
+      "primary_key": "stdio/parser/locale formatting",
+      "provenance": {
+        "line": 136,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "reverse_core",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "gap_id": "fp-reverse-core-97ef5634c70b",
+      "kind": "feature_parity_row_status",
+      "primary_key": "signal/setjmp transfer",
+      "provenance": {
+        "line": 137,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "reverse_core",
+      "status": "PLANNED"
+    },
+    {
+      "gap_id": "fp-reverse-core-bdb29f3d780e",
+      "kind": "feature_parity_row_status",
+      "primary_key": "time/timezone/rt timers",
+      "provenance": {
+        "line": 138,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "reverse_core",
+      "status": "PLANNED"
+    },
+    {
+      "gap_id": "fp-reverse-core-d6c0faa879a5",
+      "kind": "feature_parity_row_status",
+      "primary_key": "nss/resolv/nscd/sunrpc",
+      "provenance": {
+        "line": 139,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "reverse_core",
+      "status": "PLANNED"
+    },
+    {
+      "gap_id": "fp-reverse-core-36e1946e7f8d",
+      "kind": "feature_parity_row_status",
+      "primary_key": "locale/iconv/transliteration",
+      "provenance": {
+        "line": 140,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "reverse_core",
+      "status": "PLANNED"
+    },
+    {
+      "gap_id": "fp-reverse-core-c16c9c1ae7a4",
+      "kind": "feature_parity_row_status",
+      "primary_key": "ABI/time64/layout bridges",
+      "provenance": {
+        "line": 141,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "reverse_core",
+      "status": "PLANNED"
+    },
+    {
+      "gap_id": "fp-reverse-core-83ea12557c2f",
+      "kind": "feature_parity_row_status",
+      "primary_key": "VM transitions",
+      "provenance": {
+        "line": 142,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "reverse_core",
+      "status": "PLANNED"
+    },
+    {
+      "gap_id": "fp-reverse-core-afa6d92abe42",
+      "kind": "feature_parity_row_status",
+      "primary_key": "strict/hardened decision layer",
+      "provenance": {
+        "line": 143,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "reverse_core",
+      "status": "PLANNED"
+    },
+    {
+      "gap_id": "fp-reverse-core-a764fe234295",
+      "kind": "feature_parity_row_status",
+      "primary_key": "process bootstrap (`csu`, TLS init, auxv, secure mode)",
+      "provenance": {
+        "line": 144,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "reverse_core",
+      "status": "PLANNED"
+    },
+    {
+      "gap_id": "fp-reverse-core-3ac0cb0d65a2",
+      "kind": "feature_parity_row_status",
+      "primary_key": "cross-ISA syscall glue (`sysdeps/*`)",
+      "provenance": {
+        "line": 145,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "reverse_core",
+      "status": "PLANNED"
+    },
+    {
+      "gap_id": "fp-reverse-core-757002295174",
+      "kind": "feature_parity_row_status",
+      "primary_key": "System V IPC (`sysvipc`)",
+      "provenance": {
+        "line": 146,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "reverse_core",
+      "status": "PLANNED"
+    },
+    {
+      "gap_id": "fp-reverse-core-8f333dadeb11",
+      "kind": "feature_parity_row_status",
+      "primary_key": "i18n catalogs (`intl`, `catgets`, `localedata`)",
+      "provenance": {
+        "line": 147,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "reverse_core",
+      "status": "PLANNED"
+    },
+    {
+      "gap_id": "fp-reverse-core-8f05cebd7805",
+      "kind": "feature_parity_row_status",
+      "primary_key": "diagnostics/unwinding (`debug`, backtrace)",
+      "provenance": {
+        "line": 148,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "reverse_core",
+      "status": "PLANNED"
+    },
+    {
+      "gap_id": "fp-reverse-core-b4b2f8e772cb",
+      "kind": "feature_parity_row_status",
+      "primary_key": "session accounting (`login`, `utmp/wtmp`)",
+      "provenance": {
+        "line": 149,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "reverse_core",
+      "status": "PLANNED"
+    },
+    {
+      "gap_id": "fp-reverse-core-44162ed23382",
+      "kind": "feature_parity_row_status",
+      "primary_key": "profiling hooks (`gmon`, sampling/probe paths)",
+      "provenance": {
+        "line": 150,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "reverse_core",
+      "status": "PLANNED"
+    },
+    {
+      "gap_id": "fp-reverse-core-a559b1461f71",
+      "kind": "feature_parity_row_status",
+      "primary_key": "floating-point edges (`soft-fp`, `fenv` exceptional paths)",
+      "provenance": {
+        "line": 151,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "reverse_core",
+      "status": "PLANNED"
+    },
+    {
+      "gap_id": "fp-proof-math-b821b415a5d6",
+      "kind": "feature_parity_row_status",
+      "primary_key": "strict refinement theorem",
+      "provenance": {
+        "line": 197,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "proof_math",
+      "status": "PLANNED"
+    },
+    {
+      "gap_id": "fp-proof-math-f3e03ea48a96",
+      "kind": "feature_parity_row_status",
+      "primary_key": "hardened safety theorem",
+      "provenance": {
+        "line": 198,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "proof_math",
+      "status": "PLANNED"
+    },
+    {
+      "gap_id": "fp-proof-math-0dbb786935af",
+      "kind": "feature_parity_row_status",
+      "primary_key": "deterministic replay theorem",
+      "provenance": {
+        "line": 199,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "proof_math",
+      "status": "PLANNED"
+    },
+    {
+      "gap_id": "fp-proof-math-df8f42355e99",
+      "kind": "feature_parity_row_status",
+      "primary_key": "sequential regression control",
+      "provenance": {
+        "line": 200,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "proof_math",
+      "status": "PLANNED"
+    },
+    {
+      "gap_id": "fp-proof-math-6d3837dc2cdd",
+      "kind": "feature_parity_row_status",
+      "primary_key": "drift detection reliability",
+      "provenance": {
+        "line": 201,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "proof_math",
+      "status": "PLANNED"
+    },
+    {
+      "gap_id": "fp-proof-math-1a1ed91c6ee8",
+      "kind": "feature_parity_row_status",
+      "primary_key": "CPOMDP admissibility",
+      "provenance": {
+        "line": 202,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "proof_math",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "gap_id": "fp-proof-math-5a7ebb15c2f5",
+      "kind": "feature_parity_row_status",
+      "primary_key": "CHC/CEGAR convergence",
+      "provenance": {
+        "line": 203,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "proof_math",
+      "status": "PLANNED"
+    },
+    {
+      "gap_id": "fp-proof-math-4577b75545e4",
+      "kind": "feature_parity_row_status",
+      "primary_key": "superoptimization soundness",
+      "provenance": {
+        "line": 204,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "proof_math",
+      "status": "PLANNED"
+    },
+    {
+      "gap_id": "fp-proof-math-b9be3da6001d",
+      "kind": "feature_parity_row_status",
+      "primary_key": "tail-risk control",
+      "provenance": {
+        "line": 205,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "proof_math",
+      "status": "PLANNED"
+    },
+    {
+      "gap_id": "fp-proof-math-8c76410adba7",
+      "kind": "feature_parity_row_status",
+      "primary_key": "barrier invariance",
+      "provenance": {
+        "line": 206,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "proof_math",
+      "status": "PLANNED"
+    },
+    {
+      "gap_id": "fp-proof-math-2a49b40113a6",
+      "kind": "feature_parity_row_status",
+      "primary_key": "robust-radius guarantee",
+      "provenance": {
+        "line": 207,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "proof_math",
+      "status": "PLANNED"
+    },
+    {
+      "gap_id": "fp-proof-math-638859dcb801",
+      "kind": "feature_parity_row_status",
+      "primary_key": "concurrent linearizability",
+      "provenance": {
+        "line": 208,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "proof_math",
+      "status": "PLANNED"
+    },
+    {
+      "gap_id": "fp-proof-math-eb51f3bf762d",
+      "kind": "feature_parity_row_status",
+      "primary_key": "HJI viability",
+      "provenance": {
+        "line": 209,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "proof_math",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "gap_id": "fp-proof-math-9c25ab032255",
+      "kind": "feature_parity_row_status",
+      "primary_key": "sheaf consistency detection",
+      "provenance": {
+        "line": 210,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "proof_math",
+      "status": "PLANNED"
+    },
+    {
+      "gap_id": "fp-proof-math-77bcaf571ca9",
+      "kind": "feature_parity_row_status",
+      "primary_key": "combinatorial interaction coverage",
+      "provenance": {
+        "line": 211,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "proof_math",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "gap_id": "fp-proof-math-c76d1265a4b8",
+      "kind": "feature_parity_row_status",
+      "primary_key": "probabilistic coupling bounds",
+      "provenance": {
+        "line": 212,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "proof_math",
+      "status": "PLANNED"
+    },
+    {
+      "gap_id": "fp-proof-math-96c6e9c65324",
+      "kind": "feature_parity_row_status",
+      "primary_key": "mean-field stability",
+      "provenance": {
+        "line": 213,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "proof_math",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "gap_id": "fp-proof-math-f929ecc9dcd6",
+      "kind": "feature_parity_row_status",
+      "primary_key": "entropic transition safety",
+      "provenance": {
+        "line": 214,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "proof_math",
+      "status": "PLANNED"
+    },
+    {
+      "gap_id": "fp-proof-math-5fa634c732ac",
+      "kind": "feature_parity_row_status",
+      "primary_key": "SOS invariant synthesis",
+      "provenance": {
+        "line": 215,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "proof_math",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "gap_id": "fp-proof-math-d7e5810905ab",
+      "kind": "feature_parity_row_status",
+      "primary_key": "large-deviation catastrophe bounds",
+      "provenance": {
+        "line": 216,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "proof_math",
+      "status": "PLANNED"
+    },
+    {
+      "gap_id": "fp-proof-math-f6429eb2d1c8",
+      "kind": "feature_parity_row_status",
+      "primary_key": "topological anomaly detection",
+      "provenance": {
+        "line": 217,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "proof_math",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "gap_id": "fp-proof-math-37337d818152",
+      "kind": "feature_parity_row_status",
+      "primary_key": "rough-signature feature stability",
+      "provenance": {
+        "line": 218,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "proof_math",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "gap_id": "fp-proof-math-0a9c8933d821",
+      "kind": "feature_parity_row_status",
+      "primary_key": "tropical latency composition",
+      "provenance": {
+        "line": 219,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "proof_math",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "gap_id": "fp-proof-math-c215c413371b",
+      "kind": "feature_parity_row_status",
+      "primary_key": "online optimizer convergence",
+      "provenance": {
+        "line": 220,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "proof_math",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "gap_id": "fp-proof-math-a0873d9da0f5",
+      "kind": "feature_parity_row_status",
+      "primary_key": "coalgebraic stream bisimulation",
+      "provenance": {
+        "line": 221,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "proof_math",
+      "status": "PLANNED"
+    },
+    {
+      "gap_id": "fp-proof-math-bccf06e26bab",
+      "kind": "feature_parity_row_status",
+      "primary_key": "Krohn-Rhodes codec factorization",
+      "provenance": {
+        "line": 222,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "proof_math",
+      "status": "PLANNED"
+    },
+    {
+      "gap_id": "fp-proof-math-050acfed5d6f",
+      "kind": "feature_parity_row_status",
+      "primary_key": "hybrid temporal reachability",
+      "provenance": {
+        "line": 223,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "proof_math",
+      "status": "PLANNED"
+    },
+    {
+      "gap_id": "fp-proof-math-fa21b6b68812",
+      "kind": "feature_parity_row_status",
+      "primary_key": "Stackelberg cache-security equilibria",
+      "provenance": {
+        "line": 224,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "proof_math",
+      "status": "PLANNED"
+    },
+    {
+      "gap_id": "fp-proof-math-76ad47f58ff9",
+      "kind": "feature_parity_row_status",
+      "primary_key": "observability-rate optimality",
+      "provenance": {
+        "line": 225,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "proof_math",
+      "status": "PLANNED"
+    },
+    {
+      "gap_id": "fp-proof-math-fcb2fed207e1",
+      "kind": "feature_parity_row_status",
+      "primary_key": "loader namespace sheaf consistency",
+      "provenance": {
+        "line": 226,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "proof_math",
+      "status": "PLANNED"
+    },
+    {
+      "gap_id": "fp-proof-math-a4fd102d5fd8",
+      "kind": "feature_parity_row_status",
+      "primary_key": "async nonlocal-control admissibility",
+      "provenance": {
+        "line": 227,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "proof_math",
+      "status": "PLANNED"
+    },
+    {
+      "gap_id": "fp-proof-math-25ac141c57f6",
+      "kind": "feature_parity_row_status",
+      "primary_key": "termios/ioctl polyhedral safety",
+      "provenance": {
+        "line": 228,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "proof_math",
+      "status": "PLANNED"
+    },
+    {
+      "gap_id": "fp-proof-math-0d50ca59b972",
+      "kind": "feature_parity_row_status",
+      "primary_key": "launch-pattern complexity guarantees",
+      "provenance": {
+        "line": 229,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "proof_math",
+      "status": "PLANNED"
+    },
+    {
+      "gap_id": "fp-proof-math-f4c99678233a",
+      "kind": "feature_parity_row_status",
+      "primary_key": "secure-mode noninterference",
+      "provenance": {
+        "line": 230,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "proof_math",
+      "status": "PLANNED"
+    },
+    {
+      "gap_id": "fp-proof-math-498e3ada4658",
+      "kind": "feature_parity_row_status",
+      "primary_key": "conformal decision validity",
+      "provenance": {
+        "line": 231,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "proof_math",
+      "status": "PLANNED"
+    },
+    {
+      "gap_id": "fp-proof-math-76cb028ebd3b",
+      "kind": "feature_parity_row_status",
+      "primary_key": "spectral-sequence obstruction convergence",
+      "provenance": {
+        "line": 232,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "proof_math",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "gap_id": "fp-proof-math-7d4ac141f993",
+      "kind": "feature_parity_row_status",
+      "primary_key": "algebraic normal-form uniqueness",
+      "provenance": {
+        "line": 233,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "proof_math",
+      "status": "PLANNED"
+    },
+    {
+      "gap_id": "fp-proof-math-10bc920debc7",
+      "kind": "feature_parity_row_status",
+      "primary_key": "noncommutative contention stability",
+      "provenance": {
+        "line": 234,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "proof_math",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "gap_id": "fp-proof-math-d09a6233acb5",
+      "kind": "feature_parity_row_status",
+      "primary_key": "arithmetic compatibility integrity",
+      "provenance": {
+        "line": 235,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "proof_math",
+      "status": "PLANNED"
+    },
+    {
+      "gap_id": "fp-proof-math-7c593b074cca",
+      "kind": "feature_parity_row_status",
+      "primary_key": "Serre spectral convergence integrity",
+      "provenance": {
+        "line": 236,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "proof_math",
+      "status": "PLANNED"
+    },
+    {
+      "gap_id": "fp-proof-math-cecd99919641",
+      "kind": "feature_parity_row_status",
+      "primary_key": "Grothendieck descent coherence",
+      "provenance": {
+        "line": 237,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "proof_math",
+      "status": "PLANNED"
+    },
+    {
+      "gap_id": "fp-proof-math-c9faf981c807",
+      "kind": "feature_parity_row_status",
+      "primary_key": "families-index nullity",
+      "provenance": {
+        "line": 238,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "proof_math",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "gap_id": "fp-proof-math-1cf962a06c67",
+      "kind": "feature_parity_row_status",
+      "primary_key": "Atiyah-Bott localization conservativity",
+      "provenance": {
+        "line": 239,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "proof_math",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "gap_id": "fp-proof-math-080870cbbd8d",
+      "kind": "feature_parity_row_status",
+      "primary_key": "Clifford kernel equivalence",
+      "provenance": {
+        "line": 240,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "proof_math",
+      "status": "PLANNED"
+    },
+    {
+      "gap_id": "fp-proof-math-58baa463bee3",
+      "kind": "feature_parity_row_status",
+      "primary_key": "derived t-structure bootstrap ordering",
+      "provenance": {
+        "line": 241,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "proof_math",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "gap_id": "fp-gap-summary-7b67c9268b67",
+      "kind": "feature_parity_row_status",
+      "primary_key": "2",
+      "provenance": {
+        "line": 246,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "gap_summary",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "gap_id": "fp-gap-summary-d643858a62b5",
+      "kind": "feature_parity_row_status",
+      "primary_key": "3",
+      "provenance": {
+        "line": 247,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "gap_summary",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "gap_id": "fp-gap-summary-7c8a46cdcb5e",
+      "kind": "feature_parity_row_status",
+      "primary_key": "4",
+      "provenance": {
+        "line": 248,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "gap_summary",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "gap_id": "fp-gap-summary-b04531fdcdde",
+      "kind": "feature_parity_row_status",
+      "primary_key": "5",
+      "provenance": {
+        "line": 249,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "gap_summary",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "gap_id": "fp-gap-summary-3675b24bb188",
+      "kind": "feature_parity_row_status",
+      "primary_key": "6",
+      "provenance": {
+        "line": 250,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "gap_summary",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "gap_id": "fp-gap-summary-6973ad91485b",
+      "kind": "feature_parity_row_status",
+      "primary_key": "7",
+      "provenance": {
+        "line": 251,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "gap_summary",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "gap_id": "fp-gap-summary-be0b24532a7e",
+      "kind": "feature_parity_row_status",
+      "primary_key": "8",
+      "provenance": {
+        "line": 252,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "gap_summary",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "gap_id": "fp-gap-summary-0398e27f075e",
+      "kind": "feature_parity_row_status",
+      "primary_key": "8",
+      "provenance": {
+        "line": 253,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "gap_summary",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "gap_id": "fp-gap-summary-793c83cceb16",
+      "kind": "feature_parity_row_status",
+      "primary_key": "9",
+      "provenance": {
+        "line": 254,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "gap_summary",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "gap_id": "fp-gap-summary-5cbb74613755",
+      "kind": "feature_parity_row_status",
+      "primary_key": "10",
+      "provenance": {
+        "line": 255,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "gap_summary",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "gap_id": "fp-gap-summary-db582a1956fa",
+      "kind": "feature_parity_row_status",
+      "primary_key": "11",
+      "provenance": {
+        "line": 256,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "gap_summary",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "gap_id": "fp-gap-summary-84240b59cfd1",
+      "kind": "feature_parity_row_status",
+      "primary_key": "11",
+      "provenance": {
+        "line": 257,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "gap_summary",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "gap_id": "fp-gap-summary-70370851cacb",
+      "kind": "feature_parity_row_status",
+      "primary_key": "12",
+      "provenance": {
+        "line": 258,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "gap_summary",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "gap_id": "fp-gap-summary-205f8c297218",
+      "kind": "feature_parity_row_status",
+      "primary_key": "13",
+      "provenance": {
+        "line": 259,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "gap_summary",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "gap_id": "fp-gap-summary-a1d7fcc3399f",
+      "kind": "feature_parity_row_status",
+      "primary_key": "14",
+      "provenance": {
+        "line": 260,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "gap_summary",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "gap_id": "fp-gap-summary-10132dfe6278",
+      "kind": "feature_parity_row_status",
+      "primary_key": "15",
+      "provenance": {
+        "line": 261,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "gap_summary",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "gap_id": "fp-gap-summary-b95fff14be76",
+      "kind": "feature_parity_row_status",
+      "primary_key": "16",
+      "provenance": {
+        "line": 262,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "gap_summary",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "gap_id": "fp-gap-summary-09fac08213b2",
+      "kind": "feature_parity_row_status",
+      "primary_key": "17",
+      "provenance": {
+        "line": 263,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "gap_summary",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "gap_id": "fp-gap-summary-5da3dc1c8d50",
+      "kind": "feature_parity_row_status",
+      "primary_key": "18",
+      "provenance": {
+        "line": 264,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "gap_summary",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "gap_id": "fp-gap-summary-26353b43713e",
+      "kind": "feature_parity_row_status",
+      "primary_key": "19",
+      "provenance": {
+        "line": 265,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "gap_summary",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "gap_id": "fp-gap-summary-5dd50f7bfbf2",
+      "kind": "feature_parity_row_status",
+      "primary_key": "20",
+      "provenance": {
+        "line": 266,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "gap_summary",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "gap_id": "fp-gap-summary-e9257a2a9c49",
+      "kind": "feature_parity_row_status",
+      "primary_key": "21",
+      "provenance": {
+        "line": 267,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "gap_summary",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "gap_id": "fp-gap-summary-ca75128647d2",
+      "kind": "feature_parity_row_status",
+      "primary_key": "22",
+      "provenance": {
+        "line": 268,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "gap_summary",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "gap_id": "fp-gap-summary-a3aed10a522c",
+      "kind": "feature_parity_row_status",
+      "primary_key": "21",
+      "provenance": {
+        "line": 269,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "gap_summary",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "gap_id": "fp-gap-summary-03bcda968d0e",
+      "kind": "feature_parity_row_status",
+      "primary_key": "22",
+      "provenance": {
+        "line": 270,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "gap_summary",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "gap_id": "fp-gap-summary-267b493369f9",
+      "kind": "feature_parity_row_status",
+      "primary_key": "23",
+      "provenance": {
+        "line": 271,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "gap_summary",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "gap_id": "fp-gap-summary-17c934647652",
+      "kind": "feature_parity_row_status",
+      "primary_key": "24",
+      "provenance": {
+        "line": 272,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "gap_summary",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "gap_id": "fp-gap-summary-3c88823923b9",
+      "kind": "feature_parity_row_status",
+      "primary_key": "23",
+      "provenance": {
+        "line": 273,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "gap_summary",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "gap_id": "fp-gap-summary-994260bdf05c",
+      "kind": "feature_parity_row_status",
+      "primary_key": "24",
+      "provenance": {
+        "line": 274,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "gap_summary",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "gap_id": "fp-gap-summary-42c1bf789b12",
+      "kind": "feature_parity_row_status",
+      "primary_key": "25",
+      "provenance": {
+        "line": 275,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "gap_summary",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "gap_id": "fp-gap-summary-e1b445fd58b5",
+      "kind": "feature_parity_row_status",
+      "primary_key": "26",
+      "provenance": {
+        "line": 276,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "gap_summary",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "gap_id": "fp-gap-summary-a51012652c16",
+      "kind": "feature_parity_row_status",
+      "primary_key": "27",
+      "provenance": {
+        "line": 277,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "gap_summary",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "gap_id": "fp-gap-summary-b7a23cbbae29",
+      "kind": "feature_parity_row_status",
+      "primary_key": "28",
+      "provenance": {
+        "line": 278,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "gap_summary",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "gap_id": "fp-gap-summary-3c4132e4799a",
+      "kind": "feature_parity_row_status",
+      "primary_key": "29",
+      "provenance": {
+        "line": 279,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "gap_summary",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "gap_id": "fp-gap-summary-99daf17ed425",
+      "kind": "feature_parity_row_status",
+      "primary_key": "30",
+      "provenance": {
+        "line": 280,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "gap_summary",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "gap_id": "fp-gap-summary-b679d62602b3",
+      "kind": "feature_parity_row_status",
+      "primary_key": "31",
+      "provenance": {
+        "line": 281,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "gap_summary",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "gap_id": "fp-gap-summary-161e06bc3a3d",
+      "kind": "feature_parity_row_status",
+      "primary_key": "32",
+      "provenance": {
+        "line": 282,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "gap_summary",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "delta_id": "machine.support_vs_reality",
+      "gap_id": "gap-machine-support-vs-reality",
+      "kind": "machine_delta_drift",
+      "message": "support_matrix and reality_report should agree",
+      "provenance": [
+        {
+          "path": "support_matrix.json"
+        },
+        {
+          "path": "tests/conformance/reality_report.v1.json"
+        }
+      ],
+      "status": "drift"
+    },
+    {
+      "delta_id": "machine.replacement_vs_reality",
+      "gap_id": "gap-machine-replacement-vs-reality",
+      "kind": "machine_delta_drift",
+      "message": "replacement_levels current_assessment should match reality_report",
+      "provenance": [
+        {
+          "path": "tests/conformance/replacement_levels.json"
+        },
+        {
+          "path": "tests/conformance/reality_report.v1.json"
+        }
+      ],
+      "status": "drift"
+    }
+  ],
+  "generated_at": "2026-02-11T19:17:31Z",
+  "parse_errors": [],
+  "rows": [
+    {
+      "columns": {
+        "Area": "Exported symbol classification",
+        "Status": "DONE",
+        "Target": "100% of current exports explicitly classified in support taxonomy"
+      },
+      "primary_key": "Exported symbol classification",
+      "provenance": {
+        "line": 28,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-macro-targets-3a739065b069",
+      "section": "macro_targets",
+      "status": "DONE"
+    },
+    {
+      "columns": {
+        "Area": "POSIX/GNU replacement completeness",
+        "Status": "IN_PROGRESS",
+        "Target": "Remove `GlibcCallThrough` + `Stub` classes from critical surfaces"
+      },
+      "primary_key": "POSIX/GNU replacement completeness",
+      "provenance": {
+        "line": 29,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-macro-targets-fa7a23e18f01",
+      "section": "macro_targets",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "columns": {
+        "Area": "ABI symbol/version fidelity",
+        "Status": "IN_PROGRESS",
+        "Target": "Preserve exported ABI and classify each exported symbol state"
+      },
+      "primary_key": "ABI symbol/version fidelity",
+      "provenance": {
+        "line": 30,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-macro-targets-7b75050a0f03",
+      "section": "macro_targets",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "columns": {
+        "Area": "Strict mode conformance",
+        "Status": "IN_PROGRESS",
+        "Target": "Differential parity on supported symbol set"
+      },
+      "primary_key": "Strict mode conformance",
+      "provenance": {
+        "line": 31,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-macro-targets-025864627e97",
+      "section": "macro_targets",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "columns": {
+        "Area": "Hardened mode safety",
+        "Status": "IN_PROGRESS",
+        "Target": "Deterministic repair/deny coverage on membrane-gated paths"
+      },
+      "primary_key": "Hardened mode safety",
+      "provenance": {
+        "line": 32,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-macro-targets-b1b8d5acbeff",
+      "section": "macro_targets",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "columns": {
+        "Area": "Transparent Safety Membrane enforcement",
+        "Status": "IN_PROGRESS",
+        "Target": "Pointer-sensitive APIs validated before dispatch"
+      },
+      "primary_key": "Transparent Safety Membrane enforcement",
+      "provenance": {
+        "line": 33,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-macro-targets-b1983d62901c",
+      "section": "macro_targets",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "columns": {
+        "Area": "Conformance harness",
+        "Status": "IN_PROGRESS",
+        "Target": "Fixture-driven validation + drift gates"
+      },
+      "primary_key": "Conformance harness",
+      "provenance": {
+        "line": 34,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-macro-targets-556631616b22",
+      "section": "macro_targets",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "columns": {
+        "Area": "Benchmark gates",
+        "Status": "IN_PROGRESS",
+        "Target": "Regression-blocking + budget evidence"
+      },
+      "primary_key": "Benchmark gates",
+      "provenance": {
+        "line": 35,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-macro-targets-1e330b896784",
+      "section": "macro_targets",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "columns": {
+        "Live Role": "online risk upper bound per API family (`risk_upper_bound_ppm`)",
+        "Runtime Kernel": "`runtime_math::risk`",
+        "Status": "IN_PROGRESS"
+      },
+      "primary_key": "`runtime_math::risk`",
+      "provenance": {
+        "line": 69,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-runtime-math-3781ffdeb99f",
+      "section": "runtime_math",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "columns": {
+        "Live Role": "constrained `Fast` vs `Full` validation-depth routing",
+        "Runtime Kernel": "`runtime_math::bandit`",
+        "Status": "DONE"
+      },
+      "primary_key": "`runtime_math::bandit`",
+      "provenance": {
+        "line": 70,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-runtime-math-2252bcba664b",
+      "section": "runtime_math",
+      "status": "DONE"
+    },
+    {
+      "columns": {
+        "Live Role": "primal-dual runtime threshold tuning",
+        "Runtime Kernel": "`runtime_math::control`",
+        "Status": "DONE"
+      },
+      "primary_key": "`runtime_math::control`",
+      "provenance": {
+        "line": 71,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-runtime-math-2dfcc1b9ff38",
+      "section": "runtime_math",
+      "status": "DONE"
+    },
+    {
+      "columns": {
+        "Live Role": "mode-aware latency/risk Pareto profile selection + cumulative regret tracking + per-family hard regret caps",
+        "Runtime Kernel": "`runtime_math::pareto`",
+        "Status": "IN_PROGRESS"
+      },
+      "primary_key": "`runtime_math::pareto`",
+      "provenance": {
+        "line": 72,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-runtime-math-3e7761feb3e4",
+      "section": "runtime_math",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "columns": {
+        "Live Role": "constant-time admissibility guard",
+        "Runtime Kernel": "`runtime_math::barrier`",
+        "Status": "DONE"
+      },
+      "primary_key": "`runtime_math::barrier`",
+      "provenance": {
+        "line": 73,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-runtime-math-7d158ceef570",
+      "section": "runtime_math",
+      "status": "DONE"
+    },
+    {
+      "columns": {
+        "Live Role": "overlap-consistency fault detection for sharded metadata",
+        "Runtime Kernel": "`runtime_math::cohomology`",
+        "Status": "IN_PROGRESS"
+      },
+      "primary_key": "`runtime_math::cohomology`",
+      "provenance": {
+        "line": 74,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-runtime-math-8ff0b9637eb6",
+      "section": "runtime_math",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "columns": {
+        "Live Role": "D-optimal heavy-probe selection under strict/hardened budget with online identifiability tracking",
+        "Runtime Kernel": "`runtime_math::design`",
+        "Status": "DONE"
+      },
+      "primary_key": "`runtime_math::design`",
+      "provenance": {
+        "line": 75,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-runtime-math-2d308a9f541f",
+      "section": "runtime_math",
+      "status": "DONE"
+    },
+    {
+      "columns": {
+        "Live Role": "online L1 sparse-recovery latent-cause inference from executed-probe anomaly vectors, with focused/diffuse/critical state gating",
+        "Runtime Kernel": "`runtime_math::sparse`",
+        "Status": "DONE"
+      },
+      "primary_key": "`runtime_math::sparse`",
+      "provenance": {
+        "line": 76,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-runtime-math-d643d17482cf",
+      "section": "runtime_math",
+      "status": "DONE"
+    },
+    {
+      "columns": {
+        "Live Role": "adaptive robust weighted fusion over heterogeneous kernel severities with online entropy/drift telemetry and fused risk bonus",
+        "Runtime Kernel": "`runtime_math::fusion`",
+        "Status": "DONE"
+      },
+      "primary_key": "`runtime_math::fusion`",
+      "provenance": {
+        "line": 77,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-runtime-math-852b80c5f3e8",
+      "section": "runtime_math",
+      "status": "DONE"
+    },
+    {
+      "columns": {
+        "Live Role": "representation-stability/group-action monitor for cross-family semantic drift with symmetry-breaking escalation and orbit telemetry",
+        "Runtime Kernel": "`runtime_math::equivariant`",
+        "Status": "DONE"
+      },
+      "primary_key": "`runtime_math::equivariant`",
+      "provenance": {
+        "line": 78,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-runtime-math-8dbd872ffa79",
+      "section": "runtime_math",
+      "status": "DONE"
+    },
+    {
+      "columns": {
+        "Live Role": "anytime-valid sequential testing (e-value alarms) per API family",
+        "Runtime Kernel": "`runtime_math::eprocess`",
+        "Status": "DONE"
+      },
+      "primary_key": "`runtime_math::eprocess`",
+      "provenance": {
+        "line": 79,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-runtime-math-1826bc090e04",
+      "section": "runtime_math",
+      "status": "DONE"
+    },
+    {
+      "columns": {
+        "Live Role": "distributionally-robust CVaR tail-risk control with runtime alarm gating",
+        "Runtime Kernel": "`runtime_math::cvar`",
+        "Status": "DONE"
+      },
+      "primary_key": "`runtime_math::cvar`",
+      "provenance": {
+        "line": 80,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-runtime-math-6291aac1b17b",
+      "section": "runtime_math",
+      "status": "DONE"
+    },
+    {
+      "columns": {
+        "Live Role": "sampled high-order conformal alarm/full-check signal feeds live risk bonus",
+        "Runtime Kernel": "sampled conformal risk fusion (`risk_engine`)",
+        "Status": "DONE"
+      },
+      "primary_key": "sampled conformal risk fusion (`risk_engine`)",
+      "provenance": {
+        "line": 81,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-runtime-math-51c34b097aca",
+      "section": "runtime_math",
+      "status": "DONE"
+    },
+    {
+      "columns": {
+        "Live Role": "contextual ordering executes on live pointer-validation stages with exact stage-exit feedback loop",
+        "Runtime Kernel": "sampled stage-order oracle fusion (`check_oracle`)",
+        "Status": "DONE"
+      },
+      "primary_key": "sampled stage-order oracle fusion (`check_oracle`)",
+      "provenance": {
+        "line": 82,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-runtime-math-b6488991f4c3",
+      "section": "runtime_math",
+      "status": "DONE"
+    },
+    {
+      "columns": {
+        "Live Role": "allocator observations feed primal-dual quarantine depth publication",
+        "Runtime Kernel": "quarantine controller fusion (`quarantine_controller`)",
+        "Status": "DONE"
+      },
+      "primary_key": "quarantine controller fusion (`quarantine_controller`)",
+      "provenance": {
+        "line": 83,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-runtime-math-268eee7aba9d",
+      "section": "runtime_math",
+      "status": "DONE"
+    },
+    {
+      "columns": {
+        "Live Role": "min-plus (tropical) algebra for provable worst-case pipeline latency bounds",
+        "Runtime Kernel": "tropical latency compositor (`tropical_latency`)",
+        "Status": "DONE"
+      },
+      "primary_key": "tropical latency compositor (`tropical_latency`)",
+      "provenance": {
+        "line": 84,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-runtime-math-c82781a26331",
+      "section": "runtime_math",
+      "status": "DONE"
+    },
+    {
+      "columns": {
+        "Live Role": "Marchenko-Pastur / Tracy-Widom random matrix theory phase transition detection",
+        "Runtime Kernel": "spectral phase monitor (`spectral_monitor`)",
+        "Status": "DONE"
+      },
+      "primary_key": "spectral phase monitor (`spectral_monitor`)",
+      "provenance": {
+        "line": 85,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-runtime-math-74941fdad543",
+      "section": "runtime_math",
+      "status": "DONE"
+    },
+    {
+      "columns": {
+        "Live Role": "truncated depth-3 path signatures (Terry Lyons theory) for universal noncommutative feature extraction \u2014 captures ALL moments + temporal ordering",
+        "Runtime Kernel": "rough-path signature monitor (`rough_path`)",
+        "Status": "DONE"
+      },
+      "primary_key": "rough-path signature monitor (`rough_path`)",
+      "provenance": {
+        "line": 86,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-runtime-math-accb19360035",
+      "section": "runtime_math",
+      "status": "DONE"
+    },
+    {
+      "columns": {
+        "Live Role": "0-dimensional Vietoris-Rips persistent homology for topological anomaly detection \u2014 sees data *shape* invisible to all statistical methods",
+        "Runtime Kernel": "persistent homology detector (`persistence`)",
+        "Status": "DONE"
+      },
+      "primary_key": "persistent homology detector (`persistence`)",
+      "provenance": {
+        "line": 87,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-runtime-math-bcd0784d4038",
+      "section": "runtime_math",
+      "status": "DONE"
+    },
+    {
+      "columns": {
+        "Live Role": "entropic optimal transport (Sinkhorn-Knopp) between action policy and equilibrium \u2014 canonical information-theoretic regime transition distance (Cuturi 2013, L\u00e9onard 2014)",
+        "Runtime Kernel": "Schr\u00f6dinger bridge controller (`schrodinger_bridge`)",
+        "Status": "DONE"
+      },
+      "primary_key": "Schr\u00f6dinger bridge controller (`schrodinger_bridge`)",
+      "provenance": {
+        "line": 88,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-runtime-math-5f416da55fac",
+      "section": "runtime_math",
+      "status": "DONE"
+    },
+    {
+      "columns": {
+        "Live Role": "Cram\u00e9r rate function (binary KL divergence) for exact exponential failure probability bounds \u2014 strictly dominates Hoeffding/CLT",
+        "Runtime Kernel": "large-deviations monitor (`large_deviations`)",
+        "Status": "DONE"
+      },
+      "primary_key": "large-deviations monitor (`large_deviations`)",
+      "provenance": {
+        "line": 89,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-runtime-math-007e9d57face",
+      "section": "runtime_math",
+      "status": "DONE"
+    },
+    {
+      "columns": {
+        "Live Role": "Hamilton-Jacobi-Isaacs differential game reachability \u2014 value-iteration safety certificates with worst-case adversary (Isaacs 1965, Mitchell/Tomlin 2005)",
+        "Runtime Kernel": "HJI reachability controller (`hji_reachability`)",
+        "Status": "DONE"
+      },
+      "primary_key": "HJI reachability controller (`hji_reachability`)",
+      "provenance": {
+        "line": 90,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-runtime-math-d964aec7db4f",
+      "section": "runtime_math",
+      "status": "DONE"
+    },
+    {
+      "columns": {
+        "Live Role": "Lasry-Lions mean-field Nash equilibrium via Picard fixed-point \u2014 congestion collapse detection for validation resource contention (Lasry-Lions 2006, Huang-Malham\u00e9-Caines 2006)",
+        "Runtime Kernel": "mean-field game contention controller (`mean_field_game`)",
+        "Status": "DONE"
+      },
+      "primary_key": "mean-field game contention controller (`mean_field_game`)",
+      "provenance": {
+        "line": 91,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-runtime-math-0f1d5d146a2a",
+      "section": "runtime_math",
+      "status": "DONE"
+    },
+    {
+      "columns": {
+        "Live Role": "Non-Archimedean p-adic valuation for floating-point exceptional regime control \u2014 detects denormal/overflow/NaN regimes via ultrametric distance (math #40)",
+        "Runtime Kernel": "p-adic valuation error calculus (`padic_valuation`)",
+        "Status": "DONE"
+      },
+      "primary_key": "p-adic valuation error calculus (`padic_valuation`)",
+      "provenance": {
+        "line": 92,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-runtime-math-6525ce1c9c73",
+      "section": "runtime_math",
+      "status": "DONE"
+    },
+    {
+      "columns": {
+        "Live Role": "GIT/symplectic reduction for System V IPC admissibility \u2014 moment-map deadlock detection + Marsden-Weinstein quotient stability (math #39)",
+        "Runtime Kernel": "symplectic reduction IPC guard (`symplectic_reduction`)",
+        "Status": "DONE"
+      },
+      "primary_key": "symplectic reduction IPC guard (`symplectic_reduction`)",
+      "provenance": {
+        "line": 93,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-runtime-math-e82cd91e895b",
+      "section": "runtime_math",
+      "status": "DONE"
+    },
+    {
+      "columns": {
+        "Live Role": "Higher-categorical descent diagnostics for locale/catalog coherence \u2014 sheaf gluing axiom validation over locale fallback chains with EWMA violation tracking (math #42)",
+        "Runtime Kernel": "higher-topos descent controller (`higher_topos`)",
+        "Status": "DONE"
+      },
+      "primary_key": "higher-topos descent controller (`higher_topos`)",
+      "provenance": {
+        "line": 94,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-runtime-math-70d1e3175860",
+      "section": "runtime_math",
+      "status": "DONE"
+    },
+    {
+      "columns": {
+        "Live Role": "Commitment-algebra + martingale-audit for tamper-evident session/accounting traces \u2014 hash-chain commitments, replay ring buffer, anytime-valid sequential hypothesis test (math #44)",
+        "Runtime Kernel": "commitment-audit controller (`commitment_audit`)",
+        "Status": "DONE"
+      },
+      "primary_key": "commitment-audit controller (`commitment_audit`)",
+      "provenance": {
+        "line": 95,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-runtime-math-9342ffc7e184",
+      "section": "runtime_math",
+      "status": "DONE"
+    },
+    {
+      "columns": {
+        "Live Role": "Adams & MacKay (2007) online Bayesian change-point detection \u2014 truncated run-length posterior with Beta-Bernoulli conjugate model, hazard function drift/shift classification (math #6)",
+        "Runtime Kernel": "Bayesian change-point detector (`changepoint`)",
+        "Status": "DONE"
+      },
+      "primary_key": "Bayesian change-point detector (`changepoint`)",
+      "provenance": {
+        "line": 96,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-runtime-math-1b98c49992cb",
+      "section": "runtime_math",
+      "status": "DONE"
+    },
+    {
+      "columns": {
+        "Live Role": "Split conformal prediction (Vovk et al. 2005) for finite-sample coverage guarantees \u2014 sliding-window calibration, conformal p-values, EWMA coverage tracking, distribution-free miscoverage detection (math #27)",
+        "Runtime Kernel": "conformal risk controller (`conformal`)",
+        "Status": "DONE"
+      },
+      "primary_key": "conformal risk controller (`conformal`)",
+      "provenance": {
+        "line": 97,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-runtime-math-c69d7fd14a10",
+      "section": "runtime_math",
+      "status": "DONE"
+    },
+    {
+      "columns": {
+        "Live Role": "ADMM operator-splitting for online risk/latency/coverage budget optimization \u2014 O(n log n) simplex projection, primal-dual convergence tracking, shadow price telemetry (math #26)",
+        "Runtime Kernel": "ADMM budget allocator (`admm_budget`)",
+        "Status": "DONE"
+      },
+      "primary_key": "ADMM budget allocator (`admm_budget`)",
+      "provenance": {
+        "line": 98,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-runtime-math-fa5438ef8702",
+      "section": "runtime_math",
+      "status": "DONE"
+    },
+    {
+      "columns": {
+        "Live Role": "d\u00b2 \u2248 0 cross-layer consistency defect detection \u2014 12 tracked controller pairs, Frobenius norm obstruction scoring, covariance break tracking (math #28)",
+        "Runtime Kernel": "spectral-sequence obstruction detector (`obstruction_detector`)",
+        "Status": "DONE"
+      },
+      "primary_key": "spectral-sequence obstruction detector (`obstruction_detector`)",
+      "provenance": {
+        "line": 99,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-runtime-math-a72309715c7d",
+      "section": "runtime_math",
+      "status": "DONE"
+    },
+    {
+      "columns": {
+        "Live Role": "Online power iteration spectral radius estimation \u2014 amplification ratio tracking with directional coherence weighting for ensemble dynamics stability",
+        "Runtime Kernel": "operator-norm spectral radius monitor (`operator_norm`)",
+        "Status": "DONE"
+      },
+      "primary_key": "operator-norm spectral radius monitor (`operator_norm`)",
+      "provenance": {
+        "line": 100,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-runtime-math-fadcc81f4d51",
+      "section": "runtime_math",
+      "status": "DONE"
+    },
+    {
+      "columns": {
+        "Live Role": "Discrete Malliavin calculus decision-boundary fragility detection \u2014 two-timescale Clark-Ocone variance decomposition, per-controller weighted sensitivity scoring",
+        "Runtime Kernel": "Malliavin sensitivity controller (`malliavin_sensitivity`)",
+        "Status": "DONE"
+      },
+      "primary_key": "Malliavin sensitivity controller (`malliavin_sensitivity`)",
+      "provenance": {
+        "line": 101,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-runtime-math-4821dd26d181",
+      "section": "runtime_math",
+      "status": "DONE"
+    },
+    {
+      "columns": {
+        "Live Role": "Fisher-Rao geodesic distance on categorical manifold of controller states \u2014 Bhattacharyya angle, per-controller divergence profiles, structural regime shift detection (Amari 1985)",
+        "Runtime Kernel": "information geometry monitor (`info_geometry`)",
+        "Status": "DONE"
+      },
+      "primary_key": "information geometry monitor (`info_geometry`)",
+      "provenance": {
+        "line": 102,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-runtime-math-72878468431a",
+      "section": "runtime_math",
+      "status": "DONE"
+    },
+    {
+      "columns": {
+        "Live Role": "Matrix Bernstein inequality (Tropp 2012) finite-sample spectral bounds on ensemble covariance \u2014 anytime-valid confidence sets, Gershgorin spectral deviation estimation",
+        "Runtime Kernel": "matrix concentration monitor (`matrix_concentration`)",
+        "Status": "DONE"
+      },
+      "primary_key": "matrix concentration monitor (`matrix_concentration`)",
+      "provenance": {
+        "line": 103,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-runtime-math-914e63bf47d3",
+      "section": "runtime_math",
+      "status": "DONE"
+    },
+    {
+      "columns": {
+        "Live Role": "\u010cech nerve theorem correlation coherence \u2014 Betti number (\u03b2\u2080 connected components, \u03b2\u2081 1-cycles) tracking on controller correlation graph, union-find component counting, Euler characteristic cycle detection",
+        "Runtime Kernel": "nerve complex monitor (`nerve_complex`)",
+        "Status": "DONE"
+      },
+      "primary_key": "nerve complex monitor (`nerve_complex`)",
+      "provenance": {
+        "line": 104,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-runtime-math-c4e302f5613b",
+      "section": "runtime_math",
+      "status": "DONE"
+    },
+    {
+      "columns": {
+        "Live Role": "1-Wasserstein (Earth Mover's) distance on severity histograms \u2014 closed-form CDF difference computation, ordinal metric awareness (severity magnitude), per-controller drift profiling (Kantorovich-Rubinstein 1958)",
+        "Runtime Kernel": "Wasserstein drift monitor (`wasserstein_drift`)",
+        "Status": "DONE"
+      },
+      "primary_key": "Wasserstein drift monitor (`wasserstein_drift`)",
+      "provenance": {
+        "line": 105,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-runtime-math-e1660faa9226",
+      "section": "runtime_math",
+      "status": "DONE"
+    },
+    {
+      "columns": {
+        "Live Role": "Maximum Mean Discrepancy (Gretton et al. 2012) with RBF kernel \u2014 RKHS embedding, mean-embedding approximation with variance correction, distribution-free two-sample testing for joint distributional shifts",
+        "Runtime Kernel": "kernel MMD monitor (`kernel_mmd`)",
+        "Status": "DONE"
+      },
+      "primary_key": "kernel MMD monitor (`kernel_mmd`)",
+      "provenance": {
+        "line": 106,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-runtime-math-c72e6405aac7",
+      "section": "runtime_math",
+      "status": "DONE"
+    },
+    {
+      "columns": {
+        "Live Role": "Kernelized Stein Discrepancy (Liu, Lee, Jordan 2016) goodness-of-fit testing \u2014 KL-divergence between live empirical and calibration-frozen reference models, per-controller divergence profiling, regime shift detection",
+        "Runtime Kernel": "Stein discrepancy monitor (`stein_discrepancy`)",
+        "Status": "DONE"
+      },
+      "primary_key": "Stein discrepancy monitor (`stein_discrepancy`)",
+      "provenance": {
+        "line": 107,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-runtime-math-2b8e721a86d1",
+      "section": "runtime_math",
+      "status": "DONE"
+    },
+    {
+      "columns": {
+        "Live Role": "Constrained POMDP belief-space optimal repair policy \u2014 risk-conditioned action selection with belief state tracking for latent hazard estimation",
+        "Runtime Kernel": "POMDP repair controller (`pomdp_repair`)",
+        "Status": "DONE"
+      },
+      "primary_key": "POMDP repair controller (`pomdp_repair`)",
+      "provenance": {
+        "line": 108,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-runtime-math-e558f817c38f",
+      "section": "runtime_math",
+      "status": "DONE"
+    },
+    {
+      "columns": {
+        "Live Role": "Algebraic K-theory contract drift detection \u2014 K\u2080/K\u2081 group element tracking for cross-family compatibility obligation monitoring",
+        "Runtime Kernel": "K-theory contract monitor (`ktheory`)",
+        "Status": "DONE"
+      },
+      "primary_key": "K-theory contract monitor (`ktheory`)",
+      "provenance": {
+        "line": 109,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-runtime-math-95e8b3dcc00b",
+      "section": "runtime_math",
+      "status": "DONE"
+    },
+    {
+      "columns": {
+        "Live Role": "Sum-of-squares polynomial Lyapunov certificate synthesis \u2014 SDP-relaxed invariant verification for controller stability under stress",
+        "Runtime Kernel": "SOS invariant synthesizer (`sos_invariant`)",
+        "Status": "DONE"
+      },
+      "primary_key": "SOS invariant synthesizer (`sos_invariant`)",
+      "provenance": {
+        "line": 110,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-runtime-math-1c086347d0de",
+      "section": "runtime_math",
+      "status": "DONE"
+    },
+    {
+      "columns": {
+        "Live Role": "runtime-math decisions affect bloom-miss/deep-check behavior and adaptive stage ordering",
+        "Runtime Kernel": "pointer validator integration",
+        "Status": "DONE"
+      },
+      "primary_key": "pointer validator integration",
+      "provenance": {
+        "line": 111,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-runtime-math-26fa1843b2bd",
+      "section": "runtime_math",
+      "status": "DONE"
+    },
+    {
+      "columns": {
+        "Live Role": "runtime-math routing active across allocator ABI (`malloc`, `free`, `calloc`, `realloc`, `posix_memalign`, `memalign`, `aligned_alloc`) with exact check-order stage outcome feedback",
+        "Runtime Kernel": "allocator integration",
+        "Status": "DONE"
+      },
+      "primary_key": "allocator integration",
+      "provenance": {
+        "line": 112,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-runtime-math-5854a5928167",
+      "section": "runtime_math",
+      "status": "DONE"
+    },
+    {
+      "columns": {
+        "Live Role": "runtime-math routing active for bootstrap `<string.h>` entrypoints (`mem*`, `strlen`, `strcmp`, `strcpy`, `strncpy`, `strcat`, `strncat`, `strchr`, `strrchr`, `strstr`, `strtok`, `strtok_r`) with exact stage-outcome feedback on `memcpy`, `memmove`, `memset`, `memcmp`, `memchr`, `memrchr`, `strlen`, `strcmp`, `strcpy`, `strncpy`, `strcat`, `strncat`, `strchr`, `strrchr`, `strstr`, `strtok`, `strtok_r`",
+        "Runtime Kernel": "string/memory integration",
+        "Status": "IN_PROGRESS"
+      },
+      "primary_key": "string/memory integration",
+      "provenance": {
+        "line": 113,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-runtime-math-69775144f57d",
+      "section": "runtime_math",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "columns": {
+        "Live Role": "runtime-math routing active for bootstrap `<math.h>` entrypoints (`sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2`, `exp`, `log`, `log10`, `pow`, `fabs`, `ceil`, `floor`, `round`, `fmod`, `erf`, `tgamma`, `lgamma`)",
+        "Runtime Kernel": "math/fenv integration",
+        "Status": "DONE"
+      },
+      "primary_key": "math/fenv integration",
+      "provenance": {
+        "line": 114,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-runtime-math-850ce9d24711",
+      "section": "runtime_math",
+      "status": "DONE"
+    },
+    {
+      "columns": {
+        "Live Role": "runtime-math routing active for `<stdio.h>` entrypoints (`fopen`, `fclose`, `fread`, `fwrite`, `fgets`, `fputs`, `fgetc`, `fputc`, `fseek`, `ftell`, `fflush`, `fprintf`, `printf`, `sprintf`, `snprintf`, `perror`) under `ApiFamily::Stdio` with stream registry, buffered I/O, and full printf format engine",
+        "Runtime Kernel": "stdio integration",
+        "Status": "DONE"
+      },
+      "primary_key": "stdio integration",
+      "provenance": {
+        "line": 115,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-runtime-math-3350d65ab25e",
+      "section": "runtime_math",
+      "status": "DONE"
+    },
+    {
+      "columns": {
+        "Live Role": "runtime-math routing active for mutex (`init`, `destroy`, `lock`, `trylock`, `unlock`), cond (`init`, `destroy`, `wait`, `signal`, `broadcast`), rwlock (`init`, `destroy`, `rdlock`, `wrlock`, `unlock`) under `ApiFamily::Threading` with null-check validation + hardened EBUSY/EPERM repair",
+        "Runtime Kernel": "pthread/futex integration",
+        "Status": "DONE"
+      },
+      "primary_key": "pthread/futex integration",
+      "provenance": {
+        "line": 116,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-runtime-math-3c6b5f6c7257",
+      "section": "runtime_math",
+      "status": "DONE"
+    },
+    {
+      "columns": {
+        "Live Role": "runtime-math routing active for `fork`, `_exit`, `execve`, `execvp`, `waitpid`, `wait` under `ApiFamily::Process` with strict/hardened exit-status clamping and wait-options sanitization",
+        "Runtime Kernel": "process integration",
+        "Status": "DONE"
+      },
+      "primary_key": "process integration",
+      "provenance": {
+        "line": 117,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-runtime-math-42b59bcb8c96",
+      "section": "runtime_math",
+      "status": "DONE"
+    },
+    {
+      "columns": {
+        "Live Role": "runtime-math routing active for `mmap`, `munmap`, `mprotect`, `msync`, `madvise` under `ApiFamily::VirtualMemory` with strict/hardened prot/flags/advice validation + repair",
+        "Runtime Kernel": "virtual memory integration",
+        "Status": "DONE"
+      },
+      "primary_key": "virtual memory integration",
+      "provenance": {
+        "line": 118,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-runtime-math-9154f2cb685e",
+      "section": "runtime_math",
+      "status": "DONE"
+    },
+    {
+      "columns": {
+        "Live Role": "runtime-math routing active for `poll`, `ppoll`, `select`, `pselect` under `ApiFamily::Poll` with strict/hardened nfds clamping",
+        "Runtime Kernel": "poll integration",
+        "Status": "DONE"
+      },
+      "primary_key": "poll integration",
+      "provenance": {
+        "line": 119,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-runtime-math-fdc29c4fcb58",
+      "section": "runtime_math",
+      "status": "DONE"
+    },
+    {
+      "columns": {
+        "Live Role": "runtime-math routing active for bootstrap resolver ABI (`getaddrinfo`, `freeaddrinfo`, `getnameinfo`) with exact check-order stage outcomes; full NSS/cache/poisoning campaign still pending",
+        "Runtime Kernel": "resolver/NSS integration",
+        "Status": "IN_PROGRESS"
+      },
+      "primary_key": "resolver/NSS integration",
+      "provenance": {
+        "line": 120,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-runtime-math-a94b6554ba63",
+      "section": "runtime_math",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "columns": {
+        "Live Role": "runtime-math routing active for `<unistd.h>` entrypoints (`read`, `write`, `close`, `lseek`, `stat`, `access`, `getcwd`, `chdir`, `unlink`, `link`, `symlink`, `readlink`, `fsync`, `sleep`) under `ApiFamily::IoFd` with strict/hardened whence/mode/path validation + repair",
+        "Runtime Kernel": "unistd/POSIX integration",
+        "Status": "DONE"
+      },
+      "primary_key": "unistd/POSIX integration",
+      "provenance": {
+        "line": 121,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-runtime-math-d59aa9ef67a2",
+      "section": "runtime_math",
+      "status": "DONE"
+    },
+    {
+      "columns": {
+        "Live Role": "runtime-math routing active for `<sys/socket.h>` entrypoints (`socket`, `bind`, `listen`, `accept`, `connect`, `send`, `recv`, `sendto`, `recvfrom`, `shutdown`, `setsockopt`, `getsockopt`, `getpeername`, `getsockname`) under `ApiFamily::Socket` with strict/hardened AF/type/how validation + repair",
+        "Runtime Kernel": "socket integration",
+        "Status": "DONE"
+      },
+      "primary_key": "socket integration",
+      "provenance": {
+        "line": 122,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-runtime-math-1b7223dd7f66",
+      "section": "runtime_math",
+      "status": "DONE"
+    },
+    {
+      "columns": {
+        "Live Role": "runtime-math routing active for `<arpa/inet.h>` entrypoints (`htons`, `htonl`, `ntohs`, `ntohl`, `inet_pton`, `inet_ntop`, `inet_addr`) under `ApiFamily::Inet`",
+        "Runtime Kernel": "inet integration",
+        "Status": "DONE"
+      },
+      "primary_key": "inet integration",
+      "provenance": {
+        "line": 123,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-runtime-math-7f953e76455e",
+      "section": "runtime_math",
+      "status": "DONE"
+    },
+    {
+      "columns": {
+        "Live Role": "runtime-math routing active for `<locale.h>` entrypoints (`setlocale`, `localeconv`) under `ApiFamily::Locale` with strict/hardened locale validation + C-locale fallback repair",
+        "Runtime Kernel": "locale integration",
+        "Status": "DONE"
+      },
+      "primary_key": "locale integration",
+      "provenance": {
+        "line": 124,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-runtime-math-ce42fc35752f",
+      "section": "runtime_math",
+      "status": "DONE"
+    },
+    {
+      "columns": {
+        "Live Role": "runtime-math routing active for `<termios.h>` entrypoints (`tcgetattr`, `tcsetattr`, `cfget*speed`, `cfset*speed`, `tcdrain`, `tcflush`, `tcflow`, `tcsendbreak`) under `ApiFamily::Termios` with strict/hardened optional_actions/queue/flow validation + repair",
+        "Runtime Kernel": "termios integration",
+        "Status": "DONE"
+      },
+      "primary_key": "termios integration",
+      "provenance": {
+        "line": 125,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-runtime-math-727b5a164922",
+      "section": "runtime_math",
+      "status": "DONE"
+    },
+    {
+      "columns": {
+        "Live Role": "runtime-math routing active for `<dlfcn.h>` entrypoints (`dlopen`, `dlsym`, `dlclose`, `dlerror`) under `ApiFamily::Loader` with strict/hardened flag validation + RTLD_NOW fallback repair, thread-local dlerror state",
+        "Runtime Kernel": "dlfcn integration",
+        "Status": "DONE"
+      },
+      "primary_key": "dlfcn integration",
+      "provenance": {
+        "line": 126,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-runtime-math-3c54a9874e9f",
+      "section": "runtime_math",
+      "status": "DONE"
+    },
+    {
+      "columns": {
+        "Failure Target": "global compatibility drift",
+        "Required Runtime Artifact": "resolver automata + compatibility witness ledgers",
+        "Status": "PLANNED",
+        "Surface": "loader/symbol/IFUNC"
+      },
+      "primary_key": "loader/symbol/IFUNC",
+      "provenance": {
+        "line": 132,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-reverse-core-0191894bf973",
+      "section": "reverse_core",
+      "status": "PLANNED"
+    },
+    {
+      "columns": {
+        "Failure Target": "temporal/provenance corruption",
+        "Required Runtime Artifact": "allocator policy tables + admissibility guards",
+        "Status": "IN_PROGRESS",
+        "Surface": "allocator"
+      },
+      "primary_key": "allocator",
+      "provenance": {
+        "line": 133,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-reverse-core-311e99aff4d6",
+      "section": "reverse_core",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "columns": {
+        "Failure Target": "overlap/alignment/dispatch edge faults",
+        "Required Runtime Artifact": "regime classifier + certified kernel routing tables",
+        "Status": "IN_PROGRESS",
+        "Surface": "hot string/memory kernels"
+      },
+      "primary_key": "hot string/memory kernels",
+      "provenance": {
+        "line": 134,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-reverse-core-a30cbdd5d2da",
+      "section": "reverse_core",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "columns": {
+        "Failure Target": "race/starvation/timeout inconsistency",
+        "Required Runtime Artifact": "transition kernels + fairness budgets",
+        "Status": "IN_PROGRESS",
+        "Surface": "futex/pthread/cancellation"
+      },
+      "primary_key": "futex/pthread/cancellation",
+      "provenance": {
+        "line": 135,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-reverse-core-422dc81789ec",
+      "section": "reverse_core",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "columns": {
+        "Failure Target": "parser-state explosion + locale divergence",
+        "Required Runtime Artifact": "generated parser/transducer tables",
+        "Status": "IN_PROGRESS",
+        "Surface": "stdio/parser/locale formatting"
+      },
+      "primary_key": "stdio/parser/locale formatting",
+      "provenance": {
+        "line": 136,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-reverse-core-bbe405ff4f84",
+      "section": "reverse_core",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "columns": {
+        "Failure Target": "invalid non-local transitions",
+        "Required Runtime Artifact": "admissible jump/signal/cancel transition matrices",
+        "Status": "PLANNED",
+        "Surface": "signal/setjmp transfer"
+      },
+      "primary_key": "signal/setjmp transfer",
+      "provenance": {
+        "line": 137,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-reverse-core-97ef5634c70b",
+      "section": "reverse_core",
+      "status": "PLANNED"
+    },
+    {
+      "columns": {
+        "Failure Target": "discontinuity/overrun semantic drift",
+        "Required Runtime Artifact": "temporal transition DAGs + timing envelopes",
+        "Status": "PLANNED",
+        "Surface": "time/timezone/rt timers"
+      },
+      "primary_key": "time/timezone/rt timers",
+      "provenance": {
+        "line": 138,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-reverse-core-bdb29f3d780e",
+      "section": "reverse_core",
+      "status": "PLANNED"
+    },
+    {
+      "columns": {
+        "Failure Target": "poisoning/retry/cache instability",
+        "Required Runtime Artifact": "deterministic lookup DAGs + calibrated anomaly thresholds",
+        "Status": "PLANNED",
+        "Surface": "nss/resolv/nscd/sunrpc"
+      },
+      "primary_key": "nss/resolv/nscd/sunrpc",
+      "provenance": {
+        "line": 139,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-reverse-core-d6c0faa879a5",
+      "section": "reverse_core",
+      "status": "PLANNED"
+    },
+    {
+      "columns": {
+        "Failure Target": "conversion-state inconsistency",
+        "Required Runtime Artifact": "minimized codec automata + consistency certificates",
+        "Status": "PLANNED",
+        "Surface": "locale/iconv/transliteration"
+      },
+      "primary_key": "locale/iconv/transliteration",
+      "provenance": {
+        "line": 140,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-reverse-core-36e1946e7f8d",
+      "section": "reverse_core",
+      "status": "PLANNED"
+    },
+    {
+      "columns": {
+        "Failure Target": "release compatibility fracture",
+        "Required Runtime Artifact": "invariant ledgers + drift alarms",
+        "Status": "PLANNED",
+        "Surface": "ABI/time64/layout bridges"
+      },
+      "primary_key": "ABI/time64/layout bridges",
+      "provenance": {
+        "line": 141,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-reverse-core-c16c9c1ae7a4",
+      "section": "reverse_core",
+      "status": "PLANNED"
+    },
+    {
+      "columns": {
+        "Failure Target": "unsafe map/protection trajectories",
+        "Required Runtime Artifact": "VM transition guard complexes",
+        "Status": "PLANNED",
+        "Surface": "VM transitions"
+      },
+      "primary_key": "VM transitions",
+      "provenance": {
+        "line": 142,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-reverse-core-83ea12557c2f",
+      "section": "reverse_core",
+      "status": "PLANNED"
+    },
+    {
+      "columns": {
+        "Failure Target": "threshold calibration drift",
+        "Required Runtime Artifact": "coverage-certified decision sets + abstain/escalate gates",
+        "Status": "PLANNED",
+        "Surface": "strict/hardened decision layer"
+      },
+      "primary_key": "strict/hardened decision layer",
+      "provenance": {
+        "line": 143,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-reverse-core-afa6d92abe42",
+      "section": "reverse_core",
+      "status": "PLANNED"
+    },
+    {
+      "columns": {
+        "Failure Target": "init-order races + secure-mode misclassification",
+        "Required Runtime Artifact": "startup dependency DAG + secure-mode policy automaton + init witness hashes",
+        "Status": "PLANNED",
+        "Surface": "process bootstrap (`csu`, TLS init, auxv, secure mode)"
+      },
+      "primary_key": "process bootstrap (`csu`, TLS init, auxv, secure mode)",
+      "provenance": {
+        "line": 144,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-reverse-core-a764fe234295",
+      "section": "reverse_core",
+      "status": "PLANNED"
+    },
+    {
+      "columns": {
+        "Failure Target": "architecture-specific semantic drift",
+        "Required Runtime Artifact": "per-ISA obligation matrices + dispatch witness cache",
+        "Status": "PLANNED",
+        "Surface": "cross-ISA syscall glue (`sysdeps/*`)"
+      },
+      "primary_key": "cross-ISA syscall glue (`sysdeps/*`)",
+      "provenance": {
+        "line": 145,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-reverse-core-3ac0cb0d65a2",
+      "section": "reverse_core",
+      "status": "PLANNED"
+    },
+    {
+      "columns": {
+        "Failure Target": "capability drift + semaphore deadlock trajectories",
+        "Required Runtime Artifact": "semaphore admissibility guard polytopes + deadlock-cut certificates",
+        "Status": "PLANNED",
+        "Surface": "System V IPC (`sysvipc`)"
+      },
+      "primary_key": "System V IPC (`sysvipc`)",
+      "provenance": {
+        "line": 146,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-reverse-core-757002295174",
+      "section": "reverse_core",
+      "status": "PLANNED"
+    },
+    {
+      "columns": {
+        "Failure Target": "fallback incoherence + catalog/version skew",
+        "Required Runtime Artifact": "catalog resolution automata + locale-consistency witness hashes",
+        "Status": "PLANNED",
+        "Surface": "i18n catalogs (`intl`, `catgets`, `localedata`)"
+      },
+      "primary_key": "i18n catalogs (`intl`, `catgets`, `localedata`)",
+      "provenance": {
+        "line": 147,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-reverse-core-8f333dadeb11",
+      "section": "reverse_core",
+      "status": "PLANNED"
+    },
+    {
+      "columns": {
+        "Failure Target": "unsafe/non-deterministic frame-walk behavior",
+        "Required Runtime Artifact": "unwind stratification tables + safe-cut fallback matrix",
+        "Status": "PLANNED",
+        "Surface": "diagnostics/unwinding (`debug`, backtrace)"
+      },
+      "primary_key": "diagnostics/unwinding (`debug`, backtrace)",
+      "provenance": {
+        "line": 148,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-reverse-core-8f05cebd7805",
+      "section": "reverse_core",
+      "status": "PLANNED"
+    },
+    {
+      "columns": {
+        "Failure Target": "replay/tamper ambiguity + racey state updates",
+        "Required Runtime Artifact": "deterministic session-ledger transitions + anomaly thresholds",
+        "Status": "PLANNED",
+        "Surface": "session accounting (`login`, `utmp/wtmp`)"
+      },
+      "primary_key": "session accounting (`login`, `utmp/wtmp`)",
+      "provenance": {
+        "line": 149,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-reverse-core-b4b2f8e772cb",
+      "section": "reverse_core",
+      "status": "PLANNED"
+    },
+    {
+      "columns": {
+        "Failure Target": "probe-induced benchmark distortion",
+        "Required Runtime Artifact": "minimal probe schedules + deterministic debias weights",
+        "Status": "PLANNED",
+        "Surface": "profiling hooks (`gmon`, sampling/probe paths)"
+      },
+      "primary_key": "profiling hooks (`gmon`, sampling/probe paths)",
+      "provenance": {
+        "line": 150,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-reverse-core-44162ed23382",
+      "section": "reverse_core",
+      "status": "PLANNED"
+    },
+    {
+      "columns": {
+        "Failure Target": "denormal/NaN/payload drift across regimes",
+        "Required Runtime Artifact": "regime-indexed numeric guard tables + certified fallback kernels",
+        "Status": "PLANNED",
+        "Surface": "floating-point edges (`soft-fp`, `fenv` exceptional paths)"
+      },
+      "primary_key": "floating-point edges (`soft-fp`, `fenv` exceptional paths)",
+      "provenance": {
+        "line": 151,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-reverse-core-a559b1461f71",
+      "section": "reverse_core",
+      "status": "PLANNED"
+    },
+    {
+      "columns": {
+        "Evidence Artifact": "SMT/proof notes + differential fixtures",
+        "Obligation": "strict refinement theorem",
+        "Status": "PLANNED"
+      },
+      "primary_key": "strict refinement theorem",
+      "provenance": {
+        "line": 197,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-proof-math-b821b415a5d6",
+      "section": "proof_math",
+      "status": "PLANNED"
+    },
+    {
+      "columns": {
+        "Evidence Artifact": "invariant checks + policy proof notes",
+        "Obligation": "hardened safety theorem",
+        "Status": "PLANNED"
+      },
+      "primary_key": "hardened safety theorem",
+      "provenance": {
+        "line": 198,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-proof-math-f3e03ea48a96",
+      "section": "proof_math",
+      "status": "PLANNED"
+    },
+    {
+      "columns": {
+        "Evidence Artifact": "reproducibility campaign logs",
+        "Obligation": "deterministic replay theorem",
+        "Status": "PLANNED"
+      },
+      "primary_key": "deterministic replay theorem",
+      "provenance": {
+        "line": 199,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-proof-math-0dbb786935af",
+      "section": "proof_math",
+      "status": "PLANNED"
+    },
+    {
+      "columns": {
+        "Evidence Artifact": "e-process monitoring reports",
+        "Obligation": "sequential regression control",
+        "Status": "PLANNED"
+      },
+      "primary_key": "sequential regression control",
+      "provenance": {
+        "line": 200,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-proof-math-df8f42355e99",
+      "section": "proof_math",
+      "status": "PLANNED"
+    },
+    {
+      "columns": {
+        "Evidence Artifact": "change-point validation reports",
+        "Obligation": "drift detection reliability",
+        "Status": "PLANNED"
+      },
+      "primary_key": "drift detection reliability",
+      "provenance": {
+        "line": 201,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-proof-math-6d3837dc2cdd",
+      "section": "proof_math",
+      "status": "PLANNED"
+    },
+    {
+      "columns": {
+        "Evidence Artifact": "policy feasibility certificates + replay logs",
+        "Obligation": "CPOMDP admissibility",
+        "Status": "IN_PROGRESS"
+      },
+      "primary_key": "CPOMDP admissibility",
+      "provenance": {
+        "line": 202,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-proof-math-1a1ed91c6ee8",
+      "section": "proof_math",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "columns": {
+        "Evidence Artifact": "abstraction refinement logs + resolved counterexamples",
+        "Obligation": "CHC/CEGAR convergence",
+        "Status": "PLANNED"
+      },
+      "primary_key": "CHC/CEGAR convergence",
+      "provenance": {
+        "line": 203,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-proof-math-5a7ebb15c2f5",
+      "section": "proof_math",
+      "status": "PLANNED"
+    },
+    {
+      "columns": {
+        "Evidence Artifact": "SMT equivalence certificates per accepted rewrite",
+        "Obligation": "superoptimization soundness",
+        "Status": "PLANNED"
+      },
+      "primary_key": "superoptimization soundness",
+      "provenance": {
+        "line": 204,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-proof-math-4577b75545e4",
+      "section": "proof_math",
+      "status": "PLANNED"
+    },
+    {
+      "columns": {
+        "Evidence Artifact": "EVT/CVaR reports for p99/p999 slices",
+        "Obligation": "tail-risk control",
+        "Status": "PLANNED"
+      },
+      "primary_key": "tail-risk control",
+      "provenance": {
+        "line": 205,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-proof-math-b9be3da6001d",
+      "section": "proof_math",
+      "status": "PLANNED"
+    },
+    {
+      "columns": {
+        "Evidence Artifact": "barrier-certificate proof artifacts + runtime checks",
+        "Obligation": "barrier invariance",
+        "Status": "PLANNED"
+      },
+      "primary_key": "barrier invariance",
+      "provenance": {
+        "line": 206,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-proof-math-8c76410adba7",
+      "section": "proof_math",
+      "status": "PLANNED"
+    },
+    {
+      "columns": {
+        "Evidence Artifact": "Wasserstein robustness reports + constraint audits",
+        "Obligation": "robust-radius guarantee",
+        "Status": "PLANNED"
+      },
+      "primary_key": "robust-radius guarantee",
+      "provenance": {
+        "line": 207,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-proof-math-2a49b40113a6",
+      "section": "proof_math",
+      "status": "PLANNED"
+    },
+    {
+      "columns": {
+        "Evidence Artifact": "mechanized concurrency proof notes + stress evidence",
+        "Obligation": "concurrent linearizability",
+        "Status": "PLANNED"
+      },
+      "primary_key": "concurrent linearizability",
+      "provenance": {
+        "line": 208,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-proof-math-638859dcb801",
+      "section": "proof_math",
+      "status": "PLANNED"
+    },
+    {
+      "columns": {
+        "Evidence Artifact": "viability-kernel artifacts + adversarial trace audits",
+        "Obligation": "HJI viability",
+        "Status": "IN_PROGRESS"
+      },
+      "primary_key": "HJI viability",
+      "provenance": {
+        "line": 209,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-proof-math-eb51f3bf762d",
+      "section": "proof_math",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "columns": {
+        "Evidence Artifact": "cohomology diagnostics + inconsistency replay cases",
+        "Obligation": "sheaf consistency detection",
+        "Status": "PLANNED"
+      },
+      "primary_key": "sheaf consistency detection",
+      "provenance": {
+        "line": 210,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-proof-math-9c25ab032255",
+      "section": "proof_math",
+      "status": "PLANNED"
+    },
+    {
+      "columns": {
+        "Evidence Artifact": "covering-array/matroid campaign proofs",
+        "Obligation": "combinatorial interaction coverage",
+        "Status": "IN_PROGRESS"
+      },
+      "primary_key": "combinatorial interaction coverage",
+      "provenance": {
+        "line": 211,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-proof-math-77bcaf571ca9",
+      "section": "proof_math",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "columns": {
+        "Evidence Artifact": "coupled-trace divergence certificates + concentration reports",
+        "Obligation": "probabilistic coupling bounds",
+        "Status": "PLANNED"
+      },
+      "primary_key": "probabilistic coupling bounds",
+      "provenance": {
+        "line": 212,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-proof-math-c76d1265a4b8",
+      "section": "proof_math",
+      "status": "PLANNED"
+    },
+    {
+      "columns": {
+        "Evidence Artifact": "equilibrium/stability reports + contention replay evidence",
+        "Obligation": "mean-field stability",
+        "Status": "IN_PROGRESS"
+      },
+      "primary_key": "mean-field stability",
+      "provenance": {
+        "line": 213,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-proof-math-96c6e9c65324",
+      "section": "proof_math",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "columns": {
+        "Evidence Artifact": "Schr\u00f6dinger-bridge transport-cost/overshoot reports",
+        "Obligation": "entropic transition safety",
+        "Status": "PLANNED"
+      },
+      "primary_key": "entropic transition safety",
+      "provenance": {
+        "line": 214,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-proof-math-f929ecc9dcd6",
+      "section": "proof_math",
+      "status": "PLANNED"
+    },
+    {
+      "columns": {
+        "Evidence Artifact": "SDP outputs + certificate validation artifacts",
+        "Obligation": "SOS invariant synthesis",
+        "Status": "IN_PROGRESS"
+      },
+      "primary_key": "SOS invariant synthesis",
+      "provenance": {
+        "line": 215,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-proof-math-5fa634c732ac",
+      "section": "proof_math",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "columns": {
+        "Evidence Artifact": "rare-event estimation reports + threshold audits",
+        "Obligation": "large-deviation catastrophe bounds",
+        "Status": "PLANNED"
+      },
+      "primary_key": "large-deviation catastrophe bounds",
+      "provenance": {
+        "line": 216,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-proof-math-d7e5810905ab",
+      "section": "proof_math",
+      "status": "PLANNED"
+    },
+    {
+      "columns": {
+        "Evidence Artifact": "persistent-homology summaries + detection benchmarks",
+        "Obligation": "topological anomaly detection",
+        "Status": "IN_PROGRESS"
+      },
+      "primary_key": "topological anomaly detection",
+      "provenance": {
+        "line": 217,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-proof-math-f6429eb2d1c8",
+      "section": "proof_math",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "columns": {
+        "Evidence Artifact": "perturbation-stability reports + model-input audits",
+        "Obligation": "rough-signature feature stability",
+        "Status": "IN_PROGRESS"
+      },
+      "primary_key": "rough-signature feature stability",
+      "provenance": {
+        "line": 218,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-proof-math-37337d818152",
+      "section": "proof_math",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "columns": {
+        "Evidence Artifact": "min-plus envelope proofs + end-to-end bound reports",
+        "Obligation": "tropical latency composition",
+        "Status": "IN_PROGRESS"
+      },
+      "primary_key": "tropical latency composition",
+      "provenance": {
+        "line": 219,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-proof-math-0a9c8933d821",
+      "section": "proof_math",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "columns": {
+        "Evidence Artifact": "primal-dual/ADMM convergence diagnostics + rollback logs",
+        "Obligation": "online optimizer convergence",
+        "Status": "IN_PROGRESS"
+      },
+      "primary_key": "online optimizer convergence",
+      "provenance": {
+        "line": 220,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-proof-math-c215c413371b",
+      "section": "proof_math",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "columns": {
+        "Evidence Artifact": "minimized stream-machine proofs + protocol replay logs",
+        "Obligation": "coalgebraic stream bisimulation",
+        "Status": "PLANNED"
+      },
+      "primary_key": "coalgebraic stream bisimulation",
+      "provenance": {
+        "line": 221,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-proof-math-a0873d9da0f5",
+      "section": "proof_math",
+      "status": "PLANNED"
+    },
+    {
+      "columns": {
+        "Evidence Artifact": "automata decomposition artifacts + equivalence checks",
+        "Obligation": "Krohn-Rhodes codec factorization",
+        "Status": "PLANNED"
+      },
+      "primary_key": "Krohn-Rhodes codec factorization",
+      "provenance": {
+        "line": 222,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-proof-math-bccf06e26bab",
+      "section": "proof_math",
+      "status": "PLANNED"
+    },
+    {
+      "columns": {
+        "Evidence Artifact": "reachable-set artifacts + DST/leap edge replay audits",
+        "Obligation": "hybrid temporal reachability",
+        "Status": "PLANNED"
+      },
+      "primary_key": "hybrid temporal reachability",
+      "provenance": {
+        "line": 223,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-proof-math-050acfed5d6f",
+      "section": "proof_math",
+      "status": "PLANNED"
+    },
+    {
+      "columns": {
+        "Evidence Artifact": "equilibrium certificates + adversarial simulation reports",
+        "Obligation": "Stackelberg cache-security equilibria",
+        "Status": "PLANNED"
+      },
+      "primary_key": "Stackelberg cache-security equilibria",
+      "provenance": {
+        "line": 224,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-proof-math-fa21b6b68812",
+      "section": "proof_math",
+      "status": "PLANNED"
+    },
+    {
+      "columns": {
+        "Evidence Artifact": "rate-distortion/probe design reports + overhead audits",
+        "Obligation": "observability-rate optimality",
+        "Status": "PLANNED"
+      },
+      "primary_key": "observability-rate optimality",
+      "provenance": {
+        "line": 225,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-proof-math-76ad47f58ff9",
+      "section": "proof_math",
+      "status": "PLANNED"
+    },
+    {
+      "columns": {
+        "Evidence Artifact": "obstruction diagnostics + namespace replay proofs",
+        "Obligation": "loader namespace sheaf consistency",
+        "Status": "PLANNED"
+      },
+      "primary_key": "loader namespace sheaf consistency",
+      "provenance": {
+        "line": 226,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-proof-math-fcb2fed207e1",
+      "section": "proof_math",
+      "status": "PLANNED"
+    },
+    {
+      "columns": {
+        "Evidence Artifact": "pushdown/hybrid transition proof bundles + replay traces",
+        "Obligation": "async nonlocal-control admissibility",
+        "Status": "PLANNED"
+      },
+      "primary_key": "async nonlocal-control admissibility",
+      "provenance": {
+        "line": 227,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-proof-math-a4fd102d5fd8",
+      "section": "proof_math",
+      "status": "PLANNED"
+    },
+    {
+      "columns": {
+        "Evidence Artifact": "admissibility polytope artifacts + edge-case replay evidence",
+        "Obligation": "termios/ioctl polyhedral safety",
+        "Status": "PLANNED"
+      },
+      "primary_key": "termios/ioctl polyhedral safety",
+      "provenance": {
+        "line": 228,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-proof-math-25ac141c57f6",
+      "section": "proof_math",
+      "status": "PLANNED"
+    },
+    {
+      "columns": {
+        "Evidence Artifact": "symbolic automata bounds + adversarial fixture audits",
+        "Obligation": "launch-pattern complexity guarantees",
+        "Status": "PLANNED"
+      },
+      "primary_key": "launch-pattern complexity guarantees",
+      "provenance": {
+        "line": 229,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-proof-math-0d50ca59b972",
+      "section": "proof_math",
+      "status": "PLANNED"
+    },
+    {
+      "columns": {
+        "Evidence Artifact": "relational proof notes + leak-budget test reports",
+        "Obligation": "secure-mode noninterference",
+        "Status": "PLANNED"
+      },
+      "primary_key": "secure-mode noninterference",
+      "provenance": {
+        "line": 230,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-proof-math-f4c99678233a",
+      "section": "proof_math",
+      "status": "PLANNED"
+    },
+    {
+      "columns": {
+        "Evidence Artifact": "coverage/risk-control reports + calibration replay logs",
+        "Obligation": "conformal decision validity",
+        "Status": "PLANNED"
+      },
+      "primary_key": "conformal decision validity",
+      "provenance": {
+        "line": 231,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-proof-math-498e3ada4658",
+      "section": "proof_math",
+      "status": "PLANNED"
+    },
+    {
+      "columns": {
+        "Evidence Artifact": "obstruction diagnostics + localized witness traces",
+        "Obligation": "spectral-sequence obstruction convergence",
+        "Status": "IN_PROGRESS"
+      },
+      "primary_key": "spectral-sequence obstruction convergence",
+      "provenance": {
+        "line": 232,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-proof-math-76cb028ebd3b",
+      "section": "proof_math",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "columns": {
+        "Evidence Artifact": "canonicalization proofs + rewrite certificate ledgers",
+        "Obligation": "algebraic normal-form uniqueness",
+        "Status": "PLANNED"
+      },
+      "primary_key": "algebraic normal-form uniqueness",
+      "provenance": {
+        "line": 233,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-proof-math-7d4ac141f993",
+      "section": "proof_math",
+      "status": "PLANNED"
+    },
+    {
+      "columns": {
+        "Evidence Artifact": "random-matrix/free-probability tail reports + stress replays",
+        "Obligation": "noncommutative contention stability",
+        "Status": "IN_PROGRESS"
+      },
+      "primary_key": "noncommutative contention stability",
+      "provenance": {
+        "line": 234,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-proof-math-10bc920debc7",
+      "section": "proof_math",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "columns": {
+        "Evidence Artifact": "invariant ledgers + drift/fracture threshold audits",
+        "Obligation": "arithmetic compatibility integrity",
+        "Status": "PLANNED"
+      },
+      "primary_key": "arithmetic compatibility integrity",
+      "provenance": {
+        "line": 235,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-proof-math-d09a6233acb5",
+      "section": "proof_math",
+      "status": "PLANNED"
+    },
+    {
+      "columns": {
+        "Evidence Artifact": "page-wise witness ledgers + extension-obstruction replay reports",
+        "Obligation": "Serre spectral convergence integrity",
+        "Status": "PLANNED"
+      },
+      "primary_key": "Serre spectral convergence integrity",
+      "provenance": {
+        "line": 236,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-proof-math-7c593b074cca",
+      "section": "proof_math",
+      "status": "PLANNED"
+    },
+    {
+      "columns": {
+        "Evidence Artifact": "site/topos/descent certificates + nongluable-case diagnostics",
+        "Obligation": "Grothendieck descent coherence",
+        "Status": "PLANNED"
+      },
+      "primary_key": "Grothendieck descent coherence",
+      "provenance": {
+        "line": 237,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-proof-math-cecd99919641",
+      "section": "proof_math",
+      "status": "PLANNED"
+    },
+    {
+      "columns": {
+        "Evidence Artifact": "index ledgers + localized nonzero-index defect reports",
+        "Obligation": "families-index nullity",
+        "Status": "IN_PROGRESS"
+      },
+      "primary_key": "families-index nullity",
+      "provenance": {
+        "line": 238,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-proof-math-c9faf981c807",
+      "section": "proof_math",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "columns": {
+        "Evidence Artifact": "fixed-point/full-obligation equivalence reports + error bounds",
+        "Obligation": "Atiyah-Bott localization conservativity",
+        "Status": "IN_PROGRESS"
+      },
+      "primary_key": "Atiyah-Bott localization conservativity",
+      "provenance": {
+        "line": 239,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-proof-math-1cf962a06c67",
+      "section": "proof_math",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "columns": {
+        "Evidence Artifact": "regime-partition proofs + cross-ISA witness bundles",
+        "Obligation": "Clifford kernel equivalence",
+        "Status": "PLANNED"
+      },
+      "primary_key": "Clifford kernel equivalence",
+      "provenance": {
+        "line": 240,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-proof-math-080870cbbd8d",
+      "section": "proof_math",
+      "status": "PLANNED"
+    },
+    {
+      "columns": {
+        "Evidence Artifact": "t-structure filtration proofs + orthogonality violation traces",
+        "Obligation": "derived t-structure bootstrap ordering",
+        "Status": "IN_PROGRESS"
+      },
+      "primary_key": "derived t-structure bootstrap ordering",
+      "provenance": {
+        "line": 241,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-proof-math-58baa463bee3",
+      "section": "proof_math",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "columns": {
+        "entry": "No Rust libc crates in repo yet. Workspace scaffold with 6 crates created.",
+        "ordinal": "1"
+      },
+      "primary_key": "1",
+      "provenance": {
+        "line": 245,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-gap-summary-a39363bd3b78",
+      "section": "gap_summary",
+      "status": "DONE"
+    },
+    {
+      "columns": {
+        "entry": "Initial conformance fixtures committed (`tests/conformance/fixtures/`); full capture pending.",
+        "ordinal": "2"
+      },
+      "primary_key": "2",
+      "provenance": {
+        "line": 246,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-gap-summary-7b67c9268b67",
+      "section": "gap_summary",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "columns": {
+        "entry": "Benchmark harnesses exist, but committed baseline evidence + regression thresholds are still pending.",
+        "ordinal": "3"
+      },
+      "primary_key": "3",
+      "provenance": {
+        "line": 247,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-gap-summary-d643858a62b5",
+      "section": "gap_summary",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "columns": {
+        "entry": "Version script scaffold created (`libc.map`); full symbol/version verification pending.",
+        "ordinal": "4"
+      },
+      "primary_key": "4",
+      "provenance": {
+        "line": 248,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-gap-summary-7c8a46cdcb5e",
+      "section": "gap_summary",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "columns": {
+        "entry": "No formal proof artifacts are committed yet.",
+        "ordinal": "5"
+      },
+      "primary_key": "5",
+      "provenance": {
+        "line": 249,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-gap-summary-b04531fdcdde",
+      "section": "gap_summary",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "columns": {
+        "entry": "Runtime math kernel is live in membrane and pointer validation; cross-family ABI wiring remains incomplete.",
+        "ordinal": "6"
+      },
+      "primary_key": "6",
+      "provenance": {
+        "line": 250,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-gap-summary-3675b24bb188",
+      "section": "gap_summary",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "columns": {
+        "entry": "Sequential-statistical guardrails are partially wired in runtime code; calibration evidence remains pending.",
+        "ordinal": "7"
+      },
+      "primary_key": "7",
+      "provenance": {
+        "line": 251,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-gap-summary-6973ad91485b",
+      "section": "gap_summary",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "columns": {
+        "entry": "Bootstrap string/memory + allocator boundary implementations exist; initial strict/hardened fixture evidence is now committed (`tests/conformance/fixtures/membrane_mode_split.json`), full differential campaign remains pending.",
+        "ordinal": "8"
+      },
+      "primary_key": "8",
+      "provenance": {
+        "line": 252,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-gap-summary-be0b24532a7e",
+      "section": "gap_summary",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "columns": {
+        "entry": "Core allocator subsystem (size classes, thread cache, large allocator, MallocState) implemented with 50+ tests.",
+        "ordinal": "8"
+      },
+      "primary_key": "8",
+      "provenance": {
+        "line": 253,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-gap-summary-0398e27f075e",
+      "section": "gap_summary",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "columns": {
+        "entry": "Stdlib numeric conversion (`atoi`, `atol`, `strtol`, `strtoul`), process control (`exit`, `atexit`), and sorting (`qsort`, `bsearch`) implemented with core logic and ABI membrane integration.",
+        "ordinal": "9"
+      },
+      "primary_key": "9",
+      "provenance": {
+        "line": 254,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-gap-summary-793c83cceb16",
+      "section": "gap_summary",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "columns": {
+        "entry": "All string functions (mem*, str*, strtok, strtok_r, wide) implemented with comprehensive tests.",
+        "ordinal": "10"
+      },
+      "primary_key": "10",
+      "provenance": {
+        "line": 255,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-gap-summary-5cbb74613755",
+      "section": "gap_summary",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "columns": {
+        "entry": "Tropical latency compositor live \u2014 min-plus algebra for provable worst-case pipeline bounds (math item #25).",
+        "ordinal": "11"
+      },
+      "primary_key": "11",
+      "provenance": {
+        "line": 256,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-gap-summary-db582a1956fa",
+      "section": "gap_summary",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "columns": {
+        "entry": "Spectral phase monitor live \u2014 Marchenko-Pastur/Tracy-Widom eigenvalue edge detection for regime changes (math item #31).",
+        "ordinal": "11"
+      },
+      "primary_key": "11",
+      "provenance": {
+        "line": 257,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-gap-summary-84240b59cfd1",
+      "section": "gap_summary",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "columns": {
+        "entry": "Rough-path signature monitor live \u2014 truncated depth-3 path signatures in T(R^4) for universal noncommutative feature extraction (math items #24, #29).",
+        "ordinal": "12"
+      },
+      "primary_key": "12",
+      "provenance": {
+        "line": 258,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-gap-summary-70370851cacb",
+      "section": "gap_summary",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "columns": {
+        "entry": "Persistent homology detector live \u2014 0-dimensional Vietoris-Rips persistent homology for topological anomaly detection (math item #23).",
+        "ordinal": "13"
+      },
+      "primary_key": "13",
+      "provenance": {
+        "line": 259,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-gap-summary-205f8c297218",
+      "section": "gap_summary",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "columns": {
+        "entry": "Schr\u00f6dinger bridge controller live \u2014 entropic optimal transport (Sinkhorn-Knopp) for canonical regime transition detection (math item #20).",
+        "ordinal": "14"
+      },
+      "primary_key": "14",
+      "provenance": {
+        "line": 260,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-gap-summary-a1d7fcc3399f",
+      "section": "gap_summary",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "columns": {
+        "entry": "Large-deviations monitor live \u2014 Cram\u00e9r rate function (binary KL divergence) for exact exponential catastrophic failure probability bounds (math item #22).",
+        "ordinal": "15"
+      },
+      "primary_key": "15",
+      "provenance": {
+        "line": 261,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-gap-summary-10132dfe6278",
+      "section": "gap_summary",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "columns": {
+        "entry": "HJI reachability controller live \u2014 Hamilton-Jacobi-Isaacs value iteration on 64-state discrete game grid (4\u00d74\u00d74: risk/latency/adverse_rate), controller vs adversary minimax safety certificates (math item #15).",
+        "ordinal": "16"
+      },
+      "primary_key": "16",
+      "provenance": {
+        "line": 262,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-gap-summary-b95fff14be76",
+      "section": "gap_summary",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "columns": {
+        "entry": "Mean-field game contention controller live \u2014 Lasry-Lions Nash equilibrium via Picard fixed-point with logit best response, congestion collapse detection for validation resource contention (math item #19).",
+        "ordinal": "17"
+      },
+      "primary_key": "17",
+      "provenance": {
+        "line": 263,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-gap-summary-09fac08213b2",
+      "section": "gap_summary",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "columns": {
+        "entry": "String/Memory ABI fully wired \u2014 `memset`, `memcmp`, `memchr`, `strtok`, `strtok_r`, `memrchr` now delegate to `frankenlibc-core` safe implementations after membrane validation; `memcpy` and `memmove` retain local logic due to strict aliasing constraints.",
+        "ordinal": "18"
+      },
+      "primary_key": "18",
+      "provenance": {
+        "line": 264,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-gap-summary-5da3dc1c8d50",
+      "section": "gap_summary",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "columns": {
+        "entry": "D-optimal probe scheduler live \u2014 runtime selection of heavy monitors via information-gain-per-cost budgeting with identifiability feedback in hot-path decisioning (math item #41).",
+        "ordinal": "19"
+      },
+      "primary_key": "19",
+      "provenance": {
+        "line": 265,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-gap-summary-26353b43713e",
+      "section": "gap_summary",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "columns": {
+        "entry": "Sparse latent-cause recovery live \u2014 runtime ISTA-based L1 controller infers concentrated vs diffuse fault sources from probe anomaly vectors and feeds strict/hardened risk escalation (math item #41 sparse recovery component).",
+        "ordinal": "20"
+      },
+      "primary_key": "20",
+      "provenance": {
+        "line": 266,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-gap-summary-5dd50f7bfbf2",
+      "section": "gap_summary",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "columns": {
+        "entry": "Robust fusion controller live \u2014 online multiplicative-weights fusion computes `fusion_bonus_ppm` from cross-kernel severities, reducing double-counted noise while accelerating coherent multi-signal escalation.",
+        "ordinal": "21"
+      },
+      "primary_key": "21",
+      "provenance": {
+        "line": 267,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-gap-summary-e9257a2a9c49",
+      "section": "gap_summary",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "columns": {
+        "entry": "Equivariant transport controller live \u2014 representation-stability/group-action canonicalization across API-family orbits detects cross-family symmetry breaking and escalates fractured runtime regimes (math item #43).",
+        "ordinal": "22"
+      },
+      "primary_key": "22",
+      "provenance": {
+        "line": 268,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-gap-summary-ca75128647d2",
+      "section": "gap_summary",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "columns": {
+        "entry": "P-adic valuation error calculus live \u2014 non-Archimedean ultrametric regime detection for floating-point exceptional paths (denormal/overflow/NaN), with p-adic distance metric and regime-indexed guard tables (math item #40).",
+        "ordinal": "21"
+      },
+      "primary_key": "21",
+      "provenance": {
+        "line": 269,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-gap-summary-a3aed10a522c",
+      "section": "gap_summary",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "columns": {
+        "entry": "Symplectic reduction IPC guard live \u2014 GIT/symplectic moment-map admissibility for System V IPC resource requests, Marsden-Weinstein quotient deadlock detection, and stability certificates (math item #39).",
+        "ordinal": "22"
+      },
+      "primary_key": "22",
+      "provenance": {
+        "line": 270,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-gap-summary-03bcda968d0e",
+      "section": "gap_summary",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "columns": {
+        "entry": "Core `<math.h>` scalar functions implemented in safe Rust core (`trig`, `exp/log`, `float`, `special`) with bootstrap tests; removed TODO panics on numeric hot path.",
+        "ordinal": "23"
+      },
+      "primary_key": "23",
+      "provenance": {
+        "line": 271,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-gap-summary-267b493369f9",
+      "section": "gap_summary",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "columns": {
+        "entry": "ABI `<math.h>` entrypoints now runtime-math gated under `ApiFamily::MathFenv` with strict/hardened mode split and non-finite repair behavior wired into observation telemetry.",
+        "ordinal": "24"
+      },
+      "primary_key": "24",
+      "provenance": {
+        "line": 272,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-gap-summary-17c934647652",
+      "section": "gap_summary",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "columns": {
+        "entry": "Higher-topos descent controller live \u2014 higher-categorical sheaf gluing axiom validation over locale fallback chains, EWMA-tracked violation rate with Calibrating/Coherent/DescentViolation/Incoherent state machine (math item #42).",
+        "ordinal": "23"
+      },
+      "primary_key": "23",
+      "provenance": {
+        "line": 273,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-gap-summary-3c88823923b9",
+      "section": "gap_summary",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "columns": {
+        "entry": "Commitment-audit controller live \u2014 hash-chain commitments (SipHash), replay ring buffer (128 entries), supermartingale sequential hypothesis test with anytime-valid tamper detection for session/accounting traces (math item #44).",
+        "ordinal": "24"
+      },
+      "primary_key": "24",
+      "provenance": {
+        "line": 274,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-gap-summary-994260bdf05c",
+      "section": "gap_summary",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "columns": {
+        "entry": "Bayesian change-point detector live \u2014 Adams & MacKay (2007) online Bayesian change-point detection with truncated run-length posterior (256-horizon), Beta-Bernoulli conjugate model, geometric hazard function, drift/shift/stable classification (math item #6).",
+        "ordinal": "25"
+      },
+      "primary_key": "25",
+      "provenance": {
+        "line": 275,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-gap-summary-42c1bf789b12",
+      "section": "gap_summary",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "columns": {
+        "entry": "Conformal risk controller live \u2014 split conformal prediction (Vovk et al. 2005) with sliding-window calibration (256 entries), conformal p-values, EWMA coverage tracking, distribution-free finite-sample miscoverage detection (math item #27).",
+        "ordinal": "26"
+      },
+      "primary_key": "26",
+      "provenance": {
+        "line": 276,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-gap-summary-e1b445fd58b5",
+      "section": "gap_summary",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "columns": {
+        "entry": "Five new POSIX function families ported: `<unistd.h>` (27 entrypoints), `<sys/socket.h>` (14 entrypoints), `<arpa/inet.h>` (7 entrypoints), `<locale.h>` (2 entrypoints), `<termios.h>` (10 entrypoints). All routed through the RuntimeMathKernel via new ApiFamily variants (Socket=13, Locale=14, Termios=15, Inet=16). Core modules provide pure-Rust validators and constants; ABI modules wrap libc with membrane gating.",
+        "ordinal": "27"
+      },
+      "primary_key": "27",
+      "provenance": {
+        "line": 277,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-gap-summary-a51012652c16",
+      "section": "gap_summary",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "columns": {
+        "entry": "Six new runtime math monitors integrated: Malliavin sensitivity, Fisher-Rao information geometry, matrix concentration (Bernstein), \u010cech nerve complex, Wasserstein drift, kernel MMD. Total test count: 792 (up from 608).",
+        "ordinal": "28"
+      },
+      "primary_key": "28",
+      "provenance": {
+        "line": 278,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-gap-summary-b7a23cbbae29",
+      "section": "gap_summary",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "columns": {
+        "entry": "`<dlfcn.h>` ABI fully wired \u2014 `dlopen`, `dlsym`, `dlclose`, `dlerror` with membrane gating under `ApiFamily::Loader`, thread-local error state, flag validation via core, hardened mode RTLD_NOW fallback.",
+        "ordinal": "29"
+      },
+      "primary_key": "29",
+      "provenance": {
+        "line": 279,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-gap-summary-3c4132e4799a",
+      "section": "gap_summary",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "columns": {
+        "entry": "Stein discrepancy monitor fixed \u2014 replaced mean-score-norm KSD (broken for deterministic inputs) with KL divergence D(current||reference) between live EWMA and calibration-frozen models; all 7 tests pass.",
+        "ordinal": "30"
+      },
+      "primary_key": "30",
+      "provenance": {
+        "line": 280,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-gap-summary-99daf17ed425",
+      "section": "gap_summary",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "columns": {
+        "entry": "Five additional runtime math monitors verified: Stein discrepancy (KSD goodness-of-fit), POMDP repair (belief-space policy), K-theory (contract drift), SOS invariant (Lyapunov synthesis). Total test count: 792.",
+        "ordinal": "31"
+      },
+      "primary_key": "31",
+      "provenance": {
+        "line": 281,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-gap-summary-b679d62602b3",
+      "section": "gap_summary",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "columns": {
+        "entry": "POSIX Batch 3: stdio file ops (27 ABI entrypoints wired via stream registry), process control (6 entrypoints under `ApiFamily::Process=17`: fork, _exit, execve, execvp, waitpid, wait), virtual memory (5 entrypoints under `ApiFamily::VirtualMemory=18`: mmap, munmap, mprotect, msync, madvise), pthread sync (15 entrypoints extending `ApiFamily::Threading`: mutex init/destroy/lock/trylock/unlock, cond init/destroy/wait/signal/broadcast, rwlock init/destroy/rdlock/wrlock/unlock), I/O multiplexing (4 entrypoints under `ApiFamily::Poll=19`: poll, ppoll, select, pselect). ApiFamily::COUNT expanded from 17 to 20. Total test count: 897.",
+        "ordinal": "32"
+      },
+      "primary_key": "32",
+      "provenance": {
+        "line": 282,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-gap-summary-161e06bc3a3d",
+      "section": "gap_summary",
+      "status": "IN_PROGRESS"
+    }
+  ],
+  "schema_version": "v1",
+  "sources": {
+    "feature_parity": "FEATURE_PARITY.md",
+    "reality_report": "tests/conformance/reality_report.v1.json",
+    "replacement_levels": "tests/conformance/replacement_levels.json",
+    "support_matrix": "support_matrix.json"
+  },
+  "status_transitions": [],
+  "summary": {
+    "delta_count": 5,
+    "drift_delta_count": 2,
+    "gap_count": 116,
+    "parse_error_count": 0,
+    "row_count": 169,
+    "status_counts": {
+      "DONE": 55,
+      "IN_PROGRESS": 67,
+      "PLANNED": 47
+    },
+    "transition_count": 0
+  }
+}

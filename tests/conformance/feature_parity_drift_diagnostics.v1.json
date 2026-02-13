@@ -1,0 +1,2171 @@
+{
+  "bead": "bd-w2c3.1.2",
+  "diagnostics": [
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "count": 2
+        },
+        "expected": {
+          "count": 0
+        }
+      },
+      "gap_id": "env-doc.missing-in-code",
+      "kind": "env_doc_mismatch",
+      "message": "stale docs key not present in runtime usage",
+      "owner_bead": "bd-29b.3",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "/data/projects/frankenlibc/tests/conformance/env_docs_code_mismatch_report.v1.json",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "count": 26
+        },
+        "expected": {
+          "count": 0
+        }
+      },
+      "gap_id": "env-doc.missing-in-docs",
+      "kind": "env_doc_mismatch",
+      "message": "documentation coverage drift",
+      "owner_bead": "bd-29b.3",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "/data/projects/frankenlibc/tests/conformance/env_docs_code_mismatch_report.v1.json",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "replacement_counts": {
+            "glibc_call_through": 54,
+            "implemented": 113,
+            "raw_syscall": 83,
+            "stub": 0
+          },
+          "replacement_total": 250
+        },
+        "expected": {
+          "reality_counts": {
+            "glibc_call_through": 49,
+            "implemented": 118,
+            "raw_syscall": 83,
+            "stub": 0
+          },
+          "reality_total": 250
+        }
+      },
+      "gap_id": "gap-machine-replacement-vs-reality",
+      "kind": "replacement_claim_contradiction",
+      "message": "replacement_levels current_assessment should match reality_report",
+      "owner_bead": "bd-w2c3.2.3",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "tests/conformance/replacement_levels.json",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "reality_counts": {
+            "glibc_call_through": 49,
+            "implemented": 118,
+            "raw_syscall": 83,
+            "stub": 0
+          },
+          "reality_total": 250
+        },
+        "expected": {
+          "support_counts": {
+            "glibc_call_through": 54,
+            "implemented": 113,
+            "raw_syscall": 83,
+            "stub": 0
+          },
+          "support_total": 250
+        }
+      },
+      "gap_id": "gap-machine-support-vs-reality",
+      "kind": "stale_count_drift",
+      "message": "support_matrix and reality_report should agree",
+      "owner_bead": "bd-w2c3.10.1",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "support_matrix.json",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "IN_PROGRESS"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-gap-summary-0398e27f075e",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.10",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "IN_PROGRESS"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-gap-summary-03bcda968d0e",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.10",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "IN_PROGRESS"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-gap-summary-09fac08213b2",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.10",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "IN_PROGRESS"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-gap-summary-10132dfe6278",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.10",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "IN_PROGRESS"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-gap-summary-161e06bc3a3d",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.10",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "IN_PROGRESS"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-gap-summary-17c934647652",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.10",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "IN_PROGRESS"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-gap-summary-205f8c297218",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.10",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "IN_PROGRESS"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-gap-summary-26353b43713e",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.10",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "IN_PROGRESS"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-gap-summary-267b493369f9",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.10",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "IN_PROGRESS"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-gap-summary-3675b24bb188",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.10",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "IN_PROGRESS"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-gap-summary-3c4132e4799a",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.10",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "IN_PROGRESS"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-gap-summary-3c88823923b9",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.10",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "IN_PROGRESS"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-gap-summary-42c1bf789b12",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.10",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "IN_PROGRESS"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-gap-summary-5cbb74613755",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.10",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "IN_PROGRESS"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-gap-summary-5da3dc1c8d50",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.10",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "IN_PROGRESS"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-gap-summary-5dd50f7bfbf2",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.10",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "IN_PROGRESS"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-gap-summary-6973ad91485b",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.10",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "IN_PROGRESS"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-gap-summary-70370851cacb",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.10",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "IN_PROGRESS"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-gap-summary-793c83cceb16",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.10",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "IN_PROGRESS"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-gap-summary-7b67c9268b67",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.10",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "IN_PROGRESS"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-gap-summary-7c8a46cdcb5e",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.10",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "IN_PROGRESS"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-gap-summary-84240b59cfd1",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.10",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "IN_PROGRESS"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-gap-summary-994260bdf05c",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.10",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "IN_PROGRESS"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-gap-summary-99daf17ed425",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.10",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "IN_PROGRESS"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-gap-summary-a1d7fcc3399f",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.10",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "IN_PROGRESS"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-gap-summary-a3aed10a522c",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.10",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "IN_PROGRESS"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-gap-summary-a51012652c16",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.10",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "IN_PROGRESS"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-gap-summary-b04531fdcdde",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.10",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "IN_PROGRESS"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-gap-summary-b679d62602b3",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.10",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "IN_PROGRESS"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-gap-summary-b7a23cbbae29",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.10",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "IN_PROGRESS"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-gap-summary-b95fff14be76",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.10",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "IN_PROGRESS"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-gap-summary-be0b24532a7e",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.10",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "IN_PROGRESS"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-gap-summary-ca75128647d2",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.10",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "IN_PROGRESS"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-gap-summary-d643858a62b5",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.10",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "IN_PROGRESS"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-gap-summary-db582a1956fa",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.10",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "IN_PROGRESS"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-gap-summary-e1b445fd58b5",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.10",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "IN_PROGRESS"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-gap-summary-e9257a2a9c49",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.10",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "IN_PROGRESS"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-macro-targets-025864627e97",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.1",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "IN_PROGRESS"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-macro-targets-1e330b896784",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.1",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "IN_PROGRESS"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-macro-targets-556631616b22",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.1",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "IN_PROGRESS"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-macro-targets-7b75050a0f03",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.1",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "IN_PROGRESS"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-macro-targets-b1983d62901c",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.1",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "IN_PROGRESS"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-macro-targets-b1b8d5acbeff",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.1",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "IN_PROGRESS"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-macro-targets-fa7a23e18f01",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.1",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "PLANNED"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-proof-math-050acfed5d6f",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.6",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "PLANNED"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-proof-math-080870cbbd8d",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.6",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "IN_PROGRESS"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-proof-math-0a9c8933d821",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.6",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "PLANNED"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-proof-math-0d50ca59b972",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.6",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "PLANNED"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-proof-math-0dbb786935af",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.6",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "IN_PROGRESS"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-proof-math-10bc920debc7",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.6",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "IN_PROGRESS"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-proof-math-1a1ed91c6ee8",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.6",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "IN_PROGRESS"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-proof-math-1cf962a06c67",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.6",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "PLANNED"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-proof-math-25ac141c57f6",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.6",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "PLANNED"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-proof-math-2a49b40113a6",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.6",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "IN_PROGRESS"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-proof-math-37337d818152",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.6",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "PLANNED"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-proof-math-4577b75545e4",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.6",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "PLANNED"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-proof-math-498e3ada4658",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.6",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "IN_PROGRESS"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-proof-math-58baa463bee3",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.6",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "PLANNED"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-proof-math-5a7ebb15c2f5",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.6",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "IN_PROGRESS"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-proof-math-5fa634c732ac",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.6",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "PLANNED"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-proof-math-638859dcb801",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.6",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "PLANNED"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-proof-math-6d3837dc2cdd",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.6",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "PLANNED"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-proof-math-76ad47f58ff9",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.6",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "IN_PROGRESS"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-proof-math-76cb028ebd3b",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.6",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "IN_PROGRESS"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-proof-math-77bcaf571ca9",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.6",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "PLANNED"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-proof-math-7c593b074cca",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.6",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "PLANNED"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-proof-math-7d4ac141f993",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.6",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "PLANNED"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-proof-math-8c76410adba7",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.6",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "IN_PROGRESS"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-proof-math-96c6e9c65324",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.6",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "PLANNED"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-proof-math-9c25ab032255",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.6",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "PLANNED"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-proof-math-a0873d9da0f5",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.6",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "PLANNED"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-proof-math-a4fd102d5fd8",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.6",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "PLANNED"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-proof-math-b821b415a5d6",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.6",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "PLANNED"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-proof-math-b9be3da6001d",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.6",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "PLANNED"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-proof-math-bccf06e26bab",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.6",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "IN_PROGRESS"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-proof-math-c215c413371b",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.6",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "PLANNED"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-proof-math-c76d1265a4b8",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.6",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "IN_PROGRESS"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-proof-math-c9faf981c807",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.6",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "PLANNED"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-proof-math-cecd99919641",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.6",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "PLANNED"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-proof-math-d09a6233acb5",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.6",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "PLANNED"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-proof-math-d7e5810905ab",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.6",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "PLANNED"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-proof-math-df8f42355e99",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.6",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "IN_PROGRESS"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-proof-math-eb51f3bf762d",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.6",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "PLANNED"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-proof-math-f3e03ea48a96",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.6",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "PLANNED"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-proof-math-f4c99678233a",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.6",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "IN_PROGRESS"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-proof-math-f6429eb2d1c8",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.6",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "PLANNED"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-proof-math-f929ecc9dcd6",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.6",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "PLANNED"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-proof-math-fa21b6b68812",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.6",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "PLANNED"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-proof-math-fcb2fed207e1",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.6",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "PLANNED"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-reverse-core-0191894bf973",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.4",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "IN_PROGRESS"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-reverse-core-311e99aff4d6",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.4",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "PLANNED"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-reverse-core-36e1946e7f8d",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.4",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "PLANNED"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-reverse-core-3ac0cb0d65a2",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.4",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "IN_PROGRESS"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-reverse-core-422dc81789ec",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.4",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "PLANNED"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-reverse-core-44162ed23382",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.4",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "PLANNED"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-reverse-core-757002295174",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.4",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "PLANNED"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-reverse-core-83ea12557c2f",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.4",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "PLANNED"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-reverse-core-8f05cebd7805",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.4",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "PLANNED"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-reverse-core-8f333dadeb11",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.4",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "PLANNED"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-reverse-core-97ef5634c70b",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.4",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "IN_PROGRESS"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-reverse-core-a30cbdd5d2da",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.4",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "PLANNED"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-reverse-core-a559b1461f71",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.4",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "PLANNED"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-reverse-core-a764fe234295",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.4",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "PLANNED"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-reverse-core-afa6d92abe42",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.4",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "PLANNED"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-reverse-core-b4b2f8e772cb",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.4",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "IN_PROGRESS"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-reverse-core-bbe405ff4f84",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.4",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "PLANNED"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-reverse-core-bdb29f3d780e",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.4",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "PLANNED"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-reverse-core-c16c9c1ae7a4",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.4",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "PLANNED"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-reverse-core-d6c0faa879a5",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.4",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "IN_PROGRESS"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-runtime-math-3781ffdeb99f",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.5",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "IN_PROGRESS"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-runtime-math-3e7761feb3e4",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.5",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "IN_PROGRESS"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-runtime-math-69775144f57d",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.5",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "IN_PROGRESS"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-runtime-math-8ff0b9637eb6",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.5",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    },
+    {
+      "expected_vs_actual": {
+        "actual": {
+          "status": "IN_PROGRESS"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-runtime-math-a94b6554ba63",
+      "kind": "status_drift",
+      "message": "feature parity unresolved drift",
+      "owner_bead": "bd-w2c3.5",
+      "owner_status": "open",
+      "ownership_ok": true,
+      "source_file": "FEATURE_PARITY.md",
+      "status": "tracked"
+    }
+  ],
+  "generated_at": "2026-02-11T19:17:31Z",
+  "schema_version": "v1",
+  "sources": {
+    "env_docs_code_mismatch_report": "/data/projects/frankenlibc/tests/conformance/env_docs_code_mismatch_report.v1.json",
+    "feature_parity_gap_ledger": "/data/projects/frankenlibc/tests/conformance/feature_parity_gap_ledger.v1.json",
+    "issues": "/data/projects/frankenlibc/.beads/issues.jsonl"
+  },
+  "summary": {
+    "diagnostic_count": 118,
+    "fail_count": 0,
+    "kind_counts": {
+      "env_doc_mismatch": 2,
+      "replacement_claim_contradiction": 1,
+      "stale_count_drift": 1,
+      "status_drift": 114
+    },
+    "tracked_count": 118
+  }
+}

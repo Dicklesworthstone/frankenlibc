@@ -110,6 +110,26 @@ if [[ "${FRANKENLIBC_EXTENDED_GATES:-0}" == "1" ]]; then
     echo "PASS"
     echo ""
 
+    echo "--- feature parity gap ledger extractor gate ---"
+    scripts/check_feature_parity_gap_ledger.sh
+    echo "PASS"
+    echo ""
+
+    echo "--- feature parity fail-fast drift gate ---"
+    scripts/check_feature_parity_drift.sh
+    echo "PASS"
+    echo ""
+
+    echo "--- feature parity gap→bead coverage dashboard gate ---"
+    scripts/check_feature_parity_gap_bead_coverage.sh
+    echo "PASS"
+    echo ""
+
+    echo "--- test-obligation coverage dashboard + blocker extraction gate ---"
+    scripts/check_test_obligation_dashboard.sh
+    echo "PASS"
+    echo ""
+
     echo "--- symbol fixture coverage matrix drift check ---"
     scripts/check_symbol_fixture_coverage.sh
     echo "PASS"
@@ -192,6 +212,16 @@ if [[ "${FRANKENLIBC_EXTENDED_GATES:-0}" == "1" ]]; then
 
     echo "--- C fixture suite gate ---"
     scripts/check_c_fixture_suite.sh
+    echo "PASS"
+    echo ""
+
+    echo "--- bd-1qy mutex fixture strict+hardened artifact gate ---"
+    scripts/check_bd1qy_mutex_fixture.sh
+    echo "PASS"
+    echo ""
+
+    echo "--- bd-15n.2 fixture gap-fill strict+hardened artifact gate ---"
+    scripts/check_bd15n2_fixture_gap_fill.sh
     echo "PASS"
     echo ""
 
