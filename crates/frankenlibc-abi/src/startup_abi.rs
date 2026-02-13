@@ -11,7 +11,7 @@ use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
 use crate::runtime_policy;
 use crate::startup_helpers::{
-    build_invariants, normalize_argc, scan_auxv_pairs, StartupInvariants, AT_NULL, MAX_STARTUP_SCAN,
+    AT_NULL, MAX_STARTUP_SCAN, StartupInvariants, build_invariants, normalize_argc, scan_auxv_pairs,
 };
 
 type MainFn = unsafe extern "C" fn(c_int, *mut *mut c_char, *mut *mut c_char) -> c_int;

@@ -44,3 +44,7 @@ harness = false
 [[bench]]
 name = "mutex_bench"
 harness = false
+
+[[bench]]
+name = "condvar_bench"
+harness = false

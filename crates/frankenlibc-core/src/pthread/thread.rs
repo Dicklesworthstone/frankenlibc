@@ -210,10 +210,9 @@ unsafe extern "C" fn thread_trampoline(args_raw: usize) -> usize {
     // the tls_values field. The pointer is stored in the TLS table and only
     // accessed by this thread via getspecific/setspecific.
     #[cfg(target_arch = "x86_64")]
-    super::tls::register_thread_tls(
-        handle.tid.load(Ordering::Acquire),
-        unsafe { (*handle_ptr).tls_values.as_mut_ptr() },
-    );
+    super::tls::register_thread_tls(handle.tid.load(Ordering::Acquire), unsafe {
+        (*handle_ptr).tls_values.as_mut_ptr()
+    });
 
     // Cast the start_routine address back to a function pointer and call it.
     // SAFETY: start_routine_addr was a valid extern "C" fn pointer stored by

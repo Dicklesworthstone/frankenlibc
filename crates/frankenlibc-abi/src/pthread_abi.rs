@@ -9,6 +9,11 @@ use std::cell::Cell;
 use std::ffi::{c_int, c_void};
 use std::sync::atomic::{AtomicI32, AtomicU32, AtomicU64, Ordering};
 
+use frankenlibc_core::pthread::{
+    CondvarData, PTHREAD_COND_CLOCK_REALTIME, condvar_broadcast as core_condvar_broadcast,
+    condvar_destroy as core_condvar_destroy, condvar_init as core_condvar_init,
+    condvar_signal as core_condvar_signal, condvar_wait as core_condvar_wait,
+};
 use frankenlibc_membrane::check_oracle::CheckStage;
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
@@ -118,6 +123,17 @@ fn clear_managed_mutex(mutex: *mut libc::pthread_mutex_t) {
         let magic = unsafe { &*magic_ptr };
         magic.store(0, Ordering::Release);
     }
+}
+
+fn condvar_data_ptr(cond: *mut libc::pthread_cond_t) -> Option<*mut CondvarData> {
+    if cond.is_null() {
+        return None;
+    }
+    let ptr = cond.cast::<CondvarData>();
+    if !(ptr as usize).is_multiple_of(std::mem::align_of::<CondvarData>()) {
+        return None;
+    }
+    Some(ptr)
 }
 
 unsafe extern "C" {
@@ -658,21 +674,24 @@ pub unsafe extern "C" fn pthread_cond_init(
     cond: *mut libc::pthread_cond_t,
     attr: *const libc::pthread_condattr_t,
 ) -> c_int {
-    if cond.is_null() {
+    let Some(cond_ptr) = condvar_data_ptr(cond) else {
+        return libc::EINVAL;
+    };
+    if !attr.is_null() {
         return libc::EINVAL;
     }
-    // SAFETY: direct passthrough to host libc with validated pointer.
-    unsafe { libc::pthread_cond_init(cond, attr) }
+    // SAFETY: pointer validated/aligned above and points into caller-owned pthread_cond_t.
+    unsafe { core_condvar_init(cond_ptr, PTHREAD_COND_CLOCK_REALTIME) }
 }
 
 /// POSIX `pthread_cond_destroy`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pthread_cond_destroy(cond: *mut libc::pthread_cond_t) -> c_int {
-    if cond.is_null() {
+    let Some(cond_ptr) = condvar_data_ptr(cond) else {
         return libc::EINVAL;
-    }
-    // SAFETY: direct passthrough to host libc with validated pointer.
-    unsafe { libc::pthread_cond_destroy(cond) }
+    };
+    // SAFETY: pointer validated/aligned above and points into caller-owned pthread_cond_t.
+    unsafe { core_condvar_destroy(cond_ptr) }
 }
 
 /// POSIX `pthread_cond_wait`.
@@ -684,28 +703,37 @@ pub unsafe extern "C" fn pthread_cond_wait(
     if cond.is_null() || mutex.is_null() {
         return libc::EINVAL;
     }
-    // SAFETY: direct passthrough to host libc with validated pointers.
-    unsafe { libc::pthread_cond_wait(cond, mutex) }
+    if !is_managed_mutex(mutex) {
+        return libc::EINVAL;
+    }
+    let Some(cond_ptr) = condvar_data_ptr(cond) else {
+        return libc::EINVAL;
+    };
+    let Some(word_ptr) = mutex_word_ptr(mutex) else {
+        return libc::EINVAL;
+    };
+    // SAFETY: condvar pointer and mutex futex word pointer are validated/aligned and caller-owned.
+    unsafe { core_condvar_wait(cond_ptr, word_ptr.cast::<u32>() as *const u32) }
 }
 
 /// POSIX `pthread_cond_signal`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pthread_cond_signal(cond: *mut libc::pthread_cond_t) -> c_int {
-    if cond.is_null() {
+    let Some(cond_ptr) = condvar_data_ptr(cond) else {
         return libc::EINVAL;
-    }
-    // SAFETY: direct passthrough to host libc with validated pointer.
-    unsafe { libc::pthread_cond_signal(cond) }
+    };
+    // SAFETY: pointer validated/aligned above and points into caller-owned pthread_cond_t.
+    unsafe { core_condvar_signal(cond_ptr) }
 }
 
 /// POSIX `pthread_cond_broadcast`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pthread_cond_broadcast(cond: *mut libc::pthread_cond_t) -> c_int {
-    if cond.is_null() {
+    let Some(cond_ptr) = condvar_data_ptr(cond) else {
         return libc::EINVAL;
-    }
-    // SAFETY: direct passthrough to host libc with validated pointer.
-    unsafe { libc::pthread_cond_broadcast(cond) }
+    };
+    // SAFETY: pointer validated/aligned above and points into caller-owned pthread_cond_t.
+    unsafe { core_condvar_broadcast(cond_ptr) }
 }
 
 // ===========================================================================

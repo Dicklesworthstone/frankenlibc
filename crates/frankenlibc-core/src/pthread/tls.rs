@@ -30,6 +30,7 @@
 #[cfg(target_arch = "x86_64")]
 use crate::syscall;
 
+use crate::rcu;
 use core::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
 use std::sync::Mutex;
 
@@ -71,26 +72,30 @@ const EMPTY_SLOT: KeySlot = KeySlot {
     seq: 0,
 };
 
+#[derive(Clone)]
 struct KeyRegistry {
     slots: [KeySlot; PTHREAD_KEYS_MAX],
 }
 
-static KEY_REGISTRY: Mutex<KeyRegistry> = Mutex::new(KeyRegistry {
-    slots: [EMPTY_SLOT; PTHREAD_KEYS_MAX],
-});
+/// RCU-protected key registry for lock-free reads on the hot path.
+/// Writers serialize via KEY_WRITE_LOCK and publish new versions atomically.
+/// Old versions are intentionally leaked (bounded: ~16KB per key lifecycle
+/// call, typically < 100 calls in a program's lifetime).
+static KEY_REGISTRY_RCU: rcu::RcuDomain<KeyRegistry> = rcu::RcuDomain::new();
+
+/// Writer serialization lock for pthread_key_create / pthread_key_delete.
+static KEY_WRITE_LOCK: Mutex<()> = Mutex::new(());
 
 // ---------------------------------------------------------------------------
 // Per-thread value storage — allocation-free concurrent table
 // ---------------------------------------------------------------------------
 
 /// TID array for open-addressed hash table. 0 = empty slot.
-static TLS_TIDS: [AtomicI32; TLS_TABLE_SLOTS] =
-    [const { AtomicI32::new(0) }; TLS_TABLE_SLOTS];
+static TLS_TIDS: [AtomicI32; TLS_TABLE_SLOTS] = [const { AtomicI32::new(0) }; TLS_TABLE_SLOTS];
 
 /// Pointer array (paired with TLS_TIDS). Stores `*mut [u64; PTHREAD_KEYS_MAX]`
 /// cast to usize. 0 = no pointer.
-static TLS_PTRS: [AtomicUsize; TLS_TABLE_SLOTS] =
-    [const { AtomicUsize::new(0) }; TLS_TABLE_SLOTS];
+static TLS_PTRS: [AtomicUsize; TLS_TABLE_SLOTS] = [const { AtomicUsize::new(0) }; TLS_TABLE_SLOTS];
 
 /// Static TLS values for the main thread (and any thread that calls setspecific
 /// before being explicitly registered).
@@ -233,13 +238,30 @@ fn write_tls_value(tid: i32, key_id: usize, value: u64) {
 ///
 /// Returns 0 on success, `EAGAIN` if all keys are in use.
 pub fn pthread_key_create(key: &mut PthreadKey, destructor: Option<fn(u64)>) -> i32 {
-    let mut reg = KEY_REGISTRY.lock().unwrap_or_else(|e| e.into_inner());
+    let _write_guard = KEY_WRITE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
+    // Read current registry via RCU and clone it.
+    let mut new_reg = unsafe {
+        match KEY_REGISTRY_RCU.read() {
+            Some(r) => (*r).clone(),
+            None => KeyRegistry {
+                slots: [EMPTY_SLOT; PTHREAD_KEYS_MAX],
+            },
+        }
+    };
+
     for i in 0..PTHREAD_KEYS_MAX {
-        if !reg.slots[i].in_use {
-            reg.slots[i].in_use = true;
-            reg.slots[i].destructor = destructor;
-            reg.slots[i].seq = reg.slots[i].seq.wrapping_add(1);
+        if !new_reg.slots[i].in_use {
+            new_reg.slots[i].in_use = true;
+            new_reg.slots[i].destructor = destructor;
+            new_reg.slots[i].seq = new_reg.slots[i].seq.wrapping_add(1);
             key.id = i as u32;
+
+            // Publish new version via RCU.
+            let new_ptr = Box::into_raw(Box::new(new_reg));
+            let _old_ptr = unsafe { KEY_REGISTRY_RCU.update(new_ptr) };
+            // Old version is intentionally leaked. key_create is called O(1)
+            // times; each version is ~16KB. Avoids QSBR synchronize deadlocks.
             return 0;
         }
     }
@@ -257,13 +279,27 @@ pub fn pthread_key_delete(key: PthreadKey) -> i32 {
     if id >= PTHREAD_KEYS_MAX {
         return EINVAL;
     }
-    let mut reg = KEY_REGISTRY.lock().unwrap_or_else(|e| e.into_inner());
-    if !reg.slots[id].in_use {
+    let _write_guard = KEY_WRITE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
+    // Read current registry via RCU and clone it.
+    let mut new_reg = unsafe {
+        match KEY_REGISTRY_RCU.read() {
+            Some(r) => (*r).clone(),
+            None => return EINVAL, // No registry = no keys exist.
+        }
+    };
+
+    if !new_reg.slots[id].in_use {
         return EINVAL;
     }
-    reg.slots[id].in_use = false;
-    reg.slots[id].destructor = None;
-    reg.slots[id].seq = reg.slots[id].seq.wrapping_add(1);
+    new_reg.slots[id].in_use = false;
+    new_reg.slots[id].destructor = None;
+    new_reg.slots[id].seq = new_reg.slots[id].seq.wrapping_add(1);
+
+    // Publish new version via RCU.
+    let new_ptr = Box::into_raw(Box::new(new_reg));
+    let _old_ptr = unsafe { KEY_REGISTRY_RCU.update(new_ptr) };
+    // Old version intentionally leaked (same rationale as key_create).
     0
 }
 
@@ -291,14 +327,25 @@ pub fn pthread_setspecific(key: PthreadKey, value: u64) -> i32 {
     if id >= PTHREAD_KEYS_MAX {
         return EINVAL;
     }
-    // Validate key is active.
-    {
-        let reg = KEY_REGISTRY.lock().unwrap_or_else(|e| e.into_inner());
-        if !reg.slots[id].in_use {
-            return EINVAL;
-        }
-    }
     let tid = current_tid();
+
+    // Ensure RCU registration for lock-free reads.
+    let _ = rcu::rcu_register_thread(tid as u32);
+
+    // Validate key is active via RCU read (no mutex).
+    rcu::rcu_read_lock();
+    let in_use = unsafe {
+        match KEY_REGISTRY_RCU.read() {
+            Some(reg) => reg.slots[id].in_use,
+            None => false,
+        }
+    };
+    rcu::rcu_read_unlock();
+    rcu::rcu_quiescent_state(tid as u32);
+
+    if !in_use {
+        return EINVAL;
+    }
     write_tls_value(tid, id, value);
     0
 }
@@ -317,6 +364,8 @@ pub fn pthread_setspecific(key: PthreadKey, value: u64) -> i32 {
 #[cfg(target_arch = "x86_64")]
 pub(crate) fn register_thread_tls(tid: i32, values_ptr: *mut u64) {
     table_register(tid, values_ptr);
+    // Register with RCU for lock-free KEY_REGISTRY reads.
+    let _ = rcu::rcu_register_thread(tid as u32);
 }
 
 /// Run TLS destructors for an exiting thread and remove its table entry.
@@ -668,14 +717,18 @@ mod tests {
     #[test]
     fn getspecific_out_of_bounds_key_returns_zero() {
         let _g = lock_and_reset();
-        let key = PthreadKey { id: PTHREAD_KEYS_MAX as u32 + 1 };
+        let key = PthreadKey {
+            id: PTHREAD_KEYS_MAX as u32 + 1,
+        };
         assert_eq!(pthread_getspecific(key), 0);
     }
 
     #[test]
     fn setspecific_out_of_bounds_key_returns_einval() {
         let _g = lock_and_reset();
-        let key = PthreadKey { id: PTHREAD_KEYS_MAX as u32 + 1 };
+        let key = PthreadKey {
+            id: PTHREAD_KEYS_MAX as u32 + 1,
+        };
         assert_eq!(pthread_setspecific(key, 42), EINVAL);
     }
 
@@ -687,8 +740,12 @@ mod tests {
         DTOR1_COUNT.store(0, AtomicOrdering::SeqCst);
         DTOR2_COUNT.store(0, AtomicOrdering::SeqCst);
 
-        fn dtor1(_: u64) { DTOR1_COUNT.fetch_add(1, AtomicOrdering::SeqCst); }
-        fn dtor2(_: u64) { DTOR2_COUNT.fetch_add(1, AtomicOrdering::SeqCst); }
+        fn dtor1(_: u64) {
+            DTOR1_COUNT.fetch_add(1, AtomicOrdering::SeqCst);
+        }
+        fn dtor2(_: u64) {
+            DTOR2_COUNT.fetch_add(1, AtomicOrdering::SeqCst);
+        }
 
         let k1 = create_key(Some(dtor1));
         let id = k1.id;
@@ -705,8 +762,16 @@ mod tests {
         table_register(tid, block.as_mut_ptr());
         teardown_thread_tls(tid);
 
-        assert_eq!(DTOR1_COUNT.load(AtomicOrdering::SeqCst), 0, "old destructor should not fire");
-        assert_eq!(DTOR2_COUNT.load(AtomicOrdering::SeqCst), 1, "new destructor should fire");
+        assert_eq!(
+            DTOR1_COUNT.load(AtomicOrdering::SeqCst),
+            0,
+            "old destructor should not fire"
+        );
+        assert_eq!(
+            DTOR2_COUNT.load(AtomicOrdering::SeqCst),
+            1,
+            "new destructor should fire"
+        );
     }
 
     #[test]
@@ -727,7 +792,11 @@ mod tests {
             let reg = KEY_REGISTRY.lock().unwrap();
             reg.slots[id].seq
         };
-        assert_eq!(seq_after_delete, seq_after_create + 1, "seq should increment on delete");
+        assert_eq!(
+            seq_after_delete,
+            seq_after_create + 1,
+            "seq should increment on delete"
+        );
     }
 
     #[test]
@@ -796,7 +865,9 @@ mod tests {
         let _g = lock_and_reset();
         static DTOR_COUNT: AtomicU32 = AtomicU32::new(0);
         DTOR_COUNT.store(0, AtomicOrdering::SeqCst);
-        fn dtor(_: u64) { DTOR_COUNT.fetch_add(1, AtomicOrdering::SeqCst); }
+        fn dtor(_: u64) {
+            DTOR_COUNT.fetch_add(1, AtomicOrdering::SeqCst);
+        }
 
         let key = create_key(Some(dtor));
         assert_eq!(pthread_setspecific(key, 42), 0);
@@ -821,7 +892,9 @@ mod tests {
         let _g = lock_and_reset();
         static DTOR_COUNT: AtomicU32 = AtomicU32::new(0);
         DTOR_COUNT.store(0, AtomicOrdering::SeqCst);
-        fn dtor(_: u64) { DTOR_COUNT.fetch_add(1, AtomicOrdering::SeqCst); }
+        fn dtor(_: u64) {
+            DTOR_COUNT.fetch_add(1, AtomicOrdering::SeqCst);
+        }
 
         let _key = create_key(Some(dtor));
         let tid = current_tid();
@@ -841,7 +914,9 @@ mod tests {
         let _g = lock_and_reset();
         static DTOR_SUM: AtomicU32 = AtomicU32::new(0);
         DTOR_SUM.store(0, AtomicOrdering::SeqCst);
-        fn dtor(val: u64) { DTOR_SUM.fetch_add(val as u32, AtomicOrdering::SeqCst); }
+        fn dtor(val: u64) {
+            DTOR_SUM.fetch_add(val as u32, AtomicOrdering::SeqCst);
+        }
 
         const N: usize = 8;
         let mut keys = Vec::with_capacity(N);
@@ -872,7 +947,9 @@ mod tests {
         fn dtor_always_reset(_val: u64) {
             let count = DTOR_CALLS.fetch_add(1, AtomicOrdering::SeqCst);
             // Always re-set, even past the iteration limit.
-            let key = PthreadKey { id: KEY_SLOT.load(AtomicOrdering::SeqCst) };
+            let key = PthreadKey {
+                id: KEY_SLOT.load(AtomicOrdering::SeqCst),
+            };
             let _ = pthread_setspecific(key, (count as u64) + 100);
         }
 
@@ -893,7 +970,10 @@ mod tests {
             "destructor calls ({calls}) should be bounded by PTHREAD_DESTRUCTOR_ITERATIONS ({})",
             PTHREAD_DESTRUCTOR_ITERATIONS
         );
-        assert!(calls >= 1, "destructor should have been called at least once");
+        assert!(
+            calls >= 1,
+            "destructor should have been called at least once"
+        );
     }
 
     #[test]
@@ -901,7 +981,9 @@ mod tests {
         let _g = lock_and_reset();
         static WITH_DTOR_COUNT: AtomicU32 = AtomicU32::new(0);
         WITH_DTOR_COUNT.store(0, AtomicOrdering::SeqCst);
-        fn dtor(_: u64) { WITH_DTOR_COUNT.fetch_add(1, AtomicOrdering::SeqCst); }
+        fn dtor(_: u64) {
+            WITH_DTOR_COUNT.fetch_add(1, AtomicOrdering::SeqCst);
+        }
 
         // Create 4 keys: 2 with destructor, 2 without.
         let k_with_1 = create_key(Some(dtor));
@@ -928,7 +1010,9 @@ mod tests {
         let _g = lock_and_reset();
         static RECEIVED_VALUE: AtomicU64 = AtomicU64::new(0);
         RECEIVED_VALUE.store(0, AtomicOrdering::SeqCst);
-        fn dtor(val: u64) { RECEIVED_VALUE.store(val, AtomicOrdering::SeqCst); }
+        fn dtor(val: u64) {
+            RECEIVED_VALUE.store(val, AtomicOrdering::SeqCst);
+        }
 
         let key = create_key(Some(dtor));
         let tid = current_tid();
@@ -950,7 +1034,9 @@ mod tests {
         fn dtor_check_cleared(val: u64) {
             OBSERVED_VALUES.lock().unwrap().push(val);
             // Read the value for this key — it should already be cleared to 0.
-            let key = PthreadKey { id: KEY_SLOT2.load(AtomicOrdering::SeqCst) };
+            let key = PthreadKey {
+                id: KEY_SLOT2.load(AtomicOrdering::SeqCst),
+            };
             let current = pthread_getspecific(key);
             // The value was cleared before destructor was called.
             // If we're on a registered thread, it should be 0.

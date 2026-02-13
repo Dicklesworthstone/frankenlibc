@@ -44,6 +44,7 @@ pub mod metrics;
 pub mod padic_valuation;
 pub mod page_oracle;
 pub mod persistence;
+pub mod pressure_sensor;
 pub mod ptr_validator;
 pub mod quarantine_controller;
 pub mod risk_engine;
@@ -59,6 +60,7 @@ pub use config::SafetyLevel;
 pub use heal::{HealingAction, HealingPolicy};
 pub use lattice::SafetyState;
 pub use metrics::MembraneMetrics;
+pub use pressure_sensor::{PressureSensor, PressureSignals, SystemRegime};
 pub use ptr_validator::{ValidationOutcome, ValidationPipeline};
 pub use runtime_math::{
     ApiFamily, MembraneAction, RuntimeContext, RuntimeDecision, RuntimeMathKernel,

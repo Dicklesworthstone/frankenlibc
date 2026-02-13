@@ -1,13 +1,13 @@
 //! Integration tests for phase-0 startup ABI behavior (bd-1ff3).
 
-use std::ffi::{c_char, c_int, c_void, CString};
+use std::ffi::{CString, c_char, c_int, c_void};
 use std::ptr;
-use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 
 use frankenlibc_abi::errno_abi::__errno_location;
 use frankenlibc_abi::startup_abi::{
-    StartupInvariantSnapshot, __frankenlibc_startup_phase0, __frankenlibc_startup_snapshot,
+    __frankenlibc_startup_phase0, __frankenlibc_startup_snapshot, StartupInvariantSnapshot,
 };
 use frankenlibc_abi::startup_helpers::{AT_NULL, AT_SECURE, MAX_STARTUP_SCAN};
 
@@ -82,10 +82,8 @@ fn assert_startup_errno_contract(case: StartupContractCase) {
 }
 
 fn seeded_cstring(label: &str, index: usize) -> CString {
-    CString::new(format!(
-        "{label}-{STARTUP_TEST_SEED:016x}-{index:04x}"
-    ))
-    .expect("seeded test cstring should not contain interior nul")
+    CString::new(format!("{label}-{STARTUP_TEST_SEED:016x}-{index:04x}"))
+        .expect("seeded test cstring should not contain interior nul")
 }
 
 fn acquire_test_lock() -> std::sync::MutexGuard<'static, ()> {

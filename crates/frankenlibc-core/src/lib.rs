@@ -24,6 +24,8 @@ pub mod poll;
 pub mod process;
 pub mod pthread;
 pub mod pwd;
+#[allow(unsafe_code)]
+pub mod rcu;
 pub mod resolv;
 pub mod resource;
 pub mod setjmp;

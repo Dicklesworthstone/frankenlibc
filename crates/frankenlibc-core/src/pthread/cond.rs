@@ -54,7 +54,8 @@ impl CondvarData {
         self.seq.store(0, Ordering::Relaxed);
         self.nwaiters.store(0, Ordering::Relaxed);
         self.assoc_mutex.store(0, Ordering::Relaxed);
-        self.clock_id.store(sanitize_cond_clock(clock_id) as u32, Ordering::Relaxed);
+        self.clock_id
+            .store(sanitize_cond_clock(clock_id) as u32, Ordering::Relaxed);
     }
 
     /// Check if any threads are currently waiting.
@@ -121,16 +122,7 @@ pub unsafe fn condvar_signal(condvar_ptr: *mut CondvarData) -> i32 {
     if cv.has_waiters() {
         let seq_ptr = &cv.seq as *const AtomicU32 as *const u32;
         // SAFETY: seq_ptr is valid and aligned.
-        let _ = unsafe {
-            syscall::sys_futex(
-                seq_ptr,
-                FUTEX_WAKE | FUTEX_PRIVATE_FLAG,
-                1,
-                0,
-                0,
-                0,
-            )
-        };
+        let _ = unsafe { syscall::sys_futex(seq_ptr, FUTEX_WAKE | FUTEX_PRIVATE_FLAG, 1, 0, 0, 0) };
     }
     0
 }
@@ -181,10 +173,7 @@ pub unsafe fn condvar_broadcast(condvar_ptr: *mut CondvarData) -> i32 {
 /// - `condvar_ptr` must point to a valid initialized `CondvarData`.
 /// - `mutex_futex_word` must point to a valid aligned `u32` (the mutex lock word).
 #[allow(unsafe_code)]
-pub unsafe fn condvar_wait(
-    condvar_ptr: *mut CondvarData,
-    mutex_futex_word: *const u32,
-) -> i32 {
+pub unsafe fn condvar_wait(condvar_ptr: *mut CondvarData, mutex_futex_word: *const u32) -> i32 {
     if condvar_ptr.is_null() || mutex_futex_word.is_null() {
         return errno::EINVAL;
     }
@@ -236,7 +225,7 @@ pub unsafe fn condvar_wait(
             Ok(_) => break,
             Err(e) if e == errno::EAGAIN => break, // seq already changed
             Err(e) if e == errno::EINTR => continue, // interrupted, retry
-            Err(_) => break, // other error, don't loop forever
+            Err(_) => break,                       // other error, don't loop forever
         }
     }
 
@@ -313,8 +302,13 @@ pub unsafe fn condvar_timedwait(
     // FUTEX_WAIT_BITSET supports absolute timeout natively.
     // FUTEX_CLOCK_REALTIME flag selects CLOCK_REALTIME; without it, CLOCK_MONOTONIC.
     let clock = cv.clock_id.load(Ordering::Relaxed) as i32;
-    let futex_op = FUTEX_WAIT_BITSET | FUTEX_PRIVATE_FLAG
-        | if clock == PTHREAD_COND_CLOCK_REALTIME { FUTEX_CLOCK_REALTIME } else { 0 };
+    let futex_op = FUTEX_WAIT_BITSET
+        | FUTEX_PRIVATE_FLAG
+        | if clock == PTHREAD_COND_CLOCK_REALTIME {
+            FUTEX_CLOCK_REALTIME
+        } else {
+            0
+        };
 
     let seq_ptr = &cv.seq as *const AtomicU32 as *const u32;
     let mut timed_out = false;
@@ -372,14 +366,7 @@ fn relock_mutex(mutex_word: &AtomicU32, mutex_futex_ptr: *const u32) {
         let _ = mutex_word.compare_exchange(1, 2, Ordering::Acquire, Ordering::Relaxed);
         // SAFETY: mutex_futex_ptr is valid and aligned.
         let _ = unsafe {
-            syscall::sys_futex(
-                mutex_futex_ptr,
-                FUTEX_WAIT | FUTEX_PRIVATE_FLAG,
-                2,
-                0,
-                0,
-                0,
-            )
+            syscall::sys_futex(mutex_futex_ptr, FUTEX_WAIT | FUTEX_PRIVATE_FLAG, 2, 0, 0, 0)
         };
     }
 }
@@ -661,11 +648,8 @@ mod tests {
 
     #[test]
     fn contract_reinit_idle_is_ebusy() {
-        let o = condvar_contract_transition(
-            CondvarContractState::Idle,
-            CondvarContractOp::Init,
-            false,
-        );
+        let o =
+            condvar_contract_transition(CondvarContractState::Idle, CondvarContractOp::Init, false);
         assert_eq!(o.next, CondvarContractState::Idle);
         assert_eq!(o.errno, errno::EBUSY);
         assert!(!o.blocks);
@@ -733,11 +717,8 @@ mod tests {
 
     #[test]
     fn contract_wait_from_idle_blocks_and_transitions_to_waiting() {
-        let o = condvar_contract_transition(
-            CondvarContractState::Idle,
-            CondvarContractOp::Wait,
-            false,
-        );
+        let o =
+            condvar_contract_transition(CondvarContractState::Idle, CondvarContractOp::Wait, false);
         assert_eq!(o.next, CondvarContractState::Waiting);
         assert_eq!(o.errno, 0);
         assert!(o.blocks);
@@ -1076,12 +1057,12 @@ mod tests {
             CondvarContractOp::Signal,
             CondvarContractOp::Broadcast,
         ] {
-            let o = condvar_contract_transition(
-                CondvarContractState::Uninitialized,
-                op,
-                false,
+            let o = condvar_contract_transition(CondvarContractState::Uninitialized, op, false);
+            assert_eq!(
+                o.errno,
+                errno::EINVAL,
+                "expected EINVAL for {op:?} on Uninitialized"
             );
-            assert_eq!(o.errno, errno::EINVAL, "expected EINVAL for {op:?} on Uninitialized");
             assert_eq!(o.next, CondvarContractState::Uninitialized);
             assert!(!o.blocks);
         }
@@ -1096,12 +1077,12 @@ mod tests {
             CondvarContractOp::Signal,
             CondvarContractOp::Broadcast,
         ] {
-            let o = condvar_contract_transition(
-                CondvarContractState::Destroyed,
-                op,
-                false,
+            let o = condvar_contract_transition(CondvarContractState::Destroyed, op, false);
+            assert_eq!(
+                o.errno,
+                errno::EINVAL,
+                "expected EINVAL for {op:?} on Destroyed"
             );
-            assert_eq!(o.errno, errno::EINVAL, "expected EINVAL for {op:?} on Destroyed");
             assert_eq!(o.next, CondvarContractState::Destroyed);
             assert!(!o.blocks);
         }
@@ -1225,9 +1206,7 @@ mod tests {
 
     #[test]
     fn core_condvar_timedwait_null_returns_einval() {
-        let ret = unsafe {
-            condvar_timedwait(core::ptr::null_mut(), core::ptr::null(), 0, 0)
-        };
+        let ret = unsafe { condvar_timedwait(core::ptr::null_mut(), core::ptr::null(), 0, 0) };
         assert_eq!(ret, errno::EINVAL);
     }
 
@@ -1435,9 +1414,7 @@ mod tests {
                     // Simple spin + futex wait for contention.
                     let _ = mutex2.compare_exchange(1, 2, Ordering::Acquire, Ordering::Relaxed);
                     let mutex_ptr = &*mutex2 as *const AtomicU32 as *const u32;
-                    let _ = unsafe {
-                        syscall::sys_futex(mutex_ptr, 0x80, 2, 0, 0, 0)
-                    };
+                    let _ = unsafe { syscall::sys_futex(mutex_ptr, 0x80, 2, 0, 0, 0) };
                 }
 
                 let cv_ptr = &*cv2 as *const CondvarData as *mut CondvarData;
@@ -1449,9 +1426,7 @@ mod tests {
 
                 // Release mutex.
                 mutex2.store(0, Ordering::Release);
-                let _ = unsafe {
-                    syscall::sys_futex(mutex_ptr, 0x01 | 0x80, 1, 0, 0, 0)
-                };
+                let _ = unsafe { syscall::sys_futex(mutex_ptr, 0x01 | 0x80, 1, 0, 0, 0) };
             }));
         }
 
@@ -1507,7 +1482,10 @@ mod tests {
             // Should return ETIMEDOUT quickly.
             assert_eq!(ret, errno::ETIMEDOUT);
             // Should not take more than 1 second (the deadline was in the past).
-            assert!(elapsed.as_secs() < 2, "timedwait took too long: {elapsed:?}");
+            assert!(
+                elapsed.as_secs() < 2,
+                "timedwait took too long: {elapsed:?}"
+            );
 
             // Mutex should be reacquired.
             assert_ne!(mutex2.load(Ordering::Relaxed), 0);
@@ -1530,19 +1508,288 @@ mod tests {
         let mutex_b = AtomicU32::new(1);
 
         // Set association to mutex_a.
-        cv.assoc_mutex.store(
-            &mutex_a as *const AtomicU32 as usize,
-            Ordering::Release,
-        );
+        cv.assoc_mutex
+            .store(&mutex_a as *const AtomicU32 as usize, Ordering::Release);
 
         // Try wait with mutex_b — should get EINVAL.
         let cv_ptr = &cv as *const CondvarData as *mut CondvarData;
-        let ret = unsafe {
-            condvar_wait(
-                cv_ptr,
-                &mutex_b as *const AtomicU32 as *const u32,
-            )
-        };
+        let ret = unsafe { condvar_wait(cv_ptr, &mutex_b as *const AtomicU32 as *const u32) };
         assert_eq!(ret, errno::EINVAL);
+    }
+
+    // ---- Deterministic integration scenarios (bd-21k) ----
+
+    /// Producer/consumer bounded queue using condvar for synchronization.
+    #[test]
+    fn scenario_producer_consumer_bounded_queue() {
+        use std::sync::Arc;
+        use std::thread;
+
+        const QUEUE_CAPACITY: usize = 4;
+        const NUM_ITEMS: u32 = 20;
+
+        struct SharedQueue {
+            cv_not_empty: CondvarData,
+            cv_not_full: CondvarData,
+            mutex: AtomicU32,
+            items: std::cell::UnsafeCell<Vec<u32>>,
+            done: AtomicU32,
+        }
+        // SAFETY: All access to items is protected by the mutex.
+        unsafe impl Sync for SharedQueue {}
+
+        let q = Arc::new(SharedQueue {
+            cv_not_empty: CondvarData {
+                seq: AtomicU32::new(0),
+                nwaiters: AtomicU32::new(0),
+                assoc_mutex: AtomicUsize::new(0),
+                clock_id: AtomicU32::new(0),
+            },
+            cv_not_full: CondvarData {
+                seq: AtomicU32::new(0),
+                nwaiters: AtomicU32::new(0),
+                assoc_mutex: AtomicUsize::new(0),
+                clock_id: AtomicU32::new(0),
+            },
+            mutex: AtomicU32::new(0),
+            items: std::cell::UnsafeCell::new(Vec::new()),
+            done: AtomicU32::new(0),
+        });
+
+        fn mutex_ptr(q: &SharedQueue) -> *const u32 {
+            &q.mutex as *const AtomicU32 as *const u32
+        }
+
+        let lock = |q: &SharedQueue| {
+            loop {
+                if q.mutex
+                    .compare_exchange(0, 1, Ordering::Acquire, Ordering::Relaxed)
+                    .is_ok()
+                {
+                    return;
+                }
+                let _ = q
+                    .mutex
+                    .compare_exchange(1, 2, Ordering::Acquire, Ordering::Relaxed);
+                let _ = unsafe { syscall::sys_futex(mutex_ptr(q), 0x80, 2, 0, 0, 0) };
+            }
+        };
+
+        let unlock = |q: &SharedQueue| {
+            q.mutex.store(0, Ordering::Release);
+            let _ = unsafe { syscall::sys_futex(mutex_ptr(q), 0x01 | 0x80, 1, 0, 0, 0) };
+        };
+
+        // Producer
+        let q2 = q.clone();
+        let producer = thread::spawn(move || {
+            for i in 0..NUM_ITEMS {
+                lock(&q2);
+                while unsafe { &*q2.items.get() }.len() >= QUEUE_CAPACITY {
+                    let cv_ptr = &q2.cv_not_full as *const CondvarData as *mut CondvarData;
+                    unsafe { condvar_wait(cv_ptr, mutex_ptr(&q2)) };
+                }
+                unsafe { &mut *q2.items.get() }.push(i);
+                let cv_ptr = &q2.cv_not_empty as *const CondvarData as *mut CondvarData;
+                unsafe { condvar_signal(cv_ptr) };
+                unlock(&q2);
+            }
+            lock(&q2);
+            q2.done.store(1, Ordering::Release);
+            let cv_ptr = &q2.cv_not_empty as *const CondvarData as *mut CondvarData;
+            unsafe { condvar_broadcast(cv_ptr) };
+            unlock(&q2);
+        });
+
+        // Consumer
+        let q3 = q.clone();
+        let consumer = thread::spawn(move || {
+            let mut received = Vec::new();
+            loop {
+                lock(&q3);
+                while unsafe { &*q3.items.get() }.is_empty() {
+                    if q3.done.load(Ordering::Acquire) == 1 {
+                        unlock(&q3);
+                        return received;
+                    }
+                    let cv_ptr = &q3.cv_not_empty as *const CondvarData as *mut CondvarData;
+                    unsafe { condvar_wait(cv_ptr, mutex_ptr(&q3)) };
+                }
+                let item = unsafe { &mut *q3.items.get() }.remove(0);
+                received.push(item);
+                let cv_ptr = &q3.cv_not_full as *const CondvarData as *mut CondvarData;
+                unsafe { condvar_signal(cv_ptr) };
+                unlock(&q3);
+            }
+        });
+
+        producer.join().unwrap();
+        let received = consumer.join().unwrap();
+        assert_eq!(received.len(), NUM_ITEMS as usize);
+        for (i, &val) in received.iter().enumerate() {
+            assert_eq!(val, i as u32);
+        }
+    }
+
+    /// Stress test: many waiters with mixed signal/broadcast patterns.
+    #[test]
+    fn scenario_stress_many_waiters_mixed_wake() {
+        use std::sync::Arc;
+        use std::thread;
+
+        let cv = Arc::new(CondvarData {
+            seq: AtomicU32::new(0),
+            nwaiters: AtomicU32::new(0),
+            assoc_mutex: AtomicUsize::new(0),
+            clock_id: AtomicU32::new(0),
+        });
+        let mutex = Arc::new(AtomicU32::new(0));
+        let counter = Arc::new(AtomicU32::new(0));
+        let go = Arc::new(AtomicU32::new(0));
+
+        let num_waiters: u32 = 8;
+        let mut handles = Vec::new();
+
+        for _ in 0..num_waiters {
+            let cv2 = cv.clone();
+            let mutex2 = mutex.clone();
+            let counter2 = counter.clone();
+            let go2 = go.clone();
+
+            handles.push(thread::spawn(move || {
+                loop {
+                    if mutex2
+                        .compare_exchange(0, 1, Ordering::Acquire, Ordering::Relaxed)
+                        .is_ok()
+                    {
+                        break;
+                    }
+                    let _ = mutex2.compare_exchange(1, 2, Ordering::Acquire, Ordering::Relaxed);
+                    let mp = &*mutex2 as *const AtomicU32 as *const u32;
+                    let _ = unsafe { syscall::sys_futex(mp, 0x80, 2, 0, 0, 0) };
+                }
+
+                while go2.load(Ordering::Acquire) == 0 {
+                    let cv_ptr = &*cv2 as *const CondvarData as *mut CondvarData;
+                    let mp = &*mutex2 as *const AtomicU32 as *const u32;
+                    unsafe { condvar_wait(cv_ptr, mp) };
+                }
+
+                counter2.fetch_add(1, Ordering::AcqRel);
+
+                mutex2.store(0, Ordering::Release);
+                let mp = &*mutex2 as *const AtomicU32 as *const u32;
+                let _ = unsafe { syscall::sys_futex(mp, 0x01 | 0x80, 1, 0, 0, 0) };
+            }));
+        }
+
+        thread::sleep(std::time::Duration::from_millis(100));
+
+        // Signal a couple individually first.
+        let cv_ptr = &*cv as *const CondvarData as *mut CondvarData;
+        unsafe { condvar_signal(cv_ptr) };
+        thread::sleep(std::time::Duration::from_millis(10));
+        unsafe { condvar_signal(cv_ptr) };
+        thread::sleep(std::time::Duration::from_millis(10));
+
+        // Set go flag and broadcast remaining.
+        go.store(1, Ordering::Release);
+        unsafe { condvar_broadcast(cv_ptr) };
+
+        for h in handles {
+            h.join().unwrap();
+        }
+        assert_eq!(counter.load(Ordering::Acquire), num_waiters);
+    }
+
+    /// Timedwait with CLOCK_MONOTONIC past deadline: verifies quick timeout.
+    #[test]
+    fn scenario_timedwait_monotonic_past_deadline() {
+        use std::sync::Arc;
+        use std::thread;
+        use std::time::Instant;
+
+        let cv = Arc::new(CondvarData {
+            seq: AtomicU32::new(0),
+            nwaiters: AtomicU32::new(0),
+            assoc_mutex: AtomicUsize::new(0),
+            clock_id: AtomicU32::new(PTHREAD_COND_CLOCK_MONOTONIC as u32),
+        });
+        let mutex = Arc::new(AtomicU32::new(0));
+
+        let cv2 = cv.clone();
+        let mutex2 = mutex.clone();
+
+        let waiter = thread::spawn(move || {
+            while mutex2
+                .compare_exchange(0, 1, Ordering::Acquire, Ordering::Relaxed)
+                .is_err()
+            {
+                core::hint::spin_loop();
+            }
+
+            let cv_ptr = &*cv2 as *const CondvarData as *mut CondvarData;
+            let mp = &*mutex2 as *const AtomicU32 as *const u32;
+
+            // Deadline of 1 second from epoch = far in the past for CLOCK_MONOTONIC.
+            let start = Instant::now();
+            let ret = unsafe { condvar_timedwait(cv_ptr, mp, 1, 0) };
+            let elapsed = start.elapsed();
+
+            assert_eq!(ret, errno::ETIMEDOUT);
+            assert!(elapsed.as_secs() < 2);
+            mutex2.store(0, Ordering::Release);
+        });
+
+        waiter.join().unwrap();
+    }
+
+    /// Signal-before-wait: signals are not queued per POSIX.
+    #[test]
+    fn scenario_signal_before_wait_not_queued() {
+        use std::sync::Arc;
+        use std::thread;
+
+        let cv = Arc::new(CondvarData {
+            seq: AtomicU32::new(0),
+            nwaiters: AtomicU32::new(0),
+            assoc_mutex: AtomicUsize::new(0),
+            clock_id: AtomicU32::new(PTHREAD_COND_CLOCK_MONOTONIC as u32),
+        });
+        let mutex = Arc::new(AtomicU32::new(0));
+
+        // Signal 3 times with no waiters — not queued.
+        let cv_ptr = &*cv as *const CondvarData as *mut CondvarData;
+        unsafe { condvar_signal(cv_ptr) };
+        unsafe { condvar_signal(cv_ptr) };
+        unsafe { condvar_signal(cv_ptr) };
+
+        assert_eq!(cv.seq.load(Ordering::Relaxed), 3);
+
+        let cv2 = cv.clone();
+        let mutex2 = mutex.clone();
+
+        let waiter = thread::spawn(move || {
+            while mutex2
+                .compare_exchange(0, 1, Ordering::Acquire, Ordering::Relaxed)
+                .is_err()
+            {
+                core::hint::spin_loop();
+            }
+
+            let cv_ptr = &*cv2 as *const CondvarData as *mut CondvarData;
+            let mp = &*mutex2 as *const AtomicU32 as *const u32;
+
+            // Use timedwait with past deadline to avoid blocking forever.
+            let ret = unsafe { condvar_timedwait(cv_ptr, mp, 0, 0) };
+            assert_eq!(
+                ret,
+                errno::ETIMEDOUT,
+                "signal-before-wait should not unblock"
+            );
+            mutex2.store(0, Ordering::Release);
+        });
+
+        waiter.join().unwrap();
     }
 }
