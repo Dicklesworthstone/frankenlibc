@@ -493,6 +493,51 @@ FRANKENLIBC_MODE=hardened LD_PRELOAD=target/release/libfrankenlibc_abi.so ./my_a
 
 ---
 
+## Environment Variables
+
+`tests/conformance/runtime_env_inventory.v1.json` is the machine-generated source of truth for `FRANKENLIBC_*` variables.
+
+### Runtime Process Knobs
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `FRANKENLIBC_MODE` | `strict` | Selects runtime mode (`strict` or `hardened`) once per process at startup. |
+| `FRANKENLIBC_LOG` | unset | Runtime evidence/metrics log output path. |
+| `FRANKENLIBC_STARTUP_PHASE0` | `0` | Enables experimental phase-0 startup path in `__libc_start_main`. |
+
+### CI/Test/Tooling Knobs
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `FRANKENLIBC_EXTENDED_GATES` | `0` | Enables extended policy/perf/snapshot CI gates in `scripts/ci.sh`. |
+| `FRANKENLIBC_BENCH_PIN` | `0` | Benchmark-only CPU pinning toggle. |
+| `FRANKENLIBC_CLOSURE_CONTRACT_PATH` | `tests/conformance/closure_contract.v1.json` | Release/closure contract input path override. |
+| `FRANKENLIBC_CLOSURE_LEVEL` | empty | Release target level override (`L0`/`L1`/`L2`/`L3`). |
+| `FRANKENLIBC_CLOSURE_LOG` | `/tmp/frankenlibc_closure_contract.log.jsonl` | Closure-contract evidence log output path. |
+| `FRANKENLIBC_E2E_SEED` | `42` | Deterministic E2E replay seed. |
+| `FRANKENLIBC_E2E_STRESS_ITERS` | `5` | E2E stress-loop iteration count. |
+| `FRANKENLIBC_LIB` | auto-detected | Tooling override for `libfrankenlibc_abi.so` path (CVE/gentoo runners). |
+| `FRANKENLIBC_LOG_FILE` | unset | Gentoo/tooling-friendly log path alias exported into `FRANKENLIBC_LOG`. |
+| `FRANKENLIBC_LOG_DIR` | `/var/log/frankenlibc/portage` | Gentoo hook log directory root. |
+| `FRANKENLIBC_RELEASE_SIMULATE_FAIL_GATE` | empty | Injects deterministic release-gate failure for dry-run validation. |
+| `FRANKENLIBC_TMPDIR` | unset (`TMPDIR` then `/tmp`) | Temporary artifact root for release dry-run tooling. |
+| `FRANKENLIBC_PERF_ALLOW_TARGET_VIOLATION` | `1` | Perf gate policy toggle for target-budget violation handling. |
+| `FRANKENLIBC_PERF_ENABLE_KERNEL_SUITE` | `0` | Enables extra kernel-level perf suite branch. |
+| `FRANKENLIBC_PERF_MAX_LOAD_FACTOR` | `0.85` | Host-load threshold for overloaded perf-run handling. |
+| `FRANKENLIBC_PERF_MAX_REGRESSION_PCT` | `15` | Perf regression threshold percent. |
+| `FRANKENLIBC_PERF_SKIP_OVERLOADED` | `1` | Skip perf runs when host is overloaded. |
+| `FRANKENLIBC_PORTAGE_ENABLE` | `1` | Global Gentoo hook enable/disable switch. |
+| `FRANKENLIBC_PORTAGE_LOG` | `/tmp/frankenlibc-portage-hooks.log` | Gentoo hook decision log path. |
+| `FRANKENLIBC_PACKAGE` | unset | Gentoo package atom context value for hook/session logs. |
+| `FRANKENLIBC_PACKAGE_BLOCKLIST` | `sys-libs/glibc sys-apps/shadow` | Gentoo package atoms excluded from preload instrumentation. |
+| `FRANKENLIBC_PHASE` | unset | Gentoo phase context label for logs. |
+| `FRANKENLIBC_PHASE_ACTIVE` | unset/`0` | Gentoo hook internal active-phase guard. |
+| `FRANKENLIBC_PHASE_ALLOWLIST` | `src_test pkg_test` | Gentoo phases allowed to activate FrankenLibC hooks. |
+| `FRANKENLIBC_HOOKS_LOADED` | `0` | Gentoo shell bootstrap idempotence guard. |
+| `FRANKENLIBC_SKIP_STATIC` | `1` | Skip preload during static-libs builds that cannot interpose dynamically. |
+
+---
+
 ## API Coverage
 
 `tests/conformance/reality_report.v1.json` is the canonical coverage snapshot (generated from `support_matrix.json` via `harness reality-report`).
@@ -506,6 +551,17 @@ FRANKENLIBC_MODE=hardened LD_PRELOAD=target/release/libfrankenlibc_abi.so ./my_a
 
 For exact counts, stub surface, and snapshot timestamp, inspect `tests/conformance/reality_report.v1.json`.
 For per-symbol strict/hardened semantics and status, inspect `support_matrix.json` directly.
+
+### Hard-Parts Truth Table
+
+Source of truth: `tests/conformance/hard_parts_truth_table.v1.json` (generated `2026-02-13T08:48:00Z`).
+
+- `startup`: `IMPLEMENTED_PARTIAL` — implemented scope: phase-0 startup fixture path (`__libc_start_main`, `__frankenlibc_startup_phase0`, snapshot invariants). Deferred scope: full `csu`/TLS init-order hardening and secure-mode closure campaign.
+- `threading`: `IN_PROGRESS` — implemented scope: runtime-math threading routing and selected pthread semantics are live. Deferred scope: eliminate remaining `pthread_abi` call-through surface and close lifecycle/TLS stress beads.
+- `resolver`: `IMPLEMENTED_PARTIAL` — implemented scope: bootstrap numeric resolver ABI (`getaddrinfo`, `freeaddrinfo`, `getnameinfo`, `gai_strerror`). Deferred scope: full retry/cache/poisoning hardening campaign.
+- `nss`: `DEFERRED` — implemented scope: no dedicated `nss_abi` export surface is present in `support_matrix.json`. Deferred scope: files backend (`passwd/group/hosts`) plus concurrency/cache-coherence closure.
+- `locale`: `IMPLEMENTED_PARTIAL` — implemented scope: bootstrap `setlocale`/`localeconv` C/POSIX path. Deferred scope: catalog, collation, and transliteration parity expansion.
+- `iconv`: `IMPLEMENTED_PARTIAL` — implemented scope: phase-1 `iconv_open`/`iconv`/`iconv_close` conversions with deterministic strict+hardened fixtures. Deferred scope: full `iconvdata` breadth and deterministic table-generation closure.
 
 ---
 
@@ -582,19 +638,15 @@ LD_LIBRARY_PATH=/tmp/frankenlibc-lib ./my_app
 
 ### Thread-local storage errors
 
-Some programs with complex TLS layouts may conflict with the membrane's TLS cache. Set `FRANKENLIBC_TLS_CACHE=0` to disable the cache (increases overhead but resolves conflicts).
+Some programs with complex TLS layouts may still conflict with interposition order. Validate with the `LD_LIBRARY_PATH` fallback flow above and collect a reproducible log bundle for triage.
 
 ### `dlopen` returns `NULL` for shared libraries
 
-Ensure the version script (`libc.map`) covers all symbols the loaded library expects. Run with `FRANKENLIBC_LOG=debug` to see which symbol lookup failed.
+Ensure the version script (`libc.map`) covers all symbols the loaded library expects. Set `FRANKENLIBC_LOG=/tmp/frankenlibc.log` to capture runtime diagnostics and inspect symbol lookup failures.
 
 ### Hardened mode repairs too aggressively
 
-Specific repair policies can be disabled per API family:
-
-```bash
-FRANKENLIBC_DISABLE_HEAL=clamp_size,ignore_double_free ./my_app
-```
+Per-action repair toggles are not currently exposed as a stable runtime knob. For strict parity behavior, run the same workload in `strict` mode and compare fixture/evidence artifacts.
 
 ### Benchmark regressions after update
 

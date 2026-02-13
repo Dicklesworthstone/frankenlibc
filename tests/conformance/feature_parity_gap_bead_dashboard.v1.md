@@ -15,11 +15,11 @@
 
 | Owner Bead | Owner Status | Gap Count | Blocked Deps | BV Chain |
 |---|---|---:|---:|---:|
-| `bd-w2c3.6` | `open` | 45 | 225 | 12 |
-| `bd-w2c3.10` | `open` | 37 | 481 | 66 |
-| `bd-w2c3.4` | `open` | 20 | 80 | 29 |
-| `bd-w2c3.1` | `open` | 7 | 7 | 0 |
-| `bd-w2c3.5` | `open` | 5 | 25 | 10 |
+| `bd-w2c3.6` | `open` | 45 | 225 | 11 |
+| `bd-w2c3.10` | `open` | 37 | 481 | 63 |
+| `bd-w2c3.4` | `open` | 20 | 80 | 28 |
+| `bd-w2c3.1` | `in_progress` | 7 | 7 | 0 |
+| `bd-w2c3.5` | `open` | 5 | 25 | 9 |
 | `bd-w2c3.10.1` | `open` | 1 | 1 | 0 |
 | `bd-w2c3.2.3` | `open` | 1 | 3 | 2 |
 
