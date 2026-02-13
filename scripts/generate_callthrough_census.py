@@ -102,6 +102,7 @@ def build_decommission_waves(symbol_rows: list[dict[str, Any]]) -> list[dict[str
         chosen = sorted(picked & remaining)
         if not chosen:
             return
+        active_depends = [dep for dep in depends_on if dep in wave_id_order]
         wave_number = len(waves) + 1
         waves.append(
             _wave(
@@ -109,7 +110,7 @@ def build_decommission_waves(symbol_rows: list[dict[str, Any]]) -> list[dict[str
                 wave_id,
                 title,
                 chosen,
-                depends_on,
+                active_depends,
                 rollback,
                 rationale,
             )

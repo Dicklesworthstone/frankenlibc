@@ -17,10 +17,10 @@
       "evidence_source": "support_matrix"
     },
     {
-      "id": "interpose_allow_pthread_create",
+      "id": "interpose_allow_pthread_rwlock_init",
       "mode": "interpose",
       "module": "pthread_abi",
-      "symbol": "pthread_create",
+      "symbol": "pthread_rwlock_init",
       "expected_outcome": "allowed",
       "evidence_source": "source_scan"
     },
@@ -41,10 +41,10 @@
       "evidence_source": "support_matrix"
     },
     {
-      "id": "replacement_forbid_pthread_join",
+      "id": "replacement_forbid_pthread_rwlock_wrlock",
       "mode": "replacement",
       "module": "pthread_abi",
-      "symbol": "pthread_join",
+      "symbol": "pthread_rwlock_wrlock",
       "expected_outcome": "forbidden",
       "evidence_source": "support_matrix"
     },

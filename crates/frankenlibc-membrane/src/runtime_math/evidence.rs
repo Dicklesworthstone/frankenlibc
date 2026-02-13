@@ -12,7 +12,9 @@
 //! explicit little-endian byte writes into a `[u8; N]` backing array.
 
 use core::fmt;
+use core::fmt::Write as _;
 use core::sync::atomic::{AtomicU64, Ordering};
+use std::time::Instant;
 
 use parking_lot::Mutex;
 
@@ -354,6 +356,128 @@ pub struct LossEvidenceV1 {
     pub selected_expected_loss_milli: u32,
     /// Expected-loss cost for competing action in milli-units.
     pub competing_expected_loss_milli: u32,
+}
+
+/// Coarse decision-class taxonomy used by the galaxy-brain card ledger.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum DecisionType {
+    ModeTransition = 0,
+    Quarantine = 1,
+    Repair = 2,
+    Escalation = 3,
+    CertificateEvaluation = 4,
+    PolicyOverride = 5,
+}
+
+/// Compact runtime decision card (galaxy-brain card v1).
+///
+/// This is intentionally copyable and allocation-free so the hot recording path can
+/// publish cards to a bounded ring with deterministic overhead.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DecisionCardV1 {
+    pub decision_id: u64,
+    pub decision_type: DecisionType,
+    pub thread_id: u64,
+    pub symbol_id: u32,
+    pub timestamp_mono_ns: u64,
+    pub epoch_id: u64,
+    pub evidence_seqno: u64,
+    pub context: RuntimeContext,
+    pub decision: RuntimeDecision,
+    pub adverse: bool,
+    pub estimated_cost_ns: u64,
+    pub reasoning_flags: u32,
+    pub counterfactual_action: MembraneAction,
+    pub loss_evidence: Option<LossEvidenceV1>,
+}
+
+impl DecisionCardV1 {
+    #[must_use]
+    pub const fn zeroed() -> Self {
+        Self {
+            decision_id: 0,
+            decision_type: DecisionType::CertificateEvaluation,
+            thread_id: 0,
+            symbol_id: 0,
+            timestamp_mono_ns: 0,
+            epoch_id: 0,
+            evidence_seqno: 0,
+            context: RuntimeContext {
+                family: ApiFamily::PointerValidation,
+                addr_hint: 0,
+                requested_bytes: 0,
+                is_write: false,
+                contention_hint: 0,
+                bloom_negative: false,
+            },
+            decision: RuntimeDecision {
+                profile: ValidationProfile::Fast,
+                action: MembraneAction::Allow,
+                policy_id: 0,
+                risk_upper_bound_ppm: 0,
+                evidence_seqno: 0,
+            },
+            adverse: false,
+            estimated_cost_ns: 0,
+            reasoning_flags: 0,
+            counterfactual_action: MembraneAction::Allow,
+            loss_evidence: None,
+        }
+    }
+}
+
+/// Query filter for decision cards.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct DecisionCardFilter {
+    pub decision_type: Option<DecisionType>,
+    pub min_timestamp_mono_ns: Option<u64>,
+    pub max_timestamp_mono_ns: Option<u64>,
+    pub thread_id: Option<u64>,
+    pub symbol_id: Option<u32>,
+}
+
+impl DecisionCardFilter {
+    #[must_use]
+    pub const fn any() -> Self {
+        Self {
+            decision_type: None,
+            min_timestamp_mono_ns: None,
+            max_timestamp_mono_ns: None,
+            thread_id: None,
+            symbol_id: None,
+        }
+    }
+
+    #[must_use]
+    pub fn matches(&self, card: &DecisionCardV1) -> bool {
+        if let Some(t) = self.decision_type {
+            if card.decision_type != t {
+                return false;
+            }
+        }
+        if let Some(min_ts) = self.min_timestamp_mono_ns {
+            if card.timestamp_mono_ns < min_ts {
+                return false;
+            }
+        }
+        if let Some(max_ts) = self.max_timestamp_mono_ns {
+            if card.timestamp_mono_ns > max_ts {
+                return false;
+            }
+        }
+        if let Some(thread_id) = self.thread_id {
+            if card.thread_id != thread_id {
+                return false;
+            }
+        }
+        if let Some(symbol_id) = self.symbol_id {
+            if card.symbol_id != symbol_id {
+                return false;
+            }
+        }
+        true
+    }
 }
 
 /// Encode a v1 "decision" evidence payload.
@@ -720,6 +844,8 @@ fn contains_u16(hay: &[u16], needle: u16) -> bool {
 /// ESI assignment and chain hashing sequential per stream.
 pub struct SystematicEvidenceLog<const CAP: usize> {
     ring: EvidenceRingBuffer<CAP>,
+    decision_cards: DecisionCardRingBuffer<CAP>,
+    monotonic_start: Instant,
     boot_nonce: u64,
     streams: [Mutex<EpochStreamState>; ApiFamily::COUNT * 2],
 }
@@ -749,6 +875,8 @@ impl<const CAP: usize> SystematicEvidenceLog<CAP> {
     pub fn new(boot_nonce: u64) -> Self {
         Self {
             ring: EvidenceRingBuffer::new(),
+            decision_cards: DecisionCardRingBuffer::new(),
+            monotonic_start: Instant::now(),
             boot_nonce,
             streams: core::array::from_fn(|_| Mutex::new(EpochStreamState::new())),
         }
@@ -820,6 +948,27 @@ impl<const CAP: usize> SystematicEvidenceLog<CAP> {
         drop(st);
 
         self.ring.publish(seqno, rec);
+
+        let mut decision_with_seq = decision;
+        decision_with_seq.evidence_seqno = seqno;
+        let decision_id = self.decision_cards.allocate_decision_id();
+        let card = DecisionCardV1 {
+            decision_id,
+            decision_type: classify_decision_type(mode, ctx, decision),
+            thread_id: current_thread_id_u64(),
+            symbol_id: decision.policy_id,
+            timestamp_mono_ns: monotonic_elapsed_ns(self.monotonic_start),
+            epoch_id,
+            evidence_seqno: seqno,
+            context: ctx,
+            decision: decision_with_seq,
+            adverse,
+            estimated_cost_ns,
+            reasoning_flags: decision_reasoning_flags(mode, ctx, decision, adverse, loss_evidence),
+            counterfactual_action: derive_counterfactual_action(mode, decision.action),
+            loss_evidence,
+        };
+        self.decision_cards.publish(decision_id, card);
         seqno
     }
 
@@ -827,6 +976,81 @@ impl<const CAP: usize> SystematicEvidenceLog<CAP> {
     #[must_use]
     pub fn snapshot_sorted(&self) -> Vec<EvidenceSymbolRecord> {
         self.ring.snapshot_sorted()
+    }
+
+    /// Snapshot decision cards sorted by `decision_id`.
+    #[must_use]
+    pub fn decision_cards_snapshot_sorted(&self) -> Vec<DecisionCardV1> {
+        self.decision_cards.snapshot_sorted()
+    }
+
+    /// Query decision cards by type/time/thread/symbol predicates.
+    #[must_use]
+    pub fn query_decision_cards(&self, filter: DecisionCardFilter) -> Vec<DecisionCardV1> {
+        self.decision_cards
+            .snapshot_sorted()
+            .into_iter()
+            .filter(|card| filter.matches(card))
+            .collect()
+    }
+
+    /// Export decision cards as deterministic JSON for harness/CI ingestion.
+    #[must_use]
+    pub fn export_decision_cards_json(&self) -> String {
+        let cards = self.decision_cards.snapshot_sorted();
+        let mut out = String::with_capacity(cards.len().saturating_mul(256).saturating_add(128));
+        out.push_str("{\"schema\":\"decision_cards.v1\",\"count\":");
+        let _ = write!(&mut out, "{}", cards.len());
+        out.push_str(",\"cards\":[");
+
+        for (idx, card) in cards.iter().enumerate() {
+            if idx > 0 {
+                out.push(',');
+            }
+            let _ = write!(
+                &mut out,
+                "{{\"decision_id\":{},\"decision_type\":{},\"thread_id\":{},\"symbol_id\":{},\"timestamp_mono_ns\":{},\"epoch_id\":{},\"evidence_seqno\":{},\"family\":{},\"mode\":{},\"profile\":{},\"action\":{},\"counterfactual_action\":{},\"policy_id\":{},\"risk_upper_bound_ppm\":{},\"adverse\":{},\"estimated_cost_ns\":{},\"reasoning_flags\":{},\"context\":{{\"addr_hint\":{},\"requested_bytes\":{},\"is_write\":{},\"contention_hint\":{},\"bloom_negative\":{}}}",
+                card.decision_id,
+                card.decision_type as u8,
+                card.thread_id,
+                card.symbol_id,
+                card.timestamp_mono_ns,
+                card.epoch_id,
+                card.evidence_seqno,
+                card.context.family as u8,
+                mode_code(mode_from_code(mode_code_from_safety(card.context, card.decision, card.reasoning_flags))),
+                profile_code(card.decision.profile),
+                action_code(card.decision.action),
+                action_code(card.counterfactual_action),
+                card.decision.policy_id,
+                card.decision.risk_upper_bound_ppm,
+                card.adverse,
+                card.estimated_cost_ns,
+                card.reasoning_flags,
+                card.context.addr_hint,
+                card.context.requested_bytes,
+                card.context.is_write,
+                card.context.contention_hint,
+                card.context.bloom_negative
+            );
+            match card.loss_evidence {
+                Some(loss) => {
+                    let _ = write!(
+                        &mut out,
+                        ",\"loss_evidence\":{{\"posterior_adverse_ppm\":{},\"selected_action\":{},\"competing_action\":{},\"selected_expected_loss_milli\":{},\"competing_expected_loss_milli\":{}}}}}",
+                        loss.posterior_adverse_ppm,
+                        loss.selected_action,
+                        loss.competing_action,
+                        loss.selected_expected_loss_milli,
+                        loss.competing_expected_loss_milli
+                    );
+                }
+                None => out.push_str(",\"loss_evidence\":null}"),
+            }
+        }
+
+        out.push_str("]}");
+        out
     }
 }
 
@@ -837,6 +1061,173 @@ fn stream_index(mode: SafetyLevel, family: ApiFamily) -> usize {
         0
     };
     (family as usize) * 2 + mode_bit
+}
+
+#[inline]
+fn classify_decision_type(
+    mode: SafetyLevel,
+    ctx: RuntimeContext,
+    decision: RuntimeDecision,
+) -> DecisionType {
+    match decision.action {
+        MembraneAction::Repair(_) => DecisionType::Repair,
+        MembraneAction::Deny => DecisionType::Escalation,
+        MembraneAction::FullValidate if mode.heals_enabled() => DecisionType::PolicyOverride,
+        MembraneAction::FullValidate => DecisionType::CertificateEvaluation,
+        MembraneAction::Allow if ctx.bloom_negative => DecisionType::Quarantine,
+        MembraneAction::Allow => DecisionType::CertificateEvaluation,
+    }
+}
+
+#[inline]
+fn derive_counterfactual_action(mode: SafetyLevel, action: MembraneAction) -> MembraneAction {
+    match action {
+        MembraneAction::Allow => MembraneAction::FullValidate,
+        MembraneAction::FullValidate => MembraneAction::Allow,
+        MembraneAction::Repair(_) => MembraneAction::Allow,
+        MembraneAction::Deny if mode.heals_enabled() => {
+            MembraneAction::Repair(HealingAction::ReturnSafeDefault)
+        }
+        MembraneAction::Deny => MembraneAction::Allow,
+    }
+}
+
+#[inline]
+fn decision_reasoning_flags(
+    mode: SafetyLevel,
+    ctx: RuntimeContext,
+    decision: RuntimeDecision,
+    adverse: bool,
+    loss_evidence: Option<LossEvidenceV1>,
+) -> u32 {
+    let mut flags = 0u32;
+    if ctx.is_write {
+        flags |= 1 << 0;
+    }
+    if ctx.bloom_negative {
+        flags |= 1 << 1;
+    }
+    if adverse {
+        flags |= 1 << 2;
+    }
+    if matches!(mode, SafetyLevel::Hardened) {
+        flags |= 1 << 3;
+    }
+    if decision.profile.requires_full() {
+        flags |= 1 << 4;
+    }
+    if matches!(decision.action, MembraneAction::Repair(_)) {
+        flags |= 1 << 5;
+    }
+    if matches!(decision.action, MembraneAction::Deny) {
+        flags |= 1 << 6;
+    }
+    if loss_evidence.is_some() {
+        flags |= 1 << 7;
+    }
+    flags
+}
+
+#[inline]
+fn current_thread_id_u64() -> u64 {
+    use std::hash::{Hash, Hasher};
+
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    std::thread::current().id().hash(&mut hasher);
+    hasher.finish()
+}
+
+#[inline]
+fn monotonic_elapsed_ns(start: Instant) -> u64 {
+    let nanos = start.elapsed().as_nanos();
+    u64::try_from(nanos).unwrap_or(u64::MAX)
+}
+
+#[inline]
+fn mode_code_from_safety(
+    _ctx: RuntimeContext,
+    _decision: RuntimeDecision,
+    flags: u32,
+) -> SafetyLevel {
+    if (flags & (1 << 3)) != 0 {
+        SafetyLevel::Hardened
+    } else {
+        SafetyLevel::Strict
+    }
+}
+
+#[inline]
+const fn mode_from_code(mode: SafetyLevel) -> SafetyLevel {
+    mode
+}
+
+/// Overwrite-on-full decision-card ring buffer.
+pub struct DecisionCardRingBuffer<const CAP: usize> {
+    next_decision_id: AtomicU64,
+    slots: [DecisionCardSlot; CAP],
+}
+
+struct DecisionCardSlot {
+    published_decision_id: AtomicU64,
+    card: Mutex<DecisionCardV1>,
+}
+
+impl DecisionCardSlot {
+    fn new() -> Self {
+        Self {
+            published_decision_id: AtomicU64::new(0),
+            card: Mutex::new(DecisionCardV1::zeroed()),
+        }
+    }
+}
+
+impl<const CAP: usize> Default for DecisionCardRingBuffer<CAP> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<const CAP: usize> DecisionCardRingBuffer<CAP> {
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            next_decision_id: AtomicU64::new(0),
+            slots: core::array::from_fn(|_| DecisionCardSlot::new()),
+        }
+    }
+
+    pub fn allocate_decision_id(&self) -> u64 {
+        self.next_decision_id
+            .fetch_add(1, Ordering::Relaxed)
+            .wrapping_add(1)
+    }
+
+    pub fn publish(&self, decision_id: u64, card: DecisionCardV1) {
+        let idx = (decision_id as usize) % CAP;
+        let slot = &self.slots[idx];
+        debug_assert_eq!(card.decision_id, decision_id);
+        *slot.card.lock() = card;
+        slot.published_decision_id
+            .store(decision_id, Ordering::Release);
+    }
+
+    #[must_use]
+    pub fn snapshot_sorted(&self) -> Vec<DecisionCardV1> {
+        let mut out = Vec::new();
+        for slot in &self.slots {
+            let d1 = slot.published_decision_id.load(Ordering::Acquire);
+            if d1 == 0 {
+                continue;
+            }
+            let card = *slot.card.lock();
+            let d2 = slot.published_decision_id.load(Ordering::Acquire);
+            if d1 == d2 && card.decision_id == d1 {
+                out.push(card);
+            }
+        }
+        out.sort_by_key(|card| card.decision_id);
+        out
+    }
 }
 
 /// Overwrite-on-full evidence ring buffer.
@@ -1311,5 +1702,145 @@ mod tests {
         }
         let payload = encode_xor_repair_payload_v1(epoch_seed, &src, repair_esi);
         assert!(payload.iter().all(|&b| b == (4u8 ^ 5u8)));
+    }
+
+    #[test]
+    fn decision_card_filter_matches_expected_fields() {
+        let card = DecisionCardV1 {
+            decision_id: 17,
+            decision_type: DecisionType::Repair,
+            thread_id: 99,
+            symbol_id: 1234,
+            timestamp_mono_ns: 50_000,
+            epoch_id: 1,
+            evidence_seqno: 9,
+            context: RuntimeContext::pointer_validation(0xABCD, true),
+            decision: RuntimeDecision {
+                profile: ValidationProfile::Full,
+                action: MembraneAction::Repair(HealingAction::IgnoreDoubleFree),
+                policy_id: 1234,
+                risk_upper_bound_ppm: 900_000,
+                evidence_seqno: 9,
+            },
+            adverse: true,
+            estimated_cost_ns: 12,
+            reasoning_flags: 0,
+            counterfactual_action: MembraneAction::Allow,
+            loss_evidence: None,
+        };
+
+        let ok = DecisionCardFilter {
+            decision_type: Some(DecisionType::Repair),
+            min_timestamp_mono_ns: Some(40_000),
+            max_timestamp_mono_ns: Some(60_000),
+            thread_id: Some(99),
+            symbol_id: Some(1234),
+        };
+        assert!(ok.matches(&card));
+
+        let bad_thread = DecisionCardFilter {
+            thread_id: Some(7),
+            ..DecisionCardFilter::any()
+        };
+        assert!(!bad_thread.matches(&card));
+
+        let bad_symbol = DecisionCardFilter {
+            symbol_id: Some(55),
+            ..DecisionCardFilter::any()
+        };
+        assert!(!bad_symbol.matches(&card));
+    }
+
+    #[test]
+    fn systematic_log_records_queryable_decision_cards() {
+        let log: SystematicEvidenceLog<8> = SystematicEvidenceLog::new(0xBEEF);
+        let ctx = RuntimeContext {
+            family: ApiFamily::Allocator,
+            addr_hint: 0x1000,
+            requested_bytes: 64,
+            is_write: true,
+            contention_hint: 2,
+            bloom_negative: false,
+        };
+
+        let allow = RuntimeDecision {
+            profile: ValidationProfile::Fast,
+            action: MembraneAction::Allow,
+            policy_id: 41,
+            risk_upper_bound_ppm: 120,
+            evidence_seqno: 0,
+        };
+        let seq_allow = log.record_decision(
+            SafetyLevel::Strict,
+            ctx,
+            allow,
+            9,
+            false,
+            None,
+            0,
+            None,
+        );
+
+        let repair = RuntimeDecision {
+            profile: ValidationProfile::Full,
+            action: MembraneAction::Repair(HealingAction::UpgradeToSafeVariant),
+            policy_id: 42,
+            risk_upper_bound_ppm: 900_000,
+            evidence_seqno: 0,
+        };
+        let seq_repair = log.record_decision(
+            SafetyLevel::Hardened,
+            ctx,
+            repair,
+            11,
+            true,
+            Some(LossEvidenceV1 {
+                posterior_adverse_ppm: 700_000,
+                selected_action: 2,
+                competing_action: 1,
+                selected_expected_loss_milli: 30,
+                competing_expected_loss_milli: 70,
+            }),
+            0,
+            None,
+        );
+
+        assert!(seq_allow >= 1);
+        assert!(seq_repair > seq_allow);
+
+        let cards = log.decision_cards_snapshot_sorted();
+        assert_eq!(cards.len(), 2);
+        assert_eq!(cards[0].decision_id, 1);
+        assert_eq!(cards[1].decision_id, 2);
+        assert!(cards[1].timestamp_mono_ns >= cards[0].timestamp_mono_ns);
+        assert_eq!(cards[0].evidence_seqno, seq_allow);
+        assert_eq!(cards[1].evidence_seqno, seq_repair);
+
+        let repairs = log.query_decision_cards(DecisionCardFilter {
+            decision_type: Some(DecisionType::Repair),
+            ..DecisionCardFilter::any()
+        });
+        assert_eq!(repairs.len(), 1);
+        assert_eq!(repairs[0].symbol_id, 42);
+        assert!(repairs[0].loss_evidence.is_some());
+
+        let symbol_41 = log.query_decision_cards(DecisionCardFilter {
+            symbol_id: Some(41),
+            ..DecisionCardFilter::any()
+        });
+        assert_eq!(symbol_41.len(), 1);
+        assert_eq!(symbol_41[0].decision_type, DecisionType::CertificateEvaluation);
+
+        let thread_cards = log.query_decision_cards(DecisionCardFilter {
+            thread_id: Some(current_thread_id_u64()),
+            ..DecisionCardFilter::any()
+        });
+        assert_eq!(thread_cards.len(), 2);
+
+        let export = log.export_decision_cards_json();
+        assert!(export.contains("\"schema\":\"decision_cards.v1\""));
+        assert!(export.contains("\"count\":2"));
+        assert!(export.contains("\"decision_id\":1"));
+        assert!(export.contains("\"decision_id\":2"));
     }
 }
