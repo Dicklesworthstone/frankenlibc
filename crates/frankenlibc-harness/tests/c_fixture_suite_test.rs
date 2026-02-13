@@ -91,6 +91,56 @@ fn fixtures_have_required_fields() {
 }
 
 #[test]
+fn bd15n2_fixtures_have_traceability_and_mode_expectations() {
+    let s = load_spec();
+    let fixtures = s["fixtures"].as_array().unwrap();
+
+    for fixture_id in ["fixture_ctype", "fixture_math", "fixture_socket"] {
+        let fixture = fixtures
+            .iter()
+            .find(|f| f["id"].as_str() == Some(fixture_id))
+            .unwrap_or_else(|| panic!("missing required fixture '{fixture_id}'"));
+
+        for trace_key in ["posix", "c11", "internal"] {
+            let refs = fixture["spec_traceability"][trace_key]
+                .as_array()
+                .unwrap_or_else(|| {
+                    panic!("{}: missing spec_traceability.{}", fixture_id, trace_key)
+                });
+            assert!(
+                refs.iter().any(|v| v.as_str().map(str::trim).unwrap_or("") != ""),
+                "{}: spec_traceability.{} must include at least one non-empty reference",
+                fixture_id,
+                trace_key
+            );
+        }
+
+        for mode in ["strict", "hardened"] {
+            let mode_obj = fixture["mode_expectations"][mode]
+                .as_object()
+                .unwrap_or_else(|| panic!("{}: missing mode_expectations.{}", fixture_id, mode));
+            assert_eq!(
+                mode_obj.get("expected_exit").and_then(|v| v.as_i64()),
+                Some(0),
+                "{}: mode_expectations.{}.expected_exit must be 0",
+                fixture_id,
+                mode
+            );
+            let marker = mode_obj
+                .get("expected_stdout_contains")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            assert!(
+                !marker.trim().is_empty(),
+                "{}: mode_expectations.{}.expected_stdout_contains must be non-empty",
+                fixture_id,
+                mode
+            );
+        }
+    }
+}
+
+#[test]
 fn acceptance_symbols_covered() {
     let s = load_spec();
 

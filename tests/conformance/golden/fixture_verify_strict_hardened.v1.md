@@ -2,8 +2,8 @@
 
 - Mode: strict+hardened
 - Timestamp: 1970-01-01T00:00:00Z
-- Total: 91
-- Passed: 91
+- Total: 123
+- Passed: 123
 - Failed: 0
 
 | Trace | Family | Symbol | Mode | Case | Spec | Status |
@@ -13,6 +13,23 @@
 | `fixture-verify::allocator::malloc::strict::malloc_basic` | allocator | malloc | strict | malloc_basic | POSIX malloc | PASS |
 | `fixture-verify::allocator::malloc::strict::malloc_zero` | allocator | malloc | strict | malloc_zero | POSIX malloc | PASS |
 | `fixture-verify::allocator::realloc::strict::realloc_null_is_malloc` | allocator | realloc | strict | realloc_null_is_malloc | POSIX realloc | PASS |
+| `fixture-verify::elf/loader::Elf64Header::parse::strict::invalid_elf_magic` | elf/loader | Elf64Header::parse | strict | invalid_elf_magic | ELF64 Header | PASS |
+| `fixture-verify::elf/loader::Elf64Header::parse::strict::valid_elf_magic` | elf/loader | Elf64Header::parse | strict | valid_elf_magic | ELF64 Header | PASS |
+| `fixture-verify::elf/loader::ProgramFlags::to_mmap_prot::strict::program_flags_ro` | elf/loader | ProgramFlags::to_mmap_prot | strict | program_flags_ro | ELF Program Header | PASS |
+| `fixture-verify::elf/loader::ProgramFlags::to_mmap_prot::strict::program_flags_rwx` | elf/loader | ProgramFlags::to_mmap_prot | strict | program_flags_rwx | ELF Program Header | PASS |
+| `fixture-verify::elf/loader::SymbolBinding::from::strict::symbol_binding_global` | elf/loader | SymbolBinding::from | strict | symbol_binding_global | ELF Symbol Table | PASS |
+| `fixture-verify::elf/loader::SymbolBinding::from::strict::symbol_binding_local` | elf/loader | SymbolBinding::from | strict | symbol_binding_local | ELF Symbol Table | PASS |
+| `fixture-verify::elf/loader::SymbolBinding::from::strict::symbol_binding_weak` | elf/loader | SymbolBinding::from | strict | symbol_binding_weak | ELF Symbol Table | PASS |
+| `fixture-verify::elf/loader::SymbolType::from::strict::symbol_type_func` | elf/loader | SymbolType::from | strict | symbol_type_func | ELF Symbol Table | PASS |
+| `fixture-verify::elf/loader::SymbolType::from::strict::symbol_type_object` | elf/loader | SymbolType::from | strict | symbol_type_object | ELF Symbol Table | PASS |
+| `fixture-verify::elf/loader::compute_relocation::strict::reloc_r_x86_64_64` | elf/loader | compute_relocation | strict | reloc_r_x86_64_64 | x86_64 Relocations | PASS |
+| `fixture-verify::elf/loader::compute_relocation::strict::reloc_r_x86_64_glob_dat` | elf/loader | compute_relocation | strict | reloc_r_x86_64_glob_dat | x86_64 Relocations | PASS |
+| `fixture-verify::elf/loader::compute_relocation::strict::reloc_r_x86_64_jump_slot` | elf/loader | compute_relocation | strict | reloc_r_x86_64_jump_slot | x86_64 Relocations | PASS |
+| `fixture-verify::elf/loader::compute_relocation::strict::reloc_r_x86_64_none` | elf/loader | compute_relocation | strict | reloc_r_x86_64_none | x86_64 Relocations | PASS |
+| `fixture-verify::elf/loader::compute_relocation::strict::reloc_r_x86_64_relative` | elf/loader | compute_relocation | strict | reloc_r_x86_64_relative | x86_64 Relocations | PASS |
+| `fixture-verify::elf/loader::elf_hash::strict::elf_hash_empty` | elf/loader | elf_hash | strict | elf_hash_empty | ELF Hash | PASS |
+| `fixture-verify::elf/loader::elf_hash::strict::elf_hash_malloc` | elf/loader | elf_hash | strict | elf_hash_malloc | ELF Hash | PASS |
+| `fixture-verify::elf/loader::gnu_hash::strict::gnu_hash_malloc` | elf/loader | gnu_hash | strict | gnu_hash_malloc | GNU Hash | PASS |
 | `fixture-verify::iconv/phase1::iconv::hardened::hardened_utf16le_to_utf8` | iconv/phase1 | iconv | hardened | hardened_utf16le_to_utf8 | TSM hardened iconv | PASS |
 | `fixture-verify::iconv/phase1::iconv::strict::strict_e2big_preserves_progress` | iconv/phase1 | iconv | strict | strict_e2big_preserves_progress | POSIX iconv | PASS |
 | `fixture-verify::iconv/phase1::iconv::strict::strict_eilseq_invalid_utf8` | iconv/phase1 | iconv | strict | strict_eilseq_invalid_utf8 | POSIX iconv | PASS |
@@ -24,6 +41,21 @@
 | `fixture-verify::membrane/mode-split::memcpy::strict::strict_memcpy_overflow_ub` | membrane/mode-split | memcpy | strict | strict_memcpy_overflow_ub | TSM strict memcpy | PASS |
 | `fixture-verify::membrane/mode-split::strlen::hardened::hardened_strlen_unterminated_truncated` | membrane/mode-split | strlen | hardened | hardened_strlen_unterminated_truncated | TSM hardened strlen | PASS |
 | `fixture-verify::membrane/mode-split::strlen::strict::strict_strlen_unterminated_ub` | membrane/mode-split | strlen | strict | strict_strlen_unterminated_ub | TSM strict strlen | PASS |
+| `fixture-verify::resolv/dns::DnsHeader::new_query::strict::dns_header_query` | resolv/dns | DnsHeader::new_query | strict | dns_header_query | RFC 1035 Section 4.1.1 | PASS |
+| `fixture-verify::resolv/dns::ResolverConfig::default::strict::resolv_conf_default` | resolv/dns | ResolverConfig::default | strict | resolv_conf_default | resolver(5) | PASS |
+| `fixture-verify::resolv/dns::ResolverConfig::parse::strict::resolv_conf_max_nameservers` | resolv/dns | ResolverConfig::parse | strict | resolv_conf_max_nameservers | resolver(5) | PASS |
+| `fixture-verify::resolv/dns::ResolverConfig::parse::strict::resolv_conf_options_attempts` | resolv/dns | ResolverConfig::parse | strict | resolv_conf_options_attempts | resolver(5) | PASS |
+| `fixture-verify::resolv/dns::ResolverConfig::parse::strict::resolv_conf_options_ndots` | resolv/dns | ResolverConfig::parse | strict | resolv_conf_options_ndots | resolver(5) | PASS |
+| `fixture-verify::resolv/dns::ResolverConfig::parse::strict::resolv_conf_options_timeout` | resolv/dns | ResolverConfig::parse | strict | resolv_conf_options_timeout | resolver(5) | PASS |
+| `fixture-verify::resolv/dns::ResolverConfig::parse::strict::resolv_conf_search_list` | resolv/dns | ResolverConfig::parse | strict | resolv_conf_search_list | resolver(5) | PASS |
+| `fixture-verify::resolv/dns::ResolverConfig::parse::strict::resolv_conf_single_nameserver` | resolv/dns | ResolverConfig::parse | strict | resolv_conf_single_nameserver | resolver(5) | PASS |
+| `fixture-verify::resolv/dns::encode_domain_name::strict::dns_encode_domain_name` | resolv/dns | encode_domain_name | strict | dns_encode_domain_name | RFC 1035 Section 3.1 | PASS |
+| `fixture-verify::resolv/dns::encode_domain_name::strict::dns_encode_single_label` | resolv/dns | encode_domain_name | strict | dns_encode_single_label | RFC 1035 Section 3.1 | PASS |
+| `fixture-verify::resolv/dns::getaddrinfo::strict::getaddrinfo_numeric_ipv4` | resolv/dns | getaddrinfo | strict | getaddrinfo_numeric_ipv4 | POSIX getaddrinfo | PASS |
+| `fixture-verify::resolv/dns::getaddrinfo::strict::getaddrinfo_numeric_ipv6` | resolv/dns | getaddrinfo | strict | getaddrinfo_numeric_ipv6 | POSIX getaddrinfo | PASS |
+| `fixture-verify::resolv/dns::getaddrinfo::strict::getaddrinfo_unknown_host` | resolv/dns | getaddrinfo | strict | getaddrinfo_unknown_host | POSIX getaddrinfo | PASS |
+| `fixture-verify::resolv/dns::lookup_hosts::strict::hosts_lookup_basic` | resolv/dns | lookup_hosts | strict | hosts_lookup_basic | /etc/hosts format | PASS |
+| `fixture-verify::resolv/dns::lookup_hosts::strict::hosts_lookup_case_insensitive` | resolv/dns | lookup_hosts | strict | hosts_lookup_case_insensitive | /etc/hosts format | PASS |
 | `fixture-verify::stdlib/conversion::atoi::strict::atoi_basic` | stdlib/conversion | atoi | strict | atoi_basic | POSIX atoi | PASS |
 | `fixture-verify::stdlib/conversion::atoi::strict::atoi_negative` | stdlib/conversion | atoi | strict | atoi_negative | POSIX atoi | PASS |
 | `fixture-verify::stdlib/conversion::atoi::strict::atoi_whitespace` | stdlib/conversion | atoi | strict | atoi_whitespace | POSIX atoi | PASS |

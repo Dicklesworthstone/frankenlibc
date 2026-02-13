@@ -219,6 +219,19 @@ pub fn execute_fixture_case(
         "iconv" => execute_iconv_case(inputs, mode),
         "qsort" => execute_qsort_case(inputs, mode),
         "bsearch" => execute_bsearch_case(inputs, mode),
+        "Elf64Header::parse" => execute_elf64_header_parse_case(inputs, mode),
+        "compute_relocation" => execute_compute_relocation_case(inputs, mode),
+        "elf_hash" => execute_elf_hash_case(inputs, mode),
+        "gnu_hash" => execute_gnu_hash_case(inputs, mode),
+        "SymbolBinding::from" => execute_symbol_binding_from_case(inputs, mode),
+        "SymbolType::from" => execute_symbol_type_from_case(inputs, mode),
+        "ProgramFlags::to_mmap_prot" => execute_program_flags_to_mmap_prot_case(inputs, mode),
+        "ResolverConfig::default" => execute_resolver_config_default_case(inputs, mode),
+        "ResolverConfig::parse" => execute_resolver_config_parse_case(inputs, mode),
+        "DnsHeader::new_query" => execute_dns_header_new_query_case(inputs, mode),
+        "encode_domain_name" => execute_encode_domain_name_case(inputs, mode),
+        "lookup_hosts" => execute_lookup_hosts_case(inputs, mode),
+        "getaddrinfo" => execute_getaddrinfo_case(inputs, mode),
         other => Err(format!("unsupported function: {other}")),
     }
 }
@@ -332,6 +345,327 @@ fn execute_bsearch_case(
         note: None,
     })
 }
+
+fn ensure_supported_mode(mode: &str) -> Result<(), String> {
+    if mode_is_strict(mode) || mode_is_hardened(mode) {
+        return Ok(());
+    }
+    Err(format!("unsupported mode: {mode}"))
+}
+
+fn non_host_execution(impl_output: String) -> DifferentialExecution {
+    DifferentialExecution {
+        host_output: String::from("SKIP"),
+        impl_output,
+        host_parity: true,
+        note: None,
+    }
+}
+
+fn execute_elf64_header_parse_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let magic = parse_u8_vec(inputs, "magic")?;
+    if magic.len() != 4 {
+        return Err(format!("magic must be length 4, got {}", magic.len()));
+    }
+
+    let mut header = [0u8; 64];
+    header[0..4].copy_from_slice(&magic);
+    header[4] = 2; // ELF64
+    header[5] = 1; // little-endian
+
+    let impl_output = match frankenlibc_core::elf::Elf64Header::parse(&header) {
+        Ok(_) => String::from("Ok"),
+        Err(err) => format!("Err({err:?})"),
+    };
+
+    Ok(non_host_execution(impl_output))
+}
+
+fn execute_compute_relocation_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+
+    let reloc_type = parse_u64(inputs, "type")? as u32;
+    let symbol_value = inputs
+        .get("symbol_value")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0);
+    let base = inputs
+        .get("base")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0);
+    let addend = match inputs.get("addend") {
+        Some(value) => value
+            .as_i64()
+            .or_else(|| value.as_u64().and_then(|v| i64::try_from(v).ok()))
+            .ok_or_else(|| String::from("addend must be integer"))?,
+        None => 0,
+    };
+
+    let reloc = frankenlibc_core::elf::relocation::Elf64Rela {
+        r_offset: 0,
+        r_info: reloc_type as u64,
+        r_addend: addend,
+    };
+    let ctx = frankenlibc_core::elf::relocation::RelocationContext::new(base);
+
+    let impl_output =
+        match frankenlibc_core::elf::relocation::compute_relocation(&reloc, symbol_value, &ctx) {
+            Ok((value, size)) => serde_json::json!({
+                "value": value,
+                "size": size
+            })
+            .to_string(),
+            Err(frankenlibc_core::elf::RelocationResult::Skipped) => String::from("Skipped"),
+            Err(frankenlibc_core::elf::RelocationResult::Deferred) => String::from("Deferred"),
+            Err(frankenlibc_core::elf::RelocationResult::Overflow) => String::from("Overflow"),
+            Err(frankenlibc_core::elf::RelocationResult::Unsupported(code)) => {
+                format!("Unsupported({code})")
+            }
+            Err(other) => format!("{other:?}"),
+        };
+
+    Ok(non_host_execution(impl_output))
+}
+
+fn execute_elf_hash_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let name = parse_string(inputs, "name")?;
+    let impl_output = frankenlibc_core::elf::elf_hash(name.as_bytes()).to_string();
+    Ok(non_host_execution(impl_output))
+}
+
+fn execute_gnu_hash_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let name = parse_string(inputs, "name")?;
+    let impl_output = frankenlibc_core::elf::gnu_hash(name.as_bytes()).to_string();
+    Ok(non_host_execution(impl_output))
+}
+
+fn execute_symbol_binding_from_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let raw = parse_u64(inputs, "st_info_binding")?;
+    let binding = frankenlibc_core::elf::SymbolBinding::from(raw as u8);
+    Ok(non_host_execution(format!("{binding:?}")))
+}
+
+fn execute_symbol_type_from_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let raw = parse_u64(inputs, "st_info_type")?;
+    let kind = frankenlibc_core::elf::SymbolType::from(raw as u8);
+    Ok(non_host_execution(format!("{kind:?}")))
+}
+
+fn execute_program_flags_to_mmap_prot_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let flags = parse_u64(inputs, "flags")? as u32;
+    let prot = frankenlibc_core::elf::ProgramFlags(flags).to_mmap_prot();
+    Ok(non_host_execution(prot.to_string()))
+}
+
+fn execute_resolver_config_default_case(
+    _inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let config = frankenlibc_core::resolv::ResolverConfig::default();
+    let nameservers: Vec<String> = config.nameservers.iter().map(ToString::to_string).collect();
+    let impl_output = serde_json::json!({
+        "nameservers": nameservers,
+        "ndots": config.ndots,
+        "timeout": config.timeout,
+        "attempts": config.attempts
+    })
+    .to_string();
+    Ok(non_host_execution(impl_output))
+}
+
+fn execute_resolver_config_parse_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let content = parse_string(inputs, "content")?;
+    let config = frankenlibc_core::resolv::ResolverConfig::parse(content.as_bytes());
+    let nameservers: Vec<String> = config.nameservers.iter().map(ToString::to_string).collect();
+
+    let mut out = serde_json::Map::new();
+    if content.contains("nameserver") {
+        out.insert("nameservers".to_string(), serde_json::json!(nameservers));
+        let declared_nameservers = content
+            .lines()
+            .filter(|line| line.trim_start().starts_with("nameserver "))
+            .count();
+        if declared_nameservers > frankenlibc_core::resolv::config::MAX_NAMESERVERS {
+            out.insert(
+                "note".to_string(),
+                serde_json::json!(format!(
+                    "Only first {} nameservers are used per MAXNS",
+                    frankenlibc_core::resolv::config::MAX_NAMESERVERS
+                )),
+            );
+        }
+    }
+    if content.contains("search") {
+        out.insert("search".to_string(), serde_json::json!(config.search));
+    }
+    if content.contains("options ndots:") {
+        out.insert("ndots".to_string(), serde_json::json!(config.ndots));
+    }
+    if content.contains("options timeout:") {
+        out.insert("timeout".to_string(), serde_json::json!(config.timeout));
+    }
+    if content.contains("options attempts:") {
+        out.insert("attempts".to_string(), serde_json::json!(config.attempts));
+    }
+
+    if out.is_empty() {
+        out.insert("nameservers".to_string(), serde_json::json!(nameservers));
+        out.insert("ndots".to_string(), serde_json::json!(config.ndots));
+        out.insert("timeout".to_string(), serde_json::json!(config.timeout));
+        out.insert("attempts".to_string(), serde_json::json!(config.attempts));
+    }
+
+    Ok(non_host_execution(
+        serde_json::Value::Object(out).to_string(),
+    ))
+}
+
+fn execute_dns_header_new_query_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let id = parse_u64(inputs, "id")?;
+    let header = frankenlibc_core::resolv::DnsHeader::new_query(id as u16);
+    let impl_output = serde_json::json!({
+        "id": header.id,
+        "flags": header.flags,
+        "qdcount": header.qdcount,
+        "ancount": header.ancount,
+        "nscount": header.nscount,
+        "arcount": header.arcount,
+        "note": "flags=0x0100 means QR=0 (query), RD=1 (recursion desired)"
+    })
+    .to_string();
+    Ok(non_host_execution(impl_output))
+}
+
+fn render_dns_wire(bytes: &[u8]) -> String {
+    let mut out = String::new();
+    for &byte in bytes {
+        if byte.is_ascii_graphic() && byte != b'\\' {
+            out.push(byte as char);
+        } else {
+            out.push_str(&format!("\\x{byte:02x}"));
+        }
+    }
+    out
+}
+
+fn execute_encode_domain_name_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let name = parse_string(inputs, "name")?;
+    let encoded = frankenlibc_core::resolv::dns::encode_domain_name(name.as_bytes());
+    Ok(non_host_execution(render_dns_wire(&encoded)))
+}
+
+fn execute_lookup_hosts_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let content = parse_string(inputs, "content")?;
+    let name = parse_string(inputs, "name")?;
+    let addrs = frankenlibc_core::resolv::lookup_hosts(content.as_bytes(), name.as_bytes());
+    let rendered: Vec<String> = addrs
+        .iter()
+        .map(|addr| String::from_utf8_lossy(addr).to_string())
+        .collect();
+    let impl_output = serde_json::to_string(&rendered).map_err(|err| err.to_string())?;
+    Ok(non_host_execution(impl_output))
+}
+
+fn execute_getaddrinfo_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+
+    let node = match inputs.get("node") {
+        Some(serde_json::Value::Null) | None => None,
+        Some(value) => Some(
+            value
+                .as_str()
+                .ok_or_else(|| String::from("node must be string or null"))?
+                .as_bytes()
+                .to_vec(),
+        ),
+    };
+    let service = match inputs.get("service") {
+        Some(serde_json::Value::Null) | None => None,
+        Some(value) => Some(
+            value
+                .as_str()
+                .ok_or_else(|| String::from("service must be string or null"))?
+                .as_bytes()
+                .to_vec(),
+        ),
+    };
+
+    let result = frankenlibc_core::resolv::getaddrinfo(node.as_deref(), service.as_deref(), None);
+    let impl_output = match result {
+        Ok(addrs) => {
+            let first = addrs
+                .first()
+                .ok_or_else(|| String::from("getaddrinfo produced no results"))?;
+            if first.ai_family == frankenlibc_core::resolv::AF_INET6 {
+                serde_json::json!({
+                    "ai_family": first.ai_family,
+                    "ai_addr_last_byte": first.ai_addr.last().copied().unwrap_or_default()
+                })
+                .to_string()
+            } else {
+                serde_json::json!({
+                    "ai_family": first.ai_family,
+                    "ai_addr": first.ai_addr
+                })
+                .to_string()
+            }
+        }
+        Err(code) if code == frankenlibc_core::resolv::EAI_NONAME => {
+            String::from("Err(EAI_NONAME)")
+        }
+        Err(code) => format!("Err({code})"),
+    };
+
+    Ok(non_host_execution(impl_output))
+}
+
 #[must_use]
 pub fn capture_memcpy_fixture_set() -> MemcpyFixtureSet {
     let template_cases: [(&str, &[u8], usize, usize); 4] = [
@@ -505,6 +839,13 @@ fn parse_usize(inputs: &serde_json::Value, key: &str) -> Result<usize, String> {
         .get(key)
         .and_then(serde_json::Value::as_u64)
         .map(|v| v as usize)
+        .ok_or_else(|| format!("missing integer field '{key}'"))
+}
+
+fn parse_u64(inputs: &serde_json::Value, key: &str) -> Result<u64, String> {
+    inputs
+        .get(key)
+        .and_then(serde_json::Value::as_u64)
         .ok_or_else(|| format!("missing integer field '{key}'"))
 }
 

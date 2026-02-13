@@ -72,8 +72,10 @@ for src in "${FIXTURE_DIR}"/fixture_*.c; do
 
   cflags="-O2 -Wall -Wextra"
   ldflags=""
-  if [[ "${name}" == "fixture_pthread" ]]; then
+  if [[ "${name}" == fixture_pthread* ]]; then
     ldflags="-pthread"
+  elif [[ "${name}" == "fixture_math" ]]; then
+    ldflags="-lm"
   fi
 
   if cc ${cflags} "${src}" -o "${bin}" ${ldflags} 2>"${RUN_DIR}/${name}_compile.log"; then

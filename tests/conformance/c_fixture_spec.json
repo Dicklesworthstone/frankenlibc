@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "bead": "bd-3jh",
-  "description": "C fixture suite specification for frankenlibc LD_PRELOAD integration testing. Defines required fixtures, covered APIs, compilation requirements, and execution modes.",
+  "description": "C fixture suite specification for frankenlibc LD_PRELOAD integration testing. Defines required fixtures, covered APIs, compilation requirements, execution modes, and bd-15n.2 traceability expectations.",
   "fixtures": [
     {
       "id": "fixture_malloc",
@@ -36,12 +36,79 @@
     {
       "id": "fixture_pthread",
       "source": "tests/integration/fixture_pthread.c",
-      "description": "Threading: pthread_mutex_init/destroy/lock/unlock/trylock, pthread_create/join, pthread_self/equal.",
+      "description": "Threading: pthread mutex common + adversarial paths (destroy-while-locked, unlock-without-lock), pthread_create/join, pthread_self/equal.",
       "covered_symbols": ["pthread_mutex_init", "pthread_mutex_destroy", "pthread_mutex_lock", "pthread_mutex_unlock", "pthread_mutex_trylock", "pthread_create", "pthread_join", "pthread_self", "pthread_equal"],
       "covered_modules": ["pthread_abi"],
-      "tests": 5,
+      "tests": 7,
       "compile_flags": ["-O2", "-Wall", "-Wextra"],
       "link_flags": ["-pthread"]
+    },
+    {
+      "id": "fixture_pthread_mutex_adversarial",
+      "source": "tests/integration/fixture_pthread_mutex_adversarial.c",
+      "description": "Threading: deterministic mutex-only adversarial/error paths for strict+hardened fixture evidence.",
+      "covered_symbols": ["pthread_mutex_init", "pthread_mutex_destroy", "pthread_mutex_lock", "pthread_mutex_unlock", "pthread_mutex_trylock"],
+      "covered_modules": ["pthread_abi"],
+      "tests": 4,
+      "compile_flags": ["-O2", "-Wall", "-Wextra"],
+      "link_flags": ["-pthread"]
+    },
+    {
+      "id": "fixture_ctype",
+      "source": "tests/integration/fixture_ctype.c",
+      "description": "Character classification and case-mapping semantics for critical uncovered ctype APIs.",
+      "covered_symbols": ["isalnum", "isalpha", "isdigit", "islower", "isprint", "ispunct", "isspace", "isupper", "isxdigit", "tolower", "toupper"],
+      "covered_modules": ["ctype_abi"],
+      "tests": 2,
+      "compile_flags": ["-O2", "-Wall", "-Wextra"],
+      "link_flags": [],
+      "spec_traceability": {
+        "posix": ["POSIX.1-2017 <ctype.h>: isalpha/isupper/islower/isdigit/isxdigit/isspace/isprint/ispunct/isalnum and tolower/toupper behavior"],
+        "c11": ["ISO C11 §7.4 Character handling <ctype.h> contracts"],
+        "internal": ["FrankenLibC strict/hardened fixture parity contract for valid ctype input domain"]
+      },
+      "mode_expectations": {
+        "strict": {"expected_exit": 0, "expected_stdout_contains": "fixture_ctype: PASS"},
+        "hardened": {"expected_exit": 0, "expected_stdout_contains": "fixture_ctype: PASS"}
+      }
+    },
+    {
+      "id": "fixture_math",
+      "source": "tests/integration/fixture_math.c",
+      "description": "Floating-point trig/exp-log/rounding semantics for critical uncovered math APIs.",
+      "covered_symbols": ["sin", "cos", "exp", "log", "floor", "ceil", "fmod"],
+      "covered_modules": ["math_abi"],
+      "tests": 3,
+      "compile_flags": ["-O2", "-Wall", "-Wextra"],
+      "link_flags": ["-lm"],
+      "spec_traceability": {
+        "posix": ["POSIX.1-2017 <math.h>: sin/cos/exp/log/floor/ceil/fmod contracts"],
+        "c11": ["ISO C11 §7.12 Mathematics <math.h> function semantics"],
+        "internal": ["FrankenLibC strict/hardened fixture parity contract for deterministic finite math inputs"]
+      },
+      "mode_expectations": {
+        "strict": {"expected_exit": 0, "expected_stdout_contains": "fixture_math: PASS"},
+        "hardened": {"expected_exit": 0, "expected_stdout_contains": "fixture_math: PASS"}
+      }
+    },
+    {
+      "id": "fixture_socket",
+      "source": "tests/integration/fixture_socket.c",
+      "description": "Socket API validity + EBADF error-surface semantics for critical uncovered socket APIs.",
+      "covered_symbols": ["socket", "getsockopt", "bind", "send", "recv", "shutdown"],
+      "covered_modules": ["socket_abi"],
+      "tests": 2,
+      "compile_flags": ["-O2", "-Wall", "-Wextra"],
+      "link_flags": [],
+      "spec_traceability": {
+        "posix": ["POSIX.1-2017 sockets: socket/bind/send/recv/shutdown and getsockopt(SO_TYPE) behavior"],
+        "c11": ["ISO C11 interoperability expectations at C ABI boundary for network syscalls"],
+        "internal": ["FrankenLibC strict/hardened fixture parity contract for valid socket setup and invalid-fd EBADF paths"]
+      },
+      "mode_expectations": {
+        "strict": {"expected_exit": 0, "expected_stdout_contains": "fixture_socket: PASS"},
+        "hardened": {"expected_exit": 0, "expected_stdout_contains": "fixture_socket: PASS"}
+      }
     },
     {
       "id": "fixture_startup",
@@ -64,17 +131,17 @@
     "output_dir": "target/c_fixture_suite/"
   },
   "coverage_summary": {
-    "total_fixtures": 5,
-    "total_tests": 25,
-    "covered_symbols": 27,
-    "covered_modules": ["malloc_abi", "string_abi", "unistd_abi", "pthread_abi", "startup_abi"],
-    "required_by_acceptance": ["malloc", "free", "realloc", "memcpy", "memmove", "strlen", "read", "write", "open", "close", "pthread_mutex_lock", "pthread_mutex_unlock", "pthread_mutex_init", "pthread_mutex_destroy", "pthread_mutex_trylock"]
+    "total_fixtures": 9,
+    "total_tests": 38,
+    "covered_symbols": 51,
+    "covered_modules": ["malloc_abi", "string_abi", "unistd_abi", "pthread_abi", "ctype_abi", "math_abi", "socket_abi", "startup_abi"],
+    "required_by_acceptance": ["malloc", "free", "realloc", "memcpy", "memmove", "strlen", "read", "write", "open", "close", "pthread_mutex_lock", "pthread_mutex_unlock", "pthread_mutex_init", "pthread_mutex_destroy", "pthread_mutex_trylock", "isalpha", "isdigit", "isspace", "tolower", "toupper", "sin", "cos", "exp", "log", "floor", "ceil", "fmod", "socket", "getsockopt", "bind", "send", "recv", "shutdown"]
   },
   "summary": {
-    "total_fixtures": 5,
-    "total_tests": 25,
-    "modules_covered": 5,
-    "symbols_covered": 27,
+    "total_fixtures": 9,
+    "total_tests": 38,
+    "modules_covered": 8,
+    "symbols_covered": 51,
     "execution_modes": 2
   }
 }

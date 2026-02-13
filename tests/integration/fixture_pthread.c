@@ -43,6 +43,37 @@ static int test_mutex_trylock(void) {
     return 0;
 }
 
+static int test_mutex_unlock_without_lock(void) {
+    pthread_mutex_t mtx = PTHREAD_MUTEX_INITIALIZER;
+    int rc = pthread_mutex_unlock(&mtx);
+    if (rc != EPERM) {
+        fprintf(stderr, "FAIL: unlock without lock rc=%d expected=%d\n", rc, EPERM);
+        pthread_mutex_destroy(&mtx);
+        return 1;
+    }
+    pthread_mutex_destroy(&mtx);
+    return 0;
+}
+
+static int test_mutex_destroy_while_locked(void) {
+    pthread_mutex_t mtx = PTHREAD_MUTEX_INITIALIZER;
+    if (pthread_mutex_lock(&mtx) != 0) {
+        fprintf(stderr, "FAIL: lock before destroy-while-locked\n");
+        pthread_mutex_destroy(&mtx);
+        return 1;
+    }
+    int rc = pthread_mutex_destroy(&mtx);
+    if (rc != EBUSY) {
+        fprintf(stderr, "FAIL: destroy while locked rc=%d expected=%d\n", rc, EBUSY);
+        pthread_mutex_unlock(&mtx);
+        pthread_mutex_destroy(&mtx);
+        return 1;
+    }
+    pthread_mutex_unlock(&mtx);
+    pthread_mutex_destroy(&mtx);
+    return 0;
+}
+
 /* Shared state for threaded test */
 static pthread_mutex_t g_mtx = PTHREAD_MUTEX_INITIALIZER;
 static volatile int g_counter = 0;
@@ -94,6 +125,8 @@ int main(void) {
     fails += test_mutex_init_destroy();
     fails += test_mutex_lock_unlock();
     fails += test_mutex_trylock();
+    fails += test_mutex_unlock_without_lock();
+    fails += test_mutex_destroy_while_locked();
     fails += test_mutex_contention();
     fails += test_pthread_self_equal();
 
@@ -103,6 +136,6 @@ int main(void) {
         fprintf(stderr, "fixture_pthread: %d FAILED\n", fails);
         return 1;
     }
-    printf("fixture_pthread: PASS (5 tests)\n");
+    printf("fixture_pthread: PASS (7 tests)\n");
     return 0;
 }

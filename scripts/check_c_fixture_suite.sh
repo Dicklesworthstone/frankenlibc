@@ -7,6 +7,7 @@
 #   3. Fixture spec covers required acceptance symbols.
 #   4. Covered modules reference valid support_matrix modules.
 #   5. Summary statistics are consistent.
+#   6. bd-15n.2 high-risk fixtures include traceability + strict/hardened expectations.
 #
 # This gate does NOT run fixtures under LD_PRELOAD (that's c_fixture_suite.sh).
 # It validates the fixture suite structure and spec.
@@ -107,15 +108,16 @@ if command -v cc >/dev/null 2>&1; then
     for src in "${ROOT}"/tests/integration/fixture_*.c; do
         name="$(basename "${src}" .c)"
         flags=""
-        if [[ "${name}" == "fixture_pthread" ]]; then
+        if [[ "${name}" == fixture_pthread* ]]; then
             flags="-pthread"
+        elif [[ "${name}" == "fixture_math" ]]; then
+            flags="-lm"
         fi
         if ! cc -O2 -Wall -Wextra "${src}" -o "${tmpdir}/${name}" ${flags} 2>/dev/null; then
             echo "FAIL: ${name} does not compile"
             compile_fails=$((compile_fails + 1))
         fi
     done
-    rm -rf "${tmpdir}"
 
     if [[ "${compile_fails}" -gt 0 ]]; then
         failures=$((failures + 1))
@@ -266,6 +268,66 @@ else
     echo "PASS: Summary statistics consistent"
 fi
 echo "${sum_check}" | grep -E '^Fixtures' || true
+echo ""
+
+# ---------------------------------------------------------------------------
+# Check 6: bd-15n.2 traceability + mode expectations
+# ---------------------------------------------------------------------------
+echo "--- Check 6: bd-15n.2 metadata (traceability + strict/hardened expectations) ---"
+
+trace_check=$(python3 -c "
+import json
+
+with open('${SPEC}') as f:
+    spec = json.load(f)
+
+required = {'fixture_ctype', 'fixture_math', 'fixture_socket'}
+by_id = {f.get('id'): f for f in spec.get('fixtures', []) if isinstance(f, dict)}
+errors = []
+
+for fid in sorted(required):
+    fixture = by_id.get(fid)
+    if fixture is None:
+        errors.append(f'missing fixture {fid}')
+        continue
+
+    traceability = fixture.get('spec_traceability')
+    if not isinstance(traceability, dict):
+        errors.append(f'{fid}: missing spec_traceability object')
+    else:
+        for key in ('posix', 'c11', 'internal'):
+            refs = traceability.get(key)
+            if not isinstance(refs, list) or not any(isinstance(x, str) and x.strip() for x in refs):
+                errors.append(f'{fid}: spec_traceability.{key} must include at least one non-empty reference')
+
+    mode_expectations = fixture.get('mode_expectations')
+    if not isinstance(mode_expectations, dict):
+        errors.append(f'{fid}: missing mode_expectations object')
+    else:
+        for mode in ('strict', 'hardened'):
+            entry = mode_expectations.get(mode)
+            if not isinstance(entry, dict):
+                errors.append(f'{fid}: mode_expectations.{mode} missing')
+                continue
+            if entry.get('expected_exit') != 0:
+                errors.append(f'{fid}: mode_expectations.{mode}.expected_exit must be 0')
+            marker = entry.get('expected_stdout_contains')
+            if not isinstance(marker, str) or not marker.strip():
+                errors.append(f'{fid}: mode_expectations.{mode}.expected_stdout_contains missing')
+
+print(f'TRACE_ERRORS={len(errors)}')
+for e in errors:
+    print(f'  {e}')
+")
+
+trace_errs=$(echo "${trace_check}" | grep '^TRACE_ERRORS=' | cut -d= -f2)
+if [[ "${trace_errs}" -gt 0 ]]; then
+    echo "FAIL: ${trace_errs} metadata error(s):"
+    echo "${trace_check}" | grep '  '
+    failures=$((failures + 1))
+else
+    echo "PASS: bd-15n.2 fixtures carry traceability + mode expectations"
+fi
 echo ""
 
 # ---------------------------------------------------------------------------

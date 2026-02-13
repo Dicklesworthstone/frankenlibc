@@ -73,7 +73,7 @@
       "function": "elf_hash",
       "spec_section": "ELF Hash",
       "inputs": { "name": "malloc" },
-      "expected_output": 121835347,
+      "expected_output": 121123667,
       "expected_hex": "0x07383353",
       "mode": "strict"
     },

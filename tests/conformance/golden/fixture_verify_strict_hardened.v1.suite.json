@@ -1,7 +1,7 @@
 {
   "runtime_name": "frankenlibc-harness:fixture-verify",
-  "total": 91,
-  "passed": 91,
+  "total": 123,
+  "passed": 123,
   "failed": 0,
   "skipped": 0,
   "duration_ms": 3,
@@ -400,6 +400,1357 @@
             "inputs": {
               "ptr_val": 0,
               "size": 32
+            }
+          }
+        }
+      ]
+    },
+    {
+      "test_id": "fixture-verify::elf/loader::Elf64Header::parse::strict::invalid_elf_magic",
+      "test_name": "invalid_elf_magic",
+      "category": "IO",
+      "expected": "Err(InvalidMagic)",
+      "result": {
+        "passed": true,
+        "message": null,
+        "checkpoints": [
+          {
+            "name": "meta",
+            "data": {
+              "case": "invalid_elf_magic",
+              "family": "elf/loader",
+              "function": "Elf64Header::parse",
+              "mode": "strict",
+              "spec_section": "ELF64 Header",
+              "trace_id": "fixture-verify::elf/loader::Elf64Header::parse::strict::invalid_elf_magic"
+            }
+          },
+          {
+            "name": "inputs",
+            "data": {
+              "expected_errno": 0,
+              "inputs": {
+                "magic": [
+                  0,
+                  0,
+                  0,
+                  0
+                ]
+              }
+            }
+          },
+          {
+            "name": "execution",
+            "data": {
+              "diff": null,
+              "host_output": "SKIP",
+              "host_parity": true,
+              "impl_output": "Err(InvalidMagic)",
+              "note": null,
+              "notes": []
+            }
+          }
+        ],
+        "duration_ms": 0
+      },
+      "events": [
+        {
+          "kind": "Phase",
+          "name": "execute",
+          "timestamp_ms": 0,
+          "details": null
+        },
+        {
+          "kind": "Checkpoint",
+          "name": "fixture.meta",
+          "timestamp_ms": 0,
+          "details": {
+            "campaign": "fixture-verify",
+            "case": "invalid_elf_magic",
+            "family": "elf/loader",
+            "function": "Elf64Header::parse",
+            "mode": "strict",
+            "spec_section": "ELF64 Header",
+            "trace_id": "fixture-verify::elf/loader::Elf64Header::parse::strict::invalid_elf_magic"
+          }
+        },
+        {
+          "kind": "Checkpoint",
+          "name": "fixture.inputs",
+          "timestamp_ms": 0,
+          "details": {
+            "expected_errno": 0,
+            "inputs": {
+              "magic": [
+                0,
+                0,
+                0,
+                0
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "test_id": "fixture-verify::elf/loader::Elf64Header::parse::strict::valid_elf_magic",
+      "test_name": "valid_elf_magic",
+      "category": "IO",
+      "expected": "Ok",
+      "result": {
+        "passed": true,
+        "message": null,
+        "checkpoints": [
+          {
+            "name": "meta",
+            "data": {
+              "case": "valid_elf_magic",
+              "family": "elf/loader",
+              "function": "Elf64Header::parse",
+              "mode": "strict",
+              "spec_section": "ELF64 Header",
+              "trace_id": "fixture-verify::elf/loader::Elf64Header::parse::strict::valid_elf_magic"
+            }
+          },
+          {
+            "name": "inputs",
+            "data": {
+              "expected_errno": 0,
+              "inputs": {
+                "magic": [
+                  127,
+                  69,
+                  76,
+                  70
+                ]
+              }
+            }
+          },
+          {
+            "name": "execution",
+            "data": {
+              "diff": null,
+              "host_output": "SKIP",
+              "host_parity": true,
+              "impl_output": "Ok",
+              "note": null,
+              "notes": []
+            }
+          }
+        ],
+        "duration_ms": 0
+      },
+      "events": [
+        {
+          "kind": "Phase",
+          "name": "execute",
+          "timestamp_ms": 0,
+          "details": null
+        },
+        {
+          "kind": "Checkpoint",
+          "name": "fixture.meta",
+          "timestamp_ms": 0,
+          "details": {
+            "campaign": "fixture-verify",
+            "case": "valid_elf_magic",
+            "family": "elf/loader",
+            "function": "Elf64Header::parse",
+            "mode": "strict",
+            "spec_section": "ELF64 Header",
+            "trace_id": "fixture-verify::elf/loader::Elf64Header::parse::strict::valid_elf_magic"
+          }
+        },
+        {
+          "kind": "Checkpoint",
+          "name": "fixture.inputs",
+          "timestamp_ms": 0,
+          "details": {
+            "expected_errno": 0,
+            "inputs": {
+              "magic": [
+                127,
+                69,
+                76,
+                70
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "test_id": "fixture-verify::elf/loader::ProgramFlags::to_mmap_prot::strict::program_flags_ro",
+      "test_name": "program_flags_ro",
+      "category": "IO",
+      "expected": "1",
+      "result": {
+        "passed": true,
+        "message": null,
+        "checkpoints": [
+          {
+            "name": "meta",
+            "data": {
+              "case": "program_flags_ro",
+              "family": "elf/loader",
+              "function": "ProgramFlags::to_mmap_prot",
+              "mode": "strict",
+              "spec_section": "ELF Program Header",
+              "trace_id": "fixture-verify::elf/loader::ProgramFlags::to_mmap_prot::strict::program_flags_ro"
+            }
+          },
+          {
+            "name": "inputs",
+            "data": {
+              "expected_errno": 0,
+              "inputs": {
+                "flags": 4
+              }
+            }
+          },
+          {
+            "name": "execution",
+            "data": {
+              "diff": null,
+              "host_output": "SKIP",
+              "host_parity": true,
+              "impl_output": "1",
+              "note": null,
+              "notes": []
+            }
+          }
+        ],
+        "duration_ms": 0
+      },
+      "events": [
+        {
+          "kind": "Phase",
+          "name": "execute",
+          "timestamp_ms": 0,
+          "details": null
+        },
+        {
+          "kind": "Checkpoint",
+          "name": "fixture.meta",
+          "timestamp_ms": 0,
+          "details": {
+            "campaign": "fixture-verify",
+            "case": "program_flags_ro",
+            "family": "elf/loader",
+            "function": "ProgramFlags::to_mmap_prot",
+            "mode": "strict",
+            "spec_section": "ELF Program Header",
+            "trace_id": "fixture-verify::elf/loader::ProgramFlags::to_mmap_prot::strict::program_flags_ro"
+          }
+        },
+        {
+          "kind": "Checkpoint",
+          "name": "fixture.inputs",
+          "timestamp_ms": 0,
+          "details": {
+            "expected_errno": 0,
+            "inputs": {
+              "flags": 4
+            }
+          }
+        }
+      ]
+    },
+    {
+      "test_id": "fixture-verify::elf/loader::ProgramFlags::to_mmap_prot::strict::program_flags_rwx",
+      "test_name": "program_flags_rwx",
+      "category": "IO",
+      "expected": "7",
+      "result": {
+        "passed": true,
+        "message": null,
+        "checkpoints": [
+          {
+            "name": "meta",
+            "data": {
+              "case": "program_flags_rwx",
+              "family": "elf/loader",
+              "function": "ProgramFlags::to_mmap_prot",
+              "mode": "strict",
+              "spec_section": "ELF Program Header",
+              "trace_id": "fixture-verify::elf/loader::ProgramFlags::to_mmap_prot::strict::program_flags_rwx"
+            }
+          },
+          {
+            "name": "inputs",
+            "data": {
+              "expected_errno": 0,
+              "inputs": {
+                "flags": 7
+              }
+            }
+          },
+          {
+            "name": "execution",
+            "data": {
+              "diff": null,
+              "host_output": "SKIP",
+              "host_parity": true,
+              "impl_output": "7",
+              "note": null,
+              "notes": []
+            }
+          }
+        ],
+        "duration_ms": 0
+      },
+      "events": [
+        {
+          "kind": "Phase",
+          "name": "execute",
+          "timestamp_ms": 0,
+          "details": null
+        },
+        {
+          "kind": "Checkpoint",
+          "name": "fixture.meta",
+          "timestamp_ms": 0,
+          "details": {
+            "campaign": "fixture-verify",
+            "case": "program_flags_rwx",
+            "family": "elf/loader",
+            "function": "ProgramFlags::to_mmap_prot",
+            "mode": "strict",
+            "spec_section": "ELF Program Header",
+            "trace_id": "fixture-verify::elf/loader::ProgramFlags::to_mmap_prot::strict::program_flags_rwx"
+          }
+        },
+        {
+          "kind": "Checkpoint",
+          "name": "fixture.inputs",
+          "timestamp_ms": 0,
+          "details": {
+            "expected_errno": 0,
+            "inputs": {
+              "flags": 7
+            }
+          }
+        }
+      ]
+    },
+    {
+      "test_id": "fixture-verify::elf/loader::SymbolBinding::from::strict::symbol_binding_global",
+      "test_name": "symbol_binding_global",
+      "category": "IO",
+      "expected": "Global",
+      "result": {
+        "passed": true,
+        "message": null,
+        "checkpoints": [
+          {
+            "name": "meta",
+            "data": {
+              "case": "symbol_binding_global",
+              "family": "elf/loader",
+              "function": "SymbolBinding::from",
+              "mode": "strict",
+              "spec_section": "ELF Symbol Table",
+              "trace_id": "fixture-verify::elf/loader::SymbolBinding::from::strict::symbol_binding_global"
+            }
+          },
+          {
+            "name": "inputs",
+            "data": {
+              "expected_errno": 0,
+              "inputs": {
+                "st_info_binding": 1
+              }
+            }
+          },
+          {
+            "name": "execution",
+            "data": {
+              "diff": null,
+              "host_output": "SKIP",
+              "host_parity": true,
+              "impl_output": "Global",
+              "note": null,
+              "notes": []
+            }
+          }
+        ],
+        "duration_ms": 0
+      },
+      "events": [
+        {
+          "kind": "Phase",
+          "name": "execute",
+          "timestamp_ms": 0,
+          "details": null
+        },
+        {
+          "kind": "Checkpoint",
+          "name": "fixture.meta",
+          "timestamp_ms": 0,
+          "details": {
+            "campaign": "fixture-verify",
+            "case": "symbol_binding_global",
+            "family": "elf/loader",
+            "function": "SymbolBinding::from",
+            "mode": "strict",
+            "spec_section": "ELF Symbol Table",
+            "trace_id": "fixture-verify::elf/loader::SymbolBinding::from::strict::symbol_binding_global"
+          }
+        },
+        {
+          "kind": "Checkpoint",
+          "name": "fixture.inputs",
+          "timestamp_ms": 0,
+          "details": {
+            "expected_errno": 0,
+            "inputs": {
+              "st_info_binding": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "test_id": "fixture-verify::elf/loader::SymbolBinding::from::strict::symbol_binding_local",
+      "test_name": "symbol_binding_local",
+      "category": "IO",
+      "expected": "Local",
+      "result": {
+        "passed": true,
+        "message": null,
+        "checkpoints": [
+          {
+            "name": "meta",
+            "data": {
+              "case": "symbol_binding_local",
+              "family": "elf/loader",
+              "function": "SymbolBinding::from",
+              "mode": "strict",
+              "spec_section": "ELF Symbol Table",
+              "trace_id": "fixture-verify::elf/loader::SymbolBinding::from::strict::symbol_binding_local"
+            }
+          },
+          {
+            "name": "inputs",
+            "data": {
+              "expected_errno": 0,
+              "inputs": {
+                "st_info_binding": 0
+              }
+            }
+          },
+          {
+            "name": "execution",
+            "data": {
+              "diff": null,
+              "host_output": "SKIP",
+              "host_parity": true,
+              "impl_output": "Local",
+              "note": null,
+              "notes": []
+            }
+          }
+        ],
+        "duration_ms": 0
+      },
+      "events": [
+        {
+          "kind": "Phase",
+          "name": "execute",
+          "timestamp_ms": 0,
+          "details": null
+        },
+        {
+          "kind": "Checkpoint",
+          "name": "fixture.meta",
+          "timestamp_ms": 0,
+          "details": {
+            "campaign": "fixture-verify",
+            "case": "symbol_binding_local",
+            "family": "elf/loader",
+            "function": "SymbolBinding::from",
+            "mode": "strict",
+            "spec_section": "ELF Symbol Table",
+            "trace_id": "fixture-verify::elf/loader::SymbolBinding::from::strict::symbol_binding_local"
+          }
+        },
+        {
+          "kind": "Checkpoint",
+          "name": "fixture.inputs",
+          "timestamp_ms": 0,
+          "details": {
+            "expected_errno": 0,
+            "inputs": {
+              "st_info_binding": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "test_id": "fixture-verify::elf/loader::SymbolBinding::from::strict::symbol_binding_weak",
+      "test_name": "symbol_binding_weak",
+      "category": "IO",
+      "expected": "Weak",
+      "result": {
+        "passed": true,
+        "message": null,
+        "checkpoints": [
+          {
+            "name": "meta",
+            "data": {
+              "case": "symbol_binding_weak",
+              "family": "elf/loader",
+              "function": "SymbolBinding::from",
+              "mode": "strict",
+              "spec_section": "ELF Symbol Table",
+              "trace_id": "fixture-verify::elf/loader::SymbolBinding::from::strict::symbol_binding_weak"
+            }
+          },
+          {
+            "name": "inputs",
+            "data": {
+              "expected_errno": 0,
+              "inputs": {
+                "st_info_binding": 2
+              }
+            }
+          },
+          {
+            "name": "execution",
+            "data": {
+              "diff": null,
+              "host_output": "SKIP",
+              "host_parity": true,
+              "impl_output": "Weak",
+              "note": null,
+              "notes": []
+            }
+          }
+        ],
+        "duration_ms": 0
+      },
+      "events": [
+        {
+          "kind": "Phase",
+          "name": "execute",
+          "timestamp_ms": 0,
+          "details": null
+        },
+        {
+          "kind": "Checkpoint",
+          "name": "fixture.meta",
+          "timestamp_ms": 0,
+          "details": {
+            "campaign": "fixture-verify",
+            "case": "symbol_binding_weak",
+            "family": "elf/loader",
+            "function": "SymbolBinding::from",
+            "mode": "strict",
+            "spec_section": "ELF Symbol Table",
+            "trace_id": "fixture-verify::elf/loader::SymbolBinding::from::strict::symbol_binding_weak"
+          }
+        },
+        {
+          "kind": "Checkpoint",
+          "name": "fixture.inputs",
+          "timestamp_ms": 0,
+          "details": {
+            "expected_errno": 0,
+            "inputs": {
+              "st_info_binding": 2
+            }
+          }
+        }
+      ]
+    },
+    {
+      "test_id": "fixture-verify::elf/loader::SymbolType::from::strict::symbol_type_func",
+      "test_name": "symbol_type_func",
+      "category": "IO",
+      "expected": "Func",
+      "result": {
+        "passed": true,
+        "message": null,
+        "checkpoints": [
+          {
+            "name": "meta",
+            "data": {
+              "case": "symbol_type_func",
+              "family": "elf/loader",
+              "function": "SymbolType::from",
+              "mode": "strict",
+              "spec_section": "ELF Symbol Table",
+              "trace_id": "fixture-verify::elf/loader::SymbolType::from::strict::symbol_type_func"
+            }
+          },
+          {
+            "name": "inputs",
+            "data": {
+              "expected_errno": 0,
+              "inputs": {
+                "st_info_type": 2
+              }
+            }
+          },
+          {
+            "name": "execution",
+            "data": {
+              "diff": null,
+              "host_output": "SKIP",
+              "host_parity": true,
+              "impl_output": "Func",
+              "note": null,
+              "notes": []
+            }
+          }
+        ],
+        "duration_ms": 0
+      },
+      "events": [
+        {
+          "kind": "Phase",
+          "name": "execute",
+          "timestamp_ms": 0,
+          "details": null
+        },
+        {
+          "kind": "Checkpoint",
+          "name": "fixture.meta",
+          "timestamp_ms": 0,
+          "details": {
+            "campaign": "fixture-verify",
+            "case": "symbol_type_func",
+            "family": "elf/loader",
+            "function": "SymbolType::from",
+            "mode": "strict",
+            "spec_section": "ELF Symbol Table",
+            "trace_id": "fixture-verify::elf/loader::SymbolType::from::strict::symbol_type_func"
+          }
+        },
+        {
+          "kind": "Checkpoint",
+          "name": "fixture.inputs",
+          "timestamp_ms": 0,
+          "details": {
+            "expected_errno": 0,
+            "inputs": {
+              "st_info_type": 2
+            }
+          }
+        }
+      ]
+    },
+    {
+      "test_id": "fixture-verify::elf/loader::SymbolType::from::strict::symbol_type_object",
+      "test_name": "symbol_type_object",
+      "category": "IO",
+      "expected": "Object",
+      "result": {
+        "passed": true,
+        "message": null,
+        "checkpoints": [
+          {
+            "name": "meta",
+            "data": {
+              "case": "symbol_type_object",
+              "family": "elf/loader",
+              "function": "SymbolType::from",
+              "mode": "strict",
+              "spec_section": "ELF Symbol Table",
+              "trace_id": "fixture-verify::elf/loader::SymbolType::from::strict::symbol_type_object"
+            }
+          },
+          {
+            "name": "inputs",
+            "data": {
+              "expected_errno": 0,
+              "inputs": {
+                "st_info_type": 1
+              }
+            }
+          },
+          {
+            "name": "execution",
+            "data": {
+              "diff": null,
+              "host_output": "SKIP",
+              "host_parity": true,
+              "impl_output": "Object",
+              "note": null,
+              "notes": []
+            }
+          }
+        ],
+        "duration_ms": 0
+      },
+      "events": [
+        {
+          "kind": "Phase",
+          "name": "execute",
+          "timestamp_ms": 0,
+          "details": null
+        },
+        {
+          "kind": "Checkpoint",
+          "name": "fixture.meta",
+          "timestamp_ms": 0,
+          "details": {
+            "campaign": "fixture-verify",
+            "case": "symbol_type_object",
+            "family": "elf/loader",
+            "function": "SymbolType::from",
+            "mode": "strict",
+            "spec_section": "ELF Symbol Table",
+            "trace_id": "fixture-verify::elf/loader::SymbolType::from::strict::symbol_type_object"
+          }
+        },
+        {
+          "kind": "Checkpoint",
+          "name": "fixture.inputs",
+          "timestamp_ms": 0,
+          "details": {
+            "expected_errno": 0,
+            "inputs": {
+              "st_info_type": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "test_id": "fixture-verify::elf/loader::compute_relocation::strict::reloc_r_x86_64_64",
+      "test_name": "reloc_r_x86_64_64",
+      "category": "IO",
+      "expected": "{\"size\":8,\"value\":4352}",
+      "result": {
+        "passed": true,
+        "message": null,
+        "checkpoints": [
+          {
+            "name": "meta",
+            "data": {
+              "case": "reloc_r_x86_64_64",
+              "family": "elf/loader",
+              "function": "compute_relocation",
+              "mode": "strict",
+              "spec_section": "x86_64 Relocations",
+              "trace_id": "fixture-verify::elf/loader::compute_relocation::strict::reloc_r_x86_64_64"
+            }
+          },
+          {
+            "name": "inputs",
+            "data": {
+              "expected_errno": 0,
+              "inputs": {
+                "addend": 256,
+                "base": 8388608,
+                "symbol_value": 4096,
+                "type": 1
+              }
+            }
+          },
+          {
+            "name": "execution",
+            "data": {
+              "diff": null,
+              "host_output": "SKIP",
+              "host_parity": true,
+              "impl_output": "{\"size\":8,\"value\":4352}",
+              "note": null,
+              "notes": []
+            }
+          }
+        ],
+        "duration_ms": 0
+      },
+      "events": [
+        {
+          "kind": "Phase",
+          "name": "execute",
+          "timestamp_ms": 0,
+          "details": null
+        },
+        {
+          "kind": "Checkpoint",
+          "name": "fixture.meta",
+          "timestamp_ms": 0,
+          "details": {
+            "campaign": "fixture-verify",
+            "case": "reloc_r_x86_64_64",
+            "family": "elf/loader",
+            "function": "compute_relocation",
+            "mode": "strict",
+            "spec_section": "x86_64 Relocations",
+            "trace_id": "fixture-verify::elf/loader::compute_relocation::strict::reloc_r_x86_64_64"
+          }
+        },
+        {
+          "kind": "Checkpoint",
+          "name": "fixture.inputs",
+          "timestamp_ms": 0,
+          "details": {
+            "expected_errno": 0,
+            "inputs": {
+              "addend": 256,
+              "base": 8388608,
+              "symbol_value": 4096,
+              "type": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "test_id": "fixture-verify::elf/loader::compute_relocation::strict::reloc_r_x86_64_glob_dat",
+      "test_name": "reloc_r_x86_64_glob_dat",
+      "category": "IO",
+      "expected": "{\"size\":8,\"value\":139637976047616}",
+      "result": {
+        "passed": true,
+        "message": null,
+        "checkpoints": [
+          {
+            "name": "meta",
+            "data": {
+              "case": "reloc_r_x86_64_glob_dat",
+              "family": "elf/loader",
+              "function": "compute_relocation",
+              "mode": "strict",
+              "spec_section": "x86_64 Relocations",
+              "trace_id": "fixture-verify::elf/loader::compute_relocation::strict::reloc_r_x86_64_glob_dat"
+            }
+          },
+          {
+            "name": "inputs",
+            "data": {
+              "expected_errno": 0,
+              "inputs": {
+                "symbol_value": 139637976047616,
+                "type": 6
+              }
+            }
+          },
+          {
+            "name": "execution",
+            "data": {
+              "diff": null,
+              "host_output": "SKIP",
+              "host_parity": true,
+              "impl_output": "{\"size\":8,\"value\":139637976047616}",
+              "note": null,
+              "notes": []
+            }
+          }
+        ],
+        "duration_ms": 0
+      },
+      "events": [
+        {
+          "kind": "Phase",
+          "name": "execute",
+          "timestamp_ms": 0,
+          "details": null
+        },
+        {
+          "kind": "Checkpoint",
+          "name": "fixture.meta",
+          "timestamp_ms": 0,
+          "details": {
+            "campaign": "fixture-verify",
+            "case": "reloc_r_x86_64_glob_dat",
+            "family": "elf/loader",
+            "function": "compute_relocation",
+            "mode": "strict",
+            "spec_section": "x86_64 Relocations",
+            "trace_id": "fixture-verify::elf/loader::compute_relocation::strict::reloc_r_x86_64_glob_dat"
+          }
+        },
+        {
+          "kind": "Checkpoint",
+          "name": "fixture.inputs",
+          "timestamp_ms": 0,
+          "details": {
+            "expected_errno": 0,
+            "inputs": {
+              "symbol_value": 139637976047616,
+              "type": 6
+            }
+          }
+        }
+      ]
+    },
+    {
+      "test_id": "fixture-verify::elf/loader::compute_relocation::strict::reloc_r_x86_64_jump_slot",
+      "test_name": "reloc_r_x86_64_jump_slot",
+      "category": "IO",
+      "expected": "{\"size\":8,\"value\":139637976047616}",
+      "result": {
+        "passed": true,
+        "message": null,
+        "checkpoints": [
+          {
+            "name": "meta",
+            "data": {
+              "case": "reloc_r_x86_64_jump_slot",
+              "family": "elf/loader",
+              "function": "compute_relocation",
+              "mode": "strict",
+              "spec_section": "x86_64 Relocations",
+              "trace_id": "fixture-verify::elf/loader::compute_relocation::strict::reloc_r_x86_64_jump_slot"
+            }
+          },
+          {
+            "name": "inputs",
+            "data": {
+              "expected_errno": 0,
+              "inputs": {
+                "symbol_value": 139637976047616,
+                "type": 7
+              }
+            }
+          },
+          {
+            "name": "execution",
+            "data": {
+              "diff": null,
+              "host_output": "SKIP",
+              "host_parity": true,
+              "impl_output": "{\"size\":8,\"value\":139637976047616}",
+              "note": null,
+              "notes": []
+            }
+          }
+        ],
+        "duration_ms": 0
+      },
+      "events": [
+        {
+          "kind": "Phase",
+          "name": "execute",
+          "timestamp_ms": 0,
+          "details": null
+        },
+        {
+          "kind": "Checkpoint",
+          "name": "fixture.meta",
+          "timestamp_ms": 0,
+          "details": {
+            "campaign": "fixture-verify",
+            "case": "reloc_r_x86_64_jump_slot",
+            "family": "elf/loader",
+            "function": "compute_relocation",
+            "mode": "strict",
+            "spec_section": "x86_64 Relocations",
+            "trace_id": "fixture-verify::elf/loader::compute_relocation::strict::reloc_r_x86_64_jump_slot"
+          }
+        },
+        {
+          "kind": "Checkpoint",
+          "name": "fixture.inputs",
+          "timestamp_ms": 0,
+          "details": {
+            "expected_errno": 0,
+            "inputs": {
+              "symbol_value": 139637976047616,
+              "type": 7
+            }
+          }
+        }
+      ]
+    },
+    {
+      "test_id": "fixture-verify::elf/loader::compute_relocation::strict::reloc_r_x86_64_none",
+      "test_name": "reloc_r_x86_64_none",
+      "category": "IO",
+      "expected": "Skipped",
+      "result": {
+        "passed": true,
+        "message": null,
+        "checkpoints": [
+          {
+            "name": "meta",
+            "data": {
+              "case": "reloc_r_x86_64_none",
+              "family": "elf/loader",
+              "function": "compute_relocation",
+              "mode": "strict",
+              "spec_section": "x86_64 Relocations",
+              "trace_id": "fixture-verify::elf/loader::compute_relocation::strict::reloc_r_x86_64_none"
+            }
+          },
+          {
+            "name": "inputs",
+            "data": {
+              "expected_errno": 0,
+              "inputs": {
+                "addend": 0,
+                "base": 0,
+                "symbol_value": 0,
+                "type": 0
+              }
+            }
+          },
+          {
+            "name": "execution",
+            "data": {
+              "diff": null,
+              "host_output": "SKIP",
+              "host_parity": true,
+              "impl_output": "Skipped",
+              "note": null,
+              "notes": []
+            }
+          }
+        ],
+        "duration_ms": 0
+      },
+      "events": [
+        {
+          "kind": "Phase",
+          "name": "execute",
+          "timestamp_ms": 0,
+          "details": null
+        },
+        {
+          "kind": "Checkpoint",
+          "name": "fixture.meta",
+          "timestamp_ms": 0,
+          "details": {
+            "campaign": "fixture-verify",
+            "case": "reloc_r_x86_64_none",
+            "family": "elf/loader",
+            "function": "compute_relocation",
+            "mode": "strict",
+            "spec_section": "x86_64 Relocations",
+            "trace_id": "fixture-verify::elf/loader::compute_relocation::strict::reloc_r_x86_64_none"
+          }
+        },
+        {
+          "kind": "Checkpoint",
+          "name": "fixture.inputs",
+          "timestamp_ms": 0,
+          "details": {
+            "expected_errno": 0,
+            "inputs": {
+              "addend": 0,
+              "base": 0,
+              "symbol_value": 0,
+              "type": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "test_id": "fixture-verify::elf/loader::compute_relocation::strict::reloc_r_x86_64_relative",
+      "test_name": "reloc_r_x86_64_relative",
+      "category": "IO",
+      "expected": "{\"size\":8,\"value\":139637976055808}",
+      "result": {
+        "passed": true,
+        "message": null,
+        "checkpoints": [
+          {
+            "name": "meta",
+            "data": {
+              "case": "reloc_r_x86_64_relative",
+              "family": "elf/loader",
+              "function": "compute_relocation",
+              "mode": "strict",
+              "spec_section": "x86_64 Relocations",
+              "trace_id": "fixture-verify::elf/loader::compute_relocation::strict::reloc_r_x86_64_relative"
+            }
+          },
+          {
+            "name": "inputs",
+            "data": {
+              "expected_errno": 0,
+              "inputs": {
+                "addend": 8192,
+                "base": 139637976047616,
+                "symbol_value": 0,
+                "type": 8
+              }
+            }
+          },
+          {
+            "name": "execution",
+            "data": {
+              "diff": null,
+              "host_output": "SKIP",
+              "host_parity": true,
+              "impl_output": "{\"size\":8,\"value\":139637976055808}",
+              "note": null,
+              "notes": []
+            }
+          }
+        ],
+        "duration_ms": 0
+      },
+      "events": [
+        {
+          "kind": "Phase",
+          "name": "execute",
+          "timestamp_ms": 0,
+          "details": null
+        },
+        {
+          "kind": "Checkpoint",
+          "name": "fixture.meta",
+          "timestamp_ms": 0,
+          "details": {
+            "campaign": "fixture-verify",
+            "case": "reloc_r_x86_64_relative",
+            "family": "elf/loader",
+            "function": "compute_relocation",
+            "mode": "strict",
+            "spec_section": "x86_64 Relocations",
+            "trace_id": "fixture-verify::elf/loader::compute_relocation::strict::reloc_r_x86_64_relative"
+          }
+        },
+        {
+          "kind": "Checkpoint",
+          "name": "fixture.inputs",
+          "timestamp_ms": 0,
+          "details": {
+            "expected_errno": 0,
+            "inputs": {
+              "addend": 8192,
+              "base": 139637976047616,
+              "symbol_value": 0,
+              "type": 8
+            }
+          }
+        }
+      ]
+    },
+    {
+      "test_id": "fixture-verify::elf/loader::elf_hash::strict::elf_hash_empty",
+      "test_name": "elf_hash_empty",
+      "category": "IO",
+      "expected": "0",
+      "result": {
+        "passed": true,
+        "message": null,
+        "checkpoints": [
+          {
+            "name": "meta",
+            "data": {
+              "case": "elf_hash_empty",
+              "family": "elf/loader",
+              "function": "elf_hash",
+              "mode": "strict",
+              "spec_section": "ELF Hash",
+              "trace_id": "fixture-verify::elf/loader::elf_hash::strict::elf_hash_empty"
+            }
+          },
+          {
+            "name": "inputs",
+            "data": {
+              "expected_errno": 0,
+              "inputs": {
+                "name": ""
+              }
+            }
+          },
+          {
+            "name": "execution",
+            "data": {
+              "diff": null,
+              "host_output": "SKIP",
+              "host_parity": true,
+              "impl_output": "0",
+              "note": null,
+              "notes": []
+            }
+          }
+        ],
+        "duration_ms": 0
+      },
+      "events": [
+        {
+          "kind": "Phase",
+          "name": "execute",
+          "timestamp_ms": 0,
+          "details": null
+        },
+        {
+          "kind": "Checkpoint",
+          "name": "fixture.meta",
+          "timestamp_ms": 0,
+          "details": {
+            "campaign": "fixture-verify",
+            "case": "elf_hash_empty",
+            "family": "elf/loader",
+            "function": "elf_hash",
+            "mode": "strict",
+            "spec_section": "ELF Hash",
+            "trace_id": "fixture-verify::elf/loader::elf_hash::strict::elf_hash_empty"
+          }
+        },
+        {
+          "kind": "Checkpoint",
+          "name": "fixture.inputs",
+          "timestamp_ms": 0,
+          "details": {
+            "expected_errno": 0,
+            "inputs": {
+              "name": ""
+            }
+          }
+        }
+      ]
+    },
+    {
+      "test_id": "fixture-verify::elf/loader::elf_hash::strict::elf_hash_malloc",
+      "test_name": "elf_hash_malloc",
+      "category": "IO",
+      "expected": "121123667",
+      "result": {
+        "passed": true,
+        "message": null,
+        "checkpoints": [
+          {
+            "name": "meta",
+            "data": {
+              "case": "elf_hash_malloc",
+              "family": "elf/loader",
+              "function": "elf_hash",
+              "mode": "strict",
+              "spec_section": "ELF Hash",
+              "trace_id": "fixture-verify::elf/loader::elf_hash::strict::elf_hash_malloc"
+            }
+          },
+          {
+            "name": "inputs",
+            "data": {
+              "expected_errno": 0,
+              "inputs": {
+                "name": "malloc"
+              }
+            }
+          },
+          {
+            "name": "execution",
+            "data": {
+              "diff": null,
+              "host_output": "SKIP",
+              "host_parity": true,
+              "impl_output": "121123667",
+              "note": null,
+              "notes": []
+            }
+          }
+        ],
+        "duration_ms": 0
+      },
+      "events": [
+        {
+          "kind": "Phase",
+          "name": "execute",
+          "timestamp_ms": 0,
+          "details": null
+        },
+        {
+          "kind": "Checkpoint",
+          "name": "fixture.meta",
+          "timestamp_ms": 0,
+          "details": {
+            "campaign": "fixture-verify",
+            "case": "elf_hash_malloc",
+            "family": "elf/loader",
+            "function": "elf_hash",
+            "mode": "strict",
+            "spec_section": "ELF Hash",
+            "trace_id": "fixture-verify::elf/loader::elf_hash::strict::elf_hash_malloc"
+          }
+        },
+        {
+          "kind": "Checkpoint",
+          "name": "fixture.inputs",
+          "timestamp_ms": 0,
+          "details": {
+            "expected_errno": 0,
+            "inputs": {
+              "name": "malloc"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "test_id": "fixture-verify::elf/loader::gnu_hash::strict::gnu_hash_malloc",
+      "test_name": "gnu_hash_malloc",
+      "category": "IO",
+      "expected": "221883709",
+      "result": {
+        "passed": true,
+        "message": null,
+        "checkpoints": [
+          {
+            "name": "meta",
+            "data": {
+              "case": "gnu_hash_malloc",
+              "family": "elf/loader",
+              "function": "gnu_hash",
+              "mode": "strict",
+              "spec_section": "GNU Hash",
+              "trace_id": "fixture-verify::elf/loader::gnu_hash::strict::gnu_hash_malloc"
+            }
+          },
+          {
+            "name": "inputs",
+            "data": {
+              "expected_errno": 0,
+              "inputs": {
+                "name": "malloc"
+              }
+            }
+          },
+          {
+            "name": "execution",
+            "data": {
+              "diff": null,
+              "host_output": "SKIP",
+              "host_parity": true,
+              "impl_output": "221883709",
+              "note": null,
+              "notes": []
+            }
+          }
+        ],
+        "duration_ms": 0
+      },
+      "events": [
+        {
+          "kind": "Phase",
+          "name": "execute",
+          "timestamp_ms": 0,
+          "details": null
+        },
+        {
+          "kind": "Checkpoint",
+          "name": "fixture.meta",
+          "timestamp_ms": 0,
+          "details": {
+            "campaign": "fixture-verify",
+            "case": "gnu_hash_malloc",
+            "family": "elf/loader",
+            "function": "gnu_hash",
+            "mode": "strict",
+            "spec_section": "GNU Hash",
+            "trace_id": "fixture-verify::elf/loader::gnu_hash::strict::gnu_hash_malloc"
+          }
+        },
+        {
+          "kind": "Checkpoint",
+          "name": "fixture.inputs",
+          "timestamp_ms": 0,
+          "details": {
+            "expected_errno": 0,
+            "inputs": {
+              "name": "malloc"
             }
           }
         }
@@ -1425,6 +2776,1167 @@
           "timestamp_ms": 0,
           "details": {
             "diff": "strict mode leaves undefined behavior undefined"
+          }
+        }
+      ]
+    },
+    {
+      "test_id": "fixture-verify::resolv/dns::DnsHeader::new_query::strict::dns_header_query",
+      "test_name": "dns_header_query",
+      "category": "IO",
+      "expected": "{\"ancount\":0,\"arcount\":0,\"flags\":256,\"id\":4660,\"note\":\"flags=0x0100 means QR=0 (query), RD=1 (recursion desired)\",\"nscount\":0,\"qdcount\":1}",
+      "result": {
+        "passed": true,
+        "message": null,
+        "checkpoints": [
+          {
+            "name": "meta",
+            "data": {
+              "case": "dns_header_query",
+              "family": "resolv/dns",
+              "function": "DnsHeader::new_query",
+              "mode": "strict",
+              "spec_section": "RFC 1035 Section 4.1.1",
+              "trace_id": "fixture-verify::resolv/dns::DnsHeader::new_query::strict::dns_header_query"
+            }
+          },
+          {
+            "name": "inputs",
+            "data": {
+              "expected_errno": 0,
+              "inputs": {
+                "id": 4660
+              }
+            }
+          },
+          {
+            "name": "execution",
+            "data": {
+              "diff": null,
+              "host_output": "SKIP",
+              "host_parity": true,
+              "impl_output": "{\"ancount\":0,\"arcount\":0,\"flags\":256,\"id\":4660,\"note\":\"flags=0x0100 means QR=0 (query), RD=1 (recursion desired)\",\"nscount\":0,\"qdcount\":1}",
+              "note": null,
+              "notes": []
+            }
+          }
+        ],
+        "duration_ms": 0
+      },
+      "events": [
+        {
+          "kind": "Phase",
+          "name": "execute",
+          "timestamp_ms": 0,
+          "details": null
+        },
+        {
+          "kind": "Checkpoint",
+          "name": "fixture.meta",
+          "timestamp_ms": 0,
+          "details": {
+            "campaign": "fixture-verify",
+            "case": "dns_header_query",
+            "family": "resolv/dns",
+            "function": "DnsHeader::new_query",
+            "mode": "strict",
+            "spec_section": "RFC 1035 Section 4.1.1",
+            "trace_id": "fixture-verify::resolv/dns::DnsHeader::new_query::strict::dns_header_query"
+          }
+        },
+        {
+          "kind": "Checkpoint",
+          "name": "fixture.inputs",
+          "timestamp_ms": 0,
+          "details": {
+            "expected_errno": 0,
+            "inputs": {
+              "id": 4660
+            }
+          }
+        }
+      ]
+    },
+    {
+      "test_id": "fixture-verify::resolv/dns::ResolverConfig::default::strict::resolv_conf_default",
+      "test_name": "resolv_conf_default",
+      "category": "IO",
+      "expected": "{\"attempts\":2,\"nameservers\":[\"127.0.0.1\"],\"ndots\":1,\"timeout\":5}",
+      "result": {
+        "passed": true,
+        "message": null,
+        "checkpoints": [
+          {
+            "name": "meta",
+            "data": {
+              "case": "resolv_conf_default",
+              "family": "resolv/dns",
+              "function": "ResolverConfig::default",
+              "mode": "strict",
+              "spec_section": "resolver(5)",
+              "trace_id": "fixture-verify::resolv/dns::ResolverConfig::default::strict::resolv_conf_default"
+            }
+          },
+          {
+            "name": "inputs",
+            "data": {
+              "expected_errno": 0,
+              "inputs": {}
+            }
+          },
+          {
+            "name": "execution",
+            "data": {
+              "diff": null,
+              "host_output": "SKIP",
+              "host_parity": true,
+              "impl_output": "{\"attempts\":2,\"nameservers\":[\"127.0.0.1\"],\"ndots\":1,\"timeout\":5}",
+              "note": null,
+              "notes": []
+            }
+          }
+        ],
+        "duration_ms": 0
+      },
+      "events": [
+        {
+          "kind": "Phase",
+          "name": "execute",
+          "timestamp_ms": 0,
+          "details": null
+        },
+        {
+          "kind": "Checkpoint",
+          "name": "fixture.meta",
+          "timestamp_ms": 0,
+          "details": {
+            "campaign": "fixture-verify",
+            "case": "resolv_conf_default",
+            "family": "resolv/dns",
+            "function": "ResolverConfig::default",
+            "mode": "strict",
+            "spec_section": "resolver(5)",
+            "trace_id": "fixture-verify::resolv/dns::ResolverConfig::default::strict::resolv_conf_default"
+          }
+        },
+        {
+          "kind": "Checkpoint",
+          "name": "fixture.inputs",
+          "timestamp_ms": 0,
+          "details": {
+            "expected_errno": 0,
+            "inputs": {}
+          }
+        }
+      ]
+    },
+    {
+      "test_id": "fixture-verify::resolv/dns::ResolverConfig::parse::strict::resolv_conf_max_nameservers",
+      "test_name": "resolv_conf_max_nameservers",
+      "category": "IO",
+      "expected": "{\"nameservers\":[\"1.1.1.1\",\"2.2.2.2\",\"3.3.3.3\"],\"note\":\"Only first 3 nameservers are used per MAXNS\"}",
+      "result": {
+        "passed": true,
+        "message": null,
+        "checkpoints": [
+          {
+            "name": "meta",
+            "data": {
+              "case": "resolv_conf_max_nameservers",
+              "family": "resolv/dns",
+              "function": "ResolverConfig::parse",
+              "mode": "strict",
+              "spec_section": "resolver(5)",
+              "trace_id": "fixture-verify::resolv/dns::ResolverConfig::parse::strict::resolv_conf_max_nameservers"
+            }
+          },
+          {
+            "name": "inputs",
+            "data": {
+              "expected_errno": 0,
+              "inputs": {
+                "content": "nameserver 1.1.1.1\nnameserver 2.2.2.2\nnameserver 3.3.3.3\nnameserver 4.4.4.4\n"
+              }
+            }
+          },
+          {
+            "name": "execution",
+            "data": {
+              "diff": null,
+              "host_output": "SKIP",
+              "host_parity": true,
+              "impl_output": "{\"nameservers\":[\"1.1.1.1\",\"2.2.2.2\",\"3.3.3.3\"],\"note\":\"Only first 3 nameservers are used per MAXNS\"}",
+              "note": null,
+              "notes": []
+            }
+          }
+        ],
+        "duration_ms": 0
+      },
+      "events": [
+        {
+          "kind": "Phase",
+          "name": "execute",
+          "timestamp_ms": 0,
+          "details": null
+        },
+        {
+          "kind": "Checkpoint",
+          "name": "fixture.meta",
+          "timestamp_ms": 0,
+          "details": {
+            "campaign": "fixture-verify",
+            "case": "resolv_conf_max_nameservers",
+            "family": "resolv/dns",
+            "function": "ResolverConfig::parse",
+            "mode": "strict",
+            "spec_section": "resolver(5)",
+            "trace_id": "fixture-verify::resolv/dns::ResolverConfig::parse::strict::resolv_conf_max_nameservers"
+          }
+        },
+        {
+          "kind": "Checkpoint",
+          "name": "fixture.inputs",
+          "timestamp_ms": 0,
+          "details": {
+            "expected_errno": 0,
+            "inputs": {
+              "content": "nameserver 1.1.1.1\nnameserver 2.2.2.2\nnameserver 3.3.3.3\nnameserver 4.4.4.4\n"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "test_id": "fixture-verify::resolv/dns::ResolverConfig::parse::strict::resolv_conf_options_attempts",
+      "test_name": "resolv_conf_options_attempts",
+      "category": "IO",
+      "expected": "{\"attempts\":3}",
+      "result": {
+        "passed": true,
+        "message": null,
+        "checkpoints": [
+          {
+            "name": "meta",
+            "data": {
+              "case": "resolv_conf_options_attempts",
+              "family": "resolv/dns",
+              "function": "ResolverConfig::parse",
+              "mode": "strict",
+              "spec_section": "resolver(5)",
+              "trace_id": "fixture-verify::resolv/dns::ResolverConfig::parse::strict::resolv_conf_options_attempts"
+            }
+          },
+          {
+            "name": "inputs",
+            "data": {
+              "expected_errno": 0,
+              "inputs": {
+                "content": "options attempts:3\n"
+              }
+            }
+          },
+          {
+            "name": "execution",
+            "data": {
+              "diff": null,
+              "host_output": "SKIP",
+              "host_parity": true,
+              "impl_output": "{\"attempts\":3}",
+              "note": null,
+              "notes": []
+            }
+          }
+        ],
+        "duration_ms": 0
+      },
+      "events": [
+        {
+          "kind": "Phase",
+          "name": "execute",
+          "timestamp_ms": 0,
+          "details": null
+        },
+        {
+          "kind": "Checkpoint",
+          "name": "fixture.meta",
+          "timestamp_ms": 0,
+          "details": {
+            "campaign": "fixture-verify",
+            "case": "resolv_conf_options_attempts",
+            "family": "resolv/dns",
+            "function": "ResolverConfig::parse",
+            "mode": "strict",
+            "spec_section": "resolver(5)",
+            "trace_id": "fixture-verify::resolv/dns::ResolverConfig::parse::strict::resolv_conf_options_attempts"
+          }
+        },
+        {
+          "kind": "Checkpoint",
+          "name": "fixture.inputs",
+          "timestamp_ms": 0,
+          "details": {
+            "expected_errno": 0,
+            "inputs": {
+              "content": "options attempts:3\n"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "test_id": "fixture-verify::resolv/dns::ResolverConfig::parse::strict::resolv_conf_options_ndots",
+      "test_name": "resolv_conf_options_ndots",
+      "category": "IO",
+      "expected": "{\"ndots\":5}",
+      "result": {
+        "passed": true,
+        "message": null,
+        "checkpoints": [
+          {
+            "name": "meta",
+            "data": {
+              "case": "resolv_conf_options_ndots",
+              "family": "resolv/dns",
+              "function": "ResolverConfig::parse",
+              "mode": "strict",
+              "spec_section": "resolver(5)",
+              "trace_id": "fixture-verify::resolv/dns::ResolverConfig::parse::strict::resolv_conf_options_ndots"
+            }
+          },
+          {
+            "name": "inputs",
+            "data": {
+              "expected_errno": 0,
+              "inputs": {
+                "content": "options ndots:5\n"
+              }
+            }
+          },
+          {
+            "name": "execution",
+            "data": {
+              "diff": null,
+              "host_output": "SKIP",
+              "host_parity": true,
+              "impl_output": "{\"ndots\":5}",
+              "note": null,
+              "notes": []
+            }
+          }
+        ],
+        "duration_ms": 0
+      },
+      "events": [
+        {
+          "kind": "Phase",
+          "name": "execute",
+          "timestamp_ms": 0,
+          "details": null
+        },
+        {
+          "kind": "Checkpoint",
+          "name": "fixture.meta",
+          "timestamp_ms": 0,
+          "details": {
+            "campaign": "fixture-verify",
+            "case": "resolv_conf_options_ndots",
+            "family": "resolv/dns",
+            "function": "ResolverConfig::parse",
+            "mode": "strict",
+            "spec_section": "resolver(5)",
+            "trace_id": "fixture-verify::resolv/dns::ResolverConfig::parse::strict::resolv_conf_options_ndots"
+          }
+        },
+        {
+          "kind": "Checkpoint",
+          "name": "fixture.inputs",
+          "timestamp_ms": 0,
+          "details": {
+            "expected_errno": 0,
+            "inputs": {
+              "content": "options ndots:5\n"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "test_id": "fixture-verify::resolv/dns::ResolverConfig::parse::strict::resolv_conf_options_timeout",
+      "test_name": "resolv_conf_options_timeout",
+      "category": "IO",
+      "expected": "{\"timeout\":10}",
+      "result": {
+        "passed": true,
+        "message": null,
+        "checkpoints": [
+          {
+            "name": "meta",
+            "data": {
+              "case": "resolv_conf_options_timeout",
+              "family": "resolv/dns",
+              "function": "ResolverConfig::parse",
+              "mode": "strict",
+              "spec_section": "resolver(5)",
+              "trace_id": "fixture-verify::resolv/dns::ResolverConfig::parse::strict::resolv_conf_options_timeout"
+            }
+          },
+          {
+            "name": "inputs",
+            "data": {
+              "expected_errno": 0,
+              "inputs": {
+                "content": "options timeout:10\n"
+              }
+            }
+          },
+          {
+            "name": "execution",
+            "data": {
+              "diff": null,
+              "host_output": "SKIP",
+              "host_parity": true,
+              "impl_output": "{\"timeout\":10}",
+              "note": null,
+              "notes": []
+            }
+          }
+        ],
+        "duration_ms": 0
+      },
+      "events": [
+        {
+          "kind": "Phase",
+          "name": "execute",
+          "timestamp_ms": 0,
+          "details": null
+        },
+        {
+          "kind": "Checkpoint",
+          "name": "fixture.meta",
+          "timestamp_ms": 0,
+          "details": {
+            "campaign": "fixture-verify",
+            "case": "resolv_conf_options_timeout",
+            "family": "resolv/dns",
+            "function": "ResolverConfig::parse",
+            "mode": "strict",
+            "spec_section": "resolver(5)",
+            "trace_id": "fixture-verify::resolv/dns::ResolverConfig::parse::strict::resolv_conf_options_timeout"
+          }
+        },
+        {
+          "kind": "Checkpoint",
+          "name": "fixture.inputs",
+          "timestamp_ms": 0,
+          "details": {
+            "expected_errno": 0,
+            "inputs": {
+              "content": "options timeout:10\n"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "test_id": "fixture-verify::resolv/dns::ResolverConfig::parse::strict::resolv_conf_search_list",
+      "test_name": "resolv_conf_search_list",
+      "category": "IO",
+      "expected": "{\"search\":[\"example.com\",\"local.domain\"]}",
+      "result": {
+        "passed": true,
+        "message": null,
+        "checkpoints": [
+          {
+            "name": "meta",
+            "data": {
+              "case": "resolv_conf_search_list",
+              "family": "resolv/dns",
+              "function": "ResolverConfig::parse",
+              "mode": "strict",
+              "spec_section": "resolver(5)",
+              "trace_id": "fixture-verify::resolv/dns::ResolverConfig::parse::strict::resolv_conf_search_list"
+            }
+          },
+          {
+            "name": "inputs",
+            "data": {
+              "expected_errno": 0,
+              "inputs": {
+                "content": "search example.com local.domain\n"
+              }
+            }
+          },
+          {
+            "name": "execution",
+            "data": {
+              "diff": null,
+              "host_output": "SKIP",
+              "host_parity": true,
+              "impl_output": "{\"search\":[\"example.com\",\"local.domain\"]}",
+              "note": null,
+              "notes": []
+            }
+          }
+        ],
+        "duration_ms": 0
+      },
+      "events": [
+        {
+          "kind": "Phase",
+          "name": "execute",
+          "timestamp_ms": 0,
+          "details": null
+        },
+        {
+          "kind": "Checkpoint",
+          "name": "fixture.meta",
+          "timestamp_ms": 0,
+          "details": {
+            "campaign": "fixture-verify",
+            "case": "resolv_conf_search_list",
+            "family": "resolv/dns",
+            "function": "ResolverConfig::parse",
+            "mode": "strict",
+            "spec_section": "resolver(5)",
+            "trace_id": "fixture-verify::resolv/dns::ResolverConfig::parse::strict::resolv_conf_search_list"
+          }
+        },
+        {
+          "kind": "Checkpoint",
+          "name": "fixture.inputs",
+          "timestamp_ms": 0,
+          "details": {
+            "expected_errno": 0,
+            "inputs": {
+              "content": "search example.com local.domain\n"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "test_id": "fixture-verify::resolv/dns::ResolverConfig::parse::strict::resolv_conf_single_nameserver",
+      "test_name": "resolv_conf_single_nameserver",
+      "category": "IO",
+      "expected": "{\"nameservers\":[\"8.8.8.8\"]}",
+      "result": {
+        "passed": true,
+        "message": null,
+        "checkpoints": [
+          {
+            "name": "meta",
+            "data": {
+              "case": "resolv_conf_single_nameserver",
+              "family": "resolv/dns",
+              "function": "ResolverConfig::parse",
+              "mode": "strict",
+              "spec_section": "resolver(5)",
+              "trace_id": "fixture-verify::resolv/dns::ResolverConfig::parse::strict::resolv_conf_single_nameserver"
+            }
+          },
+          {
+            "name": "inputs",
+            "data": {
+              "expected_errno": 0,
+              "inputs": {
+                "content": "nameserver 8.8.8.8\n"
+              }
+            }
+          },
+          {
+            "name": "execution",
+            "data": {
+              "diff": null,
+              "host_output": "SKIP",
+              "host_parity": true,
+              "impl_output": "{\"nameservers\":[\"8.8.8.8\"]}",
+              "note": null,
+              "notes": []
+            }
+          }
+        ],
+        "duration_ms": 0
+      },
+      "events": [
+        {
+          "kind": "Phase",
+          "name": "execute",
+          "timestamp_ms": 0,
+          "details": null
+        },
+        {
+          "kind": "Checkpoint",
+          "name": "fixture.meta",
+          "timestamp_ms": 0,
+          "details": {
+            "campaign": "fixture-verify",
+            "case": "resolv_conf_single_nameserver",
+            "family": "resolv/dns",
+            "function": "ResolverConfig::parse",
+            "mode": "strict",
+            "spec_section": "resolver(5)",
+            "trace_id": "fixture-verify::resolv/dns::ResolverConfig::parse::strict::resolv_conf_single_nameserver"
+          }
+        },
+        {
+          "kind": "Checkpoint",
+          "name": "fixture.inputs",
+          "timestamp_ms": 0,
+          "details": {
+            "expected_errno": 0,
+            "inputs": {
+              "content": "nameserver 8.8.8.8\n"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "test_id": "fixture-verify::resolv/dns::encode_domain_name::strict::dns_encode_domain_name",
+      "test_name": "dns_encode_domain_name",
+      "category": "IO",
+      "expected": "\\x07example\\x03com\\x00",
+      "result": {
+        "passed": true,
+        "message": null,
+        "checkpoints": [
+          {
+            "name": "meta",
+            "data": {
+              "case": "dns_encode_domain_name",
+              "family": "resolv/dns",
+              "function": "encode_domain_name",
+              "mode": "strict",
+              "spec_section": "RFC 1035 Section 3.1",
+              "trace_id": "fixture-verify::resolv/dns::encode_domain_name::strict::dns_encode_domain_name"
+            }
+          },
+          {
+            "name": "inputs",
+            "data": {
+              "expected_errno": 0,
+              "inputs": {
+                "name": "example.com"
+              }
+            }
+          },
+          {
+            "name": "execution",
+            "data": {
+              "diff": null,
+              "host_output": "SKIP",
+              "host_parity": true,
+              "impl_output": "\\x07example\\x03com\\x00",
+              "note": null,
+              "notes": []
+            }
+          }
+        ],
+        "duration_ms": 0
+      },
+      "events": [
+        {
+          "kind": "Phase",
+          "name": "execute",
+          "timestamp_ms": 0,
+          "details": null
+        },
+        {
+          "kind": "Checkpoint",
+          "name": "fixture.meta",
+          "timestamp_ms": 0,
+          "details": {
+            "campaign": "fixture-verify",
+            "case": "dns_encode_domain_name",
+            "family": "resolv/dns",
+            "function": "encode_domain_name",
+            "mode": "strict",
+            "spec_section": "RFC 1035 Section 3.1",
+            "trace_id": "fixture-verify::resolv/dns::encode_domain_name::strict::dns_encode_domain_name"
+          }
+        },
+        {
+          "kind": "Checkpoint",
+          "name": "fixture.inputs",
+          "timestamp_ms": 0,
+          "details": {
+            "expected_errno": 0,
+            "inputs": {
+              "name": "example.com"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "test_id": "fixture-verify::resolv/dns::encode_domain_name::strict::dns_encode_single_label",
+      "test_name": "dns_encode_single_label",
+      "category": "IO",
+      "expected": "\\x09localhost\\x00",
+      "result": {
+        "passed": true,
+        "message": null,
+        "checkpoints": [
+          {
+            "name": "meta",
+            "data": {
+              "case": "dns_encode_single_label",
+              "family": "resolv/dns",
+              "function": "encode_domain_name",
+              "mode": "strict",
+              "spec_section": "RFC 1035 Section 3.1",
+              "trace_id": "fixture-verify::resolv/dns::encode_domain_name::strict::dns_encode_single_label"
+            }
+          },
+          {
+            "name": "inputs",
+            "data": {
+              "expected_errno": 0,
+              "inputs": {
+                "name": "localhost"
+              }
+            }
+          },
+          {
+            "name": "execution",
+            "data": {
+              "diff": null,
+              "host_output": "SKIP",
+              "host_parity": true,
+              "impl_output": "\\x09localhost\\x00",
+              "note": null,
+              "notes": []
+            }
+          }
+        ],
+        "duration_ms": 0
+      },
+      "events": [
+        {
+          "kind": "Phase",
+          "name": "execute",
+          "timestamp_ms": 0,
+          "details": null
+        },
+        {
+          "kind": "Checkpoint",
+          "name": "fixture.meta",
+          "timestamp_ms": 0,
+          "details": {
+            "campaign": "fixture-verify",
+            "case": "dns_encode_single_label",
+            "family": "resolv/dns",
+            "function": "encode_domain_name",
+            "mode": "strict",
+            "spec_section": "RFC 1035 Section 3.1",
+            "trace_id": "fixture-verify::resolv/dns::encode_domain_name::strict::dns_encode_single_label"
+          }
+        },
+        {
+          "kind": "Checkpoint",
+          "name": "fixture.inputs",
+          "timestamp_ms": 0,
+          "details": {
+            "expected_errno": 0,
+            "inputs": {
+              "name": "localhost"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "test_id": "fixture-verify::resolv/dns::getaddrinfo::strict::getaddrinfo_numeric_ipv4",
+      "test_name": "getaddrinfo_numeric_ipv4",
+      "category": "IO",
+      "expected": "{\"ai_addr\":[192,168,1,1],\"ai_family\":2}",
+      "result": {
+        "passed": true,
+        "message": null,
+        "checkpoints": [
+          {
+            "name": "meta",
+            "data": {
+              "case": "getaddrinfo_numeric_ipv4",
+              "family": "resolv/dns",
+              "function": "getaddrinfo",
+              "mode": "strict",
+              "spec_section": "POSIX getaddrinfo",
+              "trace_id": "fixture-verify::resolv/dns::getaddrinfo::strict::getaddrinfo_numeric_ipv4"
+            }
+          },
+          {
+            "name": "inputs",
+            "data": {
+              "expected_errno": 0,
+              "inputs": {
+                "node": "192.168.1.1",
+                "service": "80"
+              }
+            }
+          },
+          {
+            "name": "execution",
+            "data": {
+              "diff": null,
+              "host_output": "SKIP",
+              "host_parity": true,
+              "impl_output": "{\"ai_addr\":[192,168,1,1],\"ai_family\":2}",
+              "note": null,
+              "notes": []
+            }
+          }
+        ],
+        "duration_ms": 0
+      },
+      "events": [
+        {
+          "kind": "Phase",
+          "name": "execute",
+          "timestamp_ms": 0,
+          "details": null
+        },
+        {
+          "kind": "Checkpoint",
+          "name": "fixture.meta",
+          "timestamp_ms": 0,
+          "details": {
+            "campaign": "fixture-verify",
+            "case": "getaddrinfo_numeric_ipv4",
+            "family": "resolv/dns",
+            "function": "getaddrinfo",
+            "mode": "strict",
+            "spec_section": "POSIX getaddrinfo",
+            "trace_id": "fixture-verify::resolv/dns::getaddrinfo::strict::getaddrinfo_numeric_ipv4"
+          }
+        },
+        {
+          "kind": "Checkpoint",
+          "name": "fixture.inputs",
+          "timestamp_ms": 0,
+          "details": {
+            "expected_errno": 0,
+            "inputs": {
+              "node": "192.168.1.1",
+              "service": "80"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "test_id": "fixture-verify::resolv/dns::getaddrinfo::strict::getaddrinfo_numeric_ipv6",
+      "test_name": "getaddrinfo_numeric_ipv6",
+      "category": "IO",
+      "expected": "{\"ai_addr_last_byte\":1,\"ai_family\":10}",
+      "result": {
+        "passed": true,
+        "message": null,
+        "checkpoints": [
+          {
+            "name": "meta",
+            "data": {
+              "case": "getaddrinfo_numeric_ipv6",
+              "family": "resolv/dns",
+              "function": "getaddrinfo",
+              "mode": "strict",
+              "spec_section": "POSIX getaddrinfo",
+              "trace_id": "fixture-verify::resolv/dns::getaddrinfo::strict::getaddrinfo_numeric_ipv6"
+            }
+          },
+          {
+            "name": "inputs",
+            "data": {
+              "expected_errno": 0,
+              "inputs": {
+                "node": "::1",
+                "service": "443"
+              }
+            }
+          },
+          {
+            "name": "execution",
+            "data": {
+              "diff": null,
+              "host_output": "SKIP",
+              "host_parity": true,
+              "impl_output": "{\"ai_addr_last_byte\":1,\"ai_family\":10}",
+              "note": null,
+              "notes": []
+            }
+          }
+        ],
+        "duration_ms": 0
+      },
+      "events": [
+        {
+          "kind": "Phase",
+          "name": "execute",
+          "timestamp_ms": 0,
+          "details": null
+        },
+        {
+          "kind": "Checkpoint",
+          "name": "fixture.meta",
+          "timestamp_ms": 0,
+          "details": {
+            "campaign": "fixture-verify",
+            "case": "getaddrinfo_numeric_ipv6",
+            "family": "resolv/dns",
+            "function": "getaddrinfo",
+            "mode": "strict",
+            "spec_section": "POSIX getaddrinfo",
+            "trace_id": "fixture-verify::resolv/dns::getaddrinfo::strict::getaddrinfo_numeric_ipv6"
+          }
+        },
+        {
+          "kind": "Checkpoint",
+          "name": "fixture.inputs",
+          "timestamp_ms": 0,
+          "details": {
+            "expected_errno": 0,
+            "inputs": {
+              "node": "::1",
+              "service": "443"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "test_id": "fixture-verify::resolv/dns::getaddrinfo::strict::getaddrinfo_unknown_host",
+      "test_name": "getaddrinfo_unknown_host",
+      "category": "IO",
+      "expected": "Err(EAI_NONAME)",
+      "result": {
+        "passed": true,
+        "message": null,
+        "checkpoints": [
+          {
+            "name": "meta",
+            "data": {
+              "case": "getaddrinfo_unknown_host",
+              "family": "resolv/dns",
+              "function": "getaddrinfo",
+              "mode": "strict",
+              "spec_section": "POSIX getaddrinfo",
+              "trace_id": "fixture-verify::resolv/dns::getaddrinfo::strict::getaddrinfo_unknown_host"
+            }
+          },
+          {
+            "name": "inputs",
+            "data": {
+              "expected_errno": 0,
+              "inputs": {
+                "node": "nonexistent.example",
+                "service": null
+              }
+            }
+          },
+          {
+            "name": "execution",
+            "data": {
+              "diff": null,
+              "host_output": "SKIP",
+              "host_parity": true,
+              "impl_output": "Err(EAI_NONAME)",
+              "note": null,
+              "notes": []
+            }
+          }
+        ],
+        "duration_ms": 0
+      },
+      "events": [
+        {
+          "kind": "Phase",
+          "name": "execute",
+          "timestamp_ms": 0,
+          "details": null
+        },
+        {
+          "kind": "Checkpoint",
+          "name": "fixture.meta",
+          "timestamp_ms": 0,
+          "details": {
+            "campaign": "fixture-verify",
+            "case": "getaddrinfo_unknown_host",
+            "family": "resolv/dns",
+            "function": "getaddrinfo",
+            "mode": "strict",
+            "spec_section": "POSIX getaddrinfo",
+            "trace_id": "fixture-verify::resolv/dns::getaddrinfo::strict::getaddrinfo_unknown_host"
+          }
+        },
+        {
+          "kind": "Checkpoint",
+          "name": "fixture.inputs",
+          "timestamp_ms": 0,
+          "details": {
+            "expected_errno": 0,
+            "inputs": {
+              "node": "nonexistent.example",
+              "service": null
+            }
+          }
+        }
+      ]
+    },
+    {
+      "test_id": "fixture-verify::resolv/dns::lookup_hosts::strict::hosts_lookup_basic",
+      "test_name": "hosts_lookup_basic",
+      "category": "IO",
+      "expected": "[\"192.168.1.1\"]",
+      "result": {
+        "passed": true,
+        "message": null,
+        "checkpoints": [
+          {
+            "name": "meta",
+            "data": {
+              "case": "hosts_lookup_basic",
+              "family": "resolv/dns",
+              "function": "lookup_hosts",
+              "mode": "strict",
+              "spec_section": "/etc/hosts format",
+              "trace_id": "fixture-verify::resolv/dns::lookup_hosts::strict::hosts_lookup_basic"
+            }
+          },
+          {
+            "name": "inputs",
+            "data": {
+              "expected_errno": 0,
+              "inputs": {
+                "content": "127.0.0.1 localhost\n192.168.1.1 myhost\n",
+                "name": "myhost"
+              }
+            }
+          },
+          {
+            "name": "execution",
+            "data": {
+              "diff": null,
+              "host_output": "SKIP",
+              "host_parity": true,
+              "impl_output": "[\"192.168.1.1\"]",
+              "note": null,
+              "notes": []
+            }
+          }
+        ],
+        "duration_ms": 0
+      },
+      "events": [
+        {
+          "kind": "Phase",
+          "name": "execute",
+          "timestamp_ms": 0,
+          "details": null
+        },
+        {
+          "kind": "Checkpoint",
+          "name": "fixture.meta",
+          "timestamp_ms": 0,
+          "details": {
+            "campaign": "fixture-verify",
+            "case": "hosts_lookup_basic",
+            "family": "resolv/dns",
+            "function": "lookup_hosts",
+            "mode": "strict",
+            "spec_section": "/etc/hosts format",
+            "trace_id": "fixture-verify::resolv/dns::lookup_hosts::strict::hosts_lookup_basic"
+          }
+        },
+        {
+          "kind": "Checkpoint",
+          "name": "fixture.inputs",
+          "timestamp_ms": 0,
+          "details": {
+            "expected_errno": 0,
+            "inputs": {
+              "content": "127.0.0.1 localhost\n192.168.1.1 myhost\n",
+              "name": "myhost"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "test_id": "fixture-verify::resolv/dns::lookup_hosts::strict::hosts_lookup_case_insensitive",
+      "test_name": "hosts_lookup_case_insensitive",
+      "category": "IO",
+      "expected": "[\"10.0.0.1\"]",
+      "result": {
+        "passed": true,
+        "message": null,
+        "checkpoints": [
+          {
+            "name": "meta",
+            "data": {
+              "case": "hosts_lookup_case_insensitive",
+              "family": "resolv/dns",
+              "function": "lookup_hosts",
+              "mode": "strict",
+              "spec_section": "/etc/hosts format",
+              "trace_id": "fixture-verify::resolv/dns::lookup_hosts::strict::hosts_lookup_case_insensitive"
+            }
+          },
+          {
+            "name": "inputs",
+            "data": {
+              "expected_errno": 0,
+              "inputs": {
+                "content": "10.0.0.1 MyHost\n",
+                "name": "myhost"
+              }
+            }
+          },
+          {
+            "name": "execution",
+            "data": {
+              "diff": null,
+              "host_output": "SKIP",
+              "host_parity": true,
+              "impl_output": "[\"10.0.0.1\"]",
+              "note": null,
+              "notes": []
+            }
+          }
+        ],
+        "duration_ms": 0
+      },
+      "events": [
+        {
+          "kind": "Phase",
+          "name": "execute",
+          "timestamp_ms": 0,
+          "details": null
+        },
+        {
+          "kind": "Checkpoint",
+          "name": "fixture.meta",
+          "timestamp_ms": 0,
+          "details": {
+            "campaign": "fixture-verify",
+            "case": "hosts_lookup_case_insensitive",
+            "family": "resolv/dns",
+            "function": "lookup_hosts",
+            "mode": "strict",
+            "spec_section": "/etc/hosts format",
+            "trace_id": "fixture-verify::resolv/dns::lookup_hosts::strict::hosts_lookup_case_insensitive"
+          }
+        },
+        {
+          "kind": "Checkpoint",
+          "name": "fixture.inputs",
+          "timestamp_ms": 0,
+          "details": {
+            "expected_errno": 0,
+            "inputs": {
+              "content": "10.0.0.1 MyHost\n",
+              "name": "myhost"
+            }
           }
         }
       ]
