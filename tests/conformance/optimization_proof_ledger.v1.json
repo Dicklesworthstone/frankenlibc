@@ -1,0 +1,223 @@
+{
+  "schema_version": 1,
+  "bead": "bd-30o.2",
+  "description": "Optimization proof ledger for behavior-preserving perf work. Every optimization candidate must bind code-change intent to before/after measurements and machine-checkable behavior invariants before acceptance.",
+  "proof_template": {
+    "required_fields": [
+      "trace_id",
+      "candidate_id",
+      "bead_id",
+      "module",
+      "symbol",
+      "proof_status",
+      "measurement",
+      "behavior_checks",
+      "acceptance_reason"
+    ],
+    "optional_fields": [
+      "code_refs",
+      "reviewer",
+      "rejection_reasons",
+      "notes"
+    ],
+    "proof_statuses": [
+      "pending",
+      "verified",
+      "rejected",
+      "waived"
+    ],
+    "behavior_check_statuses": [
+      "pass",
+      "fail",
+      "skipped"
+    ],
+    "minimum_input_class_coverage": [
+      "null_ptr",
+      "in_bounds",
+      "boundary",
+      "oversize"
+    ],
+    "minimum_improvement_pct_for_verified": 0.5,
+    "checklist": [
+      {
+        "id": "equivalence_invariants",
+        "description": "All required behavior invariants are checked and each check result is machine-readable."
+      },
+      {
+        "id": "input_class_coverage",
+        "description": "Behavior checks cover null, in-bounds, boundary, and oversize input classes."
+      },
+      {
+        "id": "before_after_measurement_binding",
+        "description": "Candidate includes explicit before/after perf values with linked evidence references."
+      },
+      {
+        "id": "strict_hardened_guardrail",
+        "description": "No acceptance when strict/hardened parity checks fail for affected symbol families."
+      }
+    ],
+    "rejection_criteria": [
+      {
+        "id": "missing_required_fields",
+        "rule": "Reject when any required field is absent."
+      },
+      {
+        "id": "missing_behavior_coverage",
+        "rule": "Reject when verified candidates do not cover all minimum input classes."
+      },
+      {
+        "id": "behavior_check_failure",
+        "rule": "Reject when verified candidates include any failed behavior check."
+      },
+      {
+        "id": "ambiguous_perf_delta",
+        "rule": "Reject when verified candidates do not meet minimum_improvement_pct_for_verified."
+      },
+      {
+        "id": "missing_evidence_links",
+        "rule": "Reject when measurement.evidence_refs has fewer than two artifacts (before+after)."
+      }
+    ]
+  },
+  "logging_contract": {
+    "description": "Validator emits one structured record per candidate for audit/replay.",
+    "required_fields": [
+      "trace_id",
+      "candidate_id",
+      "proof_status",
+      "perf_delta",
+      "acceptance_reason"
+    ]
+  },
+  "candidates": [
+    {
+      "trace_id": "bd-30o.2::strict::cand-rtm-decide-fastpath::001",
+      "candidate_id": "cand-rtm-decide-fastpath",
+      "bead_id": "bd-30o.2",
+      "module": "frankenlibc-membrane/runtime_math",
+      "symbol": "RuntimeMathKernel::decide",
+      "code_refs": [
+        "crates/frankenlibc-membrane/src/runtime_math/mod.rs",
+        "scripts/profile_pipeline.sh"
+      ],
+      "measurement": {
+        "metric": "p50_ns_op",
+        "mode": "strict",
+        "before": 18.7,
+        "after": 15.4,
+        "perf_delta_pct": -17.65,
+        "evidence_refs": [
+          "scripts/perf_baseline.json",
+          "target/profiles/20260213T083559Z/strict/profile_report.v1.json",
+          "target/profiles/20260213T083559Z/strict/hotspot_opportunity_matrix.v1.json"
+        ]
+      },
+      "behavior_checks": [
+        {
+          "check_id": "strict_fixture_parity",
+          "check_command": "cargo run -p frankenlibc-harness --bin harness -- verify --fixture tests/conformance/fixtures --report /tmp/frankenlibc_verify.md",
+          "artifact_ref": "tests/conformance/fixtures",
+          "input_classes": [
+            "null_ptr",
+            "in_bounds"
+          ],
+          "status": "pass"
+        },
+        {
+          "check_id": "mode_semantics_guard",
+          "check_command": "scripts/check_mode_semantics.sh",
+          "artifact_ref": "tests/conformance/mode_semantics_matrix.json",
+          "input_classes": [
+            "boundary",
+            "oversize"
+          ],
+          "status": "pass"
+        }
+      ],
+      "proof_status": "verified",
+      "acceptance_reason": "Measured strict-path reduction with full invariant pass and complete input-class coverage.",
+      "reviewer": "BoldFox",
+      "notes": "Ready for implementation wave if code-change review remains clean."
+    },
+    {
+      "trace_id": "bd-30o.2::hardened::cand-futex-stage-reorder::001",
+      "candidate_id": "cand-futex-stage-reorder",
+      "bead_id": "bd-30o.2",
+      "module": "frankenlibc-membrane/ptr_validator",
+      "symbol": "ptr_validator::validate",
+      "code_refs": [
+        "crates/frankenlibc-membrane/src/ptr_validator.rs"
+      ],
+      "measurement": {
+        "metric": "p50_ns_op",
+        "mode": "hardened",
+        "before": 154.0,
+        "after": 156.4,
+        "perf_delta_pct": 1.56,
+        "evidence_refs": [
+          "target/profiles/20260213T083559Z/hardened/profile_report.v1.json",
+          "target/profiles/20260213T083559Z/hardened/hotspot_opportunity_matrix.v1.json"
+        ]
+      },
+      "behavior_checks": [
+        {
+          "check_id": "healing_oracle_consistency",
+          "check_command": "cargo test -p frankenlibc-harness --test membrane_tests",
+          "artifact_ref": "crates/frankenlibc-harness/tests/membrane_tests.rs",
+          "input_classes": [
+            "null_ptr",
+            "boundary"
+          ],
+          "status": "fail"
+        }
+      ],
+      "proof_status": "rejected",
+      "acceptance_reason": "Rejected: regression and failed behavior check.",
+      "rejection_reasons": [
+        "behavior_check_failure",
+        "ambiguous_perf_delta"
+      ]
+    },
+    {
+      "trace_id": "bd-30o.2::strict::cand-bloom-prefetch::001",
+      "candidate_id": "cand-bloom-prefetch",
+      "bead_id": "bd-30o.2",
+      "module": "frankenlibc-membrane/bloom",
+      "symbol": "BloomFilter::contains_fast",
+      "measurement": {
+        "metric": "p50_ns_op",
+        "mode": "strict",
+        "before": 7.2,
+        "after": 7.1,
+        "perf_delta_pct": -1.39,
+        "evidence_refs": [
+          "scripts/perf_baseline.json",
+          "target/profiles/20260213T083559Z/strict/profile_report.v1.json"
+        ]
+      },
+      "behavior_checks": [
+        {
+          "check_id": "strict_fixture_parity",
+          "check_command": "cargo run -p frankenlibc-harness --bin harness -- verify --fixture tests/conformance/fixtures --report /tmp/frankenlibc_verify.md",
+          "artifact_ref": "tests/conformance/fixtures",
+          "input_classes": [
+            "in_bounds",
+            "boundary"
+          ],
+          "status": "pass"
+        }
+      ],
+      "proof_status": "pending",
+      "acceptance_reason": "Pending additional oversize/null_ptr coverage and hardened replay."
+    }
+  ],
+  "summary": {
+    "total_candidates": 3,
+    "verified": 1,
+    "rejected": 1,
+    "pending": 1,
+    "waived": 0,
+    "required_log_fields": 5,
+    "required_input_classes": 4
+  }
+}

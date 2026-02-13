@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "last_updated": "2026-02-13T00:00:00Z",
+  "quarantined_tests": [],
+  "statistics": {
+    "total_quarantined": 0,
+    "by_reason": {},
+    "by_package": {}
+  }
+}

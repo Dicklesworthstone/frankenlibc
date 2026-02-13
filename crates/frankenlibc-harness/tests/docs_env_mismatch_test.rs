@@ -80,6 +80,27 @@ fn mismatch_report_is_fully_classified() {
 }
 
 #[test]
+fn mismatch_summary_counts_are_zero() {
+    let root = workspace_root();
+    let report = load_json(&root.join("tests/conformance/env_docs_code_mismatch_report.v1.json"));
+    let summary = report["summary"]
+        .as_object()
+        .expect("summary must be object");
+
+    for key in [
+        "missing_in_docs_count",
+        "missing_in_code_count",
+        "semantic_drift_count",
+    ] {
+        let value = summary
+            .get(key)
+            .and_then(|v| v.as_u64())
+            .unwrap_or(u64::MAX);
+        assert_eq!(value, 0, "{key} must be zero, got {value}");
+    }
+}
+
+#[test]
 fn unresolved_ambiguous_is_empty() {
     let root = workspace_root();
     let report = load_json(&root.join("tests/conformance/env_docs_code_mismatch_report.v1.json"));

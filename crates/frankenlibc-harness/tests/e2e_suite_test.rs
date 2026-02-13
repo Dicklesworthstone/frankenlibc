@@ -3,16 +3,20 @@
 //! Validates that:
 //! 1. e2e_suite.sh exists and is executable.
 //! 2. check_e2e_suite.sh exists and is executable.
-//! 3. The suite produces valid JSONL structured logs.
-//! 4. Artifact index format is correct.
+//! 3. validate_e2e_manifest.py + manifest catalog exist and are valid.
+//! 4. The suite produces valid JSONL structured logs.
+//! 5. Artifact index format is correct.
 //!
 //! Note: This tests the E2E *infrastructure*, not program pass rates.
 //! LD_PRELOAD timeouts are expected during the interpose phase.
 //!
 //! Run: cargo test -p frankenlibc-harness --test e2e_suite_test
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::thread::sleep;
+use std::time::Duration;
 
 fn workspace_root() -> PathBuf {
     let manifest = env!("CARGO_MANIFEST_DIR");
@@ -44,6 +48,31 @@ fn check_e2e_suite_script_exists() {
     let root = workspace_root();
     let script = root.join("scripts/check_e2e_suite.sh");
     assert!(script.exists(), "scripts/check_e2e_suite.sh must exist");
+}
+
+#[test]
+fn e2e_manifest_validator_and_catalog_exist() {
+    let root = workspace_root();
+    let validator = root.join("scripts/validate_e2e_manifest.py");
+    let manifest = root.join("tests/conformance/e2e_scenario_manifest.v1.json");
+    assert!(validator.exists(), "scripts/validate_e2e_manifest.py must exist");
+    assert!(
+        manifest.exists(),
+        "tests/conformance/e2e_scenario_manifest.v1.json must exist"
+    );
+
+    let output = Command::new("python3")
+        .arg(&validator)
+        .arg("validate")
+        .arg("--manifest")
+        .arg(&manifest)
+        .output()
+        .expect("validate_e2e_manifest.py should execute");
+    assert!(
+        output.status.success(),
+        "manifest validation should pass, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 #[test]
@@ -100,6 +129,45 @@ fn e2e_suite_runs_and_produces_jsonl() {
                     tid.starts_with("bd-2ez::"),
                     "trace_id should start with bd-2ez::"
                 );
+                let event = obj["event"].as_str().unwrap();
+                if event.starts_with("case_") || event == "manifest_case" {
+                    assert!(
+                        obj["mode"].is_string(),
+                        "{event} must include mode field"
+                    );
+                    assert!(
+                        obj["scenario_id"].is_string(),
+                        "{event} must include scenario_id field"
+                    );
+                    assert!(
+                        obj["expected_outcome"].is_string(),
+                        "{event} must include expected_outcome field"
+                    );
+                    assert!(
+                        obj["artifact_policy"].is_object(),
+                        "{event} must include artifact_policy object"
+                    );
+                    if event.starts_with("case_") {
+                        assert!(
+                            obj["replay_key"].is_string(),
+                            "{event} must include replay_key"
+                        );
+                        assert!(
+                            obj["env_fingerprint"].is_string(),
+                            "{event} must include env_fingerprint"
+                        );
+                    }
+                }
+                if event == "mode_pair_result" {
+                    assert!(
+                        obj["mode_pair_result"].is_string(),
+                        "mode_pair_result event must include result"
+                    );
+                    assert!(
+                        obj["drift_flags"].is_array(),
+                        "mode_pair_result event must include drift_flags array"
+                    );
+                }
                 valid_lines += 1;
             }
             assert!(
@@ -109,6 +177,32 @@ fn e2e_suite_runs_and_produces_jsonl() {
             );
         }
     }
+}
+
+#[test]
+fn e2e_suite_supports_manifest_dry_run() {
+    let root = workspace_root();
+    let script = root.join("scripts/e2e_suite.sh");
+
+    let output = Command::new("bash")
+        .arg(&script)
+        .arg("--dry-run-manifest")
+        .arg("fault")
+        .arg("strict")
+        .env("TIMEOUT_SECONDS", "1")
+        .output()
+        .expect("e2e_suite.sh should support manifest dry-run");
+
+    assert!(
+        output.status.success(),
+        "manifest dry-run should pass, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("[MANIFEST]"),
+        "dry-run should print manifest entries"
+    );
 }
 
 #[test]
@@ -154,6 +248,152 @@ fn e2e_artifact_index_valid() {
             }
         }
     }
+}
+
+#[test]
+fn e2e_mode_pair_report_valid() {
+    let root = workspace_root();
+    let script = root.join("scripts/e2e_suite.sh");
+    let seed = "889";
+    let _ = Command::new("bash")
+        .arg(&script)
+        .arg("fault")
+        .env("TIMEOUT_SECONDS", "1")
+        .env("FRANKENLIBC_E2E_SEED", seed)
+        .output()
+        .expect("e2e_suite.sh should execute for mode-pair report");
+
+    let e2e_dir = root.join("target/e2e_suite");
+    if !e2e_dir.exists() {
+        return; // No runs yet
+    }
+
+    let mut runs: Vec<_> = std::fs::read_dir(&e2e_dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            let name = e.file_name().to_string_lossy().to_string();
+            name.starts_with("e2e-") && name.ends_with(&format!("-s{seed}"))
+        })
+        .collect();
+    runs.sort_by_key(|e| e.file_name());
+
+    if let Some(latest) = runs.last() {
+        let report_path = latest.path().join("mode_pair_report.json");
+        assert!(
+            report_path.exists(),
+            "mode_pair_report.json should exist for non-dry-run runs"
+        );
+        let content = std::fs::read_to_string(&report_path).unwrap();
+        let report: serde_json::Value =
+            serde_json::from_str(&content).expect("mode_pair_report.json should be valid JSON");
+
+        assert_eq!(
+            report["schema_version"].as_str().unwrap(),
+            "v1",
+            "Expected schema_version v1"
+        );
+        assert!(report["run_id"].is_string(), "Expected run_id string");
+        assert!(report["pairs"].is_array(), "Expected pairs array");
+
+        let pairs = report["pairs"].as_array().unwrap();
+        assert!(
+            !pairs.is_empty(),
+            "mode_pair_report should contain at least one scenario pair"
+        );
+        for pair in pairs {
+            assert!(pair["scenario_id"].is_string(), "Pair missing scenario_id");
+            assert!(
+                pair["mode_pair_result"].is_string(),
+                "Pair missing mode_pair_result"
+            );
+            let pair_result = pair["mode_pair_result"].as_str().unwrap();
+            assert!(
+                ["match", "mismatch", "incomplete"].contains(&pair_result),
+                "unexpected mode_pair_result value: {pair_result}"
+            );
+            assert!(pair["drift_flags"].is_array(), "Pair missing drift_flags");
+        }
+    }
+}
+
+#[test]
+fn replay_keys_are_deterministic_for_same_seed_and_manifest() {
+    let root = workspace_root();
+    let script = root.join("scripts/e2e_suite.sh");
+    let seed = "777";
+
+    let run_dry = |script: &PathBuf, seed: &str| {
+        Command::new("bash")
+            .arg(script)
+            .arg("--dry-run-manifest")
+            .arg("fault")
+            .arg("strict")
+            .env("FRANKENLIBC_E2E_SEED", seed)
+            .output()
+            .expect("dry-run manifest should execute")
+    };
+
+    let out1 = run_dry(&script, seed);
+    assert!(
+        out1.status.success(),
+        "first dry-run should pass: {}",
+        String::from_utf8_lossy(&out1.stderr)
+    );
+    sleep(Duration::from_secs(1));
+    let out2 = run_dry(&script, seed);
+    assert!(
+        out2.status.success(),
+        "second dry-run should pass: {}",
+        String::from_utf8_lossy(&out2.stderr)
+    );
+
+    let e2e_dir = root.join("target/e2e_suite");
+    let mut runs: Vec<_> = std::fs::read_dir(&e2e_dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            let name = e.file_name().to_string_lossy().to_string();
+            name.starts_with("e2e-") && name.ends_with(&format!("-s{seed}"))
+        })
+        .collect();
+    runs.sort_by_key(|e| e.file_name());
+    assert!(
+        runs.len() >= 2,
+        "expected at least two dry-run outputs for deterministic replay-key test"
+    );
+
+    let latest = runs[runs.len() - 1].path().join("trace.jsonl");
+    let previous = runs[runs.len() - 2].path().join("trace.jsonl");
+
+    fn replay_key_map(trace_path: &Path) -> BTreeMap<String, String> {
+        let content = std::fs::read_to_string(trace_path).expect("trace.jsonl should exist");
+        let mut map = BTreeMap::new();
+        for line in content.lines() {
+            if line.trim().is_empty() {
+                continue;
+            }
+            let obj: serde_json::Value = serde_json::from_str(line).expect("valid JSONL line");
+            if obj["event"].as_str() == Some("manifest_case") && obj["mode"].as_str() == Some("strict") {
+                map.insert(
+                    obj["scenario_id"].as_str().unwrap().to_string(),
+                    obj["replay_key"].as_str().unwrap().to_string(),
+                );
+            }
+        }
+        map
+    }
+
+    let first_keys = replay_key_map(&previous);
+    let second_keys = replay_key_map(&latest);
+    assert!(
+        !first_keys.is_empty(),
+        "expected non-empty replay-key map from dry-run trace"
+    );
+    assert_eq!(
+        first_keys, second_keys,
+        "replay keys should be identical for same seed + manifest"
+    );
 }
 
 #[test]

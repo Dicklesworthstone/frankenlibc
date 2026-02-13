@@ -8,6 +8,7 @@
 #   4. Percentile targets are well-defined.
 #   5. Regeneration procedure is complete.
 #   6. Summary statistics are consistent.
+#   7. Profile artifact contract is defined and complete.
 #
 # This gate validates the perf baseline specification and baseline file structure.
 # It does NOT run benchmarks (that's perf_gate.sh).
@@ -382,6 +383,85 @@ else
     echo "PASS: Summary statistics consistent"
 fi
 echo "${sum_check}" | grep -E '^Suites' || true
+echo ""
+
+# ---------------------------------------------------------------------------
+# Check 7: Profile artifact contract
+# ---------------------------------------------------------------------------
+echo "--- Check 7: Profile artifact contract ---"
+
+artifact_check=$(python3 -c "
+import json
+
+with open('${SPEC}') as f:
+    spec = json.load(f)
+
+errors = []
+profile_artifacts = spec.get('profile_artifacts', {})
+if not profile_artifacts:
+    errors.append('Missing profile_artifacts section')
+else:
+    required_files = profile_artifacts.get('required_files', [])
+    required_set = set(required_files)
+    must_have = {
+        'manifest.txt',
+        'commands.log',
+        'summary.log',
+        'targets.tsv',
+        'profile_report.v1.json',
+        'hotspot_opportunity_matrix.v1.json',
+    }
+    for req in sorted(must_have):
+        if req not in required_set:
+            errors.append(f'missing required profile artifact: {req}')
+
+    if len(required_files) < len(must_have):
+        errors.append(f'too few required_files entries: {len(required_files)} (need >= {len(must_have)})')
+
+    per_target = profile_artifacts.get('per_target_required', [])
+    per_target_set = set(per_target)
+    for req in ['cpu/<slug>.top5.txt', 'alloc/<slug>.top5.txt', 'syscall/<slug>.top5.txt']:
+        if req not in per_target_set:
+            errors.append(f'missing per_target_required pattern: {req}')
+
+    structured = profile_artifacts.get('structured_reports', {})
+    profile_report = structured.get('profile_report_v1', {}).get('required_fields', [])
+    hotspot = structured.get('hotspot_opportunity_matrix_v1', {}).get('required_fields', [])
+
+    for req in ['schema_version', 'generated_at_utc', 'run', 'targets', 'summary']:
+        if req not in profile_report:
+            errors.append(f'profile_report_v1 missing required field declaration: {req}')
+
+    for req in ['schema_version', 'generated_at_utc', 'source_run', 'scoring', 'entries', 'summary']:
+        if req not in hotspot:
+            errors.append(f'hotspot_opportunity_matrix_v1 missing required field declaration: {req}')
+
+summary = spec.get('summary', {})
+claimed_required_files = summary.get('profile_required_files')
+actual_required_files = len(profile_artifacts.get('required_files', [])) if profile_artifacts else 0
+if claimed_required_files is None:
+    errors.append('summary.profile_required_files missing')
+elif claimed_required_files != actual_required_files:
+    errors.append(
+        f'summary.profile_required_files mismatch: claimed={claimed_required_files} actual={actual_required_files}'
+    )
+
+print(f'ARTIFACT_ERRORS={len(errors)}')
+print(f'PROFILE_REQUIRED_FILES={actual_required_files}')
+for e in errors:
+    print(f'  {e}')
+")
+
+artifact_errs=$(echo "${artifact_check}" | grep '^ARTIFACT_ERRORS=' | cut -d= -f2)
+
+if [[ "${artifact_errs}" -gt 0 ]]; then
+    echo "FAIL: ${artifact_errs} profile artifact contract error(s):"
+    echo "${artifact_check}" | grep '  '
+    failures=$((failures + 1))
+else
+    acount=$(echo "${artifact_check}" | grep '^PROFILE_REQUIRED_FILES=' | cut -d= -f2)
+    echo "PASS: Profile artifact contract defines ${acount} required run files"
+fi
 echo ""
 
 # ---------------------------------------------------------------------------

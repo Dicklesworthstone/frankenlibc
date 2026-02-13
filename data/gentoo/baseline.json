@@ -1,0 +1,170 @@
+{
+  "schema_version": "v1",
+  "bead": "bd-2icq.12",
+  "timestamp": "2026-02-13T08:47:14Z",
+  "source": "dry-run",
+  "packages": [
+    {
+      "package": "sys-apps/coreutils",
+      "build_status": "success",
+      "test_status": "passed",
+      "overhead_percent": 5.84,
+      "healing_actions": 0,
+      "healing_types": {},
+      "tests": [
+        {
+          "name": "test_0",
+          "passed": true
+        },
+        {
+          "name": "test_1",
+          "passed": true
+        },
+        {
+          "name": "test_2",
+          "passed": true
+        },
+        {
+          "name": "test_3",
+          "passed": true
+        },
+        {
+          "name": "test_4",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "package": "dev-libs/json-c",
+      "build_status": "success",
+      "test_status": "passed",
+      "overhead_percent": 6.45,
+      "healing_actions": 7,
+      "healing_types": {
+        "ClampSize": 3,
+        "TruncateWithNull": 4
+      },
+      "tests": [
+        {
+          "name": "test_0",
+          "passed": true
+        },
+        {
+          "name": "test_1",
+          "passed": true
+        },
+        {
+          "name": "test_2",
+          "passed": true
+        },
+        {
+          "name": "test_3",
+          "passed": true
+        },
+        {
+          "name": "test_4",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "package": "app-arch/gzip",
+      "build_status": "success",
+      "test_status": "passed",
+      "overhead_percent": 3.34,
+      "healing_actions": 3,
+      "healing_types": {
+        "ClampSize": 1,
+        "TruncateWithNull": 2
+      },
+      "tests": [
+        {
+          "name": "test_0",
+          "passed": true
+        },
+        {
+          "name": "test_1",
+          "passed": true
+        },
+        {
+          "name": "test_2",
+          "passed": true
+        },
+        {
+          "name": "test_3",
+          "passed": true
+        },
+        {
+          "name": "test_4",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "package": "sys-apps/grep",
+      "build_status": "success",
+      "test_status": "passed",
+      "overhead_percent": 6.06,
+      "healing_actions": 17,
+      "healing_types": {
+        "ClampSize": 8,
+        "TruncateWithNull": 9
+      },
+      "tests": [
+        {
+          "name": "test_0",
+          "passed": true
+        },
+        {
+          "name": "test_1",
+          "passed": true
+        },
+        {
+          "name": "test_2",
+          "passed": true
+        },
+        {
+          "name": "test_3",
+          "passed": true
+        },
+        {
+          "name": "test_4",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "package": "net-misc/curl",
+      "build_status": "success",
+      "test_status": "passed",
+      "overhead_percent": 2.52,
+      "healing_actions": 13,
+      "healing_types": {
+        "ClampSize": 6,
+        "TruncateWithNull": 7
+      },
+      "tests": [
+        {
+          "name": "test_0",
+          "passed": true
+        },
+        {
+          "name": "test_1",
+          "passed": true
+        },
+        {
+          "name": "test_2",
+          "passed": true
+        },
+        {
+          "name": "test_3",
+          "passed": true
+        },
+        {
+          "name": "test_4",
+          "passed": true
+        }
+      ]
+    }
+  ]
+}

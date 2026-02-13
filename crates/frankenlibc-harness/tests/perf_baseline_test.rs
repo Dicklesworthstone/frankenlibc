@@ -217,6 +217,97 @@ fn regeneration_procedure_complete() {
 }
 
 #[test]
+fn profile_artifact_contract_defined() {
+    let s = load_spec();
+    let artifacts = &s["profile_artifacts"];
+    assert!(
+        artifacts.is_object(),
+        "Missing profile_artifacts section in perf_baseline_spec.json"
+    );
+
+    let required_files = artifacts["required_files"]
+        .as_array()
+        .expect("profile_artifacts.required_files must be an array");
+    let required_set: HashSet<&str> = required_files.iter().filter_map(|v| v.as_str()).collect();
+    for req in [
+        "manifest.txt",
+        "commands.log",
+        "summary.log",
+        "targets.tsv",
+        "profile_report.v1.json",
+        "hotspot_opportunity_matrix.v1.json",
+    ] {
+        assert!(
+            required_set.contains(req),
+            "profile_artifacts.required_files missing {req}"
+        );
+    }
+
+    let per_target = artifacts["per_target_required"]
+        .as_array()
+        .expect("profile_artifacts.per_target_required must be an array");
+    let per_target_set: HashSet<&str> = per_target.iter().filter_map(|v| v.as_str()).collect();
+    for req in [
+        "cpu/<slug>.top5.txt",
+        "alloc/<slug>.top5.txt",
+        "syscall/<slug>.top5.txt",
+    ] {
+        assert!(
+            per_target_set.contains(req),
+            "profile_artifacts.per_target_required missing {req}"
+        );
+    }
+
+    let structured = &artifacts["structured_reports"];
+    let profile_report_fields = structured["profile_report_v1"]["required_fields"]
+        .as_array()
+        .expect("profile_report_v1.required_fields must be an array");
+    let profile_report_set: HashSet<&str> = profile_report_fields
+        .iter()
+        .filter_map(|v| v.as_str())
+        .collect();
+    for req in [
+        "schema_version",
+        "generated_at_utc",
+        "run",
+        "targets",
+        "summary",
+    ] {
+        assert!(
+            profile_report_set.contains(req),
+            "profile_report_v1.required_fields missing {req}"
+        );
+    }
+
+    let hotspot_fields = structured["hotspot_opportunity_matrix_v1"]["required_fields"]
+        .as_array()
+        .expect("hotspot_opportunity_matrix_v1.required_fields must be an array");
+    let hotspot_set: HashSet<&str> = hotspot_fields.iter().filter_map(|v| v.as_str()).collect();
+    for req in [
+        "schema_version",
+        "generated_at_utc",
+        "source_run",
+        "scoring",
+        "entries",
+        "summary",
+    ] {
+        assert!(
+            hotspot_set.contains(req),
+            "hotspot_opportunity_matrix_v1.required_fields missing {req}"
+        );
+    }
+
+    let summary_required_files = s["summary"]["profile_required_files"]
+        .as_u64()
+        .expect("summary.profile_required_files missing") as usize;
+    assert_eq!(
+        summary_required_files,
+        required_files.len(),
+        "summary.profile_required_files must match required_files length"
+    );
+}
+
+#[test]
 fn regression_thresholds_match_budget_policy() {
     let s = load_spec();
     let budget = load_budget_policy();

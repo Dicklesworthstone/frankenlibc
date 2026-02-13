@@ -132,6 +132,46 @@
     "current_suites_in_baseline": ["runtime_math", "membrane"],
     "planned_suites": ["string", "malloc"]
   },
+  "profile_artifacts": {
+    "description": "Deterministic per-run profiling artifact contract emitted by scripts/profile_pipeline.sh.",
+    "run_directory_pattern": "target/profiles/<run_ts>/<mode>/",
+    "required_files": [
+      "manifest.txt",
+      "commands.log",
+      "summary.log",
+      "targets.tsv",
+      "profile_report.v1.json",
+      "hotspot_opportunity_matrix.v1.json"
+    ],
+    "per_target_required": [
+      "cpu/<slug>.top5.txt",
+      "alloc/<slug>.top5.txt",
+      "syscall/<slug>.top5.txt"
+    ],
+    "structured_reports": {
+      "profile_report_v1": {
+        "required_fields": [
+          "schema_version",
+          "generated_at_utc",
+          "run",
+          "targets",
+          "summary"
+        ]
+      },
+      "hotspot_opportunity_matrix_v1": {
+        "required_fields": [
+          "schema_version",
+          "generated_at_utc",
+          "source_run",
+          "scoring",
+          "entries",
+          "summary"
+        ],
+        "threshold": 2.0,
+        "ordering": "Sorted descending by score, then impact, then confidence, then symbol."
+      }
+    }
+  },
   "regeneration": {
     "description": "Procedure for regenerating baselines deterministically.",
     "prerequisites": [
@@ -188,6 +228,7 @@
     "modes": 2,
     "captured_percentiles": 3,
     "regeneration_steps": 5,
-    "prerequisite_checks": 4
+    "prerequisite_checks": 4,
+    "profile_required_files": 6
   }
 }

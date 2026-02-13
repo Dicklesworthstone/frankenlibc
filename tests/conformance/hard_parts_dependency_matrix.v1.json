@@ -1,0 +1,229 @@
+{
+  "schema_version": "v1",
+  "bead": "bd-y45u",
+  "trace_id": "hard-parts-matrix-bd-y45u-v1",
+  "generated_at": "2026-02-13T08:37:00Z",
+  "subsystems": [
+    "startup",
+    "threading",
+    "resolver",
+    "nss",
+    "locale",
+    "iconv"
+  ],
+  "dependency_matrix": [
+    {
+      "from_subsystem": "startup",
+      "to_subsystem": "threading",
+      "interface": "bootstrap->thread trampoline invariants",
+      "reason": "pthread bootstrap requires stable startup ordering and TLS bootstrap preconditions",
+      "blocking_beads": ["bd-qwm", "bd-11nb", "bd-mjon", "bd-rth1"],
+      "contract_refs": [
+        "POSIX pthread_create",
+        "tests/conformance/fixtures/startup_phase0.json"
+      ]
+    },
+    {
+      "from_subsystem": "startup",
+      "to_subsystem": "resolver",
+      "interface": "secure-mode/env contract propagation",
+      "reason": "resolver config and retry policy must honor process-level mode/secure startup contracts",
+      "blocking_beads": ["bd-qwm", "bd-11nb", "bd-1y7"],
+      "contract_refs": [
+        "resolver(5)",
+        "crates/frankenlibc-abi/src/startup_abi.rs"
+      ]
+    },
+    {
+      "from_subsystem": "resolver",
+      "to_subsystem": "nss",
+      "interface": "lookup fallback ordering and cache boundary",
+      "reason": "files-backed NSS lookup must compose with resolver policy and timeout/backoff behavior",
+      "blocking_beads": ["bd-1y7", "bd-1rf", "bd-3vtx", "bd-x2sq"],
+      "contract_refs": [
+        "POSIX getaddrinfo",
+        "tests/conformance/fixtures/resolver.json"
+      ]
+    },
+    {
+      "from_subsystem": "threading",
+      "to_subsystem": "nss",
+      "interface": "concurrent lookup and cache coherence",
+      "reason": "parallel passwd/group/hosts lookups must remain deterministic and race-free",
+      "blocking_beads": ["bd-3rag", "bd-xxd9", "bd-rth1"],
+      "contract_refs": [
+        "POSIX pthread",
+        "tests/conformance/runtime_math_divergence_bounds.v1.json"
+      ]
+    },
+    {
+      "from_subsystem": "locale",
+      "to_subsystem": "iconv",
+      "interface": "codeset normalization and transliteration policy",
+      "reason": "iconv codec selection and behavior contracts depend on locale category resolution",
+      "blocking_beads": ["bd-3pe", "bd-3bg", "bd-7cba", "bd-by8c", "bd-z7gt"],
+      "contract_refs": [
+        "POSIX iconv",
+        "tests/conformance/fixtures/iconv_phase1.json"
+      ]
+    },
+    {
+      "from_subsystem": "threading",
+      "to_subsystem": "locale",
+      "interface": "thread-local locale state handoff",
+      "reason": "locale isolation and teardown semantics rely on thread lifecycle correctness",
+      "blocking_beads": ["bd-rth1", "bd-3pe", "bd-1f35"],
+      "contract_refs": [
+        "POSIX setlocale",
+        "POSIX pthread_key_create"
+      ]
+    },
+    {
+      "from_subsystem": "iconv",
+      "to_subsystem": "resolver",
+      "interface": "IDN/encoding normalization boundary",
+      "reason": "resolver names containing non-ASCII labels require deterministic conversion guardrails",
+      "blocking_beads": ["bd-by8c", "bd-z7gt", "bd-1y7"],
+      "contract_refs": [
+        "RFC 3490",
+        "tests/conformance/fixtures/resolver.json"
+      ]
+    },
+    {
+      "from_subsystem": "startup",
+      "to_subsystem": "locale",
+      "interface": "process bootstrap locale defaults",
+      "reason": "initial locale category defaults and mode parsing must be fixed before locale/iconv assertions",
+      "blocking_beads": ["bd-qwm", "bd-11nb", "bd-3pe"],
+      "contract_refs": [
+        "POSIX locale",
+        "crates/frankenlibc-abi/src/startup_helpers.rs"
+      ]
+    }
+  ],
+  "risk_register": [
+    {
+      "risk_id": "R1",
+      "subsystems": ["startup", "resolver", "nss"],
+      "severity": "high",
+      "likelihood": "medium",
+      "failure_mode": "secure-mode/env provenance drift causes resolver behavior mismatch",
+      "mitigation": "lock startup invariant capture and mode immutability tests; gate resolver fixtures against startup snapshots",
+      "owner_bead": "bd-11nb",
+      "evidence_paths": [
+        "crates/frankenlibc-abi/tests/startup_abi_contract_test.rs",
+        "tests/conformance/fixtures/resolver.json"
+      ]
+    },
+    {
+      "risk_id": "R2",
+      "subsystems": ["threading", "nss", "resolver"],
+      "severity": "high",
+      "likelihood": "high",
+      "failure_mode": "concurrent lookup cache races or deadlocks under churn",
+      "mitigation": "thread stress packs + deterministic contention seeds + timeout/deadlock signature regression tests",
+      "owner_bead": "bd-3rag",
+      "evidence_paths": [
+        "crates/frankenlibc-core/tests/pthread_mutex_contract_matrix_test.rs",
+        "tests/conformance/e2e_scenario_manifest.v1.json"
+      ]
+    },
+    {
+      "risk_id": "R3",
+      "subsystems": ["locale", "iconv"],
+      "severity": "high",
+      "likelihood": "medium",
+      "failure_mode": "codec scope drift or locale/iconv mismatch breaks conversion parity",
+      "mitigation": "codec scope ledger + deterministic table generation checksums + fixture parity gating",
+      "owner_bead": "bd-7cba",
+      "evidence_paths": [
+        "tests/conformance/fixtures/iconv_phase1.json",
+        "tests/conformance/math_value_proof.json"
+      ]
+    },
+    {
+      "risk_id": "R4",
+      "subsystems": ["startup", "threading"],
+      "severity": "high",
+      "likelihood": "medium",
+      "failure_mode": "bootstrap/trampoline ordering bug yields join/detach lifecycle corruption",
+      "mitigation": "phase-0 startup plus pthread bootstrap contract matrix with adversarial teardown checks",
+      "owner_bead": "bd-mjon",
+      "evidence_paths": [
+        "crates/frankenlibc-abi/tests/startup_abi_contract_test.rs",
+        "crates/frankenlibc-core/src/pthread/thread.rs"
+      ]
+    },
+    {
+      "risk_id": "R5",
+      "subsystems": ["startup", "threading", "resolver", "nss", "locale", "iconv"],
+      "severity": "medium",
+      "likelihood": "high",
+      "failure_mode": "docs/support/reality reports drift from implemented hard-parts scope",
+      "mitigation": "hard-parts truth reconciliation with drift gates and release dossier checks",
+      "owner_bead": "bd-8sho",
+      "evidence_paths": [
+        "README.md",
+        "FEATURE_PARITY.md",
+        "tests/conformance/reality_report.v1.json"
+      ]
+    }
+  ],
+  "milestones": [
+    {
+      "milestone_id": "M1",
+      "title": "Startup + threading bootstrap contract lock",
+      "subsystems": ["startup", "threading"],
+      "depends_on_milestones": [],
+      "depends_on_beads": ["bd-qwm", "bd-11nb", "bd-mjon", "bd-rth1", "bd-3hud"],
+      "parallelizable": false,
+      "outcome_gate": "startup/thread lifecycle contracts deterministic"
+    },
+    {
+      "milestone_id": "M2",
+      "title": "Resolver/NSS deterministic lookup semantics",
+      "subsystems": ["resolver", "nss", "threading"],
+      "depends_on_milestones": ["M1"],
+      "depends_on_beads": ["bd-1y7", "bd-1rf", "bd-3vtx", "bd-3rag", "bd-x2sq", "bd-2yhf", "bd-3ehb"],
+      "parallelizable": true,
+      "outcome_gate": "lookup parity + cache coherence under deterministic stress"
+    },
+    {
+      "milestone_id": "M3",
+      "title": "Locale/iconv deterministic baseline",
+      "subsystems": ["locale", "iconv", "threading"],
+      "depends_on_milestones": ["M1"],
+      "depends_on_beads": ["bd-3pe", "bd-3bg", "bd-7cba", "bd-13ya", "bd-by8c", "bd-z7gt"],
+      "parallelizable": true,
+      "outcome_gate": "codec scope/dispatch/fixtures stable and reproducible"
+    },
+    {
+      "milestone_id": "M4",
+      "title": "Cross-boundary hard-parts closure gate",
+      "subsystems": ["startup", "threading", "resolver", "nss", "locale", "iconv"],
+      "depends_on_milestones": ["M2", "M3"],
+      "depends_on_beads": ["bd-2mwc", "bd-1j4.5", "bd-8sho"],
+      "parallelizable": false,
+      "outcome_gate": "integrated battery is release-blocking with structured evidence"
+    }
+  ],
+  "critical_path": ["M1", "M2", "M4"],
+  "parallel_tracks": [
+    {
+      "track_id": "T-A",
+      "description": "Resolver/NSS stream after startup lock",
+      "milestones": ["M2"]
+    },
+    {
+      "track_id": "T-B",
+      "description": "Locale/iconv stream after startup lock",
+      "milestones": ["M3"]
+    }
+  ],
+  "validation": {
+    "all_required_subsystems_present": true,
+    "critical_path_explicit": true,
+    "parallel_tracks_explicit": true,
+    "risk_register_complete": true
+  }
+}

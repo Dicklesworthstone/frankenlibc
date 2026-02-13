@@ -14,7 +14,7 @@
       "kind": "env_doc_mismatch",
       "message": "stale docs key not present in runtime usage",
       "owner_bead": "bd-29b.3",
-      "owner_status": "open",
+      "owner_status": "in_progress",
       "ownership_ok": true,
       "source_file": "/data/projects/frankenlibc/tests/conformance/env_docs_code_mismatch_report.v1.json",
       "status": "tracked"
@@ -32,7 +32,7 @@
       "kind": "env_doc_mismatch",
       "message": "documentation coverage drift",
       "owner_bead": "bd-29b.3",
-      "owner_status": "open",
+      "owner_status": "in_progress",
       "ownership_ok": true,
       "source_file": "/data/projects/frankenlibc/tests/conformance/env_docs_code_mismatch_report.v1.json",
       "status": "tracked"
@@ -776,7 +776,7 @@
       "kind": "status_drift",
       "message": "feature parity unresolved drift",
       "owner_bead": "bd-w2c3.1",
-      "owner_status": "open",
+      "owner_status": "in_progress",
       "ownership_ok": true,
       "source_file": "FEATURE_PARITY.md",
       "status": "tracked"
@@ -794,7 +794,7 @@
       "kind": "status_drift",
       "message": "feature parity unresolved drift",
       "owner_bead": "bd-w2c3.1",
-      "owner_status": "open",
+      "owner_status": "in_progress",
       "ownership_ok": true,
       "source_file": "FEATURE_PARITY.md",
       "status": "tracked"
@@ -812,7 +812,7 @@
       "kind": "status_drift",
       "message": "feature parity unresolved drift",
       "owner_bead": "bd-w2c3.1",
-      "owner_status": "open",
+      "owner_status": "in_progress",
       "ownership_ok": true,
       "source_file": "FEATURE_PARITY.md",
       "status": "tracked"
@@ -830,7 +830,7 @@
       "kind": "status_drift",
       "message": "feature parity unresolved drift",
       "owner_bead": "bd-w2c3.1",
-      "owner_status": "open",
+      "owner_status": "in_progress",
       "ownership_ok": true,
       "source_file": "FEATURE_PARITY.md",
       "status": "tracked"
@@ -848,7 +848,7 @@
       "kind": "status_drift",
       "message": "feature parity unresolved drift",
       "owner_bead": "bd-w2c3.1",
-      "owner_status": "open",
+      "owner_status": "in_progress",
       "ownership_ok": true,
       "source_file": "FEATURE_PARITY.md",
       "status": "tracked"
@@ -866,7 +866,7 @@
       "kind": "status_drift",
       "message": "feature parity unresolved drift",
       "owner_bead": "bd-w2c3.1",
-      "owner_status": "open",
+      "owner_status": "in_progress",
       "ownership_ok": true,
       "source_file": "FEATURE_PARITY.md",
       "status": "tracked"
@@ -884,7 +884,7 @@
       "kind": "status_drift",
       "message": "feature parity unresolved drift",
       "owner_bead": "bd-w2c3.1",
-      "owner_status": "open",
+      "owner_status": "in_progress",
       "ownership_ok": true,
       "source_file": "FEATURE_PARITY.md",
       "status": "tracked"

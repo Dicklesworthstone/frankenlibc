@@ -1,0 +1,25 @@
+# Tier 1 Mini: 5-package fast validation set for PR gating
+# Bead: bd-2icq.18
+#
+# Selection rationale:
+#   Each package chosen for maximum coverage with minimum build time.
+#   Together they exercise: string ops, memory allocation, compression/streaming,
+#   regex/mmap, and networking/TLS/threading — the five most critical libc
+#   surface areas for FrankenLibC validation.
+#
+# Package                | Build ~  | Coverage focus
+# -----------------------|----------|--------------------------------------
+# sys-apps/coreutils     | 3 min   | memcpy, malloc, string ops, threading
+# dev-libs/json-c        | 1 min   | malloc/free, parsing, small allocs
+# app-arch/gzip          | 30 sec  | large allocs, streaming I/O, buffers
+# sys-apps/grep          | 1 min   | regex, mmap, string search
+# net-misc/curl          | 3 min   | threading, TLS, complex allocations
+#
+# Estimated total: 8–10 minutes
+# None of these are in configs/gentoo/exclusions.json.
+
+sys-apps/coreutils
+dev-libs/json-c
+app-arch/gzip
+sys-apps/grep
+net-misc/curl

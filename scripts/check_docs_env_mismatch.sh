@@ -5,6 +5,7 @@
 #   1) docs env inventory/report are reproducible.
 #   2) each mismatch has explicit remediation_action.
 #   3) unresolved_ambiguous mismatch list is empty.
+#   4) docs/code mismatch counts are fully reconciled (all zero).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -37,15 +38,20 @@ unresolved = payload.get("unresolved_ambiguous", [])
 if unresolved:
     failures.append(f"unresolved_ambiguous_count={len(unresolved)}")
 
+summary = payload.get("summary", {})
+for key in ("missing_in_docs_count", "missing_in_code_count", "semantic_drift_count"):
+    count = int(summary.get(key, 0))
+    if count != 0:
+        failures.append(f"{key}={count}")
+
 if failures:
-    print("FAIL: docs/code mismatch report invalid")
+    print("FAIL: docs/code mismatch report unresolved")
     for row in failures:
         print(f"  - {row}")
     raise SystemExit(1)
 
-summary = payload.get("summary", {})
 print(
-    "PASS: docs/code mismatch report valid "
+    "PASS: docs/code mismatch report reconciled "
     f"(total={summary.get('total_classifications', 0)}, "
     f"missing_in_docs={summary.get('missing_in_docs_count', 0)}, "
     f"missing_in_code={summary.get('missing_in_code_count', 0)}, "

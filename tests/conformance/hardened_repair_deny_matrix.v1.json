@@ -1,0 +1,137 @@
+{
+  "schema_version": "v1",
+  "bead": "bd-w2c3.3.2",
+  "description": "Deterministic hardened invalid-input action matrix for currently claimed API families. Each class maps to a fixed decision path, healing action, and policy_id, with fixture-backed evidence references.",
+  "captured_at": "2026-02-13T00:00:00Z",
+  "known_healing_actions": [
+    "ClampSize",
+    "TruncateWithNull",
+    "IgnoreDoubleFree",
+    "IgnoreForeignFree",
+    "ReallocAsMalloc",
+    "ReturnSafeDefault",
+    "UpgradeToSafeVariant",
+    "None"
+  ],
+  "claimed_api_families": [
+    {
+      "api_family": "StringMemory",
+      "symbols": ["memcpy", "strlen", "strcpy", "strcat"]
+    },
+    {
+      "api_family": "WideChar",
+      "symbols": ["wcscpy"]
+    },
+    {
+      "api_family": "Iconv",
+      "symbols": ["iconv_open", "iconv"]
+    }
+  ],
+  "invalid_input_classes": [
+    {
+      "id": "memcpy_overflow",
+      "description": "Requested copy length exceeds destination bounds."
+    },
+    {
+      "id": "unterminated_scan",
+      "description": "Input lacks terminator within known allocation extent."
+    },
+    {
+      "id": "string_copy_overflow",
+      "description": "String copy source exceeds destination capacity."
+    },
+    {
+      "id": "string_concat_overflow",
+      "description": "String concatenation source exceeds destination remaining capacity."
+    },
+    {
+      "id": "wide_copy_overflow",
+      "description": "Wide string copy source exceeds destination capacity."
+    },
+    {
+      "id": "iconv_unsupported_encoding",
+      "description": "Requested encoding pair is unsupported and cannot be repaired."
+    }
+  ],
+  "entries": [
+    {
+      "entry_id": "string_memcpy_overflow_repair",
+      "api_family": "StringMemory",
+      "symbol": "memcpy",
+      "invalid_input_class": "memcpy_overflow",
+      "decision_path": "Repair",
+      "healing_action": "ClampSize",
+      "policy_id": "tsm.repair.stringmemory.memcpy_overflow.v1",
+      "fixture_case_refs": [
+        "tests/conformance/fixtures/membrane_mode_split.json#/cases/hardened_memcpy_overflow_clamped"
+      ]
+    },
+    {
+      "entry_id": "string_strlen_unterminated_repair",
+      "api_family": "StringMemory",
+      "symbol": "strlen",
+      "invalid_input_class": "unterminated_scan",
+      "decision_path": "Repair",
+      "healing_action": "ClampSize",
+      "policy_id": "tsm.repair.stringmemory.unterminated_scan.v1",
+      "fixture_case_refs": [
+        "tests/conformance/fixtures/membrane_mode_split.json#/cases/hardened_strlen_unterminated_truncated"
+      ]
+    },
+    {
+      "entry_id": "string_strcpy_overflow_repair",
+      "api_family": "StringMemory",
+      "symbol": "strcpy",
+      "invalid_input_class": "string_copy_overflow",
+      "decision_path": "Repair",
+      "healing_action": "TruncateWithNull",
+      "policy_id": "tsm.repair.stringmemory.string_copy_overflow.v1",
+      "fixture_case_refs": [
+        "tests/conformance/fixtures/string_ops.json#/cases/hardened_strcpy_overflow"
+      ]
+    },
+    {
+      "entry_id": "string_strcat_overflow_repair",
+      "api_family": "StringMemory",
+      "symbol": "strcat",
+      "invalid_input_class": "string_concat_overflow",
+      "decision_path": "Repair",
+      "healing_action": "TruncateWithNull",
+      "policy_id": "tsm.repair.stringmemory.string_concat_overflow.v1",
+      "fixture_case_refs": [
+        "tests/conformance/fixtures/string_ops.json#/cases/hardened_strcat_overflow"
+      ]
+    },
+    {
+      "entry_id": "wide_wcscpy_overflow_repair",
+      "api_family": "WideChar",
+      "symbol": "wcscpy",
+      "invalid_input_class": "wide_copy_overflow",
+      "decision_path": "Repair",
+      "healing_action": "TruncateWithNull",
+      "policy_id": "tsm.repair.widechar.wide_copy_overflow.v1",
+      "fixture_case_refs": [
+        "tests/conformance/fixtures/wide_string_ops.json#/cases/hardened_wcscpy_overflow"
+      ]
+    },
+    {
+      "entry_id": "iconv_unsupported_encoding_deny",
+      "api_family": "Iconv",
+      "symbol": "iconv_open",
+      "invalid_input_class": "iconv_unsupported_encoding",
+      "decision_path": "Deny",
+      "healing_action": "None",
+      "policy_id": "tsm.deny.iconv.iconv_unsupported_encoding.v1",
+      "fixture_case_refs": [
+        "tests/conformance/fixtures/iconv_phase1.json#/cases/hardened_unsupported_encoding_denied"
+      ]
+    }
+  ],
+  "summary": {
+    "total_invalid_input_classes": 6,
+    "covered_invalid_input_classes": 6,
+    "entry_count": 6,
+    "repair_entries": 5,
+    "deny_entries": 1
+  }
+}

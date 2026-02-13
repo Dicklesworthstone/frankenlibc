@@ -1,0 +1,574 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "bd-b5a.1-e2e-scenario-catalog",
+  "generated_utc": "2026-02-13T08:18:30Z",
+  "description": "Deterministic E2E scenario catalog for smoke/stress/fault/stability suites.",
+  "replay_defaults": {
+    "seed_key": "FRANKENLIBC_E2E_SEED",
+    "env_keys": [
+      "FRANKENLIBC_E2E_SEED",
+      "FRANKENLIBC_MODE",
+      "TIMEOUT_SECONDS",
+      "LD_PRELOAD"
+    ],
+    "deterministic_inputs": "Pinned seed + pinned command argv + pinned manifest schema."
+  },
+  "scenarios": [
+    {
+      "id": "smoke.coreutils_ls",
+      "class": "smoke",
+      "label": "coreutils_ls",
+      "priority": 1,
+      "description": "Basic dynamic linker and process startup path via /bin/ls.",
+      "command": [
+        "/bin/ls",
+        "-la",
+        "/tmp"
+      ],
+      "mode_expectations": {
+        "strict": {
+          "expected_outcome": "pass",
+          "pass_condition": "exit_code == 0",
+          "allowed_exit_codes": [
+            0
+          ]
+        },
+        "hardened": {
+          "expected_outcome": "pass",
+          "pass_condition": "exit_code == 0",
+          "allowed_exit_codes": [
+            0
+          ]
+        }
+      },
+      "artifact_policy": {
+        "capture_stdout": true,
+        "capture_stderr": true,
+        "capture_env_on_failure": true,
+        "capture_bundle_on_failure": true,
+        "required_artifacts": [
+          "stdout.txt",
+          "stderr.txt"
+        ]
+      },
+      "replay": {
+        "seed_key": "FRANKENLIBC_E2E_SEED",
+        "env_keys": [
+          "FRANKENLIBC_E2E_SEED",
+          "FRANKENLIBC_MODE",
+          "LD_PRELOAD"
+        ],
+        "deterministic_inputs": "Static argv + fixed timeout budget."
+      }
+    },
+    {
+      "id": "smoke.coreutils_cat",
+      "class": "smoke",
+      "label": "coreutils_cat",
+      "priority": 1,
+      "description": "File read path through /etc/hosts.",
+      "command": [
+        "/bin/cat",
+        "/etc/hosts"
+      ],
+      "mode_expectations": {
+        "strict": {
+          "expected_outcome": "pass",
+          "pass_condition": "exit_code == 0",
+          "allowed_exit_codes": [
+            0
+          ]
+        },
+        "hardened": {
+          "expected_outcome": "pass",
+          "pass_condition": "exit_code == 0",
+          "allowed_exit_codes": [
+            0
+          ]
+        }
+      },
+      "artifact_policy": {
+        "capture_stdout": true,
+        "capture_stderr": true,
+        "capture_env_on_failure": true,
+        "capture_bundle_on_failure": true,
+        "required_artifacts": [
+          "stdout.txt",
+          "stderr.txt"
+        ]
+      },
+      "replay": {
+        "seed_key": "FRANKENLIBC_E2E_SEED",
+        "env_keys": [
+          "FRANKENLIBC_E2E_SEED",
+          "FRANKENLIBC_MODE",
+          "LD_PRELOAD"
+        ],
+        "deterministic_inputs": "Static argv + fixed timeout budget."
+      }
+    },
+    {
+      "id": "smoke.coreutils_echo",
+      "class": "smoke",
+      "label": "coreutils_echo",
+      "priority": 2,
+      "description": "Simple stdout write path.",
+      "command": [
+        "/bin/echo",
+        "frankenlibc_e2e_smoke"
+      ],
+      "mode_expectations": {
+        "strict": {
+          "expected_outcome": "pass",
+          "pass_condition": "exit_code == 0",
+          "allowed_exit_codes": [
+            0
+          ]
+        },
+        "hardened": {
+          "expected_outcome": "pass",
+          "pass_condition": "exit_code == 0",
+          "allowed_exit_codes": [
+            0
+          ]
+        }
+      },
+      "artifact_policy": {
+        "capture_stdout": true,
+        "capture_stderr": true,
+        "capture_env_on_failure": true,
+        "capture_bundle_on_failure": true,
+        "required_artifacts": [
+          "stdout.txt",
+          "stderr.txt"
+        ]
+      },
+      "replay": {
+        "seed_key": "FRANKENLIBC_E2E_SEED",
+        "env_keys": [
+          "FRANKENLIBC_E2E_SEED",
+          "FRANKENLIBC_MODE",
+          "LD_PRELOAD"
+        ],
+        "deterministic_inputs": "Static argv + fixed timeout budget."
+      }
+    },
+    {
+      "id": "smoke.coreutils_env",
+      "class": "smoke",
+      "label": "coreutils_env",
+      "priority": 2,
+      "description": "Environment introspection path.",
+      "command": [
+        "/usr/bin/env"
+      ],
+      "mode_expectations": {
+        "strict": {
+          "expected_outcome": "pass",
+          "pass_condition": "exit_code == 0",
+          "allowed_exit_codes": [
+            0
+          ]
+        },
+        "hardened": {
+          "expected_outcome": "pass",
+          "pass_condition": "exit_code == 0",
+          "allowed_exit_codes": [
+            0
+          ]
+        }
+      },
+      "artifact_policy": {
+        "capture_stdout": true,
+        "capture_stderr": true,
+        "capture_env_on_failure": true,
+        "capture_bundle_on_failure": true,
+        "required_artifacts": [
+          "stdout.txt",
+          "stderr.txt"
+        ]
+      },
+      "replay": {
+        "seed_key": "FRANKENLIBC_E2E_SEED",
+        "env_keys": [
+          "FRANKENLIBC_E2E_SEED",
+          "FRANKENLIBC_MODE",
+          "LD_PRELOAD"
+        ],
+        "deterministic_inputs": "Static argv + fixed timeout budget."
+      }
+    },
+    {
+      "id": "smoke.integration_link",
+      "class": "smoke",
+      "label": "integration_link",
+      "priority": 0,
+      "description": "C integration fixture linked against libc entrypoints.",
+      "command": [
+        "${INTEG_BIN}"
+      ],
+      "mode_expectations": {
+        "strict": {
+          "expected_outcome": "pass",
+          "pass_condition": "exit_code == 0",
+          "allowed_exit_codes": [
+            0
+          ]
+        },
+        "hardened": {
+          "expected_outcome": "pass",
+          "pass_condition": "exit_code == 0",
+          "allowed_exit_codes": [
+            0
+          ]
+        }
+      },
+      "artifact_policy": {
+        "capture_stdout": true,
+        "capture_stderr": true,
+        "capture_env_on_failure": true,
+        "capture_bundle_on_failure": true,
+        "required_artifacts": [
+          "stdout.txt",
+          "stderr.txt",
+          "bundle.meta"
+        ]
+      },
+      "replay": {
+        "seed_key": "FRANKENLIBC_E2E_SEED",
+        "env_keys": [
+          "FRANKENLIBC_E2E_SEED",
+          "FRANKENLIBC_MODE",
+          "LD_PRELOAD"
+        ],
+        "deterministic_inputs": "Binary rebuilt under pinned toolchain + fixed seed."
+      }
+    },
+    {
+      "id": "smoke.nontrivial_python3",
+      "class": "smoke",
+      "label": "nontrivial_python3",
+      "priority": 3,
+      "description": "Optional smoke case for python runtime compatibility.",
+      "command": [
+        "python3",
+        "-c",
+        "print('e2e_ok')"
+      ],
+      "mode_expectations": {
+        "strict": {
+          "expected_outcome": "pass",
+          "pass_condition": "exit_code == 0",
+          "allowed_exit_codes": [
+            0
+          ]
+        },
+        "hardened": {
+          "expected_outcome": "pass",
+          "pass_condition": "exit_code == 0",
+          "allowed_exit_codes": [
+            0
+          ]
+        }
+      },
+      "artifact_policy": {
+        "capture_stdout": true,
+        "capture_stderr": true,
+        "capture_env_on_failure": true,
+        "capture_bundle_on_failure": true,
+        "required_artifacts": [
+          "stdout.txt",
+          "stderr.txt"
+        ]
+      },
+      "replay": {
+        "seed_key": "FRANKENLIBC_E2E_SEED",
+        "env_keys": [
+          "FRANKENLIBC_E2E_SEED",
+          "FRANKENLIBC_MODE",
+          "LD_PRELOAD"
+        ],
+        "deterministic_inputs": "Optional scenario only when python3 binary exists."
+      }
+    },
+    {
+      "id": "stress.repeated_link",
+      "class": "stress",
+      "label": "repeated_link",
+      "priority": 0,
+      "description": "Repeated integration-link executions for medium-duration stress.",
+      "command": [
+        "${INTEG_BIN}"
+      ],
+      "mode_expectations": {
+        "strict": {
+          "expected_outcome": "pass",
+          "pass_condition": "all_iterations_exit_code == 0",
+          "allowed_exit_codes": [
+            0
+          ]
+        },
+        "hardened": {
+          "expected_outcome": "pass",
+          "pass_condition": "all_iterations_exit_code == 0",
+          "allowed_exit_codes": [
+            0
+          ]
+        }
+      },
+      "artifact_policy": {
+        "capture_stdout": true,
+        "capture_stderr": true,
+        "capture_env_on_failure": true,
+        "capture_bundle_on_failure": true,
+        "required_artifacts": [
+          "stdout.txt",
+          "stderr.txt",
+          "bundle.meta"
+        ]
+      },
+      "replay": {
+        "seed_key": "FRANKENLIBC_E2E_SEED",
+        "env_keys": [
+          "FRANKENLIBC_E2E_SEED",
+          "FRANKENLIBC_E2E_STRESS_ITERS",
+          "FRANKENLIBC_MODE",
+          "LD_PRELOAD"
+        ],
+        "deterministic_inputs": "Pinned iteration count + seed."
+      }
+    },
+    {
+      "id": "stress.repeated_echo",
+      "class": "stress",
+      "label": "repeated_echo",
+      "priority": 1,
+      "description": "Repeated low-cost command to detect scheduler jitter and preload instability.",
+      "command": [
+        "/bin/echo",
+        "iteration_${ITERATION}"
+      ],
+      "mode_expectations": {
+        "strict": {
+          "expected_outcome": "pass",
+          "pass_condition": "all_iterations_exit_code == 0",
+          "allowed_exit_codes": [
+            0
+          ]
+        },
+        "hardened": {
+          "expected_outcome": "pass",
+          "pass_condition": "all_iterations_exit_code == 0",
+          "allowed_exit_codes": [
+            0
+          ]
+        }
+      },
+      "artifact_policy": {
+        "capture_stdout": true,
+        "capture_stderr": true,
+        "capture_env_on_failure": true,
+        "capture_bundle_on_failure": true,
+        "required_artifacts": [
+          "stdout.txt",
+          "stderr.txt"
+        ]
+      },
+      "replay": {
+        "seed_key": "FRANKENLIBC_E2E_SEED",
+        "env_keys": [
+          "FRANKENLIBC_E2E_SEED",
+          "FRANKENLIBC_E2E_STRESS_ITERS",
+          "FRANKENLIBC_MODE",
+          "LD_PRELOAD"
+        ],
+        "deterministic_inputs": "Pinned iteration count + seed."
+      }
+    },
+    {
+      "id": "fault.malloc_zero",
+      "class": "fault",
+      "label": "malloc_zero",
+      "priority": 0,
+      "description": "Fault fixture binary exercises malloc/calloc/realloc semantics.",
+      "command": [
+        "${FAULT_BIN}"
+      ],
+      "mode_expectations": {
+        "strict": {
+          "expected_outcome": "pass",
+          "pass_condition": "exit_code == 0",
+          "allowed_exit_codes": [
+            0
+          ]
+        },
+        "hardened": {
+          "expected_outcome": "pass",
+          "pass_condition": "exit_code == 0",
+          "allowed_exit_codes": [
+            0
+          ]
+        }
+      },
+      "artifact_policy": {
+        "capture_stdout": true,
+        "capture_stderr": true,
+        "capture_env_on_failure": true,
+        "capture_bundle_on_failure": true,
+        "required_artifacts": [
+          "stdout.txt",
+          "stderr.txt",
+          "bundle.meta"
+        ]
+      },
+      "replay": {
+        "seed_key": "FRANKENLIBC_E2E_SEED",
+        "env_keys": [
+          "FRANKENLIBC_E2E_SEED",
+          "FRANKENLIBC_MODE",
+          "LD_PRELOAD"
+        ],
+        "deterministic_inputs": "Pinned generated C fixture source + seed."
+      }
+    },
+    {
+      "id": "fault.cat_devnull",
+      "class": "fault",
+      "label": "cat_devnull",
+      "priority": 1,
+      "description": "Minimal input edge case under /dev/null.",
+      "command": [
+        "/bin/cat",
+        "/dev/null"
+      ],
+      "mode_expectations": {
+        "strict": {
+          "expected_outcome": "pass",
+          "pass_condition": "exit_code == 0",
+          "allowed_exit_codes": [
+            0
+          ]
+        },
+        "hardened": {
+          "expected_outcome": "pass",
+          "pass_condition": "exit_code == 0",
+          "allowed_exit_codes": [
+            0
+          ]
+        }
+      },
+      "artifact_policy": {
+        "capture_stdout": true,
+        "capture_stderr": true,
+        "capture_env_on_failure": true,
+        "capture_bundle_on_failure": true,
+        "required_artifacts": [
+          "stdout.txt",
+          "stderr.txt"
+        ]
+      },
+      "replay": {
+        "seed_key": "FRANKENLIBC_E2E_SEED",
+        "env_keys": [
+          "FRANKENLIBC_E2E_SEED",
+          "FRANKENLIBC_MODE",
+          "LD_PRELOAD"
+        ],
+        "deterministic_inputs": "Static argv + fixed timeout budget."
+      }
+    },
+    {
+      "id": "fault.echo_empty",
+      "class": "fault",
+      "label": "echo_empty",
+      "priority": 1,
+      "description": "Empty-string output path under preload.",
+      "command": [
+        "/bin/echo",
+        ""
+      ],
+      "mode_expectations": {
+        "strict": {
+          "expected_outcome": "pass",
+          "pass_condition": "exit_code == 0",
+          "allowed_exit_codes": [
+            0
+          ]
+        },
+        "hardened": {
+          "expected_outcome": "pass",
+          "pass_condition": "exit_code == 0",
+          "allowed_exit_codes": [
+            0
+          ]
+        }
+      },
+      "artifact_policy": {
+        "capture_stdout": true,
+        "capture_stderr": true,
+        "capture_env_on_failure": true,
+        "capture_bundle_on_failure": true,
+        "required_artifacts": [
+          "stdout.txt",
+          "stderr.txt"
+        ]
+      },
+      "replay": {
+        "seed_key": "FRANKENLIBC_E2E_SEED",
+        "env_keys": [
+          "FRANKENLIBC_E2E_SEED",
+          "FRANKENLIBC_MODE",
+          "LD_PRELOAD"
+        ],
+        "deterministic_inputs": "Static argv + fixed timeout budget."
+      }
+    },
+    {
+      "id": "stability.link_longrun",
+      "class": "stability",
+      "label": "link_longrun",
+      "priority": 0,
+      "description": "Long-run replayable loop over integration binary.",
+      "command": [
+        "${INTEG_BIN}"
+      ],
+      "mode_expectations": {
+        "strict": {
+          "expected_outcome": "pass",
+          "pass_condition": "all_iterations_exit_code == 0",
+          "allowed_exit_codes": [
+            0
+          ]
+        },
+        "hardened": {
+          "expected_outcome": "pass",
+          "pass_condition": "all_iterations_exit_code == 0",
+          "allowed_exit_codes": [
+            0
+          ]
+        }
+      },
+      "artifact_policy": {
+        "capture_stdout": true,
+        "capture_stderr": true,
+        "capture_env_on_failure": true,
+        "capture_bundle_on_failure": true,
+        "required_artifacts": [
+          "stdout.txt",
+          "stderr.txt",
+          "bundle.meta"
+        ]
+      },
+      "replay": {
+        "seed_key": "FRANKENLIBC_E2E_SEED",
+        "env_keys": [
+          "FRANKENLIBC_E2E_SEED",
+          "FRANKENLIBC_E2E_STABILITY_ITERS",
+          "FRANKENLIBC_MODE",
+          "LD_PRELOAD"
+        ],
+        "deterministic_inputs": "Pinned iteration count + seed."
+      }
+    }
+  ]
+}

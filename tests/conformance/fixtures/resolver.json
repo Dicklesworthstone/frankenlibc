@@ -125,6 +125,17 @@
       "mode": "strict"
     },
     {
+      "name": "hosts_lookup_inline_comments_and_aliases",
+      "function": "lookup_hosts",
+      "spec_section": "/etc/hosts format",
+      "inputs": {
+        "content": "# resolver fixture\n::1 localhost localhost6 # loopback\n10.0.0.7 api api.internal # primary\n10.0.0.8 API # duplicate in different case\n",
+        "name": "api"
+      },
+      "expected_output": ["10.0.0.7", "10.0.0.8"],
+      "mode": "strict"
+    },
+    {
       "name": "getaddrinfo_numeric_ipv4",
       "function": "getaddrinfo",
       "spec_section": "POSIX getaddrinfo",

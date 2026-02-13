@@ -1,0 +1,584 @@
+{
+  "schema_version": "v1",
+  "bead": "bd-7ef9",
+  "description": "Current glibc callthrough census from support_matrix plus dependency-aware decommission sequencing.",
+  "source": {
+    "support_matrix_path": "support_matrix.json",
+    "support_matrix_sha256": "674d08351b6ef29c7a25c3a5de2c772b74a3dbfd97f80eda8a685b87f0aecaae",
+    "total_exported": 250,
+    "status_summary_callthrough": 54,
+    "derived_callthrough_symbols": 49,
+    "summary_delta": 5
+  },
+  "ranking_policy": {
+    "runtime_impact_weights": {
+      "strict_hotpath": 5,
+      "hardened_hotpath": 3,
+      "coldpath": 1
+    },
+    "replacement_complexity_weights": {
+      "low": 1,
+      "medium": 2,
+      "high": 3
+    },
+    "priority_formula": "priority_score = runtime_impact_weight(perf_class)*100 - replacement_complexity_weight*10"
+  },
+  "module_census": [
+    {
+      "module": "pthread_abi",
+      "count": 15,
+      "strict_hotpath_count": 15,
+      "hardened_hotpath_count": 0,
+      "coldpath_count": 0,
+      "runtime_impact_weight": 75,
+      "avg_complexity_weight": 2.07,
+      "complexity_mix": {
+        "low": 2,
+        "medium": 10,
+        "high": 3
+      },
+      "runtime_impact_rank": 1
+    },
+    {
+      "module": "stdio_abi",
+      "count": 30,
+      "strict_hotpath_count": 0,
+      "hardened_hotpath_count": 0,
+      "coldpath_count": 30,
+      "runtime_impact_weight": 30,
+      "avg_complexity_weight": 3.0,
+      "complexity_mix": {
+        "low": 0,
+        "medium": 0,
+        "high": 30
+      },
+      "runtime_impact_rank": 2
+    },
+    {
+      "module": "dlfcn_abi",
+      "count": 4,
+      "strict_hotpath_count": 0,
+      "hardened_hotpath_count": 0,
+      "coldpath_count": 4,
+      "runtime_impact_weight": 4,
+      "avg_complexity_weight": 2.0,
+      "complexity_mix": {
+        "low": 0,
+        "medium": 4,
+        "high": 0
+      },
+      "runtime_impact_rank": 3
+    }
+  ],
+  "symbol_census": [
+    {
+      "symbol": "pthread_equal",
+      "module": "pthread_abi",
+      "perf_class": "strict_hotpath",
+      "runtime_impact": "high",
+      "replacement_complexity": "low",
+      "priority_score": 490
+    },
+    {
+      "symbol": "pthread_self",
+      "module": "pthread_abi",
+      "perf_class": "strict_hotpath",
+      "runtime_impact": "high",
+      "replacement_complexity": "low",
+      "priority_score": 490
+    },
+    {
+      "symbol": "pthread_cond_broadcast",
+      "module": "pthread_abi",
+      "perf_class": "strict_hotpath",
+      "runtime_impact": "high",
+      "replacement_complexity": "medium",
+      "priority_score": 480
+    },
+    {
+      "symbol": "pthread_cond_destroy",
+      "module": "pthread_abi",
+      "perf_class": "strict_hotpath",
+      "runtime_impact": "high",
+      "replacement_complexity": "medium",
+      "priority_score": 480
+    },
+    {
+      "symbol": "pthread_cond_init",
+      "module": "pthread_abi",
+      "perf_class": "strict_hotpath",
+      "runtime_impact": "high",
+      "replacement_complexity": "medium",
+      "priority_score": 480
+    },
+    {
+      "symbol": "pthread_cond_signal",
+      "module": "pthread_abi",
+      "perf_class": "strict_hotpath",
+      "runtime_impact": "high",
+      "replacement_complexity": "medium",
+      "priority_score": 480
+    },
+    {
+      "symbol": "pthread_cond_wait",
+      "module": "pthread_abi",
+      "perf_class": "strict_hotpath",
+      "runtime_impact": "high",
+      "replacement_complexity": "medium",
+      "priority_score": 480
+    },
+    {
+      "symbol": "pthread_rwlock_destroy",
+      "module": "pthread_abi",
+      "perf_class": "strict_hotpath",
+      "runtime_impact": "high",
+      "replacement_complexity": "medium",
+      "priority_score": 480
+    },
+    {
+      "symbol": "pthread_rwlock_init",
+      "module": "pthread_abi",
+      "perf_class": "strict_hotpath",
+      "runtime_impact": "high",
+      "replacement_complexity": "medium",
+      "priority_score": 480
+    },
+    {
+      "symbol": "pthread_rwlock_rdlock",
+      "module": "pthread_abi",
+      "perf_class": "strict_hotpath",
+      "runtime_impact": "high",
+      "replacement_complexity": "medium",
+      "priority_score": 480
+    },
+    {
+      "symbol": "pthread_rwlock_unlock",
+      "module": "pthread_abi",
+      "perf_class": "strict_hotpath",
+      "runtime_impact": "high",
+      "replacement_complexity": "medium",
+      "priority_score": 480
+    },
+    {
+      "symbol": "pthread_rwlock_wrlock",
+      "module": "pthread_abi",
+      "perf_class": "strict_hotpath",
+      "runtime_impact": "high",
+      "replacement_complexity": "medium",
+      "priority_score": 480
+    },
+    {
+      "symbol": "pthread_create",
+      "module": "pthread_abi",
+      "perf_class": "strict_hotpath",
+      "runtime_impact": "high",
+      "replacement_complexity": "high",
+      "priority_score": 470
+    },
+    {
+      "symbol": "pthread_detach",
+      "module": "pthread_abi",
+      "perf_class": "strict_hotpath",
+      "runtime_impact": "high",
+      "replacement_complexity": "high",
+      "priority_score": 470
+    },
+    {
+      "symbol": "pthread_join",
+      "module": "pthread_abi",
+      "perf_class": "strict_hotpath",
+      "runtime_impact": "high",
+      "replacement_complexity": "high",
+      "priority_score": 470
+    },
+    {
+      "symbol": "dlclose",
+      "module": "dlfcn_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "medium",
+      "priority_score": 80
+    },
+    {
+      "symbol": "dlerror",
+      "module": "dlfcn_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "medium",
+      "priority_score": 80
+    },
+    {
+      "symbol": "dlopen",
+      "module": "dlfcn_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "medium",
+      "priority_score": 80
+    },
+    {
+      "symbol": "dlsym",
+      "module": "dlfcn_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "medium",
+      "priority_score": 80
+    },
+    {
+      "symbol": "clearerr",
+      "module": "stdio_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "high",
+      "priority_score": 70
+    },
+    {
+      "symbol": "fclose",
+      "module": "stdio_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "high",
+      "priority_score": 70
+    },
+    {
+      "symbol": "feof",
+      "module": "stdio_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "high",
+      "priority_score": 70
+    },
+    {
+      "symbol": "ferror",
+      "module": "stdio_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "high",
+      "priority_score": 70
+    },
+    {
+      "symbol": "fflush",
+      "module": "stdio_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "high",
+      "priority_score": 70
+    },
+    {
+      "symbol": "fgetc",
+      "module": "stdio_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "high",
+      "priority_score": 70
+    },
+    {
+      "symbol": "fgets",
+      "module": "stdio_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "high",
+      "priority_score": 70
+    },
+    {
+      "symbol": "fileno",
+      "module": "stdio_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "high",
+      "priority_score": 70
+    },
+    {
+      "symbol": "fopen",
+      "module": "stdio_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "high",
+      "priority_score": 70
+    },
+    {
+      "symbol": "fprintf",
+      "module": "stdio_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "high",
+      "priority_score": 70
+    },
+    {
+      "symbol": "fputc",
+      "module": "stdio_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "high",
+      "priority_score": 70
+    },
+    {
+      "symbol": "fputs",
+      "module": "stdio_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "high",
+      "priority_score": 70
+    },
+    {
+      "symbol": "fread",
+      "module": "stdio_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "high",
+      "priority_score": 70
+    },
+    {
+      "symbol": "fseek",
+      "module": "stdio_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "high",
+      "priority_score": 70
+    },
+    {
+      "symbol": "ftell",
+      "module": "stdio_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "high",
+      "priority_score": 70
+    },
+    {
+      "symbol": "fwrite",
+      "module": "stdio_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "high",
+      "priority_score": 70
+    },
+    {
+      "symbol": "getchar",
+      "module": "stdio_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "high",
+      "priority_score": 70
+    },
+    {
+      "symbol": "perror",
+      "module": "stdio_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "high",
+      "priority_score": 70
+    },
+    {
+      "symbol": "printf",
+      "module": "stdio_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "high",
+      "priority_score": 70
+    },
+    {
+      "symbol": "putchar",
+      "module": "stdio_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "high",
+      "priority_score": 70
+    },
+    {
+      "symbol": "puts",
+      "module": "stdio_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "high",
+      "priority_score": 70
+    },
+    {
+      "symbol": "rewind",
+      "module": "stdio_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "high",
+      "priority_score": 70
+    },
+    {
+      "symbol": "setbuf",
+      "module": "stdio_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "high",
+      "priority_score": 70
+    },
+    {
+      "symbol": "setvbuf",
+      "module": "stdio_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "high",
+      "priority_score": 70
+    },
+    {
+      "symbol": "snprintf",
+      "module": "stdio_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "high",
+      "priority_score": 70
+    },
+    {
+      "symbol": "sprintf",
+      "module": "stdio_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "high",
+      "priority_score": 70
+    },
+    {
+      "symbol": "stderr",
+      "module": "stdio_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "high",
+      "priority_score": 70
+    },
+    {
+      "symbol": "stdin",
+      "module": "stdio_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "high",
+      "priority_score": 70
+    },
+    {
+      "symbol": "stdout",
+      "module": "stdio_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "high",
+      "priority_score": 70
+    },
+    {
+      "symbol": "ungetc",
+      "module": "stdio_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "high",
+      "priority_score": 70
+    }
+  ],
+  "decommission_waves": [
+    {
+      "wave": 1,
+      "wave_id": "pthread-foundation",
+      "title": "Pthread foundation primitives (low complexity)",
+      "depends_on": [],
+      "symbols": [
+        "pthread_equal",
+        "pthread_self"
+      ],
+      "rationale": "Low-complexity, high-impact thread identity calls unblock later synchronization work.",
+      "rollback_strategy": "Revert to host passthrough for foundation symbols only; keep remaining waves untouched."
+    },
+    {
+      "wave": 2,
+      "wave_id": "pthread-synchronization",
+      "title": "Pthread condvar/rwlock synchronization surface",
+      "depends_on": [
+        "pthread-foundation"
+      ],
+      "symbols": [
+        "pthread_cond_broadcast",
+        "pthread_cond_destroy",
+        "pthread_cond_init",
+        "pthread_cond_signal",
+        "pthread_cond_wait",
+        "pthread_rwlock_destroy",
+        "pthread_rwlock_init",
+        "pthread_rwlock_rdlock",
+        "pthread_rwlock_unlock",
+        "pthread_rwlock_wrlock"
+      ],
+      "rationale": "Synchronization primitives carry strict-hotpath impact with bounded state-machine scope.",
+      "rollback_strategy": "Rollback to host-backed cond/rwlock while retaining foundation replacements."
+    },
+    {
+      "wave": 3,
+      "wave_id": "pthread-lifecycle",
+      "title": "Pthread lifecycle operations (create/join/detach)",
+      "depends_on": [
+        "pthread-synchronization"
+      ],
+      "symbols": [
+        "pthread_create",
+        "pthread_detach",
+        "pthread_join"
+      ],
+      "rationale": "Lifecycle transitions are highest complexity and depend on prior synchronization correctness.",
+      "rollback_strategy": "Disable native lifecycle path behind routing flag and fall back to host calls."
+    },
+    {
+      "wave": 4,
+      "wave_id": "loader-boundary",
+      "title": "dlfcn boundary migration",
+      "depends_on": [
+        "pthread-foundation"
+      ],
+      "symbols": [
+        "dlclose",
+        "dlerror",
+        "dlopen",
+        "dlsym"
+      ],
+      "rationale": "Loader boundary is coldpath but security-sensitive; migrate after core thread identity stability.",
+      "rollback_strategy": "Re-enable host dlfcn call-through via module-scoped routing switch."
+    },
+    {
+      "wave": 5,
+      "wave_id": "stdio-surface",
+      "title": "stdio callthrough surface consolidation",
+      "depends_on": [
+        "pthread-lifecycle",
+        "loader-boundary"
+      ],
+      "symbols": [
+        "clearerr",
+        "fclose",
+        "feof",
+        "ferror",
+        "fflush",
+        "fgetc",
+        "fgets",
+        "fileno",
+        "fopen",
+        "fprintf",
+        "fputc",
+        "fputs",
+        "fread",
+        "fseek",
+        "ftell",
+        "fwrite",
+        "getchar",
+        "perror",
+        "printf",
+        "putchar",
+        "puts",
+        "rewind",
+        "setbuf",
+        "setvbuf",
+        "snprintf",
+        "sprintf",
+        "stderr",
+        "stdin",
+        "stdout",
+        "ungetc"
+      ],
+      "rationale": "Largest callthrough surface; schedule last to avoid masking independent high-risk migrations.",
+      "rollback_strategy": "Rollback by restoring stdio family call-through while keeping completed non-stdio waves."
+    }
+  ],
+  "summary": {
+    "module_count": 3,
+    "symbol_count": 49,
+    "strict_hotpath_count": 15,
+    "coldpath_count": 34,
+    "wave_count": 5
+  }
+}

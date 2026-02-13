@@ -1,0 +1,54 @@
+{
+  "schema_version": "v1",
+  "bead": "bd-w2c3.3.3",
+  "description": "Mode contract lock for process-level strict/hardened selection semantics, immutability after first resolution, and provenance logging requirements.",
+  "captured_at": "2026-02-13T00:00:00Z",
+  "env_contract": {
+    "env_key": "FRANKENLIBC_MODE",
+    "allowed_values": ["strict", "hardened"],
+    "default_value": "strict",
+    "unknown_value_behavior": "fallback_to_strict",
+    "selection_timing": "first membrane mode resolution",
+    "mutability": "process-immutable after first resolution",
+    "reentrant_init_behavior": "resolving_state_returns_strict_safe_default"
+  },
+  "required_provenance_fields": [
+    "trace_id",
+    "mode",
+    "api_family",
+    "symbol",
+    "decision_path",
+    "healing_action",
+    "errno",
+    "latency_ns",
+    "artifact_refs",
+    "resolved_mode",
+    "mode_source",
+    "mode_cache_state"
+  ],
+  "startup_reentrant_test_anchors": [
+    {
+      "name": "runtime_mode_parser_is_strict_or_hardened_only",
+      "path": "crates/frankenlibc-membrane/src/config.rs"
+    },
+    {
+      "name": "cached_mode_is_process_sticky_until_cache_reset",
+      "path": "crates/frankenlibc-membrane/src/config.rs"
+    },
+    {
+      "name": "resolving_state_returns_strict_safe_default",
+      "path": "crates/frankenlibc-membrane/src/config.rs"
+    }
+  ],
+  "cross_inventory_evidence": {
+    "runtime_inventory": "tests/conformance/runtime_env_inventory.v1.json",
+    "docs_inventory": "tests/conformance/docs_env_inventory.v1.json",
+    "drift_gate": "scripts/check_docs_env_mismatch.sh",
+    "mode_semantics_gate": "scripts/check_mode_semantics.sh"
+  },
+  "summary": {
+    "allowed_value_count": 2,
+    "required_provenance_field_count": 12,
+    "startup_reentrant_anchor_count": 3
+  }
+}

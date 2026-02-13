@@ -260,6 +260,11 @@ if [[ "${FRANKENLIBC_EXTENDED_GATES:-0}" == "1" ]]; then
     echo "PASS"
     echo ""
 
+    echo "--- optimization proof ledger gate ---"
+    scripts/check_optimization_proof_ledger.sh
+    echo "PASS"
+    echo ""
+
     echo "--- crash bundle gate ---"
     scripts/check_crash_bundle.sh
     echo "PASS"
@@ -272,6 +277,26 @@ if [[ "${FRANKENLIBC_EXTENDED_GATES:-0}" == "1" ]]; then
     else
         echo "SKIP (cve_arena_gate.sh not found)"
     fi
+    echo ""
+
+    echo "--- Tier 1 fast validation gate (bd-2icq.18) ---"
+    scripts/check_fast_validate.sh
+    echo "PASS"
+    echo ""
+
+    echo "--- Gentoo perf benchmark gate (bd-2icq.9) ---"
+    scripts/check_perf_benchmark_gentoo.sh
+    echo "PASS"
+    echo ""
+
+    echo "--- flaky test quarantine gate (bd-2icq.24) ---"
+    scripts/check_flaky_quarantine.sh
+    echo "PASS"
+    echo ""
+
+    echo "--- regression detection gate (bd-2icq.12) ---"
+    scripts/check_regression_detector.sh
+    echo "PASS"
     echo ""
 else
     echo "SKIP extended gates (set FRANKENLIBC_EXTENDED_GATES=1 to run full policy/perf/snapshot checks)"

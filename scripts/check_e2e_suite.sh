@@ -3,9 +3,12 @@
 #
 # Validates:
 # 1. e2e_suite.sh exists and is executable.
-# 2. The suite can run at least the fault scenario (fastest).
-# 3. Output JSONL conforms to the structured logging contract.
-# 4. Artifact index is generated and valid.
+# 2. Manifest validator + manifest catalog file exist.
+# 3. The suite can dry-run the scenario manifest catalog.
+# 4. The suite can run at least the fault scenario (fastest).
+# 5. Output JSONL conforms to the structured logging contract.
+# 6. Artifact index is generated and valid.
+# 7. strict/hardened mode-pair replay report is generated and valid.
 #
 # Note: Many E2E scenarios are expected to timeout/fail during the interpose
 # phase of frankenlibc development. This gate verifies the *infrastructure*
@@ -41,9 +44,46 @@ fi
 echo ""
 
 # ---------------------------------------------------------------------------
-# Check 2: Run a minimal scenario and verify infrastructure
+# Check 2: Manifest tooling exists
 # ---------------------------------------------------------------------------
-echo "--- Check 2: Infrastructure smoke test ---"
+echo "--- Check 2: Manifest tooling ---"
+
+if [[ ! -f "${ROOT}/scripts/validate_e2e_manifest.py" ]]; then
+    echo "FAIL: scripts/validate_e2e_manifest.py not found"
+    failures=$((failures + 1))
+elif [[ ! -f "${ROOT}/tests/conformance/e2e_scenario_manifest.v1.json" ]]; then
+    echo "FAIL: tests/conformance/e2e_scenario_manifest.v1.json not found"
+    failures=$((failures + 1))
+elif ! python3 "${ROOT}/scripts/validate_e2e_manifest.py" validate --manifest "${ROOT}/tests/conformance/e2e_scenario_manifest.v1.json" >/dev/null 2>&1; then
+    echo "FAIL: manifest validation failed"
+    failures=$((failures + 1))
+else
+    echo "PASS: manifest validator + catalog present and valid"
+fi
+echo ""
+
+# ---------------------------------------------------------------------------
+# Check 3: Dry-run manifest catalog
+# ---------------------------------------------------------------------------
+echo "--- Check 3: Manifest dry-run ---"
+
+set +e
+bash "${ROOT}/scripts/e2e_suite.sh" --dry-run-manifest fault strict >/dev/null 2>&1
+dry_run_rc=$?
+set -e
+
+if [[ "${dry_run_rc}" -ne 0 ]]; then
+    echo "FAIL: manifest dry-run failed (exit=${dry_run_rc})"
+    failures=$((failures + 1))
+else
+    echo "PASS: manifest dry-run succeeded"
+fi
+echo ""
+
+# ---------------------------------------------------------------------------
+# Check 4: Run a minimal scenario and verify infrastructure
+# ---------------------------------------------------------------------------
+echo "--- Check 4: Infrastructure smoke test ---"
 
 # Run fault scenario only (fastest — just 3 cases per mode)
 # Use short timeout to not block CI
@@ -65,9 +105,9 @@ fi
 echo ""
 
 # ---------------------------------------------------------------------------
-# Check 3: Validate structured log output
+# Check 5: Validate structured log output
 # ---------------------------------------------------------------------------
-echo "--- Check 3: Structured log validation ---"
+echo "--- Check 5: Structured log validation ---"
 
 if [[ -n "${latest_run}" && -f "${latest_run}/trace.jsonl" ]]; then
     log_check=$(python3 -c "
@@ -98,6 +138,28 @@ with open('${latest_run}/trace.jsonl') as f:
         if 'bead_id' not in obj:
             print(f'  line {i}: missing bead_id')
             errors += 1
+        event = obj.get('event', '')
+        if event.startswith('case_') or event == 'manifest_case':
+            for field in ['mode', 'scenario_id', 'expected_outcome', 'artifact_policy']:
+                if field not in obj:
+                    print(f'  line {i}: event {event} missing required field: {field}')
+                    errors += 1
+            if event.startswith('case_'):
+                for field in ['replay_key', 'env_fingerprint']:
+                    if field not in obj:
+                        print(f'  line {i}: event {event} missing required field: {field}')
+                        errors += 1
+            if 'artifact_policy' in obj and not isinstance(obj['artifact_policy'], dict):
+                print(f'  line {i}: artifact_policy must be object for event {event}')
+                errors += 1
+        if event == 'mode_pair_result':
+            for field in ['scenario_id', 'mode_pair_result', 'drift_flags']:
+                if field not in obj:
+                    print(f'  line {i}: mode_pair_result missing required field: {field}')
+                    errors += 1
+            if 'drift_flags' in obj and not isinstance(obj['drift_flags'], list):
+                print(f'  line {i}: drift_flags must be array for mode_pair_result')
+                errors += 1
 print(f'LINES={lines}')
 print(f'ERRORS={errors}')
 ")
@@ -121,9 +183,9 @@ fi
 echo ""
 
 # ---------------------------------------------------------------------------
-# Check 4: Artifact index
+# Check 6: Artifact index
 # ---------------------------------------------------------------------------
-echo "--- Check 4: Artifact index ---"
+echo "--- Check 6: Artifact index ---"
 
 if [[ -n "${latest_run}" && -f "${latest_run}/artifact_index.json" ]]; then
     idx_check=$(python3 -c "
@@ -161,6 +223,47 @@ print(f'INDEX_ERRORS={len(errors)}')
     fi
 else
     echo "FAIL: artifact_index.json not found"
+    failures=$((failures + 1))
+fi
+echo ""
+
+# ---------------------------------------------------------------------------
+# Check 7: Mode pair report
+# ---------------------------------------------------------------------------
+echo "--- Check 7: Mode pair report ---"
+
+if [[ -n "${latest_run}" && -f "${latest_run}/mode_pair_report.json" ]]; then
+    pair_check=$(python3 -c "
+import json
+with open('${latest_run}/mode_pair_report.json') as f:
+    report = json.load(f)
+errors = []
+for key in ['schema_version', 'run_id', 'pair_count', 'mismatch_count', 'pairs']:
+    if key not in report:
+        errors.append(f'Missing key: {key}')
+if report.get('schema_version') != 'v1':
+    errors.append(f'Expected schema_version v1, got {report.get(\"schema_version\")}')
+if not isinstance(report.get('pairs', []), list):
+    errors.append('pairs must be an array')
+for pair in report.get('pairs', []):
+    for field in ['scenario_id', 'mode_pair_result', 'drift_flags']:
+        if field not in pair:
+            errors.append(f'pair missing field: {field}')
+if errors:
+    for e in errors:
+        print(f'PAIR_ERROR: {e}')
+print(f'PAIR_ERRORS={len(errors)}')
+")
+    pair_errors=$(echo "${pair_check}" | grep 'PAIR_ERRORS=' | cut -d= -f2)
+    if [[ "${pair_errors}" -gt 0 ]]; then
+        echo "FAIL: Mode pair report validation errors:"
+        echo "${pair_check}" | grep 'PAIR_ERROR:'
+        failures=$((failures + 1))
+    else
+        echo "PASS: mode_pair_report.json is valid"
+    fi
+else
+    echo "FAIL: mode_pair_report.json not found"
     failures=$((failures + 1))
 fi
 echo ""

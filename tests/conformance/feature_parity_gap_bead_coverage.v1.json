@@ -53,7 +53,6 @@
         "bd-z84",
         "bd-rqn",
         "bd-1ff3",
-        "bd-3cco",
         "bd-xxd9",
         "bd-2yhf",
         "bd-3ehb",
@@ -77,11 +76,9 @@
         "bd-3hud",
         "bd-mjon",
         "bd-rth1",
-        "bd-19j",
-        "bd-1qy",
         "bd-300"
       ],
-      "chain_length": 66,
+      "chain_length": 63,
       "is_blocked": true,
       "root_blockers": []
     },
@@ -128,7 +125,6 @@
         "bd-3vtx",
         "bd-x2sq",
         "bd-1ff3",
-        "bd-3cco",
         "bd-xxd9",
         "bd-13ya",
         "bd-7cba",
@@ -139,7 +135,7 @@
         "bd-320s",
         "bd-3bvo"
       ],
-      "chain_length": 29,
+      "chain_length": 28,
       "is_blocked": true,
       "root_blockers": []
     },
@@ -155,10 +151,9 @@
         "bd-rqn",
         "bd-15n",
         "bd-1ff3",
-        "bd-3cco",
         "bd-xxd9"
       ],
-      "chain_length": 10,
+      "chain_length": 9,
       "is_blocked": true,
       "root_blockers": []
     },
@@ -176,10 +171,9 @@
         "bd-25n",
         "bd-rqn",
         "bd-1ff3",
-        "bd-3cco",
         "bd-xxd9"
       ],
-      "chain_length": 12,
+      "chain_length": 11,
       "is_blocked": true,
       "root_blockers": []
     }
@@ -189,7 +183,7 @@
     {
       "assignee": null,
       "blocked_dependency_count": 225,
-      "bv_chain_length": 12,
+      "bv_chain_length": 11,
       "bv_root_blockers": [],
       "gap_count": 45,
       "owner_bead": "bd-w2c3.6",
@@ -199,7 +193,7 @@
     {
       "assignee": null,
       "blocked_dependency_count": 481,
-      "bv_chain_length": 66,
+      "bv_chain_length": 63,
       "bv_root_blockers": [],
       "gap_count": 37,
       "owner_bead": "bd-w2c3.10",
@@ -209,7 +203,7 @@
     {
       "assignee": null,
       "blocked_dependency_count": 80,
-      "bv_chain_length": 29,
+      "bv_chain_length": 28,
       "bv_root_blockers": [],
       "gap_count": 20,
       "owner_bead": "bd-w2c3.4",
@@ -223,13 +217,13 @@
       "bv_root_blockers": [],
       "gap_count": 7,
       "owner_bead": "bd-w2c3.1",
-      "owner_status": "open",
+      "owner_status": "in_progress",
       "priority": 0
     },
     {
       "assignee": null,
       "blocked_dependency_count": 25,
-      "bv_chain_length": 10,
+      "bv_chain_length": 9,
       "bv_root_blockers": [],
       "gap_count": 5,
       "owner_bead": "bd-w2c3.5",
@@ -295,7 +289,7 @@
       "owner_bead": "bd-w2c3.1",
       "owner_found": true,
       "owner_priority": 0,
-      "owner_status": "open",
+      "owner_status": "in_progress",
       "owner_title": "Track 0: Gap Truth Sync + Anti-Drift Governance",
       "section": "macro_targets",
       "source_file": "FEATURE_PARITY.md",
@@ -337,7 +331,7 @@
       "owner_bead": "bd-w2c3.1",
       "owner_found": true,
       "owner_priority": 0,
-      "owner_status": "open",
+      "owner_status": "in_progress",
       "owner_title": "Track 0: Gap Truth Sync + Anti-Drift Governance",
       "section": "macro_targets",
       "source_file": "FEATURE_PARITY.md",
@@ -379,7 +373,7 @@
       "owner_bead": "bd-w2c3.1",
       "owner_found": true,
       "owner_priority": 0,
-      "owner_status": "open",
+      "owner_status": "in_progress",
       "owner_title": "Track 0: Gap Truth Sync + Anti-Drift Governance",
       "section": "macro_targets",
       "source_file": "FEATURE_PARITY.md",
@@ -421,7 +415,7 @@
       "owner_bead": "bd-w2c3.1",
       "owner_found": true,
       "owner_priority": 0,
-      "owner_status": "open",
+      "owner_status": "in_progress",
       "owner_title": "Track 0: Gap Truth Sync + Anti-Drift Governance",
       "section": "macro_targets",
       "source_file": "FEATURE_PARITY.md",
@@ -463,7 +457,7 @@
       "owner_bead": "bd-w2c3.1",
       "owner_found": true,
       "owner_priority": 0,
-      "owner_status": "open",
+      "owner_status": "in_progress",
       "owner_title": "Track 0: Gap Truth Sync + Anti-Drift Governance",
       "section": "macro_targets",
       "source_file": "FEATURE_PARITY.md",
@@ -505,7 +499,7 @@
       "owner_bead": "bd-w2c3.1",
       "owner_found": true,
       "owner_priority": 0,
-      "owner_status": "open",
+      "owner_status": "in_progress",
       "owner_title": "Track 0: Gap Truth Sync + Anti-Drift Governance",
       "section": "macro_targets",
       "source_file": "FEATURE_PARITY.md",
@@ -547,7 +541,7 @@
       "owner_bead": "bd-w2c3.1",
       "owner_found": true,
       "owner_priority": 0,
-      "owner_status": "open",
+      "owner_status": "in_progress",
       "owner_title": "Track 0: Gap Truth Sync + Anti-Drift Governance",
       "section": "macro_targets",
       "source_file": "FEATURE_PARITY.md",
@@ -573,7 +567,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.2",
@@ -651,7 +645,6 @@
           "bd-z84",
           "bd-rqn",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9",
           "bd-2yhf",
           "bd-3ehb",
@@ -675,11 +668,9 @@
           "bd-3hud",
           "bd-mjon",
           "bd-rth1",
-          "bd-19j",
-          "bd-1qy",
           "bd-300"
         ],
-        "chain_length": 66,
+        "chain_length": 63,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -729,7 +720,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.2",
@@ -807,7 +798,6 @@
           "bd-z84",
           "bd-rqn",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9",
           "bd-2yhf",
           "bd-3ehb",
@@ -831,11 +821,9 @@
           "bd-3hud",
           "bd-mjon",
           "bd-rth1",
-          "bd-19j",
-          "bd-1qy",
           "bd-300"
         ],
-        "chain_length": 66,
+        "chain_length": 63,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -885,7 +873,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.2",
@@ -963,7 +951,6 @@
           "bd-z84",
           "bd-rqn",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9",
           "bd-2yhf",
           "bd-3ehb",
@@ -987,11 +974,9 @@
           "bd-3hud",
           "bd-mjon",
           "bd-rth1",
-          "bd-19j",
-          "bd-1qy",
           "bd-300"
         ],
-        "chain_length": 66,
+        "chain_length": 63,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -1041,7 +1026,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.2",
@@ -1119,7 +1104,6 @@
           "bd-z84",
           "bd-rqn",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9",
           "bd-2yhf",
           "bd-3ehb",
@@ -1143,11 +1127,9 @@
           "bd-3hud",
           "bd-mjon",
           "bd-rth1",
-          "bd-19j",
-          "bd-1qy",
           "bd-300"
         ],
-        "chain_length": 66,
+        "chain_length": 63,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -1197,7 +1179,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.2",
@@ -1275,7 +1257,6 @@
           "bd-z84",
           "bd-rqn",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9",
           "bd-2yhf",
           "bd-3ehb",
@@ -1299,11 +1280,9 @@
           "bd-3hud",
           "bd-mjon",
           "bd-rth1",
-          "bd-19j",
-          "bd-1qy",
           "bd-300"
         ],
-        "chain_length": 66,
+        "chain_length": 63,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -1353,7 +1332,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.2",
@@ -1431,7 +1410,6 @@
           "bd-z84",
           "bd-rqn",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9",
           "bd-2yhf",
           "bd-3ehb",
@@ -1455,11 +1433,9 @@
           "bd-3hud",
           "bd-mjon",
           "bd-rth1",
-          "bd-19j",
-          "bd-1qy",
           "bd-300"
         ],
-        "chain_length": 66,
+        "chain_length": 63,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -1509,7 +1485,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.2",
@@ -1587,7 +1563,6 @@
           "bd-z84",
           "bd-rqn",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9",
           "bd-2yhf",
           "bd-3ehb",
@@ -1611,11 +1586,9 @@
           "bd-3hud",
           "bd-mjon",
           "bd-rth1",
-          "bd-19j",
-          "bd-1qy",
           "bd-300"
         ],
-        "chain_length": 66,
+        "chain_length": 63,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -1665,7 +1638,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.2",
@@ -1743,7 +1716,6 @@
           "bd-z84",
           "bd-rqn",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9",
           "bd-2yhf",
           "bd-3ehb",
@@ -1767,11 +1739,9 @@
           "bd-3hud",
           "bd-mjon",
           "bd-rth1",
-          "bd-19j",
-          "bd-1qy",
           "bd-300"
         ],
-        "chain_length": 66,
+        "chain_length": 63,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -1821,7 +1791,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.2",
@@ -1899,7 +1869,6 @@
           "bd-z84",
           "bd-rqn",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9",
           "bd-2yhf",
           "bd-3ehb",
@@ -1923,11 +1892,9 @@
           "bd-3hud",
           "bd-mjon",
           "bd-rth1",
-          "bd-19j",
-          "bd-1qy",
           "bd-300"
         ],
-        "chain_length": 66,
+        "chain_length": 63,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -1977,7 +1944,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.2",
@@ -2055,7 +2022,6 @@
           "bd-z84",
           "bd-rqn",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9",
           "bd-2yhf",
           "bd-3ehb",
@@ -2079,11 +2045,9 @@
           "bd-3hud",
           "bd-mjon",
           "bd-rth1",
-          "bd-19j",
-          "bd-1qy",
           "bd-300"
         ],
-        "chain_length": 66,
+        "chain_length": 63,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -2133,7 +2097,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.2",
@@ -2211,7 +2175,6 @@
           "bd-z84",
           "bd-rqn",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9",
           "bd-2yhf",
           "bd-3ehb",
@@ -2235,11 +2198,9 @@
           "bd-3hud",
           "bd-mjon",
           "bd-rth1",
-          "bd-19j",
-          "bd-1qy",
           "bd-300"
         ],
-        "chain_length": 66,
+        "chain_length": 63,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -2289,7 +2250,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.2",
@@ -2367,7 +2328,6 @@
           "bd-z84",
           "bd-rqn",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9",
           "bd-2yhf",
           "bd-3ehb",
@@ -2391,11 +2351,9 @@
           "bd-3hud",
           "bd-mjon",
           "bd-rth1",
-          "bd-19j",
-          "bd-1qy",
           "bd-300"
         ],
-        "chain_length": 66,
+        "chain_length": 63,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -2445,7 +2403,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.2",
@@ -2523,7 +2481,6 @@
           "bd-z84",
           "bd-rqn",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9",
           "bd-2yhf",
           "bd-3ehb",
@@ -2547,11 +2504,9 @@
           "bd-3hud",
           "bd-mjon",
           "bd-rth1",
-          "bd-19j",
-          "bd-1qy",
           "bd-300"
         ],
-        "chain_length": 66,
+        "chain_length": 63,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -2601,7 +2556,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.2",
@@ -2679,7 +2634,6 @@
           "bd-z84",
           "bd-rqn",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9",
           "bd-2yhf",
           "bd-3ehb",
@@ -2703,11 +2657,9 @@
           "bd-3hud",
           "bd-mjon",
           "bd-rth1",
-          "bd-19j",
-          "bd-1qy",
           "bd-300"
         ],
-        "chain_length": 66,
+        "chain_length": 63,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -2757,7 +2709,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.2",
@@ -2835,7 +2787,6 @@
           "bd-z84",
           "bd-rqn",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9",
           "bd-2yhf",
           "bd-3ehb",
@@ -2859,11 +2810,9 @@
           "bd-3hud",
           "bd-mjon",
           "bd-rth1",
-          "bd-19j",
-          "bd-1qy",
           "bd-300"
         ],
-        "chain_length": 66,
+        "chain_length": 63,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -2913,7 +2862,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.2",
@@ -2991,7 +2940,6 @@
           "bd-z84",
           "bd-rqn",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9",
           "bd-2yhf",
           "bd-3ehb",
@@ -3015,11 +2963,9 @@
           "bd-3hud",
           "bd-mjon",
           "bd-rth1",
-          "bd-19j",
-          "bd-1qy",
           "bd-300"
         ],
-        "chain_length": 66,
+        "chain_length": 63,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -3069,7 +3015,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.2",
@@ -3147,7 +3093,6 @@
           "bd-z84",
           "bd-rqn",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9",
           "bd-2yhf",
           "bd-3ehb",
@@ -3171,11 +3116,9 @@
           "bd-3hud",
           "bd-mjon",
           "bd-rth1",
-          "bd-19j",
-          "bd-1qy",
           "bd-300"
         ],
-        "chain_length": 66,
+        "chain_length": 63,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -3225,7 +3168,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.2",
@@ -3303,7 +3246,6 @@
           "bd-z84",
           "bd-rqn",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9",
           "bd-2yhf",
           "bd-3ehb",
@@ -3327,11 +3269,9 @@
           "bd-3hud",
           "bd-mjon",
           "bd-rth1",
-          "bd-19j",
-          "bd-1qy",
           "bd-300"
         ],
-        "chain_length": 66,
+        "chain_length": 63,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -3381,7 +3321,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.2",
@@ -3459,7 +3399,6 @@
           "bd-z84",
           "bd-rqn",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9",
           "bd-2yhf",
           "bd-3ehb",
@@ -3483,11 +3422,9 @@
           "bd-3hud",
           "bd-mjon",
           "bd-rth1",
-          "bd-19j",
-          "bd-1qy",
           "bd-300"
         ],
-        "chain_length": 66,
+        "chain_length": 63,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -3537,7 +3474,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.2",
@@ -3615,7 +3552,6 @@
           "bd-z84",
           "bd-rqn",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9",
           "bd-2yhf",
           "bd-3ehb",
@@ -3639,11 +3575,9 @@
           "bd-3hud",
           "bd-mjon",
           "bd-rth1",
-          "bd-19j",
-          "bd-1qy",
           "bd-300"
         ],
-        "chain_length": 66,
+        "chain_length": 63,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -3693,7 +3627,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.2",
@@ -3771,7 +3705,6 @@
           "bd-z84",
           "bd-rqn",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9",
           "bd-2yhf",
           "bd-3ehb",
@@ -3795,11 +3728,9 @@
           "bd-3hud",
           "bd-mjon",
           "bd-rth1",
-          "bd-19j",
-          "bd-1qy",
           "bd-300"
         ],
-        "chain_length": 66,
+        "chain_length": 63,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -3849,7 +3780,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.2",
@@ -3927,7 +3858,6 @@
           "bd-z84",
           "bd-rqn",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9",
           "bd-2yhf",
           "bd-3ehb",
@@ -3951,11 +3881,9 @@
           "bd-3hud",
           "bd-mjon",
           "bd-rth1",
-          "bd-19j",
-          "bd-1qy",
           "bd-300"
         ],
-        "chain_length": 66,
+        "chain_length": 63,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -4005,7 +3933,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.2",
@@ -4083,7 +4011,6 @@
           "bd-z84",
           "bd-rqn",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9",
           "bd-2yhf",
           "bd-3ehb",
@@ -4107,11 +4034,9 @@
           "bd-3hud",
           "bd-mjon",
           "bd-rth1",
-          "bd-19j",
-          "bd-1qy",
           "bd-300"
         ],
-        "chain_length": 66,
+        "chain_length": 63,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -4161,7 +4086,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.2",
@@ -4239,7 +4164,6 @@
           "bd-z84",
           "bd-rqn",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9",
           "bd-2yhf",
           "bd-3ehb",
@@ -4263,11 +4187,9 @@
           "bd-3hud",
           "bd-mjon",
           "bd-rth1",
-          "bd-19j",
-          "bd-1qy",
           "bd-300"
         ],
-        "chain_length": 66,
+        "chain_length": 63,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -4317,7 +4239,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.2",
@@ -4395,7 +4317,6 @@
           "bd-z84",
           "bd-rqn",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9",
           "bd-2yhf",
           "bd-3ehb",
@@ -4419,11 +4340,9 @@
           "bd-3hud",
           "bd-mjon",
           "bd-rth1",
-          "bd-19j",
-          "bd-1qy",
           "bd-300"
         ],
-        "chain_length": 66,
+        "chain_length": 63,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -4473,7 +4392,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.2",
@@ -4551,7 +4470,6 @@
           "bd-z84",
           "bd-rqn",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9",
           "bd-2yhf",
           "bd-3ehb",
@@ -4575,11 +4493,9 @@
           "bd-3hud",
           "bd-mjon",
           "bd-rth1",
-          "bd-19j",
-          "bd-1qy",
           "bd-300"
         ],
-        "chain_length": 66,
+        "chain_length": 63,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -4629,7 +4545,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.2",
@@ -4707,7 +4623,6 @@
           "bd-z84",
           "bd-rqn",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9",
           "bd-2yhf",
           "bd-3ehb",
@@ -4731,11 +4646,9 @@
           "bd-3hud",
           "bd-mjon",
           "bd-rth1",
-          "bd-19j",
-          "bd-1qy",
           "bd-300"
         ],
-        "chain_length": 66,
+        "chain_length": 63,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -4785,7 +4698,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.2",
@@ -4863,7 +4776,6 @@
           "bd-z84",
           "bd-rqn",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9",
           "bd-2yhf",
           "bd-3ehb",
@@ -4887,11 +4799,9 @@
           "bd-3hud",
           "bd-mjon",
           "bd-rth1",
-          "bd-19j",
-          "bd-1qy",
           "bd-300"
         ],
-        "chain_length": 66,
+        "chain_length": 63,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -4941,7 +4851,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.2",
@@ -5019,7 +4929,6 @@
           "bd-z84",
           "bd-rqn",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9",
           "bd-2yhf",
           "bd-3ehb",
@@ -5043,11 +4952,9 @@
           "bd-3hud",
           "bd-mjon",
           "bd-rth1",
-          "bd-19j",
-          "bd-1qy",
           "bd-300"
         ],
-        "chain_length": 66,
+        "chain_length": 63,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -5097,7 +5004,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.2",
@@ -5175,7 +5082,6 @@
           "bd-z84",
           "bd-rqn",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9",
           "bd-2yhf",
           "bd-3ehb",
@@ -5199,11 +5105,9 @@
           "bd-3hud",
           "bd-mjon",
           "bd-rth1",
-          "bd-19j",
-          "bd-1qy",
           "bd-300"
         ],
-        "chain_length": 66,
+        "chain_length": 63,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -5253,7 +5157,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.2",
@@ -5331,7 +5235,6 @@
           "bd-z84",
           "bd-rqn",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9",
           "bd-2yhf",
           "bd-3ehb",
@@ -5355,11 +5258,9 @@
           "bd-3hud",
           "bd-mjon",
           "bd-rth1",
-          "bd-19j",
-          "bd-1qy",
           "bd-300"
         ],
-        "chain_length": 66,
+        "chain_length": 63,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -5409,7 +5310,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.2",
@@ -5487,7 +5388,6 @@
           "bd-z84",
           "bd-rqn",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9",
           "bd-2yhf",
           "bd-3ehb",
@@ -5511,11 +5411,9 @@
           "bd-3hud",
           "bd-mjon",
           "bd-rth1",
-          "bd-19j",
-          "bd-1qy",
           "bd-300"
         ],
-        "chain_length": 66,
+        "chain_length": 63,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -5565,7 +5463,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.2",
@@ -5643,7 +5541,6 @@
           "bd-z84",
           "bd-rqn",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9",
           "bd-2yhf",
           "bd-3ehb",
@@ -5667,11 +5564,9 @@
           "bd-3hud",
           "bd-mjon",
           "bd-rth1",
-          "bd-19j",
-          "bd-1qy",
           "bd-300"
         ],
-        "chain_length": 66,
+        "chain_length": 63,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -5721,7 +5616,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.2",
@@ -5799,7 +5694,6 @@
           "bd-z84",
           "bd-rqn",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9",
           "bd-2yhf",
           "bd-3ehb",
@@ -5823,11 +5717,9 @@
           "bd-3hud",
           "bd-mjon",
           "bd-rth1",
-          "bd-19j",
-          "bd-1qy",
           "bd-300"
         ],
-        "chain_length": 66,
+        "chain_length": 63,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -5877,7 +5769,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.2",
@@ -5955,7 +5847,6 @@
           "bd-z84",
           "bd-rqn",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9",
           "bd-2yhf",
           "bd-3ehb",
@@ -5979,11 +5870,9 @@
           "bd-3hud",
           "bd-mjon",
           "bd-rth1",
-          "bd-19j",
-          "bd-1qy",
           "bd-300"
         ],
-        "chain_length": 66,
+        "chain_length": 63,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -6033,7 +5922,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.2",
@@ -6111,7 +6000,6 @@
           "bd-z84",
           "bd-rqn",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9",
           "bd-2yhf",
           "bd-3ehb",
@@ -6135,11 +6023,9 @@
           "bd-3hud",
           "bd-mjon",
           "bd-rth1",
-          "bd-19j",
-          "bd-1qy",
           "bd-300"
         ],
-        "chain_length": 66,
+        "chain_length": 63,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -6189,7 +6075,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.2",
@@ -6267,7 +6153,6 @@
           "bd-z84",
           "bd-rqn",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9",
           "bd-2yhf",
           "bd-3ehb",
@@ -6291,11 +6176,9 @@
           "bd-3hud",
           "bd-mjon",
           "bd-rth1",
-          "bd-19j",
-          "bd-1qy",
           "bd-300"
         ],
-        "chain_length": 66,
+        "chain_length": 63,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -6459,7 +6342,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.3",
@@ -6489,7 +6372,6 @@
           "bd-3vtx",
           "bd-x2sq",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9",
           "bd-13ya",
           "bd-7cba",
@@ -6500,7 +6382,7 @@
           "bd-320s",
           "bd-3bvo"
         ],
-        "chain_length": 29,
+        "chain_length": 28,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -6545,7 +6427,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.3",
@@ -6575,7 +6457,6 @@
           "bd-3vtx",
           "bd-x2sq",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9",
           "bd-13ya",
           "bd-7cba",
@@ -6586,7 +6467,7 @@
           "bd-320s",
           "bd-3bvo"
         ],
-        "chain_length": 29,
+        "chain_length": 28,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -6631,7 +6512,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.3",
@@ -6661,7 +6542,6 @@
           "bd-3vtx",
           "bd-x2sq",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9",
           "bd-13ya",
           "bd-7cba",
@@ -6672,7 +6552,7 @@
           "bd-320s",
           "bd-3bvo"
         ],
-        "chain_length": 29,
+        "chain_length": 28,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -6717,7 +6597,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.3",
@@ -6747,7 +6627,6 @@
           "bd-3vtx",
           "bd-x2sq",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9",
           "bd-13ya",
           "bd-7cba",
@@ -6758,7 +6637,7 @@
           "bd-320s",
           "bd-3bvo"
         ],
-        "chain_length": 29,
+        "chain_length": 28,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -6803,7 +6682,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.3",
@@ -6833,7 +6712,6 @@
           "bd-3vtx",
           "bd-x2sq",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9",
           "bd-13ya",
           "bd-7cba",
@@ -6844,7 +6722,7 @@
           "bd-320s",
           "bd-3bvo"
         ],
-        "chain_length": 29,
+        "chain_length": 28,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -6889,7 +6767,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.3",
@@ -6919,7 +6797,6 @@
           "bd-3vtx",
           "bd-x2sq",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9",
           "bd-13ya",
           "bd-7cba",
@@ -6930,7 +6807,7 @@
           "bd-320s",
           "bd-3bvo"
         ],
-        "chain_length": 29,
+        "chain_length": 28,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -6975,7 +6852,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.3",
@@ -7005,7 +6882,6 @@
           "bd-3vtx",
           "bd-x2sq",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9",
           "bd-13ya",
           "bd-7cba",
@@ -7016,7 +6892,7 @@
           "bd-320s",
           "bd-3bvo"
         ],
-        "chain_length": 29,
+        "chain_length": 28,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -7061,7 +6937,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.3",
@@ -7091,7 +6967,6 @@
           "bd-3vtx",
           "bd-x2sq",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9",
           "bd-13ya",
           "bd-7cba",
@@ -7102,7 +6977,7 @@
           "bd-320s",
           "bd-3bvo"
         ],
-        "chain_length": 29,
+        "chain_length": 28,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -7147,7 +7022,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.3",
@@ -7177,7 +7052,6 @@
           "bd-3vtx",
           "bd-x2sq",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9",
           "bd-13ya",
           "bd-7cba",
@@ -7188,7 +7062,7 @@
           "bd-320s",
           "bd-3bvo"
         ],
-        "chain_length": 29,
+        "chain_length": 28,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -7233,7 +7107,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.3",
@@ -7263,7 +7137,6 @@
           "bd-3vtx",
           "bd-x2sq",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9",
           "bd-13ya",
           "bd-7cba",
@@ -7274,7 +7147,7 @@
           "bd-320s",
           "bd-3bvo"
         ],
-        "chain_length": 29,
+        "chain_length": 28,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -7319,7 +7192,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.3",
@@ -7349,7 +7222,6 @@
           "bd-3vtx",
           "bd-x2sq",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9",
           "bd-13ya",
           "bd-7cba",
@@ -7360,7 +7232,7 @@
           "bd-320s",
           "bd-3bvo"
         ],
-        "chain_length": 29,
+        "chain_length": 28,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -7405,7 +7277,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.3",
@@ -7435,7 +7307,6 @@
           "bd-3vtx",
           "bd-x2sq",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9",
           "bd-13ya",
           "bd-7cba",
@@ -7446,7 +7317,7 @@
           "bd-320s",
           "bd-3bvo"
         ],
-        "chain_length": 29,
+        "chain_length": 28,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -7491,7 +7362,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.3",
@@ -7521,7 +7392,6 @@
           "bd-3vtx",
           "bd-x2sq",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9",
           "bd-13ya",
           "bd-7cba",
@@ -7532,7 +7402,7 @@
           "bd-320s",
           "bd-3bvo"
         ],
-        "chain_length": 29,
+        "chain_length": 28,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -7577,7 +7447,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.3",
@@ -7607,7 +7477,6 @@
           "bd-3vtx",
           "bd-x2sq",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9",
           "bd-13ya",
           "bd-7cba",
@@ -7618,7 +7487,7 @@
           "bd-320s",
           "bd-3bvo"
         ],
-        "chain_length": 29,
+        "chain_length": 28,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -7663,7 +7532,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.3",
@@ -7693,7 +7562,6 @@
           "bd-3vtx",
           "bd-x2sq",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9",
           "bd-13ya",
           "bd-7cba",
@@ -7704,7 +7572,7 @@
           "bd-320s",
           "bd-3bvo"
         ],
-        "chain_length": 29,
+        "chain_length": 28,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -7749,7 +7617,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.3",
@@ -7779,7 +7647,6 @@
           "bd-3vtx",
           "bd-x2sq",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9",
           "bd-13ya",
           "bd-7cba",
@@ -7790,7 +7657,7 @@
           "bd-320s",
           "bd-3bvo"
         ],
-        "chain_length": 29,
+        "chain_length": 28,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -7835,7 +7702,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.3",
@@ -7865,7 +7732,6 @@
           "bd-3vtx",
           "bd-x2sq",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9",
           "bd-13ya",
           "bd-7cba",
@@ -7876,7 +7742,7 @@
           "bd-320s",
           "bd-3bvo"
         ],
-        "chain_length": 29,
+        "chain_length": 28,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -7921,7 +7787,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.3",
@@ -7951,7 +7817,6 @@
           "bd-3vtx",
           "bd-x2sq",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9",
           "bd-13ya",
           "bd-7cba",
@@ -7962,7 +7827,7 @@
           "bd-320s",
           "bd-3bvo"
         ],
-        "chain_length": 29,
+        "chain_length": 28,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -8007,7 +7872,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.3",
@@ -8037,7 +7902,6 @@
           "bd-3vtx",
           "bd-x2sq",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9",
           "bd-13ya",
           "bd-7cba",
@@ -8048,7 +7912,7 @@
           "bd-320s",
           "bd-3bvo"
         ],
-        "chain_length": 29,
+        "chain_length": 28,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -8093,7 +7957,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.3",
@@ -8123,7 +7987,6 @@
           "bd-3vtx",
           "bd-x2sq",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9",
           "bd-13ya",
           "bd-7cba",
@@ -8134,7 +7997,7 @@
           "bd-320s",
           "bd-3bvo"
         ],
-        "chain_length": 29,
+        "chain_length": 28,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -8183,7 +8046,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.3",
@@ -8202,10 +8065,9 @@
           "bd-rqn",
           "bd-15n",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9"
         ],
-        "chain_length": 10,
+        "chain_length": 9,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -8251,7 +8113,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.3",
@@ -8270,10 +8132,9 @@
           "bd-rqn",
           "bd-15n",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9"
         ],
-        "chain_length": 10,
+        "chain_length": 9,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -8319,7 +8180,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.3",
@@ -8338,10 +8199,9 @@
           "bd-rqn",
           "bd-15n",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9"
         ],
-        "chain_length": 10,
+        "chain_length": 9,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -8387,7 +8247,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.3",
@@ -8406,10 +8266,9 @@
           "bd-rqn",
           "bd-15n",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9"
         ],
-        "chain_length": 10,
+        "chain_length": 9,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -8455,7 +8314,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.3",
@@ -8474,10 +8333,9 @@
           "bd-rqn",
           "bd-15n",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9"
         ],
-        "chain_length": 10,
+        "chain_length": 9,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -8519,7 +8377,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.3",
@@ -8544,10 +8402,9 @@
           "bd-25n",
           "bd-rqn",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9"
         ],
-        "chain_length": 12,
+        "chain_length": 11,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -8589,7 +8446,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.3",
@@ -8614,10 +8471,9 @@
           "bd-25n",
           "bd-rqn",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9"
         ],
-        "chain_length": 12,
+        "chain_length": 11,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -8659,7 +8515,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.3",
@@ -8684,10 +8540,9 @@
           "bd-25n",
           "bd-rqn",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9"
         ],
-        "chain_length": 12,
+        "chain_length": 11,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -8729,7 +8584,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.3",
@@ -8754,10 +8609,9 @@
           "bd-25n",
           "bd-rqn",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9"
         ],
-        "chain_length": 12,
+        "chain_length": 11,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -8799,7 +8653,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.3",
@@ -8824,10 +8678,9 @@
           "bd-25n",
           "bd-rqn",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9"
         ],
-        "chain_length": 12,
+        "chain_length": 11,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -8869,7 +8722,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.3",
@@ -8894,10 +8747,9 @@
           "bd-25n",
           "bd-rqn",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9"
         ],
-        "chain_length": 12,
+        "chain_length": 11,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -8939,7 +8791,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.3",
@@ -8964,10 +8816,9 @@
           "bd-25n",
           "bd-rqn",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9"
         ],
-        "chain_length": 12,
+        "chain_length": 11,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -9009,7 +8860,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.3",
@@ -9034,10 +8885,9 @@
           "bd-25n",
           "bd-rqn",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9"
         ],
-        "chain_length": 12,
+        "chain_length": 11,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -9079,7 +8929,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.3",
@@ -9104,10 +8954,9 @@
           "bd-25n",
           "bd-rqn",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9"
         ],
-        "chain_length": 12,
+        "chain_length": 11,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -9149,7 +8998,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.3",
@@ -9174,10 +9023,9 @@
           "bd-25n",
           "bd-rqn",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9"
         ],
-        "chain_length": 12,
+        "chain_length": 11,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -9219,7 +9067,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.3",
@@ -9244,10 +9092,9 @@
           "bd-25n",
           "bd-rqn",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9"
         ],
-        "chain_length": 12,
+        "chain_length": 11,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -9289,7 +9136,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.3",
@@ -9314,10 +9161,9 @@
           "bd-25n",
           "bd-rqn",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9"
         ],
-        "chain_length": 12,
+        "chain_length": 11,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -9359,7 +9205,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.3",
@@ -9384,10 +9230,9 @@
           "bd-25n",
           "bd-rqn",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9"
         ],
-        "chain_length": 12,
+        "chain_length": 11,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -9429,7 +9274,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.3",
@@ -9454,10 +9299,9 @@
           "bd-25n",
           "bd-rqn",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9"
         ],
-        "chain_length": 12,
+        "chain_length": 11,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -9499,7 +9343,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.3",
@@ -9524,10 +9368,9 @@
           "bd-25n",
           "bd-rqn",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9"
         ],
-        "chain_length": 12,
+        "chain_length": 11,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -9569,7 +9412,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.3",
@@ -9594,10 +9437,9 @@
           "bd-25n",
           "bd-rqn",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9"
         ],
-        "chain_length": 12,
+        "chain_length": 11,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -9639,7 +9481,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.3",
@@ -9664,10 +9506,9 @@
           "bd-25n",
           "bd-rqn",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9"
         ],
-        "chain_length": 12,
+        "chain_length": 11,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -9709,7 +9550,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.3",
@@ -9734,10 +9575,9 @@
           "bd-25n",
           "bd-rqn",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9"
         ],
-        "chain_length": 12,
+        "chain_length": 11,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -9779,7 +9619,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.3",
@@ -9804,10 +9644,9 @@
           "bd-25n",
           "bd-rqn",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9"
         ],
-        "chain_length": 12,
+        "chain_length": 11,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -9849,7 +9688,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.3",
@@ -9874,10 +9713,9 @@
           "bd-25n",
           "bd-rqn",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9"
         ],
-        "chain_length": 12,
+        "chain_length": 11,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -9919,7 +9757,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.3",
@@ -9944,10 +9782,9 @@
           "bd-25n",
           "bd-rqn",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9"
         ],
-        "chain_length": 12,
+        "chain_length": 11,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -9989,7 +9826,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.3",
@@ -10014,10 +9851,9 @@
           "bd-25n",
           "bd-rqn",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9"
         ],
-        "chain_length": 12,
+        "chain_length": 11,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -10059,7 +9895,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.3",
@@ -10084,10 +9920,9 @@
           "bd-25n",
           "bd-rqn",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9"
         ],
-        "chain_length": 12,
+        "chain_length": 11,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -10129,7 +9964,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.3",
@@ -10154,10 +9989,9 @@
           "bd-25n",
           "bd-rqn",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9"
         ],
-        "chain_length": 12,
+        "chain_length": 11,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -10199,7 +10033,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.3",
@@ -10224,10 +10058,9 @@
           "bd-25n",
           "bd-rqn",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9"
         ],
-        "chain_length": 12,
+        "chain_length": 11,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -10269,7 +10102,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.3",
@@ -10294,10 +10127,9 @@
           "bd-25n",
           "bd-rqn",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9"
         ],
-        "chain_length": 12,
+        "chain_length": 11,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -10339,7 +10171,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.3",
@@ -10364,10 +10196,9 @@
           "bd-25n",
           "bd-rqn",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9"
         ],
-        "chain_length": 12,
+        "chain_length": 11,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -10409,7 +10240,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.3",
@@ -10434,10 +10265,9 @@
           "bd-25n",
           "bd-rqn",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9"
         ],
-        "chain_length": 12,
+        "chain_length": 11,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -10479,7 +10309,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.3",
@@ -10504,10 +10334,9 @@
           "bd-25n",
           "bd-rqn",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9"
         ],
-        "chain_length": 12,
+        "chain_length": 11,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -10549,7 +10378,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.3",
@@ -10574,10 +10403,9 @@
           "bd-25n",
           "bd-rqn",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9"
         ],
-        "chain_length": 12,
+        "chain_length": 11,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -10619,7 +10447,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.3",
@@ -10644,10 +10472,9 @@
           "bd-25n",
           "bd-rqn",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9"
         ],
-        "chain_length": 12,
+        "chain_length": 11,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -10689,7 +10516,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.3",
@@ -10714,10 +10541,9 @@
           "bd-25n",
           "bd-rqn",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9"
         ],
-        "chain_length": 12,
+        "chain_length": 11,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -10759,7 +10585,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.3",
@@ -10784,10 +10610,9 @@
           "bd-25n",
           "bd-rqn",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9"
         ],
-        "chain_length": 12,
+        "chain_length": 11,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -10829,7 +10654,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.3",
@@ -10854,10 +10679,9 @@
           "bd-25n",
           "bd-rqn",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9"
         ],
-        "chain_length": 12,
+        "chain_length": 11,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -10899,7 +10723,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.3",
@@ -10924,10 +10748,9 @@
           "bd-25n",
           "bd-rqn",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9"
         ],
-        "chain_length": 12,
+        "chain_length": 11,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -10969,7 +10792,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.3",
@@ -10994,10 +10817,9 @@
           "bd-25n",
           "bd-rqn",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9"
         ],
-        "chain_length": 12,
+        "chain_length": 11,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -11039,7 +10861,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.3",
@@ -11064,10 +10886,9 @@
           "bd-25n",
           "bd-rqn",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9"
         ],
-        "chain_length": 12,
+        "chain_length": 11,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -11109,7 +10930,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.3",
@@ -11134,10 +10955,9 @@
           "bd-25n",
           "bd-rqn",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9"
         ],
-        "chain_length": 12,
+        "chain_length": 11,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -11179,7 +10999,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.3",
@@ -11204,10 +11024,9 @@
           "bd-25n",
           "bd-rqn",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9"
         ],
-        "chain_length": 12,
+        "chain_length": 11,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -11249,7 +11068,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.3",
@@ -11274,10 +11093,9 @@
           "bd-25n",
           "bd-rqn",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9"
         ],
-        "chain_length": 12,
+        "chain_length": 11,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -11319,7 +11137,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.3",
@@ -11344,10 +11162,9 @@
           "bd-25n",
           "bd-rqn",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9"
         ],
-        "chain_length": 12,
+        "chain_length": 11,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -11389,7 +11206,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.3",
@@ -11414,10 +11231,9 @@
           "bd-25n",
           "bd-rqn",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9"
         ],
-        "chain_length": 12,
+        "chain_length": 11,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -11459,7 +11275,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.3",
@@ -11484,10 +11300,9 @@
           "bd-25n",
           "bd-rqn",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9"
         ],
-        "chain_length": 12,
+        "chain_length": 11,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -11529,7 +11344,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.3",
@@ -11554,10 +11369,9 @@
           "bd-25n",
           "bd-rqn",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9"
         ],
-        "chain_length": 12,
+        "chain_length": 11,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -11599,7 +11413,7 @@
         },
         {
           "issue_id": "bd-w2c3.1",
-          "status": "open"
+          "status": "in_progress"
         },
         {
           "issue_id": "bd-w2c3.3",
@@ -11624,10 +11438,9 @@
           "bd-25n",
           "bd-rqn",
           "bd-1ff3",
-          "bd-3cco",
           "bd-xxd9"
         ],
-        "chain_length": 12,
+        "chain_length": 11,
         "is_blocked": true,
         "root_blockers": []
       },
