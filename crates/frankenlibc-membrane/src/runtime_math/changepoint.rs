@@ -50,6 +50,11 @@ const EWMA_ALPHA: f64 = 0.03;
 const BETA_ALPHA0: f64 = 1.0;
 const BETA_BETA0: f64 = 1.0;
 
+/// Numerical floor for active posterior mass.
+///
+/// Entries below this value are treated as inactive in horizon trimming.
+const MIN_ACTIVE_PROB: f64 = 1e-300;
+
 // ---------------------------------------------------------------------------
 // State enum
 // ---------------------------------------------------------------------------
@@ -103,6 +108,12 @@ pub struct ChangepointController {
     suf_adverse: [f64; MAX_RUN_LENGTH],
     /// Per-run-length sufficient statistic: total observations in this run.
     suf_total: [f64; MAX_RUN_LENGTH],
+    /// Scratch buffer for next-step run-length posterior.
+    scratch_probs: [f64; MAX_RUN_LENGTH],
+    /// Scratch buffer for next-step adverse sufficient statistic.
+    scratch_adverse: [f64; MAX_RUN_LENGTH],
+    /// Scratch buffer for next-step total sufficient statistic.
+    scratch_total: [f64; MAX_RUN_LENGTH],
     /// Current maximum active run length (index into `run_length_probs`).
     current_max_rl: usize,
     /// Lifetime adverse observation count.
@@ -129,6 +140,9 @@ impl ChangepointController {
             run_length_probs,
             suf_adverse: [0.0_f64; MAX_RUN_LENGTH],
             suf_total: [0.0_f64; MAX_RUN_LENGTH],
+            scratch_probs: [0.0_f64; MAX_RUN_LENGTH],
+            scratch_adverse: [0.0_f64; MAX_RUN_LENGTH],
+            scratch_total: [0.0_f64; MAX_RUN_LENGTH],
             current_max_rl: 0,
             adverse_count: 0,
             total_observations: 0,
@@ -161,45 +175,65 @@ impl ChangepointController {
         self.ewma_adverse_rate = EWMA_ALPHA * x + (1.0 - EWMA_ALPHA) * self.ewma_adverse_rate;
 
         // --- Growth & reset accumulation ---
-        let max_rl = self.current_max_rl;
+        let mut max_rl = self.current_max_rl;
+        // Trim trailing inactive run-length states so the update only
+        // iterates over posterior support that can still contribute.
+        while max_rl > 0 && self.run_length_probs[max_rl] < MIN_ACTIVE_PROB {
+            max_rl -= 1;
+        }
         let mut reset_mass = 0.0_f64;
 
-        // Temporary buffers for the shifted distribution.
-        let mut new_probs = [0.0_f64; MAX_RUN_LENGTH];
-        let mut new_adverse = [0.0_f64; MAX_RUN_LENGTH];
-        let mut new_total = [0.0_f64; MAX_RUN_LENGTH];
+        // Reuse fixed scratch buffers to avoid per-call stack churn.
+        let pre_trim_next_max = (max_rl + 1).min(MAX_RUN_LENGTH - 1);
+        {
+            let new_probs = &mut self.scratch_probs;
+            let new_adverse = &mut self.scratch_adverse;
+            let new_total = &mut self.scratch_total;
+            new_probs[..=pre_trim_next_max].fill(0.0);
+            new_adverse[..=pre_trim_next_max].fill(0.0);
+            new_total[..=pre_trim_next_max].fill(0.0);
+        }
 
-        for r in (0..=max_rl).rev() {
-            let prior = self.run_length_probs[r];
-            if prior < 1e-300 {
-                continue;
-            }
+        {
+            let run_probs = &self.run_length_probs;
+            let run_adverse = &self.suf_adverse;
+            let run_total = &self.suf_total;
+            let new_probs = &mut self.scratch_probs;
+            let new_adverse = &mut self.scratch_adverse;
+            let new_total = &mut self.scratch_total;
 
-            // Beta-Bernoulli predictive likelihood for this run length:
-            // P(x=1 | data_r) = (alpha0 + k_r) / (alpha0 + beta0 + n_r)
-            let alpha_post = BETA_ALPHA0 + self.suf_adverse[r];
-            let beta_post = BETA_BETA0 + (self.suf_total[r] - self.suf_adverse[r]);
-            let denom = alpha_post + beta_post;
-            let pred_adverse = alpha_post / denom;
-            let likelihood = if adverse {
-                pred_adverse
-            } else {
-                1.0 - pred_adverse
-            };
+            for r in (0..=max_rl).rev() {
+                let prior = run_probs[r];
+                if prior < MIN_ACTIVE_PROB {
+                    continue;
+                }
 
-            let weighted = prior * likelihood;
-            let hazard = 1.0 / (r as f64 + HAZARD_LAMBDA);
+                // Beta-Bernoulli predictive likelihood for this run length:
+                // P(x=1 | data_r) = (alpha0 + k_r) / (alpha0 + beta0 + n_r)
+                let alpha_post = BETA_ALPHA0 + run_adverse[r];
+                let beta_post = BETA_BETA0 + (run_total[r] - run_adverse[r]);
+                let denom = alpha_post + beta_post;
+                let pred_adverse = alpha_post / denom;
+                let likelihood = if adverse {
+                    pred_adverse
+                } else {
+                    1.0 - pred_adverse
+                };
 
-            // Reset contribution.
-            reset_mass += weighted * hazard;
+                let weighted = prior * likelihood;
+                let hazard = 1.0 / (r as f64 + HAZARD_LAMBDA);
 
-            // Growth: shift r -> r+1 (if within truncation window).
-            let next_r = r + 1;
-            if next_r < MAX_RUN_LENGTH {
-                new_probs[next_r] = weighted * (1.0 - hazard);
-                // Carry forward sufficient statistics, adding the new observation.
-                new_adverse[next_r] = self.suf_adverse[r] + x;
-                new_total[next_r] = self.suf_total[r] + 1.0;
+                // Reset contribution.
+                reset_mass += weighted * hazard;
+
+                // Growth: shift r -> r+1 (if within truncation window).
+                let next_r = r + 1;
+                if next_r < MAX_RUN_LENGTH {
+                    new_probs[next_r] = weighted * (1.0 - hazard);
+                    // Carry forward sufficient statistics, adding the new observation.
+                    new_adverse[next_r] = run_adverse[r] + x;
+                    new_total[next_r] = run_total[r] + 1.0;
+                }
             }
         }
 
@@ -207,29 +241,32 @@ impl ChangepointController {
         // in this new segment (the current observation was already used in the
         // predictive likelihood above for reset mass; the r=0 slot starts fresh
         // with the observation folded in).
-        new_probs[0] = reset_mass;
-        new_adverse[0] = x;
-        new_total[0] = 1.0;
+        self.scratch_probs[0] = reset_mass;
+        self.scratch_adverse[0] = x;
+        self.scratch_total[0] = 1.0;
 
-        // Update current max run length.
-        let new_max_rl = (max_rl + 1).min(MAX_RUN_LENGTH - 1);
+        // Update active run-length horizon and trim any trailing inactive tail.
+        let mut new_max_rl = pre_trim_next_max;
+        while new_max_rl > 0 && self.scratch_probs[new_max_rl] < MIN_ACTIVE_PROB {
+            new_max_rl -= 1;
+        }
         self.current_max_rl = new_max_rl;
 
         // Renormalize.
-        let total: f64 = new_probs[..=new_max_rl].iter().sum();
+        let total: f64 = self.scratch_probs[..=new_max_rl].iter().sum();
         if total > 0.0 {
             let inv_total = 1.0 / total;
-            for p in new_probs[..=new_max_rl].iter_mut() {
+            for p in self.scratch_probs[..=new_max_rl].iter_mut() {
                 *p *= inv_total;
             }
         } else {
             // Degenerate: reset to uniform on r = 0.
-            new_probs[0] = 1.0;
+            self.scratch_probs[0] = 1.0;
         }
 
-        self.run_length_probs = new_probs;
-        self.suf_adverse = new_adverse;
-        self.suf_total = new_total;
+        self.run_length_probs[..=new_max_rl].copy_from_slice(&self.scratch_probs[..=new_max_rl]);
+        self.suf_adverse[..=new_max_rl].copy_from_slice(&self.scratch_adverse[..=new_max_rl]);
+        self.suf_total[..=new_max_rl].copy_from_slice(&self.scratch_total[..=new_max_rl]);
 
         // Track MAP run length.
         let mut map_rl = 0_usize;
@@ -510,6 +547,24 @@ mod tests {
         assert_eq!(
             from_new.summary().total_observations,
             from_default.summary().total_observations,
+        );
+    }
+
+    #[test]
+    fn trims_inactive_tail_before_update() {
+        let mut ctrl = ChangepointController::new();
+        ctrl.current_max_rl = 12;
+        ctrl.run_length_probs[0] = 1.0;
+        for r in 1..=12 {
+            ctrl.run_length_probs[r] = MIN_ACTIVE_PROB * 0.1;
+        }
+
+        ctrl.observe(false);
+
+        assert!(
+            ctrl.current_max_rl <= 1,
+            "inactive tail should be trimmed before growth update; got {}",
+            ctrl.current_max_rl
         );
     }
 }
