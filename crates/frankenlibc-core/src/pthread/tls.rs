@@ -414,7 +414,7 @@ pub(crate) fn reset_tls_state() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use core::sync::atomic::{AtomicU32, Ordering as AtomicOrdering};
+    use core::sync::atomic::{AtomicU32, AtomicU64, Ordering as AtomicOrdering};
 
     // All TLS tests share global state (KEY_REGISTRY, TLS table). Serialize
     // them with a mutex so `reset_tls_state()` doesn't race with other tests.
@@ -659,5 +659,321 @@ mod tests {
 
         // Teardown should complete without error.
         teardown_thread_tls(tid);
+    }
+
+    // -----------------------------------------------------------------------
+    // Additional edge-case and adversarial tests (bd-1j2u, bd-122j)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn getspecific_out_of_bounds_key_returns_zero() {
+        let _g = lock_and_reset();
+        let key = PthreadKey { id: PTHREAD_KEYS_MAX as u32 + 1 };
+        assert_eq!(pthread_getspecific(key), 0);
+    }
+
+    #[test]
+    fn setspecific_out_of_bounds_key_returns_einval() {
+        let _g = lock_and_reset();
+        let key = PthreadKey { id: PTHREAD_KEYS_MAX as u32 + 1 };
+        assert_eq!(pthread_setspecific(key, 42), EINVAL);
+    }
+
+    #[test]
+    fn key_create_delete_create_reuses_slot_with_new_destructor() {
+        let _g = lock_and_reset();
+        static DTOR1_COUNT: AtomicU32 = AtomicU32::new(0);
+        static DTOR2_COUNT: AtomicU32 = AtomicU32::new(0);
+        DTOR1_COUNT.store(0, AtomicOrdering::SeqCst);
+        DTOR2_COUNT.store(0, AtomicOrdering::SeqCst);
+
+        fn dtor1(_: u64) { DTOR1_COUNT.fetch_add(1, AtomicOrdering::SeqCst); }
+        fn dtor2(_: u64) { DTOR2_COUNT.fetch_add(1, AtomicOrdering::SeqCst); }
+
+        let k1 = create_key(Some(dtor1));
+        let id = k1.id;
+        assert_eq!(pthread_key_delete(k1), 0);
+
+        // Create with a different destructor — should reuse the same slot.
+        let k2 = create_key(Some(dtor2));
+        assert_eq!(k2.id, id, "slot should be reused");
+
+        // Set a value and tear down to verify the new destructor fires.
+        let tid = current_tid();
+        let mut block = TestTlsBlock::new();
+        block.values[k2.id as usize] = 99;
+        table_register(tid, block.as_mut_ptr());
+        teardown_thread_tls(tid);
+
+        assert_eq!(DTOR1_COUNT.load(AtomicOrdering::SeqCst), 0, "old destructor should not fire");
+        assert_eq!(DTOR2_COUNT.load(AtomicOrdering::SeqCst), 1, "new destructor should fire");
+    }
+
+    #[test]
+    fn generation_counter_increments_on_create_and_delete() {
+        let _g = lock_and_reset();
+        let k = create_key(None);
+        let id = k.id as usize;
+
+        // Read initial seq via the registry.
+        let seq_after_create = {
+            let reg = KEY_REGISTRY.lock().unwrap();
+            reg.slots[id].seq
+        };
+        assert!(seq_after_create >= 1, "seq should be >= 1 after create");
+
+        assert_eq!(pthread_key_delete(k), 0);
+        let seq_after_delete = {
+            let reg = KEY_REGISTRY.lock().unwrap();
+            reg.slots[id].seq
+        };
+        assert_eq!(seq_after_delete, seq_after_create + 1, "seq should increment on delete");
+    }
+
+    #[test]
+    fn table_register_same_tid_twice_overwrites() {
+        let _g = lock_and_reset();
+        let tid = current_tid();
+
+        let mut block1 = TestTlsBlock::new();
+        block1.values[0] = 111;
+        table_register(tid, block1.as_mut_ptr());
+        assert_eq!(read_tls_value(tid, 0), 111);
+
+        // Re-register with a different block.
+        let mut block2 = TestTlsBlock::new();
+        block2.values[0] = 222;
+        table_register(tid, block2.as_mut_ptr());
+        assert_eq!(read_tls_value(tid, 0), 222);
+
+        table_remove(tid);
+    }
+
+    #[test]
+    fn double_teardown_is_safe() {
+        let _g = lock_and_reset();
+        let tid = current_tid();
+
+        let mut block = TestTlsBlock::new();
+        table_register(tid, block.as_mut_ptr());
+        teardown_thread_tls(tid);
+        // Second teardown should be a no-op (entry already removed).
+        teardown_thread_tls(tid);
+    }
+
+    #[test]
+    fn table_remove_nonexistent_tid_returns_null() {
+        let _g = lock_and_reset();
+        let ptr = table_remove(99999);
+        assert!(ptr.is_null());
+    }
+
+    #[test]
+    fn table_lookup_nonexistent_tid_returns_null() {
+        let _g = lock_and_reset();
+        let ptr = table_lookup(99999);
+        assert!(ptr.is_null());
+    }
+
+    #[test]
+    fn many_keys_independent_values() {
+        let _g = lock_and_reset();
+        const N: usize = 64;
+        let mut keys = Vec::with_capacity(N);
+        for _ in 0..N {
+            keys.push(create_key(None));
+        }
+        for (i, k) in keys.iter().enumerate() {
+            assert_eq!(pthread_setspecific(*k, (i + 1) as u64), 0);
+        }
+        for (i, k) in keys.iter().enumerate() {
+            assert_eq!(pthread_getspecific(*k), (i + 1) as u64);
+        }
+    }
+
+    #[test]
+    fn key_delete_does_not_call_destructors() {
+        let _g = lock_and_reset();
+        static DTOR_COUNT: AtomicU32 = AtomicU32::new(0);
+        DTOR_COUNT.store(0, AtomicOrdering::SeqCst);
+        fn dtor(_: u64) { DTOR_COUNT.fetch_add(1, AtomicOrdering::SeqCst); }
+
+        let key = create_key(Some(dtor));
+        assert_eq!(pthread_setspecific(key, 42), 0);
+        // Per POSIX, key_delete does NOT call destructors.
+        assert_eq!(pthread_key_delete(key), 0);
+        assert_eq!(DTOR_COUNT.load(AtomicOrdering::SeqCst), 0);
+    }
+
+    #[test]
+    fn setspecific_zero_value_is_valid() {
+        let _g = lock_and_reset();
+        let key = create_key(None);
+        assert_eq!(pthread_setspecific(key, 42), 0);
+        assert_eq!(pthread_getspecific(key), 42);
+        // Setting to 0 is explicitly valid.
+        assert_eq!(pthread_setspecific(key, 0), 0);
+        assert_eq!(pthread_getspecific(key), 0);
+    }
+
+    #[test]
+    fn destructor_not_called_for_zero_value() {
+        let _g = lock_and_reset();
+        static DTOR_COUNT: AtomicU32 = AtomicU32::new(0);
+        DTOR_COUNT.store(0, AtomicOrdering::SeqCst);
+        fn dtor(_: u64) { DTOR_COUNT.fetch_add(1, AtomicOrdering::SeqCst); }
+
+        let _key = create_key(Some(dtor));
+        let tid = current_tid();
+        let mut block = TestTlsBlock::new();
+        // Value is 0 (default) — destructor should NOT be called.
+        table_register(tid, block.as_mut_ptr());
+        teardown_thread_tls(tid);
+        assert_eq!(DTOR_COUNT.load(AtomicOrdering::SeqCst), 0);
+    }
+
+    // -----------------------------------------------------------------------
+    // Destructor pass policy tests (bd-14gj)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn multiple_keys_all_destructors_fire() {
+        let _g = lock_and_reset();
+        static DTOR_SUM: AtomicU32 = AtomicU32::new(0);
+        DTOR_SUM.store(0, AtomicOrdering::SeqCst);
+        fn dtor(val: u64) { DTOR_SUM.fetch_add(val as u32, AtomicOrdering::SeqCst); }
+
+        const N: usize = 8;
+        let mut keys = Vec::with_capacity(N);
+        for _ in 0..N {
+            keys.push(create_key(Some(dtor)));
+        }
+
+        let tid = current_tid();
+        let mut block = TestTlsBlock::new();
+        for (i, k) in keys.iter().enumerate() {
+            block.values[k.id as usize] = (i + 1) as u64;
+        }
+        table_register(tid, block.as_mut_ptr());
+        teardown_thread_tls(tid);
+
+        // Sum of 1..=8 = 36
+        assert_eq!(DTOR_SUM.load(AtomicOrdering::SeqCst), 36);
+    }
+
+    #[test]
+    fn destructor_iteration_is_bounded_at_max() {
+        let _g = lock_and_reset();
+        static DTOR_CALLS: AtomicU32 = AtomicU32::new(0);
+        static KEY_SLOT: AtomicU32 = AtomicU32::new(0);
+        DTOR_CALLS.store(0, AtomicOrdering::SeqCst);
+
+        // This destructor always re-sets the value, forcing iteration.
+        fn dtor_always_reset(_val: u64) {
+            let count = DTOR_CALLS.fetch_add(1, AtomicOrdering::SeqCst);
+            // Always re-set, even past the iteration limit.
+            let key = PthreadKey { id: KEY_SLOT.load(AtomicOrdering::SeqCst) };
+            let _ = pthread_setspecific(key, (count as u64) + 100);
+        }
+
+        let key = create_key(Some(dtor_always_reset));
+        KEY_SLOT.store(key.id, AtomicOrdering::SeqCst);
+
+        let tid = current_tid();
+        let mut block = TestTlsBlock::new();
+        block.values[key.id as usize] = 1;
+        table_register(tid, block.as_mut_ptr());
+
+        teardown_thread_tls(tid);
+
+        let calls = DTOR_CALLS.load(AtomicOrdering::SeqCst);
+        // Should be bounded by PTHREAD_DESTRUCTOR_ITERATIONS (4).
+        assert!(
+            calls <= PTHREAD_DESTRUCTOR_ITERATIONS as u32,
+            "destructor calls ({calls}) should be bounded by PTHREAD_DESTRUCTOR_ITERATIONS ({})",
+            PTHREAD_DESTRUCTOR_ITERATIONS
+        );
+        assert!(calls >= 1, "destructor should have been called at least once");
+    }
+
+    #[test]
+    fn mixed_destructors_some_with_some_without() {
+        let _g = lock_and_reset();
+        static WITH_DTOR_COUNT: AtomicU32 = AtomicU32::new(0);
+        WITH_DTOR_COUNT.store(0, AtomicOrdering::SeqCst);
+        fn dtor(_: u64) { WITH_DTOR_COUNT.fetch_add(1, AtomicOrdering::SeqCst); }
+
+        // Create 4 keys: 2 with destructor, 2 without.
+        let k_with_1 = create_key(Some(dtor));
+        let k_without_1 = create_key(None);
+        let k_with_2 = create_key(Some(dtor));
+        let k_without_2 = create_key(None);
+
+        let tid = current_tid();
+        let mut block = TestTlsBlock::new();
+        block.values[k_with_1.id as usize] = 10;
+        block.values[k_without_1.id as usize] = 20;
+        block.values[k_with_2.id as usize] = 30;
+        block.values[k_without_2.id as usize] = 40;
+        table_register(tid, block.as_mut_ptr());
+
+        teardown_thread_tls(tid);
+
+        // Only the 2 keys with destructors should fire.
+        assert_eq!(WITH_DTOR_COUNT.load(AtomicOrdering::SeqCst), 2);
+    }
+
+    #[test]
+    fn destructor_receives_correct_value() {
+        let _g = lock_and_reset();
+        static RECEIVED_VALUE: AtomicU64 = AtomicU64::new(0);
+        RECEIVED_VALUE.store(0, AtomicOrdering::SeqCst);
+        fn dtor(val: u64) { RECEIVED_VALUE.store(val, AtomicOrdering::SeqCst); }
+
+        let key = create_key(Some(dtor));
+        let tid = current_tid();
+        let mut block = TestTlsBlock::new();
+        block.values[key.id as usize] = 0xCAFE_BABE;
+        table_register(tid, block.as_mut_ptr());
+
+        teardown_thread_tls(tid);
+
+        assert_eq!(RECEIVED_VALUE.load(AtomicOrdering::SeqCst), 0xCAFE_BABE);
+    }
+
+    #[test]
+    fn destructor_clears_value_before_calling() {
+        let _g = lock_and_reset();
+        static OBSERVED_VALUES: Mutex<Vec<u64>> = Mutex::new(Vec::new());
+        static KEY_SLOT2: AtomicU32 = AtomicU32::new(0);
+
+        fn dtor_check_cleared(val: u64) {
+            OBSERVED_VALUES.lock().unwrap().push(val);
+            // Read the value for this key — it should already be cleared to 0.
+            let key = PthreadKey { id: KEY_SLOT2.load(AtomicOrdering::SeqCst) };
+            let current = pthread_getspecific(key);
+            // The value was cleared before destructor was called.
+            // If we're on a registered thread, it should be 0.
+            // (On main/fallback thread it might differ, but the contract is clear.)
+            assert_eq!(current, 0, "value should be cleared before destructor runs");
+        }
+
+        let key = create_key(Some(dtor_check_cleared));
+        KEY_SLOT2.store(key.id, AtomicOrdering::SeqCst);
+        {
+            let mut v = OBSERVED_VALUES.lock().unwrap();
+            v.clear();
+        }
+
+        let tid = current_tid();
+        let mut block = TestTlsBlock::new();
+        block.values[key.id as usize] = 777;
+        table_register(tid, block.as_mut_ptr());
+
+        teardown_thread_tls(tid);
+
+        let vals = OBSERVED_VALUES.lock().unwrap();
+        assert_eq!(vals.len(), 1);
+        assert_eq!(vals[0], 777, "destructor should receive the original value");
     }
 }
