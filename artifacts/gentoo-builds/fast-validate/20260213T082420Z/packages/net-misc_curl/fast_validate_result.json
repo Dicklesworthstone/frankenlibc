@@ -1,0 +1,9 @@
+{
+  "package": "net-misc/curl",
+  "result": "success",
+  "exit_code": 0,
+  "duration_seconds": 0,
+  "mode": "hardened",
+  "dry_run": true,
+  "timestamp": "2026-02-13T08:24:21Z"
+}

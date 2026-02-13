@@ -1,0 +1,384 @@
+{
+  "schema_version": "v1",
+  "bead": "bd-2icq.9",
+  "timestamp": "2026-02-13T08:39:48Z",
+  "mode": "hardened",
+  "dry_run": true,
+  "total_packages": 5,
+  "successful": 5,
+  "failed": 0,
+  "avg_build_overhead_percent": 4.11,
+  "median_build_overhead_percent": 4.24,
+  "packages": [
+    {
+      "package": "sys-apps/coreutils",
+      "build_time_baseline_s": 100.16,
+      "build_time_instrumented_s": 105.72,
+      "build_overhead_percent": 5.55,
+      "mode": "hardened",
+      "dry_run": true,
+      "timestamp": "2026-02-13T08:39:48Z",
+      "latency_profile": {
+        "total_calls": 125,
+        "avg_latency_ns": 211.2,
+        "p50_latency_ns": 205,
+        "p95_latency_ns": 386,
+        "p99_latency_ns": 394,
+        "max_latency_ns": 396,
+        "healing_actions": 35,
+        "claim_200ns_percentile": 48.0,
+        "top_hotspots": [
+          {
+            "call": "mmap",
+            "count": 18,
+            "total_latency_ns": 4858,
+            "avg_latency_ns": 269.9,
+            "share_percent": 18.4
+          },
+          {
+            "call": "strcpy",
+            "count": 21,
+            "total_latency_ns": 4776,
+            "avg_latency_ns": 227.4,
+            "share_percent": 18.09
+          },
+          {
+            "call": "malloc",
+            "count": 23,
+            "total_latency_ns": 4072,
+            "avg_latency_ns": 177.0,
+            "share_percent": 15.43
+          },
+          {
+            "call": "free",
+            "count": 18,
+            "total_latency_ns": 3545,
+            "avg_latency_ns": 196.9,
+            "share_percent": 13.43
+          },
+          {
+            "call": "memcpy",
+            "count": 14,
+            "total_latency_ns": 3505,
+            "avg_latency_ns": 250.4,
+            "share_percent": 13.28
+          },
+          {
+            "call": "strlen",
+            "count": 17,
+            "total_latency_ns": 3251,
+            "avg_latency_ns": 191.2,
+            "share_percent": 12.32
+          },
+          {
+            "call": "strcmp",
+            "count": 14,
+            "total_latency_ns": 2390,
+            "avg_latency_ns": 170.7,
+            "share_percent": 9.05
+          }
+        ],
+        "by_action": {
+          "TruncateWithNull": 17,
+          "ClampSize": 18
+        }
+      }
+    },
+    {
+      "package": "dev-libs/json-c",
+      "build_time_baseline_s": 173.98,
+      "build_time_instrumented_s": 183.03,
+      "build_overhead_percent": 5.2,
+      "mode": "hardened",
+      "dry_run": true,
+      "timestamp": "2026-02-13T08:39:48Z",
+      "latency_profile": {
+        "total_calls": 372,
+        "avg_latency_ns": 192.2,
+        "p50_latency_ns": 189,
+        "p95_latency_ns": 364,
+        "p99_latency_ns": 393,
+        "max_latency_ns": 398,
+        "healing_actions": 156,
+        "claim_200ns_percentile": 52.15,
+        "top_hotspots": [
+          {
+            "call": "strlen",
+            "count": 57,
+            "total_latency_ns": 12520,
+            "avg_latency_ns": 219.6,
+            "share_percent": 17.51
+          },
+          {
+            "call": "free",
+            "count": 56,
+            "total_latency_ns": 12151,
+            "avg_latency_ns": 217.0,
+            "share_percent": 16.99
+          },
+          {
+            "call": "strcpy",
+            "count": 63,
+            "total_latency_ns": 11042,
+            "avg_latency_ns": 175.3,
+            "share_percent": 15.44
+          },
+          {
+            "call": "mmap",
+            "count": 56,
+            "total_latency_ns": 10201,
+            "avg_latency_ns": 182.2,
+            "share_percent": 14.26
+          },
+          {
+            "call": "memcpy",
+            "count": 51,
+            "total_latency_ns": 9761,
+            "avg_latency_ns": 191.4,
+            "share_percent": 13.65
+          },
+          {
+            "call": "malloc",
+            "count": 43,
+            "total_latency_ns": 8276,
+            "avg_latency_ns": 192.5,
+            "share_percent": 11.57
+          },
+          {
+            "call": "strcmp",
+            "count": 46,
+            "total_latency_ns": 7562,
+            "avg_latency_ns": 164.4,
+            "share_percent": 10.57
+          }
+        ],
+        "by_action": {
+          "TruncateWithNull": 75,
+          "ClampSize": 81
+        }
+      }
+    },
+    {
+      "package": "app-arch/gzip",
+      "build_time_baseline_s": 287.22,
+      "build_time_instrumented_s": 295.8,
+      "build_overhead_percent": 2.99,
+      "mode": "hardened",
+      "dry_run": true,
+      "timestamp": "2026-02-13T08:39:48Z",
+      "latency_profile": {
+        "total_calls": 251,
+        "avg_latency_ns": 202.5,
+        "p50_latency_ns": 205,
+        "p95_latency_ns": 387,
+        "p99_latency_ns": 398,
+        "max_latency_ns": 400,
+        "healing_actions": 110,
+        "claim_200ns_percentile": 49.4,
+        "top_hotspots": [
+          {
+            "call": "free",
+            "count": 44,
+            "total_latency_ns": 9024,
+            "avg_latency_ns": 205.1,
+            "share_percent": 17.75
+          },
+          {
+            "call": "strlen",
+            "count": 38,
+            "total_latency_ns": 8382,
+            "avg_latency_ns": 220.6,
+            "share_percent": 16.49
+          },
+          {
+            "call": "strcpy",
+            "count": 39,
+            "total_latency_ns": 8172,
+            "avg_latency_ns": 209.5,
+            "share_percent": 16.08
+          },
+          {
+            "call": "mmap",
+            "count": 33,
+            "total_latency_ns": 7488,
+            "avg_latency_ns": 226.9,
+            "share_percent": 14.73
+          },
+          {
+            "call": "strcmp",
+            "count": 43,
+            "total_latency_ns": 7343,
+            "avg_latency_ns": 170.8,
+            "share_percent": 14.45
+          },
+          {
+            "call": "malloc",
+            "count": 27,
+            "total_latency_ns": 5235,
+            "avg_latency_ns": 193.9,
+            "share_percent": 10.3
+          },
+          {
+            "call": "memcpy",
+            "count": 27,
+            "total_latency_ns": 5184,
+            "avg_latency_ns": 192.0,
+            "share_percent": 10.2
+          }
+        ],
+        "by_action": {
+          "ClampSize": 56,
+          "TruncateWithNull": 54
+        }
+      }
+    },
+    {
+      "package": "sys-apps/grep",
+      "build_time_baseline_s": 38.09,
+      "build_time_instrumented_s": 39.7,
+      "build_overhead_percent": 4.24,
+      "mode": "hardened",
+      "dry_run": true,
+      "timestamp": "2026-02-13T08:39:48Z",
+      "latency_profile": {
+        "total_calls": 343,
+        "avg_latency_ns": 213.9,
+        "p50_latency_ns": 213,
+        "p95_latency_ns": 382,
+        "p99_latency_ns": 396,
+        "max_latency_ns": 399,
+        "healing_actions": 124,
+        "claim_200ns_percentile": 46.94,
+        "top_hotspots": [
+          {
+            "call": "malloc",
+            "count": 54,
+            "total_latency_ns": 12331,
+            "avg_latency_ns": 228.4,
+            "share_percent": 16.81
+          },
+          {
+            "call": "strlen",
+            "count": 53,
+            "total_latency_ns": 12046,
+            "avg_latency_ns": 227.3,
+            "share_percent": 16.42
+          },
+          {
+            "call": "mmap",
+            "count": 63,
+            "total_latency_ns": 11946,
+            "avg_latency_ns": 189.6,
+            "share_percent": 16.28
+          },
+          {
+            "call": "strcpy",
+            "count": 47,
+            "total_latency_ns": 10397,
+            "avg_latency_ns": 221.2,
+            "share_percent": 14.17
+          },
+          {
+            "call": "strcmp",
+            "count": 48,
+            "total_latency_ns": 10033,
+            "avg_latency_ns": 209.0,
+            "share_percent": 13.68
+          },
+          {
+            "call": "free",
+            "count": 44,
+            "total_latency_ns": 8715,
+            "avg_latency_ns": 198.1,
+            "share_percent": 11.88
+          },
+          {
+            "call": "memcpy",
+            "count": 34,
+            "total_latency_ns": 7889,
+            "avg_latency_ns": 232.0,
+            "share_percent": 10.75
+          }
+        ],
+        "by_action": {
+          "ClampSize": 68,
+          "TruncateWithNull": 56
+        }
+      }
+    },
+    {
+      "package": "net-misc/curl",
+      "build_time_baseline_s": 277.76,
+      "build_time_instrumented_s": 284.86,
+      "build_overhead_percent": 2.56,
+      "mode": "hardened",
+      "dry_run": true,
+      "timestamp": "2026-02-13T08:39:48Z",
+      "latency_profile": {
+        "total_calls": 433,
+        "avg_latency_ns": 207.9,
+        "p50_latency_ns": 213,
+        "p95_latency_ns": 383,
+        "p99_latency_ns": 397,
+        "max_latency_ns": 400,
+        "healing_actions": 189,
+        "claim_200ns_percentile": 45.96,
+        "top_hotspots": [
+          {
+            "call": "free",
+            "count": 67,
+            "total_latency_ns": 14443,
+            "avg_latency_ns": 215.6,
+            "share_percent": 16.05
+          },
+          {
+            "call": "strlen",
+            "count": 72,
+            "total_latency_ns": 13891,
+            "avg_latency_ns": 192.9,
+            "share_percent": 15.43
+          },
+          {
+            "call": "mmap",
+            "count": 62,
+            "total_latency_ns": 13346,
+            "avg_latency_ns": 215.3,
+            "share_percent": 14.83
+          },
+          {
+            "call": "strcmp",
+            "count": 60,
+            "total_latency_ns": 12704,
+            "avg_latency_ns": 211.7,
+            "share_percent": 14.12
+          },
+          {
+            "call": "strcpy",
+            "count": 59,
+            "total_latency_ns": 12406,
+            "avg_latency_ns": 210.3,
+            "share_percent": 13.78
+          },
+          {
+            "call": "malloc",
+            "count": 56,
+            "total_latency_ns": 12008,
+            "avg_latency_ns": 214.4,
+            "share_percent": 13.34
+          },
+          {
+            "call": "memcpy",
+            "count": 57,
+            "total_latency_ns": 11203,
+            "avg_latency_ns": 196.5,
+            "share_percent": 12.45
+          }
+        ],
+        "by_action": {
+          "TruncateWithNull": 88,
+          "ClampSize": 101
+        }
+      }
+    }
+  ]
+}

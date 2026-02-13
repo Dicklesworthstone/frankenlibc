@@ -1,0 +1,15 @@
+{
+  "package": "sys-devel/binutils",
+  "version": "",
+  "result": "success",
+  "build_time_seconds": 1,
+  "frankenlibc_healing_actions": 0,
+  "frankenlibc_mode": "hardened",
+  "log_file": "/data/projects/frankenlibc/artifacts/gentoo-builds/packages/sys-devel__binutils/attempt-1/build.log",
+  "frankenlibc_log": "/data/projects/frankenlibc/artifacts/gentoo-builds/packages/sys-devel__binutils/attempt-1/frankenlibc.jsonl",
+  "binary_package": "",
+  "exit_code": 0,
+  "timestamp": "2026-02-13T02:47:07Z",
+  "attempts": 1,
+  "reason": "dry_run"
+}

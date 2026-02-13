@@ -1,0 +1,29 @@
+2026-02-13T08:25:08Z [INFO] === FrankenLibC Tier 1 Fast Validation ===
+2026-02-13T08:25:08Z [INFO] Mode:       hardened
+2026-02-13T08:25:08Z [INFO] Dry-run:    1
+2026-02-13T08:25:08Z [INFO] Local-only: 0
+2026-02-13T08:25:08Z [INFO] Fail-fast:  1
+2026-02-13T08:25:08Z [INFO] Results:    /data/projects/frankenlibc/artifacts/gentoo-builds/fast-validate/20260213T082508Z
+2026-02-13T08:25:08Z [INFO] 
+2026-02-13T08:25:08Z [INFO] Dry-run mode: skipping prerequisite checks
+2026-02-13T08:25:09Z [INFO] Packages to validate: 5
+2026-02-13T08:25:09Z [INFO]   - sys-apps/coreutils
+2026-02-13T08:25:09Z [INFO]   - dev-libs/json-c
+2026-02-13T08:25:09Z [INFO]   - app-arch/gzip
+2026-02-13T08:25:09Z [INFO]   - sys-apps/grep
+2026-02-13T08:25:09Z [INFO]   - net-misc/curl
+2026-02-13T08:25:09Z [INFO] 
+2026-02-13T08:25:09Z [INFO] [dry-run] sys-apps/coreutils: synthetic PASS
+2026-02-13T08:25:09Z [INFO] [dry-run] dev-libs/json-c: synthetic PASS
+2026-02-13T08:25:09Z [INFO] [dry-run] app-arch/gzip: synthetic PASS
+2026-02-13T08:25:09Z [INFO] [dry-run] sys-apps/grep: synthetic PASS
+2026-02-13T08:25:09Z [INFO] [dry-run] net-misc/curl: synthetic PASS
+2026-02-13T08:25:09Z [INFO] 
+2026-02-13T08:25:09Z [INFO] === Fast Validation Summary ===
+2026-02-13T08:25:09Z [INFO] Total:   5
+2026-02-13T08:25:09Z [INFO] Passed:  5
+2026-02-13T08:25:09Z [INFO] Failed:  0
+2026-02-13T08:25:09Z [INFO] Skipped: 0
+2026-02-13T08:25:09Z [INFO] Time:    0s
+2026-02-13T08:25:09Z [INFO] Results: /data/projects/frankenlibc/artifacts/gentoo-builds/fast-validate/20260213T082508Z
+2026-02-13T08:25:09Z [PASS] FAST VALIDATION PASSED

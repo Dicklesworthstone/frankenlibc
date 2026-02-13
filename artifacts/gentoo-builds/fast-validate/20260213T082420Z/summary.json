@@ -1,0 +1,18 @@
+{
+  "schema_version": "v1",
+  "bead": "bd-2icq.18",
+  "test": "tier1-fast-validation",
+  "timestamp": "2026-02-13T08:24:21Z",
+  "mode": "hardened",
+  "dry_run": true,
+  "local_only": false,
+  "total_packages": 5,
+  "passed": 5,
+  "failed": 0,
+  "skipped": 0,
+  "exit_code": 0,
+  "timeout_per_pkg_seconds": 900,
+  "total_timeout_seconds": 600,
+  "tier1_file": "configs/gentoo/tier1-mini.txt",
+  "results_dir": "/data/projects/frankenlibc/artifacts/gentoo-builds/fast-validate/20260213T082420Z"
+}
