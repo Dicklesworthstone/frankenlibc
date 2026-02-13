@@ -1,6 +1,6 @@
 {
   "matrix_version": 1,
-  "generated_utc": "2026-02-13T00:05:30Z",
+  "generated_utc": "2026-02-13T00:41:05Z",
   "description": "Verification obligations matrix for all open/in_progress critique beads. Maps each bead to required evidence types with current coverage status. Blocks bead closure when evidence is missing.",
   "schema": {
     "coverage_statuses": {
@@ -231,16 +231,16 @@
     "total_critique_beads": 115,
     "total_entries": 115,
     "by_coverage_status": {
-      "complete": 37,
+      "complete": 38,
       "partial": 0,
-      "missing": 78
+      "missing": 77
     },
     "by_priority": {
       "P0": {
         "total": 34,
-        "complete": 14,
+        "complete": 15,
         "partial": 0,
-        "missing": 20
+        "missing": 19
       },
       "P1": {
         "total": 41,
@@ -258,9 +258,9 @@
     "by_obligation_type": {
       "unit_tests": {
         "required": 115,
-        "complete": 37,
+        "complete": 38,
         "partial": 0,
-        "missing": 78
+        "missing": 77
       },
       "e2e_scripts": {
         "required": 56,
@@ -270,9 +270,9 @@
       },
       "structured_logs": {
         "required": 112,
-        "complete": 34,
+        "complete": 35,
         "partial": 0,
-        "missing": 78
+        "missing": 77
       },
       "perf_evidence": {
         "required": 24,
@@ -288,9 +288,9 @@
       },
       "golden_artifacts": {
         "required": 112,
-        "complete": 34,
+        "complete": 35,
         "partial": 0,
-        "missing": 78
+        "missing": 77
       }
     },
     "by_stream": {
@@ -307,8 +307,8 @@
         "missing": 8
       },
       "math": {
-        "total": 16,
-        "complete": 10,
+        "total": 17,
+        "complete": 11,
         "partial": 0,
         "missing": 6
       },
@@ -325,10 +325,10 @@
         "missing": 9
       },
       "syscall": {
-        "total": 24,
+        "total": 23,
         "complete": 4,
         "partial": 0,
-        "missing": 20
+        "missing": 19
       }
     }
   },
@@ -3934,8 +3934,8 @@
       "bead_id": "bd-2625",
       "title": "bd-25n subtask: Strict-vs-hardened divergence bounds test suite",
       "priority": 0,
-      "status": "open",
-      "assignee": null,
+      "status": "closed",
+      "assignee": "SilverLake",
       "labels": [
         "critique",
         "modes",
@@ -3972,15 +3972,15 @@
       },
       "coverage": {
         "unit_tests": {
-          "status": "missing",
-          "artifacts": ""
+          "status": "complete",
+          "artifacts": "cargo test -p frankenlibc-harness --test runtime_math_divergence_bounds_test"
         },
         "e2e_scripts": {
           "status": "not_required"
         },
         "structured_logs": {
-          "status": "missing",
-          "artifacts": ""
+          "status": "complete",
+          "artifacts": "target/conformance/runtime_math_divergence_bounds.log.jsonl"
         },
         "perf_evidence": {
           "status": "not_required"
@@ -3989,42 +3989,47 @@
           "status": "not_required"
         },
         "golden_artifacts": {
-          "status": "missing",
-          "artifacts": ""
+          "status": "complete",
+          "artifacts": "tests/runtime_math/runtime_math_divergence_bounds.v1.json"
         }
       },
       "coverage_summary": {
-        "overall": "missing",
+        "overall": "complete",
         "required": 3,
-        "complete": 0,
+        "complete": 3,
         "partial": 0,
-        "missing": 3
+        "missing": 0
       },
       "row": {
         "bead_id": "bd-2625",
-        "stream": "syscall",
-        "status": "missing",
+        "stream": "math",
+        "status": "complete",
         "unit_cmds": [
-          "cargo test -p frankenlibc-harness --tests -- --nocapture"
+          "cargo test -p frankenlibc-harness --test runtime_math_divergence_bounds_test -- --nocapture"
         ],
-        "e2e_cmds": [],
+        "e2e_cmds": [
+          "scripts/check_runtime_math_divergence_bounds.sh"
+        ],
         "expected_assertions": [
-          "matrix row exists and will be refined with bead-specific evidence before closure"
+          "forbidden strict-vs-hardened divergence patterns do not occur across evaluation cases",
+          "required strict/hardened decision pairs remain stable (profile+action)",
+          "gate emits structured JSONL logs and a machine-readable JSON report"
         ],
         "log_schema_refs": [
           "tests/conformance/log_schema.json"
         ],
         "artifact_paths": [
-          "tests/cve_arena/results/bd-2625/trace.jsonl",
-          "tests/cve_arena/results/bd-2625/artifact_index.json"
+          "tests/runtime_math/runtime_math_divergence_bounds.v1.json",
+          "crates/frankenlibc-harness/src/runtime_math_divergence_bounds.rs",
+          "crates/frankenlibc-harness/src/bin/harness.rs",
+          "scripts/check_runtime_math_divergence_bounds.sh",
+          "scripts/ci.sh",
+          "target/conformance/runtime_math_divergence_bounds.log.jsonl",
+          "target/conformance/runtime_math_divergence_bounds.report.json"
         ],
         "perf_proof_refs": [],
-        "close_blockers": [
-          "missing_unit",
-          "missing_logs",
-          "missing_golden_artifacts"
-        ],
-        "notes": "Auto-backfilled row for bd-2625; refine commands/artifacts as implementation evidence lands."
+        "close_blockers": [],
+        "notes": "Closed: strict-vs-hardened divergence bounds matrix + harness gate + CI integration with structured logs (bd-2625)."
       }
     },
     {

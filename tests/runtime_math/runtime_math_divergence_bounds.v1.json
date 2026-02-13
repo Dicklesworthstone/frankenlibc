@@ -1,0 +1,142 @@
+{
+  "schema_version": "v1",
+  "bead": "bd-2625",
+  "generated_at": "2026-02-13T00:00:00Z",
+  "description": "Strict-vs-hardened divergence bounds for runtime_math decisions (profile+action). This matrix is intentionally small and focuses on invariants that must remain explainable across modes. It is NOT a full behavioral spec of libc outcomes; it gates the runtime_math controller output surface consumed by membrane call paths.",
+  "mode_pair": [
+    "strict",
+    "hardened"
+  ],
+  "forbidden_divergences": [
+    {
+      "id": "hardened_profile_less_conservative",
+      "description": "Forbidden: hardened selects Fast profile when strict selects Full for the same context."
+    },
+    {
+      "id": "hardened_denies_when_strict_allows",
+      "description": "Forbidden: hardened action is Deny when strict action is Allow for the same context (compatibility regression; hardened should repair/escalate instead of hard-denying)."
+    },
+    {
+      "id": "hardened_allows_when_strict_fullvalidates",
+      "description": "Forbidden: hardened action is Allow when strict action is FullValidate for the same context (hardened must not be less conservative than strict when strict forces full checks)."
+    }
+  ],
+  "evaluation_cases": [
+    {
+      "id": "cold_start_pointer_validation_read",
+      "family": "pointer_validation",
+      "description": "Baseline pointer-validation read: cold kernel, no warmup.",
+      "ctx": {
+        "addr_hint": 8192,
+        "requested_bytes": 0,
+        "is_write": false,
+        "contention_hint": 0,
+        "bloom_negative": false
+      }
+    },
+    {
+      "id": "cold_start_allocator_small_write",
+      "family": "allocator",
+      "description": "Allocator baseline: small write-like request; cold kernel, no warmup.",
+      "ctx": {
+        "addr_hint": 12288,
+        "requested_bytes": 64,
+        "is_write": true,
+        "contention_hint": 0,
+        "bloom_negative": false
+      }
+    },
+    {
+      "id": "cold_start_string_small_write",
+      "family": "string_memory",
+      "description": "String/memory baseline: small write; cold kernel, no warmup.",
+      "ctx": {
+        "addr_hint": 16384,
+        "requested_bytes": 128,
+        "is_write": true,
+        "contention_hint": 0,
+        "bloom_negative": false
+      }
+    },
+    {
+      "id": "cold_start_threading_contended",
+      "family": "threading",
+      "description": "Threading baseline: contended hint path; cold kernel, no warmup.",
+      "ctx": {
+        "addr_hint": 20480,
+        "requested_bytes": 0,
+        "is_write": false,
+        "contention_hint": 192,
+        "bloom_negative": false
+      }
+    }
+  ],
+  "required_cases": [
+    {
+      "id": "cold_start_hardened_escalates_before_strict",
+      "family": "pointer_validation",
+      "description": "Cold start: hardened must be at least as conservative as strict (full validation earlier).",
+      "ctx": {
+        "addr_hint": 8192,
+        "requested_bytes": 0,
+        "is_write": false,
+        "contention_hint": 0,
+        "bloom_negative": false
+      },
+      "expect": {
+        "strict": {
+          "profile": "fast",
+          "action": "allow"
+        },
+        "hardened": {
+          "profile": "full",
+          "action": "full_validate"
+        }
+      }
+    },
+    {
+      "id": "max_request_between_modes_strict_denies_hardened_fullvalidates",
+      "family": "pointer_validation",
+      "description": "Requested-bytes bound differs by mode (strict=128MiB, hardened=256MiB). A request between those bounds is denied in strict but admissible in hardened.",
+      "ctx": {
+        "addr_hint": 4096,
+        "requested_bytes": 201326592,
+        "is_write": false,
+        "contention_hint": 0,
+        "bloom_negative": false
+      },
+      "expect": {
+        "strict": {
+          "profile": "fast",
+          "action": "deny"
+        },
+        "hardened": {
+          "profile": "full",
+          "action": "full_validate"
+        }
+      }
+    },
+    {
+      "id": "max_request_exceeds_both_strict_denies_hardened_repairs",
+      "family": "pointer_validation",
+      "description": "A request above both mode bounds is inadmissible. Strict denies; hardened repairs with ReturnSafeDefault as the deterministic safe fallback.",
+      "ctx": {
+        "addr_hint": 4096,
+        "requested_bytes": 536870912,
+        "is_write": false,
+        "contention_hint": 0,
+        "bloom_negative": false
+      },
+      "expect": {
+        "strict": {
+          "profile": "fast",
+          "action": "deny"
+        },
+        "hardened": {
+          "profile": "full",
+          "action": "repair:return_safe_default"
+        }
+      }
+    }
+  ]
+}

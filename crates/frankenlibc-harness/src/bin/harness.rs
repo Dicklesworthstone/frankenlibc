@@ -225,6 +225,24 @@ enum Command {
         )]
         report: PathBuf,
     },
+    /// Validate strict-vs-hardened divergence bounds for runtime_math decisions.
+    RuntimeMathDivergenceBounds {
+        /// Workspace root used for resolving canonical artifacts.
+        #[arg(long, default_value = ".")]
+        workspace_root: PathBuf,
+        /// Structured JSONL log output path.
+        #[arg(
+            long,
+            default_value = "target/conformance/runtime_math_divergence_bounds.log.jsonl"
+        )]
+        log: PathBuf,
+        /// JSON report output path.
+        #[arg(
+            long,
+            default_value = "target/conformance/runtime_math_divergence_bounds.report.json"
+        )]
+        report: PathBuf,
+    },
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -673,6 +691,32 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             eprintln!(
                 "OK: runtime_math determinism proofs passed for {} modes (log: {}, report: {})",
                 rep.summary.modes,
+                log.display(),
+                report.display()
+            );
+        }
+        Command::RuntimeMathDivergenceBounds {
+            workspace_root,
+            log,
+            report,
+        } => {
+            let rep = frankenlibc_harness::runtime_math_divergence_bounds::run_and_write(
+                &workspace_root,
+                &log,
+                &report,
+            )?;
+            if rep.summary.failed != 0 || rep.summary.violations != 0 {
+                return Err(std::io::Error::other(format!(
+                    "runtime_math divergence bounds FAILED: {} case(s) failed, {} violation(s) (report: {})",
+                    rep.summary.failed,
+                    rep.summary.violations,
+                    report.display()
+                ))
+                .into());
+            }
+            eprintln!(
+                "OK: runtime_math divergence bounds passed for {} cases (log: {}, report: {})",
+                rep.summary.total_cases,
                 log.display(),
                 report.display()
             );

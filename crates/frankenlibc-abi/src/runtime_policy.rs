@@ -320,7 +320,14 @@ pub(crate) fn note_check_order_outcome(
 ) {
     let mode = safety_level();
     if let Some(k) = kernel() {
-        k.note_check_order_outcome(mode, family, aligned, recent_page, ordering_used, exit_stage);
+        k.note_check_order_outcome(
+            mode,
+            family,
+            aligned,
+            recent_page,
+            ordering_used,
+            exit_stage,
+        );
     }
 }
 

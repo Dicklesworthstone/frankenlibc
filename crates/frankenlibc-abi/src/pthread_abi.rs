@@ -120,18 +120,18 @@ fn clear_managed_mutex(mutex: *mut libc::pthread_mutex_t) {
 }
 
 unsafe extern "C" {
-    #[link_name = "__pthread_mutex_init"]
+    #[link_name = "__pthread_mutex_init@GLIBC_2.2.5"]
     fn host_pthread_mutex_init_sym(
         mutex: *mut libc::pthread_mutex_t,
         attr: *const libc::pthread_mutexattr_t,
     ) -> c_int;
-    #[link_name = "__pthread_mutex_destroy"]
+    #[link_name = "__pthread_mutex_destroy@GLIBC_2.2.5"]
     fn host_pthread_mutex_destroy_sym(mutex: *mut libc::pthread_mutex_t) -> c_int;
-    #[link_name = "__pthread_mutex_lock"]
+    #[link_name = "__pthread_mutex_lock@GLIBC_2.2.5"]
     fn host_pthread_mutex_lock_sym(mutex: *mut libc::pthread_mutex_t) -> c_int;
-    #[link_name = "__pthread_mutex_trylock"]
+    #[link_name = "__pthread_mutex_trylock@GLIBC_2.2.5"]
     fn host_pthread_mutex_trylock_sym(mutex: *mut libc::pthread_mutex_t) -> c_int;
-    #[link_name = "__pthread_mutex_unlock"]
+    #[link_name = "__pthread_mutex_unlock@GLIBC_2.2.5"]
     fn host_pthread_mutex_unlock_sym(mutex: *mut libc::pthread_mutex_t) -> c_int;
 }
 
@@ -596,9 +596,10 @@ pub unsafe extern "C" fn pthread_mutex_lock(mutex: *mut libc::pthread_mutex_t) -
         return unsafe { host_pthread_mutex_lock(mutex) };
     };
     if !is_managed_mutex(mutex) {
-        let _ = mark_managed_mutex(mutex);
+        // SAFETY: foreign/static mutexes are owned by the host pthread implementation.
+        return unsafe { host_pthread_mutex_lock(mutex) };
     }
-    // SAFETY: `word_ptr` is alignment-checked and points to caller-owned mutex storage.
+    // SAFETY: managed mutexes use our futex word in the leading i32.
     let word = unsafe { &*word_ptr };
     futex_lock_normal(word)
 }
@@ -615,9 +616,10 @@ pub unsafe extern "C" fn pthread_mutex_trylock(mutex: *mut libc::pthread_mutex_t
         return unsafe { host_pthread_mutex_trylock(mutex) };
     };
     if !is_managed_mutex(mutex) {
-        let _ = mark_managed_mutex(mutex);
+        // SAFETY: foreign/static mutexes are owned by the host pthread implementation.
+        return unsafe { host_pthread_mutex_trylock(mutex) };
     }
-    // SAFETY: `word_ptr` is alignment-checked and points to caller-owned mutex storage.
+    // SAFETY: managed mutexes use our futex word in the leading i32.
     let word = unsafe { &*word_ptr };
     futex_trylock_normal(word)
 }
@@ -634,9 +636,10 @@ pub unsafe extern "C" fn pthread_mutex_unlock(mutex: *mut libc::pthread_mutex_t)
         return unsafe { host_pthread_mutex_unlock(mutex) };
     };
     if !is_managed_mutex(mutex) {
-        let _ = mark_managed_mutex(mutex);
+        // SAFETY: foreign/static mutexes are owned by the host pthread implementation.
+        return unsafe { host_pthread_mutex_unlock(mutex) };
     }
-    // SAFETY: `word_ptr` is alignment-checked and points to caller-owned mutex storage.
+    // SAFETY: managed mutexes use our futex word in the leading i32.
     let word = unsafe { &*word_ptr };
     futex_unlock_normal(word)
 }

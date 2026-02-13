@@ -488,6 +488,7 @@ mod tests {
     use super::*;
     use crate::check_oracle::CheckStage;
     use crate::lattice::SafetyState;
+    use crate::tls_cache::lock_tls_cache_epoch_for_tests;
 
     #[test]
     fn null_pointer_detected() {
@@ -502,16 +503,22 @@ mod tests {
     fn foreign_pointer_allowed() {
         let pipeline = ValidationPipeline::new();
         let outcome = pipeline.validate(0xDEAD_BEEF);
-        // Foreign pointers are allowed (Galois property)
+        // Foreign pointers are allowed (Galois property), but must remain Unknown/unbounded.
+        assert!(matches!(outcome, ValidationOutcome::Foreign(_)));
         assert!(outcome.can_read());
+        assert!(outcome.can_write());
+        let abs = outcome.abstraction().expect("foreign abstraction");
+        assert_eq!(abs.state, SafetyState::Unknown);
+        assert!(abs.alloc_base.is_none());
+        assert!(abs.remaining.is_none());
+        assert!(abs.generation.is_none());
     }
 
     #[test]
     fn allocated_pointer_validates() {
         let pipeline = ValidationPipeline::new();
-        let ptr = pipeline.arena.allocate(256).expect("alloc");
+        let ptr = pipeline.allocate(256).expect("alloc");
         let addr = ptr as usize;
-        pipeline.register_allocation(addr, 256);
 
         let outcome = pipeline.validate(addr);
         assert!(outcome.can_read());
@@ -524,17 +531,18 @@ mod tests {
             panic!("expected abstraction");
         }
 
-        pipeline.arena.free(ptr);
+        let result = pipeline.free(ptr);
+        assert_eq!(result, FreeResult::Freed);
     }
 
     #[test]
     fn freed_pointer_detected() {
         let pipeline = ValidationPipeline::new();
-        let ptr = pipeline.arena.allocate(128).expect("alloc");
+        let ptr = pipeline.allocate(128).expect("alloc");
         let addr = ptr as usize;
-        pipeline.register_allocation(addr, 128);
 
-        pipeline.arena.free(ptr);
+        let result = pipeline.free(ptr);
+        assert_eq!(result, FreeResult::Freed);
 
         let outcome = pipeline.validate(addr);
         assert!(!outcome.can_read());
@@ -544,35 +552,43 @@ mod tests {
     #[test]
     fn cached_validation_faster_on_second_call() {
         let pipeline = ValidationPipeline::new();
-        let ptr = pipeline.arena.allocate(512).expect("alloc");
+        let ptr = pipeline.allocate(512).expect("alloc");
         let addr = ptr as usize;
-        pipeline.register_allocation(addr, 512);
 
-        // First call — full pipeline
-        let _ = pipeline.validate(addr);
-        // Second call — should hit TLS cache
-        let outcome = pipeline.validate(addr);
-        assert!(matches!(outcome, ValidationOutcome::CachedValid(_)));
+        {
+            // Guard against unrelated concurrent frees in other tests bumping the epoch
+            // and causing flaky cache-hit expectations.
+            let _epoch_guard = lock_tls_cache_epoch_for_tests();
+            // First call — full pipeline
+            let _ = pipeline.validate(addr);
+            // Second call — should hit TLS cache
+            let outcome = pipeline.validate(addr);
+            assert!(matches!(outcome, ValidationOutcome::CachedValid(_)));
+        }
 
-        pipeline.arena.free(ptr);
+        let result = pipeline.free(ptr);
+        assert_eq!(result, FreeResult::Freed);
     }
 
     #[test]
     fn tls_cache_does_not_allow_uaf_after_free() {
         let pipeline = ValidationPipeline::new();
-        let ptr = pipeline.arena.allocate(64).expect("alloc");
+        let ptr = pipeline.allocate(64).expect("alloc");
         let addr = ptr as usize;
-        pipeline.register_allocation(addr, 64);
 
-        // Populate TLS cache.
-        let _ = pipeline.validate(addr);
-        let cached = pipeline.validate(addr);
-        assert!(
-            matches!(cached, ValidationOutcome::CachedValid(_)),
-            "expected TLS cache hit on second validate()"
-        );
+        {
+            let _epoch_guard = lock_tls_cache_epoch_for_tests();
+            // Populate TLS cache.
+            let _ = pipeline.validate(addr);
+            let cached = pipeline.validate(addr);
+            assert!(
+                matches!(cached, ValidationOutcome::CachedValid(_)),
+                "expected TLS cache hit on second validate()"
+            );
+        }
 
-        pipeline.arena.free(ptr);
+        let result = pipeline.free(ptr);
+        assert_eq!(result, FreeResult::Freed);
 
         // After free, the TLS cache must not report a stale valid pointer.
         let outcome = pipeline.validate(addr);
@@ -582,6 +598,54 @@ mod tests {
         );
         assert!(!outcome.can_read());
         assert!(!outcome.can_write());
+    }
+
+    #[test]
+    fn foreign_free_reported() {
+        let pipeline = ValidationPipeline::new();
+        let local = 42_u64;
+        let ptr = std::ptr::addr_of!(local) as *mut u64 as *mut u8;
+        let result = pipeline.free(ptr);
+        assert_eq!(result, FreeResult::ForeignPointer);
+    }
+
+    #[test]
+    fn double_free_reported() {
+        let pipeline = ValidationPipeline::new();
+        let ptr = pipeline.allocate(32).expect("alloc");
+
+        let first = pipeline.free(ptr);
+        assert_eq!(first, FreeResult::Freed);
+
+        let second = pipeline.free(ptr);
+        assert_eq!(second, FreeResult::DoubleFree);
+    }
+
+    #[test]
+    #[allow(unsafe_code)]
+    fn canary_corruption_detected_via_pipeline_free() {
+        let pipeline = ValidationPipeline::new();
+        let size = 32_usize;
+        let ptr = pipeline.allocate(size).expect("alloc");
+        let addr = ptr as usize;
+
+        // Corrupt trailing canary by writing past the user buffer.
+        // SAFETY: Intentional out-of-bounds write to verify canary detection.
+        unsafe {
+            std::ptr::write_bytes(ptr.add(size), 0xFF, CANARY_SIZE);
+        }
+
+        let result = pipeline.free(ptr);
+        assert_eq!(result, FreeResult::FreedWithCanaryCorruption);
+
+        // Canary corruption is still a free; pointer is quarantined and must not be readable/writable.
+        let outcome = pipeline.validate(addr);
+        assert!(!outcome.can_read());
+        assert!(!outcome.can_write());
+        assert!(
+            !matches!(outcome, ValidationOutcome::CachedValid(_)),
+            "must not yield CachedValid for freed/corrupted pointer"
+        );
     }
 
     #[test]

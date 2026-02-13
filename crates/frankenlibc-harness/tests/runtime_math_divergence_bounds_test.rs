@@ -1,10 +1,10 @@
-//! Integration test: runtime_math determinism + invariant proofs (bd-1fk1)
+//! Integration test: runtime_math strict-vs-hardened divergence bounds (bd-2625)
 //!
 //! Validates that:
 //! 1. The gate script exists and is executable.
 //! 2. The gate script runs successfully.
 //! 3. The gate emits structured JSONL logs and a JSON report.
-//! 4. The report indicates both modes passed with zero failures.
+//! 4. The report indicates zero failures and zero violations.
 
 use std::path::{Path, PathBuf};
 
@@ -26,10 +26,10 @@ fn load_json(path: &Path) -> serde_json::Value {
 #[test]
 fn gate_script_exists_and_executable() {
     let root = workspace_root();
-    let script = root.join("scripts/check_runtime_math_determinism_proofs.sh");
+    let script = root.join("scripts/check_runtime_math_divergence_bounds.sh");
     assert!(
         script.exists(),
-        "scripts/check_runtime_math_determinism_proofs.sh must exist"
+        "scripts/check_runtime_math_divergence_bounds.sh must exist"
     );
 
     #[cfg(unix)]
@@ -38,7 +38,7 @@ fn gate_script_exists_and_executable() {
         let perms = std::fs::metadata(&script).unwrap().permissions();
         assert!(
             perms.mode() & 0o111 != 0,
-            "check_runtime_math_determinism_proofs.sh must be executable"
+            "check_runtime_math_divergence_bounds.sh must be executable"
         );
     }
 }
@@ -46,12 +46,13 @@ fn gate_script_exists_and_executable() {
 #[test]
 fn gate_script_emits_logs_and_report() {
     let root = workspace_root();
-    let script = root.join("scripts/check_runtime_math_determinism_proofs.sh");
+    let script = root.join("scripts/check_runtime_math_divergence_bounds.sh");
 
     let output = std::process::Command::new(&script)
         .current_dir(&root)
+        .env("TMPDIR", root.join(".tmp"))
         .output()
-        .expect("failed to run determinism proofs gate script");
+        .expect("failed to run divergence bounds gate script");
 
     assert!(
         output.status.success(),
@@ -60,8 +61,8 @@ fn gate_script_emits_logs_and_report() {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    let log_path = root.join("target/conformance/runtime_math_determinism_proofs.log.jsonl");
-    let report_path = root.join("target/conformance/runtime_math_determinism_proofs.report.json");
+    let log_path = root.join("target/conformance/runtime_math_divergence_bounds.log.jsonl");
+    let report_path = root.join("target/conformance/runtime_math_divergence_bounds.report.json");
 
     let (line_count, errors) = frankenlibc_harness::structured_log::validate_log_file(&log_path)
         .expect("log file should be readable");
@@ -71,7 +72,7 @@ fn gate_script_emits_logs_and_report() {
         errors
     );
     assert!(
-        line_count >= 6,
+        line_count >= 5,
         "expected multiple log lines (got {line_count})"
     );
 
@@ -83,22 +84,21 @@ fn gate_script_emits_logs_and_report() {
     );
     assert_eq!(
         report["bead"].as_str(),
-        Some("bd-1fk1"),
+        Some("bd-2625"),
         "bead marker must match"
-    );
-    assert_eq!(
-        report["summary"]["modes"].as_u64(),
-        Some(2),
-        "expected 2 modes in summary"
     );
     assert_eq!(
         report["summary"]["failed"].as_u64(),
         Some(0),
-        "report indicates mode failures"
+        "report indicates case failures"
     );
     assert_eq!(
-        report["modes"].as_array().map(|a| a.len()),
-        Some(2),
-        "report must include two mode rows"
+        report["summary"]["violations"].as_u64(),
+        Some(0),
+        "report indicates divergence violations"
+    );
+    assert!(
+        report["results"].as_array().is_some_and(|a| !a.is_empty()),
+        "report must include per-case results"
     );
 }

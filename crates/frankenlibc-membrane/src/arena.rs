@@ -465,4 +465,125 @@ mod tests {
         let _ = arena.free(p1);
         let _ = arena.free(p2);
     }
+
+    #[test]
+    fn quarantine_drain_evicts_oldest_until_within_budget() {
+        use std::alloc::{Layout, alloc, dealloc};
+
+        let arena = AllocationArena::new();
+
+        // Construct quarantine entries directly inside one shard to avoid dependence on
+        // allocator address distribution across shards.
+        let align = 16_usize;
+        let total_size = (QUARANTINE_MAX_BYTES / 2) + 4096;
+        let user_size = total_size
+            .checked_sub(align + CANARY_SIZE)
+            .expect("sizes underflow");
+
+        fn alloc_block(total_size: usize, align: usize) -> usize {
+            let layout = Layout::from_size_align(total_size, align).expect("valid layout");
+            // SAFETY: layout is valid; we check for allocation failure.
+            unsafe {
+                let ptr = alloc(layout);
+                assert!(!ptr.is_null(), "alloc failed for total_size={total_size}");
+                ptr as usize
+            }
+        }
+
+        let mut shard = arena.shards[0].lock();
+
+        let raw1 = alloc_block(total_size, align);
+        let user1 = raw1 + align;
+        let slot1 = ArenaSlot {
+            raw_base: raw1,
+            user_base: user1,
+            user_size,
+            generation: 1,
+            state: SafetyState::Quarantined,
+        };
+        shard.slots.push(slot1);
+        let slot1_idx = shard.slots.len() - 1;
+        shard.addr_to_slot.insert(user1, slot1_idx);
+        shard.quarantine.push_back(QuarantineEntry {
+            user_base: user1,
+            raw_base: raw1,
+            total_size,
+            align,
+        });
+        shard.quarantine_bytes += total_size;
+
+        let raw2 = alloc_block(total_size, align);
+        let user2 = raw2 + align;
+        let slot2 = ArenaSlot {
+            raw_base: raw2,
+            user_base: user2,
+            user_size,
+            generation: 2,
+            state: SafetyState::Quarantined,
+        };
+        shard.slots.push(slot2);
+        let slot2_idx = shard.slots.len() - 1;
+        shard.addr_to_slot.insert(user2, slot2_idx);
+        shard.quarantine.push_back(QuarantineEntry {
+            user_base: user2,
+            raw_base: raw2,
+            total_size,
+            align,
+        });
+        shard.quarantine_bytes += total_size;
+
+        assert!(
+            shard.quarantine_bytes > QUARANTINE_MAX_BYTES,
+            "test setup must exceed drain threshold"
+        );
+
+        let drained = arena.drain_quarantine(&mut shard);
+
+        assert_eq!(drained.len(), 1, "expected exactly one entry drained");
+        assert_eq!(
+            drained[0].user_base, user1,
+            "expected oldest quarantine entry to be drained first"
+        );
+        assert!(
+            shard.quarantine_bytes <= QUARANTINE_MAX_BYTES,
+            "expected quarantine bytes within budget after drain"
+        );
+        assert!(
+            !shard.addr_to_slot.contains_key(&user1),
+            "expected drained entry to be removed from addr_to_slot"
+        );
+        assert_eq!(
+            shard.slots[slot1_idx].state,
+            SafetyState::Freed,
+            "expected drained slot state to become Freed"
+        );
+        assert_eq!(
+            shard.slots[slot2_idx].state,
+            SafetyState::Quarantined,
+            "expected most-recent slot to remain quarantined"
+        );
+        assert!(
+            shard.free_list.contains(&slot1_idx),
+            "expected drained slot index to be recycled in free_list"
+        );
+
+        // Cleanup: drain_quarantine intentionally left one entry quarantined; free it here so this
+        // unit test doesn't retain ~32MB+ of memory across the test binary lifetime.
+        let remaining = shard.quarantine.pop_front().expect("remaining entry");
+        shard.quarantine_bytes = shard
+            .quarantine_bytes
+            .checked_sub(remaining.total_size)
+            .expect("quarantine bytes underflow");
+        if let Some(&slot_idx) = shard.addr_to_slot.get(&remaining.user_base) {
+            shard.slots[slot_idx].state = SafetyState::Freed;
+            shard.addr_to_slot.remove(&remaining.user_base);
+            shard.free_list.push(slot_idx);
+        }
+        let layout =
+            Layout::from_size_align(remaining.total_size, remaining.align).expect("valid layout");
+        // SAFETY: remaining.raw_base was allocated by alloc_block with the same layout.
+        unsafe {
+            dealloc(remaining.raw_base as *mut u8, layout);
+        }
+    }
 }

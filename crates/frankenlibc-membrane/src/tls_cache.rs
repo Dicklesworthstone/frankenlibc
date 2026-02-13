@@ -18,15 +18,34 @@ const CACHE_MASK: usize = CACHE_SIZE - 1;
 // when epochs match. This prevents stale CachedValid hits after frees.
 static GLOBAL_TLS_CACHE_EPOCH: AtomicU64 = AtomicU64::new(1);
 
+// Test-only synchronization to avoid flaky cache-hit expectations when other
+// concurrently-running tests bump the global epoch (via allocator free paths).
+//
+// WARNING: Do not hold this lock while calling code paths that bump the epoch
+// (e.g. arena free), or you'll deadlock.
+#[cfg(test)]
+static TLS_CACHE_EPOCH_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[inline]
 fn current_epoch() -> u64 {
     GLOBAL_TLS_CACHE_EPOCH.load(Ordering::Relaxed)
 }
 
 pub(crate) fn bump_tls_cache_epoch() {
+    #[cfg(test)]
+    let _guard = TLS_CACHE_EPOCH_TEST_LOCK
+        .lock()
+        .expect("TLS cache epoch test lock poisoned");
     // Relaxed is sufficient: this is an advisory invalidation stamp, not a
     // synchronization primitive for memory effects.
     let _ = GLOBAL_TLS_CACHE_EPOCH.fetch_add(1, Ordering::Relaxed);
+}
+
+#[cfg(test)]
+pub(crate) fn lock_tls_cache_epoch_for_tests() -> std::sync::MutexGuard<'static, ()> {
+    TLS_CACHE_EPOCH_TEST_LOCK
+        .lock()
+        .expect("TLS cache epoch test lock poisoned")
 }
 
 /// A cached validation result for a pointer.
@@ -203,6 +222,7 @@ mod tests {
             generation: 1,
             state: SafetyState::Valid,
         };
+        let _epoch_guard = lock_tls_cache_epoch_for_tests();
         cache.insert(0x1000, val);
 
         let result = cache.lookup(0x1000).expect("should hit");
@@ -221,6 +241,7 @@ mod tests {
             generation: 2,
             state: SafetyState::Valid,
         };
+        let _epoch_guard = lock_tls_cache_epoch_for_tests();
         cache.insert(0x2000, val);
         assert!(cache.lookup(0x2000).is_some());
 
@@ -231,6 +252,7 @@ mod tests {
     #[test]
     fn invalidate_all_clears_everything() {
         let mut cache = TlsValidationCache::new();
+        let _epoch_guard = lock_tls_cache_epoch_for_tests();
         for i in 0..10 {
             let addr = (i + 1) * 0x1000;
             cache.insert(
@@ -247,6 +269,48 @@ mod tests {
         for i in 0..10 {
             let addr = (i + 1) * 0x1000;
             assert!(cache.lookup(addr).is_none());
+        }
+    }
+
+    #[test]
+    fn epoch_bump_invalidates_entry_and_self_cleans() {
+        let mut cache = TlsValidationCache::new();
+        let addr = 0x4000;
+        let val = CachedValidation {
+            user_base: addr,
+            user_size: 64,
+            generation: 3,
+            state: SafetyState::Valid,
+        };
+
+        {
+            let _epoch_guard = lock_tls_cache_epoch_for_tests();
+            cache.insert(addr, val);
+            assert!(
+                cache.lookup(addr).is_some(),
+                "expected cache hit before epoch bump"
+            );
+        }
+
+        bump_tls_cache_epoch();
+
+        let idx = TlsValidationCache::index(addr);
+        assert!(
+            cache.lookup(addr).is_none(),
+            "expected cache miss after epoch bump"
+        );
+        assert!(
+            !cache.entries[idx].valid,
+            "expected entry self-clean invalidation on epoch mismatch"
+        );
+
+        {
+            let _epoch_guard = lock_tls_cache_epoch_for_tests();
+            cache.insert(addr, val);
+            assert!(
+                cache.lookup(addr).is_some(),
+                "expected cache hit after reinsert at current epoch"
+            );
         }
     }
 }

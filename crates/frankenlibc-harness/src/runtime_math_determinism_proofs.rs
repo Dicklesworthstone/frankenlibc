@@ -207,25 +207,29 @@ fn run_mode(
             decision_mismatches += 1;
             failures.push(format!("decision mismatch at step {i}: {d1:?} != {d2:?}"));
             emitter.emit_entry(
-                LogEntry::new("", LogLevel::Error, "runtime_math.determinism.decision_mismatch")
-                    .with_stream(StreamKind::Unit)
-                    .with_gate(GATE)
-                    .with_mode(mode_str.clone())
-                    .with_outcome(Outcome::Fail)
-                    .with_controller_id("decision_law")
-                    .with_details(serde_json::json!({
-                        "step": i,
-                        "ctx": {
-                            "family": format!("{family:?}"),
-                            "addr_hint": ctx.addr_hint,
-                            "requested_bytes": ctx.requested_bytes,
-                            "is_write": ctx.is_write,
-                            "contention_hint": ctx.contention_hint,
-                            "bloom_negative": ctx.bloom_negative,
-                        },
-                        "left": format!("{d1:?}"),
-                        "right": format!("{d2:?}"),
-                    })),
+                LogEntry::new(
+                    "",
+                    LogLevel::Error,
+                    "runtime_math.determinism.decision_mismatch",
+                )
+                .with_stream(StreamKind::Unit)
+                .with_gate(GATE)
+                .with_mode(mode_str.clone())
+                .with_outcome(Outcome::Fail)
+                .with_controller_id("decision_law")
+                .with_details(serde_json::json!({
+                    "step": i,
+                    "ctx": {
+                        "family": format!("{family:?}"),
+                        "addr_hint": ctx.addr_hint,
+                        "requested_bytes": ctx.requested_bytes,
+                        "is_write": ctx.is_write,
+                        "contention_hint": ctx.contention_hint,
+                        "bloom_negative": ctx.bloom_negative,
+                    },
+                    "left": format!("{d1:?}"),
+                    "right": format!("{d2:?}"),
+                })),
             )?;
             break;
         }
@@ -237,9 +241,15 @@ fn run_mode(
         let o2 = k2.check_ordering(family, aligned, recent_page);
         if o1 != o2 {
             ordering_mismatches += 1;
-            failures.push(format!("check ordering mismatch at step {i}: {o1:?} != {o2:?}"));
+            failures.push(format!(
+                "check ordering mismatch at step {i}: {o1:?} != {o2:?}"
+            ));
         }
-        let exit_stage = if i % 13 == 0 { Some((i as usize) % 4) } else { None };
+        let exit_stage = if i % 13 == 0 {
+            Some((i as usize) % 4)
+        } else {
+            None
+        };
         k1.note_check_order_outcome(mode, family, aligned, recent_page, &o1, exit_stage);
         k2.note_check_order_outcome(mode, family, aligned, recent_page, &o2, exit_stage);
 
@@ -274,7 +284,11 @@ fn run_mode(
                 .with_stream(StreamKind::Unit)
                 .with_gate(GATE)
                 .with_mode(mode_str.clone())
-                .with_outcome(if check.ok { Outcome::Pass } else { Outcome::Fail })
+                .with_outcome(if check.ok {
+                    Outcome::Pass
+                } else {
+                    Outcome::Fail
+                })
                 .with_controller_id(check.invariant_id.clone())
                 .with_details(serde_json::json!({
                     "state_before": check.before,
@@ -462,12 +476,21 @@ fn check_snapshot_invariants(
         check("bridge_transport_distance", after.bridge_transport_distance);
         check("hji_safety_value", after.hji_safety_value);
         check("mfg_mean_contention", after.mfg_mean_contention);
-        check("padic_ultrametric_distance", after.padic_ultrametric_distance);
+        check(
+            "padic_ultrametric_distance",
+            after.padic_ultrametric_distance,
+        );
         check("symplectic_energy", after.symplectic_energy);
         check("topos_violation_rate", after.topos_violation_rate);
         check("audit_martingale_value", after.audit_martingale_value);
-        check("changepoint_posterior_short_mass", after.changepoint_posterior_short_mass);
-        check("conformal_empirical_coverage", after.conformal_empirical_coverage);
+        check(
+            "changepoint_posterior_short_mass",
+            after.changepoint_posterior_short_mass,
+        );
+        check(
+            "conformal_empirical_coverage",
+            after.conformal_empirical_coverage,
+        );
         check("sparse_l1_energy", after.sparse_l1_energy);
         check("sparse_residual_ewma", after.sparse_residual_ewma);
         check("microlocal_failure_rate", after.microlocal_failure_rate);
@@ -478,21 +501,42 @@ fn check_snapshot_invariants(
             "ktheory_max_transport_distance",
             after.ktheory_max_transport_distance,
         );
-        check("covering_coverage_fraction", after.covering_coverage_fraction);
-        check("tstructure_max_violation_rate", after.tstructure_max_violation_rate);
+        check(
+            "covering_coverage_fraction",
+            after.covering_coverage_fraction,
+        );
+        check(
+            "tstructure_max_violation_rate",
+            after.tstructure_max_violation_rate,
+        );
         check("atiyah_bott_euler_weight", after.atiyah_bott_euler_weight);
         check("pomdp_optimality_gap", after.pomdp_optimality_gap);
         check("sos_max_stress", after.sos_max_stress);
         check("admm_primal_dual_gap", after.admm_primal_dual_gap);
         check("obstruction_norm", after.obstruction_norm);
-        check("operator_norm_spectral_radius", after.operator_norm_spectral_radius);
-        check("provenance_shannon_entropy", after.provenance_shannon_entropy);
+        check(
+            "operator_norm_spectral_radius",
+            after.operator_norm_spectral_radius,
+        );
+        check(
+            "provenance_shannon_entropy",
+            after.provenance_shannon_entropy,
+        );
         check("provenance_renyi_h2", after.provenance_renyi_h2);
         check("grobner_violation_rate", after.grobner_violation_rate);
-        check("grothendieck_violation_rate", after.grothendieck_violation_rate);
-        check("malliavin_sensitivity_norm", after.malliavin_sensitivity_norm);
+        check(
+            "grothendieck_violation_rate",
+            after.grothendieck_violation_rate,
+        );
+        check(
+            "malliavin_sensitivity_norm",
+            after.malliavin_sensitivity_norm,
+        );
         check("malliavin_fragility_index", after.malliavin_fragility_index);
-        check("info_geo_geodesic_distance", after.info_geo_geodesic_distance);
+        check(
+            "info_geo_geodesic_distance",
+            after.info_geo_geodesic_distance,
+        );
         check(
             "info_geo_max_controller_distance",
             after.info_geo_max_controller_distance,
@@ -533,7 +577,10 @@ fn check_snapshot_invariants(
         check("fano_mean_mi", after.fano_mean_mi);
         check("fano_mean_bound", after.fano_mean_bound);
         check("dobrushin_max_contraction", after.dobrushin_max_contraction);
-        check("dobrushin_mean_contraction", after.dobrushin_mean_contraction);
+        check(
+            "dobrushin_mean_contraction",
+            after.dobrushin_mean_contraction,
+        );
         check("azuma_max_exceedance", after.azuma_max_exceedance);
         check("azuma_mean_exceedance", after.azuma_mean_exceedance);
         check("renewal_max_age_ratio", after.renewal_max_age_ratio);
@@ -557,7 +604,10 @@ fn check_snapshot_invariants(
             "coupling_certification_margin",
             after.coupling_certification_margin,
         );
-        check("spectral_gap_max_eigenvalue", after.spectral_gap_max_eigenvalue);
+        check(
+            "spectral_gap_max_eigenvalue",
+            after.spectral_gap_max_eigenvalue,
+        );
         check(
             "spectral_gap_mean_eigenvalue",
             after.spectral_gap_mean_eigenvalue,
