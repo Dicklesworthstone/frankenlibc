@@ -10,3 +10,4 @@ unsafe_code = "deny"
 
 [dependencies]
 frankenlibc-membrane = { workspace = true }
+libm = "0.2"

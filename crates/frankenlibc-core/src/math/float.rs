@@ -2,27 +2,27 @@
 
 #[inline]
 pub fn fabs(x: f64) -> f64 {
-    x.abs()
+    libm::fabs(x)
 }
 
 #[inline]
 pub fn ceil(x: f64) -> f64 {
-    x.ceil()
+    libm::ceil(x)
 }
 
 #[inline]
 pub fn floor(x: f64) -> f64 {
-    x.floor()
+    libm::floor(x)
 }
 
 #[inline]
 pub fn round(x: f64) -> f64 {
-    x.round()
+    libm::round(x)
 }
 
 #[inline]
 pub fn fmod(x: f64, y: f64) -> f64 {
-    x % y
+    libm::fmod(x, y)
 }
 
 #[cfg(test)]

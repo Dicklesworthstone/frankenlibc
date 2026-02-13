@@ -2,37 +2,37 @@
 
 #[inline]
 pub fn sin(x: f64) -> f64 {
-    x.sin()
+    libm::sin(x)
 }
 
 #[inline]
 pub fn cos(x: f64) -> f64 {
-    x.cos()
+    libm::cos(x)
 }
 
 #[inline]
 pub fn tan(x: f64) -> f64 {
-    x.tan()
+    libm::tan(x)
 }
 
 #[inline]
 pub fn asin(x: f64) -> f64 {
-    x.asin()
+    libm::asin(x)
 }
 
 #[inline]
 pub fn acos(x: f64) -> f64 {
-    x.acos()
+    libm::acos(x)
 }
 
 #[inline]
 pub fn atan(x: f64) -> f64 {
-    x.atan()
+    libm::atan(x)
 }
 
 #[inline]
 pub fn atan2(y: f64, x: f64) -> f64 {
-    y.atan2(x)
+    libm::atan2(y, x)
 }
 
 #[cfg(test)]

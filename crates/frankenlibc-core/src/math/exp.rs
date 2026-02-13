@@ -2,22 +2,22 @@
 
 #[inline]
 pub fn exp(x: f64) -> f64 {
-    x.exp()
+    libm::exp(x)
 }
 
 #[inline]
 pub fn log(x: f64) -> f64 {
-    x.ln()
+    libm::log(x)
 }
 
 #[inline]
 pub fn log10(x: f64) -> f64 {
-    x.log10()
+    libm::log10(x)
 }
 
 #[inline]
 pub fn pow(base: f64, exponent: f64) -> f64 {
-    base.powf(exponent)
+    libm::pow(base, exponent)
 }
 
 #[cfg(test)]
