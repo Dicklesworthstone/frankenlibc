@@ -1,0 +1,5472 @@
+{
+  "schema_version": "v1",
+  "bead": "bd-ldj.5",
+  "generated_at": "2026-02-13T19:58:35Z",
+  "report_hash": "2963787f1ee6f627",
+  "summary": {
+    "total_symbols": 250,
+    "symbols_with_fixtures": 161,
+    "symbols_without_fixtures": 89,
+    "fixture_coverage_pct": 64.4,
+    "implemented_coverage_pct": 75.9,
+    "total_fixture_files": 49,
+    "total_cases": 479,
+    "total_format_issues": 0,
+    "symbols_with_edge_cases": 112,
+    "symbols_with_errno_checks": 160,
+    "total_quality_issues": 203,
+    "uncovered_action_count": 72
+  },
+  "fixture_file_analyses": [
+    {
+      "file": "allocator.json",
+      "family": "allocator",
+      "valid": true,
+      "total_cases": 5,
+      "unique_symbols": 4,
+      "issues": []
+    },
+    {
+      "file": "backtrace_ops.json",
+      "family": "backtrace_ops",
+      "valid": true,
+      "total_cases": 5,
+      "unique_symbols": 3,
+      "issues": []
+    },
+    {
+      "file": "ctype_ops.json",
+      "family": "ctype",
+      "valid": true,
+      "total_cases": 37,
+      "unique_symbols": 11,
+      "issues": []
+    },
+    {
+      "file": "dirent_ops.json",
+      "family": "dirent_ops",
+      "valid": true,
+      "total_cases": 6,
+      "unique_symbols": 3,
+      "issues": []
+    },
+    {
+      "file": "dlfcn_ops.json",
+      "family": "dlfcn_ops",
+      "valid": true,
+      "total_cases": 7,
+      "unique_symbols": 3,
+      "issues": []
+    },
+    {
+      "file": "elf_loader.json",
+      "family": "elf/loader",
+      "valid": true,
+      "total_cases": 17,
+      "unique_symbols": 7,
+      "issues": []
+    },
+    {
+      "file": "errno_ops.json",
+      "family": "errno_ops",
+      "valid": true,
+      "total_cases": 3,
+      "unique_symbols": 1,
+      "issues": []
+    },
+    {
+      "file": "grp_ops.json",
+      "family": "grp_ops",
+      "valid": true,
+      "total_cases": 7,
+      "unique_symbols": 3,
+      "issues": []
+    },
+    {
+      "file": "iconv_phase1.json",
+      "family": "iconv/phase1",
+      "valid": true,
+      "total_cases": 11,
+      "unique_symbols": 3,
+      "issues": []
+    },
+    {
+      "file": "inet_ops.json",
+      "family": "inet",
+      "valid": true,
+      "total_cases": 15,
+      "unique_symbols": 7,
+      "issues": []
+    },
+    {
+      "file": "loader_edges.json",
+      "family": "loader_edges",
+      "valid": true,
+      "total_cases": 7,
+      "unique_symbols": 5,
+      "issues": []
+    },
+    {
+      "file": "locale_ops.json",
+      "family": "locale_ops",
+      "valid": true,
+      "total_cases": 6,
+      "unique_symbols": 2,
+      "issues": []
+    },
+    {
+      "file": "math_ops.json",
+      "family": "math",
+      "valid": true,
+      "total_cases": 33,
+      "unique_symbols": 19,
+      "issues": []
+    },
+    {
+      "file": "membrane_mode_split.json",
+      "family": "membrane/mode-split",
+      "valid": true,
+      "total_cases": 4,
+      "unique_symbols": 2,
+      "issues": []
+    },
+    {
+      "file": "memcpy_strict.json",
+      "family": "string/memcpy",
+      "valid": true,
+      "total_cases": 4,
+      "unique_symbols": 1,
+      "issues": []
+    },
+    {
+      "file": "memory_ops.json",
+      "family": "memory_ops",
+      "valid": true,
+      "total_cases": 11,
+      "unique_symbols": 5,
+      "issues": []
+    },
+    {
+      "file": "poll_ops.json",
+      "family": "poll_ops",
+      "valid": true,
+      "total_cases": 6,
+      "unique_symbols": 2,
+      "issues": []
+    },
+    {
+      "file": "pressure_sensing.json",
+      "family": "pressure_sensing",
+      "valid": true,
+      "total_cases": 9,
+      "unique_symbols": 2,
+      "issues": []
+    },
+    {
+      "file": "process_ops.json",
+      "family": "process_ops",
+      "valid": true,
+      "total_cases": 7,
+      "unique_symbols": 4,
+      "issues": []
+    },
+    {
+      "file": "pthread_cond.json",
+      "family": "pthread/cond",
+      "valid": true,
+      "total_cases": 24,
+      "unique_symbols": 6,
+      "issues": []
+    },
+    {
+      "file": "pthread_mutex.json",
+      "family": "pthread/mutex",
+      "valid": true,
+      "total_cases": 8,
+      "unique_symbols": 5,
+      "issues": []
+    },
+    {
+      "file": "pthread_thread.json",
+      "family": "pthread/thread",
+      "valid": true,
+      "total_cases": 11,
+      "unique_symbols": 5,
+      "issues": []
+    },
+    {
+      "file": "pthread_tls_keys.json",
+      "family": "pthread/tls_keys",
+      "valid": true,
+      "total_cases": 16,
+      "unique_symbols": 5,
+      "issues": []
+    },
+    {
+      "file": "pwd_ops.json",
+      "family": "pwd_ops",
+      "valid": true,
+      "total_cases": 7,
+      "unique_symbols": 3,
+      "issues": []
+    },
+    {
+      "file": "regex_glob_ops.json",
+      "family": "regex_glob_ops",
+      "valid": true,
+      "total_cases": 8,
+      "unique_symbols": 4,
+      "issues": []
+    },
+    {
+      "file": "resolver.json",
+      "family": "resolv/dns",
+      "valid": true,
+      "total_cases": 16,
+      "unique_symbols": 6,
+      "issues": []
+    },
+    {
+      "file": "resource_ops.json",
+      "family": "resource_ops",
+      "valid": true,
+      "total_cases": 5,
+      "unique_symbols": 1,
+      "issues": []
+    },
+    {
+      "file": "session_ops.json",
+      "family": "session_ops",
+      "valid": true,
+      "total_cases": 6,
+      "unique_symbols": 4,
+      "issues": []
+    },
+    {
+      "file": "setjmp_ops.json",
+      "family": "setjmp_ops",
+      "valid": true,
+      "total_cases": 7,
+      "unique_symbols": 3,
+      "issues": []
+    },
+    {
+      "file": "signal_ops.json",
+      "family": "signal_ops",
+      "valid": true,
+      "total_cases": 6,
+      "unique_symbols": 3,
+      "issues": []
+    },
+    {
+      "file": "socket_ops.json",
+      "family": "socket_ops",
+      "valid": true,
+      "total_cases": 9,
+      "unique_symbols": 5,
+      "issues": []
+    },
+    {
+      "file": "spawn_exec_ops.json",
+      "family": "spawn_exec_ops",
+      "valid": true,
+      "total_cases": 7,
+      "unique_symbols": 3,
+      "issues": []
+    },
+    {
+      "file": "startup_ops.json",
+      "family": "startup_ops",
+      "valid": true,
+      "total_cases": 5,
+      "unique_symbols": 3,
+      "issues": []
+    },
+    {
+      "file": "stdio_file_ops.json",
+      "family": "stdio_file_ops",
+      "valid": true,
+      "total_cases": 8,
+      "unique_symbols": 4,
+      "issues": []
+    },
+    {
+      "file": "stdlib_conversion.json",
+      "family": "stdlib/conversion",
+      "valid": true,
+      "total_cases": 7,
+      "unique_symbols": 2,
+      "issues": []
+    },
+    {
+      "file": "stdlib_numeric.json",
+      "family": "stdlib/numeric",
+      "valid": true,
+      "total_cases": 10,
+      "unique_symbols": 4,
+      "issues": []
+    },
+    {
+      "file": "stdlib_sort.json",
+      "family": "stdlib/sort",
+      "valid": true,
+      "total_cases": 3,
+      "unique_symbols": 2,
+      "issues": []
+    },
+    {
+      "file": "string_memory_full.json",
+      "family": "string/memory",
+      "valid": true,
+      "total_cases": 14,
+      "unique_symbols": 12,
+      "issues": []
+    },
+    {
+      "file": "string_ops.json",
+      "family": "string/narrow",
+      "valid": true,
+      "total_cases": 15,
+      "unique_symbols": 12,
+      "issues": []
+    },
+    {
+      "file": "string_strtok.json",
+      "family": "string/strtok",
+      "valid": true,
+      "total_cases": 8,
+      "unique_symbols": 2,
+      "issues": []
+    },
+    {
+      "file": "strlen_strict.json",
+      "family": "string/strlen",
+      "valid": true,
+      "total_cases": 3,
+      "unique_symbols": 1,
+      "issues": []
+    },
+    {
+      "file": "sysv_ipc_ops.json",
+      "family": "sysv_ipc_ops",
+      "valid": true,
+      "total_cases": 9,
+      "unique_symbols": 7,
+      "issues": []
+    },
+    {
+      "file": "termios_ops.json",
+      "family": "termios_ops",
+      "valid": true,
+      "total_cases": 8,
+      "unique_symbols": 5,
+      "issues": []
+    },
+    {
+      "file": "time_ops.json",
+      "family": "time_ops",
+      "valid": true,
+      "total_cases": 8,
+      "unique_symbols": 4,
+      "issues": []
+    },
+    {
+      "file": "unistd_ops.json",
+      "family": "unistd",
+      "valid": true,
+      "total_cases": 17,
+      "unique_symbols": 14,
+      "issues": []
+    },
+    {
+      "file": "virtual_memory_ops.json",
+      "family": "virtual_memory_ops",
+      "valid": true,
+      "total_cases": 8,
+      "unique_symbols": 4,
+      "issues": []
+    },
+    {
+      "file": "wide_memory.json",
+      "family": "string/wide_memory",
+      "valid": true,
+      "total_cases": 6,
+      "unique_symbols": 5,
+      "issues": []
+    },
+    {
+      "file": "wide_string.json",
+      "family": "string/wide",
+      "valid": true,
+      "total_cases": 4,
+      "unique_symbols": 3,
+      "issues": []
+    },
+    {
+      "file": "wide_string_ops.json",
+      "family": "string/wide",
+      "valid": true,
+      "total_cases": 16,
+      "unique_symbols": 9,
+      "issues": []
+    }
+  ],
+  "per_symbol_report": [
+    {
+      "symbol": "__errno_location",
+      "status": "Implemented",
+      "module": "errno_abi",
+      "perf_class": "strict_hotpath",
+      "has_fixtures": true,
+      "case_count": 3,
+      "fixture_files": [
+        "errno_ops.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "null_input"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
+    },
+    {
+      "symbol": "__frankenlibc_startup_phase0",
+      "status": "Implemented",
+      "module": "startup_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "startup_ops.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
+    },
+    {
+      "symbol": "__frankenlibc_startup_snapshot",
+      "status": "Implemented",
+      "module": "startup_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "startup_ops.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [],
+      "has_errno_check": true,
+      "quality_issues": [
+        "no edge cases detected"
+      ]
+    },
+    {
+      "symbol": "__libc_start_main",
+      "status": "Implemented",
+      "module": "startup_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "startup_ops.json"
+      ],
+      "modes_tested": [
+        "strict"
+      ],
+      "edge_cases_covered": [],
+      "has_errno_check": true,
+      "quality_issues": [
+        "fewer than 2 test cases",
+        "no edge cases detected",
+        "missing dual-mode coverage"
+      ]
+    },
+    {
+      "symbol": "_exit",
+      "status": "RawSyscall",
+      "module": "process_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": []
+    },
+    {
+      "symbol": "accept",
+      "status": "RawSyscall",
+      "module": "socket_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": []
+    },
+    {
+      "symbol": "access",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "unistd_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
+    },
+    {
+      "symbol": "acos",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "math_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
+    },
+    {
+      "symbol": "aligned_alloc",
+      "status": "Implemented",
+      "module": "malloc_abi",
+      "perf_class": "strict_hotpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "asin",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "math_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
+    },
+    {
+      "symbol": "atan",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "math_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": [
+        "fewer than 2 test cases"
+      ]
+    },
+    {
+      "symbol": "atan2",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "math_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
+    },
+    {
+      "symbol": "atexit",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "atoi",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 6,
+      "fixture_files": [
+        "stdlib_conversion.json",
+        "stdlib_numeric.json"
+      ],
+      "modes_tested": [
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": [
+        "missing dual-mode coverage"
+      ]
+    },
+    {
+      "symbol": "atol",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 3,
+      "fixture_files": [
+        "stdlib_numeric.json"
+      ],
+      "modes_tested": [
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": [
+        "missing dual-mode coverage"
+      ]
+    },
+    {
+      "symbol": "bind",
+      "status": "RawSyscall",
+      "module": "socket_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "socket_ops.json"
+      ],
+      "modes_tested": [
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "boundary",
+        "negative",
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": [
+        "fewer than 2 test cases",
+        "missing dual-mode coverage"
+      ]
+    },
+    {
+      "symbol": "bsearch",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "stdlib_sort.json"
+      ],
+      "modes_tested": [
+        "strict"
+      ],
+      "edge_cases_covered": [],
+      "has_errno_check": true,
+      "quality_issues": [
+        "no edge cases detected",
+        "missing dual-mode coverage"
+      ]
+    },
+    {
+      "symbol": "calloc",
+      "status": "Implemented",
+      "module": "malloc_abi",
+      "perf_class": "strict_hotpath",
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "allocator.json"
+      ],
+      "modes_tested": [
+        "strict"
+      ],
+      "edge_cases_covered": [],
+      "has_errno_check": true,
+      "quality_issues": [
+        "fewer than 2 test cases",
+        "no edge cases detected",
+        "missing dual-mode coverage"
+      ]
+    },
+    {
+      "symbol": "ceil",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "math_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
+      "edge_cases_covered": [],
+      "has_errno_check": true,
+      "quality_issues": [
+        "no edge cases detected"
+      ]
+    },
+    {
+      "symbol": "cfgetispeed",
+      "status": "RawSyscall",
+      "module": "termios_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "termios_ops.json"
+      ],
+      "modes_tested": [
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": [
+        "fewer than 2 test cases",
+        "missing dual-mode coverage"
+      ]
+    },
+    {
+      "symbol": "cfgetospeed",
+      "status": "RawSyscall",
+      "module": "termios_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "termios_ops.json"
+      ],
+      "modes_tested": [
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": [
+        "fewer than 2 test cases",
+        "missing dual-mode coverage"
+      ]
+    },
+    {
+      "symbol": "cfsetispeed",
+      "status": "RawSyscall",
+      "module": "termios_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "termios_ops.json"
+      ],
+      "modes_tested": [
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": [
+        "fewer than 2 test cases",
+        "missing dual-mode coverage"
+      ]
+    },
+    {
+      "symbol": "cfsetospeed",
+      "status": "RawSyscall",
+      "module": "termios_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "termios_ops.json"
+      ],
+      "modes_tested": [
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": [
+        "fewer than 2 test cases",
+        "missing dual-mode coverage"
+      ]
+    },
+    {
+      "symbol": "chdir",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": []
+    },
+    {
+      "symbol": "clearerr",
+      "status": "Implemented",
+      "module": "stdio_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "clock",
+      "status": "RawSyscall",
+      "module": "time_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "time_ops.json"
+      ],
+      "modes_tested": [
+        "strict"
+      ],
+      "edge_cases_covered": [],
+      "has_errno_check": true,
+      "quality_issues": [
+        "fewer than 2 test cases",
+        "no edge cases detected",
+        "missing dual-mode coverage"
+      ]
+    },
+    {
+      "symbol": "clock_gettime",
+      "status": "RawSyscall",
+      "module": "time_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 4,
+      "fixture_files": [
+        "time_ops.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
+    },
+    {
+      "symbol": "close",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "unistd_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
+      "edge_cases_covered": [],
+      "has_errno_check": true,
+      "quality_issues": [
+        "no edge cases detected"
+      ]
+    },
+    {
+      "symbol": "closedir",
+      "status": "RawSyscall",
+      "module": "dirent_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "dirent_ops.json"
+      ],
+      "modes_tested": [
+        "strict"
+      ],
+      "edge_cases_covered": [],
+      "has_errno_check": true,
+      "quality_issues": [
+        "fewer than 2 test cases",
+        "no edge cases detected",
+        "missing dual-mode coverage"
+      ]
+    },
+    {
+      "symbol": "connect",
+      "status": "RawSyscall",
+      "module": "socket_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": []
+    },
+    {
+      "symbol": "cos",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "math_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
+    },
+    {
+      "symbol": "dlclose",
+      "status": "GlibcCallThrough",
+      "module": "dlfcn_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "loader_edges.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [],
+      "has_errno_check": true,
+      "quality_issues": [
+        "no edge cases detected"
+      ]
+    },
+    {
+      "symbol": "dlerror",
+      "status": "GlibcCallThrough",
+      "module": "dlfcn_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "dlfcn_ops.json"
+      ],
+      "modes_tested": [
+        "strict"
+      ],
+      "edge_cases_covered": [],
+      "has_errno_check": true,
+      "quality_issues": [
+        "fewer than 2 test cases",
+        "no edge cases detected",
+        "missing dual-mode coverage"
+      ]
+    },
+    {
+      "symbol": "dlopen",
+      "status": "GlibcCallThrough",
+      "module": "dlfcn_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 5,
+      "fixture_files": [
+        "dlfcn_ops.json",
+        "loader_edges.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "null_input"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
+    },
+    {
+      "symbol": "dlsym",
+      "status": "GlibcCallThrough",
+      "module": "dlfcn_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 4,
+      "fixture_files": [
+        "dlfcn_ops.json",
+        "loader_edges.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [],
+      "has_errno_check": true,
+      "quality_issues": [
+        "no edge cases detected"
+      ]
+    },
+    {
+      "symbol": "dup",
+      "status": "RawSyscall",
+      "module": "io_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": []
+    },
+    {
+      "symbol": "dup2",
+      "status": "RawSyscall",
+      "module": "io_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": []
+    },
+    {
+      "symbol": "endgrent",
+      "status": "Implemented",
+      "module": "grp_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "endpwent",
+      "status": "Implemented",
+      "module": "pwd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "erf",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "math_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": [
+        "fewer than 2 test cases"
+      ]
+    },
+    {
+      "symbol": "execve",
+      "status": "RawSyscall",
+      "module": "process_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "spawn_exec_ops.json"
+      ],
+      "modes_tested": [
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": [
+        "missing dual-mode coverage"
+      ]
+    },
+    {
+      "symbol": "execvp",
+      "status": "RawSyscall",
+      "module": "process_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": []
+    },
+    {
+      "symbol": "exit",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "exp",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "math_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
+    },
+    {
+      "symbol": "fabs",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "math_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
+      "edge_cases_covered": [],
+      "has_errno_check": true,
+      "quality_issues": [
+        "no edge cases detected"
+      ]
+    },
+    {
+      "symbol": "fchdir",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": []
+    },
+    {
+      "symbol": "fclose",
+      "status": "GlibcCallThrough",
+      "module": "stdio_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "stdio_file_ops.json"
+      ],
+      "modes_tested": [
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "null_input"
+      ],
+      "has_errno_check": true,
+      "quality_issues": [
+        "fewer than 2 test cases",
+        "missing dual-mode coverage"
+      ]
+    },
+    {
+      "symbol": "fcntl",
+      "status": "RawSyscall",
+      "module": "io_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": []
+    },
+    {
+      "symbol": "fdatasync",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": []
+    },
+    {
+      "symbol": "feof",
+      "status": "Implemented",
+      "module": "stdio_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "ferror",
+      "status": "Implemented",
+      "module": "stdio_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "fflush",
+      "status": "Implemented",
+      "module": "stdio_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "fgetc",
+      "status": "Implemented",
+      "module": "stdio_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "fgets",
+      "status": "GlibcCallThrough",
+      "module": "stdio_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": []
+    },
+    {
+      "symbol": "fileno",
+      "status": "Implemented",
+      "module": "stdio_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "floor",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "math_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
+      "edge_cases_covered": [],
+      "has_errno_check": true,
+      "quality_issues": [
+        "no edge cases detected"
+      ]
+    },
+    {
+      "symbol": "fmod",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "math_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": [
+        "fewer than 2 test cases"
+      ]
+    },
+    {
+      "symbol": "fopen",
+      "status": "GlibcCallThrough",
+      "module": "stdio_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 3,
+      "fixture_files": [
+        "stdio_file_ops.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "null_input"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
+    },
+    {
+      "symbol": "fork",
+      "status": "RawSyscall",
+      "module": "process_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "process_ops.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [],
+      "has_errno_check": true,
+      "quality_issues": [
+        "no edge cases detected"
+      ]
+    },
+    {
+      "symbol": "fprintf",
+      "status": "GlibcCallThrough",
+      "module": "stdio_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "stdio_file_ops.json"
+      ],
+      "modes_tested": [
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "null_input"
+      ],
+      "has_errno_check": true,
+      "quality_issues": [
+        "fewer than 2 test cases",
+        "missing dual-mode coverage"
+      ]
+    },
+    {
+      "symbol": "fputc",
+      "status": "Implemented",
+      "module": "stdio_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "fputs",
+      "status": "GlibcCallThrough",
+      "module": "stdio_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": []
+    },
+    {
+      "symbol": "fread",
+      "status": "GlibcCallThrough",
+      "module": "stdio_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": []
+    },
+    {
+      "symbol": "free",
+      "status": "Implemented",
+      "module": "malloc_abi",
+      "perf_class": "strict_hotpath",
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "allocator.json"
+      ],
+      "modes_tested": [
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "null_input",
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": [
+        "fewer than 2 test cases",
+        "missing dual-mode coverage"
+      ]
+    },
+    {
+      "symbol": "freeaddrinfo",
+      "status": "Implemented",
+      "module": "resolv_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "fseek",
+      "status": "GlibcCallThrough",
+      "module": "stdio_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": []
+    },
+    {
+      "symbol": "fstat",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": []
+    },
+    {
+      "symbol": "fsync",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": []
+    },
+    {
+      "symbol": "ftell",
+      "status": "GlibcCallThrough",
+      "module": "stdio_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": []
+    },
+    {
+      "symbol": "fwrite",
+      "status": "GlibcCallThrough",
+      "module": "stdio_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": []
+    },
+    {
+      "symbol": "gai_strerror",
+      "status": "Implemented",
+      "module": "resolv_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "getaddrinfo",
+      "status": "Implemented",
+      "module": "resolv_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 3,
+      "fixture_files": [
+        "resolver.json"
+      ],
+      "modes_tested": [
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "null_input",
+        "zero_length"
+      ],
+      "has_errno_check": false,
+      "quality_issues": [
+        "missing dual-mode coverage"
+      ]
+    },
+    {
+      "symbol": "getchar",
+      "status": "Implemented",
+      "module": "stdio_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "getcwd",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "unistd_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": [
+        "fewer than 2 test cases"
+      ]
+    },
+    {
+      "symbol": "getegid",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "unistd_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
+      "edge_cases_covered": [],
+      "has_errno_check": true,
+      "quality_issues": [
+        "fewer than 2 test cases",
+        "no edge cases detected"
+      ]
+    },
+    {
+      "symbol": "getenv",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "geteuid",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "unistd_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
+      "edge_cases_covered": [],
+      "has_errno_check": true,
+      "quality_issues": [
+        "fewer than 2 test cases",
+        "no edge cases detected"
+      ]
+    },
+    {
+      "symbol": "getgid",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "unistd_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
+      "edge_cases_covered": [],
+      "has_errno_check": true,
+      "quality_issues": [
+        "fewer than 2 test cases",
+        "no edge cases detected"
+      ]
+    },
+    {
+      "symbol": "getgrent",
+      "status": "Implemented",
+      "module": "grp_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "getgrgid",
+      "status": "Implemented",
+      "module": "grp_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 3,
+      "fixture_files": [
+        "grp_ops.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
+    },
+    {
+      "symbol": "getgrgid_r",
+      "status": "Implemented",
+      "module": "grp_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "getgrnam",
+      "status": "Implemented",
+      "module": "grp_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 3,
+      "fixture_files": [
+        "grp_ops.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [],
+      "has_errno_check": true,
+      "quality_issues": [
+        "no edge cases detected"
+      ]
+    },
+    {
+      "symbol": "getgrnam_r",
+      "status": "Implemented",
+      "module": "grp_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "getnameinfo",
+      "status": "Implemented",
+      "module": "resolv_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "getpeername",
+      "status": "RawSyscall",
+      "module": "socket_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": []
+    },
+    {
+      "symbol": "getpid",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 3,
+      "fixture_files": [
+        "process_ops.json",
+        "unistd_ops.json"
+      ],
+      "modes_tested": [
+        "both",
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [],
+      "has_errno_check": true,
+      "quality_issues": [
+        "no edge cases detected"
+      ]
+    },
+    {
+      "symbol": "getppid",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "process_ops.json",
+        "unistd_ops.json"
+      ],
+      "modes_tested": [
+        "both",
+        "strict"
+      ],
+      "edge_cases_covered": [],
+      "has_errno_check": true,
+      "quality_issues": [
+        "no edge cases detected"
+      ]
+    },
+    {
+      "symbol": "getpwent",
+      "status": "Implemented",
+      "module": "pwd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "getpwnam",
+      "status": "Implemented",
+      "module": "pwd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 3,
+      "fixture_files": [
+        "pwd_ops.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [],
+      "has_errno_check": true,
+      "quality_issues": [
+        "no edge cases detected"
+      ]
+    },
+    {
+      "symbol": "getpwnam_r",
+      "status": "Implemented",
+      "module": "pwd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "getpwuid",
+      "status": "Implemented",
+      "module": "pwd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 3,
+      "fixture_files": [
+        "pwd_ops.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
+    },
+    {
+      "symbol": "getpwuid_r",
+      "status": "Implemented",
+      "module": "pwd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "getrlimit",
+      "status": "RawSyscall",
+      "module": "resource_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 5,
+      "fixture_files": [
+        "resource_ops.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [],
+      "has_errno_check": true,
+      "quality_issues": [
+        "no edge cases detected"
+      ]
+    },
+    {
+      "symbol": "getsockname",
+      "status": "RawSyscall",
+      "module": "socket_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "socket_ops.json"
+      ],
+      "modes_tested": [
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "negative"
+      ],
+      "has_errno_check": true,
+      "quality_issues": [
+        "fewer than 2 test cases",
+        "missing dual-mode coverage"
+      ]
+    },
+    {
+      "symbol": "getsockopt",
+      "status": "RawSyscall",
+      "module": "socket_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": []
+    },
+    {
+      "symbol": "getuid",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "unistd_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
+      "edge_cases_covered": [],
+      "has_errno_check": true,
+      "quality_issues": [
+        "fewer than 2 test cases",
+        "no edge cases detected"
+      ]
+    },
+    {
+      "symbol": "htonl",
+      "status": "Implemented",
+      "module": "inet_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "inet_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
+    },
+    {
+      "symbol": "htons",
+      "status": "Implemented",
+      "module": "inet_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 3,
+      "fixture_files": [
+        "inet_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
+    },
+    {
+      "symbol": "iconv",
+      "status": "Implemented",
+      "module": "iconv_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 8,
+      "fixture_files": [
+        "iconv_phase1.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "negative",
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
+    },
+    {
+      "symbol": "iconv_close",
+      "status": "Implemented",
+      "module": "iconv_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "iconv_phase1.json"
+      ],
+      "modes_tested": [
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "negative"
+      ],
+      "has_errno_check": true,
+      "quality_issues": [
+        "fewer than 2 test cases",
+        "missing dual-mode coverage"
+      ]
+    },
+    {
+      "symbol": "iconv_open",
+      "status": "Implemented",
+      "module": "iconv_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "iconv_phase1.json"
+      ],
+      "modes_tested": [
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "negative"
+      ],
+      "has_errno_check": true,
+      "quality_issues": [
+        "missing dual-mode coverage"
+      ]
+    },
+    {
+      "symbol": "inet_addr",
+      "status": "Implemented",
+      "module": "inet_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 3,
+      "fixture_files": [
+        "inet_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
+      "edge_cases_covered": [
+        "boundary",
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
+    },
+    {
+      "symbol": "inet_ntop",
+      "status": "Implemented",
+      "module": "inet_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "inet_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
+      "edge_cases_covered": [
+        "boundary",
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
+    },
+    {
+      "symbol": "inet_pton",
+      "status": "Implemented",
+      "module": "inet_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 3,
+      "fixture_files": [
+        "inet_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
+      "edge_cases_covered": [
+        "boundary",
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
+    },
+    {
+      "symbol": "isalnum",
+      "status": "Implemented",
+      "module": "ctype_abi",
+      "perf_class": "strict_hotpath",
+      "has_fixtures": true,
+      "case_count": 3,
+      "fixture_files": [
+        "ctype_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
+      "edge_cases_covered": [],
+      "has_errno_check": true,
+      "quality_issues": [
+        "no edge cases detected"
+      ]
+    },
+    {
+      "symbol": "isalpha",
+      "status": "Implemented",
+      "module": "ctype_abi",
+      "perf_class": "strict_hotpath",
+      "has_fixtures": true,
+      "case_count": 4,
+      "fixture_files": [
+        "ctype_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
+    },
+    {
+      "symbol": "isatty",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "unistd_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
+      "edge_cases_covered": [
+        "negative",
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
+    },
+    {
+      "symbol": "isdigit",
+      "status": "Implemented",
+      "module": "ctype_abi",
+      "perf_class": "strict_hotpath",
+      "has_fixtures": true,
+      "case_count": 3,
+      "fixture_files": [
+        "ctype_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
+    },
+    {
+      "symbol": "islower",
+      "status": "Implemented",
+      "module": "ctype_abi",
+      "perf_class": "strict_hotpath",
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "ctype_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
+      "edge_cases_covered": [],
+      "has_errno_check": true,
+      "quality_issues": [
+        "no edge cases detected"
+      ]
+    },
+    {
+      "symbol": "isprint",
+      "status": "Implemented",
+      "module": "ctype_abi",
+      "perf_class": "strict_hotpath",
+      "has_fixtures": true,
+      "case_count": 4,
+      "fixture_files": [
+        "ctype_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
+      "edge_cases_covered": [
+        "boundary",
+        "null_input",
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
+    },
+    {
+      "symbol": "ispunct",
+      "status": "Implemented",
+      "module": "ctype_abi",
+      "perf_class": "strict_hotpath",
+      "has_fixtures": true,
+      "case_count": 3,
+      "fixture_files": [
+        "ctype_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
+      "edge_cases_covered": [],
+      "has_errno_check": true,
+      "quality_issues": [
+        "no edge cases detected"
+      ]
+    },
+    {
+      "symbol": "isspace",
+      "status": "Implemented",
+      "module": "ctype_abi",
+      "perf_class": "strict_hotpath",
+      "has_fixtures": true,
+      "case_count": 4,
+      "fixture_files": [
+        "ctype_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
+    },
+    {
+      "symbol": "isupper",
+      "status": "Implemented",
+      "module": "ctype_abi",
+      "perf_class": "strict_hotpath",
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "ctype_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
+      "edge_cases_covered": [],
+      "has_errno_check": true,
+      "quality_issues": [
+        "no edge cases detected"
+      ]
+    },
+    {
+      "symbol": "isxdigit",
+      "status": "Implemented",
+      "module": "ctype_abi",
+      "perf_class": "strict_hotpath",
+      "has_fixtures": true,
+      "case_count": 4,
+      "fixture_files": [
+        "ctype_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
+    },
+    {
+      "symbol": "kill",
+      "status": "RawSyscall",
+      "module": "signal_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 3,
+      "fixture_files": [
+        "signal_ops.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
+    },
+    {
+      "symbol": "lgamma",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "math_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": [
+        "fewer than 2 test cases"
+      ]
+    },
+    {
+      "symbol": "link",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": []
+    },
+    {
+      "symbol": "listen",
+      "status": "RawSyscall",
+      "module": "socket_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "socket_ops.json"
+      ],
+      "modes_tested": [
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "negative"
+      ],
+      "has_errno_check": true,
+      "quality_issues": [
+        "fewer than 2 test cases",
+        "missing dual-mode coverage"
+      ]
+    },
+    {
+      "symbol": "localeconv",
+      "status": "Implemented",
+      "module": "locale_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "locale_ops.json"
+      ],
+      "modes_tested": [
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "null_input"
+      ],
+      "has_errno_check": true,
+      "quality_issues": [
+        "fewer than 2 test cases",
+        "missing dual-mode coverage"
+      ]
+    },
+    {
+      "symbol": "localtime_r",
+      "status": "RawSyscall",
+      "module": "time_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "time_ops.json"
+      ],
+      "modes_tested": [
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": [
+        "fewer than 2 test cases",
+        "missing dual-mode coverage"
+      ]
+    },
+    {
+      "symbol": "log",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "math_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
+    },
+    {
+      "symbol": "log10",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "math_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
+    },
+    {
+      "symbol": "lseek",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "unistd_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": [
+        "fewer than 2 test cases"
+      ]
+    },
+    {
+      "symbol": "lstat",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": []
+    },
+    {
+      "symbol": "madvise",
+      "status": "RawSyscall",
+      "module": "mmap_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "virtual_memory_ops.json"
+      ],
+      "modes_tested": [
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": [
+        "fewer than 2 test cases",
+        "missing dual-mode coverage"
+      ]
+    },
+    {
+      "symbol": "malloc",
+      "status": "Implemented",
+      "module": "malloc_abi",
+      "perf_class": "strict_hotpath",
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "allocator.json"
+      ],
+      "modes_tested": [
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": [
+        "missing dual-mode coverage"
+      ]
+    },
+    {
+      "symbol": "memalign",
+      "status": "Implemented",
+      "module": "malloc_abi",
+      "perf_class": "strict_hotpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "memchr",
+      "status": "Implemented",
+      "module": "string_abi",
+      "perf_class": "strict_hotpath",
+      "has_fixtures": true,
+      "case_count": 4,
+      "fixture_files": [
+        "memory_ops.json",
+        "string_memory_full.json",
+        "string_ops.json"
+      ],
+      "modes_tested": [
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": [
+        "missing dual-mode coverage"
+      ]
+    },
+    {
+      "symbol": "memcmp",
+      "status": "Implemented",
+      "module": "string_abi",
+      "perf_class": "strict_hotpath",
+      "has_fixtures": true,
+      "case_count": 7,
+      "fixture_files": [
+        "memory_ops.json",
+        "string_memory_full.json",
+        "string_ops.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
+    },
+    {
+      "symbol": "memcpy",
+      "status": "Implemented",
+      "module": "string_abi",
+      "perf_class": "strict_hotpath",
+      "has_fixtures": true,
+      "case_count": 9,
+      "fixture_files": [
+        "membrane_mode_split.json",
+        "memcpy_strict.json",
+        "memory_ops.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
+    },
+    {
+      "symbol": "memmove",
+      "status": "Implemented",
+      "module": "string_abi",
+      "perf_class": "strict_hotpath",
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "memory_ops.json",
+        "string_ops.json"
+      ],
+      "modes_tested": [
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": [
+        "missing dual-mode coverage"
+      ]
+    },
+    {
+      "symbol": "memrchr",
+      "status": "Implemented",
+      "module": "string_abi",
+      "perf_class": "strict_hotpath",
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "string_memory_full.json",
+        "string_ops.json"
+      ],
+      "modes_tested": [
+        "strict"
+      ],
+      "edge_cases_covered": [],
+      "has_errno_check": true,
+      "quality_issues": [
+        "no edge cases detected",
+        "missing dual-mode coverage"
+      ]
+    },
+    {
+      "symbol": "memset",
+      "status": "Implemented",
+      "module": "string_abi",
+      "perf_class": "strict_hotpath",
+      "has_fixtures": true,
+      "case_count": 4,
+      "fixture_files": [
+        "memory_ops.json",
+        "string_memory_full.json",
+        "string_ops.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
+    },
+    {
+      "symbol": "mmap",
+      "status": "RawSyscall",
+      "module": "mmap_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 5,
+      "fixture_files": [
+        "virtual_memory_ops.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "boundary",
+        "negative",
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
+    },
+    {
+      "symbol": "mprotect",
+      "status": "RawSyscall",
+      "module": "mmap_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "virtual_memory_ops.json"
+      ],
+      "modes_tested": [
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": [
+        "fewer than 2 test cases",
+        "missing dual-mode coverage"
+      ]
+    },
+    {
+      "symbol": "msync",
+      "status": "RawSyscall",
+      "module": "mmap_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": []
+    },
+    {
+      "symbol": "munmap",
+      "status": "RawSyscall",
+      "module": "mmap_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "virtual_memory_ops.json"
+      ],
+      "modes_tested": [
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": [
+        "fewer than 2 test cases",
+        "missing dual-mode coverage"
+      ]
+    },
+    {
+      "symbol": "ntohl",
+      "status": "Implemented",
+      "module": "inet_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "inet_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
+      "edge_cases_covered": [],
+      "has_errno_check": true,
+      "quality_issues": [
+        "fewer than 2 test cases",
+        "no edge cases detected"
+      ]
+    },
+    {
+      "symbol": "ntohs",
+      "status": "Implemented",
+      "module": "inet_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "inet_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": [
+        "fewer than 2 test cases"
+      ]
+    },
+    {
+      "symbol": "opendir",
+      "status": "RawSyscall",
+      "module": "dirent_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 4,
+      "fixture_files": [
+        "dirent_ops.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [],
+      "has_errno_check": true,
+      "quality_issues": [
+        "no edge cases detected"
+      ]
+    },
+    {
+      "symbol": "perror",
+      "status": "GlibcCallThrough",
+      "module": "stdio_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": []
+    },
+    {
+      "symbol": "pipe",
+      "status": "RawSyscall",
+      "module": "io_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "unistd_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
+      "edge_cases_covered": [],
+      "has_errno_check": true,
+      "quality_issues": [
+        "fewer than 2 test cases",
+        "no edge cases detected"
+      ]
+    },
+    {
+      "symbol": "poll",
+      "status": "RawSyscall",
+      "module": "poll_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 5,
+      "fixture_files": [
+        "poll_ops.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "negative",
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
+    },
+    {
+      "symbol": "posix_memalign",
+      "status": "Implemented",
+      "module": "malloc_abi",
+      "perf_class": "strict_hotpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "pow",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "math_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
+    },
+    {
+      "symbol": "ppoll",
+      "status": "RawSyscall",
+      "module": "poll_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": []
+    },
+    {
+      "symbol": "printf",
+      "status": "GlibcCallThrough",
+      "module": "stdio_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": []
+    },
+    {
+      "symbol": "pselect",
+      "status": "RawSyscall",
+      "module": "poll_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": []
+    },
+    {
+      "symbol": "pthread_cond_broadcast",
+      "status": "Implemented",
+      "module": "pthread_abi",
+      "perf_class": "strict_hotpath",
+      "has_fixtures": true,
+      "case_count": 3,
+      "fixture_files": [
+        "pthread_cond.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
+      "edge_cases_covered": [
+        "null_input"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
+    },
+    {
+      "symbol": "pthread_cond_destroy",
+      "status": "Implemented",
+      "module": "pthread_abi",
+      "perf_class": "strict_hotpath",
+      "has_fixtures": true,
+      "case_count": 3,
+      "fixture_files": [
+        "pthread_cond.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
+      "edge_cases_covered": [
+        "null_input"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
+    },
+    {
+      "symbol": "pthread_cond_init",
+      "status": "Implemented",
+      "module": "pthread_abi",
+      "perf_class": "strict_hotpath",
+      "has_fixtures": true,
+      "case_count": 4,
+      "fixture_files": [
+        "pthread_cond.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
+      "edge_cases_covered": [
+        "null_input"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
+    },
+    {
+      "symbol": "pthread_cond_signal",
+      "status": "Implemented",
+      "module": "pthread_abi",
+      "perf_class": "strict_hotpath",
+      "has_fixtures": true,
+      "case_count": 3,
+      "fixture_files": [
+        "pthread_cond.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
+      "edge_cases_covered": [
+        "null_input"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
+    },
+    {
+      "symbol": "pthread_cond_wait",
+      "status": "Implemented",
+      "module": "pthread_abi",
+      "perf_class": "strict_hotpath",
+      "has_fixtures": true,
+      "case_count": 6,
+      "fixture_files": [
+        "pthread_cond.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
+      "edge_cases_covered": [
+        "null_input"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
+    },
+    {
+      "symbol": "pthread_create",
+      "status": "GlibcCallThrough",
+      "module": "pthread_abi",
+      "perf_class": "strict_hotpath",
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "pthread_thread.json"
+      ],
+      "modes_tested": [
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": [
+        "missing dual-mode coverage"
+      ]
+    },
+    {
+      "symbol": "pthread_detach",
+      "status": "GlibcCallThrough",
+      "module": "pthread_abi",
+      "perf_class": "strict_hotpath",
+      "has_fixtures": true,
+      "case_count": 3,
+      "fixture_files": [
+        "pthread_thread.json"
+      ],
+      "modes_tested": [
+        "both",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "null_input"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
+    },
+    {
+      "symbol": "pthread_equal",
+      "status": "GlibcCallThrough",
+      "module": "pthread_abi",
+      "perf_class": "strict_hotpath",
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "pthread_thread.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
+      "edge_cases_covered": [],
+      "has_errno_check": true,
+      "quality_issues": [
+        "no edge cases detected"
+      ]
+    },
+    {
+      "symbol": "pthread_join",
+      "status": "GlibcCallThrough",
+      "module": "pthread_abi",
+      "perf_class": "strict_hotpath",
+      "has_fixtures": true,
+      "case_count": 3,
+      "fixture_files": [
+        "pthread_thread.json"
+      ],
+      "modes_tested": [
+        "both",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "null_input"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
+    },
+    {
+      "symbol": "pthread_mutex_destroy",
+      "status": "Implemented",
+      "module": "pthread_abi",
+      "perf_class": "strict_hotpath",
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "pthread_mutex.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
+      "edge_cases_covered": [],
+      "has_errno_check": true,
+      "quality_issues": [
+        "fewer than 2 test cases",
+        "no edge cases detected"
+      ]
+    },
+    {
+      "symbol": "pthread_mutex_init",
+      "status": "Implemented",
+      "module": "pthread_abi",
+      "perf_class": "strict_hotpath",
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "pthread_mutex.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
+      "edge_cases_covered": [
+        "null_input"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
+    },
+    {
+      "symbol": "pthread_mutex_lock",
+      "status": "Implemented",
+      "module": "pthread_abi",
+      "perf_class": "strict_hotpath",
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "pthread_mutex.json"
+      ],
+      "modes_tested": [
+        "both",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
+    },
+    {
+      "symbol": "pthread_mutex_trylock",
+      "status": "Implemented",
+      "module": "pthread_abi",
+      "perf_class": "strict_hotpath",
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "pthread_mutex.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
+      "edge_cases_covered": [],
+      "has_errno_check": true,
+      "quality_issues": [
+        "no edge cases detected"
+      ]
+    },
+    {
+      "symbol": "pthread_mutex_unlock",
+      "status": "Implemented",
+      "module": "pthread_abi",
+      "perf_class": "strict_hotpath",
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "pthread_mutex.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
+      "edge_cases_covered": [],
+      "has_errno_check": true,
+      "quality_issues": [
+        "fewer than 2 test cases",
+        "no edge cases detected"
+      ]
+    },
+    {
+      "symbol": "pthread_rwlock_destroy",
+      "status": "GlibcCallThrough",
+      "module": "pthread_abi",
+      "perf_class": "strict_hotpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": []
+    },
+    {
+      "symbol": "pthread_rwlock_init",
+      "status": "GlibcCallThrough",
+      "module": "pthread_abi",
+      "perf_class": "strict_hotpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": []
+    },
+    {
+      "symbol": "pthread_rwlock_rdlock",
+      "status": "GlibcCallThrough",
+      "module": "pthread_abi",
+      "perf_class": "strict_hotpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": []
+    },
+    {
+      "symbol": "pthread_rwlock_unlock",
+      "status": "GlibcCallThrough",
+      "module": "pthread_abi",
+      "perf_class": "strict_hotpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": []
+    },
+    {
+      "symbol": "pthread_rwlock_wrlock",
+      "status": "GlibcCallThrough",
+      "module": "pthread_abi",
+      "perf_class": "strict_hotpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": []
+    },
+    {
+      "symbol": "pthread_self",
+      "status": "GlibcCallThrough",
+      "module": "pthread_abi",
+      "perf_class": "strict_hotpath",
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "pthread_thread.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
+      "edge_cases_covered": [],
+      "has_errno_check": true,
+      "quality_issues": [
+        "fewer than 2 test cases",
+        "no edge cases detected"
+      ]
+    },
+    {
+      "symbol": "putchar",
+      "status": "Implemented",
+      "module": "stdio_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "puts",
+      "status": "GlibcCallThrough",
+      "module": "stdio_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": []
+    },
+    {
+      "symbol": "qsort",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "stdlib_sort.json"
+      ],
+      "modes_tested": [
+        "strict"
+      ],
+      "edge_cases_covered": [],
+      "has_errno_check": true,
+      "quality_issues": [
+        "fewer than 2 test cases",
+        "no edge cases detected",
+        "missing dual-mode coverage"
+      ]
+    },
+    {
+      "symbol": "raise",
+      "status": "RawSyscall",
+      "module": "signal_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "signal_ops.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
+    },
+    {
+      "symbol": "read",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "unistd_ops.json"
+      ],
+      "modes_tested": [
+        "strict"
+      ],
+      "edge_cases_covered": [],
+      "has_errno_check": true,
+      "quality_issues": [
+        "fewer than 2 test cases",
+        "no edge cases detected",
+        "missing dual-mode coverage"
+      ]
+    },
+    {
+      "symbol": "readdir",
+      "status": "RawSyscall",
+      "module": "dirent_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "dirent_ops.json"
+      ],
+      "modes_tested": [
+        "strict"
+      ],
+      "edge_cases_covered": [],
+      "has_errno_check": true,
+      "quality_issues": [
+        "fewer than 2 test cases",
+        "no edge cases detected",
+        "missing dual-mode coverage"
+      ]
+    },
+    {
+      "symbol": "readlink",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": []
+    },
+    {
+      "symbol": "realloc",
+      "status": "Implemented",
+      "module": "malloc_abi",
+      "perf_class": "strict_hotpath",
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "allocator.json"
+      ],
+      "modes_tested": [
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "null_input",
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": [
+        "fewer than 2 test cases",
+        "missing dual-mode coverage"
+      ]
+    },
+    {
+      "symbol": "recv",
+      "status": "RawSyscall",
+      "module": "socket_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": []
+    },
+    {
+      "symbol": "recvfrom",
+      "status": "RawSyscall",
+      "module": "socket_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": []
+    },
+    {
+      "symbol": "rewind",
+      "status": "Implemented",
+      "module": "stdio_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "rmdir",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": []
+    },
+    {
+      "symbol": "round",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "math_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
+      "edge_cases_covered": [],
+      "has_errno_check": true,
+      "quality_issues": [
+        "no edge cases detected"
+      ]
+    },
+    {
+      "symbol": "select",
+      "status": "RawSyscall",
+      "module": "poll_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "poll_ops.json"
+      ],
+      "modes_tested": [
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": [
+        "fewer than 2 test cases",
+        "missing dual-mode coverage"
+      ]
+    },
+    {
+      "symbol": "send",
+      "status": "RawSyscall",
+      "module": "socket_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": []
+    },
+    {
+      "symbol": "sendto",
+      "status": "RawSyscall",
+      "module": "socket_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": []
+    },
+    {
+      "symbol": "setbuf",
+      "status": "GlibcCallThrough",
+      "module": "stdio_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": []
+    },
+    {
+      "symbol": "setenv",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "setgrent",
+      "status": "Implemented",
+      "module": "grp_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "grp_ops.json"
+      ],
+      "modes_tested": [
+        "strict"
+      ],
+      "edge_cases_covered": [],
+      "has_errno_check": true,
+      "quality_issues": [
+        "fewer than 2 test cases",
+        "no edge cases detected",
+        "missing dual-mode coverage"
+      ]
+    },
+    {
+      "symbol": "setlocale",
+      "status": "Implemented",
+      "module": "locale_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 5,
+      "fixture_files": [
+        "locale_ops.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "null_input",
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
+    },
+    {
+      "symbol": "setpwent",
+      "status": "Implemented",
+      "module": "pwd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "pwd_ops.json"
+      ],
+      "modes_tested": [
+        "strict"
+      ],
+      "edge_cases_covered": [],
+      "has_errno_check": true,
+      "quality_issues": [
+        "fewer than 2 test cases",
+        "no edge cases detected",
+        "missing dual-mode coverage"
+      ]
+    },
+    {
+      "symbol": "setrlimit",
+      "status": "RawSyscall",
+      "module": "resource_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": []
+    },
+    {
+      "symbol": "setsockopt",
+      "status": "RawSyscall",
+      "module": "socket_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": []
+    },
+    {
+      "symbol": "setvbuf",
+      "status": "GlibcCallThrough",
+      "module": "stdio_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": []
+    },
+    {
+      "symbol": "shutdown",
+      "status": "RawSyscall",
+      "module": "socket_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "socket_ops.json"
+      ],
+      "modes_tested": [
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "negative"
+      ],
+      "has_errno_check": true,
+      "quality_issues": [
+        "fewer than 2 test cases",
+        "missing dual-mode coverage"
+      ]
+    },
+    {
+      "symbol": "sigaction",
+      "status": "RawSyscall",
+      "module": "signal_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "signal_ops.json"
+      ],
+      "modes_tested": [
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "null_input"
+      ],
+      "has_errno_check": true,
+      "quality_issues": [
+        "fewer than 2 test cases",
+        "missing dual-mode coverage"
+      ]
+    },
+    {
+      "symbol": "signal",
+      "status": "RawSyscall",
+      "module": "signal_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": []
+    },
+    {
+      "symbol": "sin",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "math_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
+    },
+    {
+      "symbol": "sleep",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": []
+    },
+    {
+      "symbol": "snprintf",
+      "status": "GlibcCallThrough",
+      "module": "stdio_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 3,
+      "fixture_files": [
+        "stdio_file_ops.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [],
+      "has_errno_check": true,
+      "quality_issues": [
+        "no edge cases detected"
+      ]
+    },
+    {
+      "symbol": "socket",
+      "status": "RawSyscall",
+      "module": "socket_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 5,
+      "fixture_files": [
+        "socket_ops.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
+    },
+    {
+      "symbol": "sprintf",
+      "status": "GlibcCallThrough",
+      "module": "stdio_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": []
+    },
+    {
+      "symbol": "stat",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": []
+    },
+    {
+      "symbol": "stderr",
+      "status": "Implemented",
+      "module": "stdio_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "stdin",
+      "status": "Implemented",
+      "module": "stdio_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "stdout",
+      "status": "Implemented",
+      "module": "stdio_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "strcat",
+      "status": "Implemented",
+      "module": "string_abi",
+      "perf_class": "strict_hotpath",
+      "has_fixtures": true,
+      "case_count": 3,
+      "fixture_files": [
+        "string_memory_full.json",
+        "string_ops.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
+    },
+    {
+      "symbol": "strchr",
+      "status": "Implemented",
+      "module": "string_abi",
+      "perf_class": "strict_hotpath",
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "string_memory_full.json",
+        "string_ops.json"
+      ],
+      "modes_tested": [
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": [
+        "missing dual-mode coverage"
+      ]
+    },
+    {
+      "symbol": "strcmp",
+      "status": "Implemented",
+      "module": "string_abi",
+      "perf_class": "strict_hotpath",
+      "has_fixtures": true,
+      "case_count": 3,
+      "fixture_files": [
+        "string_memory_full.json",
+        "string_ops.json"
+      ],
+      "modes_tested": [
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": [
+        "missing dual-mode coverage"
+      ]
+    },
+    {
+      "symbol": "strcpy",
+      "status": "Implemented",
+      "module": "string_abi",
+      "perf_class": "strict_hotpath",
+      "has_fixtures": true,
+      "case_count": 3,
+      "fixture_files": [
+        "string_memory_full.json",
+        "string_ops.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
+    },
+    {
+      "symbol": "strlen",
+      "status": "Implemented",
+      "module": "string_abi",
+      "perf_class": "strict_hotpath",
+      "has_fixtures": true,
+      "case_count": 5,
+      "fixture_files": [
+        "membrane_mode_split.json",
+        "strlen_strict.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
+    },
+    {
+      "symbol": "strncat",
+      "status": "Implemented",
+      "module": "string_abi",
+      "perf_class": "strict_hotpath",
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "string_memory_full.json"
+      ],
+      "modes_tested": [
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": [
+        "fewer than 2 test cases",
+        "missing dual-mode coverage"
+      ]
+    },
+    {
+      "symbol": "strncpy",
+      "status": "Implemented",
+      "module": "string_abi",
+      "perf_class": "strict_hotpath",
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "string_memory_full.json",
+        "string_ops.json"
+      ],
+      "modes_tested": [
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": [
+        "missing dual-mode coverage"
+      ]
+    },
+    {
+      "symbol": "strrchr",
+      "status": "Implemented",
+      "module": "string_abi",
+      "perf_class": "strict_hotpath",
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "string_memory_full.json",
+        "string_ops.json"
+      ],
+      "modes_tested": [
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": [
+        "missing dual-mode coverage"
+      ]
+    },
+    {
+      "symbol": "strstr",
+      "status": "Implemented",
+      "module": "string_abi",
+      "perf_class": "strict_hotpath",
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "string_memory_full.json",
+        "string_ops.json"
+      ],
+      "modes_tested": [
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": [
+        "missing dual-mode coverage"
+      ]
+    },
+    {
+      "symbol": "strtok",
+      "status": "Implemented",
+      "module": "string_abi",
+      "perf_class": "strict_hotpath",
+      "has_fixtures": true,
+      "case_count": 5,
+      "fixture_files": [
+        "string_strtok.json"
+      ],
+      "modes_tested": [
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": [
+        "missing dual-mode coverage"
+      ]
+    },
+    {
+      "symbol": "strtok_r",
+      "status": "Implemented",
+      "module": "string_abi",
+      "perf_class": "strict_hotpath",
+      "has_fixtures": true,
+      "case_count": 3,
+      "fixture_files": [
+        "string_strtok.json"
+      ],
+      "modes_tested": [
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": [
+        "missing dual-mode coverage"
+      ]
+    },
+    {
+      "symbol": "strtol",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 6,
+      "fixture_files": [
+        "stdlib_conversion.json",
+        "stdlib_numeric.json"
+      ],
+      "modes_tested": [
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": [
+        "missing dual-mode coverage"
+      ]
+    },
+    {
+      "symbol": "strtoul",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "stdlib_numeric.json"
+      ],
+      "modes_tested": [
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": [
+        "missing dual-mode coverage"
+      ]
+    },
+    {
+      "symbol": "symlink",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": []
+    },
+    {
+      "symbol": "tan",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "math_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": [
+        "fewer than 2 test cases"
+      ]
+    },
+    {
+      "symbol": "tcdrain",
+      "status": "RawSyscall",
+      "module": "termios_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": []
+    },
+    {
+      "symbol": "tcflow",
+      "status": "RawSyscall",
+      "module": "termios_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": []
+    },
+    {
+      "symbol": "tcflush",
+      "status": "RawSyscall",
+      "module": "termios_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": []
+    },
+    {
+      "symbol": "tcgetattr",
+      "status": "RawSyscall",
+      "module": "termios_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 4,
+      "fixture_files": [
+        "termios_ops.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "negative",
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
+    },
+    {
+      "symbol": "tcsendbreak",
+      "status": "RawSyscall",
+      "module": "termios_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": []
+    },
+    {
+      "symbol": "tcsetattr",
+      "status": "RawSyscall",
+      "module": "termios_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": []
+    },
+    {
+      "symbol": "tgamma",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "math_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
+    },
+    {
+      "symbol": "time",
+      "status": "RawSyscall",
+      "module": "time_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "time_ops.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "null_input"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
+    },
+    {
+      "symbol": "tolower",
+      "status": "Implemented",
+      "module": "ctype_abi",
+      "perf_class": "strict_hotpath",
+      "has_fixtures": true,
+      "case_count": 4,
+      "fixture_files": [
+        "ctype_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
+    },
+    {
+      "symbol": "toupper",
+      "status": "Implemented",
+      "module": "ctype_abi",
+      "perf_class": "strict_hotpath",
+      "has_fixtures": true,
+      "case_count": 4,
+      "fixture_files": [
+        "ctype_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
+      "edge_cases_covered": [],
+      "has_errno_check": true,
+      "quality_issues": [
+        "no edge cases detected"
+      ]
+    },
+    {
+      "symbol": "ungetc",
+      "status": "Implemented",
+      "module": "stdio_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "unlink",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": []
+    },
+    {
+      "symbol": "unsetenv",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "usleep",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": []
+    },
+    {
+      "symbol": "wait",
+      "status": "RawSyscall",
+      "module": "process_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": []
+    },
+    {
+      "symbol": "waitpid",
+      "status": "RawSyscall",
+      "module": "process_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "process_ops.json"
+      ],
+      "modes_tested": [
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "negative",
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": [
+        "missing dual-mode coverage"
+      ]
+    },
+    {
+      "symbol": "wcscat",
+      "status": "Implemented",
+      "module": "wchar_abi",
+      "perf_class": "strict_hotpath",
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "wide_string_ops.json"
+      ],
+      "modes_tested": [
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": [
+        "fewer than 2 test cases",
+        "missing dual-mode coverage"
+      ]
+    },
+    {
+      "symbol": "wcschr",
+      "status": "Implemented",
+      "module": "wchar_abi",
+      "perf_class": "strict_hotpath",
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "wide_string_ops.json"
+      ],
+      "modes_tested": [
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": [
+        "missing dual-mode coverage"
+      ]
+    },
+    {
+      "symbol": "wcscmp",
+      "status": "Implemented",
+      "module": "wchar_abi",
+      "perf_class": "strict_hotpath",
+      "has_fixtures": true,
+      "case_count": 4,
+      "fixture_files": [
+        "wide_string.json",
+        "wide_string_ops.json"
+      ],
+      "modes_tested": [
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": [
+        "missing dual-mode coverage"
+      ]
+    },
+    {
+      "symbol": "wcscpy",
+      "status": "Implemented",
+      "module": "wchar_abi",
+      "perf_class": "strict_hotpath",
+      "has_fixtures": true,
+      "case_count": 3,
+      "fixture_files": [
+        "wide_string.json",
+        "wide_string_ops.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
+    },
+    {
+      "symbol": "wcslen",
+      "status": "Implemented",
+      "module": "wchar_abi",
+      "perf_class": "strict_hotpath",
+      "has_fixtures": true,
+      "case_count": 3,
+      "fixture_files": [
+        "wide_string.json",
+        "wide_string_ops.json"
+      ],
+      "modes_tested": [
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": [
+        "missing dual-mode coverage"
+      ]
+    },
+    {
+      "symbol": "wcsncmp",
+      "status": "Implemented",
+      "module": "wchar_abi",
+      "perf_class": "strict_hotpath",
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "wide_string_ops.json"
+      ],
+      "modes_tested": [
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": [
+        "missing dual-mode coverage"
+      ]
+    },
+    {
+      "symbol": "wcsncpy",
+      "status": "Implemented",
+      "module": "wchar_abi",
+      "perf_class": "strict_hotpath",
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "wide_string_ops.json"
+      ],
+      "modes_tested": [
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": [
+        "missing dual-mode coverage"
+      ]
+    },
+    {
+      "symbol": "wcsrchr",
+      "status": "Implemented",
+      "module": "wchar_abi",
+      "perf_class": "strict_hotpath",
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "wide_string_ops.json"
+      ],
+      "modes_tested": [
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": [
+        "missing dual-mode coverage"
+      ]
+    },
+    {
+      "symbol": "wcsstr",
+      "status": "Implemented",
+      "module": "wchar_abi",
+      "perf_class": "strict_hotpath",
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "wide_string_ops.json"
+      ],
+      "modes_tested": [
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": [
+        "fewer than 2 test cases",
+        "missing dual-mode coverage"
+      ]
+    },
+    {
+      "symbol": "wmemchr",
+      "status": "Implemented",
+      "module": "wchar_abi",
+      "perf_class": "strict_hotpath",
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "wide_memory.json"
+      ],
+      "modes_tested": [
+        "strict"
+      ],
+      "edge_cases_covered": [],
+      "has_errno_check": true,
+      "quality_issues": [
+        "fewer than 2 test cases",
+        "no edge cases detected",
+        "missing dual-mode coverage"
+      ]
+    },
+    {
+      "symbol": "wmemcmp",
+      "status": "Implemented",
+      "module": "wchar_abi",
+      "perf_class": "strict_hotpath",
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "wide_memory.json"
+      ],
+      "modes_tested": [
+        "strict"
+      ],
+      "edge_cases_covered": [],
+      "has_errno_check": true,
+      "quality_issues": [
+        "no edge cases detected",
+        "missing dual-mode coverage"
+      ]
+    },
+    {
+      "symbol": "wmemcpy",
+      "status": "Implemented",
+      "module": "wchar_abi",
+      "perf_class": "strict_hotpath",
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "wide_memory.json"
+      ],
+      "modes_tested": [
+        "strict"
+      ],
+      "edge_cases_covered": [],
+      "has_errno_check": true,
+      "quality_issues": [
+        "fewer than 2 test cases",
+        "no edge cases detected",
+        "missing dual-mode coverage"
+      ]
+    },
+    {
+      "symbol": "wmemmove",
+      "status": "Implemented",
+      "module": "wchar_abi",
+      "perf_class": "strict_hotpath",
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "wide_memory.json"
+      ],
+      "modes_tested": [
+        "strict"
+      ],
+      "edge_cases_covered": [],
+      "has_errno_check": true,
+      "quality_issues": [
+        "fewer than 2 test cases",
+        "no edge cases detected",
+        "missing dual-mode coverage"
+      ]
+    },
+    {
+      "symbol": "wmemset",
+      "status": "Implemented",
+      "module": "wchar_abi",
+      "perf_class": "strict_hotpath",
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "wide_memory.json"
+      ],
+      "modes_tested": [
+        "strict"
+      ],
+      "edge_cases_covered": [],
+      "has_errno_check": true,
+      "quality_issues": [
+        "fewer than 2 test cases",
+        "no edge cases detected",
+        "missing dual-mode coverage"
+      ]
+    },
+    {
+      "symbol": "write",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "unistd_ops.json"
+      ],
+      "modes_tested": [
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": [
+        "fewer than 2 test cases",
+        "missing dual-mode coverage"
+      ]
+    }
+  ],
+  "uncovered_action_list": [
+    {
+      "symbol": "_exit",
+      "status": "RawSyscall",
+      "module": "process_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "accept",
+      "status": "RawSyscall",
+      "module": "socket_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "aligned_alloc",
+      "status": "Implemented",
+      "module": "malloc_abi",
+      "action": "create fixture cases",
+      "priority": "high"
+    },
+    {
+      "symbol": "atexit",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "chdir",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "clearerr",
+      "status": "Implemented",
+      "module": "stdio_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "connect",
+      "status": "RawSyscall",
+      "module": "socket_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "dup",
+      "status": "RawSyscall",
+      "module": "io_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "dup2",
+      "status": "RawSyscall",
+      "module": "io_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "endgrent",
+      "status": "Implemented",
+      "module": "grp_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "endpwent",
+      "status": "Implemented",
+      "module": "pwd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "execvp",
+      "status": "RawSyscall",
+      "module": "process_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "exit",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "fchdir",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "fcntl",
+      "status": "RawSyscall",
+      "module": "io_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "fdatasync",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "feof",
+      "status": "Implemented",
+      "module": "stdio_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "ferror",
+      "status": "Implemented",
+      "module": "stdio_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "fflush",
+      "status": "Implemented",
+      "module": "stdio_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "fgetc",
+      "status": "Implemented",
+      "module": "stdio_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "fileno",
+      "status": "Implemented",
+      "module": "stdio_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "fputc",
+      "status": "Implemented",
+      "module": "stdio_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "freeaddrinfo",
+      "status": "Implemented",
+      "module": "resolv_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "fstat",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "fsync",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "gai_strerror",
+      "status": "Implemented",
+      "module": "resolv_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "getchar",
+      "status": "Implemented",
+      "module": "stdio_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "getenv",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "getgrent",
+      "status": "Implemented",
+      "module": "grp_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "getgrgid_r",
+      "status": "Implemented",
+      "module": "grp_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "getgrnam_r",
+      "status": "Implemented",
+      "module": "grp_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "getnameinfo",
+      "status": "Implemented",
+      "module": "resolv_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "getpeername",
+      "status": "RawSyscall",
+      "module": "socket_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "getpwent",
+      "status": "Implemented",
+      "module": "pwd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "getpwnam_r",
+      "status": "Implemented",
+      "module": "pwd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "getpwuid_r",
+      "status": "Implemented",
+      "module": "pwd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "getsockopt",
+      "status": "RawSyscall",
+      "module": "socket_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "link",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "lstat",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "memalign",
+      "status": "Implemented",
+      "module": "malloc_abi",
+      "action": "create fixture cases",
+      "priority": "high"
+    },
+    {
+      "symbol": "msync",
+      "status": "RawSyscall",
+      "module": "mmap_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "posix_memalign",
+      "status": "Implemented",
+      "module": "malloc_abi",
+      "action": "create fixture cases",
+      "priority": "high"
+    },
+    {
+      "symbol": "ppoll",
+      "status": "RawSyscall",
+      "module": "poll_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "pselect",
+      "status": "RawSyscall",
+      "module": "poll_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "putchar",
+      "status": "Implemented",
+      "module": "stdio_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "readlink",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "recv",
+      "status": "RawSyscall",
+      "module": "socket_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "recvfrom",
+      "status": "RawSyscall",
+      "module": "socket_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "rewind",
+      "status": "Implemented",
+      "module": "stdio_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "rmdir",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "send",
+      "status": "RawSyscall",
+      "module": "socket_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "sendto",
+      "status": "RawSyscall",
+      "module": "socket_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "setenv",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "setrlimit",
+      "status": "RawSyscall",
+      "module": "resource_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "setsockopt",
+      "status": "RawSyscall",
+      "module": "socket_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "signal",
+      "status": "RawSyscall",
+      "module": "signal_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "sleep",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "stat",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "stderr",
+      "status": "Implemented",
+      "module": "stdio_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "stdin",
+      "status": "Implemented",
+      "module": "stdio_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "stdout",
+      "status": "Implemented",
+      "module": "stdio_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "symlink",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "tcdrain",
+      "status": "RawSyscall",
+      "module": "termios_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "tcflow",
+      "status": "RawSyscall",
+      "module": "termios_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "tcflush",
+      "status": "RawSyscall",
+      "module": "termios_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "tcsendbreak",
+      "status": "RawSyscall",
+      "module": "termios_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "tcsetattr",
+      "status": "RawSyscall",
+      "module": "termios_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "ungetc",
+      "status": "Implemented",
+      "module": "stdio_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "unlink",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "unsetenv",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "usleep",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "wait",
+      "status": "RawSyscall",
+      "module": "process_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    }
+  ],
+  "edge_case_categories": [
+    "null_input",
+    "zero_length",
+    "max_int",
+    "negative",
+    "boundary"
+  ]
+}

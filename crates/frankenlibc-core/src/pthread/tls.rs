@@ -387,8 +387,11 @@ pub(crate) fn teardown_thread_tls(tid: i32) {
         return;
     }
 
+    // Ensure RCU registration for lock-free registry reads.
+    let _ = rcu::rcu_register_thread(tid as u32);
+
     for _iteration in 0..PTHREAD_DESTRUCTOR_ITERATIONS {
-        // Snapshot destructors and values under the key registry lock.
+        // Snapshot destructors and values via RCU read (no mutex).
         // We collect into a stack-allocated array to avoid heap allocation.
         let mut call_count = 0usize;
         // Max 64 destructor calls per iteration to bound stack usage.
@@ -396,39 +399,44 @@ pub(crate) fn teardown_thread_tls(tid: i32) {
         const MAX_CALLS: usize = 64;
         let mut calls: [(u64, fn(u64)); MAX_CALLS] = [(0, noop_destructor); MAX_CALLS];
 
-        {
-            let reg = KEY_REGISTRY.lock().unwrap_or_else(|e| e.into_inner());
-            for i in 0..PTHREAD_KEYS_MAX {
-                if call_count >= MAX_CALLS {
-                    break;
-                }
-                if reg.slots[i].in_use {
-                    // SAFETY: values_ptr points to a valid [u64; PTHREAD_KEYS_MAX].
-                    let value = unsafe { *values_ptr.add(i) };
-                    if value != 0 {
-                        // Clear the value before calling destructor.
-                        unsafe { *values_ptr.add(i) = 0 };
-                        if let Some(dtor) = reg.slots[i].destructor {
-                            calls[call_count] = (value, dtor);
-                            call_count += 1;
+        rcu::rcu_read_lock();
+        unsafe {
+            if let Some(reg) = KEY_REGISTRY_RCU.read() {
+                for i in 0..PTHREAD_KEYS_MAX {
+                    if call_count >= MAX_CALLS {
+                        break;
+                    }
+                    if reg.slots[i].in_use {
+                        // SAFETY: values_ptr points to a valid [u64; PTHREAD_KEYS_MAX].
+                        let value = *values_ptr.add(i);
+                        if value != 0 {
+                            // Clear the value before calling destructor.
+                            *values_ptr.add(i) = 0;
+                            if let Some(dtor) = reg.slots[i].destructor {
+                                calls[call_count] = (value, dtor);
+                                call_count += 1;
+                            }
                         }
                     }
                 }
             }
         }
+        rcu::rcu_read_unlock();
+        rcu::rcu_quiescent_state(tid as u32);
 
         if call_count == 0 {
             break;
         }
 
-        // Call destructors outside the lock.
+        // Call destructors outside the RCU read section.
         for &(value, dtor) in calls.iter().take(call_count) {
             dtor(value);
         }
     }
 
-    // Remove from the table.
+    // Remove from the table and unregister from RCU.
     table_remove(tid);
+    let _ = rcu::rcu_unregister_thread(tid as u32);
 }
 
 /// No-op destructor used as default in the calls array.
@@ -441,10 +449,21 @@ fn noop_destructor(_: u64) {}
 /// Reset all TLS global state. For testing only.
 #[cfg(test)]
 pub(crate) fn reset_tls_state() {
-    {
-        let mut reg = KEY_REGISTRY.lock().unwrap_or_else(|e| e.into_inner());
-        reg.slots = [EMPTY_SLOT; PTHREAD_KEYS_MAX];
+    // Reset RCU global state (epoch, reader slots, callbacks).
+    crate::rcu::reset_rcu_state();
+
+    // Publish a fresh empty registry, freeing the old one.
+    // Safe: called only when no threads are using RCU (tests are serialized).
+    let fresh = Box::into_raw(Box::new(KeyRegistry {
+        slots: [EMPTY_SLOT; PTHREAD_KEYS_MAX],
+    }));
+    let old = unsafe { KEY_REGISTRY_RCU.update(fresh) };
+    if !old.is_null() {
+        unsafe {
+            let _ = Box::from_raw(old);
+        }
     }
+
     // Clear the table.
     for i in 0..TLS_TABLE_SLOTS {
         TLS_TIDS[i].store(0, Ordering::Release);
@@ -780,18 +799,14 @@ mod tests {
         let k = create_key(None);
         let id = k.id as usize;
 
-        // Read initial seq via the registry.
-        let seq_after_create = {
-            let reg = KEY_REGISTRY.lock().unwrap();
-            reg.slots[id].seq
-        };
+        // Read initial seq via RCU.
+        let seq_after_create =
+            unsafe { KEY_REGISTRY_RCU.read().map(|r| r.slots[id].seq).unwrap_or(0) };
         assert!(seq_after_create >= 1, "seq should be >= 1 after create");
 
         assert_eq!(pthread_key_delete(k), 0);
-        let seq_after_delete = {
-            let reg = KEY_REGISTRY.lock().unwrap();
-            reg.slots[id].seq
-        };
+        let seq_after_delete =
+            unsafe { KEY_REGISTRY_RCU.read().map(|r| r.slots[id].seq).unwrap_or(0) };
         assert_eq!(
             seq_after_delete,
             seq_after_create + 1,
