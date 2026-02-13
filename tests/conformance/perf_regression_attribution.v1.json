@@ -1,0 +1,103 @@
+{
+  "schema_version": 1,
+  "bead": "bd-30o.3",
+  "description": "Perf regression attribution policy for runtime_math/membrane perf gate. Defines threshold resolution, regression classes, suspect-component mapping, and deterministic triage contract.",
+  "threshold_policy": {
+    "default_max_regression_pct": 15.0,
+    "per_mode_max_regression_pct": {
+      "strict": 15.0,
+      "hardened": 15.0
+    },
+    "per_benchmark_overrides": {
+      "runtime_math/observe_fast": {
+        "strict": 12.0,
+        "hardened": 12.0
+      }
+    },
+    "target_source": "scripts/perf_baseline.json::targets_ns_op"
+  },
+  "attribution": {
+    "regression_classes": [
+      "ok",
+      "baseline_regression",
+      "target_budget_violation",
+      "baseline_and_budget_violation"
+    ],
+    "suspect_component_map": {
+      "runtime_math/decide": "runtime_math/control+risk+pareto",
+      "runtime_math/observe_fast": "runtime_math/observe_pipeline",
+      "runtime_math/decide_observe": "runtime_math/decision_observe_coupling",
+      "membrane/validate_known": "membrane/ptr_validator_pipeline"
+    },
+    "unknown_component_label": "unknown_component"
+  },
+  "logging_contract": {
+    "required_fields": [
+      "timestamp",
+      "trace_id",
+      "mode",
+      "benchmark_id",
+      "threshold",
+      "observed",
+      "regression_class",
+      "suspect_component"
+    ],
+    "optional_fields": [
+      "baseline",
+      "target",
+      "threshold_pct",
+      "delta_pct",
+      "verdict"
+    ],
+    "log_format": "jsonl"
+  },
+  "triage_guide": {
+    "baseline_regression": {
+      "severity": "blocker",
+      "actions": [
+        "Review candidate diff against hotspot_opportunity_matrix entries",
+        "Replay profile pipeline for affected mode",
+        "Run targeted benchmark with FRANKENLIBC_BENCH_PIN=1"
+      ],
+      "commands": [
+        "scripts/profile_pipeline.sh",
+        "cargo bench -p frankenlibc-bench --bench runtime_math_bench",
+        "cargo bench -p frankenlibc-bench --bench membrane_bench"
+      ]
+    },
+    "target_budget_violation": {
+      "severity": "policy_blocker",
+      "actions": [
+        "Validate waiver status in perf_budget_policy active_waivers",
+        "Escalate to optimization backlog if waiver is absent or expired"
+      ],
+      "commands": [
+        "scripts/check_perf_budget.sh"
+      ]
+    },
+    "baseline_and_budget_violation": {
+      "severity": "critical",
+      "actions": [
+        "Treat as hard regression and budget breach",
+        "Prioritize rollback or immediate hotfix"
+      ],
+      "commands": [
+        "scripts/perf_gate.sh",
+        "scripts/check_perf_budget.sh"
+      ]
+    }
+  },
+  "intentional_regression_scenario": {
+    "script": "scripts/e2e_perf_regression_scenario.sh",
+    "trace_id": "bd-30o.3::intentional-regression",
+    "expected_exit_code": 0,
+    "expected_gate_outcome": "regression_detected",
+    "required_detected_benchmark": "runtime_math/decide"
+  },
+  "summary": {
+    "mapped_benchmarks": 4,
+    "regression_classes": 4,
+    "required_log_fields": 8,
+    "triage_playbooks": 3
+  }
+}

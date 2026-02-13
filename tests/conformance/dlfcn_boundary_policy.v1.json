@@ -1,0 +1,122 @@
+{
+  "schema_version": "v1",
+  "bead": "bd-33zg",
+  "description": "dlfcn boundary policy for interpose vs replacement profiles with explicit fallback guard rails and auditable enforcement.",
+  "captured_at": "2026-02-13T00:00:00Z",
+  "surface_classification": {
+    "module": "dlfcn_abi",
+    "symbols": [
+      "dlopen",
+      "dlsym",
+      "dlclose",
+      "dlerror"
+    ],
+    "interpose_profile": {
+      "status": "GlibcCallThrough",
+      "host_callthrough_symbols": [
+        "dlopen",
+        "dlsym",
+        "dlclose"
+      ],
+      "local_symbols": [
+        "dlerror"
+      ],
+      "allowed_fallbacks": [
+        {
+          "symbol": "dlopen",
+          "condition": "invalid_flags_in_hardened_mode",
+          "action": "rewrite_flags_to_rtld_now_then_call_host"
+        },
+        {
+          "symbol": "dlsym",
+          "condition": "null_symbol_or_membrane_deny",
+          "action": "return_null_and_set_thread_local_dlerror"
+        },
+        {
+          "symbol": "dlclose",
+          "condition": "null_handle_or_membrane_deny",
+          "action": "return_minus_one_and_set_thread_local_dlerror"
+        }
+      ]
+    },
+    "replacement_profile": {
+      "status": "forbid_host_fallback",
+      "host_callthrough_allowed": false,
+      "gate_failure_on_unapproved_fallback": true,
+      "required_target_statuses": [
+        "Implemented",
+        "RawSyscall"
+      ],
+      "transition_requirement": "dlfcn_abi must be migrated off host call-through before L2 replacement claims"
+    }
+  },
+  "guard_rails": {
+    "approved_host_calls": {
+      "dlopen": 2,
+      "dlsym": 1,
+      "dlclose": 1
+    },
+    "required_code_anchors": [
+      "if !dlfcn_core::valid_flags(flags) {",
+      "if mode.heals_enabled() {",
+      "let healed_flags = dlfcn_core::RTLD_NOW;",
+      "set_dlerror(dlfcn_core::ERR_INVALID_FLAGS);",
+      "let handle = unsafe { libc::dlopen(filename, healed_flags) };",
+      "let sym = unsafe { libc::dlsym(handle, symbol) };",
+      "let rc = unsafe { libc::dlclose(handle) };"
+    ],
+    "forbidden_code_patterns": [
+      "libc::dlmopen(",
+      "libc::dladdr(",
+      "libc::dlinfo(",
+      "RTLD_LAZY | RTLD_LOCAL"
+    ],
+    "unapproved_fallback_outcome": "gate_failure"
+  },
+  "support_matrix_contract": {
+    "path": "support_matrix.json",
+    "expected_status": "GlibcCallThrough",
+    "strict_semantics": "dlfcn boundary policy: host glibc call-through for dlopen/dlsym/dlclose with thread-local dlerror contract",
+    "hardened_semantics": "dlfcn boundary policy: invalid dlopen flags heal to RTLD_NOW; null/denied loader inputs return deterministic dlerror"
+  },
+  "mode_semantics_contract": {
+    "path": "tests/conformance/mode_semantics_matrix.json",
+    "family": "Loader",
+    "module": "dlfcn_abi",
+    "strict_invalid_flags": "Returns NULL, sets dlerror",
+    "hardened_invalid_flags": "Heals to RTLD_NOW"
+  },
+  "docs_contract": {
+    "README.md": [
+      "### dlfcn Boundary Policy",
+      "Interpose (`L0/L1`): `dlopen`, `dlsym`, and `dlclose` may call host glibc; `dlerror` remains thread-local state in FrankenLibC.",
+      "Hardened invalid `dlopen` flags heal to `RTLD_NOW` before host dispatch.",
+      "Replacement (`L2/L3`) forbids host dlfcn fallback paths; any residual call-through is a release-blocking gate failure."
+    ],
+    "FEATURE_PARITY.md": [
+      "dlfcn boundary policy: interpose allows host call-through for `dlopen`/`dlsym`/`dlclose`, hardened invalid-flags repair is `RTLD_NOW`, replacement forbids host fallback"
+    ]
+  },
+  "structured_log_required_fields": [
+    "timestamp",
+    "trace_id",
+    "level",
+    "event",
+    "bead_id",
+    "stream",
+    "gate",
+    "mode",
+    "api_family",
+    "symbol",
+    "outcome",
+    "errno",
+    "latency_ns",
+    "artifact_refs"
+  ],
+  "summary": {
+    "symbol_count": 4,
+    "approved_host_call_sites": 4,
+    "approved_fallback_paths": 3,
+    "docs_marker_count": 5
+  }
+}

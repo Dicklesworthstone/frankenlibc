@@ -1,0 +1,60 @@
+{
+  "schema_version": "v1",
+  "bead": "bd-2mwc",
+  "generated_at": "2026-02-13T09:11:00Z",
+  "description": "Strict+hardened mode-pair failure classification matrix for hard-parts cross-boundary E2E catalog scenarios.",
+  "sources": {
+    "catalog": "tests/conformance/hard_parts_e2e_catalog.v1.json",
+    "mode_pair_report": "target/e2e_suite/<run>/mode_pair_report.json",
+    "flake_quarantine_report": "target/e2e_suite/<run>/flake_quarantine_report.json"
+  },
+  "classification_order": [
+    "quarantined_flake",
+    "mode_pair_mismatch",
+    "incomplete_pair",
+    "deterministic_failure",
+    "match"
+  ],
+  "classes": [
+    {
+      "id": "match",
+      "severity": "info",
+      "trigger": "all bound scenarios have mode_pair_result=match and strict/hardened outcomes are pass",
+      "action": "No escalation needed; preserve replay key for regression baselines."
+    },
+    {
+      "id": "deterministic_failure",
+      "severity": "high",
+      "trigger": "mode pair is available and not mismatched, but one or more bound scenarios return non-pass in both modes",
+      "action": "Reproduce with replay key, inspect artifact refs, and file targeted repair bead."
+    },
+    {
+      "id": "mode_pair_mismatch",
+      "severity": "critical",
+      "trigger": "one or more bound scenarios report mode_pair_result=mismatch",
+      "action": "Treat as strict/hardened semantic drift; escalate immediately with trace+pair report links."
+    },
+    {
+      "id": "incomplete_pair",
+      "severity": "medium",
+      "trigger": "missing strict/hardened pair data or mode_pair_result=incomplete for bound scenarios",
+      "action": "Re-run with deterministic seed; check suite interruption, manifest coverage, and mode filter."
+    },
+    {
+      "id": "quarantined_flake",
+      "severity": "medium",
+      "trigger": "one or more bound scenarios appear in flake_quarantine_report quarantined_cases",
+      "action": "Follow quarantine remediation workflow and require two deterministic clean reruns."
+    }
+  ],
+  "required_output_fields": [
+    "catalog_scenario_id",
+    "scenario_title",
+    "subsystems",
+    "classification",
+    "reason",
+    "bound_e2e_scenarios",
+    "mode_pair_breakdown",
+    "artifact_refs"
+  ]
+}

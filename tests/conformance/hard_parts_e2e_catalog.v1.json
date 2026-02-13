@@ -1,0 +1,214 @@
+{
+  "schema_version": "v1",
+  "bead": "bd-2mwc",
+  "generated_at": "2026-02-13T09:10:00Z",
+  "description": "Cross-boundary hard-parts E2E scenario catalog binding startup/threading/resolver/nss/locale/iconv obligations to deterministic strict+hardened mode-pair evidence.",
+  "sources": {
+    "hard_parts_truth_table": "tests/conformance/hard_parts_truth_table.v1.json",
+    "hard_parts_dependency_matrix": "tests/conformance/hard_parts_dependency_matrix.v1.json",
+    "e2e_manifest": "tests/conformance/e2e_scenario_manifest.v1.json",
+    "suite_script": "scripts/e2e_suite.sh"
+  },
+  "deterministic_replay": {
+    "seed_env_key": "FRANKENLIBC_E2E_SEED",
+    "timeout_env_key": "TIMEOUT_SECONDS",
+    "mode_pair": [
+      "strict",
+      "hardened"
+    ],
+    "default_scenario_class": "smoke",
+    "notes": "Uses manifest-vetted smoke probes to keep replay deterministic and low-cost."
+  },
+  "artifact_capture": {
+    "required_run_artifacts": [
+      "trace.jsonl",
+      "mode_pair_report.json",
+      "flake_quarantine_report.json",
+      "scenario_pack_report.json",
+      "artifact_index.json"
+    ],
+    "required_case_artifacts": [
+      "stdout.txt",
+      "stderr.txt"
+    ],
+    "evidence_policy": "Each hard-parts catalog scenario must emit classification rows that include bound scenario ids and artifact refs."
+  },
+  "scenarios": [
+    {
+      "id": "hp.startup_threading_bootstrap",
+      "title": "Startup bootstrap with thread handoff guardrails",
+      "subsystems": [
+        "startup",
+        "threading"
+      ],
+      "dependency_edges": [
+        {
+          "from": "startup",
+          "to": "threading"
+        }
+      ],
+      "e2e_bindings": [
+        "smoke.integration_link",
+        "smoke.coreutils_ls"
+      ],
+      "failure_classes": [
+        "mode_pair_mismatch",
+        "incomplete_pair",
+        "deterministic_failure",
+        "quarantined_flake",
+        "match"
+      ]
+    },
+    {
+      "id": "hp.startup_resolver_secure_mode",
+      "title": "Startup secure-mode propagation into resolver path",
+      "subsystems": [
+        "startup",
+        "resolver"
+      ],
+      "dependency_edges": [
+        {
+          "from": "startup",
+          "to": "resolver"
+        }
+      ],
+      "e2e_bindings": [
+        "smoke.coreutils_env",
+        "smoke.coreutils_cat"
+      ],
+      "failure_classes": [
+        "mode_pair_mismatch",
+        "incomplete_pair",
+        "deterministic_failure",
+        "quarantined_flake",
+        "match"
+      ]
+    },
+    {
+      "id": "hp.resolver_nss_lookup_chain",
+      "title": "Resolver/NSS lookup fallback and cache boundary",
+      "subsystems": [
+        "resolver",
+        "nss",
+        "threading"
+      ],
+      "dependency_edges": [
+        {
+          "from": "resolver",
+          "to": "nss"
+        },
+        {
+          "from": "threading",
+          "to": "nss"
+        }
+      ],
+      "e2e_bindings": [
+        "smoke.coreutils_cat",
+        "smoke.coreutils_env",
+        "smoke.integration_link"
+      ],
+      "failure_classes": [
+        "mode_pair_mismatch",
+        "incomplete_pair",
+        "deterministic_failure",
+        "quarantined_flake",
+        "match"
+      ]
+    },
+    {
+      "id": "hp.locale_iconv_codec_path",
+      "title": "Locale/iconv codeset normalization boundary",
+      "subsystems": [
+        "locale",
+        "iconv"
+      ],
+      "dependency_edges": [
+        {
+          "from": "locale",
+          "to": "iconv"
+        }
+      ],
+      "e2e_bindings": [
+        "smoke.nontrivial_python3",
+        "smoke.coreutils_echo"
+      ],
+      "failure_classes": [
+        "mode_pair_mismatch",
+        "incomplete_pair",
+        "deterministic_failure",
+        "quarantined_flake",
+        "match"
+      ]
+    },
+    {
+      "id": "hp.thread_locale_handoff",
+      "title": "Thread-local locale handoff with startup defaults",
+      "subsystems": [
+        "threading",
+        "locale",
+        "startup"
+      ],
+      "dependency_edges": [
+        {
+          "from": "threading",
+          "to": "locale"
+        },
+        {
+          "from": "startup",
+          "to": "locale"
+        }
+      ],
+      "e2e_bindings": [
+        "smoke.integration_link",
+        "smoke.coreutils_env"
+      ],
+      "failure_classes": [
+        "mode_pair_mismatch",
+        "incomplete_pair",
+        "deterministic_failure",
+        "quarantined_flake",
+        "match"
+      ]
+    },
+    {
+      "id": "hp.iconv_resolver_normalization",
+      "title": "Encoding/normalization handoff from iconv to resolver",
+      "subsystems": [
+        "iconv",
+        "resolver"
+      ],
+      "dependency_edges": [
+        {
+          "from": "iconv",
+          "to": "resolver"
+        },
+        {
+          "from": "startup",
+          "to": "resolver"
+        }
+      ],
+      "e2e_bindings": [
+        "smoke.nontrivial_python3",
+        "smoke.coreutils_env"
+      ],
+      "failure_classes": [
+        "mode_pair_mismatch",
+        "incomplete_pair",
+        "deterministic_failure",
+        "quarantined_flake",
+        "match"
+      ]
+    }
+  ],
+  "summary": {
+    "scenario_count": 6,
+    "required_subsystems": [
+      "startup",
+      "threading",
+      "resolver",
+      "nss",
+      "locale",
+      "iconv"
+    ]
+  }
+}

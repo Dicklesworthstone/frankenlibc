@@ -1,0 +1,151 @@
+{
+  "schema_version": "v1",
+  "bead": "bd-5fw.5",
+  "description": "Branch-diversity constraints for math obligation sets per milestone. Enforces that milestones use diverse math families, not monoculture.",
+  "math_families": {
+    "conformal_statistics": {
+      "description": "Conformal prediction, split conformal risk control, finite-sample coverage",
+      "modules": ["conformal", "risk", "pac_bayes", "rademacher_complexity"],
+      "required_for": "all_milestones"
+    },
+    "algebraic_topology": {
+      "description": "Homology, cohomology, spectral sequences, nerve complexes, persistent homology",
+      "modules": ["cohomology", "nerve_complex", "persistence", "serre_spectral", "obstruction_detector"],
+      "required_for": "all_milestones"
+    },
+    "abstract_algebra": {
+      "description": "Group actions, representation theory, Gröbner bases, Clifford algebras",
+      "modules": ["grobner_normalizer", "clifford", "equivariant", "derived_tstructure"],
+      "required_for": "all_milestones"
+    },
+    "grothendieck_serre": {
+      "description": "Topos theory, descent, stackification, sheaf methods, K-theory",
+      "modules": ["grothendieck_glue", "higher_topos", "ktheory", "microlocal"],
+      "required_for": "all_milestones"
+    },
+    "decision_theory": {
+      "description": "Loss minimization, POMDP, bandit routing, Bayesian methods",
+      "modules": ["loss_minimizer", "pomdp_repair", "bandit", "control", "barrier"]
+    },
+    "concentration_bounds": {
+      "description": "Martingale inequalities, Azuma-Hoeffding, coupling, large deviations",
+      "modules": ["azuma_hoeffding", "coupling", "large_deviations", "borel_cantelli"]
+    },
+    "information_theory": {
+      "description": "Entropy, mutual information, provenance, transfer entropy",
+      "modules": ["provenance_info", "transfer_entropy", "entropy_rate", "fano_bound", "lempel_ziv"]
+    },
+    "optimal_transport": {
+      "description": "Wasserstein, Schrödinger bridge, CVaR",
+      "modules": ["wasserstein_drift", "schrodinger_bridge", "cvar"]
+    },
+    "stochastic_processes": {
+      "description": "E-processes, change-point, renewal, Ornstein-Uhlenbeck",
+      "modules": ["eprocess", "changepoint", "renewal_theory", "ornstein_uhlenbeck"]
+    },
+    "spectral_methods": {
+      "description": "Random matrix theory, spectral gap, Lyapunov exponents, operator norms",
+      "modules": ["spectral_monitor", "spectral_gap", "lyapunov_stability", "operator_norm"]
+    },
+    "polynomial_optimization": {
+      "description": "Sum-of-squares, ADMM, barrier certificates",
+      "modules": ["sos_barrier", "sos_invariant", "admm_budget"]
+    },
+    "atiyah_singer_ktheory": {
+      "description": "Families index, K-theory transport, Atiyah-Bott localization",
+      "modules": ["ktheory", "atiyah_bott", "localization_chooser"],
+      "required_for": "simd_abi_milestones"
+    },
+    "clifford_geometric": {
+      "description": "Clifford algebra, Spin/Pin groups, geometric algebra",
+      "modules": ["clifford"],
+      "required_for": "simd_abi_milestones"
+    }
+  },
+  "milestones": [
+    {
+      "id": "allocator",
+      "name": "Allocator Safety",
+      "type": "core_subsystem",
+      "description": "malloc/free/realloc temporal and provenance safety",
+      "is_simd_abi": false
+    },
+    {
+      "id": "threading",
+      "name": "Threading & Synchronization",
+      "type": "core_subsystem",
+      "description": "pthread/futex/TLS concurrency correctness",
+      "is_simd_abi": false
+    },
+    {
+      "id": "stdio",
+      "name": "stdio/Parser Safety",
+      "type": "core_subsystem",
+      "description": "printf/scanf/FILE stream processing",
+      "is_simd_abi": false
+    },
+    {
+      "id": "string_mem",
+      "name": "String/Memory Kernels",
+      "type": "core_subsystem",
+      "description": "memcpy/strcpy/memmove hot paths",
+      "is_simd_abi": true
+    },
+    {
+      "id": "loader",
+      "name": "ELF Loader/Symbol Resolution",
+      "type": "core_subsystem",
+      "description": "dl*/IFUNC/symbol versioning",
+      "is_simd_abi": true
+    },
+    {
+      "id": "abi_compat",
+      "name": "ABI Compatibility Bridge",
+      "type": "core_subsystem",
+      "description": "time64/layout/version bridges",
+      "is_simd_abi": true
+    },
+    {
+      "id": "replacement_l1",
+      "name": "L1 Hardened Interpose",
+      "type": "replacement_level",
+      "description": "Hardened mode interposition for priority families",
+      "is_simd_abi": false
+    },
+    {
+      "id": "replacement_l2",
+      "name": "L2 Partial Replace",
+      "type": "replacement_level",
+      "description": "Standalone replacement for tested families",
+      "is_simd_abi": false
+    },
+    {
+      "id": "replacement_l3",
+      "name": "L3 Full Replace",
+      "type": "replacement_level",
+      "description": "Full glibc-compatible replacement",
+      "is_simd_abi": true
+    },
+    {
+      "id": "runtime_math",
+      "name": "Runtime Math Admission",
+      "type": "runtime_math",
+      "description": "Production admission for math modules",
+      "is_simd_abi": false
+    }
+  ],
+  "constraints": {
+    "min_distinct_families": 3,
+    "max_family_dominance_pct": 40,
+    "required_families_all": [
+      "conformal_statistics",
+      "algebraic_topology",
+      "abstract_algebra",
+      "grothendieck_serre"
+    ],
+    "required_families_simd_abi": [
+      "atiyah_singer_ktheory",
+      "clifford_geometric"
+    ]
+  }
+}

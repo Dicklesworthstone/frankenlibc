@@ -1,0 +1,130 @@
+{
+  "schema_version": "v1",
+  "bead": "bd-1p5v",
+  "description": "Temporary, auditable waivers for known high/critical stub-TODO debt while active closure beads are in flight.",
+  "policy": {
+    "forbidden_without_waiver": {
+      "source_debt_scopes": [
+        "critical_non_exported_debt",
+        "exported_shadow_debt"
+      ],
+      "risk_tiers": [
+        "critical",
+        "high"
+      ],
+      "matrix_statuses": [
+        "Stub"
+      ]
+    },
+    "waiver_requirements": [
+      "symbol",
+      "scope",
+      "risk_tier",
+      "reason",
+      "owner_bead",
+      "approved_by",
+      "expires_utc"
+    ],
+    "expiry_policy": "Waivers are temporary. Expired or stale waivers fail the guard.",
+    "default_decision": "deny"
+  },
+  "waivers": [
+    {
+      "symbol": "pthread_getspecific",
+      "scope": "critical_non_exported_debt",
+      "risk_tier": "critical",
+      "reason": "TLS key/value semantics are tracked in pthread TLS closure beads; temporary waiver while lifecycle core converges.",
+      "owner_bead": "bd-1gh",
+      "approved_by": "maintainer",
+      "expires_utc": "2026-06-30T00:00:00Z"
+    },
+    {
+      "symbol": "pthread_key_create",
+      "scope": "critical_non_exported_debt",
+      "risk_tier": "critical",
+      "reason": "TLS key registry design is staged behind pthread closure track.",
+      "owner_bead": "bd-1gh",
+      "approved_by": "maintainer",
+      "expires_utc": "2026-06-30T00:00:00Z"
+    },
+    {
+      "symbol": "pthread_key_delete",
+      "scope": "critical_non_exported_debt",
+      "risk_tier": "critical",
+      "reason": "Key lifecycle semantics remain pending until registry + destructor rules are finalized.",
+      "owner_bead": "bd-1gh",
+      "approved_by": "maintainer",
+      "expires_utc": "2026-06-30T00:00:00Z"
+    },
+    {
+      "symbol": "pthread_setspecific",
+      "scope": "critical_non_exported_debt",
+      "risk_tier": "critical",
+      "reason": "TLS value mutation semantics are pending pthread TLS closure wave.",
+      "owner_bead": "bd-1gh",
+      "approved_by": "maintainer",
+      "expires_utc": "2026-06-30T00:00:00Z"
+    },
+    {
+      "symbol": "longjmp",
+      "scope": "critical_non_exported_debt",
+      "risk_tier": "critical",
+      "reason": "setjmp/longjmp hardening and ABI semantics are tracked in setjmp implementation beads.",
+      "owner_bead": "bd-2ry",
+      "approved_by": "maintainer",
+      "expires_utc": "2026-06-30T00:00:00Z"
+    },
+    {
+      "symbol": "setjmp",
+      "scope": "critical_non_exported_debt",
+      "risk_tier": "critical",
+      "reason": "setjmp context capture remains intentionally deferred pending unsafe-boundary implementation plan.",
+      "owner_bead": "bd-2ry",
+      "approved_by": "maintainer",
+      "expires_utc": "2026-06-30T00:00:00Z"
+    },
+    {
+      "symbol": "tcgetattr",
+      "scope": "exported_shadow_debt",
+      "risk_tier": "high",
+      "reason": "termios core syscall-backed implementation not yet landed; call-through/placeholder debt is explicitly tracked.",
+      "owner_bead": "bd-2vv",
+      "approved_by": "maintainer",
+      "expires_utc": "2026-06-30T00:00:00Z"
+    },
+    {
+      "symbol": "tcsetattr",
+      "scope": "exported_shadow_debt",
+      "risk_tier": "high",
+      "reason": "termios write-path semantics remain pending closure and conformance fixtures.",
+      "owner_bead": "bd-2vv",
+      "approved_by": "maintainer",
+      "expires_utc": "2026-06-30T00:00:00Z"
+    },
+    {
+      "symbol": "rand",
+      "scope": "critical_non_exported_debt",
+      "risk_tier": "high",
+      "reason": "stdlib random placeholder retained until deterministic/random contract wave is scoped.",
+      "owner_bead": "bd-2vv",
+      "approved_by": "maintainer",
+      "expires_utc": "2026-06-30T00:00:00Z"
+    },
+    {
+      "symbol": "srand",
+      "scope": "critical_non_exported_debt",
+      "risk_tier": "high",
+      "reason": "stdlib seeding semantics closure is pending same wave as rand implementation.",
+      "owner_bead": "bd-2vv",
+      "approved_by": "maintainer",
+      "expires_utc": "2026-06-30T00:00:00Z"
+    }
+  ],
+  "matrix_waivers": [],
+  "summary": {
+    "waiver_count": 10,
+    "critical_waiver_count": 6,
+    "high_waiver_count": 4,
+    "matrix_waiver_count": 0
+  }
+}

@@ -1,0 +1,81 @@
+{
+  "schema_version": "v1",
+  "bead": "bd-27kh",
+  "description": "Deterministic fixture suite for replacement-profile zero-unapproved-callthrough policy across all GlibcCallThrough families.",
+  "source_of_truth": {
+    "support_matrix": "support_matrix.json",
+    "replacement_profile": "tests/conformance/replacement_profile.json",
+    "guard_script": "scripts/check_replacement_guard.sh"
+  },
+  "fixtures": [
+    {
+      "id": "interpose_allow_stdio_fopen",
+      "mode": "interpose",
+      "module": "stdio_abi",
+      "symbol": "fopen",
+      "expected_outcome": "allowed",
+      "evidence_source": "support_matrix"
+    },
+    {
+      "id": "interpose_allow_pthread_create",
+      "mode": "interpose",
+      "module": "pthread_abi",
+      "symbol": "pthread_create",
+      "expected_outcome": "allowed",
+      "evidence_source": "source_scan"
+    },
+    {
+      "id": "interpose_allow_dlfcn_dlopen",
+      "mode": "interpose",
+      "module": "dlfcn_abi",
+      "symbol": "dlopen",
+      "expected_outcome": "allowed",
+      "evidence_source": "source_scan"
+    },
+    {
+      "id": "replacement_forbid_stdio_printf",
+      "mode": "replacement",
+      "module": "stdio_abi",
+      "symbol": "printf",
+      "expected_outcome": "forbidden",
+      "evidence_source": "support_matrix"
+    },
+    {
+      "id": "replacement_forbid_pthread_join",
+      "mode": "replacement",
+      "module": "pthread_abi",
+      "symbol": "pthread_join",
+      "expected_outcome": "forbidden",
+      "evidence_source": "support_matrix"
+    },
+    {
+      "id": "replacement_forbid_dlfcn_dlsym",
+      "mode": "replacement",
+      "module": "dlfcn_abi",
+      "symbol": "dlsym",
+      "expected_outcome": "forbidden",
+      "evidence_source": "support_matrix"
+    }
+  ],
+  "required_log_fields": [
+    "trace_id",
+    "mode",
+    "gate_name",
+    "module",
+    "line",
+    "symbol",
+    "status",
+    "reason",
+    "artifact_ref"
+  ],
+  "summary": {
+    "fixture_count": 6,
+    "interpose_allowed_count": 3,
+    "replacement_forbidden_count": 3,
+    "covered_callthrough_modules": [
+      "stdio_abi",
+      "pthread_abi",
+      "dlfcn_abi"
+    ]
+  }
+}

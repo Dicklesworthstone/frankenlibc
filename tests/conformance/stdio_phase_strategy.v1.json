@@ -1,0 +1,161 @@
+{
+  "schema_version": "v1",
+  "bead": "bd-24ug",
+  "description": "Deterministic phased strategy for eliminating stdio_abi host callthrough in replacement-relevant paths.",
+  "generated_from": {
+    "support_matrix": "support_matrix.json",
+    "callthrough_census": "tests/conformance/callthrough_census.v1.json",
+    "generated_utc": "2026-02-13T09:06:00Z"
+  },
+  "phase_split": {
+    "phase1_required": {
+      "description": "Bootstrap-safe stdio handle/state operations prioritized for first replacement tranche.",
+      "target_status": "Implemented",
+      "symbols": [
+        "clearerr",
+        "feof",
+        "ferror",
+        "fflush",
+        "fgetc",
+        "fileno",
+        "fputc",
+        "getchar",
+        "putchar",
+        "rewind",
+        "stderr",
+        "stdin",
+        "stdout",
+        "ungetc"
+      ]
+    },
+    "deferred_surface": {
+      "description": "Higher-behavioral-complexity stdio surface deferred behind parity and fixture gates.",
+      "symbols": [
+        "fclose",
+        "fgets",
+        "fopen",
+        "fprintf",
+        "fputs",
+        "fread",
+        "fseek",
+        "ftell",
+        "fwrite",
+        "perror",
+        "printf",
+        "puts",
+        "setbuf",
+        "setvbuf",
+        "snprintf",
+        "sprintf"
+      ]
+    }
+  },
+  "migration_plan": {
+    "strategy_version": 1,
+    "invariants": [
+      "phase split is a strict partition of stdio_abi GlibcCallThrough symbols",
+      "phase ordering is deterministic and strictly increasing",
+      "phase-1 required subset remains non-empty and gate-enforced"
+    ],
+    "phases": [
+      {
+        "phase": 1,
+        "phase_id": "state-and-handle-primitives",
+        "validation_profile": "Fast",
+        "mode_scope": [
+          "strict",
+          "hardened"
+        ],
+        "symbols": [
+          "clearerr",
+          "feof",
+          "ferror",
+          "fflush",
+          "fgetc",
+          "fileno",
+          "fputc",
+          "getchar",
+          "putchar",
+          "rewind",
+          "stderr",
+          "stdin",
+          "stdout",
+          "ungetc"
+        ],
+        "entry_gates": [
+          "scripts/check_stdio_phase_strategy.sh"
+        ],
+        "completion_criteria": [
+          "phase-1 symbol list matches support_matrix-derived stdio callthrough partition",
+          "strict and hardened logs include deterministic phase-plan evidence"
+        ]
+      },
+      {
+        "phase": 2,
+        "phase_id": "unformatted-stream-io",
+        "validation_profile": "Full",
+        "mode_scope": [
+          "strict",
+          "hardened"
+        ],
+        "symbols": [
+          "fclose",
+          "fgets",
+          "fopen",
+          "fputs",
+          "fread",
+          "fseek",
+          "ftell",
+          "fwrite",
+          "setbuf",
+          "setvbuf"
+        ],
+        "entry_gates": [
+          "scripts/check_stdio_phase_strategy.sh"
+        ],
+        "completion_criteria": [
+          "stream open/close/read/write state transitions are fixture-backed",
+          "deferred-surface list remains a strict complement of phase-1 symbols"
+        ]
+      },
+      {
+        "phase": 3,
+        "phase_id": "formatted-and-diagnostics",
+        "validation_profile": "Full",
+        "mode_scope": [
+          "strict",
+          "hardened"
+        ],
+        "symbols": [
+          "fprintf",
+          "perror",
+          "printf",
+          "puts",
+          "snprintf",
+          "sprintf"
+        ],
+        "entry_gates": [
+          "scripts/check_stdio_phase_strategy.sh"
+        ],
+        "completion_criteria": [
+          "formatting and diagnostic symbols have deterministic parity fixtures",
+          "no symbol remains outside the declared phase partition"
+        ]
+      }
+    ]
+  },
+  "parity_checks": {
+    "required_gate": "scripts/check_stdio_phase_strategy.sh",
+    "required_test": "cargo test -p frankenlibc-harness --test stdio_phase_strategy_test",
+    "required_logs": [
+      "target/conformance/stdio_phase_strategy.log.jsonl",
+      "tests/cve_arena/results/bd-24ug/trace.jsonl"
+    ]
+  },
+  "summary": {
+    "total_stdio_callthrough_symbols": 30,
+    "phase_count": 3,
+    "phase1_required_count": 14,
+    "deferred_count": 16
+  }
+}

@@ -1,0 +1,212 @@
+{
+  "schema_version": "v1",
+  "bead": "bd-5fw.4",
+  "description": "Proof obligations binder: maps operational theorems to evidence artifacts and enforcing gates.",
+  "obligations": [
+    {
+      "id": "PO-01",
+      "statement": "Strict Refinement Theorem: strict mode matches reference glibc on defined inputs.",
+      "scope": {"modes": ["strict"], "families": ["all"], "input_domain": "POSIX-defined"},
+      "evidence_artifacts": ["tests/conformance/golden/fixture_verify_strict_hardened.v1.json"],
+      "gates": ["scripts/conformance_golden_gate.sh"],
+      "join_keys": ["mode=strict", "gate=conformance_golden"],
+      "category": "core_safety"
+    },
+    {
+      "id": "PO-02",
+      "statement": "Hardened Safety Theorem: hardened mode preserves safe-state invariants or denies with defined error behavior.",
+      "scope": {"modes": ["hardened"], "families": ["all"], "input_domain": "POSIX-defined + adversarial"},
+      "evidence_artifacts": ["tests/conformance/golden/fixture_verify_strict_hardened.v1.json"],
+      "gates": ["scripts/conformance_golden_gate.sh"],
+      "join_keys": ["mode=hardened", "gate=conformance_golden"],
+      "category": "core_safety"
+    },
+    {
+      "id": "PO-03",
+      "statement": "Deterministic Replay Theorem: same (mode, inputs, env snapshot) produces identical decisions and evidence.",
+      "scope": {"modes": ["strict", "hardened"], "families": ["all"]},
+      "evidence_artifacts": ["tests/conformance/golden/fixture_verify_strict_hardened.v1.suite.json"],
+      "gates": ["scripts/check_e2e_suite.sh"],
+      "join_keys": ["gate=e2e_suite", "determinism=required"],
+      "category": "determinism"
+    },
+    {
+      "id": "PO-04",
+      "statement": "Non-Regression Sequential Guarantee: anytime-valid monitors maintain bounded false alarm rates under continuous testing.",
+      "scope": {"modes": ["strict", "hardened"]},
+      "evidence_artifacts": ["tests/runtime_math/runtime_math_linkage.v1.json"],
+      "gates": ["scripts/check_anytime_valid_monitor.sh"],
+      "join_keys": ["gate=anytime_valid_monitor"],
+      "category": "statistical_guarantee"
+    },
+    {
+      "id": "PO-05",
+      "statement": "CPOMDP Safety Feasibility Guarantee: repair controller never emits inadmissible action.",
+      "scope": {"modes": ["hardened"], "families": ["malloc", "string", "stdio"]},
+      "evidence_artifacts": ["tests/runtime_math/runtime_math_linkage.v1.json"],
+      "gates": ["scripts/check_runtime_math_manifest.sh"],
+      "join_keys": ["gate=runtime_math_manifest", "module=pomdp_repair"],
+      "category": "controller_safety"
+    },
+    {
+      "id": "PO-06",
+      "statement": "Superoptimization Soundness Guarantee: every accepted hot-kernel rewrite has stored equivalence certificate.",
+      "scope": {"families": ["string", "math"]},
+      "evidence_artifacts": ["tests/conformance/optimization_proof_ledger.v1.json"],
+      "gates": ["scripts/check_optimization_proof_ledger.sh"],
+      "join_keys": ["gate=optimization_proof_ledger"],
+      "category": "optimization_proof"
+    },
+    {
+      "id": "PO-07",
+      "statement": "Barrier Invariance Theorem: safe set forward-invariant under admitted actions.",
+      "scope": {"modes": ["hardened"]},
+      "evidence_artifacts": ["tests/runtime_math/runtime_math_linkage.v1.json"],
+      "gates": ["scripts/check_runtime_math_manifest.sh"],
+      "join_keys": ["gate=runtime_math_manifest", "module=barrier"],
+      "category": "controller_safety"
+    },
+    {
+      "id": "PO-08",
+      "statement": "Robustness Radius Theorem: policy stays within safety/latency budgets inside declared ambiguity set.",
+      "scope": {"modes": ["hardened"]},
+      "evidence_artifacts": ["tests/runtime_math/runtime_math_linkage.v1.json"],
+      "gates": ["scripts/check_runtime_math_manifest.sh"],
+      "join_keys": ["gate=runtime_math_manifest", "module=cvar"],
+      "category": "robustness"
+    },
+    {
+      "id": "PO-09",
+      "statement": "Concurrent Linearizability Theorem: metadata ops linearizable under stated memory model assumptions.",
+      "scope": {"families": ["pthread", "malloc"]},
+      "evidence_artifacts": ["tests/conformance/golden/fixture_verify_strict_hardened.v1.json"],
+      "gates": ["scripts/check_c_fixture_suite.sh"],
+      "join_keys": ["gate=c_fixture_suite", "family=pthread"],
+      "category": "concurrency"
+    },
+    {
+      "id": "PO-10",
+      "statement": "HJI Viability Theorem: runtime remains in computed viability kernel under adversary model.",
+      "scope": {"modes": ["hardened"]},
+      "evidence_artifacts": ["tests/runtime_math/runtime_math_linkage.v1.json"],
+      "gates": ["scripts/check_runtime_math_manifest.sh"],
+      "join_keys": ["gate=runtime_math_manifest", "module=hji_reachability"],
+      "category": "controller_safety"
+    },
+    {
+      "id": "PO-11",
+      "statement": "Sheaf Global-Consistency Theorem: declared inconsistency classes detected by overlap/cohomology diagnostics.",
+      "scope": {"families": ["resolv", "locale"]},
+      "evidence_artifacts": ["tests/runtime_math/runtime_math_linkage.v1.json"],
+      "gates": ["scripts/check_runtime_math_manifest.sh"],
+      "join_keys": ["gate=runtime_math_manifest", "module=cohomology"],
+      "category": "consistency"
+    },
+    {
+      "id": "PO-12",
+      "statement": "Interaction-Coverage Lower-Bound Guarantee: campaign achieves declared t-wise coverage.",
+      "scope": {"families": ["all"]},
+      "evidence_artifacts": ["tests/conformance/verification_matrix.json"],
+      "gates": ["scripts/check_snapshot_coverage.sh"],
+      "join_keys": ["gate=snapshot_coverage"],
+      "category": "coverage"
+    },
+    {
+      "id": "PO-13",
+      "statement": "Coupled-Divergence Bound: strict vs hardened divergence bounded on declared domains.",
+      "scope": {"modes": ["strict", "hardened"]},
+      "evidence_artifacts": ["tests/runtime_math/runtime_math_divergence_bounds.v1.json"],
+      "gates": ["scripts/check_runtime_math_divergence_bounds.sh"],
+      "join_keys": ["gate=divergence_bounds"],
+      "category": "mode_semantics"
+    },
+    {
+      "id": "PO-14",
+      "statement": "Mean-Field Equilibrium Stability Theorem: controller parameters converge under workload classes.",
+      "scope": {"modes": ["hardened"]},
+      "evidence_artifacts": ["tests/runtime_math/runtime_math_linkage.v1.json"],
+      "gates": ["scripts/check_runtime_math_manifest.sh"],
+      "join_keys": ["gate=runtime_math_manifest", "module=mean_field_game"],
+      "category": "controller_safety"
+    },
+    {
+      "id": "PO-15",
+      "statement": "SOS Certificate Soundness Theorem: synthesized polynomial certs imply invariants.",
+      "scope": {"modes": ["hardened"]},
+      "evidence_artifacts": ["tests/runtime_math/runtime_math_linkage.v1.json"],
+      "gates": ["scripts/check_runtime_math_manifest.sh"],
+      "join_keys": ["gate=runtime_math_manifest", "module=sos_invariant"],
+      "category": "formal_verification"
+    },
+    {
+      "id": "PO-16",
+      "statement": "Large-Deviation Risk Bound: catastrophic event probabilities below thresholds.",
+      "scope": {"modes": ["strict", "hardened"]},
+      "evidence_artifacts": ["tests/runtime_math/runtime_math_linkage.v1.json"],
+      "gates": ["scripts/check_runtime_math_manifest.sh"],
+      "join_keys": ["gate=runtime_math_manifest", "module=large_deviations"],
+      "category": "statistical_guarantee"
+    },
+    {
+      "id": "PO-17",
+      "statement": "Tropical Latency Composition Bound: end-to-end worst-case bound preserved under composition.",
+      "scope": {"families": ["all"]},
+      "evidence_artifacts": ["tests/runtime_math/runtime_math_linkage.v1.json"],
+      "gates": ["scripts/check_perf_budget.sh"],
+      "join_keys": ["gate=perf_budget"],
+      "category": "performance"
+    },
+    {
+      "id": "PO-18",
+      "statement": "Branch-Diversity Guarantee: each major milestone uses at least 3 distinct math families with required category coverage.",
+      "scope": {"families": ["all"]},
+      "evidence_artifacts": ["tests/conformance/branch_diversity_spec.v1.json"],
+      "gates": ["scripts/check_branch_diversity.sh"],
+      "join_keys": ["gate=branch_diversity"],
+      "category": "governance"
+    },
+    {
+      "id": "PO-19",
+      "statement": "Math Governance Classification: each module classified as production_core, production_monitor, or research.",
+      "scope": {"families": ["runtime_math"]},
+      "evidence_artifacts": ["tests/conformance/math_governance.json"],
+      "gates": ["scripts/check_math_governance.sh"],
+      "join_keys": ["gate=math_governance"],
+      "category": "governance"
+    },
+    {
+      "id": "PO-20",
+      "statement": "Release Gate Qualification: tier1/top20/top100 gate thresholds met for ecosystem validation.",
+      "scope": {"families": ["all"]},
+      "evidence_artifacts": ["configs/gentoo/release-gates.json"],
+      "gates": ["scripts/check_release_gate.sh"],
+      "join_keys": ["gate=release_gate"],
+      "category": "release"
+    },
+    {
+      "id": "PO-21",
+      "statement": "Primal-Dual Convergence Guarantee: online constrained updates converge or safely roll back.",
+      "scope": {"modes": ["hardened"]},
+      "evidence_artifacts": ["tests/runtime_math/runtime_math_linkage.v1.json"],
+      "gates": ["scripts/check_runtime_math_manifest.sh"],
+      "join_keys": ["gate=runtime_math_manifest", "module=control"],
+      "category": "controller_safety"
+    }
+  ],
+  "categories": {
+    "core_safety": "Fundamental safety theorems (refinement, preservation)",
+    "determinism": "Deterministic replay and reproducibility guarantees",
+    "statistical_guarantee": "Statistical bounds and sequential testing guarantees",
+    "controller_safety": "Runtime controller admissibility and stability",
+    "optimization_proof": "Superoptimization equivalence proofs",
+    "robustness": "Distributional robustness and ambiguity set guarantees",
+    "concurrency": "Linearizability and thread-safety proofs",
+    "consistency": "Global metadata consistency detection",
+    "coverage": "Testing and interaction coverage bounds",
+    "mode_semantics": "Strict vs hardened semantic relationships",
+    "formal_verification": "SOS/SMT-backed formal proofs",
+    "performance": "Latency and overhead composition bounds",
+    "governance": "Math governance and diversity constraints",
+    "release": "Release gate qualification criteria"
+  }
+}

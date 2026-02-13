@@ -1,0 +1,49 @@
+{
+  "schema_version": "v1",
+  "bead": "bd-2icq.17",
+  "description": "Release gate thresholds for Gentoo ecosystem validation.",
+  "gates": {
+    "tier1": {
+      "name": "Tier 1 Core Infrastructure",
+      "required_for": "all releases",
+      "package_source": "tier1-core-infrastructure",
+      "package_count": 20,
+      "thresholds": {
+        "build_success_rate_pct": 100,
+        "test_pass_rate_pct": 95,
+        "max_new_regressions": 0,
+        "max_overhead_pct": 15
+      }
+    },
+    "top20": {
+      "name": "Top 20 Security Critical",
+      "required_for": "minor releases",
+      "package_source": "tier2-security-critical",
+      "package_count": 20,
+      "thresholds": {
+        "build_success_rate_pct": 95,
+        "test_pass_rate_pct": 90,
+        "max_new_regressions": 2,
+        "max_overhead_pct": 12
+      }
+    },
+    "top100": {
+      "name": "Top 100 Full Ecosystem",
+      "required_for": "major releases",
+      "package_source": "all tiers",
+      "package_count": 100,
+      "thresholds": {
+        "build_success_rate_pct": 90,
+        "test_pass_rate_pct": 85,
+        "max_new_regressions": 5,
+        "max_overhead_pct": 10
+      }
+    }
+  },
+  "override_policy": {
+    "requires_approvals": 2,
+    "followup_validation_days": 7,
+    "must_document_justification": true,
+    "must_create_tracking_issues": true
+  }
+}

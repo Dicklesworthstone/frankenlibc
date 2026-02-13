@@ -1,0 +1,60 @@
+{
+  "schema_version": "v1",
+  "bead": "bd-1f35",
+  "generated_at": "2026-02-13T09:18:00Z",
+  "description": "Deterministic pthread create/join/detach stress scenario catalog for strict+hardened verification.",
+  "replay_controls": {
+    "seed_env_key": "FRANKENLIBC_THREAD_STRESS_SEED",
+    "timeout_env_key": "TIMEOUT_SECONDS",
+    "fanout_iters_env_key": "FLC_BD1F35_FANOUT_ITERS",
+    "detach_join_iters_env_key": "FLC_BD1F35_DETACH_JOIN_ITERS",
+    "default_seed": "4242",
+    "default_timeout_seconds": 90
+  },
+  "scenarios": [
+    {
+      "id": "fanout_fanin_single",
+      "description": "Single create/join fan-out/fan-in lifecycle contract.",
+      "op_counts": {
+        "create": 1,
+        "join": 1,
+        "detach": 0
+      },
+      "command": "cargo test -p frankenlibc-abi --test pthread_thread_lifecycle_test pthread_equal_reflexive_and_distinct_threads_not_equal -- --exact --nocapture --test-threads=1"
+    },
+    {
+      "id": "create_join_churn",
+      "description": "Deterministic repeated create/join churn loop.",
+      "op_counts": {
+        "create": "$FLC_BD1F35_FANOUT_ITERS",
+        "join": "$FLC_BD1F35_FANOUT_ITERS",
+        "detach": 0
+      },
+      "command": "for i in $(seq 1 ${FLC_BD1F35_FANOUT_ITERS}); do cargo test -p frankenlibc-abi --test pthread_thread_lifecycle_test pthread_equal_reflexive_and_distinct_threads_not_equal -- --exact --nocapture --test-threads=1 >/dev/null; done"
+    },
+    {
+      "id": "mixed_detach_join",
+      "description": "Mixed detach/join lifecycle churn sequence with ESRCH edge checks.",
+      "op_counts": {
+        "create": "$FLC_BD1F35_DETACH_JOIN_ITERS",
+        "join": "$FLC_BD1F35_DETACH_JOIN_ITERS",
+        "detach": "$FLC_BD1F35_DETACH_JOIN_ITERS"
+      },
+      "command": "for i in $(seq 1 ${FLC_BD1F35_DETACH_JOIN_ITERS}); do cargo test -p frankenlibc-abi --test pthread_thread_lifecycle_test pthread_detach_makes_subsequent_join_fail_with_esrch -- --exact --nocapture --test-threads=1 >/dev/null; cargo test -p frankenlibc-abi --test pthread_thread_lifecycle_test pthread_join_and_detach_unknown_thread_are_esrch -- --exact --nocapture --test-threads=1 >/dev/null; done"
+    },
+    {
+      "id": "c_fixture_pthread_common_adversarial",
+      "description": "C fixture fan-out contention path under LD_PRELOAD.",
+      "op_counts": {
+        "create": 4,
+        "join": 4,
+        "detach": 0
+      },
+      "command": "tests/integration/fixture_pthread.c -> fixture_pthread binary"
+    }
+  ],
+  "summary": {
+    "scenario_count": 4,
+    "mode_count": 2
+  }
+}

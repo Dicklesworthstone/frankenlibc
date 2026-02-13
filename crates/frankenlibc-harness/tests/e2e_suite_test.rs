@@ -140,12 +140,32 @@ fn e2e_suite_runs_and_produces_jsonl() {
                         "{event} must include scenario_id field"
                     );
                     assert!(
+                        obj["scenario_pack"].is_string(),
+                        "{event} must include scenario_pack field"
+                    );
+                    assert!(
                         obj["expected_outcome"].is_string(),
                         "{event} must include expected_outcome field"
                     );
                     assert!(
                         obj["artifact_policy"].is_object(),
                         "{event} must include artifact_policy object"
+                    );
+                    assert!(
+                        obj["retry_count"].is_i64() || obj["retry_count"].is_u64(),
+                        "{event} must include retry_count integer"
+                    );
+                    assert!(
+                        obj["flake_score"].is_number(),
+                        "{event} must include flake_score number"
+                    );
+                    assert!(
+                        obj["artifact_refs"].is_array(),
+                        "{event} must include artifact_refs array"
+                    );
+                    assert!(
+                        obj["verdict"].is_string(),
+                        "{event} must include verdict string"
                     );
                     if event.starts_with("case_") {
                         assert!(
@@ -238,12 +258,20 @@ fn e2e_artifact_index_valid() {
                 "Expected bead_id bd-2ez"
             );
             assert!(idx["run_id"].is_string(), "Expected run_id string");
+            assert!(
+                idx["retention_policy"].is_object(),
+                "Expected retention_policy object"
+            );
             assert!(idx["artifacts"].is_array(), "Expected artifacts array");
 
             let artifacts = idx["artifacts"].as_array().unwrap();
             for art in artifacts {
                 assert!(art["path"].is_string(), "Artifact missing path");
                 assert!(art["kind"].is_string(), "Artifact missing kind");
+                assert!(
+                    art["retention_tier"].is_string(),
+                    "Artifact missing retention_tier"
+                );
                 assert!(art["sha256"].is_string(), "Artifact missing sha256");
             }
         }
@@ -313,6 +341,92 @@ fn e2e_mode_pair_report_valid() {
                 "unexpected mode_pair_result value: {pair_result}"
             );
             assert!(pair["drift_flags"].is_array(), "Pair missing drift_flags");
+        }
+    }
+}
+
+#[test]
+fn e2e_quarantine_and_pack_reports_valid() {
+    let root = workspace_root();
+    let script = root.join("scripts/e2e_suite.sh");
+    let seed = "901";
+    let _ = Command::new("bash")
+        .arg(&script)
+        .arg("fault")
+        .env("TIMEOUT_SECONDS", "1")
+        .env("FRANKENLIBC_E2E_SEED", seed)
+        .env("FRANKENLIBC_E2E_RETRY_MAX", "1")
+        .output()
+        .expect("e2e_suite.sh should execute for quarantine/pack reports");
+
+    let e2e_dir = root.join("target/e2e_suite");
+    if !e2e_dir.exists() {
+        return;
+    }
+
+    let mut runs: Vec<_> = std::fs::read_dir(&e2e_dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            let name = e.file_name().to_string_lossy().to_string();
+            name.starts_with("e2e-") && name.ends_with(&format!("-s{seed}"))
+        })
+        .collect();
+    runs.sort_by_key(|e| e.file_name());
+
+    if let Some(latest) = runs.last() {
+        let quarantine_report = latest.path().join("flake_quarantine_report.json");
+        let pack_report = latest.path().join("scenario_pack_report.json");
+        assert!(
+            quarantine_report.exists(),
+            "flake_quarantine_report.json should exist"
+        );
+        assert!(pack_report.exists(), "scenario_pack_report.json should exist");
+
+        let q: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(&quarantine_report).unwrap(),
+        )
+        .expect("flake_quarantine_report.json should be valid JSON");
+        assert_eq!(
+            q["schema_version"].as_str().unwrap(),
+            "v1",
+            "quarantine report schema version must be v1"
+        );
+        assert!(
+            q["quarantined_cases"].is_array(),
+            "quarantine report must include quarantined_cases array"
+        );
+        assert!(
+            q["remediation_workflow"].is_array(),
+            "quarantine report must include remediation_workflow array"
+        );
+
+        let p: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&pack_report).unwrap())
+                .expect("scenario_pack_report.json should be valid JSON");
+        assert_eq!(
+            p["schema_version"].as_str().unwrap(),
+            "v1",
+            "pack report schema version must be v1"
+        );
+        let packs = p["packs"]
+            .as_array()
+            .expect("scenario pack report must include packs array");
+        assert!(
+            !packs.is_empty(),
+            "scenario pack report must include at least one pack row"
+        );
+        for pack in packs {
+            assert!(
+                pack["scenario_pack"].is_string(),
+                "pack row missing scenario_pack"
+            );
+            assert!(pack["counts"].is_object(), "pack row missing counts");
+            assert!(
+                pack["thresholds"].is_object(),
+                "pack row missing thresholds"
+            );
+            assert!(pack["verdict"].is_string(), "pack row missing verdict");
         }
     }
 }

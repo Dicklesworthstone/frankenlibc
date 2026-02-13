@@ -5,12 +5,15 @@
 //! 2. All ABI modules with libc/host-wrapper call-throughs are in the interpose allowlist.
 //! 3. No pthread call-through exists outside pthread_abi.rs.
 //! 4. The call-through census in the profile matches reality.
-//! 5. The replacement guard script exists and is executable.
+//! 5. Zero-unapproved fixture pack covers all callthrough families in both modes.
+//! 6. replacement guard report/log include symbol->module->path diagnostics.
+//! 7. The replacement guard script exists and is executable.
 //!
 //! Run: cargo test -p frankenlibc-harness --test replacement_guard_test
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 fn workspace_root() -> PathBuf {
     let manifest = env!("CARGO_MANIFEST_DIR");
@@ -26,6 +29,15 @@ fn load_profile() -> serde_json::Value {
     let path = workspace_root().join("tests/conformance/replacement_profile.json");
     let content = std::fs::read_to_string(&path).expect("replacement_profile.json should exist");
     serde_json::from_str(&content).expect("replacement_profile.json should be valid JSON")
+}
+
+fn load_fixture_pack() -> serde_json::Value {
+    let path =
+        workspace_root().join("tests/conformance/replacement_zero_unapproved_fixtures.v1.json");
+    let content = std::fs::read_to_string(&path)
+        .expect("replacement_zero_unapproved_fixtures.v1.json should exist");
+    serde_json::from_str(&content)
+        .expect("replacement_zero_unapproved_fixtures.v1.json should be valid JSON")
 }
 
 /// Extract a libc:: function call name from a line fragment starting at "libc::"
@@ -375,6 +387,31 @@ fn replacement_profile_has_both_modes() {
             "replacement_forbidden.mutex_symbols missing {symbol}"
         );
     }
+
+    let families = profile["callthrough_families"]["modules"]
+        .as_array()
+        .expect("callthrough_families.modules must be an array");
+    let family_set: HashSet<String> = families
+        .iter()
+        .filter_map(|v| v.as_str().map(str::to_string))
+        .collect();
+    let expected_families = HashSet::from([
+        "stdio_abi".to_string(),
+        "pthread_abi".to_string(),
+        "dlfcn_abi".to_string(),
+    ]);
+    assert_eq!(
+        family_set, expected_families,
+        "callthrough_families.modules must track stdio/pthread/dlfcn"
+    );
+
+    let fixture_pack = profile["zero_unapproved_fixture_pack"]["path"]
+        .as_str()
+        .expect("zero_unapproved_fixture_pack.path must be string");
+    assert_eq!(
+        fixture_pack,
+        "tests/conformance/replacement_zero_unapproved_fixtures.v1.json"
+    );
 }
 
 #[test]
@@ -405,4 +442,184 @@ fn raw_syscalls_are_not_flagged() {
         "Expected at least 10 raw syscall sites, found {}",
         syscall_count
     );
+}
+
+#[test]
+fn callthrough_families_match_support_matrix() {
+    let profile = load_profile();
+    let root = workspace_root();
+    let support_path = root.join("support_matrix.json");
+    let support: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(&support_path).expect("support_matrix.json should exist"),
+    )
+    .expect("support_matrix.json should parse");
+
+    let declared_modules: HashSet<String> = profile["callthrough_families"]["modules"]
+        .as_array()
+        .expect("callthrough_families.modules must be array")
+        .iter()
+        .filter_map(|v| v.as_str().map(str::to_string))
+        .collect();
+
+    let matrix_modules: HashSet<String> = support["symbols"]
+        .as_array()
+        .expect("support_matrix symbols must be array")
+        .iter()
+        .filter(|row| row["status"].as_str() == Some("GlibcCallThrough"))
+        .filter_map(|row| row["module"].as_str().map(str::to_string))
+        .collect();
+
+    assert_eq!(
+        declared_modules, matrix_modules,
+        "replacement_profile.callthrough_families.modules must match GlibcCallThrough modules in support_matrix"
+    );
+
+    let allowlist: HashSet<String> = profile["interpose_allowlist"]["modules"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|v| v.as_str().map(str::to_string))
+        .collect();
+    for module in &declared_modules {
+        assert!(
+            allowlist.contains(module),
+            "callthrough family {module} missing from interpose allowlist"
+        );
+    }
+}
+
+#[test]
+fn fixture_pack_covers_all_callthrough_families_in_both_modes() {
+    let profile = load_profile();
+    let fixtures = load_fixture_pack();
+
+    assert_eq!(fixtures["schema_version"].as_str(), Some("v1"));
+    assert_eq!(fixtures["bead"].as_str(), Some("bd-27kh"));
+
+    let fixture_rows = fixtures["fixtures"]
+        .as_array()
+        .expect("fixtures must be an array");
+    assert!(!fixture_rows.is_empty(), "fixtures must not be empty");
+
+    let profile_modules: HashSet<String> = profile["callthrough_families"]["modules"]
+        .as_array()
+        .expect("callthrough_families.modules must be array")
+        .iter()
+        .filter_map(|v| v.as_str().map(str::to_string))
+        .collect();
+
+    let mut mode_counts = HashMap::<String, usize>::new();
+    let mut module_modes = HashMap::<String, HashSet<String>>::new();
+    for row in fixture_rows {
+        let mode = row["mode"].as_str().expect("fixture.mode must be string");
+        let module = row["module"]
+            .as_str()
+            .expect("fixture.module must be string");
+        let expected = row["expected_outcome"]
+            .as_str()
+            .expect("fixture.expected_outcome must be string");
+        match mode {
+            "interpose" => assert_eq!(expected, "allowed"),
+            "replacement" => assert_eq!(expected, "forbidden"),
+            _ => panic!("unexpected fixture mode: {mode}"),
+        }
+        *mode_counts.entry(mode.to_string()).or_default() += 1;
+        module_modes
+            .entry(module.to_string())
+            .or_default()
+            .insert(mode.to_string());
+    }
+
+    for module in &profile_modules {
+        let modes = module_modes
+            .get(module)
+            .unwrap_or_else(|| panic!("missing fixture coverage for module {module}"));
+        assert!(
+            modes.contains("interpose") && modes.contains("replacement"),
+            "module {module} must be covered in both interpose and replacement fixtures"
+        );
+    }
+
+    let summary = fixtures["summary"]
+        .as_object()
+        .expect("summary must be object");
+    assert_eq!(
+        summary.get("fixture_count").and_then(|v| v.as_u64()),
+        Some(fixture_rows.len() as u64),
+        "summary.fixture_count mismatch"
+    );
+    assert_eq!(
+        summary
+            .get("interpose_allowed_count")
+            .and_then(|v| v.as_u64()),
+        Some(*mode_counts.get("interpose").unwrap_or(&0) as u64),
+        "summary.interpose_allowed_count mismatch"
+    );
+    assert_eq!(
+        summary
+            .get("replacement_forbidden_count")
+            .and_then(|v| v.as_u64()),
+        Some(*mode_counts.get("replacement").unwrap_or(&0) as u64),
+        "summary.replacement_forbidden_count mismatch"
+    );
+}
+
+#[test]
+fn guard_emits_symbol_module_path_diagnostics() {
+    let root = workspace_root();
+    let script = root.join("scripts/check_replacement_guard.sh");
+    let output = Command::new(&script)
+        .arg("interpose")
+        .current_dir(&root)
+        .output()
+        .expect("failed to run check_replacement_guard.sh");
+    assert!(
+        output.status.success(),
+        "replacement guard script failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let report_path = root.join("target/conformance/replacement_guard.report.json");
+    let log_path = root.join("target/conformance/replacement_guard.log.jsonl");
+    assert!(report_path.exists(), "missing {}", report_path.display());
+    assert!(log_path.exists(), "missing {}", log_path.display());
+
+    let report: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(&report_path).expect("report should be readable"),
+    )
+    .expect("report should parse");
+    assert!(
+        report["module_counts"].is_object(),
+        "module_counts must be object"
+    );
+    assert!(
+        report["violations_detail"].is_array(),
+        "violations_detail must be array"
+    );
+    assert!(
+        report["mutex_violations_detail"].is_array(),
+        "mutex_violations_detail must be array"
+    );
+
+    let first_log = std::fs::read_to_string(&log_path)
+        .expect("log should be readable")
+        .lines()
+        .find(|line| !line.trim().is_empty())
+        .expect("log should include at least one row")
+        .to_string();
+    let row: serde_json::Value = serde_json::from_str(&first_log).expect("log row should parse");
+    for key in [
+        "trace_id",
+        "mode",
+        "gate_name",
+        "module",
+        "line",
+        "symbol",
+        "status",
+        "reason",
+        "artifact_ref",
+    ] {
+        assert!(row.get(key).is_some(), "structured log row missing {key}");
+    }
 }
