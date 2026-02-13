@@ -110,6 +110,42 @@
       "expected_output": "Some(1)",
       "expected_errno": 0,
       "mode": "strict"
+    },
+    {
+      "name": "strict_wcsncmp_equal",
+      "function": "wcsncmp",
+      "spec_section": "ISO C wcsncmp",
+      "inputs": { "s1": [65, 66, 67, 0], "s2": [65, 66, 90, 0], "n": 2 },
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "strict_wcsncmp_less",
+      "function": "wcsncmp",
+      "spec_section": "ISO C wcsncmp",
+      "inputs": { "s1": [65, 66, 0], "s2": [65, 67, 0], "n": 3 },
+      "expected_output": "-1",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "strict_wcsrchr_found",
+      "function": "wcsrchr",
+      "spec_section": "ISO C wcsrchr",
+      "inputs": { "s": [65, 66, 65, 0], "c": 65 },
+      "expected_output": "Some(2)",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "strict_wcsrchr_not_found",
+      "function": "wcsrchr",
+      "spec_section": "ISO C wcsrchr",
+      "inputs": { "s": [65, 66, 0], "c": 67 },
+      "expected_output": "None",
+      "expected_errno": 0,
+      "mode": "strict"
     }
   ]
 }

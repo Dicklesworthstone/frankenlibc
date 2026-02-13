@@ -1,0 +1,80 @@
+{
+  "version": "v1",
+  "family": "pthread/mutex",
+  "captured_at": "2026-02-13T00:00:00Z",
+  "description": "POSIX mutex operations — POSIX.1-2017 pthread.h. Tests NORMAL mutex type.",
+  "cases": [
+    {
+      "name": "mutex_init_default",
+      "function": "pthread_mutex_init",
+      "spec_section": "POSIX.1-2017 pthread_mutex_init",
+      "inputs": { "attr": "null" },
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "mutex_lock_unlock",
+      "function": "pthread_mutex_lock",
+      "spec_section": "POSIX.1-2017 pthread_mutex_lock",
+      "inputs": { "mutex": "initialized" },
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "mutex_trylock_unlocked",
+      "function": "pthread_mutex_trylock",
+      "spec_section": "POSIX.1-2017 pthread_mutex_trylock",
+      "inputs": { "mutex": "initialized_unlocked" },
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "mutex_trylock_locked_ebusy",
+      "function": "pthread_mutex_trylock",
+      "spec_section": "POSIX.1-2017 pthread_mutex_trylock",
+      "inputs": { "mutex": "initialized_locked" },
+      "expected_output": "EBUSY",
+      "expected_errno": 16,
+      "mode": "both"
+    },
+    {
+      "name": "mutex_unlock",
+      "function": "pthread_mutex_unlock",
+      "spec_section": "POSIX.1-2017 pthread_mutex_unlock",
+      "inputs": { "mutex": "initialized_locked_by_self" },
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "mutex_destroy",
+      "function": "pthread_mutex_destroy",
+      "spec_section": "POSIX.1-2017 pthread_mutex_destroy",
+      "inputs": { "mutex": "initialized_unlocked" },
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "mutex_init_null_attr_default_type",
+      "function": "pthread_mutex_init",
+      "spec_section": "POSIX.1-2017 pthread_mutex_init",
+      "inputs": { "attr": "null", "verify_type": "PTHREAD_MUTEX_DEFAULT" },
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "mutex_contention_two_threads",
+      "function": "pthread_mutex_lock",
+      "spec_section": "POSIX.1-2017 pthread_mutex_lock",
+      "inputs": { "mutex": "initialized", "threads": 2, "iterations": 1000 },
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "strict"
+    }
+  ]
+}

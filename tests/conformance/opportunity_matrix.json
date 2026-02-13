@@ -201,18 +201,31 @@
       "rationale": "Required for L3. FILE* reimplementation is massive (30 symbols). Very high effort offsets high impact.",
       "status": "eligible",
       "lever_category": "subsystem_implementation"
+    },
+    {
+      "id": "opp-013",
+      "title": "T7.1 deterministic strict+hardened hotspot seeding for one-lever optimization waves",
+      "bead_id": "bd-w2c3.8.1",
+      "module": "runtime_math/membrane profiling pipeline",
+      "impact": 3.5,
+      "confidence": 4.5,
+      "effort": 4.0,
+      "score": 3.9,
+      "rationale": "Uses deterministic profile artifacts (target/profiles/20260213T083559Z strict+hardened hotspot_opportunity_matrix.v1.json) to seed high-score opportunities and unblock T7.2/T8.1 execution with repeatable evidence.",
+      "status": "eligible",
+      "lever_category": "subsystem_implementation"
     }
   ],
   "deferred": [],
   "summary": {
-    "total_entries": 12,
-    "eligible": 12,
+    "total_entries": 13,
+    "eligible": 13,
     "deferred": 0,
-    "average_score": 2.89,
+    "average_score": 2.97,
     "highest_score": {
-      "id": "opp-004",
-      "score": 3.6,
-      "title": "Futex-based pthread_mutex_* (lock, unlock, trylock, init, destroy)"
+      "id": "opp-013",
+      "score": 3.9,
+      "title": "T7.1 deterministic strict+hardened hotspot seeding for one-lever optimization waves"
     },
     "lowest_score": {
       "id": "opp-009",

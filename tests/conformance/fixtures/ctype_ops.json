@@ -1,0 +1,341 @@
+{
+  "version": "v1",
+  "family": "ctype",
+  "captured_at": "2026-02-13T00:00:00Z",
+  "description": "Character classification and conversion functions — POSIX.1-2017 / C11 ctype.h",
+  "cases": [
+    {
+      "name": "isalpha_uppercase_A",
+      "function": "isalpha",
+      "spec_section": "POSIX.1-2017 isalpha",
+      "inputs": { "c": 65 },
+      "expected_output": "1",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "isalpha_lowercase_z",
+      "function": "isalpha",
+      "spec_section": "POSIX.1-2017 isalpha",
+      "inputs": { "c": 122 },
+      "expected_output": "1",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "isalpha_digit_0",
+      "function": "isalpha",
+      "spec_section": "POSIX.1-2017 isalpha",
+      "inputs": { "c": 48 },
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "isalpha_space",
+      "function": "isalpha",
+      "spec_section": "POSIX.1-2017 isalpha",
+      "inputs": { "c": 32 },
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "isdigit_0",
+      "function": "isdigit",
+      "spec_section": "POSIX.1-2017 isdigit",
+      "inputs": { "c": 48 },
+      "expected_output": "1",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "isdigit_9",
+      "function": "isdigit",
+      "spec_section": "POSIX.1-2017 isdigit",
+      "inputs": { "c": 57 },
+      "expected_output": "1",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "isdigit_A",
+      "function": "isdigit",
+      "spec_section": "POSIX.1-2017 isdigit",
+      "inputs": { "c": 65 },
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "isalnum_digit_5",
+      "function": "isalnum",
+      "spec_section": "POSIX.1-2017 isalnum",
+      "inputs": { "c": 53 },
+      "expected_output": "1",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "isalnum_letter_M",
+      "function": "isalnum",
+      "spec_section": "POSIX.1-2017 isalnum",
+      "inputs": { "c": 77 },
+      "expected_output": "1",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "isalnum_underscore",
+      "function": "isalnum",
+      "spec_section": "POSIX.1-2017 isalnum",
+      "inputs": { "c": 95 },
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "isupper_A",
+      "function": "isupper",
+      "spec_section": "POSIX.1-2017 isupper",
+      "inputs": { "c": 65 },
+      "expected_output": "1",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "isupper_a",
+      "function": "isupper",
+      "spec_section": "POSIX.1-2017 isupper",
+      "inputs": { "c": 97 },
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "islower_a",
+      "function": "islower",
+      "spec_section": "POSIX.1-2017 islower",
+      "inputs": { "c": 97 },
+      "expected_output": "1",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "islower_A",
+      "function": "islower",
+      "spec_section": "POSIX.1-2017 islower",
+      "inputs": { "c": 65 },
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "isspace_space",
+      "function": "isspace",
+      "spec_section": "POSIX.1-2017 isspace",
+      "inputs": { "c": 32 },
+      "expected_output": "1",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "isspace_tab",
+      "function": "isspace",
+      "spec_section": "POSIX.1-2017 isspace",
+      "inputs": { "c": 9 },
+      "expected_output": "1",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "isspace_newline",
+      "function": "isspace",
+      "spec_section": "POSIX.1-2017 isspace",
+      "inputs": { "c": 10 },
+      "expected_output": "1",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "isspace_letter",
+      "function": "isspace",
+      "spec_section": "POSIX.1-2017 isspace",
+      "inputs": { "c": 65 },
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "isprint_tilde",
+      "function": "isprint",
+      "spec_section": "POSIX.1-2017 isprint",
+      "inputs": { "c": 126 },
+      "expected_output": "1",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "isprint_space",
+      "function": "isprint",
+      "spec_section": "POSIX.1-2017 isprint",
+      "inputs": { "c": 32 },
+      "expected_output": "1",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "isprint_null",
+      "function": "isprint",
+      "spec_section": "POSIX.1-2017 isprint",
+      "inputs": { "c": 0 },
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "isprint_del",
+      "function": "isprint",
+      "spec_section": "POSIX.1-2017 isprint",
+      "inputs": { "c": 127 },
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "ispunct_exclamation",
+      "function": "ispunct",
+      "spec_section": "POSIX.1-2017 ispunct",
+      "inputs": { "c": 33 },
+      "expected_output": "1",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "ispunct_at",
+      "function": "ispunct",
+      "spec_section": "POSIX.1-2017 ispunct",
+      "inputs": { "c": 64 },
+      "expected_output": "1",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "ispunct_letter",
+      "function": "ispunct",
+      "spec_section": "POSIX.1-2017 ispunct",
+      "inputs": { "c": 65 },
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "isxdigit_A",
+      "function": "isxdigit",
+      "spec_section": "POSIX.1-2017 isxdigit",
+      "inputs": { "c": 65 },
+      "expected_output": "1",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "isxdigit_f",
+      "function": "isxdigit",
+      "spec_section": "POSIX.1-2017 isxdigit",
+      "inputs": { "c": 102 },
+      "expected_output": "1",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "isxdigit_9",
+      "function": "isxdigit",
+      "spec_section": "POSIX.1-2017 isxdigit",
+      "inputs": { "c": 57 },
+      "expected_output": "1",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "isxdigit_g",
+      "function": "isxdigit",
+      "spec_section": "POSIX.1-2017 isxdigit",
+      "inputs": { "c": 103 },
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "tolower_A",
+      "function": "tolower",
+      "spec_section": "POSIX.1-2017 tolower",
+      "inputs": { "c": 65 },
+      "expected_output": "97",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "tolower_Z",
+      "function": "tolower",
+      "spec_section": "POSIX.1-2017 tolower",
+      "inputs": { "c": 90 },
+      "expected_output": "122",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "tolower_already_lower",
+      "function": "tolower",
+      "spec_section": "POSIX.1-2017 tolower",
+      "inputs": { "c": 97 },
+      "expected_output": "97",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "tolower_digit",
+      "function": "tolower",
+      "spec_section": "POSIX.1-2017 tolower",
+      "inputs": { "c": 48 },
+      "expected_output": "48",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "toupper_a",
+      "function": "toupper",
+      "spec_section": "POSIX.1-2017 toupper",
+      "inputs": { "c": 97 },
+      "expected_output": "65",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "toupper_z",
+      "function": "toupper",
+      "spec_section": "POSIX.1-2017 toupper",
+      "inputs": { "c": 122 },
+      "expected_output": "90",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "toupper_already_upper",
+      "function": "toupper",
+      "spec_section": "POSIX.1-2017 toupper",
+      "inputs": { "c": 65 },
+      "expected_output": "65",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "toupper_digit",
+      "function": "toupper",
+      "spec_section": "POSIX.1-2017 toupper",
+      "inputs": { "c": 48 },
+      "expected_output": "48",
+      "expected_errno": 0,
+      "mode": "both"
+    }
+  ]
+}

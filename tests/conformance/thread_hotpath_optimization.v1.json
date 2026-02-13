@@ -1,0 +1,169 @@
+{
+  "schema_version": "v1",
+  "bead": "bd-18rq",
+  "description": "Thread bootstrap hot-path optimization dossier for pthread_create/pthread_join/pthread_detach using deterministic strict+hardened stress evidence, opportunity selection, and behavior-proof checklist.",
+  "generated_at_utc": "2026-02-13T09:35:00Z",
+  "sources": {
+    "support_matrix": "support_matrix.json",
+    "opportunity_matrix": "tests/conformance/opportunity_matrix.json",
+    "thread_stress_report": "tests/cve_arena/results/bd-1f35/report.json",
+    "thread_stress_trace": "tests/cve_arena/results/bd-1f35/trace.jsonl"
+  },
+  "baseline_captures": {
+    "capture_source": "tests/cve_arena/results/bd-1f35/report.json",
+    "modes": {
+      "strict": {
+        "fanout_fanin_single": {
+          "samples": 1,
+          "p50_ns_case": 208994992,
+          "p95_ns_case": 208994992,
+          "p99_ns_case": 208994992,
+          "total_ops": 2,
+          "throughput_ops_s": 9.57
+        },
+        "create_join_churn": {
+          "samples": 1,
+          "p50_ns_case": 309426904,
+          "p95_ns_case": 309426904,
+          "p99_ns_case": 309426904,
+          "total_ops": 4,
+          "throughput_ops_s": 12.93
+        },
+        "mixed_detach_join": {
+          "samples": 1,
+          "p50_ns_case": 309100493,
+          "p95_ns_case": 309100493,
+          "p99_ns_case": 309100493,
+          "total_ops": 6,
+          "throughput_ops_s": 19.41
+        }
+      },
+      "hardened": {
+        "fanout_fanin_single": {
+          "samples": 1,
+          "p50_ns_case": 209892155,
+          "p95_ns_case": 209892155,
+          "p99_ns_case": 209892155,
+          "total_ops": 2,
+          "throughput_ops_s": 9.53
+        },
+        "create_join_churn": {
+          "samples": 1,
+          "p50_ns_case": 409344903,
+          "p95_ns_case": 409344903,
+          "p99_ns_case": 409344903,
+          "total_ops": 4,
+          "throughput_ops_s": 9.77
+        },
+        "mixed_detach_join": {
+          "samples": 1,
+          "p50_ns_case": 409800347,
+          "p95_ns_case": 409800347,
+          "p99_ns_case": 409800347,
+          "total_ops": 6,
+          "throughput_ops_s": 14.64
+        }
+      }
+    },
+    "thresholds": {
+      "strict_fanout_budget_ns": 300000000,
+      "strict_create_join_budget_ns": 450000000,
+      "strict_mixed_detach_budget_ns": 450000000,
+      "hardened_fanout_budget_ns": 300000000,
+      "hardened_create_join_budget_ns": 550000000,
+      "hardened_mixed_detach_budget_ns": 550000000
+    }
+  },
+  "profile_bundle": {
+    "mode_summary": {
+      "strict": {
+        "total_cases": 4,
+        "mean_latency_ns": 234420170,
+        "median_latency_ns": 259047742.5,
+        "max_latency_ns": 309426904,
+        "total_create_ops": 9,
+        "total_join_ops": 9,
+        "total_detach_ops": 2
+      },
+      "hardened": {
+        "total_cases": 4,
+        "mean_latency_ns": 284945962,
+        "median_latency_ns": 309618529,
+        "max_latency_ns": 409800347,
+        "total_create_ops": 9,
+        "total_join_ops": 9,
+        "total_detach_ops": 2
+      }
+    },
+    "trace_references": [
+      "tests/cve_arena/results/bd-1f35/trace.jsonl",
+      "tests/cve_arena/results/bd-1f35/artifact_index.json"
+    ],
+    "notes": "Latencies are deterministic case-level measurements from strict+hardened thread stress scenarios."
+  },
+  "opportunity_selection": {
+    "threshold": 2.0,
+    "selected_entry_id": "opp-005",
+    "selected_entry_score": 3.1,
+    "selected_entry_title": "Thread bootstrap (pthread_create, pthread_join, pthread_detach)",
+    "decision": "selected",
+    "reason": "Highest-impact threading bootstrap opportunity tied to bd-yos with score above admission threshold."
+  },
+  "single_lever_optimization": {
+    "candidate_id": "thread-bootstrap-fastpath-nochange-v1",
+    "lever_category": "callthrough_removal",
+    "target_symbols": [
+      "pthread_create",
+      "pthread_join",
+      "pthread_detach"
+    ],
+    "change_summary": "No code-level optimization landed in this wave; preserve current behavior while collecting hotspot evidence and proof artifacts.",
+    "isomorphism_proof_template": {
+      "statement": "Semantics are preserved because implementation behavior was unchanged in this optimization wave and replay checks stayed green.",
+      "checklist": [
+        {
+          "id": "baseline_captured",
+          "status": "pass"
+        },
+        {
+          "id": "opportunity_threshold_met",
+          "status": "pass"
+        },
+        {
+          "id": "thread_stress_replay_guard",
+          "status": "pass"
+        },
+        {
+          "id": "strict_hardened_mode_consistency",
+          "status": "pass"
+        }
+      ],
+      "behavior_checks": [
+        {
+          "command": "scripts/check_bd1f35_thread_stress.sh",
+          "status": "pass"
+        },
+        {
+          "command": "cargo test -p frankenlibc-abi --test pthread_thread_lifecycle_test -- --nocapture --test-threads=1",
+          "status": "pass"
+        }
+      ]
+    },
+    "outcome": {
+      "decision": "no_change_justified",
+      "measured_improvement_pct": 0.0,
+      "justification": "Keep optimization wave behavior-stable while bd-rth1 TLS handoff/teardown correctness remains active; revisit lever changes after lifecycle closure."
+    }
+  },
+  "verification_commands": [
+    "scripts/check_bd1f35_thread_stress.sh",
+    "scripts/check_thread_hotpath_optimization.sh"
+  ],
+  "summary": {
+    "hot_symbols": 3,
+    "selected_opportunity_score": 3.1,
+    "strict_create_join_churn_p50_ns": 309426904,
+    "hardened_create_join_churn_p50_ns": 409344903,
+    "decision": "no_change_justified"
+  }
+}

@@ -1,0 +1,143 @@
+{
+  "version": "v1",
+  "family": "inet",
+  "captured_at": "2026-02-13T00:00:00Z",
+  "description": "Network address functions — POSIX.1-2017 arpa/inet.h + netinet/in.h byte-order macros",
+  "cases": [
+    {
+      "name": "htons_80",
+      "function": "htons",
+      "spec_section": "POSIX.1-2017 htons",
+      "inputs": { "v": 80 },
+      "expected_output": "20480",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "htons_443",
+      "function": "htons",
+      "spec_section": "POSIX.1-2017 htons",
+      "inputs": { "v": 443 },
+      "expected_output": "47873",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "htons_zero",
+      "function": "htons",
+      "spec_section": "POSIX.1-2017 htons",
+      "inputs": { "v": 0 },
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "htonl_one",
+      "function": "htonl",
+      "spec_section": "POSIX.1-2017 htonl",
+      "inputs": { "v": 1 },
+      "expected_output": "16777216",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "htonl_loopback",
+      "function": "htonl",
+      "spec_section": "POSIX.1-2017 htonl",
+      "inputs": { "v": 2130706433 },
+      "expected_output": "16777343",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "ntohs_80_net",
+      "function": "ntohs",
+      "spec_section": "POSIX.1-2017 ntohs",
+      "inputs": { "v": 20480 },
+      "expected_output": "80",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "ntohl_loopback_net",
+      "function": "ntohl",
+      "spec_section": "POSIX.1-2017 ntohl",
+      "inputs": { "v": 16777343 },
+      "expected_output": "2130706433",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "inet_addr_loopback",
+      "function": "inet_addr",
+      "spec_section": "POSIX.1-2017 inet_addr",
+      "inputs": { "s": "127.0.0.1" },
+      "expected_output": "16777343",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "inet_addr_broadcast",
+      "function": "inet_addr",
+      "spec_section": "POSIX.1-2017 inet_addr",
+      "inputs": { "s": "255.255.255.255" },
+      "expected_output": "4294967295",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "inet_addr_invalid",
+      "function": "inet_addr",
+      "spec_section": "POSIX.1-2017 inet_addr",
+      "inputs": { "s": "not.an.ip" },
+      "expected_output": "4294967295",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "inet_pton_v4_loopback",
+      "function": "inet_pton",
+      "spec_section": "POSIX.1-2017 inet_pton",
+      "inputs": { "af": 2, "src": "127.0.0.1" },
+      "expected_output": "1",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "inet_pton_v4_invalid",
+      "function": "inet_pton",
+      "spec_section": "POSIX.1-2017 inet_pton",
+      "inputs": { "af": 2, "src": "999.999.999.999" },
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "inet_pton_v6_loopback",
+      "function": "inet_pton",
+      "spec_section": "POSIX.1-2017 inet_pton",
+      "inputs": { "af": 10, "src": "::1" },
+      "expected_output": "1",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "inet_ntop_v4_loopback",
+      "function": "inet_ntop",
+      "spec_section": "POSIX.1-2017 inet_ntop",
+      "inputs": { "af": 2, "src": [127, 0, 0, 1] },
+      "expected_output": "127.0.0.1",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "inet_ntop_v4_zeros",
+      "function": "inet_ntop",
+      "spec_section": "POSIX.1-2017 inet_ntop",
+      "inputs": { "af": 2, "src": [0, 0, 0, 0] },
+      "expected_output": "0.0.0.0",
+      "expected_errno": 0,
+      "mode": "both"
+    }
+  ]
+}

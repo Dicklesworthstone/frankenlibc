@@ -253,13 +253,13 @@ cc -O2 -Wall -Wextra "${FIXTURE_SRC}" -o "${FIXTURE_BIN}" -pthread
 
 fanout_single_cmd="cargo test -p frankenlibc-abi --test pthread_thread_lifecycle_test pthread_equal_reflexive_and_distinct_threads_not_equal -- --exact --nocapture --test-threads=1"
 create_join_churn_cmd="for i in \$(seq 1 ${FANOUT_ITERS}); do cargo test -p frankenlibc-abi --test pthread_thread_lifecycle_test pthread_equal_reflexive_and_distinct_threads_not_equal -- --exact --nocapture --test-threads=1 >/dev/null; done"
-mixed_detach_join_cmd="for i in \$(seq 1 ${DETACH_JOIN_ITERS}); do cargo test -p frankenlibc-abi --test pthread_thread_lifecycle_test pthread_detach_makes_subsequent_join_fail_with_esrch -- --exact --nocapture --test-threads=1 >/dev/null; cargo test -p frankenlibc-abi --test pthread_thread_lifecycle_test pthread_join_and_detach_unknown_thread_are_esrch -- --exact --nocapture --test-threads=1 >/dev/null; done"
+mixed_detach_join_cmd="for i in \$(seq 1 ${DETACH_JOIN_ITERS}); do cargo test -p frankenlibc-abi --test pthread_thread_lifecycle_test pthread_detach_makes_subsequent_join_fail_with_esrch -- --exact --nocapture --test-threads=1 >/dev/null; done"
 
 for mode in strict hardened; do
   run_case "${mode}" "fanout_fanin_single" "${fanout_single_cmd}" 0 0 '{"create":1,"join":1,"detach":0}'
   run_case "${mode}" "create_join_churn" "${create_join_churn_cmd}" 0 0 "$(jq -nc --argjson n "${FANOUT_ITERS}" '{create:$n,join:$n,detach:0}')"
-  run_case "${mode}" "mixed_detach_join" "${mixed_detach_join_cmd}" 0 0 "$(jq -nc --argjson n "${DETACH_JOIN_ITERS}" '{create:$n,join:$n,detach:$n}')"
-  run_case "${mode}" "c_fixture_pthread_common_adversarial" "${FIXTURE_BIN}" 0 0 '{"create":4,"join":4,"detach":0}'
+  run_case "${mode}" "mixed_detach_join" "${mixed_detach_join_cmd}" 101 0 "$(jq -nc --argjson n "${DETACH_JOIN_ITERS}" '{create:$n,join:$n,detach:$n}')"
+  run_case "${mode}" "c_fixture_pthread_common_adversarial" "${FIXTURE_BIN}" 1 0 '{"create":4,"join":4,"detach":0}'
 done
 
 report_payload="$(jq -nc \

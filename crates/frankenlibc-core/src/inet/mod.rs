@@ -60,7 +60,7 @@ pub fn ntohl(v: u32) -> u32 {
 /// Equivalent to C `inet_addr`. Returns `INADDR_NONE` (`u32::MAX`) on error.
 pub fn inet_addr(s: &[u8]) -> u32 {
     match parse_ipv4(s) {
-        Some(octets) => u32::from_be_bytes(octets),
+        Some(octets) => u32::from_ne_bytes(octets),
         None => INADDR_NONE,
     }
 }
@@ -513,7 +513,7 @@ mod tests {
     #[test]
     fn test_inet_addr_basic() {
         let addr = inet_addr(b"192.168.1.1");
-        assert_eq!(addr.to_be_bytes(), [192, 168, 1, 1]);
+        assert_eq!(addr.to_ne_bytes(), [192, 168, 1, 1]);
     }
 
     #[test]
@@ -524,7 +524,7 @@ mod tests {
     #[test]
     fn test_inet_addr_loopback() {
         let addr = inet_addr(b"127.0.0.1");
-        assert_eq!(addr.to_be_bytes(), [127, 0, 0, 1]);
+        assert_eq!(addr.to_ne_bytes(), [127, 0, 0, 1]);
     }
 
     #[test]
@@ -532,7 +532,7 @@ mod tests {
         // 255.255.255.255 => u32::MAX in network byte order.
         // Note: same bit pattern as INADDR_NONE (known ambiguity).
         let addr = inet_addr(b"255.255.255.255");
-        assert_eq!(addr.to_be_bytes(), [255, 255, 255, 255]);
+        assert_eq!(addr.to_ne_bytes(), [255, 255, 255, 255]);
     }
 
     #[test]
@@ -554,7 +554,7 @@ mod tests {
     #[test]
     fn test_inet_addr_nul_terminated() {
         let addr = inet_addr(b"10.0.0.1\0");
-        assert_eq!(addr.to_be_bytes(), [10, 0, 0, 1]);
+        assert_eq!(addr.to_ne_bytes(), [10, 0, 0, 1]);
     }
 
     // -- parse_ipv4 --
@@ -1018,11 +1018,10 @@ mod tests {
 
     #[test]
     fn test_inet_addr_network_byte_order() {
-        // Verify the result is in network (big-endian) byte order.
+        // Verify the result is in network (big-endian) byte order:
+        // the raw memory bytes of the u32 match the IP octets directly.
         let addr = inet_addr(b"1.2.3.4");
-        // Network byte order: first octet in most significant byte.
-        let expected = u32::from_be_bytes([1, 2, 3, 4]);
-        assert_eq!(addr, expected);
+        assert_eq!(addr.to_ne_bytes(), [1, 2, 3, 4]);
     }
 
     #[test]

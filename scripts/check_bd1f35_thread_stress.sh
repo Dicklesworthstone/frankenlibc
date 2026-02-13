@@ -53,6 +53,14 @@ required_scenarios = {
 }
 if len(required_scenarios) < 4:
     raise SystemExit("FAIL: scenario spec must declare at least 4 scenarios")
+for row in spec.get("scenarios", []):
+    if not isinstance(row, dict):
+        continue
+    expected_exit = row.get("expected_exit")
+    if not isinstance(expected_exit, int):
+        raise SystemExit(
+            f"FAIL: scenario {row.get('id', '<unknown>')} missing integer expected_exit"
+        )
 
 required_log_fields = {"timestamp", "trace_id", "level", "event", "scenario_id", "mode", "op_counts", "failure_marker", "artifact_refs"}
 seen_modes = set()

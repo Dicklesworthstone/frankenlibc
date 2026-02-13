@@ -1,0 +1,80 @@
+{
+  "version": "v1",
+  "family": "string/strtok",
+  "captured_at": "2026-02-13T00:00:00Z",
+  "description": "POSIX strtok/strtok_r — string tokenization (first-token extraction)",
+  "cases": [
+    {
+      "name": "strtok_basic_first",
+      "function": "strtok",
+      "spec_section": "POSIX.1-2017 strtok",
+      "inputs": { "s": [104, 101, 108, 108, 111, 32, 119, 111, 114, 108, 100, 0], "delim": [32, 0] },
+      "expected_output": "hello",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "strtok_comma_delim",
+      "function": "strtok",
+      "spec_section": "POSIX.1-2017 strtok",
+      "inputs": { "s": [97, 44, 98, 44, 99, 0], "delim": [44, 0] },
+      "expected_output": "a",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "strtok_leading_delims",
+      "function": "strtok",
+      "spec_section": "POSIX.1-2017 strtok",
+      "inputs": { "s": [32, 32, 104, 105, 0], "delim": [32, 0] },
+      "expected_output": "hi",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "strtok_no_delim_found",
+      "function": "strtok",
+      "spec_section": "POSIX.1-2017 strtok",
+      "inputs": { "s": [97, 98, 99, 0], "delim": [44, 0] },
+      "expected_output": "abc",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "strtok_all_delims",
+      "function": "strtok",
+      "spec_section": "POSIX.1-2017 strtok",
+      "inputs": { "s": [32, 32, 32, 0], "delim": [32, 0] },
+      "expected_output": "NULL",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "strtok_r_basic_first",
+      "function": "strtok_r",
+      "spec_section": "POSIX.1-2017 strtok_r",
+      "inputs": { "s": [104, 101, 108, 108, 111, 32, 119, 111, 114, 108, 100, 0], "delim": [32, 0], "save_ptr": 0 },
+      "expected_output": "hello",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "strtok_r_comma_delim",
+      "function": "strtok_r",
+      "spec_section": "POSIX.1-2017 strtok_r",
+      "inputs": { "s": [97, 44, 98, 44, 99, 0], "delim": [44, 0], "save_ptr": 0 },
+      "expected_output": "a",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "strtok_r_empty",
+      "function": "strtok_r",
+      "spec_section": "POSIX.1-2017 strtok_r",
+      "inputs": { "s": [0], "delim": [32, 0], "save_ptr": 0 },
+      "expected_output": "NULL",
+      "expected_errno": 0,
+      "mode": "strict"
+    }
+  ]
+}

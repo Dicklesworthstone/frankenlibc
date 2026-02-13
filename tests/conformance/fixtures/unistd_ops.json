@@ -1,0 +1,161 @@
+{
+  "version": "v1",
+  "family": "unistd",
+  "captured_at": "2026-02-13T00:00:00Z",
+  "description": "POSIX unistd.h syscall wrappers — process/user/file identity functions",
+  "cases": [
+    {
+      "name": "getpid_positive",
+      "function": "getpid",
+      "spec_section": "POSIX.1-2017 getpid",
+      "inputs": {},
+      "expected_output": "POSITIVE_PID",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "getppid_positive",
+      "function": "getppid",
+      "spec_section": "POSIX.1-2017 getppid",
+      "inputs": {},
+      "expected_output": "POSITIVE_PID",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "getuid_nonneg",
+      "function": "getuid",
+      "spec_section": "POSIX.1-2017 getuid",
+      "inputs": {},
+      "expected_output": "NONNEG_UID",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "getgid_nonneg",
+      "function": "getgid",
+      "spec_section": "POSIX.1-2017 getgid",
+      "inputs": {},
+      "expected_output": "NONNEG_GID",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "geteuid_nonneg",
+      "function": "geteuid",
+      "spec_section": "POSIX.1-2017 geteuid",
+      "inputs": {},
+      "expected_output": "NONNEG_UID",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "getegid_nonneg",
+      "function": "getegid",
+      "spec_section": "POSIX.1-2017 getegid",
+      "inputs": {},
+      "expected_output": "NONNEG_GID",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "getcwd_nonempty",
+      "function": "getcwd",
+      "spec_section": "POSIX.1-2017 getcwd",
+      "inputs": { "buf_size": 4096 },
+      "expected_output": "NONEMPTY_PATH",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "isatty_stdin",
+      "function": "isatty",
+      "spec_section": "POSIX.1-2017 isatty",
+      "inputs": { "fd": 0 },
+      "expected_output": "0_OR_1",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "isatty_invalid_fd",
+      "function": "isatty",
+      "spec_section": "POSIX.1-2017 isatty",
+      "inputs": { "fd": -1 },
+      "expected_output": "0",
+      "expected_errno": 9,
+      "mode": "both"
+    },
+    {
+      "name": "access_root_exists",
+      "function": "access",
+      "spec_section": "POSIX.1-2017 access",
+      "inputs": { "path": "/", "mode": 0 },
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "access_nonexistent_enoent",
+      "function": "access",
+      "spec_section": "POSIX.1-2017 access",
+      "inputs": { "path": "/nonexistent_path_12345", "mode": 0 },
+      "expected_output": "-1",
+      "expected_errno": 2,
+      "mode": "both"
+    },
+    {
+      "name": "read_write_pipe",
+      "function": "write",
+      "spec_section": "POSIX.1-2017 write",
+      "inputs": { "fd": "pipe_write_end", "data": [72, 101, 108, 108, 111], "count": 5 },
+      "expected_output": "5",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "read_from_pipe",
+      "function": "read",
+      "spec_section": "POSIX.1-2017 read",
+      "inputs": { "fd": "pipe_read_end", "count": 5 },
+      "expected_output": "[72, 101, 108, 108, 111]",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "close_valid_fd",
+      "function": "close",
+      "spec_section": "POSIX.1-2017 close",
+      "inputs": { "fd": "opened_fd" },
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "close_invalid_fd_ebadf",
+      "function": "close",
+      "spec_section": "POSIX.1-2017 close",
+      "inputs": { "fd": 99999 },
+      "expected_output": "-1",
+      "expected_errno": 9,
+      "mode": "both"
+    },
+    {
+      "name": "lseek_set",
+      "function": "lseek",
+      "spec_section": "POSIX.1-2017 lseek",
+      "inputs": { "fd": "opened_fd", "offset": 0, "whence": 0 },
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "pipe_creates_two_fds",
+      "function": "pipe",
+      "spec_section": "POSIX.1-2017 pipe",
+      "inputs": {},
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "both"
+    }
+  ]
+}

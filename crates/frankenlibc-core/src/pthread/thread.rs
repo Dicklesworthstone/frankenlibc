@@ -123,6 +123,10 @@ pub struct ThreadHandle {
 
     /// Total size of the mmap'd region (guard page + usable stack).
     pub stack_total_size: usize,
+
+    /// Per-thread TLS value storage (bd-rth1). Allocation-free: lives in the
+    /// heap-allocated ThreadHandle so clone-based threads never need malloc.
+    pub tls_values: [u64; super::tls::PTHREAD_KEYS_MAX],
 }
 
 // SAFETY: ThreadHandle is designed for cross-thread sharing via atomic fields.
@@ -201,12 +205,27 @@ unsafe extern "C" fn thread_trampoline(args_raw: usize) -> usize {
         };
     }
 
+    // Register TLS storage for this thread (bd-rth1).
+    // SAFETY: handle_ptr is valid and exclusively owned by this thread for
+    // the tls_values field. The pointer is stored in the TLS table and only
+    // accessed by this thread via getspecific/setspecific.
+    #[cfg(target_arch = "x86_64")]
+    super::tls::register_thread_tls(
+        handle.tid.load(Ordering::Acquire),
+        unsafe { (*handle_ptr).tls_values.as_mut_ptr() },
+    );
+
     // Cast the start_routine address back to a function pointer and call it.
     // SAFETY: start_routine_addr was a valid extern "C" fn pointer stored by
     // the parent. arg is the user's argument.
     let start_fn: unsafe extern "C" fn(usize) -> usize =
         unsafe { core::mem::transmute(start_routine_addr) };
     let retval = unsafe { start_fn(arg) };
+
+    // Run TLS destructors before exit (bd-rth1).
+    // Per POSIX, destructors fire after start_routine returns.
+    #[cfg(target_arch = "x86_64")]
+    super::tls::teardown_thread_tls(handle.tid.load(Ordering::Acquire));
 
     // Store the return value. No concurrent readers until after tid is cleared.
     // SAFETY: retval is only read by the joiner after tid becomes 0 (kernel
@@ -351,6 +370,7 @@ pub unsafe fn create_thread(start_routine: usize, arg: usize) -> Result<*mut Thr
         retval: core::cell::UnsafeCell::new(0),
         stack_base,
         stack_total_size,
+        tls_values: [0u64; super::tls::PTHREAD_KEYS_MAX],
     });
     let handle_ptr = Box::into_raw(handle);
 
@@ -560,8 +580,7 @@ pub unsafe fn join_thread(handle_ptr: *mut ThreadHandle) -> Result<usize, i32> {
         // SAFETY: futex_ptr points to a valid, aligned i32 in the handle.
         let _ = unsafe {
             syscall::sys_futex(
-                futex_ptr,
-                0x80,       // FUTEX_WAIT_PRIVATE
+                futex_ptr, 0x80,       // FUTEX_WAIT_PRIVATE
                 tid as u32, // expected value
                 0, 0, 0,
             )
@@ -834,8 +853,7 @@ mod tests {
     #[test]
     fn detach_after_join_not_possible() {
         // Create and join a thread, then verify we can't detach it.
-        let handle =
-            unsafe { create_thread(echo_start as *const () as usize, 99) }.unwrap();
+        let handle = unsafe { create_thread(echo_start as *const () as usize, 99) }.unwrap();
 
         // SAFETY: handle is valid.
         let join_result = unsafe { join_thread(handle) };
@@ -851,8 +869,7 @@ mod tests {
     #[test]
     fn detach_finished_thread_cleans_up_immediately() {
         // Create a thread that finishes quickly.
-        let handle =
-            unsafe { create_thread(echo_start as *const () as usize, 0) }.unwrap();
+        let handle = unsafe { create_thread(echo_start as *const () as usize, 0) }.unwrap();
 
         // Wait for it to finish.
         std::thread::sleep(std::time::Duration::from_millis(50));
@@ -882,8 +899,7 @@ mod tests {
     #[test]
     fn detach_running_thread_self_cleans_on_exit() {
         // Create a thread that runs for a bit.
-        let handle =
-            unsafe { create_thread(slow_start as *const () as usize, 20) }.unwrap();
+        let handle = unsafe { create_thread(slow_start as *const () as usize, 20) }.unwrap();
 
         // Detach while it's still running.
         // SAFETY: handle is valid.

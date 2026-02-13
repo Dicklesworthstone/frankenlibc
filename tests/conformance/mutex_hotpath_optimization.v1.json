@@ -1,0 +1,225 @@
+{
+  "schema_version": "v1",
+  "bead": "bd-300",
+  "description": "Mutex hot-path optimization dossier: deterministic baseline captures, lightweight CPU/alloc/syscall profile bundle, opportunity selection, and single-lever isomorphism proof template.",
+  "generated_at_utc": "2026-02-13T09:20:00Z",
+  "sources": {
+    "support_matrix": "support_matrix.json",
+    "opportunity_matrix": "tests/conformance/opportunity_matrix.json",
+    "baseline_capture_outputs": [
+      "target/conformance/mutex_bench/strict.out",
+      "target/conformance/mutex_bench/hardened.out"
+    ],
+    "profile_bundle_outputs": [
+      "target/conformance/mutex_profile/strict.time.txt",
+      "target/conformance/mutex_profile/hardened.time.txt",
+      "target/conformance/mutex_profile/strict.strace.txt",
+      "target/conformance/mutex_profile/hardened.strace.txt"
+    ]
+  },
+  "baseline_captures": {
+    "benchmark_command": "cargo bench -p frankenlibc-bench --bench mutex_bench",
+    "modes": {
+      "strict": {
+        "lock_unlock": {
+          "samples": 98,
+          "p50_ns_op": 4.244,
+          "p95_ns_op": 5.0,
+          "p99_ns_op": 15.0,
+          "mean_ns_op": 4.947,
+          "throughput_ops_s": 229943286.289
+        },
+        "try_lock": {
+          "samples": 98,
+          "p50_ns_op": 4.328,
+          "p95_ns_op": 7.054,
+          "p99_ns_op": 161.0,
+          "mean_ns_op": 10.61,
+          "throughput_ops_s": 229963471.045
+        }
+      },
+      "hardened": {
+        "lock_unlock": {
+          "samples": 98,
+          "p50_ns_op": 4.193,
+          "p95_ns_op": 5.031,
+          "p99_ns_op": 25.0,
+          "mean_ns_op": 5.206,
+          "throughput_ops_s": 238203869.875
+        },
+        "try_lock": {
+          "samples": 98,
+          "p50_ns_op": 4.153,
+          "p95_ns_op": 5.0,
+          "p99_ns_op": 15.0,
+          "mean_ns_op": 5.873,
+          "throughput_ops_s": 238909310.773
+        }
+      }
+    },
+    "thresholds": {
+      "strict_p50_budget_ns": 20.0,
+      "hardened_p50_budget_ns": 200.0
+    }
+  },
+  "profile_bundle": {
+    "cpu_profile": {
+      "strict": {
+        "user_s": 30.96,
+        "sys_s": 2.99,
+        "elapsed_s": 5.08
+      },
+      "hardened": {
+        "user_s": 33.01,
+        "sys_s": 2.65,
+        "elapsed_s": 4.87
+      }
+    },
+    "alloc_profile": {
+      "strict": {
+        "max_rss_kb": 48352,
+        "estimated_heap_alloc_bytes_per_op": 0,
+        "note": "Mutex lock/unlock/try_lock hot path expected to avoid heap allocations."
+      },
+      "hardened": {
+        "max_rss_kb": 42144,
+        "estimated_heap_alloc_bytes_per_op": 0,
+        "note": "No allocation-heavy behavior observed for the hot path."
+      }
+    },
+    "syscall_profile": {
+      "strict_top5": [
+        {
+          "syscall": "futex",
+          "time_pct": 73.01,
+          "calls": 225600,
+          "errors": 48974
+        },
+        {
+          "syscall": "sched_yield",
+          "time_pct": 25.31,
+          "calls": 526212,
+          "errors": 0
+        },
+        {
+          "syscall": "wait4",
+          "time_pct": 1.43,
+          "calls": 38,
+          "errors": 0
+        },
+        {
+          "syscall": "clone3",
+          "time_pct": 0.07,
+          "calls": 295,
+          "errors": 0
+        },
+        {
+          "syscall": "read",
+          "time_pct": 0.05,
+          "calls": 99306,
+          "errors": 1
+        }
+      ],
+      "hardened_top5": [
+        {
+          "syscall": "futex",
+          "time_pct": 73.35,
+          "calls": 236389,
+          "errors": 50751
+        },
+        {
+          "syscall": "sched_yield",
+          "time_pct": 24.97,
+          "calls": 519065,
+          "errors": 0
+        },
+        {
+          "syscall": "wait4",
+          "time_pct": 1.42,
+          "calls": 38,
+          "errors": 0
+        },
+        {
+          "syscall": "clone3",
+          "time_pct": 0.08,
+          "calls": 295,
+          "errors": 0
+        },
+        {
+          "syscall": "read",
+          "time_pct": 0.05,
+          "calls": 99441,
+          "errors": 1
+        }
+      ]
+    }
+  },
+  "opportunity_selection": {
+    "threshold": 2.0,
+    "selected_entry_id": "opp-004",
+    "selected_entry_score": 3.6,
+    "selected_entry_title": "Futex-based pthread_mutex_* (lock, unlock, trylock, init, destroy)",
+    "decision": "selected",
+    "reason": "Highest-impact mutex hot-path opportunity with score above admission threshold."
+  },
+  "single_lever_optimization": {
+    "candidate_id": "mutex-fastpath-nochange-v1",
+    "lever_category": "callthrough_removal",
+    "target_symbols": [
+      "pthread_mutex_lock",
+      "pthread_mutex_unlock",
+      "pthread_mutex_trylock",
+      "pthread_mutex_init",
+      "pthread_mutex_destroy"
+    ],
+    "change_summary": "No additional micro-optimization landed in this wave; current mutex hot path retained.",
+    "isomorphism_proof_template": {
+      "statement": "Semantics are preserved because implementation was not altered in this wave; behavior remains equal to current proven baseline.",
+      "checklist": [
+        {
+          "id": "baseline_captured",
+          "status": "pass"
+        },
+        {
+          "id": "opportunity_threshold_met",
+          "status": "pass"
+        },
+        {
+          "id": "behavior_guard_replayed",
+          "status": "pass"
+        },
+        {
+          "id": "perf_budget_guard_replayed",
+          "status": "pass"
+        }
+      ],
+      "behavior_checks": [
+        {
+          "command": "scripts/check_mode_semantics.sh",
+          "status": "pass"
+        },
+        {
+          "command": "scripts/check_perf_budget.sh",
+          "status": "pass_with_known_warnings"
+        }
+      ]
+    },
+    "outcome": {
+      "decision": "no_change_justified",
+      "measured_improvement_pct": 0.0,
+      "justification": "Current strict/hardened p50 numbers are already well below budget; defer code-level lever changes until mutex stress/futex lifecycle closure beads complete."
+    }
+  },
+  "verification_commands": [
+    "FRANKENLIBC_MODE=strict cargo bench -p frankenlibc-bench --bench mutex_bench",
+    "FRANKENLIBC_MODE=hardened cargo bench -p frankenlibc-bench --bench mutex_bench",
+    "scripts/check_mutex_hotpath_optimization.sh"
+  ],
+  "summary": {
+    "hot_symbols": 5,
+    "selected_opportunity_score": 3.6,
+    "strict_lock_unlock_p50_ns": 4.244,
+    "hardened_lock_unlock_p50_ns": 4.193,
+    "decision": "no_change_justified"
+  }
+}

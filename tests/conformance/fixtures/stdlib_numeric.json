@@ -65,6 +65,33 @@
       "expected_output": "18446744073709551615",
       "expected_errno": 0,
       "mode": "strict"
+    },
+    {
+      "name": "atol_basic",
+      "function": "atol",
+      "spec_section": "POSIX atol",
+      "inputs": { "nptr": [49, 50, 51, 0] },
+      "expected_output": "123",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "atol_negative",
+      "function": "atol",
+      "spec_section": "POSIX atol",
+      "inputs": { "nptr": [45, 57, 57, 0] },
+      "expected_output": "-99",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "atol_large",
+      "function": "atol",
+      "spec_section": "POSIX atol",
+      "inputs": { "nptr": [49, 48, 48, 48, 48, 48, 48, 48, 48, 48, 0] },
+      "expected_output": "1000000000",
+      "expected_errno": 0,
+      "mode": "strict"
     }
   ]
 }

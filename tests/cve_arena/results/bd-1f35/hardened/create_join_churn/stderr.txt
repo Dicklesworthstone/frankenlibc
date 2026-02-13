@@ -1,7 +1,3 @@
-    Blocking waiting for file lock on package cache
-    Blocking waiting for file lock on package cache
-    Blocking waiting for file lock on package cache
-    Blocking waiting for file lock on package cache
 warning: static variable `stdin` should have an upper case name
    --> crates/frankenlibc-abi/src/stdio_abi.rs:166:12
     |
@@ -23,5 +19,28 @@ warning: static variable `stderr` should have an upper case name
     |            ^^^^^^ help: convert the identifier to upper case: `STDERR`
 
 warning: `frankenlibc-abi` (lib) generated 3 warnings
-    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.48s
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.04s
+     Running tests/pthread_thread_lifecycle_test.rs (/data/tmp/cargo-target-bd1f35/debug/deps/pthread_thread_lifecycle_test-fa35d04b963693f1)
+warning: static variable `stdin` should have an upper case name
+   --> crates/frankenlibc-abi/src/stdio_abi.rs:166:12
+    |
+166 | pub static stdin: usize = STDIN_SENTINEL;
+    |            ^^^^^ help: convert the identifier to upper case: `STDIN`
+    |
+    = note: `#[warn(non_upper_case_globals)]` (part of `#[warn(nonstandard_style)]`) on by default
+
+warning: static variable `stdout` should have an upper case name
+   --> crates/frankenlibc-abi/src/stdio_abi.rs:170:12
+    |
+170 | pub static stdout: usize = STDOUT_SENTINEL;
+    |            ^^^^^^ help: convert the identifier to upper case: `STDOUT`
+
+warning: static variable `stderr` should have an upper case name
+   --> crates/frankenlibc-abi/src/stdio_abi.rs:174:12
+    |
+174 | pub static stderr: usize = STDERR_SENTINEL;
+    |            ^^^^^^ help: convert the identifier to upper case: `STDERR`
+
+warning: `frankenlibc-abi` (lib) generated 3 warnings
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.05s
      Running tests/pthread_thread_lifecycle_test.rs (/data/tmp/cargo-target-bd1f35/debug/deps/pthread_thread_lifecycle_test-fa35d04b963693f1)

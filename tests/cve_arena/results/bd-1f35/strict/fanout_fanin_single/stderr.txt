@@ -19,5 +19,5 @@ warning: static variable `stderr` should have an upper case name
     |            ^^^^^^ help: convert the identifier to upper case: `STDERR`
 
 warning: `frankenlibc-abi` (lib) generated 3 warnings
-    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.05s
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.04s
      Running tests/pthread_thread_lifecycle_test.rs (/data/tmp/cargo-target-bd1f35/debug/deps/pthread_thread_lifecycle_test-fa35d04b963693f1)

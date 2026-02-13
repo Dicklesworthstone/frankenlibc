@@ -114,6 +114,33 @@
       "expected_output": "open_err errno=22",
       "expected_errno": 22,
       "mode": "hardened"
+    },
+    {
+      "name": "iconv_open_utf8_to_utf16le",
+      "function": "iconv_open",
+      "spec_section": "POSIX.1-2017 iconv_open",
+      "inputs": { "tocode": "UTF-16LE", "fromcode": "UTF-8" },
+      "expected_output": "VALID_DESCRIPTOR",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "iconv_open_unsupported",
+      "function": "iconv_open",
+      "spec_section": "POSIX.1-2017 iconv_open",
+      "inputs": { "tocode": "UTF-8", "fromcode": "NONEXISTENT-ENCODING" },
+      "expected_output": "INVALID",
+      "expected_errno": 22,
+      "mode": "strict"
+    },
+    {
+      "name": "iconv_close_valid",
+      "function": "iconv_close",
+      "spec_section": "POSIX.1-2017 iconv_close",
+      "inputs": { "tocode": "UTF-8", "fromcode": "ISO-8859-1" },
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "strict"
     }
   ]
 }

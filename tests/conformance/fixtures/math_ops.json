@@ -1,0 +1,305 @@
+{
+  "version": "v1",
+  "family": "math",
+  "captured_at": "2026-02-13T00:00:00Z",
+  "description": "C11/POSIX math.h — trigonometric, exponential, rounding, and special functions",
+  "cases": [
+    {
+      "name": "sin_zero",
+      "function": "sin",
+      "spec_section": "C11 7.12.4.6 sin",
+      "inputs": { "x": 0.0 },
+      "expected_output": "0.0",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "sin_pi_half",
+      "function": "sin",
+      "spec_section": "C11 7.12.4.6 sin",
+      "inputs": { "x": 1.5707963267948966 },
+      "expected_output": "1.0",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "cos_zero",
+      "function": "cos",
+      "spec_section": "C11 7.12.4.5 cos",
+      "inputs": { "x": 0.0 },
+      "expected_output": "1.0",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "cos_pi",
+      "function": "cos",
+      "spec_section": "C11 7.12.4.5 cos",
+      "inputs": { "x": 3.141592653589793 },
+      "expected_output": "-1.0",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "tan_zero",
+      "function": "tan",
+      "spec_section": "C11 7.12.4.7 tan",
+      "inputs": { "x": 0.0 },
+      "expected_output": "0.0",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "asin_zero",
+      "function": "asin",
+      "spec_section": "C11 7.12.4.2 asin",
+      "inputs": { "x": 0.0 },
+      "expected_output": "0.0",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "asin_one",
+      "function": "asin",
+      "spec_section": "C11 7.12.4.2 asin",
+      "inputs": { "x": 1.0 },
+      "expected_output": "1.5707963267948966",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "acos_one",
+      "function": "acos",
+      "spec_section": "C11 7.12.4.1 acos",
+      "inputs": { "x": 1.0 },
+      "expected_output": "0.0",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "acos_zero",
+      "function": "acos",
+      "spec_section": "C11 7.12.4.1 acos",
+      "inputs": { "x": 0.0 },
+      "expected_output": "1.5707963267948966",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "atan_zero",
+      "function": "atan",
+      "spec_section": "C11 7.12.4.3 atan",
+      "inputs": { "x": 0.0 },
+      "expected_output": "0.0",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "atan2_zero_one",
+      "function": "atan2",
+      "spec_section": "C11 7.12.4.4 atan2",
+      "inputs": { "y": 0.0, "x": 1.0 },
+      "expected_output": "0.0",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "atan2_one_one",
+      "function": "atan2",
+      "spec_section": "C11 7.12.4.4 atan2",
+      "inputs": { "y": 1.0, "x": 1.0 },
+      "expected_output": "0.7853981633974483",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "exp_zero",
+      "function": "exp",
+      "spec_section": "C11 7.12.6.1 exp",
+      "inputs": { "x": 0.0 },
+      "expected_output": "1.0",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "exp_one",
+      "function": "exp",
+      "spec_section": "C11 7.12.6.1 exp",
+      "inputs": { "x": 1.0 },
+      "expected_output": "2.718281828459045",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "log_one",
+      "function": "log",
+      "spec_section": "C11 7.12.6.7 log",
+      "inputs": { "x": 1.0 },
+      "expected_output": "0.0",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "log_e",
+      "function": "log",
+      "spec_section": "C11 7.12.6.7 log",
+      "inputs": { "x": 2.718281828459045 },
+      "expected_output": "1.0",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "log10_ten",
+      "function": "log10",
+      "spec_section": "C11 7.12.6.8 log10",
+      "inputs": { "x": 10.0 },
+      "expected_output": "1.0",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "log10_one",
+      "function": "log10",
+      "spec_section": "C11 7.12.6.8 log10",
+      "inputs": { "x": 1.0 },
+      "expected_output": "0.0",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "pow_two_ten",
+      "function": "pow",
+      "spec_section": "C11 7.12.7.4 pow",
+      "inputs": { "x": 2.0, "y": 10.0 },
+      "expected_output": "1024.0",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "pow_zero_exp",
+      "function": "pow",
+      "spec_section": "C11 7.12.7.4 pow",
+      "inputs": { "x": 5.0, "y": 0.0 },
+      "expected_output": "1.0",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "fabs_negative",
+      "function": "fabs",
+      "spec_section": "C11 7.12.7.2 fabs",
+      "inputs": { "x": -3.14 },
+      "expected_output": "3.14",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "fabs_positive",
+      "function": "fabs",
+      "spec_section": "C11 7.12.7.2 fabs",
+      "inputs": { "x": 2.71 },
+      "expected_output": "2.71",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "ceil_positive_frac",
+      "function": "ceil",
+      "spec_section": "C11 7.12.9.1 ceil",
+      "inputs": { "x": 2.3 },
+      "expected_output": "3.0",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "ceil_negative_frac",
+      "function": "ceil",
+      "spec_section": "C11 7.12.9.1 ceil",
+      "inputs": { "x": -2.3 },
+      "expected_output": "-2.0",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "floor_positive_frac",
+      "function": "floor",
+      "spec_section": "C11 7.12.9.2 floor",
+      "inputs": { "x": 2.7 },
+      "expected_output": "2.0",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "floor_negative_frac",
+      "function": "floor",
+      "spec_section": "C11 7.12.9.2 floor",
+      "inputs": { "x": -2.3 },
+      "expected_output": "-3.0",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "round_half_up",
+      "function": "round",
+      "spec_section": "C11 7.12.9.6 round",
+      "inputs": { "x": 2.5 },
+      "expected_output": "3.0",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "round_half_neg",
+      "function": "round",
+      "spec_section": "C11 7.12.9.6 round",
+      "inputs": { "x": -2.5 },
+      "expected_output": "-3.0",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "fmod_basic",
+      "function": "fmod",
+      "spec_section": "C11 7.12.10.1 fmod",
+      "inputs": { "x": 5.3, "y": 2.0 },
+      "expected_output": "1.3",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "erf_zero",
+      "function": "erf",
+      "spec_section": "C11 7.12.8.1 erf",
+      "inputs": { "x": 0.0 },
+      "expected_output": "0.0",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "tgamma_one",
+      "function": "tgamma",
+      "spec_section": "C11 7.12.8.4 tgamma",
+      "inputs": { "x": 1.0 },
+      "expected_output": "1.0",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "tgamma_five",
+      "function": "tgamma",
+      "spec_section": "C11 7.12.8.4 tgamma",
+      "inputs": { "x": 5.0 },
+      "expected_output": "24.0",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "lgamma_one",
+      "function": "lgamma",
+      "spec_section": "C11 7.12.8.3 lgamma",
+      "inputs": { "x": 1.0 },
+      "expected_output": "0.0",
+      "expected_errno": 0,
+      "mode": "both"
+    }
+  ]
+}

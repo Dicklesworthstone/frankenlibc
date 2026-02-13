@@ -3,38 +3,29 @@
   "description": "Exported symbol <-> conformance fixture coverage matrix. Targets Implemented/RawSyscall coverage gaps and maps them to subsystem tracks.",
   "families": [
     {
-      "covered_symbols": 5,
+      "covered_symbols": 14,
       "milestone_beads": [],
       "module": "unistd_abi",
       "recommended_bead": null,
       "severity": "high",
-      "severity_score": 2202,
+      "severity_score": 1302,
       "status_breakdown": {
         "RawSyscall": 27
       },
-      "target_coverage_pct": 18.52,
-      "target_covered": 5,
+      "target_coverage_pct": 51.85,
+      "target_covered": 14,
       "target_statuses": [
         "Implemented",
         "RawSyscall"
       ],
       "target_total": 27,
-      "target_uncovered": 22,
+      "target_uncovered": 13,
       "target_uncovered_symbols": [
-        "access",
         "chdir",
         "fchdir",
         "fdatasync",
         "fstat",
         "fsync",
-        "getcwd",
-        "getegid",
-        "geteuid",
-        "getgid",
-        "getpid",
-        "getppid",
-        "getuid",
-        "isatty",
         "link",
         "lstat",
         "readlink",
@@ -46,129 +37,7 @@
       ],
       "total_symbols": 27,
       "track": "unistd/syscall",
-      "uncovered_symbols": 22,
-      "workload_blocked_count": 0,
-      "workload_ids": []
-    },
-    {
-      "covered_symbols": 0,
-      "milestone_beads": [],
-      "module": "math_abi",
-      "recommended_bead": null,
-      "severity": "critical",
-      "severity_score": 1903,
-      "status_breakdown": {
-        "Implemented": 19
-      },
-      "target_coverage_pct": 0.0,
-      "target_covered": 0,
-      "target_statuses": [
-        "Implemented",
-        "RawSyscall"
-      ],
-      "target_total": 19,
-      "target_uncovered": 19,
-      "target_uncovered_symbols": [
-        "acos",
-        "asin",
-        "atan",
-        "atan2",
-        "ceil",
-        "cos",
-        "erf",
-        "exp",
-        "fabs",
-        "floor",
-        "fmod",
-        "lgamma",
-        "log",
-        "log10",
-        "pow",
-        "round",
-        "sin",
-        "tan",
-        "tgamma"
-      ],
-      "total_symbols": 19,
-      "track": "math",
-      "uncovered_symbols": 19,
-      "workload_blocked_count": 0,
-      "workload_ids": []
-    },
-    {
-      "covered_symbols": 0,
-      "milestone_beads": [],
-      "module": "socket_abi",
-      "recommended_bead": null,
-      "severity": "critical",
-      "severity_score": 1403,
-      "status_breakdown": {
-        "RawSyscall": 14
-      },
-      "target_coverage_pct": 0.0,
-      "target_covered": 0,
-      "target_statuses": [
-        "Implemented",
-        "RawSyscall"
-      ],
-      "target_total": 14,
-      "target_uncovered": 14,
-      "target_uncovered_symbols": [
-        "accept",
-        "bind",
-        "connect",
-        "getpeername",
-        "getsockname",
-        "getsockopt",
-        "listen",
-        "recv",
-        "recvfrom",
-        "send",
-        "sendto",
-        "setsockopt",
-        "shutdown",
-        "socket"
-      ],
-      "total_symbols": 14,
-      "track": "network/socket",
-      "uncovered_symbols": 14,
-      "workload_blocked_count": 0,
-      "workload_ids": []
-    },
-    {
-      "covered_symbols": 0,
-      "milestone_beads": [],
-      "module": "ctype_abi",
-      "recommended_bead": null,
-      "severity": "critical",
-      "severity_score": 1103,
-      "status_breakdown": {
-        "Implemented": 11
-      },
-      "target_coverage_pct": 0.0,
-      "target_covered": 0,
-      "target_statuses": [
-        "Implemented",
-        "RawSyscall"
-      ],
-      "target_total": 11,
-      "target_uncovered": 11,
-      "target_uncovered_symbols": [
-        "isalnum",
-        "isalpha",
-        "isdigit",
-        "islower",
-        "isprint",
-        "ispunct",
-        "isspace",
-        "isupper",
-        "isxdigit",
-        "tolower",
-        "toupper"
-      ],
-      "total_symbols": 11,
-      "track": "ctype",
-      "uncovered_symbols": 11,
+      "uncovered_symbols": 13,
       "workload_blocked_count": 0,
       "workload_ids": []
     },
@@ -209,6 +78,40 @@
       "workload_ids": []
     },
     {
+      "covered_symbols": 6,
+      "milestone_beads": [],
+      "module": "socket_abi",
+      "recommended_bead": null,
+      "severity": "high",
+      "severity_score": 802,
+      "status_breakdown": {
+        "RawSyscall": 14
+      },
+      "target_coverage_pct": 42.86,
+      "target_covered": 6,
+      "target_statuses": [
+        "Implemented",
+        "RawSyscall"
+      ],
+      "target_total": 14,
+      "target_uncovered": 8,
+      "target_uncovered_symbols": [
+        "accept",
+        "connect",
+        "getpeername",
+        "getsockname",
+        "listen",
+        "recvfrom",
+        "sendto",
+        "setsockopt"
+      ],
+      "total_symbols": 14,
+      "track": "network/socket",
+      "uncovered_symbols": 8,
+      "workload_blocked_count": 0,
+      "workload_ids": []
+    },
+    {
       "covered_symbols": 0,
       "milestone_beads": [],
       "module": "grp_abi",
@@ -237,39 +140,6 @@
       ],
       "total_symbols": 7,
       "track": "identity",
-      "uncovered_symbols": 7,
-      "workload_blocked_count": 0,
-      "workload_ids": []
-    },
-    {
-      "covered_symbols": 0,
-      "milestone_beads": [],
-      "module": "inet_abi",
-      "recommended_bead": null,
-      "severity": "critical",
-      "severity_score": 703,
-      "status_breakdown": {
-        "Implemented": 7
-      },
-      "target_coverage_pct": 0.0,
-      "target_covered": 0,
-      "target_statuses": [
-        "Implemented",
-        "RawSyscall"
-      ],
-      "target_total": 7,
-      "target_uncovered": 7,
-      "target_uncovered_symbols": [
-        "htonl",
-        "htons",
-        "inet_addr",
-        "inet_ntop",
-        "inet_pton",
-        "ntohl",
-        "ntohs"
-      ],
-      "total_symbols": 7,
-      "track": "network/inet",
       "uncovered_symbols": 7,
       "workload_blocked_count": 0,
       "workload_ids": []
@@ -340,38 +210,6 @@
       "workload_ids": []
     },
     {
-      "covered_symbols": 5,
-      "milestone_beads": [],
-      "module": "stdlib_abi",
-      "recommended_bead": null,
-      "severity": "high",
-      "severity_score": 602,
-      "status_breakdown": {
-        "Implemented": 11
-      },
-      "target_coverage_pct": 45.45,
-      "target_covered": 5,
-      "target_statuses": [
-        "Implemented",
-        "RawSyscall"
-      ],
-      "target_total": 11,
-      "target_uncovered": 6,
-      "target_uncovered_symbols": [
-        "atexit",
-        "atol",
-        "exit",
-        "getenv",
-        "setenv",
-        "unsetenv"
-      ],
-      "total_symbols": 11,
-      "track": "stdlib",
-      "uncovered_symbols": 6,
-      "workload_blocked_count": 0,
-      "workload_ids": []
-    },
-    {
       "covered_symbols": 0,
       "milestone_beads": [],
       "module": "mmap_abi",
@@ -398,6 +236,37 @@
       ],
       "total_symbols": 5,
       "track": "vm/mmap",
+      "uncovered_symbols": 5,
+      "workload_blocked_count": 0,
+      "workload_ids": []
+    },
+    {
+      "covered_symbols": 6,
+      "milestone_beads": [],
+      "module": "stdlib_abi",
+      "recommended_bead": null,
+      "severity": "high",
+      "severity_score": 502,
+      "status_breakdown": {
+        "Implemented": 11
+      },
+      "target_coverage_pct": 54.55,
+      "target_covered": 6,
+      "target_statuses": [
+        "Implemented",
+        "RawSyscall"
+      ],
+      "target_total": 11,
+      "target_uncovered": 5,
+      "target_uncovered_symbols": [
+        "atexit",
+        "exit",
+        "getenv",
+        "setenv",
+        "unsetenv"
+      ],
+      "total_symbols": 11,
+      "track": "stdlib",
       "uncovered_symbols": 5,
       "workload_blocked_count": 0,
       "workload_ids": []
@@ -679,34 +548,6 @@
     {
       "covered_symbols": 1,
       "milestone_beads": [],
-      "module": "iconv_abi",
-      "recommended_bead": null,
-      "severity": "high",
-      "severity_score": 202,
-      "status_breakdown": {
-        "Implemented": 3
-      },
-      "target_coverage_pct": 33.33,
-      "target_covered": 1,
-      "target_statuses": [
-        "Implemented",
-        "RawSyscall"
-      ],
-      "target_total": 3,
-      "target_uncovered": 2,
-      "target_uncovered_symbols": [
-        "iconv_close",
-        "iconv_open"
-      ],
-      "total_symbols": 3,
-      "track": "i18n/iconv",
-      "uncovered_symbols": 2,
-      "workload_blocked_count": 0,
-      "workload_ids": []
-    },
-    {
-      "covered_symbols": 1,
-      "milestone_beads": [],
       "module": "startup_abi",
       "recommended_bead": null,
       "severity": "high",
@@ -728,62 +569,6 @@
       ],
       "total_symbols": 3,
       "track": "startup",
-      "uncovered_symbols": 2,
-      "workload_blocked_count": 0,
-      "workload_ids": []
-    },
-    {
-      "covered_symbols": 15,
-      "milestone_beads": [],
-      "module": "string_abi",
-      "recommended_bead": null,
-      "severity": "medium",
-      "severity_score": 201,
-      "status_breakdown": {
-        "Implemented": 17
-      },
-      "target_coverage_pct": 88.24,
-      "target_covered": 15,
-      "target_statuses": [
-        "Implemented",
-        "RawSyscall"
-      ],
-      "target_total": 17,
-      "target_uncovered": 2,
-      "target_uncovered_symbols": [
-        "strtok",
-        "strtok_r"
-      ],
-      "total_symbols": 17,
-      "track": "string",
-      "uncovered_symbols": 2,
-      "workload_blocked_count": 0,
-      "workload_ids": []
-    },
-    {
-      "covered_symbols": 12,
-      "milestone_beads": [],
-      "module": "wchar_abi",
-      "recommended_bead": null,
-      "severity": "medium",
-      "severity_score": 201,
-      "status_breakdown": {
-        "Implemented": 14
-      },
-      "target_coverage_pct": 85.71,
-      "target_covered": 12,
-      "target_statuses": [
-        "Implemented",
-        "RawSyscall"
-      ],
-      "target_total": 14,
-      "target_uncovered": 2,
-      "target_uncovered_symbols": [
-        "wcsncmp",
-        "wcsrchr"
-      ],
-      "total_symbols": 14,
-      "track": "string/wide",
       "uncovered_symbols": 2,
       "workload_blocked_count": 0,
       "workload_ids": []
@@ -849,30 +634,31 @@
       ]
     },
     {
-      "covered_symbols": 9,
+      "covered_symbols": 10,
       "milestone_beads": [
         "bd-yos",
         "bd-z84"
       ],
       "module": "pthread_abi",
       "recommended_bead": "bd-yos",
-      "severity": "n/a",
+      "severity": "covered",
       "severity_score": 40,
       "status_breakdown": {
-        "GlibcCallThrough": 20
+        "GlibcCallThrough": 15,
+        "Implemented": 5
       },
       "target_coverage_pct": 100.0,
-      "target_covered": 0,
+      "target_covered": 5,
       "target_statuses": [
         "Implemented",
         "RawSyscall"
       ],
-      "target_total": 0,
+      "target_total": 5,
       "target_uncovered": 0,
       "target_uncovered_symbols": [],
       "total_symbols": 20,
       "track": "threading",
-      "uncovered_symbols": 11,
+      "uncovered_symbols": 10,
       "workload_blocked_count": 4,
       "workload_ids": [
         "wl-002",
@@ -910,15 +696,165 @@
         "wl-002",
         "wl-004"
       ]
+    },
+    {
+      "covered_symbols": 11,
+      "milestone_beads": [],
+      "module": "ctype_abi",
+      "recommended_bead": null,
+      "severity": "covered",
+      "severity_score": 0,
+      "status_breakdown": {
+        "Implemented": 11
+      },
+      "target_coverage_pct": 100.0,
+      "target_covered": 11,
+      "target_statuses": [
+        "Implemented",
+        "RawSyscall"
+      ],
+      "target_total": 11,
+      "target_uncovered": 0,
+      "target_uncovered_symbols": [],
+      "total_symbols": 11,
+      "track": "ctype",
+      "uncovered_symbols": 0,
+      "workload_blocked_count": 0,
+      "workload_ids": []
+    },
+    {
+      "covered_symbols": 3,
+      "milestone_beads": [],
+      "module": "iconv_abi",
+      "recommended_bead": null,
+      "severity": "covered",
+      "severity_score": 0,
+      "status_breakdown": {
+        "Implemented": 3
+      },
+      "target_coverage_pct": 100.0,
+      "target_covered": 3,
+      "target_statuses": [
+        "Implemented",
+        "RawSyscall"
+      ],
+      "target_total": 3,
+      "target_uncovered": 0,
+      "target_uncovered_symbols": [],
+      "total_symbols": 3,
+      "track": "i18n/iconv",
+      "uncovered_symbols": 0,
+      "workload_blocked_count": 0,
+      "workload_ids": []
+    },
+    {
+      "covered_symbols": 7,
+      "milestone_beads": [],
+      "module": "inet_abi",
+      "recommended_bead": null,
+      "severity": "covered",
+      "severity_score": 0,
+      "status_breakdown": {
+        "Implemented": 7
+      },
+      "target_coverage_pct": 100.0,
+      "target_covered": 7,
+      "target_statuses": [
+        "Implemented",
+        "RawSyscall"
+      ],
+      "target_total": 7,
+      "target_uncovered": 0,
+      "target_uncovered_symbols": [],
+      "total_symbols": 7,
+      "track": "network/inet",
+      "uncovered_symbols": 0,
+      "workload_blocked_count": 0,
+      "workload_ids": []
+    },
+    {
+      "covered_symbols": 19,
+      "milestone_beads": [],
+      "module": "math_abi",
+      "recommended_bead": null,
+      "severity": "covered",
+      "severity_score": 0,
+      "status_breakdown": {
+        "Implemented": 19
+      },
+      "target_coverage_pct": 100.0,
+      "target_covered": 19,
+      "target_statuses": [
+        "Implemented",
+        "RawSyscall"
+      ],
+      "target_total": 19,
+      "target_uncovered": 0,
+      "target_uncovered_symbols": [],
+      "total_symbols": 19,
+      "track": "math",
+      "uncovered_symbols": 0,
+      "workload_blocked_count": 0,
+      "workload_ids": []
+    },
+    {
+      "covered_symbols": 17,
+      "milestone_beads": [],
+      "module": "string_abi",
+      "recommended_bead": null,
+      "severity": "covered",
+      "severity_score": 0,
+      "status_breakdown": {
+        "Implemented": 17
+      },
+      "target_coverage_pct": 100.0,
+      "target_covered": 17,
+      "target_statuses": [
+        "Implemented",
+        "RawSyscall"
+      ],
+      "target_total": 17,
+      "target_uncovered": 0,
+      "target_uncovered_symbols": [],
+      "total_symbols": 17,
+      "track": "string",
+      "uncovered_symbols": 0,
+      "workload_blocked_count": 0,
+      "workload_ids": []
+    },
+    {
+      "covered_symbols": 14,
+      "milestone_beads": [],
+      "module": "wchar_abi",
+      "recommended_bead": null,
+      "severity": "covered",
+      "severity_score": 0,
+      "status_breakdown": {
+        "Implemented": 14
+      },
+      "target_coverage_pct": 100.0,
+      "target_covered": 14,
+      "target_statuses": [
+        "Implemented",
+        "RawSyscall"
+      ],
+      "target_total": 14,
+      "target_uncovered": 0,
+      "target_uncovered_symbols": [],
+      "total_symbols": 14,
+      "track": "string/wide",
+      "uncovered_symbols": 0,
+      "workload_blocked_count": 0,
+      "workload_ids": []
     }
   ],
   "fixture_inventory": {
-    "c_fixture_spec_fixtures": 5,
-    "c_fixture_spec_symbol_mentions": 28,
-    "c_fixture_spec_unique_symbols": 27,
-    "fixture_json_cases": 123,
-    "fixture_json_files": 15,
-    "fixture_json_unique_functions": 50,
+    "c_fixture_spec_fixtures": 9,
+    "c_fixture_spec_symbol_mentions": 57,
+    "c_fixture_spec_unique_symbols": 51,
+    "fixture_json_cases": 264,
+    "fixture_json_files": 22,
+    "fixture_json_unique_functions": 118,
     "non_symbol_fixture_function_count": 13,
     "non_symbol_fixture_functions": [
       "DnsHeader::new_query",
@@ -935,7 +871,7 @@
       "lookup_hosts",
       "open"
     ],
-    "unique_fixture_functions_total": 67
+    "unique_fixture_functions_total": 127
   },
   "generated_at_utc": "2026-02-11T19:17:31Z",
   "inputs": {
@@ -950,22 +886,13 @@
       "module": "unistd_abi",
       "recommended_bead": null,
       "severity": "high",
-      "target_uncovered_count": 22,
+      "target_uncovered_count": 13,
       "target_uncovered_symbols": [
-        "access",
         "chdir",
         "fchdir",
         "fdatasync",
         "fstat",
         "fsync",
-        "getcwd",
-        "getegid",
-        "geteuid",
-        "getgid",
-        "getpid",
-        "getppid",
-        "getuid",
-        "isatty",
         "link",
         "lstat",
         "readlink",
@@ -976,86 +903,6 @@
         "usleep"
       ],
       "track": "unistd/syscall",
-      "workload_blocked_count": 0,
-      "workload_ids": []
-    },
-    {
-      "milestone_beads": [],
-      "module": "math_abi",
-      "recommended_bead": null,
-      "severity": "critical",
-      "target_uncovered_count": 19,
-      "target_uncovered_symbols": [
-        "acos",
-        "asin",
-        "atan",
-        "atan2",
-        "ceil",
-        "cos",
-        "erf",
-        "exp",
-        "fabs",
-        "floor",
-        "fmod",
-        "lgamma",
-        "log",
-        "log10",
-        "pow",
-        "round",
-        "sin",
-        "tan",
-        "tgamma"
-      ],
-      "track": "math",
-      "workload_blocked_count": 0,
-      "workload_ids": []
-    },
-    {
-      "milestone_beads": [],
-      "module": "socket_abi",
-      "recommended_bead": null,
-      "severity": "critical",
-      "target_uncovered_count": 14,
-      "target_uncovered_symbols": [
-        "accept",
-        "bind",
-        "connect",
-        "getpeername",
-        "getsockname",
-        "getsockopt",
-        "listen",
-        "recv",
-        "recvfrom",
-        "send",
-        "sendto",
-        "setsockopt",
-        "shutdown",
-        "socket"
-      ],
-      "track": "network/socket",
-      "workload_blocked_count": 0,
-      "workload_ids": []
-    },
-    {
-      "milestone_beads": [],
-      "module": "ctype_abi",
-      "recommended_bead": null,
-      "severity": "critical",
-      "target_uncovered_count": 11,
-      "target_uncovered_symbols": [
-        "isalnum",
-        "isalpha",
-        "isdigit",
-        "islower",
-        "isprint",
-        "ispunct",
-        "isspace",
-        "isupper",
-        "isxdigit",
-        "tolower",
-        "toupper"
-      ],
-      "track": "ctype",
       "workload_blocked_count": 0,
       "workload_ids": []
     },
@@ -1083,6 +930,26 @@
     },
     {
       "milestone_beads": [],
+      "module": "socket_abi",
+      "recommended_bead": null,
+      "severity": "high",
+      "target_uncovered_count": 8,
+      "target_uncovered_symbols": [
+        "accept",
+        "connect",
+        "getpeername",
+        "getsockname",
+        "listen",
+        "recvfrom",
+        "sendto",
+        "setsockopt"
+      ],
+      "track": "network/socket",
+      "workload_blocked_count": 0,
+      "workload_ids": []
+    },
+    {
+      "milestone_beads": [],
       "module": "grp_abi",
       "recommended_bead": null,
       "severity": "critical",
@@ -1097,25 +964,6 @@
         "setgrent"
       ],
       "track": "identity",
-      "workload_blocked_count": 0,
-      "workload_ids": []
-    },
-    {
-      "milestone_beads": [],
-      "module": "inet_abi",
-      "recommended_bead": null,
-      "severity": "critical",
-      "target_uncovered_count": 7,
-      "target_uncovered_symbols": [
-        "htonl",
-        "htons",
-        "inet_addr",
-        "inet_ntop",
-        "inet_pton",
-        "ntohl",
-        "ntohs"
-      ],
-      "track": "network/inet",
       "workload_blocked_count": 0,
       "workload_ids": []
     },
@@ -1158,24 +1006,6 @@
     },
     {
       "milestone_beads": [],
-      "module": "stdlib_abi",
-      "recommended_bead": null,
-      "severity": "high",
-      "target_uncovered_count": 6,
-      "target_uncovered_symbols": [
-        "atexit",
-        "atol",
-        "exit",
-        "getenv",
-        "setenv",
-        "unsetenv"
-      ],
-      "track": "stdlib",
-      "workload_blocked_count": 0,
-      "workload_ids": []
-    },
-    {
-      "milestone_beads": [],
       "module": "mmap_abi",
       "recommended_bead": null,
       "severity": "critical",
@@ -1188,6 +1018,23 @@
         "munmap"
       ],
       "track": "vm/mmap",
+      "workload_blocked_count": 0,
+      "workload_ids": []
+    },
+    {
+      "milestone_beads": [],
+      "module": "stdlib_abi",
+      "recommended_bead": null,
+      "severity": "high",
+      "target_uncovered_count": 5,
+      "target_uncovered_symbols": [
+        "atexit",
+        "exit",
+        "getenv",
+        "setenv",
+        "unsetenv"
+      ],
+      "track": "stdlib",
       "workload_blocked_count": 0,
       "workload_ids": []
     },
@@ -1327,20 +1174,6 @@
     },
     {
       "milestone_beads": [],
-      "module": "iconv_abi",
-      "recommended_bead": null,
-      "severity": "high",
-      "target_uncovered_count": 2,
-      "target_uncovered_symbols": [
-        "iconv_close",
-        "iconv_open"
-      ],
-      "track": "i18n/iconv",
-      "workload_blocked_count": 0,
-      "workload_ids": []
-    },
-    {
-      "milestone_beads": [],
       "module": "resource_abi",
       "recommended_bead": null,
       "severity": "critical",
@@ -1369,34 +1202,6 @@
     },
     {
       "milestone_beads": [],
-      "module": "string_abi",
-      "recommended_bead": null,
-      "severity": "medium",
-      "target_uncovered_count": 2,
-      "target_uncovered_symbols": [
-        "strtok",
-        "strtok_r"
-      ],
-      "track": "string",
-      "workload_blocked_count": 0,
-      "workload_ids": []
-    },
-    {
-      "milestone_beads": [],
-      "module": "wchar_abi",
-      "recommended_bead": null,
-      "severity": "medium",
-      "target_uncovered_count": 2,
-      "target_uncovered_symbols": [
-        "wcsncmp",
-        "wcsrchr"
-      ],
-      "track": "string/wide",
-      "workload_blocked_count": 0,
-      "workload_ids": []
-    },
-    {
-      "milestone_beads": [],
       "module": "errno_abi",
       "recommended_bead": null,
       "severity": "critical",
@@ -1412,191 +1217,323 @@
   "schema_version": 1,
   "status_coverage": {
     "GlibcCallThrough": {
-      "coverage_pct": 16.67,
-      "covered": 9,
-      "total": 54,
-      "uncovered": 45
+      "coverage_pct": 10.2,
+      "covered": 5,
+      "total": 49,
+      "uncovered": 44
     },
     "Implemented": {
-      "coverage_pct": 34.51,
-      "covered": 39,
-      "total": 113,
-      "uncovered": 74
+      "coverage_pct": 74.58,
+      "covered": 88,
+      "total": 118,
+      "uncovered": 30
     },
     "RawSyscall": {
-      "coverage_pct": 7.23,
-      "covered": 6,
+      "coverage_pct": 25.3,
+      "covered": 21,
       "total": 83,
-      "uncovered": 77
+      "uncovered": 62
     }
   },
   "summary": {
-    "coverage_pct": 21.6,
-    "covered_exported_symbols": 54,
-    "target_coverage_pct": 22.96,
-    "target_covered_symbols": 45,
+    "coverage_pct": 45.6,
+    "covered_exported_symbols": 114,
+    "target_coverage_pct": 54.23,
+    "target_covered_symbols": 109,
     "target_statuses": [
       "Implemented",
       "RawSyscall"
     ],
-    "target_total_symbols": 196,
-    "target_uncovered_symbols": 151,
+    "target_total_symbols": 201,
+    "target_uncovered_symbols": 92,
     "total_exported_symbols": 250,
-    "uncovered_exported_symbols": 196,
-    "uncovered_target_families": 16,
+    "uncovered_exported_symbols": 136,
+    "uncovered_target_families": 12,
     "weak_family_threshold_pct": 80.0,
     "weak_target_families": 7
   },
   "symbols": [
     {
-      "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
-      "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "c_fixture_mentions": 1,
+      "covered": true,
+      "fixture_case_count": 3,
+      "fixture_families": [
+        "c_fixture_suite",
+        "ctype"
+      ],
+      "fixture_files": [
+        "ctype_ops.json"
+      ],
+      "fixture_ids": [
+        "fixture_ctype"
+      ],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "c_fixture_spec",
+        "fixture_json"
+      ],
       "module": "ctype_abi",
       "perf_class": "strict_hotpath",
       "status": "Implemented",
       "symbol": "isalnum"
     },
     {
-      "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
-      "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "c_fixture_mentions": 1,
+      "covered": true,
+      "fixture_case_count": 4,
+      "fixture_families": [
+        "c_fixture_suite",
+        "ctype"
+      ],
+      "fixture_files": [
+        "ctype_ops.json"
+      ],
+      "fixture_ids": [
+        "fixture_ctype"
+      ],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "c_fixture_spec",
+        "fixture_json"
+      ],
       "module": "ctype_abi",
       "perf_class": "strict_hotpath",
       "status": "Implemented",
       "symbol": "isalpha"
     },
     {
-      "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
-      "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "c_fixture_mentions": 1,
+      "covered": true,
+      "fixture_case_count": 3,
+      "fixture_families": [
+        "c_fixture_suite",
+        "ctype"
+      ],
+      "fixture_files": [
+        "ctype_ops.json"
+      ],
+      "fixture_ids": [
+        "fixture_ctype"
+      ],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "c_fixture_spec",
+        "fixture_json"
+      ],
       "module": "ctype_abi",
       "perf_class": "strict_hotpath",
       "status": "Implemented",
       "symbol": "isdigit"
     },
     {
-      "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
-      "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "c_fixture_mentions": 1,
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "c_fixture_suite",
+        "ctype"
+      ],
+      "fixture_files": [
+        "ctype_ops.json"
+      ],
+      "fixture_ids": [
+        "fixture_ctype"
+      ],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "c_fixture_spec",
+        "fixture_json"
+      ],
       "module": "ctype_abi",
       "perf_class": "strict_hotpath",
       "status": "Implemented",
       "symbol": "islower"
     },
     {
-      "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
-      "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "c_fixture_mentions": 1,
+      "covered": true,
+      "fixture_case_count": 4,
+      "fixture_families": [
+        "c_fixture_suite",
+        "ctype"
+      ],
+      "fixture_files": [
+        "ctype_ops.json"
+      ],
+      "fixture_ids": [
+        "fixture_ctype"
+      ],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "c_fixture_spec",
+        "fixture_json"
+      ],
       "module": "ctype_abi",
       "perf_class": "strict_hotpath",
       "status": "Implemented",
       "symbol": "isprint"
     },
     {
-      "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
-      "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "c_fixture_mentions": 1,
+      "covered": true,
+      "fixture_case_count": 3,
+      "fixture_families": [
+        "c_fixture_suite",
+        "ctype"
+      ],
+      "fixture_files": [
+        "ctype_ops.json"
+      ],
+      "fixture_ids": [
+        "fixture_ctype"
+      ],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "c_fixture_spec",
+        "fixture_json"
+      ],
       "module": "ctype_abi",
       "perf_class": "strict_hotpath",
       "status": "Implemented",
       "symbol": "ispunct"
     },
     {
-      "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
-      "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "c_fixture_mentions": 1,
+      "covered": true,
+      "fixture_case_count": 4,
+      "fixture_families": [
+        "c_fixture_suite",
+        "ctype"
+      ],
+      "fixture_files": [
+        "ctype_ops.json"
+      ],
+      "fixture_ids": [
+        "fixture_ctype"
+      ],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "c_fixture_spec",
+        "fixture_json"
+      ],
       "module": "ctype_abi",
       "perf_class": "strict_hotpath",
       "status": "Implemented",
       "symbol": "isspace"
     },
     {
-      "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
-      "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "c_fixture_mentions": 1,
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "c_fixture_suite",
+        "ctype"
+      ],
+      "fixture_files": [
+        "ctype_ops.json"
+      ],
+      "fixture_ids": [
+        "fixture_ctype"
+      ],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "c_fixture_spec",
+        "fixture_json"
+      ],
       "module": "ctype_abi",
       "perf_class": "strict_hotpath",
       "status": "Implemented",
       "symbol": "isupper"
     },
     {
-      "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
-      "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "c_fixture_mentions": 1,
+      "covered": true,
+      "fixture_case_count": 4,
+      "fixture_families": [
+        "c_fixture_suite",
+        "ctype"
+      ],
+      "fixture_files": [
+        "ctype_ops.json"
+      ],
+      "fixture_ids": [
+        "fixture_ctype"
+      ],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "c_fixture_spec",
+        "fixture_json"
+      ],
       "module": "ctype_abi",
       "perf_class": "strict_hotpath",
       "status": "Implemented",
       "symbol": "isxdigit"
     },
     {
-      "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
-      "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "c_fixture_mentions": 1,
+      "covered": true,
+      "fixture_case_count": 4,
+      "fixture_families": [
+        "c_fixture_suite",
+        "ctype"
+      ],
+      "fixture_files": [
+        "ctype_ops.json"
+      ],
+      "fixture_ids": [
+        "fixture_ctype"
+      ],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "c_fixture_spec",
+        "fixture_json"
+      ],
       "module": "ctype_abi",
       "perf_class": "strict_hotpath",
       "status": "Implemented",
       "symbol": "tolower"
     },
     {
-      "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
-      "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "c_fixture_mentions": 1,
+      "covered": true,
+      "fixture_case_count": 4,
+      "fixture_families": [
+        "c_fixture_suite",
+        "ctype"
+      ],
+      "fixture_files": [
+        "ctype_ops.json"
+      ],
+      "fixture_ids": [
+        "fixture_ctype"
+      ],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "c_fixture_spec",
+        "fixture_json"
+      ],
       "module": "ctype_abi",
       "perf_class": "strict_hotpath",
       "status": "Implemented",
@@ -1815,7 +1752,7 @@
     {
       "c_fixture_mentions": 0,
       "covered": true,
-      "fixture_case_count": 7,
+      "fixture_case_count": 8,
       "fixture_families": [
         "iconv/phase1"
       ],
@@ -1837,13 +1774,21 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 1,
+      "fixture_families": [
+        "iconv/phase1"
+      ],
+      "fixture_files": [
+        "iconv_phase1.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "iconv_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
@@ -1851,13 +1796,21 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "iconv/phase1"
+      ],
+      "fixture_files": [
+        "iconv_phase1.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "iconv_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
@@ -1865,13 +1818,21 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "inet"
+      ],
+      "fixture_files": [
+        "inet_ops.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "inet_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
@@ -1879,13 +1840,21 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 3,
+      "fixture_families": [
+        "inet"
+      ],
+      "fixture_files": [
+        "inet_ops.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "inet_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
@@ -1893,13 +1862,21 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 3,
+      "fixture_families": [
+        "inet"
+      ],
+      "fixture_files": [
+        "inet_ops.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "inet_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
@@ -1907,13 +1884,21 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "inet"
+      ],
+      "fixture_files": [
+        "inet_ops.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "inet_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
@@ -1921,13 +1906,21 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 3,
+      "fixture_families": [
+        "inet"
+      ],
+      "fixture_files": [
+        "inet_ops.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "inet_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
@@ -1935,13 +1928,21 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 1,
+      "fixture_families": [
+        "inet"
+      ],
+      "fixture_files": [
+        "inet_ops.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "inet_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
@@ -1949,13 +1950,21 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 1,
+      "fixture_families": [
+        "inet"
+      ],
+      "fixture_files": [
+        "inet_ops.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "inet_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
@@ -2006,17 +2015,23 @@
     {
       "c_fixture_mentions": 1,
       "covered": true,
-      "fixture_case_count": 0,
+      "fixture_case_count": 1,
       "fixture_families": [
-        "c_fixture_suite"
+        "c_fixture_suite",
+        "unistd"
       ],
-      "fixture_files": [],
+      "fixture_files": [
+        "unistd_ops.json"
+      ],
       "fixture_ids": [
         "fixture_io"
       ],
-      "fixture_modes": [],
+      "fixture_modes": [
+        "both"
+      ],
       "fixture_sources": [
-        "c_fixture_spec"
+        "c_fixture_spec",
+        "fixture_json"
       ],
       "module": "io_abi",
       "perf_class": "coldpath",
@@ -2199,13 +2214,21 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "math"
+      ],
+      "fixture_files": [
+        "math_ops.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "math_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
@@ -2213,13 +2236,21 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "math"
+      ],
+      "fixture_files": [
+        "math_ops.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "math_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
@@ -2227,13 +2258,21 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 1,
+      "fixture_families": [
+        "math"
+      ],
+      "fixture_files": [
+        "math_ops.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "math_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
@@ -2241,41 +2280,73 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "math"
+      ],
+      "fixture_files": [
+        "math_ops.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "math_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
       "symbol": "atan2"
     },
     {
-      "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
-      "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "c_fixture_mentions": 1,
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "c_fixture_suite",
+        "math"
+      ],
+      "fixture_files": [
+        "math_ops.json"
+      ],
+      "fixture_ids": [
+        "fixture_math"
+      ],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "c_fixture_spec",
+        "fixture_json"
+      ],
       "module": "math_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
       "symbol": "ceil"
     },
     {
-      "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
-      "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "c_fixture_mentions": 1,
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "c_fixture_suite",
+        "math"
+      ],
+      "fixture_files": [
+        "math_ops.json"
+      ],
+      "fixture_ids": [
+        "fixture_math"
+      ],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "c_fixture_spec",
+        "fixture_json"
+      ],
       "module": "math_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
@@ -2283,27 +2354,47 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 1,
+      "fixture_families": [
+        "math"
+      ],
+      "fixture_files": [
+        "math_ops.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "math_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
       "symbol": "erf"
     },
     {
-      "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
-      "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "c_fixture_mentions": 1,
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "c_fixture_suite",
+        "math"
+      ],
+      "fixture_files": [
+        "math_ops.json"
+      ],
+      "fixture_ids": [
+        "fixture_math"
+      ],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "c_fixture_spec",
+        "fixture_json"
+      ],
       "module": "math_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
@@ -2311,41 +2402,73 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "math"
+      ],
+      "fixture_files": [
+        "math_ops.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "math_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
       "symbol": "fabs"
     },
     {
-      "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
-      "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "c_fixture_mentions": 1,
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "c_fixture_suite",
+        "math"
+      ],
+      "fixture_files": [
+        "math_ops.json"
+      ],
+      "fixture_ids": [
+        "fixture_math"
+      ],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "c_fixture_spec",
+        "fixture_json"
+      ],
       "module": "math_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
       "symbol": "floor"
     },
     {
-      "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
-      "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "c_fixture_mentions": 1,
+      "covered": true,
+      "fixture_case_count": 1,
+      "fixture_families": [
+        "c_fixture_suite",
+        "math"
+      ],
+      "fixture_files": [
+        "math_ops.json"
+      ],
+      "fixture_ids": [
+        "fixture_math"
+      ],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "c_fixture_spec",
+        "fixture_json"
+      ],
       "module": "math_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
@@ -2353,27 +2476,47 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 1,
+      "fixture_families": [
+        "math"
+      ],
+      "fixture_files": [
+        "math_ops.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "math_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
       "symbol": "lgamma"
     },
     {
-      "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
-      "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "c_fixture_mentions": 1,
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "c_fixture_suite",
+        "math"
+      ],
+      "fixture_files": [
+        "math_ops.json"
+      ],
+      "fixture_ids": [
+        "fixture_math"
+      ],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "c_fixture_spec",
+        "fixture_json"
+      ],
       "module": "math_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
@@ -2381,13 +2524,21 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "math"
+      ],
+      "fixture_files": [
+        "math_ops.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "math_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
@@ -2395,13 +2546,21 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "math"
+      ],
+      "fixture_files": [
+        "math_ops.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "math_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
@@ -2409,27 +2568,47 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "math"
+      ],
+      "fixture_files": [
+        "math_ops.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "math_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
       "symbol": "round"
     },
     {
-      "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
-      "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "c_fixture_mentions": 1,
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "c_fixture_suite",
+        "math"
+      ],
+      "fixture_files": [
+        "math_ops.json"
+      ],
+      "fixture_ids": [
+        "fixture_math"
+      ],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "c_fixture_spec",
+        "fixture_json"
+      ],
       "module": "math_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
@@ -2437,13 +2616,21 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 1,
+      "fixture_families": [
+        "math"
+      ],
+      "fixture_files": [
+        "math_ops.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "math_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
@@ -2451,13 +2638,21 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "math"
+      ],
+      "fixture_files": [
+        "math_ops.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "math_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
@@ -2746,17 +2941,23 @@
     {
       "c_fixture_mentions": 1,
       "covered": true,
-      "fixture_case_count": 0,
+      "fixture_case_count": 2,
       "fixture_families": [
-        "c_fixture_suite"
+        "c_fixture_suite",
+        "pthread/thread"
       ],
-      "fixture_files": [],
+      "fixture_files": [
+        "pthread_thread.json"
+      ],
       "fixture_ids": [
         "fixture_pthread"
       ],
-      "fixture_modes": [],
+      "fixture_modes": [
+        "strict"
+      ],
       "fixture_sources": [
-        "c_fixture_spec"
+        "c_fixture_spec",
+        "fixture_json"
       ],
       "module": "pthread_abi",
       "perf_class": "strict_hotpath",
@@ -2765,13 +2966,22 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 3,
+      "fixture_families": [
+        "pthread/thread"
+      ],
+      "fixture_files": [
+        "pthread_thread.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "both",
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "pthread_abi",
       "perf_class": "strict_hotpath",
       "status": "GlibcCallThrough",
@@ -2780,17 +2990,23 @@
     {
       "c_fixture_mentions": 1,
       "covered": true,
-      "fixture_case_count": 0,
+      "fixture_case_count": 2,
       "fixture_families": [
-        "c_fixture_suite"
+        "c_fixture_suite",
+        "pthread/thread"
       ],
-      "fixture_files": [],
+      "fixture_files": [
+        "pthread_thread.json"
+      ],
       "fixture_ids": [
         "fixture_pthread"
       ],
-      "fixture_modes": [],
+      "fixture_modes": [
+        "both"
+      ],
       "fixture_sources": [
-        "c_fixture_spec"
+        "c_fixture_spec",
+        "fixture_json"
       ],
       "module": "pthread_abi",
       "perf_class": "strict_hotpath",
@@ -2800,17 +3016,24 @@
     {
       "c_fixture_mentions": 1,
       "covered": true,
-      "fixture_case_count": 0,
+      "fixture_case_count": 3,
       "fixture_families": [
-        "c_fixture_suite"
+        "c_fixture_suite",
+        "pthread/thread"
       ],
-      "fixture_files": [],
+      "fixture_files": [
+        "pthread_thread.json"
+      ],
       "fixture_ids": [
         "fixture_pthread"
       ],
-      "fixture_modes": [],
+      "fixture_modes": [
+        "both",
+        "strict"
+      ],
       "fixture_sources": [
-        "c_fixture_spec"
+        "c_fixture_spec",
+        "fixture_json"
       ],
       "module": "pthread_abi",
       "perf_class": "strict_hotpath",
@@ -2818,103 +3041,139 @@
       "symbol": "pthread_join"
     },
     {
-      "c_fixture_mentions": 1,
+      "c_fixture_mentions": 2,
       "covered": true,
-      "fixture_case_count": 0,
+      "fixture_case_count": 1,
       "fixture_families": [
-        "c_fixture_suite"
+        "c_fixture_suite",
+        "pthread/mutex"
       ],
-      "fixture_files": [],
+      "fixture_files": [
+        "pthread_mutex.json"
+      ],
       "fixture_ids": [
-        "fixture_pthread"
+        "fixture_pthread",
+        "fixture_pthread_mutex_adversarial"
       ],
-      "fixture_modes": [],
+      "fixture_modes": [
+        "both"
+      ],
       "fixture_sources": [
-        "c_fixture_spec"
+        "c_fixture_spec",
+        "fixture_json"
       ],
       "module": "pthread_abi",
       "perf_class": "strict_hotpath",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "symbol": "pthread_mutex_destroy"
     },
     {
-      "c_fixture_mentions": 1,
+      "c_fixture_mentions": 2,
       "covered": true,
-      "fixture_case_count": 0,
+      "fixture_case_count": 2,
       "fixture_families": [
-        "c_fixture_suite"
+        "c_fixture_suite",
+        "pthread/mutex"
       ],
-      "fixture_files": [],
+      "fixture_files": [
+        "pthread_mutex.json"
+      ],
       "fixture_ids": [
-        "fixture_pthread"
+        "fixture_pthread",
+        "fixture_pthread_mutex_adversarial"
       ],
-      "fixture_modes": [],
+      "fixture_modes": [
+        "both"
+      ],
       "fixture_sources": [
-        "c_fixture_spec"
+        "c_fixture_spec",
+        "fixture_json"
       ],
       "module": "pthread_abi",
       "perf_class": "strict_hotpath",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "symbol": "pthread_mutex_init"
     },
     {
-      "c_fixture_mentions": 1,
+      "c_fixture_mentions": 2,
       "covered": true,
-      "fixture_case_count": 0,
+      "fixture_case_count": 2,
       "fixture_families": [
-        "c_fixture_suite"
+        "c_fixture_suite",
+        "pthread/mutex"
       ],
-      "fixture_files": [],
+      "fixture_files": [
+        "pthread_mutex.json"
+      ],
       "fixture_ids": [
-        "fixture_pthread"
+        "fixture_pthread",
+        "fixture_pthread_mutex_adversarial"
       ],
-      "fixture_modes": [],
+      "fixture_modes": [
+        "both",
+        "strict"
+      ],
       "fixture_sources": [
-        "c_fixture_spec"
+        "c_fixture_spec",
+        "fixture_json"
       ],
       "module": "pthread_abi",
       "perf_class": "strict_hotpath",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "symbol": "pthread_mutex_lock"
     },
     {
-      "c_fixture_mentions": 1,
+      "c_fixture_mentions": 2,
       "covered": true,
-      "fixture_case_count": 0,
+      "fixture_case_count": 2,
       "fixture_families": [
-        "c_fixture_suite"
+        "c_fixture_suite",
+        "pthread/mutex"
       ],
-      "fixture_files": [],
+      "fixture_files": [
+        "pthread_mutex.json"
+      ],
       "fixture_ids": [
-        "fixture_pthread"
+        "fixture_pthread",
+        "fixture_pthread_mutex_adversarial"
       ],
-      "fixture_modes": [],
+      "fixture_modes": [
+        "both"
+      ],
       "fixture_sources": [
-        "c_fixture_spec"
+        "c_fixture_spec",
+        "fixture_json"
       ],
       "module": "pthread_abi",
       "perf_class": "strict_hotpath",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "symbol": "pthread_mutex_trylock"
     },
     {
-      "c_fixture_mentions": 1,
+      "c_fixture_mentions": 2,
       "covered": true,
-      "fixture_case_count": 0,
+      "fixture_case_count": 1,
       "fixture_families": [
-        "c_fixture_suite"
+        "c_fixture_suite",
+        "pthread/mutex"
       ],
-      "fixture_files": [],
+      "fixture_files": [
+        "pthread_mutex.json"
+      ],
       "fixture_ids": [
-        "fixture_pthread"
+        "fixture_pthread",
+        "fixture_pthread_mutex_adversarial"
       ],
-      "fixture_modes": [],
+      "fixture_modes": [
+        "both"
+      ],
       "fixture_sources": [
-        "c_fixture_spec"
+        "c_fixture_spec",
+        "fixture_json"
       ],
       "module": "pthread_abi",
       "perf_class": "strict_hotpath",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "symbol": "pthread_mutex_unlock"
     },
     {
@@ -2990,17 +3249,23 @@
     {
       "c_fixture_mentions": 1,
       "covered": true,
-      "fixture_case_count": 0,
+      "fixture_case_count": 1,
       "fixture_families": [
-        "c_fixture_suite"
+        "c_fixture_suite",
+        "pthread/thread"
       ],
-      "fixture_files": [],
+      "fixture_files": [
+        "pthread_thread.json"
+      ],
       "fixture_ids": [
         "fixture_pthread"
       ],
-      "fixture_modes": [],
+      "fixture_modes": [
+        "both"
+      ],
       "fixture_sources": [
-        "c_fixture_spec"
+        "c_fixture_spec",
+        "fixture_json"
       ],
       "module": "pthread_abi",
       "perf_class": "strict_hotpath",
@@ -3268,14 +3533,20 @@
       "symbol": "accept"
     },
     {
-      "c_fixture_mentions": 0,
-      "covered": false,
+      "c_fixture_mentions": 1,
+      "covered": true,
       "fixture_case_count": 0,
-      "fixture_families": [],
+      "fixture_families": [
+        "c_fixture_suite"
+      ],
       "fixture_files": [],
-      "fixture_ids": [],
+      "fixture_ids": [
+        "fixture_socket"
+      ],
       "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_sources": [
+        "c_fixture_spec"
+      ],
       "module": "socket_abi",
       "perf_class": "coldpath",
       "status": "RawSyscall",
@@ -3324,14 +3595,20 @@
       "symbol": "getsockname"
     },
     {
-      "c_fixture_mentions": 0,
-      "covered": false,
+      "c_fixture_mentions": 1,
+      "covered": true,
       "fixture_case_count": 0,
-      "fixture_families": [],
+      "fixture_families": [
+        "c_fixture_suite"
+      ],
       "fixture_files": [],
-      "fixture_ids": [],
+      "fixture_ids": [
+        "fixture_socket"
+      ],
       "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_sources": [
+        "c_fixture_spec"
+      ],
       "module": "socket_abi",
       "perf_class": "coldpath",
       "status": "RawSyscall",
@@ -3352,14 +3629,20 @@
       "symbol": "listen"
     },
     {
-      "c_fixture_mentions": 0,
-      "covered": false,
+      "c_fixture_mentions": 1,
+      "covered": true,
       "fixture_case_count": 0,
-      "fixture_families": [],
+      "fixture_families": [
+        "c_fixture_suite"
+      ],
       "fixture_files": [],
-      "fixture_ids": [],
+      "fixture_ids": [
+        "fixture_socket"
+      ],
       "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_sources": [
+        "c_fixture_spec"
+      ],
       "module": "socket_abi",
       "perf_class": "coldpath",
       "status": "RawSyscall",
@@ -3380,14 +3663,20 @@
       "symbol": "recvfrom"
     },
     {
-      "c_fixture_mentions": 0,
-      "covered": false,
+      "c_fixture_mentions": 1,
+      "covered": true,
       "fixture_case_count": 0,
-      "fixture_families": [],
+      "fixture_families": [
+        "c_fixture_suite"
+      ],
       "fixture_files": [],
-      "fixture_ids": [],
+      "fixture_ids": [
+        "fixture_socket"
+      ],
       "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_sources": [
+        "c_fixture_spec"
+      ],
       "module": "socket_abi",
       "perf_class": "coldpath",
       "status": "RawSyscall",
@@ -3422,28 +3711,40 @@
       "symbol": "setsockopt"
     },
     {
-      "c_fixture_mentions": 0,
-      "covered": false,
+      "c_fixture_mentions": 1,
+      "covered": true,
       "fixture_case_count": 0,
-      "fixture_families": [],
+      "fixture_families": [
+        "c_fixture_suite"
+      ],
       "fixture_files": [],
-      "fixture_ids": [],
+      "fixture_ids": [
+        "fixture_socket"
+      ],
       "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_sources": [
+        "c_fixture_spec"
+      ],
       "module": "socket_abi",
       "perf_class": "coldpath",
       "status": "RawSyscall",
       "symbol": "shutdown"
     },
     {
-      "c_fixture_mentions": 0,
-      "covered": false,
+      "c_fixture_mentions": 1,
+      "covered": true,
       "fixture_case_count": 0,
-      "fixture_families": [],
+      "fixture_families": [
+        "c_fixture_suite"
+      ],
       "fixture_files": [],
-      "fixture_ids": [],
+      "fixture_ids": [
+        "fixture_socket"
+      ],
       "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_sources": [
+        "c_fixture_spec"
+      ],
       "module": "socket_abi",
       "perf_class": "coldpath",
       "status": "RawSyscall",
@@ -3957,13 +4258,21 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 3,
+      "fixture_families": [
+        "stdlib/numeric"
+      ],
+      "fixture_files": [
+        "stdlib_numeric.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "stdlib_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
@@ -4502,13 +4811,21 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 5,
+      "fixture_families": [
+        "string/strtok"
+      ],
+      "fixture_files": [
+        "string_strtok.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "string_abi",
       "perf_class": "strict_hotpath",
       "status": "Implemented",
@@ -4516,13 +4833,21 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 3,
+      "fixture_families": [
+        "string/strtok"
+      ],
+      "fixture_files": [
+        "string_strtok.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "string_abi",
       "perf_class": "strict_hotpath",
       "status": "Implemented",
@@ -4726,13 +5051,21 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "unistd"
+      ],
+      "fixture_files": [
+        "unistd_ops.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "unistd_abi",
       "perf_class": "coldpath",
       "status": "RawSyscall",
@@ -4755,17 +5088,23 @@
     {
       "c_fixture_mentions": 1,
       "covered": true,
-      "fixture_case_count": 0,
+      "fixture_case_count": 2,
       "fixture_families": [
-        "c_fixture_suite"
+        "c_fixture_suite",
+        "unistd"
       ],
-      "fixture_files": [],
+      "fixture_files": [
+        "unistd_ops.json"
+      ],
       "fixture_ids": [
         "fixture_io"
       ],
-      "fixture_modes": [],
+      "fixture_modes": [
+        "both"
+      ],
       "fixture_sources": [
-        "c_fixture_spec"
+        "c_fixture_spec",
+        "fixture_json"
       ],
       "module": "unistd_abi",
       "perf_class": "coldpath",
@@ -4830,13 +5169,21 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 1,
+      "fixture_families": [
+        "unistd"
+      ],
+      "fixture_files": [
+        "unistd_ops.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "unistd_abi",
       "perf_class": "coldpath",
       "status": "RawSyscall",
@@ -4844,13 +5191,21 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 1,
+      "fixture_families": [
+        "unistd"
+      ],
+      "fixture_files": [
+        "unistd_ops.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "unistd_abi",
       "perf_class": "coldpath",
       "status": "RawSyscall",
@@ -4858,13 +5213,21 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 1,
+      "fixture_families": [
+        "unistd"
+      ],
+      "fixture_files": [
+        "unistd_ops.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "unistd_abi",
       "perf_class": "coldpath",
       "status": "RawSyscall",
@@ -4872,13 +5235,21 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 1,
+      "fixture_families": [
+        "unistd"
+      ],
+      "fixture_files": [
+        "unistd_ops.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "unistd_abi",
       "perf_class": "coldpath",
       "status": "RawSyscall",
@@ -4886,13 +5257,21 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 1,
+      "fixture_families": [
+        "unistd"
+      ],
+      "fixture_files": [
+        "unistd_ops.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "unistd_abi",
       "perf_class": "coldpath",
       "status": "RawSyscall",
@@ -4900,13 +5279,21 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 1,
+      "fixture_families": [
+        "unistd"
+      ],
+      "fixture_files": [
+        "unistd_ops.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "unistd_abi",
       "perf_class": "coldpath",
       "status": "RawSyscall",
@@ -4914,13 +5301,21 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 1,
+      "fixture_families": [
+        "unistd"
+      ],
+      "fixture_files": [
+        "unistd_ops.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "unistd_abi",
       "perf_class": "coldpath",
       "status": "RawSyscall",
@@ -4928,13 +5323,21 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "unistd"
+      ],
+      "fixture_files": [
+        "unistd_ops.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "unistd_abi",
       "perf_class": "coldpath",
       "status": "RawSyscall",
@@ -4957,17 +5360,23 @@
     {
       "c_fixture_mentions": 1,
       "covered": true,
-      "fixture_case_count": 0,
+      "fixture_case_count": 1,
       "fixture_families": [
-        "c_fixture_suite"
+        "c_fixture_suite",
+        "unistd"
       ],
-      "fixture_files": [],
+      "fixture_files": [
+        "unistd_ops.json"
+      ],
       "fixture_ids": [
         "fixture_io"
       ],
-      "fixture_modes": [],
+      "fixture_modes": [
+        "both"
+      ],
       "fixture_sources": [
-        "c_fixture_spec"
+        "c_fixture_spec",
+        "fixture_json"
       ],
       "module": "unistd_abi",
       "perf_class": "coldpath",
@@ -4991,17 +5400,23 @@
     {
       "c_fixture_mentions": 1,
       "covered": true,
-      "fixture_case_count": 0,
+      "fixture_case_count": 1,
       "fixture_families": [
-        "c_fixture_suite"
+        "c_fixture_suite",
+        "unistd"
       ],
-      "fixture_files": [],
+      "fixture_files": [
+        "unistd_ops.json"
+      ],
       "fixture_ids": [
         "fixture_io"
       ],
-      "fixture_modes": [],
+      "fixture_modes": [
+        "strict"
+      ],
       "fixture_sources": [
-        "c_fixture_spec"
+        "c_fixture_spec",
+        "fixture_json"
       ],
       "module": "unistd_abi",
       "perf_class": "coldpath",
@@ -5115,17 +5530,23 @@
     {
       "c_fixture_mentions": 1,
       "covered": true,
-      "fixture_case_count": 0,
+      "fixture_case_count": 1,
       "fixture_families": [
-        "c_fixture_suite"
+        "c_fixture_suite",
+        "unistd"
       ],
-      "fixture_files": [],
+      "fixture_files": [
+        "unistd_ops.json"
+      ],
       "fixture_ids": [
         "fixture_io"
       ],
-      "fixture_modes": [],
+      "fixture_modes": [
+        "strict"
+      ],
       "fixture_sources": [
-        "c_fixture_spec"
+        "c_fixture_spec",
+        "fixture_json"
       ],
       "module": "unistd_abi",
       "perf_class": "coldpath",
@@ -5248,13 +5669,21 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "string/wide"
+      ],
+      "fixture_files": [
+        "wide_string_ops.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "wchar_abi",
       "perf_class": "strict_hotpath",
       "status": "Implemented",
@@ -5284,13 +5713,21 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "string/wide"
+      ],
+      "fixture_files": [
+        "wide_string_ops.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "strict"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "wchar_abi",
       "perf_class": "strict_hotpath",
       "status": "Implemented",
@@ -5432,28 +5869,6 @@
   "trace_id": "bd-15n.1-symbol-fixture-coverage-v1",
   "uncovered_target_families": [
     {
-      "module": "ctype_abi",
-      "recommended_bead": null,
-      "severity": "critical",
-      "target_uncovered_count": 11,
-      "target_uncovered_symbols": [
-        "isalnum",
-        "isalpha",
-        "isdigit",
-        "islower",
-        "isprint",
-        "ispunct",
-        "isspace",
-        "isupper",
-        "isxdigit",
-        "tolower",
-        "toupper"
-      ],
-      "track": "ctype",
-      "workload_blocked_count": 0,
-      "workload_ids": []
-    },
-    {
       "module": "dirent_abi",
       "recommended_bead": null,
       "severity": "critical",
@@ -5498,24 +5913,6 @@
       "workload_ids": []
     },
     {
-      "module": "inet_abi",
-      "recommended_bead": null,
-      "severity": "critical",
-      "target_uncovered_count": 7,
-      "target_uncovered_symbols": [
-        "htonl",
-        "htons",
-        "inet_addr",
-        "inet_ntop",
-        "inet_pton",
-        "ntohl",
-        "ntohs"
-      ],
-      "track": "network/inet",
-      "workload_blocked_count": 0,
-      "workload_ids": []
-    },
-    {
       "module": "locale_abi",
       "recommended_bead": "bd-3pe",
       "severity": "critical",
@@ -5530,36 +5927,6 @@
         "wl-002",
         "wl-006"
       ]
-    },
-    {
-      "module": "math_abi",
-      "recommended_bead": null,
-      "severity": "critical",
-      "target_uncovered_count": 19,
-      "target_uncovered_symbols": [
-        "acos",
-        "asin",
-        "atan",
-        "atan2",
-        "ceil",
-        "cos",
-        "erf",
-        "exp",
-        "fabs",
-        "floor",
-        "fmod",
-        "lgamma",
-        "log",
-        "log10",
-        "pow",
-        "round",
-        "sin",
-        "tan",
-        "tgamma"
-      ],
-      "track": "math",
-      "workload_blocked_count": 0,
-      "workload_ids": []
     },
     {
       "module": "mmap_abi",
@@ -5656,31 +6023,6 @@
       "workload_ids": []
     },
     {
-      "module": "socket_abi",
-      "recommended_bead": null,
-      "severity": "critical",
-      "target_uncovered_count": 14,
-      "target_uncovered_symbols": [
-        "accept",
-        "bind",
-        "connect",
-        "getpeername",
-        "getsockname",
-        "getsockopt",
-        "listen",
-        "recv",
-        "recvfrom",
-        "send",
-        "sendto",
-        "setsockopt",
-        "shutdown",
-        "socket"
-      ],
-      "track": "network/socket",
-      "workload_blocked_count": 0,
-      "workload_ids": []
-    },
-    {
       "module": "termios_abi",
       "recommended_bead": null,
       "severity": "critical",
@@ -5718,20 +6060,6 @@
     }
   ],
   "weak_target_families": [
-    {
-      "module": "iconv_abi",
-      "recommended_bead": null,
-      "severity": "high",
-      "target_coverage_pct": 33.33,
-      "target_uncovered_count": 2,
-      "target_uncovered_symbols": [
-        "iconv_close",
-        "iconv_open"
-      ],
-      "track": "i18n/iconv",
-      "workload_blocked_count": 0,
-      "workload_ids": []
-    },
     {
       "module": "io_abi",
       "recommended_bead": null,
@@ -5783,6 +6111,26 @@
       ]
     },
     {
+      "module": "socket_abi",
+      "recommended_bead": null,
+      "severity": "high",
+      "target_coverage_pct": 42.86,
+      "target_uncovered_count": 8,
+      "target_uncovered_symbols": [
+        "accept",
+        "connect",
+        "getpeername",
+        "getsockname",
+        "listen",
+        "recvfrom",
+        "sendto",
+        "setsockopt"
+      ],
+      "track": "network/socket",
+      "workload_blocked_count": 0,
+      "workload_ids": []
+    },
+    {
       "module": "startup_abi",
       "recommended_bead": null,
       "severity": "high",
@@ -5800,11 +6148,10 @@
       "module": "stdlib_abi",
       "recommended_bead": null,
       "severity": "high",
-      "target_coverage_pct": 45.45,
-      "target_uncovered_count": 6,
+      "target_coverage_pct": 54.55,
+      "target_uncovered_count": 5,
       "target_uncovered_symbols": [
         "atexit",
-        "atol",
         "exit",
         "getenv",
         "setenv",
@@ -5818,23 +6165,14 @@
       "module": "unistd_abi",
       "recommended_bead": null,
       "severity": "high",
-      "target_coverage_pct": 18.52,
-      "target_uncovered_count": 22,
+      "target_coverage_pct": 51.85,
+      "target_uncovered_count": 13,
       "target_uncovered_symbols": [
-        "access",
         "chdir",
         "fchdir",
         "fdatasync",
         "fstat",
         "fsync",
-        "getcwd",
-        "getegid",
-        "geteuid",
-        "getgid",
-        "getpid",
-        "getppid",
-        "getuid",
-        "isatty",
         "link",
         "lstat",
         "readlink",

@@ -93,6 +93,12 @@ if [[ -z "${log_files}" ]]; then
     echo "INFO: No JSONL log files found in tests/ (expected for initial setup)"
 else
     while IFS= read -r logfile; do
+        base="$(basename "${logfile}")"
+        if [[ "${logfile}" == *"/tests/gentoo/fixtures/sample_logs/"* && "${base}" == invalid_* ]]; then
+            echo "INFO: Skipping negative fixture ${logfile}"
+            continue
+        fi
+
         log_count=$((log_count + 1))
         # Validate each line
         line_errors=$(python3 -c "

@@ -1,0 +1,107 @@
+{
+  "version": "v1",
+  "family": "pthread/thread",
+  "captured_at": "2026-02-13T00:00:00Z",
+  "description": "POSIX thread lifecycle: create, join, detach, self, equal — POSIX.1-2017 pthread.h",
+  "cases": [
+    {
+      "name": "pthread_create_basic",
+      "function": "pthread_create",
+      "spec_section": "POSIX.1-2017 pthread_create",
+      "inputs": { "start_routine": "echo_arg", "arg": 42 },
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "pthread_join_returns_retval",
+      "function": "pthread_join",
+      "spec_section": "POSIX.1-2017 pthread_join",
+      "inputs": { "thread": "valid_handle", "retval_expected": 42 },
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "pthread_join_null_thread_einval",
+      "function": "pthread_join",
+      "spec_section": "POSIX.1-2017 pthread_join",
+      "inputs": { "thread": "null" },
+      "expected_output": "EINVAL",
+      "expected_errno": 22,
+      "mode": "both"
+    },
+    {
+      "name": "pthread_detach_running",
+      "function": "pthread_detach",
+      "spec_section": "POSIX.1-2017 pthread_detach",
+      "inputs": { "thread": "valid_running_handle" },
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "pthread_detach_null_einval",
+      "function": "pthread_detach",
+      "spec_section": "POSIX.1-2017 pthread_detach",
+      "inputs": { "thread": "null" },
+      "expected_output": "EINVAL",
+      "expected_errno": 22,
+      "mode": "both"
+    },
+    {
+      "name": "pthread_self_returns_positive",
+      "function": "pthread_self",
+      "spec_section": "POSIX.1-2017 pthread_self",
+      "inputs": {},
+      "expected_output": "POSITIVE_TID",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "pthread_equal_same_thread",
+      "function": "pthread_equal",
+      "spec_section": "POSIX.1-2017 pthread_equal",
+      "inputs": { "t1": "self", "t2": "self" },
+      "expected_output": "1",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "pthread_equal_different_threads",
+      "function": "pthread_equal",
+      "spec_section": "POSIX.1-2017 pthread_equal",
+      "inputs": { "t1": "thread_a", "t2": "thread_b" },
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "pthread_create_multiple_concurrent",
+      "function": "pthread_create",
+      "spec_section": "POSIX.1-2017 pthread_create",
+      "inputs": { "start_routine": "echo_arg", "arg": 0, "count": 4 },
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "pthread_join_self_edeadlk",
+      "function": "pthread_join",
+      "spec_section": "POSIX.1-2017 pthread_join",
+      "inputs": { "thread": "self" },
+      "expected_output": "EDEADLK",
+      "expected_errno": 35,
+      "mode": "both"
+    },
+    {
+      "name": "pthread_detach_finished_immediate_cleanup",
+      "function": "pthread_detach",
+      "spec_section": "POSIX.1-2017 pthread_detach",
+      "inputs": { "thread": "valid_finished_handle" },
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "strict"
+    }
+  ]
+}

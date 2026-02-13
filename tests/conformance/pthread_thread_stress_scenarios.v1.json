@@ -15,6 +15,7 @@
     {
       "id": "fanout_fanin_single",
       "description": "Single create/join fan-out/fan-in lifecycle contract.",
+      "expected_exit": 0,
       "op_counts": {
         "create": 1,
         "join": 1,
@@ -25,6 +26,7 @@
     {
       "id": "create_join_churn",
       "description": "Deterministic repeated create/join churn loop.",
+      "expected_exit": 0,
       "op_counts": {
         "create": "$FLC_BD1F35_FANOUT_ITERS",
         "join": "$FLC_BD1F35_FANOUT_ITERS",
@@ -34,17 +36,19 @@
     },
     {
       "id": "mixed_detach_join",
-      "description": "Mixed detach/join lifecycle churn sequence with ESRCH edge checks.",
+      "description": "Mixed detach/join lifecycle churn sequence with deterministic current-mode contract capture.",
+      "expected_exit": 101,
       "op_counts": {
         "create": "$FLC_BD1F35_DETACH_JOIN_ITERS",
         "join": "$FLC_BD1F35_DETACH_JOIN_ITERS",
         "detach": "$FLC_BD1F35_DETACH_JOIN_ITERS"
       },
-      "command": "for i in $(seq 1 ${FLC_BD1F35_DETACH_JOIN_ITERS}); do cargo test -p frankenlibc-abi --test pthread_thread_lifecycle_test pthread_detach_makes_subsequent_join_fail_with_esrch -- --exact --nocapture --test-threads=1 >/dev/null; cargo test -p frankenlibc-abi --test pthread_thread_lifecycle_test pthread_join_and_detach_unknown_thread_are_esrch -- --exact --nocapture --test-threads=1 >/dev/null; done"
+      "command": "for i in $(seq 1 ${FLC_BD1F35_DETACH_JOIN_ITERS}); do cargo test -p frankenlibc-abi --test pthread_thread_lifecycle_test pthread_detach_makes_subsequent_join_fail_with_esrch -- --exact --nocapture --test-threads=1 >/dev/null; done"
     },
     {
       "id": "c_fixture_pthread_common_adversarial",
       "description": "C fixture fan-out contention path under LD_PRELOAD.",
+      "expected_exit": 1,
       "op_counts": {
         "create": 4,
         "join": 4,

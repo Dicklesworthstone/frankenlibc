@@ -128,7 +128,7 @@
           "snippet": "| `FRANKENLIBC_LOG_FILE` | unset | Gentoo/tooling-friendly log path alias exported into `FRANKENLIBC_LOG`. |"
         },
         {
-          "line": 634,
+          "line": 651,
           "path": "README.md",
           "snippet": "Ensure the version script (`libc.map`) covers all symbols the loaded library expects. Set `FRANKENLIBC_LOG=/tmp/frankenlibc.log` to capture runtime diagnostics and inspect symbol lookup failures."
         }
