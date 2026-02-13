@@ -385,6 +385,52 @@ mod tests {
     }
 
     #[test]
+    fn test_thread_cache_overflow_spills_to_central_bin_and_reuses() {
+        use crate::malloc::thread_cache::MAGAZINE_CAPACITY;
+
+        let mut state = MallocState::new();
+        let bin = size_class::bin_index(32);
+        let total = MAGAZINE_CAPACITY + 2;
+
+        let ptrs: Vec<usize> = (0..total).map(|_| state.malloc(32).unwrap()).collect();
+        for &ptr in &ptrs {
+            state.free(ptr);
+        }
+
+        assert_eq!(
+            state.thread_cache.total_cached(),
+            MAGAZINE_CAPACITY,
+            "thread cache should saturate to magazine capacity"
+        );
+        assert_eq!(
+            state.central_bins[bin].len(),
+            2,
+            "overflow frees should spill into central bin"
+        );
+
+        let overflow_candidates: std::collections::HashSet<usize> = ptrs.iter().copied().collect();
+
+        let drained = state.thread_cache.drain_magazine(bin);
+        assert_eq!(
+            drained.len(),
+            MAGAZINE_CAPACITY,
+            "draining should remove all cached objects from the magazine"
+        );
+        assert_eq!(state.thread_cache.total_cached(), 0);
+
+        let from_central = state.malloc(32).expect("central fallback allocation");
+        assert!(
+            overflow_candidates.contains(&from_central),
+            "allocated pointer should come from previously freed pool"
+        );
+        assert_eq!(
+            state.central_bins[bin].len(),
+            1,
+            "central bin should shrink after serving one allocation"
+        );
+    }
+
+    #[test]
     fn test_lookup() {
         let mut state = MallocState::new();
         let ptr = state.malloc(42).unwrap();
