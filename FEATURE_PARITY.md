@@ -43,6 +43,17 @@ Legend:
 | `GlibcCallThrough` | `stdio_abi`, `pthread_abi`, `dlfcn_abi` |
 | `Stub` | none (current exported surface) |
 
+## Hard-Parts Truth Table
+
+Source of truth: `tests/conformance/hard_parts_truth_table.v1.json` (generated `2026-02-13T08:48:00Z`).
+
+- `startup`: `IMPLEMENTED_PARTIAL` — implemented scope: phase-0 startup fixture path (`__libc_start_main`, `__frankenlibc_startup_phase0`, snapshot invariants). Deferred scope: full `csu`/TLS init-order hardening and secure-mode closure campaign.
+- `threading`: `IN_PROGRESS` — implemented scope: runtime-math threading routing and selected pthread semantics are live. Deferred scope: eliminate remaining `pthread_abi` call-through surface and close lifecycle/TLS stress beads.
+- `resolver`: `IMPLEMENTED_PARTIAL` — implemented scope: bootstrap numeric resolver ABI (`getaddrinfo`, `freeaddrinfo`, `getnameinfo`, `gai_strerror`). Deferred scope: full retry/cache/poisoning hardening campaign.
+- `nss`: `IMPLEMENTED_PARTIAL` — implemented scope: passwd/group APIs are exported as `Implemented` via `pwd_abi`/`grp_abi`. Deferred scope: hosts/backend breadth plus NSS concurrency/cache-coherence closure.
+- `locale`: `IMPLEMENTED_PARTIAL` — implemented scope: bootstrap `setlocale`/`localeconv` C/POSIX path. Deferred scope: catalog, collation, and transliteration parity expansion.
+- `iconv`: `IMPLEMENTED_PARTIAL` — implemented scope: phase-1 `iconv_open`/`iconv`/`iconv_close` conversions with deterministic strict+hardened fixtures. Deferred scope: full `iconvdata` breadth and deterministic table-generation closure.
+
 ## Deterministic Stub Surface
 
 Current stubbed symbols (explicit deterministic contracts):
@@ -123,7 +134,7 @@ Current stubbed symbols (explicit deterministic contracts):
 | inet integration | runtime-math routing active for `<arpa/inet.h>` entrypoints (`htons`, `htonl`, `ntohs`, `ntohl`, `inet_pton`, `inet_ntop`, `inet_addr`) under `ApiFamily::Inet` | DONE |
 | locale integration | runtime-math routing active for `<locale.h>` entrypoints (`setlocale`, `localeconv`) under `ApiFamily::Locale` with strict/hardened locale validation + C-locale fallback repair | DONE |
 | termios integration | runtime-math routing active for `<termios.h>` entrypoints (`tcgetattr`, `tcsetattr`, `cfget*speed`, `cfset*speed`, `tcdrain`, `tcflush`, `tcflow`, `tcsendbreak`) under `ApiFamily::Termios` with strict/hardened optional_actions/queue/flow validation + repair | DONE |
-| dlfcn integration | runtime-math routing active for `<dlfcn.h>` entrypoints (`dlopen`, `dlsym`, `dlclose`, `dlerror`) under `ApiFamily::Loader` with strict/hardened flag validation + RTLD_NOW fallback repair, thread-local dlerror state | DONE |
+| dlfcn integration | dlfcn boundary policy: interpose allows host call-through for `dlopen`/`dlsym`/`dlclose`, hardened invalid-flags repair is `RTLD_NOW`, replacement forbids host fallback; thread-local `dlerror` state remains local | DONE |
 
 ## Reverse Core Coverage Matrix
 
@@ -276,7 +287,7 @@ Current stubbed symbols (explicit deterministic contracts):
 26. Conformal risk controller live — split conformal prediction (Vovk et al. 2005) with sliding-window calibration (256 entries), conformal p-values, EWMA coverage tracking, distribution-free finite-sample miscoverage detection (math item #27).
 27. Five new POSIX function families ported: `<unistd.h>` (27 entrypoints), `<sys/socket.h>` (14 entrypoints), `<arpa/inet.h>` (7 entrypoints), `<locale.h>` (2 entrypoints), `<termios.h>` (10 entrypoints). All routed through the RuntimeMathKernel via new ApiFamily variants (Socket=13, Locale=14, Termios=15, Inet=16). Core modules provide pure-Rust validators and constants; ABI modules wrap libc with membrane gating.
 28. Six new runtime math monitors integrated: Malliavin sensitivity, Fisher-Rao information geometry, matrix concentration (Bernstein), Čech nerve complex, Wasserstein drift, kernel MMD. Total test count: 792 (up from 608).
-29. `<dlfcn.h>` ABI fully wired — `dlopen`, `dlsym`, `dlclose`, `dlerror` with membrane gating under `ApiFamily::Loader`, thread-local error state, flag validation via core, hardened mode RTLD_NOW fallback.
+29. `<dlfcn.h>` boundary locked — dlfcn boundary policy: interpose allows host call-through for `dlopen`/`dlsym`/`dlclose`, hardened invalid-flags repair is `RTLD_NOW`, replacement forbids host fallback; `dlerror` remains thread-local state.
 30. Stein discrepancy monitor fixed — replaced mean-score-norm KSD (broken for deterministic inputs) with KL divergence D(current||reference) between live EWMA and calibration-frozen models; all 7 tests pass.
 31. Five additional runtime math monitors verified: Stein discrepancy (KSD goodness-of-fit), POMDP repair (belief-space policy), K-theory (contract drift), SOS invariant (Lyapunov synthesis). Total test count: 792.
 32. POSIX Batch 3: stdio file ops (27 ABI entrypoints wired via stream registry), process control (6 entrypoints under `ApiFamily::Process=17`: fork, _exit, execve, execvp, waitpid, wait), virtual memory (5 entrypoints under `ApiFamily::VirtualMemory=18`: mmap, munmap, mprotect, msync, madvise), pthread sync (15 entrypoints extending `ApiFamily::Threading`: mutex init/destroy/lock/trylock/unlock, cond init/destroy/wait/signal/broadcast, rwlock init/destroy/rdlock/wrlock/unlock), I/O multiplexing (4 entrypoints under `ApiFamily::Poll=19`: poll, ppoll, select, pselect). ApiFamily::COUNT expanded from 17 to 20. Total test count: 897.

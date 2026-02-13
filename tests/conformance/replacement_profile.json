@@ -91,6 +91,7 @@
   "interpose_allowlist": {
     "description": "Modules permitted to call through to host glibc in interpose (LD_PRELOAD) mode. These modules have not yet been fully reimplemented.",
     "modules": [
+      "stdio_abi",
       "pthread_abi",
       "socket_abi",
       "dlfcn_abi",
@@ -107,6 +108,28 @@
     ],
     "rationale": "These modules delegate to host glibc for operations not yet reimplemented as RawSyscall or Implemented. They are safe in interpose mode because the host glibc is still loaded."
   },
+  "callthrough_families": {
+    "source": "support_matrix.json",
+    "modules": [
+      "stdio_abi",
+      "pthread_abi",
+      "dlfcn_abi"
+    ],
+    "require_fixture_coverage": true
+  },
+  "dlfcn_boundary_policy": {
+    "description": "dlfcn-specific boundary contract between interpose and replacement profiles.",
+    "interpose": {
+      "host_callthrough_symbols": ["dlopen", "dlsym", "dlclose"],
+      "local_symbol": ["dlerror"],
+      "hardened_invalid_flags_repair": "RTLD_NOW"
+    },
+    "replacement": {
+      "host_callthrough_allowed": false,
+      "forbidden_outcome": "gate_failure",
+      "enforcement_gate": "scripts/check_dlfcn_boundary_policy.sh"
+    }
+  },
   "replacement_forbidden": {
     "description": "In replacement mode, these call-through patterns must be zero. The gate scans for libc:: function calls (not syscall/constant/type) and host pthread wrapper calls (host_pthread_*) and fails if any are found outside the allowlist. Additionally, pthread_mutex_* call-through is always forbidden in replacement-relevant routing paths.",
     "mutex_symbols": [
@@ -117,6 +140,10 @@
       "pthread_mutex_unlock"
     ],
     "enforcement": "scripts/check_replacement_guard.sh"
+  },
+  "zero_unapproved_fixture_pack": {
+    "path": "tests/conformance/replacement_zero_unapproved_fixtures.v1.json",
+    "required": true
   },
   "call_through_census": {
     "description": "Current census of host glibc function calls by module. Updated by CI gate.",

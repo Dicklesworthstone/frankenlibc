@@ -92,21 +92,49 @@
     },
     {
       "id": "nss",
-      "status": "DEFERRED",
-      "implemented_scope": "No dedicated NSS ABI module is currently exported in the support taxonomy.",
-      "deferred_scope": "Files backend (`passwd/group/hosts`) and concurrency/cache-coherence closure are pending.",
+      "status": "IMPLEMENTED_PARTIAL",
+      "implemented_scope": "Passwd/group lookup entrypoints are exported and marked `Implemented` via `pwd_abi` and `grp_abi`.",
+      "deferred_scope": "Hosts/backend breadth plus NSS concurrency/cache-coherence closure remain pending.",
       "support_expectations": {
+        "required_symbols": [
+          {
+            "symbol": "getpwnam",
+            "status": "Implemented"
+          },
+          {
+            "symbol": "getpwnam_r",
+            "status": "Implemented"
+          },
+          {
+            "symbol": "getpwuid",
+            "status": "Implemented"
+          },
+          {
+            "symbol": "getpwuid_r",
+            "status": "Implemented"
+          },
+          {
+            "symbol": "getgrnam",
+            "status": "Implemented"
+          },
+          {
+            "symbol": "getgrnam_r",
+            "status": "Implemented"
+          },
+          {
+            "symbol": "getgrgid",
+            "status": "Implemented"
+          },
+          {
+            "symbol": "getgrgid_r",
+            "status": "Implemented"
+          }
+        ],
         "absent_modules": [
           "nss_abi"
-        ],
-        "absent_symbol_patterns": [
-          "^getpwnam(_r)?$",
-          "^getpwuid(_r)?$",
-          "^getgrnam(_r)?$",
-          "^getgrgid(_r)?$"
         ]
       },
-      "doc_line": "- `nss`: `DEFERRED` — implemented scope: no dedicated `nss_abi` export surface is present in `support_matrix.json`. Deferred scope: files backend (`passwd/group/hosts`) plus concurrency/cache-coherence closure."
+      "doc_line": "- `nss`: `IMPLEMENTED_PARTIAL` — implemented scope: passwd/group APIs are exported as `Implemented` via `pwd_abi`/`grp_abi`. Deferred scope: hosts/backend breadth plus NSS concurrency/cache-coherence closure."
     },
     {
       "id": "locale",

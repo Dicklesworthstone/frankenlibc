@@ -552,6 +552,12 @@ FRANKENLIBC_MODE=hardened LD_PRELOAD=target/release/libfrankenlibc_abi.so ./my_a
 For exact counts, stub surface, and snapshot timestamp, inspect `tests/conformance/reality_report.v1.json`.
 For per-symbol strict/hardened semantics and status, inspect `support_matrix.json` directly.
 
+### dlfcn Boundary Policy
+
+- Interpose (`L0/L1`): `dlopen`, `dlsym`, and `dlclose` may call host glibc; `dlerror` remains thread-local state in FrankenLibC.
+- Hardened invalid `dlopen` flags heal to `RTLD_NOW` before host dispatch.
+- Replacement (`L2/L3`) forbids host dlfcn fallback paths; any residual call-through is a release-blocking gate failure.
+
 ### Hard-Parts Truth Table
 
 Source of truth: `tests/conformance/hard_parts_truth_table.v1.json` (generated `2026-02-13T08:48:00Z`).
@@ -559,7 +565,7 @@ Source of truth: `tests/conformance/hard_parts_truth_table.v1.json` (generated `
 - `startup`: `IMPLEMENTED_PARTIAL` — implemented scope: phase-0 startup fixture path (`__libc_start_main`, `__frankenlibc_startup_phase0`, snapshot invariants). Deferred scope: full `csu`/TLS init-order hardening and secure-mode closure campaign.
 - `threading`: `IN_PROGRESS` — implemented scope: runtime-math threading routing and selected pthread semantics are live. Deferred scope: eliminate remaining `pthread_abi` call-through surface and close lifecycle/TLS stress beads.
 - `resolver`: `IMPLEMENTED_PARTIAL` — implemented scope: bootstrap numeric resolver ABI (`getaddrinfo`, `freeaddrinfo`, `getnameinfo`, `gai_strerror`). Deferred scope: full retry/cache/poisoning hardening campaign.
-- `nss`: `DEFERRED` — implemented scope: no dedicated `nss_abi` export surface is present in `support_matrix.json`. Deferred scope: files backend (`passwd/group/hosts`) plus concurrency/cache-coherence closure.
+- `nss`: `IMPLEMENTED_PARTIAL` — implemented scope: passwd/group APIs are exported as `Implemented` via `pwd_abi`/`grp_abi`. Deferred scope: hosts/backend breadth plus NSS concurrency/cache-coherence closure.
 - `locale`: `IMPLEMENTED_PARTIAL` — implemented scope: bootstrap `setlocale`/`localeconv` C/POSIX path. Deferred scope: catalog, collation, and transliteration parity expansion.
 - `iconv`: `IMPLEMENTED_PARTIAL` — implemented scope: phase-1 `iconv_open`/`iconv`/`iconv_close` conversions with deterministic strict+hardened fixtures. Deferred scope: full `iconvdata` breadth and deterministic table-generation closure.
 

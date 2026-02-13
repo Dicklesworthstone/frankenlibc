@@ -835,58 +835,10 @@
     },
     {
       "artifact_paths": [
-        "tests/cve_arena/results/bd-15n/trace.jsonl",
-        "tests/cve_arena/results/bd-15n/artifact_index.json"
-      ],
-      "bead_id": "bd-15n",
-      "bead_status": "open",
-      "blocker": "missing_e2e",
-      "category": "e2e_scripts",
-      "coverage_status": "missing",
-      "e2e_cmds": [
-        "scripts/check_e2e_suite.sh"
-      ],
-      "log_schema_refs": [
-        "tests/conformance/log_schema.json"
-      ],
-      "present_in_row_close_blockers": true,
-      "priority": 0,
-      "stream": "docs",
-      "subsystem": "docs/conformance",
-      "title": "Conformance expansion v2: full-family strict/hardened fixture coverage",
-      "unit_cmds": [
-        "cargo test -p frankenlibc-harness --tests -- --nocapture"
-      ]
-    },
-    {
-      "artifact_paths": [
-        "tests/cve_arena/results/bd-15n/trace.jsonl",
-        "tests/cve_arena/results/bd-15n/artifact_index.json"
-      ],
-      "bead_id": "bd-15n",
-      "bead_status": "open",
-      "blocker": "missing_fixtures",
-      "category": "conformance_fixtures",
-      "coverage_status": "missing",
-      "e2e_cmds": [
-        "scripts/check_e2e_suite.sh"
-      ],
-      "log_schema_refs": [
-        "tests/conformance/log_schema.json"
-      ],
-      "present_in_row_close_blockers": true,
-      "priority": 0,
-      "stream": "docs",
-      "subsystem": "docs/conformance",
-      "title": "Conformance expansion v2: full-family strict/hardened fixture coverage",
-      "unit_cmds": [
-        "cargo test -p frankenlibc-harness --tests -- --nocapture"
-      ]
-    },
-    {
-      "artifact_paths": [
-        "tests/cve_arena/results/bd-15n/trace.jsonl",
-        "tests/cve_arena/results/bd-15n/artifact_index.json"
+        "tests/cve_arena/results/bd-15n.2/trace.jsonl",
+        "tests/cve_arena/results/bd-15n.2/artifact_index.json",
+        "tests/cve_arena/results/bd-15n.2/report.json",
+        "tests/conformance/c_fixture_spec.json"
       ],
       "bead_id": "bd-15n",
       "bead_status": "open",
@@ -894,68 +846,20 @@
       "category": "golden_artifacts",
       "coverage_status": "missing",
       "e2e_cmds": [
-        "scripts/check_e2e_suite.sh"
+        "scripts/check_c_fixture_suite.sh",
+        "scripts/check_bd15n2_fixture_gap_fill.sh"
       ],
       "log_schema_refs": [
         "tests/conformance/log_schema.json"
       ],
       "present_in_row_close_blockers": true,
       "priority": 0,
-      "stream": "docs",
-      "subsystem": "docs/conformance",
+      "stream": "e2e",
+      "subsystem": "e2e/conformance",
       "title": "Conformance expansion v2: full-family strict/hardened fixture coverage",
       "unit_cmds": [
-        "cargo test -p frankenlibc-harness --tests -- --nocapture"
-      ]
-    },
-    {
-      "artifact_paths": [
-        "tests/cve_arena/results/bd-15n/trace.jsonl",
-        "tests/cve_arena/results/bd-15n/artifact_index.json"
-      ],
-      "bead_id": "bd-15n",
-      "bead_status": "open",
-      "blocker": "missing_logs",
-      "category": "structured_logs",
-      "coverage_status": "missing",
-      "e2e_cmds": [
-        "scripts/check_e2e_suite.sh"
-      ],
-      "log_schema_refs": [
-        "tests/conformance/log_schema.json"
-      ],
-      "present_in_row_close_blockers": true,
-      "priority": 0,
-      "stream": "docs",
-      "subsystem": "docs/conformance",
-      "title": "Conformance expansion v2: full-family strict/hardened fixture coverage",
-      "unit_cmds": [
-        "cargo test -p frankenlibc-harness --tests -- --nocapture"
-      ]
-    },
-    {
-      "artifact_paths": [
-        "tests/cve_arena/results/bd-15n/trace.jsonl",
-        "tests/cve_arena/results/bd-15n/artifact_index.json"
-      ],
-      "bead_id": "bd-15n",
-      "bead_status": "open",
-      "blocker": "missing_unit",
-      "category": "unit_tests",
-      "coverage_status": "missing",
-      "e2e_cmds": [
-        "scripts/check_e2e_suite.sh"
-      ],
-      "log_schema_refs": [
-        "tests/conformance/log_schema.json"
-      ],
-      "present_in_row_close_blockers": true,
-      "priority": 0,
-      "stream": "docs",
-      "subsystem": "docs/conformance",
-      "title": "Conformance expansion v2: full-family strict/hardened fixture coverage",
-      "unit_cmds": [
-        "cargo test -p frankenlibc-harness --tests -- --nocapture"
+        "cargo test -p frankenlibc-harness --test c_fixture_suite_test -- --nocapture",
+        "cargo test -p frankenlibc-harness --test bd15n2_fixture_gap_fill_artifacts_test -- --nocapture"
       ]
     },
     {
@@ -3448,98 +3352,6 @@
       "title": "EPIC: Stub Extermination (ranked by real call traces)",
       "unit_cmds": [
         "cargo test -p frankenlibc-harness --test stub_contract_test"
-      ]
-    },
-    {
-      "artifact_paths": [
-        "tests/cve_arena/results/bd-24ug/trace.jsonl",
-        "tests/cve_arena/results/bd-24ug/artifact_index.json"
-      ],
-      "bead_id": "bd-24ug",
-      "bead_status": "open",
-      "blocker": "missing_fixtures",
-      "category": "conformance_fixtures",
-      "coverage_status": "missing",
-      "e2e_cmds": [],
-      "log_schema_refs": [
-        "tests/conformance/log_schema.json"
-      ],
-      "present_in_row_close_blockers": true,
-      "priority": 1,
-      "stream": "perf",
-      "subsystem": "perf/callthrough",
-      "title": "bd-h5x subtask: stdio callthrough replacement strategy and phased execution",
-      "unit_cmds": [
-        "cargo test -p frankenlibc-harness --tests -- --nocapture"
-      ]
-    },
-    {
-      "artifact_paths": [
-        "tests/cve_arena/results/bd-24ug/trace.jsonl",
-        "tests/cve_arena/results/bd-24ug/artifact_index.json"
-      ],
-      "bead_id": "bd-24ug",
-      "bead_status": "open",
-      "blocker": "missing_golden_artifacts",
-      "category": "golden_artifacts",
-      "coverage_status": "missing",
-      "e2e_cmds": [],
-      "log_schema_refs": [
-        "tests/conformance/log_schema.json"
-      ],
-      "present_in_row_close_blockers": true,
-      "priority": 1,
-      "stream": "perf",
-      "subsystem": "perf/callthrough",
-      "title": "bd-h5x subtask: stdio callthrough replacement strategy and phased execution",
-      "unit_cmds": [
-        "cargo test -p frankenlibc-harness --tests -- --nocapture"
-      ]
-    },
-    {
-      "artifact_paths": [
-        "tests/cve_arena/results/bd-24ug/trace.jsonl",
-        "tests/cve_arena/results/bd-24ug/artifact_index.json"
-      ],
-      "bead_id": "bd-24ug",
-      "bead_status": "open",
-      "blocker": "missing_logs",
-      "category": "structured_logs",
-      "coverage_status": "missing",
-      "e2e_cmds": [],
-      "log_schema_refs": [
-        "tests/conformance/log_schema.json"
-      ],
-      "present_in_row_close_blockers": true,
-      "priority": 1,
-      "stream": "perf",
-      "subsystem": "perf/callthrough",
-      "title": "bd-h5x subtask: stdio callthrough replacement strategy and phased execution",
-      "unit_cmds": [
-        "cargo test -p frankenlibc-harness --tests -- --nocapture"
-      ]
-    },
-    {
-      "artifact_paths": [
-        "tests/cve_arena/results/bd-24ug/trace.jsonl",
-        "tests/cve_arena/results/bd-24ug/artifact_index.json"
-      ],
-      "bead_id": "bd-24ug",
-      "bead_status": "open",
-      "blocker": "missing_unit",
-      "category": "unit_tests",
-      "coverage_status": "missing",
-      "e2e_cmds": [],
-      "log_schema_refs": [
-        "tests/conformance/log_schema.json"
-      ],
-      "present_in_row_close_blockers": true,
-      "priority": 1,
-      "stream": "perf",
-      "subsystem": "perf/callthrough",
-      "title": "bd-h5x subtask: stdio callthrough replacement strategy and phased execution",
-      "unit_cmds": [
-        "cargo test -p frankenlibc-harness --tests -- --nocapture"
       ]
     },
     {
@@ -7830,6 +7642,17 @@
       "title": "bd-z84 subtask: Strict+hardened mutex fixture suite with failure artifact capture"
     },
     {
+      "assignee": "RedLotus",
+      "bead_id": "bd-24ug",
+      "blocker_count": 0,
+      "priority": 1,
+      "required_categories": 4,
+      "status": "in_progress",
+      "stream": "perf",
+      "subsystem": "perf/callthrough",
+      "title": "bd-h5x subtask: stdio callthrough replacement strategy and phased execution"
+    },
+    {
       "assignee": "WhiteMeadow",
       "bead_id": "bd-yos",
       "blocker_count": 5,
@@ -7887,12 +7710,12 @@
     {
       "assignee": null,
       "bead_id": "bd-15n",
-      "blocker_count": 5,
+      "blocker_count": 1,
       "priority": 0,
       "required_categories": 5,
       "status": "open",
-      "stream": "docs",
-      "subsystem": "docs/conformance",
+      "stream": "e2e",
+      "subsystem": "e2e/conformance",
       "title": "Conformance expansion v2: full-family strict/hardened fixture coverage"
     },
     {
@@ -8191,17 +8014,6 @@
       "stream": "stubs",
       "subsystem": "stubs/stubs",
       "title": "EPIC: Stub Extermination (ranked by real call traces)"
-    },
-    {
-      "assignee": null,
-      "bead_id": "bd-24ug",
-      "blocker_count": 4,
-      "priority": 1,
-      "required_categories": 4,
-      "status": "open",
-      "stream": "perf",
-      "subsystem": "perf/callthrough",
-      "title": "bd-h5x subtask: stdio callthrough replacement strategy and phased execution"
     },
     {
       "assignee": null,
@@ -8930,49 +8742,6 @@
       "subsystem": "docs/config"
     },
     {
-      "bead_count": 1,
-      "categories": {
-        "conformance_fixtures": {
-          "complete": 0,
-          "missing": 1,
-          "partial": 0,
-          "required": 1
-        },
-        "e2e_scripts": {
-          "complete": 0,
-          "missing": 1,
-          "partial": 0,
-          "required": 1
-        },
-        "golden_artifacts": {
-          "complete": 0,
-          "missing": 1,
-          "partial": 0,
-          "required": 1
-        },
-        "perf_evidence": {
-          "complete": 0,
-          "missing": 0,
-          "partial": 0,
-          "required": 0
-        },
-        "structured_logs": {
-          "complete": 0,
-          "missing": 1,
-          "partial": 0,
-          "required": 1
-        },
-        "unit_tests": {
-          "complete": 0,
-          "missing": 1,
-          "partial": 0,
-          "required": 1
-        }
-      },
-      "stream": "docs",
-      "subsystem": "docs/conformance"
-    },
-    {
       "bead_count": 5,
       "categories": {
         "conformance_fixtures": {
@@ -9403,25 +9172,25 @@
       "subsystem": "e2e"
     },
     {
-      "bead_count": 1,
+      "bead_count": 2,
       "categories": {
         "conformance_fixtures": {
-          "complete": 1,
+          "complete": 2,
           "missing": 0,
           "partial": 0,
-          "required": 1
+          "required": 2
         },
         "e2e_scripts": {
-          "complete": 1,
+          "complete": 2,
           "missing": 0,
           "partial": 0,
-          "required": 1
+          "required": 2
         },
         "golden_artifacts": {
           "complete": 1,
-          "missing": 0,
+          "missing": 1,
           "partial": 0,
-          "required": 1
+          "required": 2
         },
         "perf_evidence": {
           "complete": 0,
@@ -9430,16 +9199,16 @@
           "required": 0
         },
         "structured_logs": {
-          "complete": 1,
+          "complete": 2,
           "missing": 0,
           "partial": 0,
-          "required": 1
+          "required": 2
         },
         "unit_tests": {
-          "complete": 1,
+          "complete": 2,
           "missing": 0,
           "partial": 0,
-          "required": 1
+          "required": 2
         }
       },
       "stream": "e2e",
@@ -9793,8 +9562,8 @@
       "bead_count": 2,
       "categories": {
         "conformance_fixtures": {
-          "complete": 0,
-          "missing": 2,
+          "complete": 1,
+          "missing": 1,
           "partial": 0,
           "required": 2
         },
@@ -9805,8 +9574,8 @@
           "required": 1
         },
         "golden_artifacts": {
-          "complete": 0,
-          "missing": 2,
+          "complete": 1,
+          "missing": 1,
           "partial": 0,
           "required": 2
         },
@@ -9817,14 +9586,14 @@
           "required": 0
         },
         "structured_logs": {
-          "complete": 0,
-          "missing": 2,
+          "complete": 1,
+          "missing": 1,
           "partial": 0,
           "required": 2
         },
         "unit_tests": {
-          "complete": 0,
-          "missing": 2,
+          "complete": 1,
+          "missing": 1,
           "partial": 0,
           "required": 2
         }
@@ -11166,29 +10935,29 @@
       "subsystem": "syscall/unit"
     }
   ],
-  "generated_at": "2026-02-13T00:41:05Z",
+  "generated_at": "2026-02-13T09:08:00Z",
   "schema_version": "v1",
   "source": "tests/conformance/verification_matrix.json",
   "summary": {
-    "blocked_bead_count": 79,
-    "blocker_count": 320,
+    "blocked_bead_count": 78,
+    "blocker_count": 312,
     "by_blocker": {
-      "missing_e2e": 40,
-      "missing_fixtures": 33,
-      "missing_golden_artifacts": 76,
-      "missing_logs": 76,
+      "missing_e2e": 39,
+      "missing_fixtures": 31,
+      "missing_golden_artifacts": 75,
+      "missing_logs": 74,
       "missing_perf": 19,
-      "missing_unit": 76
+      "missing_unit": 74
     },
     "by_category_missing": {
-      "conformance_fixtures": 33,
-      "e2e_scripts": 40,
-      "golden_artifacts": 76,
+      "conformance_fixtures": 31,
+      "e2e_scripts": 39,
+      "golden_artifacts": 75,
       "perf_evidence": 19,
-      "structured_logs": 76,
-      "unit_tests": 76
+      "structured_logs": 74,
+      "unit_tests": 74
     },
     "entry_count": 98,
-    "subsystem_count": 54
+    "subsystem_count": 53
   }
 }

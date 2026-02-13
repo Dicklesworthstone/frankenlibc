@@ -1,6 +1,6 @@
 {
   "matrix_version": 1,
-  "generated_utc": "2026-02-13T00:41:05Z",
+  "generated_utc": "2026-02-13T09:08:00Z",
   "description": "Verification obligations matrix for all open/in_progress critique beads. Maps each bead to required evidence types with current coverage status. Blocks bead closure when evidence is missing.",
   "schema": {
     "coverage_statuses": {
@@ -3636,8 +3636,8 @@
       "bead_id": "bd-24ug",
       "title": "bd-h5x subtask: stdio callthrough replacement strategy and phased execution",
       "priority": 1,
-      "status": "open",
-      "assignee": null,
+      "status": "in_progress",
+      "assignee": "RedLotus",
       "labels": [
         "callthrough",
         "critique",
@@ -3674,61 +3674,64 @@
       },
       "coverage": {
         "unit_tests": {
-          "status": "missing",
-          "artifacts": ""
+          "status": "complete",
+          "artifacts": "cargo test -p frankenlibc-harness --test stdio_phase_strategy_test -- --nocapture"
         },
         "e2e_scripts": {
           "status": "not_required"
         },
         "structured_logs": {
-          "status": "missing",
-          "artifacts": ""
+          "status": "complete",
+          "artifacts": "target/conformance/stdio_phase_strategy.log.jsonl; tests/cve_arena/results/bd-24ug/trace.jsonl"
         },
         "perf_evidence": {
           "status": "not_required"
         },
         "conformance_fixtures": {
-          "status": "missing",
-          "artifacts": ""
+          "status": "complete",
+          "artifacts": "tests/conformance/stdio_phase_strategy.v1.json"
         },
         "golden_artifacts": {
-          "status": "missing",
-          "artifacts": ""
+          "status": "complete",
+          "artifacts": "target/conformance/stdio_phase_strategy.report.json; tests/cve_arena/results/bd-24ug/artifact_index.json"
         }
       },
       "coverage_summary": {
-        "overall": "missing",
+        "overall": "complete",
         "required": 4,
-        "complete": 0,
+        "complete": 4,
         "partial": 0,
-        "missing": 4
+        "missing": 0
       },
       "row": {
         "bead_id": "bd-24ug",
         "stream": "perf",
-        "status": "missing",
+        "status": "complete",
         "unit_cmds": [
-          "cargo test -p frankenlibc-harness --tests -- --nocapture"
+          "cargo test -p frankenlibc-harness --test stdio_phase_strategy_test -- --nocapture",
+          "scripts/check_stdio_phase_strategy.sh"
         ],
         "e2e_cmds": [],
         "expected_assertions": [
-          "matrix row exists and will be refined with bead-specific evidence before closure"
+          "stdio phase split is a deterministic, complete partition of support_matrix stdio_abi callthrough symbols",
+          "migration phases are strictly ordered, non-overlapping, and fully cover stdio_abi callthrough symbols",
+          "gate emits schema-conformant structured logs and report/index evidence under target/conformance and tests/cve_arena/results/bd-24ug"
         ],
         "log_schema_refs": [
           "tests/conformance/log_schema.json"
         ],
         "artifact_paths": [
+          "tests/conformance/stdio_phase_strategy.v1.json",
+          "scripts/check_stdio_phase_strategy.sh",
+          "crates/frankenlibc-harness/tests/stdio_phase_strategy_test.rs",
+          "target/conformance/stdio_phase_strategy.report.json",
+          "target/conformance/stdio_phase_strategy.log.jsonl",
           "tests/cve_arena/results/bd-24ug/trace.jsonl",
           "tests/cve_arena/results/bd-24ug/artifact_index.json"
         ],
         "perf_proof_refs": [],
-        "close_blockers": [
-          "missing_unit",
-          "missing_logs",
-          "missing_golden_artifacts",
-          "missing_fixtures"
-        ],
-        "notes": "Auto-backfilled row for bd-24ug; refine commands/artifacts as implementation evidence lands."
+        "close_blockers": [],
+        "notes": "Updated for bd-24ug: stdio phased replacement strategy artifact + deterministic gate + harness verification."
       }
     },
     {

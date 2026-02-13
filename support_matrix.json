@@ -317,8 +317,8 @@
       "status": "GlibcCallThrough",
       "module": "dlfcn_abi",
       "perf_class": "coldpath",
-      "strict_semantics": "Delegates to host glibc dlopen/dlsym/dlclose/dlerror; preserves host semantics",
-      "hardened_semantics": "Host glibc delegation; hardened membrane validates path strings",
+      "strict_semantics": "dlfcn boundary policy: host glibc call-through for dlopen/dlsym/dlclose with thread-local dlerror contract",
+      "hardened_semantics": "dlfcn boundary policy: invalid dlopen flags heal to RTLD_NOW; null/denied loader inputs return deterministic dlerror",
       "default_stub": false
     },
     {
@@ -326,8 +326,8 @@
       "status": "GlibcCallThrough",
       "module": "dlfcn_abi",
       "perf_class": "coldpath",
-      "strict_semantics": "Delegates to host glibc dlopen/dlsym/dlclose/dlerror; preserves host semantics",
-      "hardened_semantics": "Host glibc delegation; hardened membrane validates path strings",
+      "strict_semantics": "dlfcn boundary policy: host glibc call-through for dlopen/dlsym/dlclose with thread-local dlerror contract",
+      "hardened_semantics": "dlfcn boundary policy: invalid dlopen flags heal to RTLD_NOW; null/denied loader inputs return deterministic dlerror",
       "default_stub": false
     },
     {
@@ -335,8 +335,8 @@
       "status": "GlibcCallThrough",
       "module": "dlfcn_abi",
       "perf_class": "coldpath",
-      "strict_semantics": "Delegates to host glibc dlopen/dlsym/dlclose/dlerror; preserves host semantics",
-      "hardened_semantics": "Host glibc delegation; hardened membrane validates path strings",
+      "strict_semantics": "dlfcn boundary policy: host glibc call-through for dlopen/dlsym/dlclose with thread-local dlerror contract",
+      "hardened_semantics": "dlfcn boundary policy: invalid dlopen flags heal to RTLD_NOW; null/denied loader inputs return deterministic dlerror",
       "default_stub": false
     },
     {
@@ -344,8 +344,8 @@
       "status": "GlibcCallThrough",
       "module": "dlfcn_abi",
       "perf_class": "coldpath",
-      "strict_semantics": "Delegates to host glibc dlopen/dlsym/dlclose/dlerror; preserves host semantics",
-      "hardened_semantics": "Host glibc delegation; hardened membrane validates path strings",
+      "strict_semantics": "dlfcn boundary policy: host glibc call-through for dlopen/dlsym/dlclose with thread-local dlerror contract",
+      "hardened_semantics": "dlfcn boundary policy: invalid dlopen flags heal to RTLD_NOW; null/denied loader inputs return deterministic dlerror",
       "default_stub": false
     },
     {

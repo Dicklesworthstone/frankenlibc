@@ -427,7 +427,7 @@
         "invalid_flags": "Returns NULL, sets dlerror"
       },
       "hardened_behavior": {
-        "invalid_flags": "Heals to RTLD_LAZY | RTLD_LOCAL"
+        "invalid_flags": "Heals to RTLD_NOW"
       }
     },
     {
