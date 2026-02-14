@@ -1,0 +1,133 @@
+{
+  "schema_version": "v1",
+  "bead": "bd-2xp3",
+  "description": "Clean-room phase-scoped semantics contract for setjmp/sigsetjmp/longjmp/siglongjmp with explicit deferred scope and support-matrix caveats.",
+  "generated_from": {
+    "support_matrix": "support_matrix.json",
+    "stub_census": "tests/conformance/stub_census.json",
+    "waiver_policy": "tests/conformance/stub_regression_waiver_policy.v1.json",
+    "fixture": "tests/conformance/fixtures/setjmp_ops.json",
+    "generated_utc": "2026-02-14T08:10:00Z"
+  },
+  "symbols": {
+    "phase1_deferred": [
+      "setjmp",
+      "longjmp",
+      "_setjmp",
+      "_longjmp",
+      "sigsetjmp",
+      "siglongjmp"
+    ],
+    "phase2_target": [
+      "setjmp",
+      "longjmp",
+      "sigsetjmp",
+      "siglongjmp"
+    ],
+    "support_matrix_visible_now": []
+  },
+  "abi_semantics_matrix": [
+    {
+      "symbol": "setjmp",
+      "phase": "deferred_phase1",
+      "strict_semantics": "Not exported in current ABI surface; internal core placeholder panics with explicit unsafe-boundary contract.",
+      "hardened_semantics": "Same as strict until phase-2 implementation lands; no hidden repair semantics are advertised.",
+      "signal_mask_semantics": "No signal-mask save.",
+      "support_matrix_status": "DeferredNotExported",
+      "implementation_owner_bead": "bd-146t"
+    },
+    {
+      "symbol": "longjmp",
+      "phase": "deferred_phase1",
+      "strict_semantics": "Not exported in current ABI surface; control-transfer restore path is intentionally absent.",
+      "hardened_semantics": "Same as strict; hardened mode does not claim control-transfer repair until jump-buffer integrity checks are implemented.",
+      "signal_mask_semantics": "No signal-mask restore.",
+      "support_matrix_status": "DeferredNotExported",
+      "implementation_owner_bead": "bd-146t"
+    },
+    {
+      "symbol": "_setjmp",
+      "phase": "deferred_phase1",
+      "strict_semantics": "Deferred non-local jump capture variant; not exported.",
+      "hardened_semantics": "Deferred; no hardened-specific behavior claim yet.",
+      "signal_mask_semantics": "Must not save signal mask when implemented.",
+      "support_matrix_status": "DeferredNotExported",
+      "implementation_owner_bead": "bd-146t"
+    },
+    {
+      "symbol": "_longjmp",
+      "phase": "deferred_phase1",
+      "strict_semantics": "Deferred non-local jump restore variant; not exported.",
+      "hardened_semantics": "Deferred; no hardened-specific behavior claim yet.",
+      "signal_mask_semantics": "Must not restore signal mask when implemented.",
+      "support_matrix_status": "DeferredNotExported",
+      "implementation_owner_bead": "bd-146t"
+    },
+    {
+      "symbol": "sigsetjmp",
+      "phase": "deferred_phase1",
+      "strict_semantics": "Deferred POSIX signal-aware capture variant; not exported.",
+      "hardened_semantics": "Deferred; hardened mode cannot claim mask-aware validation until sigjmp_buf invariants exist.",
+      "signal_mask_semantics": "Must save signal mask iff savemask != 0.",
+      "support_matrix_status": "DeferredNotExported",
+      "implementation_owner_bead": "bd-146t"
+    },
+    {
+      "symbol": "siglongjmp",
+      "phase": "deferred_phase1",
+      "strict_semantics": "Deferred POSIX signal-aware restore variant; not exported.",
+      "hardened_semantics": "Deferred; hardened path must validate jump-buffer integrity before restore in phase-2.",
+      "signal_mask_semantics": "Must restore saved mask iff originating sigsetjmp used savemask != 0.",
+      "support_matrix_status": "DeferredNotExported",
+      "implementation_owner_bead": "bd-146t"
+    }
+  ],
+  "signal_mask_contract": {
+    "pairing_rules": [
+      "sigsetjmp(env, savemask != 0) MUST save caller signal mask and mark env as mask-bearing.",
+      "sigsetjmp(env, savemask == 0) MUST NOT save caller signal mask.",
+      "siglongjmp(env, val) MUST restore signal mask only when env is mask-bearing.",
+      "setjmp/longjmp and _setjmp/_longjmp MUST NOT mutate signal mask state."
+    ],
+    "phase1_enforcement": "No setjmp-family symbols are exported until strict+hardened fixture and integrity checks are implemented."
+  },
+  "phase1_non_goals": [
+    "No production ABI export of setjmp-family symbols in L0/L1 profile.",
+    "No claim of async-signal-safe non-local jump behavior.",
+    "No claim of cross-thread jump support.",
+    "No claim of stack-unwind interoperability with C++ exceptions or cancellation."
+  ],
+  "safety_constraints": [
+    "Never perform hidden stack rewrites from safe core code.",
+    "Any future jump-buffer parsing must include explicit integrity checks before restore.",
+    "Signal-mask semantics must be deterministic and pairwise-testable per env instance.",
+    "Support matrix must not advertise setjmp-family availability before fixture and guard gates pass."
+  ],
+  "support_matrix_caveats": {
+    "user_visible_notes": [
+      "setjmp-family symbols are intentionally deferred and currently omitted from support_matrix exported surface.",
+      "Current placeholders exist only in non-exported core modules and are guarded by explicit waiver policy until implementation beads close.",
+      "Users must rely on host libc for setjmp-family behavior until bd-146t and bd-24b6 complete."
+    ],
+    "waiver_policy_symbols": [
+      "setjmp",
+      "longjmp"
+    ],
+    "owner_bead": "bd-2ry",
+    "expires_utc": "2026-06-30T00:00:00Z"
+  },
+  "parity_checks": {
+    "required_gate": "scripts/check_setjmp_semantics_contract.sh",
+    "required_test": "cargo test -p frankenlibc-harness --test setjmp_semantics_contract_test",
+    "required_logs": [
+      "target/conformance/setjmp_semantics_contract.log.jsonl",
+      "tests/cve_arena/results/bd-2xp3/trace.jsonl"
+    ]
+  },
+  "summary": {
+    "total_symbols": 6,
+    "deferred_symbols": 6,
+    "phase2_target_symbols": 4,
+    "required_signal_mask_rules": 4
+  }
+}

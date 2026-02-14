@@ -1,0 +1,92 @@
+{
+  "schema_version": "v1",
+  "bead": "bd-ahjd",
+  "family": "setjmp_nested_edges",
+  "captured_at": "2026-02-14T08:20:00Z",
+  "description": "Deterministic fixture pack for nested and edge non-local jump scenarios with explicit strict/hardened expectations and deferred unsupported semantics.",
+  "seed": "bd-ahjd-setjmp-fixtures-20260214",
+  "program_scenarios": [
+    {
+      "scenario_id": "nested_two_level_longjmp",
+      "source": "tests/integration/fixture_setjmp_nested.c",
+      "jump_depth": 2,
+      "mask_state": "none",
+      "expected": {
+        "strict": {
+          "exit_code": 0,
+          "stdout_contains": "fixture_setjmp_nested: PASS"
+        },
+        "hardened": {
+          "exit_code": 0,
+          "stdout_contains": "fixture_setjmp_nested: PASS"
+        }
+      }
+    },
+    {
+      "scenario_id": "edge_zero_value_and_sigmask_roundtrip",
+      "source": "tests/integration/fixture_setjmp_edges.c",
+      "jump_depth": 1,
+      "mask_state": "saved_and_restored",
+      "expected": {
+        "strict": {
+          "exit_code": 0,
+          "stdout_contains": "fixture_setjmp_edges: PASS"
+        },
+        "hardened": {
+          "exit_code": 0,
+          "stdout_contains": "fixture_setjmp_edges: PASS"
+        }
+      }
+    }
+  ],
+  "unsupported_scenarios": [
+    {
+      "scenario_id": "cross_thread_longjmp",
+      "modes": [
+        "strict",
+        "hardened"
+      ],
+      "jump_depth": 1,
+      "mask_state": "unknown",
+      "expected_outcome": "unsupported_deferred",
+      "expected_errno": "ENOSYS",
+      "documented_semantics": "Cross-thread longjmp/siglongjmp remains unsupported until phase-1 implementation bead bd-146t lands with invariant guards."
+    },
+    {
+      "scenario_id": "corrupted_jump_buffer_restore",
+      "modes": [
+        "strict",
+        "hardened"
+      ],
+      "jump_depth": 1,
+      "mask_state": "unknown",
+      "expected_outcome": "unsupported_deferred",
+      "expected_errno": "EFAULT",
+      "documented_semantics": "Corrupted jump-buffer restore semantics are deferred; hardened integrity policy is specified but not yet exported."
+    },
+    {
+      "scenario_id": "siglongjmp_without_sigsetjmp",
+      "modes": [
+        "strict",
+        "hardened"
+      ],
+      "jump_depth": 0,
+      "mask_state": "none",
+      "expected_outcome": "unsupported_deferred",
+      "expected_errno": "EINVAL",
+      "documented_semantics": "Unpaired siglongjmp behavior is explicitly deferred and must fail with documented unsupported semantics."
+    }
+  ],
+  "triage_doc": "docs/setjmp/non_local_jump_triage.md",
+  "replay": {
+    "script": "scripts/check_setjmp_fixture_pack.sh",
+    "command": "scripts/check_setjmp_fixture_pack.sh",
+    "mode_env": "FRANKENLIBC_MODE=strict|hardened"
+  },
+  "summary": {
+    "program_scenario_count": 2,
+    "unsupported_scenario_count": 3,
+    "strict_profiles": 2,
+    "hardened_profiles": 2
+  }
+}

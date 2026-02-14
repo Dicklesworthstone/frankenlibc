@@ -453,7 +453,7 @@ fn percentile_ns(values: &mut [u64], percentile: usize) -> u64 {
 }
 
 fn current_mode_name() -> &'static str {
-    use frankenlibc_membrane::config::{safety_level, SafetyLevel};
+    use frankenlibc_membrane::config::{SafetyLevel, safety_level};
     match safety_level() {
         SafetyLevel::Off => "off",
         SafetyLevel::Strict => "strict",

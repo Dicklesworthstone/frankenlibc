@@ -876,14 +876,7 @@ pub unsafe extern "C" fn puts(s: *const c_char) -> c_int {
         return libc::EOF;
     }
 
-    let (mode, decision) = runtime_policy::decide(
-        ApiFamily::Stdio,
-        s as usize,
-        0,
-        false,
-        true,
-        0,
-    );
+    let (mode, decision) = runtime_policy::decide(ApiFamily::Stdio, s as usize, 0, false, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
         return libc::EOF;

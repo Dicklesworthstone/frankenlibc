@@ -580,8 +580,9 @@ pub(crate) fn check_ordering(
     let Some(k) = kernel() else {
         return PASSTHROUGH_ORDERING;
     };
-    match panic::catch_unwind(AssertUnwindSafe(|| k.check_ordering(family, aligned, recent_page)))
-    {
+    match panic::catch_unwind(AssertUnwindSafe(|| {
+        k.check_ordering(family, aligned, recent_page)
+    })) {
         Ok(ordering) => ordering,
         Err(_) => {
             mark_kernel_broken();

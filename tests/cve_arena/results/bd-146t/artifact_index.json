@@ -1,0 +1,32 @@
+{
+  "index_version": 1,
+  "bead_id": "bd-146t",
+  "generated_at": "2026-02-14T08:35:17Z",
+  "artifacts": [
+    {
+      "path": "crates/frankenlibc-core/src/setjmp/mod.rs",
+      "kind": "core_impl",
+      "sha256": "29c215e9d19f8b8c71c5108a3598050d9d32ff939ac0afaaa251b8b99a67d9f8"
+    },
+    {
+      "path": "target/conformance/setjmp_phase1_core.report.json",
+      "kind": "report",
+      "sha256": "0a972e13310b227277d2a21977f46dd54c087e15fa0669e9fefa5c3806710ea7"
+    },
+    {
+      "path": "target/conformance/setjmp_phase1_core.log.jsonl",
+      "kind": "log",
+      "sha256": "a460fb51d545a4f4ced33af362911d760a73c7521e7f50be78882a6f83fd0e53"
+    },
+    {
+      "path": "target/conformance/setjmp_phase1_core.test_output.log",
+      "kind": "unit_test_log",
+      "sha256": "1cec40e381b9e28d96c54bc7c9668c1d972cddae837068a752dd9af4a3c04f88"
+    },
+    {
+      "path": "tests/cve_arena/results/bd-146t/trace.jsonl",
+      "kind": "trace",
+      "sha256": "a460fb51d545a4f4ced33af362911d760a73c7521e7f50be78882a6f83fd0e53"
+    }
+  ]
+}
