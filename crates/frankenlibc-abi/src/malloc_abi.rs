@@ -14,7 +14,6 @@ use std::ffi::{c_int, c_void};
 use frankenlibc_core::errno::{EINVAL, ENOMEM};
 use frankenlibc_membrane::arena::{AllocationArena, FreeResult};
 use frankenlibc_membrane::check_oracle::CheckStage;
-use frankenlibc_membrane::config::safety_level;
 use frankenlibc_membrane::heal::{HealingAction, global_healing_policy};
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
@@ -91,6 +90,11 @@ thread_local! {
     static ALLOCATOR_REENTRY_DEPTH: Cell<u32> = const { Cell::new(0) };
 }
 
+#[must_use]
+pub(crate) fn in_allocator_reentry_context() -> bool {
+    ALLOCATOR_REENTRY_DEPTH.with(|depth| depth.get() > 0)
+}
+
 struct AllocatorReentryGuard;
 
 impl Drop for AllocatorReentryGuard {
@@ -104,6 +108,9 @@ impl Drop for AllocatorReentryGuard {
 
 #[inline]
 fn enter_allocator_reentry_guard() -> Option<AllocatorReentryGuard> {
+    if runtime_policy::in_policy_reentry_context() {
+        return None;
+    }
     ALLOCATOR_REENTRY_DEPTH.with(|depth| {
         let current = depth.get();
         if current > 0 {
@@ -293,7 +300,7 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
         }
         FreeResult::DoubleFree => {
             adverse = true;
-            if safety_level().heals_enabled() {
+            if runtime_policy::mode().heals_enabled() {
                 let policy = global_healing_policy();
                 policy.record(&HealingAction::IgnoreDoubleFree);
             }
@@ -302,7 +309,7 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
         }
         FreeResult::ForeignPointer => {
             adverse = true;
-            if safety_level().heals_enabled() {
+            if runtime_policy::mode().heals_enabled() {
                 let policy = global_healing_policy();
                 policy.record(&HealingAction::IgnoreForeignFree);
             }
@@ -476,7 +483,7 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
         Some(slot) => slot.user_size,
         None => {
             // Foreign pointer -- in hardened mode, treat as malloc
-            if safety_level().heals_enabled() {
+            if runtime_policy::mode().heals_enabled() {
                 let policy = global_healing_policy();
                 policy.record(&HealingAction::ReallocAsMalloc { size });
                 record_allocator_stage_outcome(

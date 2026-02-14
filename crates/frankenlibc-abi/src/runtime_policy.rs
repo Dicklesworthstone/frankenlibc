@@ -7,10 +7,12 @@
 #![allow(dead_code)]
 
 use std::cell::{Cell, RefCell};
+use std::ffi::{c_char, c_void};
+use std::panic::{self, AssertUnwindSafe};
 use std::sync::atomic::{AtomicPtr, AtomicU8, Ordering as AtomicOrdering};
 
 use frankenlibc_membrane::check_oracle::CheckStage;
-use frankenlibc_membrane::config::{SafetyLevel, safety_level};
+use frankenlibc_membrane::config::SafetyLevel;
 use frankenlibc_membrane::runtime_math::{
     ApiFamily, MembraneAction, RuntimeContext, RuntimeDecision, RuntimeMathKernel,
     ValidationProfile,
@@ -20,6 +22,14 @@ use frankenlibc_membrane::runtime_math::{
 const STATE_UNINIT: u8 = 0;
 const STATE_INITIALIZING: u8 = 1;
 const STATE_READY: u8 = 2;
+const STATE_BROKEN: u8 = 3;
+const MODE_UNRESOLVED: u8 = 0;
+const MODE_STRICT: u8 = 1;
+const MODE_HARDENED: u8 = 2;
+const MODE_OFF: u8 = 3;
+const MODE_RESOLVING: u8 = 255;
+const PANIC_HOOK_UNSET: u8 = 0;
+const PANIC_HOOK_INSTALLED: u8 = 1;
 const TRACE_UNKNOWN_SYMBOL: &str = "unknown";
 const CONTROLLER_ID_RUNTIME_MATH: &str = "runtime_math_kernel.v1";
 const DECISION_GATE_RUNTIME_POLICY: &str = "runtime_policy.decide";
@@ -32,6 +42,137 @@ const DECISION_GATE_RUNTIME_POLICY: &str = "runtime_policy.decide";
 // sees INITIALIZING returns None (passthrough).
 static KERNEL_STATE: AtomicU8 = AtomicU8::new(STATE_UNINIT);
 static KERNEL_PTR: AtomicPtr<RuntimeMathKernel> = AtomicPtr::new(std::ptr::null_mut());
+static MODE_STATE: AtomicU8 = AtomicU8::new(MODE_UNRESOLVED);
+static PANIC_HOOK_STATE: AtomicU8 = AtomicU8::new(PANIC_HOOK_UNSET);
+
+unsafe extern "C" {
+    static mut environ: *mut *mut c_char;
+}
+
+fn mode_to_u8(level: SafetyLevel) -> u8 {
+    match level {
+        SafetyLevel::Strict => MODE_STRICT,
+        SafetyLevel::Hardened => MODE_HARDENED,
+        SafetyLevel::Off => MODE_OFF,
+    }
+}
+
+fn u8_to_mode(v: u8) -> SafetyLevel {
+    match v {
+        MODE_HARDENED => SafetyLevel::Hardened,
+        MODE_OFF => SafetyLevel::Off,
+        _ => SafetyLevel::Strict,
+    }
+}
+
+#[cfg(test)]
+fn parse_mode_value(raw: &str) -> SafetyLevel {
+    match raw.to_ascii_lowercase().as_str() {
+        "hardened" | "repair" | "tsm" | "full" => SafetyLevel::Hardened,
+        "strict" | "default" | "abi" => SafetyLevel::Strict,
+        // Runtime contract is strict|hardened only. Keep benchmark-only Off
+        // reachable through direct API use, not env parsing.
+        _ => SafetyLevel::Strict,
+    }
+}
+
+#[inline]
+unsafe fn cstr_eq_ignore_ascii_case(ptr: *const c_char, expected: &[u8]) -> bool {
+    for (idx, want) in expected.iter().enumerate() {
+        // SAFETY: caller guarantees a valid NUL-terminated C string pointer.
+        let got = unsafe { *ptr.add(idx) as u8 };
+        if got == 0 || !got.eq_ignore_ascii_case(want) {
+            return false;
+        }
+    }
+    // SAFETY: same as above.
+    unsafe { *ptr.add(expected.len()) as u8 == 0 }
+}
+
+fn parse_mode_from_environ() -> Option<SafetyLevel> {
+    const KEY_EQ: &[u8] = b"FRANKENLIBC_MODE=";
+    const MAX_SCAN: usize = 4096;
+
+    // SAFETY: process-owned env pointer table, expected to be NUL-terminated.
+    let mut envp = unsafe { environ };
+    if envp.is_null() {
+        return None;
+    }
+
+    for _ in 0..MAX_SCAN {
+        // SAFETY: envp points to a readable pointer slot in env vector.
+        let entry = unsafe { *envp };
+        if entry.is_null() {
+            return None;
+        }
+
+        let mut matched = true;
+        for (idx, want) in KEY_EQ.iter().enumerate() {
+            // SAFETY: entry points to a NUL-terminated env string.
+            let got = unsafe { *entry.add(idx) as u8 };
+            if got != *want {
+                matched = false;
+                break;
+            }
+        }
+
+        if matched {
+            // SAFETY: KEY_EQ matched exactly; value pointer is in-bounds.
+            let value = unsafe { entry.add(KEY_EQ.len()) };
+            // Hardened aliases are accepted case-insensitively.
+            // SAFETY: value is a valid C string tail of entry.
+            if unsafe {
+                cstr_eq_ignore_ascii_case(value, b"hardened")
+                    || cstr_eq_ignore_ascii_case(value, b"repair")
+                    || cstr_eq_ignore_ascii_case(value, b"tsm")
+                    || cstr_eq_ignore_ascii_case(value, b"full")
+            } {
+                return Some(SafetyLevel::Hardened);
+            }
+            // Unrecognized values fall back to strict by contract.
+            return Some(SafetyLevel::Strict);
+        }
+
+        // SAFETY: advance to next env vector slot.
+        envp = unsafe { envp.add(1) };
+    }
+
+    None
+}
+
+#[must_use]
+pub(crate) fn mode() -> SafetyLevel {
+    let cached = MODE_STATE.load(AtomicOrdering::Relaxed);
+
+    if cached != MODE_UNRESOLVED && cached != MODE_RESOLVING {
+        return u8_to_mode(cached);
+    }
+
+    if cached == MODE_RESOLVING {
+        return SafetyLevel::Strict;
+    }
+
+    if MODE_STATE
+        .compare_exchange(
+            MODE_UNRESOLVED,
+            MODE_RESOLVING,
+            AtomicOrdering::SeqCst,
+            AtomicOrdering::Relaxed,
+        )
+        .is_err()
+    {
+        let v = MODE_STATE.load(AtomicOrdering::Relaxed);
+        return if v != MODE_UNRESOLVED && v != MODE_RESOLVING {
+            u8_to_mode(v)
+        } else {
+            SafetyLevel::Strict
+        };
+    }
+
+    let resolved = parse_mode_from_environ().unwrap_or(SafetyLevel::Strict);
+    MODE_STATE.store(mode_to_u8(resolved), AtomicOrdering::Release);
+    resolved
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct TraceContext {
@@ -94,6 +235,7 @@ thread_local! {
     static DECISION_COUNTER: Cell<u64> = const { Cell::new(0) };
     static TRACE_CONTEXT: Cell<Option<TraceContext>> = const { Cell::new(None) };
     static LAST_EXPLAINABILITY: RefCell<Option<DecisionExplainability>> = const { RefCell::new(None) };
+    static POLICY_REENTRY_DEPTH: Cell<u32> = const { Cell::new(0) };
 }
 
 pub(crate) struct EntrypointTraceGuard {
@@ -104,6 +246,35 @@ impl Drop for EntrypointTraceGuard {
     fn drop(&mut self) {
         TRACE_CONTEXT.with(|slot| slot.set(self.previous));
     }
+}
+
+struct PolicyReentryGuard;
+
+impl Drop for PolicyReentryGuard {
+    fn drop(&mut self) {
+        POLICY_REENTRY_DEPTH.with(|depth| {
+            let current = depth.get();
+            depth.set(current.saturating_sub(1));
+        });
+    }
+}
+
+#[inline]
+fn enter_policy_reentry_guard() -> Option<PolicyReentryGuard> {
+    POLICY_REENTRY_DEPTH.with(|depth| {
+        let current = depth.get();
+        if current > 0 {
+            None
+        } else {
+            depth.set(current + 1);
+            Some(PolicyReentryGuard)
+        }
+    })
+}
+
+#[must_use]
+pub(crate) fn in_policy_reentry_context() -> bool {
+    POLICY_REENTRY_DEPTH.with(|depth| depth.get() > 0)
 }
 
 #[must_use]
@@ -160,6 +331,38 @@ fn fallback_trace_context() -> TraceContext {
     }
 }
 
+fn mark_kernel_broken() {
+    KERNEL_STATE.store(STATE_BROKEN, AtomicOrdering::Release);
+}
+
+fn ensure_minimal_panic_hook() {
+    if PANIC_HOOK_STATE
+        .compare_exchange(
+            PANIC_HOOK_UNSET,
+            PANIC_HOOK_INSTALLED,
+            AtomicOrdering::SeqCst,
+            AtomicOrdering::Relaxed,
+        )
+        .is_err()
+    {
+        return;
+    }
+
+    panic::set_hook(Box::new(|_| {
+        const MSG: &[u8] = b"frankenlibc: runtime kernel panic (fallback)\n";
+        // SAFETY: best-effort direct syscall write to stderr avoids our own
+        // interposed `write` symbol and prevents panic-hook recursion.
+        let _ = unsafe {
+            libc::syscall(
+                libc::SYS_write as libc::c_long,
+                libc::STDERR_FILENO,
+                MSG.as_ptr().cast::<c_void>(),
+                MSG.len(),
+            )
+        };
+    }));
+}
+
 fn active_trace_context() -> TraceContext {
     TRACE_CONTEXT
         .with(|slot| slot.get())
@@ -204,6 +407,10 @@ fn kernel() -> Option<&'static RuntimeMathKernel> {
         return Some(unsafe { &*ptr });
     }
 
+    if state == STATE_BROKEN {
+        return None;
+    }
+
     if state == STATE_INITIALIZING {
         // Reentrant call during init — passthrough to raw C behavior.
         return None;
@@ -230,7 +437,14 @@ fn kernel() -> Option<&'static RuntimeMathKernel> {
     }
 
     // We own the init. Allocate kernel on heap (leaked, lives forever).
-    let kernel = Box::new(RuntimeMathKernel::new());
+    ensure_minimal_panic_hook();
+    let kernel = match panic::catch_unwind(AssertUnwindSafe(RuntimeMathKernel::new)) {
+        Ok(k) => Box::new(k),
+        Err(_) => {
+            mark_kernel_broken();
+            return None;
+        }
+    };
     let ptr = Box::into_raw(kernel);
     KERNEL_PTR.store(ptr, AtomicOrdering::Release);
     KERNEL_STATE.store(STATE_READY, AtomicOrdering::Release);
@@ -268,7 +482,7 @@ pub(crate) fn decide(
     bloom_negative: bool,
     contention_hint: u16,
 ) -> (SafetyLevel, RuntimeDecision) {
-    let mode = safety_level();
+    let mode = mode();
     let ctx = RuntimeContext {
         family,
         addr_hint,
@@ -277,12 +491,40 @@ pub(crate) fn decide(
         contention_hint,
         bloom_negative,
     };
+
+    // Scoped mitigation: allocator/string families currently run in passthrough
+    // policy mode under LD_PRELOAD to prevent recursive runtime-kernel lock
+    // paths during hot bootstrap operations.
+    if matches!(
+        family,
+        ApiFamily::Allocator | ApiFamily::StringMemory | ApiFamily::Stdio
+    ) {
+        let decision = passthrough_decision();
+        record_last_explainability(mode, ctx, decision);
+        return (mode, decision);
+    }
+
+    let Some(_reentry_guard) = enter_policy_reentry_guard() else {
+        let decision = passthrough_decision();
+        record_last_explainability(mode, ctx, decision);
+        return (mode, decision);
+    };
+
+    ensure_minimal_panic_hook();
     let Some(k) = kernel() else {
         let decision = passthrough_decision();
         record_last_explainability(mode, ctx, decision);
         return (mode, decision);
     };
-    let decision = k.decide(mode, ctx);
+    let decision = match panic::catch_unwind(AssertUnwindSafe(|| k.decide(mode, ctx))) {
+        Ok(decision) => decision,
+        Err(_) => {
+            mark_kernel_broken();
+            let decision = passthrough_decision();
+            record_last_explainability(mode, ctx, decision);
+            return (mode, decision);
+        }
+    };
     record_last_explainability(mode, ctx, decision);
     (mode, decision)
 }
@@ -293,9 +535,29 @@ pub(crate) fn observe(
     estimated_cost_ns: u64,
     adverse: bool,
 ) {
-    let mode = safety_level();
+    // Scoped mitigation: allocator/string observe feedback currently risks
+    // recursive lock paths under LD_PRELOAD bootstrap. Keep runtime decisions
+    // enabled, but defer feedback updates for these two hot families.
+    if matches!(
+        family,
+        ApiFamily::Allocator | ApiFamily::StringMemory | ApiFamily::Stdio
+    ) {
+        return;
+    }
+
+    let mode = mode();
+    let Some(_reentry_guard) = enter_policy_reentry_guard() else {
+        return;
+    };
+    ensure_minimal_panic_hook();
     if let Some(k) = kernel() {
-        k.observe_validation_result(mode, family, profile, estimated_cost_ns, adverse);
+        if panic::catch_unwind(AssertUnwindSafe(|| {
+            k.observe_validation_result(mode, family, profile, estimated_cost_ns, adverse);
+        }))
+        .is_err()
+        {
+            mark_kernel_broken();
+        }
     }
 }
 
@@ -305,10 +567,27 @@ pub(crate) fn check_ordering(
     aligned: bool,
     recent_page: bool,
 ) -> [CheckStage; 7] {
+    if matches!(
+        family,
+        ApiFamily::Allocator | ApiFamily::StringMemory | ApiFamily::Stdio
+    ) {
+        return PASSTHROUGH_ORDERING;
+    }
+    let Some(_reentry_guard) = enter_policy_reentry_guard() else {
+        return PASSTHROUGH_ORDERING;
+    };
+    ensure_minimal_panic_hook();
     let Some(k) = kernel() else {
         return PASSTHROUGH_ORDERING;
     };
-    k.check_ordering(family, aligned, recent_page)
+    match panic::catch_unwind(AssertUnwindSafe(|| k.check_ordering(family, aligned, recent_page)))
+    {
+        Ok(ordering) => ordering,
+        Err(_) => {
+            mark_kernel_broken();
+            PASSTHROUGH_ORDERING
+        }
+    }
 }
 
 pub(crate) fn note_check_order_outcome(
@@ -318,16 +597,32 @@ pub(crate) fn note_check_order_outcome(
     ordering_used: &[CheckStage; 7],
     exit_stage: Option<usize>,
 ) {
-    let mode = safety_level();
+    if matches!(
+        family,
+        ApiFamily::Allocator | ApiFamily::StringMemory | ApiFamily::Stdio
+    ) {
+        return;
+    }
+    let mode = mode();
+    let Some(_reentry_guard) = enter_policy_reentry_guard() else {
+        return;
+    };
+    ensure_minimal_panic_hook();
     if let Some(k) = kernel() {
-        k.note_check_order_outcome(
-            mode,
-            family,
-            aligned,
-            recent_page,
-            ordering_used,
-            exit_stage,
-        );
+        if panic::catch_unwind(AssertUnwindSafe(|| {
+            k.note_check_order_outcome(
+                mode,
+                family,
+                aligned,
+                recent_page,
+                ordering_used,
+                exit_stage,
+            );
+        }))
+        .is_err()
+        {
+            mark_kernel_broken();
+        }
     }
 }
 
@@ -340,6 +635,38 @@ pub(crate) fn scaled_cost(base_ns: u64, bytes: usize) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn runtime_mode_value_parser_is_strict_or_hardened_only() {
+        assert_eq!(parse_mode_value("strict"), SafetyLevel::Strict);
+        assert_eq!(parse_mode_value("hardened"), SafetyLevel::Hardened);
+        assert_eq!(parse_mode_value("repair"), SafetyLevel::Hardened);
+        assert_eq!(parse_mode_value("off"), SafetyLevel::Strict);
+        assert_eq!(parse_mode_value("bogus"), SafetyLevel::Strict);
+    }
+
+    #[test]
+    fn policy_reentry_guard_blocks_nested_entry() {
+        let outer = enter_policy_reentry_guard().expect("first entry should acquire guard");
+        assert!(
+            enter_policy_reentry_guard().is_none(),
+            "nested entry should be blocked"
+        );
+        drop(outer);
+        assert!(
+            enter_policy_reentry_guard().is_some(),
+            "guard should be reacquirable after drop"
+        );
+    }
+
+    #[test]
+    fn in_policy_reentry_context_tracks_guard_lifetime() {
+        assert!(!in_policy_reentry_context());
+        let outer = enter_policy_reentry_guard().expect("first entry should acquire guard");
+        assert!(in_policy_reentry_context());
+        drop(outer);
+        assert!(!in_policy_reentry_context());
+    }
 
     #[test]
     fn scoped_trace_context_carries_symbol_into_explainability() {

@@ -31,6 +31,11 @@ impl Drop for StringMembraneGuard {
 }
 
 fn enter_string_membrane_guard() -> Option<StringMembraneGuard> {
+    if runtime_policy::in_policy_reentry_context()
+        || crate::malloc_abi::in_allocator_reentry_context()
+    {
+        return None;
+    }
     STRING_MEMBRANE_DEPTH.with(|depth| {
         let current = depth.get();
         if current > 0 {

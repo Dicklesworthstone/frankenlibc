@@ -43,7 +43,12 @@ unsafe fn scan_c_str_len(ptr: *const c_char, bound: Option<usize>) -> (usize, bo
             (limit, false)
         }
         None => {
-            let len = unsafe { CStr::from_ptr(ptr) }.to_bytes().len();
+            let mut len = 0usize;
+            // SAFETY: caller guarantees `ptr` references a NUL-terminated C string
+            // when unbounded scan mode is requested.
+            while unsafe { *ptr.add(len) } != 0 {
+                len = len.saturating_add(1);
+            }
             (len, true)
         }
     }
@@ -876,7 +881,7 @@ pub unsafe extern "C" fn puts(s: *const c_char) -> c_int {
         s as usize,
         0,
         false,
-        known_remaining(s as usize).is_none(),
+        true,
         0,
     );
     if matches!(decision.action, MembraneAction::Deny) {
@@ -885,11 +890,7 @@ pub unsafe extern "C" fn puts(s: *const c_char) -> c_int {
     }
 
     let repair = repair_enabled(mode.heals_enabled(), decision.action);
-    let bound = if repair {
-        known_remaining(s as usize)
-    } else {
-        None
-    };
+    let bound = None;
     let (len, terminated) = unsafe { scan_c_str_len(s, bound) };
     if !terminated && repair {
         global_healing_policy().record(&HealingAction::TruncateWithNull {
