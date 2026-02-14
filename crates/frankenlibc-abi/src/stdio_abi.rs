@@ -1359,3 +1359,187 @@ pub unsafe extern "C" fn printf(format: *const c_char, mut args: ...) -> c_int {
     );
     if adverse { -1 } else { total_len as c_int }
 }
+
+/// glibc fortified `__printf_chk`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __printf_chk(_flag: c_int, format: *const c_char, mut args: ...) -> c_int {
+    if format.is_null() {
+        return -1;
+    }
+
+    let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, 0, 0, false, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+        return -1;
+    }
+
+    let fmt_bytes = unsafe { CStr::from_ptr(format) }.to_bytes();
+    let segments = parse_format_string(fmt_bytes);
+    let extract_count = count_printf_args(&segments);
+    let mut arg_buf = [0u64; MAX_VA_ARGS];
+    extract_va_args!(&segments, &mut args, &mut arg_buf, extract_count);
+
+    let rendered = unsafe { render_printf(fmt_bytes, arg_buf.as_ptr(), extract_count) };
+    let total_len = rendered.len();
+
+    let rc = unsafe { sys_write_fd(libc::STDOUT_FILENO, rendered.as_ptr().cast(), total_len) };
+    let adverse = rc < 0 || rc as usize != total_len;
+    runtime_policy::observe(
+        ApiFamily::Stdio,
+        decision.profile,
+        runtime_policy::scaled_cost(15, total_len),
+        adverse,
+    );
+    if adverse { -1 } else { total_len as c_int }
+}
+
+/// glibc fortified `__fprintf_chk`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __fprintf_chk(
+    stream: *mut c_void,
+    _flag: c_int,
+    format: *const c_char,
+    mut args: ...
+) -> c_int {
+    if format.is_null() {
+        return -1;
+    }
+    let id = stream as usize;
+
+    let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, id, 0, false, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+        return -1;
+    }
+
+    let fmt_bytes = unsafe { CStr::from_ptr(format) }.to_bytes();
+    let segments = parse_format_string(fmt_bytes);
+    let extract_count = count_printf_args(&segments);
+    let mut arg_buf = [0u64; MAX_VA_ARGS];
+    extract_va_args!(&segments, &mut args, &mut arg_buf, extract_count);
+
+    let rendered = unsafe { render_printf(fmt_bytes, arg_buf.as_ptr(), extract_count) };
+    let total_len = rendered.len();
+
+    let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(s) = reg.streams.get_mut(&id) {
+        let flush_data = s.buffer_write(&rendered);
+        if !flush_data.is_empty() {
+            let fd = s.fd();
+            let rc = unsafe { sys_write_fd(fd, flush_data.as_ptr().cast(), flush_data.len()) };
+            if rc >= 0 && rc as usize == flush_data.len() {
+                s.mark_flushed();
+            } else {
+                s.set_error();
+                runtime_policy::observe(
+                    ApiFamily::Stdio,
+                    decision.profile,
+                    runtime_policy::scaled_cost(15, total_len),
+                    true,
+                );
+                return -1;
+            }
+        }
+    } else {
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+        return -1;
+    }
+
+    runtime_policy::observe(
+        ApiFamily::Stdio,
+        decision.profile,
+        runtime_policy::scaled_cost(15, total_len),
+        false,
+    );
+    total_len as c_int
+}
+
+/// glibc fortified `__sprintf_chk`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __sprintf_chk(
+    str_buf: *mut c_char,
+    _flag: c_int,
+    slen: usize,
+    format: *const c_char,
+    mut args: ...
+) -> c_int {
+    if format.is_null() || str_buf.is_null() || slen == 0 {
+        return -1;
+    }
+
+    let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, 0, slen, false, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+        return -1;
+    }
+
+    let fmt_bytes = unsafe { CStr::from_ptr(format) }.to_bytes();
+    let segments = parse_format_string(fmt_bytes);
+    let extract_count = count_printf_args(&segments);
+    let mut arg_buf = [0u64; MAX_VA_ARGS];
+    extract_va_args!(&segments, &mut args, &mut arg_buf, extract_count);
+
+    let rendered = unsafe { render_printf(fmt_bytes, arg_buf.as_ptr(), extract_count) };
+    let total_len = rendered.len();
+    let copy_len = total_len.min(slen.saturating_sub(1));
+
+    unsafe {
+        std::ptr::copy_nonoverlapping(rendered.as_ptr(), str_buf as *mut u8, copy_len);
+        *str_buf.add(copy_len) = 0;
+    }
+
+    runtime_policy::observe(
+        ApiFamily::Stdio,
+        decision.profile,
+        runtime_policy::scaled_cost(15, total_len),
+        copy_len != total_len,
+    );
+    total_len as c_int
+}
+
+/// glibc fortified `__snprintf_chk`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __snprintf_chk(
+    str_buf: *mut c_char,
+    maxlen: usize,
+    _flag: c_int,
+    slen: usize,
+    format: *const c_char,
+    mut args: ...
+) -> c_int {
+    if format.is_null() || str_buf.is_null() {
+        return -1;
+    }
+
+    let effective = maxlen.min(slen);
+    let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, 0, effective, false, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+        return -1;
+    }
+
+    let fmt_bytes = unsafe { CStr::from_ptr(format) }.to_bytes();
+    let segments = parse_format_string(fmt_bytes);
+    let extract_count = count_printf_args(&segments);
+    let mut arg_buf = [0u64; MAX_VA_ARGS];
+    extract_va_args!(&segments, &mut args, &mut arg_buf, extract_count);
+
+    let rendered = unsafe { render_printf(fmt_bytes, arg_buf.as_ptr(), extract_count) };
+    let total_len = rendered.len();
+
+    if effective > 0 {
+        let copy_len = total_len.min(effective - 1);
+        unsafe {
+            std::ptr::copy_nonoverlapping(rendered.as_ptr(), str_buf as *mut u8, copy_len);
+            *str_buf.add(copy_len) = 0;
+        }
+    }
+
+    runtime_policy::observe(
+        ApiFamily::Stdio,
+        decision.profile,
+        runtime_policy::scaled_cost(15, total_len),
+        total_len >= effective,
+    );
+    total_len as c_int
+}

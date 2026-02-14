@@ -584,10 +584,7 @@ pub(crate) fn decide(
     // paths during hot bootstrap operations.
     if matches!(
         family,
-        ApiFamily::Allocator
-            | ApiFamily::StringMemory
-            | ApiFamily::Stdio
-            | ApiFamily::Threading
+        ApiFamily::Allocator | ApiFamily::StringMemory | ApiFamily::Stdio | ApiFamily::Threading
     ) {
         let decision = passthrough_decision();
         record_last_explainability(mode, ctx, decision);
@@ -639,10 +636,7 @@ pub(crate) fn check_ordering(
 ) -> [CheckStage; 7] {
     if matches!(
         family,
-        ApiFamily::Allocator
-            | ApiFamily::StringMemory
-            | ApiFamily::Stdio
-            | ApiFamily::Threading
+        ApiFamily::Allocator | ApiFamily::StringMemory | ApiFamily::Stdio | ApiFamily::Threading
     ) {
         return PASSTHROUGH_ORDERING;
     }
@@ -673,10 +667,7 @@ pub(crate) fn note_check_order_outcome(
 ) {
     if matches!(
         family,
-        ApiFamily::Allocator
-            | ApiFamily::StringMemory
-            | ApiFamily::Stdio
-            | ApiFamily::Threading
+        ApiFamily::Allocator | ApiFamily::StringMemory | ApiFamily::Stdio | ApiFamily::Threading
     ) {
         return;
     }
