@@ -26,6 +26,10 @@ type HostStartMainFn = unsafe extern "C" fn(
     *mut c_void,
 ) -> c_int;
 
+unsafe extern "C" {
+    static mut environ: *mut *mut c_char;
+}
+
 static LAST_ARGC: AtomicUsize = AtomicUsize::new(0);
 static LAST_ARGV_COUNT: AtomicUsize = AtomicUsize::new(0);
 static LAST_ENV_COUNT: AtomicUsize = AtomicUsize::new(0);
@@ -58,7 +62,48 @@ fn store_invariants(inv: StartupInvariants) {
 }
 
 fn startup_phase0_env_enabled() -> bool {
-    matches!(std::env::var("FRANKENLIBC_STARTUP_PHASE0"), Ok(v) if v == "1")
+    const KEY_EQ: &[u8] = b"FRANKENLIBC_STARTUP_PHASE0=";
+    const MAX_SCAN: usize = 4096;
+
+    // Read process environment directly from `environ` to avoid calling any
+    // interposed ABI symbol (notably getenv/strlen/memcpy) during startup.
+    let mut envp = unsafe { environ };
+    if envp.is_null() {
+        return false;
+    }
+
+    for _ in 0..MAX_SCAN {
+        // SAFETY: `envp` is a null-terminated vector of C string pointers.
+        let entry = unsafe { *envp };
+        if entry.is_null() {
+            return false;
+        }
+
+        let mut matched = true;
+        for (idx, want) in KEY_EQ.iter().enumerate() {
+            // SAFETY: `entry` points to a NUL-terminated string; reading prefix
+            // bytes is valid until mismatch or NUL.
+            let got = unsafe { *entry.add(idx) as u8 };
+            if got != *want {
+                matched = false;
+                break;
+            }
+        }
+
+        if matched {
+            // Accept only exact value `1`.
+            // SAFETY: KEY_EQ matched exactly; value bytes are in-bounds.
+            let value = unsafe { *entry.add(KEY_EQ.len()) as u8 };
+            // SAFETY: same as above.
+            let terminator = unsafe { *entry.add(KEY_EQ.len() + 1) as u8 };
+            return value == b'1' && terminator == 0;
+        }
+
+        // SAFETY: advance to next env pointer slot.
+        envp = unsafe { envp.add(1) };
+    }
+
+    false
 }
 
 unsafe fn delegate_to_host_libc_start_main(
@@ -71,8 +116,27 @@ unsafe fn delegate_to_host_libc_start_main(
     stack_end: *mut c_void,
 ) -> Option<c_int> {
     let symbol = b"__libc_start_main\0";
-    // SAFETY: forwards to ABI dlsym wrapper with static NUL-terminated symbol name.
-    let ptr = unsafe { crate::dlfcn_abi::dlsym(libc::RTLD_NEXT, symbol.as_ptr().cast::<c_char>()) };
+    let glibc_v34 = b"GLIBC_2.34\0";
+    let glibc_v225 = b"GLIBC_2.2.5\0";
+    // SAFETY: versioned lookup via host dynamic loader, bypassing our interposed
+    // dlsym symbol to avoid recursive startup-resolution loops.
+    let mut ptr = unsafe {
+        libc::dlvsym(
+            libc::RTLD_NEXT,
+            symbol.as_ptr().cast::<c_char>(),
+            glibc_v34.as_ptr().cast::<c_char>(),
+        )
+    };
+    if ptr.is_null() {
+        // SAFETY: fallback to older glibc symbol version when 2.34 alias is absent.
+        ptr = unsafe {
+            libc::dlvsym(
+                libc::RTLD_NEXT,
+                symbol.as_ptr().cast::<c_char>(),
+                glibc_v225.as_ptr().cast::<c_char>(),
+            )
+        };
+    }
     if ptr.is_null() {
         return None;
     }
