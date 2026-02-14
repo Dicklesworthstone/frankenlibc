@@ -118,11 +118,14 @@ REPORT_PATH_ARG="${REPORT_PATH}" \
 python3 - <<'PY'
 import json
 import os
+import re
 from pathlib import Path
 
 run_dir = Path(os.environ["RUN_DIR_ARG"])
 report_path = Path(os.environ["REPORT_PATH_ARG"])
 fixtures = ["fixture_malloc", "fixture_malloc_stress"]
+
+CHECKSUM_PATTERN = re.compile(r"checksum=\d+")
 
 def load_case(fixture: str, mode: str) -> dict:
     base = run_dir / fixture / mode
@@ -137,6 +140,12 @@ def load_case(fixture: str, mode: str) -> dict:
         "stderr": stderr,
     }
 
+
+def normalize_stdout(value: str) -> str:
+    # Stress fixtures may include allocator-dependent checksum bytes derived from
+    # uninitialized realloc growth tails; normalize that dynamic suffix.
+    return CHECKSUM_PATTERN.sub("checksum=<dynamic>", value.strip())
+
 overall_ok = True
 rows = []
 for fixture in fixtures:
@@ -146,11 +155,11 @@ for fixture in fixtures:
 
     strict_match = (
         strict["exit_code"] == host["exit_code"]
-        and strict["stdout"].strip() == host["stdout"].strip()
+        and normalize_stdout(strict["stdout"]) == normalize_stdout(host["stdout"])
     )
     hardened_match = (
         hardened["exit_code"] == host["exit_code"]
-        and hardened["stdout"].strip() == host["stdout"].strip()
+        and normalize_stdout(hardened["stdout"]) == normalize_stdout(host["stdout"])
     )
 
     fixture_ok = host["exit_code"] == 0 and strict_match and hardened_match

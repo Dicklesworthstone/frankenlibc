@@ -1361,8 +1361,8 @@ pub unsafe extern "C" fn printf(format: *const c_char, mut args: ...) -> c_int {
 }
 
 /// glibc fortified `__printf_chk`.
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __printf_chk(_flag: c_int, format: *const c_char, mut args: ...) -> c_int {
+#[unsafe(export_name = "__printf_chk")]
+pub unsafe extern "C" fn printf_chk(_flag: c_int, format: *const c_char, mut args: ...) -> c_int {
     if format.is_null() {
         return -1;
     }
@@ -1394,8 +1394,8 @@ pub unsafe extern "C" fn __printf_chk(_flag: c_int, format: *const c_char, mut a
 }
 
 /// glibc fortified `__fprintf_chk`.
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __fprintf_chk(
+#[unsafe(export_name = "__fprintf_chk")]
+pub unsafe extern "C" fn fprintf_chk(
     stream: *mut c_void,
     _flag: c_int,
     format: *const c_char,
@@ -1455,8 +1455,8 @@ pub unsafe extern "C" fn __fprintf_chk(
 }
 
 /// glibc fortified `__sprintf_chk`.
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __sprintf_chk(
+#[unsafe(export_name = "__sprintf_chk")]
+pub unsafe extern "C" fn sprintf_chk(
     str_buf: *mut c_char,
     _flag: c_int,
     slen: usize,
@@ -1498,8 +1498,8 @@ pub unsafe extern "C" fn __sprintf_chk(
 }
 
 /// glibc fortified `__snprintf_chk`.
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __snprintf_chk(
+#[unsafe(export_name = "__snprintf_chk")]
+pub unsafe extern "C" fn snprintf_chk(
     str_buf: *mut c_char,
     maxlen: usize,
     _flag: c_int,
