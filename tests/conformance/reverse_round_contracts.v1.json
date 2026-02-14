@@ -1,0 +1,381 @@
+{
+  "schema_version": "v1",
+  "bead": "bd-2a2.4",
+  "generated_at": "2026-02-13T21:27:07Z",
+  "report_hash": "4ea167ea89c7c503",
+  "summary": {
+    "rounds_verified": 5,
+    "total_math_families": 20,
+    "modules_found": 20,
+    "modules_missing": 0,
+    "module_coverage_pct": 100.0,
+    "invariants_specified": 20,
+    "invariants_total": 20,
+    "unique_math_classes": [
+      "algebra",
+      "algebraic-topology",
+      "conformal-statistics",
+      "decision-theory",
+      "experimental-design",
+      "game-theory",
+      "grothendieck-serre",
+      "optimal-transport",
+      "stochastic-analysis"
+    ],
+    "math_class_count": 9,
+    "all_rounds_diverse": true
+  },
+  "round_results": {
+    "R10": {
+      "name": "NSS / resolv",
+      "legacy_surfaces": [
+        "nss",
+        "resolv",
+        "nscd",
+        "sunrpc"
+      ],
+      "failure_class": "poisoning/retry/cache instability",
+      "artifacts": "deterministic lookup DAGs + calibrated thresholds",
+      "math_families": {
+        "pomdp": {
+          "module": "pomdp_repair",
+          "module_path": "crates/frankenlibc-membrane/src/runtime_math/pomdp_repair.rs",
+          "module_exists": true,
+          "description": "Constrained POMDP repair policy controller (math #8)",
+          "math_class": "decision-theory",
+          "invariant": "Bellman optimality: V*(s) = max_a [R(s,a) + \u03b3 \u03a3 P(s'|s,a)V*(s')]",
+          "invariant_specified": true
+        },
+        "changepoint": {
+          "module": "changepoint",
+          "module_path": "crates/frankenlibc-membrane/src/runtime_math/changepoint.rs",
+          "module_exists": true,
+          "description": "Bayesian online change-point detection (math #6)",
+          "math_class": "conformal-statistics",
+          "invariant": "posterior: P(r_t|x_{1:t}) via message-passing recursion",
+          "invariant_specified": true
+        },
+        "wasserstein": {
+          "module": "wasserstein_drift",
+          "module_path": "crates/frankenlibc-membrane/src/runtime_math/wasserstein_drift.rs",
+          "module_exists": true,
+          "description": "1-Wasserstein distributional shift detection",
+          "math_class": "optimal-transport",
+          "invariant": "metric: W_1(\u03bc,\u03bd) = inf E[|X-Y|] over couplings (X,Y)",
+          "invariant_specified": true
+        },
+        "serre_spectral": {
+          "module": "serre_spectral",
+          "module_path": "crates/frankenlibc-membrane/src/runtime_math/serre_spectral.rs",
+          "module_exists": true,
+          "description": "Serre spectral sequence for cross-layer defects (math #32)",
+          "math_class": "algebraic-topology",
+          "invariant": "spectral convergence: E_\u221e = lim E_r via filtered complex",
+          "invariant_specified": true
+        }
+      },
+      "family_count": 4,
+      "modules_found": 4,
+      "branch_diversity": {
+        "total_families": 4,
+        "unique_classes": [
+          "algebraic-topology",
+          "conformal-statistics",
+          "decision-theory",
+          "optimal-transport"
+        ],
+        "class_count": 4,
+        "passes_diversity": true,
+        "has_conformal": true,
+        "has_topology": true,
+        "has_algebra": false,
+        "has_grothendieck": false
+      }
+    },
+    "R11": {
+      "name": "libm / fenv",
+      "legacy_surfaces": [
+        "math",
+        "soft-fp",
+        "ieee754",
+        "fenv"
+      ],
+      "failure_class": "denormal/NaN/payload drift across regimes",
+      "artifacts": "regime-indexed numeric guard tables + certified fallback kernels",
+      "math_families": {
+        "padic": {
+          "module": "padic_valuation",
+          "module_path": "crates/frankenlibc-membrane/src/padic_valuation.rs",
+          "module_exists": true,
+          "description": "Non-Archimedean p-adic error calculus (math #40)",
+          "math_class": "algebra",
+          "invariant": "|x + y|_p <= max(|x|_p, |y|_p) (ultrametric inequality)",
+          "invariant_specified": true
+        },
+        "loss_minimizer": {
+          "module": "loss_minimizer",
+          "module_path": "crates/frankenlibc-membrane/src/runtime_math/loss_minimizer.rs",
+          "module_exists": true,
+          "description": "Decision-theoretic loss minimization (math #4)",
+          "math_class": "decision-theory",
+          "invariant": "proper scoring: argmin E[S(q,Y)] = P(Y) (calibration)",
+          "invariant_specified": true
+        },
+        "design": {
+          "module": "design",
+          "module_path": "crates/frankenlibc-membrane/src/runtime_math/design.rs",
+          "module_exists": true,
+          "description": "D-optimal probe scheduling (math #41)",
+          "math_class": "experimental-design",
+          "invariant": "det(X'X) maximized over probe allocation",
+          "invariant_specified": true
+        },
+        "clifford": {
+          "module": "clifford",
+          "module_path": "crates/frankenlibc-membrane/src/runtime_math/clifford.rs",
+          "module_exists": true,
+          "description": "Clifford/geometric algebra for SIMD correctness (math #36)",
+          "math_class": "algebra",
+          "invariant": "Cl(V,q) graded algebra: v\u00b2 = q(v) for all v \u2208 V",
+          "invariant_specified": true
+        }
+      },
+      "family_count": 4,
+      "modules_found": 4,
+      "branch_diversity": {
+        "total_families": 4,
+        "unique_classes": [
+          "algebra",
+          "decision-theory",
+          "experimental-design"
+        ],
+        "class_count": 3,
+        "passes_diversity": true,
+        "has_conformal": false,
+        "has_topology": false,
+        "has_algebra": true,
+        "has_grothendieck": false
+      }
+    },
+    "R7": {
+      "name": "Loader / Symbol / IFUNC",
+      "legacy_surfaces": [
+        "elf",
+        "dl-*",
+        "IFUNC",
+        "hwcaps",
+        "tunables"
+      ],
+      "failure_class": "global compatibility drift",
+      "artifacts": "resolver automata + compatibility witness ledgers",
+      "math_families": {
+        "tropical": {
+          "module": "tropical_latency",
+          "module_path": "crates/frankenlibc-membrane/src/tropical_latency.rs",
+          "module_exists": true,
+          "description": "Min-plus algebra worst-case latency bounds (math #25)",
+          "math_class": "algebra",
+          "invariant": "tropical semiring monotonicity: a \u2295 (a \u2297 b) = a",
+          "invariant_specified": true
+        },
+        "sheaf_cohomology": {
+          "module": "grothendieck_glue",
+          "module_path": "crates/frankenlibc-membrane/src/runtime_math/grothendieck_glue.rs",
+          "module_exists": true,
+          "description": "Grothendieck site cocycle/descent for symbol gluing (math #33)",
+          "math_class": "grothendieck-serre",
+          "invariant": "cocycle condition: \u03b4(g_ij) = g_ik \u00b7 g_kj^(-1)",
+          "invariant_specified": true
+        },
+        "regret_bounds": {
+          "module": "bandit",
+          "module_path": "crates/frankenlibc-membrane/src/runtime_math/bandit.rs",
+          "module_exists": true,
+          "description": "Constrained bandit routing with regret bounds",
+          "math_class": "decision-theory",
+          "invariant": "cumulative regret O(sqrt(T log K))",
+          "invariant_specified": true
+        },
+        "ktheory": {
+          "module": "ktheory",
+          "module_path": "crates/frankenlibc-membrane/src/runtime_math/ktheory.rs",
+          "module_exists": true,
+          "description": "K-theory transport for ABI compatibility (math #34)",
+          "math_class": "algebraic-topology",
+          "invariant": "index stability: ind(D_s) is locally constant in s",
+          "invariant_specified": true
+        }
+      },
+      "family_count": 4,
+      "modules_found": 4,
+      "branch_diversity": {
+        "total_families": 4,
+        "unique_classes": [
+          "algebra",
+          "algebraic-topology",
+          "decision-theory",
+          "grothendieck-serre"
+        ],
+        "class_count": 4,
+        "passes_diversity": true,
+        "has_conformal": false,
+        "has_topology": true,
+        "has_algebra": true,
+        "has_grothendieck": true
+      }
+    },
+    "R8": {
+      "name": "Allocator / nptl",
+      "legacy_surfaces": [
+        "malloc",
+        "nptl",
+        "futex",
+        "pthread"
+      ],
+      "failure_class": "temporal/provenance corruption",
+      "artifacts": "allocator policy tables + admissibility guards",
+      "math_families": {
+        "mean_field_game": {
+          "module": "mean_field_game",
+          "module_path": "crates/frankenlibc-membrane/src/mean_field_game.rs",
+          "module_exists": true,
+          "description": "Mean-field Nash equilibrium contention controller (math #19)",
+          "math_class": "game-theory",
+          "invariant": "Nash fixed-point: no agent benefits from unilateral deviation",
+          "invariant_specified": true
+        },
+        "sos_barrier": {
+          "module": "sos_barrier",
+          "module_path": "crates/frankenlibc-membrane/src/runtime_math/sos_barrier.rs",
+          "module_exists": true,
+          "description": "SOS barrier certificate for admissibility (math #21)",
+          "math_class": "algebra",
+          "invariant": "B(x) >= 0 on safe set, dB/dt <= 0 on boundary",
+          "invariant_specified": true
+        },
+        "rough_path": {
+          "module": "rough_path",
+          "module_path": "crates/frankenlibc-membrane/src/rough_path.rs",
+          "module_exists": true,
+          "description": "Rough-path signatures for trace dynamics (math #24)",
+          "math_class": "stochastic-analysis",
+          "invariant": "Chen identity: S(X)_{s,u} = S(X)_{s,t} \u2297 S(X)_{t,u}",
+          "invariant_specified": true
+        },
+        "coupling": {
+          "module": "coupling",
+          "module_path": "crates/frankenlibc-membrane/src/runtime_math/coupling.rs",
+          "module_exists": true,
+          "description": "Probabilistic coupling for divergence certification (math #18)",
+          "math_class": "conformal-statistics",
+          "invariant": "Azuma-Hoeffding: P(|M_n - M_0| > t) <= 2exp(-t\u00b2/2nc\u00b2)",
+          "invariant_specified": true
+        }
+      },
+      "family_count": 4,
+      "modules_found": 4,
+      "branch_diversity": {
+        "total_families": 4,
+        "unique_classes": [
+          "algebra",
+          "conformal-statistics",
+          "game-theory",
+          "stochastic-analysis"
+        ],
+        "class_count": 4,
+        "passes_diversity": true,
+        "has_conformal": true,
+        "has_topology": false,
+        "has_algebra": true,
+        "has_grothendieck": false
+      }
+    },
+    "R9": {
+      "name": "Format / Locale",
+      "legacy_surfaces": [
+        "stdio-common",
+        "libio",
+        "locale",
+        "iconv",
+        "wcsmbs"
+      ],
+      "failure_class": "parser-state explosion and locale drift",
+      "artifacts": "parser/transducer tables + consistency certs",
+      "math_families": {
+        "conformal": {
+          "module": "conformal",
+          "module_path": "crates/frankenlibc-membrane/src/runtime_math/conformal.rs",
+          "module_exists": true,
+          "description": "Split conformal prediction for finite-sample guarantees (math #27)",
+          "math_class": "conformal-statistics",
+          "invariant": "coverage: P(Y \u2208 C(X)) >= 1-\u03b1 for finite sample",
+          "invariant_specified": true
+        },
+        "eprocess": {
+          "module": "eprocess",
+          "module_path": "crates/frankenlibc-membrane/src/runtime_math/eprocess.rs",
+          "module_exists": true,
+          "description": "Anytime-valid sequential testing (e-values) (math #5)",
+          "math_class": "conformal-statistics",
+          "invariant": "E[e-process] <= 1 under null (supermartingale)",
+          "invariant_specified": true
+        },
+        "higher_topos": {
+          "module": "higher_topos",
+          "module_path": "crates/frankenlibc-membrane/src/runtime_math/higher_topos.rs",
+          "module_exists": true,
+          "description": "Higher-topos descent for locale coherence (math #42)",
+          "math_class": "grothendieck-serre",
+          "invariant": "descent: local objects glue to global via cocartesian lifts",
+          "invariant_specified": true
+        },
+        "grobner": {
+          "module": "grobner_normalizer",
+          "module_path": "crates/frankenlibc-membrane/src/runtime_math/grobner_normalizer.rs",
+          "module_exists": true,
+          "description": "Gr\u00f6bner basis constraint normalization (math #30)",
+          "math_class": "algebra",
+          "invariant": "confluence: all reduction paths terminate at same normal form",
+          "invariant_specified": true
+        }
+      },
+      "family_count": 4,
+      "modules_found": 4,
+      "branch_diversity": {
+        "total_families": 4,
+        "unique_classes": [
+          "algebra",
+          "conformal-statistics",
+          "grothendieck-serre"
+        ],
+        "class_count": 3,
+        "passes_diversity": true,
+        "has_conformal": true,
+        "has_topology": false,
+        "has_algebra": true,
+        "has_grothendieck": true
+      }
+    }
+  },
+  "branch_diversity_rule": {
+    "requirement": ">=3 distinct math families per round",
+    "mandatory_classes": [
+      "conformal-statistics",
+      "algebraic-topology",
+      "algebra",
+      "grothendieck-serre"
+    ],
+    "max_single_family_pct": 40
+  },
+  "golden_output": {
+    "description": "Reproducible baseline for regression detection",
+    "hash": "4ea167ea89c7c503",
+    "round_hashes": {
+      "R10": "7e84357ec964",
+      "R11": "33bf75d138f7",
+      "R7": "aac99f84f6dc",
+      "R8": "fd21d6709ab1",
+      "R9": "1c8f487e1ef1"
+    }
+  }
+}
