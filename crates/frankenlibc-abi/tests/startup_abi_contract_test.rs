@@ -7,9 +7,13 @@ use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 
 use frankenlibc_abi::errno_abi::__errno_location;
 use frankenlibc_abi::startup_abi::{
-    __frankenlibc_startup_phase0, __frankenlibc_startup_snapshot, StartupInvariantSnapshot,
+    __frankenlibc_startup_phase0, __frankenlibc_startup_snapshot, StartupFailureReason,
+    StartupInvariantSnapshot, StartupInvariantStatus, StartupPolicyDecision,
+    startup_policy_snapshot_for_tests,
 };
-use frankenlibc_abi::startup_helpers::{AT_NULL, AT_SECURE, MAX_STARTUP_SCAN};
+use frankenlibc_abi::startup_helpers::{
+    AT_NULL, AT_SECURE, MAX_STARTUP_SCAN, SecureModeState, StartupCheckpoint,
+};
 
 type MainFn = unsafe extern "C" fn(c_int, *mut *mut c_char, *mut *mut c_char) -> c_int;
 type HookFn = unsafe extern "C" fn();
@@ -144,6 +148,15 @@ fn startup_phase0_executes_main_and_captures_invariants() {
     assert_eq!(snapshot.env_count, 1);
     assert_eq!(snapshot.auxv_count, 1);
     assert_eq!(snapshot.secure_mode, 1);
+
+    let policy = startup_policy_snapshot_for_tests();
+    assert_eq!(policy.decision, StartupPolicyDecision::Allow);
+    assert_eq!(policy.invariant_status, StartupInvariantStatus::Valid);
+    assert_eq!(policy.failure_reason, StartupFailureReason::None);
+    assert_eq!(policy.secure_mode_state, SecureModeState::Secure);
+    assert_eq!(policy.last_phase, StartupCheckpoint::Complete);
+    assert!(policy.dag_valid);
+    assert!(policy.latency_ns > 0);
 }
 
 #[test]
@@ -168,6 +181,14 @@ fn startup_phase0_rejects_missing_main() {
     assert_eq!(rc, -1);
     // SAFETY: reading thread-local errno after ABI failure.
     assert_eq!(unsafe { abi_errno() }, libc::EINVAL);
+
+    let policy = startup_policy_snapshot_for_tests();
+    assert_eq!(policy.decision, StartupPolicyDecision::Deny);
+    assert_eq!(policy.invariant_status, StartupInvariantStatus::Invalid);
+    assert_eq!(policy.failure_reason, StartupFailureReason::MissingMain);
+    assert_eq!(policy.secure_mode_state, SecureModeState::Unknown);
+    assert_eq!(policy.last_phase, StartupCheckpoint::Deny);
+    assert!(policy.dag_valid);
 }
 
 #[test]
@@ -192,6 +213,13 @@ fn startup_phase0_rejects_argc_argv_mismatch() {
     assert_eq!(rc, -1);
     // SAFETY: reading thread-local errno after ABI failure.
     assert_eq!(unsafe { abi_errno() }, libc::EINVAL);
+
+    let policy = startup_policy_snapshot_for_tests();
+    assert_eq!(policy.decision, StartupPolicyDecision::Deny);
+    assert_eq!(policy.invariant_status, StartupInvariantStatus::Invalid);
+    assert_eq!(policy.failure_reason, StartupFailureReason::ArgcOutOfBounds);
+    assert_eq!(policy.last_phase, StartupCheckpoint::Deny);
+    assert!(policy.dag_valid);
 }
 
 #[test]
@@ -199,9 +227,11 @@ fn startup_snapshot_rejects_null_output() {
     let _guard = acquire_test_lock();
     // SAFETY: explicit null pointer validates EFAULT error path.
     let rc = unsafe { __frankenlibc_startup_snapshot(ptr::null_mut()) };
+    // SAFETY: reading thread-local errno after ABI failure.
+    let errno = unsafe { abi_errno() };
     assert_eq!(rc, -1);
     // SAFETY: reading thread-local errno after ABI failure.
-    assert_eq!(unsafe { abi_errno() }, libc::EFAULT);
+    assert_eq!(errno, libc::EFAULT);
 }
 
 #[test]
@@ -233,6 +263,16 @@ fn startup_phase0_rejects_unterminated_argv_scan_window() {
         errno,
         expected_errno: libc::E2BIG,
     });
+
+    let policy = startup_policy_snapshot_for_tests();
+    assert_eq!(policy.decision, StartupPolicyDecision::Deny);
+    assert_eq!(policy.invariant_status, StartupInvariantStatus::Invalid);
+    assert_eq!(
+        policy.failure_reason,
+        StartupFailureReason::UnterminatedArgv
+    );
+    assert_eq!(policy.last_phase, StartupCheckpoint::Deny);
+    assert!(policy.dag_valid);
 }
 
 #[test]
@@ -270,6 +310,68 @@ fn startup_phase0_rejects_unterminated_envp_scan_window() {
         errno,
         expected_errno: libc::E2BIG,
     });
+
+    let policy = startup_policy_snapshot_for_tests();
+    assert_eq!(policy.decision, StartupPolicyDecision::Deny);
+    assert_eq!(policy.invariant_status, StartupInvariantStatus::Invalid);
+    assert_eq!(
+        policy.failure_reason,
+        StartupFailureReason::UnterminatedEnvp
+    );
+    assert_eq!(policy.last_phase, StartupCheckpoint::Deny);
+    assert!(policy.dag_valid);
+}
+
+#[test]
+fn startup_phase0_rejects_unterminated_auxv_scan_window() {
+    let _guard = acquire_test_lock();
+    let arg0 = seeded_cstring("arg", 9);
+    let env0 = seeded_cstring("env", 9);
+    let mut argv_env = vec![
+        arg0.as_ptr().cast_mut(),
+        ptr::null_mut(),
+        env0.as_ptr().cast_mut(),
+        ptr::null_mut(),
+    ];
+    let mut auxv = Vec::with_capacity(MAX_STARTUP_SCAN.saturating_mul(2));
+    for _ in 0..MAX_STARTUP_SCAN {
+        auxv.push(1usize);
+        auxv.push(0usize);
+    }
+
+    // SAFETY: argv/envp are null-terminated; auxv intentionally omits AT_NULL terminator.
+    let rc = unsafe {
+        __frankenlibc_startup_phase0(
+            Some(test_main as MainFn),
+            1,
+            argv_env.as_mut_ptr(),
+            None,
+            None,
+            None,
+            auxv.as_mut_ptr().cast::<c_void>(),
+        )
+    };
+    // SAFETY: reading thread-local errno after ABI failure.
+    let errno = unsafe { abi_errno() };
+    assert_startup_errno_contract(StartupContractCase {
+        subsystem: "startup",
+        clause: "auxv-vector-must-be-null-terminated",
+        evidence_path: "crates/frankenlibc-abi/tests/startup_abi_contract_test.rs",
+        rc,
+        errno,
+        expected_errno: libc::E2BIG,
+    });
+
+    let policy = startup_policy_snapshot_for_tests();
+    assert_eq!(policy.decision, StartupPolicyDecision::Deny);
+    assert_eq!(policy.invariant_status, StartupInvariantStatus::Invalid);
+    assert_eq!(
+        policy.failure_reason,
+        StartupFailureReason::UnterminatedAuxv
+    );
+    assert_eq!(policy.secure_mode_state, SecureModeState::NonSecure);
+    assert_eq!(policy.last_phase, StartupCheckpoint::Deny);
+    assert!(policy.dag_valid);
 }
 
 #[test]
@@ -312,4 +414,12 @@ fn startup_phase0_negative_argc_normalizes_to_zero() {
     assert_eq!(snapshot.env_count, 1);
     assert_eq!(snapshot.auxv_count, 0);
     assert_eq!(snapshot.secure_mode, 0);
+
+    let policy = startup_policy_snapshot_for_tests();
+    assert_eq!(policy.decision, StartupPolicyDecision::Allow);
+    assert_eq!(policy.invariant_status, StartupInvariantStatus::Valid);
+    assert_eq!(policy.failure_reason, StartupFailureReason::None);
+    assert_eq!(policy.secure_mode_state, SecureModeState::NonSecure);
+    assert_eq!(policy.last_phase, StartupCheckpoint::Complete);
+    assert!(policy.dag_valid);
 }

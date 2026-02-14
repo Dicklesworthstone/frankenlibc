@@ -67,14 +67,14 @@ pub const EINPROGRESS: i32 = 115;
 ///
 /// Equivalent to reading C `errno`.
 pub fn get_errno() -> i32 {
-    ERRNO.get()
+    ERRNO.try_with(Cell::get).unwrap_or(0)
 }
 
 /// Sets the current thread-local errno value.
 ///
 /// Equivalent to assigning to C `errno`.
 pub fn set_errno(value: i32) {
-    ERRNO.set(value);
+    let _ = ERRNO.try_with(|cell| cell.set(value));
 }
 
 /// Helper to execute a closure that might set errno.

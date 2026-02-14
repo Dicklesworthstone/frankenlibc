@@ -7,10 +7,11 @@
 #![allow(dead_code)]
 
 use std::cell::{Cell, RefCell};
-use std::ffi::{c_char, c_void};
+use std::ffi::c_char;
 use std::panic::{self, AssertUnwindSafe};
-use std::sync::atomic::{AtomicPtr, AtomicU8, Ordering as AtomicOrdering};
+use std::sync::atomic::{AtomicPtr, AtomicU8, AtomicU32, Ordering as AtomicOrdering};
 
+use frankenlibc_core::syscall;
 use frankenlibc_membrane::check_oracle::CheckStage;
 use frankenlibc_membrane::config::SafetyLevel;
 use frankenlibc_membrane::runtime_math::{
@@ -30,6 +31,9 @@ const MODE_OFF: u8 = 3;
 const MODE_RESOLVING: u8 = 255;
 const PANIC_HOOK_UNSET: u8 = 0;
 const PANIC_HOOK_INSTALLED: u8 = 1;
+const PANIC_HOOK_WRITE_IDLE: u8 = 0;
+const PANIC_HOOK_WRITE_ACTIVE: u8 = 1;
+const PANIC_HOOK_LOG_LIMIT: u32 = 64;
 const TRACE_UNKNOWN_SYMBOL: &str = "unknown";
 const CONTROLLER_ID_RUNTIME_MATH: &str = "runtime_math_kernel.v1";
 const DECISION_GATE_RUNTIME_POLICY: &str = "runtime_policy.decide";
@@ -44,6 +48,8 @@ static KERNEL_STATE: AtomicU8 = AtomicU8::new(STATE_UNINIT);
 static KERNEL_PTR: AtomicPtr<RuntimeMathKernel> = AtomicPtr::new(std::ptr::null_mut());
 static MODE_STATE: AtomicU8 = AtomicU8::new(MODE_UNRESOLVED);
 static PANIC_HOOK_STATE: AtomicU8 = AtomicU8::new(PANIC_HOOK_UNSET);
+static PANIC_HOOK_WRITE_STATE: AtomicU8 = AtomicU8::new(PANIC_HOOK_WRITE_IDLE);
+static PANIC_HOOK_LOG_COUNT: AtomicU32 = AtomicU32::new(0);
 
 unsafe extern "C" {
     static mut environ: *mut *mut c_char;
@@ -244,7 +250,7 @@ pub(crate) struct EntrypointTraceGuard {
 
 impl Drop for EntrypointTraceGuard {
     fn drop(&mut self) {
-        TRACE_CONTEXT.with(|slot| slot.set(self.previous));
+        let _ = TRACE_CONTEXT.try_with(|slot| slot.set(self.previous));
     }
 }
 
@@ -252,7 +258,7 @@ struct PolicyReentryGuard;
 
 impl Drop for PolicyReentryGuard {
     fn drop(&mut self) {
-        POLICY_REENTRY_DEPTH.with(|depth| {
+        let _ = POLICY_REENTRY_DEPTH.try_with(|depth| {
             let current = depth.get();
             depth.set(current.saturating_sub(1));
         });
@@ -261,29 +267,29 @@ impl Drop for PolicyReentryGuard {
 
 #[inline]
 fn enter_policy_reentry_guard() -> Option<PolicyReentryGuard> {
-    POLICY_REENTRY_DEPTH.with(|depth| {
-        let current = depth.get();
-        if current > 0 {
-            None
-        } else {
-            depth.set(current + 1);
-            Some(PolicyReentryGuard)
-        }
-    })
+    POLICY_REENTRY_DEPTH
+        .try_with(|depth| {
+            let current = depth.get();
+            if current > 0 {
+                None
+            } else {
+                depth.set(current + 1);
+                Some(PolicyReentryGuard)
+            }
+        })
+        .unwrap_or(None)
 }
 
 #[must_use]
 pub(crate) fn in_policy_reentry_context() -> bool {
-    POLICY_REENTRY_DEPTH.with(|depth| depth.get() > 0)
+    POLICY_REENTRY_DEPTH
+        .try_with(|depth| depth.get() > 0)
+        .unwrap_or(false)
 }
 
 #[must_use]
 pub(crate) fn entrypoint_scope(symbol: &'static str) -> EntrypointTraceGuard {
-    let trace_seq = TRACE_COUNTER.with(|counter| {
-        let next = counter.get().wrapping_add(1);
-        counter.set(next);
-        next
-    });
+    let trace_seq = next_trace_seq();
 
     let context = TraceContext {
         trace_seq,
@@ -291,39 +297,62 @@ pub(crate) fn entrypoint_scope(symbol: &'static str) -> EntrypointTraceGuard {
         parent_span_seq: trace_seq,
     };
 
-    let previous = TRACE_CONTEXT.with(|slot| {
-        let prev = slot.get();
-        slot.set(Some(context));
-        prev
-    });
+    let previous = TRACE_CONTEXT
+        .try_with(|slot| {
+            let prev = slot.get();
+            slot.set(Some(context));
+            prev
+        })
+        .ok()
+        .flatten();
 
     EntrypointTraceGuard { previous }
 }
 
 #[must_use]
 pub(crate) fn take_last_explainability() -> Option<DecisionExplainability> {
-    LAST_EXPLAINABILITY.with(|slot| slot.borrow_mut().take())
+    LAST_EXPLAINABILITY
+        .try_with(|slot| slot.borrow_mut().take())
+        .ok()
+        .flatten()
 }
 
 #[must_use]
 pub(crate) fn peek_last_explainability() -> Option<DecisionExplainability> {
-    LAST_EXPLAINABILITY.with(|slot| *slot.borrow())
+    LAST_EXPLAINABILITY
+        .try_with(|slot| *slot.borrow())
+        .ok()
+        .flatten()
 }
 
 fn next_decision_span_seq() -> u64 {
-    DECISION_COUNTER.with(|counter| {
-        let next = counter.get().wrapping_add(1);
-        counter.set(next);
-        next
-    })
+    DECISION_COUNTER
+        .try_with(|counter| {
+            let next = counter.get().wrapping_add(1);
+            counter.set(next);
+            next
+        })
+        .unwrap_or(0)
+}
+
+fn next_trace_seq() -> u64 {
+    TRACE_COUNTER
+        .try_with(|counter| {
+            let next = counter.get().wrapping_add(1);
+            counter.set(next);
+            next
+        })
+        .unwrap_or(0)
 }
 
 fn fallback_trace_context() -> TraceContext {
-    let trace_seq = TRACE_COUNTER.with(|counter| {
-        let next = counter.get().wrapping_add(1);
-        counter.set(next);
-        next
-    });
+    let trace_seq = TRACE_COUNTER
+        .try_with(|counter| {
+            let next = counter.get().wrapping_add(1);
+            counter.set(next);
+            next
+        })
+        .unwrap_or(0);
     TraceContext {
         trace_seq,
         symbol: TRACE_UNKNOWN_SYMBOL,
@@ -348,24 +377,82 @@ fn ensure_minimal_panic_hook() {
         return;
     }
 
-    panic::set_hook(Box::new(|_| {
+    panic::set_hook(Box::new(|info| {
         const MSG: &[u8] = b"frankenlibc: runtime kernel panic (fallback)\n";
-        // SAFETY: best-effort direct syscall write to stderr avoids our own
-        // interposed `write` symbol and prevents panic-hook recursion.
-        let _ = unsafe {
-            libc::syscall(
-                libc::SYS_write as libc::c_long,
-                libc::STDERR_FILENO,
-                MSG.as_ptr().cast::<c_void>(),
-                MSG.len(),
+        mark_kernel_broken();
+
+        let seen = PANIC_HOOK_LOG_COUNT.fetch_add(1, AtomicOrdering::Relaxed);
+        if seen >= PANIC_HOOK_LOG_LIMIT {
+            return;
+        }
+
+        if PANIC_HOOK_WRITE_STATE
+            .compare_exchange(
+                PANIC_HOOK_WRITE_IDLE,
+                PANIC_HOOK_WRITE_ACTIVE,
+                AtomicOrdering::AcqRel,
+                AtomicOrdering::Relaxed,
             )
-        };
+            .is_err()
+        {
+            return;
+        }
+
+        // SAFETY: direct raw syscall write avoids libc indirection and is
+        // async-signal-safe enough for panic reporting.
+        let _ = unsafe { syscall::sys_write(libc::STDERR_FILENO, MSG.as_ptr(), MSG.len()) };
+        if seen == 0 {
+            const PREFIX: &[u8] = b"frankenlibc: panic location: ";
+            let _ =
+                unsafe { syscall::sys_write(libc::STDERR_FILENO, PREFIX.as_ptr(), PREFIX.len()) };
+            if let Some(location) = info.location() {
+                let _ = unsafe {
+                    syscall::sys_write(
+                        libc::STDERR_FILENO,
+                        location.file().as_bytes().as_ptr(),
+                        location.file().len(),
+                    )
+                };
+                let _ = unsafe { syscall::sys_write(libc::STDERR_FILENO, b":".as_ptr(), 1) };
+                write_u32_stderr(location.line());
+            } else {
+                let _ = unsafe { syscall::sys_write(libc::STDERR_FILENO, b"unknown".as_ptr(), 7) };
+            }
+            let _ = unsafe { syscall::sys_write(libc::STDERR_FILENO, b"\n".as_ptr(), 1) };
+        }
+        PANIC_HOOK_WRITE_STATE.store(PANIC_HOOK_WRITE_IDLE, AtomicOrdering::Release);
     }));
+}
+
+fn write_u32_stderr(mut value: u32) {
+    let mut buf = [0u8; 10];
+    let mut idx = buf.len();
+
+    if value == 0 {
+        let _ = unsafe { syscall::sys_write(libc::STDERR_FILENO, b"0".as_ptr(), 1) };
+        return;
+    }
+
+    while value > 0 {
+        idx -= 1;
+        buf[idx] = b'0' + (value % 10) as u8;
+        value /= 10;
+    }
+
+    let _ = unsafe {
+        syscall::sys_write(
+            libc::STDERR_FILENO,
+            buf[idx..].as_ptr(),
+            buf.len().saturating_sub(idx),
+        )
+    };
 }
 
 fn active_trace_context() -> TraceContext {
     TRACE_CONTEXT
-        .with(|slot| slot.get())
+        .try_with(|slot| slot.get())
+        .ok()
+        .flatten()
         .unwrap_or_else(fallback_trace_context)
 }
 
@@ -392,7 +479,7 @@ fn record_last_explainability(mode: SafetyLevel, ctx: RuntimeContext, decision: 
         evidence_seqno: decision.evidence_seqno,
     };
 
-    LAST_EXPLAINABILITY.with(|slot| {
+    let _ = LAST_EXPLAINABILITY.try_with(|slot| {
         *slot.borrow_mut() = Some(explainability);
     });
 }
@@ -497,7 +584,10 @@ pub(crate) fn decide(
     // paths during hot bootstrap operations.
     if matches!(
         family,
-        ApiFamily::Allocator | ApiFamily::StringMemory | ApiFamily::Stdio
+        ApiFamily::Allocator
+            | ApiFamily::StringMemory
+            | ApiFamily::Stdio
+            | ApiFamily::Threading
     ) {
         let decision = passthrough_decision();
         record_last_explainability(mode, ctx, decision);
@@ -535,30 +625,10 @@ pub(crate) fn observe(
     estimated_cost_ns: u64,
     adverse: bool,
 ) {
-    // Scoped mitigation: allocator/string observe feedback currently risks
-    // recursive lock paths under LD_PRELOAD bootstrap. Keep runtime decisions
-    // enabled, but defer feedback updates for these two hot families.
-    if matches!(
-        family,
-        ApiFamily::Allocator | ApiFamily::StringMemory | ApiFamily::Stdio
-    ) {
-        return;
-    }
-
-    let mode = mode();
-    let Some(_reentry_guard) = enter_policy_reentry_guard() else {
-        return;
-    };
-    ensure_minimal_panic_hook();
-    if let Some(k) = kernel() {
-        if panic::catch_unwind(AssertUnwindSafe(|| {
-            k.observe_validation_result(mode, family, profile, estimated_cost_ns, adverse);
-        }))
-        .is_err()
-        {
-            mark_kernel_broken();
-        }
-    }
+    // Temporary preload safety mitigation: runtime-math feedback updates can
+    // recurse into allocator/lock paths and deadlock under heavy interposition.
+    // Keep decision path active, but suppress observe-side state mutation.
+    let _ = (family, profile, estimated_cost_ns, adverse);
 }
 
 #[must_use]
@@ -569,7 +639,10 @@ pub(crate) fn check_ordering(
 ) -> [CheckStage; 7] {
     if matches!(
         family,
-        ApiFamily::Allocator | ApiFamily::StringMemory | ApiFamily::Stdio
+        ApiFamily::Allocator
+            | ApiFamily::StringMemory
+            | ApiFamily::Stdio
+            | ApiFamily::Threading
     ) {
         return PASSTHROUGH_ORDERING;
     }
@@ -600,7 +673,10 @@ pub(crate) fn note_check_order_outcome(
 ) {
     if matches!(
         family,
-        ApiFamily::Allocator | ApiFamily::StringMemory | ApiFamily::Stdio
+        ApiFamily::Allocator
+            | ApiFamily::StringMemory
+            | ApiFamily::Stdio
+            | ApiFamily::Threading
     ) {
         return;
     }

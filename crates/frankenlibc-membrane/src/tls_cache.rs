@@ -199,7 +199,22 @@ pub fn with_tls_cache<F, R>(f: F) -> R
 where
     F: FnOnce(&mut TlsValidationCache) -> R,
 {
-    TLS_CACHE.with(|cache| f(&mut cache.borrow_mut()))
+    let mut maybe_f = Some(f);
+    match TLS_CACHE.try_with(|cache| {
+        let action = maybe_f
+            .take()
+            .expect("with_tls_cache closure must be consumed exactly once");
+        action(&mut cache.borrow_mut())
+    }) {
+        Ok(value) => value,
+        Err(_) => {
+            let mut fallback = TlsValidationCache::new();
+            let action = maybe_f
+                .take()
+                .expect("with_tls_cache fallback closure must be available");
+            action(&mut fallback)
+        }
+    }
 }
 
 #[cfg(test)]

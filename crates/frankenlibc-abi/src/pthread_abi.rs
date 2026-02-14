@@ -26,6 +26,22 @@ use crate::malloc_abi::known_remaining;
 use crate::runtime_policy;
 
 type StartRoutine = unsafe extern "C" fn(*mut c_void) -> *mut c_void;
+type HostPthreadCreateFn = unsafe extern "C" fn(
+    *mut libc::pthread_t,
+    *const libc::pthread_attr_t,
+    Option<StartRoutine>,
+    *mut c_void,
+) -> c_int;
+type HostPthreadJoinFn = unsafe extern "C" fn(libc::pthread_t, *mut *mut c_void) -> c_int;
+type HostPthreadDetachFn = unsafe extern "C" fn(libc::pthread_t) -> c_int;
+type HostPthreadSelfFn = unsafe extern "C" fn() -> libc::pthread_t;
+type HostPthreadEqualFn = unsafe extern "C" fn(libc::pthread_t, libc::pthread_t) -> c_int;
+type HostPthreadMutexInitFn =
+    unsafe extern "C" fn(*mut libc::pthread_mutex_t, *const libc::pthread_mutexattr_t) -> c_int;
+type HostPthreadMutexDestroyFn = unsafe extern "C" fn(*mut libc::pthread_mutex_t) -> c_int;
+type HostPthreadMutexLockFn = unsafe extern "C" fn(*mut libc::pthread_mutex_t) -> c_int;
+type HostPthreadMutexTrylockFn = unsafe extern "C" fn(*mut libc::pthread_mutex_t) -> c_int;
+type HostPthreadMutexUnlockFn = unsafe extern "C" fn(*mut libc::pthread_mutex_t) -> c_int;
 
 // ---------------------------------------------------------------------------
 // Futex-backed NORMAL mutex core (bd-z84)
@@ -43,11 +59,140 @@ thread_local! {
     static THREADING_POLICY_DEPTH: Cell<u32> = const { Cell::new(0) };
 }
 
+unsafe fn resolve_host_symbol(name: &[u8]) -> *mut c_void {
+    let glibc_v34 = b"GLIBC_2.34\0";
+    let glibc_v225 = b"GLIBC_2.2.5\0";
+    // SAFETY: versioned lookup in next object after this interposed library.
+    let mut ptr = unsafe {
+        libc::dlvsym(
+            libc::RTLD_NEXT,
+            name.as_ptr().cast::<libc::c_char>(),
+            glibc_v34.as_ptr().cast::<libc::c_char>(),
+        )
+    };
+    if ptr.is_null() {
+        // SAFETY: older baseline for distributions exposing legacy pthread version.
+        ptr = unsafe {
+            libc::dlvsym(
+                libc::RTLD_NEXT,
+                name.as_ptr().cast::<libc::c_char>(),
+                glibc_v225.as_ptr().cast::<libc::c_char>(),
+            )
+        };
+    }
+    if ptr.is_null() {
+        // SAFETY: final unversioned fallback.
+        unsafe { libc::dlsym(libc::RTLD_NEXT, name.as_ptr().cast::<libc::c_char>()) }
+    } else {
+        ptr
+    }
+}
+
+unsafe fn host_pthread_create_fn() -> Option<HostPthreadCreateFn> {
+    let ptr = unsafe { resolve_host_symbol(b"pthread_create\0") };
+    if ptr.is_null() {
+        None
+    } else {
+        // SAFETY: resolved symbol has pthread_create ABI.
+        Some(unsafe { std::mem::transmute::<*mut c_void, HostPthreadCreateFn>(ptr) })
+    }
+}
+
+unsafe fn host_pthread_join_fn() -> Option<HostPthreadJoinFn> {
+    let ptr = unsafe { resolve_host_symbol(b"pthread_join\0") };
+    if ptr.is_null() {
+        None
+    } else {
+        // SAFETY: resolved symbol has pthread_join ABI.
+        Some(unsafe { std::mem::transmute::<*mut c_void, HostPthreadJoinFn>(ptr) })
+    }
+}
+
+unsafe fn host_pthread_detach_fn() -> Option<HostPthreadDetachFn> {
+    let ptr = unsafe { resolve_host_symbol(b"pthread_detach\0") };
+    if ptr.is_null() {
+        None
+    } else {
+        // SAFETY: resolved symbol has pthread_detach ABI.
+        Some(unsafe { std::mem::transmute::<*mut c_void, HostPthreadDetachFn>(ptr) })
+    }
+}
+
+unsafe fn host_pthread_self_fn() -> Option<HostPthreadSelfFn> {
+    let ptr = unsafe { resolve_host_symbol(b"pthread_self\0") };
+    if ptr.is_null() {
+        None
+    } else {
+        // SAFETY: resolved symbol has pthread_self ABI.
+        Some(unsafe { std::mem::transmute::<*mut c_void, HostPthreadSelfFn>(ptr) })
+    }
+}
+
+unsafe fn host_pthread_equal_fn() -> Option<HostPthreadEqualFn> {
+    let ptr = unsafe { resolve_host_symbol(b"pthread_equal\0") };
+    if ptr.is_null() {
+        None
+    } else {
+        // SAFETY: resolved symbol has pthread_equal ABI.
+        Some(unsafe { std::mem::transmute::<*mut c_void, HostPthreadEqualFn>(ptr) })
+    }
+}
+
+unsafe fn host_pthread_mutex_init_fn() -> Option<HostPthreadMutexInitFn> {
+    let ptr = unsafe { resolve_host_symbol(b"pthread_mutex_init\0") };
+    if ptr.is_null() {
+        None
+    } else {
+        // SAFETY: resolved symbol has pthread_mutex_init ABI.
+        Some(unsafe { std::mem::transmute::<*mut c_void, HostPthreadMutexInitFn>(ptr) })
+    }
+}
+
+unsafe fn host_pthread_mutex_destroy_fn() -> Option<HostPthreadMutexDestroyFn> {
+    let ptr = unsafe { resolve_host_symbol(b"pthread_mutex_destroy\0") };
+    if ptr.is_null() {
+        None
+    } else {
+        // SAFETY: resolved symbol has pthread_mutex_destroy ABI.
+        Some(unsafe { std::mem::transmute::<*mut c_void, HostPthreadMutexDestroyFn>(ptr) })
+    }
+}
+
+unsafe fn host_pthread_mutex_lock_fn() -> Option<HostPthreadMutexLockFn> {
+    let ptr = unsafe { resolve_host_symbol(b"pthread_mutex_lock\0") };
+    if ptr.is_null() {
+        None
+    } else {
+        // SAFETY: resolved symbol has pthread_mutex_lock ABI.
+        Some(unsafe { std::mem::transmute::<*mut c_void, HostPthreadMutexLockFn>(ptr) })
+    }
+}
+
+unsafe fn host_pthread_mutex_trylock_fn() -> Option<HostPthreadMutexTrylockFn> {
+    let ptr = unsafe { resolve_host_symbol(b"pthread_mutex_trylock\0") };
+    if ptr.is_null() {
+        None
+    } else {
+        // SAFETY: resolved symbol has pthread_mutex_trylock ABI.
+        Some(unsafe { std::mem::transmute::<*mut c_void, HostPthreadMutexTrylockFn>(ptr) })
+    }
+}
+
+unsafe fn host_pthread_mutex_unlock_fn() -> Option<HostPthreadMutexUnlockFn> {
+    let ptr = unsafe { resolve_host_symbol(b"pthread_mutex_unlock\0") };
+    if ptr.is_null() {
+        None
+    } else {
+        // SAFETY: resolved symbol has pthread_mutex_unlock ABI.
+        Some(unsafe { std::mem::transmute::<*mut c_void, HostPthreadMutexUnlockFn>(ptr) })
+    }
+}
+
 struct ThreadingPolicyGuard;
 
 impl Drop for ThreadingPolicyGuard {
     fn drop(&mut self) {
-        THREADING_POLICY_DEPTH.with(|depth| {
+        let _ = THREADING_POLICY_DEPTH.try_with(|depth| {
             let current = depth.get();
             depth.set(current.saturating_sub(1));
         });
@@ -55,15 +200,17 @@ impl Drop for ThreadingPolicyGuard {
 }
 
 fn enter_threading_policy_guard() -> Option<ThreadingPolicyGuard> {
-    THREADING_POLICY_DEPTH.with(|depth| {
-        let current = depth.get();
-        if current > 0 {
-            None
-        } else {
-            depth.set(current + 1);
-            Some(ThreadingPolicyGuard)
-        }
-    })
+    THREADING_POLICY_DEPTH
+        .try_with(|depth| {
+            let current = depth.get();
+            if current > 0 {
+                None
+            } else {
+                depth.set(current + 1);
+                Some(ThreadingPolicyGuard)
+            }
+        })
+        .unwrap_or(None)
 }
 
 fn with_threading_policy_guard<T, Fallback, Work>(fallback: Fallback, work: Work) -> T
@@ -76,6 +223,13 @@ where
     } else {
         fallback()
     }
+}
+
+#[must_use]
+pub(crate) fn in_threading_policy_context() -> bool {
+    THREADING_POLICY_DEPTH
+        .try_with(|depth| depth.get() > 0)
+        .unwrap_or(true)
 }
 
 /// Treats the leading atomic word of `pthread_mutex_t` as our lock state.
@@ -199,6 +353,11 @@ fn condvar_data_ptr(cond: *mut libc::pthread_cond_t) -> Option<*mut CondvarData>
 
 #[inline]
 fn native_pthread_self() -> libc::pthread_t {
+    // SAFETY: host symbol lookup/transmute guarantees ABI if present.
+    if let Some(host_self) = unsafe { host_pthread_self_fn() } {
+        // SAFETY: direct call through resolved host symbol.
+        return unsafe { host_self() };
+    }
     let tid = core_self_tid();
     if tid > 0 {
         let registry = THREAD_HANDLE_REGISTRY
@@ -219,6 +378,11 @@ fn native_pthread_self() -> libc::pthread_t {
 
 #[inline]
 fn native_pthread_equal(a: libc::pthread_t, b: libc::pthread_t) -> c_int {
+    // SAFETY: host symbol lookup/transmute guarantees ABI if present.
+    if let Some(host_equal) = unsafe { host_pthread_equal_fn() } {
+        // SAFETY: direct call through resolved host symbol.
+        return unsafe { host_equal(a, b) };
+    }
     if a == b { 1 } else { 0 }
 }
 
@@ -229,6 +393,11 @@ unsafe fn native_pthread_create(
     start_routine: StartRoutine,
     arg: *mut c_void,
 ) -> c_int {
+    // SAFETY: host symbol lookup/transmute guarantees ABI if present.
+    if let Some(host_create) = unsafe { host_pthread_create_fn() } {
+        // SAFETY: direct call through resolved host symbol.
+        return unsafe { host_create(thread_out, attr, Some(start_routine), arg) };
+    }
     if thread_out.is_null() {
         return libc::EINVAL;
     }
@@ -260,6 +429,11 @@ unsafe fn native_pthread_create(
 
 #[allow(unsafe_code)]
 unsafe fn native_pthread_join(thread: libc::pthread_t, retval: *mut *mut c_void) -> c_int {
+    // SAFETY: host symbol lookup/transmute guarantees ABI if present.
+    if let Some(host_join) = unsafe { host_pthread_join_fn() } {
+        // SAFETY: direct call through resolved host symbol.
+        return unsafe { host_join(thread, retval) };
+    }
     let thread_key = thread as usize;
 
     let handle_ptr = {
@@ -292,6 +466,11 @@ unsafe fn native_pthread_join(thread: libc::pthread_t, retval: *mut *mut c_void)
 
 #[allow(unsafe_code)]
 unsafe fn native_pthread_detach(thread: libc::pthread_t) -> c_int {
+    // SAFETY: host symbol lookup/transmute guarantees ABI if present.
+    if let Some(host_detach) = unsafe { host_pthread_detach_fn() } {
+        // SAFETY: direct call through resolved host symbol.
+        return unsafe { host_detach(thread) };
+    }
     let thread_key = thread as usize;
     let handle_ptr = {
         let mut registry = THREAD_HANDLE_REGISTRY
@@ -582,54 +761,13 @@ fn record_threading_stage_outcome(
 /// POSIX `pthread_self`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pthread_self() -> libc::pthread_t {
-    with_threading_policy_guard(
-        || native_pthread_self(),
-        || {
-            let (aligned, recent_page, ordering) = threading_stage_context(0, 0);
-            let (_, decision) = runtime_policy::decide(ApiFamily::Threading, 0, 0, false, false, 0);
-            if matches!(decision.action, MembraneAction::Deny) {
-                record_threading_stage_outcome(
-                    &ordering,
-                    aligned,
-                    recent_page,
-                    Some(stage_index(&ordering, CheckStage::Arena)),
-                );
-                runtime_policy::observe(ApiFamily::Threading, decision.profile, 4, true);
-                return 0;
-            }
-            let id = native_pthread_self();
-            record_threading_stage_outcome(&ordering, aligned, recent_page, None);
-            runtime_policy::observe(ApiFamily::Threading, decision.profile, 4, false);
-            id
-        },
-    )
+    native_pthread_self()
 }
 
 /// POSIX `pthread_equal`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pthread_equal(a: libc::pthread_t, b: libc::pthread_t) -> c_int {
-    with_threading_policy_guard(
-        || native_pthread_equal(a, b),
-        || {
-            let (aligned, recent_page, ordering) = threading_stage_context(a as usize, b as usize);
-            let (_, decision) =
-                runtime_policy::decide(ApiFamily::Threading, a as usize, 0, false, false, 0);
-            if matches!(decision.action, MembraneAction::Deny) {
-                record_threading_stage_outcome(
-                    &ordering,
-                    aligned,
-                    recent_page,
-                    Some(stage_index(&ordering, CheckStage::Arena)),
-                );
-                runtime_policy::observe(ApiFamily::Threading, decision.profile, 4, true);
-                return 0;
-            }
-            let equal = native_pthread_equal(a, b);
-            record_threading_stage_outcome(&ordering, aligned, recent_page, None);
-            runtime_policy::observe(ApiFamily::Threading, decision.profile, 4, false);
-            equal
-        },
-    )
+    native_pthread_equal(a, b)
 }
 
 /// POSIX `pthread_create`.
@@ -642,144 +780,26 @@ pub unsafe extern "C" fn pthread_create(
     start_routine: Option<StartRoutine>,
     arg: *mut c_void,
 ) -> c_int {
-    let (aligned, recent_page, ordering) =
-        threading_stage_context(thread_out as usize, arg as usize);
     if thread_out.is_null() || start_routine.is_none() {
-        record_threading_stage_outcome(
-            &ordering,
-            aligned,
-            recent_page,
-            Some(stage_index(
-                &ordering,
-                if thread_out.is_null() {
-                    CheckStage::Null
-                } else {
-                    CheckStage::Bounds
-                },
-            )),
-        );
         return libc::EINVAL;
     }
-    with_threading_policy_guard(
-        || {
-            let start =
-                start_routine.unwrap_or_else(|| unreachable!("start routine checked above"));
-            // SAFETY: pointers and start routine are validated by this wrapper.
-            unsafe { native_pthread_create(thread_out, _attr, start, arg) }
-        },
-        || {
-            let (_, decision) =
-                runtime_policy::decide(ApiFamily::Threading, arg as usize, 0, true, false, 0);
-            if matches!(decision.action, MembraneAction::Deny) {
-                record_threading_stage_outcome(
-                    &ordering,
-                    aligned,
-                    recent_page,
-                    Some(stage_index(&ordering, CheckStage::Arena)),
-                );
-                runtime_policy::observe(ApiFamily::Threading, decision.profile, 16, true);
-                return libc::EAGAIN;
-            }
-
-            let start =
-                start_routine.unwrap_or_else(|| unreachable!("start routine checked above"));
-            // SAFETY: pointers and start routine are validated by this wrapper.
-            let rc = unsafe { native_pthread_create(thread_out, _attr, start, arg) };
-            record_threading_stage_outcome(
-                &ordering,
-                aligned,
-                recent_page,
-                if rc == 0 {
-                    None
-                } else {
-                    Some(stage_index(&ordering, CheckStage::Arena))
-                },
-            );
-            runtime_policy::observe(ApiFamily::Threading, decision.profile, 40, rc != 0);
-            rc
-        },
-    )
+    let start = start_routine.unwrap_or_else(|| unreachable!("start routine checked above"));
+    // SAFETY: pointers and start routine are validated by this wrapper.
+    unsafe { native_pthread_create(thread_out, _attr, start, arg) }
 }
 
 /// POSIX `pthread_join`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pthread_join(thread: libc::pthread_t, retval: *mut *mut c_void) -> c_int {
-    with_threading_policy_guard(
-        || {
-            // SAFETY: native helper enforces thread-handle validity and pointer checks.
-            unsafe { native_pthread_join(thread, retval) }
-        },
-        || {
-            let (aligned, recent_page, ordering) =
-                threading_stage_context(thread as usize, retval as usize);
-            let (_, decision) =
-                runtime_policy::decide(ApiFamily::Threading, thread as usize, 0, true, false, 0);
-            if matches!(decision.action, MembraneAction::Deny) {
-                record_threading_stage_outcome(
-                    &ordering,
-                    aligned,
-                    recent_page,
-                    Some(stage_index(&ordering, CheckStage::Arena)),
-                );
-                runtime_policy::observe(ApiFamily::Threading, decision.profile, 24, true);
-                return libc::EINVAL;
-            }
-            // SAFETY: native helper enforces thread-handle validity and pointer checks.
-            let rc = unsafe { native_pthread_join(thread, retval) };
-            record_threading_stage_outcome(
-                &ordering,
-                aligned,
-                recent_page,
-                if rc == 0 {
-                    None
-                } else {
-                    Some(stage_index(&ordering, CheckStage::Arena))
-                },
-            );
-            runtime_policy::observe(ApiFamily::Threading, decision.profile, 24, rc != 0);
-            rc
-        },
-    )
+    // SAFETY: native helper enforces thread-handle validity and pointer checks.
+    unsafe { native_pthread_join(thread, retval) }
 }
 
 /// POSIX `pthread_detach`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pthread_detach(thread: libc::pthread_t) -> c_int {
-    with_threading_policy_guard(
-        || {
-            // SAFETY: native helper enforces thread-handle validity.
-            unsafe { native_pthread_detach(thread) }
-        },
-        || {
-            let (aligned, recent_page, ordering) = threading_stage_context(thread as usize, 0);
-            let (_, decision) =
-                runtime_policy::decide(ApiFamily::Threading, thread as usize, 0, true, false, 0);
-            if matches!(decision.action, MembraneAction::Deny) {
-                record_threading_stage_outcome(
-                    &ordering,
-                    aligned,
-                    recent_page,
-                    Some(stage_index(&ordering, CheckStage::Arena)),
-                );
-                runtime_policy::observe(ApiFamily::Threading, decision.profile, 8, true);
-                return libc::EINVAL;
-            }
-            // SAFETY: native helper enforces thread-handle validity.
-            let rc = unsafe { native_pthread_detach(thread) };
-            record_threading_stage_outcome(
-                &ordering,
-                aligned,
-                recent_page,
-                if rc == 0 {
-                    None
-                } else {
-                    Some(stage_index(&ordering, CheckStage::Arena))
-                },
-            );
-            runtime_policy::observe(ApiFamily::Threading, decision.profile, 8, rc != 0);
-            rc
-        },
-    )
+    // SAFETY: native helper enforces thread-handle validity.
+    unsafe { native_pthread_detach(thread) }
 }
 
 // ===========================================================================
@@ -792,22 +812,28 @@ pub unsafe extern "C" fn pthread_mutex_init(
     mutex: *mut libc::pthread_mutex_t,
     attr: *const libc::pthread_mutexattr_t,
 ) -> c_int {
+    // SAFETY: host symbol lookup/transmute guarantees ABI if present.
+    if let Some(host_init) = unsafe { host_pthread_mutex_init_fn() } {
+        // SAFETY: direct call through resolved host symbol.
+        return unsafe { host_init(mutex, attr) };
+    }
+
     if mutex.is_null() {
         return libc::EINVAL;
     }
 
-    if !attr.is_null() {
-        clear_managed_mutex(mutex);
-        return libc::EINVAL;
-    }
+    // Attribute handling is currently best-effort for preload compatibility:
+    // we always initialize the futex word and only tag managed state when the
+    // in-object marker slot is available.
+    let _ = attr;
 
     if let Some(word_ptr) = mutex_word_ptr(mutex) {
-        // SAFETY: `word_ptr` is alignment-checked and points to caller-owned mutex storage.
+        // SAFETY: `word_ptr` is alignment-checked and points to caller-owned
+        // mutex storage.
         let word = unsafe { &*word_ptr };
         word.store(0, Ordering::Release);
-        if mark_managed_mutex(mutex) {
-            return 0;
-        }
+        let _ = mark_managed_mutex(mutex);
+        return 0;
     }
     clear_managed_mutex(mutex);
     libc::EINVAL
@@ -816,11 +842,13 @@ pub unsafe extern "C" fn pthread_mutex_init(
 /// POSIX `pthread_mutex_destroy`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pthread_mutex_destroy(mutex: *mut libc::pthread_mutex_t) -> c_int {
-    if mutex.is_null() {
-        return libc::EINVAL;
+    // SAFETY: host symbol lookup/transmute guarantees ABI if present.
+    if let Some(host_destroy) = unsafe { host_pthread_mutex_destroy_fn() } {
+        // SAFETY: direct call through resolved host symbol.
+        return unsafe { host_destroy(mutex) };
     }
 
-    if !is_managed_mutex(mutex) {
+    if mutex.is_null() {
         return libc::EINVAL;
     }
 
@@ -841,17 +869,21 @@ pub unsafe extern "C" fn pthread_mutex_destroy(mutex: *mut libc::pthread_mutex_t
 /// POSIX `pthread_mutex_lock`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pthread_mutex_lock(mutex: *mut libc::pthread_mutex_t) -> c_int {
+    // SAFETY: host symbol lookup/transmute guarantees ABI if present.
+    if let Some(host_lock) = unsafe { host_pthread_mutex_lock_fn() } {
+        // SAFETY: direct call through resolved host symbol.
+        return unsafe { host_lock(mutex) };
+    }
+
     if mutex.is_null() {
         return libc::EINVAL;
     }
 
-    if !is_managed_mutex(mutex) {
-        return libc::EINVAL;
-    }
     let Some(word_ptr) = mutex_word_ptr(mutex) else {
         return libc::EINVAL;
     };
-    // SAFETY: managed mutexes use our futex word in the leading i32.
+    // SAFETY: alignment is validated by `mutex_word_ptr`; use futex semantics
+    // for both managed and pre-initialized foreign/default mutex layouts.
     let word = unsafe { &*word_ptr };
     futex_lock_normal(word)
 }
@@ -859,17 +891,21 @@ pub unsafe extern "C" fn pthread_mutex_lock(mutex: *mut libc::pthread_mutex_t) -
 /// POSIX `pthread_mutex_trylock`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pthread_mutex_trylock(mutex: *mut libc::pthread_mutex_t) -> c_int {
+    // SAFETY: host symbol lookup/transmute guarantees ABI if present.
+    if let Some(host_trylock) = unsafe { host_pthread_mutex_trylock_fn() } {
+        // SAFETY: direct call through resolved host symbol.
+        return unsafe { host_trylock(mutex) };
+    }
+
     if mutex.is_null() {
         return libc::EINVAL;
     }
 
-    if !is_managed_mutex(mutex) {
-        return libc::EINVAL;
-    }
     let Some(word_ptr) = mutex_word_ptr(mutex) else {
         return libc::EINVAL;
     };
-    // SAFETY: managed mutexes use our futex word in the leading i32.
+    // SAFETY: alignment is validated by `mutex_word_ptr`; use futex semantics
+    // for both managed and pre-initialized foreign/default mutex layouts.
     let word = unsafe { &*word_ptr };
     futex_trylock_normal(word)
 }
@@ -877,17 +913,21 @@ pub unsafe extern "C" fn pthread_mutex_trylock(mutex: *mut libc::pthread_mutex_t
 /// POSIX `pthread_mutex_unlock`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pthread_mutex_unlock(mutex: *mut libc::pthread_mutex_t) -> c_int {
+    // SAFETY: host symbol lookup/transmute guarantees ABI if present.
+    if let Some(host_unlock) = unsafe { host_pthread_mutex_unlock_fn() } {
+        // SAFETY: direct call through resolved host symbol.
+        return unsafe { host_unlock(mutex) };
+    }
+
     if mutex.is_null() {
         return libc::EINVAL;
     }
 
-    if !is_managed_mutex(mutex) {
-        return libc::EINVAL;
-    }
     let Some(word_ptr) = mutex_word_ptr(mutex) else {
         return libc::EINVAL;
     };
-    // SAFETY: managed mutexes use our futex word in the leading i32.
+    // SAFETY: alignment is validated by `mutex_word_ptr`; use futex semantics
+    // for both managed and pre-initialized foreign/default mutex layouts.
     let word = unsafe { &*word_ptr };
     futex_unlock_normal(word)
 }

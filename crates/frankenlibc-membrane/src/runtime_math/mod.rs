@@ -93,6 +93,10 @@ compile_error!(
 pub const RUNTIME_MATH_PRODUCTION_ENABLED: bool = cfg!(feature = "runtime-math-production");
 /// Compile-time flag indicating research runtime-math extensions are enabled.
 pub const RUNTIME_MATH_RESEARCH_ENABLED: bool = cfg!(feature = "runtime-math-research");
+const OBSERVE_FEEDBACK_ENABLED: u8 = 1;
+const OBSERVE_FEEDBACK_DISABLED: u8 = 2;
+// Default disabled for preload-stability while keeping decision/check-ordering live.
+static OBSERVE_FEEDBACK_STATE: AtomicU8 = AtomicU8::new(OBSERVE_FEEDBACK_DISABLED);
 
 use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
 
@@ -186,6 +190,11 @@ use self::stein_discrepancy::{SteinDiscrepancyMonitor, SteinState};
 use self::submodular_coverage::{SubmodularCoverageMonitor, SubmodularState};
 use self::transfer_entropy::{TransferEntropyMonitor, TransferEntropyState};
 use self::wasserstein_drift::{DriftState, WassersteinDriftMonitor};
+
+#[inline]
+fn observe_feedback_enabled() -> bool {
+    OBSERVE_FEEDBACK_STATE.load(Ordering::Relaxed) == OBSERVE_FEEDBACK_ENABLED
+}
 
 const FAST_PATH_BUDGET_NS: u64 = 20;
 const FULL_PATH_BUDGET_NS: u64 = 200;
@@ -301,6 +310,47 @@ impl RuntimeDecision {
                 MembraneAction::FullValidate | MembraneAction::Repair(_)
             )
     }
+}
+
+/// Stable, explicit evidence-export counters exposed by the runtime kernel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RuntimeEvidenceContractSnapshot {
+    /// Monotonic evidence record sequence number.
+    pub evidence_seqno: u64,
+    /// Number of evidence losses caused by bounded-ring overwrites.
+    pub evidence_loss_count: u64,
+    /// Highest observed evidence epoch across all streams.
+    pub evidence_max_epoch: u64,
+}
+
+/// Common runtime-kernel framework contract.
+///
+/// This provides a shared `evaluate -> calibrate -> snapshot` surface for
+/// controller orchestration and deterministic evidence export wiring.
+pub trait RuntimeKernelFramework {
+    type Snapshot;
+
+    /// Evaluate one runtime context and return the selected decision.
+    fn evaluate(&self, mode: SafetyLevel, ctx: RuntimeContext) -> RuntimeDecision;
+
+    /// Calibrate kernel state with observed post-decision outcome data.
+    fn calibrate(
+        &self,
+        mode: SafetyLevel,
+        family: ApiFamily,
+        profile: ValidationProfile,
+        estimated_cost_ns: u64,
+        adverse: bool,
+    );
+
+    /// Capture a point-in-time kernel snapshot.
+    fn snapshot(&self, mode: SafetyLevel) -> Self::Snapshot;
+
+    /// Capture evidence-export counters for traceability and audit checks.
+    fn evidence_contract_snapshot(&self) -> RuntimeEvidenceContractSnapshot;
+
+    /// Export structured JSON decision-card evidence for deterministic tooling ingestion.
+    fn export_decision_cards_json(&self) -> String;
 }
 
 /// Stable schema version for [`RuntimeKernelSnapshot`].
@@ -1968,6 +2018,11 @@ impl RuntimeMathKernel {
         estimated_cost_ns: u64,
         adverse: bool,
     ) {
+        if !observe_feedback_enabled() {
+            let _ = (mode, family, profile, estimated_cost_ns, adverse);
+            return;
+        }
+
         let probe_mask = self.cached_probe_mask.load(Ordering::Relaxed) as u32;
         self.risk.observe(family, adverse);
         self.router
@@ -4062,6 +4117,22 @@ impl RuntimeMathKernel {
         }
     }
 
+    /// Snapshot evidence-export counters for contract checks and telemetry.
+    #[must_use]
+    pub fn evidence_contract_snapshot(&self) -> RuntimeEvidenceContractSnapshot {
+        RuntimeEvidenceContractSnapshot {
+            evidence_seqno: self.cached_evidence_seqno.load(Ordering::Relaxed),
+            evidence_loss_count: self.cached_evidence_loss.load(Ordering::Relaxed),
+            evidence_max_epoch: self.cached_evidence_max_epoch.load(Ordering::Relaxed),
+        }
+    }
+
+    /// Export structured decision-card JSON from the runtime evidence log.
+    #[must_use]
+    pub fn export_decision_cards_json(&self) -> String {
+        self.evidence_log.export_decision_cards_json()
+    }
+
     fn resample_high_order_kernels(&self, mode: SafetyLevel, ctx: RuntimeContext) {
         let mut sampled_risk = self.sampled_risk.lock();
         let risk_decision = sampled_risk.evaluate(
@@ -4096,6 +4167,44 @@ impl RuntimeMathKernel {
 
         let bias = oracle_bias_from_ordering(&ordering, mode);
         self.cached_oracle_bias[usize::from(ctx.family as u8)].store(bias, Ordering::Relaxed);
+    }
+}
+
+impl RuntimeKernelFramework for RuntimeMathKernel {
+    type Snapshot = RuntimeKernelSnapshot;
+
+    fn evaluate(&self, mode: SafetyLevel, ctx: RuntimeContext) -> RuntimeDecision {
+        RuntimeMathKernel::decide(self, mode, ctx)
+    }
+
+    fn calibrate(
+        &self,
+        mode: SafetyLevel,
+        family: ApiFamily,
+        profile: ValidationProfile,
+        estimated_cost_ns: u64,
+        adverse: bool,
+    ) {
+        RuntimeMathKernel::observe_validation_result(
+            self,
+            mode,
+            family,
+            profile,
+            estimated_cost_ns,
+            adverse,
+        );
+    }
+
+    fn snapshot(&self, mode: SafetyLevel) -> Self::Snapshot {
+        RuntimeMathKernel::snapshot(self, mode)
+    }
+
+    fn evidence_contract_snapshot(&self) -> RuntimeEvidenceContractSnapshot {
+        RuntimeMathKernel::evidence_contract_snapshot(self)
+    }
+
+    fn export_decision_cards_json(&self) -> String {
+        RuntimeMathKernel::export_decision_cards_json(self)
     }
 }
 
@@ -4182,6 +4291,7 @@ fn oracle_bias_from_ordering(ordering: &[CheckStage; 7], mode: SafetyLevel) -> u
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::Value;
 
     #[test]
     fn runtime_math_feature_flags_are_consistent() {
@@ -4277,6 +4387,82 @@ mod tests {
         let bias = kernel.cached_oracle_bias[usize::from(ApiFamily::PointerValidation as u8)]
             .load(Ordering::Relaxed);
         assert!(bias <= 2);
+    }
+
+    #[test]
+    fn runtime_kernel_framework_roundtrip_exposes_snapshot_and_contract() {
+        let kernel = RuntimeMathKernel::new();
+        let mode = SafetyLevel::Hardened;
+        let ctx = RuntimeContext {
+            family: ApiFamily::Allocator,
+            addr_hint: 0x2000,
+            requested_bytes: 8192,
+            is_write: true,
+            contention_hint: 128,
+            bloom_negative: true,
+        };
+
+        let decision = RuntimeKernelFramework::evaluate(&kernel, mode, ctx);
+        RuntimeKernelFramework::calibrate(
+            &kernel,
+            mode,
+            ApiFamily::Allocator,
+            decision.profile,
+            64,
+            !matches!(decision.action, MembraneAction::Allow),
+        );
+
+        let snap = RuntimeKernelFramework::snapshot(&kernel, mode);
+        let evidence = RuntimeKernelFramework::evidence_contract_snapshot(&kernel);
+
+        assert!(snap.decisions >= 1);
+        assert_eq!(evidence.evidence_seqno, snap.evidence_seqno);
+        assert_eq!(evidence.evidence_loss_count, snap.evidence_loss_count);
+        assert_eq!(evidence.evidence_max_epoch, snap.evidence_max_epoch);
+    }
+
+    #[test]
+    fn runtime_kernel_framework_exports_structured_decision_card_json() {
+        let kernel = RuntimeMathKernel::new();
+        let ctx = RuntimeContext::pointer_validation(0x1000, false);
+        // Evidence recording follows the existing cadence contract.
+        for _ in 0..16385 {
+            let _ = kernel.decide(SafetyLevel::Hardened, ctx);
+        }
+
+        let export = RuntimeKernelFramework::export_decision_cards_json(&kernel);
+        let parsed: Value =
+            serde_json::from_str(&export).expect("decision card export must be valid JSON");
+
+        assert_eq!(
+            parsed.get("schema").and_then(Value::as_str),
+            Some("decision_cards.v1")
+        );
+        let cards = parsed
+            .get("cards")
+            .and_then(Value::as_array)
+            .expect("cards array must be present");
+        assert!(!cards.is_empty(), "at least one decision card is expected");
+        let first = cards[0]
+            .as_object()
+            .expect("decision card entries must be JSON objects");
+        for key in [
+            "decision_id",
+            "decision_type",
+            "timestamp_mono_ns",
+            "family",
+            "mode",
+            "profile",
+            "action",
+            "policy_id",
+            "risk_upper_bound_ppm",
+            "context",
+        ] {
+            assert!(
+                first.contains_key(key),
+                "decision card must contain required key `{key}`"
+            );
+        }
     }
 
     #[test]

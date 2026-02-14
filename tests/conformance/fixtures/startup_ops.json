@@ -2,7 +2,7 @@
   "version": "v1",
   "family": "startup_ops",
   "captured_at": "2026-02-13T00:00:00Z",
-  "description": "Mode-specific parity fixtures for startup operations (__libc_start_main, __frankenlibc_startup_phase0, __frankenlibc_startup_snapshot). All Implemented. Strict: deterministic startup sequence. Hardened: same behavior.",
+  "description": "Mode-specific parity fixtures for startup operations (__libc_start_main, __frankenlibc_startup_phase0, __frankenlibc_startup_snapshot). All Implemented. Strict: deterministic startup sequence with explicit deny/fallback startup policy. Hardened: same startup ordering with the same policy outcomes.",
   "cases": [
     {
       "name": "startup_phase0_returns_strict",
@@ -51,6 +51,26 @@
       "expected_output": "SNAPSHOT_VALID",
       "expected_errno": 0,
       "mode": "hardened"
+    },
+    {
+      "name": "startup_phase0_rejects_unterminated_auxv_strict",
+      "function": "__frankenlibc_startup_phase0",
+      "spec_section": "FrankenLibC startup",
+      "inputs": { "auxv": "unterminated_pairs_max_scan", "argc": 1, "argv": "valid_ptr" },
+      "expected_output": "DENY_INVALID_STARTUP_CONTEXT",
+      "expected_errno": 7,
+      "mode": "strict",
+      "note": "Auxv scan without AT_NULL terminator must deterministically deny with E2BIG"
+    },
+    {
+      "name": "startup_phase0_rejects_unterminated_auxv_hardened",
+      "function": "__frankenlibc_startup_phase0",
+      "spec_section": "FrankenLibC startup",
+      "inputs": { "auxv": "unterminated_pairs_max_scan", "argc": 1, "argv": "valid_ptr" },
+      "expected_output": "DENY_INVALID_STARTUP_CONTEXT",
+      "expected_errno": 7,
+      "mode": "hardened",
+      "note": "Hardened mode keeps startup deny policy deterministic for invalid auxv contexts"
     }
   ]
 }

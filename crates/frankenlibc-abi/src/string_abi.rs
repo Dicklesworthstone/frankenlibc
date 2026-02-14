@@ -23,7 +23,7 @@ struct StringMembraneGuard;
 
 impl Drop for StringMembraneGuard {
     fn drop(&mut self) {
-        STRING_MEMBRANE_DEPTH.with(|depth| {
+        let _ = STRING_MEMBRANE_DEPTH.try_with(|depth| {
             let current = depth.get();
             depth.set(current.saturating_sub(1));
         });
@@ -33,18 +33,21 @@ impl Drop for StringMembraneGuard {
 fn enter_string_membrane_guard() -> Option<StringMembraneGuard> {
     if runtime_policy::in_policy_reentry_context()
         || crate::malloc_abi::in_allocator_reentry_context()
+        || crate::pthread_abi::in_threading_policy_context()
     {
         return None;
     }
-    STRING_MEMBRANE_DEPTH.with(|depth| {
-        let current = depth.get();
-        if current > 0 {
-            None
-        } else {
-            depth.set(current + 1);
-            Some(StringMembraneGuard)
-        }
-    })
+    STRING_MEMBRANE_DEPTH
+        .try_with(|depth| {
+            let current = depth.get();
+            if current > 0 {
+                None
+            } else {
+                depth.set(current + 1);
+                Some(StringMembraneGuard)
+            }
+        })
+        .unwrap_or(None)
 }
 
 #[inline(never)]

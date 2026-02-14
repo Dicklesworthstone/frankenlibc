@@ -2,6 +2,7 @@
  * Exit 0 = PASS, nonzero = FAIL with diagnostic to stderr.
  */
 #include <errno.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -12,6 +13,14 @@ extern int __frankenlibc_startup_phase0(startup_main_fn_t main, int argc, char *
                                      startup_hook_fn_t init, startup_hook_fn_t fini,
                                      startup_hook_fn_t rtld_fini, void *stack_end)
     __attribute__((weak));
+typedef struct startup_snapshot_t {
+    size_t argc;
+    size_t argv_count;
+    size_t env_count;
+    size_t auxv_count;
+    int secure_mode;
+} startup_snapshot_t;
+extern int __frankenlibc_startup_snapshot(startup_snapshot_t *out) __attribute__((weak));
 
 static int g_main_called = 0;
 static int g_init_called = 0;
@@ -76,6 +85,25 @@ static int test_startup_happy_path(void) {
                 "FAIL: callback counts init=%d main=%d fini=%d rtld_fini=%d\n",
                 g_init_called, g_main_called, g_fini_called, g_rtld_fini_called);
         return 2;
+    }
+
+    if (!__frankenlibc_startup_snapshot) {
+        fprintf(stderr, "FAIL: __frankenlibc_startup_snapshot not resolved\n");
+        return 3;
+    }
+    startup_snapshot_t snap = {0};
+    errno = 0;
+    int snap_rc = __frankenlibc_startup_snapshot(&snap);
+    if (snap_rc != 0) {
+        fprintf(stderr, "FAIL: startup snapshot rc=%d errno=%d\n", snap_rc, errno);
+        return 4;
+    }
+    if (snap.argc != 2 || snap.argv_count != 2 || snap.env_count != 1 ||
+        snap.auxv_count != 1 || snap.secure_mode != 1) {
+        fprintf(stderr,
+                "FAIL: snapshot mismatch argc=%zu argv=%zu env=%zu auxv=%zu secure=%d\n",
+                snap.argc, snap.argv_count, snap.env_count, snap.auxv_count, snap.secure_mode);
+        return 5;
     }
 
     return 0;

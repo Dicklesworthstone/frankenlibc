@@ -28,16 +28,8 @@ unsafe extern "C" {
     fn native_libc_realloc_sym(ptr: *mut c_void, size: usize) -> *mut c_void;
     #[link_name = "__libc_free@GLIBC_2.2.5"]
     fn native_libc_free_sym(ptr: *mut c_void);
-    #[link_name = "posix_memalign@GLIBC_2.2.5"]
-    fn native_libc_posix_memalign_sym(
-        memptr: *mut *mut c_void,
-        alignment: usize,
-        size: usize,
-    ) -> c_int;
     #[link_name = "__libc_memalign@GLIBC_2.2.5"]
     fn native_libc_memalign_sym(alignment: usize, size: usize) -> *mut c_void;
-    #[link_name = "aligned_alloc@GLIBC_2.16"]
-    fn native_libc_aligned_alloc_sym(alignment: usize, size: usize) -> *mut c_void;
 }
 
 #[inline]
@@ -70,8 +62,21 @@ unsafe fn native_libc_posix_memalign(
     alignment: usize,
     size: usize,
 ) -> c_int {
+    if memptr.is_null()
+        || !alignment.is_power_of_two()
+        || !alignment.is_multiple_of(std::mem::size_of::<usize>())
+    {
+        return EINVAL;
+    }
+    let req = size.max(1);
     // SAFETY: direct call to libc allocator symbol.
-    unsafe { native_libc_posix_memalign_sym(memptr, alignment, size) }
+    let ptr = unsafe { native_libc_memalign(alignment, req) };
+    if ptr.is_null() {
+        return ENOMEM;
+    }
+    // SAFETY: memptr non-null and caller-provided writable out pointer.
+    unsafe { *memptr = ptr };
+    0
 }
 
 #[inline]
@@ -83,7 +88,7 @@ unsafe fn native_libc_memalign(alignment: usize, size: usize) -> *mut c_void {
 #[inline]
 unsafe fn native_libc_aligned_alloc(alignment: usize, size: usize) -> *mut c_void {
     // SAFETY: direct call to libc allocator symbol.
-    unsafe { native_libc_aligned_alloc_sym(alignment, size) }
+    unsafe { native_libc_memalign(alignment, size) }
 }
 
 thread_local! {
@@ -92,14 +97,16 @@ thread_local! {
 
 #[must_use]
 pub(crate) fn in_allocator_reentry_context() -> bool {
-    ALLOCATOR_REENTRY_DEPTH.with(|depth| depth.get() > 0)
+    ALLOCATOR_REENTRY_DEPTH
+        .try_with(|depth| depth.get() > 0)
+        .unwrap_or(true)
 }
 
 struct AllocatorReentryGuard;
 
 impl Drop for AllocatorReentryGuard {
     fn drop(&mut self) {
-        ALLOCATOR_REENTRY_DEPTH.with(|depth| {
+        let _ = ALLOCATOR_REENTRY_DEPTH.try_with(|depth| {
             let current = depth.get();
             depth.set(current.saturating_sub(1));
         });
@@ -111,15 +118,20 @@ fn enter_allocator_reentry_guard() -> Option<AllocatorReentryGuard> {
     if runtime_policy::in_policy_reentry_context() {
         return None;
     }
-    ALLOCATOR_REENTRY_DEPTH.with(|depth| {
-        let current = depth.get();
-        if current > 0 {
-            None
-        } else {
-            depth.set(current + 1);
-            Some(AllocatorReentryGuard)
-        }
-    })
+    if crate::pthread_abi::in_threading_policy_context() {
+        return None;
+    }
+    ALLOCATOR_REENTRY_DEPTH
+        .try_with(|depth| {
+            let current = depth.get();
+            if current > 0 {
+                None
+            } else {
+                depth.set(current + 1);
+                Some(AllocatorReentryGuard)
+            }
+        })
+        .unwrap_or(None)
 }
 
 #[inline]
@@ -178,6 +190,9 @@ pub(crate) fn known_remaining(addr: usize) -> Option<usize> {
 /// Caller must eventually `free` the returned pointer exactly once.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn malloc(size: usize) -> *mut c_void {
+    // SAFETY: delegated host allocator path for preload stability.
+    return unsafe { native_libc_malloc(size.max(1)) };
+
     let Some(_reentry_guard) = enter_allocator_reentry_guard() else {
         // SAFETY: reentrant path bypasses membrane/runtime-policy to avoid allocator recursion.
         return unsafe { native_libc_malloc(size.max(1)) };
@@ -248,6 +263,10 @@ pub unsafe extern "C" fn malloc(size: usize) -> *mut c_void {
 /// `realloc`, and must not have been freed already.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn free(ptr: *mut c_void) {
+    // SAFETY: delegated host allocator path for preload stability.
+    unsafe { native_libc_free(ptr) };
+    return;
+
     let Some(_reentry_guard) = enter_allocator_reentry_guard() else {
         // SAFETY: reentrant path bypasses membrane/runtime-policy to avoid allocator recursion.
         unsafe { native_libc_free(ptr) };
@@ -348,6 +367,9 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
 /// Caller must eventually `free` the returned pointer exactly once.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn calloc(nmemb: usize, size: usize) -> *mut c_void {
+    // SAFETY: delegated host allocator path for preload stability.
+    return unsafe { native_libc_calloc(nmemb, size) };
+
     let Some(_reentry_guard) = enter_allocator_reentry_guard() else {
         // SAFETY: reentrant path bypasses membrane/runtime-policy to avoid allocator recursion.
         return unsafe { native_libc_calloc(nmemb, size) };
@@ -435,6 +457,9 @@ pub unsafe extern "C" fn calloc(nmemb: usize, size: usize) -> *mut c_void {
 /// `ptr` must be null or a pointer previously returned by `malloc`/`calloc`/`realloc`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
+    // SAFETY: delegated host allocator path for preload stability.
+    return unsafe { native_libc_realloc(ptr, size) };
+
     let Some(_reentry_guard) = enter_allocator_reentry_guard() else {
         // SAFETY: reentrant path bypasses membrane/runtime-policy to avoid allocator recursion.
         return unsafe { native_libc_realloc(ptr, size) };
@@ -579,76 +604,10 @@ pub unsafe extern "C" fn posix_memalign(
     alignment: usize,
     size: usize,
 ) -> c_int {
-    let Some(_reentry_guard) = enter_allocator_reentry_guard() else {
-        // SAFETY: reentrant path bypasses membrane/runtime-policy to avoid allocator recursion.
-        return unsafe { native_libc_posix_memalign(memptr, alignment, size) };
-    };
-
-    let _trace_scope = runtime_policy::entrypoint_scope("posix_memalign");
-    let (aligned, recent_page, ordering) = allocator_stage_context(size);
-    // Requirements: alignment power of 2, multiple of sizeof(void*)
-    if !alignment.is_power_of_two() || !alignment.is_multiple_of(std::mem::size_of::<usize>()) {
-        record_allocator_stage_outcome(
-            &ordering,
-            aligned,
-            recent_page,
-            Some(stage_index(&ordering, CheckStage::Bounds)),
-        );
-        return EINVAL;
-    }
-
-    let req = size.max(1);
-    let (_, decision) = runtime_policy::decide(ApiFamily::Allocator, req, req, true, false, 0);
-    if matches!(decision.action, MembraneAction::Deny) {
-        record_allocator_stage_outcome(
-            &ordering,
-            aligned,
-            recent_page,
-            Some(stage_index(&ordering, CheckStage::Arena)),
-        );
-        runtime_policy::observe(
-            ApiFamily::Allocator,
-            decision.profile,
-            runtime_policy::scaled_cost(8, req),
-            true,
-        );
-        return ENOMEM;
-    }
-
-    let Some(pipeline) = crate::membrane_state::try_global_pipeline() else {
-        // SAFETY: reentrant allocator bootstrap falls back to libc allocator.
-        return unsafe { native_libc_posix_memalign(memptr, alignment, size) };
-    };
-
-    match pipeline.allocate_aligned(req, alignment) {
-        Some(ptr) => {
-            // SAFETY: caller guarantees `memptr` points to writable `*mut c_void`.
-            unsafe { *memptr = ptr.cast() };
-            runtime_policy::observe(
-                ApiFamily::Allocator,
-                decision.profile,
-                runtime_policy::scaled_cost(12, req),
-                false,
-            );
-            record_allocator_stage_outcome(&ordering, aligned, recent_page, None);
-            0
-        }
-        None => {
-            runtime_policy::observe(
-                ApiFamily::Allocator,
-                decision.profile,
-                runtime_policy::scaled_cost(12, req),
-                true,
-            );
-            record_allocator_stage_outcome(
-                &ordering,
-                aligned,
-                recent_page,
-                Some(stage_index(&ordering, CheckStage::Arena)),
-            );
-            ENOMEM
-        }
-    }
+    // Keep aligned-allocation bootstrap paths delegated to native libc to avoid
+    // recursive allocator lock interactions under LD_PRELOAD thread startup.
+    // SAFETY: forwards arguments to libc-compatible fallback implementation.
+    unsafe { native_libc_posix_memalign(memptr, alignment, size) }
 }
 
 // ---------------------------------------------------------------------------
@@ -664,76 +623,8 @@ pub unsafe extern "C" fn posix_memalign(
 /// Caller must eventually `free` the returned pointer exactly once.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn memalign(alignment: usize, size: usize) -> *mut c_void {
-    let Some(_reentry_guard) = enter_allocator_reentry_guard() else {
-        // SAFETY: reentrant path bypasses membrane/runtime-policy to avoid allocator recursion.
-        return unsafe { native_libc_memalign(alignment, size) };
-    };
-
-    let _trace_scope = runtime_policy::entrypoint_scope("memalign");
-    let (aligned, recent_page, ordering) = allocator_stage_context(size);
-    if !alignment.is_power_of_two() {
-        frankenlibc_core::errno::set_errno(EINVAL);
-        record_allocator_stage_outcome(
-            &ordering,
-            aligned,
-            recent_page,
-            Some(stage_index(&ordering, CheckStage::Bounds)),
-        );
-        return std::ptr::null_mut();
-    }
-
-    let req = size.max(1);
-    let (_, decision) = runtime_policy::decide(ApiFamily::Allocator, req, req, true, false, 0);
-    if matches!(decision.action, MembraneAction::Deny) {
-        record_allocator_stage_outcome(
-            &ordering,
-            aligned,
-            recent_page,
-            Some(stage_index(&ordering, CheckStage::Arena)),
-        );
-        runtime_policy::observe(
-            ApiFamily::Allocator,
-            decision.profile,
-            runtime_policy::scaled_cost(8, req),
-            true,
-        );
-        return std::ptr::null_mut();
-    }
-
-    let Some(pipeline) = crate::membrane_state::try_global_pipeline() else {
-        // SAFETY: reentrant allocator bootstrap falls back to libc allocator.
-        return unsafe { native_libc_memalign(alignment, size) };
-    };
-
-    match pipeline.arena.allocate_aligned(req, alignment) {
-        Some(ptr) => {
-            pipeline.register_allocation(ptr as usize, req);
-            runtime_policy::observe(
-                ApiFamily::Allocator,
-                decision.profile,
-                runtime_policy::scaled_cost(12, req),
-                false,
-            );
-            record_allocator_stage_outcome(&ordering, aligned, recent_page, None);
-            ptr.cast()
-        }
-        None => {
-            frankenlibc_core::errno::set_errno(ENOMEM);
-            runtime_policy::observe(
-                ApiFamily::Allocator,
-                decision.profile,
-                runtime_policy::scaled_cost(12, req),
-                true,
-            );
-            record_allocator_stage_outcome(
-                &ordering,
-                aligned,
-                recent_page,
-                Some(stage_index(&ordering, CheckStage::Arena)),
-            );
-            std::ptr::null_mut()
-        }
-    }
+    // SAFETY: direct delegation avoids recursive aligned-allocation lock paths.
+    unsafe { native_libc_memalign(alignment, size) }
 }
 
 // ---------------------------------------------------------------------------
@@ -751,75 +642,6 @@ pub unsafe extern "C" fn memalign(alignment: usize, size: usize) -> *mut c_void 
 /// Caller must eventually `free` the returned pointer exactly once.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn aligned_alloc(alignment: usize, size: usize) -> *mut c_void {
-    let Some(_reentry_guard) = enter_allocator_reentry_guard() else {
-        // SAFETY: reentrant path bypasses membrane/runtime-policy to avoid allocator recursion.
-        return unsafe { native_libc_aligned_alloc(alignment, size) };
-    };
-
-    let _trace_scope = runtime_policy::entrypoint_scope("aligned_alloc");
-    let (aligned, recent_page, ordering) = allocator_stage_context(size);
-    // Requirements: alignment power of 2, size multiple of alignment
-    if !alignment.is_power_of_two() || !size.is_multiple_of(alignment) {
-        frankenlibc_core::errno::set_errno(EINVAL);
-        record_allocator_stage_outcome(
-            &ordering,
-            aligned,
-            recent_page,
-            Some(stage_index(&ordering, CheckStage::Bounds)),
-        );
-        return std::ptr::null_mut();
-    }
-
-    let req = size.max(1);
-    let (_, decision) = runtime_policy::decide(ApiFamily::Allocator, req, req, true, false, 0);
-    if matches!(decision.action, MembraneAction::Deny) {
-        record_allocator_stage_outcome(
-            &ordering,
-            aligned,
-            recent_page,
-            Some(stage_index(&ordering, CheckStage::Arena)),
-        );
-        runtime_policy::observe(
-            ApiFamily::Allocator,
-            decision.profile,
-            runtime_policy::scaled_cost(8, req),
-            true,
-        );
-        return std::ptr::null_mut();
-    }
-
-    let Some(pipeline) = crate::membrane_state::try_global_pipeline() else {
-        // SAFETY: reentrant allocator bootstrap falls back to libc allocator.
-        return unsafe { native_libc_aligned_alloc(alignment, size) };
-    };
-
-    match pipeline.arena.allocate_aligned(req, alignment) {
-        Some(ptr) => {
-            pipeline.register_allocation(ptr as usize, req);
-            runtime_policy::observe(
-                ApiFamily::Allocator,
-                decision.profile,
-                runtime_policy::scaled_cost(12, req),
-                false,
-            );
-            record_allocator_stage_outcome(&ordering, aligned, recent_page, None);
-            ptr.cast()
-        }
-        None => {
-            frankenlibc_core::errno::set_errno(ENOMEM);
-            runtime_policy::observe(
-                ApiFamily::Allocator,
-                decision.profile,
-                runtime_policy::scaled_cost(12, req),
-                true,
-            );
-            record_allocator_stage_outcome(
-                &ordering,
-                aligned,
-                recent_page,
-                Some(stage_index(&ordering, CheckStage::Arena)),
-            );
-            std::ptr::null_mut()
-        }
-    }
+    // SAFETY: direct delegation avoids recursive aligned-allocation lock paths.
+    unsafe { native_libc_aligned_alloc(alignment, size) }
 }
