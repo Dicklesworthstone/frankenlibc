@@ -97,7 +97,11 @@ const OBSERVE_FEEDBACK_ENABLED: u8 = 1;
 const OBSERVE_FEEDBACK_DISABLED: u8 = 2;
 // Default disabled for preload-stability while keeping decision/check-ordering live.
 static OBSERVE_FEEDBACK_STATE: AtomicU8 = AtomicU8::new(OBSERVE_FEEDBACK_DISABLED);
+const POLICY_LOAD_STATE_NONE: u8 = 0;
+const POLICY_LOAD_STATE_LOADED: u8 = 1;
+const POLICY_LOAD_STATE_VERIFY_FAILED: u8 = 2;
 
+use std::fmt::Write as _;
 use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
 
 use parking_lot::Mutex;
@@ -822,6 +826,7 @@ pub struct RuntimeMathKernel {
     cached_evidence_max_epoch: AtomicU64,
     policy_lookup: Option<policy_table::PolicyTableLookup>,
     cached_policy_hash: AtomicU64,
+    cached_policy_load_state: AtomicU8,
     cached_policy_action_dist: [AtomicU64; 4], // Allow, FullValidate, Repair, Deny
     cached_risk_bonus_ppm: AtomicU64,
     cached_oracle_bias: [AtomicU8; ApiFamily::COUNT],
@@ -1024,6 +1029,7 @@ impl RuntimeMathKernel {
             cached_evidence_max_epoch: AtomicU64::new(0),
             policy_lookup: None,
             cached_policy_hash: AtomicU64::new(0),
+            cached_policy_load_state: AtomicU8::new(POLICY_LOAD_STATE_NONE),
             cached_policy_action_dist: std::array::from_fn(|_| AtomicU64::new(0)),
             cached_risk_bonus_ppm: AtomicU64::new(0),
             cached_oracle_bias: std::array::from_fn(|_| AtomicU8::new(1)),
@@ -1127,11 +1133,23 @@ impl RuntimeMathKernel {
         &mut self,
         artifact: &[u8],
     ) -> Result<(), policy_table::PolicyTableError> {
-        let lookup = policy_table::PolicyTableLookup::from_artifact(artifact)?;
-        self.cached_policy_hash
-            .store(lookup.hash_prefix(), Ordering::Relaxed);
-        self.policy_lookup = Some(lookup);
-        Ok(())
+        match policy_table::PolicyTableLookup::from_artifact(artifact) {
+            Ok(lookup) => {
+                self.cached_policy_hash
+                    .store(lookup.hash_prefix(), Ordering::Relaxed);
+                self.cached_policy_load_state
+                    .store(POLICY_LOAD_STATE_LOADED, Ordering::Relaxed);
+                self.policy_lookup = Some(lookup);
+                Ok(())
+            }
+            Err(err) => {
+                self.cached_policy_hash.store(0, Ordering::Relaxed);
+                self.cached_policy_load_state
+                    .store(POLICY_LOAD_STATE_VERIFY_FAILED, Ordering::Relaxed);
+                self.policy_lookup = None;
+                Err(err)
+            }
+        }
     }
 
     /// Decide runtime validation/repair strategy for one call context.
@@ -4133,6 +4151,118 @@ impl RuntimeMathKernel {
         self.evidence_log.export_decision_cards_json()
     }
 
+    /// Export deterministic JSONL structured logs for runtime-math governance.
+    ///
+    /// The stream includes:
+    /// - per-decision `runtime_decision` rows (TRACE/INFO/WARN/ERROR by action),
+    /// - one `runtime_calibration` DEBUG row,
+    /// - one `runtime_snapshot` INFO row,
+    /// - certificate load/verification rows,
+    /// - optional drift/regret WARN alerts when thresholds are exceeded.
+    #[must_use]
+    pub fn export_runtime_math_log_jsonl(
+        &self,
+        mode: SafetyLevel,
+        bead_id: &str,
+        run_id: &str,
+    ) -> String {
+        let cards = self.evidence_log.decision_cards_snapshot_sorted();
+        let snapshot = self.snapshot(mode);
+        let policy_hash_prefix = self.cached_policy_hash.load(Ordering::Relaxed);
+        let policy_load_state = self.cached_policy_load_state.load(Ordering::Relaxed);
+        let bead = sanitize_trace_component(bead_id);
+        let run = sanitize_trace_component(run_id);
+        let timestamp = now_utc_iso_like();
+        let mode_label = mode_name(mode);
+        let mut out = String::with_capacity(cards.len().saturating_mul(512).saturating_add(2048));
+
+        for card in cards {
+            let action_name = action_name(card.decision.action);
+            let level = level_for_action(card.decision.action);
+            let family_name = family_name(card.context.family);
+            let decision_name = decision_name(card.decision.action);
+            let decision_path = decision_path(card.decision.action);
+            let healing_action = healing_action_json(card.decision.action);
+            let _ = writeln!(
+                &mut out,
+                "{{\"timestamp\":\"{timestamp}\",\"trace_id\":\"{bead}::{run}::{:06}\",\"bead_id\":\"{bead}\",\"scenario_id\":\"{run}\",\"level\":\"{level}\",\"event\":\"runtime_decision\",\"controller_id\":\"runtime_math_kernel.v1\",\"decision\":\"{decision_name}\",\"decision_action\":\"{action_name}\",\"decision_path\":\"{decision_path}\",\"healing_action\":{healing_action},\"decision_id\":{},\"mode\":\"{}\",\"api_family\":\"{family_name}\",\"symbol\":\"runtime_math::{family_name}\",\"errno\":0,\"latency_ns\":{},\"policy_id\":{},\"risk_upper_bound_ppm\":{},\"evidence_seqno\":{},\"risk_inputs\":{{\"requested_bytes\":{},\"bloom_negative\":{},\"is_write\":{},\"contention_hint\":{},\"addr_hint\":{}}},\"artifact_refs\":[\"crates/frankenlibc-membrane/src/runtime_math/mod.rs\"]}}",
+                card.decision_id,
+                card.decision_id,
+                mode_label,
+                card.estimated_cost_ns,
+                card.decision.policy_id,
+                card.decision.risk_upper_bound_ppm,
+                card.decision.evidence_seqno,
+                card.context.requested_bytes,
+                card.context.bloom_negative,
+                card.context.is_write,
+                card.context.contention_hint,
+                card.context.addr_hint,
+            );
+        }
+
+        let _ = writeln!(
+            &mut out,
+            "{{\"timestamp\":\"{timestamp}\",\"trace_id\":\"{bead}::{run}::calibration\",\"bead_id\":\"{bead}\",\"scenario_id\":\"{run}\",\"level\":\"debug\",\"event\":\"runtime_calibration\",\"controller_id\":\"runtime_math_kernel.v1\",\"mode\":\"{mode_label}\",\"api_family\":\"runtime_math\",\"symbol\":\"runtime_math::kernel\",\"decision_path\":\"snapshot::calibration\",\"healing_action\":null,\"errno\":0,\"latency_ns\":0,\"full_validation_trigger_ppm\":{},\"repair_trigger_ppm\":{},\"design_selected_probes\":{},\"design_budget_ns\":{},\"sampled_risk_bonus_ppm\":{},\"policy_hash_prefix\":{},\"artifact_refs\":[\"crates/frankenlibc-membrane/src/runtime_math/mod.rs\"]}}",
+            snapshot.full_validation_trigger_ppm,
+            snapshot.repair_trigger_ppm,
+            snapshot.design_selected_probes,
+            snapshot.design_budget_ns,
+            snapshot.sampled_risk_bonus_ppm,
+            policy_hash_prefix,
+        );
+
+        let _ = writeln!(
+            &mut out,
+            "{{\"timestamp\":\"{timestamp}\",\"trace_id\":\"{bead}::{run}::snapshot\",\"bead_id\":\"{bead}\",\"scenario_id\":\"{run}\",\"level\":\"info\",\"event\":\"runtime_snapshot\",\"controller_id\":\"runtime_math_kernel.v1\",\"mode\":\"{mode_label}\",\"api_family\":\"runtime_math\",\"symbol\":\"runtime_math::kernel\",\"decision_path\":\"snapshot::state\",\"healing_action\":null,\"errno\":0,\"latency_ns\":0,\"decisions\":{},\"consistency_faults\":{},\"pareto_cumulative_regret_milli\":{},\"pareto_cap_enforcements\":{},\"pareto_exhausted_families\":{},\"evidence_seqno\":{},\"artifact_refs\":[\"crates/frankenlibc-membrane/src/runtime_math/mod.rs\"]}}",
+            snapshot.decisions,
+            snapshot.consistency_faults,
+            snapshot.pareto_cumulative_regret_milli,
+            snapshot.pareto_cap_enforcements,
+            snapshot.pareto_exhausted_families,
+            snapshot.evidence_seqno,
+        );
+
+        if policy_load_state == POLICY_LOAD_STATE_LOADED {
+            let _ = writeln!(
+                &mut out,
+                "{{\"timestamp\":\"{timestamp}\",\"trace_id\":\"{bead}::{run}::certificate\",\"bead_id\":\"{bead}\",\"scenario_id\":\"{run}\",\"level\":\"info\",\"event\":\"runtime_certificate_loaded\",\"controller_id\":\"runtime_math_kernel.v1\",\"mode\":\"{mode_label}\",\"api_family\":\"runtime_math\",\"symbol\":\"runtime_math::kernel\",\"decision_path\":\"certificate::verify\",\"healing_action\":null,\"errno\":0,\"latency_ns\":0,\"policy_hash_prefix\":{},\"verification\":\"pass\",\"artifact_refs\":[\"crates/frankenlibc-membrane/src/runtime_math/mod.rs\"]}}",
+                policy_hash_prefix,
+            );
+        } else if policy_load_state == POLICY_LOAD_STATE_VERIFY_FAILED {
+            let _ = writeln!(
+                &mut out,
+                "{{\"timestamp\":\"{timestamp}\",\"trace_id\":\"{bead}::{run}::certificate\",\"bead_id\":\"{bead}\",\"scenario_id\":\"{run}\",\"level\":\"error\",\"event\":\"runtime_certificate_verification_failed\",\"controller_id\":\"runtime_math_kernel.v1\",\"mode\":\"{mode_label}\",\"api_family\":\"runtime_math\",\"symbol\":\"runtime_math::kernel\",\"decision_path\":\"certificate::verify\",\"healing_action\":null,\"errno\":0,\"latency_ns\":0,\"policy_hash_prefix\":{},\"verification\":\"fail\",\"artifact_refs\":[\"crates/frankenlibc-membrane/src/runtime_math/mod.rs\"]}}",
+                policy_hash_prefix,
+            );
+        }
+
+        if snapshot.pareto_cap_enforcements > 0 || snapshot.pareto_exhausted_families > 0 {
+            let _ = writeln!(
+                &mut out,
+                "{{\"timestamp\":\"{timestamp}\",\"trace_id\":\"{bead}::{run}::regret\",\"bead_id\":\"{bead}\",\"scenario_id\":\"{run}\",\"level\":\"warn\",\"event\":\"runtime_regret_alert\",\"controller_id\":\"runtime_math_kernel.v1\",\"mode\":\"{mode_label}\",\"api_family\":\"runtime_math\",\"symbol\":\"runtime_math::kernel\",\"decision_path\":\"pareto::regret\",\"healing_action\":null,\"errno\":0,\"latency_ns\":0,\"pareto_cap_enforcements\":{},\"pareto_exhausted_families\":{},\"artifact_refs\":[\"crates/frankenlibc-membrane/src/runtime_math/mod.rs\"]}}",
+                snapshot.pareto_cap_enforcements, snapshot.pareto_exhausted_families,
+            );
+        }
+
+        if snapshot.padic_drift_count > 0
+            || snapshot.equivariant_drift_count > 0
+            || snapshot.doob_max_drift > f64::EPSILON
+            || snapshot.wasserstein_aggregate_distance > f64::EPSILON
+        {
+            let _ = writeln!(
+                &mut out,
+                "{{\"timestamp\":\"{timestamp}\",\"trace_id\":\"{bead}::{run}::drift\",\"bead_id\":\"{bead}\",\"scenario_id\":\"{run}\",\"level\":\"warn\",\"event\":\"runtime_drift_alert\",\"controller_id\":\"runtime_math_kernel.v1\",\"mode\":\"{mode_label}\",\"api_family\":\"runtime_math\",\"symbol\":\"runtime_math::kernel\",\"decision_path\":\"drift::monitor\",\"healing_action\":null,\"errno\":0,\"latency_ns\":0,\"padic_drift_count\":{},\"equivariant_drift_count\":{},\"doob_max_drift\":{},\"wasserstein_aggregate_distance\":{},\"artifact_refs\":[\"crates/frankenlibc-membrane/src/runtime_math/mod.rs\"]}}",
+                snapshot.padic_drift_count,
+                snapshot.equivariant_drift_count,
+                snapshot.doob_max_drift,
+                snapshot.wasserstein_aggregate_distance,
+            );
+        }
+
+        out
+    }
+
     fn resample_high_order_kernels(&self, mode: SafetyLevel, ctx: RuntimeContext) {
         let mut sampled_risk = self.sampled_risk.lock();
         let risk_decision = sampled_risk.evaluate(
@@ -4212,6 +4342,127 @@ impl Default for RuntimeMathKernel {
     fn default() -> Self {
         Self::new()
     }
+}
+
+fn action_name(action: MembraneAction) -> &'static str {
+    match action {
+        MembraneAction::Allow => "Allow",
+        MembraneAction::FullValidate => "FullValidate",
+        MembraneAction::Repair(_) => "Repair",
+        MembraneAction::Deny => "Deny",
+    }
+}
+
+fn decision_name(action: MembraneAction) -> &'static str {
+    match action {
+        MembraneAction::Allow => "Allow",
+        MembraneAction::FullValidate => "FullValidate",
+        MembraneAction::Repair(HealingAction::ClampSize { .. }) => "Repair::ClampSize",
+        MembraneAction::Repair(HealingAction::TruncateWithNull { .. }) => {
+            "Repair::TruncateWithNull"
+        }
+        MembraneAction::Repair(HealingAction::IgnoreDoubleFree) => "Repair::IgnoreDoubleFree",
+        MembraneAction::Repair(HealingAction::IgnoreForeignFree) => "Repair::IgnoreForeignFree",
+        MembraneAction::Repair(HealingAction::ReallocAsMalloc { .. }) => "Repair::ReallocAsMalloc",
+        MembraneAction::Repair(HealingAction::ReturnSafeDefault) => "Repair::ReturnSafeDefault",
+        MembraneAction::Repair(HealingAction::UpgradeToSafeVariant) => {
+            "Repair::UpgradeToSafeVariant"
+        }
+        MembraneAction::Repair(HealingAction::None) => "Repair::None",
+        MembraneAction::Deny => "Deny",
+    }
+}
+
+fn level_for_action(action: MembraneAction) -> &'static str {
+    match action {
+        MembraneAction::Allow => "trace",
+        MembraneAction::FullValidate => "info",
+        MembraneAction::Repair(_) => "warn",
+        MembraneAction::Deny => "error",
+    }
+}
+
+fn decision_path(action: MembraneAction) -> &'static str {
+    match action {
+        MembraneAction::Allow => "risk->bandit->control->barrier->allow",
+        MembraneAction::FullValidate => "risk->bandit->control->barrier->full_validate",
+        MembraneAction::Repair(_) => "risk->bandit->control->barrier->repair",
+        MembraneAction::Deny => "risk->bandit->control->barrier->deny",
+    }
+}
+
+fn healing_action_json(action: MembraneAction) -> &'static str {
+    match action {
+        MembraneAction::Repair(HealingAction::ClampSize { .. }) => "\"ClampSize\"",
+        MembraneAction::Repair(HealingAction::TruncateWithNull { .. }) => "\"TruncateWithNull\"",
+        MembraneAction::Repair(HealingAction::IgnoreDoubleFree) => "\"IgnoreDoubleFree\"",
+        MembraneAction::Repair(HealingAction::IgnoreForeignFree) => "\"IgnoreForeignFree\"",
+        MembraneAction::Repair(HealingAction::ReallocAsMalloc { .. }) => "\"ReallocAsMalloc\"",
+        MembraneAction::Repair(HealingAction::ReturnSafeDefault) => "\"ReturnSafeDefault\"",
+        MembraneAction::Repair(HealingAction::UpgradeToSafeVariant) => "\"UpgradeToSafeVariant\"",
+        MembraneAction::Repair(HealingAction::None) => "\"None\"",
+        MembraneAction::Allow | MembraneAction::FullValidate | MembraneAction::Deny => "null",
+    }
+}
+
+fn family_name(family: ApiFamily) -> &'static str {
+    match family {
+        ApiFamily::PointerValidation => "pointer_validation",
+        ApiFamily::Allocator => "allocator",
+        ApiFamily::StringMemory => "string_memory",
+        ApiFamily::Stdio => "stdio",
+        ApiFamily::Threading => "threading",
+        ApiFamily::Resolver => "resolver",
+        ApiFamily::MathFenv => "math_fenv",
+        ApiFamily::Loader => "loader",
+        ApiFamily::Stdlib => "stdlib",
+        ApiFamily::Ctype => "ctype",
+        ApiFamily::Time => "time",
+        ApiFamily::Signal => "signal",
+        ApiFamily::IoFd => "io_fd",
+        ApiFamily::Socket => "socket",
+        ApiFamily::Locale => "locale",
+        ApiFamily::Termios => "termios",
+        ApiFamily::Inet => "inet",
+        ApiFamily::Process => "process",
+        ApiFamily::VirtualMemory => "virtual_memory",
+        ApiFamily::Poll => "poll",
+    }
+}
+
+fn mode_name(mode: SafetyLevel) -> &'static str {
+    match mode {
+        SafetyLevel::Strict => "strict",
+        SafetyLevel::Hardened => "hardened",
+        SafetyLevel::Off => "off",
+    }
+}
+
+fn sanitize_trace_component(raw: &str) -> String {
+    raw.chars()
+        .map(|ch| match ch {
+            'a'..='z' | 'A'..='Z' | '0'..='9' | '-' | '_' | '.' => ch,
+            _ => '_',
+        })
+        .collect()
+}
+
+fn now_utc_iso_like() -> String {
+    let duration = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default();
+    let secs = duration.as_secs();
+    let millis = duration.subsec_millis();
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",
+        1970 + secs / 31_557_600,
+        (secs % 31_557_600) / 2_629_800 + 1,
+        (secs % 2_629_800) / 86_400 + 1,
+        (secs % 86_400) / 3_600,
+        (secs % 3_600) / 60,
+        secs % 60,
+        millis,
+    )
 }
 
 fn compute_policy_id(
@@ -4463,6 +4714,166 @@ mod tests {
                 "decision card must contain required key `{key}`"
             );
         }
+    }
+
+    #[test]
+    fn runtime_math_log_jsonl_export_contains_required_runtime_decision_fields() {
+        let kernel = RuntimeMathKernel::new();
+        let ctx = RuntimeContext {
+            family: ApiFamily::Allocator,
+            addr_hint: 0x4000,
+            requested_bytes: 4096,
+            is_write: true,
+            contention_hint: 64,
+            bloom_negative: false,
+        };
+        for _ in 0..16385 {
+            let _ = kernel.decide(SafetyLevel::Hardened, ctx);
+        }
+
+        let jsonl =
+            kernel.export_runtime_math_log_jsonl(SafetyLevel::Hardened, "bd-5vr.8", "smoke-1");
+        let lines: Vec<&str> = jsonl
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .collect();
+        assert!(
+            !lines.is_empty(),
+            "jsonl export must emit at least one line"
+        );
+
+        let mut saw_runtime_decision = false;
+        for line in lines {
+            let parsed: Value =
+                serde_json::from_str(line).expect("each runtime log line must be valid JSON");
+            for required in [
+                "timestamp",
+                "trace_id",
+                "bead_id",
+                "scenario_id",
+                "level",
+                "event",
+                "controller_id",
+                "mode",
+                "api_family",
+                "symbol",
+                "decision_path",
+                "healing_action",
+                "errno",
+                "latency_ns",
+                "artifact_refs",
+            ] {
+                assert!(
+                    parsed.get(required).is_some(),
+                    "runtime log line missing `{required}`"
+                );
+            }
+            assert!(
+                parsed
+                    .get("trace_id")
+                    .and_then(Value::as_str)
+                    .is_some_and(|trace_id| trace_id.contains("::")),
+                "trace_id must include scope separators"
+            );
+            assert_eq!(
+                parsed.get("bead_id").and_then(Value::as_str),
+                Some("bd-5vr.8"),
+                "bead_id should round-trip through structured logs"
+            );
+            assert_eq!(
+                parsed.get("scenario_id").and_then(Value::as_str),
+                Some("smoke-1"),
+                "scenario_id should round-trip through structured logs"
+            );
+            assert_eq!(
+                parsed.get("errno").and_then(Value::as_i64),
+                Some(0),
+                "runtime log export should use deterministic errno placeholder"
+            );
+            assert!(
+                parsed.get("latency_ns").and_then(Value::as_u64).is_some(),
+                "latency_ns must be included as integer"
+            );
+            if parsed
+                .get("event")
+                .and_then(Value::as_str)
+                .is_some_and(|event| event == "runtime_decision")
+            {
+                saw_runtime_decision = true;
+                for required in ["decision", "decision_action", "decision_id", "risk_inputs"] {
+                    assert!(
+                        parsed.get(required).is_some(),
+                        "runtime_decision line missing `{required}`"
+                    );
+                }
+                let decision_action = parsed
+                    .get("decision_action")
+                    .and_then(Value::as_str)
+                    .expect("decision_action must be string");
+                assert!(
+                    matches!(
+                        decision_action,
+                        "Allow" | "FullValidate" | "Repair" | "Deny"
+                    ),
+                    "decision_action must match schema enum, got {decision_action}"
+                );
+                assert!(
+                    parsed
+                        .get("decision_path")
+                        .and_then(Value::as_str)
+                        .is_some_and(|path| {
+                            path.starts_with("risk->bandit->control->barrier->")
+                        }),
+                    "decision_path must include deterministic kernel pipeline prefix"
+                );
+                if decision_action == "Repair" {
+                    assert!(
+                        parsed
+                            .get("healing_action")
+                            .and_then(Value::as_str)
+                            .is_some(),
+                        "repair decisions must include healing_action string"
+                    );
+                }
+            }
+        }
+        assert!(
+            saw_runtime_decision,
+            "jsonl export must include runtime_decision rows"
+        );
+    }
+
+    #[test]
+    fn runtime_math_log_jsonl_export_reports_certificate_load_outcomes() {
+        let mut success_kernel = RuntimeMathKernel::new();
+        let valid_artifact = policy_table::build_test_pcpt(&[]);
+        success_kernel
+            .load_policy_table(&valid_artifact)
+            .expect("valid pcpt must load");
+        let success_jsonl =
+            success_kernel.export_runtime_math_log_jsonl(SafetyLevel::Strict, "bd-5vr.8", "ok");
+        assert!(
+            success_jsonl.contains("\"event\":\"runtime_certificate_loaded\""),
+            "successful load must emit runtime_certificate_loaded"
+        );
+
+        let mut failure_kernel = RuntimeMathKernel::new();
+        let mut invalid_artifact = policy_table::build_test_pcpt(&[]);
+        invalid_artifact[120] ^= 0xFF;
+        assert!(
+            failure_kernel.load_policy_table(&invalid_artifact).is_err(),
+            "tampered artifact must fail verification"
+        );
+        let failure_jsonl =
+            failure_kernel.export_runtime_math_log_jsonl(SafetyLevel::Strict, "bd-5vr.8", "fail");
+        assert!(
+            failure_jsonl.contains("\"event\":\"runtime_certificate_verification_failed\""),
+            "failed load must emit runtime_certificate_verification_failed"
+        );
+        assert!(
+            failure_jsonl.contains("\"level\":\"error\""),
+            "failed certificate verification should be error-level"
+        );
     }
 
     #[test]
