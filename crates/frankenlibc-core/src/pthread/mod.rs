@@ -24,6 +24,9 @@ pub use rwlock::{
 };
 pub use thread::{
     THREAD_DETACHED, THREAD_FINISHED, THREAD_JOINED, THREAD_RUNNING, THREAD_STARTING, ThreadHandle,
-    create_thread, detach_thread, join_thread, self_tid,
 };
-pub use tls::{pthread_getspecific, pthread_key_create, pthread_key_delete, pthread_setspecific};
+#[cfg(target_arch = "x86_64")]
+pub use thread::{create_thread, detach_thread, join_thread, self_tid};
+#[cfg(target_arch = "x86_64")]
+pub use tls::{pthread_getspecific, pthread_setspecific};
+pub use tls::{pthread_key_create, pthread_key_delete};

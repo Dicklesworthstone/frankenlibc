@@ -1,21 +1,8 @@
-//! Raw x86_64 Linux syscall primitives.
+//! Raw Linux syscall primitives for supported architectures.
 //!
-//! Each function issues a single `syscall` instruction with the specified
-//! number of arguments. The return value is the raw kernel return in `rax`.
-//!
-//! # ABI
-//!
-//! ```text
-//! syscall number → rax
-//! arg1           → rdi
-//! arg2           → rsi
-//! arg3           → rdx
-//! arg4           → r10
-//! arg5           → r8
-//! arg6           → r9
-//! return         → rax
-//! clobbered      → rcx, r11
-//! ```
+//! Each function issues a single trap instruction (`syscall` on x86_64,
+//! `svc 0` on aarch64) with the specified number of arguments.
+//! The return value is the raw kernel return register value.
 
 use core::arch::asm;
 
@@ -26,6 +13,7 @@ use core::arch::asm;
 /// The caller must supply a valid syscall number and accept the kernel's
 /// return value semantics.
 #[inline]
+#[cfg(target_arch = "x86_64")]
 pub unsafe fn syscall0(nr: usize) -> usize {
     let ret: usize;
     // SAFETY: Inline asm issues syscall instruction. Caller guarantees nr is valid.
@@ -41,12 +29,35 @@ pub unsafe fn syscall0(nr: usize) -> usize {
     ret
 }
 
+/// Issue a syscall with 0 arguments.
+///
+/// # Safety
+///
+/// The caller must supply a valid syscall number and accept the kernel's
+/// return value semantics.
+#[inline]
+#[cfg(target_arch = "aarch64")]
+pub unsafe fn syscall0(nr: usize) -> usize {
+    let ret: usize;
+    // SAFETY: Inline asm issues `svc 0`. Caller guarantees nr is valid.
+    unsafe {
+        asm!(
+            "svc 0",
+            in("x8") nr,
+            lateout("x0") ret,
+            options(nostack),
+        );
+    }
+    ret
+}
+
 /// Issue a syscall with 1 argument.
 ///
 /// # Safety
 ///
 /// The caller must supply valid syscall number and argument.
 #[inline]
+#[cfg(target_arch = "x86_64")]
 pub unsafe fn syscall1(nr: usize, a1: usize) -> usize {
     let ret: usize;
     // SAFETY: Inline asm issues syscall instruction. Caller guarantees validity.
@@ -63,12 +74,34 @@ pub unsafe fn syscall1(nr: usize, a1: usize) -> usize {
     ret
 }
 
+/// Issue a syscall with 1 argument.
+///
+/// # Safety
+///
+/// The caller must supply valid syscall number and argument.
+#[inline]
+#[cfg(target_arch = "aarch64")]
+pub unsafe fn syscall1(nr: usize, a1: usize) -> usize {
+    let ret: usize;
+    // SAFETY: Inline asm issues `svc 0`. Caller guarantees validity.
+    unsafe {
+        asm!(
+            "svc 0",
+            in("x8") nr,
+            inlateout("x0") a1 => ret,
+            options(nostack),
+        );
+    }
+    ret
+}
+
 /// Issue a syscall with 2 arguments.
 ///
 /// # Safety
 ///
 /// The caller must supply valid syscall number and arguments.
 #[inline]
+#[cfg(target_arch = "x86_64")]
 pub unsafe fn syscall2(nr: usize, a1: usize, a2: usize) -> usize {
     let ret: usize;
     // SAFETY: Inline asm issues syscall instruction. Caller guarantees validity.
@@ -86,12 +119,35 @@ pub unsafe fn syscall2(nr: usize, a1: usize, a2: usize) -> usize {
     ret
 }
 
+/// Issue a syscall with 2 arguments.
+///
+/// # Safety
+///
+/// The caller must supply valid syscall number and arguments.
+#[inline]
+#[cfg(target_arch = "aarch64")]
+pub unsafe fn syscall2(nr: usize, a1: usize, a2: usize) -> usize {
+    let ret: usize;
+    // SAFETY: Inline asm issues `svc 0`. Caller guarantees validity.
+    unsafe {
+        asm!(
+            "svc 0",
+            in("x8") nr,
+            inlateout("x0") a1 => ret,
+            in("x1") a2,
+            options(nostack),
+        );
+    }
+    ret
+}
+
 /// Issue a syscall with 3 arguments.
 ///
 /// # Safety
 ///
 /// The caller must supply valid syscall number and arguments.
 #[inline]
+#[cfg(target_arch = "x86_64")]
 pub unsafe fn syscall3(nr: usize, a1: usize, a2: usize, a3: usize) -> usize {
     let ret: usize;
     // SAFETY: Inline asm issues syscall instruction. Caller guarantees validity.
@@ -110,12 +166,36 @@ pub unsafe fn syscall3(nr: usize, a1: usize, a2: usize, a3: usize) -> usize {
     ret
 }
 
+/// Issue a syscall with 3 arguments.
+///
+/// # Safety
+///
+/// The caller must supply valid syscall number and arguments.
+#[inline]
+#[cfg(target_arch = "aarch64")]
+pub unsafe fn syscall3(nr: usize, a1: usize, a2: usize, a3: usize) -> usize {
+    let ret: usize;
+    // SAFETY: Inline asm issues `svc 0`. Caller guarantees validity.
+    unsafe {
+        asm!(
+            "svc 0",
+            in("x8") nr,
+            inlateout("x0") a1 => ret,
+            in("x1") a2,
+            in("x2") a3,
+            options(nostack),
+        );
+    }
+    ret
+}
+
 /// Issue a syscall with 4 arguments.
 ///
 /// # Safety
 ///
 /// The caller must supply valid syscall number and arguments.
 #[inline]
+#[cfg(target_arch = "x86_64")]
 pub unsafe fn syscall4(nr: usize, a1: usize, a2: usize, a3: usize, a4: usize) -> usize {
     let ret: usize;
     // SAFETY: Inline asm issues syscall instruction. Caller guarantees validity.
@@ -135,12 +215,37 @@ pub unsafe fn syscall4(nr: usize, a1: usize, a2: usize, a3: usize, a4: usize) ->
     ret
 }
 
+/// Issue a syscall with 4 arguments.
+///
+/// # Safety
+///
+/// The caller must supply valid syscall number and arguments.
+#[inline]
+#[cfg(target_arch = "aarch64")]
+pub unsafe fn syscall4(nr: usize, a1: usize, a2: usize, a3: usize, a4: usize) -> usize {
+    let ret: usize;
+    // SAFETY: Inline asm issues `svc 0`. Caller guarantees validity.
+    unsafe {
+        asm!(
+            "svc 0",
+            in("x8") nr,
+            inlateout("x0") a1 => ret,
+            in("x1") a2,
+            in("x2") a3,
+            in("x3") a4,
+            options(nostack),
+        );
+    }
+    ret
+}
+
 /// Issue a syscall with 5 arguments.
 ///
 /// # Safety
 ///
 /// The caller must supply valid syscall number and arguments.
 #[inline]
+#[cfg(target_arch = "x86_64")]
 pub unsafe fn syscall5(nr: usize, a1: usize, a2: usize, a3: usize, a4: usize, a5: usize) -> usize {
     let ret: usize;
     // SAFETY: Inline asm issues syscall instruction. Caller guarantees validity.
@@ -156,6 +261,31 @@ pub unsafe fn syscall5(nr: usize, a1: usize, a2: usize, a3: usize, a4: usize, a5
             lateout("rcx") _,
             lateout("r11") _,
             options(nostack, preserves_flags),
+        );
+    }
+    ret
+}
+
+/// Issue a syscall with 5 arguments.
+///
+/// # Safety
+///
+/// The caller must supply valid syscall number and arguments.
+#[inline]
+#[cfg(target_arch = "aarch64")]
+pub unsafe fn syscall5(nr: usize, a1: usize, a2: usize, a3: usize, a4: usize, a5: usize) -> usize {
+    let ret: usize;
+    // SAFETY: Inline asm issues `svc 0`. Caller guarantees validity.
+    unsafe {
+        asm!(
+            "svc 0",
+            in("x8") nr,
+            inlateout("x0") a1 => ret,
+            in("x1") a2,
+            in("x2") a3,
+            in("x3") a4,
+            in("x4") a5,
+            options(nostack),
         );
     }
     ret
@@ -182,6 +312,7 @@ pub unsafe fn syscall5(nr: usize, a1: usize, a2: usize, a3: usize, a4: usize, a5
 /// - The function pointer must be valid and callable.
 /// - `parent_tid` and `child_tid` must be valid if corresponding flags are set.
 #[inline]
+#[cfg(target_arch = "x86_64")]
 pub unsafe fn clone_thread_asm(
     flags: usize,
     child_sp: usize,
@@ -238,12 +369,75 @@ pub unsafe fn clone_thread_asm(
     ret
 }
 
+/// Execute `clone` syscall with a child trampoline on aarch64.
+///
+/// The child stack at `child_sp` must contain:
+/// - `[child_sp + 0]`: function pointer (8 bytes)
+/// - `[child_sp + 8]`: argument value (8 bytes)
+///
+/// After clone, the child thread:
+/// 1. Pops the function pointer into `x9`
+/// 2. Pops the argument into `x0` (first C ABI parameter)
+/// 3. Aligns the stack to 16 bytes
+/// 4. Calls the function via `blr x9`
+/// 5. On return, exits the thread via `SYS_exit` with the return value
+///
+/// The parent receives the child TID in `x0` (positive) or `-errno` (negative).
+///
+/// # Safety
+///
+/// - `child_sp` must point to a valid, writable stack with fn_ptr and arg placed.
+/// - The function pointer must be valid and callable.
+/// - `parent_tid` and `child_tid` must be valid if corresponding flags are set.
+#[inline]
+#[cfg(target_arch = "aarch64")]
+pub unsafe fn clone_thread_asm(
+    flags: usize,
+    child_sp: usize,
+    parent_tid: usize,
+    child_tid: usize,
+    tls: usize,
+) -> usize {
+    let ret: usize;
+    // SAFETY: caller guarantees child_sp points to a valid child stack with
+    // fn_ptr and arg words at the top. Parent receives child tid; child runs
+    // trampoline and exits through SYS_exit.
+    unsafe {
+        asm!(
+            "mov x8, {clone_nr}",
+            "svc 0",
+            "cbnz x0, 2f",
+            "mov x29, xzr",
+            "ldr x9, [sp], #8",
+            "ldr x0, [sp], #8",
+            "and sp, sp, #-16",
+            "blr x9",
+            "mov x8, {exit_nr}",
+            "svc 0",
+            "brk #0",
+            "2:",
+            clone_nr = const 220usize,
+            exit_nr = const 93usize,
+            in("x0") flags,
+            in("x1") child_sp,
+            in("x2") parent_tid,
+            in("x3") child_tid,
+            in("x4") tls,
+            lateout("x0") ret,
+            lateout("x8") _,
+            options(nostack),
+        );
+    }
+    ret
+}
+
 /// Issue a syscall with 6 arguments.
 ///
 /// # Safety
 ///
 /// The caller must supply valid syscall number and arguments.
 #[inline]
+#[cfg(target_arch = "x86_64")]
 pub unsafe fn syscall6(
     nr: usize,
     a1: usize,
@@ -268,6 +462,40 @@ pub unsafe fn syscall6(
             lateout("rcx") _,
             lateout("r11") _,
             options(nostack, preserves_flags),
+        );
+    }
+    ret
+}
+
+/// Issue a syscall with 6 arguments.
+///
+/// # Safety
+///
+/// The caller must supply valid syscall number and arguments.
+#[inline]
+#[cfg(target_arch = "aarch64")]
+pub unsafe fn syscall6(
+    nr: usize,
+    a1: usize,
+    a2: usize,
+    a3: usize,
+    a4: usize,
+    a5: usize,
+    a6: usize,
+) -> usize {
+    let ret: usize;
+    // SAFETY: Inline asm issues `svc 0`. Caller guarantees validity.
+    unsafe {
+        asm!(
+            "svc 0",
+            in("x8") nr,
+            inlateout("x0") a1 => ret,
+            in("x1") a2,
+            in("x2") a3,
+            in("x3") a4,
+            in("x4") a5,
+            in("x5") a6,
+            options(nostack),
         );
     }
     ret

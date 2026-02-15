@@ -1,4 +1,4 @@
-//! Raw Linux x86_64 syscall veneer.
+//! Raw Linux syscall veneer for supported architectures.
 //!
 //! Provides zero-dependency raw syscall primitives using inline assembly,
 //! plus typed wrappers for the syscalls needed by frankenlibc ABI entrypoints.
@@ -14,6 +14,11 @@
 //! - Return: `rax` (negative values in `[-4095, -1]` indicate `-errno`)
 //! - Clobbered: `rcx`, `r11`
 //!
+//! aarch64 Linux syscall ABI:
+//! - Syscall number: `x8`
+//! - Arguments: `x0`, `x1`, `x2`, `x3`, `x4`, `x5`
+//! - Return: `x0` (negative values in `[-4095, -1]` indicate `-errno`)
+//!
 //! # Safety
 //!
 //! Each raw `syscallN` function is `unsafe` because the kernel trusts the
@@ -27,43 +32,149 @@ mod raw;
 pub use raw::*;
 
 // -------------------------------------------------------------------------
-// Syscall number constants (x86_64 Linux)
+// Syscall number constants (Linux)
 // -------------------------------------------------------------------------
 
+#[cfg(target_arch = "x86_64")]
 pub const SYS_READ: usize = 0;
+#[cfg(target_arch = "x86_64")]
 pub const SYS_WRITE: usize = 1;
+#[cfg(target_arch = "x86_64")]
 pub const SYS_OPEN: usize = 2;
+#[cfg(target_arch = "x86_64")]
 pub const SYS_CLOSE: usize = 3;
+#[cfg(target_arch = "x86_64")]
 pub const SYS_FSTAT: usize = 5;
+#[cfg(target_arch = "x86_64")]
 pub const SYS_LSEEK: usize = 8;
+#[cfg(target_arch = "x86_64")]
 pub const SYS_MMAP: usize = 9;
+#[cfg(target_arch = "x86_64")]
 pub const SYS_MPROTECT: usize = 10;
+#[cfg(target_arch = "x86_64")]
 pub const SYS_MUNMAP: usize = 11;
+#[cfg(target_arch = "x86_64")]
 pub const SYS_BRK: usize = 12;
+#[cfg(target_arch = "x86_64")]
 pub const SYS_IOCTL: usize = 16;
+#[cfg(target_arch = "x86_64")]
 pub const SYS_PIPE: usize = 22;
+#[cfg(target_arch = "x86_64")]
 pub const SYS_DUP: usize = 32;
+#[cfg(target_arch = "x86_64")]
 pub const SYS_DUP2: usize = 33;
+#[cfg(target_arch = "x86_64")]
 pub const SYS_GETPID: usize = 39;
+#[cfg(target_arch = "x86_64")]
 pub const SYS_CLONE: usize = 56;
+#[cfg(target_arch = "x86_64")]
 pub const SYS_FORK: usize = 57;
+#[cfg(target_arch = "x86_64")]
 pub const SYS_EXECVE: usize = 59;
+#[cfg(target_arch = "x86_64")]
 pub const SYS_EXIT: usize = 60;
+#[cfg(target_arch = "x86_64")]
 pub const SYS_WAIT4: usize = 61;
+#[cfg(target_arch = "x86_64")]
 pub const SYS_FCNTL: usize = 72;
+#[cfg(target_arch = "x86_64")]
 pub const SYS_FSYNC: usize = 74;
+#[cfg(target_arch = "x86_64")]
 pub const SYS_PREAD64: usize = 17;
+#[cfg(target_arch = "x86_64")]
 pub const SYS_PWRITE64: usize = 18;
+#[cfg(target_arch = "x86_64")]
 pub const SYS_MSYNC: usize = 26;
+#[cfg(target_arch = "x86_64")]
 pub const SYS_MADVISE: usize = 28;
+#[cfg(target_arch = "x86_64")]
 pub const SYS_FDATASYNC: usize = 75;
+#[cfg(target_arch = "x86_64")]
 pub const SYS_GETDENTS64: usize = 217;
+#[cfg(target_arch = "x86_64")]
 pub const SYS_EXIT_GROUP: usize = 231;
+#[cfg(target_arch = "x86_64")]
 pub const SYS_OPENAT: usize = 257;
+#[cfg(target_arch = "x86_64")]
 pub const SYS_PIPE2: usize = 293;
+#[cfg(target_arch = "x86_64")]
 pub const SYS_FUTEX: usize = 202;
+#[cfg(target_arch = "x86_64")]
 pub const SYS_SET_TID_ADDRESS: usize = 218;
+#[cfg(target_arch = "x86_64")]
 pub const SYS_GETTID: usize = 186;
+
+#[cfg(target_arch = "aarch64")]
+pub const SYS_READ: usize = 63;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_WRITE: usize = 64;
+// Legacy `open` is not a separate syscall on aarch64; use openat semantics.
+#[cfg(target_arch = "aarch64")]
+pub const SYS_OPEN: usize = 56;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_CLOSE: usize = 57;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_FSTAT: usize = 80;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_LSEEK: usize = 62;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_MMAP: usize = 222;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_MPROTECT: usize = 226;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_MUNMAP: usize = 215;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_BRK: usize = 214;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_IOCTL: usize = 29;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_PIPE: usize = 59;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_DUP: usize = 23;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_DUP2: usize = 24;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_GETPID: usize = 172;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_CLONE: usize = 220;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_FORK: usize = SYS_CLONE;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_EXECVE: usize = 221;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_EXIT: usize = 93;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_WAIT4: usize = 260;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_FCNTL: usize = 25;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_FSYNC: usize = 82;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_PREAD64: usize = 67;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_PWRITE64: usize = 68;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_MSYNC: usize = 227;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_MADVISE: usize = 233;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_FDATASYNC: usize = 83;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_GETDENTS64: usize = 61;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_EXIT_GROUP: usize = 94;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_OPENAT: usize = 56;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_PIPE2: usize = 59;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_FUTEX: usize = 98;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_SET_TID_ADDRESS: usize = 96;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_GETTID: usize = 178;
+#[cfg(target_arch = "aarch64")]
+const SYS_DUP3: usize = 24;
 
 // -------------------------------------------------------------------------
 // Error handling
@@ -352,8 +463,11 @@ pub fn sys_fdatasync(fd: i32) -> Result<(), i32> {
 #[inline]
 #[allow(unsafe_code)]
 pub fn sys_dup2(oldfd: i32, newfd: i32) -> Result<i32, i32> {
-    // SAFETY: dup2 is safe on any fd values (bad fd returns EBADF).
+    // SAFETY: dup2/dup3 are safe on any fd values (bad fd returns EBADF).
+    #[cfg(target_arch = "x86_64")]
     let ret = unsafe { raw::syscall2(SYS_DUP2, oldfd as usize, newfd as usize) };
+    #[cfg(target_arch = "aarch64")]
+    let ret = unsafe { raw::syscall3(SYS_DUP3, oldfd as usize, newfd as usize, 0) };
     syscall_result(ret).map(|v| v as i32)
 }
 
@@ -425,7 +539,7 @@ pub fn sys_exit_thread(status: i32) -> ! {
 ///
 /// After clone, the child will:
 /// 1. Pop the function pointer from the stack
-/// 2. Pop the argument and pass it in `rdi` (first C ABI argument)
+/// 2. Pop the argument and pass it in the first C ABI argument register
 /// 3. Call the function
 /// 4. Use the return value as the thread exit status
 ///

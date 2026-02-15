@@ -343,3 +343,47 @@ mod x86_64_tests {
         assert_eq!(result, Ok(0), "futex wake with no waiters should return 0");
     }
 }
+
+#[cfg(target_arch = "aarch64")]
+mod aarch64_tests {
+    use frankenlibc_core::syscall::*;
+
+    #[test]
+    fn syscall_number_constants() {
+        assert_eq!(SYS_READ, 63);
+        assert_eq!(SYS_WRITE, 64);
+        assert_eq!(SYS_OPENAT, 56);
+        assert_eq!(SYS_CLOSE, 57);
+        assert_eq!(SYS_MMAP, 222);
+        assert_eq!(SYS_MPROTECT, 226);
+        assert_eq!(SYS_MUNMAP, 215);
+        assert_eq!(SYS_GETPID, 172);
+        assert_eq!(SYS_CLONE, 220);
+        assert_eq!(SYS_EXIT_GROUP, 94);
+        assert_eq!(SYS_FUTEX, 98);
+        assert_eq!(SYS_PIPE2, 59);
+    }
+
+    #[test]
+    #[allow(clippy::type_complexity)]
+    fn api_surface_complete() {
+        // Compile-time API parity check with x86_64 veneer.
+        let _: unsafe fn(i32, *mut u8, usize) -> Result<usize, i32> = sys_read;
+        let _: unsafe fn(i32, *const u8, usize) -> Result<usize, i32> = sys_write;
+        let _: unsafe fn(i32, *const u8, i32, u32) -> Result<i32, i32> = sys_openat;
+        let _: fn(i32) -> Result<(), i32> = sys_close;
+        let _: unsafe fn(*mut u8, usize, i32, i32, i32, i64) -> Result<*mut u8, i32> = sys_mmap;
+        let _: unsafe fn(*mut u8, usize) -> Result<(), i32> = sys_munmap;
+        let _: unsafe fn(*mut u8, usize, i32) -> Result<(), i32> = sys_mprotect;
+        let _: unsafe fn(*const u32, i32, u32, usize, usize, u32) -> Result<isize, i32> = sys_futex;
+        let _: fn(i32) -> ! = sys_exit_group;
+        let _: fn() -> i32 = sys_getpid;
+        let _: unsafe fn(*mut i32, i32) -> Result<(), i32> = sys_pipe2;
+        let _: fn(i32) -> Result<i32, i32> = sys_dup;
+        let _: unsafe fn(i32, usize, usize) -> Result<i32, i32> = sys_ioctl;
+        let _: fn(i32, i64, i32) -> Result<i64, i32> = sys_lseek;
+        let _: fn(i32) -> Result<(), i32> = sys_fsync;
+        let _: unsafe fn(i32, *mut u8, usize) -> Result<usize, i32> = sys_getdents64;
+        let _: unsafe fn(i32, i32, usize) -> Result<i32, i32> = sys_fcntl;
+    }
+}

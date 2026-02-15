@@ -4543,6 +4543,106 @@ fn oracle_bias_from_ordering(ordering: &[CheckStage; 7], mode: SafetyLevel) -> u
 mod tests {
     use super::*;
     use serde_json::Value;
+    use std::collections::{BTreeSet, HashMap};
+
+    fn snapshot_struct_field_names(source: &str) -> Vec<String> {
+        let struct_start = source
+            .find("pub struct RuntimeKernelSnapshot {")
+            .expect("RuntimeKernelSnapshot definition must exist");
+        let after_struct = &source[struct_start..];
+        let struct_end = after_struct
+            .find("\n}\n\n/// Online control kernel for strict/hardened runtime decisions.")
+            .expect("RuntimeKernelSnapshot end marker must exist");
+        let struct_block = &after_struct[..struct_end];
+
+        struct_block
+            .lines()
+            .filter_map(|line| {
+                let trimmed = line.trim();
+                let rest = trimmed.strip_prefix("pub ")?;
+                let (name, _) = rest.split_once(':')?;
+                Some(name.trim().to_string())
+            })
+            .collect()
+    }
+
+    fn snapshot_schema_field_names(schema_doc: &str) -> Vec<String> {
+        schema_doc
+            .lines()
+            .filter_map(|line| {
+                let trimmed = line.trim_start();
+                if !trimmed.starts_with("| `") {
+                    return None;
+                }
+                let mut parts = trimmed.split('`');
+                let _ = parts.next();
+                parts.next().map(std::string::ToString::to_string)
+            })
+            .collect()
+    }
+
+    fn snapshot_literal_field_counts(snapshot_src: &str) -> HashMap<String, usize> {
+        let struct_start = snapshot_src
+            .find("RuntimeKernelSnapshot {\n            schema_version:")
+            .expect("snapshot must build RuntimeKernelSnapshot struct literal");
+        let literal_tail = &snapshot_src[struct_start..];
+        let open_brace = literal_tail
+            .find('{')
+            .expect("snapshot struct literal must contain an opening brace");
+
+        let mut depth = 0usize;
+        let mut close_brace = None;
+        for (idx, ch) in literal_tail.char_indices().skip(open_brace) {
+            match ch {
+                '{' => depth += 1,
+                '}' => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        close_brace = Some(idx);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        let close_brace = close_brace.expect("snapshot struct literal must terminate");
+        let struct_literal = &literal_tail[..=close_brace];
+
+        let mut counts = HashMap::new();
+        for line in struct_literal.lines() {
+            let trimmed = line.trim();
+            if trimmed.is_empty()
+                || trimmed == "RuntimeKernelSnapshot {"
+                || trimmed.starts_with("//")
+                || trimmed == "}"
+            {
+                continue;
+            }
+            let name = if let Some(colon_idx) = trimmed.find(':') {
+                if trimmed[colon_idx..].starts_with("::") {
+                    continue;
+                }
+                &trimmed[..colon_idx]
+            } else if let Some(name) = trimmed.strip_suffix(',') {
+                name
+            } else {
+                continue;
+            };
+
+            let name = name.trim();
+            let mut chars = name.chars();
+            let Some(first) = chars.next() else {
+                continue;
+            };
+            if !(first == '_' || first.is_ascii_alphabetic())
+                || !chars.all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
+            {
+                continue;
+            }
+            *counts.entry(name.to_string()).or_insert(0) += 1;
+        }
+        counts
+    }
 
     #[test]
     fn runtime_math_feature_flags_are_consistent() {
@@ -4943,6 +5043,287 @@ mod tests {
                 "snapshot must cache exactly one local for `{needle}` before struct construction"
             );
         }
+    }
+
+    #[test]
+    fn runtime_kernel_snapshot_schema_and_literal_cover_all_fields() {
+        let src = include_str!("mod.rs");
+        let schema_doc = include_str!("runtime_kernel_snapshot_schema.md");
+        let struct_fields = snapshot_struct_field_names(src);
+        let expected_fields = struct_fields.len();
+        assert!(
+            expected_fields >= 154,
+            "RuntimeKernelSnapshot must include at least the 154 baseline fields"
+        );
+
+        let snapshot_fn_start = src
+            .find("pub fn snapshot(&self, mode: SafetyLevel) -> RuntimeKernelSnapshot")
+            .expect("snapshot function signature must exist");
+        let snapshot_tail = &src[snapshot_fn_start..];
+        let resample_fn_start = snapshot_tail
+            .find("fn resample_high_order_kernels(&self, mode: SafetyLevel, ctx: RuntimeContext) {")
+            .expect("resample function must follow snapshot");
+        let snapshot_src = &snapshot_tail[..resample_fn_start];
+        let literal_fields = snapshot_literal_field_counts(snapshot_src);
+
+        let struct_field_set: BTreeSet<_> = struct_fields.iter().cloned().collect();
+        let literal_field_set: BTreeSet<_> = literal_fields.keys().cloned().collect();
+        let missing_in_literal: Vec<_> = struct_field_set
+            .difference(&literal_field_set)
+            .cloned()
+            .collect();
+        let extra_in_literal: Vec<_> = literal_field_set
+            .difference(&struct_field_set)
+            .cloned()
+            .collect();
+        assert!(
+            missing_in_literal.is_empty() && extra_in_literal.is_empty(),
+            "snapshot literal field mismatch; missing={missing_in_literal:?}, extra={extra_in_literal:?}"
+        );
+
+        for field in &struct_field_set {
+            assert_eq!(
+                literal_fields.get(field),
+                Some(&1usize),
+                "snapshot literal must assign `{field}` exactly once"
+            );
+        }
+
+        let schema_field_set: BTreeSet<_> = snapshot_schema_field_names(schema_doc)
+            .into_iter()
+            .collect();
+        for field in &schema_field_set {
+            assert!(
+                struct_field_set.contains(field),
+                "schema references unknown RuntimeKernelSnapshot field `{field}`"
+            );
+        }
+    }
+
+    #[test]
+    fn snapshot_contract_ranges_are_sane_for_fresh_kernel() {
+        let kernel = RuntimeMathKernel::new();
+        let snap = kernel.snapshot(SafetyLevel::Strict);
+
+        assert_eq!(snap.schema_version, RUNTIME_KERNEL_SNAPSHOT_SCHEMA_VERSION);
+        assert!(snap.full_validation_trigger_ppm <= 1_000_000);
+        assert!(snap.repair_trigger_ppm <= 1_000_000);
+        assert!(snap.sampled_risk_bonus_ppm <= 1_000_000);
+        assert!(snap.design_identifiability_ppm <= 1_000_000);
+        assert!(snap.fusion_bonus_ppm <= 1_000_000);
+        assert!(snap.fusion_drift_ppm <= 1_000_000);
+        assert!(snap.fusion_entropy_milli <= 1_000);
+        assert!(snap.loss_posterior_adverse_ppm <= 1_000_000);
+        assert!(snap.loss_recommended_action <= 3);
+        assert!(snap.loss_competing_action <= 3);
+        assert!((0.0..=1.0).contains(&snap.topos_violation_rate));
+        assert!((0.0..=1.0).contains(&snap.covering_coverage_fraction));
+        assert!((0.0..=1.0).contains(&snap.pac_bayes_bound));
+        assert!((0.0..=1.0).contains(&snap.dobrushin_max_contraction));
+        assert!((0.0..=1.0).contains(&snap.dobrushin_mean_contraction));
+        assert!((0.0..=1.0).contains(&snap.submodular_coverage_ratio));
+        assert!((0.0..=1.0).contains(&snap.bifurcation_max_sensitivity));
+        assert!((0.0..=1.0).contains(&snap.bifurcation_mean_sensitivity));
+        assert!((0.0..=1.0).contains(&snap.entropy_rate_ratio));
+        assert!(snap.sobol_augmented_mask & !Probe::all_mask() == 0);
+
+        for value in [
+            snap.spectral_edge_ratio,
+            snap.persistence_entropy,
+            snap.bridge_transport_distance,
+            snap.hji_safety_value,
+            snap.padic_ultrametric_distance,
+            snap.audit_martingale_value,
+            snap.info_geo_geodesic_distance,
+            snap.info_geo_max_controller_distance,
+            snap.matrix_conc_spectral_deviation,
+            snap.matrix_conc_bernstein_bound,
+        ] {
+            assert!(value.is_finite(), "snapshot values must remain finite");
+        }
+    }
+
+    #[test]
+    fn snapshot_decision_and_evidence_counters_are_monotone() {
+        let kernel = RuntimeMathKernel::new();
+        let ctx = RuntimeContext::pointer_validation(0x1000, false);
+
+        let snap0 = kernel.snapshot(SafetyLevel::Hardened);
+        for _ in 0..8193 {
+            let _ = kernel.decide(SafetyLevel::Hardened, ctx);
+        }
+        let snap1 = kernel.snapshot(SafetyLevel::Hardened);
+        for _ in 0..8193 {
+            let _ = kernel.decide(SafetyLevel::Hardened, ctx);
+        }
+        let snap2 = kernel.snapshot(SafetyLevel::Hardened);
+
+        assert!(snap1.decisions >= snap0.decisions);
+        assert!(snap2.decisions >= snap1.decisions);
+        assert!(snap1.evidence_seqno >= snap0.evidence_seqno);
+        assert!(snap2.evidence_seqno >= snap1.evidence_seqno);
+        assert!(snap2.evidence_max_epoch >= snap1.evidence_max_epoch);
+    }
+
+    #[test]
+    fn decision_card_export_json_roundtrip_preserves_payload() {
+        let kernel = RuntimeMathKernel::new();
+        let ctx = RuntimeContext::pointer_validation(0x1000, false);
+        for _ in 0..16385 {
+            let _ = kernel.decide(SafetyLevel::Hardened, ctx);
+        }
+
+        let export = RuntimeKernelFramework::export_decision_cards_json(&kernel);
+        let parsed: Value =
+            serde_json::from_str(&export).expect("decision card export must be valid JSON");
+        let cards = parsed
+            .get("cards")
+            .and_then(Value::as_array)
+            .expect("decision cards export must contain `cards` array");
+        assert!(!cards.is_empty(), "decision card export must not be empty");
+        assert!(
+            cards.iter().all(|card| card.get("loss_evidence").is_some()),
+            "every decision card must include loss_evidence (object or null)"
+        );
+
+        let roundtrip = serde_json::to_string(&parsed).expect("roundtrip JSON should serialize");
+        let reparsed: Value =
+            serde_json::from_str(&roundtrip).expect("roundtrip JSON should parse");
+        assert_eq!(
+            parsed, reparsed,
+            "decision card JSON roundtrip must be lossless"
+        );
+    }
+
+    #[test]
+    fn deterministic_replay_produces_identical_decisions_and_evidence() {
+        let k1 = RuntimeMathKernel::new();
+        let k2 = RuntimeMathKernel::new();
+
+        let script = [
+            (
+                SafetyLevel::Strict,
+                RuntimeContext::pointer_validation(0x1000, false),
+                32u64,
+                false,
+            ),
+            (
+                SafetyLevel::Hardened,
+                RuntimeContext {
+                    family: ApiFamily::Allocator,
+                    addr_hint: 0x2200,
+                    requested_bytes: 96,
+                    is_write: true,
+                    contention_hint: 2,
+                    bloom_negative: false,
+                },
+                48u64,
+                true,
+            ),
+            (
+                SafetyLevel::Hardened,
+                RuntimeContext {
+                    family: ApiFamily::StringMemory,
+                    addr_hint: 0x3300,
+                    requested_bytes: 64,
+                    is_write: false,
+                    contention_hint: 1,
+                    bloom_negative: true,
+                },
+                20u64,
+                false,
+            ),
+            (
+                SafetyLevel::Strict,
+                RuntimeContext {
+                    family: ApiFamily::IoFd,
+                    addr_hint: 0x4400,
+                    requested_bytes: 4096,
+                    is_write: true,
+                    contention_hint: 0,
+                    bloom_negative: false,
+                },
+                75u64,
+                true,
+            ),
+        ];
+
+        let mut trace1 = Vec::new();
+        let mut trace2 = Vec::new();
+        for round in 0..512 {
+            let (mode, ctx, estimated_cost_ns, adverse) = script[round % script.len()];
+            let d1 = k1.decide(mode, ctx);
+            let d2 = k2.decide(mode, ctx);
+            trace1.push(d1);
+            trace2.push(d2);
+
+            k1.observe_validation_result(mode, ctx.family, d1.profile, estimated_cost_ns, adverse);
+            k2.observe_validation_result(mode, ctx.family, d2.profile, estimated_cost_ns, adverse);
+        }
+
+        assert_eq!(
+            trace1, trace2,
+            "same (mode,input,event) replay must produce identical decisions"
+        );
+        assert_eq!(
+            RuntimeKernelFramework::evidence_contract_snapshot(&k1),
+            RuntimeKernelFramework::evidence_contract_snapshot(&k2),
+            "same replay must produce identical evidence counters"
+        );
+    }
+
+    #[test]
+    fn raptorq_redundancy_budget_survives_target_loss_fraction() {
+        const K_SOURCE: u16 = 256;
+        const OVERHEAD_PERCENT: u16 = 20;
+        const TARGET_LOSS_PPM: u32 = 100_000; // 10%
+
+        let repair_count = evidence::derive_repair_symbol_count_v1(K_SOURCE, OVERHEAD_PERCENT);
+        assert!(
+            repair_count >= evidence::SLACK_DECODE_V1,
+            "repair count must include at least decode slack"
+        );
+
+        let tolerated_loss_ppm = evidence::loss_fraction_max_ppm_v1(K_SOURCE, repair_count);
+        assert!(
+            tolerated_loss_ppm >= TARGET_LOSS_PPM,
+            "expected >= {}ppm tolerated loss; got {}ppm (K={}, overhead={}%, R={})",
+            TARGET_LOSS_PPM,
+            tolerated_loss_ppm,
+            K_SOURCE,
+            OVERHEAD_PERCENT,
+            repair_count
+        );
+
+        let epoch_seed = 0x0BAD_F00D_DEAD_BEEFu64;
+        let mut source_payloads = vec![[0u8; evidence::EVIDENCE_SYMBOL_SIZE_T]; K_SOURCE as usize];
+        for (idx, payload) in source_payloads.iter_mut().enumerate() {
+            *payload = [idx as u8; evidence::EVIDENCE_SYMBOL_SIZE_T];
+        }
+
+        let repairs =
+            evidence::generate_repair_payloads_v1(epoch_seed, &source_payloads, OVERHEAD_PERCENT);
+        let repairs_again =
+            evidence::generate_repair_payloads_v1(epoch_seed, &source_payloads, OVERHEAD_PERCENT);
+        assert_eq!(
+            repairs, repairs_again,
+            "repair payload generation must be deterministic"
+        );
+        assert_eq!(
+            repairs.len(),
+            repair_count as usize,
+            "repair payload count must match derive_repair_symbol_count_v1"
+        );
+        assert_eq!(
+            repairs.first().map(|(esi, _)| *esi),
+            Some(K_SOURCE),
+            "first repair ESI must start at K_source"
+        );
+        assert_eq!(
+            repairs.last().map(|(esi, _)| *esi),
+            Some(K_SOURCE + repair_count - 1),
+            "last repair ESI must end at K_source + R - 1"
+        );
     }
 
     #[test]

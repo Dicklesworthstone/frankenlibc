@@ -731,8 +731,8 @@ pub(crate) fn note_check_order_outcome(
         return;
     };
     ensure_minimal_panic_hook();
-    if let Some(k) = kernel() {
-        if panic::catch_unwind(AssertUnwindSafe(|| {
+    if let Some(k) = kernel()
+        && panic::catch_unwind(AssertUnwindSafe(|| {
             k.note_check_order_outcome(
                 mode,
                 family,
@@ -743,9 +743,8 @@ pub(crate) fn note_check_order_outcome(
             );
         }))
         .is_err()
-        {
-            mark_kernel_broken();
-        }
+    {
+        mark_kernel_broken();
     }
 }
 
@@ -758,6 +757,62 @@ pub(crate) fn scaled_cost(base_ns: u64, bytes: usize) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::ffi::OsString;
+    use std::sync::{Mutex, MutexGuard, OnceLock};
+
+    struct ModeStateGuard {
+        previous: u8,
+    }
+
+    impl Drop for ModeStateGuard {
+        fn drop(&mut self) {
+            MODE_STATE.store(self.previous, AtomicOrdering::SeqCst);
+        }
+    }
+
+    fn set_mode_state_for_tests(state: u8) -> ModeStateGuard {
+        let previous = MODE_STATE.swap(state, AtomicOrdering::SeqCst);
+        ModeStateGuard { previous }
+    }
+
+    struct EnvVarGuard {
+        previous: Option<OsString>,
+    }
+
+    impl EnvVarGuard {
+        fn set(value: Option<&str>) -> Self {
+            let previous = std::env::var_os("FRANKENLIBC_MODE");
+            // SAFETY: test-only env mutation is serialized by `env_lock`.
+            unsafe {
+                if let Some(v) = value {
+                    std::env::set_var("FRANKENLIBC_MODE", v);
+                } else {
+                    std::env::remove_var("FRANKENLIBC_MODE");
+                }
+            }
+            Self { previous }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            // SAFETY: test-only env mutation is serialized by `env_lock`.
+            unsafe {
+                if let Some(previous) = self.previous.as_ref() {
+                    std::env::set_var("FRANKENLIBC_MODE", previous);
+                } else {
+                    std::env::remove_var("FRANKENLIBC_MODE");
+                }
+            }
+        }
+    }
+
+    fn env_lock() -> MutexGuard<'static, ()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("env lock should not be poisoned")
+    }
 
     fn reset_decision_contract_machine_for_tests() {
         let _ = DECISION_CONTRACT_MACHINE.try_with(|slot| {
@@ -772,6 +827,56 @@ mod tests {
         assert_eq!(parse_mode_value("repair"), SafetyLevel::Hardened);
         assert_eq!(parse_mode_value("off"), SafetyLevel::Strict);
         assert_eq!(parse_mode_value("bogus"), SafetyLevel::Strict);
+    }
+
+    #[test]
+    fn mode_resolution_is_sticky_until_cache_reset() {
+        let _lock = env_lock();
+        let _env = EnvVarGuard::set(Some("hardened"));
+        let _state = set_mode_state_for_tests(MODE_UNRESOLVED);
+
+        assert_eq!(mode(), SafetyLevel::Hardened);
+        // SAFETY: test-only env mutation is serialized by `env_lock`.
+        unsafe {
+            std::env::set_var("FRANKENLIBC_MODE", "strict");
+        }
+        assert_eq!(
+            mode(),
+            SafetyLevel::Hardened,
+            "resolved mode must remain process-sticky until cache reset"
+        );
+    }
+
+    #[test]
+    fn cache_reset_reparses_mode_from_environment() {
+        let _lock = env_lock();
+        let _env = EnvVarGuard::set(Some("hardened"));
+        let _state = set_mode_state_for_tests(MODE_UNRESOLVED);
+
+        assert_eq!(mode(), SafetyLevel::Hardened);
+        MODE_STATE.store(MODE_UNRESOLVED, AtomicOrdering::SeqCst);
+        // SAFETY: test-only env mutation is serialized by `env_lock`.
+        unsafe {
+            std::env::set_var("FRANKENLIBC_MODE", "strict");
+        }
+        assert_eq!(
+            mode(),
+            SafetyLevel::Strict,
+            "resetting cache should force environment re-parse"
+        );
+    }
+
+    #[test]
+    fn parse_mode_from_environ_accepts_case_insensitive_aliases() {
+        let _lock = env_lock();
+        let _env = EnvVarGuard::set(Some("RePaIr"));
+
+        assert_eq!(parse_mode_from_environ(), Some(SafetyLevel::Hardened));
+        // SAFETY: test-only env mutation is serialized by `env_lock`.
+        unsafe {
+            std::env::set_var("FRANKENLIBC_MODE", "bogus");
+        }
+        assert_eq!(parse_mode_from_environ(), Some(SafetyLevel::Strict));
     }
 
     #[test]
