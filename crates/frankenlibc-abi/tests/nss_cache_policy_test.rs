@@ -2,8 +2,8 @@ use std::ffi::{CStr, CString};
 use std::fs;
 use std::path::Path;
 use std::ptr;
-use std::sync::Mutex;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 
 static TEST_LOCK: Mutex<()> = Mutex::new(());
 static TEST_SEQ: AtomicU64 = AtomicU64::new(0);
@@ -21,6 +21,13 @@ fn temp_path(prefix: &str) -> std::path::PathBuf {
 
 fn write_file(path: &Path, content: &[u8]) {
     fs::write(path, content).expect("temporary NSS backend file should be writable");
+}
+
+fn atomic_replace(path: &Path, content: &[u8]) {
+    let seq = TEST_SEQ.fetch_add(1, Ordering::Relaxed);
+    let tmp = path.with_extension(format!("swap-{seq}.tmp"));
+    fs::write(&tmp, content).expect("temporary swap file should be writable");
+    fs::rename(&tmp, path).expect("atomic rename should succeed");
 }
 
 unsafe fn passwd_name(ptr: *mut libc::passwd) -> String {
@@ -309,6 +316,122 @@ fn group_reentrant_uses_configured_source_members_and_erange_contract() {
     assert!(
         miss_result.is_null(),
         "not-found contract should return 0 with NULL result"
+    );
+
+    unsafe {
+        frankenlibc_abi::grp_abi::endgrent();
+        // SAFETY: integration tests serialize env mutation via TEST_LOCK.
+        std::env::remove_var(GROUP_ENV);
+    }
+    let _ = fs::remove_file(&path);
+}
+
+#[test]
+fn passwd_concurrent_lookup_coherence_under_file_churn() {
+    let _guard = TEST_LOCK.lock().expect("lock should be available");
+    let path = temp_path("passwd-concurrency");
+    let variant_a: &[u8] =
+        b"root:x:0:0:root:/root:/bin/sh\nalice:x:1001:1001::/home/alice:/bin/sh\n";
+    let variant_b: &[u8] =
+        b"root:x:0:0:root:/root:/bin/sh\nalice:x:2002:2002::/home/alice:/bin/bash\n";
+    write_file(&path, variant_a);
+    // SAFETY: integration tests serialize env mutation via TEST_LOCK.
+    unsafe { std::env::set_var(PASSWD_ENV, &path) };
+    unsafe { frankenlibc_abi::pwd_abi::endpwent() };
+
+    let errors = Arc::new(AtomicUsize::new(0));
+    let path_for_writer = path.clone();
+    let writer = std::thread::spawn(move || {
+        for i in 0..200 {
+            let payload = if i % 2 == 0 { variant_a } else { variant_b };
+            atomic_replace(&path_for_writer, payload);
+        }
+    });
+
+    let mut readers = Vec::new();
+    for _ in 0..4 {
+        let err_reader = Arc::clone(&errors);
+        readers.push(std::thread::spawn(move || {
+            let name = CString::new("alice").expect("literal has no interior NUL");
+            for _ in 0..800 {
+                let entry = unsafe { frankenlibc_abi::pwd_abi::getpwnam(name.as_ptr()) };
+                if entry.is_null() {
+                    err_reader.fetch_add(1, Ordering::Relaxed);
+                    continue;
+                }
+                let uid = unsafe { (*entry).pw_uid };
+                if uid != 1001 && uid != 2002 {
+                    err_reader.fetch_add(1, Ordering::Relaxed);
+                }
+            }
+        }));
+    }
+
+    writer.join().expect("writer thread should join");
+    for reader in readers {
+        reader.join().expect("reader thread should join");
+    }
+    assert_eq!(
+        errors.load(Ordering::Relaxed),
+        0,
+        "all lookups should return coherent passwd uid variants only"
+    );
+
+    unsafe {
+        frankenlibc_abi::pwd_abi::endpwent();
+        // SAFETY: integration tests serialize env mutation via TEST_LOCK.
+        std::env::remove_var(PASSWD_ENV);
+    }
+    let _ = fs::remove_file(&path);
+}
+
+#[test]
+fn group_concurrent_lookup_coherence_under_file_churn() {
+    let _guard = TEST_LOCK.lock().expect("lock should be available");
+    let path = temp_path("group-concurrency");
+    let variant_a: &[u8] = b"root:x:0:\ndev:x:250:alice,bob\n";
+    let variant_b: &[u8] = b"root:x:0:\ndev:x:450:alice,bob\n";
+    write_file(&path, variant_a);
+    // SAFETY: integration tests serialize env mutation via TEST_LOCK.
+    unsafe { std::env::set_var(GROUP_ENV, &path) };
+    unsafe { frankenlibc_abi::grp_abi::endgrent() };
+
+    let errors = Arc::new(AtomicUsize::new(0));
+    let path_for_writer = path.clone();
+    let writer = std::thread::spawn(move || {
+        for i in 0..200 {
+            let payload = if i % 2 == 0 { variant_a } else { variant_b };
+            atomic_replace(&path_for_writer, payload);
+        }
+    });
+
+    let mut readers = Vec::new();
+    for _ in 0..4 {
+        let err_reader = Arc::clone(&errors);
+        readers.push(std::thread::spawn(move || {
+            let name = CString::new("dev").expect("literal has no interior NUL");
+            for _ in 0..800 {
+                let entry = unsafe { frankenlibc_abi::grp_abi::getgrnam(name.as_ptr()) };
+                if entry.is_null() {
+                    err_reader.fetch_add(1, Ordering::Relaxed);
+                    continue;
+                }
+                let gid = unsafe { (*entry).gr_gid };
+                if gid != 250 && gid != 450 {
+                    err_reader.fetch_add(1, Ordering::Relaxed);
+                }
+            }
+        }));
+    }
+
+    writer.join().expect("writer thread should join");
+    for reader in readers {
+        reader.join().expect("reader thread should join");
+    }
+    assert_eq!(
+        errors.load(Ordering::Relaxed),
+        0,
+        "all lookups should return coherent group gid variants only"
     );
 
     unsafe {
