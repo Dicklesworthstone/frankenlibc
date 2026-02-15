@@ -246,4 +246,25 @@ mod tests {
         assert_eq!(s.adverse, 4);
         assert!(s.e_value.is_finite());
     }
+
+    #[test]
+    fn high_index_family_contributes_to_alarm_count_and_max() {
+        let mon = AnytimeEProcessMonitor::new_with_params(0.02, 0.25, 16, 10.0, 100.0);
+
+        for _ in 0..128 {
+            mon.observe(ApiFamily::Poll, true);
+            mon.observe(ApiFamily::Loader, false);
+        }
+
+        assert_eq!(mon.state(ApiFamily::Poll), SequentialState::Alarm);
+        assert_eq!(mon.state(ApiFamily::Loader), SequentialState::Normal);
+        assert!(
+            mon.alarmed_family_count() >= 1,
+            "high-index family alarms should be included in aggregate alarm count"
+        );
+        assert!(
+            mon.max_e_value() >= mon.e_value(ApiFamily::Poll),
+            "max_e_value should include high-index family contributions"
+        );
+    }
 }

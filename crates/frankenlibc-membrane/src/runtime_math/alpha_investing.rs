@@ -619,42 +619,34 @@ mod tests {
         }
 
         let s = c.summary();
-
         // Golden values — update ONLY when an intentional semantic change
         // is made. Each update must be accompanied by an isomorphism proof
         // or explicit justification in the bead comment.
         //
         // Seed: 0xCAFE_BABE_0000_0001, warmup=64 zeros, then 1024 random obs.
-        // These values are deterministic given the xorshift64 sequence.
-        assert_eq!(s.wealth_milli, c.wealth_milli(), "wealth_milli mismatch");
-        assert_eq!(s.tests, c.tests, "tests mismatch");
-        assert_eq!(s.rejections, c.rejections, "rejections mismatch");
-        assert_eq!(s.suppressions, c.suppressions, "suppressions mismatch");
+        const GOLDEN_WEALTH_MILLI: u64 = 109;
+        const GOLDEN_TESTS: u64 = 825;
+        const GOLDEN_REJECTIONS: u64 = 411;
+        const GOLDEN_SUPPRESSIONS: u64 = 414;
 
-        // Snapshot the actual values to define the golden baseline.
-        // These are recorded from the first successful run.
-        let golden_wealth = s.wealth_milli;
-        let golden_tests = s.tests;
-        let golden_rejections = s.rejections;
-        let golden_suppressions = s.suppressions;
-
-        // Structural invariants that must always hold regardless of values.
+        assert_eq!(s.wealth_milli, GOLDEN_WEALTH_MILLI, "wealth_milli drift");
+        assert_eq!(s.tests, GOLDEN_TESTS, "tests drift");
+        assert_eq!(s.rejections, GOLDEN_REJECTIONS, "rejections drift");
+        assert_eq!(s.suppressions, GOLDEN_SUPPRESSIONS, "suppressions drift");
         assert_eq!(
-            golden_tests,
-            golden_rejections + golden_suppressions,
+            s.tests,
+            s.rejections + s.suppressions,
             "tests must equal rejections + suppressions"
         );
-        assert!(golden_wealth <= INITIAL_WEALTH_MILLI + golden_rejections * REWARD_MILLI);
-        // Verify the summary is self-consistent.
-        if golden_tests > 0 {
-            let expected_fdr = golden_rejections as f64 / golden_tests as f64;
-            assert!(
-                (s.empirical_fdr - expected_fdr).abs() < 1e-10,
-                "empirical_fdr inconsistent: {} vs {}",
-                s.empirical_fdr,
-                expected_fdr
-            );
-        }
+        assert!(s.wealth_milli <= INITIAL_WEALTH_MILLI + s.rejections * REWARD_MILLI);
+
+        let expected_fdr = GOLDEN_REJECTIONS as f64 / GOLDEN_TESTS as f64;
+        assert!(
+            (s.empirical_fdr - expected_fdr).abs() < 1e-12,
+            "empirical_fdr drift: {} vs {}",
+            s.empirical_fdr,
+            expected_fdr
+        );
     }
 
     /// Verify that the observation path uses only integer arithmetic.

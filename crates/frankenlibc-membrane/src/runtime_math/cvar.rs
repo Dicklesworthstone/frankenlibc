@@ -237,7 +237,19 @@ fn family_from_index(idx: usize) -> ApiFamily {
         4 => ApiFamily::Threading,
         5 => ApiFamily::Resolver,
         6 => ApiFamily::MathFenv,
-        _ => ApiFamily::Loader,
+        7 => ApiFamily::Loader,
+        8 => ApiFamily::Stdlib,
+        9 => ApiFamily::Ctype,
+        10 => ApiFamily::Time,
+        11 => ApiFamily::Signal,
+        12 => ApiFamily::IoFd,
+        13 => ApiFamily::Socket,
+        14 => ApiFamily::Locale,
+        15 => ApiFamily::Termios,
+        16 => ApiFamily::Inet,
+        17 => ApiFamily::Process,
+        18 => ApiFamily::VirtualMemory,
+        _ => ApiFamily::Poll,
     }
 }
 
@@ -290,5 +302,31 @@ mod tests {
             c.observe(ApiFamily::Resolver, ValidationProfile::Full, 350);
         }
         assert!(c.max_family_robust_cvar_ns() >= FULL_BUDGET_NS);
+    }
+
+    #[test]
+    fn high_index_families_are_counted_independently() {
+        let c = DroCvarController::new();
+        for _ in 0..256 {
+            c.observe(ApiFamily::Loader, ValidationProfile::Fast, 12);
+            c.observe(ApiFamily::Poll, ValidationProfile::Fast, 480);
+        }
+
+        assert_eq!(
+            c.family_state(SafetyLevel::Hardened, ApiFamily::Loader),
+            TailState::Normal
+        );
+        assert!(matches!(
+            c.family_state(SafetyLevel::Hardened, ApiFamily::Poll),
+            TailState::Warning | TailState::Alarm
+        ));
+        assert!(
+            c.alarmed_family_count(SafetyLevel::Hardened) >= 1,
+            "poll alarm should be counted independently from loader"
+        );
+        assert!(
+            c.max_family_robust_cvar_ns() >= c.family_robust_cvar_ns(ApiFamily::Poll),
+            "max aggregation should include high-index families"
+        );
     }
 }

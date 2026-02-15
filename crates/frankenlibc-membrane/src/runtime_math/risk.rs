@@ -170,4 +170,21 @@ mod tests {
         assert!(high_rate <= 1_000_000);
         assert!(low_rate <= 1_000_000);
     }
+
+    #[test]
+    fn high_index_family_isolated_from_loader() {
+        let risk = ConformalRiskEngine::new(5_000, 3.0);
+
+        for i in 0..512 {
+            risk.observe(ApiFamily::Poll, i % 2 == 0);
+            risk.observe(ApiFamily::Loader, false);
+        }
+
+        let poll = risk.upper_bound_ppm(ApiFamily::Poll);
+        let loader = risk.upper_bound_ppm(ApiFamily::Loader);
+        assert!(
+            poll > loader,
+            "high-index family updates should not collapse into loader accounting"
+        );
+    }
 }

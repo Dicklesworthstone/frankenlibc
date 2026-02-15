@@ -53,6 +53,8 @@
 //!
 //! Large-deviations rare-event analysis for catastrophic failure budgeting.
 
+use crate::runtime_math::ApiFamily;
+
 /// Per-family observation window size.
 const LD_WINDOW: usize = 256;
 
@@ -73,7 +75,7 @@ const RATE_DROP_WARN: f64 = 0.4;
 const RATE_DROP_CRIT: f64 = 0.8;
 
 /// Number of API families.
-const FAMILIES: usize = 8;
+const FAMILIES: usize = ApiFamily::COUNT;
 
 /// Binary KL divergence D(x ‖ p) = x·log(x/p) + (1−x)·log((1−x)/(1−p)).
 ///
@@ -481,5 +483,26 @@ mod tests {
         assert!(s.rate_at_10pct >= 0.0);
         assert!(s.rate_at_20pct >= 0.0);
         assert!(s.failure_budget_log_5pct <= 0.0 || s.rate_at_5pct < 1e-12);
+    }
+
+    #[test]
+    fn high_index_api_family_is_tracked() {
+        let mut mon = LargeDeviationsMonitor::new();
+        let family = ApiFamily::Poll as usize;
+
+        for _ in 0..6 {
+            for i in 0..LD_WINDOW {
+                mon.observe(family, i % 25 == 0); // 4% adverse
+            }
+        }
+
+        let summary = mon.summary(family);
+        assert_ne!(
+            mon.state(family),
+            RateState::Calibrating,
+            "high-index family should leave calibration like lower indices"
+        );
+        assert!(summary.empirical_adverse_rate > 0.0);
+        assert!(summary.failure_budget_log_5pct <= 0.0 || summary.rate_at_5pct < 1e-12);
     }
 }
