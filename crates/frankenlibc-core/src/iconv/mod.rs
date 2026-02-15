@@ -17,6 +17,22 @@ enum Encoding {
     Utf32,
 }
 
+/// Canonical phase-1 codecs intentionally supported by the in-tree iconv engine.
+pub const ICONV_PHASE1_INCLUDED_CODECS: [&str; 4] = ["UTF-8", "ISO-8859-1", "UTF-16LE", "UTF-32"];
+
+/// Canonical alias map for phase-1 supported codecs.
+pub const ICONV_PHASE1_ALIAS_NORMALIZATIONS: [(&str, &str); 1] = [("LATIN1", "ISO-8859-1")];
+
+/// Known out-of-scope codec families for phase-1 implementation.
+pub const ICONV_PHASE1_EXCLUDED_CODEC_FAMILIES: [&str; 6] = [
+    "ISO-2022-CN-EXT",
+    "ISO-2022-JP",
+    "EUC-JP",
+    "SHIFT_JIS",
+    "GB18030",
+    "BIG5-HKSCS",
+];
+
 /// Opaque conversion descriptor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct IconvDescriptor {
@@ -57,7 +73,7 @@ enum EncodeError {
     Unrepresentable,
 }
 
-fn parse_encoding(raw: &[u8]) -> Option<Encoding> {
+fn normalize_encoding_label(raw: &[u8]) -> Vec<u8> {
     let mut canonical = Vec::with_capacity(raw.len());
     for &b in raw {
         if matches!(b, b'-' | b'_' | b' ' | b'\t') {
@@ -65,6 +81,11 @@ fn parse_encoding(raw: &[u8]) -> Option<Encoding> {
         }
         canonical.push(b.to_ascii_uppercase());
     }
+    canonical
+}
+
+fn parse_encoding(raw: &[u8]) -> Option<Encoding> {
+    let canonical = normalize_encoding_label(raw);
 
     match canonical.as_slice() {
         b"UTF8" => Some(Encoding::Utf8),
@@ -355,6 +376,26 @@ mod tests {
         assert!(iconv_open(b"utf8", b"latin1").is_some());
         assert!(iconv_open(b"UTF16LE", b"UTF-8").is_some());
         assert!(iconv_open(b"UTF-32", b"UTF-8").is_some());
+    }
+
+    #[test]
+    fn iconv_open_normalizes_encoding_tokens() {
+        assert!(iconv_open(b"utf 16_le", b" latin-1 ").is_some());
+        assert!(iconv_open(b"utf-32", b"utf 8").is_some());
+    }
+
+    #[test]
+    fn iconv_open_rejects_out_of_scope_codecs() {
+        for codec in ICONV_PHASE1_EXCLUDED_CODEC_FAMILIES {
+            assert!(
+                iconv_open(codec.as_bytes(), b"UTF-8").is_none(),
+                "phase-1 should reject unsupported destination codec {codec}"
+            );
+            assert!(
+                iconv_open(b"UTF-8", codec.as_bytes()).is_none(),
+                "phase-1 should reject unsupported source codec {codec}"
+            );
+        }
     }
 
     #[test]

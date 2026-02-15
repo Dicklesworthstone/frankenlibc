@@ -920,7 +920,7 @@
       "status": "Implemented",
       "module": "iconv_abi",
       "perf_class": "coldpath",
-      "strict_semantics": "Phase-1 iconv implementation for UTF-8/ISO-8859-1/UTF-16LE with deterministic errno semantics",
+      "strict_semantics": "Phase-1 iconv implementation for UTF-8/ISO-8859-1/UTF-16LE/UTF-32 with deterministic errno semantics",
       "hardened_semantics": "Phase-1 iconv with hardened membrane routing; deterministic bounds/error behavior",
       "default_stub": false
     },
@@ -929,7 +929,7 @@
       "status": "Implemented",
       "module": "iconv_abi",
       "perf_class": "coldpath",
-      "strict_semantics": "Phase-1 iconv implementation for UTF-8/ISO-8859-1/UTF-16LE with deterministic errno semantics",
+      "strict_semantics": "Phase-1 iconv implementation for UTF-8/ISO-8859-1/UTF-16LE/UTF-32 with deterministic errno semantics",
       "hardened_semantics": "Phase-1 iconv with hardened membrane routing; deterministic bounds/error behavior",
       "default_stub": false
     },
@@ -938,7 +938,7 @@
       "status": "Implemented",
       "module": "iconv_abi",
       "perf_class": "coldpath",
-      "strict_semantics": "Phase-1 iconv implementation for UTF-8/ISO-8859-1/UTF-16LE with deterministic errno semantics",
+      "strict_semantics": "Phase-1 iconv implementation for UTF-8/ISO-8859-1/UTF-16LE/UTF-32 with deterministic errno semantics",
       "hardened_semantics": "Phase-1 iconv with hardened membrane routing; deterministic bounds/error behavior",
       "default_stub": false
     },
