@@ -330,9 +330,7 @@ unsafe fn delegate_to_host_libc_start_main(
         if override_ptr != 0 {
             // SAFETY: debug-test override stores a valid HostStartMainFn pointer.
             let host_fn: HostStartMainFn = unsafe {
-                std::mem::transmute::<*const c_void, HostStartMainFn>(
-                    override_ptr as *const c_void,
-                )
+                std::mem::transmute::<*const c_void, HostStartMainFn>(override_ptr as *const c_void)
             };
             // SAFETY: forwards startup ABI arguments to deterministic test delegate.
             return Some(unsafe { host_fn(main, argc, ubp_av, init, fini, rtld_fini, stack_end) });
@@ -373,8 +371,6 @@ unsafe fn delegate_to_host_libc_start_main(
 
 /// Test-only hook for overriding host `__libc_start_main` delegation.
 #[cfg(debug_assertions)]
-#[cfg_attr(not(debug_assertions), allow(dead_code))]
-#[cfg_attr(not(debug_assertions), allow(improper_ctypes_definitions))]
 pub unsafe extern "C" fn __frankenlibc_set_startup_host_delegate_for_tests(
     delegate: Option<HostStartMainFn>,
 ) {
@@ -631,9 +627,8 @@ pub unsafe extern "C" fn __libc_start_main(
 ) -> c_int {
     if startup_phase0_env_enabled() {
         // SAFETY: explicit phase-0 opt-in path.
-        let phase0_rc = unsafe {
-            startup_phase0_impl(main, argc, ubp_av, init, fini, rtld_fini, stack_end)
-        };
+        let phase0_rc =
+            unsafe { startup_phase0_impl(main, argc, ubp_av, init, fini, rtld_fini, stack_end) };
         if phase0_rc >= 0 {
             return phase0_rc;
         }
@@ -641,7 +636,9 @@ pub unsafe extern "C" fn __libc_start_main(
         let phase0 = startup_policy_snapshot_for_tests();
         if startup_failure_allows_host_fallback(phase0.failure_reason)
             && let Some(host_rc) = unsafe {
-                delegate_to_host_libc_start_main(main, argc, ubp_av, init, fini, rtld_fini, stack_end)
+                delegate_to_host_libc_start_main(
+                    main, argc, ubp_av, init, fini, rtld_fini, stack_end,
+                )
             }
         {
             store_policy_snapshot(

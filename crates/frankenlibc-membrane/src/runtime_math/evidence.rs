@@ -451,30 +451,30 @@ impl DecisionCardFilter {
 
     #[must_use]
     pub fn matches(&self, card: &DecisionCardV1) -> bool {
-        if let Some(t) = self.decision_type {
-            if card.decision_type != t {
-                return false;
-            }
+        if let Some(t) = self.decision_type
+            && card.decision_type != t
+        {
+            return false;
         }
-        if let Some(min_ts) = self.min_timestamp_mono_ns {
-            if card.timestamp_mono_ns < min_ts {
-                return false;
-            }
+        if let Some(min_ts) = self.min_timestamp_mono_ns
+            && card.timestamp_mono_ns < min_ts
+        {
+            return false;
         }
-        if let Some(max_ts) = self.max_timestamp_mono_ns {
-            if card.timestamp_mono_ns > max_ts {
-                return false;
-            }
+        if let Some(max_ts) = self.max_timestamp_mono_ns
+            && card.timestamp_mono_ns > max_ts
+        {
+            return false;
         }
-        if let Some(thread_id) = self.thread_id {
-            if card.thread_id != thread_id {
-                return false;
-            }
+        if let Some(thread_id) = self.thread_id
+            && card.thread_id != thread_id
+        {
+            return false;
         }
-        if let Some(symbol_id) = self.symbol_id {
-            if card.symbol_id != symbol_id {
-                return false;
-            }
+        if let Some(symbol_id) = self.symbol_id
+            && card.symbol_id != symbol_id
+        {
+            return false;
         }
         true
     }

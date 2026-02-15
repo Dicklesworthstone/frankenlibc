@@ -9,14 +9,13 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 
 use frankenlibc_abi::errno_abi::__errno_location;
+#[cfg(debug_assertions)]
+use frankenlibc_abi::startup_abi::__frankenlibc_set_startup_host_delegate_for_tests;
 use frankenlibc_abi::startup_abi::{
     __frankenlibc_startup_phase0, __frankenlibc_startup_snapshot, __libc_start_main,
     StartupFailureReason, StartupInvariantSnapshot, StartupInvariantStatus, StartupPolicyDecision,
-    StartupPolicySnapshot,
-    startup_policy_snapshot_for_tests,
+    StartupPolicySnapshot, startup_policy_snapshot_for_tests,
 };
-#[cfg(debug_assertions)]
-use frankenlibc_abi::startup_abi::__frankenlibc_set_startup_host_delegate_for_tests;
 use frankenlibc_abi::startup_helpers::{
     AT_NULL, AT_SECURE, MAX_STARTUP_SCAN, SecureModeState, StartupCheckpoint,
 };
@@ -153,12 +152,7 @@ fn append_startup_trace(scenario: &str, rc: c_int, errno: c_int, policy: Startup
     let outcome = if rc >= 0 { "pass" } else { "fail" };
     let line = format!(
         "{{\"timestamp\":\"2026-02-15T00:00:00Z\",\"trace_id\":\"bd-11nb::startup::{seq:03}\",\"level\":\"info\",\"event\":\"startup_decision\",\"bead_id\":\"bd-11nb\",\"mode\":\"strict\",\"api_family\":\"process\",\"symbol\":\"__libc_start_main\",\"decision\":\"{:?}\",\"decision_path\":\"{:?}\",\"outcome\":\"{}\",\"errno\":{},\"latency_ns\":{},\"artifact_refs\":[\"crates/frankenlibc-abi/tests/startup_abi_contract_test.rs\"],\"scenario\":\"{}\"}}\n",
-        policy.decision,
-        policy.last_phase,
-        outcome,
-        errno,
-        policy.latency_ns,
-        scenario,
+        policy.decision, policy.last_phase, outcome, errno, policy.latency_ns, scenario,
     );
     let mut file = OpenOptions::new()
         .create(true)
@@ -568,7 +562,12 @@ fn libc_start_main_phase0_disabled_delegates_to_host() {
     assert_eq!(policy.decision, StartupPolicyDecision::FallbackHost);
     assert_eq!(policy.failure_reason, StartupFailureReason::None);
     assert_eq!(policy.last_phase, StartupCheckpoint::FallbackHost);
-    append_startup_trace("phase0-disabled-host-delegate", rc, unsafe { abi_errno() }, policy);
+    append_startup_trace(
+        "phase0-disabled-host-delegate",
+        rc,
+        unsafe { abi_errno() },
+        policy,
+    );
 }
 
 #[test]
@@ -607,7 +606,10 @@ fn libc_start_main_phase0_unsafe_path_falls_back_to_host() {
     assert_eq!(HOST_DELEGATE_CALLS.load(Ordering::Relaxed), 1);
     let policy = startup_policy_snapshot_for_tests();
     assert_eq!(policy.decision, StartupPolicyDecision::FallbackHost);
-    assert_eq!(policy.failure_reason, StartupFailureReason::UnterminatedEnvp);
+    assert_eq!(
+        policy.failure_reason,
+        StartupFailureReason::UnterminatedEnvp
+    );
     assert_eq!(policy.last_phase, StartupCheckpoint::FallbackHost);
     append_startup_trace(
         "phase0-unsafe-envp-fallback-host",
