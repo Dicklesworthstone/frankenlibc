@@ -28,10 +28,11 @@ fn parse_event_line(stdout: &str) -> serde_json::Value {
         if !trimmed.starts_with('{') {
             continue;
         }
-        if let Ok(value) = serde_json::from_str::<serde_json::Value>(trimmed) {
-            if value.get("trace_id").is_some() && value.get("artifact_refs").is_some() {
-                return value;
-            }
+        if let Ok(value) = serde_json::from_str::<serde_json::Value>(trimmed)
+            && value.get("trace_id").is_some()
+            && value.get("artifact_refs").is_some()
+        {
+            return value;
         }
     }
     panic!("structured event line not found in stdout:\n{stdout}");

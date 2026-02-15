@@ -86,7 +86,13 @@ fn fixture_gap_fill_gate_emits_valid_bd15n2_artifacts() {
                 Some("fixture_socket") => socket_seen = true,
                 _ => {}
             }
-            assert!(row["spec_ref"].as_str().map(str::trim).unwrap_or("") != "");
+            assert!(
+                !row["spec_ref"]
+                    .as_str()
+                    .map(str::trim)
+                    .unwrap_or("")
+                    .is_empty()
+            );
             assert!(row["artifact_refs"].is_array());
             assert!(row["details"]["expected_vs_actual"].is_object());
         }

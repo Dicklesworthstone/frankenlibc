@@ -67,8 +67,9 @@ fn extract_libc_call(fragment: &str) -> Option<&str> {
 }
 
 /// Scan an ABI source file for call-throughs:
-/// - libc::<function>(...)
-/// - host_pthread_<wrapper>(...)
+///   - libc::<function>(...)
+///   - host_pthread_<wrapper>(...)
+///
 /// excluding raw syscall and `_sym` wrapper internals.
 fn scan_call_throughs(content: &str) -> Vec<(usize, String)> {
     let mut results = Vec::new();

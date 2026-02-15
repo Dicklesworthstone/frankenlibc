@@ -294,7 +294,7 @@ fn bench_condvar_wait_signal_roundtrip(_c: &mut Criterion) {
         });
 
         let cv_ptr = Arc::as_ptr(&cv) as *mut CondvarData;
-        let mutex_ptr = Arc::as_ptr(&mutex_word) as *const AtomicU32 as *const u32;
+        let mutex_ptr = Arc::as_ptr(&mutex_word) as *const u32;
 
         let start = Instant::now();
         for _ in 0..iters_per_round {
@@ -338,7 +338,7 @@ fn bench_condvar_broadcast_4_waiters(_c: &mut Criterion) {
             let mw_c = mutex_word.clone();
             handles.push(std::thread::spawn(move || {
                 let cv_ptr = Arc::as_ptr(&cv_c) as *mut CondvarData;
-                let mutex_ptr = Arc::as_ptr(&mw_c) as *const AtomicU32 as *const u32;
+                let mutex_ptr = Arc::as_ptr(&mw_c) as *const u32;
                 // Acquire mutex via CAS spin.
                 loop {
                     if mw_c
