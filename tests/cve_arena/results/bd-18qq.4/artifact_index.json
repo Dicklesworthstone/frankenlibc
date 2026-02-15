@@ -1,0 +1,17 @@
+{
+  "artifacts": [
+    {
+      "kind": "trace",
+      "path": "tests/cve_arena/results/bd-18qq.4/trace.jsonl",
+      "sha256": "6e637de2ee2ae8a6cc9670b1fb12956d23798fa58ffeeaa5b51c6dbb70a875cc"
+    },
+    {
+      "kind": "report",
+      "path": "tests/cve_arena/results/bd-18qq.4/uaf_adversarial_detection.v1.json",
+      "sha256": "393c8a66706d08f359d214fc563e51cc4f895b74a2b4451330b333e52d69f5d3"
+    }
+  ],
+  "bead_id": "bd-18qq.4",
+  "generated_utc": "2026-02-15T00:00:00Z",
+  "index_version": 1
+}

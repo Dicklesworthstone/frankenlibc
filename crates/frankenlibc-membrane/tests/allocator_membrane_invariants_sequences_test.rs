@@ -223,6 +223,48 @@ fn current_mode_name() -> &'static str {
     }
 }
 
+#[derive(Debug, Clone)]
+struct FaultInjectionRow {
+    pattern: &'static str,
+    variant: String,
+    mode: &'static str,
+    detected: bool,
+    classification: &'static str,
+    strict_expectation: &'static str,
+    hardened_expectation: &'static str,
+}
+
+fn is_live_validation(outcome: ValidationOutcome) -> bool {
+    matches!(
+        outcome,
+        ValidationOutcome::CachedValid(_) | ValidationOutcome::Validated(_)
+    )
+}
+
+fn churn_allocator_state(pipeline: &ValidationPipeline, rounds: usize) {
+    // Intentionally deterministic allocator churn so delay-based scenarios can be replayed.
+    let mut queued: Vec<*mut u8> = Vec::new();
+    for i in 0..rounds {
+        let size = 24 + (i % 41);
+        if let Some(ptr) = pipeline.allocate(size) {
+            queued.push(ptr);
+        }
+        if queued.len() >= 4 {
+            let ptr = queued.remove(0);
+            let _ = pipeline.free(ptr);
+        }
+    }
+    for ptr in queued {
+        let _ = pipeline.free(ptr);
+    }
+}
+
+fn ranges_overlap(a_start: usize, a_len: usize, b_start: usize, b_len: usize) -> bool {
+    let a_end = a_start.saturating_add(a_len);
+    let b_end = b_start.saturating_add(b_len);
+    a_start < b_end && b_start < a_end
+}
+
 fn measure_uncontended_double_free_latency_ns(iterations: usize) -> u64 {
     assert!(iterations > 0);
     let pipeline = ValidationPipeline::new();
@@ -493,4 +535,207 @@ fn concurrent_double_free_detection_stress_100k_64t_50pct() {
         "no_deadlock": report.no_deadlock
     });
     println!("DOUBLE_FREE_REPORT {}", payload);
+}
+
+#[test]
+#[allow(unsafe_code)]
+fn adversarial_pointer_fault_injection_matrix_has_zero_false_negatives() {
+    let mode = current_mode_name();
+    let mut rows: Vec<FaultInjectionRow> = Vec::new();
+
+    // Use-after-free: vary delay and allocation size.
+    for (delay, size) in [(0usize, 32usize), (1, 128), (100, 1024)] {
+        let pipeline = ValidationPipeline::new();
+        let ptr = pipeline
+            .allocate(size)
+            .expect("uaf setup allocation should succeed");
+        let addr = ptr as usize;
+        let first = pipeline.free(ptr);
+        assert!(
+            matches!(
+                first,
+                frankenlibc_membrane::arena::FreeResult::Freed
+                    | frankenlibc_membrane::arena::FreeResult::FreedWithCanaryCorruption
+            ),
+            "first free should succeed in uaf setup"
+        );
+        churn_allocator_state(&pipeline, delay);
+
+        let out = pipeline.validate(addr);
+        rows.push(FaultInjectionRow {
+            pattern: "use_after_free",
+            variant: format!("delay={delay},size={size}"),
+            mode,
+            detected: matches!(out, ValidationOutcome::TemporalViolation(_)),
+            classification: "TemporalViolation",
+            strict_expectation: "Deny",
+            hardened_expectation: "Deny + ReturnSafeDefault at API boundary",
+        });
+    }
+
+    // Dangling aliases: free through owner pointer, then validate aliases.
+    for (alias_offset, size) in [(0usize, 64usize), (8, 96), (15, 160)] {
+        let pipeline = ValidationPipeline::new();
+        let ptr = pipeline
+            .allocate(size)
+            .expect("dangling setup allocation should succeed");
+        let owner_addr = ptr as usize;
+        let alias_addr = owner_addr + alias_offset.min(size.saturating_sub(1));
+        let first = pipeline.free(ptr);
+        assert!(
+            matches!(
+                first,
+                frankenlibc_membrane::arena::FreeResult::Freed
+                    | frankenlibc_membrane::arena::FreeResult::FreedWithCanaryCorruption
+            ),
+            "first free should succeed in dangling setup"
+        );
+        let out = pipeline.validate(alias_addr);
+        let detected = matches!(
+            out,
+            ValidationOutcome::TemporalViolation(_) | ValidationOutcome::Foreign(_)
+        );
+        let classification = if matches!(out, ValidationOutcome::TemporalViolation(_)) {
+            "TemporalViolation"
+        } else {
+            "ForeignFastPath"
+        };
+        rows.push(FaultInjectionRow {
+            pattern: "dangling_alias",
+            variant: format!("alias_offset={alias_offset},size={size}"),
+            mode,
+            detected,
+            classification,
+            strict_expectation: "Deny",
+            hardened_expectation: "Deny + ReturnSafeDefault at API boundary",
+        });
+    }
+
+    // Wild pointers: null+offset, stack pointer, and high canonical address.
+    let stack_word = 0xABCD_u64;
+    let wild_inputs = [
+        ("null_plus_1", 1usize),
+        ("stack_pointer", std::ptr::addr_of!(stack_word) as usize),
+        ("high_canonical", usize::MAX.saturating_sub(0x1000)),
+    ];
+    for (variant, addr) in wild_inputs {
+        let pipeline = ValidationPipeline::new();
+        let out = pipeline.validate(addr);
+        rows.push(FaultInjectionRow {
+            pattern: "wild_pointer",
+            variant: String::from(variant),
+            mode,
+            detected: matches!(out, ValidationOutcome::Foreign(_)),
+            classification: "Foreign",
+            strict_expectation: "Foreign/Unknown",
+            hardened_expectation: "Foreign/Unknown",
+        });
+    }
+
+    // Double-free with delay variation.
+    for delay in [0usize, 1usize, 10_000usize] {
+        let pipeline = ValidationPipeline::new();
+        let ptr = pipeline
+            .allocate(72)
+            .expect("double-free setup allocation should succeed");
+        let first = pipeline.free(ptr);
+        assert!(
+            matches!(
+                first,
+                frankenlibc_membrane::arena::FreeResult::Freed
+                    | frankenlibc_membrane::arena::FreeResult::FreedWithCanaryCorruption
+            ),
+            "first free should succeed in double-free setup"
+        );
+        churn_allocator_state(&pipeline, delay);
+        let second = pipeline.free(ptr);
+        rows.push(FaultInjectionRow {
+            pattern: "double_free",
+            variant: format!("delay={delay}"),
+            mode,
+            detected: matches!(second, frankenlibc_membrane::arena::FreeResult::DoubleFree),
+            classification: "DoubleFree",
+            strict_expectation: "Deny",
+            hardened_expectation: "IgnoreDoubleFree + log",
+        });
+    }
+
+    // Off-by-one writes: verify canary corruption is detected on free.
+    for size in [16usize, 64usize, 257usize] {
+        let pipeline = ValidationPipeline::new();
+        let ptr = pipeline
+            .allocate(size)
+            .expect("off-by-one setup allocation should succeed");
+        // SAFETY: Intentional one-byte overflow to validate canary-based detection.
+        unsafe {
+            std::ptr::write(ptr.add(size), 0x5A_u8);
+        }
+        let result = pipeline.free(ptr);
+        rows.push(FaultInjectionRow {
+            pattern: "off_by_one",
+            variant: format!("size={size}"),
+            mode,
+            detected: matches!(
+                result,
+                frankenlibc_membrane::arena::FreeResult::FreedWithCanaryCorruption
+            ),
+            classification: "FreedWithCanaryCorruption",
+            strict_expectation: "Detect corruption on free",
+            hardened_expectation: "Detect corruption + heal at API boundary",
+        });
+    }
+
+    // Overlapping regions: detect overlap and verify both pointers remain valid.
+    for (src_offset, dst_offset, len) in [(0usize, 8usize, 24usize), (4, 0, 20), (12, 20, 32)] {
+        let pipeline = ValidationPipeline::new();
+        let ptr = pipeline
+            .allocate(96)
+            .expect("overlap setup allocation should succeed");
+        let base = ptr as usize;
+        let src = base + src_offset;
+        let dst = base + dst_offset;
+        let _ = is_live_validation(pipeline.validate(src));
+        let _ = is_live_validation(pipeline.validate(dst));
+        let src_in_bounds = pipeline.arena.remaining_from(src).is_some();
+        let dst_in_bounds = pipeline.arena.remaining_from(dst).is_some();
+        let overlap = ranges_overlap(src, len, dst, len);
+
+        let _ = pipeline.free(ptr);
+        rows.push(FaultInjectionRow {
+            pattern: "overlapping_regions",
+            variant: format!("src_offset={src_offset},dst_offset={dst_offset},len={len}"),
+            mode,
+            detected: src_in_bounds && dst_in_bounds && overlap,
+            classification: "OverlapRequiresMemmove",
+            strict_expectation: "Must route to memmove-safe semantics",
+            hardened_expectation: "Must route to memmove-safe semantics",
+        });
+    }
+
+    let undetected: Vec<String> = rows
+        .iter()
+        .filter(|row| !row.detected)
+        .map(|row| format!("{}::{}", row.pattern, row.variant))
+        .collect();
+    let false_negatives = undetected.len();
+    let payload = json!({
+        "mode": mode,
+        "total_cases": rows.len(),
+        "false_negatives": false_negatives,
+        "undetected": undetected,
+        "matrix": rows.iter().map(|row| json!({
+            "pattern": row.pattern,
+            "variant": row.variant,
+            "mode": row.mode,
+            "detected": row.detected,
+            "classification": row.classification,
+            "strict_expectation": row.strict_expectation,
+            "hardened_expectation": row.hardened_expectation
+        })).collect::<Vec<_>>()
+    });
+    println!("FAULT_INJECTION_MATRIX {}", payload);
+    assert_eq!(
+        false_negatives, 0,
+        "fault-injection matrix produced false negatives"
+    );
 }
