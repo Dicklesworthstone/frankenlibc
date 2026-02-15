@@ -131,15 +131,15 @@ fn futex_mutex_contention_increments_wait_and_wake_counters() {
     let after = pthread_mutex_branch_counters_for_tests();
 
     assert!(
-        after.0 >= before.0 + 1,
+        after.0 > before.0,
         "spin did not increase: before={before:?} after={after:?}"
     );
     assert!(
-        after.1 >= before.1 + 1,
+        after.1 > before.1,
         "wait did not increase: before={before:?} after={after:?}"
     );
     assert!(
-        after.2 >= before.2 + 1,
+        after.2 > before.2,
         "wake did not increase: before={before:?} after={after:?}"
     );
 

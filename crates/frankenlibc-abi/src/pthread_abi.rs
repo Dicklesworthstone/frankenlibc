@@ -20,7 +20,7 @@ use frankenlibc_core::pthread::{
     self_tid as core_self_tid,
 };
 use frankenlibc_membrane::check_oracle::CheckStage;
-use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
+use frankenlibc_membrane::runtime_math::ApiFamily;
 
 use crate::malloc_abi::known_remaining;
 use crate::runtime_policy;
@@ -188,6 +188,7 @@ unsafe fn host_pthread_mutex_unlock_fn() -> Option<HostPthreadMutexUnlockFn> {
     }
 }
 
+#[allow(dead_code)]
 struct ThreadingPolicyGuard;
 
 impl Drop for ThreadingPolicyGuard {
@@ -199,6 +200,7 @@ impl Drop for ThreadingPolicyGuard {
     }
 }
 
+#[allow(dead_code)]
 fn enter_threading_policy_guard() -> Option<ThreadingPolicyGuard> {
     THREADING_POLICY_DEPTH
         .try_with(|depth| {
@@ -213,6 +215,7 @@ fn enter_threading_policy_guard() -> Option<ThreadingPolicyGuard> {
         .unwrap_or(None)
 }
 
+#[allow(dead_code)]
 fn with_threading_policy_guard<T, Fallback, Work>(fallback: Fallback, work: Work) -> T
 where
     Fallback: FnOnce() -> T,
@@ -729,11 +732,13 @@ pub fn pthread_mutex_branch_counters_for_tests() -> (u64, u64, u64) {
 }
 
 #[inline]
+#[allow(dead_code)]
 fn stage_index(ordering: &[CheckStage; 7], stage: CheckStage) -> usize {
     ordering.iter().position(|s| *s == stage).unwrap_or(0)
 }
 
 #[inline]
+#[allow(dead_code)]
 fn threading_stage_context(addr1: usize, addr2: usize) -> (bool, bool, [CheckStage; 7]) {
     let aligned = ((addr1 | addr2) & 0x7) == 0;
     let recent_page = (addr1 != 0 && known_remaining(addr1).is_some())
@@ -743,6 +748,7 @@ fn threading_stage_context(addr1: usize, addr2: usize) -> (bool, bool, [CheckSta
 }
 
 #[inline]
+#[allow(dead_code)]
 fn record_threading_stage_outcome(
     ordering: &[CheckStage; 7],
     aligned: bool,

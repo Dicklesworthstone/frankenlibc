@@ -146,7 +146,7 @@ pub unsafe extern "C" fn localeconv() -> *const LConv {
 /// - `CODESET` -> `"ANSI_X3.4-1968"`
 /// - `RADIXCHAR` -> `"."`
 /// - `THOUSEP` -> `""`
-/// Unsupported items return `""`.
+///   Unsupported items return `""`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn nl_langinfo(item: libc::nl_item) -> *const c_char {
     let (_, decision) = runtime_policy::decide(ApiFamily::Locale, item as usize, 0, false, true, 0);

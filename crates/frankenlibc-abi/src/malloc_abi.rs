@@ -189,6 +189,7 @@ pub(crate) fn known_remaining(addr: usize) -> Option<usize> {
 ///
 /// Caller must eventually `free` the returned pointer exactly once.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[allow(unreachable_code)]
 pub unsafe extern "C" fn malloc(size: usize) -> *mut c_void {
     // SAFETY: delegated host allocator path for preload stability.
     return unsafe { native_libc_malloc(size.max(1)) };
@@ -262,6 +263,7 @@ pub unsafe extern "C" fn malloc(size: usize) -> *mut c_void {
 /// `ptr` must have been returned by a previous call to `malloc`, `calloc`, or
 /// `realloc`, and must not have been freed already.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[allow(unreachable_code)]
 pub unsafe extern "C" fn free(ptr: *mut c_void) {
     // SAFETY: delegated host allocator path for preload stability.
     unsafe { native_libc_free(ptr) };
@@ -366,6 +368,7 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
 ///
 /// Caller must eventually `free` the returned pointer exactly once.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[allow(unreachable_code)]
 pub unsafe extern "C" fn calloc(nmemb: usize, size: usize) -> *mut c_void {
     // SAFETY: delegated host allocator path for preload stability.
     return unsafe { native_libc_calloc(nmemb, size) };
@@ -456,6 +459,7 @@ pub unsafe extern "C" fn calloc(nmemb: usize, size: usize) -> *mut c_void {
 ///
 /// `ptr` must be null or a pointer previously returned by `malloc`/`calloc`/`realloc`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[allow(unreachable_code)]
 pub unsafe extern "C" fn realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
     // SAFETY: delegated host allocator path for preload stability.
     return unsafe { native_libc_realloc(ptr, size) };

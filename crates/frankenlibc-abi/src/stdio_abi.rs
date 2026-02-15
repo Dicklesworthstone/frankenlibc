@@ -168,14 +168,17 @@ unsafe fn refill_stream(stream: &mut StdioStream) -> isize {
 
 /// Global `stdin` pointer.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[allow(non_upper_case_globals)]
 pub static stdin: usize = STDIN_SENTINEL;
 
 /// Global `stdout` pointer.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[allow(non_upper_case_globals)]
 pub static stdout: usize = STDOUT_SENTINEL;
 
 /// Global `stderr` pointer.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[allow(non_upper_case_globals)]
 pub static stderr: usize = STDERR_SENTINEL;
 
 // ---------------------------------------------------------------------------
@@ -883,11 +886,10 @@ pub unsafe extern "C" fn puts(s: *const c_char) -> c_int {
     }
 
     let repair = repair_enabled(mode.heals_enabled(), decision.action);
-    let bound = None;
-    let (len, terminated) = unsafe { scan_c_str_len(s, bound) };
+    let (len, terminated) = unsafe { scan_c_str_len(s, None) };
     if !terminated && repair {
         global_healing_policy().record(&HealingAction::TruncateWithNull {
-            requested: bound.unwrap_or(len).saturating_add(1),
+            requested: len.saturating_add(1),
             truncated: len,
         });
     }

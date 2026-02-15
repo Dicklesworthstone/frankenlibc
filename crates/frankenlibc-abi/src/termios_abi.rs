@@ -113,7 +113,7 @@ pub unsafe extern "C" fn cfgetispeed(termios_p: *const libc::termios) -> u32 {
     if termios_p.is_null() {
         return 0;
     }
-    unsafe { ((*termios_p).c_cflag as u32) & termios_core::CBAUD }
+    unsafe { (*termios_p).c_cflag & termios_core::CBAUD }
 }
 
 // ---------------------------------------------------------------------------
@@ -125,7 +125,7 @@ pub unsafe extern "C" fn cfgetospeed(termios_p: *const libc::termios) -> u32 {
     if termios_p.is_null() {
         return 0;
     }
-    unsafe { ((*termios_p).c_cflag as u32) & termios_core::CBAUD }
+    unsafe { (*termios_p).c_cflag & termios_core::CBAUD }
 }
 
 // ---------------------------------------------------------------------------
@@ -143,7 +143,7 @@ pub unsafe extern "C" fn cfsetispeed(termios_p: *mut libc::termios, speed: u32) 
     }
     unsafe {
         let next =
-            (((*termios_p).c_cflag as u32) & !termios_core::CBAUD) | (speed & termios_core::CBAUD);
+            ((*termios_p).c_cflag & !termios_core::CBAUD) | (speed & termios_core::CBAUD);
         (*termios_p).c_cflag = next as libc::tcflag_t;
     }
     0
@@ -164,7 +164,7 @@ pub unsafe extern "C" fn cfsetospeed(termios_p: *mut libc::termios, speed: u32) 
     }
     unsafe {
         let next =
-            (((*termios_p).c_cflag as u32) & !termios_core::CBAUD) | (speed & termios_core::CBAUD);
+            ((*termios_p).c_cflag & !termios_core::CBAUD) | (speed & termios_core::CBAUD);
         (*termios_p).c_cflag = next as libc::tcflag_t;
     }
     0

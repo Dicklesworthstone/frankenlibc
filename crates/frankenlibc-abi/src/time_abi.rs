@@ -73,9 +73,8 @@ pub unsafe extern "C" fn clock() -> i64 {
     if rc != 0 {
         return -1;
     }
-    let ticks = ts.tv_sec as i64 * time_core::CLOCKS_PER_SEC
-        + ts.tv_nsec as i64 / (1_000_000_000 / time_core::CLOCKS_PER_SEC);
-    ticks
+    ts.tv_sec as i64 * time_core::CLOCKS_PER_SEC
+        + ts.tv_nsec as i64 / (1_000_000_000 / time_core::CLOCKS_PER_SEC)
 }
 
 // ---------------------------------------------------------------------------
