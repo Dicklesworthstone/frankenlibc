@@ -5,9 +5,16 @@ use std::sync::Mutex;
 
 use frankenlibc_abi::pthread_abi::{
     pthread_create, pthread_detach, pthread_equal, pthread_join, pthread_self,
+    pthread_threading_force_native_for_tests,
 };
 
 static TEST_GUARD: Mutex<()> = Mutex::new(());
+
+fn lock_and_force_native() -> std::sync::MutexGuard<'static, ()> {
+    let guard = TEST_GUARD.lock().unwrap();
+    pthread_threading_force_native_for_tests();
+    guard
+}
 
 unsafe extern "C" fn start_return_arg(arg: *mut c_void) -> *mut c_void {
     arg
@@ -20,7 +27,7 @@ unsafe extern "C" fn start_return_pthread_self(_arg: *mut c_void) -> *mut c_void
 
 #[test]
 fn pthread_self_is_nonzero_and_stable_within_thread() {
-    let _guard = TEST_GUARD.lock().unwrap();
+    let _guard = lock_and_force_native();
     let a = unsafe { pthread_self() };
     let b = unsafe { pthread_self() };
     assert_ne!(a, 0, "pthread_self must be nonzero");
@@ -29,7 +36,7 @@ fn pthread_self_is_nonzero_and_stable_within_thread() {
 
 #[test]
 fn pthread_equal_reflexive_and_distinct_threads_not_equal() {
-    let _guard = TEST_GUARD.lock().unwrap();
+    let _guard = lock_and_force_native();
 
     let main_id = unsafe { pthread_self() };
     assert_eq!(unsafe { pthread_equal(main_id, main_id) }, 1);
@@ -57,7 +64,7 @@ fn pthread_equal_reflexive_and_distinct_threads_not_equal() {
 
 #[test]
 fn pthread_create_argument_validation() {
-    let _guard = TEST_GUARD.lock().unwrap();
+    let _guard = lock_and_force_native();
 
     // Null thread_out -> EINVAL
     let rc = unsafe {
@@ -85,7 +92,7 @@ fn pthread_create_argument_validation() {
 
 #[test]
 fn pthread_join_and_detach_unknown_thread_are_esrch() {
-    let _guard = TEST_GUARD.lock().unwrap();
+    let _guard = lock_and_force_native();
 
     let mut retval: *mut c_void = std::ptr::null_mut();
     let rc = unsafe { pthread_join(0xFFFF_FFFF_FFFF_u64 as libc::pthread_t, &mut retval) };
@@ -97,7 +104,7 @@ fn pthread_join_and_detach_unknown_thread_are_esrch() {
 
 #[test]
 fn pthread_detach_makes_subsequent_join_fail_with_esrch() {
-    let _guard = TEST_GUARD.lock().unwrap();
+    let _guard = lock_and_force_native();
 
     let mut tid: libc::pthread_t = 0;
     let rc = unsafe {

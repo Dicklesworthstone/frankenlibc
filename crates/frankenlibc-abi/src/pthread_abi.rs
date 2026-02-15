@@ -56,6 +56,12 @@ static MUTEX_WAKE_BRANCHES: AtomicU64 = AtomicU64::new(0);
 /// that tests can exercise the futex state machine without glibc intercepting.
 static FORCE_NATIVE_MUTEX: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
+
+/// When true, thread lifecycle operations (create/join/detach/self/equal) skip
+/// host delegation and use the native implementation. Set by
+/// [`pthread_threading_force_native_for_tests`].
+static FORCE_NATIVE_THREADING: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
 const MANAGED_MUTEX_MAGIC: u32 = 0x474d_5854; // "GMXT"
 const MANAGED_RWLOCK_MAGIC: u32 = 0x4752_5758; // "GRWX"
 static THREAD_HANDLE_REGISTRY: LazyLock<Mutex<HashMap<usize, usize>>> =
@@ -362,10 +368,12 @@ fn condvar_data_ptr(cond: *mut libc::pthread_cond_t) -> Option<*mut CondvarData>
 
 #[inline]
 fn native_pthread_self() -> libc::pthread_t {
-    // SAFETY: host symbol lookup/transmute guarantees ABI if present.
-    if let Some(host_self) = unsafe { host_pthread_self_fn() } {
-        // SAFETY: direct call through resolved host symbol.
-        return unsafe { host_self() };
+    if !FORCE_NATIVE_THREADING.load(Ordering::Acquire) {
+        // SAFETY: host symbol lookup/transmute guarantees ABI if present.
+        if let Some(host_self) = unsafe { host_pthread_self_fn() } {
+            // SAFETY: direct call through resolved host symbol.
+            return unsafe { host_self() };
+        }
     }
     let tid = core_self_tid();
     if tid > 0 {
@@ -387,10 +395,12 @@ fn native_pthread_self() -> libc::pthread_t {
 
 #[inline]
 fn native_pthread_equal(a: libc::pthread_t, b: libc::pthread_t) -> c_int {
-    // SAFETY: host symbol lookup/transmute guarantees ABI if present.
-    if let Some(host_equal) = unsafe { host_pthread_equal_fn() } {
-        // SAFETY: direct call through resolved host symbol.
-        return unsafe { host_equal(a, b) };
+    if !FORCE_NATIVE_THREADING.load(Ordering::Acquire) {
+        // SAFETY: host symbol lookup/transmute guarantees ABI if present.
+        if let Some(host_equal) = unsafe { host_pthread_equal_fn() } {
+            // SAFETY: direct call through resolved host symbol.
+            return unsafe { host_equal(a, b) };
+        }
     }
     if a == b { 1 } else { 0 }
 }
@@ -402,10 +412,12 @@ unsafe fn native_pthread_create(
     start_routine: StartRoutine,
     arg: *mut c_void,
 ) -> c_int {
-    // SAFETY: host symbol lookup/transmute guarantees ABI if present.
-    if let Some(host_create) = unsafe { host_pthread_create_fn() } {
-        // SAFETY: direct call through resolved host symbol.
-        return unsafe { host_create(thread_out, attr, Some(start_routine), arg) };
+    if !FORCE_NATIVE_THREADING.load(Ordering::Acquire) {
+        // SAFETY: host symbol lookup/transmute guarantees ABI if present.
+        if let Some(host_create) = unsafe { host_pthread_create_fn() } {
+            // SAFETY: direct call through resolved host symbol.
+            return unsafe { host_create(thread_out, attr, Some(start_routine), arg) };
+        }
     }
     if thread_out.is_null() {
         return libc::EINVAL;
@@ -438,10 +450,12 @@ unsafe fn native_pthread_create(
 
 #[allow(unsafe_code)]
 unsafe fn native_pthread_join(thread: libc::pthread_t, retval: *mut *mut c_void) -> c_int {
-    // SAFETY: host symbol lookup/transmute guarantees ABI if present.
-    if let Some(host_join) = unsafe { host_pthread_join_fn() } {
-        // SAFETY: direct call through resolved host symbol.
-        return unsafe { host_join(thread, retval) };
+    if !FORCE_NATIVE_THREADING.load(Ordering::Acquire) {
+        // SAFETY: host symbol lookup/transmute guarantees ABI if present.
+        if let Some(host_join) = unsafe { host_pthread_join_fn() } {
+            // SAFETY: direct call through resolved host symbol.
+            return unsafe { host_join(thread, retval) };
+        }
     }
     let thread_key = thread as usize;
 
@@ -475,10 +489,12 @@ unsafe fn native_pthread_join(thread: libc::pthread_t, retval: *mut *mut c_void)
 
 #[allow(unsafe_code)]
 unsafe fn native_pthread_detach(thread: libc::pthread_t) -> c_int {
-    // SAFETY: host symbol lookup/transmute guarantees ABI if present.
-    if let Some(host_detach) = unsafe { host_pthread_detach_fn() } {
-        // SAFETY: direct call through resolved host symbol.
-        return unsafe { host_detach(thread) };
+    if !FORCE_NATIVE_THREADING.load(Ordering::Acquire) {
+        // SAFETY: host symbol lookup/transmute guarantees ABI if present.
+        if let Some(host_detach) = unsafe { host_pthread_detach_fn() } {
+            // SAFETY: direct call through resolved host symbol.
+            return unsafe { host_detach(thread) };
+        }
     }
     let thread_key = thread as usize;
     let handle_ptr = {
@@ -736,6 +752,13 @@ pub fn pthread_mutex_reset_state_for_tests() {
 #[must_use]
 pub fn pthread_mutex_branch_counters_for_tests() -> (u64, u64, u64) {
     mutex_branch_counters()
+}
+
+/// Test hook: force thread lifecycle operations (create/join/detach/self/equal)
+/// to use the native implementation, bypassing host glibc delegation.
+#[doc(hidden)]
+pub fn pthread_threading_force_native_for_tests() {
+    FORCE_NATIVE_THREADING.store(true, Ordering::Release);
 }
 
 #[inline]
