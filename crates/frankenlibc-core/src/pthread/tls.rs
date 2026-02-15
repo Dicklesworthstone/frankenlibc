@@ -50,7 +50,7 @@ const EINVAL: i32 = 22;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct PthreadKey {
     /// Key index into the global registry (0..PTHREAD_KEYS_MAX-1).
-    pub(crate) id: u32,
+    pub id: u32,
 }
 
 // ---------------------------------------------------------------------------

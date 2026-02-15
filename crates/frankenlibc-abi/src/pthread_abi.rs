@@ -15,9 +15,18 @@ use frankenlibc_core::pthread::{
     CondvarData, PTHREAD_COND_CLOCK_REALTIME, ThreadHandle,
     condvar_broadcast as core_condvar_broadcast, condvar_destroy as core_condvar_destroy,
     condvar_init as core_condvar_init, condvar_signal as core_condvar_signal,
-    condvar_wait as core_condvar_wait, create_thread as core_create_thread,
-    detach_thread as core_detach_thread, join_thread as core_join_thread,
-    self_tid as core_self_tid,
+    condvar_timedwait as core_condvar_timedwait, condvar_wait as core_condvar_wait,
+    create_thread as core_create_thread, detach_thread as core_detach_thread,
+    join_thread as core_join_thread, self_tid as core_self_tid,
+};
+#[cfg(target_arch = "x86_64")]
+use frankenlibc_core::pthread::tls::{
+    pthread_getspecific as core_pthread_getspecific,
+    pthread_setspecific as core_pthread_setspecific,
+};
+use frankenlibc_core::pthread::tls::{
+    PthreadKey, pthread_key_create as core_pthread_key_create,
+    pthread_key_delete as core_pthread_key_delete,
 };
 use frankenlibc_membrane::check_oracle::CheckStage;
 use frankenlibc_membrane::runtime_math::ApiFamily;
@@ -726,6 +735,36 @@ fn futex_rwlock_unlock(word: &AtomicI32) -> c_int {
     }
 }
 
+fn futex_rwlock_tryrdlock(word: &AtomicI32) -> c_int {
+    let state = word.load(Ordering::Acquire);
+    if state < 0 || state == i32::MAX {
+        return libc::EBUSY;
+    }
+    match word.compare_exchange(state, state + 1, Ordering::Acquire, Ordering::Relaxed) {
+        Ok(_) => 0,
+        Err(_) => libc::EBUSY,
+    }
+}
+
+fn futex_rwlock_trywrlock(word: &AtomicI32) -> c_int {
+    match word.compare_exchange(0, -1, Ordering::Acquire, Ordering::Relaxed) {
+        Ok(_) => 0,
+        Err(_) => libc::EBUSY,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// pthread_once
+// ---------------------------------------------------------------------------
+//
+// once_control layout (inside libc::pthread_once_t, which is at least 4 bytes):
+//   0 = INIT (never started)
+//   1 = IN_PROGRESS (init_routine is running)
+//   2 = DONE (init_routine completed)
+const ONCE_INIT: i32 = 0;
+const ONCE_IN_PROGRESS: i32 = 1;
+const ONCE_DONE: i32 = 2;
+
 fn reset_mutex_registry_for_tests() {
     MUTEX_SPIN_BRANCHES.store(0, Ordering::Relaxed);
     MUTEX_WAIT_BRANCHES.store(0, Ordering::Relaxed);
@@ -1152,6 +1191,193 @@ pub unsafe extern "C" fn pthread_rwlock_unlock(rwlock: *mut libc::pthread_rwlock
     // SAFETY: `word_ptr` is alignment-checked and points to caller-owned rwlock storage.
     let word = unsafe { &*word_ptr };
     futex_rwlock_unlock(word)
+}
+
+/// POSIX `pthread_rwlock_tryrdlock`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_rwlock_tryrdlock(rwlock: *mut libc::pthread_rwlock_t) -> c_int {
+    if rwlock.is_null() {
+        return libc::EINVAL;
+    }
+    if !is_managed_rwlock(rwlock) {
+        return libc::EINVAL;
+    }
+    let Some(word_ptr) = rwlock_word_ptr(rwlock) else {
+        return libc::EINVAL;
+    };
+    // SAFETY: `word_ptr` is alignment-checked and points to caller-owned rwlock storage.
+    let word = unsafe { &*word_ptr };
+    futex_rwlock_tryrdlock(word)
+}
+
+/// POSIX `pthread_rwlock_trywrlock`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_rwlock_trywrlock(rwlock: *mut libc::pthread_rwlock_t) -> c_int {
+    if rwlock.is_null() {
+        return libc::EINVAL;
+    }
+    if !is_managed_rwlock(rwlock) {
+        return libc::EINVAL;
+    }
+    let Some(word_ptr) = rwlock_word_ptr(rwlock) else {
+        return libc::EINVAL;
+    };
+    // SAFETY: `word_ptr` is alignment-checked and points to caller-owned rwlock storage.
+    let word = unsafe { &*word_ptr };
+    futex_rwlock_trywrlock(word)
+}
+
+// ===========================================================================
+// Condition variable timed wait
+// ===========================================================================
+
+/// POSIX `pthread_cond_timedwait`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_cond_timedwait(
+    cond: *mut libc::pthread_cond_t,
+    mutex: *mut libc::pthread_mutex_t,
+    abstime: *const libc::timespec,
+) -> c_int {
+    if cond.is_null() || mutex.is_null() || abstime.is_null() {
+        return libc::EINVAL;
+    }
+    if !is_managed_mutex(mutex) {
+        return libc::EINVAL;
+    }
+    let Some(cond_ptr) = condvar_data_ptr(cond) else {
+        return libc::EINVAL;
+    };
+    let Some(word_ptr) = mutex_word_ptr(mutex) else {
+        return libc::EINVAL;
+    };
+    // SAFETY: abstime is non-null, condvar and mutex pointers are validated/aligned.
+    let ts = unsafe { &*abstime };
+    unsafe {
+        core_condvar_timedwait(
+            cond_ptr,
+            word_ptr.cast::<u32>() as *const u32,
+            ts.tv_sec,
+            ts.tv_nsec,
+        )
+    }
+}
+
+// ===========================================================================
+// Thread-specific data (TSD / pthread_key)
+// ===========================================================================
+
+/// POSIX `pthread_key_create`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_key_create(
+    key: *mut libc::pthread_key_t,
+    destructor: Option<unsafe extern "C" fn(*mut c_void)>,
+) -> c_int {
+    if key.is_null() {
+        return libc::EINVAL;
+    }
+    let mut internal_key = PthreadKey::default();
+    // Convert the C destructor to the core-expected signature.
+    // Core uses `fn(u64)` where value is the stored pointer-as-integer.
+    let core_dtor: Option<fn(u64)> = destructor.map(|f| {
+        // SAFETY: We transmute the extern "C" fn(*mut c_void) to fn(u64) since
+        // on all 64-bit platforms, *mut c_void and u64 have the same representation.
+        unsafe { std::mem::transmute::<unsafe extern "C" fn(*mut c_void), fn(u64)>(f) }
+    });
+    let rc = core_pthread_key_create(&mut internal_key, core_dtor);
+    if rc == 0 {
+        // SAFETY: key is non-null and we write the index.
+        unsafe { *key = internal_key.id };
+    }
+    rc
+}
+
+/// POSIX `pthread_key_delete`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_key_delete(key: libc::pthread_key_t) -> c_int {
+    let internal_key = PthreadKey { id: key };
+    core_pthread_key_delete(internal_key)
+}
+
+/// POSIX `pthread_getspecific`.
+#[cfg(target_arch = "x86_64")]
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_getspecific(key: libc::pthread_key_t) -> *mut c_void {
+    let internal_key = PthreadKey { id: key };
+    core_pthread_getspecific(internal_key) as *mut c_void
+}
+
+/// POSIX `pthread_setspecific`.
+#[cfg(target_arch = "x86_64")]
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_setspecific(
+    key: libc::pthread_key_t,
+    value: *const c_void,
+) -> c_int {
+    let internal_key = PthreadKey { id: key };
+    core_pthread_setspecific(internal_key, value as u64)
+}
+
+// ===========================================================================
+// pthread_once
+// ===========================================================================
+
+/// POSIX `pthread_once`.
+///
+/// Guarantees that `init_routine` is called exactly once, even when multiple
+/// threads call `pthread_once` concurrently with the same `once_control`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_once(
+    once_control: *mut libc::pthread_once_t,
+    init_routine: Option<unsafe extern "C" fn()>,
+) -> c_int {
+    if once_control.is_null() {
+        return libc::EINVAL;
+    }
+    let Some(routine) = init_routine else {
+        return libc::EINVAL;
+    };
+
+    // Reinterpret the first 4 bytes of pthread_once_t as an AtomicI32.
+    // SAFETY: pthread_once_t is at least 4-byte aligned on all Linux platforms.
+    let state = unsafe { &*(once_control as *const AtomicI32) };
+
+    // Fast path: already done.
+    if state.load(Ordering::Acquire) == ONCE_DONE {
+        return 0;
+    }
+
+    // Try to become the initializer.
+    match state.compare_exchange(ONCE_INIT, ONCE_IN_PROGRESS, Ordering::Acquire, Ordering::Acquire)
+    {
+        Ok(_) => {
+            // We won; run the init routine.
+            unsafe { routine() };
+            state.store(ONCE_DONE, Ordering::Release);
+            #[cfg(target_os = "linux")]
+            {
+                let _ = futex_wake_private(state, i32::MAX);
+            }
+            0
+        }
+        Err(current) if current == ONCE_DONE => 0,
+        Err(_) => {
+            // Another thread is running init_routine; wait until done.
+            loop {
+                let s = state.load(Ordering::Acquire);
+                if s == ONCE_DONE {
+                    return 0;
+                }
+                #[cfg(target_os = "linux")]
+                {
+                    let _ = futex_wait_private(state, s);
+                }
+                #[cfg(not(target_os = "linux"))]
+                {
+                    core::hint::spin_loop();
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]
