@@ -17,6 +17,7 @@ use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 use crate::runtime_policy;
 
 const PASSWD_PATH: &str = "/etc/passwd";
+const PASSWD_PATH_ENV: &str = "FRANKENLIBC_PASSWD_PATH";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct FileFingerprint {
@@ -61,7 +62,7 @@ struct PwdStorage {
 
 impl PwdStorage {
     fn new() -> Self {
-        Self::new_with_path(PASSWD_PATH)
+        Self::new_with_path(Self::configured_source_path())
     }
 
     fn new_with_path(path: impl Into<PathBuf>) -> Self {
@@ -78,6 +79,31 @@ impl PwdStorage {
             iter_idx: 0,
             cache_metrics: CacheMetrics::default(),
         }
+    }
+
+    fn configured_source_path() -> PathBuf {
+        std::env::var_os(PASSWD_PATH_ENV)
+            .filter(|v| !v.is_empty())
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(PASSWD_PATH))
+    }
+
+    fn refresh_source_path_from_env(&mut self) {
+        let configured = Self::configured_source_path();
+        if configured == self.source_path {
+            return;
+        }
+
+        self.source_path = configured;
+        if self.file_cache.is_some() || !self.entries.is_empty() {
+            self.cache_metrics.invalidations += 1;
+        }
+        self.file_cache = None;
+        self.cache_fingerprint = None;
+        self.entries.clear();
+        self.iter_idx = 0;
+        self.entries_generation = 0;
+        self.last_parse_stats = frankenlibc_core::pwd::ParseStats::default();
     }
 
     fn file_fingerprint(path: &Path) -> Option<FileFingerprint> {
@@ -100,6 +126,7 @@ impl PwdStorage {
     /// - cache hit: retain parsed entries/cursor
     /// - reload or read failure: drop parsed entries and reset cursor
     fn refresh_cache(&mut self) {
+        self.refresh_source_path_from_env();
         let current_fp = Self::file_fingerprint(&self.source_path);
 
         if let (Some(_), Some(cached_fp), Some(now_fp)) =
@@ -114,12 +141,12 @@ impl PwdStorage {
 
         match std::fs::read(&self.source_path) {
             Ok(bytes) => {
-                let next_fp = Self::file_fingerprint(&self.source_path).or(current_fp).unwrap_or(
-                    FileFingerprint {
+                let next_fp = Self::file_fingerprint(&self.source_path)
+                    .or(current_fp)
+                    .unwrap_or(FileFingerprint {
                         len: bytes.len() as u64,
                         modified_ns: 0,
-                    },
-                );
+                    });
                 let had_cache = self.file_cache.is_some();
 
                 self.file_cache = Some(bytes);
