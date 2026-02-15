@@ -66,15 +66,29 @@ def main() -> int:
         for entry in entries:
             governance_modules[entry["module"]] = tier_name
 
-    # Extract manifest modules
-    manifest_modules_raw = manifest.get("production_modules",
-        manifest.get("modules",
-        manifest.get("production_set",
-        manifest.get("controllers", []))))
-    manifest_modules = [
-        m.get("name", m) if isinstance(m, dict) else m
-        for m in manifest_modules_raw
-    ]
+    # Extract manifest module partitions.
+    def normalize_modules(raw: Any) -> list[str]:
+        if not isinstance(raw, list):
+            return []
+        normalized: list[str] = []
+        for item in raw:
+            name = item.get("name", item) if isinstance(item, dict) else item
+            if isinstance(name, str) and name:
+                normalized.append(name)
+        return normalized
+
+    production_modules_raw = manifest.get(
+        "production_modules",
+        manifest.get(
+            "modules",
+            manifest.get("production_set", manifest.get("controllers", [])),
+        ),
+    )
+    research_only_modules_raw = manifest.get("research_only_modules", [])
+
+    production_modules = sorted(set(normalize_modules(production_modules_raw)))
+    research_only_modules = sorted(set(normalize_modules(research_only_modules_raw)))
+    manifest_modules = sorted(set(production_modules) | set(research_only_modules))
 
     # Extract ablation decisions
     ablation_decisions: dict[str, dict] = {}
@@ -122,9 +136,9 @@ def main() -> int:
     production_feature = "runtime-math-production"
     research_feature = "runtime-math-research"
 
-    # Check: retired modules must only be in optional research feature set
-    # The manifest lists all modules (both production and research) in production_modules
-    # But the feature gating determines what actually compiles
+    # Check: retired modules must only be in optional research feature set.
+    # Manifest membership is the union of production and research-only sets.
+    # "ADMITTED" modules must still come from production_modules.
     for module in sorted(retired_modules):
         tier = governance_modules.get(module, "unknown")
         if tier == "research":
@@ -156,9 +170,9 @@ def main() -> int:
         })
 
     # === POLICY 4: PRODUCTION CORE COMPLETENESS ===
-    # All production_core modules in governance must exist in manifest
+    # All production_core modules in governance must exist in the production set.
     for module, tier in sorted(governance_modules.items()):
-        if tier == "production_core" and module not in manifest_modules:
+        if tier == "production_core" and module not in production_modules:
             findings.append({
                 "severity": "warning",
                 "policy": "completeness",
@@ -196,9 +210,11 @@ def main() -> int:
         tier = governance_modules.get(module, "unclassified")
         decision = ablation_decisions.get(module, {}).get("decision", "NO_EVIDENCE")
         in_manifest = module in manifest_modules
+        in_production_manifest = module in production_modules
+        in_research_only_manifest = module in research_only_modules
         in_governance = module in governance_modules
 
-        if decision == "RETAIN" and in_manifest and in_governance:
+        if decision == "RETAIN" and in_production_manifest and in_governance:
             admission_status = "ADMITTED"
         elif decision == "RETIRE":
             admission_status = "RETIRED"
@@ -217,6 +233,8 @@ def main() -> int:
             "ablation_decision": decision,
             "admission_status": admission_status,
             "in_manifest": in_manifest,
+            "in_production_manifest": in_production_manifest,
+            "in_research_only_manifest": in_research_only_manifest,
             "in_governance": in_governance,
         })
 
