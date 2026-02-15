@@ -14,6 +14,10 @@ use std::sync::atomic::{AtomicPtr, AtomicU8, AtomicU32, Ordering as AtomicOrderi
 use frankenlibc_core::syscall;
 use frankenlibc_membrane::check_oracle::CheckStage;
 use frankenlibc_membrane::config::SafetyLevel;
+use frankenlibc_membrane::decision_contract::{
+    DecisionAction as DecisionContractAction, DecisionContractMachine,
+    DecisionEvent as DecisionContractEvent, TsmState,
+};
 use frankenlibc_membrane::runtime_math::{
     ApiFamily, MembraneAction, RuntimeContext, RuntimeDecision, RuntimeMathKernel,
     ValidationProfile,
@@ -37,6 +41,7 @@ const PANIC_HOOK_LOG_LIMIT: u32 = 64;
 const TRACE_UNKNOWN_SYMBOL: &str = "unknown";
 const CONTROLLER_ID_RUNTIME_MATH: &str = "runtime_math_kernel.v1";
 const DECISION_GATE_RUNTIME_POLICY: &str = "runtime_policy.decide";
+const DECISION_CONTRACT_CLEAR_THRESHOLD: u16 = 3;
 
 // Manual init guard that avoids OnceLock's internal futex.
 // OnceLock::get_or_init uses a futex wait when it sees init-in-progress,
@@ -199,6 +204,9 @@ pub(crate) struct DecisionExplainability {
     pub family: ApiFamily,
     pub profile: ValidationProfile,
     pub action: MembraneAction,
+    pub contract_state: TsmState,
+    pub contract_event: DecisionContractEvent,
+    pub contract_action: DecisionContractAction,
     pub policy_id: u32,
     pub risk_upper_bound_ppm: u32,
     pub requested_bytes: usize,
@@ -242,6 +250,8 @@ thread_local! {
     static TRACE_CONTEXT: Cell<Option<TraceContext>> = const { Cell::new(None) };
     static LAST_EXPLAINABILITY: RefCell<Option<DecisionExplainability>> = const { RefCell::new(None) };
     static POLICY_REENTRY_DEPTH: Cell<u32> = const { Cell::new(0) };
+    static DECISION_CONTRACT_MACHINE: RefCell<DecisionContractMachine> =
+        const { RefCell::new(DecisionContractMachine::new(DECISION_CONTRACT_CLEAR_THRESHOLD)) };
 }
 
 pub(crate) struct EntrypointTraceGuard {
@@ -456,8 +466,50 @@ fn active_trace_context() -> TraceContext {
         .unwrap_or_else(fallback_trace_context)
 }
 
+fn decision_contract_event_for_runtime_decision(
+    decision: RuntimeDecision,
+) -> DecisionContractEvent {
+    match decision.action {
+        MembraneAction::Allow => {
+            if matches!(decision.profile, ValidationProfile::Full) {
+                DecisionContractEvent::SoftAnomaly
+            } else {
+                DecisionContractEvent::CheckPass
+            }
+        }
+        MembraneAction::FullValidate => DecisionContractEvent::SoftAnomaly,
+        MembraneAction::Repair(_) | MembraneAction::Deny => DecisionContractEvent::HardViolation,
+    }
+}
+
+fn apply_decision_contract(
+    mode: SafetyLevel,
+    decision: RuntimeDecision,
+) -> (TsmState, DecisionContractEvent, DecisionContractAction) {
+    let mut event = decision_contract_event_for_runtime_decision(decision);
+    DECISION_CONTRACT_MACHINE
+        .try_with(|slot| {
+            let mut machine = slot.borrow_mut();
+            let mut transition = machine.observe(event, mode);
+
+            // Hardened repairs require an explicit completion edge from Unsafe -> Safe.
+            if matches!(decision.action, MembraneAction::Repair(_)) {
+                event = DecisionContractEvent::RepairComplete;
+                transition = machine.observe(event, mode);
+            }
+
+            (transition.to, event, transition.action)
+        })
+        .unwrap_or((
+            TsmState::Safe,
+            DecisionContractEvent::CheckPass,
+            DecisionContractAction::Log,
+        ))
+}
+
 fn record_last_explainability(mode: SafetyLevel, ctx: RuntimeContext, decision: RuntimeDecision) {
     let trace = active_trace_context();
+    let (contract_state, contract_event, contract_action) = apply_decision_contract(mode, decision);
     let explainability = DecisionExplainability {
         trace_seq: trace.trace_seq,
         span_seq: next_decision_span_seq(),
@@ -469,6 +521,9 @@ fn record_last_explainability(mode: SafetyLevel, ctx: RuntimeContext, decision: 
         family: ctx.family,
         profile: decision.profile,
         action: decision.action,
+        contract_state,
+        contract_event,
+        contract_action,
         policy_id: decision.policy_id,
         risk_upper_bound_ppm: decision.risk_upper_bound_ppm,
         requested_bytes: ctx.requested_bytes,
@@ -704,6 +759,12 @@ pub(crate) fn scaled_cost(base_ns: u64, bytes: usize) -> u64 {
 mod tests {
     use super::*;
 
+    fn reset_decision_contract_machine_for_tests() {
+        let _ = DECISION_CONTRACT_MACHINE.try_with(|slot| {
+            *slot.borrow_mut() = DecisionContractMachine::new(DECISION_CONTRACT_CLEAR_THRESHOLD);
+        });
+    }
+
     #[test]
     fn runtime_mode_value_parser_is_strict_or_hardened_only() {
         assert_eq!(parse_mode_value("strict"), SafetyLevel::Strict);
@@ -738,6 +799,7 @@ mod tests {
 
     #[test]
     fn scoped_trace_context_carries_symbol_into_explainability() {
+        reset_decision_contract_machine_for_tests();
         let _scope = entrypoint_scope("malloc");
         let decision = RuntimeDecision {
             action: MembraneAction::FullValidate,
@@ -770,6 +832,7 @@ mod tests {
 
     #[test]
     fn missing_scope_uses_fallback_context() {
+        reset_decision_contract_machine_for_tests();
         let decision = RuntimeDecision {
             action: MembraneAction::Allow,
             profile: ValidationProfile::Fast,
@@ -792,6 +855,68 @@ mod tests {
         assert!(explain.trace_id().starts_with("abi::unknown::"));
         assert_eq!(explain.decision_gate, DECISION_GATE_RUNTIME_POLICY);
         assert_eq!(explain.controller_id, CONTROLLER_ID_RUNTIME_MATH);
+    }
+
+    #[test]
+    fn strict_mode_projects_contract_actions_to_log() {
+        reset_decision_contract_machine_for_tests();
+        let _scope = entrypoint_scope("memcmp");
+        let decision = RuntimeDecision {
+            action: MembraneAction::FullValidate,
+            profile: ValidationProfile::Full,
+            policy_id: 7,
+            risk_upper_bound_ppm: 42_000,
+            evidence_seqno: 11,
+        };
+        let ctx = RuntimeContext {
+            family: ApiFamily::StringMemory,
+            addr_hint: 0x2222,
+            requested_bytes: 256,
+            is_write: false,
+            contention_hint: 2,
+            bloom_negative: false,
+        };
+
+        record_last_explainability(SafetyLevel::Strict, ctx, decision);
+        let explain = take_last_explainability().expect("explainability should be recorded");
+
+        assert_eq!(explain.contract_state, TsmState::Suspicious);
+        assert_eq!(explain.contract_event, DecisionContractEvent::SoftAnomaly);
+        assert_eq!(explain.contract_action, DecisionContractAction::Log);
+    }
+
+    #[test]
+    fn hardened_repair_completes_unsafe_to_safe_contract_edge() {
+        reset_decision_contract_machine_for_tests();
+        let _scope = entrypoint_scope("free");
+        let decision = RuntimeDecision {
+            action: MembraneAction::Repair(frankenlibc_membrane::HealingAction::IgnoreDoubleFree),
+            profile: ValidationProfile::Full,
+            policy_id: 9,
+            risk_upper_bound_ppm: 700_000,
+            evidence_seqno: 13,
+        };
+        let ctx = RuntimeContext {
+            family: ApiFamily::Allocator,
+            addr_hint: 0x3333,
+            requested_bytes: 0,
+            is_write: true,
+            contention_hint: 9,
+            bloom_negative: true,
+        };
+
+        record_last_explainability(SafetyLevel::Hardened, ctx, decision);
+        let explain = take_last_explainability().expect("explainability should be recorded");
+
+        assert_eq!(explain.contract_state, TsmState::Safe);
+        assert_eq!(
+            explain.contract_event,
+            DecisionContractEvent::RepairComplete
+        );
+        assert_eq!(
+            explain.contract_action,
+            DecisionContractAction::ClearSuspicion
+        );
     }
 
     #[test]

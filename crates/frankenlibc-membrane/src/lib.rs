@@ -31,6 +31,7 @@ pub mod arena;
 pub mod bloom;
 pub mod check_oracle;
 pub mod config;
+pub mod decision_contract;
 pub mod fingerprint;
 pub mod galois;
 #[path = "runtime_math/grobner.rs"]
@@ -57,6 +58,10 @@ pub mod tls_cache;
 pub mod tropical_latency;
 
 pub use config::SafetyLevel;
+pub use decision_contract::{
+    DecisionAction as DecisionContractAction, DecisionContractMachine,
+    DecisionEvent as DecisionContractEvent, DecisionTransition, TsmState,
+};
 pub use heal::{HealingAction, HealingPolicy};
 pub use lattice::SafetyState;
 pub use metrics::MembraneMetrics;
