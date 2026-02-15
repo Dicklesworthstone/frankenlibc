@@ -518,20 +518,16 @@ impl<T> RcuDomain<T> {
 pub(crate) fn reset_rcu_state() {
     GLOBAL_EPOCH.store(1, Ordering::Release);
     REGISTERED_COUNT.store(0, Ordering::Release);
-    for idx in 0..MAX_RCU_THREADS {
-        READER_SLOTS[idx].tid.store(SLOT_EMPTY, Ordering::Release);
-        READER_SLOTS[idx]
-            .epoch
-            .store(EPOCH_OFFLINE, Ordering::Release);
+    for slot in READER_SLOTS.iter().take(MAX_RCU_THREADS) {
+        slot.tid.store(SLOT_EMPTY, Ordering::Release);
+        slot.epoch.store(EPOCH_OFFLINE, Ordering::Release);
     }
     CB_WRITE_IDX.store(0, Ordering::Release);
     CB_READ_IDX.store(0, Ordering::Release);
-    for idx in 0..CALLBACK_QUEUE_CAP {
-        CALLBACK_QUEUE[idx].func.store(0, Ordering::Release);
-        CALLBACK_QUEUE[idx].arg.store(0, Ordering::Release);
-        CALLBACK_QUEUE[idx]
-            .enqueue_epoch
-            .store(0, Ordering::Release);
+    for callback in CALLBACK_QUEUE.iter().take(CALLBACK_QUEUE_CAP) {
+        callback.func.store(0, Ordering::Release);
+        callback.arg.store(0, Ordering::Release);
+        callback.enqueue_epoch.store(0, Ordering::Release);
     }
 }
 

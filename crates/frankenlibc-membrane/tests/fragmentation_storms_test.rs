@@ -136,7 +136,7 @@ impl StormRunner {
     fn sample_metrics(&mut self) {
         self.hole_ratio_sum += self.current_hole_ratio();
         self.hole_ratio_samples += 1;
-        if self.ops_count <= 1 || self.ops_count % 1024 == 0 {
+        if self.ops_count <= 1 || self.ops_count.is_multiple_of(1024) {
             let rss = current_rss_kb();
             if rss > self.peak_rss_kb {
                 self.peak_rss_kb = rss;
@@ -266,7 +266,7 @@ impl StormRunner {
                 }
             } else {
                 let idx = phase - self.slots.len();
-                if idx % 2 == 0 {
+                if idx.is_multiple_of(2) {
                     if !self.free_at(idx) {
                         let size = 256 + ((idx * 19) % 8_192);
                         let _ = self.allocate_at(idx, size, 16);
@@ -327,7 +327,7 @@ impl StormRunner {
             let idx = self.rng.gen_range(0, self.slots.len() - 1);
             let class_idx = self.rng.gen_range(0, size_classes.len() - 1);
             let size = size_classes[class_idx];
-            if self.ops_count % 3 == 0 {
+            if self.ops_count.is_multiple_of(3) {
                 if !self.free_at(idx) {
                     let _ = self.allocate_at(idx, size, 16);
                 }
@@ -357,14 +357,14 @@ impl StormRunner {
         while self.ops_count < self.target_ops {
             let idx = self.rng.gen_range(0, self.slots.len() - 1);
             // Keep 2MB alignment in the mix, but rare, to preserve tractable runtime.
-            let align = if self.ops_count % 1000 == 0 {
+            let align = if self.ops_count.is_multiple_of(1000) {
                 2 * 1024 * 1024
             } else {
                 common_alignments[self.rng.gen_range(0, common_alignments.len() - 1)]
             };
             let size = self.rng.gen_range(1024, 4096);
 
-            let do_alloc = self.ops_count % 4 != 0;
+            let do_alloc = !self.ops_count.is_multiple_of(4);
             if do_alloc {
                 if !self.allocate_at(idx, size, align) {
                     let _ = self.free_at(idx);

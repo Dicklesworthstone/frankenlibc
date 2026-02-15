@@ -142,6 +142,7 @@ impl MallocState {
         ((self.thread_cache_hits.saturating_mul(1000)) / total) as u16
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn record_lifecycle(
         &mut self,
         level: AllocatorLogLevel,

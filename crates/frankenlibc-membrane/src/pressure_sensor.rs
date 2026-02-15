@@ -435,17 +435,11 @@ mod tests {
     fn composite_score_bounded() {
         let calm = calm_signals();
         let score = calm.composite_score();
-        assert!(
-            score >= 0.0 && score <= 100.0,
-            "score {score} out of bounds"
-        );
+        assert!((0.0..=100.0).contains(&score), "score {score} out of bounds");
 
         let heavy = heavy_signals();
         let score = heavy.composite_score();
-        assert!(
-            score >= 0.0 && score <= 100.0,
-            "score {score} out of bounds"
-        );
+        assert!((0.0..=100.0).contains(&score), "score {score} out of bounds");
     }
 
     #[test]
