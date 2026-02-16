@@ -23,6 +23,9 @@ use frankenlibc_membrane::runtime_math::control::ControlLimits;
 use frankenlibc_membrane::runtime_math::design::OptimalDesignController;
 use frankenlibc_membrane::runtime_math::pareto::ParetoController;
 use frankenlibc_membrane::runtime_math::risk::ConformalRiskEngine;
+use frankenlibc_membrane::runtime_math::sos_barrier::{
+    evaluate_fragmentation_barrier, evaluate_provenance_barrier, evaluate_quarantine_barrier,
+};
 use frankenlibc_membrane::{ApiFamily, RuntimeContext, SafetyLevel, ValidationProfile};
 
 #[derive(Default)]
@@ -386,6 +389,117 @@ fn bench_runtime_math_kernels(c: &mut Criterion) {
         );
         group.finish();
         stats.borrow().report(mode_label, "approachability_summary");
+    }
+
+    // --- sos_barrier::evaluate_provenance_barrier (hot-path certificate) ---
+    {
+        for _ in 0..10_000 {
+            black_box(evaluate_provenance_barrier(50_000, 0, 100_000, 200_000));
+        }
+
+        let stats = RefCell::new(BenchStats::default());
+        let mut group = c.benchmark_group("runtime_math_kernels");
+        group.throughput(Throughput::Elements(1));
+        group.bench_function(
+            BenchmarkId::new("sos_barrier_provenance_eval", mode_label),
+            |b| {
+                b.iter_custom(|iters| {
+                    let start = Instant::now();
+                    for _ in 0..iters {
+                        black_box(evaluate_provenance_barrier(50_000, 0, 100_000, 200_000));
+                    }
+                    let dur = start.elapsed().max(Duration::from_nanos(1));
+                    stats.borrow_mut().record(iters, dur);
+                    dur
+                });
+            },
+        );
+        group.finish();
+        stats
+            .borrow()
+            .report(mode_label, "sos_barrier_provenance_eval");
+    }
+
+    // --- sos_barrier::evaluate_quarantine_barrier (cadence certificate) ---
+    {
+        for _ in 0..10_000 {
+            black_box(evaluate_quarantine_barrier(4_096, 4, 1_000, 0));
+        }
+
+        let stats = RefCell::new(BenchStats::default());
+        let mut group = c.benchmark_group("runtime_math_kernels");
+        group.throughput(Throughput::Elements(1));
+        group.bench_function(
+            BenchmarkId::new("sos_barrier_quarantine_eval", mode_label),
+            |b| {
+                b.iter_custom(|iters| {
+                    let start = Instant::now();
+                    for _ in 0..iters {
+                        black_box(evaluate_quarantine_barrier(4_096, 4, 1_000, 0));
+                    }
+                    let dur = start.elapsed().max(Duration::from_nanos(1));
+                    stats.borrow_mut().record(iters, dur);
+                    dur
+                });
+            },
+        );
+        group.finish();
+        stats
+            .borrow()
+            .report(mode_label, "sos_barrier_quarantine_eval");
+    }
+
+    // --- sos_barrier::evaluate_fragmentation_barrier (sawtooth profile) ---
+    {
+        // Precompute a deterministic 10K-cycle sawtooth sequence to avoid
+        // per-iteration branch noise in timing samples.
+        let mut sawtooth_profile = Vec::with_capacity(10_000);
+        let mut alloc_count = 0u32;
+        let mut free_count = 0u32;
+        for i in 0..10_000u32 {
+            if i % 2 == 0 {
+                alloc_count = alloc_count.saturating_add(1);
+            } else {
+                free_count = free_count.saturating_add(1);
+            }
+            let dispersion_ppm = 120_000 + (i % 64) * 500;
+            let arena_utilization_ppm = 450_000 + (i % 128) * 500;
+            sawtooth_profile.push((
+                alloc_count,
+                free_count,
+                dispersion_ppm.min(300_000),
+                arena_utilization_ppm.min(700_000),
+            ));
+        }
+
+        for &(a, f, d, u) in &sawtooth_profile {
+            black_box(evaluate_fragmentation_barrier(a, f, d, u));
+        }
+
+        let stats = RefCell::new(BenchStats::default());
+        let mut group = c.benchmark_group("runtime_math_kernels");
+        group.throughput(Throughput::Elements(1));
+        group.bench_function(
+            BenchmarkId::new("sos_barrier_fragmentation_eval", mode_label),
+            |b| {
+                b.iter_custom(|iters| {
+                    let start = Instant::now();
+                    let len = sawtooth_profile.len() as u64;
+                    for i in 0..iters {
+                        let idx = (i % len) as usize;
+                        let (a, f, d, u) = sawtooth_profile[idx];
+                        black_box(evaluate_fragmentation_barrier(a, f, d, u));
+                    }
+                    let dur = start.elapsed().max(Duration::from_nanos(1));
+                    stats.borrow_mut().record(iters, dur);
+                    dur
+                });
+            },
+        );
+        group.finish();
+        stats
+            .borrow()
+            .report(mode_label, "sos_barrier_fragmentation_eval");
     }
 }
 

@@ -1,0 +1,13 @@
+# MOSEK task export summary for bd-2ste.1 fragmentation SOS certificate.
+# This artifact is consumed by crates/frankenlibc-membrane/build.rs.
+schema_version: 1
+solver_family: mosek
+certificate: fragmentation
+dimension: 4
+monomial_degree: 2
+barrier_budget_milli: 800000
+gram_matrix:
+1100,150,120,100
+150,900,100,80
+120,100,1300,200
+100,80,200,1000

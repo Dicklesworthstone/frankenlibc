@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 description = "Transparent Safety Membrane for FrankenLibC"
+build = "build.rs"
 
 [features]
 default = ["runtime-math-production"]
@@ -18,3 +19,6 @@ sha2 = { workspace = true }
 [dev-dependencies]
 criterion = { workspace = true }
 serde_json = { workspace = true }
+
+[build-dependencies]
+sha2 = { workspace = true }

@@ -41,6 +41,10 @@
 
 use sha2::{Digest, Sha256};
 
+mod generated_fragmentation_certificate {
+    include!(concat!(env!("OUT_DIR"), "/sos_fragmentation_generated.rs"));
+}
+
 // ---------------------------------------------------------------------------
 // Maximum variable count for static arrays.
 // ---------------------------------------------------------------------------
@@ -48,9 +52,10 @@ use sha2::{Digest, Sha256};
 /// Maximum number of variables per barrier certificate.
 const MAX_VARS: usize = 4;
 /// Fragmentation certificate dimensionality.
-const FRAGMENTATION_CERT_DIM: usize = 4;
+const FRAGMENTATION_CERT_DIM: usize = generated_fragmentation_certificate::FRAGMENTATION_CERT_DIM;
 /// Fragmentation barrier budget in milli-units.
-const FRAGMENTATION_BARRIER_BUDGET_MILLI: i64 = 800_000;
+const FRAGMENTATION_BARRIER_BUDGET_MILLI: i64 =
+    generated_fragmentation_certificate::FRAGMENTATION_BARRIER_BUDGET_MILLI;
 /// Allowed allocation/free imbalance before certificate penalties begin.
 const FRAGMENTATION_IMBALANCE_BUDGET_PPM: u32 = 200_000;
 /// Allowed size-class dispersion budget before penalties begin.
@@ -170,21 +175,20 @@ pub fn compute_certificate_hash<const D: usize>(
 ///
 /// Basis variables represent excess-over-budget scores (0..1000):
 /// [allocation/free imbalance, size-class dispersion, arena utilization, churn].
-static FRAGMENTATION_GRAM_MATRIX: [[i64; FRAGMENTATION_CERT_DIM]; FRAGMENTATION_CERT_DIM] = [
-    [1100, 150, 120, 100],
-    [150, 900, 100, 80],
-    [120, 100, 1300, 200],
-    [100, 80, 200, 1000],
-];
+static FRAGMENTATION_GRAM_MATRIX: [[i64; FRAGMENTATION_CERT_DIM]; FRAGMENTATION_CERT_DIM] =
+    generated_fragmentation_certificate::FRAGMENTATION_GRAM_MATRIX;
 
 /// Offline proof hash for `FRAGMENTATION_GRAM_MATRIX`.
-const FRAGMENTATION_PROOF_HASH: [u8; 32] = [
-    0xae, 0x71, 0xa0, 0x74, 0x9e, 0xdf, 0x66, 0x01, 0x7e, 0xf3, 0xa8, 0x23, 0x2a, 0x5e, 0x47, 0xcb,
-    0x0e, 0x82, 0x4f, 0x6f, 0xce, 0x7c, 0x61, 0x9c, 0xb4, 0x22, 0xa1, 0x3d, 0xb6, 0x37, 0xc2, 0x45,
-];
+const FRAGMENTATION_PROOF_HASH: [u8; 32] =
+    generated_fragmentation_certificate::FRAGMENTATION_PROOF_HASH;
 
 /// Monomial degree for the fragmentation quadratic form.
-const FRAGMENTATION_MONOMIAL_DEGREE: u32 = 2;
+const FRAGMENTATION_MONOMIAL_DEGREE: u32 =
+    generated_fragmentation_certificate::FRAGMENTATION_MONOMIAL_DEGREE;
+
+/// SHA-256 over the source `.task` artifact consumed by build-time generation.
+pub const FRAGMENTATION_TASK_SOURCE_SHA256_HEX: &str =
+    generated_fragmentation_certificate::FRAGMENTATION_TASK_SOURCE_SHA256_HEX;
 
 /// Runtime fragmentation certificate artifact.
 pub static FRAGMENTATION_CERTIFICATE: SosCertificate<FRAGMENTATION_CERT_DIM> = SosCertificate::new(
@@ -797,6 +801,21 @@ mod tests {
     }
 
     #[test]
+    fn generated_task_source_hash_is_hex_sha256() {
+        assert_eq!(
+            FRAGMENTATION_TASK_SOURCE_SHA256_HEX.len(),
+            64,
+            "task hash must be a 64-char SHA-256 hex string"
+        );
+        assert!(
+            FRAGMENTATION_TASK_SOURCE_SHA256_HEX
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit()),
+            "task hash must contain only ASCII hex digits"
+        );
+    }
+
+    #[test]
     fn certificate_tamper_is_detected() {
         let mut tampered = FRAGMENTATION_GRAM_MATRIX;
         tampered[0][0] += 1;
@@ -850,6 +869,41 @@ mod tests {
         assert!(
             val < 0,
             "extreme fragmentation profile should violate certificate, got {val}"
+        );
+    }
+
+    #[test]
+    fn fragmentation_sawtooth_10k_cycles_stays_within_envelope() {
+        let mut ctrl = SosBarrierController::new();
+        for _ in 0..WARMUP {
+            ctrl.evaluate_provenance(10_000, 1_000_000, 10_000, 50_000);
+        }
+
+        let mut checks = 0u32;
+        for i in 0..10_000u32 {
+            // Sawtooth profile: alternating alloc/free pressure with bounded depth drift.
+            let depth = if i % 2 == 0 {
+                4_096 + (i % 256)
+            } else {
+                4_096 - (i % 128)
+            };
+            let free_like = i % 2 == 1;
+            ctrl.note_allocator_observation(free_like, depth);
+            if ctrl.is_fragmentation_cadence() {
+                checks = checks.saturating_add(1);
+                let arena_utilization_ppm = depth_to_arena_utilization_ppm(depth);
+                let safe = ctrl.evaluate_fragmentation(120_000, arena_utilization_ppm);
+                assert!(safe, "sawtooth cycle triggered fragmentation violation");
+            }
+        }
+
+        assert!(
+            checks > 0,
+            "expected at least one fragmentation cadence check"
+        );
+        assert_eq!(
+            ctrl.fragmentation_violations, 0,
+            "sawtooth profile should remain within certified envelope"
         );
     }
 
