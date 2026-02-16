@@ -2,7 +2,7 @@
   "version": 2,
   "generated_at_utc": "2026-02-13T18:07:59Z",
   "library": "/data/tmp/cargo-target/release/libfrankenlibc_abi.so",
-  "total_exported": 255,
+  "total_exported": 261,
   "taxonomy": {
     "Implemented": "Native Rust code owns the entire operation. No host libc dependency. Full test coverage required.",
     "RawSyscall": "ABI entrypoint marshals arguments directly to Linux syscall instruction. No glibc call-through.",
@@ -161,6 +161,15 @@
     },
     {
       "symbol": "atol",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Safe Rust stdlib (atoi/qsort/bsearch); POSIX-correct return values and errno",
+      "hardened_semantics": "Stdlib with hardened membrane; repair clamping on comparator bounds",
+      "default_stub": false
+    },
+    {
+      "symbol": "atoll",
       "status": "Implemented",
       "module": "stdlib_abi",
       "perf_class": "coldpath",
@@ -1672,6 +1681,15 @@
       "default_stub": false
     },
     {
+      "symbol": "secure_getenv",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Safe Rust stdlib (atoi/qsort/bsearch); POSIX-correct return values and errno",
+      "hardened_semantics": "Stdlib with hardened membrane; repair clamping on comparator bounds",
+      "default_stub": false
+    },
+    {
       "symbol": "send",
       "status": "RawSyscall",
       "module": "socket_abi",
@@ -2014,6 +2032,15 @@
       "default_stub": false
     },
     {
+      "symbol": "strtoimax",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Safe Rust stdlib (atoi/qsort/bsearch); POSIX-correct return values and errno",
+      "hardened_semantics": "Stdlib with hardened membrane; repair clamping on comparator bounds",
+      "default_stub": false
+    },
+    {
       "symbol": "strtol",
       "status": "Implemented",
       "module": "stdlib_abi",
@@ -2023,7 +2050,34 @@
       "default_stub": false
     },
     {
+      "symbol": "strtoll",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Safe Rust stdlib (atoi/qsort/bsearch); POSIX-correct return values and errno",
+      "hardened_semantics": "Stdlib with hardened membrane; repair clamping on comparator bounds",
+      "default_stub": false
+    },
+    {
       "symbol": "strtoul",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Safe Rust stdlib (atoi/qsort/bsearch); POSIX-correct return values and errno",
+      "hardened_semantics": "Stdlib with hardened membrane; repair clamping on comparator bounds",
+      "default_stub": false
+    },
+    {
+      "symbol": "strtoull",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Safe Rust stdlib (atoi/qsort/bsearch); POSIX-correct return values and errno",
+      "hardened_semantics": "Stdlib with hardened membrane; repair clamping on comparator bounds",
+      "default_stub": false
+    },
+    {
+      "symbol": "strtoumax",
       "status": "Implemented",
       "module": "stdlib_abi",
       "perf_class": "coldpath",
@@ -2330,7 +2384,7 @@
     }
   ],
   "summary": {
-    "Implemented": 152,
+    "Implemented": 158,
     "RawSyscall": 83,
     "GlibcCallThrough": 20,
     "Stub": 0,
