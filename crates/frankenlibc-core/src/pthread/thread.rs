@@ -522,8 +522,28 @@ pub unsafe fn join_thread(handle_ptr: *mut ThreadHandle) -> Result<usize, i32> {
 
     // Self-join detection: if the calling thread's TID matches the handle's
     // TID, we'd deadlock.
+    //
+    // On clone startup there is a small publication window where the child can
+    // run user code before parent-side TID publication is visible in `tid`.
+    // If we evaluate self-join during that window, we'd miss EDEADLK and later
+    // block forever waiting on a zero tid value.
     let my_tid = syscall::sys_gettid();
-    let target_tid = handle.tid.load(Ordering::Acquire);
+    let mut target_tid = handle.tid.load(Ordering::Acquire);
+    if target_tid == 0 {
+        loop {
+            let state = handle.state.load(Ordering::Acquire);
+            if state != THREAD_STARTING && state != THREAD_RUNNING {
+                break;
+            }
+
+            target_tid = handle.tid.load(Ordering::Acquire);
+            if target_tid != 0 {
+                break;
+            }
+            core::hint::spin_loop();
+        }
+    }
+
     if target_tid != 0 && my_tid == target_tid {
         return Err(EDEADLK);
     }

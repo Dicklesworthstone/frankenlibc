@@ -25,6 +25,14 @@ unsafe extern "C" fn start_return_pthread_self(_arg: *mut c_void) -> *mut c_void
     unsafe { pthread_self() as usize as *mut c_void }
 }
 
+unsafe extern "C" fn start_self_join_errno(_arg: *mut c_void) -> *mut c_void {
+    // SAFETY: calling our ABI-layer pthread_self/pthread_join in the child.
+    let self_tid = unsafe { pthread_self() };
+    // SAFETY: self_tid is a valid pthread_t for this thread; null retval is allowed.
+    let rc = unsafe { pthread_join(self_tid, std::ptr::null_mut()) };
+    rc as usize as *mut c_void
+}
+
 fn env_usize(var: &str, default: usize, max: usize) -> usize {
     std::env::var(var)
         .ok()
@@ -252,6 +260,33 @@ fn pthread_join_then_reuse_handle_is_esrch() {
         detach_after_join_rc,
         libc::ESRCH,
         "detach after join-consumption should be ESRCH"
+    );
+}
+
+#[test]
+fn pthread_self_join_is_rejected_with_edeadlk() {
+    let _guard = lock_and_force_native();
+
+    let mut tid: libc::pthread_t = 0;
+    let create_rc = unsafe {
+        pthread_create(
+            &mut tid as *mut libc::pthread_t,
+            std::ptr::null(),
+            Some(start_self_join_errno),
+            std::ptr::null_mut(),
+        )
+    };
+    assert_eq!(create_rc, 0, "pthread_create failed rc={create_rc}");
+
+    let mut retval: *mut c_void = std::ptr::null_mut();
+    let join_rc = unsafe { pthread_join(tid, &mut retval as *mut *mut c_void) };
+    assert_eq!(join_rc, 0, "pthread_join(child) failed rc={join_rc}");
+
+    let child_errno = retval as usize as i32;
+    assert_eq!(
+        child_errno,
+        libc::EDEADLK,
+        "child pthread_join(self) should return EDEADLK"
     );
 }
 
