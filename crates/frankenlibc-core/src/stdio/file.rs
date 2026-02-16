@@ -311,6 +311,7 @@ impl StdioStream {
             result.push(b);
             remaining -= 1;
             if remaining == 0 {
+                self.advance_offset(result.len());
                 return result;
             }
         }
@@ -357,10 +358,10 @@ impl StdioStream {
     ///
     /// Returns pending write data that must be flushed before the seek.
     pub fn prepare_seek(&mut self) -> Vec<u8> {
+        let pending = self.buffer.pending_write_data().to_vec();
         self.ungetc_byte = None;
         self.buffer.reset();
         self.flags.eof = false;
-        let pending = self.buffer.pending_write_data().to_vec();
         self.buffer.mark_flushed();
         pending
     }
@@ -503,6 +504,47 @@ mod tests {
         let replay = s.buffered_read(2);
         assert_eq!(&replay, b"bc");
         assert_eq!(s.offset(), 3);
+    }
+
+    #[test]
+    fn test_ungetc_single_byte_read_restores_offset() {
+        let flags = OpenFlags {
+            readable: true,
+            ..Default::default()
+        };
+        let mut s = StdioStream::new(3, flags);
+        s.fill_read_buffer(b"abc");
+        let first = s.buffered_read(2);
+        assert_eq!(&first, b"ab");
+        assert_eq!(s.offset(), 2);
+        assert!(s.ungetc(b'b'));
+        assert_eq!(s.offset(), 1);
+        let replay = s.buffered_read(1);
+        assert_eq!(&replay, b"b");
+        assert_eq!(s.offset(), 2);
+    }
+
+    #[test]
+    fn test_prepare_seek_flushes_pending_writes_and_clears_read_state() {
+        let flags = OpenFlags {
+            readable: true,
+            writable: true,
+            ..Default::default()
+        };
+        let mut s = StdioStream::new(3, flags);
+        let flush = s.buffer_write(b"buffered");
+        assert!(flush.is_empty());
+        assert_eq!(s.pending_flush(), b"buffered");
+
+        assert!(s.ungetc(b'w'));
+        assert!(s.readable_buffered() > 0);
+        s.set_eof();
+
+        let pending = s.prepare_seek();
+        assert_eq!(&pending, b"buffered");
+        assert!(s.pending_flush().is_empty());
+        assert_eq!(s.readable_buffered(), 0);
+        assert!(!s.is_eof());
     }
 
     #[test]
