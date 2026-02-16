@@ -11,6 +11,15 @@ use std::ffi::{c_int, c_void};
 use std::sync::atomic::{AtomicI32, AtomicU32, AtomicU64, Ordering};
 use std::sync::{LazyLock, Mutex};
 
+use frankenlibc_core::pthread::tls::{
+    PthreadKey, pthread_key_create as core_pthread_key_create,
+    pthread_key_delete as core_pthread_key_delete,
+};
+#[cfg(target_arch = "x86_64")]
+use frankenlibc_core::pthread::tls::{
+    pthread_getspecific as core_pthread_getspecific,
+    pthread_setspecific as core_pthread_setspecific,
+};
 use frankenlibc_core::pthread::{
     CondvarData, PTHREAD_COND_CLOCK_REALTIME, ThreadHandle,
     condvar_broadcast as core_condvar_broadcast, condvar_destroy as core_condvar_destroy,
@@ -18,15 +27,6 @@ use frankenlibc_core::pthread::{
     condvar_timedwait as core_condvar_timedwait, condvar_wait as core_condvar_wait,
     create_thread as core_create_thread, detach_thread as core_detach_thread,
     join_thread as core_join_thread, self_tid as core_self_tid,
-};
-#[cfg(target_arch = "x86_64")]
-use frankenlibc_core::pthread::tls::{
-    pthread_getspecific as core_pthread_getspecific,
-    pthread_setspecific as core_pthread_setspecific,
-};
-use frankenlibc_core::pthread::tls::{
-    PthreadKey, pthread_key_create as core_pthread_key_create,
-    pthread_key_delete as core_pthread_key_delete,
 };
 use frankenlibc_membrane::check_oracle::CheckStage;
 use frankenlibc_membrane::runtime_math::ApiFamily;
@@ -1347,8 +1347,12 @@ pub unsafe extern "C" fn pthread_once(
     }
 
     // Try to become the initializer.
-    match state.compare_exchange(ONCE_INIT, ONCE_IN_PROGRESS, Ordering::Acquire, Ordering::Acquire)
-    {
+    match state.compare_exchange(
+        ONCE_INIT,
+        ONCE_IN_PROGRESS,
+        Ordering::Acquire,
+        Ordering::Acquire,
+    ) {
         Ok(_) => {
             // We won; run the init routine.
             unsafe { routine() };

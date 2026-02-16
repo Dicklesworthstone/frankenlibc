@@ -3,8 +3,8 @@
 //! Integration tests for pthread_once.
 
 use std::ffi::c_void;
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use frankenlibc_abi::pthread_abi::{pthread_create, pthread_join, pthread_once};
 
