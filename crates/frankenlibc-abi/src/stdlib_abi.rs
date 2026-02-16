@@ -5,12 +5,13 @@
 //! process control (`exit`, `atexit`), and sorting/searching (`qsort`, `bsearch`)
 //! with membrane validation.
 
-use std::ffi::{c_char, c_int, c_long, c_ulong, c_void};
+use std::ffi::{c_char, c_int, c_long, c_longlong, c_ulong, c_ulonglong, c_void};
 use std::ptr;
 
 use crate::malloc_abi::known_remaining;
 use crate::runtime_policy;
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
+use libc::{intmax_t, uintmax_t};
 
 #[inline]
 unsafe fn set_abi_errno(val: c_int) {
@@ -174,6 +175,15 @@ pub unsafe extern "C" fn atol(nptr: *const c_char) -> c_long {
 }
 
 // ---------------------------------------------------------------------------
+// atoll
+// ---------------------------------------------------------------------------
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn atoll(nptr: *const c_char) -> c_longlong {
+    unsafe { atol(nptr) as c_longlong }
+}
+
+// ---------------------------------------------------------------------------
 // strtol
 // ---------------------------------------------------------------------------
 
@@ -242,6 +252,88 @@ pub unsafe extern "C" fn strtol(
 }
 
 // ---------------------------------------------------------------------------
+// strtoimax
+// ---------------------------------------------------------------------------
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strtoimax(
+    nptr: *const c_char,
+    endptr: *mut *mut c_char,
+    base: c_int,
+) -> intmax_t {
+    if nptr.is_null() {
+        return 0;
+    }
+
+    let (mode, decision) = runtime_policy::decide(
+        ApiFamily::Stdlib,
+        nptr as usize,
+        0,
+        false,
+        known_remaining(nptr as usize).is_none(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 6, true);
+        return 0;
+    }
+
+    let bound = if repair_enabled(mode.heals_enabled(), decision.action) {
+        known_remaining(nptr as usize)
+    } else {
+        None
+    };
+
+    if !endptr.is_null() {
+        let (_, end_decision) = runtime_policy::decide(
+            ApiFamily::Stdlib,
+            endptr as usize,
+            std::mem::size_of::<*mut c_char>(),
+            true,
+            true,
+            0,
+        );
+        if matches!(end_decision.action, MembraneAction::Deny) {
+            return 0;
+        }
+    }
+
+    let (len, _terminated) = unsafe { scan_c_string(nptr, bound) };
+    let slice = unsafe { std::slice::from_raw_parts(nptr as *const u8, len) };
+
+    let (val, consumed, _status) =
+        frankenlibc_core::stdlib::conversion::strtoimax_impl(slice, base);
+
+    if !endptr.is_null() {
+        unsafe {
+            *endptr = (nptr as *mut c_char).add(consumed);
+        }
+    }
+
+    runtime_policy::observe(
+        ApiFamily::Stdlib,
+        decision.profile,
+        runtime_policy::scaled_cost(15, consumed),
+        false,
+    );
+
+    val as intmax_t
+}
+
+// ---------------------------------------------------------------------------
+// strtoll
+// ---------------------------------------------------------------------------
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strtoll(
+    nptr: *const c_char,
+    endptr: *mut *mut c_char,
+    base: c_int,
+) -> c_longlong {
+    unsafe { strtol(nptr, endptr, base) as c_longlong }
+}
+
+// ---------------------------------------------------------------------------
 // strtoul
 // ---------------------------------------------------------------------------
 
@@ -307,6 +399,88 @@ pub unsafe extern "C" fn strtoul(
     );
 
     val as c_ulong
+}
+
+// ---------------------------------------------------------------------------
+// strtoumax
+// ---------------------------------------------------------------------------
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strtoumax(
+    nptr: *const c_char,
+    endptr: *mut *mut c_char,
+    base: c_int,
+) -> uintmax_t {
+    if nptr.is_null() {
+        return 0;
+    }
+
+    let (mode, decision) = runtime_policy::decide(
+        ApiFamily::Stdlib,
+        nptr as usize,
+        0,
+        false,
+        known_remaining(nptr as usize).is_none(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 6, true);
+        return 0;
+    }
+
+    let bound = if repair_enabled(mode.heals_enabled(), decision.action) {
+        known_remaining(nptr as usize)
+    } else {
+        None
+    };
+
+    if !endptr.is_null() {
+        let (_, end_decision) = runtime_policy::decide(
+            ApiFamily::Stdlib,
+            endptr as usize,
+            std::mem::size_of::<*mut c_char>(),
+            true,
+            true,
+            0,
+        );
+        if matches!(end_decision.action, MembraneAction::Deny) {
+            return 0;
+        }
+    }
+
+    let (len, _terminated) = unsafe { scan_c_string(nptr, bound) };
+    let slice = unsafe { std::slice::from_raw_parts(nptr as *const u8, len) };
+
+    let (val, consumed, _status) =
+        frankenlibc_core::stdlib::conversion::strtoumax_impl(slice, base);
+
+    if !endptr.is_null() {
+        unsafe {
+            *endptr = (nptr as *mut c_char).add(consumed);
+        }
+    }
+
+    runtime_policy::observe(
+        ApiFamily::Stdlib,
+        decision.profile,
+        runtime_policy::scaled_cost(15, consumed),
+        false,
+    );
+
+    val as uintmax_t
+}
+
+// ---------------------------------------------------------------------------
+// strtoull
+// ---------------------------------------------------------------------------
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strtoull(
+    nptr: *const c_char,
+    endptr: *mut *mut c_char,
+    base: c_int,
+) -> c_ulonglong {
+    unsafe { strtoul(nptr, endptr, base) as c_ulonglong }
 }
 
 // ---------------------------------------------------------------------------
@@ -519,6 +693,28 @@ pub unsafe extern "C" fn getenv(name: *const c_char) -> *mut c_char {
         adverse,
     );
     result
+}
+
+// ---------------------------------------------------------------------------
+// secure_getenv
+// ---------------------------------------------------------------------------
+
+/// GNU `secure_getenv` — getenv that returns null in secure execution mode.
+///
+/// We conservatively treat setuid/setgid transitions as secure execution and
+/// return null in that context.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn secure_getenv(name: *const c_char) -> *mut c_char {
+    let uid = unsafe { crate::unistd_abi::getuid() };
+    let euid = unsafe { crate::unistd_abi::geteuid() };
+    let gid = unsafe { crate::unistd_abi::getgid() };
+    let egid = unsafe { crate::unistd_abi::getegid() };
+
+    if uid != euid || gid != egid {
+        return ptr::null_mut();
+    }
+
+    unsafe { getenv(name) }
 }
 
 // ---------------------------------------------------------------------------

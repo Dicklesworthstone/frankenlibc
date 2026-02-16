@@ -23,6 +23,10 @@ pub fn atol(s: &[u8]) -> i64 {
     val
 }
 
+pub fn atoll(s: &[u8]) -> i64 {
+    atol(s)
+}
+
 /// Helper for strtol: returns (value, consumed_bytes, status)
 pub fn strtol_impl(s: &[u8], base: i32) -> (i64, usize, ConversionStatus) {
     let mut i = 0;
@@ -134,6 +138,24 @@ pub fn strtol(s: &[u8], base: i32) -> (i64, usize) {
     (val, len)
 }
 
+/// Helper for strtoll
+pub fn strtoll_impl(s: &[u8], base: i32) -> (i64, usize, ConversionStatus) {
+    strtol_impl(s, base)
+}
+
+pub fn strtoll(s: &[u8], base: i32) -> (i64, usize) {
+    strtol(s, base)
+}
+
+/// Helper for strtoimax
+pub fn strtoimax_impl(s: &[u8], base: i32) -> (i64, usize, ConversionStatus) {
+    strtol_impl(s, base)
+}
+
+pub fn strtoimax(s: &[u8], base: i32) -> (i64, usize) {
+    strtol(s, base)
+}
+
 /// Helper for strtoul
 pub fn strtoul_impl(s: &[u8], base: i32) -> (u64, usize, ConversionStatus) {
     let mut i = 0;
@@ -231,6 +253,24 @@ pub fn strtoul(s: &[u8], base: i32) -> (u64, usize) {
     (val, len)
 }
 
+/// Helper for strtoull
+pub fn strtoull_impl(s: &[u8], base: i32) -> (u64, usize, ConversionStatus) {
+    strtoul_impl(s, base)
+}
+
+pub fn strtoull(s: &[u8], base: i32) -> (u64, usize) {
+    strtoul(s, base)
+}
+
+/// Helper for strtoumax
+pub fn strtoumax_impl(s: &[u8], base: i32) -> (u64, usize, ConversionStatus) {
+    strtoul_impl(s, base)
+}
+
+pub fn strtoumax(s: &[u8], base: i32) -> (u64, usize) {
+    strtoul(s, base)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -244,10 +284,30 @@ mod tests {
     }
 
     #[test]
+    fn test_atoll_aliases_atol() {
+        assert_eq!(atoll(b"9223372036854775807"), i64::MAX);
+        assert_eq!(atoll(b"-9223372036854775808"), i64::MIN);
+    }
+
+    #[test]
     fn test_strtol_base10() {
         let (val, len) = strtol(b"123456", 10);
         assert_eq!(val, 123456);
         assert_eq!(len, 6);
+    }
+
+    #[test]
+    fn test_strtoimax_aliases_strtol() {
+        let (val, len) = strtoimax(b"-9223372036854775808", 10);
+        assert_eq!(val, i64::MIN);
+        assert_eq!(len, 20);
+    }
+
+    #[test]
+    fn test_strtoll_aliases_strtol() {
+        let (val, len) = strtoll(b"-9223372036854775808", 10);
+        assert_eq!(val, i64::MIN);
+        assert_eq!(len, 20);
     }
 
     #[test]
@@ -308,6 +368,20 @@ mod tests {
         let (val, _, status) = strtoul_impl(s_over.as_bytes(), 10);
         assert_eq!(val, u64::MAX);
         assert_eq!(status, ConversionStatus::Overflow);
+    }
+
+    #[test]
+    fn test_strtoumax_aliases_strtoul() {
+        let (val, len) = strtoumax(b"18446744073709551615", 10);
+        assert_eq!(val, u64::MAX);
+        assert_eq!(len, 20);
+    }
+
+    #[test]
+    fn test_strtoull_aliases_strtoul() {
+        let (val, len) = strtoull(b"18446744073709551615", 10);
+        assert_eq!(val, u64::MAX);
+        assert_eq!(len, 20);
     }
 
     #[test]
