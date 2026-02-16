@@ -1809,10 +1809,11 @@ impl RuntimeMathKernel {
         if self.cached_equivariant_state.load(Ordering::Relaxed) >= 3 {
             profile = ValidationProfile::Full;
         }
+        let sos_barrier_state = self.cached_sos_barrier_state.load(Ordering::Relaxed);
         // SOS barrier certificate: if the barrier evaluator reports Warning or
         // Violated, force full validation. This is the runtime embodiment of
         // the offline SOS safety proof — monotone escalation only.
-        if self.cached_sos_barrier_state.load(Ordering::Relaxed) >= 2 {
+        if sos_barrier_state >= SosBarrierState::Warning as u8 {
             profile = ValidationProfile::Full;
         }
         // Blackwell approachability: if the controller detects the cumulative
@@ -1898,7 +1899,7 @@ impl RuntimeMathKernel {
             _ => None,
         });
 
-        let action = if !admissible {
+        let mut action = if !admissible {
             if mode.heals_enabled() {
                 MembraneAction::Repair(HealingAction::ReturnSafeDefault)
             } else {
@@ -1915,6 +1916,21 @@ impl RuntimeMathKernel {
         } else {
             MembraneAction::Allow
         };
+
+        // SOS barrier memory-pressure certificate: a violated certificate is a
+        // hard safety signal. Escalate the final action even if profile/risk
+        // logic would otherwise remain permissive.
+        if sos_barrier_state >= SosBarrierState::Violated as u8 {
+            action = if mode.heals_enabled() {
+                if matches!(action, MembraneAction::Deny) {
+                    MembraneAction::Deny
+                } else {
+                    MembraneAction::Repair(HealingAction::ReturnSafeDefault)
+                }
+            } else {
+                MembraneAction::Deny
+            };
+        }
 
         // Track policy table action distribution for snapshot.
         let action_idx = match action {
@@ -3059,14 +3075,15 @@ impl RuntimeMathKernel {
                 let barrier_code = {
                     let mut barrier = self.sos_barrier.lock();
                     // Provenance barrier: use cached risk and profile.
-                    let risk_ppm = self.cached_risk_bonus_ppm.load(Ordering::Relaxed) as u32;
+                    let risk_ppm = risk_bound_ppm;
                     let depth_ppm = if profile.requires_full() {
                         1_000_000u32
                     } else {
                         0u32
                     };
-                    barrier.evaluate_provenance(risk_ppm, depth_ppm, 0, 0);
                     let depth = current_depth() as u32;
+                    let arena_utilization_ppm = depth_to_arena_utilization_ppm(depth);
+                    barrier.evaluate_provenance(risk_ppm, depth_ppm, 0, arena_utilization_ppm);
                     if matches!(family, ApiFamily::Allocator) {
                         barrier.note_allocator_observation(adverse, depth);
                     }
@@ -3080,7 +3097,6 @@ impl RuntimeMathKernel {
                         let sparse_state =
                             u32::from(self.cached_sparse_state.load(Ordering::Relaxed)).min(4);
                         let size_dispersion_ppm = sparse_state.saturating_mul(250_000);
-                        let arena_utilization_ppm = depth_to_arena_utilization_ppm(depth);
                         barrier.evaluate_fragmentation(size_dispersion_ppm, arena_utilization_ppm);
                     }
                     match barrier.state() {
@@ -5706,6 +5722,35 @@ mod tests {
             hardened_decision.action,
             MembraneAction::Repair(HealingAction::ReturnSafeDefault),
             "barrier non-admissible in hardened mode must produce Repair(ReturnSafeDefault)"
+        );
+    }
+
+    /// Decision-law invariant (behavioral): SOS barrier certificate violation
+    /// must enforce hardened repair or strict denial, even on otherwise
+    /// low-risk/admissible requests.
+    #[test]
+    fn decide_sos_barrier_violation_enforces_guard_action() {
+        let kernel = RuntimeMathKernel::new();
+        let ctx = RuntimeContext::pointer_validation(0x1000, false);
+
+        kernel
+            .cached_sos_barrier_state
+            .store(SosBarrierState::Violated as u8, Ordering::Relaxed);
+        let strict = kernel.decide(SafetyLevel::Strict, ctx);
+        assert_eq!(
+            strict.action,
+            MembraneAction::Deny,
+            "SOS barrier violation in strict mode must deny"
+        );
+
+        kernel
+            .cached_sos_barrier_state
+            .store(SosBarrierState::Violated as u8, Ordering::Relaxed);
+        let hardened = kernel.decide(SafetyLevel::Hardened, ctx);
+        assert_eq!(
+            hardened.action,
+            MembraneAction::Repair(HealingAction::ReturnSafeDefault),
+            "SOS barrier violation in hardened mode must repair with safe default"
         );
     }
 

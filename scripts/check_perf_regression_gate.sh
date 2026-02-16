@@ -39,11 +39,14 @@ try:
     with open(path, encoding="utf-8") as f:
         doc = json.load(f)
     v = doc.get("schema_version", 0)
+    warning = doc.get("warning_policy", {})
     threshold = doc.get("threshold_policy", {})
     attribution = doc.get("attribution", {})
     logging = doc.get("logging_contract", {})
     if v < 1:
         print("INVALID: schema_version < 1")
+    elif not warning:
+        print("INVALID: missing warning_policy")
     elif not threshold:
         print("INVALID: missing threshold_policy")
     elif not attribution:
@@ -82,6 +85,7 @@ with open(baseline_path, encoding="utf-8") as f:
 
 errors = []
 threshold = policy.get("threshold_policy", {})
+warning = policy.get("warning_policy", {})
 default_pct = threshold.get("default_max_regression_pct")
 if not isinstance(default_pct, (int, float)) or default_pct <= 0:
     errors.append("default_max_regression_pct must be positive")
@@ -91,6 +95,21 @@ for mode in ("strict", "hardened"):
     pct = mode_thresholds.get(mode)
     if not isinstance(pct, (int, float)) or pct <= 0:
         errors.append(f"per_mode_max_regression_pct.{mode} must be positive")
+
+default_warning = warning.get("default_warning_pct")
+if not isinstance(default_warning, (int, float)) or default_warning <= 0:
+    errors.append("default_warning_pct must be positive")
+
+mode_warnings = warning.get("per_mode_warning_pct", {})
+for mode in ("strict", "hardened"):
+    pct = mode_warnings.get(mode)
+    if not isinstance(pct, (int, float)) or pct <= 0:
+        errors.append(f"per_mode_warning_pct.{mode} must be positive")
+    max_pct = mode_thresholds.get(mode)
+    if isinstance(max_pct, (int, float)) and isinstance(pct, (int, float)) and pct > max_pct:
+        errors.append(
+            f"per_mode_warning_pct.{mode} must be <= per_mode_max_regression_pct.{mode}"
+        )
 
 required_benchmark_ids = []
 for suite, modes in baseline.get("baseline_p50_ns_op", {}).items():
@@ -117,6 +136,28 @@ for benchmark_id, by_mode in overrides.items():
             errors.append(f"per_benchmark_overrides.{benchmark_id} has invalid mode: {mode}")
         if not isinstance(pct, (int, float)) or pct <= 0:
             errors.append(f"per_benchmark_overrides.{benchmark_id}.{mode} must be positive")
+
+warning_overrides = warning.get("per_benchmark_overrides", {})
+for benchmark_id, by_mode in warning_overrides.items():
+    if benchmark_id not in required_benchmark_ids:
+        errors.append(f"warning per_benchmark_overrides references unknown benchmark_id: {benchmark_id}")
+    if not isinstance(by_mode, dict):
+        errors.append(f"warning per_benchmark_overrides.{benchmark_id} must be object")
+        continue
+    for mode, pct in by_mode.items():
+        if mode not in ("strict", "hardened"):
+            errors.append(f"warning per_benchmark_overrides.{benchmark_id} has invalid mode: {mode}")
+        if not isinstance(pct, (int, float)) or pct <= 0:
+            errors.append(f"warning per_benchmark_overrides.{benchmark_id}.{mode} must be positive")
+        max_pct = (
+            threshold.get("per_benchmark_overrides", {})
+            .get(benchmark_id, {})
+            .get(mode, mode_thresholds.get(mode))
+        )
+        if isinstance(max_pct, (int, float)) and isinstance(pct, (int, float)) and pct > max_pct:
+            errors.append(
+                f"warning per_benchmark_overrides.{benchmark_id}.{mode} must be <= max threshold"
+            )
 
 print(f"MAPPING_ERRORS={len(errors)}")
 print(f"REQUIRED_BENCHMARKS={len(set(required_benchmark_ids))}")
@@ -166,12 +207,12 @@ for field in (
         errors.append(f"logging_contract.required_fields missing: {field}")
 
 classes = set(policy.get("attribution", {}).get("regression_classes", []))
-for cls in ("ok", "baseline_regression", "target_budget_violation", "baseline_and_budget_violation"):
+for cls in ("ok", "baseline_warning", "baseline_regression", "target_budget_violation", "baseline_and_budget_violation"):
     if cls not in classes:
         errors.append(f"attribution.regression_classes missing: {cls}")
 
 triage = policy.get("triage_guide", {})
-for cls in ("baseline_regression", "target_budget_violation", "baseline_and_budget_violation"):
+for cls in ("baseline_warning", "baseline_regression", "target_budget_violation", "baseline_and_budget_violation"):
     guide = triage.get(cls)
     if not isinstance(guide, dict):
         errors.append(f"triage_guide missing class: {cls}")

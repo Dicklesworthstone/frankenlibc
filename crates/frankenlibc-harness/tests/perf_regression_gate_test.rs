@@ -44,16 +44,31 @@ fn resolve_threshold(policy: &serde_json::Value, mode: &str, benchmark_id: &str)
         .or_else(|| policy["threshold_policy"]["default_max_regression_pct"].as_f64())
 }
 
+fn resolve_warning_threshold(
+    policy: &serde_json::Value,
+    mode: &str,
+    benchmark_id: &str,
+) -> Option<f64> {
+    policy["warning_policy"]["per_benchmark_overrides"][benchmark_id][mode]
+        .as_f64()
+        .or_else(|| policy["warning_policy"]["per_mode_warning_pct"][mode].as_f64())
+        .or_else(|| policy["warning_policy"]["default_warning_pct"].as_f64())
+}
+
 fn classify_regression(
     observed: f64,
     baseline: f64,
     target: f64,
+    warning_pct: f64,
     threshold_pct: f64,
 ) -> &'static str {
+    let warning_threshold = baseline * (1.0 + warning_pct / 100.0);
     let threshold = baseline * (1.0 + threshold_pct / 100.0);
+    let warning_hit = observed > warning_threshold;
     let baseline_ok = observed <= threshold;
     let target_ok = observed <= target;
     match (baseline_ok, target_ok) {
+        (true, true) if warning_hit => "baseline_warning",
         (true, true) => "ok",
         (false, true) => "baseline_regression",
         (true, false) => "target_budget_violation",
@@ -105,13 +120,13 @@ fn threshold_resolver_deterministic() {
 
     let decide_strict = resolve_threshold(&policy, "strict", "runtime_math/decide").unwrap();
     assert_eq!(
-        decide_strict, 15.0,
+        decide_strict, 20.0,
         "runtime_math/decide should resolve strict per-mode threshold"
     );
 
     let observe_strict = resolve_threshold(&policy, "strict", "runtime_math/observe_fast").unwrap();
     assert_eq!(
-        observe_strict, 12.0,
+        observe_strict, 10.0,
         "runtime_math/observe_fast should resolve benchmark override"
     );
 
@@ -123,24 +138,57 @@ fn threshold_resolver_deterministic() {
 }
 
 #[test]
+fn warning_threshold_resolver_deterministic() {
+    let policy = load_policy();
+    let default_pct = policy["warning_policy"]["default_warning_pct"]
+        .as_f64()
+        .unwrap();
+
+    let decide_strict =
+        resolve_warning_threshold(&policy, "strict", "runtime_math/decide").unwrap();
+    assert_eq!(
+        decide_strict, 5.0,
+        "runtime_math/decide should resolve strict per-mode warning threshold"
+    );
+
+    let observe_strict =
+        resolve_warning_threshold(&policy, "strict", "runtime_math/observe_fast").unwrap();
+    assert_eq!(
+        observe_strict, 4.0,
+        "runtime_math/observe_fast should resolve warning benchmark override"
+    );
+
+    let unknown = resolve_warning_threshold(&policy, "strict", "unknown/bench").unwrap();
+    assert_eq!(
+        unknown, default_pct,
+        "unknown benchmark should fall back to warning default threshold"
+    );
+}
+
+#[test]
 fn regression_classifier_stable() {
     assert_eq!(
-        classify_regression(100.0, 100.0, 120.0, 15.0),
+        classify_regression(100.0, 100.0, 120.0, 5.0, 20.0),
         "ok",
-        "within threshold and target"
+        "within warning threshold and target"
     );
     assert_eq!(
-        classify_regression(120.0, 100.0, 200.0, 15.0),
+        classify_regression(107.0, 100.0, 120.0, 5.0, 20.0),
+        "baseline_warning",
+        "exceeds warning threshold but not blocking threshold"
+    );
+    assert_eq!(
+        classify_regression(121.0, 100.0, 200.0, 5.0, 20.0),
         "baseline_regression",
         "exceeds baseline threshold only"
     );
     assert_eq!(
-        classify_regression(80.0, 70.0, 75.0, 20.0),
+        classify_regression(80.0, 70.0, 75.0, 5.0, 20.0),
         "target_budget_violation",
         "within baseline threshold but above target budget"
     );
     assert_eq!(
-        classify_regression(120.0, 100.0, 90.0, 15.0),
+        classify_regression(121.0, 100.0, 90.0, 5.0, 20.0),
         "baseline_and_budget_violation",
         "exceeds both baseline threshold and target budget"
     );
@@ -216,6 +264,7 @@ fn triage_contract_complete() {
         .collect();
     for class in [
         "ok",
+        "baseline_warning",
         "baseline_regression",
         "target_budget_violation",
         "baseline_and_budget_violation",
@@ -225,6 +274,7 @@ fn triage_contract_complete() {
 
     let triage = policy["triage_guide"].as_object().unwrap();
     for class in [
+        "baseline_warning",
         "baseline_regression",
         "target_budget_violation",
         "baseline_and_budget_violation",

@@ -2,16 +2,29 @@
   "schema_version": 1,
   "bead": "bd-30o.3",
   "description": "Perf regression attribution policy for runtime_math/membrane perf gate. Defines threshold resolution, regression classes, suspect-component mapping, and deterministic triage contract.",
-  "threshold_policy": {
-    "default_max_regression_pct": 15.0,
-    "per_mode_max_regression_pct": {
-      "strict": 15.0,
-      "hardened": 15.0
+  "warning_policy": {
+    "default_warning_pct": 5.0,
+    "per_mode_warning_pct": {
+      "strict": 5.0,
+      "hardened": 5.0
     },
     "per_benchmark_overrides": {
       "runtime_math/observe_fast": {
-        "strict": 12.0,
-        "hardened": 12.0
+        "strict": 4.0,
+        "hardened": 4.0
+      }
+    }
+  },
+  "threshold_policy": {
+    "default_max_regression_pct": 20.0,
+    "per_mode_max_regression_pct": {
+      "strict": 20.0,
+      "hardened": 20.0
+    },
+    "per_benchmark_overrides": {
+      "runtime_math/observe_fast": {
+        "strict": 10.0,
+        "hardened": 10.0
       }
     },
     "target_source": "scripts/perf_baseline.json::targets_ns_op"
@@ -19,6 +32,7 @@
   "attribution": {
     "regression_classes": [
       "ok",
+      "baseline_warning",
       "baseline_regression",
       "target_budget_violation",
       "baseline_and_budget_violation"
@@ -65,6 +79,17 @@
         "cargo bench -p frankenlibc-bench --bench membrane_bench"
       ]
     },
+    "baseline_warning": {
+      "severity": "warning",
+      "actions": [
+        "Inspect warning deltas and confirm no trend acceleration",
+        "Capture targeted profile before promoting to blocker backlog"
+      ],
+      "commands": [
+        "scripts/profile_pipeline.sh",
+        "scripts/perf_gate.sh"
+      ]
+    },
     "target_budget_violation": {
       "severity": "policy_blocker",
       "actions": [
@@ -96,8 +121,8 @@
   },
   "summary": {
     "mapped_benchmarks": 4,
-    "regression_classes": 4,
+    "regression_classes": 5,
     "required_log_fields": 8,
-    "triage_playbooks": 3
+    "triage_playbooks": 4
   }
 }

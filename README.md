@@ -524,7 +524,7 @@ FRANKENLIBC_MODE=hardened LD_PRELOAD=target/release/libfrankenlibc_abi.so ./my_a
 | `FRANKENLIBC_PERF_ALLOW_TARGET_VIOLATION` | `1` | Perf gate policy toggle for target-budget violation handling. |
 | `FRANKENLIBC_PERF_ENABLE_KERNEL_SUITE` | `0` | Enables extra kernel-level perf suite branch. |
 | `FRANKENLIBC_PERF_MAX_LOAD_FACTOR` | `0.85` | Host-load threshold for overloaded perf-run handling. |
-| `FRANKENLIBC_PERF_MAX_REGRESSION_PCT` | `15` | Perf regression threshold percent. |
+| `FRANKENLIBC_PERF_MAX_REGRESSION_PCT` | `20` | Perf regression blocking threshold percent. |
 | `FRANKENLIBC_PERF_SKIP_OVERLOADED` | `1` | Skip perf runs when host is overloaded. |
 | `FRANKENLIBC_PORTAGE_ENABLE` | `1` | Global Gentoo hook enable/disable switch. |
 | `FRANKENLIBC_PORTAGE_LOG` | `/tmp/frankenlibc-portage-hooks.log` | Gentoo hook decision log path. |
