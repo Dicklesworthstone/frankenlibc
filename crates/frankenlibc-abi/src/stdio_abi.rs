@@ -1369,6 +1369,39 @@ pub unsafe extern "C" fn printf(format: *const c_char, mut args: ...) -> c_int {
     if adverse { -1 } else { total_len as c_int }
 }
 
+/// POSIX `dprintf`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn dprintf(fd: c_int, format: *const c_char, mut args: ...) -> c_int {
+    if format.is_null() {
+        return -1;
+    }
+
+    let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, fd as usize, 0, false, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+        return -1;
+    }
+
+    let fmt_bytes = unsafe { CStr::from_ptr(format) }.to_bytes();
+    let segments = parse_format_string(fmt_bytes);
+    let extract_count = count_printf_args(&segments);
+    let mut arg_buf = [0u64; MAX_VA_ARGS];
+    extract_va_args!(&segments, &mut args, &mut arg_buf, extract_count);
+
+    let rendered = unsafe { render_printf(fmt_bytes, arg_buf.as_ptr(), extract_count) };
+    let total_len = rendered.len();
+
+    let rc = unsafe { sys_write_fd(fd, rendered.as_ptr().cast(), total_len) };
+    let adverse = rc < 0 || rc as usize != total_len;
+    runtime_policy::observe(
+        ApiFamily::Stdio,
+        decision.profile,
+        runtime_policy::scaled_cost(15, total_len),
+        adverse,
+    );
+    if adverse { -1 } else { total_len as c_int }
+}
+
 /// glibc fortified `__printf_chk`.
 #[unsafe(export_name = "__printf_chk")]
 pub unsafe extern "C" fn printf_chk(_flag: c_int, format: *const c_char, mut args: ...) -> c_int {

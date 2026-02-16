@@ -10,8 +10,8 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use frankenlibc_abi::stdio_abi::{
-    fclose, fflush, fgetc, fgets, fileno, fopen, fprintf, fputc, fputs, fread, fseek, fwrite,
-    printf, setbuf, setvbuf, snprintf, sprintf, ungetc,
+    dprintf, fclose, fflush, fgetc, fgets, fileno, fopen, fprintf, fputc, fputs, fread, fseek,
+    fwrite, printf, setbuf, setvbuf, snprintf, sprintf, ungetc,
 };
 
 const IOFBF: i32 = 0;
@@ -377,5 +377,35 @@ fn printf_writes_to_redirected_stdout() {
 
     let bytes = fs::read(&path).expect("redirected printf output file should exist");
     assert_eq!(bytes, b"printf-9\n");
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn dprintf_writes_to_fd() {
+    let path = temp_path("dprintf");
+    let _ = fs::remove_file(&path);
+    let path_c = path_cstring(&path);
+
+    // SAFETY: path pointer is valid and open mode bits are valid.
+    let out_fd = unsafe {
+        libc::open(
+            path_c.as_ptr(),
+            libc::O_CREAT | libc::O_TRUNC | libc::O_WRONLY,
+            0o600,
+        )
+    };
+    assert!(out_fd >= 0);
+
+    // SAFETY: file descriptor is valid and variadic args match format string.
+    let written = unsafe { dprintf(out_fd, c"dprintf-%u".as_ptr(), 77_u32) };
+    assert_eq!(written, 10);
+
+    // SAFETY: file descriptor was returned by open and is still owned here.
+    unsafe {
+        libc::close(out_fd);
+    }
+
+    let bytes = fs::read(&path).expect("dprintf output file should exist");
+    assert_eq!(bytes, b"dprintf-77");
     let _ = fs::remove_file(path);
 }
