@@ -260,6 +260,11 @@ pub fn execute_fixture_case(
         "encode_domain_name" => execute_encode_domain_name_case(inputs, mode),
         "lookup_hosts" => execute_lookup_hosts_case(inputs, mode),
         "getaddrinfo" => execute_getaddrinfo_case(inputs, mode),
+        // stdio
+        "fopen" => execute_fopen_case(inputs, mode),
+        "fclose" => execute_fclose_case(inputs, mode),
+        "fprintf" => execute_fprintf_case(inputs, mode),
+        "snprintf" => execute_snprintf_case(inputs, mode),
         // ctype
         "isalpha" => execute_ctype_classify_case("isalpha", inputs, mode),
         "isdigit" => execute_ctype_classify_case("isdigit", inputs, mode),
@@ -1023,6 +1028,400 @@ fn mode_is_strict(mode: &str) -> bool {
 
 fn mode_is_hardened(mode: &str) -> bool {
     mode.eq_ignore_ascii_case("hardened")
+}
+
+#[derive(Debug)]
+enum PrintfArg {
+    Int(c_int),
+    Str(CString),
+}
+
+fn parse_printf_args(inputs: &serde_json::Value) -> Result<Vec<PrintfArg>, String> {
+    let Some(values) = inputs.get("args").and_then(serde_json::Value::as_array) else {
+        return Ok(Vec::new());
+    };
+
+    let mut args = Vec::with_capacity(values.len());
+    for value in values {
+        if let Some(int_value) = value
+            .as_i64()
+            .or_else(|| value.as_u64().and_then(|v| i64::try_from(v).ok()))
+        {
+            let narrowed = i32::try_from(int_value)
+                .map_err(|_| format!("printf int out of range: {int_value}"))?;
+            args.push(PrintfArg::Int(narrowed));
+            continue;
+        }
+
+        if let Some(text) = value.as_str() {
+            let c_text = CString::new(text)
+                .map_err(|_| String::from("printf string argument contains interior NUL"))?;
+            args.push(PrintfArg::Str(c_text));
+            continue;
+        }
+
+        return Err(format!("unsupported printf arg value: {value}"));
+    }
+
+    Ok(args)
+}
+
+fn stream_alias_to_target(alias: &str) -> Option<(&'static str, &'static str)> {
+    match alias {
+        "devnull" | "valid_devnull" => Some(("/dev/null", "w")),
+        _ => None,
+    }
+}
+
+fn render_c_buffer(buffer: &[c_char], size: usize) -> String {
+    if size == 0 {
+        return String::new();
+    }
+
+    let take = size.min(buffer.len());
+    let mut bytes = Vec::with_capacity(take);
+    for &ch in &buffer[..take] {
+        if ch == 0 {
+            break;
+        }
+        bytes.push(ch as u8);
+    }
+    String::from_utf8_lossy(&bytes).into_owned()
+}
+
+fn run_impl_snprintf(
+    dst: *mut c_char,
+    size: usize,
+    fmt: *const c_char,
+    args: &[PrintfArg],
+) -> Result<c_int, String> {
+    let rc = match args {
+        [] => unsafe { frankenlibc_abi::stdio_abi::snprintf(dst, size, fmt) },
+        [PrintfArg::Int(a0)] => unsafe {
+            frankenlibc_abi::stdio_abi::snprintf(dst, size, fmt, *a0)
+        },
+        [PrintfArg::Str(a0)] => unsafe {
+            frankenlibc_abi::stdio_abi::snprintf(dst, size, fmt, a0.as_ptr())
+        },
+        [PrintfArg::Int(a0), PrintfArg::Int(a1)] => unsafe {
+            frankenlibc_abi::stdio_abi::snprintf(dst, size, fmt, *a0, *a1)
+        },
+        [PrintfArg::Int(a0), PrintfArg::Str(a1)] => unsafe {
+            frankenlibc_abi::stdio_abi::snprintf(dst, size, fmt, *a0, a1.as_ptr())
+        },
+        [PrintfArg::Str(a0), PrintfArg::Int(a1)] => unsafe {
+            frankenlibc_abi::stdio_abi::snprintf(dst, size, fmt, a0.as_ptr(), *a1)
+        },
+        [PrintfArg::Str(a0), PrintfArg::Str(a1)] => unsafe {
+            frankenlibc_abi::stdio_abi::snprintf(dst, size, fmt, a0.as_ptr(), a1.as_ptr())
+        },
+        _ => {
+            return Err(format!(
+                "unsupported snprintf arg signature length {}",
+                args.len()
+            ));
+        }
+    };
+    Ok(rc)
+}
+
+fn run_host_snprintf(
+    dst: *mut c_char,
+    size: usize,
+    fmt: *const c_char,
+    args: &[PrintfArg],
+) -> Result<c_int, String> {
+    let rc = match args {
+        [] => unsafe { libc::snprintf(dst, size, fmt) },
+        [PrintfArg::Int(a0)] => unsafe { libc::snprintf(dst, size, fmt, *a0) },
+        [PrintfArg::Str(a0)] => unsafe { libc::snprintf(dst, size, fmt, a0.as_ptr()) },
+        [PrintfArg::Int(a0), PrintfArg::Int(a1)] => unsafe {
+            libc::snprintf(dst, size, fmt, *a0, *a1)
+        },
+        [PrintfArg::Int(a0), PrintfArg::Str(a1)] => unsafe {
+            libc::snprintf(dst, size, fmt, *a0, a1.as_ptr())
+        },
+        [PrintfArg::Str(a0), PrintfArg::Int(a1)] => unsafe {
+            libc::snprintf(dst, size, fmt, a0.as_ptr(), *a1)
+        },
+        [PrintfArg::Str(a0), PrintfArg::Str(a1)] => unsafe {
+            libc::snprintf(dst, size, fmt, a0.as_ptr(), a1.as_ptr())
+        },
+        _ => {
+            return Err(format!(
+                "unsupported snprintf arg signature length {}",
+                args.len()
+            ));
+        }
+    };
+    Ok(rc)
+}
+
+fn run_impl_fprintf(
+    stream: *mut c_void,
+    fmt: *const c_char,
+    args: &[PrintfArg],
+) -> Result<c_int, String> {
+    let rc = match args {
+        [] => unsafe { frankenlibc_abi::stdio_abi::fprintf(stream, fmt) },
+        [PrintfArg::Int(a0)] => unsafe { frankenlibc_abi::stdio_abi::fprintf(stream, fmt, *a0) },
+        [PrintfArg::Str(a0)] => unsafe {
+            frankenlibc_abi::stdio_abi::fprintf(stream, fmt, a0.as_ptr())
+        },
+        [PrintfArg::Int(a0), PrintfArg::Int(a1)] => unsafe {
+            frankenlibc_abi::stdio_abi::fprintf(stream, fmt, *a0, *a1)
+        },
+        [PrintfArg::Int(a0), PrintfArg::Str(a1)] => unsafe {
+            frankenlibc_abi::stdio_abi::fprintf(stream, fmt, *a0, a1.as_ptr())
+        },
+        [PrintfArg::Str(a0), PrintfArg::Int(a1)] => unsafe {
+            frankenlibc_abi::stdio_abi::fprintf(stream, fmt, a0.as_ptr(), *a1)
+        },
+        [PrintfArg::Str(a0), PrintfArg::Str(a1)] => unsafe {
+            frankenlibc_abi::stdio_abi::fprintf(stream, fmt, a0.as_ptr(), a1.as_ptr())
+        },
+        _ => {
+            return Err(format!(
+                "unsupported fprintf arg signature length {}",
+                args.len()
+            ));
+        }
+    };
+    Ok(rc)
+}
+
+fn run_host_fprintf(
+    stream: *mut libc::FILE,
+    fmt: *const c_char,
+    args: &[PrintfArg],
+) -> Result<c_int, String> {
+    let rc = match args {
+        [] => unsafe { libc::fprintf(stream, fmt) },
+        [PrintfArg::Int(a0)] => unsafe { libc::fprintf(stream, fmt, *a0) },
+        [PrintfArg::Str(a0)] => unsafe { libc::fprintf(stream, fmt, a0.as_ptr()) },
+        [PrintfArg::Int(a0), PrintfArg::Int(a1)] => unsafe { libc::fprintf(stream, fmt, *a0, *a1) },
+        [PrintfArg::Int(a0), PrintfArg::Str(a1)] => unsafe {
+            libc::fprintf(stream, fmt, *a0, a1.as_ptr())
+        },
+        [PrintfArg::Str(a0), PrintfArg::Int(a1)] => unsafe {
+            libc::fprintf(stream, fmt, a0.as_ptr(), *a1)
+        },
+        [PrintfArg::Str(a0), PrintfArg::Str(a1)] => unsafe {
+            libc::fprintf(stream, fmt, a0.as_ptr(), a1.as_ptr())
+        },
+        _ => {
+            return Err(format!(
+                "unsupported fprintf arg signature length {}",
+                args.len()
+            ));
+        }
+    };
+    Ok(rc)
+}
+
+fn execute_fopen_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    let filename = parse_string_any(inputs, &["filename", "path"])?;
+    let open_mode = parse_string(inputs, "mode")?;
+    let strict = mode_is_strict(mode);
+    let hardened = mode_is_hardened(mode);
+    if !strict && !hardened {
+        return Err(format!("unsupported mode: {mode}"));
+    }
+
+    let filename_c =
+        CString::new(filename).map_err(|_| String::from("filename contains interior NUL"))?;
+    let mode_c = CString::new(open_mode).map_err(|_| String::from("mode contains interior NUL"))?;
+
+    let impl_stream =
+        unsafe { frankenlibc_abi::stdio_abi::fopen(filename_c.as_ptr(), mode_c.as_ptr()) };
+    let impl_opened = !impl_stream.is_null();
+    if impl_opened {
+        let _ = unsafe { frankenlibc_abi::stdio_abi::fclose(impl_stream) };
+    }
+    let impl_output = if impl_opened { "STREAM_OPENED" } else { "NULL" }.to_string();
+
+    if strict {
+        let host_stream = unsafe { libc::fopen(filename_c.as_ptr(), mode_c.as_ptr()) };
+        let host_opened = !host_stream.is_null();
+        if host_opened {
+            let _ = unsafe { libc::fclose(host_stream) };
+        }
+        let host_output = if host_opened { "STREAM_OPENED" } else { "NULL" }.to_string();
+        let host_parity = host_output == impl_output;
+        let note = (!host_parity).then(|| String::from("strict fopen host parity mismatch"));
+        return Ok(DifferentialExecution {
+            host_output,
+            impl_output,
+            host_parity,
+            note,
+        });
+    }
+
+    Ok(DifferentialExecution {
+        host_output: String::from("SKIP"),
+        impl_output,
+        host_parity: true,
+        note: None,
+    })
+}
+
+fn execute_fclose_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    let strict = mode_is_strict(mode);
+    let hardened = mode_is_hardened(mode);
+    if !strict && !hardened {
+        return Err(format!("unsupported mode: {mode}"));
+    }
+
+    let stream_alias = parse_string(inputs, "stream")?;
+    let Some((path, open_mode)) = stream_alias_to_target(&stream_alias) else {
+        return Err(format!("unsupported stream alias: {stream_alias}"));
+    };
+
+    let path_c = CString::new(path).expect("static path has no interior NUL");
+    let mode_c = CString::new(open_mode).expect("static mode has no interior NUL");
+
+    let impl_stream =
+        unsafe { frankenlibc_abi::stdio_abi::fopen(path_c.as_ptr(), mode_c.as_ptr()) };
+    let impl_rc = if impl_stream.is_null() {
+        -1
+    } else {
+        unsafe { frankenlibc_abi::stdio_abi::fclose(impl_stream) }
+    };
+    let impl_output = impl_rc.to_string();
+
+    if strict {
+        let host_stream = unsafe { libc::fopen(path_c.as_ptr(), mode_c.as_ptr()) };
+        let host_rc = if host_stream.is_null() {
+            -1
+        } else {
+            unsafe { libc::fclose(host_stream) }
+        };
+        let host_output = host_rc.to_string();
+        let host_parity = host_output == impl_output;
+        let note = (!host_parity).then(|| String::from("strict fclose host parity mismatch"));
+        return Ok(DifferentialExecution {
+            host_output,
+            impl_output,
+            host_parity,
+            note,
+        });
+    }
+
+    Ok(DifferentialExecution {
+        host_output: String::from("SKIP"),
+        impl_output,
+        host_parity: true,
+        note: None,
+    })
+}
+
+fn execute_fprintf_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    let strict = mode_is_strict(mode);
+    let hardened = mode_is_hardened(mode);
+    if !strict && !hardened {
+        return Err(format!("unsupported mode: {mode}"));
+    }
+
+    let stream_alias = parse_string(inputs, "stream")?;
+    let Some((path, open_mode)) = stream_alias_to_target(&stream_alias) else {
+        return Err(format!("unsupported stream alias: {stream_alias}"));
+    };
+    let format = parse_string(inputs, "format")?;
+    let format_c =
+        CString::new(format).map_err(|_| String::from("format contains interior NUL"))?;
+    let args = parse_printf_args(inputs)?;
+
+    let path_c = CString::new(path).expect("static path has no interior NUL");
+    let mode_c = CString::new(open_mode).expect("static mode has no interior NUL");
+
+    let impl_stream =
+        unsafe { frankenlibc_abi::stdio_abi::fopen(path_c.as_ptr(), mode_c.as_ptr()) };
+    let impl_rc = if impl_stream.is_null() {
+        -1
+    } else {
+        let rc = run_impl_fprintf(impl_stream, format_c.as_ptr(), &args)?;
+        let _ = unsafe { frankenlibc_abi::stdio_abi::fclose(impl_stream) };
+        rc
+    };
+    let impl_output = impl_rc.to_string();
+
+    if strict {
+        let host_stream = unsafe { libc::fopen(path_c.as_ptr(), mode_c.as_ptr()) };
+        let host_rc = if host_stream.is_null() {
+            -1
+        } else {
+            let rc = run_host_fprintf(host_stream, format_c.as_ptr(), &args)?;
+            let _ = unsafe { libc::fclose(host_stream) };
+            rc
+        };
+        let host_output = host_rc.to_string();
+        let host_parity = host_output == impl_output;
+        let note = (!host_parity).then(|| String::from("strict fprintf host parity mismatch"));
+        return Ok(DifferentialExecution {
+            host_output,
+            impl_output,
+            host_parity,
+            note,
+        });
+    }
+
+    Ok(DifferentialExecution {
+        host_output: String::from("SKIP"),
+        impl_output,
+        host_parity: true,
+        note: None,
+    })
+}
+
+fn execute_snprintf_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    let strict = mode_is_strict(mode);
+    let hardened = mode_is_hardened(mode);
+    if !strict && !hardened {
+        return Err(format!("unsupported mode: {mode}"));
+    }
+
+    let size = parse_usize(inputs, "size")?;
+    let format = parse_string(inputs, "format")?;
+    let format_c =
+        CString::new(format).map_err(|_| String::from("format contains interior NUL"))?;
+    let args = parse_printf_args(inputs)?;
+
+    let mut impl_buf = vec![0 as c_char; size.max(1)];
+    let _ = run_impl_snprintf(impl_buf.as_mut_ptr(), size, format_c.as_ptr(), &args)?;
+    let impl_output = render_c_buffer(&impl_buf, size);
+
+    if strict {
+        let mut host_buf = vec![0 as c_char; size.max(1)];
+        let _ = run_host_snprintf(host_buf.as_mut_ptr(), size, format_c.as_ptr(), &args)?;
+        let host_output = render_c_buffer(&host_buf, size);
+        let host_parity = host_output == impl_output;
+        let note = (!host_parity).then(|| String::from("strict snprintf host parity mismatch"));
+        return Ok(DifferentialExecution {
+            host_output,
+            impl_output,
+            host_parity,
+            note,
+        });
+    }
+
+    Ok(DifferentialExecution {
+        host_output: String::from("SKIP"),
+        impl_output,
+        host_parity: true,
+        note: None,
+    })
 }
 
 fn execute_memcpy_case(
@@ -4309,6 +4708,54 @@ mod tests {
         assert_eq!(result.host_output, "UB");
         assert_eq!(result.impl_output, "3");
         assert!(!result.host_parity);
+    }
+
+    #[test]
+    fn execute_fopen_case_strict_valid_devnull() {
+        let inputs = serde_json::json!({
+            "filename": "/dev/null",
+            "mode": "r"
+        });
+        let result =
+            execute_fixture_case("fopen", &inputs, "strict").expect("fopen should execute");
+        assert_eq!(result.impl_output, "STREAM_OPENED");
+        assert!(result.host_parity);
+    }
+
+    #[test]
+    fn execute_fclose_case_strict_valid_stream() {
+        let inputs = serde_json::json!({
+            "stream": "valid_devnull"
+        });
+        let result =
+            execute_fixture_case("fclose", &inputs, "strict").expect("fclose should execute");
+        assert_eq!(result.impl_output, "0");
+        assert!(result.host_parity);
+    }
+
+    #[test]
+    fn execute_fprintf_case_strict_devnull() {
+        let inputs = serde_json::json!({
+            "stream": "devnull",
+            "format": "hello %d",
+            "args": [42]
+        });
+        let result =
+            execute_fixture_case("fprintf", &inputs, "strict").expect("fprintf should execute");
+        assert_eq!(result.impl_output, "8");
+        assert!(result.host_parity);
+    }
+
+    #[test]
+    fn execute_snprintf_case_strict_truncation() {
+        let inputs = serde_json::json!({
+            "size": 5,
+            "format": "hello world"
+        });
+        let result =
+            execute_fixture_case("snprintf", &inputs, "strict").expect("snprintf should execute");
+        assert_eq!(result.impl_output, "hell");
+        assert!(result.host_parity);
     }
 
     #[test]
