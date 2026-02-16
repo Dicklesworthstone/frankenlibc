@@ -2,7 +2,7 @@
   "version": 2,
   "generated_at_utc": "2026-02-13T18:07:59Z",
   "library": "/data/tmp/cargo-target/release/libfrankenlibc_abi.so",
-  "total_exported": 250,
+  "total_exported": 254,
   "taxonomy": {
     "Implemented": "Native Rust code owns the entire operation. No host libc dependency. Full test coverage required.",
     "RawSyscall": "ABI entrypoint marshals arguments directly to Linux syscall instruction. No glibc call-through.",
@@ -1906,6 +1906,15 @@
       "default_stub": false
     },
     {
+      "symbol": "stpcpy",
+      "status": "Implemented",
+      "module": "string_abi",
+      "perf_class": "strict_hotpath",
+      "strict_semantics": "Safe Rust string/memory ops; unbounded scans follow C semantics; no repair",
+      "hardened_semantics": "Clamps copy/scan to tracked allocation bounds; logs ClampSize/TruncateWithNull",
+      "default_stub": false
+    },
+    {
       "symbol": "strlen",
       "status": "Implemented",
       "module": "string_abi",
@@ -1925,6 +1934,33 @@
     },
     {
       "symbol": "strncpy",
+      "status": "Implemented",
+      "module": "string_abi",
+      "perf_class": "strict_hotpath",
+      "strict_semantics": "Safe Rust string/memory ops; unbounded scans follow C semantics; no repair",
+      "hardened_semantics": "Clamps copy/scan to tracked allocation bounds; logs ClampSize/TruncateWithNull",
+      "default_stub": false
+    },
+    {
+      "symbol": "strncmp",
+      "status": "Implemented",
+      "module": "string_abi",
+      "perf_class": "strict_hotpath",
+      "strict_semantics": "Safe Rust string/memory ops; unbounded scans follow C semantics; no repair",
+      "hardened_semantics": "Clamps copy/scan to tracked allocation bounds; logs ClampSize/TruncateWithNull",
+      "default_stub": false
+    },
+    {
+      "symbol": "strnlen",
+      "status": "Implemented",
+      "module": "string_abi",
+      "perf_class": "strict_hotpath",
+      "strict_semantics": "Safe Rust string/memory ops; unbounded scans follow C semantics; no repair",
+      "hardened_semantics": "Clamps copy/scan to tracked allocation bounds; logs ClampSize/TruncateWithNull",
+      "default_stub": false
+    },
+    {
+      "symbol": "stpncpy",
       "status": "Implemented",
       "module": "string_abi",
       "perf_class": "strict_hotpath",
@@ -2285,7 +2321,7 @@
     }
   ],
   "summary": {
-    "Implemented": 147,
+    "Implemented": 151,
     "RawSyscall": 83,
     "GlibcCallThrough": 20,
     "Stub": 0,
