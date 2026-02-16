@@ -103,6 +103,59 @@ fn pthread_join_and_detach_unknown_thread_are_esrch() {
 }
 
 #[test]
+fn pthread_create_join_roundtrip_stress() {
+    let _guard = lock_and_force_native();
+
+    for i in 1usize..=128 {
+        let arg = i as *mut c_void;
+        let mut tid: libc::pthread_t = 0;
+        let create_rc = unsafe {
+            pthread_create(
+                &mut tid as *mut libc::pthread_t,
+                std::ptr::null(),
+                Some(start_return_arg),
+                arg,
+            )
+        };
+        assert_eq!(create_rc, 0, "pthread_create failed on iteration {i}");
+
+        let mut retval: *mut c_void = std::ptr::null_mut();
+        let join_rc = unsafe { pthread_join(tid, &mut retval as *mut *mut c_void) };
+        assert_eq!(join_rc, 0, "pthread_join failed on iteration {i}");
+        assert_eq!(retval, arg, "returned arg mismatch on iteration {i}");
+    }
+}
+
+#[test]
+fn pthread_create_join_parallel_batch_stress() {
+    let _guard = lock_and_force_native();
+    const BATCH: usize = 16;
+
+    let mut tids = [0 as libc::pthread_t; BATCH];
+    let mut args = [std::ptr::null_mut::<c_void>(); BATCH];
+
+    for idx in 0..BATCH {
+        args[idx] = (idx + 1) as *mut c_void;
+        let create_rc = unsafe {
+            pthread_create(
+                &mut tids[idx] as *mut libc::pthread_t,
+                std::ptr::null(),
+                Some(start_return_arg),
+                args[idx],
+            )
+        };
+        assert_eq!(create_rc, 0, "pthread_create failed for slot {idx}");
+    }
+
+    for idx in 0..BATCH {
+        let mut retval: *mut c_void = std::ptr::null_mut();
+        let join_rc = unsafe { pthread_join(tids[idx], &mut retval as *mut *mut c_void) };
+        assert_eq!(join_rc, 0, "pthread_join failed for slot {idx}");
+        assert_eq!(retval, args[idx], "returned arg mismatch for slot {idx}");
+    }
+}
+
+#[test]
 fn pthread_detach_makes_subsequent_join_fail_with_esrch() {
     let _guard = lock_and_force_native();
 
@@ -123,4 +176,28 @@ fn pthread_detach_makes_subsequent_join_fail_with_esrch() {
     // Join after detach should fail; thread handle was removed from join table.
     let join_rc = unsafe { pthread_join(tid, std::ptr::null_mut()) };
     assert_eq!(join_rc, libc::ESRCH);
+}
+
+#[test]
+fn pthread_detach_join_esrch_stress() {
+    let _guard = lock_and_force_native();
+
+    for i in 0..64 {
+        let mut tid: libc::pthread_t = 0;
+        let create_rc = unsafe {
+            pthread_create(
+                &mut tid as *mut libc::pthread_t,
+                std::ptr::null(),
+                Some(start_return_arg),
+                std::ptr::null_mut(),
+            )
+        };
+        assert_eq!(create_rc, 0, "pthread_create failed on iteration {i}");
+
+        let detach_rc = unsafe { pthread_detach(tid) };
+        assert_eq!(detach_rc, 0, "pthread_detach failed on iteration {i}");
+
+        let join_rc = unsafe { pthread_join(tid, std::ptr::null_mut()) };
+        assert_eq!(join_rc, libc::ESRCH, "join-after-detach mismatch on {i}");
+    }
 }
