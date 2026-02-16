@@ -192,7 +192,10 @@ fn ld_preload_smoke_report_schema_valid_when_present() {
                     assert!(obj[field].is_string(), "trace line missing {}", field);
                 }
                 assert!(obj["errno"].is_number(), "trace line missing errno");
-                assert!(obj["latency_ns"].is_number(), "trace line missing latency_ns");
+                assert!(
+                    obj["latency_ns"].is_number(),
+                    "trace line missing latency_ns"
+                );
                 assert!(
                     obj["artifact_refs"].is_array(),
                     "trace line missing artifact_refs"
