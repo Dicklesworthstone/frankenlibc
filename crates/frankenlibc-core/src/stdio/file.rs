@@ -140,6 +140,15 @@ pub struct StdioStream {
 }
 
 impl StdioStream {
+    fn advance_offset(&mut self, bytes: usize) {
+        let inc = i64::try_from(bytes).unwrap_or(i64::MAX);
+        self.offset = self.offset.saturating_add(inc);
+    }
+
+    fn rewind_offset_one(&mut self) {
+        self.offset = self.offset.saturating_sub(1);
+    }
+
     /// Create a new stream for the given fd with default buffering.
     pub fn new(fd: i32, open_flags: OpenFlags) -> Self {
         let buf_mode = if fd <= 2 {
@@ -259,6 +268,7 @@ impl StdioStream {
         }
         self.flags.io_started = true;
         let result = self.buffer.write(data);
+        self.advance_offset(data.len());
         if result.flush_needed {
             result.flush_data
         } else {
@@ -284,6 +294,9 @@ impl StdioStream {
     ///
     /// If empty, caller should call `fill_read_buffer` then retry.
     pub fn buffered_read(&mut self, count: usize) -> Vec<u8> {
+        if count == 0 {
+            return Vec::new();
+        }
         if !self.open_flags.readable {
             self.flags.error = true;
             return Vec::new();
@@ -305,6 +318,7 @@ impl StdioStream {
         // Then read from buffer.
         let data = self.buffer.read(remaining);
         result.extend_from_slice(data);
+        self.advance_offset(result.len());
         result
     }
 
@@ -320,14 +334,19 @@ impl StdioStream {
 
     /// Push a byte back (ungetc). Returns false if already one pushed back.
     pub fn ungetc(&mut self, byte: u8) -> bool {
-        if self.ungetc_byte.is_some() {
+        let pushed = if self.ungetc_byte.is_some() {
             // Try the buffer's unget.
             self.buffer.unget(byte)
         } else {
             self.ungetc_byte = Some(byte);
-            self.flags.eof = false; // POSIX: ungetc clears EOF
             true
+        };
+
+        if pushed {
+            self.flags.eof = false; // POSIX: ungetc clears EOF
+            self.rewind_offset_one();
         }
+        pushed
     }
 
     // -----------------------------------------------------------------------
@@ -354,7 +373,6 @@ impl StdioStream {
     pub fn prepare_close(&mut self) -> Vec<u8> {
         let pending = self.buffer.pending_write_data().to_vec();
         self.buffer.mark_flushed();
-        self.fd = -1;
         pending
     }
 
@@ -440,6 +458,51 @@ mod tests {
         assert!(s.ungetc(b'h'));
         let data = s.buffered_read(5);
         assert_eq!(&data, b"hello");
+    }
+
+    #[test]
+    fn test_stream_offset_tracks_reads_and_writes() {
+        let write_flags = OpenFlags {
+            writable: true,
+            ..Default::default()
+        };
+        let mut writer = StdioStream::new(3, write_flags);
+        assert_eq!(writer.offset(), 0);
+        let _ = writer.buffer_write(b"hello");
+        assert_eq!(writer.offset(), 5);
+        let _ = writer.buffer_write(b" world");
+        assert_eq!(writer.offset(), 11);
+
+        let read_flags = OpenFlags {
+            readable: true,
+            ..Default::default()
+        };
+        let mut reader = StdioStream::new(3, read_flags);
+        reader.fill_read_buffer(b"abcdef");
+        let first = reader.buffered_read(2);
+        assert_eq!(&first, b"ab");
+        assert_eq!(reader.offset(), 2);
+        let second = reader.buffered_read(4);
+        assert_eq!(&second, b"cdef");
+        assert_eq!(reader.offset(), 6);
+    }
+
+    #[test]
+    fn test_ungetc_rewinds_offset() {
+        let flags = OpenFlags {
+            readable: true,
+            ..Default::default()
+        };
+        let mut s = StdioStream::new(3, flags);
+        s.fill_read_buffer(b"abc");
+        let first = s.buffered_read(2);
+        assert_eq!(&first, b"ab");
+        assert_eq!(s.offset(), 2);
+        assert!(s.ungetc(b'b'));
+        assert_eq!(s.offset(), 1);
+        let replay = s.buffered_read(2);
+        assert_eq!(&replay, b"bc");
+        assert_eq!(s.offset(), 3);
     }
 
     #[test]

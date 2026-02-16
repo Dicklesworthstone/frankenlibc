@@ -272,6 +272,7 @@ pub const fn sanitize_mutex_type(kind: i32) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
 
     #[test]
     fn mutex_type_constants() {
@@ -404,5 +405,63 @@ mod tests {
         let note = futex_contention_fairness_note();
         assert!(note.contains("wait/wake"));
         assert!(note.contains("starvation"));
+    }
+
+    proptest! {
+        #[test]
+        fn prop_sanitize_always_returns_supported_kind(kind in any::<i32>()) {
+            prop_assert!(valid_mutex_type(sanitize_mutex_type(kind)));
+        }
+
+        #[test]
+        fn prop_invalid_kind_transitions_fail_with_einval(
+            kind in any::<i32>(),
+            state in prop_oneof![
+                Just(MutexContractState::Uninitialized),
+                Just(MutexContractState::Unlocked),
+                Just(MutexContractState::LockedBySelf),
+                Just(MutexContractState::LockedByOther),
+                Just(MutexContractState::Destroyed),
+            ],
+            op in prop_oneof![
+                Just(MutexContractOp::Init),
+                Just(MutexContractOp::Lock),
+                Just(MutexContractOp::TryLock),
+                Just(MutexContractOp::Unlock),
+                Just(MutexContractOp::Destroy),
+            ],
+        ) {
+            prop_assume!(!valid_mutex_type(kind));
+            let outcome = mutex_contract_transition(kind, state, op);
+            prop_assert_eq!(outcome.next, state);
+            prop_assert_eq!(outcome.errno, errno::EINVAL);
+            prop_assert!(!outcome.blocks);
+        }
+
+        #[test]
+        fn prop_relock_semantics_from_locked_by_self(kind in prop_oneof![
+            Just(PTHREAD_MUTEX_NORMAL),
+            Just(PTHREAD_MUTEX_RECURSIVE),
+            Just(PTHREAD_MUTEX_ERRORCHECK),
+        ]) {
+            let outcome =
+                mutex_contract_transition(kind, MutexContractState::LockedBySelf, MutexContractOp::Lock);
+
+            prop_assert_eq!(outcome.next, MutexContractState::LockedBySelf);
+            match kind {
+                PTHREAD_MUTEX_RECURSIVE => {
+                    prop_assert_eq!(outcome.errno, 0);
+                    prop_assert!(!outcome.blocks);
+                }
+                PTHREAD_MUTEX_ERRORCHECK => {
+                    prop_assert_eq!(outcome.errno, errno::EDEADLK);
+                    prop_assert!(!outcome.blocks);
+                }
+                _ => {
+                    prop_assert_eq!(outcome.errno, 0);
+                    prop_assert!(outcome.blocks);
+                }
+            }
+        }
     }
 }

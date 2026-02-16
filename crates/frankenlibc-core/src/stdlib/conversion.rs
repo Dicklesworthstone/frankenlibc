@@ -234,6 +234,7 @@ pub fn strtoul(s: &[u8], base: i32) -> (u64, usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
 
     #[test]
     fn test_atoi_basic() {
@@ -331,5 +332,51 @@ mod tests {
         let (val, len) = strtol(b"0x1", 0);
         assert_eq!(val, 1);
         assert_eq!(len, 3);
+    }
+
+    proptest! {
+        #[test]
+        fn prop_strtol_round_trips_all_i64_values(value in any::<i64>()) {
+            let text = value.to_string();
+            let (parsed, consumed, status) = strtol_impl(text.as_bytes(), 10);
+            prop_assert_eq!(parsed, value);
+            prop_assert_eq!(consumed, text.len());
+            prop_assert_eq!(status, ConversionStatus::Success);
+        }
+
+        #[test]
+        fn prop_strtoul_round_trips_all_u64_values(value in any::<u64>()) {
+            let text = value.to_string();
+            let (parsed, consumed, status) = strtoul_impl(text.as_bytes(), 10);
+            prop_assert_eq!(parsed, value);
+            prop_assert_eq!(consumed, text.len());
+            prop_assert_eq!(status, ConversionStatus::Success);
+        }
+
+        #[test]
+        fn prop_invalid_bases_are_rejected(
+            raw in any::<i32>(),
+            input in proptest::collection::vec(any::<u8>(), 0..32)
+        ) {
+            let is_valid = raw == 0 || (2..=36).contains(&raw);
+            prop_assume!(!is_valid);
+
+            let mut idx = 0usize;
+            while idx < input.len() && input[idx].is_ascii_whitespace() {
+                idx += 1;
+            }
+            if idx < input.len() && (input[idx] == b'+' || input[idx] == b'-') {
+                idx += 1;
+            }
+            // strto* implementations return Success before base validation when
+            // no parseable body remains after whitespace/sign consumption.
+            prop_assume!(idx < input.len());
+
+            let (_, _, status_signed) = strtol_impl(&input, raw);
+            let (_, _, status_unsigned) = strtoul_impl(&input, raw);
+
+            prop_assert_eq!(status_signed, ConversionStatus::InvalidBase);
+            prop_assert_eq!(status_unsigned, ConversionStatus::InvalidBase);
+        }
     }
 }

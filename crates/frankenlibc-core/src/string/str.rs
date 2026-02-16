@@ -195,6 +195,13 @@ pub fn strstr(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
+
+    fn to_c_string(mut bytes: Vec<u8>) -> Vec<u8> {
+        bytes.retain(|byte| *byte != 0);
+        bytes.push(0);
+        bytes
+    }
 
     #[test]
     fn test_strlen_basic() {
@@ -304,5 +311,49 @@ mod tests {
     #[test]
     fn test_strstr_empty_needle() {
         assert_eq!(strstr(b"hello\0", b"\0"), Some(0));
+    }
+
+    proptest! {
+        #[test]
+        fn prop_strlen_matches_first_nul_or_slice_len(data in proptest::collection::vec(any::<u8>(), 0..128)) {
+            let expected = data.iter().position(|byte| *byte == 0).unwrap_or(data.len());
+            prop_assert_eq!(strlen(&data), expected);
+        }
+
+        #[test]
+        fn prop_strcmp_is_antisymmetric(
+            left in proptest::collection::vec(any::<u8>(), 0..96),
+            right in proptest::collection::vec(any::<u8>(), 0..96)
+        ) {
+            let left_c = to_c_string(left);
+            let right_c = to_c_string(right);
+
+            let lr = strcmp(&left_c, &right_c);
+            let rl = strcmp(&right_c, &left_c);
+            prop_assert_eq!(lr.signum(), -rl.signum());
+        }
+
+        #[test]
+        fn prop_strstr_aligns_with_manual_window_search(
+            hay in proptest::collection::vec(any::<u8>(), 0..96),
+            needle in proptest::collection::vec(any::<u8>(), 0..24)
+        ) {
+            let hay_c = to_c_string(hay);
+            let needle_c = to_c_string(needle);
+
+            let hay_len = strlen(&hay_c);
+            let needle_len = strlen(&needle_c);
+            let expected = if needle_len == 0 {
+                Some(0)
+            } else if needle_len > hay_len {
+                None
+            } else {
+                hay_c[..hay_len]
+                    .windows(needle_len)
+                    .position(|window| window == &needle_c[..needle_len])
+            };
+
+            prop_assert_eq!(strstr(&hay_c, &needle_c), expected);
+        }
     }
 }

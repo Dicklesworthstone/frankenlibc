@@ -408,6 +408,19 @@ impl Default for PersistenceDetector {
 mod tests {
     use super::*;
 
+    fn feed_window(det: &mut PersistenceDetector, window: &[[f64; PERSIST_DIM]; PERSIST_CLOUD]) {
+        for point in window {
+            det.observe(*point);
+        }
+    }
+
+    fn stable_window() -> [[f64; PERSIST_DIM]; PERSIST_CLOUD] {
+        std::array::from_fn(|i| {
+            let t = i as f64 * 0.05;
+            [t.sin(), (t * 1.3).cos(), (t * 0.7).sin(), (t * 2.0).cos()]
+        })
+    }
+
     #[test]
     fn empty_cloud_has_no_pairs() {
         let pairs = compute_persistence_h0(&[]);
@@ -522,6 +535,49 @@ mod tests {
         let det = PersistenceDetector::new();
         assert_eq!(det.state(), TopologicalState::Calibrating);
         assert_eq!(det.anomaly_count(), 0);
+    }
+
+    #[test]
+    fn calibration_requires_full_baseline_windows() {
+        let mut det = PersistenceDetector::new();
+        let stable = stable_window();
+
+        for _ in 0..BASELINE_WINDOWS {
+            feed_window(&mut det, &stable);
+            assert_eq!(det.state(), TopologicalState::Calibrating);
+            assert_eq!(det.anomaly_count(), 0);
+        }
+
+        // One additional stable window should move us out of calibration.
+        feed_window(&mut det, &stable);
+        assert_eq!(det.state(), TopologicalState::Normal);
+        assert_eq!(det.anomaly_count(), 0);
+    }
+
+    #[test]
+    fn abrupt_topology_shift_increments_anomaly_counter() {
+        let mut det = PersistenceDetector::new();
+        let stable = stable_window();
+
+        for _ in 0..=BASELINE_WINDOWS {
+            feed_window(&mut det, &stable);
+        }
+        assert_eq!(det.state(), TopologicalState::Normal);
+        let before = det.anomaly_count();
+
+        // Bimodal far-separated cloud to induce a strong topology shift.
+        let shifted = std::array::from_fn(|i| {
+            let center = if i < PERSIST_CLOUD / 2 { 600.0 } else { -600.0 };
+            let jitter = i as f64 * 0.01;
+            [center + jitter, jitter, jitter * 0.5, -jitter]
+        });
+        feed_window(&mut det, &shifted);
+
+        assert_eq!(det.state(), TopologicalState::Anomalous);
+        assert!(
+            det.anomaly_count() > before,
+            "anomaly counter should increase after topology shift"
+        );
     }
 
     #[test]

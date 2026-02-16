@@ -293,6 +293,7 @@ pub struct WriteResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
 
     #[test]
     fn test_full_buffer_absorbs_small_writes() {
@@ -381,5 +382,56 @@ mod tests {
         assert_eq!(BufMode::from_posix(1), Some(BufMode::Line));
         assert_eq!(BufMode::from_posix(2), Some(BufMode::None));
         assert_eq!(BufMode::from_posix(3), Option::None);
+    }
+
+    proptest! {
+        #[test]
+        fn prop_full_mode_buffers_without_flush_when_capacity_allows(
+            cap in 1usize..128,
+            data in proptest::collection::vec(any::<u8>(), 0..128)
+        ) {
+            prop_assume!(data.len() <= cap);
+
+            let mut buf = StreamBuffer::new(BufMode::Full, cap);
+            let result = buf.write(&data);
+
+            prop_assert!(!result.flush_needed);
+            prop_assert_eq!(result.buffered, data.len());
+            prop_assert_eq!(buf.pending_write_data(), data.as_slice());
+        }
+
+        #[test]
+        fn prop_line_mode_flushes_through_last_newline(
+            data in proptest::collection::vec(any::<u8>(), 0..128)
+        ) {
+            let mut buf = StreamBuffer::new(BufMode::Line, data.len().max(1) + 1);
+            let result = buf.write(&data);
+            let last_nl = data.iter().rposition(|b| *b == b'\n');
+
+            match last_nl {
+                Some(index) => {
+                    prop_assert!(result.flush_needed);
+                    prop_assert_eq!(&result.flush_data, &data[..=index]);
+                    prop_assert_eq!(buf.pending_write_data(), &data[index + 1..]);
+                }
+                None => {
+                    prop_assert!(!result.flush_needed);
+                    prop_assert!(result.flush_data.is_empty());
+                    prop_assert_eq!(buf.pending_write_data(), data.as_slice());
+                }
+            }
+        }
+
+        #[test]
+        fn prop_unbuffered_mode_always_requests_immediate_flush(
+            data in proptest::collection::vec(any::<u8>(), 0..128)
+        ) {
+            let mut buf = StreamBuffer::unbuffered();
+            let result = buf.write(&data);
+
+            prop_assert!(result.flush_needed);
+            prop_assert_eq!(result.buffered, 0);
+            prop_assert_eq!(result.flush_data, data);
+        }
     }
 }

@@ -227,7 +227,14 @@ pub unsafe extern "C" fn fopen(pathname: *const c_char, mode: *const c_char) -> 
     }
 
     // Create stream and register it.
-    let stream = StdioStream::new(fd, open_flags);
+    let mut stream = StdioStream::new(fd, open_flags);
+    if open_flags.append {
+        // POSIX append streams start at end-of-file for logical position tracking.
+        let end_off = unsafe { libc::syscall(libc::SYS_lseek as c_long, fd, 0, libc::SEEK_END) };
+        if end_off >= 0 {
+            stream.set_offset(end_off as i64);
+        }
+    }
     let id = alloc_stream_id();
     let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
     reg.streams.insert(id, stream);
@@ -257,9 +264,9 @@ pub unsafe extern "C" fn fclose(stream: *mut c_void) -> c_int {
         return libc::EOF;
     };
 
+    let fd = s.fd();
     // Flush pending writes.
     let pending = s.prepare_close();
-    let fd = s.fd();
     let mut adverse = false;
 
     if !pending.is_empty() && fd >= 0 {

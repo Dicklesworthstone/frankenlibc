@@ -72,4 +72,23 @@ mod tests {
         assert!(!monitor.note_overlap(1, 2, 0x00));
         assert_eq!(monitor.fault_count(), 1);
     }
+
+    #[test]
+    fn shard_wraparound_and_repeated_faults_are_counted() {
+        let monitor = CohomologyMonitor::new();
+        monitor.set_section_hash(1, 0xAA);
+        monitor.set_section_hash(1 + SHARD_COUNT, 0xBB); // wraps and overrides shard 1
+        monitor.set_section_hash(2, 0x11);
+
+        // Wrapped shard index should participate in overlap checks.
+        assert!(monitor.note_overlap(1 + SHARD_COUNT, 2, 0xAA)); // 0xBB ^ 0x11 = 0xAA
+
+        // Same wrapped shard compared with itself is always xor=0.
+        assert!(monitor.note_overlap(1, 1 + SHARD_COUNT, 0));
+
+        // Fault counter should accumulate across repeated mismatches.
+        assert!(!monitor.note_overlap(1, 2, 0x00));
+        assert!(!monitor.note_overlap(1, 2, 0x01));
+        assert_eq!(monitor.fault_count(), 2);
+    }
 }

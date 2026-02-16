@@ -460,4 +460,54 @@ mod tests {
         assert_eq!(snap.checks, 512);
         assert!(snap.global_violation_rate < 0.01);
     }
+
+    #[test]
+    fn descent_failure_counter_tracks_entries_not_duration() {
+        let mut ctrl = GrothendieckGlueController::new();
+
+        let coherent_obs = CocycleObservation {
+            family: QueryFamily::Hostname,
+            source_i: DataSource::Files,
+            source_j: DataSource::Dns,
+            compatible: true,
+            is_stack_check: false,
+        };
+        let failing_obs = CocycleObservation {
+            compatible: false,
+            ..coherent_obs
+        };
+
+        // Establish coherent baseline.
+        for _ in 0..COCYCLE_WINDOW {
+            ctrl.observe_cocycle(&coherent_obs);
+        }
+        assert_eq!(ctrl.state(), GlueState::Coherent);
+
+        // Enter descent failure once.
+        for _ in 0..COCYCLE_WINDOW {
+            ctrl.observe_cocycle(&failing_obs);
+        }
+        assert_eq!(ctrl.state(), GlueState::DescentFailure);
+        let first_count = ctrl.snapshot().descent_failure_count;
+        assert_eq!(first_count, 1);
+
+        // Stay failed: counter should not increase while state is unchanged.
+        for _ in 0..(2 * COCYCLE_WINDOW) {
+            ctrl.observe_cocycle(&failing_obs);
+        }
+        assert_eq!(ctrl.snapshot().descent_failure_count, first_count);
+
+        // Recover back to coherent.
+        for _ in 0..(4 * COCYCLE_WINDOW) {
+            ctrl.observe_cocycle(&coherent_obs);
+        }
+        assert_eq!(ctrl.state(), GlueState::Coherent);
+
+        // Re-enter failure: counter increments once.
+        for _ in 0..COCYCLE_WINDOW {
+            ctrl.observe_cocycle(&failing_obs);
+        }
+        assert_eq!(ctrl.state(), GlueState::DescentFailure);
+        assert_eq!(ctrl.snapshot().descent_failure_count, first_count + 1);
+    }
 }

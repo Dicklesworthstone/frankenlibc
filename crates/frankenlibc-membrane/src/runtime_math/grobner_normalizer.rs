@@ -469,4 +469,58 @@ mod tests {
             "Should detect eprocess > risk violation"
         );
     }
+
+    #[test]
+    fn targeted_two_constraint_breaks_yield_minor_inconsistency() {
+        let mut ctrl = GrobnerNormalizerController::new();
+        // Violate only C0 and C1:
+        // - C0: eprocess(4) - risk(0) <= 1
+        // - C1: cvar(5) - risk(0) <= 1
+        let mut state = [0u8; NUM_VARIABLES];
+        state[4] = 2;
+        state[5] = 2;
+
+        for _ in 0..128 {
+            ctrl.check_state_vector(&state);
+        }
+
+        let snap = ctrl.snapshot();
+        assert_eq!(ctrl.state(), GrobnerState::MinorInconsistency);
+        assert_eq!(snap.last_violations, 2);
+        assert!(snap.max_excess >= 1);
+    }
+
+    #[test]
+    fn fault_count_only_increments_on_structural_fault_entry() {
+        let mut ctrl = GrobnerNormalizerController::new();
+        let fault_state = [3u8; NUM_VARIABLES];
+        let calm_state = [0u8; NUM_VARIABLES];
+
+        // First entry into structural fault.
+        for _ in 0..128 {
+            ctrl.check_state_vector(&fault_state);
+        }
+        assert_eq!(ctrl.state(), GrobnerState::StructuralFault);
+        let first_fault_count = ctrl.snapshot().fault_count;
+        assert_eq!(first_fault_count, 1);
+
+        // Staying in structural fault should not keep incrementing the counter.
+        for _ in 0..128 {
+            ctrl.check_state_vector(&fault_state);
+        }
+        assert_eq!(ctrl.snapshot().fault_count, first_fault_count);
+
+        // Recover to non-fault.
+        for _ in 0..1024 {
+            ctrl.check_state_vector(&calm_state);
+        }
+        assert_ne!(ctrl.state(), GrobnerState::StructuralFault);
+
+        // Re-enter structural fault should increment exactly once more.
+        for _ in 0..128 {
+            ctrl.check_state_vector(&fault_state);
+        }
+        assert_eq!(ctrl.state(), GrobnerState::StructuralFault);
+        assert_eq!(ctrl.snapshot().fault_count, first_fault_count + 1);
+    }
 }

@@ -77,6 +77,7 @@ pub fn memrchr(haystack: &[u8], needle: u8, n: usize) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
 
     #[test]
     fn test_memcpy_basic() {
@@ -143,5 +144,50 @@ mod tests {
     #[test]
     fn test_memrchr_not_found() {
         assert_eq!(memrchr(b"hello", b'z', 5), None);
+    }
+
+    proptest! {
+        #[test]
+        fn prop_memcpy_matches_prefix_copy(
+            src in proptest::collection::vec(any::<u8>(), 0..128),
+            dest_seed in proptest::collection::vec(any::<u8>(), 0..128),
+            n in 0usize..256
+        ) {
+            let mut dest = dest_seed.clone();
+            let original_dest = dest.clone();
+
+            let copied = memcpy(&mut dest, &src, n);
+            let expected = n.min(src.len()).min(original_dest.len());
+
+            prop_assert_eq!(copied, expected);
+            prop_assert_eq!(&dest[..expected], &src[..expected]);
+            prop_assert_eq!(&dest[expected..], &original_dest[expected..]);
+        }
+
+        #[test]
+        fn prop_memcmp_is_antisymmetric(
+            left in proptest::collection::vec(any::<u8>(), 0..128),
+            right in proptest::collection::vec(any::<u8>(), 0..128),
+            n in 0usize..256
+        ) {
+            let lr = memcmp(&left, &right, n);
+            let rl = memcmp(&right, &left, n);
+            prop_assert_eq!(lr, rl.reverse());
+        }
+
+        #[test]
+        fn prop_memset_only_mutates_requested_prefix(
+            original in proptest::collection::vec(any::<u8>(), 0..128),
+            value in any::<u8>(),
+            n in 0usize..256
+        ) {
+            let mut buf = original.clone();
+            let set = memset(&mut buf, value, n);
+            let expected = n.min(original.len());
+
+            prop_assert_eq!(set, expected);
+            prop_assert!(buf.iter().take(expected).all(|b| *b == value));
+            prop_assert_eq!(&buf[expected..], &original[expected..]);
+        }
     }
 }

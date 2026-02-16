@@ -502,5 +502,7 @@ mod tests {
         let s = cc.summary();
         assert_eq!(s.total_observations, 128);
         assert_eq!(s.state, CliffordState::Aligned);
+        assert_eq!(s.drift_count, 0);
+        assert_eq!(s.overlap_violation_count, 0);
     }
 }
