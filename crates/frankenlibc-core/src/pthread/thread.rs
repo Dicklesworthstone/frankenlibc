@@ -108,6 +108,10 @@ pub struct ThreadHandle {
     /// Cleared to 0 by `CLONE_CHILD_CLEARTID` on thread exit.
     pub tid: AtomicI32,
 
+    /// Stable thread identity captured by the child in trampoline context.
+    /// Unlike `tid`, this is not cleared by `CLONE_CHILD_CLEARTID`.
+    pub self_tid: AtomicI32,
+
     /// Lifecycle state (see `THREAD_*` constants).
     pub state: AtomicU32,
 
@@ -177,6 +181,11 @@ unsafe extern "C" fn thread_trampoline(args_raw: usize) -> usize {
     // SAFETY: handle_ptr was allocated by the parent and is valid for the
     // thread's entire lifetime.
     let handle = unsafe { &*handle_ptr };
+    let current_tid = syscall::sys_gettid();
+    handle.self_tid.store(current_tid, Ordering::Release);
+    if handle.tid.load(Ordering::Acquire) == 0 {
+        handle.tid.store(current_tid, Ordering::Release);
+    }
 
     // Try to transition STARTING → RUNNING. If detach_thread already set
     // DETACHED, we must not overwrite it.
@@ -364,6 +373,7 @@ pub unsafe fn create_thread(start_routine: usize, arg: usize) -> Result<*mut Thr
     // Allocate the ThreadHandle on the heap (Box).
     let handle = Box::new(ThreadHandle {
         tid: AtomicI32::new(0),
+        self_tid: AtomicI32::new(0),
         state: AtomicU32::new(THREAD_STARTING),
         started: AtomicU32::new(0),
         retval: core::cell::UnsafeCell::new(0),
@@ -520,6 +530,16 @@ pub unsafe fn join_thread(handle_ptr: *mut ThreadHandle) -> Result<usize, i32> {
     // SAFETY: caller guarantees handle_ptr is valid.
     let handle = unsafe { &*handle_ptr };
 
+    let state = handle.state.load(Ordering::Acquire);
+    let my_tid = syscall::sys_gettid();
+    let target_self_tid = handle.self_tid.load(Ordering::Acquire);
+    if (state == THREAD_STARTING || state == THREAD_RUNNING)
+        && target_self_tid != 0
+        && my_tid == target_self_tid
+    {
+        return Err(EDEADLK);
+    }
+
     // Self-join detection: if the calling thread's TID matches the handle's
     // TID, we'd deadlock.
     //
@@ -527,7 +547,6 @@ pub unsafe fn join_thread(handle_ptr: *mut ThreadHandle) -> Result<usize, i32> {
     // run user code before parent-side TID publication is visible in `tid`.
     // If we evaluate self-join during that window, we'd miss EDEADLK and later
     // block forever waiting on a zero tid value.
-    let my_tid = syscall::sys_gettid();
     let mut target_tid = handle.tid.load(Ordering::Acquire);
     if target_tid == 0 {
         loop {

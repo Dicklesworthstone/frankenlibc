@@ -21,7 +21,7 @@ use frankenlibc_core::pthread::tls::{
     pthread_setspecific as core_pthread_setspecific,
 };
 use frankenlibc_core::pthread::{
-    CondvarData, PTHREAD_COND_CLOCK_REALTIME, ThreadHandle,
+    CondvarData, PTHREAD_COND_CLOCK_REALTIME, THREAD_RUNNING, THREAD_STARTING, ThreadHandle,
     condvar_broadcast as core_condvar_broadcast, condvar_destroy as core_condvar_destroy,
     condvar_init as core_condvar_init, condvar_signal as core_condvar_signal,
     condvar_timedwait as core_condvar_timedwait, condvar_wait as core_condvar_wait,
@@ -541,6 +541,33 @@ unsafe fn native_pthread_join(thread: libc::pthread_t, retval: *mut *mut c_void)
         }
     }
     let thread_key = thread as usize;
+    let my_tid = core_self_tid();
+    if my_tid > 0 && thread_key == my_tid as usize {
+        return libc::EDEADLK;
+    }
+
+    // Reject self-join before removing the handle from the registry. This
+    // avoids entering core join wait paths when a thread attempts to join its
+    // own `pthread_t`.
+    {
+        let registry = THREAD_HANDLE_REGISTRY
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if let Some(&raw) = registry.get(&thread_key) {
+            let handle_ptr = raw as *mut ThreadHandle;
+            // SAFETY: registry only stores handles created by core_create_thread.
+            let state = unsafe { (*handle_ptr).state.load(Ordering::Acquire) };
+            if state == THREAD_STARTING || state == THREAD_RUNNING {
+                // SAFETY: handle_ptr is valid while present in registry.
+                let handle_tid = unsafe { (*handle_ptr).tid.load(Ordering::Acquire) };
+                // SAFETY: handle_ptr is valid while present in registry.
+                let handle_self_tid = unsafe { (*handle_ptr).self_tid.load(Ordering::Acquire) };
+                if my_tid > 0 && (handle_tid == my_tid || handle_self_tid == my_tid) {
+                    return libc::EDEADLK;
+                }
+            }
+        }
+    }
 
     let handle_ptr = {
         let mut registry = THREAD_HANDLE_REGISTRY
