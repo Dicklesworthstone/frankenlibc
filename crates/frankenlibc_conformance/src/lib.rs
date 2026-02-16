@@ -1,6 +1,6 @@
 //! Conformance and parity tooling for frankenlibc.
 
-use std::ffi::{CString, c_char, c_int, c_void};
+use std::ffi::{CString, c_char, c_int, c_long, c_void};
 
 use serde::{Deserialize, Serialize};
 
@@ -265,6 +265,11 @@ pub fn execute_fixture_case(
         "fclose" => execute_fclose_case(inputs, mode),
         "fprintf" => execute_fprintf_case(inputs, mode),
         "snprintf" => execute_snprintf_case(inputs, mode),
+        "fread" => execute_fread_case(inputs, mode),
+        "fwrite" => execute_fwrite_case(inputs, mode),
+        "fseek" => execute_fseek_case(inputs, mode),
+        "ftell" => execute_ftell_case(inputs, mode),
+        "fflush" => execute_fflush_case(inputs, mode),
         // ctype
         "isalpha" => execute_ctype_classify_case("isalpha", inputs, mode),
         "isdigit" => execute_ctype_classify_case("isdigit", inputs, mode),
@@ -1069,6 +1074,9 @@ fn parse_printf_args(inputs: &serde_json::Value) -> Result<Vec<PrintfArg>, Strin
 fn stream_alias_to_target(alias: &str) -> Option<(&'static str, &'static str)> {
     match alias {
         "devnull" | "valid_devnull" => Some(("/dev/null", "w")),
+        "devnull_read" => Some(("/dev/null", "r")),
+        "devnull_rw" => Some(("/dev/null", "w+")),
+        "devzero" => Some(("/dev/zero", "r")),
         _ => None,
     }
 }
@@ -1408,6 +1416,339 @@ fn execute_snprintf_case(
         let host_output = render_c_buffer(&host_buf, size);
         let host_parity = host_output == impl_output;
         let note = (!host_parity).then(|| String::from("strict snprintf host parity mismatch"));
+        return Ok(DifferentialExecution {
+            host_output,
+            impl_output,
+            host_parity,
+            note,
+        });
+    }
+
+    Ok(DifferentialExecution {
+        host_output: String::from("SKIP"),
+        impl_output,
+        host_parity: true,
+        note: None,
+    })
+}
+
+fn execute_fwrite_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    let strict = mode_is_strict(mode);
+    let hardened = mode_is_hardened(mode);
+    if !strict && !hardened {
+        return Err(format!("unsupported mode: {mode}"));
+    }
+
+    let stream_alias =
+        parse_optional_string(inputs, "stream")?.unwrap_or_else(|| String::from("devnull"));
+    let Some((path, open_mode)) = stream_alias_to_target(&stream_alias) else {
+        return Err(format!("unsupported stream alias: {stream_alias}"));
+    };
+    let size = parse_usize(inputs, "size")?;
+    let nmemb = parse_usize(inputs, "nmemb")?;
+    let payload = parse_u8_vec_any(inputs, &["payload", "data"])?;
+    let total = size.saturating_mul(nmemb);
+    if payload.len() < total {
+        return Err(format!(
+            "payload too short for fwrite: len={} needed={total}",
+            payload.len()
+        ));
+    }
+
+    let path_c = CString::new(path).expect("static path has no interior NUL");
+    let mode_c = CString::new(open_mode).expect("static mode has no interior NUL");
+
+    let impl_stream =
+        unsafe { frankenlibc_abi::stdio_abi::fopen(path_c.as_ptr(), mode_c.as_ptr()) };
+    let impl_output = if impl_stream.is_null() {
+        String::from("-1")
+    } else {
+        let items = unsafe {
+            frankenlibc_abi::stdio_abi::fwrite(payload.as_ptr().cast(), size, nmemb, impl_stream)
+        };
+        let _ = unsafe { frankenlibc_abi::stdio_abi::fclose(impl_stream) };
+        items.to_string()
+    };
+
+    if strict {
+        let host_stream = unsafe { libc::fopen(path_c.as_ptr(), mode_c.as_ptr()) };
+        let host_output = if host_stream.is_null() {
+            String::from("-1")
+        } else {
+            let items = unsafe { libc::fwrite(payload.as_ptr().cast(), size, nmemb, host_stream) };
+            let _ = unsafe { libc::fclose(host_stream) };
+            items.to_string()
+        };
+        let host_parity = host_output == impl_output;
+        let note = (!host_parity).then(|| String::from("strict fwrite host parity mismatch"));
+        return Ok(DifferentialExecution {
+            host_output,
+            impl_output,
+            host_parity,
+            note,
+        });
+    }
+
+    Ok(DifferentialExecution {
+        host_output: String::from("SKIP"),
+        impl_output,
+        host_parity: true,
+        note: None,
+    })
+}
+
+fn execute_fread_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    let strict = mode_is_strict(mode);
+    let hardened = mode_is_hardened(mode);
+    if !strict && !hardened {
+        return Err(format!("unsupported mode: {mode}"));
+    }
+
+    let stream_alias =
+        parse_optional_string(inputs, "stream")?.unwrap_or_else(|| String::from("devzero"));
+    let Some((path, open_mode)) = stream_alias_to_target(&stream_alias) else {
+        return Err(format!("unsupported stream alias: {stream_alias}"));
+    };
+    let size = parse_usize(inputs, "size")?;
+    let nmemb = parse_usize(inputs, "nmemb")?;
+    let total = size.saturating_mul(nmemb);
+
+    let path_c = CString::new(path).expect("static path has no interior NUL");
+    let mode_c = CString::new(open_mode).expect("static mode has no interior NUL");
+
+    let impl_stream =
+        unsafe { frankenlibc_abi::stdio_abi::fopen(path_c.as_ptr(), mode_c.as_ptr()) };
+    let impl_output = if impl_stream.is_null() {
+        String::from("items=-1;data=[]")
+    } else {
+        let mut buf = vec![0u8; total];
+        let items = unsafe {
+            frankenlibc_abi::stdio_abi::fread(buf.as_mut_ptr().cast(), size, nmemb, impl_stream)
+        };
+        let _ = unsafe { frankenlibc_abi::stdio_abi::fclose(impl_stream) };
+        let take = items.saturating_mul(size).min(buf.len());
+        format!("items={items};data={:?}", &buf[..take])
+    };
+
+    if strict {
+        let host_stream = unsafe { libc::fopen(path_c.as_ptr(), mode_c.as_ptr()) };
+        let host_output = if host_stream.is_null() {
+            String::from("items=-1;data=[]")
+        } else {
+            let mut buf = vec![0u8; total];
+            let items = unsafe { libc::fread(buf.as_mut_ptr().cast(), size, nmemb, host_stream) };
+            let _ = unsafe { libc::fclose(host_stream) };
+            let take = items.saturating_mul(size).min(buf.len());
+            format!("items={items};data={:?}", &buf[..take])
+        };
+        let host_parity = host_output == impl_output;
+        let note = (!host_parity).then(|| String::from("strict fread host parity mismatch"));
+        return Ok(DifferentialExecution {
+            host_output,
+            impl_output,
+            host_parity,
+            note,
+        });
+    }
+
+    Ok(DifferentialExecution {
+        host_output: String::from("SKIP"),
+        impl_output,
+        host_parity: true,
+        note: None,
+    })
+}
+
+fn execute_fflush_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    let strict = mode_is_strict(mode);
+    let hardened = mode_is_hardened(mode);
+    if !strict && !hardened {
+        return Err(format!("unsupported mode: {mode}"));
+    }
+
+    let stream_alias =
+        parse_optional_string(inputs, "stream")?.unwrap_or_else(|| String::from("devnull"));
+    let Some((path, open_mode)) = stream_alias_to_target(&stream_alias) else {
+        return Err(format!("unsupported stream alias: {stream_alias}"));
+    };
+
+    let payload = parse_u8_vec_any(inputs, &["payload", "data"]).unwrap_or_default();
+    let path_c = CString::new(path).expect("static path has no interior NUL");
+    let mode_c = CString::new(open_mode).expect("static mode has no interior NUL");
+
+    let impl_stream =
+        unsafe { frankenlibc_abi::stdio_abi::fopen(path_c.as_ptr(), mode_c.as_ptr()) };
+    let impl_output = if impl_stream.is_null() {
+        String::from("-1")
+    } else {
+        if !payload.is_empty() {
+            let _ = unsafe {
+                frankenlibc_abi::stdio_abi::fwrite(
+                    payload.as_ptr().cast(),
+                    1,
+                    payload.len(),
+                    impl_stream,
+                )
+            };
+        }
+        let rc = unsafe { frankenlibc_abi::stdio_abi::fflush(impl_stream) };
+        let _ = unsafe { frankenlibc_abi::stdio_abi::fclose(impl_stream) };
+        rc.to_string()
+    };
+
+    if strict {
+        let host_stream = unsafe { libc::fopen(path_c.as_ptr(), mode_c.as_ptr()) };
+        let host_output = if host_stream.is_null() {
+            String::from("-1")
+        } else {
+            if !payload.is_empty() {
+                let _ =
+                    unsafe { libc::fwrite(payload.as_ptr().cast(), 1, payload.len(), host_stream) };
+            }
+            let rc = unsafe { libc::fflush(host_stream) };
+            let _ = unsafe { libc::fclose(host_stream) };
+            rc.to_string()
+        };
+        let host_parity = host_output == impl_output;
+        let note = (!host_parity).then(|| String::from("strict fflush host parity mismatch"));
+        return Ok(DifferentialExecution {
+            host_output,
+            impl_output,
+            host_parity,
+            note,
+        });
+    }
+
+    Ok(DifferentialExecution {
+        host_output: String::from("SKIP"),
+        impl_output,
+        host_parity: true,
+        note: None,
+    })
+}
+
+fn execute_fseek_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    let strict = mode_is_strict(mode);
+    let hardened = mode_is_hardened(mode);
+    if !strict && !hardened {
+        return Err(format!("unsupported mode: {mode}"));
+    }
+
+    let stream_alias =
+        parse_optional_string(inputs, "stream")?.unwrap_or_else(|| String::from("devnull_rw"));
+    let Some((path, open_mode)) = stream_alias_to_target(&stream_alias) else {
+        return Err(format!("unsupported stream alias: {stream_alias}"));
+    };
+    let offset = parse_i32(inputs, "offset")? as c_long;
+    let whence = parse_i32(inputs, "whence")?;
+
+    let path_c = CString::new(path).expect("static path has no interior NUL");
+    let mode_c = CString::new(open_mode).expect("static mode has no interior NUL");
+
+    let impl_stream =
+        unsafe { frankenlibc_abi::stdio_abi::fopen(path_c.as_ptr(), mode_c.as_ptr()) };
+    let impl_output = if impl_stream.is_null() {
+        String::from("-1")
+    } else {
+        let rc = unsafe { frankenlibc_abi::stdio_abi::fseek(impl_stream, offset, whence) };
+        let _ = unsafe { frankenlibc_abi::stdio_abi::fclose(impl_stream) };
+        rc.to_string()
+    };
+
+    if strict {
+        let host_stream = unsafe { libc::fopen(path_c.as_ptr(), mode_c.as_ptr()) };
+        let host_output = if host_stream.is_null() {
+            String::from("-1")
+        } else {
+            let rc = unsafe { libc::fseek(host_stream, offset, whence) };
+            let _ = unsafe { libc::fclose(host_stream) };
+            rc.to_string()
+        };
+        let host_parity = host_output == impl_output;
+        let note = (!host_parity).then(|| String::from("strict fseek host parity mismatch"));
+        return Ok(DifferentialExecution {
+            host_output,
+            impl_output,
+            host_parity,
+            note,
+        });
+    }
+
+    Ok(DifferentialExecution {
+        host_output: String::from("SKIP"),
+        impl_output,
+        host_parity: true,
+        note: None,
+    })
+}
+
+fn execute_ftell_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    let strict = mode_is_strict(mode);
+    let hardened = mode_is_hardened(mode);
+    if !strict && !hardened {
+        return Err(format!("unsupported mode: {mode}"));
+    }
+
+    let stream_alias =
+        parse_optional_string(inputs, "stream")?.unwrap_or_else(|| String::from("devnull_rw"));
+    let Some((path, open_mode)) = stream_alias_to_target(&stream_alias) else {
+        return Err(format!("unsupported stream alias: {stream_alias}"));
+    };
+
+    let seek_offset = inputs.get("seek_offset").and_then(|value| {
+        value
+            .as_i64()
+            .or_else(|| value.as_u64().and_then(|v| i64::try_from(v).ok()))
+            .or_else(|| value.as_str().and_then(|s| s.parse::<i64>().ok()))
+    });
+
+    let path_c = CString::new(path).expect("static path has no interior NUL");
+    let mode_c = CString::new(open_mode).expect("static mode has no interior NUL");
+
+    let impl_stream =
+        unsafe { frankenlibc_abi::stdio_abi::fopen(path_c.as_ptr(), mode_c.as_ptr()) };
+    let impl_output = if impl_stream.is_null() {
+        String::from("-1")
+    } else {
+        if let Some(off) = seek_offset {
+            let _ = unsafe {
+                frankenlibc_abi::stdio_abi::fseek(impl_stream, off as c_long, libc::SEEK_SET)
+            };
+        }
+        let pos = unsafe { frankenlibc_abi::stdio_abi::ftell(impl_stream) };
+        let _ = unsafe { frankenlibc_abi::stdio_abi::fclose(impl_stream) };
+        pos.to_string()
+    };
+
+    if strict {
+        let host_stream = unsafe { libc::fopen(path_c.as_ptr(), mode_c.as_ptr()) };
+        let host_output = if host_stream.is_null() {
+            String::from("-1")
+        } else {
+            if let Some(off) = seek_offset {
+                let _ = unsafe { libc::fseek(host_stream, off as c_long, libc::SEEK_SET) };
+            }
+            let pos = unsafe { libc::ftell(host_stream) };
+            let _ = unsafe { libc::fclose(host_stream) };
+            pos.to_string()
+        };
+        let host_parity = host_output == impl_output;
+        let note = (!host_parity).then(|| String::from("strict ftell host parity mismatch"));
         return Ok(DifferentialExecution {
             host_output,
             impl_output,
@@ -4756,6 +5097,114 @@ mod tests {
             execute_fixture_case("snprintf", &inputs, "strict").expect("snprintf should execute");
         assert_eq!(result.impl_output, "hell");
         assert!(result.host_parity);
+    }
+
+    #[test]
+    fn execute_fwrite_case_strict_devnull() {
+        let inputs = serde_json::json!({
+            "stream": "devnull",
+            "size": 1,
+            "nmemb": 4,
+            "payload": [65, 66, 67, 68]
+        });
+        let result =
+            execute_fixture_case("fwrite", &inputs, "strict").expect("fwrite should execute");
+        assert_eq!(result.impl_output, "4");
+        assert!(result.host_parity);
+    }
+
+    #[test]
+    fn execute_fread_case_strict_devzero() {
+        let inputs = serde_json::json!({
+            "stream": "devzero",
+            "size": 1,
+            "nmemb": 4
+        });
+        let result =
+            execute_fixture_case("fread", &inputs, "strict").expect("fread should execute");
+        assert_eq!(result.impl_output, "items=4;data=[0, 0, 0, 0]");
+        assert!(result.host_parity);
+    }
+
+    #[test]
+    fn execute_fflush_case_strict_devnull() {
+        let inputs = serde_json::json!({
+            "stream": "devnull",
+            "payload": [65, 66, 67]
+        });
+        let result =
+            execute_fixture_case("fflush", &inputs, "strict").expect("fflush should execute");
+        assert_eq!(result.impl_output, "0");
+        assert!(result.host_parity);
+    }
+
+    #[test]
+    fn execute_fseek_case_strict_devnull_rw() {
+        let inputs = serde_json::json!({
+            "stream": "devnull_rw",
+            "offset": 3,
+            "whence": 0
+        });
+        let result =
+            execute_fixture_case("fseek", &inputs, "strict").expect("fseek should execute");
+        assert_eq!(result.impl_output, "0");
+        assert!(result.host_parity);
+    }
+
+    #[test]
+    fn execute_ftell_case_strict_after_seek() {
+        let inputs = serde_json::json!({
+            "stream": "devnull_rw",
+            "seek_offset": 7
+        });
+        let result =
+            execute_fixture_case("ftell", &inputs, "strict").expect("ftell should execute");
+        let pos = result
+            .impl_output
+            .parse::<i64>()
+            .expect("ftell output should be integer");
+        assert!(pos >= 0);
+        assert!(result.host_parity);
+    }
+
+    #[test]
+    fn stdio_file_ops_fixture_cases_match_execute_fixture_case() {
+        #[derive(Deserialize)]
+        struct FixtureCaseLite {
+            name: String,
+            function: String,
+            inputs: serde_json::Value,
+            expected_output: String,
+            mode: String,
+        }
+
+        #[derive(Deserialize)]
+        struct FixtureSetLite {
+            cases: Vec<FixtureCaseLite>,
+        }
+
+        let raw = include_str!("../../../tests/conformance/fixtures/stdio_file_ops.json");
+        let fixture: FixtureSetLite =
+            serde_json::from_str(raw).expect("stdio_file_ops fixture should parse");
+
+        for case in fixture.cases {
+            let result = execute_fixture_case(&case.function, &case.inputs, &case.mode)
+                .unwrap_or_else(|err| {
+                    panic!("fixture case {} failed to execute: {err}", case.name)
+                });
+            assert_eq!(
+                result.impl_output, case.expected_output,
+                "fixture expected_output mismatch for {}",
+                case.name
+            );
+            if case.mode.eq_ignore_ascii_case("strict") {
+                assert!(
+                    result.host_parity,
+                    "strict host parity mismatch for {}",
+                    case.name
+                );
+            }
+        }
     }
 
     #[test]

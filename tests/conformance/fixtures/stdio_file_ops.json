@@ -59,6 +59,51 @@
       "mode": "strict"
     },
     {
+      "name": "fwrite_devnull_strict",
+      "function": "fwrite",
+      "spec_section": "C11 7.21.8.2 fwrite",
+      "inputs": { "stream": "devnull", "size": 1, "nmemb": 4, "payload": [65, 66, 67, 68] },
+      "expected_output": "4",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "fread_devzero_strict",
+      "function": "fread",
+      "spec_section": "C11 7.21.8.1 fread",
+      "inputs": { "stream": "devzero", "size": 1, "nmemb": 4 },
+      "expected_output": "items=4;data=[0, 0, 0, 0]",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "fseek_devnull_rw_strict",
+      "function": "fseek",
+      "spec_section": "C11 7.21.9.2 fseek",
+      "inputs": { "stream": "devnull_rw", "offset": 3, "whence": 0 },
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "ftell_after_seek_strict",
+      "function": "ftell",
+      "spec_section": "C11 7.21.9.4 ftell",
+      "inputs": { "stream": "devnull_rw", "seek_offset": 7 },
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "fflush_devnull_strict",
+      "function": "fflush",
+      "spec_section": "C11 7.21.5.2 fflush",
+      "inputs": { "stream": "devnull", "payload": [65, 66, 67] },
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
       "name": "fopen_valid_mode_hardened",
       "function": "fopen",
       "spec_section": "C11 7.21.5.3 fopen",
@@ -73,6 +118,24 @@
       "spec_section": "C11 7.21.6.5 snprintf",
       "inputs": { "size": 32, "format": "val=%d", "args": [99] },
       "expected_output": "val=99",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "fflush_devnull_hardened",
+      "function": "fflush",
+      "spec_section": "C11 7.21.5.2 fflush",
+      "inputs": { "stream": "devnull", "payload": [88, 89] },
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "fread_devzero_hardened",
+      "function": "fread",
+      "spec_section": "C11 7.21.8.1 fread",
+      "inputs": { "stream": "devzero", "size": 1, "nmemb": 2 },
+      "expected_output": "items=2;data=[0, 0]",
       "expected_errno": 0,
       "mode": "hardened"
     }
