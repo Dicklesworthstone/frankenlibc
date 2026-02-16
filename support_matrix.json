@@ -458,11 +458,11 @@
     },
     {
       "symbol": "fclose",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "coldpath",
-      "strict_semantics": "Delegates to host glibc FILE* ops after membrane validation; preserves host semantics",
-      "hardened_semantics": "Host glibc delegation; hardened membrane bounds C string scans, logs TruncateWithNull",
+      "strict_semantics": "Native stream-registry + syscall-backed stdio path; no host glibc call-through",
+      "hardened_semantics": "Native stream-registry + syscall-backed stdio path with membrane validation/repair; no host glibc call-through",
       "default_stub": false
     },
     {
@@ -521,11 +521,11 @@
     },
     {
       "symbol": "fgets",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "coldpath",
-      "strict_semantics": "Delegates to host glibc FILE* ops after membrane validation; preserves host semantics",
-      "hardened_semantics": "Host glibc delegation; hardened membrane bounds C string scans, logs TruncateWithNull",
+      "strict_semantics": "Native stream-registry + syscall-backed stdio path; no host glibc call-through",
+      "hardened_semantics": "Native stream-registry + syscall-backed stdio path with membrane validation/repair; no host glibc call-through",
       "default_stub": false
     },
     {
@@ -557,11 +557,11 @@
     },
     {
       "symbol": "fopen",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "coldpath",
-      "strict_semantics": "Delegates to host glibc FILE* ops after membrane validation; preserves host semantics",
-      "hardened_semantics": "Host glibc delegation; hardened membrane bounds C string scans, logs TruncateWithNull",
+      "strict_semantics": "Native stream-registry + syscall-backed stdio path; no host glibc call-through",
+      "hardened_semantics": "Native stream-registry + syscall-backed stdio path with membrane validation/repair; no host glibc call-through",
       "default_stub": false
     },
     {
@@ -593,20 +593,20 @@
     },
     {
       "symbol": "fputs",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "coldpath",
-      "strict_semantics": "Delegates to host glibc FILE* ops after membrane validation; preserves host semantics",
-      "hardened_semantics": "Host glibc delegation; hardened membrane bounds C string scans, logs TruncateWithNull",
+      "strict_semantics": "Native stream-registry + syscall-backed stdio path; no host glibc call-through",
+      "hardened_semantics": "Native stream-registry + syscall-backed stdio path with membrane validation/repair; no host glibc call-through",
       "default_stub": false
     },
     {
       "symbol": "fread",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "coldpath",
-      "strict_semantics": "Delegates to host glibc FILE* ops after membrane validation; preserves host semantics",
-      "hardened_semantics": "Host glibc delegation; hardened membrane bounds C string scans, logs TruncateWithNull",
+      "strict_semantics": "Native stream-registry + syscall-backed stdio path; no host glibc call-through",
+      "hardened_semantics": "Native stream-registry + syscall-backed stdio path with membrane validation/repair; no host glibc call-through",
       "default_stub": false
     },
     {
@@ -665,11 +665,11 @@
     },
     {
       "symbol": "fwrite",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "coldpath",
-      "strict_semantics": "Delegates to host glibc FILE* ops after membrane validation; preserves host semantics",
-      "hardened_semantics": "Host glibc delegation; hardened membrane bounds C string scans, logs TruncateWithNull",
+      "strict_semantics": "Native stream-registry + syscall-backed stdio path; no host glibc call-through",
+      "hardened_semantics": "Native stream-registry + syscall-backed stdio path with membrane validation/repair; no host glibc call-through",
       "default_stub": false
     },
     {
@@ -1709,11 +1709,11 @@
     },
     {
       "symbol": "setbuf",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "coldpath",
-      "strict_semantics": "Delegates to host glibc FILE* ops after membrane validation; preserves host semantics",
-      "hardened_semantics": "Host glibc delegation; hardened membrane bounds C string scans, logs TruncateWithNull",
+      "strict_semantics": "Native stream-registry + syscall-backed stdio path; no host glibc call-through",
+      "hardened_semantics": "Native stream-registry + syscall-backed stdio path with membrane validation/repair; no host glibc call-through",
       "default_stub": false
     },
     {
@@ -1772,11 +1772,11 @@
     },
     {
       "symbol": "setvbuf",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "coldpath",
-      "strict_semantics": "Delegates to host glibc FILE* ops after membrane validation; preserves host semantics",
-      "hardened_semantics": "Host glibc delegation; hardened membrane bounds C string scans, logs TruncateWithNull",
+      "strict_semantics": "Native stream-registry + syscall-backed stdio path; no host glibc call-through",
+      "hardened_semantics": "Native stream-registry + syscall-backed stdio path with membrane validation/repair; no host glibc call-through",
       "default_stub": false
     },
     {
