@@ -166,3 +166,35 @@ fn condvar_repeated_timedwait_timeout_is_stable() {
         free_mutex_ptr(mutex);
     }
 }
+
+#[test]
+fn condvar_timedwait_rejects_null_abstime_and_invalid_nsec() {
+    pthread_mutex_reset_state_for_tests();
+    let cond = alloc_cond_ptr();
+    let mutex = alloc_mutex_ptr();
+    unsafe {
+        assert_eq!(pthread_mutex_init(mutex, std::ptr::null()), 0);
+        assert_eq!(pthread_cond_init(cond, std::ptr::null()), 0);
+        assert_eq!(pthread_mutex_lock(mutex), 0);
+
+        assert_eq!(
+            pthread_cond_timedwait(cond, mutex, std::ptr::null()),
+            libc::EINVAL
+        );
+
+        let invalid_nsec = libc::timespec {
+            tv_sec: 0,
+            tv_nsec: 1_000_000_000,
+        };
+        assert_eq!(
+            pthread_cond_timedwait(cond, mutex, &invalid_nsec as *const libc::timespec),
+            libc::EINVAL
+        );
+
+        assert_eq!(pthread_mutex_unlock(mutex), 0);
+        assert_eq!(pthread_cond_destroy(cond), 0);
+        assert_eq!(pthread_mutex_destroy(mutex), 0);
+        free_cond_ptr(cond);
+        free_mutex_ptr(mutex);
+    }
+}

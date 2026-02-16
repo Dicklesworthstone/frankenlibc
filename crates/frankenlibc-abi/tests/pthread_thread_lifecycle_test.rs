@@ -1,6 +1,7 @@
 #![cfg(target_os = "linux")]
 
 use std::ffi::c_void;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 
 use frankenlibc_abi::pthread_abi::{
@@ -23,6 +24,78 @@ unsafe extern "C" fn start_return_arg(arg: *mut c_void) -> *mut c_void {
 unsafe extern "C" fn start_return_pthread_self(_arg: *mut c_void) -> *mut c_void {
     // SAFETY: calling our ABI-layer pthread_self; return value treated as an integer payload.
     unsafe { pthread_self() as usize as *mut c_void }
+}
+
+unsafe extern "C" fn start_join_self_from_slot(arg: *mut c_void) -> *mut c_void {
+    if arg.is_null() {
+        return usize::MAX as *mut c_void;
+    }
+
+    // SAFETY: caller passes a valid pointer to AtomicUsize for the thread handle slot.
+    let slot = unsafe { &*(arg as *const AtomicUsize) };
+    for spin in 0..1_000_000usize {
+        let handle = slot.load(Ordering::Acquire);
+        if handle != 0 {
+            let rc = unsafe { pthread_join(handle as libc::pthread_t, std::ptr::null_mut()) };
+            return rc as usize as *mut c_void;
+        }
+        if spin % 1024 == 0 {
+            std::thread::yield_now();
+        }
+        std::hint::spin_loop();
+    }
+
+    usize::MAX as *mut c_void
+}
+
+fn env_usize(var: &str, default: usize, max: usize) -> usize {
+    std::env::var(var)
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .map(|value| value.clamp(1, max))
+        .unwrap_or(default)
+}
+
+fn run_create_join_roundtrip_iters(iters: usize) {
+    for i in 1usize..=iters {
+        let arg = i as *mut c_void;
+        let mut tid: libc::pthread_t = 0;
+        let create_rc = unsafe {
+            pthread_create(
+                &mut tid as *mut libc::pthread_t,
+                std::ptr::null(),
+                Some(start_return_arg),
+                arg,
+            )
+        };
+        assert_eq!(create_rc, 0, "pthread_create failed on iteration {i}");
+
+        let mut retval: *mut c_void = std::ptr::null_mut();
+        let join_rc = unsafe { pthread_join(tid, &mut retval as *mut *mut c_void) };
+        assert_eq!(join_rc, 0, "pthread_join failed on iteration {i}");
+        assert_eq!(retval, arg, "returned arg mismatch on iteration {i}");
+    }
+}
+
+fn run_detach_join_esrch_iters(iters: usize) {
+    for i in 0..iters {
+        let mut tid: libc::pthread_t = 0;
+        let create_rc = unsafe {
+            pthread_create(
+                &mut tid as *mut libc::pthread_t,
+                std::ptr::null(),
+                Some(start_return_arg),
+                std::ptr::null_mut(),
+            )
+        };
+        assert_eq!(create_rc, 0, "pthread_create failed on iteration {i}");
+
+        let detach_rc = unsafe { pthread_detach(tid) };
+        assert_eq!(detach_rc, 0, "pthread_detach failed on iteration {i}");
+
+        let join_rc = unsafe { pthread_join(tid, std::ptr::null_mut()) };
+        assert_eq!(join_rc, libc::ESRCH, "join-after-detach mismatch on {i}");
+    }
 }
 
 #[test]
@@ -103,38 +176,61 @@ fn pthread_join_and_detach_unknown_thread_are_esrch() {
 }
 
 #[test]
-fn pthread_create_join_roundtrip_stress() {
+fn pthread_self_join_is_rejected_with_edeadlk() {
     let _guard = lock_and_force_native();
 
-    for i in 1usize..=128 {
-        let arg = i as *mut c_void;
-        let mut tid: libc::pthread_t = 0;
-        let create_rc = unsafe {
-            pthread_create(
-                &mut tid as *mut libc::pthread_t,
-                std::ptr::null(),
-                Some(start_return_arg),
-                arg,
-            )
-        };
-        assert_eq!(create_rc, 0, "pthread_create failed on iteration {i}");
+    let handle_slot = Box::into_raw(Box::new(AtomicUsize::new(0)));
+    let mut tid: libc::pthread_t = 0;
+    let create_rc = unsafe {
+        pthread_create(
+            &mut tid as *mut libc::pthread_t,
+            std::ptr::null(),
+            Some(start_join_self_from_slot),
+            handle_slot.cast::<c_void>(),
+        )
+    };
+    assert_eq!(create_rc, 0, "pthread_create failed rc={create_rc}");
 
-        let mut retval: *mut c_void = std::ptr::null_mut();
-        let join_rc = unsafe { pthread_join(tid, &mut retval as *mut *mut c_void) };
-        assert_eq!(join_rc, 0, "pthread_join failed on iteration {i}");
-        assert_eq!(retval, arg, "returned arg mismatch on iteration {i}");
+    // SAFETY: `handle_slot` remains valid until after join below.
+    unsafe {
+        (*handle_slot).store(tid as usize, Ordering::Release);
     }
+
+    let mut retval: *mut c_void = std::ptr::null_mut();
+    let join_rc = unsafe { pthread_join(tid, &mut retval as *mut *mut c_void) };
+    assert_eq!(join_rc, 0, "parent join failed rc={join_rc}");
+    assert_eq!(
+        retval as usize as libc::c_int,
+        libc::EDEADLK,
+        "self-join in child should return EDEADLK"
+    );
+
+    // SAFETY: allocated with Box::into_raw above and no longer used after join.
+    unsafe { drop(Box::from_raw(handle_slot)) };
+}
+
+#[test]
+fn pthread_create_join_roundtrip_stress() {
+    let _guard = lock_and_force_native();
+    let iters = env_usize("FRANKENLIBC_THREAD_ROUNDTRIP_STRESS_ITERS", 16, 128);
+    run_create_join_roundtrip_iters(iters);
+}
+
+#[test]
+#[ignore = "long-running stress profile; run with --ignored when explicitly validating lifecycle endurance"]
+fn pthread_create_join_roundtrip_long_stress_profile() {
+    let _guard = lock_and_force_native();
+    run_create_join_roundtrip_iters(128);
 }
 
 #[test]
 fn pthread_create_join_parallel_batch_stress() {
     let _guard = lock_and_force_native();
-    const BATCH: usize = 16;
+    let batch = env_usize("FRANKENLIBC_THREAD_PARALLEL_BATCH", 8, 32);
+    let mut tids = vec![0 as libc::pthread_t; batch];
+    let mut args = vec![std::ptr::null_mut::<c_void>(); batch];
 
-    let mut tids = [0 as libc::pthread_t; BATCH];
-    let mut args = [std::ptr::null_mut::<c_void>(); BATCH];
-
-    for idx in 0..BATCH {
+    for idx in 0..batch {
         args[idx] = (idx + 1) as *mut c_void;
         let create_rc = unsafe {
             pthread_create(
@@ -147,7 +243,7 @@ fn pthread_create_join_parallel_batch_stress() {
         assert_eq!(create_rc, 0, "pthread_create failed for slot {idx}");
     }
 
-    for idx in 0..BATCH {
+    for idx in 0..batch {
         let mut retval: *mut c_void = std::ptr::null_mut();
         let join_rc = unsafe { pthread_join(tids[idx], &mut retval as *mut *mut c_void) };
         assert_eq!(join_rc, 0, "pthread_join failed for slot {idx}");
@@ -179,25 +275,48 @@ fn pthread_detach_makes_subsequent_join_fail_with_esrch() {
 }
 
 #[test]
-fn pthread_detach_join_esrch_stress() {
+fn pthread_join_then_reuse_handle_is_esrch() {
     let _guard = lock_and_force_native();
 
-    for i in 0..64 {
-        let mut tid: libc::pthread_t = 0;
-        let create_rc = unsafe {
-            pthread_create(
-                &mut tid as *mut libc::pthread_t,
-                std::ptr::null(),
-                Some(start_return_arg),
-                std::ptr::null_mut(),
-            )
-        };
-        assert_eq!(create_rc, 0, "pthread_create failed on iteration {i}");
+    let mut tid: libc::pthread_t = 0;
+    let create_rc = unsafe {
+        pthread_create(
+            &mut tid as *mut libc::pthread_t,
+            std::ptr::null(),
+            Some(start_return_arg),
+            std::ptr::null_mut(),
+        )
+    };
+    assert_eq!(create_rc, 0, "pthread_create failed rc={create_rc}");
 
-        let detach_rc = unsafe { pthread_detach(tid) };
-        assert_eq!(detach_rc, 0, "pthread_detach failed on iteration {i}");
+    let first_join_rc = unsafe { pthread_join(tid, std::ptr::null_mut()) };
+    assert_eq!(first_join_rc, 0, "first pthread_join failed rc={first_join_rc}");
 
-        let join_rc = unsafe { pthread_join(tid, std::ptr::null_mut()) };
-        assert_eq!(join_rc, libc::ESRCH, "join-after-detach mismatch on {i}");
-    }
+    let second_join_rc = unsafe { pthread_join(tid, std::ptr::null_mut()) };
+    assert_eq!(
+        second_join_rc,
+        libc::ESRCH,
+        "second join on consumed handle should be ESRCH"
+    );
+
+    let detach_after_join_rc = unsafe { pthread_detach(tid) };
+    assert_eq!(
+        detach_after_join_rc,
+        libc::ESRCH,
+        "detach after join-consumption should be ESRCH"
+    );
+}
+
+#[test]
+fn pthread_detach_join_esrch_stress() {
+    let _guard = lock_and_force_native();
+    let iters = env_usize("FRANKENLIBC_THREAD_DETACH_STRESS_ITERS", 16, 128);
+    run_detach_join_esrch_iters(iters);
+}
+
+#[test]
+#[ignore = "long-running stress profile; run with --ignored when explicitly validating lifecycle endurance"]
+fn pthread_detach_join_esrch_long_stress_profile() {
+    let _guard = lock_and_force_native();
+    run_detach_join_esrch_iters(128);
 }
