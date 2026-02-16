@@ -1479,11 +1479,7 @@ pub unsafe extern "C" fn strncpy(dst: *mut c_char, src: *const c_char, n: usize)
 /// Caller must ensure `dst` is valid for at least `n` bytes and `src` is valid
 /// for reads as required by `n`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn stpncpy(
-    dst: *mut c_char,
-    src: *const c_char,
-    n: usize,
-) -> *mut c_char {
+pub unsafe extern "C" fn stpncpy(dst: *mut c_char, src: *const c_char, n: usize) -> *mut c_char {
     if dst.is_null() || src.is_null() {
         return dst;
     }
@@ -1869,6 +1865,34 @@ pub unsafe extern "C" fn strchr(s: *const c_char, c: c_int) -> *mut c_char {
         adverse,
     );
     out
+}
+
+// ---------------------------------------------------------------------------
+// strchrnul
+// ---------------------------------------------------------------------------
+
+/// GNU `strchrnul` -- locates the first occurrence of `c` in `s`, returning
+/// the string terminator when `c` is absent.
+///
+/// # Safety
+///
+/// Caller must ensure `s` is a valid null-terminated string.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strchrnul(s: *const c_char, c: c_int) -> *mut c_char {
+    if s.is_null() {
+        return std::ptr::null_mut();
+    }
+
+    // SAFETY: delegated ABI helper validates scan behavior through the membrane.
+    let found = unsafe { strchr(s, c) };
+    if !found.is_null() {
+        return found;
+    }
+
+    // SAFETY: delegated ABI helper computes the terminating NUL index.
+    let len = unsafe { strlen(s) };
+    // SAFETY: len is measured from `s`, so the resulting pointer is within the string object.
+    unsafe { s.add(len) as *mut c_char }
 }
 
 // ---------------------------------------------------------------------------

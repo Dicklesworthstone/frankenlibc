@@ -18,6 +18,7 @@ GLIBC_2.2.5 {
         strcat;
         strncat;
         strchr;
+        strchrnul;
         strrchr;
         strstr;
         strtok;

@@ -2,7 +2,7 @@
 
 //! Integration tests for `<string.h>` ABI entrypoints.
 
-use frankenlibc_abi::string_abi::{stpcpy, stpncpy, strncmp, strnlen};
+use frankenlibc_abi::string_abi::{stpcpy, stpncpy, strchrnul, strncmp, strnlen};
 
 #[test]
 fn strncmp_returns_zero_for_n_zero() {
@@ -69,7 +69,12 @@ fn stpcpy_returns_pointer_to_trailing_nul() {
     // SAFETY: `end` points inside `dst` by contract of `stpcpy`.
     let offset = unsafe { end.offset_from(dst.as_ptr()) };
     assert_eq!(offset, 5);
-    assert_eq!(&dst[..6], &[b'h' as i8, b'e' as i8, b'l' as i8, b'l' as i8, b'o' as i8, 0]);
+    assert_eq!(
+        &dst[..6],
+        &[
+            b'h' as i8, b'e' as i8, b'l' as i8, b'l' as i8, b'o' as i8, 0
+        ]
+    );
 }
 
 #[test]
@@ -97,8 +102,27 @@ fn stpncpy_returns_first_nul_when_source_shorter_than_count() {
     // SAFETY: `end` points inside `dst` by contract of `stpncpy`.
     let offset = unsafe { end.offset_from(dst.as_ptr()) };
     assert_eq!(offset, 2);
-    assert_eq!(
-        &dst[..5],
-        &[b'h' as i8, b'i' as i8, 0, 0, 0]
-    );
+    assert_eq!(&dst[..5], &[b'h' as i8, b'i' as i8, 0, 0, 0]);
+}
+
+#[test]
+fn strchrnul_returns_match_when_present() {
+    let haystack = c"franken".as_ptr();
+
+    // SAFETY: pointer references a static NUL-terminated C string.
+    let pos = unsafe { strchrnul(haystack, b'n' as i32) };
+    // SAFETY: return value points inside the same C string.
+    let offset = unsafe { pos.offset_from(haystack) };
+    assert_eq!(offset, 3);
+}
+
+#[test]
+fn strchrnul_returns_terminator_when_absent() {
+    let haystack = c"franken".as_ptr();
+
+    // SAFETY: pointer references a static NUL-terminated C string.
+    let pos = unsafe { strchrnul(haystack, b'z' as i32) };
+    // SAFETY: return value points inside the same C string.
+    let offset = unsafe { pos.offset_from(haystack) };
+    assert_eq!(offset, 7);
 }

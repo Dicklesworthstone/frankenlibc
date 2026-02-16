@@ -1,5 +1,5 @@
 //! String operations: strlen, strnlen, strcmp, strncmp, strcpy, stpcpy, strncpy,
-//! stpncpy, strcat, strncat, strchr, strrchr, strstr.
+//! stpncpy, strcat, strncat, strchr, strchrnul, strrchr, strstr.
 //!
 //! These are safe Rust implementations operating on byte slices that represent
 //! NUL-terminated C strings. In this safe Rust model, strings are `&[u8]` slices
@@ -189,6 +189,13 @@ pub fn strchr(s: &[u8], c: u8) -> Option<usize> {
     s[..len].iter().position(|&b| b == c)
 }
 
+/// Locates `c` in `s`, returning either the match index or the terminating NUL index.
+///
+/// Equivalent to GNU C `strchrnul`.
+pub fn strchrnul(s: &[u8], c: u8) -> usize {
+    strchr(s, c).unwrap_or_else(|| strlen(s))
+}
+
 /// Locates the last occurrence of `c` in the NUL-terminated string `s`.
 ///
 /// Equivalent to C `strrchr`. Returns the index of the last byte equal to `c`,
@@ -354,6 +361,16 @@ mod tests {
     #[test]
     fn test_strchr_nul() {
         assert_eq!(strchr(b"hello\0", 0), Some(5));
+    }
+
+    #[test]
+    fn test_strchrnul_found() {
+        assert_eq!(strchrnul(b"hello\0", b'l'), 2);
+    }
+
+    #[test]
+    fn test_strchrnul_not_found_returns_terminator() {
+        assert_eq!(strchrnul(b"hello\0", b'z'), 5);
     }
 
     #[test]
