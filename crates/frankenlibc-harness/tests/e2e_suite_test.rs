@@ -28,6 +28,20 @@ fn workspace_root() -> PathBuf {
         .to_path_buf()
 }
 
+fn latest_run_dir(root: &Path, parent: &str, prefix: &str) -> Option<PathBuf> {
+    let run_root = root.join(parent);
+    if !run_root.exists() {
+        return None;
+    }
+    let mut runs: Vec<_> = std::fs::read_dir(&run_root)
+        .ok()?
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_name().to_string_lossy().starts_with(prefix))
+        .collect();
+    runs.sort_by_key(|e| e.file_name());
+    runs.last().map(|e| e.path())
+}
+
 #[test]
 fn e2e_suite_script_exists() {
     let root = workspace_root();
@@ -48,6 +62,146 @@ fn check_e2e_suite_script_exists() {
     let root = workspace_root();
     let script = root.join("scripts/check_e2e_suite.sh");
     assert!(script.exists(), "scripts/check_e2e_suite.sh must exist");
+}
+
+#[test]
+fn ld_preload_smoke_script_exists() {
+    let root = workspace_root();
+    let script = root.join("scripts/ld_preload_smoke.sh");
+    assert!(script.exists(), "scripts/ld_preload_smoke.sh must exist");
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let perms = std::fs::metadata(&script).unwrap().permissions();
+        assert!(
+            perms.mode() & 0o111 != 0,
+            "ld_preload_smoke.sh must be executable"
+        );
+    }
+}
+
+#[test]
+fn ld_preload_smoke_script_declares_abi_parity_contract() {
+    let root = workspace_root();
+    let script = root.join("scripts/ld_preload_smoke.sh");
+    let content = std::fs::read_to_string(&script).expect("ld_preload_smoke.sh should be readable");
+
+    for needle in [
+        "ENFORCE_PARITY_MODES",
+        "ENFORCE_PERF_MODES",
+        "PERF_RATIO_MAX_PPM",
+        "VALGRIND_POLICY",
+        "rch is required for cargo build offload",
+        "abi_compat_report.json",
+        "CASE_TSV",
+        "\"bd-18qq.6\"",
+        "case_skip_optional_binary_missing",
+    ] {
+        assert!(
+            content.contains(needle),
+            "ld_preload_smoke.sh missing expected contract marker: {}",
+            needle
+        );
+    }
+}
+
+#[test]
+fn ld_preload_smoke_report_schema_valid_when_present() {
+    let root = workspace_root();
+    let Some(run_dir) = latest_run_dir(&root, "target/ld_preload_smoke", "20") else {
+        // Smoke suite may not have been run in this environment.
+        return;
+    };
+
+    let report_path = run_dir.join("abi_compat_report.json");
+    if !report_path.exists() {
+        return;
+    }
+
+    let report: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(&report_path).expect("abi_compat_report.json should be readable"),
+    )
+    .expect("abi_compat_report.json should be valid JSON");
+
+    assert_eq!(
+        report["schema_version"].as_str(),
+        Some("v1"),
+        "expected v1 schema"
+    );
+    assert_eq!(
+        report["bead_id"].as_str(),
+        Some("bd-18qq.6"),
+        "expected bead id linkage"
+    );
+    assert!(report["summary"].is_object(), "summary must be an object");
+    assert!(report["modes"].is_object(), "modes must be an object");
+    assert!(report["cases"].is_array(), "cases must be an array");
+
+    for mode in ["strict", "hardened"] {
+        let mode_obj = &report["modes"][mode];
+        assert!(mode_obj.is_object(), "missing modes.{} object", mode);
+        for field in [
+            "total_cases",
+            "passes",
+            "fails",
+            "skips",
+            "strict_parity_failures",
+        ] {
+            assert!(
+                mode_obj[field].is_number(),
+                "modes.{}.{} must be numeric",
+                mode,
+                field
+            );
+        }
+        for optional_field in ["perf_failures", "valgrind_failures"] {
+            if !mode_obj[optional_field].is_null() {
+                assert!(
+                    mode_obj[optional_field].is_number(),
+                    "modes.{}.{} must be numeric when present",
+                    mode,
+                    optional_field
+                );
+            }
+        }
+    }
+
+    let trace_path = run_dir.join("trace.jsonl");
+    if trace_path.exists() {
+        let content = std::fs::read_to_string(&trace_path).expect("trace.jsonl should be readable");
+        let mut lines = 0usize;
+        for line in content.lines().filter(|l| !l.trim().is_empty()) {
+            let obj: serde_json::Value =
+                serde_json::from_str(line).expect("trace.jsonl must contain valid JSON lines");
+            for field in [
+                "timestamp",
+                "trace_id",
+                "level",
+                "event",
+                "bead_id",
+                "run_id",
+                "mode",
+                "case",
+                "status",
+            ] {
+                assert!(obj[field].is_string(), "trace line missing {}", field);
+            }
+            if !obj["api_family"].is_null() {
+                for field in ["api_family", "symbol", "decision_path", "healing_action"] {
+                    assert!(obj[field].is_string(), "trace line missing {}", field);
+                }
+                assert!(obj["errno"].is_number(), "trace line missing errno");
+                assert!(obj["latency_ns"].is_number(), "trace line missing latency_ns");
+                assert!(
+                    obj["artifact_refs"].is_array(),
+                    "trace line missing artifact_refs"
+                );
+            }
+            lines += 1;
+        }
+        assert!(lines > 0, "trace.jsonl should contain at least one event");
+    }
 }
 
 #[test]
