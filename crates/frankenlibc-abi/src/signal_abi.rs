@@ -25,17 +25,13 @@ fn last_host_errno(default_errno: c_int) -> c_int {
         .unwrap_or(default_errno)
 }
 
-/// Type alias for C signal handler: `void (*)(int)`.
-type SigHandler = unsafe extern "C" fn(c_int);
-
 // ---------------------------------------------------------------------------
 // signal
 // ---------------------------------------------------------------------------
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn signal(signum: c_int, handler: SigHandler) -> SigHandler {
-    // SIG_ERR = transmuted -1isize
-    let sig_err: SigHandler = unsafe { std::mem::transmute(-1isize) };
+pub unsafe extern "C" fn signal(signum: c_int, handler: libc::sighandler_t) -> libc::sighandler_t {
+    let sig_err = libc::SIG_ERR;
 
     let (_mode, decision) =
         runtime_policy::decide(ApiFamily::Signal, signum as usize, 0, false, true, 0);
@@ -59,7 +55,7 @@ pub unsafe extern "C" fn signal(signum: c_int, handler: SigHandler) -> SigHandle
     if adverse {
         sig_err
     } else {
-        unsafe { std::mem::transmute::<usize, SigHandler>(oldact.sa_sigaction as usize) }
+        oldact.sa_sigaction
     }
 }
 
