@@ -31,3 +31,5 @@ doc = false
 name = "fuzz_printf"
 path = "fuzz_targets/fuzz_printf.rs"
 doc = false
+
+[workspace]

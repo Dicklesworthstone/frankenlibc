@@ -20,8 +20,8 @@ cargo clippy --workspace --all-targets -- -D warnings
 echo "PASS"
 echo ""
 
-echo "--- cargo test --workspace ---"
-cargo test --workspace
+echo "--- cargo test --workspace --all-targets ---"
+cargo test --workspace --all-targets
 echo "PASS"
 echo ""
 

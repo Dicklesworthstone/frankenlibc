@@ -1,7 +1,7 @@
 {
   "schema_version": "v1",
   "bead": "bd-1oz.6",
-  "generated_at": "2026-02-13T19:43:01Z",
+  "generated_at": "2026-02-16T16:36:12Z",
   "summary": {
     "phase": 1,
     "total_targets": 4,
@@ -68,22 +68,32 @@
           "memmove",
           "memrchr",
           "memset",
+          "stpcpy",
+          "stpncpy",
           "strcat",
           "strchr",
+          "strchrnul",
           "strcmp",
           "strcpy",
           "strlen",
           "strncat",
+          "strncmp",
           "strncpy",
+          "strnlen",
           "strrchr",
           "strstr",
           "strtok",
           "strtok_r"
         ],
-        "covered_count": 17,
-        "available_count": 17,
-        "coverage_pct": 100.0,
-        "uncovered": []
+        "covered_count": 18,
+        "available_count": 22,
+        "coverage_pct": 81.8,
+        "uncovered": [
+          "stpcpy",
+          "stpncpy",
+          "strchrnul",
+          "strnlen"
+        ]
       },
       "readiness_score": 70,
       "implementation_status": "functional",
