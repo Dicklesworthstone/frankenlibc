@@ -8,10 +8,13 @@ GLIBC_2.2.5 {
         memchr;
         memrchr;
         strlen;
+        strnlen;
         strcmp;
         strncmp;
         strcpy;
+        stpcpy;
         strncpy;
+        stpncpy;
         strcat;
         strncat;
         strchr;

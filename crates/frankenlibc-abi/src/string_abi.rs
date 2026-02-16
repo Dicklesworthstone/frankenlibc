@@ -932,6 +932,97 @@ pub unsafe extern "C" fn strlen(s: *const c_char) -> usize {
 }
 
 // ---------------------------------------------------------------------------
+// strnlen
+// ---------------------------------------------------------------------------
+
+/// POSIX `strnlen` -- computes string length up to at most `n` bytes.
+///
+/// # Safety
+///
+/// Caller must ensure `s` points to readable memory for the compared span.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strnlen(s: *const c_char, n: usize) -> usize {
+    if n == 0 {
+        return 0;
+    }
+
+    let aligned = (s as usize) & 0x7 == 0;
+    let recent_page = !s.is_null() && known_remaining(s as usize).is_some();
+    let ordering = runtime_policy::check_ordering(ApiFamily::StringMemory, aligned, recent_page);
+
+    if s.is_null() {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Null)),
+        );
+        return 0;
+    }
+
+    let (mode, decision) = runtime_policy::decide(
+        ApiFamily::StringMemory,
+        s as usize,
+        n,
+        false,
+        known_remaining(s as usize).is_none(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Arena)),
+        );
+        runtime_policy::observe(ApiFamily::StringMemory, decision.profile, 6, true);
+        return 0;
+    }
+
+    let repair = repair_enabled(mode.heals_enabled(), decision.action);
+    let mut scan_limit = n;
+    let mut adverse = false;
+    if repair
+        && let Some(bound) = known_remaining(s as usize)
+        && bound < scan_limit
+    {
+        scan_limit = bound;
+        adverse = true;
+    }
+
+    // SAFETY: strict mode follows libc semantics; hardened mode bounds reads.
+    let (len, span) = unsafe {
+        let mut i = 0usize;
+        loop {
+            if i >= scan_limit {
+                break (scan_limit, scan_limit);
+            }
+            if *s.add(i) == 0 {
+                break (i, i);
+            }
+            i += 1;
+        }
+    };
+
+    if adverse {
+        record_truncation(n, scan_limit);
+    }
+    record_string_stage_outcome(
+        &ordering,
+        aligned,
+        recent_page,
+        Some(stage_index(&ordering, CheckStage::Bounds)),
+    );
+    runtime_policy::observe(
+        ApiFamily::StringMemory,
+        decision.profile,
+        runtime_policy::scaled_cost(7, span),
+        adverse,
+    );
+    len
+}
+
+// ---------------------------------------------------------------------------
 // strcmp
 // ---------------------------------------------------------------------------
 
@@ -1245,6 +1336,35 @@ pub unsafe extern "C" fn strcpy(dst: *mut c_char, src: *const c_char) -> *mut c_
 }
 
 // ---------------------------------------------------------------------------
+// stpcpy
+// ---------------------------------------------------------------------------
+
+/// POSIX `stpcpy` -- copies `src` to `dst` and returns a pointer to the
+/// trailing NUL byte in `dst`.
+///
+/// # Safety
+///
+/// Caller must ensure `dst` is large enough for `src` including NUL and that
+/// both pointers are valid.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn stpcpy(dst: *mut c_char, src: *const c_char) -> *mut c_char {
+    if dst.is_null() || src.is_null() {
+        return dst;
+    }
+
+    // SAFETY: pointer validity and bounds are validated by the delegated ABI helper.
+    let copied = unsafe { strcpy(dst, src) };
+    if copied.is_null() {
+        return std::ptr::null_mut();
+    }
+
+    // SAFETY: `strcpy` above produced a NUL-terminated destination in non-deny paths.
+    let len = unsafe { strlen(dst) };
+    // SAFETY: `len` is measured from `dst`, so offset is within the destination string.
+    unsafe { dst.add(len) }
+}
+
+// ---------------------------------------------------------------------------
 // strncpy
 // ---------------------------------------------------------------------------
 
@@ -1345,6 +1465,43 @@ pub unsafe extern "C" fn strncpy(dst: *mut c_char, src: *const c_char, n: usize)
         Some(stage_index(&ordering, CheckStage::Bounds)),
     );
     dst
+}
+
+// ---------------------------------------------------------------------------
+// stpncpy
+// ---------------------------------------------------------------------------
+
+/// POSIX `stpncpy` -- copies at most `n` bytes from `src` to `dst` and returns
+/// the end pointer according to C `stpncpy` semantics.
+///
+/// # Safety
+///
+/// Caller must ensure `dst` is valid for at least `n` bytes and `src` is valid
+/// for reads as required by `n`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn stpncpy(
+    dst: *mut c_char,
+    src: *const c_char,
+    n: usize,
+) -> *mut c_char {
+    if dst.is_null() || src.is_null() {
+        return dst;
+    }
+    if n == 0 {
+        return dst;
+    }
+
+    // SAFETY: pointer validity and copy bounds are validated by the delegated ABI helper.
+    let copied = unsafe { strncpy(dst, src, n) };
+    if copied.is_null() {
+        return std::ptr::null_mut();
+    }
+
+    // SAFETY: bounded scan by `n` matches `stpncpy` return contract.
+    let src_prefix = unsafe { strnlen(src, n) };
+    let offset = if src_prefix < n { src_prefix } else { n };
+    // SAFETY: offset is bounded by `n`, the API contract's writable span.
+    unsafe { dst.add(offset) }
 }
 
 // ---------------------------------------------------------------------------

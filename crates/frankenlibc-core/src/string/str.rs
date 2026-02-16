@@ -1,5 +1,5 @@
-//! String operations: strlen, strcmp, strncmp, strcpy, strncpy, strcat, strncat,
-//! strchr, strrchr, strstr.
+//! String operations: strlen, strnlen, strcmp, strncmp, strcpy, stpcpy, strncpy,
+//! stpncpy, strcat, strncat, strchr, strrchr, strstr.
 //!
 //! These are safe Rust implementations operating on byte slices that represent
 //! NUL-terminated C strings. In this safe Rust model, strings are `&[u8]` slices
@@ -11,6 +11,16 @@
 /// its index. If no NUL is found, returns the full slice length.
 pub fn strlen(s: &[u8]) -> usize {
     s.iter().position(|&b| b == 0).unwrap_or(s.len())
+}
+
+/// Returns the length of a C string up to a maximum of `maxlen` bytes.
+///
+/// Equivalent to C `strnlen`. Scans at most `maxlen` bytes and returns:
+/// - index of first `0x00` byte if found before `maxlen`
+/// - otherwise `maxlen` (or `s.len()` when the slice is shorter)
+pub fn strnlen(s: &[u8], maxlen: usize) -> usize {
+    let limit = maxlen.min(s.len());
+    s.iter().take(limit).position(|&b| b == 0).unwrap_or(limit)
 }
 
 /// Compares two NUL-terminated byte strings lexicographically.
@@ -74,6 +84,16 @@ pub fn strcpy(dest: &mut [u8], src: &[u8]) -> usize {
     src_len + 1
 }
 
+/// Copies a NUL-terminated string from `src` into `dest` and returns the
+/// index of the trailing NUL byte in `dest`.
+///
+/// Equivalent to C `stpcpy`. Return value models the pointer arithmetic as an
+/// index relative to `dest`.
+pub fn stpcpy(dest: &mut [u8], src: &[u8]) -> usize {
+    let copied = strcpy(dest, src);
+    copied.saturating_sub(1)
+}
+
 /// Copies at most `n` bytes from `src` into `dest`.
 ///
 /// Equivalent to C `strncpy`. If `src` is shorter than `n`, the remainder of
@@ -94,6 +114,17 @@ pub fn strncpy(dest: &mut [u8], src: &[u8], n: usize) -> usize {
     }
 
     count
+}
+
+/// Copies at most `n` bytes from `src` into `dest` and returns the index
+/// corresponding to C `stpncpy`'s returned pointer.
+///
+/// If `src` is shorter than `n`, returns the index of the first written NUL.
+/// Otherwise returns `min(n, dest.len())`.
+pub fn stpncpy(dest: &mut [u8], src: &[u8], n: usize) -> usize {
+    let count = strncpy(dest, src, n);
+    let src_len = strlen(src);
+    if src_len < count { src_len } else { count }
 }
 
 /// Appends `src` to the end of the NUL-terminated string in `dest`.
@@ -232,6 +263,14 @@ mod tests {
     }
 
     #[test]
+    fn test_strnlen_basic() {
+        assert_eq!(strnlen(b"hello\0", 10), 5);
+        assert_eq!(strnlen(b"hello\0", 3), 3);
+        assert_eq!(strnlen(b"\0", 5), 0);
+        assert_eq!(strnlen(b"abc", 8), 3);
+    }
+
+    #[test]
     fn test_strncmp_basic() {
         assert_eq!(strncmp(b"abcdef\0", b"abcxyz\0", 3), 0);
         assert!(strncmp(b"abcdef\0", b"abcxyz\0", 4) < 0);
@@ -242,6 +281,14 @@ mod tests {
         let mut buf = [0u8; 10];
         let n = strcpy(&mut buf, b"hello\0");
         assert_eq!(n, 6);
+        assert_eq!(&buf[..6], b"hello\0");
+    }
+
+    #[test]
+    fn test_stpcpy_returns_terminator_index() {
+        let mut buf = [0u8; 10];
+        let idx = stpcpy(&mut buf, b"hello\0");
+        assert_eq!(idx, 5);
         assert_eq!(&buf[..6], b"hello\0");
     }
 
@@ -258,6 +305,22 @@ mod tests {
         strncpy(&mut buf, b"hello\0", 3);
         // Not NUL-terminated because src was longer than n.
         assert_eq!(&buf, b"hel");
+    }
+
+    #[test]
+    fn test_stpncpy_returns_first_padding_nul_when_source_short() {
+        let mut buf = [0xFFu8; 8];
+        let idx = stpncpy(&mut buf, b"hi\0", 5);
+        assert_eq!(idx, 2);
+        assert_eq!(&buf[..5], b"hi\0\0\0");
+    }
+
+    #[test]
+    fn test_stpncpy_returns_n_when_source_long() {
+        let mut buf = [0xFFu8; 8];
+        let idx = stpncpy(&mut buf, b"hello\0", 3);
+        assert_eq!(idx, 3);
+        assert_eq!(&buf[..3], b"hel");
     }
 
     #[test]
