@@ -235,7 +235,17 @@ run_case() {
 
   local stdout_match=1
   local stderr_match=1
-  cmp -s "${baseline_stdout}" "${preload_stdout}" || stdout_match=0
+  local compare_baseline_stdout="${baseline_stdout}"
+  local compare_preload_stdout="${preload_stdout}"
+  if [[ "${label}" == "coreutils_env" ]]; then
+    local baseline_stdout_normalized="${case_dir}/baseline.stdout.normalized.txt"
+    local preload_stdout_normalized="${case_dir}/stdout.normalized.txt"
+    grep -Ev '^(FRANKENLIBC_MODE|LD_PRELOAD)=' "${baseline_stdout}" > "${baseline_stdout_normalized}" || true
+    grep -Ev '^(FRANKENLIBC_MODE|LD_PRELOAD)=' "${preload_stdout}" > "${preload_stdout_normalized}" || true
+    compare_baseline_stdout="${baseline_stdout_normalized}"
+    compare_preload_stdout="${preload_stdout_normalized}"
+  fi
+  cmp -s "${compare_baseline_stdout}" "${compare_preload_stdout}" || stdout_match=0
   cmp -s "${baseline_stderr}" "${preload_stderr}" || stderr_match=0
 
   local parity_required=0

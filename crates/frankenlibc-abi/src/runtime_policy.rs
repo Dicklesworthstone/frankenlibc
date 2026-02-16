@@ -429,6 +429,33 @@ fn ensure_minimal_panic_hook() {
                 let _ = unsafe { syscall::sys_write(libc::STDERR_FILENO, b"unknown".as_ptr(), 7) };
             }
             let _ = unsafe { syscall::sys_write(libc::STDERR_FILENO, b"\n".as_ptr(), 1) };
+
+            const PAYLOAD_PREFIX: &[u8] = b"frankenlibc: panic payload: ";
+            let _ = unsafe {
+                syscall::sys_write(
+                    libc::STDERR_FILENO,
+                    PAYLOAD_PREFIX.as_ptr(),
+                    PAYLOAD_PREFIX.len(),
+                )
+            };
+            if let Some(payload) = info.payload().downcast_ref::<&str>() {
+                let payload_bytes = payload.as_bytes();
+                let payload_len = payload_bytes.len().min(512);
+                let _ = unsafe {
+                    syscall::sys_write(libc::STDERR_FILENO, payload_bytes.as_ptr(), payload_len)
+                };
+            } else if let Some(payload) = info.payload().downcast_ref::<String>() {
+                let payload_bytes = payload.as_bytes();
+                let payload_len = payload_bytes.len().min(512);
+                let _ = unsafe {
+                    syscall::sys_write(libc::STDERR_FILENO, payload_bytes.as_ptr(), payload_len)
+                };
+            } else {
+                let _ = unsafe {
+                    syscall::sys_write(libc::STDERR_FILENO, b"<non-string>".as_ptr(), 12)
+                };
+            }
+            let _ = unsafe { syscall::sys_write(libc::STDERR_FILENO, b"\n".as_ptr(), 1) };
         }
         PANIC_HOOK_WRITE_STATE.store(PANIC_HOOK_WRITE_IDLE, AtomicOrdering::Release);
     }));

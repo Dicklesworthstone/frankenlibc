@@ -2,6 +2,8 @@
 
 use std::sync::Mutex;
 
+use crate::syscall;
+
 // Global list of atexit handlers
 static ATEXIT_HANDLERS: Mutex<Vec<extern "C" fn()>> = Mutex::new(Vec::new());
 
@@ -25,9 +27,8 @@ pub fn exit(status: i32) -> ! {
     // 2. Flush stdio buffers (TODO: wire up stdio flushing)
 
     // 3. Terminate process
-    // For now, using std::process::exit as placeholder.
-    // In final production, this calls raw syscall exit_group.
-    std::process::exit(status)
+    // Use a raw syscall to avoid recursion through our interposed `exit` ABI.
+    syscall::sys_exit_group(status)
 }
 pub fn atexit(func: extern "C" fn()) -> i32 {
     if let Ok(mut handlers) = ATEXIT_HANDLERS.lock() {

@@ -62,15 +62,39 @@ fn condvar_wait_rejects_unmanaged_and_null_mutex() {
 }
 
 #[test]
-fn condvar_init_rejects_non_null_attr_in_phase_scope() {
+fn condvar_init_accepts_initialized_attr() {
     pthread_mutex_reset_state_for_tests();
     let cond = alloc_cond_ptr();
-    let attr: libc::pthread_condattr_t = unsafe { std::mem::zeroed() };
+    let mut attr: libc::pthread_condattr_t = unsafe { std::mem::zeroed() };
     unsafe {
+        assert_eq!(libc::pthread_condattr_init(&mut attr), 0);
         assert_eq!(
             pthread_cond_init(cond, &attr as *const libc::pthread_condattr_t),
-            libc::EINVAL
+            0
         );
+        assert_eq!(pthread_cond_destroy(cond), 0);
+        assert_eq!(libc::pthread_condattr_destroy(&mut attr), 0);
+        free_cond_ptr(cond);
+    }
+}
+
+#[test]
+fn condvar_init_accepts_monotonic_attr_clock() {
+    pthread_mutex_reset_state_for_tests();
+    let cond = alloc_cond_ptr();
+    let mut attr: libc::pthread_condattr_t = unsafe { std::mem::zeroed() };
+    unsafe {
+        assert_eq!(libc::pthread_condattr_init(&mut attr), 0);
+        assert_eq!(
+            libc::pthread_condattr_setclock(&mut attr, libc::CLOCK_MONOTONIC),
+            0
+        );
+        assert_eq!(
+            pthread_cond_init(cond, &attr as *const libc::pthread_condattr_t),
+            0
+        );
+        assert_eq!(pthread_cond_destroy(cond), 0);
+        assert_eq!(libc::pthread_condattr_destroy(&mut attr), 0);
         free_cond_ptr(cond);
     }
 }
