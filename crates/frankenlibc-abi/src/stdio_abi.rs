@@ -20,7 +20,7 @@ use frankenlibc_core::stdio::{BufMode, OpenFlags, StdioStream, flags_to_oflags, 
 use frankenlibc_membrane::heal::{HealingAction, global_healing_policy};
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
-use crate::malloc_abi::known_remaining;
+use crate::malloc_abi::{known_remaining, malloc};
 use crate::runtime_policy;
 use crate::unistd_abi::{sys_read_fd, sys_write_fd};
 
@@ -1400,6 +1400,59 @@ pub unsafe extern "C" fn dprintf(fd: c_int, format: *const c_char, mut args: ...
         adverse,
     );
     if adverse { -1 } else { total_len as c_int }
+}
+
+/// GNU `asprintf`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn asprintf(
+    strp: *mut *mut c_char,
+    format: *const c_char,
+    mut args: ...
+) -> c_int {
+    if strp.is_null() || format.is_null() {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return -1;
+    }
+    // SAFETY: caller provided non-null out-pointer.
+    unsafe { *strp = std::ptr::null_mut() };
+
+    let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, strp as usize, 0, false, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+        return -1;
+    }
+
+    let fmt_bytes = unsafe { CStr::from_ptr(format) }.to_bytes();
+    let segments = parse_format_string(fmt_bytes);
+    let extract_count = count_printf_args(&segments);
+    let mut arg_buf = [0u64; MAX_VA_ARGS];
+    extract_va_args!(&segments, &mut args, &mut arg_buf, extract_count);
+
+    let rendered = unsafe { render_printf(fmt_bytes, arg_buf.as_ptr(), extract_count) };
+    let total_len = rendered.len();
+    let alloc_size = total_len.saturating_add(1);
+
+    // SAFETY: allocation size is computed from rendered payload and includes trailing NUL byte.
+    let out = unsafe { malloc(alloc_size).cast::<c_char>() };
+    if out.is_null() {
+        unsafe { set_abi_errno(errno::ENOMEM) };
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+        return -1;
+    }
+
+    unsafe {
+        std::ptr::copy_nonoverlapping(rendered.as_ptr(), out.cast::<u8>(), total_len);
+        *out.add(total_len) = 0;
+        *strp = out;
+    }
+
+    runtime_policy::observe(
+        ApiFamily::Stdio,
+        decision.profile,
+        runtime_policy::scaled_cost(15, total_len),
+        false,
+    );
+    total_len as c_int
 }
 
 /// glibc fortified `__printf_chk`.

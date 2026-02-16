@@ -74,14 +74,15 @@
     {
       "id": "fixture_stdio_printf",
       "source": "tests/integration/fixture_stdio_printf.c",
-      "description": "Stdio phase-2 printf-family operations: snprintf/sprintf/fprintf/printf/dprintf format/output contracts.",
-      "covered_symbols": ["snprintf", "sprintf", "fprintf", "printf", "dprintf"],
+      "description": "Stdio phase-2 printf-family operations: snprintf/sprintf/fprintf/printf/dprintf/asprintf format/output contracts.",
+      "covered_symbols": ["snprintf", "sprintf", "fprintf", "printf", "dprintf", "asprintf"],
       "covered_modules": ["stdio_abi"],
-      "tests": 5,
+      "tests": 6,
       "compile_flags": ["-O2", "-Wall", "-Wextra"],
       "link_flags": [],
       "spec_traceability": {
         "posix": ["POSIX.1-2017 stdio formatted I/O contracts for snprintf/sprintf/fprintf/printf/dprintf and return-length semantics"],
+        "gnu": ["GNU extension contract for asprintf dynamic allocation + return-length semantics"],
         "c11": ["ISO C11 §7.21.6 formatted input/output function contracts in <stdio.h>"],
         "internal": ["FrankenLibC strict/hardened fixture parity contract for stdio phase-2 printf-family ABI behavior under LD_PRELOAD"]
       },
@@ -189,16 +190,16 @@
   },
   "coverage_summary": {
     "total_fixtures": 12,
-    "total_tests": 52,
-    "covered_symbols": 69,
+    "total_tests": 53,
+    "covered_symbols": 70,
     "covered_modules": ["malloc_abi", "string_abi", "unistd_abi", "stdio_abi", "pthread_abi", "ctype_abi", "math_abi", "socket_abi", "startup_abi"],
-    "required_by_acceptance": ["malloc", "free", "realloc", "memcpy", "memmove", "strlen", "read", "write", "open", "close", "fopen", "fclose", "fflush", "fread", "fwrite", "fgetc", "fputc", "fgets", "fputs", "ungetc", "fileno", "setvbuf", "setbuf", "snprintf", "sprintf", "fprintf", "printf", "dprintf", "pthread_mutex_lock", "pthread_mutex_unlock", "pthread_mutex_init", "pthread_mutex_destroy", "pthread_mutex_trylock", "isalpha", "isdigit", "isspace", "tolower", "toupper", "sin", "cos", "exp", "log", "floor", "ceil", "fmod", "socket", "getsockopt", "bind", "send", "recv", "shutdown"]
+    "required_by_acceptance": ["malloc", "free", "realloc", "memcpy", "memmove", "strlen", "read", "write", "open", "close", "fopen", "fclose", "fflush", "fread", "fwrite", "fgetc", "fputc", "fgets", "fputs", "ungetc", "fileno", "setvbuf", "setbuf", "snprintf", "sprintf", "fprintf", "printf", "dprintf", "asprintf", "pthread_mutex_lock", "pthread_mutex_unlock", "pthread_mutex_init", "pthread_mutex_destroy", "pthread_mutex_trylock", "isalpha", "isdigit", "isspace", "tolower", "toupper", "sin", "cos", "exp", "log", "floor", "ceil", "fmod", "socket", "getsockopt", "bind", "send", "recv", "shutdown"]
   },
   "summary": {
     "total_fixtures": 12,
-    "total_tests": 52,
+    "total_tests": 53,
     "modules_covered": 9,
-    "symbols_covered": 69,
+    "symbols_covered": 70,
     "execution_modes": 2
   }
 }

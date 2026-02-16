@@ -214,6 +214,27 @@ static int test_dprintf_contracts(void) {
     return 0;
 }
 
+static int test_asprintf_contracts(void) {
+    char *out = NULL;
+    int rc = asprintf(&out, "asprintf-%d:%s", 55, "ok");
+    if (rc != 14) {
+        fprintf(stderr, "FAIL: asprintf length expected 14 got %d\n", rc);
+        free(out);
+        return 1;
+    }
+    if (out == NULL) {
+        fprintf(stderr, "FAIL: asprintf returned NULL output pointer\n");
+        return 1;
+    }
+    if (strcmp(out, "asprintf-55:ok") != 0) {
+        fprintf(stderr, "FAIL: asprintf output mismatch got '%s'\n", out);
+        free(out);
+        return 1;
+    }
+    free(out);
+    return 0;
+}
+
 int main(void) {
     int fails = 0;
     fails += test_snprintf_contracts();
@@ -221,11 +242,12 @@ int main(void) {
     fails += test_fprintf_contracts();
     fails += test_printf_redirect_contracts();
     fails += test_dprintf_contracts();
+    fails += test_asprintf_contracts();
 
     if (fails) {
         fprintf(stderr, "fixture_stdio_printf: %d FAILED\n", fails);
         return 1;
     }
-    printf("fixture_stdio_printf: PASS (5 tests)\n");
+    printf("fixture_stdio_printf: PASS (6 tests)\n");
     return 0;
 }

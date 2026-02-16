@@ -2,7 +2,7 @@
   "version": 2,
   "generated_at_utc": "2026-02-13T18:07:59Z",
   "library": "/data/tmp/cargo-target/release/libfrankenlibc_abi.so",
-  "total_exported": 262,
+  "total_exported": 263,
   "taxonomy": {
     "Implemented": "Native Rust code owns the entire operation. No host libc dependency. Full test coverage required.",
     "RawSyscall": "ABI entrypoint marshals arguments directly to Linux syscall instruction. No glibc call-through.",
@@ -121,6 +121,15 @@
       "perf_class": "coldpath",
       "strict_semantics": "Rust std::f64 math; returns NaN/Inf per IEEE 754; no repair",
       "hardened_semantics": "Rust std::f64 math; no mode difference (pure computation)",
+      "default_stub": false
+    },
+    {
+      "symbol": "asprintf",
+      "status": "Implemented",
+      "module": "stdio_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Native formatted allocation using frankenlibc printf renderer and malloc-compatible output contract",
+      "hardened_semantics": "Native formatted allocation with runtime-policy mediation; denial/alloc-failure returns deterministic error",
       "default_stub": false
     },
     {

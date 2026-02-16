@@ -10,8 +10,8 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use frankenlibc_abi::stdio_abi::{
-    dprintf, fclose, fflush, fgetc, fgets, fileno, fopen, fprintf, fputc, fputs, fread, fseek,
-    fwrite, printf, setbuf, setvbuf, snprintf, sprintf, ungetc,
+    asprintf, dprintf, fclose, fflush, fgetc, fgets, fileno, fopen, fprintf, fputc, fputs, fread,
+    fseek, fwrite, printf, setbuf, setvbuf, snprintf, sprintf, ungetc,
 };
 
 const IOFBF: i32 = 0;
@@ -408,4 +408,29 @@ fn dprintf_writes_to_fd() {
     let bytes = fs::read(&path).expect("dprintf output file should exist");
     assert_eq!(bytes, b"dprintf-77");
     let _ = fs::remove_file(path);
+}
+
+#[test]
+fn asprintf_allocates_and_formats_output() {
+    let mut out: *mut i8 = std::ptr::null_mut();
+    // SAFETY: out-pointer and format are valid; variadic args match specifiers.
+    let written = unsafe { asprintf(&mut out, c"asprintf-%d:%s".as_ptr(), 55_i32, c"ok".as_ptr()) };
+    assert_eq!(written, 14);
+    assert!(!out.is_null());
+
+    // SAFETY: asprintf returns a NUL-terminated allocated string on success.
+    let rendered = unsafe { CStr::from_ptr(out) };
+    assert_eq!(rendered.to_bytes(), b"asprintf-55:ok");
+
+    // SAFETY: pointer was allocated by asprintf and is released once here.
+    unsafe { libc::free(out.cast()) };
+}
+
+#[test]
+fn asprintf_rejects_null_arguments() {
+    let mut out: *mut i8 = std::ptr::null_mut();
+    // SAFETY: null out-pointer is rejected by contract.
+    assert_eq!(unsafe { asprintf(std::ptr::null_mut(), c"x".as_ptr()) }, -1);
+    // SAFETY: null format pointer is rejected by contract.
+    assert_eq!(unsafe { asprintf(&mut out, std::ptr::null()) }, -1);
 }
