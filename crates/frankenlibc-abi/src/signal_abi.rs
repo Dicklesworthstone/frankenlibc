@@ -140,13 +140,16 @@ pub unsafe extern "C" fn sigaction(
         return -1;
     }
 
+    // Linux `rt_sigaction` expects the kernel sigset size (`sizeof(unsigned long)`),
+    // not libc's userspace `sigset_t` size.
+    let kernel_sigset_size = std::mem::size_of::<libc::c_ulong>();
     let rc = unsafe {
         libc::syscall(
             libc::SYS_rt_sigaction,
             signum,
             act,
             oldact,
-            std::mem::size_of::<libc::sigset_t>(),
+            kernel_sigset_size,
         ) as c_int
     };
     let adverse = rc != 0;
