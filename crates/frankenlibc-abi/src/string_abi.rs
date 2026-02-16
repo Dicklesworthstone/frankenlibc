@@ -1031,6 +1031,103 @@ pub unsafe extern "C" fn strcmp(s1: *const c_char, s2: *const c_char) -> c_int {
 }
 
 // ---------------------------------------------------------------------------
+// strncmp
+// ---------------------------------------------------------------------------
+
+/// POSIX `strncmp` -- compares at most `n` bytes of two strings.
+///
+/// # Safety
+///
+/// Caller must ensure both `s1` and `s2` point to valid memory for the
+/// compared span.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strncmp(s1: *const c_char, s2: *const c_char, n: usize) -> c_int {
+    if n == 0 {
+        return 0;
+    }
+
+    let (aligned, recent_page, ordering) = stage_context_two(s1 as usize, s2 as usize);
+    if s1.is_null() || s2.is_null() {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Null)),
+        );
+        return 0;
+    }
+
+    let (mode, decision) = runtime_policy::decide(
+        ApiFamily::StringMemory,
+        s1 as usize,
+        n,
+        false,
+        known_remaining(s1 as usize).is_none() && known_remaining(s2 as usize).is_none(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Arena)),
+        );
+        runtime_policy::observe(ApiFamily::StringMemory, decision.profile, 6, true);
+        return 0;
+    }
+
+    let repair = repair_enabled(mode.heals_enabled(), decision.action);
+    let lhs_bound = if repair {
+        known_remaining(s1 as usize)
+    } else {
+        None
+    };
+    let rhs_bound = if repair {
+        known_remaining(s2 as usize)
+    } else {
+        None
+    };
+    let cmp_limit = match (lhs_bound, rhs_bound) {
+        (Some(a), Some(b)) => a.min(b).min(n),
+        _ => n,
+    };
+    let adverse = repair && cmp_limit < n;
+
+    // SAFETY: strict mode follows libc semantics; hardened mode bounds reads.
+    let (result, span) = unsafe {
+        let mut i = 0usize;
+        loop {
+            if i >= cmp_limit {
+                break (0, i);
+            }
+            let a = *s1.add(i) as u8;
+            let b = *s2.add(i) as u8;
+            if a != b || a == 0 {
+                break ((a as c_int) - (b as c_int), i.saturating_add(1));
+            }
+            i += 1;
+        }
+    };
+
+    if adverse {
+        record_truncation(n, cmp_limit);
+    }
+    record_string_stage_outcome(
+        &ordering,
+        aligned,
+        recent_page,
+        Some(stage_index(&ordering, CheckStage::Bounds)),
+    );
+    runtime_policy::observe(
+        ApiFamily::StringMemory,
+        decision.profile,
+        runtime_policy::scaled_cost(7, span),
+        adverse,
+    );
+    result
+}
+
+// ---------------------------------------------------------------------------
 // strcpy
 // ---------------------------------------------------------------------------
 
@@ -2129,5 +2226,41 @@ pub unsafe extern "C" fn strtok_r(
                 std::ptr::null_mut()
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::strncmp;
+    use std::ffi::c_char;
+
+    #[test]
+    fn strncmp_returns_zero_for_n_zero() {
+        let a = b"alpha\0".as_ptr().cast::<c_char>();
+        let b = b"beta\0".as_ptr().cast::<c_char>();
+        // SAFETY: both pointers refer to static NUL-terminated byte strings.
+        let result = unsafe { strncmp(a, b, 0) };
+        assert_eq!(result, 0);
+    }
+
+    #[test]
+    fn strncmp_obeys_count_limit() {
+        let a = b"abcdef\0".as_ptr().cast::<c_char>();
+        let b = b"abcxyz\0".as_ptr().cast::<c_char>();
+        // SAFETY: both pointers refer to static NUL-terminated byte strings.
+        let first = unsafe { strncmp(a, b, 3) };
+        // SAFETY: both pointers refer to static NUL-terminated byte strings.
+        let second = unsafe { strncmp(a, b, 4) };
+        assert_eq!(first, 0);
+        assert!(second < 0);
+    }
+
+    #[test]
+    fn strncmp_treats_terminator_as_end_of_compare() {
+        let a = b"ab\0cd\0".as_ptr().cast::<c_char>();
+        let b = b"ab\0ef\0".as_ptr().cast::<c_char>();
+        // SAFETY: both pointers refer to static NUL-terminated byte strings.
+        let result = unsafe { strncmp(a, b, 8) };
+        assert_eq!(result, 0);
     }
 }

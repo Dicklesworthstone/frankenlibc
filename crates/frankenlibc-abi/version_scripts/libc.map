@@ -6,8 +6,10 @@ GLIBC_2.2.5 {
         memset;
         memcmp;
         memchr;
+        memrchr;
         strlen;
         strcmp;
+        strncmp;
         strcpy;
         strncpy;
         strcat;
@@ -16,6 +18,7 @@ GLIBC_2.2.5 {
         strrchr;
         strstr;
         strtok;
+        strtok_r;
 
         /* memory allocation */
         malloc;
