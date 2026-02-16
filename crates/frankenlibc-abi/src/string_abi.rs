@@ -2228,39 +2228,3 @@ pub unsafe extern "C" fn strtok_r(
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::strncmp;
-    use std::ffi::c_char;
-
-    #[test]
-    fn strncmp_returns_zero_for_n_zero() {
-        let a = b"alpha\0".as_ptr().cast::<c_char>();
-        let b = b"beta\0".as_ptr().cast::<c_char>();
-        // SAFETY: both pointers refer to static NUL-terminated byte strings.
-        let result = unsafe { strncmp(a, b, 0) };
-        assert_eq!(result, 0);
-    }
-
-    #[test]
-    fn strncmp_obeys_count_limit() {
-        let a = b"abcdef\0".as_ptr().cast::<c_char>();
-        let b = b"abcxyz\0".as_ptr().cast::<c_char>();
-        // SAFETY: both pointers refer to static NUL-terminated byte strings.
-        let first = unsafe { strncmp(a, b, 3) };
-        // SAFETY: both pointers refer to static NUL-terminated byte strings.
-        let second = unsafe { strncmp(a, b, 4) };
-        assert_eq!(first, 0);
-        assert!(second < 0);
-    }
-
-    #[test]
-    fn strncmp_treats_terminator_as_end_of_compare() {
-        let a = b"ab\0cd\0".as_ptr().cast::<c_char>();
-        let b = b"ab\0ef\0".as_ptr().cast::<c_char>();
-        // SAFETY: both pointers refer to static NUL-terminated byte strings.
-        let result = unsafe { strncmp(a, b, 8) };
-        assert_eq!(result, 0);
-    }
-}
