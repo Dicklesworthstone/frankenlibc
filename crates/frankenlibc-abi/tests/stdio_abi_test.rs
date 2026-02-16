@@ -5,7 +5,7 @@
 use std::ffi::{CStr, CString};
 use std::fs;
 use std::os::unix::ffi::OsStrExt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use frankenlibc_abi::stdio_abi::{
@@ -30,7 +30,7 @@ fn temp_path(tag: &str) -> PathBuf {
     path
 }
 
-fn path_cstring(path: &PathBuf) -> CString {
+fn path_cstring(path: &Path) -> CString {
     CString::new(path.as_os_str().as_bytes()).expect("temp path must not contain interior NUL")
 }
 
@@ -183,6 +183,94 @@ fn fileno_and_setvbuf_contracts_hold() {
     // setbuf should remain callable without crashing.
     // SAFETY: wrapper over setvbuf for this valid stream.
     unsafe { setbuf(stream, std::ptr::null_mut()) };
+
+    // SAFETY: `stream` is valid and open.
+    assert_eq!(unsafe { fclose(stream) }, 0);
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn rejects_invalid_open_mode_and_null_stream_handles() {
+    let path = temp_path("invalid_mode");
+    let _ = fs::remove_file(&path);
+    let path_c = path_cstring(&path);
+
+    // SAFETY: pointers are valid C strings for this call.
+    let invalid = unsafe { fopen(path_c.as_ptr(), c"z".as_ptr()) };
+    assert!(invalid.is_null());
+
+    // SAFETY: null stream is explicitly rejected by ABI functions.
+    assert_eq!(unsafe { fclose(std::ptr::null_mut()) }, libc::EOF);
+    // SAFETY: null stream is explicitly rejected by ABI functions.
+    assert_eq!(unsafe { fileno(std::ptr::null_mut()) }, -1);
+}
+
+#[test]
+fn null_and_zero_length_io_paths_are_safe_defaults() {
+    let path = temp_path("null_io");
+    let _ = fs::remove_file(&path);
+    let path_c = path_cstring(&path);
+
+    // SAFETY: pointers are valid C strings for this call.
+    let stream = unsafe { fopen(path_c.as_ptr(), c"w+".as_ptr()) };
+    assert!(!stream.is_null());
+
+    let mut read_buf = [0_u8; 8];
+
+    // SAFETY: zero-sized operations are valid and return zero items.
+    assert_eq!(
+        unsafe { fread(read_buf.as_mut_ptr().cast(), 0, 8, stream) },
+        0
+    );
+    // SAFETY: zero-sized operations are valid and return zero items.
+    assert_eq!(
+        unsafe { fread(read_buf.as_mut_ptr().cast(), 1, 0, stream) },
+        0
+    );
+    // SAFETY: null pointer is rejected by ABI implementation.
+    assert_eq!(unsafe { fread(std::ptr::null_mut(), 1, 8, stream) }, 0);
+
+    // SAFETY: zero-sized operations are valid and return zero items.
+    assert_eq!(
+        unsafe { fwrite(read_buf.as_ptr().cast(), 0, read_buf.len(), stream) },
+        0
+    );
+    // SAFETY: zero-sized operations are valid and return zero items.
+    assert_eq!(unsafe { fwrite(read_buf.as_ptr().cast(), 1, 0, stream) }, 0);
+    // SAFETY: null pointer is rejected by ABI implementation.
+    assert_eq!(
+        unsafe { fwrite(std::ptr::null(), 1, read_buf.len(), stream) },
+        0
+    );
+
+    // SAFETY: null string pointer is rejected by ABI implementation.
+    assert_eq!(unsafe { fputs(std::ptr::null(), stream) }, libc::EOF);
+    // SAFETY: EOF cannot be pushed back by contract.
+    assert_eq!(unsafe { ungetc(libc::EOF, stream) }, libc::EOF);
+
+    // SAFETY: `stream` is valid and open.
+    assert_eq!(unsafe { fclose(stream) }, 0);
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn fgets_rejects_invalid_destination_or_size() {
+    let path = temp_path("fgets_invalid");
+    let _ = fs::remove_file(&path);
+    let path_c = path_cstring(&path);
+
+    // SAFETY: pointers are valid C strings for this call.
+    let stream = unsafe { fopen(path_c.as_ptr(), c"w+".as_ptr()) };
+    assert!(!stream.is_null());
+
+    // SAFETY: destination buffer null is rejected.
+    assert!(unsafe { fgets(std::ptr::null_mut(), 8, stream) }.is_null());
+
+    let mut buf = [0_i8; 8];
+    // SAFETY: non-positive size is rejected.
+    assert!(unsafe { fgets(buf.as_mut_ptr(), 0, stream) }.is_null());
+    // SAFETY: non-positive size is rejected.
+    assert!(unsafe { fgets(buf.as_mut_ptr(), -1, stream) }.is_null());
 
     // SAFETY: `stream` is valid and open.
     assert_eq!(unsafe { fclose(stream) }, 0);

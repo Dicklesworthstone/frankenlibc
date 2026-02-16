@@ -9,6 +9,7 @@
 #   1 — one or more fixtures failed
 #   2 — setup error (missing compiler, library, etc.)
 set -euo pipefail
+shopt -s nullglob
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 FIXTURE_DIR="${ROOT}/tests/integration"
@@ -17,6 +18,11 @@ RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)"
 RUN_DIR="${OUT_ROOT}/${RUN_ID}"
 BIN_DIR="${RUN_DIR}/bin"
 TIMEOUT_SECONDS="${TIMEOUT_SECONDS:-10}"
+BEAD_ID="${BEAD_ID:-bd-3jh}"
+TRACE_FILE="${RUN_DIR}/trace.jsonl"
+ARTIFACT_INDEX="${RUN_DIR}/artifact_index.json"
+TRACE_SEQ=0
+FIXTURE_FILTER="${FIXTURE_FILTER:-fixture_*.c}"
 
 LIB_CANDIDATES=(
   "${ROOT}/target/release/libfrankenlibc_abi.so"
@@ -32,6 +38,42 @@ for candidate in "${LIB_CANDIDATES[@]}"; do
 done
 
 mkdir -p "${RUN_DIR}" "${BIN_DIR}"
+: > "${TRACE_FILE}"
+
+now_iso_utc() {
+  date -u +"%Y-%m-%dT%H:%M:%S.%3NZ"
+}
+
+emit_trace() {
+  local level="$1"
+  local event="$2"
+  local mode="$3"
+  local symbol="$4"
+  local decision_path="$5"
+  local outcome="$6"
+  local errno_val="$7"
+  local latency_ns="$8"
+  local artifact_refs_json="$9"
+
+  TRACE_SEQ=$((TRACE_SEQ + 1))
+  local trace_id
+  trace_id="${BEAD_ID}::${RUN_ID}::$(printf '%03d' "${TRACE_SEQ}")"
+
+  printf '{"timestamp":"%s","trace_id":"%s","level":"%s","event":"%s","bead_id":"%s","run_id":"%s","mode":"%s","api_family":"integration-fixture","symbol":"%s","decision_path":"%s","healing_action":"None","outcome":"%s","errno":%s,"latency_ns":%s,"artifact_refs":%s}\n' \
+    "$(now_iso_utc)" \
+    "${trace_id}" \
+    "${level}" \
+    "${event}" \
+    "${BEAD_ID}" \
+    "${RUN_ID}" \
+    "${mode}" \
+    "${symbol}" \
+    "${decision_path}" \
+    "${outcome}" \
+    "${errno_val}" \
+    "${latency_ns}" \
+    "${artifact_refs_json}" >> "${TRACE_FILE}"
+}
 
 # Build library if needed
 if [[ -z "${LIB_PATH}" ]]; then
@@ -59,6 +101,8 @@ echo "=== C Fixture Suite (bd-3jh) ==="
 echo "run_dir=${RUN_DIR}"
 echo "lib=${LIB_PATH}"
 echo "timeout=${TIMEOUT_SECONDS}s"
+echo "bead_id=${BEAD_ID}"
+echo "fixture_filter=${FIXTURE_FILTER}"
 echo ""
 
 # Compile all fixtures
@@ -66,7 +110,13 @@ echo "--- Compiling fixtures ---"
 compile_fails=0
 fixture_bins=()
 
-for src in "${FIXTURE_DIR}"/fixture_*.c; do
+matched_sources=("${FIXTURE_DIR}"/${FIXTURE_FILTER})
+if [[ "${#matched_sources[@]}" -eq 0 ]]; then
+  echo "c_fixture_suite: no fixtures matched filter '${FIXTURE_FILTER}'" >&2
+  exit 2
+fi
+
+for src in "${matched_sources[@]}"; do
   name="$(basename "${src}" .c)"
   bin="${BIN_DIR}/${name}"
 
@@ -108,6 +158,8 @@ run_fixture() {
   mkdir -p "${case_dir}"
 
   total=$((total + 1))
+  local start_ns
+  start_ns="$(date +%s%N)"
 
   set +e
   timeout "${TIMEOUT_SECONDS}" \
@@ -116,17 +168,27 @@ run_fixture() {
   local rc=$?
   set -e
 
+  local end_ns
+  end_ns="$(date +%s%N)"
+  local elapsed_ns=$((end_ns - start_ns))
+
   echo "${rc}" > "${case_dir}/exit_code"
+
+  local refs_json
+  refs_json="$(printf '["%s/%s/stdout.txt","%s/%s/stderr.txt","%s/%s/exit_code"]' "${mode}" "${name}" "${mode}" "${name}" "${mode}" "${name}")"
 
   if [[ "${rc}" -eq 0 ]]; then
     passes=$((passes + 1))
     echo "[PASS] mode=${mode} ${name}"
+    emit_trace "info" "fixture_result" "${mode}" "${name}" "fixture_exit_code" "pass" 0 "${elapsed_ns}" "${refs_json}"
   elif [[ "${rc}" -eq 124 || "${rc}" -eq 125 ]]; then
     fails=$((fails + 1))
     echo "[FAIL] mode=${mode} ${name} (timeout ${TIMEOUT_SECONDS}s)"
+    emit_trace "error" "fixture_result" "${mode}" "${name}" "timeout" "fail" "${rc}" "${elapsed_ns}" "${refs_json}"
   else
     fails=$((fails + 1))
     echo "[FAIL] mode=${mode} ${name} (exit ${rc})"
+    emit_trace "error" "fixture_result" "${mode}" "${name}" "nonzero_exit" "fail" "${rc}" "${elapsed_ns}" "${refs_json}"
   fi
 }
 
@@ -144,10 +206,13 @@ import json, os, glob
 
 results = {
     'run_id': '${RUN_ID}',
+    'bead_id': '${BEAD_ID}',
     'lib_path': '${LIB_PATH}',
     'total': ${total},
     'passes': ${passes},
     'fails': ${fails},
+    'trace_log': '${TRACE_FILE#${ROOT}/}',
+    'artifact_index': '${ARTIFACT_INDEX#${ROOT}/}',
     'fixtures': []
 }
 
@@ -174,9 +239,93 @@ with open('${RUN_DIR}/results.json', 'w') as f:
     json.dump(results, f, indent=2)
 "
 
+summary_refs="$(printf '["%s","%s"]' "${TRACE_FILE#${ROOT}/}" "${RUN_DIR#${ROOT}/}/results.json")"
+if [[ "${fails}" -eq 0 ]]; then
+  emit_trace "info" "run_summary" "strict+hardened" "c_fixture_suite" "aggregate_exit" "pass" 0 0 "${summary_refs}"
+else
+  emit_trace "error" "run_summary" "strict+hardened" "c_fixture_suite" "aggregate_exit" "fail" "${fails}" 0 "${summary_refs}"
+fi
+
+python3 - "${ROOT}" "${RUN_DIR}" "${ARTIFACT_INDEX}" "${RUN_ID}" "${BEAD_ID}" <<'PY'
+import hashlib
+import json
+from datetime import datetime, timezone
+from pathlib import Path
+import sys
+
+root = Path(sys.argv[1])
+run_dir = Path(sys.argv[2])
+index_path = Path(sys.argv[3])
+run_id = sys.argv[4]
+bead_id = sys.argv[5]
+
+def sha256_hex(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(65536), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+paths = []
+for rel in ("results.json", "trace.jsonl"):
+    p = run_dir / rel
+    if p.exists():
+        paths.append(p)
+
+for pattern in (
+    "strict/fixture_*/stdout.txt",
+    "strict/fixture_*/stderr.txt",
+    "strict/fixture_*/exit_code",
+    "hardened/fixture_*/stdout.txt",
+    "hardened/fixture_*/stderr.txt",
+    "hardened/fixture_*/exit_code",
+    "*_compile.log",
+):
+    paths.extend(sorted(run_dir.glob(pattern)))
+
+artifacts = []
+for path in paths:
+    rel = path.relative_to(root).as_posix()
+    if rel.endswith(".jsonl"):
+        kind = "log"
+    elif rel.endswith("results.json"):
+        kind = "report"
+    elif rel.endswith("_compile.log"):
+        kind = "compile_log"
+    elif rel.endswith("stdout.txt"):
+        kind = "stdout"
+    elif rel.endswith("stderr.txt"):
+        kind = "stderr"
+    elif rel.endswith("exit_code"):
+        kind = "status"
+    else:
+        kind = "artifact"
+
+    artifacts.append(
+        {
+            "path": rel,
+            "kind": kind,
+            "sha256": sha256_hex(path),
+            "size_bytes": path.stat().st_size,
+            "description": "c fixture suite artifact",
+        }
+    )
+
+payload = {
+    "index_version": 1,
+    "run_id": run_id,
+    "bead_id": bead_id,
+    "generated_utc": datetime.now(timezone.utc).isoformat(),
+    "artifacts": artifacts,
+}
+index_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+PY
+
 echo "=== Summary ==="
 echo "Total: ${total} | Passes: ${passes} | Fails: ${fails}"
 echo "Results: ${RUN_DIR}/results.json"
+echo "Trace: ${TRACE_FILE}"
+echo "Artifact index: ${ARTIFACT_INDEX}"
 
 if [[ "${fails}" -gt 0 ]]; then
   echo ""
