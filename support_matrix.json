@@ -575,11 +575,11 @@
     },
     {
       "symbol": "fprintf",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "coldpath",
-      "strict_semantics": "Delegates to host glibc FILE* ops after membrane validation; preserves host semantics",
-      "hardened_semantics": "Host glibc delegation; hardened membrane bounds C string scans, logs TruncateWithNull",
+      "strict_semantics": "Native printf engine + stream-registry stdio path; no host glibc call-through",
+      "hardened_semantics": "Native printf engine + stream-registry stdio with membrane validation/repair; no host glibc call-through",
       "default_stub": false
     },
     {
@@ -1358,11 +1358,11 @@
     },
     {
       "symbol": "printf",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "coldpath",
-      "strict_semantics": "Delegates to host glibc FILE* ops after membrane validation; preserves host semantics",
-      "hardened_semantics": "Host glibc delegation; hardened membrane bounds C string scans, logs TruncateWithNull",
+      "strict_semantics": "Native printf engine writing directly to stdout via syscall-backed path; no host glibc call-through",
+      "hardened_semantics": "Native printf engine + membrane validation/repair on stdout path; no host glibc call-through",
       "default_stub": false
     },
     {
@@ -1826,11 +1826,11 @@
     },
     {
       "symbol": "snprintf",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "coldpath",
-      "strict_semantics": "Delegates to host glibc FILE* ops after membrane validation; preserves host semantics",
-      "hardened_semantics": "Host glibc delegation; hardened membrane bounds C string scans, logs TruncateWithNull",
+      "strict_semantics": "Native printf engine into caller-provided bounded buffer; no host glibc call-through",
+      "hardened_semantics": "Native bounded formatting path with membrane validation/repair; no host glibc call-through",
       "default_stub": false
     },
     {
@@ -1844,11 +1844,11 @@
     },
     {
       "symbol": "sprintf",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "coldpath",
-      "strict_semantics": "Delegates to host glibc FILE* ops after membrane validation; preserves host semantics",
-      "hardened_semantics": "Host glibc delegation; hardened membrane bounds C string scans, logs TruncateWithNull",
+      "strict_semantics": "Native printf engine into caller-provided buffer; no host glibc call-through",
+      "hardened_semantics": "Native unbounded formatting path with membrane validation/repair; no host glibc call-through",
       "default_stub": false
     },
     {

@@ -6,17 +6,19 @@ use std::ffi::{CStr, CString};
 use std::fs;
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use frankenlibc_abi::stdio_abi::{
-    fclose, fflush, fgetc, fgets, fileno, fopen, fputc, fputs, fread, fseek, fwrite, setbuf,
-    setvbuf, ungetc,
+    fclose, fflush, fgetc, fgets, fileno, fopen, fprintf, fputc, fputs, fread, fseek, fwrite,
+    printf, setbuf, setvbuf, snprintf, sprintf, ungetc,
 };
 
 const IOFBF: i32 = 0;
 const IONBF: i32 = 2;
 
 static NEXT_TMP_ID: AtomicU64 = AtomicU64::new(0);
+static STDOUT_REDIRECT_LOCK: Mutex<()> = Mutex::new(());
 
 fn temp_path(tag: &str) -> PathBuf {
     let id = NEXT_TMP_ID.fetch_add(1, Ordering::Relaxed);
@@ -274,5 +276,106 @@ fn fgets_rejects_invalid_destination_or_size() {
 
     // SAFETY: `stream` is valid and open.
     assert_eq!(unsafe { fclose(stream) }, 0);
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn snprintf_truncates_and_reports_full_length() {
+    let mut buf = [0_i8; 5];
+
+    // SAFETY: destination is writable; format string is valid C string.
+    let written = unsafe { snprintf(buf.as_mut_ptr(), buf.len(), c"abcdef".as_ptr()) };
+    assert_eq!(written, 6);
+
+    // SAFETY: snprintf guarantees NUL-termination when size > 0.
+    let out = unsafe { CStr::from_ptr(buf.as_ptr()) };
+    assert_eq!(out.to_bytes(), b"abcd");
+}
+
+#[test]
+fn sprintf_formats_integer_and_string_arguments() {
+    let mut buf = [0_i8; 64];
+
+    // SAFETY: destination is writable; variadic args match format specifiers.
+    let written = unsafe {
+        sprintf(
+            buf.as_mut_ptr(),
+            c"x=%d %s".as_ptr(),
+            17_i32,
+            c"ok".as_ptr(),
+        )
+    };
+    assert_eq!(written, 7);
+
+    // SAFETY: sprintf writes a trailing NUL on success.
+    let out = unsafe { CStr::from_ptr(buf.as_ptr()) };
+    assert_eq!(out.to_bytes(), b"x=17 ok");
+}
+
+#[test]
+fn fprintf_formats_and_persists_to_stream() {
+    let path = temp_path("fprintf");
+    let _ = fs::remove_file(&path);
+    let path_c = path_cstring(&path);
+
+    // SAFETY: path/mode pointers are valid C strings.
+    let stream = unsafe { fopen(path_c.as_ptr(), c"w+".as_ptr()) };
+    assert!(!stream.is_null());
+
+    // SAFETY: stream is valid; variadic args match format specifiers.
+    let written = unsafe { fprintf(stream, c"v=%u:%c".as_ptr(), 42_u32, b'Z' as i32) };
+    assert_eq!(written, 6);
+    // SAFETY: stream is valid and open.
+    assert_eq!(unsafe { fflush(stream) }, 0);
+    // SAFETY: stream is valid and open.
+    assert_eq!(unsafe { fclose(stream) }, 0);
+
+    let bytes = fs::read(&path).expect("fprintf output file should exist");
+    assert_eq!(bytes, b"v=42:Z");
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn printf_writes_to_redirected_stdout() {
+    let _guard = STDOUT_REDIRECT_LOCK
+        .lock()
+        .expect("stdout redirect lock should not be poisoned");
+
+    let path = temp_path("printf");
+    let _ = fs::remove_file(&path);
+    let path_c = path_cstring(&path);
+
+    // SAFETY: path pointer is valid and open mode bits are valid.
+    let out_fd = unsafe {
+        libc::open(
+            path_c.as_ptr(),
+            libc::O_CREAT | libc::O_TRUNC | libc::O_WRONLY,
+            0o600,
+        )
+    };
+    assert!(out_fd >= 0);
+
+    // SAFETY: dup/dup2/close operate on valid fds.
+    let saved_stdout = unsafe { libc::dup(libc::STDOUT_FILENO) };
+    assert!(saved_stdout >= 0);
+    // SAFETY: redirect stdout to the temp file.
+    assert_eq!(
+        unsafe { libc::dup2(out_fd, libc::STDOUT_FILENO) },
+        libc::STDOUT_FILENO
+    );
+
+    // SAFETY: variadic args match the format string.
+    let written = unsafe { printf(c"printf-%d\n".as_ptr(), 9_i32) };
+    assert_eq!(written, 9);
+
+    // SAFETY: restore stdout and close descriptors.
+    unsafe {
+        libc::dup2(saved_stdout, libc::STDOUT_FILENO);
+        libc::close(saved_stdout);
+        libc::close(out_fd);
+    }
+
+    let bytes = fs::read(&path).expect("redirected printf output file should exist");
+    assert_eq!(bytes, b"printf-9\n");
     let _ = fs::remove_file(path);
 }
