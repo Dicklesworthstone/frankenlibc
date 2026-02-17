@@ -330,7 +330,17 @@ GLIBC_2.2.5 {
         time;
         clock;
         clock_gettime;
+        clock_getres;
+        clock_nanosleep;
         localtime_r;
+        gmtime_r;
+        mktime;
+        timegm;
+        difftime;
+        gettimeofday;
+        nanosleep;
+        asctime_r;
+        ctime_r;
 
         /* termios */
         tcgetattr;

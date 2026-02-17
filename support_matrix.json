@@ -2,7 +2,7 @@
   "version": 2,
   "generated_at_utc": "2026-02-13T18:07:59Z",
   "library": "/data/tmp/cargo-target/release/libfrankenlibc_abi.so",
-  "total_exported": 297,
+  "total_exported": 307,
   "taxonomy": {
     "Implemented": "Native Rust code owns the entire operation. No host libc dependency. Full test coverage required.",
     "RawSyscall": "ABI entrypoint marshals arguments directly to Linux syscall instruction. No glibc call-through.",
@@ -130,6 +130,15 @@
       "perf_class": "strict_hotpath",
       "strict_semantics": "Safe Rust arena allocator; null on failure; double-free silently ignored",
       "hardened_semantics": "Arena with healing: foreign-ptr realloc as malloc, double-free logged as HealingAction",
+      "default_stub": false
+    },
+    {
+      "symbol": "asctime_r",
+      "status": "Implemented",
+      "module": "time_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Pure Rust formatting of broken-down time to string; no syscall",
+      "hardened_semantics": "Pure Rust formatting with null pointer guard",
       "default_stub": false
     },
     {
@@ -331,12 +340,30 @@
       "default_stub": false
     },
     {
+      "symbol": "clock_getres",
+      "status": "RawSyscall",
+      "module": "time_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Raw Linux syscall SYS_clock_getres; POSIX errno on failure",
+      "hardened_semantics": "Raw syscall; validates clock_id before calling kernel",
+      "default_stub": false
+    },
+    {
       "symbol": "clock_gettime",
       "status": "RawSyscall",
       "module": "time_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Raw Linux syscall for time queries; POSIX errno on failure",
       "hardened_semantics": "Raw syscall; defaults invalid clock_id to CLOCK_REALTIME",
+      "default_stub": false
+    },
+    {
+      "symbol": "clock_nanosleep",
+      "status": "RawSyscall",
+      "module": "time_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Raw Linux syscall SYS_clock_nanosleep; returns error code directly",
+      "hardened_semantics": "Raw syscall; validates clock_id and req pointer",
       "default_stub": false
     },
     {
@@ -391,6 +418,24 @@
       "perf_class": "coldpath",
       "strict_semantics": "Rust libm path; finite overflow to infinity sets errno=ERANGE while preserving IEEE 754 behavior",
       "hardened_semantics": "Same ERANGE overflow signaling with runtime-policy routing; hardened mode may repair non-finite outputs deterministically",
+      "default_stub": false
+    },
+    {
+      "symbol": "ctime_r",
+      "status": "Implemented",
+      "module": "time_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Combines epoch_to_broken_down with format_asctime; pure Rust",
+      "hardened_semantics": "Pure Rust conversion with null pointer guard",
+      "default_stub": false
+    },
+    {
+      "symbol": "difftime",
+      "status": "Implemented",
+      "module": "time_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Pure computation returning time1 - time0 as f64; no syscall",
+      "hardened_semantics": "Pure computation; no mode difference",
       "default_stub": false
     },
     {
@@ -997,12 +1042,30 @@
       "default_stub": false
     },
     {
+      "symbol": "gettimeofday",
+      "status": "RawSyscall",
+      "module": "time_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Raw Linux syscall via clock_gettime(CLOCK_REALTIME); POSIX errno on failure",
+      "hardened_semantics": "Raw syscall; validates tv pointer",
+      "default_stub": false
+    },
+    {
       "symbol": "getuid",
       "status": "RawSyscall",
       "module": "unistd_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Raw Linux syscall for POSIX I/O and process queries; POSIX errno on failure",
       "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid whence/amode",
+      "default_stub": false
+    },
+    {
+      "symbol": "gmtime_r",
+      "status": "Implemented",
+      "module": "time_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Pure Rust epoch_to_broken_down conversion to UTC; no syscall",
+      "hardened_semantics": "Pure Rust conversion with null pointer guard",
       "default_stub": false
     },
     {
@@ -1393,6 +1456,15 @@
       "default_stub": false
     },
     {
+      "symbol": "mktime",
+      "status": "Implemented",
+      "module": "time_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Pure Rust broken_down_to_epoch with field normalization; UTC only",
+      "hardened_semantics": "Pure Rust conversion; normalizes fields, UTC only",
+      "default_stub": false
+    },
+    {
       "symbol": "mmap",
       "status": "RawSyscall",
       "module": "mmap_abi",
@@ -1426,6 +1498,15 @@
       "perf_class": "coldpath",
       "strict_semantics": "Raw Linux syscall for virtual memory; POSIX errno on failure",
       "hardened_semantics": "Raw syscall; denies conflicting prot/flags combinations",
+      "default_stub": false
+    },
+    {
+      "symbol": "nanosleep",
+      "status": "RawSyscall",
+      "module": "time_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Raw Linux syscall SYS_nanosleep; sets errno EINTR on signal interruption",
+      "hardened_semantics": "Raw syscall; validates req pointer",
       "default_stub": false
     },
     {
@@ -2488,6 +2569,15 @@
       "perf_class": "coldpath",
       "strict_semantics": "Raw Linux syscall for time queries; POSIX errno on failure",
       "hardened_semantics": "Raw syscall; defaults invalid clock_id to CLOCK_REALTIME",
+      "default_stub": false
+    },
+    {
+      "symbol": "timegm",
+      "status": "Implemented",
+      "module": "time_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Delegates to mktime; pure Rust broken_down_to_epoch; UTC",
+      "hardened_semantics": "Delegates to mktime with membrane validation",
       "default_stub": false
     },
     {
