@@ -252,6 +252,8 @@ GLIBC_2.2.5 {
         read;
         write;
         close;
+        open;
+        creat;
         lseek;
         access;
         chdir;
@@ -262,6 +264,17 @@ GLIBC_2.2.5 {
         link;
         unlink;
         rmdir;
+        rename;
+        mkdir;
+        chmod;
+        fchmod;
+        chown;
+        fchown;
+        lchown;
+        umask;
+        truncate;
+        ftruncate;
+        flock;
         stat;
         lstat;
         fstat;
@@ -270,6 +283,10 @@ GLIBC_2.2.5 {
         sleep;
         usleep;
         isatty;
+        uname;
+        gethostname;
+        getrusage;
+        alarm;
         getpid;
         getppid;
         getuid;
@@ -288,6 +305,19 @@ GLIBC_2.2.5 {
         setregid;
         getgroups;
         setgroups;
+
+        /* *at() family — directory-fd-relative operations */
+        openat;
+        fstatat;
+        unlinkat;
+        renameat;
+        mkdirat;
+        readlinkat;
+        symlinkat;
+        faccessat;
+        fchownat;
+        fchmodat;
+        linkat;
 
         /* process */
         fork;
@@ -321,8 +351,16 @@ GLIBC_2.2.5 {
         /* I/O */
         dup;
         dup2;
+        dup3;
         pipe;
+        pipe2;
         fcntl;
+        ioctl;
+        pread;
+        pwrite;
+        readv;
+        writev;
+        sendfile;
 
         /* poll/select */
         poll;

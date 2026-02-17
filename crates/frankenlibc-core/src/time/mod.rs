@@ -151,7 +151,7 @@ pub fn broken_down_to_epoch(bd: &BrokenDownTime) -> i64 {
     let mut year = bd.tm_year as i64 + 1900;
     let mut mon = bd.tm_mon as i64;
     // Normalize month
-    if mon < 0 || mon > 11 {
+    if !(0..=11).contains(&mon) {
         year += mon.div_euclid(12);
         mon = mon.rem_euclid(12);
     }

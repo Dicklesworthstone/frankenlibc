@@ -827,6 +827,676 @@ pub unsafe extern "C" fn fdatasync(fd: c_int) -> c_int {
 }
 
 // ---------------------------------------------------------------------------
+// open / creat
+// ---------------------------------------------------------------------------
+
+/// POSIX `open` — open a file descriptor.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn open(path: *const c_char, flags: c_int, mode: libc::mode_t) -> c_int {
+    let (_, decision) = runtime_policy::decide(ApiFamily::IoFd, path as usize, 0, true, true, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
+        return -1;
+    }
+    if path.is_null() {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
+        return -1;
+    }
+    let rc = unsafe {
+        syscall_ret_int(
+            libc::syscall(libc::SYS_openat, libc::AT_FDCWD, path, flags, mode),
+            errno::ENOENT,
+        )
+    };
+    runtime_policy::observe(ApiFamily::IoFd, decision.profile, 12, rc < 0);
+    rc
+}
+
+/// POSIX `creat` — equivalent to `open(path, O_CREAT|O_WRONLY|O_TRUNC, mode)`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn creat(path: *const c_char, mode: libc::mode_t) -> c_int {
+    unsafe { open(path, libc::O_CREAT | libc::O_WRONLY | libc::O_TRUNC, mode) }
+}
+
+// ---------------------------------------------------------------------------
+// rename / mkdir
+// ---------------------------------------------------------------------------
+
+/// POSIX `rename` — rename a file.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn rename(oldpath: *const c_char, newpath: *const c_char) -> c_int {
+    let (_, decision) = runtime_policy::decide(ApiFamily::IoFd, oldpath as usize, 0, true, true, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
+        return -1;
+    }
+    if oldpath.is_null() || newpath.is_null() {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
+        return -1;
+    }
+    let rc = unsafe {
+        syscall_ret_int(
+            libc::syscall(
+                libc::SYS_renameat2,
+                libc::AT_FDCWD,
+                oldpath,
+                libc::AT_FDCWD,
+                newpath,
+                0,
+            ),
+            errno::ENOENT,
+        )
+    };
+    runtime_policy::observe(ApiFamily::IoFd, decision.profile, 12, rc != 0);
+    rc
+}
+
+/// POSIX `mkdir` — create a directory.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn mkdir(path: *const c_char, mode: libc::mode_t) -> c_int {
+    let (_, decision) = runtime_policy::decide(ApiFamily::IoFd, path as usize, 0, true, true, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
+        return -1;
+    }
+    if path.is_null() {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
+        return -1;
+    }
+    let rc = unsafe {
+        syscall_ret_int(
+            libc::syscall(libc::SYS_mkdirat, libc::AT_FDCWD, path, mode),
+            errno::ENOENT,
+        )
+    };
+    runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, rc != 0);
+    rc
+}
+
+// ---------------------------------------------------------------------------
+// chmod / fchmod
+// ---------------------------------------------------------------------------
+
+/// POSIX `chmod` — change file mode bits.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn chmod(path: *const c_char, mode: libc::mode_t) -> c_int {
+    let (_, decision) = runtime_policy::decide(ApiFamily::IoFd, path as usize, 0, true, true, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
+        return -1;
+    }
+    if path.is_null() {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
+        return -1;
+    }
+    let rc = unsafe {
+        syscall_ret_int(
+            libc::syscall(libc::SYS_fchmodat, libc::AT_FDCWD, path, mode, 0),
+            errno::ENOENT,
+        )
+    };
+    runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, rc != 0);
+    rc
+}
+
+/// POSIX `fchmod` — change file mode bits by file descriptor.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn fchmod(fd: c_int, mode: libc::mode_t) -> c_int {
+    let (_, decision) = runtime_policy::decide(ApiFamily::IoFd, fd as usize, 0, true, true, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
+        return -1;
+    }
+    let rc = unsafe { syscall_ret_int(libc::syscall(libc::SYS_fchmod, fd, mode), errno::EBADF) };
+    runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, rc != 0);
+    rc
+}
+
+// ---------------------------------------------------------------------------
+// chown / fchown / lchown
+// ---------------------------------------------------------------------------
+
+/// POSIX `chown` — change ownership of a file.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn chown(
+    path: *const c_char,
+    owner: libc::uid_t,
+    group: libc::gid_t,
+) -> c_int {
+    let (_, decision) = runtime_policy::decide(ApiFamily::IoFd, path as usize, 0, true, true, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
+        return -1;
+    }
+    if path.is_null() {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
+        return -1;
+    }
+    let rc = unsafe {
+        syscall_ret_int(
+            libc::syscall(libc::SYS_fchownat, libc::AT_FDCWD, path, owner, group, 0),
+            errno::ENOENT,
+        )
+    };
+    runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, rc != 0);
+    rc
+}
+
+/// POSIX `fchown` — change ownership of a file by file descriptor.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn fchown(fd: c_int, owner: libc::uid_t, group: libc::gid_t) -> c_int {
+    let (_, decision) = runtime_policy::decide(ApiFamily::IoFd, fd as usize, 0, true, true, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
+        return -1;
+    }
+    let rc = unsafe {
+        syscall_ret_int(
+            libc::syscall(libc::SYS_fchown, fd, owner, group),
+            errno::EBADF,
+        )
+    };
+    runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, rc != 0);
+    rc
+}
+
+/// POSIX `lchown` — change ownership of a symbolic link.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn lchown(
+    path: *const c_char,
+    owner: libc::uid_t,
+    group: libc::gid_t,
+) -> c_int {
+    let (_, decision) = runtime_policy::decide(ApiFamily::IoFd, path as usize, 0, true, true, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
+        return -1;
+    }
+    if path.is_null() {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
+        return -1;
+    }
+    let rc = unsafe {
+        syscall_ret_int(
+            libc::syscall(
+                libc::SYS_fchownat,
+                libc::AT_FDCWD,
+                path,
+                owner,
+                group,
+                libc::AT_SYMLINK_NOFOLLOW,
+            ),
+            errno::ENOENT,
+        )
+    };
+    runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, rc != 0);
+    rc
+}
+
+// ---------------------------------------------------------------------------
+// umask
+// ---------------------------------------------------------------------------
+
+/// POSIX `umask` — set the file mode creation mask.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn umask(mask: libc::mode_t) -> libc::mode_t {
+    unsafe { libc::syscall(libc::SYS_umask, mask) as libc::mode_t }
+}
+
+// ---------------------------------------------------------------------------
+// truncate / ftruncate
+// ---------------------------------------------------------------------------
+
+/// POSIX `truncate` — truncate a file to a specified length.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn truncate(path: *const c_char, length: i64) -> c_int {
+    let (_, decision) = runtime_policy::decide(ApiFamily::IoFd, path as usize, 0, true, true, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
+        return -1;
+    }
+    if path.is_null() {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
+        return -1;
+    }
+    let rc = unsafe {
+        syscall_ret_int(
+            libc::syscall(libc::SYS_truncate, path, length),
+            errno::ENOENT,
+        )
+    };
+    runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, rc != 0);
+    rc
+}
+
+/// POSIX `ftruncate` — truncate a file to a specified length by file descriptor.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ftruncate(fd: c_int, length: i64) -> c_int {
+    let (_, decision) = runtime_policy::decide(ApiFamily::IoFd, fd as usize, 0, true, true, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
+        return -1;
+    }
+    let rc =
+        unsafe { syscall_ret_int(libc::syscall(libc::SYS_ftruncate, fd, length), errno::EBADF) };
+    runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, rc != 0);
+    rc
+}
+
+// ---------------------------------------------------------------------------
+// flock
+// ---------------------------------------------------------------------------
+
+/// BSD `flock` — apply or remove an advisory lock on an open file.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn flock(fd: c_int, operation: c_int) -> c_int {
+    let (_, decision) = runtime_policy::decide(ApiFamily::IoFd, fd as usize, 0, true, true, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
+        return -1;
+    }
+    let rc =
+        unsafe { syscall_ret_int(libc::syscall(libc::SYS_flock, fd, operation), errno::EBADF) };
+    runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, rc != 0);
+    rc
+}
+
+// ---------------------------------------------------------------------------
+// *at() family: openat, fstatat, unlinkat, renameat, mkdirat
+// ---------------------------------------------------------------------------
+
+/// POSIX `openat` — open a file relative to a directory file descriptor.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn openat(
+    dirfd: c_int,
+    path: *const c_char,
+    flags: c_int,
+    mode: libc::mode_t,
+) -> c_int {
+    let (_, decision) = runtime_policy::decide(ApiFamily::IoFd, path as usize, 0, true, true, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
+        return -1;
+    }
+    if path.is_null() {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
+        return -1;
+    }
+    let rc = unsafe {
+        syscall_ret_int(
+            libc::syscall(libc::SYS_openat, dirfd, path, flags, mode),
+            errno::ENOENT,
+        )
+    };
+    runtime_policy::observe(ApiFamily::IoFd, decision.profile, 12, rc < 0);
+    rc
+}
+
+/// POSIX `fstatat` — get file status relative to a directory file descriptor.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn fstatat(
+    dirfd: c_int,
+    path: *const c_char,
+    buf: *mut libc::stat,
+    flags: c_int,
+) -> c_int {
+    let (_, decision) = runtime_policy::decide(ApiFamily::IoFd, path as usize, 0, false, true, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
+        return -1;
+    }
+    if path.is_null() || buf.is_null() {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
+        return -1;
+    }
+    let rc = unsafe {
+        syscall_ret_int(
+            libc::syscall(libc::SYS_newfstatat, dirfd, path, buf, flags),
+            errno::ENOENT,
+        )
+    };
+    runtime_policy::observe(ApiFamily::IoFd, decision.profile, 15, rc != 0);
+    rc
+}
+
+/// POSIX `unlinkat` — remove a directory entry relative to a directory fd.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn unlinkat(dirfd: c_int, path: *const c_char, flags: c_int) -> c_int {
+    let (_, decision) = runtime_policy::decide(ApiFamily::IoFd, path as usize, 0, true, true, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
+        return -1;
+    }
+    if path.is_null() {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
+        return -1;
+    }
+    let rc = unsafe {
+        syscall_ret_int(
+            libc::syscall(libc::SYS_unlinkat, dirfd, path, flags),
+            errno::ENOENT,
+        )
+    };
+    runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, rc != 0);
+    rc
+}
+
+/// POSIX `renameat` — rename a file relative to directory fds.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn renameat(
+    olddirfd: c_int,
+    oldpath: *const c_char,
+    newdirfd: c_int,
+    newpath: *const c_char,
+) -> c_int {
+    let (_, decision) = runtime_policy::decide(ApiFamily::IoFd, oldpath as usize, 0, true, true, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
+        return -1;
+    }
+    if oldpath.is_null() || newpath.is_null() {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
+        return -1;
+    }
+    let rc = unsafe {
+        syscall_ret_int(
+            libc::syscall(libc::SYS_renameat2, olddirfd, oldpath, newdirfd, newpath, 0),
+            errno::ENOENT,
+        )
+    };
+    runtime_policy::observe(ApiFamily::IoFd, decision.profile, 12, rc != 0);
+    rc
+}
+
+/// POSIX `mkdirat` — create a directory relative to a directory fd.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn mkdirat(dirfd: c_int, path: *const c_char, mode: libc::mode_t) -> c_int {
+    let (_, decision) = runtime_policy::decide(ApiFamily::IoFd, path as usize, 0, true, true, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
+        return -1;
+    }
+    if path.is_null() {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
+        return -1;
+    }
+    let rc = unsafe {
+        syscall_ret_int(
+            libc::syscall(libc::SYS_mkdirat, dirfd, path, mode),
+            errno::ENOENT,
+        )
+    };
+    runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, rc != 0);
+    rc
+}
+
+// ---------------------------------------------------------------------------
+// *at() family: readlinkat, symlinkat, faccessat, fchownat, fchmodat, linkat
+// ---------------------------------------------------------------------------
+
+/// POSIX `readlinkat` — read value of a symbolic link relative to a directory fd.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn readlinkat(
+    dirfd: c_int,
+    path: *const c_char,
+    buf: *mut c_char,
+    bufsiz: usize,
+) -> isize {
+    let (_, decision) =
+        runtime_policy::decide(ApiFamily::IoFd, path as usize, bufsiz, false, true, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
+        return -1;
+    }
+    if path.is_null() || buf.is_null() {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
+        return -1;
+    }
+    let rc = unsafe {
+        syscall_ret_isize(
+            libc::syscall(libc::SYS_readlinkat, dirfd, path, buf, bufsiz),
+            errno::ENOENT,
+        )
+    };
+    runtime_policy::observe(ApiFamily::IoFd, decision.profile, 12, rc < 0);
+    rc
+}
+
+/// POSIX `symlinkat` — create a symbolic link relative to a directory fd.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn symlinkat(
+    target: *const c_char,
+    newdirfd: c_int,
+    linkpath: *const c_char,
+) -> c_int {
+    let (_, decision) = runtime_policy::decide(ApiFamily::IoFd, target as usize, 0, true, true, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
+        return -1;
+    }
+    if target.is_null() || linkpath.is_null() {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
+        return -1;
+    }
+    let rc = unsafe {
+        syscall_ret_int(
+            libc::syscall(libc::SYS_symlinkat, target, newdirfd, linkpath),
+            errno::ENOENT,
+        )
+    };
+    runtime_policy::observe(ApiFamily::IoFd, decision.profile, 12, rc != 0);
+    rc
+}
+
+/// POSIX `faccessat` — check file accessibility relative to a directory fd.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn faccessat(
+    dirfd: c_int,
+    path: *const c_char,
+    amode: c_int,
+    flags: c_int,
+) -> c_int {
+    let (_, decision) = runtime_policy::decide(ApiFamily::IoFd, path as usize, 0, false, true, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
+        return -1;
+    }
+    if path.is_null() {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
+        return -1;
+    }
+    let rc = unsafe {
+        syscall_ret_int(
+            libc::syscall(libc::SYS_faccessat, dirfd, path, amode, flags),
+            errno::EACCES,
+        )
+    };
+    runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, rc != 0);
+    rc
+}
+
+/// POSIX `fchownat` — change ownership of a file relative to a directory fd.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn fchownat(
+    dirfd: c_int,
+    path: *const c_char,
+    owner: libc::uid_t,
+    group: libc::gid_t,
+    flags: c_int,
+) -> c_int {
+    let (_, decision) = runtime_policy::decide(ApiFamily::IoFd, path as usize, 0, true, true, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
+        return -1;
+    }
+    if path.is_null() {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
+        return -1;
+    }
+    let rc = unsafe {
+        syscall_ret_int(
+            libc::syscall(libc::SYS_fchownat, dirfd, path, owner, group, flags),
+            errno::ENOENT,
+        )
+    };
+    runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, rc != 0);
+    rc
+}
+
+/// POSIX `fchmodat` — change file mode bits relative to a directory fd.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn fchmodat(
+    dirfd: c_int,
+    path: *const c_char,
+    mode: libc::mode_t,
+    flags: c_int,
+) -> c_int {
+    let (_, decision) = runtime_policy::decide(ApiFamily::IoFd, path as usize, 0, true, true, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
+        return -1;
+    }
+    if path.is_null() {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
+        return -1;
+    }
+    let rc = unsafe {
+        syscall_ret_int(
+            libc::syscall(libc::SYS_fchmodat, dirfd, path, mode, flags),
+            errno::ENOENT,
+        )
+    };
+    runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, rc != 0);
+    rc
+}
+
+/// POSIX `linkat` — create a hard link relative to directory fds.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn linkat(
+    olddirfd: c_int,
+    oldpath: *const c_char,
+    newdirfd: c_int,
+    newpath: *const c_char,
+    flags: c_int,
+) -> c_int {
+    let (_, decision) = runtime_policy::decide(ApiFamily::IoFd, oldpath as usize, 0, true, true, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
+        return -1;
+    }
+    if oldpath.is_null() || newpath.is_null() {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
+        return -1;
+    }
+    let rc = unsafe {
+        syscall_ret_int(
+            libc::syscall(
+                libc::SYS_linkat,
+                olddirfd,
+                oldpath,
+                newdirfd,
+                newpath,
+                flags,
+            ),
+            errno::ENOENT,
+        )
+    };
+    runtime_policy::observe(ApiFamily::IoFd, decision.profile, 12, rc != 0);
+    rc
+}
+
+// ---------------------------------------------------------------------------
+// uname / gethostname
+// ---------------------------------------------------------------------------
+
+/// POSIX `uname` — get system identification.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn uname(buf: *mut libc::utsname) -> c_int {
+    if buf.is_null() {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        return -1;
+    }
+    unsafe { syscall_ret_int(libc::syscall(libc::SYS_uname, buf), errno::EFAULT) }
+}
+
+/// POSIX `gethostname` — get the hostname.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn gethostname(name: *mut c_char, len: usize) -> c_int {
+    if name.is_null() {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        return -1;
+    }
+    let mut uts = std::mem::MaybeUninit::<libc::utsname>::zeroed();
+    let rc = unsafe { libc::syscall(libc::SYS_uname, uts.as_mut_ptr()) };
+    if rc < 0 {
+        unsafe { set_abi_errno(last_host_errno(errno::EFAULT)) };
+        return -1;
+    }
+    let uts = unsafe { uts.assume_init() };
+    let nodename = &uts.nodename;
+    let hostname_len = nodename
+        .iter()
+        .position(|&c| c == 0)
+        .unwrap_or(nodename.len());
+    if hostname_len >= len {
+        unsafe { set_abi_errno(errno::ENAMETOOLONG) };
+        return -1;
+    }
+    unsafe {
+        std::ptr::copy_nonoverlapping(nodename.as_ptr(), name.cast(), hostname_len);
+        *name.add(hostname_len) = 0;
+    }
+    0
+}
+
+// ---------------------------------------------------------------------------
+// getrusage
+// ---------------------------------------------------------------------------
+
+/// POSIX `getrusage` — get resource usage.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getrusage(who: c_int, usage: *mut libc::rusage) -> c_int {
+    if usage.is_null() {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        return -1;
+    }
+    unsafe {
+        syscall_ret_int(
+            libc::syscall(libc::SYS_getrusage, who, usage),
+            errno::EINVAL,
+        )
+    }
+}
+
+// ---------------------------------------------------------------------------
+// alarm / sysconf
+// ---------------------------------------------------------------------------
+
+/// POSIX `alarm` — schedule a SIGALRM signal.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn alarm(seconds: u32) -> u32 {
+    unsafe { libc::syscall(libc::SYS_alarm, seconds) as u32 }
+}
+
+// ---------------------------------------------------------------------------
 // sleep / usleep
 // ---------------------------------------------------------------------------
 

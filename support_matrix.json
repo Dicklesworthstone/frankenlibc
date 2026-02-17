@@ -2,7 +2,7 @@
   "version": 2,
   "generated_at_utc": "2026-02-13T18:07:59Z",
   "library": "/data/tmp/cargo-target/release/libfrankenlibc_abi.so",
-  "total_exported": 323,
+  "total_exported": 359,
   "taxonomy": {
     "Implemented": "Native Rust code owns the entire operation. No host libc dependency. Full test coverage required.",
     "RawSyscall": "ABI entrypoint marshals arguments directly to Linux syscall instruction. No glibc call-through.",
@@ -122,6 +122,13 @@
       "strict_semantics": "Rust libm path; finite x<1 sets errno=EDOM and preserves IEEE 754 NaN/Inf behavior",
       "hardened_semantics": "Same domain errno signaling with runtime-policy routing; hardened mode may repair non-finite outputs deterministically",
       "default_stub": false
+    },
+    {
+      "symbol": "alarm",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "syscall_veneer",
+      "semantics": "POSIX"
     },
     {
       "symbol": "aligned_alloc",
@@ -322,6 +329,20 @@
       "default_stub": false
     },
     {
+      "symbol": "chmod",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "syscall_veneer",
+      "semantics": "POSIX"
+    },
+    {
+      "symbol": "chown",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "syscall_veneer",
+      "semantics": "POSIX"
+    },
+    {
       "symbol": "clearerr",
       "status": "Implemented",
       "module": "stdio_abi",
@@ -421,6 +442,13 @@
       "default_stub": false
     },
     {
+      "symbol": "creat",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "syscall_veneer",
+      "semantics": "POSIX"
+    },
+    {
       "symbol": "ctime_r",
       "status": "Implemented",
       "module": "time_abi",
@@ -500,6 +528,13 @@
       "strict_semantics": "Raw Linux syscall for dup/dup2/pipe/fcntl; POSIX errno on failure",
       "hardened_semantics": "Raw syscall with hardened membrane; repair on invalid flags",
       "default_stub": false
+    },
+    {
+      "symbol": "dup3",
+      "status": "RawSyscall",
+      "module": "io_abi",
+      "perf_class": "syscall_veneer",
+      "semantics": "Linux"
     },
     {
       "symbol": "endgrent",
@@ -592,6 +627,13 @@
       "default_stub": false
     },
     {
+      "symbol": "faccessat",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "syscall_veneer",
+      "semantics": "POSIX"
+    },
+    {
       "symbol": "fchdir",
       "status": "RawSyscall",
       "module": "unistd_abi",
@@ -599,6 +641,34 @@
       "strict_semantics": "Raw Linux syscall for POSIX I/O and process queries; POSIX errno on failure",
       "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid whence/amode",
       "default_stub": false
+    },
+    {
+      "symbol": "fchmod",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "syscall_veneer",
+      "semantics": "POSIX"
+    },
+    {
+      "symbol": "fchmodat",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "syscall_veneer",
+      "semantics": "POSIX"
+    },
+    {
+      "symbol": "fchown",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "syscall_veneer",
+      "semantics": "POSIX"
+    },
+    {
+      "symbol": "fchownat",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "syscall_veneer",
+      "semantics": "POSIX"
     },
     {
       "symbol": "fclose",
@@ -680,6 +750,13 @@
       "strict_semantics": "Native stream-registry + syscall-backed stdio path; no host glibc call-through",
       "hardened_semantics": "Native stream-registry + syscall-backed stdio path with membrane validation/repair; no host glibc call-through",
       "default_stub": false
+    },
+    {
+      "symbol": "flock",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "syscall_veneer",
+      "semantics": "BSD"
     },
     {
       "symbol": "floor",
@@ -790,6 +867,13 @@
       "default_stub": false
     },
     {
+      "symbol": "fstatat",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "syscall_veneer",
+      "semantics": "POSIX"
+    },
+    {
       "symbol": "fsync",
       "status": "RawSyscall",
       "module": "unistd_abi",
@@ -806,6 +890,13 @@
       "strict_semantics": "Delegates to host glibc FILE* ops after membrane validation; preserves host semantics",
       "hardened_semantics": "Host glibc delegation; hardened membrane bounds C string scans, logs TruncateWithNull",
       "default_stub": false
+    },
+    {
+      "symbol": "ftruncate",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "syscall_veneer",
+      "semantics": "POSIX"
     },
     {
       "symbol": "fwrite",
@@ -943,6 +1034,13 @@
       "default_stub": false
     },
     {
+      "symbol": "gethostname",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "syscall_veneer",
+      "semantics": "POSIX"
+    },
+    {
       "symbol": "getnameinfo",
       "status": "Implemented",
       "module": "resolv_abi",
@@ -1040,6 +1138,13 @@
       "strict_semantics": "Raw Linux syscall for getrlimit/setrlimit; POSIX errno on failure",
       "hardened_semantics": "Raw syscall; denies invalid resource constants",
       "default_stub": false
+    },
+    {
+      "symbol": "getrusage",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "syscall_veneer",
+      "semantics": "POSIX"
     },
     {
       "symbol": "getsid",
@@ -1195,6 +1300,13 @@
       "default_stub": false
     },
     {
+      "symbol": "ioctl",
+      "status": "RawSyscall",
+      "module": "io_abi",
+      "perf_class": "syscall_veneer",
+      "semantics": "POSIX"
+    },
+    {
       "symbol": "isalnum",
       "status": "Implemented",
       "module": "ctype_abi",
@@ -1303,6 +1415,13 @@
       "default_stub": false
     },
     {
+      "symbol": "lchown",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "syscall_veneer",
+      "semantics": "POSIX"
+    },
+    {
       "symbol": "lgamma",
       "status": "Implemented",
       "module": "math_abi",
@@ -1319,6 +1438,13 @@
       "strict_semantics": "Raw Linux syscall for POSIX I/O and process queries; POSIX errno on failure",
       "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid whence/amode",
       "default_stub": false
+    },
+    {
+      "symbol": "linkat",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "syscall_veneer",
+      "semantics": "POSIX"
     },
     {
       "symbol": "listen",
@@ -1483,6 +1609,20 @@
       "default_stub": false
     },
     {
+      "symbol": "mkdir",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "syscall_veneer",
+      "semantics": "POSIX"
+    },
+    {
+      "symbol": "mkdirat",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "syscall_veneer",
+      "semantics": "POSIX"
+    },
+    {
       "symbol": "mktime",
       "status": "Implemented",
       "module": "time_abi",
@@ -1555,6 +1695,20 @@
       "default_stub": false
     },
     {
+      "symbol": "open",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "syscall_veneer",
+      "semantics": "POSIX"
+    },
+    {
+      "symbol": "openat",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "syscall_veneer",
+      "semantics": "POSIX"
+    },
+    {
       "symbol": "opendir",
       "status": "RawSyscall",
       "module": "dirent_abi",
@@ -1591,6 +1745,13 @@
       "default_stub": false
     },
     {
+      "symbol": "pipe2",
+      "status": "RawSyscall",
+      "module": "io_abi",
+      "perf_class": "syscall_veneer",
+      "semantics": "Linux"
+    },
+    {
       "symbol": "poll",
       "status": "RawSyscall",
       "module": "poll_abi",
@@ -1625,6 +1786,13 @@
       "strict_semantics": "Raw Linux syscall for I/O multiplexing; POSIX errno on failure",
       "hardened_semantics": "Raw syscall; clamps nfds to tracked pollfd array bounds",
       "default_stub": false
+    },
+    {
+      "symbol": "pread",
+      "status": "RawSyscall",
+      "module": "io_abi",
+      "perf_class": "syscall_veneer",
+      "semantics": "POSIX"
     },
     {
       "symbol": "printf",
@@ -1852,6 +2020,13 @@
       "default_stub": false
     },
     {
+      "symbol": "pwrite",
+      "status": "RawSyscall",
+      "module": "io_abi",
+      "perf_class": "syscall_veneer",
+      "semantics": "POSIX"
+    },
+    {
       "symbol": "qsort",
       "status": "Implemented",
       "module": "stdlib_abi",
@@ -1897,6 +2072,20 @@
       "default_stub": false
     },
     {
+      "symbol": "readlinkat",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "syscall_veneer",
+      "semantics": "POSIX"
+    },
+    {
+      "symbol": "readv",
+      "status": "RawSyscall",
+      "module": "io_abi",
+      "perf_class": "syscall_veneer",
+      "semantics": "POSIX"
+    },
+    {
       "symbol": "realloc",
       "status": "Implemented",
       "module": "malloc_abi",
@@ -1940,6 +2129,20 @@
       "strict_semantics": "Rust libm path; y==0 or infinite x with finite y sets errno=EDOM while preserving IEEE 754 NaN behavior",
       "hardened_semantics": "Same errno signaling with runtime-policy routing; hardened mode may repair non-finite outputs deterministically",
       "default_stub": false
+    },
+    {
+      "symbol": "rename",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "syscall_veneer",
+      "semantics": "POSIX"
+    },
+    {
+      "symbol": "renameat",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "syscall_veneer",
+      "semantics": "POSIX"
     },
     {
       "symbol": "rewind",
@@ -2003,6 +2206,13 @@
       "strict_semantics": "Raw Linux syscall for BSD sockets; POSIX errno on failure",
       "hardened_semantics": "Raw syscall; clamps send/recv buffer lengths to tracked bounds",
       "default_stub": false
+    },
+    {
+      "symbol": "sendfile",
+      "status": "RawSyscall",
+      "module": "io_abi",
+      "perf_class": "syscall_veneer",
+      "semantics": "Linux"
     },
     {
       "symbol": "sendmsg",
@@ -2590,6 +2800,13 @@
       "default_stub": false
     },
     {
+      "symbol": "symlinkat",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "syscall_veneer",
+      "semantics": "POSIX"
+    },
+    {
       "symbol": "tan",
       "status": "Implemented",
       "module": "math_abi",
@@ -2716,6 +2933,27 @@
       "default_stub": false
     },
     {
+      "symbol": "truncate",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "syscall_veneer",
+      "semantics": "POSIX"
+    },
+    {
+      "symbol": "umask",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "syscall_veneer",
+      "semantics": "POSIX"
+    },
+    {
+      "symbol": "uname",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "syscall_veneer",
+      "semantics": "POSIX"
+    },
+    {
       "symbol": "ungetc",
       "status": "Implemented",
       "module": "stdio_abi",
@@ -2732,6 +2970,13 @@
       "strict_semantics": "Raw Linux syscall for POSIX I/O and process queries; POSIX errno on failure",
       "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid whence/amode",
       "default_stub": false
+    },
+    {
+      "symbol": "unlinkat",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "syscall_veneer",
+      "semantics": "POSIX"
     },
     {
       "symbol": "unsetenv",
@@ -2939,6 +3184,13 @@
       "strict_semantics": "Raw Linux syscall for POSIX I/O and process queries; POSIX errno on failure",
       "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid whence/amode",
       "default_stub": false
+    },
+    {
+      "symbol": "writev",
+      "status": "RawSyscall",
+      "module": "io_abi",
+      "perf_class": "syscall_veneer",
+      "semantics": "POSIX"
     }
   ],
   "summary": {
