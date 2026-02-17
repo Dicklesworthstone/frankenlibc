@@ -35,6 +35,36 @@ pub fn atan2(y: f64, x: f64) -> f64 {
     libm::atan2(y, x)
 }
 
+#[inline]
+pub fn sinh(x: f64) -> f64 {
+    libm::sinh(x)
+}
+
+#[inline]
+pub fn cosh(x: f64) -> f64 {
+    libm::cosh(x)
+}
+
+#[inline]
+pub fn tanh(x: f64) -> f64 {
+    libm::tanh(x)
+}
+
+#[inline]
+pub fn asinh(x: f64) -> f64 {
+    libm::asinh(x)
+}
+
+#[inline]
+pub fn acosh(x: f64) -> f64 {
+    libm::acosh(x)
+}
+
+#[inline]
+pub fn atanh(x: f64) -> f64 {
+    libm::atanh(x)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -50,6 +80,12 @@ mod tests {
         assert!((acos(x) - x.acos()).abs() < 1e-12);
         assert!((atan(x) - x.atan()).abs() < 1e-12);
         assert!((atan2(1.0, 2.0) - 1.0_f64.atan2(2.0)).abs() < 1e-12);
+        assert!((sinh(x) - x.sinh()).abs() < 1e-12);
+        assert!((cosh(x) - x.cosh()).abs() < 1e-12);
+        assert!((tanh(x) - x.tanh()).abs() < 1e-12);
+        assert!((asinh(x) - x.asinh()).abs() < 1e-12);
+        assert!((acosh(1.5) - 1.5_f64.acosh()).abs() < 1e-12);
+        assert!((atanh(x) - x.atanh()).abs() < 1e-12);
     }
 
     proptest! {
@@ -71,6 +107,20 @@ mod tests {
         fn prop_sin_asin_round_trip(x in -1.0f64..1.0f64) {
             let round_trip = sin(asin(x));
             prop_assert!((round_trip - x).abs() <= 1e-11);
+        }
+
+        #[test]
+        fn prop_sinh_is_odd(x in -100.0f64..100.0f64) {
+            let lhs = sinh(-x);
+            let rhs = -sinh(x);
+            prop_assert!((lhs - rhs).abs() <= 1e-11);
+        }
+
+        #[test]
+        fn prop_tanh_is_odd(x in -100.0f64..100.0f64) {
+            let lhs = tanh(-x);
+            let rhs = -tanh(x);
+            prop_assert!((lhs - rhs).abs() <= 1e-11);
         }
     }
 }

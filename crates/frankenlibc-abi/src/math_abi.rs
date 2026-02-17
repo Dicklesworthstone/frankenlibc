@@ -4,10 +4,18 @@
 //! so numeric exceptional regimes (NaN/Inf/denormal patterns) participate
 //! in the same strict/hardened control loop as memory and concurrency paths.
 
+use std::ffi::c_int;
+
 use frankenlibc_membrane::config::SafetyLevel;
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
 use crate::runtime_policy;
+
+#[inline]
+unsafe fn set_abi_errno(val: c_int) {
+    let p = unsafe { crate::errno_abi::__errno_location() };
+    unsafe { *p = val };
+}
 
 #[inline]
 fn deny_fallback(mode: SafetyLevel) -> f64 {
@@ -27,6 +35,23 @@ fn heal_non_finite(x: f64) -> f64 {
     } else {
         x
     }
+}
+
+#[inline]
+fn set_domain_errno() {
+    // SAFETY: `__errno_location` returns writable thread-local errno storage.
+    unsafe { set_abi_errno(libc::EDOM) };
+}
+
+#[inline]
+fn set_range_errno() {
+    // SAFETY: `__errno_location` returns writable thread-local errno storage.
+    unsafe { set_abi_errno(libc::ERANGE) };
+}
+
+#[inline]
+fn is_integral_f64(x: f64) -> bool {
+    x.is_finite() && x.fract() == 0.0
 }
 
 #[inline]
@@ -118,12 +143,20 @@ pub unsafe extern "C" fn tan(x: f64) -> f64 {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn asin(x: f64) -> f64 {
-    unary_entry(x, 6, frankenlibc_core::math::asin)
+    let out = unary_entry(x, 6, frankenlibc_core::math::asin);
+    if x.is_finite() && x.abs() > 1.0 {
+        set_domain_errno();
+    }
+    out
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn acos(x: f64) -> f64 {
-    unary_entry(x, 6, frankenlibc_core::math::acos)
+    let out = unary_entry(x, 6, frankenlibc_core::math::acos);
+    if x.is_finite() && x.abs() > 1.0 {
+        set_domain_errno();
+    }
+    out
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -137,23 +170,175 @@ pub unsafe extern "C" fn atan2(y: f64, x: f64) -> f64 {
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn sinh(x: f64) -> f64 {
+    let out = unary_entry(x, 7, frankenlibc_core::math::sinh);
+    if x.is_finite() && out.is_infinite() {
+        set_range_errno();
+    }
+    out
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn cosh(x: f64) -> f64 {
+    let out = unary_entry(x, 7, frankenlibc_core::math::cosh);
+    if x.is_finite() && out.is_infinite() {
+        set_range_errno();
+    }
+    out
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn tanh(x: f64) -> f64 {
+    unary_entry(x, 6, frankenlibc_core::math::tanh)
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn asinh(x: f64) -> f64 {
+    unary_entry(x, 7, frankenlibc_core::math::asinh)
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn acosh(x: f64) -> f64 {
+    let out = unary_entry(x, 7, frankenlibc_core::math::acosh);
+    if x.is_finite() && x < 1.0 {
+        set_domain_errno();
+    }
+    out
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn atanh(x: f64) -> f64 {
+    let out = unary_entry(x, 7, frankenlibc_core::math::atanh);
+    if x.is_finite() {
+        if x.abs() > 1.0 {
+            set_domain_errno();
+        } else if x.abs() == 1.0 {
+            set_range_errno();
+        }
+    }
+    out
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn exp(x: f64) -> f64 {
-    unary_entry(x, 6, frankenlibc_core::math::exp)
+    let out = unary_entry(x, 6, frankenlibc_core::math::exp);
+    if x.is_finite() && (out.is_infinite() || out == 0.0) {
+        set_range_errno();
+    }
+    out
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn exp2(x: f64) -> f64 {
+    let out = unary_entry(x, 6, frankenlibc_core::math::exp2);
+    if x.is_finite() && (out.is_infinite() || out == 0.0) {
+        set_range_errno();
+    }
+    out
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn expm1(x: f64) -> f64 {
+    let out = unary_entry(x, 6, frankenlibc_core::math::expm1);
+    if x.is_finite() && out.is_infinite() {
+        set_range_errno();
+    }
+    out
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn log(x: f64) -> f64 {
-    unary_entry(x, 6, frankenlibc_core::math::log)
+    let out = unary_entry(x, 6, frankenlibc_core::math::log);
+    if x.is_finite() {
+        if x < 0.0 {
+            set_domain_errno();
+        } else if x == 0.0 {
+            set_range_errno();
+        }
+    }
+    out
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn log2(x: f64) -> f64 {
+    let out = unary_entry(x, 6, frankenlibc_core::math::log2);
+    if x.is_finite() {
+        if x < 0.0 {
+            set_domain_errno();
+        } else if x == 0.0 {
+            set_range_errno();
+        }
+    }
+    out
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn log10(x: f64) -> f64 {
-    unary_entry(x, 6, frankenlibc_core::math::log10)
+    let out = unary_entry(x, 6, frankenlibc_core::math::log10);
+    if x.is_finite() {
+        if x < 0.0 {
+            set_domain_errno();
+        } else if x == 0.0 {
+            set_range_errno();
+        }
+    }
+    out
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn log1p(x: f64) -> f64 {
+    let out = unary_entry(x, 6, frankenlibc_core::math::log1p);
+    if x.is_finite() {
+        if x < -1.0 {
+            set_domain_errno();
+        } else if x == -1.0 {
+            set_range_errno();
+        }
+    }
+    out
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pow(x: f64, y: f64) -> f64 {
-    binary_entry(x, y, 8, frankenlibc_core::math::pow)
+    let out = binary_entry(x, y, 8, frankenlibc_core::math::pow);
+    if x.is_finite() && y.is_finite() {
+        if x == 0.0 && y < 0.0 {
+            set_range_errno();
+        } else if x < 0.0 && !is_integral_f64(y) {
+            set_domain_errno();
+        } else if out.is_infinite() || (out == 0.0 && x != 0.0) {
+            set_range_errno();
+        }
+    }
+    out
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn sqrt(x: f64) -> f64 {
+    let out = unary_entry(x, 6, frankenlibc_core::math::sqrt);
+    if x.is_finite() && x < 0.0 {
+        set_domain_errno();
+    }
+    out
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn cbrt(x: f64) -> f64 {
+    unary_entry(x, 6, frankenlibc_core::math::cbrt)
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn hypot(x: f64, y: f64) -> f64 {
+    let out = binary_entry(x, y, 7, frankenlibc_core::math::hypot);
+    if x.is_finite() && y.is_finite() && out.is_infinite() {
+        set_range_errno();
+    }
+    out
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn copysign(x: f64, y: f64) -> f64 {
+    binary_entry(x, y, 4, frankenlibc_core::math::copysign)
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -177,8 +362,31 @@ pub unsafe extern "C" fn round(x: f64) -> f64 {
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn trunc(x: f64) -> f64 {
+    unary_entry(x, 4, frankenlibc_core::math::trunc)
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn rint(x: f64) -> f64 {
+    unary_entry(x, 4, frankenlibc_core::math::rint)
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fmod(x: f64, y: f64) -> f64 {
-    binary_entry(x, y, 6, frankenlibc_core::math::fmod)
+    let out = binary_entry(x, y, 6, frankenlibc_core::math::fmod);
+    if y == 0.0 || (x.is_infinite() && y.is_finite()) {
+        set_domain_errno();
+    }
+    out
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn remainder(x: f64, y: f64) -> f64 {
+    let out = binary_entry(x, y, 6, frankenlibc_core::math::remainder);
+    if y == 0.0 || (x.is_infinite() && y.is_finite()) {
+        set_domain_errno();
+    }
+    out
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -188,17 +396,39 @@ pub unsafe extern "C" fn erf(x: f64) -> f64 {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn tgamma(x: f64) -> f64 {
-    unary_entry(x, 11, frankenlibc_core::math::tgamma)
+    let out = unary_entry(x, 11, frankenlibc_core::math::tgamma);
+    if x.is_finite() {
+        if x < 0.0 && is_integral_f64(x) {
+            set_domain_errno();
+        } else if x == 0.0 || out.is_infinite() || out == 0.0 {
+            set_range_errno();
+        }
+    }
+    out
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn lgamma(x: f64) -> f64 {
-    unary_entry(x, 10, frankenlibc_core::math::lgamma)
+    let out = unary_entry(x, 10, frankenlibc_core::math::lgamma);
+    if x.is_finite() && (x == 0.0 || (x < 0.0 && is_integral_f64(x)) || out.is_infinite()) {
+        set_range_errno();
+    }
+    out
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn abi_errno() -> i32 {
+        // SAFETY: `__errno_location` returns valid thread-local storage for this thread.
+        unsafe { *crate::errno_abi::__errno_location() }
+    }
+
+    fn set_errno_for_test(val: i32) {
+        // SAFETY: test helper writes this thread's errno slot directly.
+        unsafe { *crate::errno_abi::__errno_location() = val };
+    }
 
     #[test]
     fn heal_non_finite_sanity() {
@@ -206,5 +436,358 @@ mod tests {
         assert_eq!(heal_non_finite(f64::INFINITY), f64::MAX);
         assert_eq!(heal_non_finite(f64::NEG_INFINITY), f64::MIN);
         assert_eq!(heal_non_finite(3.0), 3.0);
+    }
+
+    #[test]
+    fn asin_domain_sets_errno() {
+        set_errno_for_test(0);
+        // SAFETY: ABI entrypoint accepts plain f64 input.
+        let out = unsafe { asin(2.0) };
+        assert!(out.is_nan());
+        assert_eq!(abi_errno(), libc::EDOM);
+    }
+
+    #[test]
+    fn acosh_less_than_one_sets_domain_errno() {
+        set_errno_for_test(0);
+        // SAFETY: ABI entrypoint accepts plain f64 input.
+        let out = unsafe { acosh(0.5) };
+        assert!(out.is_nan());
+        assert_eq!(abi_errno(), libc::EDOM);
+    }
+
+    #[test]
+    fn atanh_out_of_domain_sets_domain_errno() {
+        set_errno_for_test(0);
+        // SAFETY: ABI entrypoint accepts plain f64 input.
+        let out = unsafe { atanh(2.0) };
+        assert!(out.is_nan());
+        assert_eq!(abi_errno(), libc::EDOM);
+    }
+
+    #[test]
+    fn atanh_unity_sets_range_errno() {
+        set_errno_for_test(0);
+        // SAFETY: ABI entrypoint accepts plain f64 input.
+        let out = unsafe { atanh(1.0) };
+        assert!(out.is_infinite() && out.is_sign_positive());
+        assert_eq!(abi_errno(), libc::ERANGE);
+    }
+
+    #[test]
+    fn sinh_overflow_sets_range_errno() {
+        set_errno_for_test(0);
+        // SAFETY: ABI entrypoint accepts plain f64 input.
+        let out = unsafe { sinh(1000.0) };
+        assert!(out.is_infinite() && out.is_sign_positive());
+        assert_eq!(abi_errno(), libc::ERANGE);
+    }
+
+    #[test]
+    fn cosh_overflow_sets_range_errno() {
+        set_errno_for_test(0);
+        // SAFETY: ABI entrypoint accepts plain f64 input.
+        let out = unsafe { cosh(1000.0) };
+        assert!(out.is_infinite() && out.is_sign_positive());
+        assert_eq!(abi_errno(), libc::ERANGE);
+    }
+
+    #[test]
+    fn tanh_finite_value_leaves_errno() {
+        set_errno_for_test(0);
+        // SAFETY: ABI entrypoint accepts plain f64 input.
+        let out = unsafe { tanh(2.0) };
+        assert!(out.is_finite());
+        assert_eq!(abi_errno(), 0);
+    }
+
+    #[test]
+    fn asinh_finite_value_leaves_errno() {
+        set_errno_for_test(0);
+        // SAFETY: ABI entrypoint accepts plain f64 input.
+        let out = unsafe { asinh(-2.0) };
+        assert!(out.is_finite());
+        assert_eq!(abi_errno(), 0);
+    }
+
+    #[test]
+    fn log_negative_sets_domain_errno() {
+        set_errno_for_test(0);
+        // SAFETY: ABI entrypoint accepts plain f64 input.
+        let out = unsafe { log(-1.0) };
+        assert!(out.is_nan());
+        assert_eq!(abi_errno(), libc::EDOM);
+    }
+
+    #[test]
+    fn log_zero_sets_range_errno() {
+        set_errno_for_test(0);
+        // SAFETY: ABI entrypoint accepts plain f64 input.
+        let out = unsafe { log(0.0) };
+        assert!(out.is_infinite() && out.is_sign_negative());
+        assert_eq!(abi_errno(), libc::ERANGE);
+    }
+
+    #[test]
+    fn log2_negative_sets_domain_errno() {
+        set_errno_for_test(0);
+        // SAFETY: ABI entrypoint accepts plain f64 input.
+        let out = unsafe { log2(-1.0) };
+        assert!(out.is_nan());
+        assert_eq!(abi_errno(), libc::EDOM);
+    }
+
+    #[test]
+    fn log2_zero_sets_range_errno() {
+        set_errno_for_test(0);
+        // SAFETY: ABI entrypoint accepts plain f64 input.
+        let out = unsafe { log2(0.0) };
+        assert!(out.is_infinite() && out.is_sign_negative());
+        assert_eq!(abi_errno(), libc::ERANGE);
+    }
+
+    #[test]
+    fn log1p_less_than_negative_one_sets_domain_errno() {
+        set_errno_for_test(0);
+        // SAFETY: ABI entrypoint accepts plain f64 input.
+        let out = unsafe { log1p(-2.0) };
+        assert!(out.is_nan());
+        assert_eq!(abi_errno(), libc::EDOM);
+    }
+
+    #[test]
+    fn log1p_negative_one_sets_range_errno() {
+        set_errno_for_test(0);
+        // SAFETY: ABI entrypoint accepts plain f64 input.
+        let out = unsafe { log1p(-1.0) };
+        assert!(out.is_infinite() && out.is_sign_negative());
+        assert_eq!(abi_errno(), libc::ERANGE);
+    }
+
+    #[test]
+    fn exp_overflow_sets_range_errno() {
+        set_errno_for_test(0);
+        // SAFETY: ABI entrypoint accepts plain f64 input.
+        let out = unsafe { exp(1000.0) };
+        assert!(out.is_infinite() && out.is_sign_positive());
+        assert_eq!(abi_errno(), libc::ERANGE);
+    }
+
+    #[test]
+    fn exp_underflow_sets_range_errno() {
+        set_errno_for_test(0);
+        // SAFETY: ABI entrypoint accepts plain f64 input.
+        let out = unsafe { exp(-1000.0) };
+        assert_eq!(out, 0.0);
+        assert_eq!(abi_errno(), libc::ERANGE);
+    }
+
+    #[test]
+    fn exp2_overflow_sets_range_errno() {
+        set_errno_for_test(0);
+        // SAFETY: ABI entrypoint accepts plain f64 input.
+        let out = unsafe { exp2(1024.0) };
+        assert!(out.is_infinite());
+        assert_eq!(abi_errno(), libc::ERANGE);
+    }
+
+    #[test]
+    fn exp2_underflow_sets_range_errno() {
+        set_errno_for_test(0);
+        // SAFETY: ABI entrypoint accepts plain f64 input.
+        let out = unsafe { exp2(-1075.0) };
+        assert_eq!(out, 0.0);
+        assert_eq!(abi_errno(), libc::ERANGE);
+    }
+
+    #[test]
+    fn expm1_overflow_sets_range_errno() {
+        set_errno_for_test(0);
+        // SAFETY: ABI entrypoint accepts plain f64 input.
+        let out = unsafe { expm1(1000.0) };
+        assert!(out.is_infinite());
+        assert_eq!(abi_errno(), libc::ERANGE);
+    }
+
+    #[test]
+    fn expm1_regular_value_leaves_errno() {
+        set_errno_for_test(0);
+        // SAFETY: ABI entrypoint accepts plain f64 input.
+        let out = unsafe { expm1(-1.0e-10) };
+        assert!(out.is_finite());
+        assert_eq!(abi_errno(), 0);
+    }
+
+    #[test]
+    fn fmod_divide_by_zero_sets_domain_errno() {
+        set_errno_for_test(0);
+        // SAFETY: ABI entrypoint accepts plain f64 input.
+        let out = unsafe { fmod(1.0, 0.0) };
+        assert!(out.is_nan());
+        assert_eq!(abi_errno(), libc::EDOM);
+    }
+
+    #[test]
+    fn fmod_infinite_dividend_sets_domain_errno() {
+        set_errno_for_test(0);
+        // SAFETY: ABI entrypoint accepts plain f64 input.
+        let out = unsafe { fmod(f64::INFINITY, 2.0) };
+        assert!(out.is_nan());
+        assert_eq!(abi_errno(), libc::EDOM);
+    }
+
+    #[test]
+    fn pow_negative_fractional_sets_domain_errno() {
+        set_errno_for_test(0);
+        // SAFETY: ABI entrypoint accepts plain f64 input.
+        let out = unsafe { pow(-2.0, 0.5) };
+        assert!(out.is_nan());
+        assert_eq!(abi_errno(), libc::EDOM);
+    }
+
+    #[test]
+    fn pow_zero_negative_sets_range_errno() {
+        set_errno_for_test(0);
+        // SAFETY: ABI entrypoint accepts plain f64 input.
+        let out = unsafe { pow(0.0, -1.0) };
+        assert!(out.is_infinite());
+        assert_eq!(abi_errno(), libc::ERANGE);
+    }
+
+    #[test]
+    fn pow_overflow_sets_range_errno() {
+        set_errno_for_test(0);
+        // SAFETY: ABI entrypoint accepts plain f64 input.
+        let out = unsafe { pow(1.0e308, 2.0) };
+        assert!(out.is_infinite());
+        assert_eq!(abi_errno(), libc::ERANGE);
+    }
+
+    #[test]
+    fn pow_underflow_sets_range_errno() {
+        set_errno_for_test(0);
+        // SAFETY: ABI entrypoint accepts plain f64 input.
+        let out = unsafe { pow(1.0e-308, 2.0) };
+        assert_eq!(out, 0.0);
+        assert_eq!(abi_errno(), libc::ERANGE);
+    }
+
+    #[test]
+    fn sqrt_negative_sets_domain_errno() {
+        set_errno_for_test(0);
+        // SAFETY: ABI entrypoint accepts plain f64 input.
+        let out = unsafe { sqrt(-1.0) };
+        assert!(out.is_nan());
+        assert_eq!(abi_errno(), libc::EDOM);
+    }
+
+    #[test]
+    fn sqrt_negative_zero_preserves_sign_and_errno() {
+        set_errno_for_test(0);
+        // SAFETY: ABI entrypoint accepts plain f64 input.
+        let out = unsafe { sqrt(-0.0) };
+        assert_eq!(out, -0.0);
+        assert!(out.is_sign_negative());
+        assert_eq!(abi_errno(), 0);
+    }
+
+    #[test]
+    fn cbrt_negative_value_no_errno() {
+        set_errno_for_test(0);
+        // SAFETY: ABI entrypoint accepts plain f64 input.
+        let out = unsafe { cbrt(-8.0) };
+        assert_eq!(out, -2.0);
+        assert_eq!(abi_errno(), 0);
+    }
+
+    #[test]
+    fn copysign_applies_sign_and_leaves_errno() {
+        set_errno_for_test(0);
+        // SAFETY: ABI entrypoint accepts plain f64 input.
+        let out = unsafe { copysign(3.0, -0.0) };
+        assert_eq!(out, -3.0);
+        assert!(out.is_sign_negative());
+        assert_eq!(abi_errno(), 0);
+    }
+
+    #[test]
+    fn trunc_finite_value_leaves_errno() {
+        set_errno_for_test(0);
+        // SAFETY: ABI entrypoint accepts plain f64 input.
+        let out = unsafe { trunc(-2.9) };
+        assert_eq!(out, -2.0);
+        assert_eq!(abi_errno(), 0);
+    }
+
+    #[test]
+    fn rint_finite_value_leaves_errno() {
+        set_errno_for_test(0);
+        // SAFETY: ABI entrypoint accepts plain f64 input.
+        let out = unsafe { rint(2.0) };
+        assert_eq!(out, 2.0);
+        assert_eq!(abi_errno(), 0);
+    }
+
+    #[test]
+    fn remainder_divide_by_zero_sets_domain_errno() {
+        set_errno_for_test(0);
+        // SAFETY: ABI entrypoint accepts plain f64 input.
+        let out = unsafe { remainder(1.0, 0.0) };
+        assert!(out.is_nan());
+        assert_eq!(abi_errno(), libc::EDOM);
+    }
+
+    #[test]
+    fn remainder_infinite_dividend_sets_domain_errno() {
+        set_errno_for_test(0);
+        // SAFETY: ABI entrypoint accepts plain f64 input.
+        let out = unsafe { remainder(f64::INFINITY, 2.0) };
+        assert!(out.is_nan());
+        assert_eq!(abi_errno(), libc::EDOM);
+    }
+
+    #[test]
+    fn hypot_finite_overflow_sets_range_errno() {
+        set_errno_for_test(0);
+        // SAFETY: ABI entrypoint accepts plain f64 input.
+        let out = unsafe { hypot(1.6e308, 1.6e308) };
+        assert!(out.is_infinite());
+        assert_eq!(abi_errno(), libc::ERANGE);
+    }
+
+    #[test]
+    fn tgamma_zero_sets_range_errno() {
+        set_errno_for_test(0);
+        // SAFETY: ABI entrypoint accepts plain f64 input.
+        let out = unsafe { tgamma(0.0) };
+        assert!(out.is_infinite());
+        assert_eq!(abi_errno(), libc::ERANGE);
+    }
+
+    #[test]
+    fn tgamma_negative_integer_sets_domain_errno() {
+        set_errno_for_test(0);
+        // SAFETY: ABI entrypoint accepts plain f64 input.
+        let out = unsafe { tgamma(-1.0) };
+        assert!(out.is_nan());
+        assert_eq!(abi_errno(), libc::EDOM);
+    }
+
+    #[test]
+    fn lgamma_zero_sets_range_errno() {
+        set_errno_for_test(0);
+        // SAFETY: ABI entrypoint accepts plain f64 input.
+        let out = unsafe { lgamma(0.0) };
+        assert!(out.is_infinite());
+        assert_eq!(abi_errno(), libc::ERANGE);
+    }
+
+    #[test]
+    fn lgamma_negative_integer_sets_range_errno() {
+        set_errno_for_test(0);
+        // SAFETY: ABI entrypoint accepts plain f64 input.
+        let out = unsafe { lgamma(-1.0) };
+        assert!(out.is_infinite());
+        assert_eq!(abi_errno(), libc::ERANGE);
     }
 }
