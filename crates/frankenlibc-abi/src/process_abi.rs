@@ -244,3 +244,92 @@ pub unsafe extern "C" fn waitpid(
 pub unsafe extern "C" fn wait(wstatus: *mut c_int) -> libc::pid_t {
     unsafe { waitpid(-1, wstatus, 0) }
 }
+
+// ---------------------------------------------------------------------------
+// wait3
+// ---------------------------------------------------------------------------
+
+/// BSD `wait3` — wait for any child with resource usage.
+///
+/// Equivalent to `wait4(-1, wstatus, options, rusage)`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn wait3(
+    wstatus: *mut c_int,
+    options: c_int,
+    rusage: *mut libc::rusage,
+) -> libc::pid_t {
+    unsafe { wait4(-1, wstatus, options, rusage) }
+}
+
+// ---------------------------------------------------------------------------
+// wait4
+// ---------------------------------------------------------------------------
+
+/// BSD `wait4` — wait for a specific child with resource usage.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn wait4(
+    pid: libc::pid_t,
+    wstatus: *mut c_int,
+    options: c_int,
+    rusage: *mut libc::rusage,
+) -> libc::pid_t {
+    let (_, decision) =
+        runtime_policy::decide(ApiFamily::Process, wstatus as usize, 0, true, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Process, decision.profile, 30, true);
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return -1;
+    }
+
+    let rc = unsafe {
+        libc::syscall(libc::SYS_wait4 as c_long, pid, wstatus, options, rusage) as libc::pid_t
+    };
+    let adverse = rc < 0;
+    if adverse {
+        unsafe { set_abi_errno(libc::ECHILD) };
+    }
+    runtime_policy::observe(ApiFamily::Process, decision.profile, 30, adverse);
+    rc
+}
+
+// ---------------------------------------------------------------------------
+// waitid
+// ---------------------------------------------------------------------------
+
+/// POSIX `waitid` — wait for a child process to change state (extended).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn waitid(
+    idtype: c_int,
+    id: libc::id_t,
+    infop: *mut libc::siginfo_t,
+    options: c_int,
+) -> c_int {
+    let (_, decision) =
+        runtime_policy::decide(ApiFamily::Process, infop as usize, 0, true, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Process, decision.profile, 30, true);
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return -1;
+    }
+
+    let rc =
+        unsafe { libc::syscall(libc::SYS_waitid as c_long, idtype, id, infop, options) as c_int };
+    let adverse = rc < 0;
+    if adverse {
+        unsafe { set_abi_errno(libc::ECHILD) };
+    }
+    runtime_policy::observe(ApiFamily::Process, decision.profile, 30, adverse);
+    rc
+}
+
+// ---------------------------------------------------------------------------
+// vfork
+// ---------------------------------------------------------------------------
+
+/// BSD/POSIX `vfork` — on modern Linux, identical to `fork`.
+///
+/// POSIX.1-2008 removed vfork; glibc maps it to fork. We do the same.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn vfork() -> libc::pid_t {
+    unsafe { fork() }
+}

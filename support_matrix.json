@@ -2,7 +2,7 @@
   "version": 2,
   "generated_at_utc": "2026-02-13T18:07:59Z",
   "library": "/data/tmp/cargo-target/release/libfrankenlibc_abi.so",
-  "total_exported": 307,
+  "total_exported": 323,
   "taxonomy": {
     "Implemented": "Native Rust code owns the entire operation. No host libc dependency. Full test coverage required.",
     "RawSyscall": "ABI entrypoint marshals arguments directly to Linux syscall instruction. No glibc call-through.",
@@ -934,6 +934,15 @@
       "default_stub": false
     },
     {
+      "symbol": "getgroups",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Raw Linux syscall SYS_getgroups; POSIX errno on failure",
+      "hardened_semantics": "Raw syscall; validates size parameter",
+      "default_stub": false
+    },
+    {
       "symbol": "getnameinfo",
       "status": "Implemented",
       "module": "resolv_abi",
@@ -949,6 +958,15 @@
       "perf_class": "coldpath",
       "strict_semantics": "Raw Linux syscall for BSD sockets; POSIX errno on failure",
       "hardened_semantics": "Raw syscall; clamps send/recv buffer lengths to tracked bounds",
+      "default_stub": false
+    },
+    {
+      "symbol": "getpgid",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Raw Linux syscall SYS_getpgid; POSIX errno on failure",
+      "hardened_semantics": "Raw syscall; validates pid parameter",
       "default_stub": false
     },
     {
@@ -1021,6 +1039,15 @@
       "perf_class": "coldpath",
       "strict_semantics": "Raw Linux syscall for getrlimit/setrlimit; POSIX errno on failure",
       "hardened_semantics": "Raw syscall; denies invalid resource constants",
+      "default_stub": false
+    },
+    {
+      "symbol": "getsid",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Raw Linux syscall SYS_getsid; POSIX errno on failure",
+      "hardened_semantics": "Raw syscall; validates pid parameter",
       "default_stub": false
     },
     {
@@ -2005,12 +2032,39 @@
       "default_stub": false
     },
     {
+      "symbol": "setegid",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Raw Linux syscall via SYS_setregid; POSIX errno on failure",
+      "hardened_semantics": "Raw syscall; credential change operation",
+      "default_stub": false
+    },
+    {
       "symbol": "setenv",
       "status": "Implemented",
       "module": "stdlib_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Safe Rust stdlib (atoi/qsort/bsearch); POSIX-correct return values and errno",
       "hardened_semantics": "Stdlib with hardened membrane; repair clamping on comparator bounds",
+      "default_stub": false
+    },
+    {
+      "symbol": "seteuid",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Raw Linux syscall via SYS_setreuid; POSIX errno on failure",
+      "hardened_semantics": "Raw syscall; credential change operation",
+      "default_stub": false
+    },
+    {
+      "symbol": "setgid",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Raw Linux syscall SYS_setgid; POSIX errno on failure",
+      "hardened_semantics": "Raw syscall; credential change operation",
       "default_stub": false
     },
     {
@@ -2023,12 +2077,30 @@
       "default_stub": false
     },
     {
+      "symbol": "setgroups",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Raw Linux syscall SYS_setgroups; POSIX errno on failure",
+      "hardened_semantics": "Raw syscall; credential change operation",
+      "default_stub": false
+    },
+    {
       "symbol": "setlocale",
       "status": "Implemented",
       "module": "locale_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Bootstrap locale implementation: setlocale supports C/POSIX and localeconv returns static C locale struct",
       "hardened_semantics": "Locale implementation with hardened fallback to C locale defaults on invalid input",
+      "default_stub": false
+    },
+    {
+      "symbol": "setpgid",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Raw Linux syscall SYS_setpgid; POSIX errno on failure",
+      "hardened_semantics": "Raw syscall; validates pid and pgid parameters",
       "default_stub": false
     },
     {
@@ -2041,6 +2113,24 @@
       "default_stub": false
     },
     {
+      "symbol": "setregid",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Raw Linux syscall SYS_setregid; POSIX errno on failure",
+      "hardened_semantics": "Raw syscall; credential change operation",
+      "default_stub": false
+    },
+    {
+      "symbol": "setreuid",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Raw Linux syscall SYS_setreuid; POSIX errno on failure",
+      "hardened_semantics": "Raw syscall; credential change operation",
+      "default_stub": false
+    },
+    {
       "symbol": "setrlimit",
       "status": "RawSyscall",
       "module": "resource_abi",
@@ -2050,12 +2140,30 @@
       "default_stub": false
     },
     {
+      "symbol": "setsid",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Raw Linux syscall SYS_setsid; POSIX errno on failure",
+      "hardened_semantics": "Raw syscall; session creation",
+      "default_stub": false
+    },
+    {
       "symbol": "setsockopt",
       "status": "RawSyscall",
       "module": "socket_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Raw Linux syscall for BSD sockets; POSIX errno on failure",
       "hardened_semantics": "Raw syscall; clamps send/recv buffer lengths to tracked bounds",
+      "default_stub": false
+    },
+    {
+      "symbol": "setuid",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Raw Linux syscall SYS_setuid; POSIX errno on failure",
+      "hardened_semantics": "Raw syscall; credential change operation",
       "default_stub": false
     },
     {
@@ -2644,12 +2752,48 @@
       "default_stub": false
     },
     {
+      "symbol": "vfork",
+      "status": "RawSyscall",
+      "module": "process_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Delegates to fork; identical on modern Linux",
+      "hardened_semantics": "Delegates to fork with membrane gating",
+      "default_stub": false
+    },
+    {
       "symbol": "wait",
       "status": "RawSyscall",
       "module": "process_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Raw Linux syscall for process control; POSIX errno on failure",
       "hardened_semantics": "Raw syscall; validates argv/envp pointer arrays before execve",
+      "default_stub": false
+    },
+    {
+      "symbol": "wait3",
+      "status": "RawSyscall",
+      "module": "process_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Delegates to wait4(-1, ...); BSD-style wait with rusage",
+      "hardened_semantics": "Delegates to wait4 with membrane gating",
+      "default_stub": false
+    },
+    {
+      "symbol": "wait4",
+      "status": "RawSyscall",
+      "module": "process_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Raw Linux syscall SYS_wait4; POSIX errno on failure",
+      "hardened_semantics": "Raw syscall; validates options in hardened mode",
+      "default_stub": false
+    },
+    {
+      "symbol": "waitid",
+      "status": "RawSyscall",
+      "module": "process_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Raw Linux syscall SYS_waitid; POSIX errno on failure",
+      "hardened_semantics": "Raw syscall; validates idtype and options",
       "default_stub": false
     },
     {

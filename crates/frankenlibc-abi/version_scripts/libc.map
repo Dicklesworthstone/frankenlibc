@@ -276,13 +276,29 @@ GLIBC_2.2.5 {
         geteuid;
         getgid;
         getegid;
+        getpgid;
+        getsid;
+        setpgid;
+        setsid;
+        setuid;
+        seteuid;
+        setreuid;
+        setgid;
+        setegid;
+        setregid;
+        getgroups;
+        setgroups;
 
         /* process */
         fork;
+        vfork;
         execve;
         execvp;
         wait;
         waitpid;
+        wait3;
+        wait4;
+        waitid;
         _exit;
 
         /* signal */
