@@ -892,11 +892,11 @@
     },
     {
       "symbol": "fseek",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "coldpath",
-      "strict_semantics": "Delegates to host glibc FILE* ops after membrane validation; preserves host semantics",
-      "hardened_semantics": "Host glibc delegation; hardened membrane bounds C string scans, logs TruncateWithNull",
+      "strict_semantics": "Native stream registry with SYS_lseek syscall; flushes pending writes, discards read buffer, updates logical offset",
+      "hardened_semantics": "Native implementation; membrane validates stream ID, sets EINVAL on invalid whence; heals invalid offsets via safe default",
       "default_stub": false
     },
     {
@@ -926,11 +926,11 @@
     },
     {
       "symbol": "ftell",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "coldpath",
-      "strict_semantics": "Delegates to host glibc FILE* ops after membrane validation; preserves host semantics",
-      "hardened_semantics": "Host glibc delegation; hardened membrane bounds C string scans, logs TruncateWithNull",
+      "strict_semantics": "Returns logical file offset from internal StdioStream state; no host glibc delegation",
+      "hardened_semantics": "Native implementation; membrane validates stream ID, returns -1 with EBADF for invalid streams",
       "default_stub": false
     },
     {
@@ -1847,11 +1847,11 @@
     },
     {
       "symbol": "perror",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "coldpath",
-      "strict_semantics": "Delegates to host glibc FILE* ops after membrane validation; preserves host semantics",
-      "hardened_semantics": "Host glibc delegation; hardened membrane bounds C string scans, logs TruncateWithNull",
+      "strict_semantics": "Native errno-to-message mapping with direct write to stderr fd; no host glibc delegation",
+      "hardened_semantics": "Native implementation; membrane validates optional prefix string, logs TruncateWithNull for unterminated strings",
       "default_stub": false
     },
     {
@@ -2138,11 +2138,11 @@
     },
     {
       "symbol": "puts",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "coldpath",
-      "strict_semantics": "Delegates to host glibc FILE* ops after membrane validation; preserves host semantics",
-      "hardened_semantics": "Host glibc delegation; hardened membrane bounds C string scans, logs TruncateWithNull",
+      "strict_semantics": "Native string scan with direct write to stdout fd plus trailing newline; no host glibc delegation",
+      "hardened_semantics": "Native implementation; membrane bounds string scan, logs TruncateWithNull for unterminated strings",
       "default_stub": false
     },
     {

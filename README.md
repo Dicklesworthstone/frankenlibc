@@ -17,16 +17,16 @@ FRANKENLIBC_MODE=hardened LD_PRELOAD=/usr/lib/frankenlibc/libfrankenlibc_abi.so 
 ## Current Implementation Reality (Machine-Generated)
 
 Source of truth: `tests/conformance/reality_report.v1.json` (generated `2026-02-13T18:07:59Z`).
-Reality snapshot: total_exported=383, implemented=203, raw_syscall=172, glibc_call_through=8, stub=0.
+Reality snapshot: total_exported=383, implemented=207, raw_syscall=172, glibc_call_through=4, stub=0.
 Counts below reflect that generated snapshot and will change as matrix drift fixes land.
 
 Current implementation is **hybrid interposition**, not full replacement. Exported symbols are classified into four support-taxonomy states:
 
 | Status | Count | Share | Meaning |
 |---|---:|---:|---|
-| `Implemented` | 203 | 53% | Native Rust implementation owns behavior |
+| `Implemented` | 207 | 54% | Native Rust implementation owns behavior |
 | `RawSyscall` | 172 | 45% | ABI entrypoint marshals directly to Linux syscalls |
-| `GlibcCallThrough` | 8 | 2% | Delegates to host glibc after membrane checks |
+| `GlibcCallThrough` | 4 | 1% | Delegates to host glibc after membrane checks |
 | `Stub` | 0 | 0% | Deterministic fallback contract (documented) |
 
 Total currently classified exports: **383**.
@@ -544,9 +544,9 @@ FRANKENLIBC_MODE=hardened LD_PRELOAD=target/release/libfrankenlibc_abi.so ./my_a
 
 | Taxonomy | Primary Families/Modules |
 |---|---|
-| `Implemented` | `string_abi`, `wchar_abi`, `math_abi`, `malloc_abi`, `stdlib_abi`, `ctype_abi`, `inet_abi`, `errno_abi`, `resolv_abi`, `locale_abi` |
+| `Implemented` | `string_abi`, `wchar_abi`, `math_abi`, `malloc_abi`, `stdlib_abi`, `ctype_abi`, `inet_abi`, `errno_abi`, `resolv_abi`, `locale_abi`, `stdio_abi` |
 | `RawSyscall` | `unistd_abi`, `socket_abi`, `termios_abi`, `time_abi`, `dirent_abi`, `process_abi`, `poll_abi`, `io_abi`, `mmap_abi`, `resource_abi`, `signal_abi` |
-| `GlibcCallThrough` | `stdio_abi`, `dlfcn_abi` |
+| `GlibcCallThrough` | `dlfcn_abi` |
 | `Stub` | none (current exported surface) |
 
 For exact counts, stub surface, and snapshot timestamp, inspect `tests/conformance/reality_report.v1.json`.
