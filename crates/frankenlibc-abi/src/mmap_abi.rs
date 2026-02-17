@@ -5,7 +5,9 @@
 //! under `ApiFamily::VirtualMemory`.
 
 use std::ffi::{c_int, c_void};
+use std::os::raw::c_long;
 
+use frankenlibc_core::errno;
 use frankenlibc_core::mmap;
 use frankenlibc_core::syscall;
 use frankenlibc_membrane::heal::{HealingAction, global_healing_policy};
@@ -272,5 +274,61 @@ pub unsafe extern "C" fn madvise(addr: *mut c_void, length: usize, advice: c_int
         }
     };
     runtime_policy::observe(ApiFamily::VirtualMemory, decision.profile, 15, rc < 0);
+    rc
+}
+
+// ---------------------------------------------------------------------------
+// mlock / munlock / mlockall / munlockall
+// ---------------------------------------------------------------------------
+
+/// POSIX `mlock` — lock a range of memory.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn mlock(addr: *const c_void, len: usize) -> c_int {
+    let rc = unsafe { libc::syscall(libc::SYS_mlock as c_long, addr, len) as c_int };
+    if rc < 0 {
+        let e = std::io::Error::last_os_error()
+            .raw_os_error()
+            .unwrap_or(errno::ENOMEM);
+        unsafe { set_abi_errno(e) };
+    }
+    rc
+}
+
+/// POSIX `munlock` — unlock a range of memory.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn munlock(addr: *const c_void, len: usize) -> c_int {
+    let rc = unsafe { libc::syscall(libc::SYS_munlock as c_long, addr, len) as c_int };
+    if rc < 0 {
+        let e = std::io::Error::last_os_error()
+            .raw_os_error()
+            .unwrap_or(errno::ENOMEM);
+        unsafe { set_abi_errno(e) };
+    }
+    rc
+}
+
+/// POSIX `mlockall` — lock all of the calling process's virtual memory.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn mlockall(flags: c_int) -> c_int {
+    let rc = unsafe { libc::syscall(libc::SYS_mlockall as c_long, flags) as c_int };
+    if rc < 0 {
+        let e = std::io::Error::last_os_error()
+            .raw_os_error()
+            .unwrap_or(errno::ENOMEM);
+        unsafe { set_abi_errno(e) };
+    }
+    rc
+}
+
+/// POSIX `munlockall` — unlock all of the calling process's virtual memory.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn munlockall() -> c_int {
+    let rc = unsafe { libc::syscall(libc::SYS_munlockall as c_long) as c_int };
+    if rc < 0 {
+        let e = std::io::Error::last_os_error()
+            .raw_os_error()
+            .unwrap_or(errno::ENOMEM);
+        unsafe { set_abi_errno(e) };
+    }
     rc
 }

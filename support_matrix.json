@@ -2,7 +2,7 @@
   "version": 2,
   "generated_at_utc": "2026-02-13T18:07:59Z",
   "library": "/data/tmp/cargo-target/release/libfrankenlibc_abi.so",
-  "total_exported": 359,
+  "total_exported": 374,
   "taxonomy": {
     "Implemented": "Native Rust code owns the entire operation. No host libc dependency. Full test coverage required.",
     "RawSyscall": "ABI entrypoint marshals arguments directly to Linux syscall instruction. No glibc call-through.",
@@ -555,6 +555,41 @@
       "default_stub": false
     },
     {
+      "symbol": "epoll_create",
+      "status": "RawSyscall",
+      "module": "poll_abi",
+      "perf_class": "syscall_veneer",
+      "semantics": "Linux"
+    },
+    {
+      "symbol": "epoll_create1",
+      "status": "RawSyscall",
+      "module": "poll_abi",
+      "perf_class": "syscall_veneer",
+      "semantics": "Linux"
+    },
+    {
+      "symbol": "epoll_ctl",
+      "status": "RawSyscall",
+      "module": "poll_abi",
+      "perf_class": "syscall_veneer",
+      "semantics": "Linux"
+    },
+    {
+      "symbol": "epoll_pwait",
+      "status": "RawSyscall",
+      "module": "poll_abi",
+      "perf_class": "syscall_veneer",
+      "semantics": "Linux"
+    },
+    {
+      "symbol": "epoll_wait",
+      "status": "RawSyscall",
+      "module": "poll_abi",
+      "perf_class": "syscall_veneer",
+      "semantics": "Linux"
+    },
+    {
       "symbol": "erf",
       "status": "Implemented",
       "module": "math_abi",
@@ -562,6 +597,13 @@
       "strict_semantics": "Rust std::f64 math; returns NaN/Inf per IEEE 754; no repair",
       "hardened_semantics": "Rust std::f64 math; no mode difference (pure computation)",
       "default_stub": false
+    },
+    {
+      "symbol": "eventfd",
+      "status": "RawSyscall",
+      "module": "poll_abi",
+      "perf_class": "syscall_veneer",
+      "semantics": "Linux"
     },
     {
       "symbol": "execve",
@@ -1632,6 +1674,20 @@
       "default_stub": false
     },
     {
+      "symbol": "mlock",
+      "status": "RawSyscall",
+      "module": "mmap_abi",
+      "perf_class": "syscall_veneer",
+      "semantics": "POSIX"
+    },
+    {
+      "symbol": "mlockall",
+      "status": "RawSyscall",
+      "module": "mmap_abi",
+      "perf_class": "syscall_veneer",
+      "semantics": "POSIX"
+    },
+    {
       "symbol": "mmap",
       "status": "RawSyscall",
       "module": "mmap_abi",
@@ -1657,6 +1713,20 @@
       "strict_semantics": "Raw Linux syscall for virtual memory; POSIX errno on failure",
       "hardened_semantics": "Raw syscall; denies conflicting prot/flags combinations",
       "default_stub": false
+    },
+    {
+      "symbol": "munlock",
+      "status": "RawSyscall",
+      "module": "mmap_abi",
+      "perf_class": "syscall_veneer",
+      "semantics": "POSIX"
+    },
+    {
+      "symbol": "munlockall",
+      "status": "RawSyscall",
+      "module": "mmap_abi",
+      "perf_class": "syscall_veneer",
+      "semantics": "POSIX"
     },
     {
       "symbol": "munmap",
@@ -1786,6 +1856,13 @@
       "strict_semantics": "Raw Linux syscall for I/O multiplexing; POSIX errno on failure",
       "hardened_semantics": "Raw syscall; clamps nfds to tracked pollfd array bounds",
       "default_stub": false
+    },
+    {
+      "symbol": "prctl",
+      "status": "RawSyscall",
+      "module": "poll_abi",
+      "perf_class": "syscall_veneer",
+      "semantics": "Linux"
     },
     {
       "symbol": "pread",
@@ -2179,6 +2256,13 @@
       "strict_semantics": "Rust std::f64 math; returns NaN/Inf per IEEE 754; no repair",
       "hardened_semantics": "Rust std::f64 math; no mode difference (pure computation)",
       "default_stub": false
+    },
+    {
+      "symbol": "sched_yield",
+      "status": "RawSyscall",
+      "module": "poll_abi",
+      "perf_class": "syscall_veneer",
+      "semantics": "POSIX"
     },
     {
       "symbol": "secure_getenv",
@@ -2904,6 +2988,27 @@
       "strict_semantics": "Delegates to mktime; pure Rust broken_down_to_epoch; UTC",
       "hardened_semantics": "Delegates to mktime with membrane validation",
       "default_stub": false
+    },
+    {
+      "symbol": "timerfd_create",
+      "status": "RawSyscall",
+      "module": "poll_abi",
+      "perf_class": "syscall_veneer",
+      "semantics": "Linux"
+    },
+    {
+      "symbol": "timerfd_gettime",
+      "status": "RawSyscall",
+      "module": "poll_abi",
+      "perf_class": "syscall_veneer",
+      "semantics": "Linux"
+    },
+    {
+      "symbol": "timerfd_settime",
+      "status": "RawSyscall",
+      "module": "poll_abi",
+      "perf_class": "syscall_veneer",
+      "semantics": "Linux"
     },
     {
       "symbol": "tolower",

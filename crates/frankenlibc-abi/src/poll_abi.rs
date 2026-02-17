@@ -7,6 +7,7 @@
 use std::ffi::c_int;
 use std::os::raw::c_long;
 
+use frankenlibc_core::errno;
 use frankenlibc_core::poll as poll_core;
 use frankenlibc_membrane::heal::{HealingAction, global_healing_policy};
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
@@ -225,5 +226,244 @@ pub unsafe extern "C" fn pselect(
         unsafe { set_abi_errno(libc::EINVAL) };
     }
     runtime_policy::observe(ApiFamily::Poll, decision.profile, 30, adverse);
+    rc
+}
+
+// ---------------------------------------------------------------------------
+// epoll_create / epoll_create1
+// ---------------------------------------------------------------------------
+
+/// Linux `epoll_create` — open an epoll file descriptor.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn epoll_create(size: c_int) -> c_int {
+    // size is ignored but must be > 0 for compatibility.
+    if size <= 0 {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return -1;
+    }
+    // Modern kernels ignore size; use epoll_create1(0) internally.
+    let rc = unsafe { libc::syscall(libc::SYS_epoll_create1 as c_long, 0) as c_int };
+    if rc < 0 {
+        let e = std::io::Error::last_os_error()
+            .raw_os_error()
+            .unwrap_or(errno::ENOMEM);
+        unsafe { set_abi_errno(e) };
+    }
+    rc
+}
+
+/// Linux `epoll_create1` — open an epoll file descriptor with flags.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn epoll_create1(flags: c_int) -> c_int {
+    let rc = unsafe { libc::syscall(libc::SYS_epoll_create1 as c_long, flags) as c_int };
+    if rc < 0 {
+        let e = std::io::Error::last_os_error()
+            .raw_os_error()
+            .unwrap_or(errno::EINVAL);
+        unsafe { set_abi_errno(e) };
+    }
+    rc
+}
+
+// ---------------------------------------------------------------------------
+// epoll_ctl
+// ---------------------------------------------------------------------------
+
+/// Linux `epoll_ctl` — control interface for an epoll file descriptor.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn epoll_ctl(
+    epfd: c_int,
+    op: c_int,
+    fd: c_int,
+    event: *mut libc::epoll_event,
+) -> c_int {
+    let rc = unsafe { libc::syscall(libc::SYS_epoll_ctl as c_long, epfd, op, fd, event) as c_int };
+    if rc < 0 {
+        let e = std::io::Error::last_os_error()
+            .raw_os_error()
+            .unwrap_or(errno::EBADF);
+        unsafe { set_abi_errno(e) };
+    }
+    rc
+}
+
+// ---------------------------------------------------------------------------
+// epoll_wait / epoll_pwait
+// ---------------------------------------------------------------------------
+
+/// Linux `epoll_wait` — wait for events on an epoll file descriptor.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn epoll_wait(
+    epfd: c_int,
+    events: *mut libc::epoll_event,
+    maxevents: c_int,
+    timeout: c_int,
+) -> c_int {
+    if events.is_null() || maxevents <= 0 {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return -1;
+    }
+    let rc = unsafe {
+        libc::syscall(
+            libc::SYS_epoll_pwait as c_long,
+            epfd,
+            events,
+            maxevents,
+            timeout,
+            std::ptr::null::<libc::sigset_t>(),
+            core::mem::size_of::<libc::sigset_t>(),
+        ) as c_int
+    };
+    if rc < 0 {
+        let e = std::io::Error::last_os_error()
+            .raw_os_error()
+            .unwrap_or(errno::EBADF);
+        unsafe { set_abi_errno(e) };
+    }
+    rc
+}
+
+/// Linux `epoll_pwait` — wait for events with signal mask.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn epoll_pwait(
+    epfd: c_int,
+    events: *mut libc::epoll_event,
+    maxevents: c_int,
+    timeout: c_int,
+    sigmask: *const libc::sigset_t,
+) -> c_int {
+    if events.is_null() || maxevents <= 0 {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return -1;
+    }
+    let rc = unsafe {
+        libc::syscall(
+            libc::SYS_epoll_pwait as c_long,
+            epfd,
+            events,
+            maxevents,
+            timeout,
+            sigmask,
+            core::mem::size_of::<libc::sigset_t>(),
+        ) as c_int
+    };
+    if rc < 0 {
+        let e = std::io::Error::last_os_error()
+            .raw_os_error()
+            .unwrap_or(errno::EBADF);
+        unsafe { set_abi_errno(e) };
+    }
+    rc
+}
+
+// ---------------------------------------------------------------------------
+// eventfd
+// ---------------------------------------------------------------------------
+
+/// Linux `eventfd` — create a file descriptor for event notification.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn eventfd(initval: u32, flags: c_int) -> c_int {
+    let rc = unsafe { libc::syscall(libc::SYS_eventfd2 as c_long, initval, flags) as c_int };
+    if rc < 0 {
+        let e = std::io::Error::last_os_error()
+            .raw_os_error()
+            .unwrap_or(errno::EINVAL);
+        unsafe { set_abi_errno(e) };
+    }
+    rc
+}
+
+// ---------------------------------------------------------------------------
+// timerfd_create / timerfd_settime / timerfd_gettime
+// ---------------------------------------------------------------------------
+
+/// Linux `timerfd_create` — create a timer file descriptor.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn timerfd_create(clockid: c_int, flags: c_int) -> c_int {
+    let rc = unsafe { libc::syscall(libc::SYS_timerfd_create as c_long, clockid, flags) as c_int };
+    if rc < 0 {
+        let e = std::io::Error::last_os_error()
+            .raw_os_error()
+            .unwrap_or(errno::EINVAL);
+        unsafe { set_abi_errno(e) };
+    }
+    rc
+}
+
+/// Linux `timerfd_settime` — arm/disarm a timer file descriptor.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn timerfd_settime(
+    fd: c_int,
+    flags: c_int,
+    new_value: *const libc::itimerspec,
+    old_value: *mut libc::itimerspec,
+) -> c_int {
+    if new_value.is_null() {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        return -1;
+    }
+    let rc = unsafe {
+        libc::syscall(
+            libc::SYS_timerfd_settime as c_long,
+            fd,
+            flags,
+            new_value,
+            old_value,
+        ) as c_int
+    };
+    if rc < 0 {
+        let e = std::io::Error::last_os_error()
+            .raw_os_error()
+            .unwrap_or(errno::EBADF);
+        unsafe { set_abi_errno(e) };
+    }
+    rc
+}
+
+/// Linux `timerfd_gettime` — get current setting of a timer file descriptor.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn timerfd_gettime(fd: c_int, curr_value: *mut libc::itimerspec) -> c_int {
+    if curr_value.is_null() {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        return -1;
+    }
+    let rc = unsafe { libc::syscall(libc::SYS_timerfd_gettime as c_long, fd, curr_value) as c_int };
+    if rc < 0 {
+        let e = std::io::Error::last_os_error()
+            .raw_os_error()
+            .unwrap_or(errno::EBADF);
+        unsafe { set_abi_errno(e) };
+    }
+    rc
+}
+
+// ---------------------------------------------------------------------------
+// sched_yield / prctl
+// ---------------------------------------------------------------------------
+
+/// POSIX `sched_yield` — yield the processor.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn sched_yield() -> c_int {
+    unsafe { libc::syscall(libc::SYS_sched_yield as c_long) as c_int }
+}
+
+/// Linux `prctl` — operations on a process.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn prctl(
+    option: c_int,
+    arg2: libc::c_ulong,
+    arg3: libc::c_ulong,
+    arg4: libc::c_ulong,
+    arg5: libc::c_ulong,
+) -> c_int {
+    let rc = unsafe {
+        libc::syscall(libc::SYS_prctl as c_long, option, arg2, arg3, arg4, arg5) as c_int
+    };
+    if rc < 0 {
+        let e = std::io::Error::last_os_error()
+            .raw_os_error()
+            .unwrap_or(errno::EINVAL);
+        unsafe { set_abi_errno(e) };
+    }
     rc
 }

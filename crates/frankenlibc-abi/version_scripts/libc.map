@@ -362,11 +362,26 @@ GLIBC_2.2.5 {
         writev;
         sendfile;
 
-        /* poll/select */
+        /* poll/select/epoll */
         poll;
         ppoll;
         select;
         pselect;
+        epoll_create;
+        epoll_create1;
+        epoll_ctl;
+        epoll_wait;
+        epoll_pwait;
+
+        /* eventfd / timerfd */
+        eventfd;
+        timerfd_create;
+        timerfd_settime;
+        timerfd_gettime;
+
+        /* scheduler / prctl */
+        sched_yield;
+        prctl;
 
         /* mmap */
         mmap;
@@ -374,6 +389,10 @@ GLIBC_2.2.5 {
         mprotect;
         msync;
         madvise;
+        mlock;
+        munlock;
+        mlockall;
+        munlockall;
 
         /* directory */
         opendir;
