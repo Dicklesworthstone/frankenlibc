@@ -537,3 +537,132 @@ pub unsafe extern "C" fn getsockname(
     runtime_policy::observe(ApiFamily::Socket, decision.profile, 8, adverse);
     rc
 }
+
+// ---------------------------------------------------------------------------
+// socketpair
+// ---------------------------------------------------------------------------
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn socketpair(
+    domain: c_int,
+    sock_type: c_int,
+    protocol: c_int,
+    sv: *mut c_int,
+) -> c_int {
+    let (mode, decision) = runtime_policy::decide(ApiFamily::Socket, sv as usize, 0, true, true, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
+        return -1;
+    }
+
+    if sv.is_null() {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
+        return -1;
+    }
+
+    if !socket_core::valid_address_family(domain) && !mode.heals_enabled() {
+        unsafe { set_abi_errno(errno::EAFNOSUPPORT) };
+        runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
+        return -1;
+    }
+
+    if !socket_core::valid_socket_type(sock_type) && !mode.heals_enabled() {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
+        return -1;
+    }
+
+    let rc = unsafe {
+        syscall_ret_int(libc::syscall(
+            libc::SYS_socketpair,
+            domain,
+            sock_type,
+            protocol,
+            sv,
+        ))
+    };
+    let adverse = rc != 0;
+    runtime_policy::observe(ApiFamily::Socket, decision.profile, 10, adverse);
+    rc
+}
+
+// ---------------------------------------------------------------------------
+// sendmsg
+// ---------------------------------------------------------------------------
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn sendmsg(sockfd: c_int, msg: *const libc::msghdr, flags: c_int) -> isize {
+    let (_, decision) = runtime_policy::decide(ApiFamily::Socket, msg as usize, 0, false, true, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
+        return -1;
+    }
+
+    if msg.is_null() {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
+        return -1;
+    }
+
+    let rc = unsafe { syscall_ret_size(libc::syscall(libc::SYS_sendmsg, sockfd, msg, flags)) };
+    let adverse = rc < 0;
+    runtime_policy::observe(ApiFamily::Socket, decision.profile, 12, adverse);
+    rc
+}
+
+// ---------------------------------------------------------------------------
+// recvmsg
+// ---------------------------------------------------------------------------
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn recvmsg(sockfd: c_int, msg: *mut libc::msghdr, flags: c_int) -> isize {
+    let (_, decision) = runtime_policy::decide(ApiFamily::Socket, msg as usize, 0, true, true, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
+        return -1;
+    }
+
+    if msg.is_null() {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
+        return -1;
+    }
+
+    let rc = unsafe { syscall_ret_size(libc::syscall(libc::SYS_recvmsg, sockfd, msg, flags)) };
+    let adverse = rc < 0;
+    runtime_policy::observe(ApiFamily::Socket, decision.profile, 12, adverse);
+    rc
+}
+
+// ---------------------------------------------------------------------------
+// accept4 (Linux extension)
+// ---------------------------------------------------------------------------
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn accept4(
+    sockfd: c_int,
+    addr: *mut libc::sockaddr,
+    addrlen: *mut u32,
+    flags: c_int,
+) -> c_int {
+    let (_, decision) =
+        runtime_policy::decide(ApiFamily::Socket, sockfd as usize, 0, true, true, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
+        return -1;
+    }
+
+    let rc = unsafe {
+        syscall_ret_int(libc::syscall(
+            libc::SYS_accept4,
+            sockfd,
+            addr,
+            addrlen,
+            flags,
+        ))
+    };
+    let adverse = rc < 0;
+    runtime_policy::observe(ApiFamily::Socket, decision.profile, 15, adverse);
+    rc
+}

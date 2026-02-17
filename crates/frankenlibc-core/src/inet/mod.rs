@@ -135,6 +135,25 @@ pub fn inet_ntop(af: i32, src: &[u8]) -> Option<Vec<u8>> {
 }
 
 // ---------------------------------------------------------------------------
+// inet_aton
+// ---------------------------------------------------------------------------
+
+/// Parses a dotted-quad IPv4 address string into a 4-byte network-order result.
+///
+/// Equivalent to C `inet_aton`. Returns 1 on success (and writes the address
+/// into `dst`), 0 on failure. Unlike `inet_pton`, `inet_aton` is a legacy
+/// function that only handles AF_INET.
+pub fn inet_aton(src: &[u8], dst: &mut [u8; 4]) -> i32 {
+    match parse_ipv4(src) {
+        Some(octets) => {
+            *dst = octets;
+            1
+        }
+        None => 0,
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Internal: IPv4 parsing
 // ---------------------------------------------------------------------------
 
@@ -962,6 +981,53 @@ mod tests {
                 String::from_utf8_lossy(&text)
             );
         }
+    }
+
+    // -- inet_aton --
+
+    #[test]
+    fn test_inet_aton_basic() {
+        let mut dst = [0u8; 4];
+        assert_eq!(inet_aton(b"192.168.1.1", &mut dst), 1);
+        assert_eq!(dst, [192, 168, 1, 1]);
+    }
+
+    #[test]
+    fn test_inet_aton_loopback() {
+        let mut dst = [0u8; 4];
+        assert_eq!(inet_aton(b"127.0.0.1", &mut dst), 1);
+        assert_eq!(dst, [127, 0, 0, 1]);
+    }
+
+    #[test]
+    fn test_inet_aton_zero() {
+        let mut dst = [0xFFu8; 4];
+        assert_eq!(inet_aton(b"0.0.0.0", &mut dst), 1);
+        assert_eq!(dst, [0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn test_inet_aton_broadcast() {
+        let mut dst = [0u8; 4];
+        assert_eq!(inet_aton(b"255.255.255.255", &mut dst), 1);
+        assert_eq!(dst, [255, 255, 255, 255]);
+    }
+
+    #[test]
+    fn test_inet_aton_invalid() {
+        let mut dst = [0u8; 4];
+        assert_eq!(inet_aton(b"", &mut dst), 0);
+        assert_eq!(inet_aton(b"abc", &mut dst), 0);
+        assert_eq!(inet_aton(b"1.2.3", &mut dst), 0);
+        assert_eq!(inet_aton(b"1.2.3.4.5", &mut dst), 0);
+        assert_eq!(inet_aton(b"256.0.0.1", &mut dst), 0);
+    }
+
+    #[test]
+    fn test_inet_aton_nul_terminated() {
+        let mut dst = [0u8; 4];
+        assert_eq!(inet_aton(b"10.0.0.1\0", &mut dst), 1);
+        assert_eq!(dst, [10, 0, 0, 1]);
     }
 
     // -- Edge cases --

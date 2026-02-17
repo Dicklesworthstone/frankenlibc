@@ -2,7 +2,7 @@
   "version": 2,
   "generated_at_utc": "2026-02-13T18:07:59Z",
   "library": "/data/tmp/cargo-target/release/libfrankenlibc_abi.so",
-  "total_exported": 280,
+  "total_exported": 297,
   "taxonomy": {
     "Implemented": "Native Rust code owns the entire operation. No host libc dependency. Full test coverage required.",
     "RawSyscall": "ABI entrypoint marshals arguments directly to Linux syscall instruction. No glibc call-through.",
@@ -85,6 +85,15 @@
       "perf_class": "coldpath",
       "strict_semantics": "Raw Linux syscall for BSD sockets; POSIX errno on failure",
       "hardened_semantics": "Raw syscall; clamps send/recv buffer lengths to tracked bounds",
+      "default_stub": false
+    },
+    {
+      "symbol": "accept4",
+      "status": "RawSyscall",
+      "module": "socket_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Raw Linux syscall for BSD sockets; accept with flags (SOCK_NONBLOCK, SOCK_CLOEXEC); POSIX errno on failure",
+      "hardened_semantics": "Raw syscall; validates fd and flag arguments",
       "default_stub": false
     },
     {
@@ -358,6 +367,15 @@
       "default_stub": false
     },
     {
+      "symbol": "copysign",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Rust libm path; magnitude/sign transfer preserves IEEE 754 NaN payload and signed zero semantics with no errno side effects",
+      "hardened_semantics": "Rust libm path; no mode difference expected for finite inputs",
+      "default_stub": false
+    },
+    {
       "symbol": "cos",
       "status": "Implemented",
       "module": "math_abi",
@@ -373,15 +391,6 @@
       "perf_class": "coldpath",
       "strict_semantics": "Rust libm path; finite overflow to infinity sets errno=ERANGE while preserving IEEE 754 behavior",
       "hardened_semantics": "Same ERANGE overflow signaling with runtime-policy routing; hardened mode may repair non-finite outputs deterministically",
-      "default_stub": false
-    },
-    {
-      "symbol": "copysign",
-      "status": "Implemented",
-      "module": "math_abi",
-      "perf_class": "coldpath",
-      "strict_semantics": "Rust libm path; magnitude/sign transfer preserves IEEE 754 NaN payload and signed zero semantics with no errno side effects",
-      "hardened_semantics": "Rust libm path; no mode difference expected for finite inputs",
       "default_stub": false
     },
     {
@@ -1060,6 +1069,24 @@
       "default_stub": false
     },
     {
+      "symbol": "inet_aton",
+      "status": "Implemented",
+      "module": "inet_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Parse dotted-quad IPv4 text to in_addr; returns 1 on success, 0 on failure",
+      "hardened_semantics": "Same as strict; pure compute with no mode difference",
+      "default_stub": false
+    },
+    {
+      "symbol": "inet_ntoa",
+      "status": "Implemented",
+      "module": "inet_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Convert IPv4 in_addr to dotted-quad string in thread-local buffer; not reentrant",
+      "hardened_semantics": "Same as strict; pure compute with no mode difference",
+      "default_stub": false
+    },
+    {
       "symbol": "inet_ntop",
       "status": "Implemented",
       "module": "inet_abi",
@@ -1174,6 +1201,15 @@
       "perf_class": "coldpath",
       "strict_semantics": "Raw Linux syscall for signal handling; POSIX errno on failure",
       "hardened_semantics": "Raw syscall; denies invalid signal numbers instead of passing to kernel",
+      "default_stub": false
+    },
+    {
+      "symbol": "killpg",
+      "status": "RawSyscall",
+      "module": "signal_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Raw Linux syscall via kill(-pgrp, sig); POSIX errno on failure",
+      "hardened_semantics": "Raw syscall; validates pgrp non-negative and signal number before passing to kernel",
       "default_stub": false
     },
     {
@@ -1417,6 +1453,15 @@
       "perf_class": "coldpath",
       "strict_semantics": "Raw Linux syscall for directory enumeration; POSIX errno on failure",
       "hardened_semantics": "Raw syscall; validates path pointer bounds before getdents64",
+      "default_stub": false
+    },
+    {
+      "symbol": "pause",
+      "status": "RawSyscall",
+      "module": "signal_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Raw Linux syscall SYS_pause; always returns -1 with EINTR",
+      "hardened_semantics": "Raw syscall; membrane-gated suspension with EINTR on signal delivery",
       "default_stub": false
     },
     {
@@ -1672,6 +1717,15 @@
       "default_stub": false
     },
     {
+      "symbol": "pthread_sigmask",
+      "status": "RawSyscall",
+      "module": "signal_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Delegates to sigprocmask; identical on Linux (rt_sigprocmask)",
+      "hardened_semantics": "Delegates to sigprocmask with membrane gating",
+      "default_stub": false
+    },
+    {
       "symbol": "putchar",
       "status": "Implemented",
       "module": "stdio_abi",
@@ -1744,15 +1798,6 @@
       "default_stub": false
     },
     {
-      "symbol": "remainder",
-      "status": "Implemented",
-      "module": "math_abi",
-      "perf_class": "coldpath",
-      "strict_semantics": "Rust libm path; y==0 or infinite x with finite y sets errno=EDOM while preserving IEEE 754 NaN behavior",
-      "hardened_semantics": "Same errno signaling with runtime-policy routing; hardened mode may repair non-finite outputs deterministically",
-      "default_stub": false
-    },
-    {
       "symbol": "recv",
       "status": "RawSyscall",
       "module": "socket_abi",
@@ -1768,6 +1813,24 @@
       "perf_class": "coldpath",
       "strict_semantics": "Raw Linux syscall for BSD sockets; POSIX errno on failure",
       "hardened_semantics": "Raw syscall; clamps send/recv buffer lengths to tracked bounds",
+      "default_stub": false
+    },
+    {
+      "symbol": "recvmsg",
+      "status": "RawSyscall",
+      "module": "socket_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Raw Linux syscall for scatter/gather receive via msghdr; POSIX errno on failure",
+      "hardened_semantics": "Raw syscall; validates msghdr pointer",
+      "default_stub": false
+    },
+    {
+      "symbol": "remainder",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Rust libm path; y==0 or infinite x with finite y sets errno=EDOM while preserving IEEE 754 NaN behavior",
+      "hardened_semantics": "Same errno signaling with runtime-policy routing; hardened mode may repair non-finite outputs deterministically",
       "default_stub": false
     },
     {
@@ -1807,15 +1870,6 @@
       "default_stub": false
     },
     {
-      "symbol": "select",
-      "status": "RawSyscall",
-      "module": "poll_abi",
-      "perf_class": "coldpath",
-      "strict_semantics": "Raw Linux syscall for I/O multiplexing; POSIX errno on failure",
-      "hardened_semantics": "Raw syscall; clamps nfds to tracked pollfd array bounds",
-      "default_stub": false
-    },
-    {
       "symbol": "secure_getenv",
       "status": "Implemented",
       "module": "stdlib_abi",
@@ -1825,12 +1879,30 @@
       "default_stub": false
     },
     {
+      "symbol": "select",
+      "status": "RawSyscall",
+      "module": "poll_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Raw Linux syscall for I/O multiplexing; POSIX errno on failure",
+      "hardened_semantics": "Raw syscall; clamps nfds to tracked pollfd array bounds",
+      "default_stub": false
+    },
+    {
       "symbol": "send",
       "status": "RawSyscall",
       "module": "socket_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Raw Linux syscall for BSD sockets; POSIX errno on failure",
       "hardened_semantics": "Raw syscall; clamps send/recv buffer lengths to tracked bounds",
+      "default_stub": false
+    },
+    {
+      "symbol": "sendmsg",
+      "status": "RawSyscall",
+      "module": "socket_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Raw Linux syscall for scatter/gather send via msghdr; POSIX errno on failure",
+      "hardened_semantics": "Raw syscall; validates msghdr pointer",
       "default_stub": false
     },
     {
@@ -1933,12 +2005,84 @@
       "default_stub": false
     },
     {
+      "symbol": "sigaddset",
+      "status": "Implemented",
+      "module": "signal_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Pure bit manipulation on sigset_t; validates signal number, sets errno EINVAL on failure",
+      "hardened_semantics": "Pure bit manipulation; validates signal number range before modification",
+      "default_stub": false
+    },
+    {
+      "symbol": "sigaltstack",
+      "status": "RawSyscall",
+      "module": "signal_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Raw Linux syscall SYS_sigaltstack; POSIX errno on failure",
+      "hardened_semantics": "Raw syscall; membrane-gated alternate signal stack management",
+      "default_stub": false
+    },
+    {
+      "symbol": "sigdelset",
+      "status": "Implemented",
+      "module": "signal_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Pure bit manipulation on sigset_t; validates signal number, sets errno EINVAL on failure",
+      "hardened_semantics": "Pure bit manipulation; validates signal number range before modification",
+      "default_stub": false
+    },
+    {
+      "symbol": "sigemptyset",
+      "status": "Implemented",
+      "module": "signal_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Zeroes entire sigset_t structure; null pointer returns -1",
+      "hardened_semantics": "Zeroes sigset_t; null pointer guard returns -1",
+      "default_stub": false
+    },
+    {
+      "symbol": "sigfillset",
+      "status": "Implemented",
+      "module": "signal_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Sets all bits in sigset_t structure; null pointer returns -1",
+      "hardened_semantics": "Sets all sigset_t bits; null pointer guard returns -1",
+      "default_stub": false
+    },
+    {
+      "symbol": "sigismember",
+      "status": "Implemented",
+      "module": "signal_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Pure bit query on sigset_t; returns 1 if signal in set, 0 if not, -1 on invalid input",
+      "hardened_semantics": "Pure bit query; validates signal number range before testing membership",
+      "default_stub": false
+    },
+    {
       "symbol": "signal",
       "status": "RawSyscall",
       "module": "signal_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Raw Linux syscall for signal handling; POSIX errno on failure",
       "hardened_semantics": "Raw syscall; denies invalid signal numbers instead of passing to kernel",
+      "default_stub": false
+    },
+    {
+      "symbol": "sigprocmask",
+      "status": "RawSyscall",
+      "module": "signal_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Raw Linux syscall SYS_rt_sigprocmask; POSIX errno on failure",
+      "hardened_semantics": "Raw syscall; membrane-gated signal mask manipulation",
+      "default_stub": false
+    },
+    {
+      "symbol": "sigsuspend",
+      "status": "RawSyscall",
+      "module": "signal_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Raw Linux syscall SYS_rt_sigsuspend; always returns -1 with EINTR",
+      "hardened_semantics": "Raw syscall; membrane-gated signal suspension with EINTR on delivery",
       "default_stub": false
     },
     {
@@ -1984,6 +2128,15 @@
       "perf_class": "coldpath",
       "strict_semantics": "Raw Linux syscall for BSD sockets; POSIX errno on failure",
       "hardened_semantics": "Raw syscall; clamps send/recv buffer lengths to tracked bounds",
+      "default_stub": false
+    },
+    {
+      "symbol": "socketpair",
+      "status": "RawSyscall",
+      "module": "socket_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Raw Linux syscall to create a pair of connected sockets; POSIX errno on failure",
+      "hardened_semantics": "Raw syscall; validates sv output pointer and address family/type arguments",
       "default_stub": false
     },
     {
@@ -2041,6 +2194,24 @@
       "default_stub": false
     },
     {
+      "symbol": "stpcpy",
+      "status": "Implemented",
+      "module": "string_abi",
+      "perf_class": "strict_hotpath",
+      "strict_semantics": "Safe Rust string/memory ops; unbounded scans follow C semantics; no repair",
+      "hardened_semantics": "Clamps copy/scan to tracked allocation bounds; logs ClampSize/TruncateWithNull",
+      "default_stub": false
+    },
+    {
+      "symbol": "stpncpy",
+      "status": "Implemented",
+      "module": "string_abi",
+      "perf_class": "strict_hotpath",
+      "strict_semantics": "Safe Rust string/memory ops; unbounded scans follow C semantics; no repair",
+      "hardened_semantics": "Clamps copy/scan to tracked allocation bounds; logs ClampSize/TruncateWithNull",
+      "default_stub": false
+    },
+    {
       "symbol": "strcat",
       "status": "Implemented",
       "module": "string_abi",
@@ -2086,15 +2257,6 @@
       "default_stub": false
     },
     {
-      "symbol": "stpcpy",
-      "status": "Implemented",
-      "module": "string_abi",
-      "perf_class": "strict_hotpath",
-      "strict_semantics": "Safe Rust string/memory ops; unbounded scans follow C semantics; no repair",
-      "hardened_semantics": "Clamps copy/scan to tracked allocation bounds; logs ClampSize/TruncateWithNull",
-      "default_stub": false
-    },
-    {
       "symbol": "strlen",
       "status": "Implemented",
       "module": "string_abi",
@@ -2113,15 +2275,6 @@
       "default_stub": false
     },
     {
-      "symbol": "strncpy",
-      "status": "Implemented",
-      "module": "string_abi",
-      "perf_class": "strict_hotpath",
-      "strict_semantics": "Safe Rust string/memory ops; unbounded scans follow C semantics; no repair",
-      "hardened_semantics": "Clamps copy/scan to tracked allocation bounds; logs ClampSize/TruncateWithNull",
-      "default_stub": false
-    },
-    {
       "symbol": "strncmp",
       "status": "Implemented",
       "module": "string_abi",
@@ -2131,7 +2284,7 @@
       "default_stub": false
     },
     {
-      "symbol": "strnlen",
+      "symbol": "strncpy",
       "status": "Implemented",
       "module": "string_abi",
       "perf_class": "strict_hotpath",
@@ -2140,7 +2293,7 @@
       "default_stub": false
     },
     {
-      "symbol": "stpncpy",
+      "symbol": "strnlen",
       "status": "Implemented",
       "module": "string_abi",
       "perf_class": "strict_hotpath",
@@ -2167,6 +2320,15 @@
       "default_stub": false
     },
     {
+      "symbol": "strtoimax",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Safe Rust stdlib (atoi/qsort/bsearch); POSIX-correct return values and errno",
+      "hardened_semantics": "Stdlib with hardened membrane; repair clamping on comparator bounds",
+      "default_stub": false
+    },
+    {
       "symbol": "strtok",
       "status": "Implemented",
       "module": "string_abi",
@@ -2182,15 +2344,6 @@
       "perf_class": "strict_hotpath",
       "strict_semantics": "Safe Rust string/memory ops; unbounded scans follow C semantics; no repair",
       "hardened_semantics": "Clamps copy/scan to tracked allocation bounds; logs ClampSize/TruncateWithNull",
-      "default_stub": false
-    },
-    {
-      "symbol": "strtoimax",
-      "status": "Implemented",
-      "module": "stdlib_abi",
-      "perf_class": "coldpath",
-      "strict_semantics": "Safe Rust stdlib (atoi/qsort/bsearch); POSIX-correct return values and errno",
-      "hardened_semantics": "Stdlib with hardened membrane; repair clamping on comparator bounds",
       "default_stub": false
     },
     {

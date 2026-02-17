@@ -1,5 +1,13 @@
 GLIBC_2.2.5 {
     global:
+        /* errno */
+        __errno_location;
+
+        /* startup */
+        __libc_start_main;
+        __frankenlibc_startup_phase0;
+        __frankenlibc_startup_snapshot;
+
         /* string/memory operations */
         memcpy;
         memmove;
@@ -24,43 +32,96 @@ GLIBC_2.2.5 {
         strtok;
         strtok_r;
 
+        /* wide string operations */
+        wcscat;
+        wcschr;
+        wcscmp;
+        wcscpy;
+        wcslen;
+        wcsncmp;
+        wcsncpy;
+        wcsrchr;
+        wcsstr;
+        wmemchr;
+        wmemcmp;
+        wmemcpy;
+        wmemmove;
+        wmemset;
+
         /* memory allocation */
         malloc;
         free;
         calloc;
         realloc;
+        aligned_alloc;
+        memalign;
+        posix_memalign;
 
-        /* iconv */
-        iconv_open;
-        iconv;
-        iconv_close;
+        /* stdlib */
+        atoi;
+        atol;
+        atoll;
+        strtol;
+        strtoll;
+        strtoul;
+        strtoull;
+        strtoimax;
+        strtoumax;
+        qsort;
+        bsearch;
+        getenv;
+        setenv;
+        unsetenv;
+        secure_getenv;
+        exit;
+        atexit;
 
-        /* locale */
-        setlocale;
-        localeconv;
-        nl_langinfo;
+        /* ctype */
+        isalnum;
+        isalpha;
+        isdigit;
+        islower;
+        isprint;
+        ispunct;
+        isspace;
+        isupper;
+        isxdigit;
+        tolower;
+        toupper;
 
-        /* startup */
-        __frankenlibc_startup_phase0;
-        __frankenlibc_startup_snapshot;
-
-        /* passwd database */
-        getpwnam;
-        getpwuid;
-        getpwent;
-        setpwent;
-        endpwent;
-        getpwnam_r;
-        getpwuid_r;
-
-        /* group database */
-        getgrnam;
-        getgrgid;
-        getgrent;
-        setgrent;
-        endgrent;
-        getgrnam_r;
-        getgrgid_r;
+        /* stdio */
+        printf;
+        fprintf;
+        sprintf;
+        snprintf;
+        dprintf;
+        asprintf;
+        fopen;
+        fclose;
+        fread;
+        fwrite;
+        fgetc;
+        fgets;
+        fputc;
+        fputs;
+        fflush;
+        fseek;
+        ftell;
+        rewind;
+        feof;
+        ferror;
+        clearerr;
+        fileno;
+        setbuf;
+        setvbuf;
+        getchar;
+        putchar;
+        puts;
+        ungetc;
+        perror;
+        stdin;
+        stdout;
+        stderr;
 
         /* math operations */
         sin;
@@ -99,6 +160,199 @@ GLIBC_2.2.5 {
         erf;
         tgamma;
         lgamma;
+
+        /* iconv */
+        iconv_open;
+        iconv;
+        iconv_close;
+
+        /* locale */
+        setlocale;
+        localeconv;
+        nl_langinfo;
+
+        /* pthread */
+        pthread_self;
+        pthread_equal;
+        pthread_create;
+        pthread_join;
+        pthread_detach;
+        pthread_mutex_init;
+        pthread_mutex_destroy;
+        pthread_mutex_lock;
+        pthread_mutex_trylock;
+        pthread_mutex_unlock;
+        pthread_rwlock_init;
+        pthread_rwlock_destroy;
+        pthread_rwlock_rdlock;
+        pthread_rwlock_wrlock;
+        pthread_rwlock_unlock;
+        pthread_cond_init;
+        pthread_cond_destroy;
+        pthread_cond_signal;
+        pthread_cond_broadcast;
+        pthread_cond_wait;
+
+        /* passwd database */
+        getpwnam;
+        getpwuid;
+        getpwent;
+        setpwent;
+        endpwent;
+        getpwnam_r;
+        getpwuid_r;
+
+        /* group database */
+        getgrnam;
+        getgrgid;
+        getgrent;
+        setgrent;
+        endgrent;
+        getgrnam_r;
+        getgrgid_r;
+
+        /* socket operations */
+        socket;
+        bind;
+        listen;
+        accept;
+        accept4;
+        connect;
+        send;
+        recv;
+        sendto;
+        recvfrom;
+        sendmsg;
+        recvmsg;
+        shutdown;
+        setsockopt;
+        getsockopt;
+        getpeername;
+        getsockname;
+        socketpair;
+
+        /* resolver */
+        getaddrinfo;
+        freeaddrinfo;
+        getnameinfo;
+        gai_strerror;
+
+        /* inet / network byte order */
+        htons;
+        htonl;
+        ntohs;
+        ntohl;
+        inet_pton;
+        inet_ntop;
+        inet_addr;
+        inet_aton;
+        inet_ntoa;
+
+        /* unistd / POSIX I/O */
+        read;
+        write;
+        close;
+        lseek;
+        access;
+        chdir;
+        fchdir;
+        getcwd;
+        readlink;
+        symlink;
+        link;
+        unlink;
+        rmdir;
+        stat;
+        lstat;
+        fstat;
+        fsync;
+        fdatasync;
+        sleep;
+        usleep;
+        isatty;
+        getpid;
+        getppid;
+        getuid;
+        geteuid;
+        getgid;
+        getegid;
+
+        /* process */
+        fork;
+        execve;
+        execvp;
+        wait;
+        waitpid;
+        _exit;
+
+        /* signal */
+        signal;
+        sigaction;
+        kill;
+        killpg;
+        raise;
+        sigprocmask;
+        pthread_sigmask;
+        sigemptyset;
+        sigfillset;
+        sigaddset;
+        sigdelset;
+        sigismember;
+        pause;
+        sigsuspend;
+        sigaltstack;
+
+        /* I/O */
+        dup;
+        dup2;
+        pipe;
+        fcntl;
+
+        /* poll/select */
+        poll;
+        ppoll;
+        select;
+        pselect;
+
+        /* mmap */
+        mmap;
+        munmap;
+        mprotect;
+        msync;
+        madvise;
+
+        /* directory */
+        opendir;
+        closedir;
+        readdir;
+
+        /* time */
+        time;
+        clock;
+        clock_gettime;
+        localtime_r;
+
+        /* termios */
+        tcgetattr;
+        tcsetattr;
+        tcsendbreak;
+        tcdrain;
+        tcflush;
+        tcflow;
+        cfgetispeed;
+        cfgetospeed;
+        cfsetispeed;
+        cfsetospeed;
+
+        /* resource */
+        getrlimit;
+        setrlimit;
+
+        /* dlfcn */
+        dlopen;
+        dlclose;
+        dlsym;
+        dlerror;
 
     local:
         *;

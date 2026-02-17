@@ -155,6 +155,65 @@ pub unsafe extern "C" fn inet_ntop(
 }
 
 // ---------------------------------------------------------------------------
+// inet_aton
+// ---------------------------------------------------------------------------
+
+/// Parse dotted-quad IPv4 string and write to `inp`.
+///
+/// Returns 1 on success, 0 on failure.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn inet_aton(cp: *const c_char, inp: *mut u32) -> c_int {
+    let (_, decision) = runtime_policy::decide(ApiFamily::Inet, cp as usize, 0, false, true, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Inet, decision.profile, 5, true);
+        return 0;
+    }
+
+    if cp.is_null() || inp.is_null() {
+        runtime_policy::observe(ApiFamily::Inet, decision.profile, 5, true);
+        return 0;
+    }
+
+    let src_bytes = unsafe { std::ffi::CStr::from_ptr(cp) }.to_bytes();
+    let mut octets = [0u8; 4];
+    let rc = inet_core::inet_aton(src_bytes, &mut octets);
+    if rc == 1 {
+        // Write as network-byte-order u32 (same as in_addr.s_addr)
+        unsafe { *inp = u32::from_ne_bytes(octets) };
+    }
+    runtime_policy::observe(ApiFamily::Inet, decision.profile, 8, rc != 1);
+    rc
+}
+
+// ---------------------------------------------------------------------------
+// inet_ntoa
+// ---------------------------------------------------------------------------
+
+/// Convert IPv4 address (network byte order u32) to dotted-quad string.
+///
+/// Returns a pointer to a thread-local static buffer. This function is NOT
+/// reentrant — the buffer is overwritten on each call from the same thread.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn inet_ntoa(addr: u32) -> *const c_char {
+    // Thread-local buffer for the returned string (max "255.255.255.255\0" = 16 bytes).
+    thread_local! {
+        static BUF: std::cell::RefCell<[u8; 16]> = const { std::cell::RefCell::new([0u8; 16]) };
+    }
+
+    let octets = addr.to_ne_bytes();
+    let text = inet_core::format_ipv4(&[octets[0], octets[1], octets[2], octets[3]]);
+    let len = inet_core::format_ipv4_len(&[octets[0], octets[1], octets[2], octets[3]]);
+
+    BUF.with(|cell| {
+        let mut buf = cell.borrow_mut();
+        let copy_len = len.min(15);
+        buf[..copy_len].copy_from_slice(&text[..copy_len]);
+        buf[copy_len] = 0; // NUL terminator
+        buf.as_ptr() as *const c_char
+    })
+}
+
+// ---------------------------------------------------------------------------
 // inet_addr
 // ---------------------------------------------------------------------------
 

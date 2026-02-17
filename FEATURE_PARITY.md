@@ -3,13 +3,13 @@
 ## Current Reality
 
 Source of truth for implementation parity is `tests/conformance/reality_report.v1.json` (generated `2026-02-13T18:07:59Z`).
-Reality snapshot: total_exported=250, implemented=147, raw_syscall=83, glibc_call_through=20, stub=0.
+Reality snapshot: total_exported=297, implemented=196, raw_syscall=93, glibc_call_through=8, stub=0.
 Counts below reflect that generated snapshot and will change as matrix drift fixes land.
 
-Current exported ABI surface is **250 symbols**, classified as:
-- `Implemented`: 147
-- `RawSyscall`: 83
-- `GlibcCallThrough`: 20
+Current exported ABI surface is **297 symbols**, classified as:
+- `Implemented`: 196
+- `RawSyscall`: 93
+- `GlibcCallThrough`: 8
 - `Stub`: 0
 
 This means the current artifact is a **hybrid interposition profile** (mixed Rust-owned behavior, raw syscalls, host-glibc delegation, and deterministic stubs), not a full replacement profile.
