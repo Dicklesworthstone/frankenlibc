@@ -306,6 +306,23 @@ GLIBC_2.2.5 {
         getgroups;
         setgroups;
 
+        /* inotify */
+        inotify_init;
+        inotify_init1;
+        inotify_add_watch;
+        inotify_rm_watch;
+
+        /* interval timers */
+        setitimer;
+        getitimer;
+
+        /* filesystem creation */
+        mknod;
+        mkfifo;
+
+        /* system configuration */
+        sysconf;
+
         /* *at() family — directory-fd-relative operations */
         openat;
         fstatat;

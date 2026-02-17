@@ -17,19 +17,19 @@ FRANKENLIBC_MODE=hardened LD_PRELOAD=/usr/lib/frankenlibc/libfrankenlibc_abi.so 
 ## Current Implementation Reality (Machine-Generated)
 
 Source of truth: `tests/conformance/reality_report.v1.json` (generated `2026-02-13T18:07:59Z`).
-Reality snapshot: total_exported=374, implemented=202, raw_syscall=164, glibc_call_through=8, stub=0.
+Reality snapshot: total_exported=383, implemented=203, raw_syscall=172, glibc_call_through=8, stub=0.
 Counts below reflect that generated snapshot and will change as matrix drift fixes land.
 
 Current implementation is **hybrid interposition**, not full replacement. Exported symbols are classified into four support-taxonomy states:
 
 | Status | Count | Share | Meaning |
 |---|---:|---:|---|
-| `Implemented` | 202 | 54% | Native Rust implementation owns behavior |
-| `RawSyscall` | 164 | 44% | ABI entrypoint marshals directly to Linux syscalls |
+| `Implemented` | 203 | 53% | Native Rust implementation owns behavior |
+| `RawSyscall` | 172 | 45% | ABI entrypoint marshals directly to Linux syscalls |
 | `GlibcCallThrough` | 8 | 2% | Delegates to host glibc after membrane checks |
 | `Stub` | 0 | 0% | Deterministic fallback contract (documented) |
 
-Total currently classified exports: **374**.
+Total currently classified exports: **383**.
 
 Known stubs:
 - _none in current exported surface_

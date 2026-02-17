@@ -1545,3 +1545,170 @@ pub unsafe extern "C" fn usleep(usec: u32) -> c_int {
         )
     }
 }
+
+// ---------------------------------------------------------------------------
+// inotify
+// ---------------------------------------------------------------------------
+
+/// Linux `inotify_init` — initialize an inotify instance.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn inotify_init() -> c_int {
+    let rc = unsafe { libc::syscall(libc::SYS_inotify_init1, 0) as c_int };
+    if rc < 0 {
+        unsafe { set_abi_errno(last_host_errno(errno::ENOMEM)) };
+    }
+    rc
+}
+
+/// Linux `inotify_init1` — initialize an inotify instance with flags.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn inotify_init1(flags: c_int) -> c_int {
+    let rc = unsafe { libc::syscall(libc::SYS_inotify_init1, flags) as c_int };
+    if rc < 0 {
+        unsafe { set_abi_errno(last_host_errno(errno::EINVAL)) };
+    }
+    rc
+}
+
+/// Linux `inotify_add_watch` — add a watch to an inotify instance.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn inotify_add_watch(fd: c_int, pathname: *const c_char, mask: u32) -> c_int {
+    if pathname.is_null() {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        return -1;
+    }
+    let rc = unsafe { libc::syscall(libc::SYS_inotify_add_watch, fd, pathname, mask) as c_int };
+    if rc < 0 {
+        unsafe { set_abi_errno(last_host_errno(errno::EBADF)) };
+    }
+    rc
+}
+
+/// Linux `inotify_rm_watch` — remove a watch from an inotify instance.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn inotify_rm_watch(fd: c_int, wd: c_int) -> c_int {
+    let rc = unsafe { libc::syscall(libc::SYS_inotify_rm_watch, fd, wd) as c_int };
+    if rc < 0 {
+        unsafe { set_abi_errno(last_host_errno(errno::EBADF)) };
+    }
+    rc
+}
+
+// ---------------------------------------------------------------------------
+// setitimer / getitimer
+// ---------------------------------------------------------------------------
+
+/// POSIX `setitimer` — set value of an interval timer.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn setitimer(
+    which: c_int,
+    new_value: *const libc::itimerval,
+    old_value: *mut libc::itimerval,
+) -> c_int {
+    if new_value.is_null() {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        return -1;
+    }
+    let rc = unsafe { libc::syscall(libc::SYS_setitimer, which, new_value, old_value) as c_int };
+    if rc < 0 {
+        unsafe { set_abi_errno(last_host_errno(errno::EINVAL)) };
+    }
+    rc
+}
+
+/// POSIX `getitimer` — get value of an interval timer.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getitimer(which: c_int, curr_value: *mut libc::itimerval) -> c_int {
+    if curr_value.is_null() {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        return -1;
+    }
+    let rc = unsafe { libc::syscall(libc::SYS_getitimer, which, curr_value) as c_int };
+    if rc < 0 {
+        unsafe { set_abi_errno(last_host_errno(errno::EINVAL)) };
+    }
+    rc
+}
+
+// ---------------------------------------------------------------------------
+// mknod / mkfifo
+// ---------------------------------------------------------------------------
+
+/// POSIX `mknod` — create a special or ordinary file.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn mknod(path: *const c_char, mode: libc::mode_t, dev: libc::dev_t) -> c_int {
+    if path.is_null() {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        return -1;
+    }
+    unsafe {
+        syscall_ret_int(
+            libc::syscall(libc::SYS_mknodat, libc::AT_FDCWD, path, mode, dev),
+            errno::ENOENT,
+        )
+    }
+}
+
+/// POSIX `mkfifo` — create a FIFO (named pipe).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn mkfifo(path: *const c_char, mode: libc::mode_t) -> c_int {
+    // mkfifo is mknod with S_IFIFO
+    unsafe { mknod(path, mode | libc::S_IFIFO, 0) }
+}
+
+// ---------------------------------------------------------------------------
+// sysconf
+// ---------------------------------------------------------------------------
+
+/// POSIX `sysconf` — get configurable system variables.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn sysconf(name: c_int) -> libc::c_long {
+    match name {
+        libc::_SC_PAGESIZE => 4096,
+        libc::_SC_CLK_TCK => 100,
+        libc::_SC_NPROCESSORS_ONLN | libc::_SC_NPROCESSORS_CONF => {
+            // Read from /sys/devices/system/cpu/online or fallback.
+            // Simple approach: use SYS_sched_getaffinity to count CPUs.
+            let mut mask = [0u8; 128]; // 1024 CPUs max
+            let rc = unsafe {
+                libc::syscall(
+                    libc::SYS_sched_getaffinity,
+                    0,
+                    mask.len(),
+                    mask.as_mut_ptr(),
+                )
+            };
+            if rc > 0 {
+                let n = mask[..rc as usize]
+                    .iter()
+                    .map(|b| b.count_ones() as libc::c_long)
+                    .sum();
+                if n > 0 {
+                    return n;
+                }
+            }
+            1
+        }
+        libc::_SC_OPEN_MAX => {
+            // Try to get from getrlimit.
+            let mut rlim = std::mem::MaybeUninit::<libc::rlimit>::zeroed();
+            let rc = unsafe {
+                libc::syscall(libc::SYS_getrlimit, libc::RLIMIT_NOFILE, rlim.as_mut_ptr())
+            };
+            if rc == 0 {
+                let rlim = unsafe { rlim.assume_init() };
+                return rlim.rlim_cur as libc::c_long;
+            }
+            1024
+        }
+        libc::_SC_HOST_NAME_MAX => 64,
+        libc::_SC_LINE_MAX => 2048,
+        libc::_SC_ARG_MAX => 2097152, // 2 MiB
+        libc::_SC_CHILD_MAX => 32768,
+        libc::_SC_IOV_MAX => 1024,
+        _ => {
+            unsafe { set_abi_errno(errno::EINVAL) };
+            -1
+        }
+    }
+}

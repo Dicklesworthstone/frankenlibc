@@ -2,7 +2,7 @@
   "version": 2,
   "generated_at_utc": "2026-02-13T18:07:59Z",
   "library": "/data/tmp/cargo-target/release/libfrankenlibc_abi.so",
-  "total_exported": 374,
+  "total_exported": 383,
   "taxonomy": {
     "Implemented": "Native Rust code owns the entire operation. No host libc dependency. Full test coverage required.",
     "RawSyscall": "ABI entrypoint marshals arguments directly to Linux syscall instruction. No glibc call-through.",
@@ -1083,6 +1083,13 @@
       "semantics": "POSIX"
     },
     {
+      "symbol": "getitimer",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "syscall_veneer",
+      "semantics": "POSIX"
+    },
+    {
       "symbol": "getnameinfo",
       "status": "Implemented",
       "module": "resolv_abi",
@@ -1340,6 +1347,34 @@
       "strict_semantics": "Pure-computation byte-order and address conversion; no syscalls",
       "hardened_semantics": "Pure computation; no mode difference",
       "default_stub": false
+    },
+    {
+      "symbol": "inotify_add_watch",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "syscall_veneer",
+      "semantics": "Linux"
+    },
+    {
+      "symbol": "inotify_init",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "syscall_veneer",
+      "semantics": "Linux"
+    },
+    {
+      "symbol": "inotify_init1",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "syscall_veneer",
+      "semantics": "Linux"
+    },
+    {
+      "symbol": "inotify_rm_watch",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "syscall_veneer",
+      "semantics": "Linux"
     },
     {
       "symbol": "ioctl",
@@ -1659,6 +1694,20 @@
     },
     {
       "symbol": "mkdirat",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "syscall_veneer",
+      "semantics": "POSIX"
+    },
+    {
+      "symbol": "mkfifo",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "syscall_veneer",
+      "semantics": "POSIX"
+    },
+    {
+      "symbol": "mknod",
       "status": "RawSyscall",
       "module": "unistd_abi",
       "perf_class": "syscall_veneer",
@@ -2380,6 +2429,13 @@
       "default_stub": false
     },
     {
+      "symbol": "setitimer",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "syscall_veneer",
+      "semantics": "POSIX"
+    },
+    {
       "symbol": "setlocale",
       "status": "Implemented",
       "module": "locale_abi",
@@ -2888,6 +2944,13 @@
       "status": "RawSyscall",
       "module": "unistd_abi",
       "perf_class": "syscall_veneer",
+      "semantics": "POSIX"
+    },
+    {
+      "symbol": "sysconf",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "native",
       "semantics": "POSIX"
     },
     {
