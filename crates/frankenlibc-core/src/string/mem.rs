@@ -74,6 +74,39 @@ pub fn memrchr(haystack: &[u8], needle: u8, n: usize) -> Option<usize> {
     haystack[..count].iter().rposition(|&b| b == needle)
 }
 
+/// Searches `haystack` (first `n` bytes) for the byte sequence `needle` (of length `needle_len`).
+///
+/// Equivalent to GNU `memmem`. Returns the index of the first occurrence,
+/// or `None` if not found.
+pub fn memmem(haystack: &[u8], n: usize, needle: &[u8], needle_len: usize) -> Option<usize> {
+    let h_count = n.min(haystack.len());
+    let n_count = needle_len.min(needle.len());
+
+    if n_count == 0 {
+        return Some(0);
+    }
+    if n_count > h_count {
+        return None;
+    }
+
+    haystack[..h_count]
+        .windows(n_count)
+        .position(|window| window == &needle[..n_count])
+}
+
+/// Copies `n` bytes from `src` to `dest` and returns the index one past the
+/// last byte written.
+///
+/// Equivalent to GNU `mempcpy`. Only copies `min(n, src.len(), dest.len())` bytes.
+///
+/// Returns the number of bytes copied (which is also the index of the next
+/// unwritten byte in `dest`).
+pub fn mempcpy(dest: &mut [u8], src: &[u8], n: usize) -> usize {
+    let count = n.min(dest.len()).min(src.len());
+    dest[..count].copy_from_slice(&src[..count]);
+    count
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -144,6 +177,35 @@ mod tests {
     #[test]
     fn test_memrchr_not_found() {
         assert_eq!(memrchr(b"hello", b'z', 5), None);
+    }
+
+    #[test]
+    fn test_memmem_found() {
+        assert_eq!(memmem(b"hello world", 11, b"world", 5), Some(6));
+    }
+
+    #[test]
+    fn test_memmem_not_found() {
+        assert_eq!(memmem(b"hello world", 11, b"xyz", 3), None);
+    }
+
+    #[test]
+    fn test_memmem_empty_needle() {
+        assert_eq!(memmem(b"hello", 5, b"", 0), Some(0));
+    }
+
+    #[test]
+    fn test_memmem_needle_longer() {
+        assert_eq!(memmem(b"hi", 2, b"hello", 5), None);
+    }
+
+    #[test]
+    fn test_mempcpy_basic() {
+        let src = b"hello";
+        let mut dest = [0u8; 8];
+        let end = mempcpy(&mut dest, src, 5);
+        assert_eq!(end, 5);
+        assert_eq!(&dest[..5], b"hello");
     }
 
     proptest! {

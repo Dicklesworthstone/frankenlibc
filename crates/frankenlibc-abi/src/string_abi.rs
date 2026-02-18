@@ -2409,3 +2409,969 @@ pub unsafe extern "C" fn strtok_r(
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// strcasecmp
+// ---------------------------------------------------------------------------
+
+/// POSIX `strcasecmp` -- case-insensitive comparison of two null-terminated strings.
+///
+/// # Safety
+///
+/// Caller must ensure both `s1` and `s2` point to valid null-terminated strings.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strcasecmp(s1: *const c_char, s2: *const c_char) -> c_int {
+    let (aligned, recent_page, ordering) = stage_context_two(s1 as usize, s2 as usize);
+    if s1.is_null() || s2.is_null() {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Null)),
+        );
+        return 0;
+    }
+
+    let (mode, decision) = runtime_policy::decide(
+        ApiFamily::StringMemory,
+        s1 as usize,
+        0,
+        false,
+        known_remaining(s1 as usize).is_none() && known_remaining(s2 as usize).is_none(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Arena)),
+        );
+        runtime_policy::observe(ApiFamily::StringMemory, decision.profile, 6, true);
+        return 0;
+    }
+
+    let repair = repair_enabled(mode.heals_enabled(), decision.action);
+    let lhs_bound = if repair {
+        known_remaining(s1 as usize)
+    } else {
+        None
+    };
+    let rhs_bound = if repair {
+        known_remaining(s2 as usize)
+    } else {
+        None
+    };
+
+    // SAFETY: bounded scan within known limits.
+    let (result, span) = unsafe {
+        let (s1_len, _) = scan_c_string(s1, lhs_bound);
+        let (s2_len, _) = scan_c_string(s2, rhs_bound);
+        let s1_slice = std::slice::from_raw_parts(s1.cast::<u8>(), s1_len + 1);
+        let s2_slice = std::slice::from_raw_parts(s2.cast::<u8>(), s2_len + 1);
+        let r = frankenlibc_core::string::str::strcasecmp(s1_slice, s2_slice);
+        (r, s1_len.max(s2_len))
+    };
+
+    record_string_stage_outcome(
+        &ordering,
+        aligned,
+        recent_page,
+        Some(stage_index(&ordering, CheckStage::Bounds)),
+    );
+    runtime_policy::observe(
+        ApiFamily::StringMemory,
+        decision.profile,
+        runtime_policy::scaled_cost(7, span),
+        lhs_bound.is_some() || rhs_bound.is_some(),
+    );
+    result
+}
+
+// ---------------------------------------------------------------------------
+// strncasecmp
+// ---------------------------------------------------------------------------
+
+/// POSIX `strncasecmp` -- case-insensitive comparison of at most `n` bytes.
+///
+/// # Safety
+///
+/// Caller must ensure both `s1` and `s2` point to valid memory for the compared span.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strncasecmp(s1: *const c_char, s2: *const c_char, n: usize) -> c_int {
+    if n == 0 {
+        return 0;
+    }
+
+    let (aligned, recent_page, ordering) = stage_context_two(s1 as usize, s2 as usize);
+    if s1.is_null() || s2.is_null() {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Null)),
+        );
+        return 0;
+    }
+
+    let (mode, decision) = runtime_policy::decide(
+        ApiFamily::StringMemory,
+        s1 as usize,
+        n,
+        false,
+        known_remaining(s1 as usize).is_none() && known_remaining(s2 as usize).is_none(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Arena)),
+        );
+        runtime_policy::observe(ApiFamily::StringMemory, decision.profile, 6, true);
+        return 0;
+    }
+
+    let repair = repair_enabled(mode.heals_enabled(), decision.action);
+    let lhs_bound = if repair {
+        known_remaining(s1 as usize)
+    } else {
+        None
+    };
+    let rhs_bound = if repair {
+        known_remaining(s2 as usize)
+    } else {
+        None
+    };
+    let cmp_limit = match (lhs_bound, rhs_bound) {
+        (Some(a), Some(b)) => a.min(b).min(n),
+        _ => n,
+    };
+    let adverse = repair && cmp_limit < n;
+
+    // SAFETY: bounded compare within cmp_limit.
+    let result = unsafe {
+        let mut i = 0usize;
+        loop {
+            if i >= cmp_limit {
+                break 0;
+            }
+            let a = (*s1.add(i) as u8).to_ascii_lowercase();
+            let b = (*s2.add(i) as u8).to_ascii_lowercase();
+            if a != b {
+                break (a as c_int) - (b as c_int);
+            }
+            if a == 0 {
+                break 0;
+            }
+            i += 1;
+        }
+    };
+
+    if adverse {
+        record_truncation(n, cmp_limit);
+    }
+    record_string_stage_outcome(
+        &ordering,
+        aligned,
+        recent_page,
+        Some(stage_index(&ordering, CheckStage::Bounds)),
+    );
+    runtime_policy::observe(
+        ApiFamily::StringMemory,
+        decision.profile,
+        runtime_policy::scaled_cost(7, cmp_limit),
+        adverse,
+    );
+    result
+}
+
+// ---------------------------------------------------------------------------
+// strspn
+// ---------------------------------------------------------------------------
+
+/// POSIX `strspn` -- returns length of initial segment of `s` consisting of
+/// bytes in `accept`.
+///
+/// # Safety
+///
+/// Caller must ensure both `s` and `accept` are valid null-terminated strings.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strspn(s: *const c_char, accept: *const c_char) -> usize {
+    let (aligned, recent_page, ordering) = stage_context_two(s as usize, accept as usize);
+    if s.is_null() || accept.is_null() {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Null)),
+        );
+        return 0;
+    }
+
+    let (mode, decision) = runtime_policy::decide(
+        ApiFamily::StringMemory,
+        s as usize,
+        0,
+        false,
+        known_remaining(s as usize).is_none() && known_remaining(accept as usize).is_none(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Arena)),
+        );
+        runtime_policy::observe(ApiFamily::StringMemory, decision.profile, 6, true);
+        return 0;
+    }
+
+    let repair = repair_enabled(mode.heals_enabled(), decision.action);
+    let s_bound = if repair {
+        known_remaining(s as usize)
+    } else {
+        None
+    };
+    let accept_bound = if repair {
+        known_remaining(accept as usize)
+    } else {
+        None
+    };
+
+    // SAFETY: bounded scan.
+    let (result, span) = unsafe {
+        let (s_len, _) = scan_c_string(s, s_bound);
+        let (accept_len, _) = scan_c_string(accept, accept_bound);
+        let s_slice = std::slice::from_raw_parts(s.cast::<u8>(), s_len + 1);
+        let accept_slice = std::slice::from_raw_parts(accept.cast::<u8>(), accept_len + 1);
+        let r = frankenlibc_core::string::str::strspn(s_slice, accept_slice);
+        (r, s_len)
+    };
+
+    record_string_stage_outcome(
+        &ordering,
+        aligned,
+        recent_page,
+        Some(stage_index(&ordering, CheckStage::Bounds)),
+    );
+    runtime_policy::observe(
+        ApiFamily::StringMemory,
+        decision.profile,
+        runtime_policy::scaled_cost(7, span),
+        s_bound.is_some(),
+    );
+    result
+}
+
+// ---------------------------------------------------------------------------
+// strcspn
+// ---------------------------------------------------------------------------
+
+/// POSIX `strcspn` -- returns length of initial segment of `s` consisting
+/// entirely of bytes NOT in `reject`.
+///
+/// # Safety
+///
+/// Caller must ensure both `s` and `reject` are valid null-terminated strings.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strcspn(s: *const c_char, reject: *const c_char) -> usize {
+    let (aligned, recent_page, ordering) = stage_context_two(s as usize, reject as usize);
+    if s.is_null() || reject.is_null() {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Null)),
+        );
+        return 0;
+    }
+
+    let (mode, decision) = runtime_policy::decide(
+        ApiFamily::StringMemory,
+        s as usize,
+        0,
+        false,
+        known_remaining(s as usize).is_none() && known_remaining(reject as usize).is_none(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Arena)),
+        );
+        runtime_policy::observe(ApiFamily::StringMemory, decision.profile, 6, true);
+        return 0;
+    }
+
+    let repair = repair_enabled(mode.heals_enabled(), decision.action);
+    let s_bound = if repair {
+        known_remaining(s as usize)
+    } else {
+        None
+    };
+    let reject_bound = if repair {
+        known_remaining(reject as usize)
+    } else {
+        None
+    };
+
+    // SAFETY: bounded scan.
+    let (result, span) = unsafe {
+        let (s_len, _) = scan_c_string(s, s_bound);
+        let (reject_len, _) = scan_c_string(reject, reject_bound);
+        let s_slice = std::slice::from_raw_parts(s.cast::<u8>(), s_len + 1);
+        let reject_slice = std::slice::from_raw_parts(reject.cast::<u8>(), reject_len + 1);
+        let r = frankenlibc_core::string::str::strcspn(s_slice, reject_slice);
+        (r, s_len)
+    };
+
+    record_string_stage_outcome(
+        &ordering,
+        aligned,
+        recent_page,
+        Some(stage_index(&ordering, CheckStage::Bounds)),
+    );
+    runtime_policy::observe(
+        ApiFamily::StringMemory,
+        decision.profile,
+        runtime_policy::scaled_cost(7, span),
+        s_bound.is_some(),
+    );
+    result
+}
+
+// ---------------------------------------------------------------------------
+// strpbrk
+// ---------------------------------------------------------------------------
+
+/// POSIX `strpbrk` -- locates the first occurrence in `s` of any byte from `accept`.
+///
+/// Returns pointer to the matching byte, or null if not found.
+///
+/// # Safety
+///
+/// Caller must ensure both `s` and `accept` are valid null-terminated strings.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strpbrk(s: *const c_char, accept: *const c_char) -> *mut c_char {
+    let (aligned, recent_page, ordering) = stage_context_two(s as usize, accept as usize);
+    if s.is_null() || accept.is_null() {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Null)),
+        );
+        return std::ptr::null_mut();
+    }
+
+    let (mode, decision) = runtime_policy::decide(
+        ApiFamily::StringMemory,
+        s as usize,
+        0,
+        false,
+        known_remaining(s as usize).is_none() && known_remaining(accept as usize).is_none(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Arena)),
+        );
+        runtime_policy::observe(ApiFamily::StringMemory, decision.profile, 6, true);
+        return std::ptr::null_mut();
+    }
+
+    let repair = repair_enabled(mode.heals_enabled(), decision.action);
+    let s_bound = if repair {
+        known_remaining(s as usize)
+    } else {
+        None
+    };
+    let accept_bound = if repair {
+        known_remaining(accept as usize)
+    } else {
+        None
+    };
+
+    // SAFETY: bounded scan.
+    let (result, span) = unsafe {
+        let (s_len, _) = scan_c_string(s, s_bound);
+        let (accept_len, _) = scan_c_string(accept, accept_bound);
+        let s_slice = std::slice::from_raw_parts(s.cast::<u8>(), s_len + 1);
+        let accept_slice = std::slice::from_raw_parts(accept.cast::<u8>(), accept_len + 1);
+        match frankenlibc_core::string::str::strpbrk(s_slice, accept_slice) {
+            Some(idx) => (s.add(idx) as *mut c_char, s_len),
+            None => (std::ptr::null_mut(), s_len),
+        }
+    };
+
+    record_string_stage_outcome(
+        &ordering,
+        aligned,
+        recent_page,
+        Some(stage_index(&ordering, CheckStage::Bounds)),
+    );
+    runtime_policy::observe(
+        ApiFamily::StringMemory,
+        decision.profile,
+        runtime_policy::scaled_cost(7, span),
+        s_bound.is_some(),
+    );
+    result
+}
+
+// ---------------------------------------------------------------------------
+// strdup
+// ---------------------------------------------------------------------------
+
+/// POSIX `strdup` -- duplicates a null-terminated string into malloc'd memory.
+///
+/// Returns pointer to the new string, or null on failure.
+///
+/// # Safety
+///
+/// Caller must ensure `s` is a valid null-terminated string.
+/// The returned pointer must be freed with `free`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strdup(s: *const c_char) -> *mut c_char {
+    let (aligned, recent_page, ordering) = stage_context_one(s as usize);
+    if s.is_null() {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Null)),
+        );
+        return std::ptr::null_mut();
+    }
+
+    let (mode, decision) = runtime_policy::decide(
+        ApiFamily::StringMemory,
+        s as usize,
+        0,
+        false,
+        known_remaining(s as usize).is_none(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Arena)),
+        );
+        runtime_policy::observe(ApiFamily::StringMemory, decision.profile, 7, true);
+        return std::ptr::null_mut();
+    }
+
+    let repair = repair_enabled(mode.heals_enabled(), decision.action);
+    let bound = if repair {
+        known_remaining(s as usize)
+    } else {
+        None
+    };
+
+    // SAFETY: scan string, allocate via malloc, copy.
+    unsafe {
+        let (s_len, _) = scan_c_string(s, bound);
+        let alloc_size = s_len + 1;
+
+        let dst = crate::malloc_abi::malloc(alloc_size);
+        if dst.is_null() {
+            record_string_stage_outcome(
+                &ordering,
+                aligned,
+                recent_page,
+                Some(stage_index(&ordering, CheckStage::Bounds)),
+            );
+            runtime_policy::observe(
+                ApiFamily::StringMemory,
+                decision.profile,
+                runtime_policy::scaled_cost(8, s_len),
+                bound.is_some(),
+            );
+            return std::ptr::null_mut();
+        }
+
+        raw_memcpy_bytes(dst.cast::<u8>(), s.cast::<u8>(), s_len);
+        *(dst as *mut u8).add(s_len) = 0;
+
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Bounds)),
+        );
+        runtime_policy::observe(
+            ApiFamily::StringMemory,
+            decision.profile,
+            runtime_policy::scaled_cost(8, s_len),
+            bound.is_some(),
+        );
+        dst.cast::<c_char>()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// strndup
+// ---------------------------------------------------------------------------
+
+/// POSIX `strndup` -- duplicates at most `n` bytes of a null-terminated string
+/// into malloc'd memory.
+///
+/// Always null-terminates the result.
+///
+/// # Safety
+///
+/// Caller must ensure `s` is a valid null-terminated string.
+/// The returned pointer must be freed with `free`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strndup(s: *const c_char, n: usize) -> *mut c_char {
+    let (aligned, recent_page, ordering) = stage_context_one(s as usize);
+    if s.is_null() {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Null)),
+        );
+        return std::ptr::null_mut();
+    }
+
+    let (mode, decision) = runtime_policy::decide(
+        ApiFamily::StringMemory,
+        s as usize,
+        n,
+        false,
+        known_remaining(s as usize).is_none(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Arena)),
+        );
+        runtime_policy::observe(ApiFamily::StringMemory, decision.profile, 7, true);
+        return std::ptr::null_mut();
+    }
+
+    let repair = repair_enabled(mode.heals_enabled(), decision.action);
+    let bound = if repair {
+        known_remaining(s as usize).map(|b| b.min(n))
+    } else {
+        Some(n)
+    };
+
+    // SAFETY: scan string up to n, allocate via malloc, copy.
+    unsafe {
+        let (s_len, _) = scan_c_string(s, bound);
+        let copy_len = s_len.min(n);
+        let alloc_size = copy_len + 1;
+
+        let dst = crate::malloc_abi::malloc(alloc_size);
+        if dst.is_null() {
+            record_string_stage_outcome(
+                &ordering,
+                aligned,
+                recent_page,
+                Some(stage_index(&ordering, CheckStage::Bounds)),
+            );
+            runtime_policy::observe(
+                ApiFamily::StringMemory,
+                decision.profile,
+                runtime_policy::scaled_cost(8, copy_len),
+                bound.is_some() && bound != Some(n),
+            );
+            return std::ptr::null_mut();
+        }
+
+        if copy_len > 0 {
+            raw_memcpy_bytes(dst.cast::<u8>(), s.cast::<u8>(), copy_len);
+        }
+        *(dst as *mut u8).add(copy_len) = 0;
+
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Bounds)),
+        );
+        runtime_policy::observe(
+            ApiFamily::StringMemory,
+            decision.profile,
+            runtime_policy::scaled_cost(8, copy_len),
+            bound.is_some() && bound != Some(n),
+        );
+        dst.cast::<c_char>()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// memmem
+// ---------------------------------------------------------------------------
+
+/// GNU `memmem` -- locates the first occurrence of `needle` (of `needle_len`
+/// bytes) in `haystack` (of `haystack_len` bytes).
+///
+/// Returns pointer to the start of the match, or null if not found.
+///
+/// # Safety
+///
+/// Caller must ensure `haystack` is valid for `haystack_len` bytes and
+/// `needle` is valid for `needle_len` bytes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn memmem(
+    haystack: *const c_void,
+    haystack_len: usize,
+    needle: *const c_void,
+    needle_len: usize,
+) -> *mut c_void {
+    if needle_len == 0 {
+        return haystack as *mut c_void;
+    }
+
+    let (aligned, recent_page, ordering) = stage_context_two(haystack as usize, needle as usize);
+    if haystack.is_null() || needle.is_null() || haystack_len == 0 {
+        if haystack.is_null() || needle.is_null() {
+            record_string_stage_outcome(
+                &ordering,
+                aligned,
+                recent_page,
+                Some(stage_index(&ordering, CheckStage::Null)),
+            );
+        }
+        return std::ptr::null_mut();
+    }
+
+    let (mode, decision) = runtime_policy::decide(
+        ApiFamily::StringMemory,
+        haystack as usize,
+        haystack_len,
+        false,
+        known_remaining(haystack as usize).is_none() && known_remaining(needle as usize).is_none(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Arena)),
+        );
+        runtime_policy::observe(
+            ApiFamily::StringMemory,
+            decision.profile,
+            runtime_policy::scaled_cost(10, haystack_len),
+            true,
+        );
+        return std::ptr::null_mut();
+    }
+
+    let (hay_scan, clamped_h) = maybe_clamp_copy_len(
+        haystack_len,
+        Some(haystack as usize),
+        None,
+        repair_enabled(mode.heals_enabled(), decision.action),
+    );
+    let (needle_scan, _clamped_n) = maybe_clamp_copy_len(
+        needle_len,
+        Some(needle as usize),
+        None,
+        repair_enabled(mode.heals_enabled(), decision.action),
+    );
+
+    // SAFETY: bounded by clamped lengths.
+    let result = unsafe {
+        let h_bytes = std::slice::from_raw_parts(haystack.cast::<u8>(), hay_scan);
+        let n_bytes = std::slice::from_raw_parts(needle.cast::<u8>(), needle_scan);
+        match frankenlibc_core::string::mem::memmem(h_bytes, hay_scan, n_bytes, needle_scan) {
+            Some(idx) => (haystack as *mut u8).add(idx).cast::<c_void>(),
+            None => std::ptr::null_mut(),
+        }
+    };
+
+    record_string_stage_outcome(
+        &ordering,
+        aligned,
+        recent_page,
+        Some(stage_index(&ordering, CheckStage::Bounds)),
+    );
+    runtime_policy::observe(
+        ApiFamily::StringMemory,
+        decision.profile,
+        runtime_policy::scaled_cost(10, hay_scan),
+        clamped_h,
+    );
+    result
+}
+
+// ---------------------------------------------------------------------------
+// mempcpy
+// ---------------------------------------------------------------------------
+
+/// GNU `mempcpy` -- copies `n` bytes from `src` to `dst` and returns a pointer
+/// to the byte after the last written byte.
+///
+/// # Safety
+///
+/// Caller must ensure `src` and `dst` are valid for `n` bytes and do not overlap.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn mempcpy(dst: *mut c_void, src: *const c_void, n: usize) -> *mut c_void {
+    let Some(_membrane_guard) = enter_string_membrane_guard() else {
+        if n == 0 {
+            return dst;
+        }
+        if dst.is_null() || src.is_null() {
+            return std::ptr::null_mut();
+        }
+        // SAFETY: reentrant fallback.
+        unsafe {
+            raw_memcpy_bytes(dst.cast::<u8>(), src.cast::<u8>(), n);
+        }
+        return unsafe { (dst as *mut u8).add(n).cast() };
+    };
+
+    let aligned = ((dst as usize) | (src as usize)) & 0x7 == 0;
+    let recent_page = (!dst.is_null() && known_remaining(dst as usize).is_some())
+        || (!src.is_null() && known_remaining(src as usize).is_some());
+    let ordering = runtime_policy::check_ordering(ApiFamily::StringMemory, aligned, recent_page);
+
+    if n == 0 {
+        return dst;
+    }
+    if dst.is_null() || src.is_null() {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Null)),
+        );
+        return std::ptr::null_mut();
+    }
+
+    let (mode, decision) = runtime_policy::decide(
+        ApiFamily::StringMemory,
+        dst as usize,
+        n,
+        true,
+        known_remaining(dst as usize).is_none() && known_remaining(src as usize).is_none(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Arena)),
+        );
+        runtime_policy::observe(
+            ApiFamily::StringMemory,
+            decision.profile,
+            runtime_policy::scaled_cost(7, n),
+            true,
+        );
+        return std::ptr::null_mut();
+    }
+
+    let (copy_len, clamped) = maybe_clamp_copy_len(
+        n,
+        Some(src as usize),
+        Some(dst as usize),
+        mode.heals_enabled() || matches!(decision.action, MembraneAction::Repair(_)),
+    );
+    if copy_len == 0 {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Bounds)),
+        );
+        runtime_policy::observe(
+            ApiFamily::StringMemory,
+            decision.profile,
+            runtime_policy::scaled_cost(7, n),
+            clamped,
+        );
+        return dst;
+    }
+
+    // SAFETY: `copy_len` is either original `n` (strict) or clamped to known bounds.
+    unsafe {
+        raw_memcpy_bytes(dst.cast::<u8>(), src.cast::<u8>(), copy_len);
+    }
+    record_string_stage_outcome(&ordering, aligned, recent_page, None);
+    runtime_policy::observe(
+        ApiFamily::StringMemory,
+        decision.profile,
+        runtime_policy::scaled_cost(7, copy_len),
+        clamped,
+    );
+    // SAFETY: copy_len <= n, pointer arithmetic within copied range.
+    unsafe { (dst as *mut u8).add(copy_len).cast() }
+}
+
+// ---------------------------------------------------------------------------
+// strcasestr
+// ---------------------------------------------------------------------------
+
+/// GNU `strcasestr` -- case-insensitive version of strstr.
+///
+/// Returns pointer to the first case-insensitive occurrence of `needle`
+/// in `haystack`, or null if not found.
+///
+/// # Safety
+///
+/// Caller must ensure both `haystack` and `needle` are valid null-terminated strings.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strcasestr(haystack: *const c_char, needle: *const c_char) -> *mut c_char {
+    let (aligned, recent_page, ordering) = stage_context_two(haystack as usize, needle as usize);
+    if haystack.is_null() {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Null)),
+        );
+        return std::ptr::null_mut();
+    }
+    if needle.is_null() {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Null)),
+        );
+        return haystack as *mut c_char;
+    }
+
+    let (mode, decision) = runtime_policy::decide(
+        ApiFamily::StringMemory,
+        haystack as usize,
+        0,
+        false,
+        known_remaining(haystack as usize).is_none() && known_remaining(needle as usize).is_none(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        record_string_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Arena)),
+        );
+        runtime_policy::observe(ApiFamily::StringMemory, decision.profile, 10, true);
+        return std::ptr::null_mut();
+    }
+
+    let repair = repair_enabled(mode.heals_enabled(), decision.action);
+    let hay_bound = if repair {
+        known_remaining(haystack as usize)
+    } else {
+        None
+    };
+    let needle_bound = if repair {
+        known_remaining(needle as usize)
+    } else {
+        None
+    };
+
+    // SAFETY: bounded scan.
+    let (out, span) = unsafe {
+        let (hay_len, _) = scan_c_string(haystack, hay_bound);
+        let (needle_len, _) = scan_c_string(needle, needle_bound);
+        let h_slice = std::slice::from_raw_parts(haystack.cast::<u8>(), hay_len + 1);
+        let n_slice = std::slice::from_raw_parts(needle.cast::<u8>(), needle_len + 1);
+        match frankenlibc_core::string::str::strcasestr(h_slice, n_slice) {
+            Some(idx) => (haystack.add(idx) as *mut c_char, hay_len),
+            None => (std::ptr::null_mut(), hay_len),
+        }
+    };
+
+    record_string_stage_outcome(
+        &ordering,
+        aligned,
+        recent_page,
+        Some(stage_index(&ordering, CheckStage::Bounds)),
+    );
+    runtime_policy::observe(
+        ApiFamily::StringMemory,
+        decision.profile,
+        runtime_policy::scaled_cost(10, span),
+        hay_bound.is_some() || needle_bound.is_some(),
+    );
+    out
+}
+
+// ---------------------------------------------------------------------------
+// strerror
+// ---------------------------------------------------------------------------
+
+// Thread-local buffer for strerror return values.
+thread_local! {
+    static STRERROR_BUF: std::cell::RefCell<[u8; 256]> = const { std::cell::RefCell::new([0u8; 256]) };
+}
+
+/// POSIX `strerror` -- returns a pointer to a string describing the error number.
+///
+/// The returned string is stored in a thread-local buffer and must not be freed.
+///
+/// # Safety
+///
+/// The returned pointer is valid until the next call to `strerror` on the same thread.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strerror(errnum: c_int) -> *mut c_char {
+    let msg = frankenlibc_core::errno::strerror_message(errnum);
+    STRERROR_BUF
+        .try_with(|buf_cell| {
+            let mut buf = buf_cell.borrow_mut();
+            let msg_bytes = msg.as_bytes();
+            let copy_len = msg_bytes.len().min(buf.len() - 1);
+            buf[..copy_len].copy_from_slice(&msg_bytes[..copy_len]);
+            buf[copy_len] = 0;
+            buf.as_ptr() as *mut c_char
+        })
+        .unwrap_or(std::ptr::null_mut())
+}
+
+// ---------------------------------------------------------------------------
+// strerror_r
+// ---------------------------------------------------------------------------
+
+/// POSIX `strerror_r` (XSI-compliant) -- fills `buf` with the error message for `errnum`.
+///
+/// Returns 0 on success, or an errno value on failure.
+///
+/// # Safety
+///
+/// Caller must ensure `buf` is valid for `buflen` bytes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strerror_r(errnum: c_int, buf: *mut c_char, buflen: usize) -> c_int {
+    if buf.is_null() || buflen == 0 {
+        return frankenlibc_core::errno::EINVAL;
+    }
+
+    let msg = frankenlibc_core::errno::strerror_message(errnum);
+    let msg_bytes = msg.as_bytes();
+    let copy_len = msg_bytes.len().min(buflen - 1);
+
+    // SAFETY: caller guarantees `buf` is valid for `buflen` bytes.
+    unsafe {
+        raw_memcpy_bytes(buf.cast::<u8>(), msg_bytes.as_ptr(), copy_len);
+        *buf.add(copy_len) = 0;
+    }
+
+    if msg_bytes.len() >= buflen {
+        frankenlibc_core::errno::ERANGE
+    } else {
+        0
+    }
+}

@@ -230,6 +230,136 @@ pub fn strstr(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack.windows(n_len).position(|window| window == needle)
 }
 
+/// Case-insensitive comparison of two NUL-terminated byte strings.
+///
+/// Equivalent to POSIX `strcasecmp`. Compares byte-by-byte after converting
+/// ASCII letters to lowercase.
+pub fn strcasecmp(s1: &[u8], s2: &[u8]) -> i32 {
+    let mut i = 0;
+    loop {
+        let a = if i < s1.len() { s1[i] } else { 0 };
+        let b = if i < s2.len() { s2[i] } else { 0 };
+        let la = a.to_ascii_lowercase();
+        let lb = b.to_ascii_lowercase();
+
+        if la != lb {
+            return (la as i32) - (lb as i32);
+        }
+        if a == 0 {
+            return 0;
+        }
+        i += 1;
+    }
+}
+
+/// Case-insensitive comparison of at most `n` bytes of two NUL-terminated strings.
+///
+/// Equivalent to POSIX `strncasecmp`.
+pub fn strncasecmp(s1: &[u8], s2: &[u8], n: usize) -> i32 {
+    for i in 0..n {
+        let a = if i < s1.len() { s1[i] } else { 0 };
+        let b = if i < s2.len() { s2[i] } else { 0 };
+        let la = a.to_ascii_lowercase();
+        let lb = b.to_ascii_lowercase();
+
+        if la != lb {
+            return (la as i32) - (lb as i32);
+        }
+        if a == 0 {
+            return 0;
+        }
+    }
+    0
+}
+
+/// Returns the length of the initial segment of `s` consisting entirely of
+/// bytes in `accept`.
+///
+/// Equivalent to C `strspn`.
+pub fn strspn(s: &[u8], accept: &[u8]) -> usize {
+    let s_len = strlen(s);
+    let accept_len = strlen(accept);
+    let accept_set = &accept[..accept_len];
+
+    s[..s_len]
+        .iter()
+        .position(|b| !accept_set.contains(b))
+        .unwrap_or(s_len)
+}
+
+/// Returns the length of the initial segment of `s` consisting entirely of
+/// bytes NOT in `reject`.
+///
+/// Equivalent to C `strcspn`.
+pub fn strcspn(s: &[u8], reject: &[u8]) -> usize {
+    let s_len = strlen(s);
+    let reject_len = strlen(reject);
+    let reject_set = &reject[..reject_len];
+
+    s[..s_len]
+        .iter()
+        .position(|b| reject_set.contains(b))
+        .unwrap_or(s_len)
+}
+
+/// Locates the first occurrence of any byte from `accept` in `s`.
+///
+/// Equivalent to C `strpbrk`. Returns the index of the first match, or `None`.
+pub fn strpbrk(s: &[u8], accept: &[u8]) -> Option<usize> {
+    let s_len = strlen(s);
+    let accept_len = strlen(accept);
+    let accept_set = &accept[..accept_len];
+
+    s[..s_len].iter().position(|b| accept_set.contains(b))
+}
+
+/// Case-insensitive version of `strstr`. Finds the first occurrence of
+/// `needle` in `haystack`, ignoring ASCII case.
+///
+/// Equivalent to GNU `strcasestr`. Returns the byte index where `needle` starts,
+/// or `None` if not found.
+pub fn strcasestr(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    let h_len = strlen(haystack);
+    let n_len = strlen(needle);
+
+    if n_len == 0 {
+        return Some(0);
+    }
+    if n_len > h_len {
+        return None;
+    }
+
+    let haystack = &haystack[..h_len];
+    let needle = &needle[..n_len];
+
+    haystack
+        .windows(n_len)
+        .position(|window| window.eq_ignore_ascii_case(needle))
+}
+
+/// Duplicates a NUL-terminated string into a new `Vec<u8>`.
+///
+/// This is the safe core of C `strdup`. The ABI layer handles the actual
+/// malloc allocation. Returns the string bytes including the trailing NUL.
+pub fn strdup_bytes(s: &[u8]) -> Vec<u8> {
+    let len = strlen(s);
+    let mut out = Vec::with_capacity(len + 1);
+    out.extend_from_slice(&s[..len]);
+    out.push(0);
+    out
+}
+
+/// Duplicates at most `n` bytes of a NUL-terminated string into a new `Vec<u8>`.
+///
+/// This is the safe core of C `strndup`. Always NUL-terminates the result.
+pub fn strndup_bytes(s: &[u8], n: usize) -> Vec<u8> {
+    let len = strlen(s).min(n);
+    let mut out = Vec::with_capacity(len + 1);
+    out.extend_from_slice(&s[..len]);
+    out.push(0);
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -391,6 +521,26 @@ mod tests {
     #[test]
     fn test_strstr_empty_needle() {
         assert_eq!(strstr(b"hello\0", b"\0"), Some(0));
+    }
+
+    #[test]
+    fn test_strcasestr_found() {
+        assert_eq!(strcasestr(b"Hello World\0", b"world\0"), Some(6));
+    }
+
+    #[test]
+    fn test_strcasestr_not_found() {
+        assert_eq!(strcasestr(b"Hello World\0", b"xyz\0"), None);
+    }
+
+    #[test]
+    fn test_strcasestr_empty_needle() {
+        assert_eq!(strcasestr(b"hello\0", b"\0"), Some(0));
+    }
+
+    #[test]
+    fn test_strcasestr_exact_match() {
+        assert_eq!(strcasestr(b"ABC\0", b"abc\0"), Some(0));
     }
 
     proptest! {
