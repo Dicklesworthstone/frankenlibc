@@ -1971,3 +1971,143 @@ pub unsafe extern "C" fn wcstod(
 ) -> f64 {
     unsafe { libc_wcstod(nptr, endptr) }
 }
+
+// ---------------------------------------------------------------------------
+// Wide I/O functions — GlibcCallThrough
+// ---------------------------------------------------------------------------
+
+unsafe extern "C" {
+    #[link_name = "fgetwc"]
+    fn libc_fgetwc(stream: *mut std::ffi::c_void) -> u32;
+    #[link_name = "fputwc"]
+    fn libc_fputwc(wc: u32, stream: *mut std::ffi::c_void) -> u32;
+    #[link_name = "ungetwc"]
+    fn libc_ungetwc(wc: u32, stream: *mut std::ffi::c_void) -> u32;
+    #[link_name = "fgetws"]
+    fn libc_fgetws(ws: *mut libc::wchar_t, n: c_int, stream: *mut std::ffi::c_void) -> *mut libc::wchar_t;
+    #[link_name = "fputws"]
+    fn libc_fputws(ws: *const libc::wchar_t, stream: *mut std::ffi::c_void) -> c_int;
+    #[link_name = "getwchar"]
+    fn libc_getwchar() -> u32;
+    #[link_name = "putwchar"]
+    fn libc_putwchar(wc: u32) -> u32;
+    #[link_name = "fwprintf"]
+    fn libc_fwprintf(stream: *mut std::ffi::c_void, format: *const libc::wchar_t, ...) -> c_int;
+    #[link_name = "wprintf"]
+    fn libc_wprintf(format: *const libc::wchar_t, ...) -> c_int;
+    #[link_name = "swprintf"]
+    fn libc_swprintf(s: *mut libc::wchar_t, n: usize, format: *const libc::wchar_t, ...) -> c_int;
+    #[link_name = "vfwprintf"]
+    fn libc_vfwprintf(stream: *mut std::ffi::c_void, format: *const libc::wchar_t, ap: *mut std::ffi::c_void) -> c_int;
+    #[link_name = "vwprintf"]
+    fn libc_vwprintf(format: *const libc::wchar_t, ap: *mut std::ffi::c_void) -> c_int;
+    #[link_name = "vswprintf"]
+    fn libc_vswprintf(s: *mut libc::wchar_t, n: usize, format: *const libc::wchar_t, ap: *mut std::ffi::c_void) -> c_int;
+    #[link_name = "fwscanf"]
+    fn libc_fwscanf(stream: *mut std::ffi::c_void, format: *const libc::wchar_t, ...) -> c_int;
+    #[link_name = "wscanf"]
+    fn libc_wscanf(format: *const libc::wchar_t, ...) -> c_int;
+    #[link_name = "swscanf"]
+    fn libc_swscanf(s: *const libc::wchar_t, format: *const libc::wchar_t, ...) -> c_int;
+    #[link_name = "vfwscanf"]
+    fn libc_vfwscanf(stream: *mut std::ffi::c_void, format: *const libc::wchar_t, ap: *mut std::ffi::c_void) -> c_int;
+    #[link_name = "vwscanf"]
+    fn libc_vwscanf(format: *const libc::wchar_t, ap: *mut std::ffi::c_void) -> c_int;
+    #[link_name = "vswscanf"]
+    fn libc_vswscanf(s: *const libc::wchar_t, format: *const libc::wchar_t, ap: *mut std::ffi::c_void) -> c_int;
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn fgetwc(stream: *mut std::ffi::c_void) -> u32 {
+    unsafe { libc_fgetwc(stream) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn fputwc(wc: u32, stream: *mut std::ffi::c_void) -> u32 {
+    unsafe { libc_fputwc(wc, stream) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ungetwc(wc: u32, stream: *mut std::ffi::c_void) -> u32 {
+    unsafe { libc_ungetwc(wc, stream) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn fgetws(ws: *mut libc::wchar_t, n: c_int, stream: *mut std::ffi::c_void) -> *mut libc::wchar_t {
+    unsafe { libc_fgetws(ws, n, stream) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn fputws(ws: *const libc::wchar_t, stream: *mut std::ffi::c_void) -> c_int {
+    unsafe { libc_fputws(ws, stream) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getwchar() -> u32 {
+    unsafe { libc_getwchar() }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn putwchar(wc: u32) -> u32 {
+    unsafe { libc_putwchar(wc) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn fwprintf(stream: *mut std::ffi::c_void, format: *const libc::wchar_t, args: ...) -> c_int {
+    unsafe { libc_fwprintf(stream, format, args) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn wprintf(format: *const libc::wchar_t, args: ...) -> c_int {
+    unsafe { libc_wprintf(format, args) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn swprintf(s: *mut libc::wchar_t, n: usize, format: *const libc::wchar_t, args: ...) -> c_int {
+    unsafe { libc_swprintf(s, n, format, args) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn vfwprintf(stream: *mut std::ffi::c_void, format: *const libc::wchar_t, ap: *mut std::ffi::c_void) -> c_int {
+    unsafe { libc_vfwprintf(stream, format, ap) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn vwprintf(format: *const libc::wchar_t, ap: *mut std::ffi::c_void) -> c_int {
+    unsafe { libc_vwprintf(format, ap) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn vswprintf(s: *mut libc::wchar_t, n: usize, format: *const libc::wchar_t, ap: *mut std::ffi::c_void) -> c_int {
+    unsafe { libc_vswprintf(s, n, format, ap) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn fwscanf(stream: *mut std::ffi::c_void, format: *const libc::wchar_t, args: ...) -> c_int {
+    unsafe { libc_fwscanf(stream, format, args) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn wscanf(format: *const libc::wchar_t, args: ...) -> c_int {
+    unsafe { libc_wscanf(format, args) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn swscanf(s: *const libc::wchar_t, format: *const libc::wchar_t, args: ...) -> c_int {
+    unsafe { libc_swscanf(s, format, args) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn vfwscanf(stream: *mut std::ffi::c_void, format: *const libc::wchar_t, ap: *mut std::ffi::c_void) -> c_int {
+    unsafe { libc_vfwscanf(stream, format, ap) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn vwscanf(format: *const libc::wchar_t, ap: *mut std::ffi::c_void) -> c_int {
+    unsafe { libc_vwscanf(format, ap) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn vswscanf(s: *const libc::wchar_t, format: *const libc::wchar_t, ap: *mut std::ffi::c_void) -> c_int {
+    unsafe { libc_vswscanf(s, format, ap) }
+}

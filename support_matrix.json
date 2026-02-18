@@ -2,7 +2,7 @@
   "version": 2,
   "generated_at_utc": "2026-02-18T04:49:26Z",
   "library": "/data/tmp/cargo-target/release/libfrankenlibc_abi.so",
-  "total_exported": 821,
+  "total_exported": 854,
   "taxonomy": {
     "Implemented": "Native Rust code owns the entire operation. No host libc dependency. Full test coverage required.",
     "RawSyscall": "ABI entrypoint marshals arguments directly to Linux syscall instruction. No glibc call-through.",
@@ -547,6 +547,12 @@
       "module": "unistd_abi",
       "perf_class": "syscall_veneer",
       "semantics": "POSIX"
+    },
+    {
+      "symbol": "clearenv",
+      "status": "GlibcCallThrough",
+      "module": "stdlib_abi",
+      "perf_class": "fast"
     },
     {
       "symbol": "clearerr",
@@ -1323,6 +1329,12 @@
       "default_stub": false
     },
     {
+      "symbol": "fgetc_unlocked",
+      "status": "GlibcCallThrough",
+      "module": "stdio_abi",
+      "perf_class": "fast"
+    },
+    {
       "symbol": "fgetpos",
       "status": "Implemented",
       "module": "stdio_abi",
@@ -1348,6 +1360,18 @@
       "strict_semantics": "Native stream-registry + syscall-backed stdio path; no host glibc call-through",
       "hardened_semantics": "Native stream-registry + syscall-backed stdio path with membrane validation/repair; no host glibc call-through",
       "default_stub": false
+    },
+    {
+      "symbol": "fgetwc",
+      "status": "GlibcCallThrough",
+      "module": "wchar_abi",
+      "perf_class": "fast"
+    },
+    {
+      "symbol": "fgetws",
+      "status": "GlibcCallThrough",
+      "module": "wchar_abi",
+      "perf_class": "fast"
     },
     {
       "symbol": "fgetxattr",
@@ -1382,6 +1406,12 @@
       "module": "unistd_abi",
       "perf_class": "syscall_veneer",
       "semantics": "BSD"
+    },
+    {
+      "symbol": "flockfile",
+      "status": "GlibcCallThrough",
+      "module": "stdio_abi",
+      "perf_class": "fast"
     },
     {
       "symbol": "floor",
@@ -1432,6 +1462,12 @@
       "status": "Implemented",
       "module": "math_abi",
       "notes": ""
+    },
+    {
+      "symbol": "fmemopen",
+      "status": "GlibcCallThrough",
+      "module": "stdio_abi",
+      "perf_class": "fast"
     },
     {
       "symbol": "fmin",
@@ -1495,6 +1531,12 @@
       "default_stub": false
     },
     {
+      "symbol": "fopencookie",
+      "status": "GlibcCallThrough",
+      "module": "stdio_abi",
+      "perf_class": "fast"
+    },
+    {
       "symbol": "fork",
       "status": "RawSyscall",
       "module": "process_abi",
@@ -1540,6 +1582,12 @@
       "default_stub": false
     },
     {
+      "symbol": "fputc_unlocked",
+      "status": "GlibcCallThrough",
+      "module": "stdio_abi",
+      "perf_class": "fast"
+    },
+    {
       "symbol": "fputs",
       "status": "Implemented",
       "module": "stdio_abi",
@@ -1547,6 +1595,18 @@
       "strict_semantics": "Native stream-registry + syscall-backed stdio path; no host glibc call-through",
       "hardened_semantics": "Native stream-registry + syscall-backed stdio path with membrane validation/repair; no host glibc call-through",
       "default_stub": false
+    },
+    {
+      "symbol": "fputwc",
+      "status": "GlibcCallThrough",
+      "module": "wchar_abi",
+      "perf_class": "fast"
+    },
+    {
+      "symbol": "fputws",
+      "status": "GlibcCallThrough",
+      "module": "wchar_abi",
+      "perf_class": "fast"
     },
     {
       "symbol": "fread",
@@ -1774,6 +1834,12 @@
       "default_stub": false
     },
     {
+      "symbol": "ftrylockfile",
+      "status": "GlibcCallThrough",
+      "module": "stdio_abi",
+      "perf_class": "fast"
+    },
+    {
       "symbol": "ftw",
       "status": "GlibcCallThrough",
       "module": "unistd_abi",
@@ -1783,6 +1849,18 @@
       "default_stub": false
     },
     {
+      "symbol": "funlockfile",
+      "status": "GlibcCallThrough",
+      "module": "stdio_abi",
+      "perf_class": "fast"
+    },
+    {
+      "symbol": "fwprintf",
+      "status": "GlibcCallThrough",
+      "module": "wchar_abi",
+      "perf_class": "fast"
+    },
+    {
       "symbol": "fwrite",
       "status": "Implemented",
       "module": "stdio_abi",
@@ -1790,6 +1868,12 @@
       "strict_semantics": "Native stream-registry + syscall-backed stdio path; no host glibc call-through",
       "hardened_semantics": "Native stream-registry + syscall-backed stdio path with membrane validation/repair; no host glibc call-through",
       "default_stub": false
+    },
+    {
+      "symbol": "fwscanf",
+      "status": "GlibcCallThrough",
+      "module": "wchar_abi",
+      "perf_class": "fast"
     },
     {
       "symbol": "gai_strerror",
@@ -1841,6 +1925,12 @@
       "strict_semantics": "Function alias for fgetc; reads one byte from stream",
       "hardened_semantics": "Same as strict; inherits fgetc membrane checks",
       "default_stub": false
+    },
+    {
+      "symbol": "getc_unlocked",
+      "status": "GlibcCallThrough",
+      "module": "stdio_abi",
+      "perf_class": "fast"
     },
     {
       "symbol": "getchar",
@@ -2293,6 +2383,12 @@
       "symbol": "getutent",
       "status": "GlibcCallThrough",
       "module": "unistd_abi",
+      "perf_class": "fast"
+    },
+    {
+      "symbol": "getwchar",
+      "status": "GlibcCallThrough",
+      "module": "wchar_abi",
       "perf_class": "fast"
     },
     {
@@ -3332,11 +3428,23 @@
       "default_stub": false
     },
     {
+      "symbol": "mkostemps",
+      "status": "GlibcCallThrough",
+      "module": "stdlib_abi",
+      "perf_class": "syscall"
+    },
+    {
       "symbol": "mkstemp",
       "header": "stdlib.h",
       "family": "unistd",
       "status": "GlibcCallThrough",
       "notes": "Create temporary file (delegates to libc)"
+    },
+    {
+      "symbol": "mkstemps",
+      "status": "GlibcCallThrough",
+      "module": "stdlib_abi",
+      "perf_class": "syscall"
     },
     {
       "symbol": "mktime",
@@ -3640,6 +3748,12 @@
       "strict_semantics": "LP64 alias via glibc",
       "hardened_semantics": "LP64 alias via glibc",
       "default_stub": false
+    },
+    {
+      "symbol": "open_memstream",
+      "status": "GlibcCallThrough",
+      "module": "stdio_abi",
+      "perf_class": "fast"
     },
     {
       "symbol": "openat",
@@ -4518,6 +4632,12 @@
       "default_stub": false
     },
     {
+      "symbol": "putc_unlocked",
+      "status": "GlibcCallThrough",
+      "module": "stdio_abi",
+      "perf_class": "fast"
+    },
+    {
       "symbol": "putchar",
       "status": "Implemented",
       "module": "stdio_abi",
@@ -4541,6 +4661,12 @@
       "strict_semantics": "Native string scan with direct write to stdout fd plus trailing newline; no host glibc delegation",
       "hardened_semantics": "Native implementation; membrane bounds string scan, logs TruncateWithNull for unterminated strings",
       "default_stub": false
+    },
+    {
+      "symbol": "putwchar",
+      "status": "GlibcCallThrough",
+      "module": "wchar_abi",
+      "perf_class": "fast"
     },
     {
       "symbol": "pwrite",
@@ -5280,6 +5406,12 @@
       "strict_semantics": "Phase-1 capture with metadata tracking.",
       "hardened_semantics": "Same with additional validation.",
       "default_stub": "Returns -1"
+    },
+    {
+      "symbol": "setlinebuf",
+      "status": "GlibcCallThrough",
+      "module": "stdio_abi",
+      "perf_class": "fast"
     },
     {
       "symbol": "setlocale",
@@ -6163,6 +6295,18 @@
       "default_stub": false
     },
     {
+      "symbol": "swprintf",
+      "status": "GlibcCallThrough",
+      "module": "wchar_abi",
+      "perf_class": "fast"
+    },
+    {
+      "symbol": "swscanf",
+      "status": "GlibcCallThrough",
+      "module": "wchar_abi",
+      "perf_class": "fast"
+    },
+    {
       "symbol": "symlink",
       "status": "RawSyscall",
       "module": "unistd_abi",
@@ -6524,6 +6668,12 @@
       "default_stub": false
     },
     {
+      "symbol": "ungetwc",
+      "status": "GlibcCallThrough",
+      "module": "wchar_abi",
+      "perf_class": "fast"
+    },
+    {
       "symbol": "unlink",
       "status": "RawSyscall",
       "module": "unistd_abi",
@@ -6612,6 +6762,18 @@
       "default_stub": "Returns EOF"
     },
     {
+      "symbol": "vfwprintf",
+      "status": "GlibcCallThrough",
+      "module": "wchar_abi",
+      "perf_class": "fast"
+    },
+    {
+      "symbol": "vfwscanf",
+      "status": "GlibcCallThrough",
+      "module": "wchar_abi",
+      "perf_class": "fast"
+    },
+    {
       "symbol": "vmsplice",
       "status": "RawSyscall",
       "module": "io_abi",
@@ -6660,6 +6822,18 @@
       "default_stub": "Returns EOF"
     },
     {
+      "symbol": "vswprintf",
+      "status": "GlibcCallThrough",
+      "module": "wchar_abi",
+      "perf_class": "fast"
+    },
+    {
+      "symbol": "vswscanf",
+      "status": "GlibcCallThrough",
+      "module": "wchar_abi",
+      "perf_class": "fast"
+    },
+    {
       "symbol": "vsyslog",
       "status": "GlibcCallThrough",
       "module": "unistd_abi",
@@ -6667,6 +6841,18 @@
       "strict_semantics": "Passthrough to glibc vsyslog",
       "hardened_semantics": "Passthrough to glibc vsyslog",
       "default_stub": false
+    },
+    {
+      "symbol": "vwprintf",
+      "status": "GlibcCallThrough",
+      "module": "wchar_abi",
+      "perf_class": "fast"
+    },
+    {
+      "symbol": "vwscanf",
+      "status": "GlibcCallThrough",
+      "module": "wchar_abi",
+      "perf_class": "fast"
     },
     {
       "symbol": "wait",
@@ -7005,6 +7191,12 @@
       "default_stub": false
     },
     {
+      "symbol": "wprintf",
+      "status": "GlibcCallThrough",
+      "module": "wchar_abi",
+      "perf_class": "fast"
+    },
+    {
       "symbol": "write",
       "status": "RawSyscall",
       "module": "unistd_abi",
@@ -7019,6 +7211,12 @@
       "module": "io_abi",
       "perf_class": "syscall_veneer",
       "semantics": "POSIX"
+    },
+    {
+      "symbol": "wscanf",
+      "status": "GlibcCallThrough",
+      "module": "wchar_abi",
+      "perf_class": "fast"
     }
   ],
   "summary": {
@@ -7030,6 +7228,6 @@
   },
   "implemented": 389,
   "raw_syscall": 211,
-  "glibc_call_through": 221,
+  "glibc_call_through": 254,
   "stub": 0
 }

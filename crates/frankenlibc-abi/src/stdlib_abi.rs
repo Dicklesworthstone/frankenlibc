@@ -1281,3 +1281,31 @@ pub unsafe extern "C" fn strtold(nptr: *const c_char, endptr: *mut *mut c_char) 
 pub unsafe extern "C" fn mkostemp(template: *mut c_char, flags: c_int) -> c_int {
     unsafe { libc_mkostemp(template, flags) }
 }
+
+// ---------------------------------------------------------------------------
+// mkstemps / mkostemps / clearenv — GlibcCallThrough
+// ---------------------------------------------------------------------------
+
+unsafe extern "C" {
+    #[link_name = "mkstemps"]
+    fn libc_mkstemps(template: *mut c_char, suffixlen: c_int) -> c_int;
+    #[link_name = "mkostemps"]
+    fn libc_mkostemps(template: *mut c_char, suffixlen: c_int, flags: c_int) -> c_int;
+    #[link_name = "clearenv"]
+    fn libc_clearenv() -> c_int;
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn mkstemps(template: *mut c_char, suffixlen: c_int) -> c_int {
+    unsafe { libc_mkstemps(template, suffixlen) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn mkostemps(template: *mut c_char, suffixlen: c_int, flags: c_int) -> c_int {
+    unsafe { libc_mkostemps(template, suffixlen, flags) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn clearenv() -> c_int {
+    unsafe { libc_clearenv() }
+}

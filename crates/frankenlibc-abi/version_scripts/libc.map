@@ -95,6 +95,27 @@ GLIBC_2.2.5 {
         wcstoul;
         wcstod;
 
+        /* wide I/O */
+        fgetwc;
+        fputwc;
+        ungetwc;
+        fgetws;
+        fputws;
+        getwchar;
+        putwchar;
+        fwprintf;
+        wprintf;
+        swprintf;
+        vfwprintf;
+        vwprintf;
+        vswprintf;
+        fwscanf;
+        wscanf;
+        swscanf;
+        vfwscanf;
+        vwscanf;
+        vswscanf;
+
         /* multibyte/wide character conversion */
         mblen;
         mbtowc;
@@ -166,6 +187,9 @@ GLIBC_2.2.5 {
         atexit;
         reallocarray;
         mkostemp;
+        mkstemps;
+        mkostemps;
+        clearenv;
 
         /* ctype */
         isalnum;
@@ -184,6 +208,19 @@ GLIBC_2.2.5 {
         toascii;
         tolower;
         toupper;
+
+        /* stdio extras */
+        setlinebuf;
+        flockfile;
+        ftrylockfile;
+        funlockfile;
+        getc_unlocked;
+        putc_unlocked;
+        fgetc_unlocked;
+        fputc_unlocked;
+        fmemopen;
+        open_memstream;
+        fopencookie;
 
         /* stdio */
         printf;
