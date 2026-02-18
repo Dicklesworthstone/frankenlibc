@@ -2509,3 +2509,171 @@ pub unsafe extern "C" fn pidfd_send_signal(
     }
     rc
 }
+
+// ---------------------------------------------------------------------------
+// Extended attributes — RawSyscall
+// ---------------------------------------------------------------------------
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getxattr(
+    path: *const c_char, name: *const c_char, value: *mut c_void, size: usize,
+) -> isize {
+    let rc = unsafe { libc::syscall(libc::SYS_getxattr, path, name, value, size) };
+    if rc < 0 { unsafe { set_abi_errno(std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::ENOTSUP)) }; }
+    rc as isize
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn setxattr(
+    path: *const c_char, name: *const c_char, value: *const c_void, size: usize, flags: c_int,
+) -> c_int {
+    let rc = unsafe { libc::syscall(libc::SYS_setxattr, path, name, value, size, flags) } as c_int;
+    if rc < 0 { unsafe { set_abi_errno(std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::ENOTSUP)) }; }
+    rc
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn listxattr(path: *const c_char, list: *mut c_char, size: usize) -> isize {
+    let rc = unsafe { libc::syscall(libc::SYS_listxattr, path, list, size) };
+    if rc < 0 { unsafe { set_abi_errno(std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::ENOTSUP)) }; }
+    rc as isize
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn removexattr(path: *const c_char, name: *const c_char) -> c_int {
+    let rc = unsafe { libc::syscall(libc::SYS_removexattr, path, name) } as c_int;
+    if rc < 0 { unsafe { set_abi_errno(std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::ENOTSUP)) }; }
+    rc
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn fgetxattr(fd: c_int, name: *const c_char, value: *mut c_void, size: usize) -> isize {
+    let rc = unsafe { libc::syscall(libc::SYS_fgetxattr, fd, name, value, size) };
+    if rc < 0 { unsafe { set_abi_errno(std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::ENOTSUP)) }; }
+    rc as isize
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn fsetxattr(
+    fd: c_int, name: *const c_char, value: *const c_void, size: usize, flags: c_int,
+) -> c_int {
+    let rc = unsafe { libc::syscall(libc::SYS_fsetxattr, fd, name, value, size, flags) } as c_int;
+    if rc < 0 { unsafe { set_abi_errno(std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::ENOTSUP)) }; }
+    rc
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn flistxattr(fd: c_int, list: *mut c_char, size: usize) -> isize {
+    let rc = unsafe { libc::syscall(libc::SYS_flistxattr, fd, list, size) };
+    if rc < 0 { unsafe { set_abi_errno(std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::ENOTSUP)) }; }
+    rc as isize
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn fremovexattr(fd: c_int, name: *const c_char) -> c_int {
+    let rc = unsafe { libc::syscall(libc::SYS_fremovexattr, fd, name) } as c_int;
+    if rc < 0 { unsafe { set_abi_errno(std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::ENOTSUP)) }; }
+    rc
+}
+
+// ---------------------------------------------------------------------------
+// Misc Linux syscalls — RawSyscall
+// ---------------------------------------------------------------------------
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn mincore(addr: *mut c_void, length: usize, vec: *mut u8) -> c_int {
+    let rc = unsafe { libc::syscall(libc::SYS_mincore, addr, length, vec) } as c_int;
+    if rc < 0 { unsafe { set_abi_errno(std::io::Error::last_os_error().raw_os_error().unwrap_or(errno::ENOMEM)) }; }
+    rc
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn posix_fadvise(fd: c_int, offset: i64, len: i64, advice: c_int) -> c_int {
+    unsafe { libc::syscall(libc::SYS_fadvise64, fd, offset, len, advice) as c_int }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn readahead(fd: c_int, offset: i64, count: usize) -> isize {
+    let rc = unsafe { libc::syscall(libc::SYS_readahead, fd, offset, count) };
+    if rc < 0 { unsafe { set_abi_errno(std::io::Error::last_os_error().raw_os_error().unwrap_or(errno::EBADF)) }; }
+    rc as isize
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn syncfs(fd: c_int) -> c_int {
+    let rc = unsafe { libc::syscall(libc::SYS_syncfs, fd) } as c_int;
+    if rc < 0 { unsafe { set_abi_errno(std::io::Error::last_os_error().raw_os_error().unwrap_or(errno::EBADF)) }; }
+    rc
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn sync() {
+    unsafe { libc::syscall(libc::SYS_sync) };
+}
+
+// ---------------------------------------------------------------------------
+// PTY / crypt / utmp — GlibcCallThrough
+// ---------------------------------------------------------------------------
+
+unsafe extern "C" {
+    #[link_name = "openpty"]
+    fn libc_openpty(amaster: *mut c_int, aslave: *mut c_int, name: *mut c_char, termp: *const c_void, winp: *const c_void) -> c_int;
+    #[link_name = "login_tty"]
+    fn libc_login_tty(fd: c_int) -> c_int;
+    #[link_name = "forkpty"]
+    fn libc_forkpty(amaster: *mut c_int, name: *mut c_char, termp: *const c_void, winp: *const c_void) -> libc::pid_t;
+    #[link_name = "grantpt"]
+    fn libc_grantpt(fd: c_int) -> c_int;
+    #[link_name = "unlockpt"]
+    fn libc_unlockpt(fd: c_int) -> c_int;
+    #[link_name = "ptsname"]
+    fn libc_ptsname(fd: c_int) -> *mut c_char;
+    #[link_name = "posix_openpt"]
+    fn libc_posix_openpt(flags: c_int) -> c_int;
+    #[link_name = "crypt"]
+    fn libc_crypt(key: *const c_char, salt: *const c_char) -> *mut c_char;
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn openpty(
+    amaster: *mut c_int, aslave: *mut c_int, name: *mut c_char, termp: *const c_void, winp: *const c_void,
+) -> c_int {
+    unsafe { libc_openpty(amaster, aslave, name, termp, winp) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn login_tty(fd: c_int) -> c_int {
+    unsafe { libc_login_tty(fd) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn forkpty(
+    amaster: *mut c_int, name: *mut c_char, termp: *const c_void, winp: *const c_void,
+) -> libc::pid_t {
+    unsafe { libc_forkpty(amaster, name, termp, winp) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn grantpt(fd: c_int) -> c_int {
+    unsafe { libc_grantpt(fd) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn unlockpt(fd: c_int) -> c_int {
+    unsafe { libc_unlockpt(fd) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ptsname(fd: c_int) -> *mut c_char {
+    unsafe { libc_ptsname(fd) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn posix_openpt(flags: c_int) -> c_int {
+    unsafe { libc_posix_openpt(flags) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn crypt(key: *const c_char, salt: *const c_char) -> *mut c_char {
+    unsafe { libc_crypt(key, salt) }
+}

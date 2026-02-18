@@ -158,3 +158,30 @@ pub unsafe extern "C" fn dlerror() -> *const c_char {
     clear_dlerror();
     msg
 }
+
+// ---------------------------------------------------------------------------
+// dl_iterate_phdr / dladdr — GlibcCallThrough
+// ---------------------------------------------------------------------------
+
+unsafe extern "C" {
+    #[link_name = "dl_iterate_phdr"]
+    fn libc_dl_iterate_phdr(
+        callback: Option<unsafe extern "C" fn(*mut c_void, usize, *mut c_void) -> c_int>,
+        data: *mut c_void,
+    ) -> c_int;
+    #[link_name = "dladdr"]
+    fn libc_dladdr(addr: *const c_void, info: *mut c_void) -> c_int;
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn dl_iterate_phdr(
+    callback: Option<unsafe extern "C" fn(*mut c_void, usize, *mut c_void) -> c_int>,
+    data: *mut c_void,
+) -> c_int {
+    unsafe { libc_dl_iterate_phdr(callback, data) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn dladdr(addr: *const c_void, info: *mut c_void) -> c_int {
+    unsafe { libc_dladdr(addr, info) }
+}

@@ -418,6 +418,16 @@ GLIBC_2.2.5 {
         pthread_setcanceltype;
         pthread_testcancel;
         pthread_getattr_np;
+        pthread_spin_init;
+        pthread_spin_destroy;
+        pthread_spin_lock;
+        pthread_spin_trylock;
+        pthread_spin_unlock;
+        pthread_barrier_init;
+        pthread_barrier_destroy;
+        pthread_barrier_wait;
+        pthread_setname_np;
+        pthread_getname_np;
 
         /* passwd database */
         getpwnam;
@@ -737,6 +747,8 @@ GLIBC_2.2.5 {
         dlclose;
         dlsym;
         dlerror;
+        dladdr;
+        dl_iterate_phdr;
 
         /* syslog */
         openlog;
@@ -835,6 +847,35 @@ GLIBC_2.2.5 {
         close_range;
         pidfd_open;
         pidfd_send_signal;
+
+        /* extended attributes */
+        getxattr;
+        setxattr;
+        listxattr;
+        removexattr;
+        fgetxattr;
+        fsetxattr;
+        flistxattr;
+        fremovexattr;
+
+        /* misc Linux */
+        mincore;
+        posix_fadvise;
+        readahead;
+        syncfs;
+        sync;
+
+        /* PTY */
+        openpty;
+        login_tty;
+        forkpty;
+        grantpt;
+        unlockpt;
+        ptsname;
+        posix_openpt;
+
+        /* crypt */
+        crypt;
 
         /* 64-bit LFS variants */
         open64;

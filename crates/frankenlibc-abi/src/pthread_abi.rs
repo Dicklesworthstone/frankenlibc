@@ -1764,6 +1764,89 @@ pub unsafe extern "C" fn pthread_getattr_np(
     unsafe { libc_pthread_getattr_np(thread, attr) }
 }
 
+// ---------------------------------------------------------------------------
+// pthread spin locks — GlibcCallThrough
+// ---------------------------------------------------------------------------
+
+unsafe extern "C" {
+    #[link_name = "pthread_spin_init"]
+    fn libc_pthread_spin_init(lock: *mut c_void, pshared: c_int) -> c_int;
+    #[link_name = "pthread_spin_destroy"]
+    fn libc_pthread_spin_destroy(lock: *mut c_void) -> c_int;
+    #[link_name = "pthread_spin_lock"]
+    fn libc_pthread_spin_lock(lock: *mut c_void) -> c_int;
+    #[link_name = "pthread_spin_trylock"]
+    fn libc_pthread_spin_trylock(lock: *mut c_void) -> c_int;
+    #[link_name = "pthread_spin_unlock"]
+    fn libc_pthread_spin_unlock(lock: *mut c_void) -> c_int;
+    #[link_name = "pthread_barrier_init"]
+    fn libc_pthread_barrier_init(barrier: *mut c_void, attr: *const c_void, count: libc::c_uint) -> c_int;
+    #[link_name = "pthread_barrier_destroy"]
+    fn libc_pthread_barrier_destroy(barrier: *mut c_void) -> c_int;
+    #[link_name = "pthread_barrier_wait"]
+    fn libc_pthread_barrier_wait(barrier: *mut c_void) -> c_int;
+    #[link_name = "pthread_setname_np"]
+    fn libc_pthread_setname_np(thread: libc::pthread_t, name: *const std::ffi::c_char) -> c_int;
+    #[link_name = "pthread_getname_np"]
+    fn libc_pthread_getname_np(thread: libc::pthread_t, name: *mut std::ffi::c_char, len: usize) -> c_int;
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_spin_init(lock: *mut c_void, pshared: c_int) -> c_int {
+    unsafe { libc_pthread_spin_init(lock, pshared) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_spin_destroy(lock: *mut c_void) -> c_int {
+    unsafe { libc_pthread_spin_destroy(lock) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_spin_lock(lock: *mut c_void) -> c_int {
+    unsafe { libc_pthread_spin_lock(lock) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_spin_trylock(lock: *mut c_void) -> c_int {
+    unsafe { libc_pthread_spin_trylock(lock) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_spin_unlock(lock: *mut c_void) -> c_int {
+    unsafe { libc_pthread_spin_unlock(lock) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_barrier_init(
+    barrier: *mut c_void, attr: *const c_void, count: libc::c_uint,
+) -> c_int {
+    unsafe { libc_pthread_barrier_init(barrier, attr, count) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_barrier_destroy(barrier: *mut c_void) -> c_int {
+    unsafe { libc_pthread_barrier_destroy(barrier) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_barrier_wait(barrier: *mut c_void) -> c_int {
+    unsafe { libc_pthread_barrier_wait(barrier) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_setname_np(
+    thread: libc::pthread_t, name: *const std::ffi::c_char,
+) -> c_int {
+    unsafe { libc_pthread_setname_np(thread, name) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_getname_np(
+    thread: libc::pthread_t, name: *mut std::ffi::c_char, len: usize,
+) -> c_int {
+    unsafe { libc_pthread_getname_np(thread, name, len) }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
