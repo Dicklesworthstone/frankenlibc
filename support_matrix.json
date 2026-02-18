@@ -2,7 +2,7 @@
   "version": 2,
   "generated_at_utc": "2026-02-13T18:07:59Z",
   "library": "/data/tmp/cargo-target/release/libfrankenlibc_abi.so",
-  "total_exported": 408,
+  "total_exported": 423,
   "taxonomy": {
     "Implemented": "Native Rust code owns the entire operation. No host libc dependency. Full test coverage required.",
     "RawSyscall": "ABI entrypoint marshals arguments directly to Linux syscall instruction. No glibc call-through.",
@@ -76,6 +76,15 @@
       "perf_class": "coldpath",
       "strict_semantics": "Raw Linux syscall for process control; POSIX errno on failure",
       "hardened_semantics": "Raw syscall; validates argv/envp pointer arrays before execve",
+      "default_stub": false
+    },
+    {
+      "symbol": "abs",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Integer absolute value via wrapping_abs",
+      "hardened_semantics": "No mode difference; pure computation",
       "default_stub": false
     },
     {
@@ -209,6 +218,15 @@
       "perf_class": "coldpath",
       "strict_semantics": "Safe Rust stdlib (atoi/qsort/bsearch); POSIX-correct return values and errno",
       "hardened_semantics": "Stdlib with hardened membrane; repair clamping on comparator bounds",
+      "default_stub": false
+    },
+    {
+      "symbol": "atof",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "String-to-double conversion via Rust parse; POSIX-correct",
+      "hardened_semantics": "Membrane-validated string scan before parse",
       "default_stub": false
     },
     {
@@ -491,6 +509,15 @@
       "perf_class": "coldpath",
       "strict_semantics": "Pure computation returning time1 - time0 as f64; no syscall",
       "hardened_semantics": "Pure computation; no mode difference",
+      "default_stub": false
+    },
+    {
+      "symbol": "div",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Integer division returning quotient and remainder; zero-denom returns zero",
+      "hardened_semantics": "No mode difference; pure computation",
       "default_stub": false
     },
     {
@@ -800,6 +827,33 @@
       "perf_class": "coldpath",
       "strict_semantics": "Native stream-registry + syscall-backed stdio path; no host glibc call-through",
       "hardened_semantics": "Native stream-registry + syscall-backed stdio path with membrane validation/repair; no host glibc call-through",
+      "default_stub": false
+    },
+    {
+      "symbol": "ffs",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Find first set bit via trailing_zeros; returns 0 for input 0",
+      "hardened_semantics": "No mode difference; pure computation",
+      "default_stub": false
+    },
+    {
+      "symbol": "ffsl",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Find first set bit in long via trailing_zeros",
+      "hardened_semantics": "No mode difference; pure computation",
+      "default_stub": false
+    },
+    {
+      "symbol": "ffsll",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Find first set bit in long long via trailing_zeros",
+      "hardened_semantics": "No mode difference; pure computation",
       "default_stub": false
     },
     {
@@ -1537,11 +1591,29 @@
       "default_stub": false
     },
     {
+      "symbol": "labs",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Long absolute value via wrapping_abs",
+      "hardened_semantics": "No mode difference; pure computation",
+      "default_stub": false
+    },
+    {
       "symbol": "lchown",
       "status": "RawSyscall",
       "module": "unistd_abi",
       "perf_class": "syscall_veneer",
       "semantics": "POSIX"
+    },
+    {
+      "symbol": "ldiv",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Long division returning quotient and remainder; zero-denom returns zero",
+      "hardened_semantics": "No mode difference; pure computation",
+      "default_stub": false
     },
     {
       "symbol": "lgamma",
@@ -1575,6 +1647,24 @@
       "perf_class": "coldpath",
       "strict_semantics": "Raw Linux syscall for BSD sockets; POSIX errno on failure",
       "hardened_semantics": "Raw syscall; clamps send/recv buffer lengths to tracked bounds",
+      "default_stub": false
+    },
+    {
+      "symbol": "llabs",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Long long absolute value via wrapping_abs",
+      "hardened_semantics": "No mode difference; pure computation",
+      "default_stub": false
+    },
+    {
+      "symbol": "lldiv",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Long long division returning quotient and remainder; zero-denom returns zero",
+      "hardened_semantics": "No mode difference; pure computation",
       "default_stub": false
     },
     {
@@ -2243,6 +2333,24 @@
       "default_stub": false
     },
     {
+      "symbol": "rand",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Thread-local LCG pseudo-random generator; glibc-compatible constants",
+      "hardened_semantics": "No mode difference; pure computation",
+      "default_stub": false
+    },
+    {
+      "symbol": "rand_r",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Reentrant LCG pseudo-random generator using caller-provided state",
+      "hardened_semantics": "Null seedp check; returns 0 on null",
+      "default_stub": false
+    },
+    {
       "symbol": "read",
       "status": "RawSyscall",
       "module": "unistd_abi",
@@ -2778,6 +2886,15 @@
       "default_stub": false
     },
     {
+      "symbol": "srand",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Seeds thread-local LCG generator",
+      "hardened_semantics": "No mode difference; pure computation",
+      "default_stub": false
+    },
+    {
       "symbol": "stat",
       "status": "RawSyscall",
       "module": "unistd_abi",
@@ -3063,6 +3180,24 @@
       "perf_class": "strict_hotpath",
       "strict_semantics": "Safe Rust string/memory ops; unbounded scans follow C semantics; no repair",
       "hardened_semantics": "Clamps copy/scan to tracked allocation bounds; logs ClampSize/TruncateWithNull",
+      "default_stub": false
+    },
+    {
+      "symbol": "strtod",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "String-to-double with endptr via Rust parse; supports inf/nan/hex",
+      "hardened_semantics": "Membrane-validated string scan before parse",
+      "default_stub": false
+    },
+    {
+      "symbol": "strtof",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "String-to-float via strtod with narrowing cast",
+      "hardened_semantics": "Same as strtod hardened semantics",
       "default_stub": false
     },
     {

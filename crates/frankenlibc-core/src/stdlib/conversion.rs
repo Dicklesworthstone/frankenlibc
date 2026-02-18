@@ -271,6 +271,116 @@ pub fn strtoumax(s: &[u8], base: i32) -> (u64, usize) {
     strtoul(s, base)
 }
 
+// ---------------------------------------------------------------------------
+// Floating-point conversion
+// ---------------------------------------------------------------------------
+
+/// Parses a floating-point number from a NUL-terminated byte slice.
+///
+/// Returns `(value, bytes_consumed)`. On failure, returns `(0.0, 0)`.
+pub fn strtod_impl(s: &[u8]) -> (f64, usize) {
+    let len = crate::string::strlen(s);
+    let slice = &s[..len];
+
+    let mut i = 0;
+    while i < slice.len() && slice[i].is_ascii_whitespace() {
+        i += 1;
+    }
+    if i >= slice.len() {
+        return (0.0, 0);
+    }
+
+    // Try to parse using core::str::parse on the valid ASCII portion.
+    // Collect chars that could be part of a float.
+    let start = i;
+    if i < slice.len() && (slice[i] == b'+' || slice[i] == b'-') {
+        i += 1;
+    }
+
+    // Check for "inf", "infinity", "nan" (case-insensitive)
+    if i + 3 <= slice.len() {
+        let word = &slice[i..i + 3];
+        if word.eq_ignore_ascii_case(b"inf") {
+            i += 3;
+            if i + 5 <= slice.len() && slice[i..i + 5].eq_ignore_ascii_case(b"inity") {
+                i += 5;
+            }
+            let sign: f64 = if start < slice.len() && slice[start] == b'-' {
+                -1.0
+            } else {
+                1.0
+            };
+            return (sign * f64::INFINITY, i);
+        }
+        if word.eq_ignore_ascii_case(b"nan") {
+            i += 3;
+            return (f64::NAN, i);
+        }
+    }
+
+    // Check for hex float (0x...)
+    let is_hex =
+        i + 1 < slice.len() && slice[i] == b'0' && (slice[i + 1] == b'x' || slice[i + 1] == b'X');
+    if is_hex {
+        i += 2;
+    }
+
+    // Consume digits, decimal point, exponent.
+    let mut has_digits = false;
+    while i < slice.len() && (slice[i].is_ascii_digit() || (is_hex && slice[i].is_ascii_hexdigit()))
+    {
+        has_digits = true;
+        i += 1;
+    }
+    if i < slice.len() && slice[i] == b'.' {
+        i += 1;
+        while i < slice.len()
+            && (slice[i].is_ascii_digit() || (is_hex && slice[i].is_ascii_hexdigit()))
+        {
+            has_digits = true;
+            i += 1;
+        }
+    }
+    if !has_digits {
+        return (0.0, 0);
+    }
+    // Exponent
+    if i < slice.len() {
+        let exp_char = if is_hex { b'p' } else { b'e' };
+        if slice[i].to_ascii_lowercase() == exp_char {
+            i += 1;
+            if i < slice.len() && (slice[i] == b'+' || slice[i] == b'-') {
+                i += 1;
+            }
+            while i < slice.len() && slice[i].is_ascii_digit() {
+                i += 1;
+            }
+        }
+    }
+
+    let num_str = core::str::from_utf8(&slice[start..i]).unwrap_or("");
+    match num_str.parse::<f64>() {
+        Ok(val) => (val, i),
+        Err(_) => (0.0, 0),
+    }
+}
+
+/// C `strtod` -- parse double from string, returns (value, bytes_consumed).
+pub fn strtod(s: &[u8]) -> (f64, usize) {
+    strtod_impl(s)
+}
+
+/// C `strtof` -- parse float from string, returns (value, bytes_consumed).
+pub fn strtof(s: &[u8]) -> (f32, usize) {
+    let (val, consumed) = strtod_impl(s);
+    (val as f32, consumed)
+}
+
+/// C `atof` -- equivalent to `strtod(s, NULL)`.
+pub fn atof(s: &[u8]) -> f64 {
+    strtod_impl(s).0
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -406,6 +516,47 @@ mod tests {
         let (val, len) = strtol(b"0x1", 0);
         assert_eq!(val, 1);
         assert_eq!(len, 3);
+    }
+
+    #[test]
+    fn test_atof_basic() {
+        assert!((atof(b"3.14\0") - 3.14).abs() < 1e-10);
+        assert!((atof(b"-42.5\0") - (-42.5)).abs() < 1e-10);
+        assert_eq!(atof(b"0\0"), 0.0);
+    }
+
+    #[test]
+    fn test_strtod_basic() {
+        let (val, consumed) = strtod(b"123.456abc\0");
+        assert!((val - 123.456).abs() < 1e-10);
+        assert_eq!(consumed, 7);
+    }
+
+    #[test]
+    fn test_strtod_whitespace() {
+        let (val, consumed) = strtod(b"  42.0\0");
+        assert!((val - 42.0).abs() < 1e-10);
+        assert_eq!(consumed, 6);
+    }
+
+    #[test]
+    fn test_strtod_infinity() {
+        let (val, consumed) = strtod(b"inf\0");
+        assert!(val.is_infinite() && val > 0.0);
+        assert_eq!(consumed, 3);
+    }
+
+    #[test]
+    fn test_strtod_nan() {
+        let (val, _) = strtod(b"nan\0");
+        assert!(val.is_nan());
+    }
+
+    #[test]
+    fn test_strtof_basic() {
+        let (val, consumed) = strtof(b"3.14\0");
+        assert!((val - 3.14f32).abs() < 1e-5);
+        assert_eq!(consumed, 4);
     }
 
     proptest! {

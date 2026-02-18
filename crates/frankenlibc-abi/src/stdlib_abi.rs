@@ -5,7 +5,7 @@
 //! process control (`exit`, `atexit`), and sorting/searching (`qsort`, `bsearch`)
 //! with membrane validation.
 
-use std::ffi::{c_char, c_int, c_long, c_longlong, c_ulong, c_ulonglong, c_void};
+use std::ffi::{c_char, c_int, c_long, c_longlong, c_uint, c_ulong, c_ulonglong, c_void};
 use std::ptr;
 
 use crate::malloc_abi::known_remaining;
@@ -871,4 +871,238 @@ pub unsafe extern "C" fn unsetenv(name: *const c_char) -> c_int {
         adverse,
     );
     rc
+}
+
+// ---------------------------------------------------------------------------
+// abs / labs / llabs
+// ---------------------------------------------------------------------------
+
+/// C `abs` -- absolute value of an integer.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub extern "C" fn abs(n: c_int) -> c_int {
+    frankenlibc_core::stdlib::abs(n)
+}
+
+/// C `labs` -- absolute value of a long.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub extern "C" fn labs(n: c_long) -> c_long {
+    frankenlibc_core::stdlib::labs(n)
+}
+
+/// C `llabs` -- absolute value of a long long.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub extern "C" fn llabs(n: c_longlong) -> c_longlong {
+    frankenlibc_core::stdlib::llabs(n)
+}
+
+// ---------------------------------------------------------------------------
+// div / ldiv / lldiv
+// ---------------------------------------------------------------------------
+
+/// C `div_t` result type.
+#[repr(C)]
+pub struct CDiv {
+    pub quot: c_int,
+    pub rem: c_int,
+}
+
+/// C `ldiv_t` result type.
+#[repr(C)]
+pub struct CLdiv {
+    pub quot: c_long,
+    pub rem: c_long,
+}
+
+/// C `lldiv_t` result type.
+#[repr(C)]
+pub struct CLldiv {
+    pub quot: c_longlong,
+    pub rem: c_longlong,
+}
+
+/// C `div` -- integer division yielding quotient and remainder.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub extern "C" fn div(numer: c_int, denom: c_int) -> CDiv {
+    let r = frankenlibc_core::stdlib::div(numer, denom);
+    CDiv {
+        quot: r.quot,
+        rem: r.rem,
+    }
+}
+
+/// C `ldiv` -- long division yielding quotient and remainder.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub extern "C" fn ldiv(numer: c_long, denom: c_long) -> CLdiv {
+    let r = frankenlibc_core::stdlib::ldiv(numer, denom);
+    CLdiv {
+        quot: r.quot,
+        rem: r.rem,
+    }
+}
+
+/// C `lldiv` -- long long division yielding quotient and remainder.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub extern "C" fn lldiv(numer: c_longlong, denom: c_longlong) -> CLldiv {
+    let r = frankenlibc_core::stdlib::lldiv(numer, denom);
+    CLldiv {
+        quot: r.quot,
+        rem: r.rem,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ffs / ffsl / ffsll
+// ---------------------------------------------------------------------------
+
+/// POSIX `ffs` -- find first set bit.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub extern "C" fn ffs(i: c_int) -> c_int {
+    frankenlibc_core::stdlib::ffs(i)
+}
+
+/// GNU `ffsl` -- find first set bit in long.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub extern "C" fn ffsl(i: c_long) -> c_int {
+    frankenlibc_core::stdlib::ffsl(i)
+}
+
+/// GNU `ffsll` -- find first set bit in long long.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub extern "C" fn ffsll(i: c_longlong) -> c_int {
+    frankenlibc_core::stdlib::ffsll(i)
+}
+
+// ---------------------------------------------------------------------------
+// rand / srand / rand_r
+// ---------------------------------------------------------------------------
+
+/// C `rand` -- returns a pseudo-random integer in [0, RAND_MAX].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub extern "C" fn rand() -> c_int {
+    frankenlibc_core::stdlib::rand()
+}
+
+/// C `srand` -- seeds the pseudo-random number generator.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub extern "C" fn srand(seed: c_uint) {
+    frankenlibc_core::stdlib::srand(seed);
+}
+
+/// POSIX `rand_r` -- reentrant pseudo-random number generator.
+///
+/// # Safety
+///
+/// Caller must ensure `seedp` is a valid pointer to a `unsigned int`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn rand_r(seedp: *mut c_uint) -> c_int {
+    if seedp.is_null() {
+        return 0;
+    }
+    // SAFETY: caller guarantees seedp is valid.
+    let seed = unsafe { &mut *seedp };
+    frankenlibc_core::stdlib::rand_r(seed)
+}
+
+// ---------------------------------------------------------------------------
+// atof / strtod / strtof
+// ---------------------------------------------------------------------------
+
+/// C `atof` -- converts string to double.
+///
+/// # Safety
+///
+/// Caller must ensure `nptr` is a valid null-terminated string.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn atof(nptr: *const c_char) -> f64 {
+    if nptr.is_null() {
+        return 0.0;
+    }
+
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Stdlib,
+        nptr as usize,
+        0,
+        false,
+        known_remaining(nptr as usize).is_none(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 5, true);
+        return 0.0;
+    }
+
+    // SAFETY: caller guarantees nptr is valid NUL-terminated.
+    let mut len = 0usize;
+    unsafe {
+        while *nptr.add(len) != 0 {
+            len += 1;
+        }
+    }
+    let slice = unsafe { std::slice::from_raw_parts(nptr.cast::<u8>(), len + 1) };
+    let result = frankenlibc_core::stdlib::atof(slice);
+    runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 5, false);
+    result
+}
+
+/// C `strtod` -- converts string to double with endptr.
+///
+/// # Safety
+///
+/// Caller must ensure `nptr` is a valid null-terminated string.
+/// `endptr`, if non-null, will be set to point past the last parsed character.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strtod(nptr: *const c_char, endptr: *mut *mut c_char) -> f64 {
+    if nptr.is_null() {
+        if !endptr.is_null() {
+            unsafe { *endptr = nptr as *mut c_char };
+        }
+        return 0.0;
+    }
+
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Stdlib,
+        nptr as usize,
+        0,
+        false,
+        known_remaining(nptr as usize).is_none(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 5, true);
+        if !endptr.is_null() {
+            unsafe { *endptr = nptr as *mut c_char };
+        }
+        return 0.0;
+    }
+
+    // SAFETY: caller guarantees nptr is valid NUL-terminated.
+    let mut len = 0usize;
+    unsafe {
+        while *nptr.add(len) != 0 {
+            len += 1;
+        }
+    }
+    let slice = unsafe { std::slice::from_raw_parts(nptr.cast::<u8>(), len + 1) };
+    let (val, consumed) = frankenlibc_core::stdlib::strtod(slice);
+    if !endptr.is_null() {
+        unsafe { *endptr = nptr.add(consumed) as *mut c_char };
+    }
+    runtime_policy::observe(
+        ApiFamily::Stdlib,
+        decision.profile,
+        runtime_policy::scaled_cost(5, consumed),
+        false,
+    );
+    val
+}
+
+/// C `strtof` -- converts string to float with endptr.
+///
+/// # Safety
+///
+/// Same safety requirements as `strtod`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strtof(nptr: *const c_char, endptr: *mut *mut c_char) -> f32 {
+    // SAFETY: same contract as strtod.
+    unsafe { strtod(nptr, endptr) as f32 }
 }
