@@ -2,7 +2,7 @@
   "version": 2,
   "generated_at_utc": "2026-02-18T04:49:26Z",
   "library": "/data/tmp/cargo-target/release/libfrankenlibc_abi.so",
-  "total_exported": 903,
+  "total_exported": 929,
   "taxonomy": {
     "Implemented": "Native Rust code owns the entire operation. No host libc dependency. Full test coverage required.",
     "RawSyscall": "ABI entrypoint marshals arguments directly to Linux syscall instruction. No glibc call-through.",
@@ -7511,6 +7511,162 @@
       "status": "GlibcCallThrough",
       "module": "wchar_abi",
       "perf_class": "fast"
+    },
+    {
+      "symbol": "setns",
+      "header": "<unistd.h>",
+      "status": "RawSyscall",
+      "notes": "Tier 10"
+    },
+    {
+      "symbol": "unshare",
+      "header": "<unistd.h>",
+      "status": "RawSyscall",
+      "notes": "Tier 10"
+    },
+    {
+      "symbol": "mount",
+      "header": "<unistd.h>",
+      "status": "RawSyscall",
+      "notes": "Tier 10"
+    },
+    {
+      "symbol": "umount2",
+      "header": "<unistd.h>",
+      "status": "RawSyscall",
+      "notes": "Tier 10"
+    },
+    {
+      "symbol": "chroot",
+      "header": "<unistd.h>",
+      "status": "RawSyscall",
+      "notes": "Tier 10"
+    },
+    {
+      "symbol": "pivot_root",
+      "header": "<unistd.h>",
+      "status": "RawSyscall",
+      "notes": "Tier 10"
+    },
+    {
+      "symbol": "acct",
+      "header": "<unistd.h>",
+      "status": "RawSyscall",
+      "notes": "Tier 10"
+    },
+    {
+      "symbol": "reboot",
+      "header": "<unistd.h>",
+      "status": "RawSyscall",
+      "notes": "Tier 10"
+    },
+    {
+      "symbol": "swapon",
+      "header": "<unistd.h>",
+      "status": "RawSyscall",
+      "notes": "Tier 10"
+    },
+    {
+      "symbol": "swapoff",
+      "header": "<unistd.h>",
+      "status": "RawSyscall",
+      "notes": "Tier 10"
+    },
+    {
+      "symbol": "getresuid",
+      "header": "<unistd.h>",
+      "status": "RawSyscall",
+      "notes": "Tier 10"
+    },
+    {
+      "symbol": "getresgid",
+      "header": "<unistd.h>",
+      "status": "RawSyscall",
+      "notes": "Tier 10"
+    },
+    {
+      "symbol": "setresuid",
+      "header": "<unistd.h>",
+      "status": "RawSyscall",
+      "notes": "Tier 10"
+    },
+    {
+      "symbol": "setresgid",
+      "header": "<unistd.h>",
+      "status": "RawSyscall",
+      "notes": "Tier 10"
+    },
+    {
+      "symbol": "fanotify_init",
+      "header": "<unistd.h>",
+      "status": "RawSyscall",
+      "notes": "Tier 10"
+    },
+    {
+      "symbol": "fanotify_mark",
+      "header": "<unistd.h>",
+      "status": "RawSyscall",
+      "notes": "Tier 10"
+    },
+    {
+      "symbol": "process_vm_readv",
+      "header": "<unistd.h>",
+      "status": "RawSyscall",
+      "notes": "Tier 10"
+    },
+    {
+      "symbol": "process_vm_writev",
+      "header": "<unistd.h>",
+      "status": "RawSyscall",
+      "notes": "Tier 10"
+    },
+    {
+      "symbol": "mlock2",
+      "header": "<unistd.h>",
+      "status": "RawSyscall",
+      "notes": "Tier 10"
+    },
+    {
+      "symbol": "name_to_handle_at",
+      "header": "<unistd.h>",
+      "status": "RawSyscall",
+      "notes": "Tier 10"
+    },
+    {
+      "symbol": "open_by_handle_at",
+      "header": "<unistd.h>",
+      "status": "RawSyscall",
+      "notes": "Tier 10"
+    },
+    {
+      "symbol": "umount",
+      "header": "<unistd.h>",
+      "status": "GlibcCallThrough",
+      "notes": "Tier 10"
+    },
+    {
+      "symbol": "glob64",
+      "header": "<unistd.h>",
+      "status": "GlibcCallThrough",
+      "notes": "Tier 10"
+    },
+    {
+      "symbol": "globfree64",
+      "header": "<unistd.h>",
+      "status": "GlibcCallThrough",
+      "notes": "Tier 10"
+    },
+    {
+      "symbol": "nftw64",
+      "header": "<unistd.h>",
+      "status": "GlibcCallThrough",
+      "notes": "Tier 10"
+    },
+    {
+      "symbol": "alphasort64",
+      "header": "<unistd.h>",
+      "status": "GlibcCallThrough",
+      "notes": "Tier 10"
     }
   ],
   "summary": {
@@ -7521,7 +7677,7 @@
     "stub": 0
   },
   "implemented": 394,
-  "raw_syscall": 213,
-  "glibc_call_through": 296,
+  "raw_syscall": 234,
+  "glibc_call_through": 301,
   "stub": 0
 }

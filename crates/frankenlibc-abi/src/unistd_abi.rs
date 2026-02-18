@@ -3409,3 +3409,238 @@ pub unsafe extern "C" fn sethostname(name: *const c_char, len: usize) -> c_int {
 pub unsafe extern "C" fn setdomainname(name: *const c_char, len: usize) -> c_int {
     unsafe { libc_setdomainname(name, len) }
 }
+
+// ---------------------------------------------------------------------------
+// Linux namespace / mount / security — RawSyscall
+// ---------------------------------------------------------------------------
+
+/// `setns` — reassociate thread with a namespace.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn setns(fd: c_int, nstype: c_int) -> c_int {
+    let rc = unsafe { libc::syscall(libc::SYS_setns, fd, nstype) } as c_int;
+    if rc < 0 { let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::ENOTSUP); unsafe { set_abi_errno(e) }; }
+    rc
+}
+
+/// `unshare` — disassociate parts of process execution context.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn unshare(flags: c_int) -> c_int {
+    let rc = unsafe { libc::syscall(libc::SYS_unshare, flags) } as c_int;
+    if rc < 0 { let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::ENOTSUP); unsafe { set_abi_errno(e) }; }
+    rc
+}
+
+/// `mount` — mount a filesystem.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn mount(
+    source: *const c_char, target: *const c_char,
+    filesystemtype: *const c_char, mountflags: std::ffi::c_ulong, data: *const c_void,
+) -> c_int {
+    let rc = unsafe { libc::syscall(libc::SYS_mount, source, target, filesystemtype, mountflags, data) } as c_int;
+    if rc < 0 { let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::ENOTSUP); unsafe { set_abi_errno(e) }; }
+    rc
+}
+
+/// `umount2` — unmount a filesystem with flags.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn umount2(target: *const c_char, flags: c_int) -> c_int {
+    let rc = unsafe { libc::syscall(libc::SYS_umount2, target, flags) } as c_int;
+    if rc < 0 { let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::ENOTSUP); unsafe { set_abi_errno(e) }; }
+    rc
+}
+
+/// `chroot` — change root directory.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn chroot(path: *const c_char) -> c_int {
+    let rc = unsafe { libc::syscall(libc::SYS_chroot, path) } as c_int;
+    if rc < 0 { let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::ENOTSUP); unsafe { set_abi_errno(e) }; }
+    rc
+}
+
+/// `pivot_root` — change the root filesystem.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pivot_root(new_root: *const c_char, put_old: *const c_char) -> c_int {
+    let rc = unsafe { libc::syscall(libc::SYS_pivot_root, new_root, put_old) } as c_int;
+    if rc < 0 { let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::ENOTSUP); unsafe { set_abi_errno(e) }; }
+    rc
+}
+
+/// `acct` — process accounting.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn acct(filename: *const c_char) -> c_int {
+    let rc = unsafe { libc::syscall(libc::SYS_acct, filename) } as c_int;
+    if rc < 0 { let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::ENOTSUP); unsafe { set_abi_errno(e) }; }
+    rc
+}
+
+/// `reboot` — reboot or enable/disable Ctrl-Alt-Del.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn reboot(cmd: c_int) -> c_int {
+    let rc = unsafe { libc::syscall(libc::SYS_reboot, 0xfee1dead_u64, 672274793_u64, cmd) } as c_int;
+    if rc < 0 { let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::ENOTSUP); unsafe { set_abi_errno(e) }; }
+    rc
+}
+
+/// `swapon` — start swapping.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn swapon(path: *const c_char, swapflags: c_int) -> c_int {
+    let rc = unsafe { libc::syscall(libc::SYS_swapon, path, swapflags) } as c_int;
+    if rc < 0 { let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::ENOTSUP); unsafe { set_abi_errno(e) }; }
+    rc
+}
+
+/// `swapoff` — stop swapping.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn swapoff(path: *const c_char) -> c_int {
+    let rc = unsafe { libc::syscall(libc::SYS_swapoff, path) } as c_int;
+    if rc < 0 { let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::ENOTSUP); unsafe { set_abi_errno(e) }; }
+    rc
+}
+
+// ---------------------------------------------------------------------------
+// UID/GID extras — RawSyscall
+// ---------------------------------------------------------------------------
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getresuid(ruid: *mut libc::uid_t, euid: *mut libc::uid_t, suid: *mut libc::uid_t) -> c_int {
+    let rc = unsafe { libc::syscall(libc::SYS_getresuid, ruid, euid, suid) } as c_int;
+    if rc < 0 { let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::ENOTSUP); unsafe { set_abi_errno(e) }; }
+    rc
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getresgid(rgid: *mut libc::gid_t, egid: *mut libc::gid_t, sgid: *mut libc::gid_t) -> c_int {
+    let rc = unsafe { libc::syscall(libc::SYS_getresgid, rgid, egid, sgid) } as c_int;
+    if rc < 0 { let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::ENOTSUP); unsafe { set_abi_errno(e) }; }
+    rc
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn setresuid(ruid: libc::uid_t, euid: libc::uid_t, suid: libc::uid_t) -> c_int {
+    let rc = unsafe { libc::syscall(libc::SYS_setresuid, ruid, euid, suid) } as c_int;
+    if rc < 0 { let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::ENOTSUP); unsafe { set_abi_errno(e) }; }
+    rc
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn setresgid(rgid: libc::gid_t, egid: libc::gid_t, sgid: libc::gid_t) -> c_int {
+    let rc = unsafe { libc::syscall(libc::SYS_setresgid, rgid, egid, sgid) } as c_int;
+    if rc < 0 { let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::ENOTSUP); unsafe { set_abi_errno(e) }; }
+    rc
+}
+
+// ---------------------------------------------------------------------------
+// fanotify — RawSyscall
+// ---------------------------------------------------------------------------
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn fanotify_init(flags: c_uint, event_f_flags: c_uint) -> c_int {
+    let rc = unsafe { libc::syscall(libc::SYS_fanotify_init, flags, event_f_flags) } as c_int;
+    if rc < 0 { let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::ENOTSUP); unsafe { set_abi_errno(e) }; }
+    rc
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn fanotify_mark(
+    fanotify_fd: c_int, flags: c_uint, mask: u64, dirfd: c_int, pathname: *const c_char,
+) -> c_int {
+    let rc = unsafe { libc::syscall(libc::SYS_fanotify_mark, fanotify_fd, flags, mask, dirfd, pathname) } as c_int;
+    if rc < 0 { let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::ENOTSUP); unsafe { set_abi_errno(e) }; }
+    rc
+}
+
+// ---------------------------------------------------------------------------
+// process_vm — RawSyscall
+// ---------------------------------------------------------------------------
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn process_vm_readv(
+    pid: libc::pid_t, local_iov: *const libc::iovec, liovcnt: std::ffi::c_ulong,
+    remote_iov: *const libc::iovec, riovcnt: std::ffi::c_ulong, flags: std::ffi::c_ulong,
+) -> isize {
+    let rc = unsafe { libc::syscall(libc::SYS_process_vm_readv, pid, local_iov, liovcnt, remote_iov, riovcnt, flags) };
+    if rc < 0 { let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::ENOTSUP); unsafe { set_abi_errno(e) }; }
+    rc as isize
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn process_vm_writev(
+    pid: libc::pid_t, local_iov: *const libc::iovec, liovcnt: std::ffi::c_ulong,
+    remote_iov: *const libc::iovec, riovcnt: std::ffi::c_ulong, flags: std::ffi::c_ulong,
+) -> isize {
+    let rc = unsafe { libc::syscall(libc::SYS_process_vm_writev, pid, local_iov, liovcnt, remote_iov, riovcnt, flags) };
+    if rc < 0 { let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::ENOTSUP); unsafe { set_abi_errno(e) }; }
+    rc as isize
+}
+
+// ---------------------------------------------------------------------------
+// mlock2, name_to_handle_at, open_by_handle_at — RawSyscall
+// ---------------------------------------------------------------------------
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn mlock2(addr: *const c_void, len: usize, flags: c_uint) -> c_int {
+    let rc = unsafe { libc::syscall(libc::SYS_mlock2, addr, len, flags) } as c_int;
+    if rc < 0 { let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::ENOTSUP); unsafe { set_abi_errno(e) }; }
+    rc
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn name_to_handle_at(
+    dirfd: c_int, pathname: *const c_char, handle: *mut c_void, mount_id: *mut c_int, flags: c_int,
+) -> c_int {
+    let rc = unsafe { libc::syscall(libc::SYS_name_to_handle_at, dirfd, pathname, handle, mount_id, flags) } as c_int;
+    if rc < 0 { let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::ENOTSUP); unsafe { set_abi_errno(e) }; }
+    rc
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn open_by_handle_at(mount_fd: c_int, handle: *mut c_void, flags: c_int) -> c_int {
+    let rc = unsafe { libc::syscall(libc::SYS_open_by_handle_at, mount_fd, handle, flags) } as c_int;
+    if rc < 0 { let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::ENOTSUP); unsafe { set_abi_errno(e) }; }
+    rc
+}
+
+// ---------------------------------------------------------------------------
+// 64-bit LFS extras / umount — GlibcCallThrough
+// ---------------------------------------------------------------------------
+
+unsafe extern "C" {
+    #[link_name = "umount"]
+    fn libc_umount(target: *const c_char) -> c_int;
+    #[link_name = "glob64"]
+    fn libc_glob64(pattern: *const c_char, flags: c_int, errfunc: Option<unsafe extern "C" fn(*const c_char, c_int) -> c_int>, pglob: *mut c_void) -> c_int;
+    #[link_name = "globfree64"]
+    fn libc_globfree64(pglob: *mut c_void);
+    #[link_name = "nftw64"]
+    fn libc_nftw64(dirpath: *const c_char, fn_: *const c_void, nopenfd: c_int, flags: c_int) -> c_int;
+    #[link_name = "alphasort64"]
+    fn libc_alphasort64(a: *mut *const c_void, b: *mut *const c_void) -> c_int;
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn umount(target: *const c_char) -> c_int {
+    unsafe { libc_umount(target) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn glob64(
+    pattern: *const c_char, flags: c_int,
+    errfunc: Option<unsafe extern "C" fn(*const c_char, c_int) -> c_int>, pglob: *mut c_void,
+) -> c_int {
+    unsafe { libc_glob64(pattern, flags, errfunc, pglob) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn globfree64(pglob: *mut c_void) {
+    unsafe { libc_globfree64(pglob) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn nftw64(dirpath: *const c_char, fn_: *const c_void, nopenfd: c_int, flags: c_int) -> c_int {
+    unsafe { libc_nftw64(dirpath, fn_, nopenfd, flags) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn alphasort64(a: *mut *const c_void, b: *mut *const c_void) -> c_int {
+    unsafe { libc_alphasort64(a, b) }
+}

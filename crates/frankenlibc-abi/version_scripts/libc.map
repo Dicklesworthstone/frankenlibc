@@ -1043,6 +1043,38 @@ GLIBC_2.2.5 {
         endutent;
         utmpname;
 
+        /* namespace / mount / security */
+        setns;
+        unshare;
+        mount;
+        umount;
+        umount2;
+        chroot;
+        pivot_root;
+        acct;
+        reboot;
+        swapon;
+        swapoff;
+
+        /* UID/GID extras */
+        getresuid;
+        getresgid;
+        setresuid;
+        setresgid;
+
+        /* fanotify */
+        fanotify_init;
+        fanotify_mark;
+
+        /* process_vm */
+        process_vm_readv;
+        process_vm_writev;
+
+        /* mlock2, handle */
+        mlock2;
+        name_to_handle_at;
+        open_by_handle_at;
+
         /* 64-bit LFS variants */
         open64;
         creat64;
@@ -1060,6 +1092,10 @@ GLIBC_2.2.5 {
         ftello64;
         fgetpos64;
         fsetpos64;
+        glob64;
+        globfree64;
+        nftw64;
+        alphasort64;
 
     local:
         *;
