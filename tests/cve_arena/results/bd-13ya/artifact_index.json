@@ -1,0 +1,42 @@
+{
+  "index_version": 1,
+  "bead_id": "bd-13ya",
+  "generated_at": "2026-02-18T08:55:22Z",
+  "artifacts": [
+    {
+      "path": "scripts/generate_iconv_table_pack.py",
+      "kind": "generator",
+      "sha256": "3dd8d33e2159a121dc4b339e5a8a1eb6f0d5516308128eddc34bf24dc6a4b67b"
+    },
+    {
+      "path": "scripts/check_iconv_table_generation.sh",
+      "kind": "gate_script",
+      "sha256": "7e0b55c2c2aebf17ba491125af5ae6079df1ce5d98354093acff8a2f79fa5dbc"
+    },
+    {
+      "path": "tests/conformance/iconv_table_pack.v1.json",
+      "kind": "table_pack",
+      "sha256": "dd3214f84434dda0c8c67e261f210f6ab0b87bf7f6ed12ce5dfaf4dda974fb41"
+    },
+    {
+      "path": "tests/conformance/iconv_table_checksums.v1.json",
+      "kind": "checksum_manifest",
+      "sha256": "3cceb631c6d5074be3029ef311f3381debd64ebae3ed0b7848ef8baae89f72fd"
+    },
+    {
+      "path": "target/conformance/iconv_table_generation.report.json",
+      "kind": "report",
+      "sha256": "4ae741b2dceed1f76389609fc92a077d77fe13f541aa740eba2cf4ae4f5b5492"
+    },
+    {
+      "path": "target/conformance/iconv_table_generation.log.jsonl",
+      "kind": "log",
+      "sha256": "e6e4bc78f99ab817e67638a057e6b45bf12b8da05c7d7d4ba827a1dde391a5d8"
+    },
+    {
+      "path": "tests/cve_arena/results/bd-13ya/trace.jsonl",
+      "kind": "trace",
+      "sha256": "e6e4bc78f99ab817e67638a057e6b45bf12b8da05c7d7d4ba827a1dde391a5d8"
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "artifact_paths": {
+    "checksums": "tests/conformance/iconv_table_checksums.v1.json",
+    "table_pack": "tests/conformance/iconv_table_pack.v1.json"
+  },
+  "bead": "bd-13ya",
+  "checksums_sha256": "1935cc5fd4eae6abddaaa60fdc627fd4b6e31463cfef9dd1aa6808d4369e2f51",
+  "codec_table_sha256": {
+    "ISO-8859-1": "a2224e81756023540839404090b606bd5ec5b8809dbb806db5bf7cd8e77dcd48",
+    "UTF-16LE": "445faf4485680e90969e701c5f53c553ed5de8159883fe4db33f1603ce69f7da",
+    "UTF-32": "c5eb26dd5488e2265eac43995e2cf074ab8343655d09f4c6130ebf159e60b3aa",
+    "UTF-8": "33de9f07167d52665dac9e6f8fff33098cc0091bf137a85a89bb46df38441ebf"
+  },
+  "excluded_codec_families_sha256": "f8c3db47459d79b19a006ca84b8e964fc16181c7bd79b3d65afa2eb7d41daa69",
+  "generator": {
+    "path": "scripts/generate_iconv_table_pack.py",
+    "version": "1.0.0"
+  },
+  "schema_version": "v1",
+  "source_ledger_sha256": "ac53c7c8210f2dec1be143a7f9f922dd3256f5373f71201c1b948eb7e7b7d4f9",
+  "table_pack_sha256": "80b52aaae5c4e046d0959a79ada6575ba39e3617768dc1cb0212e8b48d648275"
+}

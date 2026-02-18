@@ -250,6 +250,11 @@ if [[ "${FRANKENLIBC_EXTENDED_GATES:-0}" == "1" ]]; then
     echo "PASS"
     echo ""
 
+    echo "--- bd-13ya iconv deterministic table generation gate ---"
+    scripts/check_iconv_table_generation.sh
+    echo "PASS"
+    echo ""
+
     echo "--- stub priority ranking gate ---"
     scripts/check_stub_priority.sh
     echo "PASS"

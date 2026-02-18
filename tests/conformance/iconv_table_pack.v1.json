@@ -1,0 +1,202 @@
+{
+  "bead": "bd-13ya",
+  "excluded_codec_families": [
+    {
+      "canonical": "BIG5-HKSCS",
+      "compatibility_intent": "Remain unsupported in phase-1; `iconv_open` must return EINVAL.",
+      "normalized": "BIG5HKSCS",
+      "reason": "Large mapping table not admitted until deterministic generation+checksum controls land."
+    },
+    {
+      "canonical": "EUC-JP",
+      "compatibility_intent": "Remain unsupported in phase-1; `iconv_open` must return EINVAL.",
+      "normalized": "EUCJP",
+      "reason": "Requires additional deterministic multibyte table pipeline beyond phase-1 scope."
+    },
+    {
+      "canonical": "GB18030",
+      "compatibility_intent": "Remain unsupported in phase-1; `iconv_open` must return EINVAL.",
+      "normalized": "GB18030",
+      "reason": "Large mapping table not admitted until deterministic generation+checksum controls land."
+    },
+    {
+      "canonical": "ISO-2022-CN-EXT",
+      "compatibility_intent": "Remain unsupported in phase-1; `iconv_open` must return EINVAL.",
+      "normalized": "ISO2022CNEXT",
+      "reason": "Stateful escape-sequence codec family deferred until deterministic table generation/checksum provenance closure (`bd-13ya`)."
+    },
+    {
+      "canonical": "ISO-2022-JP",
+      "compatibility_intent": "Remain unsupported in phase-1; `iconv_open` must return EINVAL.",
+      "normalized": "ISO2022JP",
+      "reason": "Shift-state machine and table corpus are out of phase-1 minimal scope."
+    },
+    {
+      "canonical": "SHIFT_JIS",
+      "compatibility_intent": "Remain unsupported in phase-1; `iconv_open` must return EINVAL.",
+      "normalized": "SHIFTJIS",
+      "reason": "Requires additional deterministic multibyte table pipeline beyond phase-1 scope."
+    }
+  ],
+  "generator": {
+    "path": "scripts/generate_iconv_table_pack.py",
+    "version": "1.0.0"
+  },
+  "included_codec_tables": [
+    {
+      "aliases": [
+        "latin1"
+      ],
+      "canonical": "ISO-8859-1",
+      "compatibility_intent": "Supported as the phase-1 single-byte baseline for deterministic conversion/error semantics.",
+      "normalized": "ISO88591",
+      "normalized_aliases": [
+        "ISO88591",
+        "LATIN1"
+      ],
+      "table": {
+        "deterministic_vectors": [
+          {
+            "expected_scalar_sequence": [
+              "U+0041",
+              "U+00E9"
+            ],
+            "input_hex": "41E9"
+          },
+          {
+            "expected_scalar_sequence": [
+              "U+00FF"
+            ],
+            "input_hex": "FF"
+          }
+        ],
+        "endianness": "n/a",
+        "family": "single-byte",
+        "max_units_per_scalar": 1,
+        "notes": "Phase-1 Latin-1 baseline table for deterministic error semantics.",
+        "unit_kind": "fixed-width"
+      },
+      "table_sha256": "a2224e81756023540839404090b606bd5ec5b8809dbb806db5bf7cd8e77dcd48"
+    },
+    {
+      "aliases": [
+        "utf16le"
+      ],
+      "canonical": "UTF-16LE",
+      "compatibility_intent": "Supported for deterministic little-endian wide-char conversion coverage.",
+      "normalized": "UTF16LE",
+      "normalized_aliases": [
+        "UTF16LE"
+      ],
+      "table": {
+        "deterministic_vectors": [
+          {
+            "expected_scalar_sequence": [
+              "U+0041",
+              "U+20AC"
+            ],
+            "input_hex": "4100AC20"
+          },
+          {
+            "expected_scalar_sequence": [
+              "U+10300"
+            ],
+            "input_hex": "3DD800DE"
+          }
+        ],
+        "endianness": "little",
+        "family": "utf",
+        "max_units_per_scalar": 2,
+        "notes": "Phase-1 UTF-16LE conversion table with surrogate-pair coverage.",
+        "unit_kind": "fixed-width"
+      },
+      "table_sha256": "445faf4485680e90969e701c5f53c553ed5de8159883fe4db33f1603ce69f7da"
+    },
+    {
+      "aliases": [
+        "utf32"
+      ],
+      "canonical": "UTF-32",
+      "compatibility_intent": "Supported with deterministic BOM emission and bounds/error behavior.",
+      "normalized": "UTF32",
+      "normalized_aliases": [
+        "UTF32"
+      ],
+      "table": {
+        "deterministic_vectors": [
+          {
+            "expected_scalar_sequence": [
+              "U+0041"
+            ],
+            "input_hex": "41000000"
+          },
+          {
+            "expected_scalar_sequence": [
+              "U+20AC"
+            ],
+            "input_hex": "AC200000"
+          }
+        ],
+        "emit_bom_on_open": true,
+        "endianness": "little",
+        "family": "utf",
+        "max_units_per_scalar": 1,
+        "notes": "Phase-1 UTF-32LE conversion table with deterministic BOM policy.",
+        "unit_kind": "fixed-width"
+      },
+      "table_sha256": "c5eb26dd5488e2265eac43995e2cf074ab8343655d09f4c6130ebf159e60b3aa"
+    },
+    {
+      "aliases": [
+        "utf8"
+      ],
+      "canonical": "UTF-8",
+      "compatibility_intent": "Supported for strict+hardened fixtures and host-parity validation in iconv phase-1.",
+      "normalized": "UTF8",
+      "normalized_aliases": [
+        "UTF8"
+      ],
+      "table": {
+        "deterministic_vectors": [
+          {
+            "expected_scalar_sequence": [
+              "U+0041"
+            ],
+            "input_hex": "41"
+          },
+          {
+            "expected_scalar_sequence": [
+              "U+20AC"
+            ],
+            "input_hex": "E282AC"
+          }
+        ],
+        "endianness": "n/a",
+        "family": "utf",
+        "max_units_per_scalar": 4,
+        "notes": "Phase-1 UTF-8 decoder/encoder path used by strict+hardened fixtures.",
+        "unit_kind": "variable-width"
+      },
+      "table_sha256": "33de9f07167d52665dac9e6f8fff33098cc0091bf137a85a89bb46df38441ebf"
+    }
+  ],
+  "phase": "phase1",
+  "schema_version": "v1",
+  "source_ledger": {
+    "bead": "bd-7cba",
+    "path": "tests/conformance/iconv_codec_scope_ledger.v1.json",
+    "sha256": "ac53c7c8210f2dec1be143a7f9f922dd3256f5373f71201c1b948eb7e7b7d4f9"
+  },
+  "support_matrix_mapping": {
+    "hardened_semantics": "Phase-1 iconv with hardened membrane routing; deterministic bounds/error behavior",
+    "module": "iconv_abi",
+    "status": "Implemented",
+    "strict_semantics": "Phase-1 iconv implementation for UTF-8/ISO-8859-1/UTF-16LE/UTF-32 with deterministic errno semantics",
+    "symbols": [
+      "iconv",
+      "iconv_close",
+      "iconv_open"
+    ]
+  },
+  "table_pack_sha256": "80b52aaae5c4e046d0959a79ada6575ba39e3617768dc1cb0212e8b48d648275"
+}
