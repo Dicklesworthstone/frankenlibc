@@ -2,7 +2,7 @@
   "version": 2,
   "generated_at_utc": "2026-02-18T04:49:26Z",
   "library": "/data/tmp/cargo-target/release/libfrankenlibc_abi.so",
-  "total_exported": 542,
+  "total_exported": 548,
   "taxonomy": {
     "Implemented": "Native Rust code owns the entire operation. No host libc dependency. Full test coverage required.",
     "RawSyscall": "ABI entrypoint marshals arguments directly to Linux syscall instruction. No glibc call-through.",
@@ -4670,6 +4670,48 @@
       "family": "unistd",
       "status": "GlibcCallThrough",
       "notes": "Create temporary file (delegates to libc)"
+    },
+    {
+      "symbol": "vprintf",
+      "header": "stdio.h",
+      "family": "stdio",
+      "status": "GlibcCallThrough",
+      "notes": "Delegates to libc (va_list forwarding requires C ABI)"
+    },
+    {
+      "symbol": "vfprintf",
+      "header": "stdio.h",
+      "family": "stdio",
+      "status": "GlibcCallThrough",
+      "notes": "Delegates to libc (va_list forwarding requires C ABI)"
+    },
+    {
+      "symbol": "vsprintf",
+      "header": "stdio.h",
+      "family": "stdio",
+      "status": "GlibcCallThrough",
+      "notes": "Delegates to libc (va_list forwarding requires C ABI)"
+    },
+    {
+      "symbol": "vsnprintf",
+      "header": "stdio.h",
+      "family": "stdio",
+      "status": "GlibcCallThrough",
+      "notes": "Delegates to libc (va_list forwarding requires C ABI)"
+    },
+    {
+      "symbol": "vdprintf",
+      "header": "stdio.h",
+      "family": "stdio",
+      "status": "GlibcCallThrough",
+      "notes": "Delegates to libc (va_list forwarding requires C ABI)"
+    },
+    {
+      "symbol": "vasprintf",
+      "header": "stdio.h",
+      "family": "stdio",
+      "status": "GlibcCallThrough",
+      "notes": "Delegates to libc (va_list forwarding requires C ABI)"
     }
   ],
   "summary": {
@@ -4681,6 +4723,6 @@
   },
   "implemented": 363,
   "raw_syscall": 172,
-  "glibc_call_through": 7,
+  "glibc_call_through": 13,
   "stub": 0
 }

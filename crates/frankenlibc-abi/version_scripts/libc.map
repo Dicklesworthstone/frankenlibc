@@ -176,6 +176,12 @@ GLIBC_2.2.5 {
         snprintf;
         dprintf;
         asprintf;
+        vprintf;
+        vfprintf;
+        vsprintf;
+        vsnprintf;
+        vdprintf;
+        vasprintf;
         fopen;
         fclose;
         fread;

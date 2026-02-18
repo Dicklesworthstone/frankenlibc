@@ -1455,6 +1455,82 @@ pub unsafe extern "C" fn asprintf(
     total_len as c_int
 }
 
+// ===========================================================================
+// v*printf family — va_list variants (GlibcCallThrough)
+//
+// These delegate to glibc because Rust cannot safely extract arguments from
+// a foreign va_list without naming the unstable VaListImpl type.
+// The libc crate doesn't expose v*printf, so we link directly.
+// ===========================================================================
+
+unsafe extern "C" {
+    #[link_name = "vsnprintf"]
+    fn libc_vsnprintf(s: *mut c_char, n: usize, fmt: *const c_char, ap: *mut c_void) -> c_int;
+    #[link_name = "vsprintf"]
+    fn libc_vsprintf(s: *mut c_char, fmt: *const c_char, ap: *mut c_void) -> c_int;
+    #[link_name = "vfprintf"]
+    fn libc_vfprintf(stream: *mut c_void, fmt: *const c_char, ap: *mut c_void) -> c_int;
+    #[link_name = "vprintf"]
+    fn libc_vprintf(fmt: *const c_char, ap: *mut c_void) -> c_int;
+    #[link_name = "vdprintf"]
+    fn libc_vdprintf(fd: c_int, fmt: *const c_char, ap: *mut c_void) -> c_int;
+    #[link_name = "vasprintf"]
+    fn libc_vasprintf(strp: *mut *mut c_char, fmt: *const c_char, ap: *mut c_void) -> c_int;
+}
+
+/// POSIX `vsnprintf` — format at most `size` bytes from va_list.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn vsnprintf(
+    str_buf: *mut c_char,
+    size: usize,
+    format: *const c_char,
+    ap: *mut c_void,
+) -> c_int {
+    unsafe { libc_vsnprintf(str_buf, size, format, ap) }
+}
+
+/// POSIX `vsprintf` — format into buffer from va_list (no size limit).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn vsprintf(
+    str_buf: *mut c_char,
+    format: *const c_char,
+    ap: *mut c_void,
+) -> c_int {
+    unsafe { libc_vsprintf(str_buf, format, ap) }
+}
+
+/// POSIX `vfprintf` — format to stream from va_list.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn vfprintf(
+    stream: *mut c_void,
+    format: *const c_char,
+    ap: *mut c_void,
+) -> c_int {
+    unsafe { libc_vfprintf(stream, format, ap) }
+}
+
+/// POSIX `vprintf` — format to stdout from va_list.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn vprintf(format: *const c_char, ap: *mut c_void) -> c_int {
+    unsafe { libc_vprintf(format, ap) }
+}
+
+/// POSIX `vdprintf` — format to file descriptor from va_list.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn vdprintf(fd: c_int, format: *const c_char, ap: *mut c_void) -> c_int {
+    unsafe { libc_vdprintf(fd, format, ap) }
+}
+
+/// GNU `vasprintf` — allocate and format from va_list.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn vasprintf(
+    strp: *mut *mut c_char,
+    format: *const c_char,
+    ap: *mut c_void,
+) -> c_int {
+    unsafe { libc_vasprintf(strp, format, ap) }
+}
+
 /// glibc fortified `__printf_chk`.
 #[unsafe(export_name = "__printf_chk")]
 pub unsafe extern "C" fn printf_chk(_flag: c_int, format: *const c_char, mut args: ...) -> c_int {
