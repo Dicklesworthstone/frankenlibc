@@ -2677,3 +2677,161 @@ pub unsafe extern "C" fn posix_openpt(flags: c_int) -> c_int {
 pub unsafe extern "C" fn crypt(key: *const c_char, salt: *const c_char) -> *mut c_char {
     unsafe { libc_crypt(key, salt) }
 }
+
+// ---------------------------------------------------------------------------
+// Symlink-aware extended attributes — RawSyscall
+// ---------------------------------------------------------------------------
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn lgetxattr(path: *const c_char, name: *const c_char, value: *mut c_void, size: usize) -> isize {
+    let rc = unsafe { libc::syscall(libc::SYS_lgetxattr, path, name, value, size) };
+    if rc < 0 { unsafe { set_abi_errno(std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::ENOTSUP)) }; }
+    rc as isize
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn lsetxattr(
+    path: *const c_char, name: *const c_char, value: *const c_void, size: usize, flags: c_int,
+) -> c_int {
+    let rc = unsafe { libc::syscall(libc::SYS_lsetxattr, path, name, value, size, flags) } as c_int;
+    if rc < 0 { unsafe { set_abi_errno(std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::ENOTSUP)) }; }
+    rc
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn llistxattr(path: *const c_char, list: *mut c_char, size: usize) -> isize {
+    let rc = unsafe { libc::syscall(libc::SYS_llistxattr, path, list, size) };
+    if rc < 0 { unsafe { set_abi_errno(std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::ENOTSUP)) }; }
+    rc as isize
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn lremovexattr(path: *const c_char, name: *const c_char) -> c_int {
+    let rc = unsafe { libc::syscall(libc::SYS_lremovexattr, path, name) } as c_int;
+    if rc < 0 { unsafe { set_abi_errno(std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::ENOTSUP)) }; }
+    rc
+}
+
+// ---------------------------------------------------------------------------
+// prlimit — RawSyscall
+// ---------------------------------------------------------------------------
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn prlimit(
+    pid: libc::pid_t,
+    resource: c_int,
+    new_limit: *const libc::rlimit,
+    old_limit: *mut libc::rlimit,
+) -> c_int {
+    let rc = unsafe { libc::syscall(libc::SYS_prlimit64, pid, resource, new_limit, old_limit) } as c_int;
+    if rc < 0 {
+        let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(errno::EINVAL);
+        unsafe { set_abi_errno(e) };
+    }
+    rc
+}
+
+/// `prlimit64` alias — on LP64, identical to prlimit.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn prlimit64(
+    pid: libc::pid_t,
+    resource: c_int,
+    new_limit: *const libc::rlimit,
+    old_limit: *mut libc::rlimit,
+) -> c_int {
+    unsafe { prlimit(pid, resource, new_limit, old_limit) }
+}
+
+// ---------------------------------------------------------------------------
+// GNU system info — GlibcCallThrough
+// ---------------------------------------------------------------------------
+
+unsafe extern "C" {
+    #[link_name = "get_nprocs"]
+    fn libc_get_nprocs() -> c_int;
+    #[link_name = "get_nprocs_conf"]
+    fn libc_get_nprocs_conf() -> c_int;
+    #[link_name = "get_phys_pages"]
+    fn libc_get_phys_pages() -> std::ffi::c_long;
+    #[link_name = "get_avphys_pages"]
+    fn libc_get_avphys_pages() -> std::ffi::c_long;
+    #[link_name = "getutent"]
+    fn libc_getutent() -> *mut c_void;
+    #[link_name = "setutent"]
+    fn libc_setutent();
+    #[link_name = "endutent"]
+    fn libc_endutent();
+    #[link_name = "utmpname"]
+    fn libc_utmpname(file: *const c_char) -> c_int;
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn get_nprocs() -> c_int {
+    unsafe { libc_get_nprocs() }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn get_nprocs_conf() -> c_int {
+    unsafe { libc_get_nprocs_conf() }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn get_phys_pages() -> std::ffi::c_long {
+    unsafe { libc_get_phys_pages() }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn get_avphys_pages() -> std::ffi::c_long {
+    unsafe { libc_get_avphys_pages() }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getutent() -> *mut c_void {
+    unsafe { libc_getutent() }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn setutent() {
+    unsafe { libc_setutent() }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn endutent() {
+    unsafe { libc_endutent() }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn utmpname(file: *const c_char) -> c_int {
+    unsafe { libc_utmpname(file) }
+}
+
+// ---------------------------------------------------------------------------
+// eventfd_read / eventfd_write — Implemented
+// ---------------------------------------------------------------------------
+
+/// `eventfd_read` — read an eventfd counter.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn eventfd_read(fd: c_int, value: *mut u64) -> c_int {
+    let rc = unsafe { syscall::sys_read(fd, value as *mut u8, 8) };
+    match rc {
+        Ok(8) => 0,
+        _ => {
+            unsafe { set_abi_errno(errno::EIO) };
+            -1
+        }
+    }
+}
+
+/// `eventfd_write` — write to an eventfd counter.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn eventfd_write(fd: c_int, value: u64) -> c_int {
+    let buf = value.to_ne_bytes();
+    let rc = unsafe { syscall::sys_write(fd, buf.as_ptr(), 8) };
+    match rc {
+        Ok(8) => 0,
+        _ => {
+            unsafe { set_abi_errno(errno::EIO) };
+            -1
+        }
+    }
+}

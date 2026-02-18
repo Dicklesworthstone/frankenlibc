@@ -2,7 +2,7 @@
   "version": 2,
   "generated_at_utc": "2026-02-18T04:49:26Z",
   "library": "/data/tmp/cargo-target/release/libfrankenlibc_abi.so",
-  "total_exported": 594,
+  "total_exported": 787,
   "taxonomy": {
     "Implemented": "Native Rust code owns the entire operation. No host libc dependency. Full test coverage required.",
     "RawSyscall": "ABI entrypoint marshals arguments directly to Linux syscall instruction. No glibc call-through.",
@@ -79,6 +79,24 @@
       "default_stub": false
     },
     {
+      "symbol": "_longjmp",
+      "status": "Implemented",
+      "module": "setjmp_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Alias for longjmp.",
+      "hardened_semantics": "Same.",
+      "default_stub": "Aborts"
+    },
+    {
+      "symbol": "_setjmp",
+      "status": "Implemented",
+      "module": "setjmp_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Alias for setjmp (no signal mask save).",
+      "hardened_semantics": "Same.",
+      "default_stub": "Returns -1"
+    },
+    {
       "symbol": "abs",
       "status": "Implemented",
       "module": "stdlib_abi",
@@ -142,6 +160,13 @@
       "default_stub": false
     },
     {
+      "symbol": "acoshf",
+      "header": "math.h",
+      "status": "Implemented",
+      "module": "math_abi",
+      "notes": ""
+    },
+    {
       "symbol": "alarm",
       "status": "RawSyscall",
       "module": "unistd_abi",
@@ -156,6 +181,51 @@
       "strict_semantics": "Safe Rust arena allocator; null on failure; double-free silently ignored",
       "hardened_semantics": "Arena with healing: foreign-ptr realloc as malloc, double-free logged as HealingAction",
       "default_stub": false
+    },
+    {
+      "symbol": "alphasort",
+      "status": "GlibcCallThrough",
+      "module": "dirent_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc alphasort",
+      "hardened_semantics": "Passthrough to glibc alphasort",
+      "default_stub": false
+    },
+    {
+      "symbol": "arc4random",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "arc4random via SYS_getrandom",
+      "hardened_semantics": "arc4random via SYS_getrandom",
+      "default_stub": false
+    },
+    {
+      "symbol": "arc4random_buf",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "arc4random_buf via SYS_getrandom",
+      "hardened_semantics": "arc4random_buf via SYS_getrandom",
+      "default_stub": false
+    },
+    {
+      "symbol": "arc4random_uniform",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "arc4random_uniform via rejection sampling + SYS_getrandom",
+      "hardened_semantics": "arc4random_uniform via rejection sampling + SYS_getrandom",
+      "default_stub": false
+    },
+    {
+      "symbol": "asctime",
+      "status": "Implemented",
+      "module": "time_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Thread-local buffer wrapping asctime_r. Returns pointer to static string.",
+      "hardened_semantics": "Same. Null pointer returns NULL.",
+      "default_stub": "Returns NULL"
     },
     {
       "symbol": "asctime_r",
@@ -192,6 +262,13 @@
       "strict_semantics": "Rust std::f64 math; odd inverse-hyperbolic function over finite domain; no errno side effects",
       "hardened_semantics": "Rust std::f64 math; no mode difference expected for finite inputs",
       "default_stub": false
+    },
+    {
+      "symbol": "asinhf",
+      "header": "math.h",
+      "status": "Implemented",
+      "module": "math_abi",
+      "notes": ""
     },
     {
       "symbol": "asprintf",
@@ -248,6 +325,13 @@
       "default_stub": false
     },
     {
+      "symbol": "atanhf",
+      "header": "math.h",
+      "status": "Implemented",
+      "module": "math_abi",
+      "notes": ""
+    },
+    {
       "symbol": "atexit",
       "status": "Implemented",
       "module": "stdlib_abi",
@@ -293,6 +377,13 @@
       "default_stub": false
     },
     {
+      "symbol": "basename",
+      "header": "libgen.h",
+      "family": "unistd",
+      "status": "Implemented",
+      "notes": "Extract filename from path"
+    },
+    {
       "symbol": "bcmp",
       "status": "Implemented",
       "module": "string_abi",
@@ -320,12 +411,30 @@
       "default_stub": false
     },
     {
+      "symbol": "bindtextdomain",
+      "status": "GlibcCallThrough",
+      "module": "locale_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc bindtextdomain",
+      "hardened_semantics": "Passthrough to glibc bindtextdomain",
+      "default_stub": false
+    },
+    {
       "symbol": "bsearch",
       "status": "Implemented",
       "module": "stdlib_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Safe Rust stdlib (atoi/qsort/bsearch); POSIX-correct return values and errno",
       "hardened_semantics": "Stdlib with hardened membrane; repair clamping on comparator bounds",
+      "default_stub": false
+    },
+    {
+      "symbol": "btowc",
+      "status": "GlibcCallThrough",
+      "module": "wchar_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc btowc",
+      "hardened_semantics": "Passthrough to glibc btowc",
       "default_stub": false
     },
     {
@@ -354,6 +463,13 @@
       "strict_semantics": "Rust libm path; odd real-root function over all finite inputs, preserving signed zero and IEEE 754 NaN/Inf behavior",
       "hardened_semantics": "Rust libm path; no mode difference expected for finite inputs",
       "default_stub": false
+    },
+    {
+      "symbol": "cbrtf",
+      "header": "math.h",
+      "status": "Implemented",
+      "module": "math_abi",
+      "notes": ""
     },
     {
       "symbol": "ceil",
@@ -478,12 +594,30 @@
       "default_stub": false
     },
     {
+      "symbol": "clock_settime",
+      "status": "RawSyscall",
+      "module": "time_abi",
+      "perf_class": "default",
+      "strict_semantics": "SYS_clock_settime \u2014 set clock",
+      "hardened_semantics": "SYS_clock_settime \u2014 set clock",
+      "default_stub": false
+    },
+    {
       "symbol": "close",
       "status": "RawSyscall",
       "module": "unistd_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Raw Linux syscall for POSIX I/O and process queries; POSIX errno on failure",
       "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid whence/amode",
+      "default_stub": false
+    },
+    {
+      "symbol": "close_range",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "SYS_close_range \u2014 close fd range",
+      "hardened_semantics": "SYS_close_range \u2014 close fd range",
       "default_stub": false
     },
     {
@@ -496,12 +630,39 @@
       "default_stub": false
     },
     {
+      "symbol": "closelog",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc closelog",
+      "hardened_semantics": "Passthrough to glibc closelog",
+      "default_stub": false
+    },
+    {
+      "symbol": "confstr",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc confstr",
+      "hardened_semantics": "Passthrough to glibc confstr",
+      "default_stub": false
+    },
+    {
       "symbol": "connect",
       "status": "RawSyscall",
       "module": "socket_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Raw Linux syscall for BSD sockets; POSIX errno on failure",
       "hardened_semantics": "Raw syscall; clamps send/recv buffer lengths to tracked bounds",
+      "default_stub": false
+    },
+    {
+      "symbol": "copy_file_range",
+      "status": "RawSyscall",
+      "module": "io_abi",
+      "perf_class": "default",
+      "strict_semantics": "SYS_copy_file_range \u2014 server-side file copy",
+      "hardened_semantics": "SYS_copy_file_range \u2014 server-side file copy",
       "default_stub": false
     },
     {
@@ -512,6 +673,13 @@
       "strict_semantics": "Rust libm path; magnitude/sign transfer preserves IEEE 754 NaN payload and signed zero semantics with no errno side effects",
       "hardened_semantics": "Rust libm path; no mode difference expected for finite inputs",
       "default_stub": false
+    },
+    {
+      "symbol": "copysignf",
+      "header": "math.h",
+      "status": "Implemented",
+      "module": "math_abi",
+      "notes": ""
     },
     {
       "symbol": "cos",
@@ -541,11 +709,45 @@
       "default_stub": false
     },
     {
+      "symbol": "coshf",
+      "header": "math.h",
+      "status": "Implemented",
+      "module": "math_abi",
+      "notes": ""
+    },
+    {
       "symbol": "creat",
       "status": "RawSyscall",
       "module": "unistd_abi",
       "perf_class": "syscall_veneer",
       "semantics": "POSIX"
+    },
+    {
+      "symbol": "creat64",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "LP64 alias via glibc",
+      "hardened_semantics": "LP64 alias via glibc",
+      "default_stub": false
+    },
+    {
+      "symbol": "crypt",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc crypt",
+      "hardened_semantics": "Passthrough to glibc crypt",
+      "default_stub": false
+    },
+    {
+      "symbol": "ctime",
+      "status": "Implemented",
+      "module": "time_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Thread-local buffer wrapping ctime_r. Returns pointer to static string.",
+      "hardened_semantics": "Same. Null pointer returns NULL.",
+      "default_stub": "Returns NULL"
     },
     {
       "symbol": "ctime_r",
@@ -554,6 +756,24 @@
       "perf_class": "coldpath",
       "strict_semantics": "Combines epoch_to_broken_down with format_asctime; pure Rust",
       "hardened_semantics": "Pure Rust conversion with null pointer guard",
+      "default_stub": false
+    },
+    {
+      "symbol": "daemon",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc daemon",
+      "hardened_semantics": "Passthrough to glibc daemon",
+      "default_stub": false
+    },
+    {
+      "symbol": "dgettext",
+      "status": "GlibcCallThrough",
+      "module": "locale_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc dgettext",
+      "hardened_semantics": "Passthrough to glibc dgettext",
       "default_stub": false
     },
     {
@@ -566,12 +786,37 @@
       "default_stub": false
     },
     {
+      "symbol": "dirname",
+      "header": "libgen.h",
+      "family": "unistd",
+      "status": "Implemented",
+      "notes": "Extract directory from path"
+    },
+    {
       "symbol": "div",
       "status": "Implemented",
       "module": "stdlib_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Integer division returning quotient and remainder; zero-denom returns zero",
       "hardened_semantics": "No mode difference; pure computation",
+      "default_stub": false
+    },
+    {
+      "symbol": "dl_iterate_phdr",
+      "status": "GlibcCallThrough",
+      "module": "dlfcn_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc dl_iterate_phdr",
+      "hardened_semantics": "Passthrough to glibc dl_iterate_phdr",
+      "default_stub": false
+    },
+    {
+      "symbol": "dladdr",
+      "status": "GlibcCallThrough",
+      "module": "dlfcn_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc dladdr",
+      "hardened_semantics": "Passthrough to glibc dladdr",
       "default_stub": false
     },
     {
@@ -663,6 +908,12 @@
       "default_stub": false
     },
     {
+      "symbol": "endutent",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "fast"
+    },
+    {
       "symbol": "epoll_create",
       "status": "RawSyscall",
       "module": "poll_abi",
@@ -716,11 +967,37 @@
       "default_stub": false
     },
     {
+      "symbol": "erfcf",
+      "header": "math.h",
+      "status": "Implemented",
+      "module": "math_abi",
+      "notes": ""
+    },
+    {
+      "symbol": "erff",
+      "header": "math.h",
+      "status": "Implemented",
+      "module": "math_abi",
+      "notes": ""
+    },
+    {
       "symbol": "eventfd",
       "status": "RawSyscall",
       "module": "poll_abi",
       "perf_class": "syscall_veneer",
       "semantics": "Linux"
+    },
+    {
+      "symbol": "eventfd_read",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "fast"
+    },
+    {
+      "symbol": "eventfd_write",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "fast"
     },
     {
       "symbol": "execve",
@@ -738,6 +1015,15 @@
       "perf_class": "coldpath",
       "strict_semantics": "Raw Linux syscall for process control; POSIX errno on failure",
       "hardened_semantics": "Raw syscall; validates argv/envp pointer arrays before execve",
+      "default_stub": false
+    },
+    {
+      "symbol": "execvpe",
+      "status": "GlibcCallThrough",
+      "module": "process_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc execvpe",
+      "hardened_semantics": "Passthrough to glibc execvpe",
       "default_stub": false
     },
     {
@@ -768,6 +1054,13 @@
       "default_stub": false
     },
     {
+      "symbol": "exp2f",
+      "header": "math.h",
+      "status": "Implemented",
+      "module": "math_abi",
+      "notes": ""
+    },
+    {
       "symbol": "expf",
       "status": "Implemented",
       "module": "math_abi",
@@ -795,6 +1088,13 @@
       "default_stub": false
     },
     {
+      "symbol": "expm1f",
+      "header": "math.h",
+      "status": "Implemented",
+      "module": "math_abi",
+      "notes": ""
+    },
+    {
       "symbol": "fabs",
       "status": "Implemented",
       "module": "math_abi",
@@ -818,6 +1118,15 @@
       "module": "unistd_abi",
       "perf_class": "syscall_veneer",
       "semantics": "POSIX"
+    },
+    {
+      "symbol": "fallocate",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "SYS_fallocate \u2014 allocate/deallocate file space",
+      "hardened_semantics": "SYS_fallocate \u2014 allocate/deallocate file space",
+      "default_stub": false
     },
     {
       "symbol": "fchdir",
@@ -893,6 +1202,22 @@
       "default_stub": false
     },
     {
+      "symbol": "fdimf",
+      "header": "math.h",
+      "status": "Implemented",
+      "module": "math_abi",
+      "notes": ""
+    },
+    {
+      "symbol": "fdopen",
+      "status": "Implemented",
+      "module": "stdio_abi",
+      "perf_class": "strict_fast",
+      "strict_semantics": "Associate a FILE stream with an existing fd; mode validation",
+      "hardened_semantics": "Same as strict; invalid mode returns NULL",
+      "default_stub": false
+    },
+    {
       "symbol": "feof",
       "status": "Implemented",
       "module": "stdio_abi",
@@ -956,6 +1281,24 @@
       "default_stub": false
     },
     {
+      "symbol": "fgetpos",
+      "status": "Implemented",
+      "module": "stdio_abi",
+      "perf_class": "strict_fast",
+      "strict_semantics": "Store current stream position into fpos_t",
+      "hardened_semantics": "Same as strict with null-pointer validation",
+      "default_stub": false
+    },
+    {
+      "symbol": "fgetpos64",
+      "status": "GlibcCallThrough",
+      "module": "stdio_abi",
+      "perf_class": "default",
+      "strict_semantics": "LP64 alias via glibc",
+      "hardened_semantics": "LP64 alias via glibc",
+      "default_stub": false
+    },
+    {
       "symbol": "fgets",
       "status": "Implemented",
       "module": "stdio_abi",
@@ -965,12 +1308,30 @@
       "default_stub": false
     },
     {
+      "symbol": "fgetxattr",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "SYS_fgetxattr",
+      "hardened_semantics": "SYS_fgetxattr",
+      "default_stub": false
+    },
+    {
       "symbol": "fileno",
       "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Native stream-registry + syscall-backed stdio path; no host glibc call-through",
       "hardened_semantics": "Native stream-registry + syscall-backed stdio path with membrane validation/repair; no host glibc call-through",
+      "default_stub": false
+    },
+    {
+      "symbol": "flistxattr",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "SYS_flistxattr",
+      "hardened_semantics": "SYS_flistxattr",
       "default_stub": false
     },
     {
@@ -1008,6 +1369,13 @@
       "default_stub": false
     },
     {
+      "symbol": "fmaf",
+      "header": "math.h",
+      "status": "Implemented",
+      "module": "math_abi",
+      "notes": ""
+    },
+    {
       "symbol": "fmax",
       "status": "Implemented",
       "module": "math_abi",
@@ -1017,6 +1385,13 @@
       "default_stub": false
     },
     {
+      "symbol": "fmaxf",
+      "header": "math.h",
+      "status": "Implemented",
+      "module": "math_abi",
+      "notes": ""
+    },
+    {
       "symbol": "fmin",
       "status": "Implemented",
       "module": "math_abi",
@@ -1024,6 +1399,13 @@
       "strict_semantics": "pass-through",
       "hardened_semantics": "heal-non-finite",
       "default_stub": false
+    },
+    {
+      "symbol": "fminf",
+      "header": "math.h",
+      "status": "Implemented",
+      "module": "math_abi",
+      "notes": ""
     },
     {
       "symbol": "fmod",
@@ -1044,6 +1426,15 @@
       "default_stub": false
     },
     {
+      "symbol": "fnmatch",
+      "status": "GlibcCallThrough",
+      "module": "string_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc fnmatch",
+      "hardened_semantics": "Passthrough to glibc fnmatch",
+      "default_stub": false
+    },
+    {
       "symbol": "fopen",
       "status": "Implemented",
       "module": "stdio_abi",
@@ -1053,12 +1444,39 @@
       "default_stub": false
     },
     {
+      "symbol": "fopen64",
+      "status": "GlibcCallThrough",
+      "module": "stdio_abi",
+      "perf_class": "default",
+      "strict_semantics": "LP64 alias via glibc",
+      "hardened_semantics": "LP64 alias via glibc",
+      "default_stub": false
+    },
+    {
       "symbol": "fork",
       "status": "RawSyscall",
       "module": "process_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Raw Linux syscall for process control; POSIX errno on failure",
       "hardened_semantics": "Raw syscall; validates argv/envp pointer arrays before execve",
+      "default_stub": false
+    },
+    {
+      "symbol": "forkpty",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc forkpty",
+      "hardened_semantics": "Passthrough to glibc forkpty",
+      "default_stub": false
+    },
+    {
+      "symbol": "fpathconf",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc fpathconf",
+      "hardened_semantics": "Passthrough to glibc fpathconf",
       "default_stub": false
     },
     {
@@ -1116,6 +1534,33 @@
       "default_stub": false
     },
     {
+      "symbol": "fremovexattr",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "SYS_fremovexattr",
+      "hardened_semantics": "SYS_fremovexattr",
+      "default_stub": false
+    },
+    {
+      "symbol": "freopen",
+      "status": "Implemented",
+      "module": "stdio_abi",
+      "perf_class": "strict_slow",
+      "strict_semantics": "Close stream and reopen with new file/mode",
+      "hardened_semantics": "Same as strict; flushes pending writes before close",
+      "default_stub": false
+    },
+    {
+      "symbol": "freopen64",
+      "status": "GlibcCallThrough",
+      "module": "stdio_abi",
+      "perf_class": "default",
+      "strict_semantics": "LP64 alias via glibc",
+      "hardened_semantics": "LP64 alias via glibc",
+      "default_stub": false
+    },
+    {
       "symbol": "frexp",
       "status": "Implemented",
       "module": "math_abi",
@@ -1125,12 +1570,73 @@
       "default_stub": false
     },
     {
+      "symbol": "frexpf",
+      "header": "math.h",
+      "status": "Implemented",
+      "module": "math_abi",
+      "notes": ""
+    },
+    {
+      "symbol": "fscanf",
+      "status": "GlibcCallThrough",
+      "module": "stdio_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Delegates to glibc vfscanf after membrane validation.",
+      "hardened_semantics": "Same delegation; format string validated by glibc.",
+      "default_stub": "Returns EOF"
+    },
+    {
       "symbol": "fseek",
       "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Native stream registry with SYS_lseek syscall; flushes pending writes, discards read buffer, updates logical offset",
       "hardened_semantics": "Native implementation; membrane validates stream ID, sets EINVAL on invalid whence; heals invalid offsets via safe default",
+      "default_stub": false
+    },
+    {
+      "symbol": "fseeko",
+      "status": "Implemented",
+      "module": "stdio_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Aliases fseek on LP64 (off_t == long).",
+      "hardened_semantics": "Same.",
+      "default_stub": "Returns -1"
+    },
+    {
+      "symbol": "fseeko64",
+      "status": "GlibcCallThrough",
+      "module": "stdio_abi",
+      "perf_class": "default",
+      "strict_semantics": "LP64 alias via glibc",
+      "hardened_semantics": "LP64 alias via glibc",
+      "default_stub": false
+    },
+    {
+      "symbol": "fsetpos",
+      "status": "Implemented",
+      "module": "stdio_abi",
+      "perf_class": "strict_fast",
+      "strict_semantics": "Restore stream position from fpos_t (delegates to fseek)",
+      "hardened_semantics": "Same as strict with null-pointer validation",
+      "default_stub": false
+    },
+    {
+      "symbol": "fsetpos64",
+      "status": "GlibcCallThrough",
+      "module": "stdio_abi",
+      "perf_class": "default",
+      "strict_semantics": "LP64 alias via glibc",
+      "hardened_semantics": "LP64 alias via glibc",
+      "default_stub": false
+    },
+    {
+      "symbol": "fsetxattr",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "SYS_fsetxattr",
+      "hardened_semantics": "SYS_fsetxattr",
       "default_stub": false
     },
     {
@@ -1143,11 +1649,29 @@
       "default_stub": false
     },
     {
+      "symbol": "fstat64",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "LP64 alias via glibc",
+      "hardened_semantics": "LP64 alias via glibc",
+      "default_stub": false
+    },
+    {
       "symbol": "fstatat",
       "status": "RawSyscall",
       "module": "unistd_abi",
       "perf_class": "syscall_veneer",
       "semantics": "POSIX"
+    },
+    {
+      "symbol": "fstatat64",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "LP64 alias via glibc",
+      "hardened_semantics": "LP64 alias via glibc",
+      "default_stub": false
     },
     {
       "symbol": "fsync",
@@ -1168,11 +1692,47 @@
       "default_stub": false
     },
     {
+      "symbol": "ftello",
+      "status": "Implemented",
+      "module": "stdio_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Aliases ftell on LP64 (off_t == long).",
+      "hardened_semantics": "Same.",
+      "default_stub": "Returns -1"
+    },
+    {
+      "symbol": "ftello64",
+      "status": "GlibcCallThrough",
+      "module": "stdio_abi",
+      "perf_class": "default",
+      "strict_semantics": "LP64 alias via glibc",
+      "hardened_semantics": "LP64 alias via glibc",
+      "default_stub": false
+    },
+    {
       "symbol": "ftruncate",
       "status": "RawSyscall",
       "module": "unistd_abi",
       "perf_class": "syscall_veneer",
       "semantics": "POSIX"
+    },
+    {
+      "symbol": "ftruncate64",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "LP64 alias via glibc",
+      "hardened_semantics": "LP64 alias via glibc",
+      "default_stub": false
+    },
+    {
+      "symbol": "ftw",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc ftw",
+      "hardened_semantics": "Passthrough to glibc ftw",
+      "default_stub": false
     },
     {
       "symbol": "fwrite",
@@ -1193,12 +1753,45 @@
       "default_stub": false
     },
     {
+      "symbol": "get_avphys_pages",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "fast"
+    },
+    {
+      "symbol": "get_nprocs",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "fast"
+    },
+    {
+      "symbol": "get_nprocs_conf",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "fast"
+    },
+    {
+      "symbol": "get_phys_pages",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "fast"
+    },
+    {
       "symbol": "getaddrinfo",
       "status": "Implemented",
       "module": "resolv_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Bootstrap resolver implementation: numeric getaddrinfo/getnameinfo + gai_strerror/freeaddrinfo with deterministic EAI_* failures",
       "hardened_semantics": "Resolver with deterministic repairs: invalid host/service normalized to safe defaults, evidence emitted",
+      "default_stub": false
+    },
+    {
+      "symbol": "getc",
+      "status": "Implemented",
+      "module": "stdio_abi",
+      "perf_class": "strict_hotpath",
+      "strict_semantics": "Function alias for fgetc; reads one byte from stream",
+      "hardened_semantics": "Same as strict; inherits fgetc membrane checks",
       "default_stub": false
     },
     {
@@ -1220,12 +1813,39 @@
       "default_stub": false
     },
     {
+      "symbol": "getdelim",
+      "status": "Implemented",
+      "module": "stdio_abi",
+      "perf_class": "strict_slow",
+      "strict_semantics": "Read until delimiter with dynamic buffer allocation via malloc",
+      "hardened_semantics": "Same as strict; validates all pointer arguments",
+      "default_stub": false
+    },
+    {
+      "symbol": "getdomainname",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc getdomainname",
+      "hardened_semantics": "Passthrough to glibc getdomainname",
+      "default_stub": false
+    },
+    {
       "symbol": "getegid",
       "status": "RawSyscall",
       "module": "unistd_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Raw Linux syscall for POSIX I/O and process queries; POSIX errno on failure",
       "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid whence/amode",
+      "default_stub": false
+    },
+    {
+      "symbol": "getentropy",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "getentropy via SYS_getrandom (max 256 bytes)",
+      "hardened_semantics": "getentropy via SYS_getrandom (max 256 bytes)",
       "default_stub": false
     },
     {
@@ -1310,6 +1930,33 @@
       "default_stub": false
     },
     {
+      "symbol": "gethostbyaddr",
+      "status": "GlibcCallThrough",
+      "module": "resolv_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc gethostbyaddr",
+      "hardened_semantics": "Passthrough to glibc gethostbyaddr",
+      "default_stub": false
+    },
+    {
+      "symbol": "gethostbyname",
+      "status": "GlibcCallThrough",
+      "module": "resolv_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc gethostbyname",
+      "hardened_semantics": "Passthrough to glibc gethostbyname",
+      "default_stub": false
+    },
+    {
+      "symbol": "gethostid",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc gethostid",
+      "hardened_semantics": "Passthrough to glibc gethostid",
+      "default_stub": false
+    },
+    {
       "symbol": "gethostname",
       "status": "RawSyscall",
       "module": "unistd_abi",
@@ -1324,12 +1971,48 @@
       "semantics": "POSIX"
     },
     {
+      "symbol": "getline",
+      "status": "Implemented",
+      "module": "stdio_abi",
+      "perf_class": "strict_slow",
+      "strict_semantics": "Read line (newline-delimited); delegates to getdelim",
+      "hardened_semantics": "Same as strict; validates all pointer arguments",
+      "default_stub": false
+    },
+    {
       "symbol": "getnameinfo",
       "status": "Implemented",
       "module": "resolv_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Bootstrap resolver implementation: numeric getaddrinfo/getnameinfo + gai_strerror/freeaddrinfo with deterministic EAI_* failures",
       "hardened_semantics": "Resolver with deterministic repairs: invalid host/service normalized to safe defaults, evidence emitted",
+      "default_stub": false
+    },
+    {
+      "symbol": "getopt",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Delegates to glibc getopt for CLI option parsing.",
+      "hardened_semantics": "Same delegation.",
+      "default_stub": "Returns -1"
+    },
+    {
+      "symbol": "getopt_long",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Delegates to glibc getopt_long for long option parsing.",
+      "hardened_semantics": "Same delegation.",
+      "default_stub": "Returns -1"
+    },
+    {
+      "symbol": "getpagesize",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc getpagesize",
+      "hardened_semantics": "Passthrough to glibc getpagesize",
       "default_stub": false
     },
     {
@@ -1366,6 +2049,24 @@
       "perf_class": "coldpath",
       "strict_semantics": "Raw Linux syscall for POSIX I/O and process queries; POSIX errno on failure",
       "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid whence/amode",
+      "default_stub": false
+    },
+    {
+      "symbol": "getprotobyname",
+      "status": "GlibcCallThrough",
+      "module": "resolv_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc getprotobyname",
+      "hardened_semantics": "Passthrough to glibc getprotobyname",
+      "default_stub": false
+    },
+    {
+      "symbol": "getprotobynumber",
+      "status": "GlibcCallThrough",
+      "module": "resolv_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc getprotobynumber",
+      "hardened_semantics": "Passthrough to glibc getprotobynumber",
       "default_stub": false
     },
     {
@@ -1414,6 +2115,15 @@
       "default_stub": false
     },
     {
+      "symbol": "getrandom",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "SYS_getrandom \u2014 kernel CSPRNG",
+      "hardened_semantics": "SYS_getrandom \u2014 kernel CSPRNG",
+      "default_stub": false
+    },
+    {
       "symbol": "getrlimit",
       "status": "RawSyscall",
       "module": "resource_abi",
@@ -1428,6 +2138,24 @@
       "module": "unistd_abi",
       "perf_class": "syscall_veneer",
       "semantics": "POSIX"
+    },
+    {
+      "symbol": "getservbyname",
+      "status": "GlibcCallThrough",
+      "module": "resolv_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc getservbyname",
+      "hardened_semantics": "Passthrough to glibc getservbyname",
+      "default_stub": false
+    },
+    {
+      "symbol": "getservbyport",
+      "status": "GlibcCallThrough",
+      "module": "resolv_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc getservbyport",
+      "hardened_semantics": "Passthrough to glibc getservbyport",
+      "default_stub": false
     },
     {
       "symbol": "getsid",
@@ -1457,6 +2185,15 @@
       "default_stub": false
     },
     {
+      "symbol": "gettext",
+      "status": "GlibcCallThrough",
+      "module": "locale_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc gettext",
+      "hardened_semantics": "Passthrough to glibc gettext",
+      "default_stub": false
+    },
+    {
       "symbol": "gettimeofday",
       "status": "RawSyscall",
       "module": "time_abi",
@@ -1475,12 +2212,63 @@
       "default_stub": false
     },
     {
+      "symbol": "getutent",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "fast"
+    },
+    {
+      "symbol": "getxattr",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "SYS_getxattr",
+      "hardened_semantics": "SYS_getxattr",
+      "default_stub": false
+    },
+    {
+      "symbol": "glob",
+      "status": "GlibcCallThrough",
+      "module": "string_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc glob",
+      "hardened_semantics": "Passthrough to glibc glob",
+      "default_stub": false
+    },
+    {
+      "symbol": "globfree",
+      "status": "GlibcCallThrough",
+      "module": "string_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc globfree",
+      "hardened_semantics": "Passthrough to glibc globfree",
+      "default_stub": false
+    },
+    {
+      "symbol": "gmtime",
+      "status": "Implemented",
+      "module": "time_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Thread-local buffer wrapping gmtime_r. Returns pointer to static tm.",
+      "hardened_semantics": "Same. Null pointer returns NULL.",
+      "default_stub": "Returns NULL"
+    },
+    {
       "symbol": "gmtime_r",
       "status": "Implemented",
       "module": "time_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Pure Rust epoch_to_broken_down conversion to UTC; no syscall",
       "hardened_semantics": "Pure Rust conversion with null pointer guard",
+      "default_stub": false
+    },
+    {
+      "symbol": "grantpt",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc grantpt",
+      "hardened_semantics": "Passthrough to glibc grantpt",
       "default_stub": false
     },
     {
@@ -1511,6 +2299,13 @@
       "default_stub": false
     },
     {
+      "symbol": "hypotf",
+      "header": "math.h",
+      "status": "Implemented",
+      "module": "math_abi",
+      "notes": ""
+    },
+    {
       "symbol": "iconv",
       "status": "Implemented",
       "module": "iconv_abi",
@@ -1538,6 +2333,24 @@
       "default_stub": false
     },
     {
+      "symbol": "if_indextoname",
+      "status": "GlibcCallThrough",
+      "module": "inet_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc if_indextoname",
+      "hardened_semantics": "Passthrough to glibc if_indextoname",
+      "default_stub": false
+    },
+    {
+      "symbol": "if_nametoindex",
+      "status": "GlibcCallThrough",
+      "module": "inet_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc if_nametoindex",
+      "hardened_semantics": "Passthrough to glibc if_nametoindex",
+      "default_stub": false
+    },
+    {
       "symbol": "ilogb",
       "status": "Implemented",
       "module": "math_abi",
@@ -1545,6 +2358,13 @@
       "strict_semantics": "pass-through",
       "hardened_semantics": "heal-non-finite",
       "default_stub": false
+    },
+    {
+      "symbol": "ilogbf",
+      "header": "math.h",
+      "status": "Implemented",
+      "module": "math_abi",
+      "notes": ""
     },
     {
       "symbol": "index",
@@ -1753,6 +2573,55 @@
       "default_stub": false
     },
     {
+      "symbol": "iswalnum",
+      "header": "wctype.h",
+      "family": "wctype",
+      "status": "Implemented",
+      "notes": "Wide character alphanumeric test"
+    },
+    {
+      "symbol": "iswalpha",
+      "header": "wctype.h",
+      "family": "wctype",
+      "status": "Implemented",
+      "notes": "Wide character alphabetic test"
+    },
+    {
+      "symbol": "iswdigit",
+      "header": "wctype.h",
+      "family": "wctype",
+      "status": "Implemented",
+      "notes": "Wide character digit test"
+    },
+    {
+      "symbol": "iswlower",
+      "header": "wctype.h",
+      "family": "wctype",
+      "status": "Implemented",
+      "notes": "Wide character lowercase test"
+    },
+    {
+      "symbol": "iswprint",
+      "header": "wctype.h",
+      "family": "wctype",
+      "status": "Implemented",
+      "notes": "Wide character printable test"
+    },
+    {
+      "symbol": "iswspace",
+      "header": "wctype.h",
+      "family": "wctype",
+      "status": "Implemented",
+      "notes": "Wide character whitespace test"
+    },
+    {
+      "symbol": "iswupper",
+      "header": "wctype.h",
+      "family": "wctype",
+      "status": "Implemented",
+      "notes": "Wide character uppercase test"
+    },
+    {
       "symbol": "isxdigit",
       "status": "Implemented",
       "module": "ctype_abi",
@@ -1805,6 +2674,13 @@
       "default_stub": false
     },
     {
+      "symbol": "ldexpf",
+      "header": "math.h",
+      "status": "Implemented",
+      "module": "math_abi",
+      "notes": ""
+    },
+    {
       "symbol": "ldiv",
       "status": "Implemented",
       "module": "stdlib_abi",
@@ -1821,6 +2697,19 @@
       "strict_semantics": "Rust libm path; poles at zero/negative integers and overflow regimes set errno=ERANGE",
       "hardened_semantics": "Same ERANGE signaling with runtime-policy routing; hardened mode may repair non-finite outputs deterministically",
       "default_stub": false
+    },
+    {
+      "symbol": "lgammaf",
+      "header": "math.h",
+      "status": "Implemented",
+      "module": "math_abi",
+      "notes": ""
+    },
+    {
+      "symbol": "lgetxattr",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "syscall"
     },
     {
       "symbol": "link",
@@ -1848,6 +2737,15 @@
       "default_stub": false
     },
     {
+      "symbol": "listxattr",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "SYS_listxattr",
+      "hardened_semantics": "SYS_listxattr",
+      "default_stub": false
+    },
+    {
       "symbol": "llabs",
       "status": "Implemented",
       "module": "stdlib_abi",
@@ -1866,6 +2764,12 @@
       "default_stub": false
     },
     {
+      "symbol": "llistxattr",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "syscall"
+    },
+    {
       "symbol": "llrint",
       "status": "Implemented",
       "module": "math_abi",
@@ -1873,6 +2777,13 @@
       "strict_semantics": "pass-through",
       "hardened_semantics": "heal-non-finite",
       "default_stub": false
+    },
+    {
+      "symbol": "llrintf",
+      "header": "math.h",
+      "status": "Implemented",
+      "module": "math_abi",
+      "notes": ""
     },
     {
       "symbol": "llround",
@@ -1884,6 +2795,13 @@
       "default_stub": false
     },
     {
+      "symbol": "llroundf",
+      "header": "math.h",
+      "status": "Implemented",
+      "module": "math_abi",
+      "notes": ""
+    },
+    {
       "symbol": "localeconv",
       "status": "Implemented",
       "module": "locale_abi",
@@ -1891,6 +2809,15 @@
       "strict_semantics": "Bootstrap locale implementation: setlocale supports C/POSIX and localeconv returns static C locale struct",
       "hardened_semantics": "Locale implementation with hardened fallback to C locale defaults on invalid input",
       "default_stub": false
+    },
+    {
+      "symbol": "localtime",
+      "status": "Implemented",
+      "module": "time_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Thread-local buffer wrapping localtime_r. Returns pointer to static tm.",
+      "hardened_semantics": "Same. Null pointer returns NULL.",
+      "default_stub": "Returns NULL"
     },
     {
       "symbol": "localtime_r",
@@ -1938,6 +2865,13 @@
       "default_stub": false
     },
     {
+      "symbol": "log1pf",
+      "header": "math.h",
+      "status": "Implemented",
+      "module": "math_abi",
+      "notes": ""
+    },
+    {
       "symbol": "log2",
       "status": "Implemented",
       "module": "math_abi",
@@ -1965,6 +2899,13 @@
       "default_stub": false
     },
     {
+      "symbol": "logbf",
+      "header": "math.h",
+      "status": "Implemented",
+      "module": "math_abi",
+      "notes": ""
+    },
+    {
       "symbol": "logf",
       "status": "Implemented",
       "module": "math_abi",
@@ -1972,6 +2913,30 @@
       "strict_semantics": "pass-through",
       "hardened_semantics": "heal-non-finite",
       "default_stub": false
+    },
+    {
+      "symbol": "login_tty",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc login_tty",
+      "hardened_semantics": "Passthrough to glibc login_tty",
+      "default_stub": false
+    },
+    {
+      "symbol": "longjmp",
+      "status": "Implemented",
+      "module": "setjmp_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Phase-1 restore with validation. Terminates (deferred backend).",
+      "hardened_semantics": "Same.",
+      "default_stub": "Aborts"
+    },
+    {
+      "symbol": "lremovexattr",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "syscall"
     },
     {
       "symbol": "lrint",
@@ -1983,6 +2948,13 @@
       "default_stub": false
     },
     {
+      "symbol": "lrintf",
+      "header": "math.h",
+      "status": "Implemented",
+      "module": "math_abi",
+      "notes": ""
+    },
+    {
       "symbol": "lround",
       "status": "Implemented",
       "module": "math_abi",
@@ -1990,6 +2962,13 @@
       "strict_semantics": "pass-through",
       "hardened_semantics": "heal-non-finite",
       "default_stub": false
+    },
+    {
+      "symbol": "lroundf",
+      "header": "math.h",
+      "status": "Implemented",
+      "module": "math_abi",
+      "notes": ""
     },
     {
       "symbol": "lseek",
@@ -2001,12 +2980,36 @@
       "default_stub": false
     },
     {
+      "symbol": "lseek64",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "LP64 alias via glibc",
+      "hardened_semantics": "LP64 alias via glibc",
+      "default_stub": false
+    },
+    {
+      "symbol": "lsetxattr",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "syscall"
+    },
+    {
       "symbol": "lstat",
       "status": "RawSyscall",
       "module": "unistd_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Raw Linux syscall for POSIX I/O and process queries; POSIX errno on failure",
       "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid whence/amode",
+      "default_stub": false
+    },
+    {
+      "symbol": "lstat64",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "LP64 alias via glibc",
+      "hardened_semantics": "LP64 alias via glibc",
       "default_stub": false
     },
     {
@@ -2026,6 +3029,45 @@
       "strict_semantics": "Safe Rust arena allocator; null on failure; double-free silently ignored",
       "hardened_semantics": "Arena with healing: foreign-ptr realloc as malloc, double-free logged as HealingAction",
       "default_stub": false
+    },
+    {
+      "symbol": "mblen",
+      "header": "stdlib.h",
+      "family": "wchar",
+      "status": "Implemented",
+      "notes": "UTF-8 multibyte character length"
+    },
+    {
+      "symbol": "mbrtowc",
+      "status": "GlibcCallThrough",
+      "module": "wchar_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc mbrtowc",
+      "hardened_semantics": "Passthrough to glibc mbrtowc",
+      "default_stub": false
+    },
+    {
+      "symbol": "mbsrtowcs",
+      "status": "GlibcCallThrough",
+      "module": "wchar_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc mbsrtowcs",
+      "hardened_semantics": "Passthrough to glibc mbsrtowcs",
+      "default_stub": false
+    },
+    {
+      "symbol": "mbstowcs",
+      "header": "stdlib.h",
+      "family": "wchar",
+      "status": "Implemented",
+      "notes": "UTF-8 multibyte string to wide string"
+    },
+    {
+      "symbol": "mbtowc",
+      "header": "stdlib.h",
+      "family": "wchar",
+      "status": "Implemented",
+      "notes": "UTF-8 multibyte to wide character"
     },
     {
       "symbol": "memalign",
@@ -2070,6 +3112,15 @@
       "perf_class": "strict_hotpath",
       "strict_semantics": "Safe Rust string/memory ops; unbounded scans follow C semantics; no repair",
       "hardened_semantics": "Clamps copy/scan to tracked allocation bounds; logs ClampSize/TruncateWithNull",
+      "default_stub": false
+    },
+    {
+      "symbol": "memfd_create",
+      "status": "RawSyscall",
+      "module": "io_abi",
+      "perf_class": "default",
+      "strict_semantics": "SYS_memfd_create \u2014 anonymous file in memory",
+      "hardened_semantics": "SYS_memfd_create \u2014 anonymous file in memory",
       "default_stub": false
     },
     {
@@ -2118,6 +3169,15 @@
       "default_stub": false
     },
     {
+      "symbol": "mincore",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "SYS_mincore",
+      "hardened_semantics": "SYS_mincore",
+      "default_stub": false
+    },
+    {
       "symbol": "mkdir",
       "status": "RawSyscall",
       "module": "unistd_abi",
@@ -2132,6 +3192,15 @@
       "semantics": "POSIX"
     },
     {
+      "symbol": "mkdtemp",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc mkdtemp",
+      "hardened_semantics": "Passthrough to glibc mkdtemp",
+      "default_stub": false
+    },
+    {
       "symbol": "mkfifo",
       "status": "RawSyscall",
       "module": "unistd_abi",
@@ -2144,6 +3213,22 @@
       "module": "unistd_abi",
       "perf_class": "syscall_veneer",
       "semantics": "POSIX"
+    },
+    {
+      "symbol": "mkostemp",
+      "status": "GlibcCallThrough",
+      "module": "stdlib_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc mkostemp",
+      "hardened_semantics": "Passthrough to glibc mkostemp",
+      "default_stub": false
+    },
+    {
+      "symbol": "mkstemp",
+      "header": "stdlib.h",
+      "family": "unistd",
+      "status": "GlibcCallThrough",
+      "notes": "Create temporary file (delegates to libc)"
     },
     {
       "symbol": "mktime",
@@ -2178,6 +3263,15 @@
       "default_stub": false
     },
     {
+      "symbol": "mmap64",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "LP64 alias via glibc",
+      "hardened_semantics": "LP64 alias via glibc",
+      "default_stub": false
+    },
+    {
       "symbol": "modf",
       "status": "Implemented",
       "module": "math_abi",
@@ -2187,12 +3281,91 @@
       "default_stub": false
     },
     {
+      "symbol": "modff",
+      "header": "math.h",
+      "status": "Implemented",
+      "module": "math_abi",
+      "notes": ""
+    },
+    {
       "symbol": "mprotect",
       "status": "RawSyscall",
       "module": "mmap_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Raw Linux syscall for virtual memory; POSIX errno on failure",
       "hardened_semantics": "Raw syscall; denies conflicting prot/flags combinations",
+      "default_stub": false
+    },
+    {
+      "symbol": "mq_close",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc mq_close",
+      "hardened_semantics": "Passthrough to glibc mq_close",
+      "default_stub": false
+    },
+    {
+      "symbol": "mq_getattr",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc mq_getattr",
+      "hardened_semantics": "Passthrough to glibc mq_getattr",
+      "default_stub": false
+    },
+    {
+      "symbol": "mq_open",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc mq_open",
+      "hardened_semantics": "Passthrough to glibc mq_open",
+      "default_stub": false
+    },
+    {
+      "symbol": "mq_receive",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc mq_receive",
+      "hardened_semantics": "Passthrough to glibc mq_receive",
+      "default_stub": false
+    },
+    {
+      "symbol": "mq_send",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc mq_send",
+      "hardened_semantics": "Passthrough to glibc mq_send",
+      "default_stub": false
+    },
+    {
+      "symbol": "mq_setattr",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc mq_setattr",
+      "hardened_semantics": "Passthrough to glibc mq_setattr",
+      "default_stub": false
+    },
+    {
+      "symbol": "mq_unlink",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc mq_unlink",
+      "hardened_semantics": "Passthrough to glibc mq_unlink",
+      "default_stub": false
+    },
+    {
+      "symbol": "mremap",
+      "status": "RawSyscall",
+      "module": "mmap_abi",
+      "perf_class": "default",
+      "strict_semantics": "SYS_mremap \u2014 remap virtual memory",
+      "hardened_semantics": "SYS_mremap \u2014 remap virtual memory",
       "default_stub": false
     },
     {
@@ -2246,6 +3419,13 @@
       "default_stub": false
     },
     {
+      "symbol": "nearbyintf",
+      "header": "math.h",
+      "status": "Implemented",
+      "module": "math_abi",
+      "notes": ""
+    },
+    {
       "symbol": "nextafter",
       "status": "Implemented",
       "module": "math_abi",
@@ -2253,6 +3433,47 @@
       "strict_semantics": "pass-through",
       "hardened_semantics": "heal-non-finite",
       "default_stub": false
+    },
+    {
+      "symbol": "nextafterf",
+      "header": "math.h",
+      "status": "Implemented",
+      "module": "math_abi",
+      "notes": ""
+    },
+    {
+      "symbol": "nftw",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc nftw",
+      "hardened_semantics": "Passthrough to glibc nftw",
+      "default_stub": false
+    },
+    {
+      "symbol": "ngettext",
+      "status": "GlibcCallThrough",
+      "module": "locale_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc ngettext",
+      "hardened_semantics": "Passthrough to glibc ngettext",
+      "default_stub": false
+    },
+    {
+      "symbol": "nice",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc nice",
+      "hardened_semantics": "Passthrough to glibc nice",
+      "default_stub": false
+    },
+    {
+      "symbol": "nl_langinfo",
+      "header": "langinfo.h",
+      "status": "GlibcCallThrough",
+      "module": "locale_abi",
+      "notes": ""
     },
     {
       "symbol": "ntohl",
@@ -2280,6 +3501,15 @@
       "semantics": "POSIX"
     },
     {
+      "symbol": "open64",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "LP64 alias via glibc",
+      "hardened_semantics": "LP64 alias via glibc",
+      "default_stub": false
+    },
+    {
       "symbol": "openat",
       "status": "RawSyscall",
       "module": "unistd_abi",
@@ -2296,6 +3526,33 @@
       "default_stub": false
     },
     {
+      "symbol": "openlog",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc openlog",
+      "hardened_semantics": "Passthrough to glibc openlog",
+      "default_stub": false
+    },
+    {
+      "symbol": "openpty",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc openpty",
+      "hardened_semantics": "Passthrough to glibc openpty",
+      "default_stub": false
+    },
+    {
+      "symbol": "pathconf",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc pathconf",
+      "hardened_semantics": "Passthrough to glibc pathconf",
+      "default_stub": false
+    },
+    {
       "symbol": "pause",
       "status": "RawSyscall",
       "module": "signal_abi",
@@ -2305,12 +3562,37 @@
       "default_stub": false
     },
     {
+      "symbol": "pclose",
+      "header": "stdio.h",
+      "status": "Implemented",
+      "module": "stdio_abi",
+      "notes": ""
+    },
+    {
       "symbol": "perror",
       "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Native errno-to-message mapping with direct write to stderr fd; no host glibc delegation",
       "hardened_semantics": "Native implementation; membrane validates optional prefix string, logs TruncateWithNull for unterminated strings",
+      "default_stub": false
+    },
+    {
+      "symbol": "pidfd_open",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "SYS_pidfd_open \u2014 process file descriptor",
+      "hardened_semantics": "SYS_pidfd_open \u2014 process file descriptor",
+      "default_stub": false
+    },
+    {
+      "symbol": "pidfd_send_signal",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "SYS_pidfd_send_signal \u2014 signal via pidfd",
+      "hardened_semantics": "SYS_pidfd_send_signal \u2014 signal via pidfd",
       "default_stub": false
     },
     {
@@ -2339,12 +3621,91 @@
       "default_stub": false
     },
     {
+      "symbol": "popen",
+      "header": "stdio.h",
+      "status": "Implemented",
+      "module": "stdio_abi",
+      "notes": ""
+    },
+    {
+      "symbol": "posix_fadvise",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "SYS_fadvise64",
+      "hardened_semantics": "SYS_fadvise64",
+      "default_stub": false
+    },
+    {
       "symbol": "posix_memalign",
       "status": "Implemented",
       "module": "malloc_abi",
       "perf_class": "strict_hotpath",
       "strict_semantics": "Safe Rust arena allocator; null on failure; double-free silently ignored",
       "hardened_semantics": "Arena with healing: foreign-ptr realloc as malloc, double-free logged as HealingAction",
+      "default_stub": false
+    },
+    {
+      "symbol": "posix_openpt",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc posix_openpt",
+      "hardened_semantics": "Passthrough to glibc posix_openpt",
+      "default_stub": false
+    },
+    {
+      "symbol": "posix_spawn",
+      "status": "GlibcCallThrough",
+      "module": "process_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc posix_spawn",
+      "hardened_semantics": "Passthrough to glibc posix_spawn",
+      "default_stub": false
+    },
+    {
+      "symbol": "posix_spawn_file_actions_destroy",
+      "status": "GlibcCallThrough",
+      "module": "process_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc posix_spawn_file_actions_destroy",
+      "hardened_semantics": "Passthrough to glibc posix_spawn_file_actions_destroy",
+      "default_stub": false
+    },
+    {
+      "symbol": "posix_spawn_file_actions_init",
+      "status": "GlibcCallThrough",
+      "module": "process_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc posix_spawn_file_actions_init",
+      "hardened_semantics": "Passthrough to glibc posix_spawn_file_actions_init",
+      "default_stub": false
+    },
+    {
+      "symbol": "posix_spawnattr_destroy",
+      "status": "GlibcCallThrough",
+      "module": "process_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc posix_spawnattr_destroy",
+      "hardened_semantics": "Passthrough to glibc posix_spawnattr_destroy",
+      "default_stub": false
+    },
+    {
+      "symbol": "posix_spawnattr_init",
+      "status": "GlibcCallThrough",
+      "module": "process_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc posix_spawnattr_init",
+      "hardened_semantics": "Passthrough to glibc posix_spawnattr_init",
+      "default_stub": false
+    },
+    {
+      "symbol": "posix_spawnp",
+      "status": "GlibcCallThrough",
+      "module": "process_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc posix_spawnp",
+      "hardened_semantics": "Passthrough to glibc posix_spawnp",
       "default_stub": false
     },
     {
@@ -2389,6 +3750,33 @@
       "semantics": "POSIX"
     },
     {
+      "symbol": "pread64",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "LP64 alias via glibc",
+      "hardened_semantics": "LP64 alias via glibc",
+      "default_stub": false
+    },
+    {
+      "symbol": "preadv",
+      "status": "RawSyscall",
+      "module": "io_abi",
+      "perf_class": "default",
+      "strict_semantics": "SYS_preadv \u2014 vectored pread",
+      "hardened_semantics": "SYS_preadv \u2014 vectored pread",
+      "default_stub": false
+    },
+    {
+      "symbol": "preadv2",
+      "status": "RawSyscall",
+      "module": "io_abi",
+      "perf_class": "default",
+      "strict_semantics": "SYS_preadv2 \u2014 vectored pread with flags",
+      "hardened_semantics": "SYS_preadv2 \u2014 vectored pread with flags",
+      "default_stub": false
+    },
+    {
       "symbol": "printf",
       "status": "Implemented",
       "module": "stdio_abi",
@@ -2398,12 +3786,123 @@
       "default_stub": false
     },
     {
+      "symbol": "prlimit",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "syscall"
+    },
+    {
+      "symbol": "prlimit64",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "syscall"
+    },
+    {
       "symbol": "pselect",
       "status": "RawSyscall",
       "module": "poll_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Raw Linux syscall for I/O multiplexing; POSIX errno on failure",
       "hardened_semantics": "Raw syscall; clamps nfds to tracked pollfd array bounds",
+      "default_stub": false
+    },
+    {
+      "symbol": "psignal",
+      "status": "GlibcCallThrough",
+      "module": "string_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc psignal",
+      "hardened_semantics": "Passthrough to glibc psignal",
+      "default_stub": false
+    },
+    {
+      "symbol": "pthread_attr_destroy",
+      "status": "GlibcCallThrough",
+      "module": "pthread_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Delegates to glibc.",
+      "hardened_semantics": "Same.",
+      "default_stub": "Returns EINVAL"
+    },
+    {
+      "symbol": "pthread_attr_getdetachstate",
+      "status": "GlibcCallThrough",
+      "module": "pthread_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Delegates to glibc.",
+      "hardened_semantics": "Same.",
+      "default_stub": "Returns EINVAL"
+    },
+    {
+      "symbol": "pthread_attr_getstacksize",
+      "status": "GlibcCallThrough",
+      "module": "pthread_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Delegates to glibc.",
+      "hardened_semantics": "Same.",
+      "default_stub": "Returns EINVAL"
+    },
+    {
+      "symbol": "pthread_attr_init",
+      "status": "GlibcCallThrough",
+      "module": "pthread_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Delegates to glibc.",
+      "hardened_semantics": "Same.",
+      "default_stub": "Returns EINVAL"
+    },
+    {
+      "symbol": "pthread_attr_setdetachstate",
+      "status": "GlibcCallThrough",
+      "module": "pthread_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Delegates to glibc.",
+      "hardened_semantics": "Same.",
+      "default_stub": "Returns EINVAL"
+    },
+    {
+      "symbol": "pthread_attr_setstacksize",
+      "status": "GlibcCallThrough",
+      "module": "pthread_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Delegates to glibc.",
+      "hardened_semantics": "Same.",
+      "default_stub": "Returns EINVAL"
+    },
+    {
+      "symbol": "pthread_barrier_destroy",
+      "status": "GlibcCallThrough",
+      "module": "pthread_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough",
+      "hardened_semantics": "Passthrough",
+      "default_stub": false
+    },
+    {
+      "symbol": "pthread_barrier_init",
+      "status": "GlibcCallThrough",
+      "module": "pthread_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough",
+      "hardened_semantics": "Passthrough",
+      "default_stub": false
+    },
+    {
+      "symbol": "pthread_barrier_wait",
+      "status": "GlibcCallThrough",
+      "module": "pthread_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough",
+      "hardened_semantics": "Passthrough",
+      "default_stub": false
+    },
+    {
+      "symbol": "pthread_cancel",
+      "status": "GlibcCallThrough",
+      "module": "pthread_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc pthread_cancel",
+      "hardened_semantics": "Passthrough to glibc pthread_cancel",
       "default_stub": false
     },
     {
@@ -2443,6 +3942,15 @@
       "default_stub": false
     },
     {
+      "symbol": "pthread_cond_timedwait",
+      "status": "Implemented",
+      "module": "pthread_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Timed condvar wait with futex backend.",
+      "hardened_semantics": "Same.",
+      "default_stub": "Returns EINVAL"
+    },
+    {
       "symbol": "pthread_cond_wait",
       "status": "Implemented",
       "module": "pthread_abi",
@@ -2450,6 +3958,42 @@
       "strict_semantics": "Native condvar wait with futex choreography; requires managed mutex and enforces association invariants",
       "hardened_semantics": "Native condvar wait with deterministic validation, bounded wake/relock path, and explicit EINVAL on invalid association",
       "default_stub": false
+    },
+    {
+      "symbol": "pthread_condattr_destroy",
+      "status": "GlibcCallThrough",
+      "module": "pthread_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Delegates to glibc.",
+      "hardened_semantics": "Same.",
+      "default_stub": "Returns EINVAL"
+    },
+    {
+      "symbol": "pthread_condattr_getclock",
+      "status": "GlibcCallThrough",
+      "module": "pthread_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Delegates to glibc.",
+      "hardened_semantics": "Same.",
+      "default_stub": "Returns EINVAL"
+    },
+    {
+      "symbol": "pthread_condattr_init",
+      "status": "GlibcCallThrough",
+      "module": "pthread_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Delegates to glibc.",
+      "hardened_semantics": "Same.",
+      "default_stub": "Returns EINVAL"
+    },
+    {
+      "symbol": "pthread_condattr_setclock",
+      "status": "GlibcCallThrough",
+      "module": "pthread_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Delegates to glibc.",
+      "hardened_semantics": "Same.",
+      "default_stub": "Returns EINVAL"
     },
     {
       "symbol": "pthread_create",
@@ -2479,6 +4023,33 @@
       "default_stub": false
     },
     {
+      "symbol": "pthread_getattr_np",
+      "status": "GlibcCallThrough",
+      "module": "pthread_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc pthread_getattr_np",
+      "hardened_semantics": "Passthrough to glibc pthread_getattr_np",
+      "default_stub": false
+    },
+    {
+      "symbol": "pthread_getname_np",
+      "status": "GlibcCallThrough",
+      "module": "pthread_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough",
+      "hardened_semantics": "Passthrough",
+      "default_stub": false
+    },
+    {
+      "symbol": "pthread_getspecific",
+      "status": "Implemented",
+      "module": "pthread_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Thread-specific data retrieval.",
+      "hardened_semantics": "Same.",
+      "default_stub": "Returns NULL"
+    },
+    {
       "symbol": "pthread_join",
       "status": "Implemented",
       "module": "pthread_abi",
@@ -2486,6 +4057,24 @@
       "strict_semantics": "Native join on managed ThreadHandle registry with deterministic ESRCH for unknown ids and core join errno propagation",
       "hardened_semantics": "Native join with membrane policy gating and deterministic registry ownership enforcement",
       "default_stub": false
+    },
+    {
+      "symbol": "pthread_key_create",
+      "status": "Implemented",
+      "module": "pthread_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Thread-specific data key creation.",
+      "hardened_semantics": "Same.",
+      "default_stub": "Returns EINVAL"
+    },
+    {
+      "symbol": "pthread_key_delete",
+      "status": "Implemented",
+      "module": "pthread_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Thread-specific data key deletion.",
+      "hardened_semantics": "Same.",
+      "default_stub": "Returns EINVAL"
     },
     {
       "symbol": "pthread_mutex_destroy",
@@ -2533,6 +4122,51 @@
       "default_stub": false
     },
     {
+      "symbol": "pthread_mutexattr_destroy",
+      "status": "GlibcCallThrough",
+      "module": "pthread_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Delegates to glibc.",
+      "hardened_semantics": "Same.",
+      "default_stub": "Returns EINVAL"
+    },
+    {
+      "symbol": "pthread_mutexattr_gettype",
+      "status": "GlibcCallThrough",
+      "module": "pthread_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Delegates to glibc.",
+      "hardened_semantics": "Same.",
+      "default_stub": "Returns EINVAL"
+    },
+    {
+      "symbol": "pthread_mutexattr_init",
+      "status": "GlibcCallThrough",
+      "module": "pthread_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Delegates to glibc.",
+      "hardened_semantics": "Same.",
+      "default_stub": "Returns EINVAL"
+    },
+    {
+      "symbol": "pthread_mutexattr_settype",
+      "status": "GlibcCallThrough",
+      "module": "pthread_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Delegates to glibc.",
+      "hardened_semantics": "Same.",
+      "default_stub": "Returns EINVAL"
+    },
+    {
+      "symbol": "pthread_once",
+      "status": "Implemented",
+      "module": "pthread_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "One-time initialization with futex-based once control.",
+      "hardened_semantics": "Same.",
+      "default_stub": "Returns EINVAL"
+    },
+    {
       "symbol": "pthread_rwlock_destroy",
       "status": "Implemented",
       "module": "pthread_abi",
@@ -2560,6 +4194,24 @@
       "default_stub": false
     },
     {
+      "symbol": "pthread_rwlock_tryrdlock",
+      "status": "Implemented",
+      "module": "pthread_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Try read lock with futex backend.",
+      "hardened_semantics": "Same.",
+      "default_stub": "Returns EINVAL"
+    },
+    {
+      "symbol": "pthread_rwlock_trywrlock",
+      "status": "Implemented",
+      "module": "pthread_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Try write lock with futex backend.",
+      "hardened_semantics": "Same.",
+      "default_stub": "Returns EINVAL"
+    },
+    {
       "symbol": "pthread_rwlock_unlock",
       "status": "Implemented",
       "module": "pthread_abi",
@@ -2578,6 +4230,24 @@
       "default_stub": false
     },
     {
+      "symbol": "pthread_rwlockattr_destroy",
+      "status": "GlibcCallThrough",
+      "module": "pthread_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Delegates to glibc.",
+      "hardened_semantics": "Same.",
+      "default_stub": "Returns EINVAL"
+    },
+    {
+      "symbol": "pthread_rwlockattr_init",
+      "status": "GlibcCallThrough",
+      "module": "pthread_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Delegates to glibc.",
+      "hardened_semantics": "Same.",
+      "default_stub": "Returns EINVAL"
+    },
+    {
       "symbol": "pthread_self",
       "status": "Implemented",
       "module": "pthread_abi",
@@ -2585,6 +4255,42 @@
       "strict_semantics": "Native self id resolution: returns managed ThreadHandle-backed pthread_t when available, otherwise kernel tid fallback",
       "hardened_semantics": "Native self id resolution under membrane policy routing with deterministic managed-handle preference",
       "default_stub": false
+    },
+    {
+      "symbol": "pthread_setcancelstate",
+      "status": "GlibcCallThrough",
+      "module": "pthread_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc pthread_setcancelstate",
+      "hardened_semantics": "Passthrough to glibc pthread_setcancelstate",
+      "default_stub": false
+    },
+    {
+      "symbol": "pthread_setcanceltype",
+      "status": "GlibcCallThrough",
+      "module": "pthread_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc pthread_setcanceltype",
+      "hardened_semantics": "Passthrough to glibc pthread_setcanceltype",
+      "default_stub": false
+    },
+    {
+      "symbol": "pthread_setname_np",
+      "status": "GlibcCallThrough",
+      "module": "pthread_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough",
+      "hardened_semantics": "Passthrough",
+      "default_stub": false
+    },
+    {
+      "symbol": "pthread_setspecific",
+      "status": "Implemented",
+      "module": "pthread_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Thread-specific data storage.",
+      "hardened_semantics": "Same.",
+      "default_stub": "Returns EINVAL"
     },
     {
       "symbol": "pthread_sigmask",
@@ -2596,6 +4302,78 @@
       "default_stub": false
     },
     {
+      "symbol": "pthread_spin_destroy",
+      "status": "GlibcCallThrough",
+      "module": "pthread_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough",
+      "hardened_semantics": "Passthrough",
+      "default_stub": false
+    },
+    {
+      "symbol": "pthread_spin_init",
+      "status": "GlibcCallThrough",
+      "module": "pthread_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough",
+      "hardened_semantics": "Passthrough",
+      "default_stub": false
+    },
+    {
+      "symbol": "pthread_spin_lock",
+      "status": "GlibcCallThrough",
+      "module": "pthread_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough",
+      "hardened_semantics": "Passthrough",
+      "default_stub": false
+    },
+    {
+      "symbol": "pthread_spin_trylock",
+      "status": "GlibcCallThrough",
+      "module": "pthread_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough",
+      "hardened_semantics": "Passthrough",
+      "default_stub": false
+    },
+    {
+      "symbol": "pthread_spin_unlock",
+      "status": "GlibcCallThrough",
+      "module": "pthread_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough",
+      "hardened_semantics": "Passthrough",
+      "default_stub": false
+    },
+    {
+      "symbol": "pthread_testcancel",
+      "status": "GlibcCallThrough",
+      "module": "pthread_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc pthread_testcancel",
+      "hardened_semantics": "Passthrough to glibc pthread_testcancel",
+      "default_stub": false
+    },
+    {
+      "symbol": "ptsname",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc ptsname",
+      "hardened_semantics": "Passthrough to glibc ptsname",
+      "default_stub": false
+    },
+    {
+      "symbol": "putc",
+      "status": "Implemented",
+      "module": "stdio_abi",
+      "perf_class": "strict_hotpath",
+      "strict_semantics": "Function alias for fputc; writes one byte to stream",
+      "hardened_semantics": "Same as strict; inherits fputc membrane checks",
+      "default_stub": false
+    },
+    {
       "symbol": "putchar",
       "status": "Implemented",
       "module": "stdio_abi",
@@ -2603,6 +4381,13 @@
       "strict_semantics": "Native stream-registry + syscall-backed stdio path; no host glibc call-through",
       "hardened_semantics": "Native stream-registry + syscall-backed stdio path with membrane validation/repair; no host glibc call-through",
       "default_stub": false
+    },
+    {
+      "symbol": "putenv",
+      "header": "stdlib.h",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "notes": ""
     },
     {
       "symbol": "puts",
@@ -2619,6 +4404,33 @@
       "module": "io_abi",
       "perf_class": "syscall_veneer",
       "semantics": "POSIX"
+    },
+    {
+      "symbol": "pwrite64",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "LP64 alias via glibc",
+      "hardened_semantics": "LP64 alias via glibc",
+      "default_stub": false
+    },
+    {
+      "symbol": "pwritev",
+      "status": "RawSyscall",
+      "module": "io_abi",
+      "perf_class": "default",
+      "strict_semantics": "SYS_pwritev \u2014 vectored pwrite",
+      "hardened_semantics": "SYS_pwritev \u2014 vectored pwrite",
+      "default_stub": false
+    },
+    {
+      "symbol": "pwritev2",
+      "status": "RawSyscall",
+      "module": "io_abi",
+      "perf_class": "default",
+      "strict_semantics": "SYS_pwritev2 \u2014 vectored pwrite with flags",
+      "hardened_semantics": "SYS_pwritev2 \u2014 vectored pwrite with flags",
+      "default_stub": false
     },
     {
       "symbol": "qsort",
@@ -2666,12 +4478,39 @@
       "default_stub": false
     },
     {
+      "symbol": "readahead",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "SYS_readahead",
+      "hardened_semantics": "SYS_readahead",
+      "default_stub": false
+    },
+    {
       "symbol": "readdir",
       "status": "RawSyscall",
       "module": "dirent_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Raw Linux syscall for directory enumeration; POSIX errno on failure",
       "hardened_semantics": "Raw syscall; validates path pointer bounds before getdents64",
+      "default_stub": false
+    },
+    {
+      "symbol": "readdir64",
+      "status": "GlibcCallThrough",
+      "module": "dirent_abi",
+      "perf_class": "default",
+      "strict_semantics": "LP64 alias via glibc",
+      "hardened_semantics": "LP64 alias via glibc",
+      "default_stub": false
+    },
+    {
+      "symbol": "readdir_r",
+      "status": "GlibcCallThrough",
+      "module": "dirent_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc readdir_r (deprecated but used)",
+      "hardened_semantics": "Passthrough to glibc readdir_r (deprecated but used)",
       "default_stub": false
     },
     {
@@ -2707,6 +4546,22 @@
       "default_stub": false
     },
     {
+      "symbol": "reallocarray",
+      "status": "GlibcCallThrough",
+      "module": "stdlib_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc reallocarray",
+      "hardened_semantics": "Passthrough to glibc reallocarray",
+      "default_stub": false
+    },
+    {
+      "symbol": "realpath",
+      "header": "stdlib.h",
+      "family": "unistd",
+      "status": "GlibcCallThrough",
+      "notes": "Resolve pathname (delegates to libc)"
+    },
+    {
       "symbol": "recv",
       "status": "RawSyscall",
       "module": "socket_abi",
@@ -2734,12 +4589,73 @@
       "default_stub": false
     },
     {
+      "symbol": "regcomp",
+      "status": "GlibcCallThrough",
+      "module": "string_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc regcomp",
+      "hardened_semantics": "Passthrough to glibc regcomp",
+      "default_stub": false
+    },
+    {
+      "symbol": "regerror",
+      "status": "GlibcCallThrough",
+      "module": "string_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc regerror",
+      "hardened_semantics": "Passthrough to glibc regerror",
+      "default_stub": false
+    },
+    {
+      "symbol": "regexec",
+      "status": "GlibcCallThrough",
+      "module": "string_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc regexec",
+      "hardened_semantics": "Passthrough to glibc regexec",
+      "default_stub": false
+    },
+    {
+      "symbol": "regfree",
+      "status": "GlibcCallThrough",
+      "module": "string_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc regfree",
+      "hardened_semantics": "Passthrough to glibc regfree",
+      "default_stub": false
+    },
+    {
       "symbol": "remainder",
       "status": "Implemented",
       "module": "math_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Rust libm path; y==0 or infinite x with finite y sets errno=EDOM while preserving IEEE 754 NaN behavior",
       "hardened_semantics": "Same errno signaling with runtime-policy routing; hardened mode may repair non-finite outputs deterministically",
+      "default_stub": false
+    },
+    {
+      "symbol": "remainderf",
+      "header": "math.h",
+      "status": "Implemented",
+      "module": "math_abi",
+      "notes": ""
+    },
+    {
+      "symbol": "remove",
+      "status": "Implemented",
+      "module": "stdio_abi",
+      "perf_class": "strict_slow",
+      "strict_semantics": "Remove file via unlinkat; falls back to rmdir for directories",
+      "hardened_semantics": "Same as strict with null-pointer guard",
+      "default_stub": false
+    },
+    {
+      "symbol": "removexattr",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "SYS_removexattr",
+      "hardened_semantics": "SYS_removexattr",
       "default_stub": false
     },
     {
@@ -2766,6 +4682,15 @@
       "default_stub": false
     },
     {
+      "symbol": "rewinddir",
+      "status": "GlibcCallThrough",
+      "module": "dirent_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc rewinddir",
+      "hardened_semantics": "Passthrough to glibc rewinddir",
+      "default_stub": false
+    },
+    {
       "symbol": "rindex",
       "status": "Implemented",
       "module": "string_abi",
@@ -2782,6 +4707,13 @@
       "strict_semantics": "Rust libm path; rounds according to current floating-point mode while preserving IEEE 754 NaN/Inf behavior",
       "hardened_semantics": "Rust libm path; no mode difference expected for finite inputs",
       "default_stub": false
+    },
+    {
+      "symbol": "rintf",
+      "header": "math.h",
+      "status": "Implemented",
+      "module": "math_abi",
+      "notes": ""
     },
     {
       "symbol": "rmdir",
@@ -2820,12 +4752,125 @@
       "default_stub": false
     },
     {
+      "symbol": "scalblnf",
+      "header": "math.h",
+      "status": "Implemented",
+      "module": "math_abi",
+      "notes": ""
+    },
+    {
       "symbol": "scalbn",
       "status": "Implemented",
       "module": "math_abi",
       "perf_class": "hotpath",
       "strict_semantics": "pass-through",
       "hardened_semantics": "heal-non-finite",
+      "default_stub": false
+    },
+    {
+      "symbol": "scalbnf",
+      "header": "math.h",
+      "status": "Implemented",
+      "module": "math_abi",
+      "notes": ""
+    },
+    {
+      "symbol": "scandir",
+      "status": "GlibcCallThrough",
+      "module": "dirent_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc scandir",
+      "hardened_semantics": "Passthrough to glibc scandir",
+      "default_stub": false
+    },
+    {
+      "symbol": "scandir64",
+      "status": "GlibcCallThrough",
+      "module": "dirent_abi",
+      "perf_class": "default",
+      "strict_semantics": "LP64 alias via glibc",
+      "hardened_semantics": "LP64 alias via glibc",
+      "default_stub": false
+    },
+    {
+      "symbol": "scanf",
+      "status": "GlibcCallThrough",
+      "module": "stdio_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Delegates to glibc vscanf after membrane validation.",
+      "hardened_semantics": "Same delegation; format string validated by glibc.",
+      "default_stub": "Returns EOF"
+    },
+    {
+      "symbol": "sched_get_priority_max",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc sched_get_priority_max",
+      "hardened_semantics": "Passthrough to glibc sched_get_priority_max",
+      "default_stub": false
+    },
+    {
+      "symbol": "sched_get_priority_min",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc sched_get_priority_min",
+      "hardened_semantics": "Passthrough to glibc sched_get_priority_min",
+      "default_stub": false
+    },
+    {
+      "symbol": "sched_getaffinity",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "SYS_sched_getaffinity \u2014 get CPU affinity",
+      "hardened_semantics": "SYS_sched_getaffinity \u2014 get CPU affinity",
+      "default_stub": false
+    },
+    {
+      "symbol": "sched_getparam",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc sched_getparam",
+      "hardened_semantics": "Passthrough to glibc sched_getparam",
+      "default_stub": false
+    },
+    {
+      "symbol": "sched_getscheduler",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc sched_getscheduler",
+      "hardened_semantics": "Passthrough to glibc sched_getscheduler",
+      "default_stub": false
+    },
+    {
+      "symbol": "sched_setaffinity",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "SYS_sched_setaffinity \u2014 set CPU affinity",
+      "hardened_semantics": "SYS_sched_setaffinity \u2014 set CPU affinity",
+      "default_stub": false
+    },
+    {
+      "symbol": "sched_setparam",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc sched_setparam",
+      "hardened_semantics": "Passthrough to glibc sched_setparam",
+      "default_stub": false
+    },
+    {
+      "symbol": "sched_setscheduler",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc sched_setscheduler",
+      "hardened_semantics": "Passthrough to glibc sched_setscheduler",
       "default_stub": false
     },
     {
@@ -2845,12 +4890,111 @@
       "default_stub": false
     },
     {
+      "symbol": "seekdir",
+      "status": "GlibcCallThrough",
+      "module": "dirent_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc seekdir",
+      "hardened_semantics": "Passthrough to glibc seekdir",
+      "default_stub": false
+    },
+    {
       "symbol": "select",
       "status": "RawSyscall",
       "module": "poll_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Raw Linux syscall for I/O multiplexing; POSIX errno on failure",
       "hardened_semantics": "Raw syscall; clamps nfds to tracked pollfd array bounds",
+      "default_stub": false
+    },
+    {
+      "symbol": "sem_close",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc sem_close",
+      "hardened_semantics": "Passthrough to glibc sem_close",
+      "default_stub": false
+    },
+    {
+      "symbol": "sem_destroy",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc sem_destroy",
+      "hardened_semantics": "Passthrough to glibc sem_destroy",
+      "default_stub": false
+    },
+    {
+      "symbol": "sem_getvalue",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc sem_getvalue",
+      "hardened_semantics": "Passthrough to glibc sem_getvalue",
+      "default_stub": false
+    },
+    {
+      "symbol": "sem_init",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc sem_init",
+      "hardened_semantics": "Passthrough to glibc sem_init",
+      "default_stub": false
+    },
+    {
+      "symbol": "sem_open",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc sem_open",
+      "hardened_semantics": "Passthrough to glibc sem_open",
+      "default_stub": false
+    },
+    {
+      "symbol": "sem_post",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc sem_post",
+      "hardened_semantics": "Passthrough to glibc sem_post",
+      "default_stub": false
+    },
+    {
+      "symbol": "sem_timedwait",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc sem_timedwait",
+      "hardened_semantics": "Passthrough to glibc sem_timedwait",
+      "default_stub": false
+    },
+    {
+      "symbol": "sem_trywait",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc sem_trywait",
+      "hardened_semantics": "Passthrough to glibc sem_trywait",
+      "default_stub": false
+    },
+    {
+      "symbol": "sem_unlink",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc sem_unlink",
+      "hardened_semantics": "Passthrough to glibc sem_unlink",
+      "default_stub": false
+    },
+    {
+      "symbol": "sem_wait",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc sem_wait",
+      "hardened_semantics": "Passthrough to glibc sem_wait",
       "default_stub": false
     },
     {
@@ -2868,6 +5012,15 @@
       "module": "io_abi",
       "perf_class": "syscall_veneer",
       "semantics": "Linux"
+    },
+    {
+      "symbol": "sendfile64",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "LP64 alias via glibc",
+      "hardened_semantics": "LP64 alias via glibc",
+      "default_stub": false
     },
     {
       "symbol": "sendmsg",
@@ -2958,6 +5111,15 @@
       "semantics": "POSIX"
     },
     {
+      "symbol": "setjmp",
+      "status": "Implemented",
+      "module": "setjmp_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Phase-1 capture with metadata tracking.",
+      "hardened_semantics": "Same with additional validation.",
+      "default_stub": "Returns -1"
+    },
+    {
       "symbol": "setlocale",
       "status": "Implemented",
       "module": "locale_abi",
@@ -3039,12 +5201,45 @@
       "default_stub": false
     },
     {
+      "symbol": "setutent",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "fast"
+    },
+    {
       "symbol": "setvbuf",
       "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Native stream-registry + syscall-backed stdio path; no host glibc call-through",
       "hardened_semantics": "Native stream-registry + syscall-backed stdio path with membrane validation/repair; no host glibc call-through",
+      "default_stub": false
+    },
+    {
+      "symbol": "setxattr",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "SYS_setxattr",
+      "hardened_semantics": "SYS_setxattr",
+      "default_stub": false
+    },
+    {
+      "symbol": "shm_open",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc shm_open",
+      "hardened_semantics": "Passthrough to glibc shm_open",
+      "default_stub": false
+    },
+    {
+      "symbol": "shm_unlink",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc shm_unlink",
+      "hardened_semantics": "Passthrough to glibc shm_unlink",
       "default_stub": false
     },
     {
@@ -3120,12 +5315,39 @@
       "default_stub": false
     },
     {
+      "symbol": "siglongjmp",
+      "status": "Implemented",
+      "module": "setjmp_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "longjmp with signal mask restore metadata.",
+      "hardened_semantics": "Same.",
+      "default_stub": "Aborts"
+    },
+    {
       "symbol": "signal",
       "status": "RawSyscall",
       "module": "signal_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Raw Linux syscall for signal handling; POSIX errno on failure",
       "hardened_semantics": "Raw syscall; denies invalid signal numbers instead of passing to kernel",
+      "default_stub": false
+    },
+    {
+      "symbol": "signalfd",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "SYS_signalfd4 \u2014 signal file descriptor",
+      "hardened_semantics": "SYS_signalfd4 \u2014 signal file descriptor",
+      "default_stub": false
+    },
+    {
+      "symbol": "sigpending",
+      "status": "GlibcCallThrough",
+      "module": "signal_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc sigpending",
+      "hardened_semantics": "Passthrough to glibc sigpending",
       "default_stub": false
     },
     {
@@ -3138,12 +5360,30 @@
       "default_stub": false
     },
     {
+      "symbol": "sigsetjmp",
+      "status": "Implemented",
+      "module": "setjmp_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "setjmp with optional signal mask save.",
+      "hardened_semantics": "Same.",
+      "default_stub": "Returns -1"
+    },
+    {
       "symbol": "sigsuspend",
       "status": "RawSyscall",
       "module": "signal_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Raw Linux syscall SYS_rt_sigsuspend; always returns -1 with EINTR",
       "hardened_semantics": "Raw syscall; membrane-gated signal suspension with EINTR on delivery",
+      "default_stub": false
+    },
+    {
+      "symbol": "sigwait",
+      "status": "GlibcCallThrough",
+      "module": "signal_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc sigwait",
+      "hardened_semantics": "Passthrough to glibc sigwait",
       "default_stub": false
     },
     {
@@ -3172,6 +5412,13 @@
       "strict_semantics": "Rust libm path; finite overflow to signed infinity sets errno=ERANGE while preserving IEEE 754 behavior",
       "hardened_semantics": "Same ERANGE overflow signaling with runtime-policy routing; hardened mode may repair non-finite outputs deterministically",
       "default_stub": false
+    },
+    {
+      "symbol": "sinhf",
+      "header": "math.h",
+      "status": "Implemented",
+      "module": "math_abi",
+      "notes": ""
     },
     {
       "symbol": "sleep",
@@ -3207,6 +5454,15 @@
       "perf_class": "coldpath",
       "strict_semantics": "Raw Linux syscall to create a pair of connected sockets; POSIX errno on failure",
       "hardened_semantics": "Raw syscall; validates sv output pointer and address family/type arguments",
+      "default_stub": false
+    },
+    {
+      "symbol": "splice",
+      "status": "RawSyscall",
+      "module": "io_abi",
+      "perf_class": "default",
+      "strict_semantics": "SYS_splice \u2014 zero-copy pipe transfer",
+      "hardened_semantics": "SYS_splice \u2014 zero-copy pipe transfer",
       "default_stub": false
     },
     {
@@ -3246,12 +5502,39 @@
       "default_stub": false
     },
     {
+      "symbol": "sscanf",
+      "status": "GlibcCallThrough",
+      "module": "stdio_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Delegates to glibc vsscanf after membrane validation.",
+      "hardened_semantics": "Same delegation; format string validated by glibc.",
+      "default_stub": "Returns EOF"
+    },
+    {
       "symbol": "stat",
       "status": "RawSyscall",
       "module": "unistd_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Raw Linux syscall for POSIX I/O and process queries; POSIX errno on failure",
       "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid whence/amode",
+      "default_stub": false
+    },
+    {
+      "symbol": "stat64",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "LP64 alias via glibc",
+      "hardened_semantics": "LP64 alias via glibc",
+      "default_stub": false
+    },
+    {
+      "symbol": "statx",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "SYS_statx \u2014 extended file status",
+      "hardened_semantics": "SYS_statx \u2014 extended file status",
       "default_stub": false
     },
     {
@@ -3408,6 +5691,13 @@
       "default_stub": false
     },
     {
+      "symbol": "strftime",
+      "header": "time.h",
+      "family": "time",
+      "status": "Implemented",
+      "notes": "Full POSIX strftime format specifier support (UTC only)"
+    },
+    {
       "symbol": "strlcat",
       "status": "Implemented",
       "module": "string_abi",
@@ -3435,21 +5725,21 @@
       "default_stub": false
     },
     {
-      "symbol": "strncat",
-      "status": "Implemented",
-      "module": "string_abi",
-      "perf_class": "strict_hotpath",
-      "strict_semantics": "Safe Rust string/memory ops; unbounded scans follow C semantics; no repair",
-      "hardened_semantics": "Clamps copy/scan to tracked allocation bounds; logs ClampSize/TruncateWithNull",
-      "default_stub": false
-    },
-    {
       "symbol": "strncasecmp",
       "status": "Implemented",
       "module": "string_abi",
       "perf_class": "strict_hotpath",
       "strict_semantics": "Safe Rust case-insensitive compare of at most n bytes; ASCII lowering; no repair",
       "hardened_semantics": "Clamps compare span to tracked allocation bounds; logs TruncateWithNull",
+      "default_stub": false
+    },
+    {
+      "symbol": "strncat",
+      "status": "Implemented",
+      "module": "string_abi",
+      "perf_class": "strict_hotpath",
+      "strict_semantics": "Safe Rust string/memory ops; unbounded scans follow C semantics; no repair",
+      "hardened_semantics": "Clamps copy/scan to tracked allocation bounds; logs ClampSize/TruncateWithNull",
       "default_stub": false
     },
     {
@@ -3498,6 +5788,15 @@
       "default_stub": false
     },
     {
+      "symbol": "strptime",
+      "status": "GlibcCallThrough",
+      "module": "time_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Delegates to glibc strptime for date/time parsing.",
+      "hardened_semantics": "Same delegation. Null pointers return NULL.",
+      "default_stub": "Returns NULL"
+    },
+    {
       "symbol": "strrchr",
       "status": "Implemented",
       "module": "string_abi",
@@ -3513,6 +5812,15 @@
       "perf_class": "strict_hotpath",
       "strict_semantics": "Safe Rust token extraction with NUL delimiter write; no repair",
       "hardened_semantics": "Scans within tracked bounds; clamps string pointer updates",
+      "default_stub": false
+    },
+    {
+      "symbol": "strsignal",
+      "status": "GlibcCallThrough",
+      "module": "string_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc strsignal",
+      "hardened_semantics": "Passthrough to glibc strsignal",
       "default_stub": false
     },
     {
@@ -3588,6 +5896,15 @@
       "default_stub": false
     },
     {
+      "symbol": "strtold",
+      "status": "GlibcCallThrough",
+      "module": "stdlib_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc strtold",
+      "hardened_semantics": "Passthrough to glibc strtold",
+      "default_stub": false
+    },
+    {
       "symbol": "strtoll",
       "status": "Implemented",
       "module": "stdlib_abi",
@@ -3658,11 +5975,45 @@
       "semantics": "POSIX"
     },
     {
+      "symbol": "sync",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "SYS_sync",
+      "hardened_semantics": "SYS_sync",
+      "default_stub": false
+    },
+    {
+      "symbol": "syncfs",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "SYS_syncfs",
+      "hardened_semantics": "SYS_syncfs",
+      "default_stub": false
+    },
+    {
       "symbol": "sysconf",
       "status": "Implemented",
       "module": "unistd_abi",
       "perf_class": "native",
       "semantics": "POSIX"
+    },
+    {
+      "symbol": "syslog",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "Variadic forwarded via vsyslog to glibc",
+      "hardened_semantics": "Variadic forwarded via vsyslog to glibc",
+      "default_stub": false
+    },
+    {
+      "symbol": "system",
+      "header": "stdlib.h",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "notes": ""
     },
     {
       "symbol": "tan",
@@ -3690,6 +6041,13 @@
       "strict_semantics": "Rust std::f64 math; bounded odd hyperbolic tangent over finite domain; no errno side effects",
       "hardened_semantics": "Rust std::f64 math; no mode difference expected for finite inputs",
       "default_stub": false
+    },
+    {
+      "symbol": "tanhf",
+      "header": "math.h",
+      "status": "Implemented",
+      "module": "math_abi",
+      "notes": ""
     },
     {
       "symbol": "tcdrain",
@@ -3746,6 +6104,33 @@
       "default_stub": false
     },
     {
+      "symbol": "tee",
+      "status": "RawSyscall",
+      "module": "io_abi",
+      "perf_class": "default",
+      "strict_semantics": "SYS_tee \u2014 duplicate pipe content",
+      "hardened_semantics": "SYS_tee \u2014 duplicate pipe content",
+      "default_stub": false
+    },
+    {
+      "symbol": "telldir",
+      "status": "GlibcCallThrough",
+      "module": "dirent_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc telldir",
+      "hardened_semantics": "Passthrough to glibc telldir",
+      "default_stub": false
+    },
+    {
+      "symbol": "textdomain",
+      "status": "GlibcCallThrough",
+      "module": "locale_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc textdomain",
+      "hardened_semantics": "Passthrough to glibc textdomain",
+      "default_stub": false
+    },
+    {
       "symbol": "tgamma",
       "status": "Implemented",
       "module": "math_abi",
@@ -3753,6 +6138,13 @@
       "strict_semantics": "Rust libm path; negative integer poles set errno=EDOM, zero/pole-overflow/underflow regimes set errno=ERANGE",
       "hardened_semantics": "Same errno signaling with runtime-policy routing; hardened mode may repair non-finite outputs deterministically",
       "default_stub": false
+    },
+    {
+      "symbol": "tgammaf",
+      "header": "math.h",
+      "status": "Implemented",
+      "module": "math_abi",
+      "notes": ""
     },
     {
       "symbol": "time",
@@ -3794,6 +6186,33 @@
       "semantics": "Linux"
     },
     {
+      "symbol": "tmpfile",
+      "status": "Implemented",
+      "module": "stdio_abi",
+      "perf_class": "strict_slow",
+      "strict_semantics": "Create temporary file via O_TMPFILE with fallback to mkstemp+unlink",
+      "hardened_semantics": "Same as strict; auto-deleted on close",
+      "default_stub": false
+    },
+    {
+      "symbol": "tmpfile64",
+      "status": "GlibcCallThrough",
+      "module": "stdio_abi",
+      "perf_class": "default",
+      "strict_semantics": "LP64 alias via glibc",
+      "hardened_semantics": "LP64 alias via glibc",
+      "default_stub": false
+    },
+    {
+      "symbol": "tmpnam",
+      "status": "Implemented",
+      "module": "stdio_abi",
+      "perf_class": "strict_fast",
+      "strict_semantics": "Generate unique temp filename using pid+counter",
+      "hardened_semantics": "Same as strict; thread-safe with atomic counter",
+      "default_stub": false
+    },
+    {
       "symbol": "toascii",
       "status": "Implemented",
       "module": "ctype_abi",
@@ -3821,6 +6240,20 @@
       "default_stub": false
     },
     {
+      "symbol": "towlower",
+      "header": "wctype.h",
+      "family": "wctype",
+      "status": "Implemented",
+      "notes": "Wide character to lowercase"
+    },
+    {
+      "symbol": "towupper",
+      "header": "wctype.h",
+      "family": "wctype",
+      "status": "Implemented",
+      "notes": "Wide character to uppercase"
+    },
+    {
       "symbol": "trunc",
       "status": "Implemented",
       "module": "math_abi",
@@ -3837,6 +6270,15 @@
       "semantics": "POSIX"
     },
     {
+      "symbol": "truncate64",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "LP64 alias via glibc",
+      "hardened_semantics": "LP64 alias via glibc",
+      "default_stub": false
+    },
+    {
       "symbol": "truncf",
       "status": "Implemented",
       "module": "math_abi",
@@ -3844,6 +6286,15 @@
       "strict_semantics": "pass-through",
       "hardened_semantics": "heal-non-finite",
       "default_stub": false
+    },
+    {
+      "symbol": "tzset",
+      "status": "GlibcCallThrough",
+      "module": "time_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Delegates to glibc tzset for timezone initialization.",
+      "hardened_semantics": "Same delegation.",
+      "default_stub": "No-op"
     },
     {
       "symbol": "umask",
@@ -3885,6 +6336,15 @@
       "semantics": "POSIX"
     },
     {
+      "symbol": "unlockpt",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc unlockpt",
+      "hardened_semantics": "Passthrough to glibc unlockpt",
+      "default_stub": false
+    },
+    {
       "symbol": "unsetenv",
       "status": "Implemented",
       "module": "stdlib_abi",
@@ -3903,12 +6363,105 @@
       "default_stub": false
     },
     {
+      "symbol": "utmpname",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "fast"
+    },
+    {
+      "symbol": "vasprintf",
+      "header": "stdio.h",
+      "family": "stdio",
+      "status": "GlibcCallThrough",
+      "notes": "Delegates to libc (va_list forwarding requires C ABI)"
+    },
+    {
+      "symbol": "vdprintf",
+      "header": "stdio.h",
+      "family": "stdio",
+      "status": "GlibcCallThrough",
+      "notes": "Delegates to libc (va_list forwarding requires C ABI)"
+    },
+    {
       "symbol": "vfork",
       "status": "RawSyscall",
       "module": "process_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Delegates to fork; identical on modern Linux",
       "hardened_semantics": "Delegates to fork with membrane gating",
+      "default_stub": false
+    },
+    {
+      "symbol": "vfprintf",
+      "header": "stdio.h",
+      "family": "stdio",
+      "status": "GlibcCallThrough",
+      "notes": "Delegates to libc (va_list forwarding requires C ABI)"
+    },
+    {
+      "symbol": "vfscanf",
+      "status": "GlibcCallThrough",
+      "module": "stdio_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Delegates to glibc vfscanf with va_list passthrough.",
+      "hardened_semantics": "Same delegation.",
+      "default_stub": "Returns EOF"
+    },
+    {
+      "symbol": "vmsplice",
+      "status": "RawSyscall",
+      "module": "io_abi",
+      "perf_class": "default",
+      "strict_semantics": "SYS_vmsplice \u2014 splice user pages into pipe",
+      "hardened_semantics": "SYS_vmsplice \u2014 splice user pages into pipe",
+      "default_stub": false
+    },
+    {
+      "symbol": "vprintf",
+      "header": "stdio.h",
+      "family": "stdio",
+      "status": "GlibcCallThrough",
+      "notes": "Delegates to libc (va_list forwarding requires C ABI)"
+    },
+    {
+      "symbol": "vscanf",
+      "status": "GlibcCallThrough",
+      "module": "stdio_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Delegates to glibc vscanf with va_list passthrough.",
+      "hardened_semantics": "Same delegation.",
+      "default_stub": "Returns EOF"
+    },
+    {
+      "symbol": "vsnprintf",
+      "header": "stdio.h",
+      "family": "stdio",
+      "status": "GlibcCallThrough",
+      "notes": "Delegates to libc (va_list forwarding requires C ABI)"
+    },
+    {
+      "symbol": "vsprintf",
+      "header": "stdio.h",
+      "family": "stdio",
+      "status": "GlibcCallThrough",
+      "notes": "Delegates to libc (va_list forwarding requires C ABI)"
+    },
+    {
+      "symbol": "vsscanf",
+      "status": "GlibcCallThrough",
+      "module": "stdio_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Delegates to glibc vsscanf with va_list passthrough.",
+      "hardened_semantics": "Same delegation.",
+      "default_stub": "Returns EOF"
+    },
+    {
+      "symbol": "vsyslog",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc vsyslog",
+      "hardened_semantics": "Passthrough to glibc vsyslog",
       "default_stub": false
     },
     {
@@ -3954,6 +6507,15 @@
       "perf_class": "coldpath",
       "strict_semantics": "Raw Linux syscall for process control; POSIX errno on failure",
       "hardened_semantics": "Raw syscall; validates argv/envp pointer arrays before execve",
+      "default_stub": false
+    },
+    {
+      "symbol": "wcrtomb",
+      "status": "GlibcCallThrough",
+      "module": "wchar_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc wcrtomb",
+      "hardened_semantics": "Passthrough to glibc wcrtomb",
       "default_stub": false
     },
     {
@@ -4047,6 +6609,15 @@
       "default_stub": false
     },
     {
+      "symbol": "wcsnlen",
+      "status": "GlibcCallThrough",
+      "module": "wchar_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc wcsnlen",
+      "hardened_semantics": "Passthrough to glibc wcsnlen",
+      "default_stub": false
+    },
+    {
       "symbol": "wcspbrk",
       "status": "Implemented",
       "module": "wchar_abi",
@@ -4062,6 +6633,15 @@
       "perf_class": "strict_hotpath",
       "strict_semantics": "Safe Rust wide-char ops; follows C semantics; no repair",
       "hardened_semantics": "Clamps wide-char copy/scan to tracked allocation bounds; logs ClampSize",
+      "default_stub": false
+    },
+    {
+      "symbol": "wcsrtombs",
+      "status": "GlibcCallThrough",
+      "module": "wchar_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc wcsrtombs",
+      "hardened_semantics": "Passthrough to glibc wcsrtombs",
       "default_stub": false
     },
     {
@@ -4083,6 +6663,15 @@
       "default_stub": false
     },
     {
+      "symbol": "wcstod",
+      "status": "GlibcCallThrough",
+      "module": "wchar_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc wcstod",
+      "hardened_semantics": "Passthrough to glibc wcstod",
+      "default_stub": false
+    },
+    {
       "symbol": "wcstok",
       "status": "Implemented",
       "module": "wchar_abi",
@@ -4090,6 +6679,63 @@
       "strict_semantics": "pass-through",
       "hardened_semantics": "bounds-check-and-repair",
       "default_stub": false
+    },
+    {
+      "symbol": "wcstol",
+      "status": "GlibcCallThrough",
+      "module": "wchar_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc wcstol",
+      "hardened_semantics": "Passthrough to glibc wcstol",
+      "default_stub": false
+    },
+    {
+      "symbol": "wcstombs",
+      "header": "stdlib.h",
+      "family": "wchar",
+      "status": "Implemented",
+      "notes": "Wide string to UTF-8 multibyte string"
+    },
+    {
+      "symbol": "wcstoul",
+      "status": "GlibcCallThrough",
+      "module": "wchar_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc wcstoul",
+      "hardened_semantics": "Passthrough to glibc wcstoul",
+      "default_stub": false
+    },
+    {
+      "symbol": "wcswidth",
+      "status": "GlibcCallThrough",
+      "module": "wchar_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc wcswidth",
+      "hardened_semantics": "Passthrough to glibc wcswidth",
+      "default_stub": false
+    },
+    {
+      "symbol": "wctob",
+      "status": "GlibcCallThrough",
+      "module": "wchar_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc wctob",
+      "hardened_semantics": "Passthrough to glibc wctob",
+      "default_stub": false
+    },
+    {
+      "symbol": "wctomb",
+      "header": "stdlib.h",
+      "family": "wchar",
+      "status": "Implemented",
+      "notes": "Wide character to UTF-8 multibyte"
+    },
+    {
+      "symbol": "wcwidth",
+      "header": "wchar.h",
+      "family": "wchar",
+      "status": "Implemented",
+      "notes": "Wide character display width"
     },
     {
       "symbol": "wmemchr",
@@ -4137,2230 +6783,6 @@
       "default_stub": false
     },
     {
-      "symbol": "write",
-      "status": "RawSyscall",
-      "module": "unistd_abi",
-      "perf_class": "coldpath",
-      "strict_semantics": "Raw Linux syscall for POSIX I/O and process queries; POSIX errno on failure",
-      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid whence/amode",
-      "default_stub": false
-    },
-    {
-      "symbol": "writev",
-      "status": "RawSyscall",
-      "module": "io_abi",
-      "perf_class": "syscall_veneer",
-      "semantics": "POSIX"
-    },
-    {
-      "symbol": "getc",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "perf_class": "strict_hotpath",
-      "strict_semantics": "Function alias for fgetc; reads one byte from stream",
-      "hardened_semantics": "Same as strict; inherits fgetc membrane checks",
-      "default_stub": false
-    },
-    {
-      "symbol": "putc",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "perf_class": "strict_hotpath",
-      "strict_semantics": "Function alias for fputc; writes one byte to stream",
-      "hardened_semantics": "Same as strict; inherits fputc membrane checks",
-      "default_stub": false
-    },
-    {
-      "symbol": "fgetpos",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "perf_class": "strict_fast",
-      "strict_semantics": "Store current stream position into fpos_t",
-      "hardened_semantics": "Same as strict with null-pointer validation",
-      "default_stub": false
-    },
-    {
-      "symbol": "fsetpos",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "perf_class": "strict_fast",
-      "strict_semantics": "Restore stream position from fpos_t (delegates to fseek)",
-      "hardened_semantics": "Same as strict with null-pointer validation",
-      "default_stub": false
-    },
-    {
-      "symbol": "fdopen",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "perf_class": "strict_fast",
-      "strict_semantics": "Associate a FILE stream with an existing fd; mode validation",
-      "hardened_semantics": "Same as strict; invalid mode returns NULL",
-      "default_stub": false
-    },
-    {
-      "symbol": "freopen",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "perf_class": "strict_slow",
-      "strict_semantics": "Close stream and reopen with new file/mode",
-      "hardened_semantics": "Same as strict; flushes pending writes before close",
-      "default_stub": false
-    },
-    {
-      "symbol": "remove",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "perf_class": "strict_slow",
-      "strict_semantics": "Remove file via unlinkat; falls back to rmdir for directories",
-      "hardened_semantics": "Same as strict with null-pointer guard",
-      "default_stub": false
-    },
-    {
-      "symbol": "getdelim",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "perf_class": "strict_slow",
-      "strict_semantics": "Read until delimiter with dynamic buffer allocation via malloc",
-      "hardened_semantics": "Same as strict; validates all pointer arguments",
-      "default_stub": false
-    },
-    {
-      "symbol": "getline",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "perf_class": "strict_slow",
-      "strict_semantics": "Read line (newline-delimited); delegates to getdelim",
-      "hardened_semantics": "Same as strict; validates all pointer arguments",
-      "default_stub": false
-    },
-    {
-      "symbol": "tmpfile",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "perf_class": "strict_slow",
-      "strict_semantics": "Create temporary file via O_TMPFILE with fallback to mkstemp+unlink",
-      "hardened_semantics": "Same as strict; auto-deleted on close",
-      "default_stub": false
-    },
-    {
-      "symbol": "tmpnam",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "perf_class": "strict_fast",
-      "strict_semantics": "Generate unique temp filename using pid+counter",
-      "hardened_semantics": "Same as strict; thread-safe with atomic counter",
-      "default_stub": false
-    },
-    {
-      "symbol": "acoshf",
-      "header": "math.h",
-      "status": "Implemented",
-      "module": "math_abi",
-      "notes": ""
-    },
-    {
-      "symbol": "asinhf",
-      "header": "math.h",
-      "status": "Implemented",
-      "module": "math_abi",
-      "notes": ""
-    },
-    {
-      "symbol": "atanhf",
-      "header": "math.h",
-      "status": "Implemented",
-      "module": "math_abi",
-      "notes": ""
-    },
-    {
-      "symbol": "cbrtf",
-      "header": "math.h",
-      "status": "Implemented",
-      "module": "math_abi",
-      "notes": ""
-    },
-    {
-      "symbol": "copysignf",
-      "header": "math.h",
-      "status": "Implemented",
-      "module": "math_abi",
-      "notes": ""
-    },
-    {
-      "symbol": "coshf",
-      "header": "math.h",
-      "status": "Implemented",
-      "module": "math_abi",
-      "notes": ""
-    },
-    {
-      "symbol": "erfcf",
-      "header": "math.h",
-      "status": "Implemented",
-      "module": "math_abi",
-      "notes": ""
-    },
-    {
-      "symbol": "erff",
-      "header": "math.h",
-      "status": "Implemented",
-      "module": "math_abi",
-      "notes": ""
-    },
-    {
-      "symbol": "exp2f",
-      "header": "math.h",
-      "status": "Implemented",
-      "module": "math_abi",
-      "notes": ""
-    },
-    {
-      "symbol": "expm1f",
-      "header": "math.h",
-      "status": "Implemented",
-      "module": "math_abi",
-      "notes": ""
-    },
-    {
-      "symbol": "fdimf",
-      "header": "math.h",
-      "status": "Implemented",
-      "module": "math_abi",
-      "notes": ""
-    },
-    {
-      "symbol": "fmaf",
-      "header": "math.h",
-      "status": "Implemented",
-      "module": "math_abi",
-      "notes": ""
-    },
-    {
-      "symbol": "fmaxf",
-      "header": "math.h",
-      "status": "Implemented",
-      "module": "math_abi",
-      "notes": ""
-    },
-    {
-      "symbol": "fminf",
-      "header": "math.h",
-      "status": "Implemented",
-      "module": "math_abi",
-      "notes": ""
-    },
-    {
-      "symbol": "frexpf",
-      "header": "math.h",
-      "status": "Implemented",
-      "module": "math_abi",
-      "notes": ""
-    },
-    {
-      "symbol": "hypotf",
-      "header": "math.h",
-      "status": "Implemented",
-      "module": "math_abi",
-      "notes": ""
-    },
-    {
-      "symbol": "ilogbf",
-      "header": "math.h",
-      "status": "Implemented",
-      "module": "math_abi",
-      "notes": ""
-    },
-    {
-      "symbol": "ldexpf",
-      "header": "math.h",
-      "status": "Implemented",
-      "module": "math_abi",
-      "notes": ""
-    },
-    {
-      "symbol": "lgammaf",
-      "header": "math.h",
-      "status": "Implemented",
-      "module": "math_abi",
-      "notes": ""
-    },
-    {
-      "symbol": "llrintf",
-      "header": "math.h",
-      "status": "Implemented",
-      "module": "math_abi",
-      "notes": ""
-    },
-    {
-      "symbol": "llroundf",
-      "header": "math.h",
-      "status": "Implemented",
-      "module": "math_abi",
-      "notes": ""
-    },
-    {
-      "symbol": "log1pf",
-      "header": "math.h",
-      "status": "Implemented",
-      "module": "math_abi",
-      "notes": ""
-    },
-    {
-      "symbol": "logbf",
-      "header": "math.h",
-      "status": "Implemented",
-      "module": "math_abi",
-      "notes": ""
-    },
-    {
-      "symbol": "lrintf",
-      "header": "math.h",
-      "status": "Implemented",
-      "module": "math_abi",
-      "notes": ""
-    },
-    {
-      "symbol": "lroundf",
-      "header": "math.h",
-      "status": "Implemented",
-      "module": "math_abi",
-      "notes": ""
-    },
-    {
-      "symbol": "modff",
-      "header": "math.h",
-      "status": "Implemented",
-      "module": "math_abi",
-      "notes": ""
-    },
-    {
-      "symbol": "nearbyintf",
-      "header": "math.h",
-      "status": "Implemented",
-      "module": "math_abi",
-      "notes": ""
-    },
-    {
-      "symbol": "nextafterf",
-      "header": "math.h",
-      "status": "Implemented",
-      "module": "math_abi",
-      "notes": ""
-    },
-    {
-      "symbol": "remainderf",
-      "header": "math.h",
-      "status": "Implemented",
-      "module": "math_abi",
-      "notes": ""
-    },
-    {
-      "symbol": "rintf",
-      "header": "math.h",
-      "status": "Implemented",
-      "module": "math_abi",
-      "notes": ""
-    },
-    {
-      "symbol": "scalblnf",
-      "header": "math.h",
-      "status": "Implemented",
-      "module": "math_abi",
-      "notes": ""
-    },
-    {
-      "symbol": "scalbnf",
-      "header": "math.h",
-      "status": "Implemented",
-      "module": "math_abi",
-      "notes": ""
-    },
-    {
-      "symbol": "sinhf",
-      "header": "math.h",
-      "status": "Implemented",
-      "module": "math_abi",
-      "notes": ""
-    },
-    {
-      "symbol": "tanhf",
-      "header": "math.h",
-      "status": "Implemented",
-      "module": "math_abi",
-      "notes": ""
-    },
-    {
-      "symbol": "tgammaf",
-      "header": "math.h",
-      "status": "Implemented",
-      "module": "math_abi",
-      "notes": ""
-    },
-    {
-      "symbol": "nl_langinfo",
-      "header": "langinfo.h",
-      "status": "GlibcCallThrough",
-      "module": "locale_abi",
-      "notes": ""
-    },
-    {
-      "symbol": "system",
-      "header": "stdlib.h",
-      "status": "Implemented",
-      "module": "stdlib_abi",
-      "notes": ""
-    },
-    {
-      "symbol": "putenv",
-      "header": "stdlib.h",
-      "status": "Implemented",
-      "module": "stdlib_abi",
-      "notes": ""
-    },
-    {
-      "symbol": "popen",
-      "header": "stdio.h",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "notes": ""
-    },
-    {
-      "symbol": "pclose",
-      "header": "stdio.h",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "notes": ""
-    },
-    {
-      "symbol": "strftime",
-      "header": "time.h",
-      "family": "time",
-      "status": "Implemented",
-      "notes": "Full POSIX strftime format specifier support (UTC only)"
-    },
-    {
-      "symbol": "mblen",
-      "header": "stdlib.h",
-      "family": "wchar",
-      "status": "Implemented",
-      "notes": "UTF-8 multibyte character length"
-    },
-    {
-      "symbol": "mbtowc",
-      "header": "stdlib.h",
-      "family": "wchar",
-      "status": "Implemented",
-      "notes": "UTF-8 multibyte to wide character"
-    },
-    {
-      "symbol": "wctomb",
-      "header": "stdlib.h",
-      "family": "wchar",
-      "status": "Implemented",
-      "notes": "Wide character to UTF-8 multibyte"
-    },
-    {
-      "symbol": "mbstowcs",
-      "header": "stdlib.h",
-      "family": "wchar",
-      "status": "Implemented",
-      "notes": "UTF-8 multibyte string to wide string"
-    },
-    {
-      "symbol": "wcstombs",
-      "header": "stdlib.h",
-      "family": "wchar",
-      "status": "Implemented",
-      "notes": "Wide string to UTF-8 multibyte string"
-    },
-    {
-      "symbol": "iswalnum",
-      "header": "wctype.h",
-      "family": "wctype",
-      "status": "Implemented",
-      "notes": "Wide character alphanumeric test"
-    },
-    {
-      "symbol": "iswalpha",
-      "header": "wctype.h",
-      "family": "wctype",
-      "status": "Implemented",
-      "notes": "Wide character alphabetic test"
-    },
-    {
-      "symbol": "iswdigit",
-      "header": "wctype.h",
-      "family": "wctype",
-      "status": "Implemented",
-      "notes": "Wide character digit test"
-    },
-    {
-      "symbol": "iswlower",
-      "header": "wctype.h",
-      "family": "wctype",
-      "status": "Implemented",
-      "notes": "Wide character lowercase test"
-    },
-    {
-      "symbol": "iswupper",
-      "header": "wctype.h",
-      "family": "wctype",
-      "status": "Implemented",
-      "notes": "Wide character uppercase test"
-    },
-    {
-      "symbol": "iswspace",
-      "header": "wctype.h",
-      "family": "wctype",
-      "status": "Implemented",
-      "notes": "Wide character whitespace test"
-    },
-    {
-      "symbol": "iswprint",
-      "header": "wctype.h",
-      "family": "wctype",
-      "status": "Implemented",
-      "notes": "Wide character printable test"
-    },
-    {
-      "symbol": "towupper",
-      "header": "wctype.h",
-      "family": "wctype",
-      "status": "Implemented",
-      "notes": "Wide character to uppercase"
-    },
-    {
-      "symbol": "towlower",
-      "header": "wctype.h",
-      "family": "wctype",
-      "status": "Implemented",
-      "notes": "Wide character to lowercase"
-    },
-    {
-      "symbol": "wcwidth",
-      "header": "wchar.h",
-      "family": "wchar",
-      "status": "Implemented",
-      "notes": "Wide character display width"
-    },
-    {
-      "symbol": "basename",
-      "header": "libgen.h",
-      "family": "unistd",
-      "status": "Implemented",
-      "notes": "Extract filename from path"
-    },
-    {
-      "symbol": "dirname",
-      "header": "libgen.h",
-      "family": "unistd",
-      "status": "Implemented",
-      "notes": "Extract directory from path"
-    },
-    {
-      "symbol": "realpath",
-      "header": "stdlib.h",
-      "family": "unistd",
-      "status": "GlibcCallThrough",
-      "notes": "Resolve pathname (delegates to libc)"
-    },
-    {
-      "symbol": "mkstemp",
-      "header": "stdlib.h",
-      "family": "unistd",
-      "status": "GlibcCallThrough",
-      "notes": "Create temporary file (delegates to libc)"
-    },
-    {
-      "symbol": "vprintf",
-      "header": "stdio.h",
-      "family": "stdio",
-      "status": "GlibcCallThrough",
-      "notes": "Delegates to libc (va_list forwarding requires C ABI)"
-    },
-    {
-      "symbol": "vfprintf",
-      "header": "stdio.h",
-      "family": "stdio",
-      "status": "GlibcCallThrough",
-      "notes": "Delegates to libc (va_list forwarding requires C ABI)"
-    },
-    {
-      "symbol": "vsprintf",
-      "header": "stdio.h",
-      "family": "stdio",
-      "status": "GlibcCallThrough",
-      "notes": "Delegates to libc (va_list forwarding requires C ABI)"
-    },
-    {
-      "symbol": "vsnprintf",
-      "header": "stdio.h",
-      "family": "stdio",
-      "status": "GlibcCallThrough",
-      "notes": "Delegates to libc (va_list forwarding requires C ABI)"
-    },
-    {
-      "symbol": "vdprintf",
-      "header": "stdio.h",
-      "family": "stdio",
-      "status": "GlibcCallThrough",
-      "notes": "Delegates to libc (va_list forwarding requires C ABI)"
-    },
-    {
-      "symbol": "vasprintf",
-      "header": "stdio.h",
-      "family": "stdio",
-      "status": "GlibcCallThrough",
-      "notes": "Delegates to libc (va_list forwarding requires C ABI)"
-    },
-    {
-      "symbol": "scanf",
-      "status": "GlibcCallThrough",
-      "module": "stdio_abi",
-      "perf_class": "coldpath",
-      "strict_semantics": "Delegates to glibc vscanf after membrane validation.",
-      "hardened_semantics": "Same delegation; format string validated by glibc.",
-      "default_stub": "Returns EOF"
-    },
-    {
-      "symbol": "fscanf",
-      "status": "GlibcCallThrough",
-      "module": "stdio_abi",
-      "perf_class": "coldpath",
-      "strict_semantics": "Delegates to glibc vfscanf after membrane validation.",
-      "hardened_semantics": "Same delegation; format string validated by glibc.",
-      "default_stub": "Returns EOF"
-    },
-    {
-      "symbol": "sscanf",
-      "status": "GlibcCallThrough",
-      "module": "stdio_abi",
-      "perf_class": "coldpath",
-      "strict_semantics": "Delegates to glibc vsscanf after membrane validation.",
-      "hardened_semantics": "Same delegation; format string validated by glibc.",
-      "default_stub": "Returns EOF"
-    },
-    {
-      "symbol": "vscanf",
-      "status": "GlibcCallThrough",
-      "module": "stdio_abi",
-      "perf_class": "coldpath",
-      "strict_semantics": "Delegates to glibc vscanf with va_list passthrough.",
-      "hardened_semantics": "Same delegation.",
-      "default_stub": "Returns EOF"
-    },
-    {
-      "symbol": "vfscanf",
-      "status": "GlibcCallThrough",
-      "module": "stdio_abi",
-      "perf_class": "coldpath",
-      "strict_semantics": "Delegates to glibc vfscanf with va_list passthrough.",
-      "hardened_semantics": "Same delegation.",
-      "default_stub": "Returns EOF"
-    },
-    {
-      "symbol": "vsscanf",
-      "status": "GlibcCallThrough",
-      "module": "stdio_abi",
-      "perf_class": "coldpath",
-      "strict_semantics": "Delegates to glibc vsscanf with va_list passthrough.",
-      "hardened_semantics": "Same delegation.",
-      "default_stub": "Returns EOF"
-    },
-    {
-      "symbol": "gmtime",
-      "status": "Implemented",
-      "module": "time_abi",
-      "perf_class": "coldpath",
-      "strict_semantics": "Thread-local buffer wrapping gmtime_r. Returns pointer to static tm.",
-      "hardened_semantics": "Same. Null pointer returns NULL.",
-      "default_stub": "Returns NULL"
-    },
-    {
-      "symbol": "localtime",
-      "status": "Implemented",
-      "module": "time_abi",
-      "perf_class": "coldpath",
-      "strict_semantics": "Thread-local buffer wrapping localtime_r. Returns pointer to static tm.",
-      "hardened_semantics": "Same. Null pointer returns NULL.",
-      "default_stub": "Returns NULL"
-    },
-    {
-      "symbol": "asctime",
-      "status": "Implemented",
-      "module": "time_abi",
-      "perf_class": "coldpath",
-      "strict_semantics": "Thread-local buffer wrapping asctime_r. Returns pointer to static string.",
-      "hardened_semantics": "Same. Null pointer returns NULL.",
-      "default_stub": "Returns NULL"
-    },
-    {
-      "symbol": "ctime",
-      "status": "Implemented",
-      "module": "time_abi",
-      "perf_class": "coldpath",
-      "strict_semantics": "Thread-local buffer wrapping ctime_r. Returns pointer to static string.",
-      "hardened_semantics": "Same. Null pointer returns NULL.",
-      "default_stub": "Returns NULL"
-    },
-    {
-      "symbol": "strptime",
-      "status": "GlibcCallThrough",
-      "module": "time_abi",
-      "perf_class": "coldpath",
-      "strict_semantics": "Delegates to glibc strptime for date/time parsing.",
-      "hardened_semantics": "Same delegation. Null pointers return NULL.",
-      "default_stub": "Returns NULL"
-    },
-    {
-      "symbol": "tzset",
-      "status": "GlibcCallThrough",
-      "module": "time_abi",
-      "perf_class": "coldpath",
-      "strict_semantics": "Delegates to glibc tzset for timezone initialization.",
-      "hardened_semantics": "Same delegation.",
-      "default_stub": "No-op"
-    },
-    {
-      "symbol": "getopt",
-      "status": "GlibcCallThrough",
-      "module": "unistd_abi",
-      "perf_class": "coldpath",
-      "strict_semantics": "Delegates to glibc getopt for CLI option parsing.",
-      "hardened_semantics": "Same delegation.",
-      "default_stub": "Returns -1"
-    },
-    {
-      "symbol": "getopt_long",
-      "status": "GlibcCallThrough",
-      "module": "unistd_abi",
-      "perf_class": "coldpath",
-      "strict_semantics": "Delegates to glibc getopt_long for long option parsing.",
-      "hardened_semantics": "Same delegation.",
-      "default_stub": "Returns -1"
-    },
-    {
-      "symbol": "fseeko",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "perf_class": "coldpath",
-      "strict_semantics": "Aliases fseek on LP64 (off_t == long).",
-      "hardened_semantics": "Same.",
-      "default_stub": "Returns -1"
-    },
-    {
-      "symbol": "ftello",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "perf_class": "coldpath",
-      "strict_semantics": "Aliases ftell on LP64 (off_t == long).",
-      "hardened_semantics": "Same.",
-      "default_stub": "Returns -1"
-    },
-    {
-      "symbol": "setjmp",
-      "status": "Implemented",
-      "module": "setjmp_abi",
-      "perf_class": "coldpath",
-      "strict_semantics": "Phase-1 capture with metadata tracking.",
-      "hardened_semantics": "Same with additional validation.",
-      "default_stub": "Returns -1"
-    },
-    {
-      "symbol": "_setjmp",
-      "status": "Implemented",
-      "module": "setjmp_abi",
-      "perf_class": "coldpath",
-      "strict_semantics": "Alias for setjmp (no signal mask save).",
-      "hardened_semantics": "Same.",
-      "default_stub": "Returns -1"
-    },
-    {
-      "symbol": "sigsetjmp",
-      "status": "Implemented",
-      "module": "setjmp_abi",
-      "perf_class": "coldpath",
-      "strict_semantics": "setjmp with optional signal mask save.",
-      "hardened_semantics": "Same.",
-      "default_stub": "Returns -1"
-    },
-    {
-      "symbol": "longjmp",
-      "status": "Implemented",
-      "module": "setjmp_abi",
-      "perf_class": "coldpath",
-      "strict_semantics": "Phase-1 restore with validation. Terminates (deferred backend).",
-      "hardened_semantics": "Same.",
-      "default_stub": "Aborts"
-    },
-    {
-      "symbol": "_longjmp",
-      "status": "Implemented",
-      "module": "setjmp_abi",
-      "perf_class": "coldpath",
-      "strict_semantics": "Alias for longjmp.",
-      "hardened_semantics": "Same.",
-      "default_stub": "Aborts"
-    },
-    {
-      "symbol": "siglongjmp",
-      "status": "Implemented",
-      "module": "setjmp_abi",
-      "perf_class": "coldpath",
-      "strict_semantics": "longjmp with signal mask restore metadata.",
-      "hardened_semantics": "Same.",
-      "default_stub": "Aborts"
-    },
-    {
-      "symbol": "pthread_attr_init",
-      "status": "GlibcCallThrough",
-      "module": "pthread_abi",
-      "perf_class": "coldpath",
-      "strict_semantics": "Delegates to glibc.",
-      "hardened_semantics": "Same.",
-      "default_stub": "Returns EINVAL"
-    },
-    {
-      "symbol": "pthread_attr_destroy",
-      "status": "GlibcCallThrough",
-      "module": "pthread_abi",
-      "perf_class": "coldpath",
-      "strict_semantics": "Delegates to glibc.",
-      "hardened_semantics": "Same.",
-      "default_stub": "Returns EINVAL"
-    },
-    {
-      "symbol": "pthread_attr_setdetachstate",
-      "status": "GlibcCallThrough",
-      "module": "pthread_abi",
-      "perf_class": "coldpath",
-      "strict_semantics": "Delegates to glibc.",
-      "hardened_semantics": "Same.",
-      "default_stub": "Returns EINVAL"
-    },
-    {
-      "symbol": "pthread_attr_getdetachstate",
-      "status": "GlibcCallThrough",
-      "module": "pthread_abi",
-      "perf_class": "coldpath",
-      "strict_semantics": "Delegates to glibc.",
-      "hardened_semantics": "Same.",
-      "default_stub": "Returns EINVAL"
-    },
-    {
-      "symbol": "pthread_attr_setstacksize",
-      "status": "GlibcCallThrough",
-      "module": "pthread_abi",
-      "perf_class": "coldpath",
-      "strict_semantics": "Delegates to glibc.",
-      "hardened_semantics": "Same.",
-      "default_stub": "Returns EINVAL"
-    },
-    {
-      "symbol": "pthread_attr_getstacksize",
-      "status": "GlibcCallThrough",
-      "module": "pthread_abi",
-      "perf_class": "coldpath",
-      "strict_semantics": "Delegates to glibc.",
-      "hardened_semantics": "Same.",
-      "default_stub": "Returns EINVAL"
-    },
-    {
-      "symbol": "pthread_mutexattr_init",
-      "status": "GlibcCallThrough",
-      "module": "pthread_abi",
-      "perf_class": "coldpath",
-      "strict_semantics": "Delegates to glibc.",
-      "hardened_semantics": "Same.",
-      "default_stub": "Returns EINVAL"
-    },
-    {
-      "symbol": "pthread_mutexattr_destroy",
-      "status": "GlibcCallThrough",
-      "module": "pthread_abi",
-      "perf_class": "coldpath",
-      "strict_semantics": "Delegates to glibc.",
-      "hardened_semantics": "Same.",
-      "default_stub": "Returns EINVAL"
-    },
-    {
-      "symbol": "pthread_mutexattr_settype",
-      "status": "GlibcCallThrough",
-      "module": "pthread_abi",
-      "perf_class": "coldpath",
-      "strict_semantics": "Delegates to glibc.",
-      "hardened_semantics": "Same.",
-      "default_stub": "Returns EINVAL"
-    },
-    {
-      "symbol": "pthread_mutexattr_gettype",
-      "status": "GlibcCallThrough",
-      "module": "pthread_abi",
-      "perf_class": "coldpath",
-      "strict_semantics": "Delegates to glibc.",
-      "hardened_semantics": "Same.",
-      "default_stub": "Returns EINVAL"
-    },
-    {
-      "symbol": "pthread_condattr_init",
-      "status": "GlibcCallThrough",
-      "module": "pthread_abi",
-      "perf_class": "coldpath",
-      "strict_semantics": "Delegates to glibc.",
-      "hardened_semantics": "Same.",
-      "default_stub": "Returns EINVAL"
-    },
-    {
-      "symbol": "pthread_condattr_destroy",
-      "status": "GlibcCallThrough",
-      "module": "pthread_abi",
-      "perf_class": "coldpath",
-      "strict_semantics": "Delegates to glibc.",
-      "hardened_semantics": "Same.",
-      "default_stub": "Returns EINVAL"
-    },
-    {
-      "symbol": "pthread_condattr_setclock",
-      "status": "GlibcCallThrough",
-      "module": "pthread_abi",
-      "perf_class": "coldpath",
-      "strict_semantics": "Delegates to glibc.",
-      "hardened_semantics": "Same.",
-      "default_stub": "Returns EINVAL"
-    },
-    {
-      "symbol": "pthread_condattr_getclock",
-      "status": "GlibcCallThrough",
-      "module": "pthread_abi",
-      "perf_class": "coldpath",
-      "strict_semantics": "Delegates to glibc.",
-      "hardened_semantics": "Same.",
-      "default_stub": "Returns EINVAL"
-    },
-    {
-      "symbol": "pthread_rwlockattr_init",
-      "status": "GlibcCallThrough",
-      "module": "pthread_abi",
-      "perf_class": "coldpath",
-      "strict_semantics": "Delegates to glibc.",
-      "hardened_semantics": "Same.",
-      "default_stub": "Returns EINVAL"
-    },
-    {
-      "symbol": "pthread_rwlockattr_destroy",
-      "status": "GlibcCallThrough",
-      "module": "pthread_abi",
-      "perf_class": "coldpath",
-      "strict_semantics": "Delegates to glibc.",
-      "hardened_semantics": "Same.",
-      "default_stub": "Returns EINVAL"
-    },
-    {
-      "symbol": "pthread_cond_timedwait",
-      "status": "Implemented",
-      "module": "pthread_abi",
-      "perf_class": "coldpath",
-      "strict_semantics": "Timed condvar wait with futex backend.",
-      "hardened_semantics": "Same.",
-      "default_stub": "Returns EINVAL"
-    },
-    {
-      "symbol": "pthread_rwlock_tryrdlock",
-      "status": "Implemented",
-      "module": "pthread_abi",
-      "perf_class": "coldpath",
-      "strict_semantics": "Try read lock with futex backend.",
-      "hardened_semantics": "Same.",
-      "default_stub": "Returns EINVAL"
-    },
-    {
-      "symbol": "pthread_rwlock_trywrlock",
-      "status": "Implemented",
-      "module": "pthread_abi",
-      "perf_class": "coldpath",
-      "strict_semantics": "Try write lock with futex backend.",
-      "hardened_semantics": "Same.",
-      "default_stub": "Returns EINVAL"
-    },
-    {
-      "symbol": "pthread_key_create",
-      "status": "Implemented",
-      "module": "pthread_abi",
-      "perf_class": "coldpath",
-      "strict_semantics": "Thread-specific data key creation.",
-      "hardened_semantics": "Same.",
-      "default_stub": "Returns EINVAL"
-    },
-    {
-      "symbol": "pthread_key_delete",
-      "status": "Implemented",
-      "module": "pthread_abi",
-      "perf_class": "coldpath",
-      "strict_semantics": "Thread-specific data key deletion.",
-      "hardened_semantics": "Same.",
-      "default_stub": "Returns EINVAL"
-    },
-    {
-      "symbol": "pthread_getspecific",
-      "status": "Implemented",
-      "module": "pthread_abi",
-      "perf_class": "coldpath",
-      "strict_semantics": "Thread-specific data retrieval.",
-      "hardened_semantics": "Same.",
-      "default_stub": "Returns NULL"
-    },
-    {
-      "symbol": "pthread_setspecific",
-      "status": "Implemented",
-      "module": "pthread_abi",
-      "perf_class": "coldpath",
-      "strict_semantics": "Thread-specific data storage.",
-      "hardened_semantics": "Same.",
-      "default_stub": "Returns EINVAL"
-    },
-    {
-      "symbol": "pthread_once",
-      "status": "Implemented",
-      "module": "pthread_abi",
-      "perf_class": "coldpath",
-      "strict_semantics": "One-time initialization with futex-based once control.",
-      "hardened_semantics": "Same.",
-      "default_stub": "Returns EINVAL"
-    },
-    {
-      "symbol": "seekdir",
-      "status": "GlibcCallThrough",
-      "module": "dirent_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc seekdir",
-      "hardened_semantics": "Passthrough to glibc seekdir",
-      "default_stub": false
-    },
-    {
-      "symbol": "telldir",
-      "status": "GlibcCallThrough",
-      "module": "dirent_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc telldir",
-      "hardened_semantics": "Passthrough to glibc telldir",
-      "default_stub": false
-    },
-    {
-      "symbol": "rewinddir",
-      "status": "GlibcCallThrough",
-      "module": "dirent_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc rewinddir",
-      "hardened_semantics": "Passthrough to glibc rewinddir",
-      "default_stub": false
-    },
-    {
-      "symbol": "scandir",
-      "status": "GlibcCallThrough",
-      "module": "dirent_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc scandir",
-      "hardened_semantics": "Passthrough to glibc scandir",
-      "default_stub": false
-    },
-    {
-      "symbol": "openlog",
-      "status": "GlibcCallThrough",
-      "module": "unistd_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc openlog",
-      "hardened_semantics": "Passthrough to glibc openlog",
-      "default_stub": false
-    },
-    {
-      "symbol": "syslog",
-      "status": "GlibcCallThrough",
-      "module": "unistd_abi",
-      "perf_class": "default",
-      "strict_semantics": "Variadic forwarded via vsyslog to glibc",
-      "hardened_semantics": "Variadic forwarded via vsyslog to glibc",
-      "default_stub": false
-    },
-    {
-      "symbol": "closelog",
-      "status": "GlibcCallThrough",
-      "module": "unistd_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc closelog",
-      "hardened_semantics": "Passthrough to glibc closelog",
-      "default_stub": false
-    },
-    {
-      "symbol": "vsyslog",
-      "status": "GlibcCallThrough",
-      "module": "unistd_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc vsyslog",
-      "hardened_semantics": "Passthrough to glibc vsyslog",
-      "default_stub": false
-    },
-    {
-      "symbol": "regcomp",
-      "status": "GlibcCallThrough",
-      "module": "string_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc regcomp",
-      "hardened_semantics": "Passthrough to glibc regcomp",
-      "default_stub": false
-    },
-    {
-      "symbol": "regexec",
-      "status": "GlibcCallThrough",
-      "module": "string_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc regexec",
-      "hardened_semantics": "Passthrough to glibc regexec",
-      "default_stub": false
-    },
-    {
-      "symbol": "regfree",
-      "status": "GlibcCallThrough",
-      "module": "string_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc regfree",
-      "hardened_semantics": "Passthrough to glibc regfree",
-      "default_stub": false
-    },
-    {
-      "symbol": "regerror",
-      "status": "GlibcCallThrough",
-      "module": "string_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc regerror",
-      "hardened_semantics": "Passthrough to glibc regerror",
-      "default_stub": false
-    },
-    {
-      "symbol": "fnmatch",
-      "status": "GlibcCallThrough",
-      "module": "string_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc fnmatch",
-      "hardened_semantics": "Passthrough to glibc fnmatch",
-      "default_stub": false
-    },
-    {
-      "symbol": "glob",
-      "status": "GlibcCallThrough",
-      "module": "string_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc glob",
-      "hardened_semantics": "Passthrough to glibc glob",
-      "default_stub": false
-    },
-    {
-      "symbol": "globfree",
-      "status": "GlibcCallThrough",
-      "module": "string_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc globfree",
-      "hardened_semantics": "Passthrough to glibc globfree",
-      "default_stub": false
-    },
-    {
-      "symbol": "execvpe",
-      "status": "GlibcCallThrough",
-      "module": "process_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc execvpe",
-      "hardened_semantics": "Passthrough to glibc execvpe",
-      "default_stub": false
-    },
-    {
-      "symbol": "sigwait",
-      "status": "GlibcCallThrough",
-      "module": "signal_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc sigwait",
-      "hardened_semantics": "Passthrough to glibc sigwait",
-      "default_stub": false
-    },
-    {
-      "symbol": "sigpending",
-      "status": "GlibcCallThrough",
-      "module": "signal_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc sigpending",
-      "hardened_semantics": "Passthrough to glibc sigpending",
-      "default_stub": false
-    },
-    {
-      "symbol": "gethostbyname",
-      "status": "GlibcCallThrough",
-      "module": "resolv_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc gethostbyname",
-      "hardened_semantics": "Passthrough to glibc gethostbyname",
-      "default_stub": false
-    },
-    {
-      "symbol": "gethostbyaddr",
-      "status": "GlibcCallThrough",
-      "module": "resolv_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc gethostbyaddr",
-      "hardened_semantics": "Passthrough to glibc gethostbyaddr",
-      "default_stub": false
-    },
-    {
-      "symbol": "getservbyname",
-      "status": "GlibcCallThrough",
-      "module": "resolv_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc getservbyname",
-      "hardened_semantics": "Passthrough to glibc getservbyname",
-      "default_stub": false
-    },
-    {
-      "symbol": "getservbyport",
-      "status": "GlibcCallThrough",
-      "module": "resolv_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc getservbyport",
-      "hardened_semantics": "Passthrough to glibc getservbyport",
-      "default_stub": false
-    },
-    {
-      "symbol": "getprotobyname",
-      "status": "GlibcCallThrough",
-      "module": "resolv_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc getprotobyname",
-      "hardened_semantics": "Passthrough to glibc getprotobyname",
-      "default_stub": false
-    },
-    {
-      "symbol": "getprotobynumber",
-      "status": "GlibcCallThrough",
-      "module": "resolv_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc getprotobynumber",
-      "hardened_semantics": "Passthrough to glibc getprotobynumber",
-      "default_stub": false
-    },
-    {
-      "symbol": "confstr",
-      "status": "GlibcCallThrough",
-      "module": "unistd_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc confstr",
-      "hardened_semantics": "Passthrough to glibc confstr",
-      "default_stub": false
-    },
-    {
-      "symbol": "pathconf",
-      "status": "GlibcCallThrough",
-      "module": "unistd_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc pathconf",
-      "hardened_semantics": "Passthrough to glibc pathconf",
-      "default_stub": false
-    },
-    {
-      "symbol": "fpathconf",
-      "status": "GlibcCallThrough",
-      "module": "unistd_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc fpathconf",
-      "hardened_semantics": "Passthrough to glibc fpathconf",
-      "default_stub": false
-    },
-    {
-      "symbol": "nice",
-      "status": "GlibcCallThrough",
-      "module": "unistd_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc nice",
-      "hardened_semantics": "Passthrough to glibc nice",
-      "default_stub": false
-    },
-    {
-      "symbol": "daemon",
-      "status": "GlibcCallThrough",
-      "module": "unistd_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc daemon",
-      "hardened_semantics": "Passthrough to glibc daemon",
-      "default_stub": false
-    },
-    {
-      "symbol": "getpagesize",
-      "status": "GlibcCallThrough",
-      "module": "unistd_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc getpagesize",
-      "hardened_semantics": "Passthrough to glibc getpagesize",
-      "default_stub": false
-    },
-    {
-      "symbol": "gethostid",
-      "status": "GlibcCallThrough",
-      "module": "unistd_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc gethostid",
-      "hardened_semantics": "Passthrough to glibc gethostid",
-      "default_stub": false
-    },
-    {
-      "symbol": "getdomainname",
-      "status": "GlibcCallThrough",
-      "module": "unistd_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc getdomainname",
-      "hardened_semantics": "Passthrough to glibc getdomainname",
-      "default_stub": false
-    },
-    {
-      "symbol": "mkdtemp",
-      "status": "GlibcCallThrough",
-      "module": "unistd_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc mkdtemp",
-      "hardened_semantics": "Passthrough to glibc mkdtemp",
-      "default_stub": false
-    },
-    {
-      "symbol": "getrandom",
-      "status": "RawSyscall",
-      "module": "unistd_abi",
-      "perf_class": "default",
-      "strict_semantics": "SYS_getrandom \u2014 kernel CSPRNG",
-      "hardened_semantics": "SYS_getrandom \u2014 kernel CSPRNG",
-      "default_stub": false
-    },
-    {
-      "symbol": "statx",
-      "status": "RawSyscall",
-      "module": "unistd_abi",
-      "perf_class": "default",
-      "strict_semantics": "SYS_statx \u2014 extended file status",
-      "hardened_semantics": "SYS_statx \u2014 extended file status",
-      "default_stub": false
-    },
-    {
-      "symbol": "fallocate",
-      "status": "RawSyscall",
-      "module": "unistd_abi",
-      "perf_class": "default",
-      "strict_semantics": "SYS_fallocate \u2014 allocate/deallocate file space",
-      "hardened_semantics": "SYS_fallocate \u2014 allocate/deallocate file space",
-      "default_stub": false
-    },
-    {
-      "symbol": "copy_file_range",
-      "status": "RawSyscall",
-      "module": "io_abi",
-      "perf_class": "default",
-      "strict_semantics": "SYS_copy_file_range \u2014 server-side file copy",
-      "hardened_semantics": "SYS_copy_file_range \u2014 server-side file copy",
-      "default_stub": false
-    },
-    {
-      "symbol": "posix_spawn",
-      "status": "GlibcCallThrough",
-      "module": "process_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc posix_spawn",
-      "hardened_semantics": "Passthrough to glibc posix_spawn",
-      "default_stub": false
-    },
-    {
-      "symbol": "posix_spawnp",
-      "status": "GlibcCallThrough",
-      "module": "process_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc posix_spawnp",
-      "hardened_semantics": "Passthrough to glibc posix_spawnp",
-      "default_stub": false
-    },
-    {
-      "symbol": "posix_spawn_file_actions_init",
-      "status": "GlibcCallThrough",
-      "module": "process_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc posix_spawn_file_actions_init",
-      "hardened_semantics": "Passthrough to glibc posix_spawn_file_actions_init",
-      "default_stub": false
-    },
-    {
-      "symbol": "posix_spawn_file_actions_destroy",
-      "status": "GlibcCallThrough",
-      "module": "process_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc posix_spawn_file_actions_destroy",
-      "hardened_semantics": "Passthrough to glibc posix_spawn_file_actions_destroy",
-      "default_stub": false
-    },
-    {
-      "symbol": "posix_spawnattr_init",
-      "status": "GlibcCallThrough",
-      "module": "process_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc posix_spawnattr_init",
-      "hardened_semantics": "Passthrough to glibc posix_spawnattr_init",
-      "default_stub": false
-    },
-    {
-      "symbol": "posix_spawnattr_destroy",
-      "status": "GlibcCallThrough",
-      "module": "process_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc posix_spawnattr_destroy",
-      "hardened_semantics": "Passthrough to glibc posix_spawnattr_destroy",
-      "default_stub": false
-    },
-    {
-      "symbol": "alphasort",
-      "status": "GlibcCallThrough",
-      "module": "dirent_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc alphasort",
-      "hardened_semantics": "Passthrough to glibc alphasort",
-      "default_stub": false
-    },
-    {
-      "symbol": "readdir_r",
-      "status": "GlibcCallThrough",
-      "module": "dirent_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc readdir_r (deprecated but used)",
-      "hardened_semantics": "Passthrough to glibc readdir_r (deprecated but used)",
-      "default_stub": false
-    },
-    {
-      "symbol": "ftw",
-      "status": "GlibcCallThrough",
-      "module": "unistd_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc ftw",
-      "hardened_semantics": "Passthrough to glibc ftw",
-      "default_stub": false
-    },
-    {
-      "symbol": "nftw",
-      "status": "GlibcCallThrough",
-      "module": "unistd_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc nftw",
-      "hardened_semantics": "Passthrough to glibc nftw",
-      "default_stub": false
-    },
-    {
-      "symbol": "gettext",
-      "status": "GlibcCallThrough",
-      "module": "locale_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc gettext",
-      "hardened_semantics": "Passthrough to glibc gettext",
-      "default_stub": false
-    },
-    {
-      "symbol": "dgettext",
-      "status": "GlibcCallThrough",
-      "module": "locale_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc dgettext",
-      "hardened_semantics": "Passthrough to glibc dgettext",
-      "default_stub": false
-    },
-    {
-      "symbol": "ngettext",
-      "status": "GlibcCallThrough",
-      "module": "locale_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc ngettext",
-      "hardened_semantics": "Passthrough to glibc ngettext",
-      "default_stub": false
-    },
-    {
-      "symbol": "textdomain",
-      "status": "GlibcCallThrough",
-      "module": "locale_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc textdomain",
-      "hardened_semantics": "Passthrough to glibc textdomain",
-      "default_stub": false
-    },
-    {
-      "symbol": "bindtextdomain",
-      "status": "GlibcCallThrough",
-      "module": "locale_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc bindtextdomain",
-      "hardened_semantics": "Passthrough to glibc bindtextdomain",
-      "default_stub": false
-    },
-    {
-      "symbol": "preadv",
-      "status": "RawSyscall",
-      "module": "io_abi",
-      "perf_class": "default",
-      "strict_semantics": "SYS_preadv \u2014 vectored pread",
-      "hardened_semantics": "SYS_preadv \u2014 vectored pread",
-      "default_stub": false
-    },
-    {
-      "symbol": "pwritev",
-      "status": "RawSyscall",
-      "module": "io_abi",
-      "perf_class": "default",
-      "strict_semantics": "SYS_pwritev \u2014 vectored pwrite",
-      "hardened_semantics": "SYS_pwritev \u2014 vectored pwrite",
-      "default_stub": false
-    },
-    {
-      "symbol": "preadv2",
-      "status": "RawSyscall",
-      "module": "io_abi",
-      "perf_class": "default",
-      "strict_semantics": "SYS_preadv2 \u2014 vectored pread with flags",
-      "hardened_semantics": "SYS_preadv2 \u2014 vectored pread with flags",
-      "default_stub": false
-    },
-    {
-      "symbol": "pwritev2",
-      "status": "RawSyscall",
-      "module": "io_abi",
-      "perf_class": "default",
-      "strict_semantics": "SYS_pwritev2 \u2014 vectored pwrite with flags",
-      "hardened_semantics": "SYS_pwritev2 \u2014 vectored pwrite with flags",
-      "default_stub": false
-    },
-    {
-      "symbol": "mremap",
-      "status": "RawSyscall",
-      "module": "mmap_abi",
-      "perf_class": "default",
-      "strict_semantics": "SYS_mremap \u2014 remap virtual memory",
-      "hardened_semantics": "SYS_mremap \u2014 remap virtual memory",
-      "default_stub": false
-    },
-    {
-      "symbol": "sched_getaffinity",
-      "status": "RawSyscall",
-      "module": "unistd_abi",
-      "perf_class": "default",
-      "strict_semantics": "SYS_sched_getaffinity \u2014 get CPU affinity",
-      "hardened_semantics": "SYS_sched_getaffinity \u2014 get CPU affinity",
-      "default_stub": false
-    },
-    {
-      "symbol": "sched_setaffinity",
-      "status": "RawSyscall",
-      "module": "unistd_abi",
-      "perf_class": "default",
-      "strict_semantics": "SYS_sched_setaffinity \u2014 set CPU affinity",
-      "hardened_semantics": "SYS_sched_setaffinity \u2014 set CPU affinity",
-      "default_stub": false
-    },
-    {
-      "symbol": "getentropy",
-      "status": "Implemented",
-      "module": "unistd_abi",
-      "perf_class": "default",
-      "strict_semantics": "getentropy via SYS_getrandom (max 256 bytes)",
-      "hardened_semantics": "getentropy via SYS_getrandom (max 256 bytes)",
-      "default_stub": false
-    },
-    {
-      "symbol": "arc4random",
-      "status": "Implemented",
-      "module": "unistd_abi",
-      "perf_class": "default",
-      "strict_semantics": "arc4random via SYS_getrandom",
-      "hardened_semantics": "arc4random via SYS_getrandom",
-      "default_stub": false
-    },
-    {
-      "symbol": "arc4random_buf",
-      "status": "Implemented",
-      "module": "unistd_abi",
-      "perf_class": "default",
-      "strict_semantics": "arc4random_buf via SYS_getrandom",
-      "hardened_semantics": "arc4random_buf via SYS_getrandom",
-      "default_stub": false
-    },
-    {
-      "symbol": "arc4random_uniform",
-      "status": "Implemented",
-      "module": "unistd_abi",
-      "perf_class": "default",
-      "strict_semantics": "arc4random_uniform via rejection sampling + SYS_getrandom",
-      "hardened_semantics": "arc4random_uniform via rejection sampling + SYS_getrandom",
-      "default_stub": false
-    },
-    {
-      "symbol": "open64",
-      "status": "GlibcCallThrough",
-      "module": "unistd_abi",
-      "perf_class": "default",
-      "strict_semantics": "LP64 alias via glibc",
-      "hardened_semantics": "LP64 alias via glibc",
-      "default_stub": false
-    },
-    {
-      "symbol": "creat64",
-      "status": "GlibcCallThrough",
-      "module": "unistd_abi",
-      "perf_class": "default",
-      "strict_semantics": "LP64 alias via glibc",
-      "hardened_semantics": "LP64 alias via glibc",
-      "default_stub": false
-    },
-    {
-      "symbol": "stat64",
-      "status": "GlibcCallThrough",
-      "module": "unistd_abi",
-      "perf_class": "default",
-      "strict_semantics": "LP64 alias via glibc",
-      "hardened_semantics": "LP64 alias via glibc",
-      "default_stub": false
-    },
-    {
-      "symbol": "fstat64",
-      "status": "GlibcCallThrough",
-      "module": "unistd_abi",
-      "perf_class": "default",
-      "strict_semantics": "LP64 alias via glibc",
-      "hardened_semantics": "LP64 alias via glibc",
-      "default_stub": false
-    },
-    {
-      "symbol": "lstat64",
-      "status": "GlibcCallThrough",
-      "module": "unistd_abi",
-      "perf_class": "default",
-      "strict_semantics": "LP64 alias via glibc",
-      "hardened_semantics": "LP64 alias via glibc",
-      "default_stub": false
-    },
-    {
-      "symbol": "fstatat64",
-      "status": "GlibcCallThrough",
-      "module": "unistd_abi",
-      "perf_class": "default",
-      "strict_semantics": "LP64 alias via glibc",
-      "hardened_semantics": "LP64 alias via glibc",
-      "default_stub": false
-    },
-    {
-      "symbol": "lseek64",
-      "status": "GlibcCallThrough",
-      "module": "unistd_abi",
-      "perf_class": "default",
-      "strict_semantics": "LP64 alias via glibc",
-      "hardened_semantics": "LP64 alias via glibc",
-      "default_stub": false
-    },
-    {
-      "symbol": "truncate64",
-      "status": "GlibcCallThrough",
-      "module": "unistd_abi",
-      "perf_class": "default",
-      "strict_semantics": "LP64 alias via glibc",
-      "hardened_semantics": "LP64 alias via glibc",
-      "default_stub": false
-    },
-    {
-      "symbol": "ftruncate64",
-      "status": "GlibcCallThrough",
-      "module": "unistd_abi",
-      "perf_class": "default",
-      "strict_semantics": "LP64 alias via glibc",
-      "hardened_semantics": "LP64 alias via glibc",
-      "default_stub": false
-    },
-    {
-      "symbol": "pread64",
-      "status": "GlibcCallThrough",
-      "module": "unistd_abi",
-      "perf_class": "default",
-      "strict_semantics": "LP64 alias via glibc",
-      "hardened_semantics": "LP64 alias via glibc",
-      "default_stub": false
-    },
-    {
-      "symbol": "pwrite64",
-      "status": "GlibcCallThrough",
-      "module": "unistd_abi",
-      "perf_class": "default",
-      "strict_semantics": "LP64 alias via glibc",
-      "hardened_semantics": "LP64 alias via glibc",
-      "default_stub": false
-    },
-    {
-      "symbol": "mmap64",
-      "status": "GlibcCallThrough",
-      "module": "unistd_abi",
-      "perf_class": "default",
-      "strict_semantics": "LP64 alias via glibc",
-      "hardened_semantics": "LP64 alias via glibc",
-      "default_stub": false
-    },
-    {
-      "symbol": "sendfile64",
-      "status": "GlibcCallThrough",
-      "module": "unistd_abi",
-      "perf_class": "default",
-      "strict_semantics": "LP64 alias via glibc",
-      "hardened_semantics": "LP64 alias via glibc",
-      "default_stub": false
-    },
-    {
-      "symbol": "fopen64",
-      "status": "GlibcCallThrough",
-      "module": "stdio_abi",
-      "perf_class": "default",
-      "strict_semantics": "LP64 alias via glibc",
-      "hardened_semantics": "LP64 alias via glibc",
-      "default_stub": false
-    },
-    {
-      "symbol": "freopen64",
-      "status": "GlibcCallThrough",
-      "module": "stdio_abi",
-      "perf_class": "default",
-      "strict_semantics": "LP64 alias via glibc",
-      "hardened_semantics": "LP64 alias via glibc",
-      "default_stub": false
-    },
-    {
-      "symbol": "tmpfile64",
-      "status": "GlibcCallThrough",
-      "module": "stdio_abi",
-      "perf_class": "default",
-      "strict_semantics": "LP64 alias via glibc",
-      "hardened_semantics": "LP64 alias via glibc",
-      "default_stub": false
-    },
-    {
-      "symbol": "fseeko64",
-      "status": "GlibcCallThrough",
-      "module": "stdio_abi",
-      "perf_class": "default",
-      "strict_semantics": "LP64 alias via glibc",
-      "hardened_semantics": "LP64 alias via glibc",
-      "default_stub": false
-    },
-    {
-      "symbol": "ftello64",
-      "status": "GlibcCallThrough",
-      "module": "stdio_abi",
-      "perf_class": "default",
-      "strict_semantics": "LP64 alias via glibc",
-      "hardened_semantics": "LP64 alias via glibc",
-      "default_stub": false
-    },
-    {
-      "symbol": "fgetpos64",
-      "status": "GlibcCallThrough",
-      "module": "stdio_abi",
-      "perf_class": "default",
-      "strict_semantics": "LP64 alias via glibc",
-      "hardened_semantics": "LP64 alias via glibc",
-      "default_stub": false
-    },
-    {
-      "symbol": "fsetpos64",
-      "status": "GlibcCallThrough",
-      "module": "stdio_abi",
-      "perf_class": "default",
-      "strict_semantics": "LP64 alias via glibc",
-      "hardened_semantics": "LP64 alias via glibc",
-      "default_stub": false
-    },
-    {
-      "symbol": "readdir64",
-      "status": "GlibcCallThrough",
-      "module": "dirent_abi",
-      "perf_class": "default",
-      "strict_semantics": "LP64 alias via glibc",
-      "hardened_semantics": "LP64 alias via glibc",
-      "default_stub": false
-    },
-    {
-      "symbol": "scandir64",
-      "status": "GlibcCallThrough",
-      "module": "dirent_abi",
-      "perf_class": "default",
-      "strict_semantics": "LP64 alias via glibc",
-      "hardened_semantics": "LP64 alias via glibc",
-      "default_stub": false
-    },
-    {
-      "symbol": "pthread_cancel",
-      "status": "GlibcCallThrough",
-      "module": "pthread_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc pthread_cancel",
-      "hardened_semantics": "Passthrough to glibc pthread_cancel",
-      "default_stub": false
-    },
-    {
-      "symbol": "pthread_setcancelstate",
-      "status": "GlibcCallThrough",
-      "module": "pthread_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc pthread_setcancelstate",
-      "hardened_semantics": "Passthrough to glibc pthread_setcancelstate",
-      "default_stub": false
-    },
-    {
-      "symbol": "pthread_setcanceltype",
-      "status": "GlibcCallThrough",
-      "module": "pthread_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc pthread_setcanceltype",
-      "hardened_semantics": "Passthrough to glibc pthread_setcanceltype",
-      "default_stub": false
-    },
-    {
-      "symbol": "pthread_testcancel",
-      "status": "GlibcCallThrough",
-      "module": "pthread_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc pthread_testcancel",
-      "hardened_semantics": "Passthrough to glibc pthread_testcancel",
-      "default_stub": false
-    },
-    {
-      "symbol": "pthread_getattr_np",
-      "status": "GlibcCallThrough",
-      "module": "pthread_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc pthread_getattr_np",
-      "hardened_semantics": "Passthrough to glibc pthread_getattr_np",
-      "default_stub": false
-    },
-    {
-      "symbol": "wcsnlen",
-      "status": "GlibcCallThrough",
-      "module": "wchar_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc wcsnlen",
-      "hardened_semantics": "Passthrough to glibc wcsnlen",
-      "default_stub": false
-    },
-    {
-      "symbol": "wcswidth",
-      "status": "GlibcCallThrough",
-      "module": "wchar_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc wcswidth",
-      "hardened_semantics": "Passthrough to glibc wcswidth",
-      "default_stub": false
-    },
-    {
-      "symbol": "wctob",
-      "status": "GlibcCallThrough",
-      "module": "wchar_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc wctob",
-      "hardened_semantics": "Passthrough to glibc wctob",
-      "default_stub": false
-    },
-    {
-      "symbol": "btowc",
-      "status": "GlibcCallThrough",
-      "module": "wchar_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc btowc",
-      "hardened_semantics": "Passthrough to glibc btowc",
-      "default_stub": false
-    },
-    {
-      "symbol": "wcrtomb",
-      "status": "GlibcCallThrough",
-      "module": "wchar_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc wcrtomb",
-      "hardened_semantics": "Passthrough to glibc wcrtomb",
-      "default_stub": false
-    },
-    {
-      "symbol": "mbrtowc",
-      "status": "GlibcCallThrough",
-      "module": "wchar_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc mbrtowc",
-      "hardened_semantics": "Passthrough to glibc mbrtowc",
-      "default_stub": false
-    },
-    {
-      "symbol": "mbsrtowcs",
-      "status": "GlibcCallThrough",
-      "module": "wchar_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc mbsrtowcs",
-      "hardened_semantics": "Passthrough to glibc mbsrtowcs",
-      "default_stub": false
-    },
-    {
-      "symbol": "wcsrtombs",
-      "status": "GlibcCallThrough",
-      "module": "wchar_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc wcsrtombs",
-      "hardened_semantics": "Passthrough to glibc wcsrtombs",
-      "default_stub": false
-    },
-    {
-      "symbol": "wcstol",
-      "status": "GlibcCallThrough",
-      "module": "wchar_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc wcstol",
-      "hardened_semantics": "Passthrough to glibc wcstol",
-      "default_stub": false
-    },
-    {
-      "symbol": "wcstoul",
-      "status": "GlibcCallThrough",
-      "module": "wchar_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc wcstoul",
-      "hardened_semantics": "Passthrough to glibc wcstoul",
-      "default_stub": false
-    },
-    {
-      "symbol": "wcstod",
-      "status": "GlibcCallThrough",
-      "module": "wchar_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc wcstod",
-      "hardened_semantics": "Passthrough to glibc wcstod",
-      "default_stub": false
-    },
-    {
-      "symbol": "strsignal",
-      "status": "GlibcCallThrough",
-      "module": "string_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc strsignal",
-      "hardened_semantics": "Passthrough to glibc strsignal",
-      "default_stub": false
-    },
-    {
-      "symbol": "psignal",
-      "status": "GlibcCallThrough",
-      "module": "string_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc psignal",
-      "hardened_semantics": "Passthrough to glibc psignal",
-      "default_stub": false
-    },
-    {
-      "symbol": "splice",
-      "status": "RawSyscall",
-      "module": "io_abi",
-      "perf_class": "default",
-      "strict_semantics": "SYS_splice \u2014 zero-copy pipe transfer",
-      "hardened_semantics": "SYS_splice \u2014 zero-copy pipe transfer",
-      "default_stub": false
-    },
-    {
-      "symbol": "tee",
-      "status": "RawSyscall",
-      "module": "io_abi",
-      "perf_class": "default",
-      "strict_semantics": "SYS_tee \u2014 duplicate pipe content",
-      "hardened_semantics": "SYS_tee \u2014 duplicate pipe content",
-      "default_stub": false
-    },
-    {
-      "symbol": "vmsplice",
-      "status": "RawSyscall",
-      "module": "io_abi",
-      "perf_class": "default",
-      "strict_semantics": "SYS_vmsplice \u2014 splice user pages into pipe",
-      "hardened_semantics": "SYS_vmsplice \u2014 splice user pages into pipe",
-      "default_stub": false
-    },
-    {
-      "symbol": "memfd_create",
-      "status": "RawSyscall",
-      "module": "io_abi",
-      "perf_class": "default",
-      "strict_semantics": "SYS_memfd_create \u2014 anonymous file in memory",
-      "hardened_semantics": "SYS_memfd_create \u2014 anonymous file in memory",
-      "default_stub": false
-    },
-    {
-      "symbol": "reallocarray",
-      "status": "GlibcCallThrough",
-      "module": "stdlib_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc reallocarray",
-      "hardened_semantics": "Passthrough to glibc reallocarray",
-      "default_stub": false
-    },
-    {
-      "symbol": "strtold",
-      "status": "GlibcCallThrough",
-      "module": "stdlib_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc strtold",
-      "hardened_semantics": "Passthrough to glibc strtold",
-      "default_stub": false
-    },
-    {
-      "symbol": "mkostemp",
-      "status": "GlibcCallThrough",
-      "module": "stdlib_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc mkostemp",
-      "hardened_semantics": "Passthrough to glibc mkostemp",
-      "default_stub": false
-    },
-    {
-      "symbol": "if_nametoindex",
-      "status": "GlibcCallThrough",
-      "module": "inet_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc if_nametoindex",
-      "hardened_semantics": "Passthrough to glibc if_nametoindex",
-      "default_stub": false
-    },
-    {
-      "symbol": "if_indextoname",
-      "status": "GlibcCallThrough",
-      "module": "inet_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc if_indextoname",
-      "hardened_semantics": "Passthrough to glibc if_indextoname",
-      "default_stub": false
-    },
-    {
-      "symbol": "shm_open",
-      "status": "GlibcCallThrough",
-      "module": "unistd_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc shm_open",
-      "hardened_semantics": "Passthrough to glibc shm_open",
-      "default_stub": false
-    },
-    {
-      "symbol": "shm_unlink",
-      "status": "GlibcCallThrough",
-      "module": "unistd_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc shm_unlink",
-      "hardened_semantics": "Passthrough to glibc shm_unlink",
-      "default_stub": false
-    },
-    {
-      "symbol": "sem_open",
-      "status": "GlibcCallThrough",
-      "module": "unistd_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc sem_open",
-      "hardened_semantics": "Passthrough to glibc sem_open",
-      "default_stub": false
-    },
-    {
-      "symbol": "sem_close",
-      "status": "GlibcCallThrough",
-      "module": "unistd_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc sem_close",
-      "hardened_semantics": "Passthrough to glibc sem_close",
-      "default_stub": false
-    },
-    {
-      "symbol": "sem_unlink",
-      "status": "GlibcCallThrough",
-      "module": "unistd_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc sem_unlink",
-      "hardened_semantics": "Passthrough to glibc sem_unlink",
-      "default_stub": false
-    },
-    {
-      "symbol": "sem_wait",
-      "status": "GlibcCallThrough",
-      "module": "unistd_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc sem_wait",
-      "hardened_semantics": "Passthrough to glibc sem_wait",
-      "default_stub": false
-    },
-    {
-      "symbol": "sem_trywait",
-      "status": "GlibcCallThrough",
-      "module": "unistd_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc sem_trywait",
-      "hardened_semantics": "Passthrough to glibc sem_trywait",
-      "default_stub": false
-    },
-    {
-      "symbol": "sem_timedwait",
-      "status": "GlibcCallThrough",
-      "module": "unistd_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc sem_timedwait",
-      "hardened_semantics": "Passthrough to glibc sem_timedwait",
-      "default_stub": false
-    },
-    {
-      "symbol": "sem_post",
-      "status": "GlibcCallThrough",
-      "module": "unistd_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc sem_post",
-      "hardened_semantics": "Passthrough to glibc sem_post",
-      "default_stub": false
-    },
-    {
-      "symbol": "sem_getvalue",
-      "status": "GlibcCallThrough",
-      "module": "unistd_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc sem_getvalue",
-      "hardened_semantics": "Passthrough to glibc sem_getvalue",
-      "default_stub": false
-    },
-    {
-      "symbol": "sem_init",
-      "status": "GlibcCallThrough",
-      "module": "unistd_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc sem_init",
-      "hardened_semantics": "Passthrough to glibc sem_init",
-      "default_stub": false
-    },
-    {
-      "symbol": "sem_destroy",
-      "status": "GlibcCallThrough",
-      "module": "unistd_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc sem_destroy",
-      "hardened_semantics": "Passthrough to glibc sem_destroy",
-      "default_stub": false
-    },
-    {
-      "symbol": "mq_open",
-      "status": "GlibcCallThrough",
-      "module": "unistd_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc mq_open",
-      "hardened_semantics": "Passthrough to glibc mq_open",
-      "default_stub": false
-    },
-    {
-      "symbol": "mq_close",
-      "status": "GlibcCallThrough",
-      "module": "unistd_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc mq_close",
-      "hardened_semantics": "Passthrough to glibc mq_close",
-      "default_stub": false
-    },
-    {
-      "symbol": "mq_unlink",
-      "status": "GlibcCallThrough",
-      "module": "unistd_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc mq_unlink",
-      "hardened_semantics": "Passthrough to glibc mq_unlink",
-      "default_stub": false
-    },
-    {
-      "symbol": "mq_send",
-      "status": "GlibcCallThrough",
-      "module": "unistd_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc mq_send",
-      "hardened_semantics": "Passthrough to glibc mq_send",
-      "default_stub": false
-    },
-    {
-      "symbol": "mq_receive",
-      "status": "GlibcCallThrough",
-      "module": "unistd_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc mq_receive",
-      "hardened_semantics": "Passthrough to glibc mq_receive",
-      "default_stub": false
-    },
-    {
-      "symbol": "mq_getattr",
-      "status": "GlibcCallThrough",
-      "module": "unistd_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc mq_getattr",
-      "hardened_semantics": "Passthrough to glibc mq_getattr",
-      "default_stub": false
-    },
-    {
-      "symbol": "mq_setattr",
-      "status": "GlibcCallThrough",
-      "module": "unistd_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc mq_setattr",
-      "hardened_semantics": "Passthrough to glibc mq_setattr",
-      "default_stub": false
-    },
-    {
-      "symbol": "sched_getscheduler",
-      "status": "GlibcCallThrough",
-      "module": "unistd_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc sched_getscheduler",
-      "hardened_semantics": "Passthrough to glibc sched_getscheduler",
-      "default_stub": false
-    },
-    {
-      "symbol": "sched_setscheduler",
-      "status": "GlibcCallThrough",
-      "module": "unistd_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc sched_setscheduler",
-      "hardened_semantics": "Passthrough to glibc sched_setscheduler",
-      "default_stub": false
-    },
-    {
-      "symbol": "sched_getparam",
-      "status": "GlibcCallThrough",
-      "module": "unistd_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc sched_getparam",
-      "hardened_semantics": "Passthrough to glibc sched_getparam",
-      "default_stub": false
-    },
-    {
-      "symbol": "sched_setparam",
-      "status": "GlibcCallThrough",
-      "module": "unistd_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc sched_setparam",
-      "hardened_semantics": "Passthrough to glibc sched_setparam",
-      "default_stub": false
-    },
-    {
-      "symbol": "sched_get_priority_min",
-      "status": "GlibcCallThrough",
-      "module": "unistd_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc sched_get_priority_min",
-      "hardened_semantics": "Passthrough to glibc sched_get_priority_min",
-      "default_stub": false
-    },
-    {
-      "symbol": "sched_get_priority_max",
-      "status": "GlibcCallThrough",
-      "module": "unistd_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc sched_get_priority_max",
-      "hardened_semantics": "Passthrough to glibc sched_get_priority_max",
-      "default_stub": false
-    },
-    {
       "symbol": "wordexp",
       "status": "GlibcCallThrough",
       "module": "unistd_abi",
@@ -6379,346 +6801,20 @@
       "default_stub": false
     },
     {
-      "symbol": "signalfd",
+      "symbol": "write",
       "status": "RawSyscall",
       "module": "unistd_abi",
-      "perf_class": "default",
-      "strict_semantics": "SYS_signalfd4 \u2014 signal file descriptor",
-      "hardened_semantics": "SYS_signalfd4 \u2014 signal file descriptor",
+      "perf_class": "coldpath",
+      "strict_semantics": "Raw Linux syscall for POSIX I/O and process queries; POSIX errno on failure",
+      "hardened_semantics": "Raw syscall; clamps read/write count to tracked buffer bounds, defaults invalid whence/amode",
       "default_stub": false
     },
     {
-      "symbol": "close_range",
+      "symbol": "writev",
       "status": "RawSyscall",
-      "module": "unistd_abi",
-      "perf_class": "default",
-      "strict_semantics": "SYS_close_range \u2014 close fd range",
-      "hardened_semantics": "SYS_close_range \u2014 close fd range",
-      "default_stub": false
-    },
-    {
-      "symbol": "pidfd_open",
-      "status": "RawSyscall",
-      "module": "unistd_abi",
-      "perf_class": "default",
-      "strict_semantics": "SYS_pidfd_open \u2014 process file descriptor",
-      "hardened_semantics": "SYS_pidfd_open \u2014 process file descriptor",
-      "default_stub": false
-    },
-    {
-      "symbol": "pidfd_send_signal",
-      "status": "RawSyscall",
-      "module": "unistd_abi",
-      "perf_class": "default",
-      "strict_semantics": "SYS_pidfd_send_signal \u2014 signal via pidfd",
-      "hardened_semantics": "SYS_pidfd_send_signal \u2014 signal via pidfd",
-      "default_stub": false
-    },
-    {
-      "symbol": "clock_settime",
-      "status": "RawSyscall",
-      "module": "time_abi",
-      "perf_class": "default",
-      "strict_semantics": "SYS_clock_settime \u2014 set clock",
-      "hardened_semantics": "SYS_clock_settime \u2014 set clock",
-      "default_stub": false
-    },
-    {
-      "symbol": "getxattr",
-      "status": "RawSyscall",
-      "module": "unistd_abi",
-      "perf_class": "default",
-      "strict_semantics": "SYS_getxattr",
-      "hardened_semantics": "SYS_getxattr",
-      "default_stub": false
-    },
-    {
-      "symbol": "setxattr",
-      "status": "RawSyscall",
-      "module": "unistd_abi",
-      "perf_class": "default",
-      "strict_semantics": "SYS_setxattr",
-      "hardened_semantics": "SYS_setxattr",
-      "default_stub": false
-    },
-    {
-      "symbol": "listxattr",
-      "status": "RawSyscall",
-      "module": "unistd_abi",
-      "perf_class": "default",
-      "strict_semantics": "SYS_listxattr",
-      "hardened_semantics": "SYS_listxattr",
-      "default_stub": false
-    },
-    {
-      "symbol": "removexattr",
-      "status": "RawSyscall",
-      "module": "unistd_abi",
-      "perf_class": "default",
-      "strict_semantics": "SYS_removexattr",
-      "hardened_semantics": "SYS_removexattr",
-      "default_stub": false
-    },
-    {
-      "symbol": "fgetxattr",
-      "status": "RawSyscall",
-      "module": "unistd_abi",
-      "perf_class": "default",
-      "strict_semantics": "SYS_fgetxattr",
-      "hardened_semantics": "SYS_fgetxattr",
-      "default_stub": false
-    },
-    {
-      "symbol": "fsetxattr",
-      "status": "RawSyscall",
-      "module": "unistd_abi",
-      "perf_class": "default",
-      "strict_semantics": "SYS_fsetxattr",
-      "hardened_semantics": "SYS_fsetxattr",
-      "default_stub": false
-    },
-    {
-      "symbol": "flistxattr",
-      "status": "RawSyscall",
-      "module": "unistd_abi",
-      "perf_class": "default",
-      "strict_semantics": "SYS_flistxattr",
-      "hardened_semantics": "SYS_flistxattr",
-      "default_stub": false
-    },
-    {
-      "symbol": "fremovexattr",
-      "status": "RawSyscall",
-      "module": "unistd_abi",
-      "perf_class": "default",
-      "strict_semantics": "SYS_fremovexattr",
-      "hardened_semantics": "SYS_fremovexattr",
-      "default_stub": false
-    },
-    {
-      "symbol": "mincore",
-      "status": "RawSyscall",
-      "module": "unistd_abi",
-      "perf_class": "default",
-      "strict_semantics": "SYS_mincore",
-      "hardened_semantics": "SYS_mincore",
-      "default_stub": false
-    },
-    {
-      "symbol": "posix_fadvise",
-      "status": "RawSyscall",
-      "module": "unistd_abi",
-      "perf_class": "default",
-      "strict_semantics": "SYS_fadvise64",
-      "hardened_semantics": "SYS_fadvise64",
-      "default_stub": false
-    },
-    {
-      "symbol": "readahead",
-      "status": "RawSyscall",
-      "module": "unistd_abi",
-      "perf_class": "default",
-      "strict_semantics": "SYS_readahead",
-      "hardened_semantics": "SYS_readahead",
-      "default_stub": false
-    },
-    {
-      "symbol": "syncfs",
-      "status": "RawSyscall",
-      "module": "unistd_abi",
-      "perf_class": "default",
-      "strict_semantics": "SYS_syncfs",
-      "hardened_semantics": "SYS_syncfs",
-      "default_stub": false
-    },
-    {
-      "symbol": "sync",
-      "status": "RawSyscall",
-      "module": "unistd_abi",
-      "perf_class": "default",
-      "strict_semantics": "SYS_sync",
-      "hardened_semantics": "SYS_sync",
-      "default_stub": false
-    },
-    {
-      "symbol": "openpty",
-      "status": "GlibcCallThrough",
-      "module": "unistd_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc openpty",
-      "hardened_semantics": "Passthrough to glibc openpty",
-      "default_stub": false
-    },
-    {
-      "symbol": "login_tty",
-      "status": "GlibcCallThrough",
-      "module": "unistd_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc login_tty",
-      "hardened_semantics": "Passthrough to glibc login_tty",
-      "default_stub": false
-    },
-    {
-      "symbol": "forkpty",
-      "status": "GlibcCallThrough",
-      "module": "unistd_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc forkpty",
-      "hardened_semantics": "Passthrough to glibc forkpty",
-      "default_stub": false
-    },
-    {
-      "symbol": "grantpt",
-      "status": "GlibcCallThrough",
-      "module": "unistd_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc grantpt",
-      "hardened_semantics": "Passthrough to glibc grantpt",
-      "default_stub": false
-    },
-    {
-      "symbol": "unlockpt",
-      "status": "GlibcCallThrough",
-      "module": "unistd_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc unlockpt",
-      "hardened_semantics": "Passthrough to glibc unlockpt",
-      "default_stub": false
-    },
-    {
-      "symbol": "ptsname",
-      "status": "GlibcCallThrough",
-      "module": "unistd_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc ptsname",
-      "hardened_semantics": "Passthrough to glibc ptsname",
-      "default_stub": false
-    },
-    {
-      "symbol": "posix_openpt",
-      "status": "GlibcCallThrough",
-      "module": "unistd_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc posix_openpt",
-      "hardened_semantics": "Passthrough to glibc posix_openpt",
-      "default_stub": false
-    },
-    {
-      "symbol": "crypt",
-      "status": "GlibcCallThrough",
-      "module": "unistd_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc crypt",
-      "hardened_semantics": "Passthrough to glibc crypt",
-      "default_stub": false
-    },
-    {
-      "symbol": "dl_iterate_phdr",
-      "status": "GlibcCallThrough",
-      "module": "dlfcn_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc dl_iterate_phdr",
-      "hardened_semantics": "Passthrough to glibc dl_iterate_phdr",
-      "default_stub": false
-    },
-    {
-      "symbol": "dladdr",
-      "status": "GlibcCallThrough",
-      "module": "dlfcn_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc dladdr",
-      "hardened_semantics": "Passthrough to glibc dladdr",
-      "default_stub": false
-    },
-    {
-      "symbol": "pthread_spin_init",
-      "status": "GlibcCallThrough",
-      "module": "pthread_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough",
-      "hardened_semantics": "Passthrough",
-      "default_stub": false
-    },
-    {
-      "symbol": "pthread_spin_destroy",
-      "status": "GlibcCallThrough",
-      "module": "pthread_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough",
-      "hardened_semantics": "Passthrough",
-      "default_stub": false
-    },
-    {
-      "symbol": "pthread_spin_lock",
-      "status": "GlibcCallThrough",
-      "module": "pthread_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough",
-      "hardened_semantics": "Passthrough",
-      "default_stub": false
-    },
-    {
-      "symbol": "pthread_spin_trylock",
-      "status": "GlibcCallThrough",
-      "module": "pthread_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough",
-      "hardened_semantics": "Passthrough",
-      "default_stub": false
-    },
-    {
-      "symbol": "pthread_spin_unlock",
-      "status": "GlibcCallThrough",
-      "module": "pthread_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough",
-      "hardened_semantics": "Passthrough",
-      "default_stub": false
-    },
-    {
-      "symbol": "pthread_barrier_init",
-      "status": "GlibcCallThrough",
-      "module": "pthread_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough",
-      "hardened_semantics": "Passthrough",
-      "default_stub": false
-    },
-    {
-      "symbol": "pthread_barrier_destroy",
-      "status": "GlibcCallThrough",
-      "module": "pthread_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough",
-      "hardened_semantics": "Passthrough",
-      "default_stub": false
-    },
-    {
-      "symbol": "pthread_barrier_wait",
-      "status": "GlibcCallThrough",
-      "module": "pthread_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough",
-      "hardened_semantics": "Passthrough",
-      "default_stub": false
-    },
-    {
-      "symbol": "pthread_setname_np",
-      "status": "GlibcCallThrough",
-      "module": "pthread_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough",
-      "hardened_semantics": "Passthrough",
-      "default_stub": false
-    },
-    {
-      "symbol": "pthread_getname_np",
-      "status": "GlibcCallThrough",
-      "module": "pthread_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough",
-      "hardened_semantics": "Passthrough",
-      "default_stub": false
+      "module": "io_abi",
+      "perf_class": "syscall_veneer",
+      "semantics": "POSIX"
     }
   ],
   "summary": {
@@ -6728,8 +6824,8 @@
     "glibc_call_through": 179,
     "stub": 0
   },
-  "implemented": 383,
-  "raw_syscall": 172,
-  "glibc_call_through": 39,
+  "implemented": 389,
+  "raw_syscall": 211,
+  "glibc_call_through": 187,
   "stub": 0
 }

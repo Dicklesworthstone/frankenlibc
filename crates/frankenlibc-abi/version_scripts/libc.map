@@ -566,6 +566,10 @@ GLIBC_2.2.5 {
 
         /* system configuration */
         sysconf;
+        get_nprocs;
+        get_nprocs_conf;
+        get_phys_pages;
+        get_avphys_pages;
 
         /* command-line parsing */
         getopt;
@@ -662,6 +666,8 @@ GLIBC_2.2.5 {
 
         /* eventfd / timerfd */
         eventfd;
+        eventfd_read;
+        eventfd_write;
         timerfd_create;
         timerfd_settime;
         timerfd_gettime;
@@ -741,6 +747,8 @@ GLIBC_2.2.5 {
         /* resource */
         getrlimit;
         setrlimit;
+        prlimit;
+        prlimit64;
 
         /* dlfcn */
         dlopen;
@@ -857,6 +865,10 @@ GLIBC_2.2.5 {
         fsetxattr;
         flistxattr;
         fremovexattr;
+        lgetxattr;
+        lsetxattr;
+        llistxattr;
+        lremovexattr;
 
         /* misc Linux */
         mincore;
@@ -876,6 +888,12 @@ GLIBC_2.2.5 {
 
         /* crypt */
         crypt;
+
+        /* utmp */
+        getutent;
+        setutent;
+        endutent;
+        utmpname;
 
         /* 64-bit LFS variants */
         open64;
