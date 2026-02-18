@@ -1745,12 +1745,13 @@ pub unsafe extern "C" fn wcwidth(wc: u32) -> c_int {
 
 use frankenlibc_core::unistd::{basename_range, dirname_range};
 
-/// Thread-local buffer for basename return value.
-static mut BASENAME_BUF: [u8; 4097] = [0u8; 4097];
+/// Static buffer for basename return value.
+static BASENAME_BUF: std::sync::Mutex<[u8; 4097]> = std::sync::Mutex::new([0u8; 4097]);
 
 /// POSIX `basename` — extract filename component from a path.
 ///
-/// Returns a pointer to a static buffer. Not thread-safe per POSIX spec.
+/// Returns a pointer to a static buffer. Not thread-safe per POSIX spec,
+/// but we use a mutex internally for Rust safety.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn basename(path: *mut std::ffi::c_char) -> *mut std::ffi::c_char {
     let dot = b".\0";
@@ -1767,19 +1768,19 @@ pub unsafe extern "C" fn basename(path: *mut std::ffi::c_char) -> *mut std::ffi:
     if result_len == 0 {
         return dot.as_ptr() as *mut std::ffi::c_char;
     }
-    unsafe {
-        BASENAME_BUF[..result_len].copy_from_slice(&slice[s..e]);
-        BASENAME_BUF[result_len] = 0;
-        BASENAME_BUF.as_mut_ptr() as *mut std::ffi::c_char
-    }
+    let mut buf = BASENAME_BUF.lock().unwrap();
+    buf[..result_len].copy_from_slice(&slice[s..e]);
+    buf[result_len] = 0;
+    buf.as_mut_ptr() as *mut std::ffi::c_char
 }
 
-/// Thread-local buffer for dirname return value.
-static mut DIRNAME_BUF: [u8; 4097] = [0u8; 4097];
+/// Static buffer for dirname return value.
+static DIRNAME_BUF: std::sync::Mutex<[u8; 4097]> = std::sync::Mutex::new([0u8; 4097]);
 
 /// POSIX `dirname` — extract directory component from a path.
 ///
-/// Returns a pointer to a static buffer. Not thread-safe per POSIX spec.
+/// Returns a pointer to a static buffer. Not thread-safe per POSIX spec,
+/// but we use a mutex internally for Rust safety.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn dirname(path: *mut std::ffi::c_char) -> *mut std::ffi::c_char {
     let dot = b".\0";
@@ -1796,11 +1797,10 @@ pub unsafe extern "C" fn dirname(path: *mut std::ffi::c_char) -> *mut std::ffi::
     if result_len == 0 {
         return dot.as_ptr() as *mut std::ffi::c_char;
     }
-    unsafe {
-        DIRNAME_BUF[..result_len].copy_from_slice(&slice[s..e]);
-        DIRNAME_BUF[result_len] = 0;
-        DIRNAME_BUF.as_mut_ptr() as *mut std::ffi::c_char
-    }
+    let mut buf = DIRNAME_BUF.lock().unwrap();
+    buf[..result_len].copy_from_slice(&slice[s..e]);
+    buf[result_len] = 0;
+    buf.as_mut_ptr() as *mut std::ffi::c_char
 }
 
 // ---------------------------------------------------------------------------
