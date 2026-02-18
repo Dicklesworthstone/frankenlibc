@@ -491,6 +491,12 @@ GLIBC_2.2.5 {
         inet_ntoa;
         if_nametoindex;
         if_indextoname;
+        if_nameindex;
+        if_freenameindex;
+        getservbyname_r;
+        getservbyport_r;
+        gethostbyname_r;
+        gethostbyaddr_r;
 
         /* unistd / POSIX I/O */
         read;
@@ -749,6 +755,9 @@ GLIBC_2.2.5 {
         setrlimit;
         prlimit;
         prlimit64;
+        lockf;
+        posix_fallocate;
+        posix_madvise;
 
         /* dlfcn */
         dlopen;
@@ -888,6 +897,39 @@ GLIBC_2.2.5 {
 
         /* crypt */
         crypt;
+
+        /* SysV IPC */
+        shmget;
+        shmctl;
+        shmat;
+        shmdt;
+        semget;
+        semctl;
+        semop;
+        msgget;
+        msgctl;
+        msgsnd;
+        msgrcv;
+
+        /* signal extras */
+        sigqueue;
+        sigtimedwait;
+        sigwaitinfo;
+
+        /* network interfaces */
+        getifaddrs;
+        freeifaddrs;
+        ether_aton;
+        ether_ntoa;
+        ether_aton_r;
+        ether_ntoa_r;
+        herror;
+        hstrerror;
+
+        /* exec family (variadic) */
+        execl;
+        execlp;
+        execle;
 
         /* utmp */
         getutent;

@@ -2,7 +2,7 @@
   "version": 2,
   "generated_at_utc": "2026-02-18T04:49:26Z",
   "library": "/data/tmp/cargo-target/release/libfrankenlibc_abi.so",
-  "total_exported": 787,
+  "total_exported": 821,
   "taxonomy": {
     "Implemented": "Native Rust code owns the entire operation. No host libc dependency. Full test coverage required.",
     "RawSyscall": "ABI entrypoint marshals arguments directly to Linux syscall instruction. No glibc call-through.",
@@ -981,6 +981,30 @@
       "notes": ""
     },
     {
+      "symbol": "ether_aton",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "fast"
+    },
+    {
+      "symbol": "ether_aton_r",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "fast"
+    },
+    {
+      "symbol": "ether_ntoa",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "fast"
+    },
+    {
+      "symbol": "ether_ntoa_r",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "fast"
+    },
+    {
       "symbol": "eventfd",
       "status": "RawSyscall",
       "module": "poll_abi",
@@ -998,6 +1022,24 @@
       "status": "Implemented",
       "module": "unistd_abi",
       "perf_class": "fast"
+    },
+    {
+      "symbol": "execl",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "syscall"
+    },
+    {
+      "symbol": "execle",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "syscall"
+    },
+    {
+      "symbol": "execlp",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "syscall"
     },
     {
       "symbol": "execve",
@@ -1534,6 +1576,12 @@
       "default_stub": false
     },
     {
+      "symbol": "freeifaddrs",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "fast"
+    },
+    {
       "symbol": "fremovexattr",
       "status": "RawSyscall",
       "module": "unistd_abi",
@@ -1939,6 +1987,12 @@
       "default_stub": false
     },
     {
+      "symbol": "gethostbyaddr_r",
+      "status": "GlibcCallThrough",
+      "module": "inet_abi",
+      "perf_class": "fast"
+    },
+    {
       "symbol": "gethostbyname",
       "status": "GlibcCallThrough",
       "module": "resolv_abi",
@@ -1946,6 +2000,12 @@
       "strict_semantics": "Passthrough to glibc gethostbyname",
       "hardened_semantics": "Passthrough to glibc gethostbyname",
       "default_stub": false
+    },
+    {
+      "symbol": "gethostbyname_r",
+      "status": "GlibcCallThrough",
+      "module": "inet_abi",
+      "perf_class": "fast"
     },
     {
       "symbol": "gethostid",
@@ -1962,6 +2022,12 @@
       "module": "unistd_abi",
       "perf_class": "syscall_veneer",
       "semantics": "POSIX"
+    },
+    {
+      "symbol": "getifaddrs",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "fast"
     },
     {
       "symbol": "getitimer",
@@ -2149,6 +2215,12 @@
       "default_stub": false
     },
     {
+      "symbol": "getservbyname_r",
+      "status": "GlibcCallThrough",
+      "module": "inet_abi",
+      "perf_class": "fast"
+    },
+    {
       "symbol": "getservbyport",
       "status": "GlibcCallThrough",
       "module": "resolv_abi",
@@ -2156,6 +2228,12 @@
       "strict_semantics": "Passthrough to glibc getservbyport",
       "hardened_semantics": "Passthrough to glibc getservbyport",
       "default_stub": false
+    },
+    {
+      "symbol": "getservbyport_r",
+      "status": "GlibcCallThrough",
+      "module": "inet_abi",
+      "perf_class": "fast"
     },
     {
       "symbol": "getsid",
@@ -2272,6 +2350,18 @@
       "default_stub": false
     },
     {
+      "symbol": "herror",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "fast"
+    },
+    {
+      "symbol": "hstrerror",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "fast"
+    },
+    {
       "symbol": "htonl",
       "status": "Implemented",
       "module": "inet_abi",
@@ -2333,6 +2423,12 @@
       "default_stub": false
     },
     {
+      "symbol": "if_freenameindex",
+      "status": "GlibcCallThrough",
+      "module": "inet_abi",
+      "perf_class": "fast"
+    },
+    {
       "symbol": "if_indextoname",
       "status": "GlibcCallThrough",
       "module": "inet_abi",
@@ -2340,6 +2436,12 @@
       "strict_semantics": "Passthrough to glibc if_indextoname",
       "hardened_semantics": "Passthrough to glibc if_indextoname",
       "default_stub": false
+    },
+    {
+      "symbol": "if_nameindex",
+      "status": "GlibcCallThrough",
+      "module": "inet_abi",
+      "perf_class": "fast"
     },
     {
       "symbol": "if_nametoindex",
@@ -2827,6 +2929,12 @@
       "strict_semantics": "Raw Linux syscall for time queries; POSIX errno on failure",
       "hardened_semantics": "Raw syscall; defaults invalid clock_id to CLOCK_REALTIME",
       "default_stub": false
+    },
+    {
+      "symbol": "lockf",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "syscall"
     },
     {
       "symbol": "log",
@@ -3369,6 +3477,30 @@
       "default_stub": false
     },
     {
+      "symbol": "msgctl",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "syscall"
+    },
+    {
+      "symbol": "msgget",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "syscall"
+    },
+    {
+      "symbol": "msgrcv",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "syscall"
+    },
+    {
+      "symbol": "msgsnd",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "syscall"
+    },
+    {
       "symbol": "msync",
       "status": "RawSyscall",
       "module": "mmap_abi",
@@ -3635,6 +3767,18 @@
       "strict_semantics": "SYS_fadvise64",
       "hardened_semantics": "SYS_fadvise64",
       "default_stub": false
+    },
+    {
+      "symbol": "posix_fallocate",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "syscall"
+    },
+    {
+      "symbol": "posix_madvise",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "syscall"
     },
     {
       "symbol": "posix_memalign",
@@ -4998,6 +5142,24 @@
       "default_stub": false
     },
     {
+      "symbol": "semctl",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "syscall"
+    },
+    {
+      "symbol": "semget",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "syscall"
+    },
+    {
+      "symbol": "semop",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "syscall"
+    },
+    {
       "symbol": "send",
       "status": "RawSyscall",
       "module": "socket_abi",
@@ -5243,6 +5405,30 @@
       "default_stub": false
     },
     {
+      "symbol": "shmat",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "syscall"
+    },
+    {
+      "symbol": "shmctl",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "syscall"
+    },
+    {
+      "symbol": "shmdt",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "syscall"
+    },
+    {
+      "symbol": "shmget",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "syscall"
+    },
+    {
       "symbol": "shutdown",
       "status": "RawSyscall",
       "module": "socket_abi",
@@ -5360,6 +5546,12 @@
       "default_stub": false
     },
     {
+      "symbol": "sigqueue",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "syscall"
+    },
+    {
       "symbol": "sigsetjmp",
       "status": "Implemented",
       "module": "setjmp_abi",
@@ -5378,6 +5570,12 @@
       "default_stub": false
     },
     {
+      "symbol": "sigtimedwait",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "syscall"
+    },
+    {
       "symbol": "sigwait",
       "status": "GlibcCallThrough",
       "module": "signal_abi",
@@ -5385,6 +5583,12 @@
       "strict_semantics": "Passthrough to glibc sigwait",
       "hardened_semantics": "Passthrough to glibc sigwait",
       "default_stub": false
+    },
+    {
+      "symbol": "sigwaitinfo",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "syscall"
     },
     {
       "symbol": "sin",
@@ -6826,6 +7030,6 @@
   },
   "implemented": 389,
   "raw_syscall": 211,
-  "glibc_call_through": 187,
+  "glibc_call_through": 221,
   "stub": 0
 }

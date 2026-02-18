@@ -2835,3 +2835,253 @@ pub unsafe extern "C" fn eventfd_write(fd: c_int, value: u64) -> c_int {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// lockf / posix_fallocate / posix_madvise — GlibcCallThrough
+// ---------------------------------------------------------------------------
+
+unsafe extern "C" {
+    #[link_name = "lockf"]
+    fn libc_lockf(fd: c_int, cmd: c_int, len: libc::off_t) -> c_int;
+    #[link_name = "posix_fallocate"]
+    fn libc_posix_fallocate(fd: c_int, offset: libc::off_t, len: libc::off_t) -> c_int;
+    #[link_name = "posix_madvise"]
+    fn libc_posix_madvise(addr: *mut c_void, len: usize, advice: c_int) -> c_int;
+}
+
+/// `lockf` — apply, test or remove a POSIX lock on a file section.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn lockf(fd: c_int, cmd: c_int, len: libc::off_t) -> c_int {
+    unsafe { libc_lockf(fd, cmd, len) }
+}
+
+/// `posix_fallocate` — allocate file space.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn posix_fallocate(fd: c_int, offset: libc::off_t, len: libc::off_t) -> c_int {
+    unsafe { libc_posix_fallocate(fd, offset, len) }
+}
+
+/// `posix_madvise` — POSIX advisory information on memory usage.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn posix_madvise(addr: *mut c_void, len: usize, advice: c_int) -> c_int {
+    unsafe { libc_posix_madvise(addr, len, advice) }
+}
+
+// ---------------------------------------------------------------------------
+// SysV IPC — GlibcCallThrough (shmget, shmctl, shmat, shmdt,
+//                                semget, semctl, semop,
+//                                msgget, msgctl, msgsnd, msgrcv)
+// ---------------------------------------------------------------------------
+
+unsafe extern "C" {
+    #[link_name = "shmget"]
+    fn libc_shmget(key: c_int, size: usize, shmflg: c_int) -> c_int;
+    #[link_name = "shmctl"]
+    fn libc_shmctl(shmid: c_int, cmd: c_int, buf: *mut c_void) -> c_int;
+    #[link_name = "shmat"]
+    fn libc_shmat(shmid: c_int, shmaddr: *const c_void, shmflg: c_int) -> *mut c_void;
+    #[link_name = "shmdt"]
+    fn libc_shmdt(shmaddr: *const c_void) -> c_int;
+    #[link_name = "semget"]
+    fn libc_semget(key: c_int, nsems: c_int, semflg: c_int) -> c_int;
+    #[link_name = "semctl"]
+    fn libc_semctl(semid: c_int, semnum: c_int, cmd: c_int, ...) -> c_int;
+    #[link_name = "semop"]
+    fn libc_semop(semid: c_int, sops: *mut c_void, nsops: usize) -> c_int;
+    #[link_name = "msgget"]
+    fn libc_msgget(key: c_int, msgflg: c_int) -> c_int;
+    #[link_name = "msgctl"]
+    fn libc_msgctl(msqid: c_int, cmd: c_int, buf: *mut c_void) -> c_int;
+    #[link_name = "msgsnd"]
+    fn libc_msgsnd(msqid: c_int, msgp: *const c_void, msgsz: usize, msgflg: c_int) -> c_int;
+    #[link_name = "msgrcv"]
+    fn libc_msgrcv(msqid: c_int, msgp: *mut c_void, msgsz: usize, msgtyp: std::ffi::c_long, msgflg: c_int) -> libc::ssize_t;
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn shmget(key: c_int, size: usize, shmflg: c_int) -> c_int {
+    unsafe { libc_shmget(key, size, shmflg) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn shmctl(shmid: c_int, cmd: c_int, buf: *mut c_void) -> c_int {
+    unsafe { libc_shmctl(shmid, cmd, buf) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn shmat(shmid: c_int, shmaddr: *const c_void, shmflg: c_int) -> *mut c_void {
+    unsafe { libc_shmat(shmid, shmaddr, shmflg) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn shmdt(shmaddr: *const c_void) -> c_int {
+    unsafe { libc_shmdt(shmaddr) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn semget(key: c_int, nsems: c_int, semflg: c_int) -> c_int {
+    unsafe { libc_semget(key, nsems, semflg) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn semctl(semid: c_int, semnum: c_int, cmd: c_int, args: ...) -> c_int {
+    unsafe { libc_semctl(semid, semnum, cmd, args) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn semop(semid: c_int, sops: *mut c_void, nsops: usize) -> c_int {
+    unsafe { libc_semop(semid, sops, nsops) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn msgget(key: c_int, msgflg: c_int) -> c_int {
+    unsafe { libc_msgget(key, msgflg) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn msgctl(msqid: c_int, cmd: c_int, buf: *mut c_void) -> c_int {
+    unsafe { libc_msgctl(msqid, cmd, buf) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn msgsnd(msqid: c_int, msgp: *const c_void, msgsz: usize, msgflg: c_int) -> c_int {
+    unsafe { libc_msgsnd(msqid, msgp, msgsz, msgflg) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn msgrcv(msqid: c_int, msgp: *mut c_void, msgsz: usize, msgtyp: std::ffi::c_long, msgflg: c_int) -> libc::ssize_t {
+    unsafe { libc_msgrcv(msqid, msgp, msgsz, msgtyp, msgflg) }
+}
+
+// ---------------------------------------------------------------------------
+// Signal extras — RawSyscall / GlibcCallThrough
+// ---------------------------------------------------------------------------
+
+unsafe extern "C" {
+    #[link_name = "sigqueue"]
+    fn libc_sigqueue(pid: libc::pid_t, sig: c_int, value: *const c_void) -> c_int;
+    #[link_name = "sigtimedwait"]
+    fn libc_sigtimedwait(set: *const c_void, info: *mut c_void, timeout: *const libc::timespec) -> c_int;
+    #[link_name = "sigwaitinfo"]
+    fn libc_sigwaitinfo(set: *const c_void, info: *mut c_void) -> c_int;
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn sigqueue(pid: libc::pid_t, sig: c_int, value: *const c_void) -> c_int {
+    unsafe { libc_sigqueue(pid, sig, value) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn sigtimedwait(set: *const c_void, info: *mut c_void, timeout: *const libc::timespec) -> c_int {
+    unsafe { libc_sigtimedwait(set, info, timeout) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn sigwaitinfo(set: *const c_void, info: *mut c_void) -> c_int {
+    unsafe { libc_sigwaitinfo(set, info) }
+}
+
+// ---------------------------------------------------------------------------
+// getifaddrs / freeifaddrs — GlibcCallThrough
+// ---------------------------------------------------------------------------
+
+unsafe extern "C" {
+    #[link_name = "getifaddrs"]
+    fn libc_getifaddrs(ifap: *mut *mut c_void) -> c_int;
+    #[link_name = "freeifaddrs"]
+    fn libc_freeifaddrs(ifa: *mut c_void);
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getifaddrs(ifap: *mut *mut c_void) -> c_int {
+    unsafe { libc_getifaddrs(ifap) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn freeifaddrs(ifa: *mut c_void) {
+    unsafe { libc_freeifaddrs(ifa) }
+}
+
+// ---------------------------------------------------------------------------
+// ether_aton / ether_ntoa — GlibcCallThrough
+// ---------------------------------------------------------------------------
+
+unsafe extern "C" {
+    #[link_name = "ether_aton"]
+    fn libc_ether_aton(asc: *const c_char) -> *mut c_void;
+    #[link_name = "ether_ntoa"]
+    fn libc_ether_ntoa(addr: *const c_void) -> *mut c_char;
+    #[link_name = "ether_aton_r"]
+    fn libc_ether_aton_r(asc: *const c_char, addr: *mut c_void) -> *mut c_void;
+    #[link_name = "ether_ntoa_r"]
+    fn libc_ether_ntoa_r(addr: *const c_void, buf: *mut c_char) -> *mut c_char;
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ether_aton(asc: *const c_char) -> *mut c_void {
+    unsafe { libc_ether_aton(asc) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ether_ntoa(addr: *const c_void) -> *mut c_char {
+    unsafe { libc_ether_ntoa(addr) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ether_aton_r(asc: *const c_char, addr: *mut c_void) -> *mut c_void {
+    unsafe { libc_ether_aton_r(asc, addr) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ether_ntoa_r(addr: *const c_void, buf: *mut c_char) -> *mut c_char {
+    unsafe { libc_ether_ntoa_r(addr, buf) }
+}
+
+// ---------------------------------------------------------------------------
+// herror / hstrerror — GlibcCallThrough
+// ---------------------------------------------------------------------------
+
+unsafe extern "C" {
+    #[link_name = "herror"]
+    fn libc_herror(s: *const c_char);
+    #[link_name = "hstrerror"]
+    fn libc_hstrerror(err: c_int) -> *const c_char;
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn herror(s: *const c_char) {
+    unsafe { libc_herror(s) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn hstrerror(err: c_int) -> *const c_char {
+    unsafe { libc_hstrerror(err) }
+}
+
+// ---------------------------------------------------------------------------
+// execl / execlp / execle — GlibcCallThrough (variadic)
+// ---------------------------------------------------------------------------
+
+unsafe extern "C" {
+    #[link_name = "execl"]
+    fn libc_execl(path: *const c_char, arg: *const c_char, ...) -> c_int;
+    #[link_name = "execlp"]
+    fn libc_execlp(file: *const c_char, arg: *const c_char, ...) -> c_int;
+    #[link_name = "execle"]
+    fn libc_execle(path: *const c_char, arg: *const c_char, ...) -> c_int;
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn execl(path: *const c_char, arg: *const c_char, args: ...) -> c_int {
+    unsafe { libc_execl(path, arg, args) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn execlp(file: *const c_char, arg: *const c_char, args: ...) -> c_int {
+    unsafe { libc_execlp(file, arg, args) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn execle(path: *const c_char, arg: *const c_char, args: ...) -> c_int {
+    unsafe { libc_execle(path, arg, args) }
+}
