@@ -1719,6 +1719,51 @@ pub unsafe extern "C" fn pthread_rwlockattr_destroy(
     unsafe { libc_pthread_rwlockattr_destroy(attr) }
 }
 
+// ---------------------------------------------------------------------------
+// pthread cancellation — GlibcCallThrough
+// ---------------------------------------------------------------------------
+
+unsafe extern "C" {
+    #[link_name = "pthread_cancel"]
+    fn libc_pthread_cancel(thread: libc::pthread_t) -> c_int;
+    #[link_name = "pthread_setcancelstate"]
+    fn libc_pthread_setcancelstate(state: c_int, oldstate: *mut c_int) -> c_int;
+    #[link_name = "pthread_setcanceltype"]
+    fn libc_pthread_setcanceltype(typ: c_int, oldtype: *mut c_int) -> c_int;
+    #[link_name = "pthread_testcancel"]
+    fn libc_pthread_testcancel();
+    #[link_name = "pthread_getattr_np"]
+    fn libc_pthread_getattr_np(thread: libc::pthread_t, attr: *mut libc::pthread_attr_t) -> c_int;
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_cancel(thread: libc::pthread_t) -> c_int {
+    unsafe { libc_pthread_cancel(thread) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_setcancelstate(state: c_int, oldstate: *mut c_int) -> c_int {
+    unsafe { libc_pthread_setcancelstate(state, oldstate) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_setcanceltype(typ: c_int, oldtype: *mut c_int) -> c_int {
+    unsafe { libc_pthread_setcanceltype(typ, oldtype) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_testcancel() {
+    unsafe { libc_pthread_testcancel() }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_getattr_np(
+    thread: libc::pthread_t,
+    attr: *mut libc::pthread_attr_t,
+) -> c_int {
+    unsafe { libc_pthread_getattr_np(thread, attr) }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

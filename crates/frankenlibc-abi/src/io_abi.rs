@@ -546,3 +546,121 @@ pub unsafe extern "C" fn pwritev2(
         rc as libc::ssize_t
     }
 }
+
+// ---------------------------------------------------------------------------
+// splice / tee / vmsplice — RawSyscall
+// ---------------------------------------------------------------------------
+
+/// Linux `splice` — move data between two file descriptors without copying.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn splice(
+    fd_in: c_int,
+    off_in: *mut i64,
+    fd_out: c_int,
+    off_out: *mut i64,
+    len: usize,
+    flags: c_uint,
+) -> libc::ssize_t {
+    let (_, decision) =
+        runtime_policy::decide(ApiFamily::IoFd, fd_in as usize, len, true, true, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+        return -1;
+    }
+    let rc = unsafe {
+        libc::syscall(libc::SYS_splice, fd_in, off_in, fd_out, off_out, len, flags)
+    };
+    if rc < 0 {
+        let e = std::io::Error::last_os_error()
+            .raw_os_error()
+            .unwrap_or(errno::EIO);
+        unsafe { set_abi_errno(e) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, true);
+        -1
+    } else {
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, false);
+        rc as libc::ssize_t
+    }
+}
+
+/// Linux `tee` — duplicate pipe content.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn tee(
+    fd_in: c_int,
+    fd_out: c_int,
+    len: usize,
+    flags: c_uint,
+) -> libc::ssize_t {
+    let (_, decision) =
+        runtime_policy::decide(ApiFamily::IoFd, fd_in as usize, len, true, true, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+        return -1;
+    }
+    let rc = unsafe { libc::syscall(libc::SYS_tee, fd_in, fd_out, len, flags) };
+    if rc < 0 {
+        let e = std::io::Error::last_os_error()
+            .raw_os_error()
+            .unwrap_or(errno::EIO);
+        unsafe { set_abi_errno(e) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, true);
+        -1
+    } else {
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, false);
+        rc as libc::ssize_t
+    }
+}
+
+/// Linux `vmsplice` — splice user pages into a pipe.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn vmsplice(
+    fd: c_int,
+    iov: *const libc::iovec,
+    nr_segs: usize,
+    flags: c_uint,
+) -> libc::ssize_t {
+    let (_, decision) =
+        runtime_policy::decide(ApiFamily::IoFd, fd as usize, nr_segs, true, true, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+        return -1;
+    }
+    let rc = unsafe { libc::syscall(libc::SYS_vmsplice, fd, iov, nr_segs, flags) };
+    if rc < 0 {
+        let e = std::io::Error::last_os_error()
+            .raw_os_error()
+            .unwrap_or(errno::EIO);
+        unsafe { set_abi_errno(e) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, true);
+        -1
+    } else {
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, false);
+        rc as libc::ssize_t
+    }
+}
+
+// ---------------------------------------------------------------------------
+// memfd_create — RawSyscall
+// ---------------------------------------------------------------------------
+
+/// Linux `memfd_create` — create anonymous file in memory.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn memfd_create(name: *const std::ffi::c_char, flags: c_uint) -> c_int {
+    let (_, decision) =
+        runtime_policy::decide(ApiFamily::IoFd, 0, 0, true, true, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+        return -1;
+    }
+    let rc = unsafe { libc::syscall(libc::SYS_memfd_create, name, flags) } as c_int;
+    if rc < 0 {
+        let e = std::io::Error::last_os_error()
+            .raw_os_error()
+            .unwrap_or(errno::EINVAL);
+        unsafe { set_abi_errno(e) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, true);
+    } else {
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, false);
+    }
+    rc
+}

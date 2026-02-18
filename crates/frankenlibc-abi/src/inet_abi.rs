@@ -243,3 +243,24 @@ pub unsafe extern "C" fn inet_addr(cp: *const c_char) -> u32 {
     );
     result
 }
+
+// ---------------------------------------------------------------------------
+// Network interface name/index — GlibcCallThrough
+// ---------------------------------------------------------------------------
+
+unsafe extern "C" {
+    #[link_name = "if_nametoindex"]
+    fn libc_if_nametoindex(ifname: *const c_char) -> libc::c_uint;
+    #[link_name = "if_indextoname"]
+    fn libc_if_indextoname(ifindex: libc::c_uint, ifname: *mut c_char) -> *mut c_char;
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn if_nametoindex(ifname: *const c_char) -> libc::c_uint {
+    unsafe { libc_if_nametoindex(ifname) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn if_indextoname(ifindex: libc::c_uint, ifname: *mut c_char) -> *mut c_char {
+    unsafe { libc_if_indextoname(ifindex, ifname) }
+}

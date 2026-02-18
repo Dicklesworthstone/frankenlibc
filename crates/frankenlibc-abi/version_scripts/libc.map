@@ -49,6 +49,8 @@ GLIBC_2.2.5 {
         strsep;
         strtok;
         strtok_r;
+        strsignal;
+        psignal;
         swab;
         index;
         rindex;
@@ -81,6 +83,17 @@ GLIBC_2.2.5 {
         wmemmove;
         wmemset;
         wcwidth;
+        wcsnlen;
+        wcswidth;
+        wctob;
+        btowc;
+        wcrtomb;
+        mbrtowc;
+        mbsrtowcs;
+        wcsrtombs;
+        wcstol;
+        wcstoul;
+        wcstod;
 
         /* multibyte/wide character conversion */
         mblen;
@@ -136,6 +149,7 @@ GLIBC_2.2.5 {
         strtoumax;
         strtod;
         strtof;
+        strtold;
         qsort;
         bsearch;
         getenv;
@@ -150,6 +164,8 @@ GLIBC_2.2.5 {
         ffsll;
         exit;
         atexit;
+        reallocarray;
+        mkostemp;
 
         /* ctype */
         isalnum;
@@ -397,6 +413,11 @@ GLIBC_2.2.5 {
         pthread_getspecific;
         pthread_setspecific;
         pthread_once;
+        pthread_cancel;
+        pthread_setcancelstate;
+        pthread_setcanceltype;
+        pthread_testcancel;
+        pthread_getattr_np;
 
         /* passwd database */
         getpwnam;
@@ -458,6 +479,8 @@ GLIBC_2.2.5 {
         inet_addr;
         inet_aton;
         inet_ntoa;
+        if_nametoindex;
+        if_indextoname;
 
         /* unistd / POSIX I/O */
         read;
@@ -611,6 +634,10 @@ GLIBC_2.2.5 {
         pwritev2;
         sendfile;
         sendfile64;
+        splice;
+        tee;
+        vmsplice;
+        memfd_create;
 
         /* poll/select/epoll */
         poll;

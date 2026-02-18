@@ -1252,3 +1252,32 @@ pub unsafe extern "C" fn putenv(string: *mut c_char) -> c_int {
     runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 10, ret != 0);
     ret
 }
+
+// ---------------------------------------------------------------------------
+// Additional stdlib — GlibcCallThrough
+// ---------------------------------------------------------------------------
+
+unsafe extern "C" {
+    #[link_name = "reallocarray"]
+    fn libc_reallocarray(ptr: *mut c_void, nmemb: usize, size: usize) -> *mut c_void;
+    #[link_name = "strtold"]
+    fn libc_strtold(nptr: *const c_char, endptr: *mut *mut c_char) -> f64;
+    #[link_name = "mkostemp"]
+    fn libc_mkostemp(template: *mut c_char, flags: c_int) -> c_int;
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn reallocarray(ptr: *mut c_void, nmemb: usize, size: usize) -> *mut c_void {
+    unsafe { libc_reallocarray(ptr, nmemb, size) }
+}
+
+/// `strtold` — convert string to long double (on x86_64, same as f64).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strtold(nptr: *const c_char, endptr: *mut *mut c_char) -> f64 {
+    unsafe { libc_strtold(nptr, endptr) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn mkostemp(template: *mut c_char, flags: c_int) -> c_int {
+    unsafe { libc_mkostemp(template, flags) }
+}

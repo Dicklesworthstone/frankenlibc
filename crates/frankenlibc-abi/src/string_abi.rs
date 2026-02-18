@@ -4354,3 +4354,24 @@ pub unsafe extern "C" fn glob(
 pub unsafe extern "C" fn globfree(pglob: *mut c_void) {
     unsafe { libc_globfree(pglob) }
 }
+
+// ---------------------------------------------------------------------------
+// Signal/error description functions — GlibcCallThrough
+// ---------------------------------------------------------------------------
+
+unsafe extern "C" {
+    #[link_name = "strsignal"]
+    fn libc_strsignal(sig: c_int) -> *mut c_char;
+    #[link_name = "psignal"]
+    fn libc_psignal(sig: c_int, s: *const c_char);
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strsignal(sig: c_int) -> *mut c_char {
+    unsafe { libc_strsignal(sig) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn psignal(sig: c_int, s: *const c_char) {
+    unsafe { libc_psignal(sig, s) }
+}

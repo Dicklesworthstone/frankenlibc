@@ -1861,3 +1861,113 @@ pub unsafe extern "C" fn mkstemp(template: *mut std::ffi::c_char) -> c_int {
     }
     result
 }
+
+// ---------------------------------------------------------------------------
+// Additional wide char / multibyte functions — GlibcCallThrough
+// ---------------------------------------------------------------------------
+
+unsafe extern "C" {
+    #[link_name = "wcsnlen"]
+    fn libc_wcsnlen(s: *const libc::wchar_t, maxlen: usize) -> usize;
+    #[link_name = "wcswidth"]
+    fn libc_wcswidth(s: *const libc::wchar_t, n: usize) -> c_int;
+    #[link_name = "wctob"]
+    fn libc_wctob(c: u32) -> c_int;
+    #[link_name = "btowc"]
+    fn libc_btowc(c: c_int) -> u32;
+    #[link_name = "wcrtomb"]
+    fn libc_wcrtomb(s: *mut std::ffi::c_char, wc: libc::wchar_t, ps: *mut std::ffi::c_void) -> usize;
+    #[link_name = "mbrtowc"]
+    fn libc_mbrtowc(pwc: *mut libc::wchar_t, s: *const std::ffi::c_char, n: usize, ps: *mut std::ffi::c_void) -> usize;
+    #[link_name = "mbsrtowcs"]
+    fn libc_mbsrtowcs(dst: *mut libc::wchar_t, src: *mut *const std::ffi::c_char, len: usize, ps: *mut std::ffi::c_void) -> usize;
+    #[link_name = "wcsrtombs"]
+    fn libc_wcsrtombs(dst: *mut std::ffi::c_char, src: *mut *const libc::wchar_t, len: usize, ps: *mut std::ffi::c_void) -> usize;
+    #[link_name = "wcstol"]
+    fn libc_wcstol(nptr: *const libc::wchar_t, endptr: *mut *mut libc::wchar_t, base: c_int) -> std::ffi::c_long;
+    #[link_name = "wcstoul"]
+    fn libc_wcstoul(nptr: *const libc::wchar_t, endptr: *mut *mut libc::wchar_t, base: c_int) -> std::ffi::c_ulong;
+    #[link_name = "wcstod"]
+    fn libc_wcstod(nptr: *const libc::wchar_t, endptr: *mut *mut libc::wchar_t) -> f64;
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn wcsnlen(s: *const libc::wchar_t, maxlen: usize) -> usize {
+    unsafe { libc_wcsnlen(s, maxlen) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn wcswidth(s: *const libc::wchar_t, n: usize) -> c_int {
+    unsafe { libc_wcswidth(s, n) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn wctob(c: u32) -> c_int {
+    unsafe { libc_wctob(c) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn btowc(c: c_int) -> u32 {
+    unsafe { libc_btowc(c) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn wcrtomb(s: *mut std::ffi::c_char, wc: libc::wchar_t, ps: *mut std::ffi::c_void) -> usize {
+    unsafe { libc_wcrtomb(s, wc, ps) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn mbrtowc(
+    pwc: *mut libc::wchar_t,
+    s: *const std::ffi::c_char,
+    n: usize,
+    ps: *mut std::ffi::c_void,
+) -> usize {
+    unsafe { libc_mbrtowc(pwc, s, n, ps) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn mbsrtowcs(
+    dst: *mut libc::wchar_t,
+    src: *mut *const std::ffi::c_char,
+    len: usize,
+    ps: *mut std::ffi::c_void,
+) -> usize {
+    unsafe { libc_mbsrtowcs(dst, src, len, ps) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn wcsrtombs(
+    dst: *mut std::ffi::c_char,
+    src: *mut *const libc::wchar_t,
+    len: usize,
+    ps: *mut std::ffi::c_void,
+) -> usize {
+    unsafe { libc_wcsrtombs(dst, src, len, ps) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn wcstol(
+    nptr: *const libc::wchar_t,
+    endptr: *mut *mut libc::wchar_t,
+    base: c_int,
+) -> std::ffi::c_long {
+    unsafe { libc_wcstol(nptr, endptr, base) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn wcstoul(
+    nptr: *const libc::wchar_t,
+    endptr: *mut *mut libc::wchar_t,
+    base: c_int,
+) -> std::ffi::c_ulong {
+    unsafe { libc_wcstoul(nptr, endptr, base) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn wcstod(
+    nptr: *const libc::wchar_t,
+    endptr: *mut *mut libc::wchar_t,
+) -> f64 {
+    unsafe { libc_wcstod(nptr, endptr) }
+}

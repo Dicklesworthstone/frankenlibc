@@ -5891,13 +5891,256 @@
       "strict_semantics": "LP64 alias via glibc",
       "hardened_semantics": "LP64 alias via glibc",
       "default_stub": false
+    },
+    {
+      "symbol": "pthread_cancel",
+      "status": "GlibcCallThrough",
+      "module": "pthread_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc pthread_cancel",
+      "hardened_semantics": "Passthrough to glibc pthread_cancel",
+      "default_stub": false
+    },
+    {
+      "symbol": "pthread_setcancelstate",
+      "status": "GlibcCallThrough",
+      "module": "pthread_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc pthread_setcancelstate",
+      "hardened_semantics": "Passthrough to glibc pthread_setcancelstate",
+      "default_stub": false
+    },
+    {
+      "symbol": "pthread_setcanceltype",
+      "status": "GlibcCallThrough",
+      "module": "pthread_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc pthread_setcanceltype",
+      "hardened_semantics": "Passthrough to glibc pthread_setcanceltype",
+      "default_stub": false
+    },
+    {
+      "symbol": "pthread_testcancel",
+      "status": "GlibcCallThrough",
+      "module": "pthread_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc pthread_testcancel",
+      "hardened_semantics": "Passthrough to glibc pthread_testcancel",
+      "default_stub": false
+    },
+    {
+      "symbol": "pthread_getattr_np",
+      "status": "GlibcCallThrough",
+      "module": "pthread_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc pthread_getattr_np",
+      "hardened_semantics": "Passthrough to glibc pthread_getattr_np",
+      "default_stub": false
+    },
+    {
+      "symbol": "wcsnlen",
+      "status": "GlibcCallThrough",
+      "module": "wchar_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc wcsnlen",
+      "hardened_semantics": "Passthrough to glibc wcsnlen",
+      "default_stub": false
+    },
+    {
+      "symbol": "wcswidth",
+      "status": "GlibcCallThrough",
+      "module": "wchar_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc wcswidth",
+      "hardened_semantics": "Passthrough to glibc wcswidth",
+      "default_stub": false
+    },
+    {
+      "symbol": "wctob",
+      "status": "GlibcCallThrough",
+      "module": "wchar_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc wctob",
+      "hardened_semantics": "Passthrough to glibc wctob",
+      "default_stub": false
+    },
+    {
+      "symbol": "btowc",
+      "status": "GlibcCallThrough",
+      "module": "wchar_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc btowc",
+      "hardened_semantics": "Passthrough to glibc btowc",
+      "default_stub": false
+    },
+    {
+      "symbol": "wcrtomb",
+      "status": "GlibcCallThrough",
+      "module": "wchar_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc wcrtomb",
+      "hardened_semantics": "Passthrough to glibc wcrtomb",
+      "default_stub": false
+    },
+    {
+      "symbol": "mbrtowc",
+      "status": "GlibcCallThrough",
+      "module": "wchar_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc mbrtowc",
+      "hardened_semantics": "Passthrough to glibc mbrtowc",
+      "default_stub": false
+    },
+    {
+      "symbol": "mbsrtowcs",
+      "status": "GlibcCallThrough",
+      "module": "wchar_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc mbsrtowcs",
+      "hardened_semantics": "Passthrough to glibc mbsrtowcs",
+      "default_stub": false
+    },
+    {
+      "symbol": "wcsrtombs",
+      "status": "GlibcCallThrough",
+      "module": "wchar_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc wcsrtombs",
+      "hardened_semantics": "Passthrough to glibc wcsrtombs",
+      "default_stub": false
+    },
+    {
+      "symbol": "wcstol",
+      "status": "GlibcCallThrough",
+      "module": "wchar_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc wcstol",
+      "hardened_semantics": "Passthrough to glibc wcstol",
+      "default_stub": false
+    },
+    {
+      "symbol": "wcstoul",
+      "status": "GlibcCallThrough",
+      "module": "wchar_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc wcstoul",
+      "hardened_semantics": "Passthrough to glibc wcstoul",
+      "default_stub": false
+    },
+    {
+      "symbol": "wcstod",
+      "status": "GlibcCallThrough",
+      "module": "wchar_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc wcstod",
+      "hardened_semantics": "Passthrough to glibc wcstod",
+      "default_stub": false
+    },
+    {
+      "symbol": "strsignal",
+      "status": "GlibcCallThrough",
+      "module": "string_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc strsignal",
+      "hardened_semantics": "Passthrough to glibc strsignal",
+      "default_stub": false
+    },
+    {
+      "symbol": "psignal",
+      "status": "GlibcCallThrough",
+      "module": "string_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc psignal",
+      "hardened_semantics": "Passthrough to glibc psignal",
+      "default_stub": false
+    },
+    {
+      "symbol": "splice",
+      "status": "RawSyscall",
+      "module": "io_abi",
+      "perf_class": "default",
+      "strict_semantics": "SYS_splice \u2014 zero-copy pipe transfer",
+      "hardened_semantics": "SYS_splice \u2014 zero-copy pipe transfer",
+      "default_stub": false
+    },
+    {
+      "symbol": "tee",
+      "status": "RawSyscall",
+      "module": "io_abi",
+      "perf_class": "default",
+      "strict_semantics": "SYS_tee \u2014 duplicate pipe content",
+      "hardened_semantics": "SYS_tee \u2014 duplicate pipe content",
+      "default_stub": false
+    },
+    {
+      "symbol": "vmsplice",
+      "status": "RawSyscall",
+      "module": "io_abi",
+      "perf_class": "default",
+      "strict_semantics": "SYS_vmsplice \u2014 splice user pages into pipe",
+      "hardened_semantics": "SYS_vmsplice \u2014 splice user pages into pipe",
+      "default_stub": false
+    },
+    {
+      "symbol": "memfd_create",
+      "status": "RawSyscall",
+      "module": "io_abi",
+      "perf_class": "default",
+      "strict_semantics": "SYS_memfd_create \u2014 anonymous file in memory",
+      "hardened_semantics": "SYS_memfd_create \u2014 anonymous file in memory",
+      "default_stub": false
+    },
+    {
+      "symbol": "reallocarray",
+      "status": "GlibcCallThrough",
+      "module": "stdlib_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc reallocarray",
+      "hardened_semantics": "Passthrough to glibc reallocarray",
+      "default_stub": false
+    },
+    {
+      "symbol": "strtold",
+      "status": "GlibcCallThrough",
+      "module": "stdlib_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc strtold",
+      "hardened_semantics": "Passthrough to glibc strtold",
+      "default_stub": false
+    },
+    {
+      "symbol": "mkostemp",
+      "status": "GlibcCallThrough",
+      "module": "stdlib_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc mkostemp",
+      "hardened_semantics": "Passthrough to glibc mkostemp",
+      "default_stub": false
+    },
+    {
+      "symbol": "if_nametoindex",
+      "status": "GlibcCallThrough",
+      "module": "inet_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc if_nametoindex",
+      "hardened_semantics": "Passthrough to glibc if_nametoindex",
+      "default_stub": false
+    },
+    {
+      "symbol": "if_indextoname",
+      "status": "GlibcCallThrough",
+      "module": "inet_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc if_indextoname",
+      "hardened_semantics": "Passthrough to glibc if_indextoname",
+      "default_stub": false
     }
   ],
   "summary": {
-    "total_exported": 679,
+    "total_exported": 706,
     "implemented": 387,
-    "raw_syscall": 183,
-    "glibc_call_through": 109,
+    "raw_syscall": 187,
+    "glibc_call_through": 132,
     "stub": 0
   },
   "implemented": 383,
