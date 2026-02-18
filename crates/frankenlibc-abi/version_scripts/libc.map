@@ -659,6 +659,12 @@ GLIBC_2.2.5 {
         /* scheduler / prctl */
         sched_yield;
         prctl;
+        sched_getscheduler;
+        sched_setscheduler;
+        sched_getparam;
+        sched_setparam;
+        sched_get_priority_min;
+        sched_get_priority_max;
 
         /* mmap */
         mmap;
@@ -690,6 +696,7 @@ GLIBC_2.2.5 {
         time;
         clock;
         clock_gettime;
+        clock_settime;
         clock_getres;
         clock_nanosleep;
         localtime_r;
@@ -793,6 +800,41 @@ GLIBC_2.2.5 {
         arc4random;
         arc4random_buf;
         arc4random_uniform;
+
+        /* POSIX shared memory */
+        shm_open;
+        shm_unlink;
+
+        /* POSIX semaphores */
+        sem_open;
+        sem_close;
+        sem_unlink;
+        sem_wait;
+        sem_trywait;
+        sem_timedwait;
+        sem_post;
+        sem_getvalue;
+        sem_init;
+        sem_destroy;
+
+        /* POSIX message queues */
+        mq_open;
+        mq_close;
+        mq_unlink;
+        mq_send;
+        mq_receive;
+        mq_getattr;
+        mq_setattr;
+
+        /* wordexp */
+        wordexp;
+        wordfree;
+
+        /* Linux-specific syscalls */
+        signalfd;
+        close_range;
+        pidfd_open;
+        pidfd_send_signal;
 
         /* 64-bit LFS variants */
         open64;

@@ -486,3 +486,26 @@ pub unsafe extern "C" fn strptime(
 pub unsafe extern "C" fn tzset() {
     unsafe { libc_tzset() }
 }
+
+// ---------------------------------------------------------------------------
+// clock_settime — RawSyscall
+// ---------------------------------------------------------------------------
+
+/// POSIX `clock_settime` — set a clock.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn clock_settime(
+    clk_id: libc::clockid_t,
+    tp: *const libc::timespec,
+) -> std::ffi::c_int {
+    let rc = unsafe {
+        libc::syscall(libc::SYS_clock_settime, clk_id, tp)
+    } as std::ffi::c_int;
+    if rc < 0 {
+        let e = std::io::Error::last_os_error()
+            .raw_os_error()
+            .unwrap_or(libc::EPERM);
+        let p = unsafe { super::errno_abi::__errno_location() };
+        unsafe { *p = e };
+    }
+    rc
+}

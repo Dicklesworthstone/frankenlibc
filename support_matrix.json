@@ -6134,13 +6134,301 @@
       "strict_semantics": "Passthrough to glibc if_indextoname",
       "hardened_semantics": "Passthrough to glibc if_indextoname",
       "default_stub": false
+    },
+    {
+      "symbol": "shm_open",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc shm_open",
+      "hardened_semantics": "Passthrough to glibc shm_open",
+      "default_stub": false
+    },
+    {
+      "symbol": "shm_unlink",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc shm_unlink",
+      "hardened_semantics": "Passthrough to glibc shm_unlink",
+      "default_stub": false
+    },
+    {
+      "symbol": "sem_open",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc sem_open",
+      "hardened_semantics": "Passthrough to glibc sem_open",
+      "default_stub": false
+    },
+    {
+      "symbol": "sem_close",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc sem_close",
+      "hardened_semantics": "Passthrough to glibc sem_close",
+      "default_stub": false
+    },
+    {
+      "symbol": "sem_unlink",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc sem_unlink",
+      "hardened_semantics": "Passthrough to glibc sem_unlink",
+      "default_stub": false
+    },
+    {
+      "symbol": "sem_wait",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc sem_wait",
+      "hardened_semantics": "Passthrough to glibc sem_wait",
+      "default_stub": false
+    },
+    {
+      "symbol": "sem_trywait",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc sem_trywait",
+      "hardened_semantics": "Passthrough to glibc sem_trywait",
+      "default_stub": false
+    },
+    {
+      "symbol": "sem_timedwait",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc sem_timedwait",
+      "hardened_semantics": "Passthrough to glibc sem_timedwait",
+      "default_stub": false
+    },
+    {
+      "symbol": "sem_post",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc sem_post",
+      "hardened_semantics": "Passthrough to glibc sem_post",
+      "default_stub": false
+    },
+    {
+      "symbol": "sem_getvalue",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc sem_getvalue",
+      "hardened_semantics": "Passthrough to glibc sem_getvalue",
+      "default_stub": false
+    },
+    {
+      "symbol": "sem_init",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc sem_init",
+      "hardened_semantics": "Passthrough to glibc sem_init",
+      "default_stub": false
+    },
+    {
+      "symbol": "sem_destroy",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc sem_destroy",
+      "hardened_semantics": "Passthrough to glibc sem_destroy",
+      "default_stub": false
+    },
+    {
+      "symbol": "mq_open",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc mq_open",
+      "hardened_semantics": "Passthrough to glibc mq_open",
+      "default_stub": false
+    },
+    {
+      "symbol": "mq_close",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc mq_close",
+      "hardened_semantics": "Passthrough to glibc mq_close",
+      "default_stub": false
+    },
+    {
+      "symbol": "mq_unlink",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc mq_unlink",
+      "hardened_semantics": "Passthrough to glibc mq_unlink",
+      "default_stub": false
+    },
+    {
+      "symbol": "mq_send",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc mq_send",
+      "hardened_semantics": "Passthrough to glibc mq_send",
+      "default_stub": false
+    },
+    {
+      "symbol": "mq_receive",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc mq_receive",
+      "hardened_semantics": "Passthrough to glibc mq_receive",
+      "default_stub": false
+    },
+    {
+      "symbol": "mq_getattr",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc mq_getattr",
+      "hardened_semantics": "Passthrough to glibc mq_getattr",
+      "default_stub": false
+    },
+    {
+      "symbol": "mq_setattr",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc mq_setattr",
+      "hardened_semantics": "Passthrough to glibc mq_setattr",
+      "default_stub": false
+    },
+    {
+      "symbol": "sched_getscheduler",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc sched_getscheduler",
+      "hardened_semantics": "Passthrough to glibc sched_getscheduler",
+      "default_stub": false
+    },
+    {
+      "symbol": "sched_setscheduler",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc sched_setscheduler",
+      "hardened_semantics": "Passthrough to glibc sched_setscheduler",
+      "default_stub": false
+    },
+    {
+      "symbol": "sched_getparam",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc sched_getparam",
+      "hardened_semantics": "Passthrough to glibc sched_getparam",
+      "default_stub": false
+    },
+    {
+      "symbol": "sched_setparam",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc sched_setparam",
+      "hardened_semantics": "Passthrough to glibc sched_setparam",
+      "default_stub": false
+    },
+    {
+      "symbol": "sched_get_priority_min",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc sched_get_priority_min",
+      "hardened_semantics": "Passthrough to glibc sched_get_priority_min",
+      "default_stub": false
+    },
+    {
+      "symbol": "sched_get_priority_max",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc sched_get_priority_max",
+      "hardened_semantics": "Passthrough to glibc sched_get_priority_max",
+      "default_stub": false
+    },
+    {
+      "symbol": "wordexp",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc wordexp",
+      "hardened_semantics": "Passthrough to glibc wordexp",
+      "default_stub": false
+    },
+    {
+      "symbol": "wordfree",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc wordfree",
+      "hardened_semantics": "Passthrough to glibc wordfree",
+      "default_stub": false
+    },
+    {
+      "symbol": "signalfd",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "SYS_signalfd4 \u2014 signal file descriptor",
+      "hardened_semantics": "SYS_signalfd4 \u2014 signal file descriptor",
+      "default_stub": false
+    },
+    {
+      "symbol": "close_range",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "SYS_close_range \u2014 close fd range",
+      "hardened_semantics": "SYS_close_range \u2014 close fd range",
+      "default_stub": false
+    },
+    {
+      "symbol": "pidfd_open",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "SYS_pidfd_open \u2014 process file descriptor",
+      "hardened_semantics": "SYS_pidfd_open \u2014 process file descriptor",
+      "default_stub": false
+    },
+    {
+      "symbol": "pidfd_send_signal",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "SYS_pidfd_send_signal \u2014 signal via pidfd",
+      "hardened_semantics": "SYS_pidfd_send_signal \u2014 signal via pidfd",
+      "default_stub": false
+    },
+    {
+      "symbol": "clock_settime",
+      "status": "RawSyscall",
+      "module": "time_abi",
+      "perf_class": "default",
+      "strict_semantics": "SYS_clock_settime \u2014 set clock",
+      "hardened_semantics": "SYS_clock_settime \u2014 set clock",
+      "default_stub": false
     }
   ],
   "summary": {
-    "total_exported": 706,
+    "total_exported": 738,
     "implemented": 387,
-    "raw_syscall": 187,
-    "glibc_call_through": 132,
+    "raw_syscall": 192,
+    "glibc_call_through": 159,
     "stub": 0
   },
   "implemented": 383,

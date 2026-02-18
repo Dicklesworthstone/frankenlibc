@@ -2214,3 +2214,298 @@ pub unsafe extern "C" fn sendfile64(
 ) -> isize {
     unsafe { libc_sendfile64(out_fd, in_fd, offset, count) }
 }
+
+// ---------------------------------------------------------------------------
+// POSIX shared memory — GlibcCallThrough
+// ---------------------------------------------------------------------------
+
+unsafe extern "C" {
+    #[link_name = "shm_open"]
+    fn libc_shm_open(name: *const c_char, oflag: c_int, mode: libc::mode_t) -> c_int;
+    #[link_name = "shm_unlink"]
+    fn libc_shm_unlink(name: *const c_char) -> c_int;
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn shm_open(name: *const c_char, oflag: c_int, mode: libc::mode_t) -> c_int {
+    unsafe { libc_shm_open(name, oflag, mode) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn shm_unlink(name: *const c_char) -> c_int {
+    unsafe { libc_shm_unlink(name) }
+}
+
+// ---------------------------------------------------------------------------
+// POSIX semaphores — GlibcCallThrough
+// ---------------------------------------------------------------------------
+
+unsafe extern "C" {
+    #[link_name = "sem_open"]
+    fn libc_sem_open(name: *const c_char, oflag: c_int, ...) -> *mut c_void;
+    #[link_name = "sem_close"]
+    fn libc_sem_close(sem: *mut c_void) -> c_int;
+    #[link_name = "sem_unlink"]
+    fn libc_sem_unlink(name: *const c_char) -> c_int;
+    #[link_name = "sem_wait"]
+    fn libc_sem_wait(sem: *mut c_void) -> c_int;
+    #[link_name = "sem_trywait"]
+    fn libc_sem_trywait(sem: *mut c_void) -> c_int;
+    #[link_name = "sem_timedwait"]
+    fn libc_sem_timedwait(sem: *mut c_void, abs_timeout: *const libc::timespec) -> c_int;
+    #[link_name = "sem_post"]
+    fn libc_sem_post(sem: *mut c_void) -> c_int;
+    #[link_name = "sem_getvalue"]
+    fn libc_sem_getvalue(sem: *mut c_void, sval: *mut c_int) -> c_int;
+    #[link_name = "sem_init"]
+    fn libc_sem_init(sem: *mut c_void, pshared: c_int, value: c_uint) -> c_int;
+    #[link_name = "sem_destroy"]
+    fn libc_sem_destroy(sem: *mut c_void) -> c_int;
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn sem_open(name: *const c_char, oflag: c_int, args: ...) -> *mut c_void {
+    unsafe { libc_sem_open(name, oflag, args) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn sem_close(sem: *mut c_void) -> c_int {
+    unsafe { libc_sem_close(sem) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn sem_unlink(name: *const c_char) -> c_int {
+    unsafe { libc_sem_unlink(name) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn sem_wait(sem: *mut c_void) -> c_int {
+    unsafe { libc_sem_wait(sem) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn sem_trywait(sem: *mut c_void) -> c_int {
+    unsafe { libc_sem_trywait(sem) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn sem_timedwait(sem: *mut c_void, abs_timeout: *const libc::timespec) -> c_int {
+    unsafe { libc_sem_timedwait(sem, abs_timeout) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn sem_post(sem: *mut c_void) -> c_int {
+    unsafe { libc_sem_post(sem) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn sem_getvalue(sem: *mut c_void, sval: *mut c_int) -> c_int {
+    unsafe { libc_sem_getvalue(sem, sval) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn sem_init(sem: *mut c_void, pshared: c_int, value: c_uint) -> c_int {
+    unsafe { libc_sem_init(sem, pshared, value) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn sem_destroy(sem: *mut c_void) -> c_int {
+    unsafe { libc_sem_destroy(sem) }
+}
+
+// ---------------------------------------------------------------------------
+// POSIX message queues — GlibcCallThrough
+// ---------------------------------------------------------------------------
+
+unsafe extern "C" {
+    #[link_name = "mq_open"]
+    fn libc_mq_open(name: *const c_char, oflag: c_int, ...) -> c_int;
+    #[link_name = "mq_close"]
+    fn libc_mq_close(mqdes: c_int) -> c_int;
+    #[link_name = "mq_unlink"]
+    fn libc_mq_unlink(name: *const c_char) -> c_int;
+    #[link_name = "mq_send"]
+    fn libc_mq_send(mqdes: c_int, msg_ptr: *const c_char, msg_len: usize, msg_prio: c_uint) -> c_int;
+    #[link_name = "mq_receive"]
+    fn libc_mq_receive(mqdes: c_int, msg_ptr: *mut c_char, msg_len: usize, msg_prio: *mut c_uint) -> isize;
+    #[link_name = "mq_getattr"]
+    fn libc_mq_getattr(mqdes: c_int, attr: *mut c_void) -> c_int;
+    #[link_name = "mq_setattr"]
+    fn libc_mq_setattr(mqdes: c_int, newattr: *const c_void, oldattr: *mut c_void) -> c_int;
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn mq_open(name: *const c_char, oflag: c_int, args: ...) -> c_int {
+    unsafe { libc_mq_open(name, oflag, args) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn mq_close(mqdes: c_int) -> c_int {
+    unsafe { libc_mq_close(mqdes) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn mq_unlink(name: *const c_char) -> c_int {
+    unsafe { libc_mq_unlink(name) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn mq_send(
+    mqdes: c_int,
+    msg_ptr: *const c_char,
+    msg_len: usize,
+    msg_prio: c_uint,
+) -> c_int {
+    unsafe { libc_mq_send(mqdes, msg_ptr, msg_len, msg_prio) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn mq_receive(
+    mqdes: c_int,
+    msg_ptr: *mut c_char,
+    msg_len: usize,
+    msg_prio: *mut c_uint,
+) -> isize {
+    unsafe { libc_mq_receive(mqdes, msg_ptr, msg_len, msg_prio) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn mq_getattr(mqdes: c_int, attr: *mut c_void) -> c_int {
+    unsafe { libc_mq_getattr(mqdes, attr) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn mq_setattr(mqdes: c_int, newattr: *const c_void, oldattr: *mut c_void) -> c_int {
+    unsafe { libc_mq_setattr(mqdes, newattr, oldattr) }
+}
+
+// ---------------------------------------------------------------------------
+// Scheduler — GlibcCallThrough
+// ---------------------------------------------------------------------------
+
+unsafe extern "C" {
+    #[link_name = "sched_getscheduler"]
+    fn libc_sched_getscheduler(pid: libc::pid_t) -> c_int;
+    #[link_name = "sched_setscheduler"]
+    fn libc_sched_setscheduler(pid: libc::pid_t, policy: c_int, param: *const c_void) -> c_int;
+    #[link_name = "sched_getparam"]
+    fn libc_sched_getparam(pid: libc::pid_t, param: *mut c_void) -> c_int;
+    #[link_name = "sched_setparam"]
+    fn libc_sched_setparam(pid: libc::pid_t, param: *const c_void) -> c_int;
+    #[link_name = "sched_get_priority_min"]
+    fn libc_sched_get_priority_min(policy: c_int) -> c_int;
+    #[link_name = "sched_get_priority_max"]
+    fn libc_sched_get_priority_max(policy: c_int) -> c_int;
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn sched_getscheduler(pid: libc::pid_t) -> c_int {
+    unsafe { libc_sched_getscheduler(pid) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn sched_setscheduler(pid: libc::pid_t, policy: c_int, param: *const c_void) -> c_int {
+    unsafe { libc_sched_setscheduler(pid, policy, param) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn sched_getparam(pid: libc::pid_t, param: *mut c_void) -> c_int {
+    unsafe { libc_sched_getparam(pid, param) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn sched_setparam(pid: libc::pid_t, param: *const c_void) -> c_int {
+    unsafe { libc_sched_setparam(pid, param) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn sched_get_priority_min(policy: c_int) -> c_int {
+    unsafe { libc_sched_get_priority_min(policy) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn sched_get_priority_max(policy: c_int) -> c_int {
+    unsafe { libc_sched_get_priority_max(policy) }
+}
+
+// ---------------------------------------------------------------------------
+// wordexp — GlibcCallThrough
+// ---------------------------------------------------------------------------
+
+unsafe extern "C" {
+    #[link_name = "wordexp"]
+    fn libc_wordexp(words: *const c_char, pwordexp: *mut c_void, flags: c_int) -> c_int;
+    #[link_name = "wordfree"]
+    fn libc_wordfree(pwordexp: *mut c_void);
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn wordexp(words: *const c_char, pwordexp: *mut c_void, flags: c_int) -> c_int {
+    unsafe { libc_wordexp(words, pwordexp, flags) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn wordfree(pwordexp: *mut c_void) {
+    unsafe { libc_wordfree(pwordexp) }
+}
+
+// ---------------------------------------------------------------------------
+// Linux-specific syscalls — RawSyscall
+// ---------------------------------------------------------------------------
+
+/// Linux `signalfd4` — create a file descriptor for signals.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn signalfd(fd: c_int, mask: *const c_void, flags: c_int) -> c_int {
+    let rc = unsafe { libc::syscall(libc::SYS_signalfd4, fd, mask, 8usize, flags) } as c_int;
+    if rc < 0 {
+        let e = std::io::Error::last_os_error()
+            .raw_os_error()
+            .unwrap_or(errno::EINVAL);
+        unsafe { set_abi_errno(e) };
+    }
+    rc
+}
+
+/// Linux `close_range` — close a range of file descriptors.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn close_range(first: c_uint, last: c_uint, flags: c_uint) -> c_int {
+    let rc = unsafe { libc::syscall(libc::SYS_close_range, first, last, flags) } as c_int;
+    if rc < 0 {
+        let e = std::io::Error::last_os_error()
+            .raw_os_error()
+            .unwrap_or(errno::EINVAL);
+        unsafe { set_abi_errno(e) };
+    }
+    rc
+}
+
+/// Linux `pidfd_open` — obtain a file descriptor that refers to a process.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pidfd_open(pid: libc::pid_t, flags: c_uint) -> c_int {
+    let rc = unsafe { libc::syscall(libc::SYS_pidfd_open, pid, flags) } as c_int;
+    if rc < 0 {
+        let e = std::io::Error::last_os_error()
+            .raw_os_error()
+            .unwrap_or(errno::EINVAL);
+        unsafe { set_abi_errno(e) };
+    }
+    rc
+}
+
+/// Linux `pidfd_send_signal` — send a signal via a process file descriptor.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pidfd_send_signal(
+    pidfd: c_int,
+    sig: c_int,
+    info: *const c_void,
+    flags: c_uint,
+) -> c_int {
+    let rc = unsafe { libc::syscall(libc::SYS_pidfd_send_signal, pidfd, sig, info, flags) } as c_int;
+    if rc < 0 {
+        let e = std::io::Error::last_os_error()
+            .raw_os_error()
+            .unwrap_or(errno::EINVAL);
+        unsafe { set_abi_errno(e) };
+    }
+    rc
+}
