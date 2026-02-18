@@ -96,3 +96,31 @@ pub unsafe extern "C" fn toupper(c: c_int) -> c_int {
 pub unsafe extern "C" fn tolower(c: c_int) -> c_int {
     convert(c, frankenlibc_core::ctype::to_lower)
 }
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn isblank(c: c_int) -> c_int {
+    classify(c, frankenlibc_core::ctype::is_blank)
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn iscntrl(c: c_int) -> c_int {
+    classify(c, frankenlibc_core::ctype::is_cntrl)
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn isgraph(c: c_int) -> c_int {
+    classify(c, frankenlibc_core::ctype::is_graph)
+}
+
+/// Returns non-zero if `c` is a 7-bit ASCII value (0–127).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn isascii(c: c_int) -> c_int {
+    // isascii checks the full int range, not just 0-255
+    if (0..=0x7F).contains(&c) { 1 } else { 0 }
+}
+
+/// Masks `c` to 7-bit ASCII.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn toascii(c: c_int) -> c_int {
+    c & 0x7F
+}

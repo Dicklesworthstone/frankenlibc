@@ -1102,6 +1102,407 @@ pub unsafe extern "C" fn wmemchr(s: *const u32, c: u32, n: usize) -> *mut u32 {
     result
 }
 
+// ---------------------------------------------------------------------------
+// wcsncat
+// ---------------------------------------------------------------------------
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn wcsncat(dst: *mut u32, src: *const u32, n: usize) -> *mut u32 {
+    if dst.is_null() || src.is_null() || n == 0 {
+        return dst;
+    }
+
+    let (mode, decision) = runtime_policy::decide(
+        ApiFamily::StringMemory,
+        dst as usize,
+        0,
+        true,
+        known_remaining(dst as usize).is_none() && known_remaining(src as usize).is_none(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::StringMemory, decision.profile, 8, true);
+        return std::ptr::null_mut();
+    }
+
+    let repair = repair_enabled(mode.heals_enabled(), decision.action);
+    let dst_bound = if repair {
+        known_remaining(dst as usize).map(bytes_to_wchars)
+    } else {
+        None
+    };
+    let src_bound = if repair {
+        known_remaining(src as usize).map(bytes_to_wchars)
+    } else {
+        None
+    };
+
+    let (work, adverse) = unsafe {
+        let (dst_len, _dst_terminated) = scan_w_string(dst.cast_const(), dst_bound);
+        let (src_len, src_terminated) = scan_w_string(src, src_bound);
+        let copy_len = src_len.min(n);
+
+        if repair {
+            match dst_bound {
+                Some(0) => {
+                    record_truncation(copy_len.saturating_add(1), 0);
+                    (0, true)
+                }
+                Some(limit) => {
+                    let available = limit.saturating_sub(dst_len.saturating_add(1));
+                    let actual_copy = copy_len.min(available);
+                    if actual_copy > 0 {
+                        std::ptr::copy_nonoverlapping(src, dst.add(dst_len), actual_copy);
+                    }
+                    *dst.add(dst_len.saturating_add(actual_copy)) = 0;
+                    let truncated = !src_terminated || actual_copy < copy_len;
+                    if truncated {
+                        record_truncation(copy_len.saturating_add(1), actual_copy);
+                    }
+                    (
+                        dst_len.saturating_add(actual_copy).saturating_add(1),
+                        truncated,
+                    )
+                }
+                None => {
+                    if copy_len > 0 {
+                        std::ptr::copy_nonoverlapping(src, dst.add(dst_len), copy_len);
+                    }
+                    *dst.add(dst_len + copy_len) = 0;
+                    (dst_len + copy_len + 1, false)
+                }
+            }
+        } else {
+            if copy_len > 0 {
+                std::ptr::copy_nonoverlapping(src, dst.add(dst_len), copy_len);
+            }
+            *dst.add(dst_len + copy_len) = 0;
+            (dst_len + copy_len + 1, false)
+        }
+    };
+
+    runtime_policy::observe(
+        ApiFamily::StringMemory,
+        decision.profile,
+        runtime_policy::scaled_cost(9, work * 4),
+        adverse,
+    );
+    dst
+}
+
+// ---------------------------------------------------------------------------
+// wcsdup
+// ---------------------------------------------------------------------------
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn wcsdup(s: *const u32) -> *mut u32 {
+    if s.is_null() {
+        return std::ptr::null_mut();
+    }
+
+    let (mode, decision) = runtime_policy::decide(
+        ApiFamily::StringMemory,
+        s as usize,
+        0,
+        false,
+        known_remaining(s as usize).is_none(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::StringMemory, decision.profile, 8, true);
+        return std::ptr::null_mut();
+    }
+
+    let bound = if repair_enabled(mode.heals_enabled(), decision.action) {
+        known_remaining(s as usize).map(bytes_to_wchars)
+    } else {
+        None
+    };
+
+    unsafe {
+        let (len, _terminated) = scan_w_string(s, bound);
+        let alloc_elems = len + 1;
+        let alloc_bytes = alloc_elems * 4;
+
+        // Use libc malloc for allocation
+        let ptr = libc::malloc(alloc_bytes) as *mut u32;
+        if ptr.is_null() {
+            runtime_policy::observe(ApiFamily::StringMemory, decision.profile, 8, true);
+            return std::ptr::null_mut();
+        }
+
+        std::ptr::copy_nonoverlapping(s, ptr, len);
+        *ptr.add(len) = 0;
+
+        runtime_policy::observe(
+            ApiFamily::StringMemory,
+            decision.profile,
+            runtime_policy::scaled_cost(8, alloc_bytes),
+            false,
+        );
+        ptr
+    }
+}
+
+// ---------------------------------------------------------------------------
+// wcsspn
+// ---------------------------------------------------------------------------
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn wcsspn(s: *const u32, accept: *const u32) -> usize {
+    if s.is_null() || accept.is_null() {
+        return 0;
+    }
+
+    let (mode, decision) = runtime_policy::decide(
+        ApiFamily::StringMemory,
+        s as usize,
+        0,
+        false,
+        known_remaining(s as usize).is_none() && known_remaining(accept as usize).is_none(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::StringMemory, decision.profile, 7, true);
+        return 0;
+    }
+
+    let repair = repair_enabled(mode.heals_enabled(), decision.action);
+    let s_bound = if repair {
+        known_remaining(s as usize).map(bytes_to_wchars)
+    } else {
+        None
+    };
+    let accept_bound = if repair {
+        known_remaining(accept as usize).map(bytes_to_wchars)
+    } else {
+        None
+    };
+
+    let result = unsafe {
+        let (accept_len, _) = scan_w_string(accept, accept_bound);
+        let accept_slice = std::slice::from_raw_parts(accept, accept_len);
+        let (s_len, _) = scan_w_string(s, s_bound);
+        let mut count = 0usize;
+        for i in 0..s_len {
+            if accept_slice.contains(&*s.add(i)) {
+                count += 1;
+            } else {
+                break;
+            }
+        }
+        count
+    };
+
+    runtime_policy::observe(
+        ApiFamily::StringMemory,
+        decision.profile,
+        runtime_policy::scaled_cost(7, result * 4),
+        false,
+    );
+    result
+}
+
+// ---------------------------------------------------------------------------
+// wcscspn
+// ---------------------------------------------------------------------------
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn wcscspn(s: *const u32, reject: *const u32) -> usize {
+    if s.is_null() || reject.is_null() {
+        return 0;
+    }
+
+    let (mode, decision) = runtime_policy::decide(
+        ApiFamily::StringMemory,
+        s as usize,
+        0,
+        false,
+        known_remaining(s as usize).is_none() && known_remaining(reject as usize).is_none(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::StringMemory, decision.profile, 7, true);
+        return 0;
+    }
+
+    let repair = repair_enabled(mode.heals_enabled(), decision.action);
+    let s_bound = if repair {
+        known_remaining(s as usize).map(bytes_to_wchars)
+    } else {
+        None
+    };
+    let reject_bound = if repair {
+        known_remaining(reject as usize).map(bytes_to_wchars)
+    } else {
+        None
+    };
+
+    let result = unsafe {
+        let (reject_len, _) = scan_w_string(reject, reject_bound);
+        let reject_slice = std::slice::from_raw_parts(reject, reject_len);
+        let (s_len, _) = scan_w_string(s, s_bound);
+        let mut count = 0usize;
+        for i in 0..s_len {
+            if reject_slice.contains(&*s.add(i)) {
+                break;
+            }
+            count += 1;
+        }
+        count
+    };
+
+    runtime_policy::observe(
+        ApiFamily::StringMemory,
+        decision.profile,
+        runtime_policy::scaled_cost(7, result * 4),
+        false,
+    );
+    result
+}
+
+// ---------------------------------------------------------------------------
+// wcspbrk
+// ---------------------------------------------------------------------------
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn wcspbrk(s: *const u32, accept: *const u32) -> *mut u32 {
+    if s.is_null() || accept.is_null() {
+        return std::ptr::null_mut();
+    }
+
+    let (mode, decision) = runtime_policy::decide(
+        ApiFamily::StringMemory,
+        s as usize,
+        0,
+        false,
+        known_remaining(s as usize).is_none() && known_remaining(accept as usize).is_none(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::StringMemory, decision.profile, 7, true);
+        return std::ptr::null_mut();
+    }
+
+    let repair = repair_enabled(mode.heals_enabled(), decision.action);
+    let s_bound = if repair {
+        known_remaining(s as usize).map(bytes_to_wchars)
+    } else {
+        None
+    };
+    let accept_bound = if repair {
+        known_remaining(accept as usize).map(bytes_to_wchars)
+    } else {
+        None
+    };
+
+    let (result, span) = unsafe {
+        let (accept_len, _) = scan_w_string(accept, accept_bound);
+        let accept_slice = std::slice::from_raw_parts(accept, accept_len);
+        let (s_len, _) = scan_w_string(s, s_bound);
+        let mut found: *mut u32 = std::ptr::null_mut();
+        let mut work = s_len;
+        for i in 0..s_len {
+            if accept_slice.contains(&*s.add(i)) {
+                found = s.add(i) as *mut u32;
+                work = i + 1;
+                break;
+            }
+        }
+        (found, work)
+    };
+
+    runtime_policy::observe(
+        ApiFamily::StringMemory,
+        decision.profile,
+        runtime_policy::scaled_cost(7, span * 4),
+        false,
+    );
+    result
+}
+
+// ---------------------------------------------------------------------------
+// wcstok
+// ---------------------------------------------------------------------------
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn wcstok(
+    s: *mut u32,
+    delim: *const u32,
+    save_ptr: *mut *mut u32,
+) -> *mut u32 {
+    if delim.is_null() || save_ptr.is_null() {
+        return std::ptr::null_mut();
+    }
+
+    // Determine the starting pointer: s if non-null, else *save_ptr
+    let start = unsafe {
+        if !s.is_null() {
+            s
+        } else {
+            let saved = *save_ptr;
+            if saved.is_null() {
+                return std::ptr::null_mut();
+            }
+            saved
+        }
+    };
+
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::StringMemory,
+        start as usize,
+        0,
+        true,
+        known_remaining(start as usize).is_none(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::StringMemory, decision.profile, 8, true);
+        return std::ptr::null_mut();
+    }
+
+    // Scan delimiters to build set
+    let (delim_len, _) = unsafe { scan_w_string(delim, None) };
+
+    unsafe {
+        // Skip leading delimiters
+        let mut pos = start;
+        loop {
+            let ch = *pos;
+            if ch == 0 {
+                *save_ptr = pos;
+                runtime_policy::observe(ApiFamily::StringMemory, decision.profile, 7, false);
+                return std::ptr::null_mut();
+            }
+            let delim_slice = std::slice::from_raw_parts(delim, delim_len);
+            if !delim_slice.contains(&ch) {
+                break;
+            }
+            pos = pos.add(1);
+        }
+
+        // Find end of token
+        let token_start = pos;
+        loop {
+            let ch = *pos;
+            if ch == 0 {
+                *save_ptr = pos;
+                break;
+            }
+            let delim_slice = std::slice::from_raw_parts(delim, delim_len);
+            if delim_slice.contains(&ch) {
+                *pos = 0;
+                *save_ptr = pos.add(1);
+                break;
+            }
+            pos = pos.add(1);
+        }
+
+        runtime_policy::observe(ApiFamily::StringMemory, decision.profile, 8, false);
+        token_start
+    }
+}
+
 #[allow(dead_code)]
 fn maybe_clamp_wchars(
     requested: usize, // elements

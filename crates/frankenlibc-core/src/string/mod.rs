@@ -17,4 +17,7 @@ pub use str::{
     strndup_bytes, strnlen, strpbrk, strrchr, strsep, strspn, strstr, strxfrm,
 };
 pub use strtok::{strtok, strtok_r};
-pub use wide::{wcscmp, wcscpy, wcslen, wmemchr, wmemcmp, wmemcpy, wmemmove, wmemset};
+pub use wide::{
+    wcscat, wcscmp, wcscpy, wcscspn, wcsdup_len, wcslen, wcsncat, wcsncmp, wcsncpy, wcspbrk,
+    wcsrchr, wcsspn, wcsstr, wcstok, wmemchr, wmemcmp, wmemcpy, wmemmove, wmemset,
+};

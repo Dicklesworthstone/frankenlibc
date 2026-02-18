@@ -249,6 +249,130 @@ pub fn wmemchr(s: &[u32], c: u32, n: usize) -> Option<usize> {
     s[..count].iter().position(|&x| x == c)
 }
 
+/// Appends at most `n` wide characters from `src` to `dest`, plus a NUL terminator.
+///
+/// Equivalent to C `wcsncat`. Returns the new total length (including NUL).
+///
+/// # Panics
+///
+/// Panics if `dest` doesn't have enough space.
+pub fn wcsncat(dest: &mut [u32], src: &[u32], n: usize) -> usize {
+    let dest_len = wcslen(dest);
+    let src_len = wcslen(src);
+    let copy_len = src_len.min(n);
+    let needed = dest_len + copy_len + 1;
+
+    assert!(
+        dest.len() >= needed,
+        "wcsncat: destination buffer too small ({} elements for {} needed)",
+        dest.len(),
+        needed
+    );
+
+    dest[dest_len..dest_len + copy_len].copy_from_slice(&src[..copy_len]);
+    dest[dest_len + copy_len] = 0;
+    needed
+}
+
+/// Returns the bytes needed to duplicate a wide string (including NUL),
+/// and the string length (excluding NUL).
+///
+/// This is the core of `wcsdup` — the ABI layer handles allocation.
+pub fn wcsdup_len(s: &[u32]) -> usize {
+    wcslen(s)
+}
+
+/// Returns the length of the initial segment of `s` consisting entirely of
+/// wide characters in `accept`.
+///
+/// Equivalent to C `wcsspn`.
+pub fn wcsspn(s: &[u32], accept: &[u32]) -> usize {
+    let accept_len = wcslen(accept);
+    let accept_set = &accept[..accept_len];
+
+    for (i, &ch) in s.iter().enumerate() {
+        if ch == 0 {
+            return i;
+        }
+        if !accept_set.contains(&ch) {
+            return i;
+        }
+    }
+    s.len()
+}
+
+/// Returns the length of the initial segment of `s` consisting entirely of
+/// wide characters NOT in `reject`.
+///
+/// Equivalent to C `wcscspn`.
+pub fn wcscspn(s: &[u32], reject: &[u32]) -> usize {
+    let reject_len = wcslen(reject);
+    let reject_set = &reject[..reject_len];
+
+    for (i, &ch) in s.iter().enumerate() {
+        if ch == 0 {
+            return i;
+        }
+        if reject_set.contains(&ch) {
+            return i;
+        }
+    }
+    s.len()
+}
+
+/// Locates the first occurrence in `s` of any wide character in `accept`.
+///
+/// Equivalent to C `wcspbrk`. Returns the index of the first match, or `None`.
+pub fn wcspbrk(s: &[u32], accept: &[u32]) -> Option<usize> {
+    let accept_len = wcslen(accept);
+    let accept_set = &accept[..accept_len];
+
+    for (i, &ch) in s.iter().enumerate() {
+        if ch == 0 {
+            return None;
+        }
+        if accept_set.contains(&ch) {
+            return Some(i);
+        }
+    }
+    None
+}
+
+/// Tokenizes a wide string, similar to C `wcstok`.
+///
+/// Takes a mutable slice, a set of delimiter characters, and the offset to
+/// resume from. Returns `Some((token_start, next_state))` or `None` if no
+/// more tokens.
+pub fn wcstok(s: &mut [u32], delim: &[u32], start: usize) -> Option<(usize, usize)> {
+    let delim_len = wcslen(delim);
+    let delim_set = &delim[..delim_len];
+
+    // Skip leading delimiters
+    let mut pos = start;
+    while pos < s.len() && s[pos] != 0 && delim_set.contains(&s[pos]) {
+        pos += 1;
+    }
+
+    if pos >= s.len() || s[pos] == 0 {
+        return None;
+    }
+
+    let token_start = pos;
+
+    // Find end of token
+    while pos < s.len() && s[pos] != 0 && !delim_set.contains(&s[pos]) {
+        pos += 1;
+    }
+
+    // NUL-terminate the token if we hit a delimiter
+    if pos < s.len() && s[pos] != 0 {
+        s[pos] = 0;
+        pos += 1;
+    }
+
+    Some((token_start, pos))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -398,5 +522,133 @@ mod tests {
         let haystack = [1u32, 2, 3, 4];
         assert_eq!(wmemchr(&haystack, 3, 4), Some(2));
         assert_eq!(wmemchr(&haystack, 5, 4), None);
+    }
+
+    #[test]
+    fn test_wcsncat_basic() {
+        let mut dest = [0u32; 10];
+        dest[0] = b'H' as u32;
+        dest[1] = 0;
+        let src = [b'e' as u32, b'l' as u32, b'l' as u32, b'o' as u32, 0];
+        wcsncat(&mut dest, &src, 2);
+        assert_eq!(dest[0], b'H' as u32);
+        assert_eq!(dest[1], b'e' as u32);
+        assert_eq!(dest[2], b'l' as u32);
+        assert_eq!(dest[3], 0);
+    }
+
+    #[test]
+    fn test_wcsncat_full() {
+        let mut dest = [0u32; 10];
+        dest[0] = b'A' as u32;
+        dest[1] = 0;
+        let src = [b'B' as u32, b'C' as u32, 0];
+        wcsncat(&mut dest, &src, 10); // n > src_len
+        assert_eq!(dest[0], b'A' as u32);
+        assert_eq!(dest[1], b'B' as u32);
+        assert_eq!(dest[2], b'C' as u32);
+        assert_eq!(dest[3], 0);
+    }
+
+    #[test]
+    fn test_wcsdup_len() {
+        let s = [b'H' as u32, b'i' as u32, 0];
+        assert_eq!(wcsdup_len(&s), 2);
+        assert_eq!(wcsdup_len(&[0u32]), 0);
+    }
+
+    #[test]
+    fn test_wcsspn_basic() {
+        let s = [b'a' as u32, b'b' as u32, b'c' as u32, b'x' as u32, 0];
+        let accept = [b'a' as u32, b'b' as u32, b'c' as u32, 0];
+        assert_eq!(wcsspn(&s, &accept), 3);
+    }
+
+    #[test]
+    fn test_wcsspn_empty() {
+        let s = [b'x' as u32, 0];
+        let accept = [b'a' as u32, 0];
+        assert_eq!(wcsspn(&s, &accept), 0);
+    }
+
+    #[test]
+    fn test_wcscspn_basic() {
+        let s = [b'a' as u32, b'b' as u32, b'c' as u32, b'x' as u32, 0];
+        let reject = [b'x' as u32, b'y' as u32, 0];
+        assert_eq!(wcscspn(&s, &reject), 3);
+    }
+
+    #[test]
+    fn test_wcscspn_none_rejected() {
+        let s = [b'a' as u32, b'b' as u32, 0];
+        let reject = [b'x' as u32, 0];
+        assert_eq!(wcscspn(&s, &reject), 2);
+    }
+
+    #[test]
+    fn test_wcspbrk_basic() {
+        let s = [b'a' as u32, b'b' as u32, b'c' as u32, 0];
+        let accept = [b'c' as u32, b'd' as u32, 0];
+        assert_eq!(wcspbrk(&s, &accept), Some(2));
+    }
+
+    #[test]
+    fn test_wcspbrk_not_found() {
+        let s = [b'a' as u32, b'b' as u32, 0];
+        let accept = [b'x' as u32, 0];
+        assert_eq!(wcspbrk(&s, &accept), None);
+    }
+
+    #[test]
+    fn test_wcstok_basic() {
+        let mut s = [
+            b'h' as u32,
+            b'e' as u32,
+            b'l' as u32,
+            b'l' as u32,
+            b'o' as u32,
+            b' ' as u32,
+            b'w' as u32,
+            b'o' as u32,
+            b'r' as u32,
+            b'l' as u32,
+            b'd' as u32,
+            0,
+        ];
+        let delim = [b' ' as u32, 0];
+
+        // First token: "hello"
+        let (start1, next1) = wcstok(&mut s, &delim, 0).unwrap();
+        assert_eq!(start1, 0);
+        assert_eq!(
+            &s[start1..start1 + 5],
+            &[
+                b'h' as u32,
+                b'e' as u32,
+                b'l' as u32,
+                b'l' as u32,
+                b'o' as u32
+            ]
+        );
+
+        // Second token: "world"
+        let (start2, _) = wcstok(&mut s, &delim, next1).unwrap();
+        assert_eq!(
+            &s[start2..start2 + 5],
+            &[
+                b'w' as u32,
+                b'o' as u32,
+                b'r' as u32,
+                b'l' as u32,
+                b'd' as u32
+            ]
+        );
+    }
+
+    #[test]
+    fn test_wcstok_no_more() {
+        let mut s = [0u32];
+        let delim = [b' ' as u32, 0];
+        assert!(wcstok(&mut s, &delim, 0).is_none());
     }
 }

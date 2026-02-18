@@ -71,6 +71,36 @@ pub fn to_lower(c: u8) -> u8 {
     if is_upper(c) { c + 32 } else { c }
 }
 
+/// Returns `true` if `c` is a blank character (space or tab).
+#[inline]
+pub fn is_blank(c: u8) -> bool {
+    matches!(c, b' ' | b'\t')
+}
+
+/// Returns `true` if `c` is a control character (0x00–0x1F or 0x7F).
+#[inline]
+pub fn is_cntrl(c: u8) -> bool {
+    c < 0x20 || c == 0x7F
+}
+
+/// Returns `true` if `c` is a visible (graphical) character — printable but not space.
+#[inline]
+pub fn is_graph(c: u8) -> bool {
+    (0x21..=0x7E).contains(&c)
+}
+
+/// Returns `true` if `c` is a 7-bit ASCII value (0x00–0x7F).
+#[inline]
+pub fn is_ascii_val(c: u8) -> bool {
+    c <= 0x7F
+}
+
+/// Masks `c` to 7-bit ASCII.
+#[inline]
+pub fn to_ascii(c: u8) -> u8 {
+    c & 0x7F
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -177,6 +207,54 @@ mod tests {
     }
 
     #[test]
+    fn test_is_blank() {
+        assert!(is_blank(b' '));
+        assert!(is_blank(b'\t'));
+        assert!(!is_blank(b'\n'));
+        assert!(!is_blank(b'a'));
+        assert!(!is_blank(0));
+    }
+
+    #[test]
+    fn test_is_cntrl() {
+        assert!(is_cntrl(0));
+        assert!(is_cntrl(0x1F));
+        assert!(is_cntrl(0x7F));
+        assert!(!is_cntrl(b' '));
+        assert!(!is_cntrl(b'A'));
+        assert!(!is_cntrl(0x80));
+    }
+
+    #[test]
+    fn test_is_graph() {
+        assert!(is_graph(b'!'));
+        assert!(is_graph(b'~'));
+        assert!(is_graph(b'A'));
+        assert!(is_graph(b'0'));
+        assert!(!is_graph(b' '));
+        assert!(!is_graph(0x1F));
+        assert!(!is_graph(0x7F));
+    }
+
+    #[test]
+    fn test_is_ascii_val() {
+        for c in 0u8..=0x7F {
+            assert!(is_ascii_val(c));
+        }
+        for c in 0x80u8..=0xFF {
+            assert!(!is_ascii_val(c));
+        }
+    }
+
+    #[test]
+    fn test_to_ascii() {
+        assert_eq!(to_ascii(b'A'), b'A');
+        assert_eq!(to_ascii(0x80), 0);
+        assert_eq!(to_ascii(0xFF), 0x7F);
+        assert_eq!(to_ascii(0xC1), 0x41); // 0xC1 & 0x7F = 'A'
+    }
+
+    #[test]
     fn exhaustive_invariants() {
         for c in 0u8..=255 {
             assert_eq!(
@@ -209,6 +287,27 @@ mod tests {
                 to_upper(to_lower(c)),
                 to_upper(c),
                 "round-trip failed for {c}"
+            );
+            // blank ⊂ space
+            if is_blank(c) {
+                assert!(is_space(c), "blank must be space for {c}");
+            }
+            // graph = print minus space
+            assert_eq!(
+                is_graph(c),
+                is_print(c) && c != b' ',
+                "graph invariant failed for {c}"
+            );
+            // cntrl and print are disjoint
+            assert!(
+                !(is_cntrl(c) && is_print(c)),
+                "cntrl and print must be disjoint for {c}"
+            );
+            // to_ascii idempotent
+            assert_eq!(
+                to_ascii(to_ascii(c)),
+                to_ascii(c),
+                "to_ascii idempotent failed for {c}"
             );
         }
     }

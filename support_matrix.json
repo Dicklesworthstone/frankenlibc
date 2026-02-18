@@ -1,8 +1,8 @@
 {
   "version": 2,
-  "generated_at_utc": "2026-02-13T18:07:59Z",
+  "generated_at_utc": "2026-02-18T00:50:00Z",
   "library": "/data/tmp/cargo-target/release/libfrankenlibc_abi.so",
-  "total_exported": 423,
+  "total_exported": 434,
   "taxonomy": {
     "Implemented": "Native Rust code owns the entire operation. No host libc dependency. Full test coverage required.",
     "RawSyscall": "ABI entrypoint marshals arguments directly to Linux syscall instruction. No glibc call-through.",
@@ -1501,6 +1501,15 @@
       "default_stub": false
     },
     {
+      "symbol": "isascii",
+      "status": "Implemented",
+      "module": "ctype_abi",
+      "perf_class": "trivial",
+      "strict_semantics": "pass-through",
+      "hardened_semantics": "pass-through",
+      "default_stub": false
+    },
+    {
       "symbol": "isatty",
       "status": "RawSyscall",
       "module": "unistd_abi",
@@ -1510,12 +1519,39 @@
       "default_stub": false
     },
     {
+      "symbol": "isblank",
+      "status": "Implemented",
+      "module": "ctype_abi",
+      "perf_class": "trivial",
+      "strict_semantics": "pass-through",
+      "hardened_semantics": "pass-through",
+      "default_stub": false
+    },
+    {
+      "symbol": "iscntrl",
+      "status": "Implemented",
+      "module": "ctype_abi",
+      "perf_class": "trivial",
+      "strict_semantics": "pass-through",
+      "hardened_semantics": "pass-through",
+      "default_stub": false
+    },
+    {
       "symbol": "isdigit",
       "status": "Implemented",
       "module": "ctype_abi",
       "perf_class": "strict_hotpath",
       "strict_semantics": "Lookup-table ctype classification; returns 0/1 per POSIX C locale",
       "hardened_semantics": "Lookup-table ctype; no mode difference (pure computation)",
+      "default_stub": false
+    },
+    {
+      "symbol": "isgraph",
+      "status": "Implemented",
+      "module": "ctype_abi",
+      "perf_class": "trivial",
+      "strict_semantics": "pass-through",
+      "hardened_semantics": "pass-through",
       "default_stub": false
     },
     {
@@ -3434,6 +3470,15 @@
       "semantics": "Linux"
     },
     {
+      "symbol": "toascii",
+      "status": "Implemented",
+      "module": "ctype_abi",
+      "perf_class": "trivial",
+      "strict_semantics": "pass-through",
+      "hardened_semantics": "pass-through",
+      "default_stub": false
+    },
+    {
       "symbol": "tolower",
       "status": "Implemented",
       "module": "ctype_abi",
@@ -3615,12 +3660,39 @@
       "default_stub": false
     },
     {
+      "symbol": "wcscspn",
+      "status": "Implemented",
+      "module": "wchar_abi",
+      "perf_class": "hotpath",
+      "strict_semantics": "pass-through",
+      "hardened_semantics": "bounds-check-and-repair",
+      "default_stub": false
+    },
+    {
+      "symbol": "wcsdup",
+      "status": "Implemented",
+      "module": "wchar_abi",
+      "perf_class": "hotpath",
+      "strict_semantics": "pass-through",
+      "hardened_semantics": "bounds-check-and-repair",
+      "default_stub": false
+    },
+    {
       "symbol": "wcslen",
       "status": "Implemented",
       "module": "wchar_abi",
       "perf_class": "strict_hotpath",
       "strict_semantics": "Safe Rust wide-char ops; follows C semantics; no repair",
       "hardened_semantics": "Clamps wide-char copy/scan to tracked allocation bounds; logs ClampSize",
+      "default_stub": false
+    },
+    {
+      "symbol": "wcsncat",
+      "status": "Implemented",
+      "module": "wchar_abi",
+      "perf_class": "hotpath",
+      "strict_semantics": "pass-through",
+      "hardened_semantics": "bounds-check-and-repair",
       "default_stub": false
     },
     {
@@ -3642,6 +3714,15 @@
       "default_stub": false
     },
     {
+      "symbol": "wcspbrk",
+      "status": "Implemented",
+      "module": "wchar_abi",
+      "perf_class": "hotpath",
+      "strict_semantics": "pass-through",
+      "hardened_semantics": "bounds-check-and-repair",
+      "default_stub": false
+    },
+    {
       "symbol": "wcsrchr",
       "status": "Implemented",
       "module": "wchar_abi",
@@ -3651,12 +3732,30 @@
       "default_stub": false
     },
     {
+      "symbol": "wcsspn",
+      "status": "Implemented",
+      "module": "wchar_abi",
+      "perf_class": "hotpath",
+      "strict_semantics": "pass-through",
+      "hardened_semantics": "bounds-check-and-repair",
+      "default_stub": false
+    },
+    {
       "symbol": "wcsstr",
       "status": "Implemented",
       "module": "wchar_abi",
       "perf_class": "strict_hotpath",
       "strict_semantics": "Safe Rust wide-char ops; follows C semantics; no repair",
       "hardened_semantics": "Clamps wide-char copy/scan to tracked allocation bounds; logs ClampSize",
+      "default_stub": false
+    },
+    {
+      "symbol": "wcstok",
+      "status": "Implemented",
+      "module": "wchar_abi",
+      "perf_class": "hotpath",
+      "strict_semantics": "pass-through",
+      "hardened_semantics": "bounds-check-and-repair",
       "default_stub": false
     },
     {
