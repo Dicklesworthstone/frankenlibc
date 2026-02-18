@@ -1106,3 +1106,149 @@ pub unsafe extern "C" fn strtof(nptr: *const c_char, endptr: *mut *mut c_char) -
     // SAFETY: same contract as strtod.
     unsafe { strtod(nptr, endptr) as f32 }
 }
+
+// ---------------------------------------------------------------------------
+// system
+// ---------------------------------------------------------------------------
+
+/// POSIX `system` — execute a shell command.
+///
+/// If `command` is NULL, returns non-zero to indicate a shell is available.
+/// Otherwise, forks and executes `/bin/sh -c command`, returning the exit status.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn system(command: *const c_char) -> c_int {
+    let (_, decision) = runtime_policy::decide(ApiFamily::Stdlib, 0, 0, false, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 50, true);
+        return -1;
+    }
+
+    if command.is_null() {
+        runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 5, false);
+        return 1; // shell is available
+    }
+
+    // SAFETY: fork via clone(SIGCHLD).
+    let pid = unsafe {
+        libc::syscall(
+            libc::SYS_clone as c_long,
+            libc::SIGCHLD as c_long,
+            0 as c_long,
+            0 as c_long,
+            0 as c_long,
+            0 as c_long,
+        ) as i32
+    };
+
+    if pid < 0 {
+        let e = std::io::Error::last_os_error()
+            .raw_os_error()
+            .unwrap_or(libc::ENOMEM);
+        unsafe { set_abi_errno(e) };
+        runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 50, true);
+        return -1;
+    }
+
+    if pid == 0 {
+        // Child process: exec /bin/sh -c command.
+        let sh = c"/bin/sh".as_ptr();
+        let dash_c = c"-c".as_ptr();
+        let argv: [*const c_char; 4] = [sh, dash_c, command, ptr::null()];
+        // SAFETY: argv is well-formed null-terminated array.
+        unsafe {
+            libc::syscall(
+                libc::SYS_execve as c_long,
+                sh,
+                argv.as_ptr(),
+                std::ptr::null::<*const c_char>(),
+            );
+            // If execve returns, exit with 127.
+            libc::syscall(libc::SYS_exit_group as c_long, 127 as c_long);
+            std::hint::unreachable_unchecked()
+        }
+    }
+
+    // Parent: wait for child.
+    let mut wstatus: c_int = 0;
+    loop {
+        let ret = unsafe {
+            libc::syscall(
+                libc::SYS_wait4 as c_long,
+                pid,
+                &mut wstatus as *mut c_int,
+                0,
+                ptr::null::<c_void>(),
+            )
+        };
+        if ret == pid as i64 {
+            break;
+        }
+        if ret < 0 {
+            let e = std::io::Error::last_os_error()
+                .raw_os_error()
+                .unwrap_or(libc::EINTR);
+            if e != libc::EINTR {
+                unsafe { set_abi_errno(e) };
+                runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 50, true);
+                return -1;
+            }
+        }
+    }
+
+    runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 50, false);
+    wstatus
+}
+
+// ---------------------------------------------------------------------------
+// putenv
+// ---------------------------------------------------------------------------
+
+/// POSIX `putenv` — change or add an environment variable.
+///
+/// The string must be of the form `NAME=value`. Unlike `setenv`, the string
+/// itself is stored in the environment (not a copy), so it must remain valid.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn putenv(string: *mut c_char) -> c_int {
+    if string.is_null() {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return -1;
+    }
+
+    let (_, decision) = runtime_policy::decide(ApiFamily::Stdlib, 0, 0, false, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 10, true);
+        return -1;
+    }
+
+    // Find '=' to split name and value.
+    let s = unsafe { std::ffi::CStr::from_ptr(string) };
+    let bytes = s.to_bytes();
+    let eq_pos = match bytes.iter().position(|&b| b == b'=') {
+        Some(pos) => pos,
+        None => {
+            // No '=': unset the variable (glibc behavior).
+            let name_cstr = s;
+            return unsafe { super::stdlib_abi::unsetenv(name_cstr.as_ptr()) };
+        }
+    };
+
+    // Extract name and value.
+    let name = &bytes[..eq_pos];
+    let value = &bytes[eq_pos + 1..];
+
+    // Build C strings for setenv.
+    let name_vec: Vec<u8> = name.iter().copied().chain(std::iter::once(0)).collect();
+    let value_vec: Vec<u8> = value.iter().copied().chain(std::iter::once(0)).collect();
+
+    // Delegate to setenv with overwrite=1.
+    let ret = unsafe {
+        super::stdlib_abi::setenv(
+            name_vec.as_ptr() as *const c_char,
+            value_vec.as_ptr() as *const c_char,
+            1,
+        )
+    };
+
+    runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 10, ret != 0);
+    ret
+}

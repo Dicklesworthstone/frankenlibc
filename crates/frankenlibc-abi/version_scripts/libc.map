@@ -91,6 +91,8 @@ GLIBC_2.2.5 {
         posix_memalign;
 
         /* stdlib */
+        system;
+        putenv;
         abs;
         labs;
         llabs;
@@ -186,6 +188,8 @@ GLIBC_2.2.5 {
         getline;
         tmpfile;
         tmpnam;
+        popen;
+        pclose;
 
         /* math operations — double precision */
         sin;

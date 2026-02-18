@@ -4502,11 +4502,39 @@
       "status": "GlibcCallThrough",
       "module": "locale_abi",
       "notes": ""
+    },
+    {
+      "symbol": "system",
+      "header": "stdlib.h",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "notes": ""
+    },
+    {
+      "symbol": "putenv",
+      "header": "stdlib.h",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "notes": ""
+    },
+    {
+      "symbol": "popen",
+      "header": "stdio.h",
+      "status": "Implemented",
+      "module": "stdio_abi",
+      "notes": ""
+    },
+    {
+      "symbol": "pclose",
+      "header": "stdio.h",
+      "status": "Implemented",
+      "module": "stdio_abi",
+      "notes": ""
     }
   ],
   "summary": {
-    "total_exported": 518,
-    "Implemented": 341,
+    "total_exported": 522,
+    "Implemented": 345,
     "RawSyscall": 172,
     "GlibcCallThrough": 5,
     "Stub": 0

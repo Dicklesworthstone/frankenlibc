@@ -2092,6 +2092,192 @@ fn write_u64_to_buf(buf: &mut [u8], start: usize, mut v: u64) -> usize {
     start + len
 }
 
+// ---------------------------------------------------------------------------
+// popen / pclose
+// ---------------------------------------------------------------------------
+
+/// Registry to map FILE* sentinels to child PIDs for pclose.
+static POPEN_PIDS: Mutex<Option<HashMap<usize, i32>>> = Mutex::new(None);
+
+/// POSIX `popen` — open a process by creating a pipe.
+///
+/// Forks and execs `/bin/sh -c command`. If type is `"r"`, returns a stream
+/// that reads from the child's stdout. If `"w"`, returns a stream that writes
+/// to the child's stdin.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn popen(command: *const c_char, typ: *const c_char) -> *mut c_void {
+    if command.is_null() || typ.is_null() {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return std::ptr::null_mut();
+    }
+
+    let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, 0, 0, false, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 50, true);
+        return std::ptr::null_mut();
+    }
+
+    let mode = unsafe { *typ as u8 };
+    let reading = mode == b'r';
+    if mode != b'r' && mode != b'w' {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 50, true);
+        return std::ptr::null_mut();
+    }
+
+    // Create pipe: pipe_fds[0] = read end, pipe_fds[1] = write end.
+    let mut pipe_fds = [0i32; 2];
+    let ret = unsafe { libc::syscall(libc::SYS_pipe2 as c_long, pipe_fds.as_mut_ptr(), 0) };
+    if ret < 0 {
+        let e = std::io::Error::last_os_error()
+            .raw_os_error()
+            .unwrap_or(errno::EIO);
+        unsafe { set_abi_errno(e) };
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 50, true);
+        return std::ptr::null_mut();
+    }
+
+    // Fork via clone(SIGCHLD).
+    let pid = unsafe {
+        libc::syscall(
+            libc::SYS_clone as c_long,
+            libc::SIGCHLD as c_long,
+            0 as c_long,
+            0 as c_long,
+            0 as c_long,
+            0 as c_long,
+        ) as i32
+    };
+
+    if pid < 0 {
+        let e = std::io::Error::last_os_error()
+            .raw_os_error()
+            .unwrap_or(errno::ENOMEM);
+        unsafe { set_abi_errno(e) };
+        unsafe {
+            libc::syscall(libc::SYS_close as c_long, pipe_fds[0]);
+            libc::syscall(libc::SYS_close as c_long, pipe_fds[1]);
+        }
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 50, true);
+        return std::ptr::null_mut();
+    }
+
+    if pid == 0 {
+        // Child process.
+        if reading {
+            // Parent reads from child's stdout: dup write end to stdout.
+            unsafe {
+                libc::syscall(libc::SYS_close as c_long, pipe_fds[0]);
+                libc::syscall(libc::SYS_dup2 as c_long, pipe_fds[1], libc::STDOUT_FILENO);
+                libc::syscall(libc::SYS_close as c_long, pipe_fds[1]);
+            }
+        } else {
+            // Parent writes to child's stdin: dup read end to stdin.
+            unsafe {
+                libc::syscall(libc::SYS_close as c_long, pipe_fds[1]);
+                libc::syscall(libc::SYS_dup2 as c_long, pipe_fds[0], libc::STDIN_FILENO);
+                libc::syscall(libc::SYS_close as c_long, pipe_fds[0]);
+            }
+        }
+
+        let sh = c"/bin/sh".as_ptr();
+        let dash_c = c"-c".as_ptr();
+        let argv: [*const c_char; 4] = [sh, dash_c, command, std::ptr::null()];
+        unsafe {
+            libc::syscall(
+                libc::SYS_execve as c_long,
+                sh,
+                argv.as_ptr(),
+                std::ptr::null::<*const c_char>(),
+            );
+            libc::syscall(libc::SYS_exit_group as c_long, 127 as c_long);
+        }
+        unsafe { std::hint::unreachable_unchecked() }
+    }
+
+    // Parent: close unused end and wrap the other in a FILE stream.
+    let our_fd = if reading {
+        unsafe { libc::syscall(libc::SYS_close as c_long, pipe_fds[1]) };
+        pipe_fds[0]
+    } else {
+        unsafe { libc::syscall(libc::SYS_close as c_long, pipe_fds[0]) };
+        pipe_fds[1]
+    };
+
+    let open_flags = OpenFlags {
+        readable: reading,
+        writable: !reading,
+        ..Default::default()
+    };
+    let stream = StdioStream::new(our_fd, open_flags);
+    let id = alloc_stream_id();
+    let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
+    reg.streams.insert(id, stream);
+    drop(reg);
+
+    // Record the child PID so pclose can wait for it.
+    let mut pids = POPEN_PIDS.lock().unwrap_or_else(|e| e.into_inner());
+    pids.get_or_insert_with(HashMap::new).insert(id, pid);
+
+    runtime_policy::observe(ApiFamily::Stdio, decision.profile, 50, false);
+    id as *mut c_void
+}
+
+/// POSIX `pclose` — close a stream opened by popen and wait for the child.
+///
+/// Returns the child's exit status, or -1 on error.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pclose(stream: *mut c_void) -> c_int {
+    if stream.is_null() {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return -1;
+    }
+
+    let id = stream as usize;
+
+    // Look up and remove the child PID.
+    let child_pid = {
+        let mut pids = POPEN_PIDS.lock().unwrap_or_else(|e| e.into_inner());
+        pids.as_mut().and_then(|m| m.remove(&id))
+    };
+
+    let Some(pid) = child_pid else {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return -1;
+    };
+
+    // Close the stream (flushes and closes fd).
+    unsafe { fclose(stream) };
+
+    // Wait for child.
+    let mut wstatus: c_int = 0;
+    loop {
+        let ret = unsafe {
+            libc::syscall(
+                libc::SYS_wait4 as c_long,
+                pid,
+                &mut wstatus as *mut c_int,
+                0,
+                std::ptr::null::<c_void>(),
+            )
+        };
+        if ret == pid as i64 {
+            break;
+        }
+        if ret < 0 {
+            let e = std::io::Error::last_os_error()
+                .raw_os_error()
+                .unwrap_or(libc::EINTR);
+            if e != libc::EINTR {
+                unsafe { set_abi_errno(e) };
+                return -1;
+            }
+        }
+    }
+
+    wstatus
+}
+
 /// glibc fortified `__snprintf_chk`.
 #[unsafe(export_name = "__snprintf_chk")]
 pub unsafe extern "C" fn snprintf_chk(
