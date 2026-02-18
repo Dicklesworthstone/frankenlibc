@@ -416,6 +416,157 @@ pub unsafe extern "C" fn lgamma(x: f64) -> f64 {
     out
 }
 
+// ---------------------------------------------------------------------------
+// Complementary error function
+// ---------------------------------------------------------------------------
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn erfc(x: f64) -> f64 {
+    unary_entry(x, 9, frankenlibc_core::math::erfc)
+}
+
+// ---------------------------------------------------------------------------
+// Rounding / conversion
+// ---------------------------------------------------------------------------
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn nearbyint(x: f64) -> f64 {
+    unary_entry(x, 3, frankenlibc_core::math::nearbyint)
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn lrint(x: f64) -> i64 {
+    frankenlibc_core::math::lrint(x)
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn llrint(x: f64) -> i64 {
+    frankenlibc_core::math::llrint(x)
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn lround(x: f64) -> i64 {
+    frankenlibc_core::math::lround(x)
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn llround(x: f64) -> i64 {
+    frankenlibc_core::math::llround(x)
+}
+
+// ---------------------------------------------------------------------------
+// Float decomposition
+// ---------------------------------------------------------------------------
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ldexp(x: f64, exp: c_int) -> f64 {
+    frankenlibc_core::math::ldexp(x, exp)
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn frexp(x: f64, exp: *mut c_int) -> f64 {
+    let (mantissa, e) = frankenlibc_core::math::frexp(x);
+    if !exp.is_null() {
+        unsafe { *exp = e };
+    }
+    mantissa
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn modf(x: f64, iptr: *mut f64) -> f64 {
+    let (frac, int_part) = frankenlibc_core::math::modf(x);
+    if !iptr.is_null() {
+        unsafe { *iptr = int_part };
+    }
+    frac
+}
+
+// ---------------------------------------------------------------------------
+// Min / max / dim / fma
+// ---------------------------------------------------------------------------
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn fmin(x: f64, y: f64) -> f64 {
+    frankenlibc_core::math::fmin(x, y)
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn fmax(x: f64, y: f64) -> f64 {
+    frankenlibc_core::math::fmax(x, y)
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn fdim(x: f64, y: f64) -> f64 {
+    frankenlibc_core::math::fdim(x, y)
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn fma(x: f64, y: f64, z: f64) -> f64 {
+    let mixed = (x.to_bits() as usize).wrapping_mul(0x9e37_79b9_7f4a_7c15usize)
+        ^ y.to_bits() as usize
+        ^ z.to_bits() as usize;
+    let (mode, decision) = runtime_policy::decide(
+        ApiFamily::MathFenv,
+        mixed,
+        std::mem::size_of::<f64>() * 3,
+        false,
+        false,
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::MathFenv, decision.profile, 5, true);
+        return deny_fallback(mode);
+    }
+
+    let raw = frankenlibc_core::math::fma(x, y, z);
+    let adverse = x.is_finite() && y.is_finite() && z.is_finite() && !raw.is_finite();
+    let out = if adverse
+        && mode.heals_enabled()
+        && matches!(decision.action, MembraneAction::Repair(_))
+    {
+        heal_non_finite(raw)
+    } else {
+        raw
+    };
+
+    runtime_policy::observe(
+        ApiFamily::MathFenv,
+        decision.profile,
+        runtime_policy::scaled_cost(5, std::mem::size_of::<f64>() * 3),
+        adverse,
+    );
+    out
+}
+
+// ---------------------------------------------------------------------------
+// Scaling / exponent extraction
+// ---------------------------------------------------------------------------
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn scalbn(x: f64, n: c_int) -> f64 {
+    frankenlibc_core::math::scalbn(x, n)
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn scalbln(x: f64, n: i64) -> f64 {
+    frankenlibc_core::math::scalbln(x, n)
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn nextafter(x: f64, y: f64) -> f64 {
+    frankenlibc_core::math::nextafter(x, y)
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ilogb(x: f64) -> c_int {
+    frankenlibc_core::math::ilogb(x)
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn logb(x: f64) -> f64 {
+    frankenlibc_core::math::logb(x)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

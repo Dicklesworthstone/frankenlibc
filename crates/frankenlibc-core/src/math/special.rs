@@ -15,6 +15,12 @@ pub fn lgamma(x: f64) -> f64 {
     libm::lgamma(x)
 }
 
+/// Complementary error function: 1 - erf(x).
+#[inline]
+pub fn erfc(x: f64) -> f64 {
+    libm::erfc(x)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -29,5 +35,12 @@ mod tests {
     fn gamma_sanity() {
         assert!((tgamma(5.0) - 24.0).abs() < 1e-8);
         assert!((lgamma(5.0) - 24.0_f64.ln()).abs() < 1e-8);
+    }
+
+    #[test]
+    fn erfc_sanity() {
+        // erfc(x) = 1 - erf(x)
+        assert!((erfc(0.0) - 1.0).abs() < 1e-12);
+        assert!((erfc(1.0) - (1.0 - erf(1.0))).abs() < 1e-12);
     }
 }

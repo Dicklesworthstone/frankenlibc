@@ -1,8 +1,8 @@
 {
   "version": 2,
-  "generated_at_utc": "2026-02-18T00:50:00Z",
+  "generated_at_utc": "2026-02-18T01:30:00Z",
   "library": "/data/tmp/cargo-target/release/libfrankenlibc_abi.so",
-  "total_exported": 434,
+  "total_exported": 452,
   "taxonomy": {
     "Implemented": "Native Rust code owns the entire operation. No host libc dependency. Full test coverage required.",
     "RawSyscall": "ABI entrypoint marshals arguments directly to Linux syscall instruction. No glibc call-through.",
@@ -653,6 +653,15 @@
       "default_stub": false
     },
     {
+      "symbol": "erfc",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "hotpath",
+      "strict_semantics": "pass-through",
+      "hardened_semantics": "heal-non-finite",
+      "default_stub": false
+    },
+    {
       "symbol": "eventfd",
       "status": "RawSyscall",
       "module": "poll_abi",
@@ -803,6 +812,15 @@
       "default_stub": false
     },
     {
+      "symbol": "fdim",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "hotpath",
+      "strict_semantics": "pass-through",
+      "hardened_semantics": "heal-non-finite",
+      "default_stub": false
+    },
+    {
       "symbol": "feof",
       "status": "Implemented",
       "module": "stdio_abi",
@@ -900,6 +918,33 @@
       "default_stub": false
     },
     {
+      "symbol": "fma",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "hotpath",
+      "strict_semantics": "pass-through",
+      "hardened_semantics": "heal-non-finite",
+      "default_stub": false
+    },
+    {
+      "symbol": "fmax",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "hotpath",
+      "strict_semantics": "pass-through",
+      "hardened_semantics": "heal-non-finite",
+      "default_stub": false
+    },
+    {
+      "symbol": "fmin",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "hotpath",
+      "strict_semantics": "pass-through",
+      "hardened_semantics": "heal-non-finite",
+      "default_stub": false
+    },
+    {
       "symbol": "fmod",
       "status": "Implemented",
       "module": "math_abi",
@@ -978,6 +1023,15 @@
       "perf_class": "coldpath",
       "strict_semantics": "Bootstrap resolver implementation: numeric getaddrinfo/getnameinfo + gai_strerror/freeaddrinfo with deterministic EAI_* failures",
       "hardened_semantics": "Resolver with deterministic repairs: invalid host/service normalized to safe defaults, evidence emitted",
+      "default_stub": false
+    },
+    {
+      "symbol": "frexp",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "hotpath",
+      "strict_semantics": "pass-through",
+      "hardened_semantics": "heal-non-finite",
       "default_stub": false
     },
     {
@@ -1394,6 +1448,15 @@
       "default_stub": false
     },
     {
+      "symbol": "ilogb",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "hotpath",
+      "strict_semantics": "pass-through",
+      "hardened_semantics": "heal-non-finite",
+      "default_stub": false
+    },
+    {
       "symbol": "index",
       "status": "Implemented",
       "module": "string_abi",
@@ -1643,6 +1706,15 @@
       "semantics": "POSIX"
     },
     {
+      "symbol": "ldexp",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "hotpath",
+      "strict_semantics": "pass-through",
+      "hardened_semantics": "heal-non-finite",
+      "default_stub": false
+    },
+    {
       "symbol": "ldiv",
       "status": "Implemented",
       "module": "stdlib_abi",
@@ -1704,6 +1776,24 @@
       "default_stub": false
     },
     {
+      "symbol": "llrint",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "hotpath",
+      "strict_semantics": "pass-through",
+      "hardened_semantics": "heal-non-finite",
+      "default_stub": false
+    },
+    {
+      "symbol": "llround",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "hotpath",
+      "strict_semantics": "pass-through",
+      "hardened_semantics": "heal-non-finite",
+      "default_stub": false
+    },
+    {
       "symbol": "localeconv",
       "status": "Implemented",
       "module": "locale_abi",
@@ -1755,6 +1845,33 @@
       "perf_class": "coldpath",
       "strict_semantics": "Rust libm path; x<0 sets errno=EDOM and x==0 sets errno=ERANGE with IEEE 754 outputs preserved",
       "hardened_semantics": "Same errno domain/range signaling with runtime-policy routing; hardened mode may repair non-finite outputs deterministically",
+      "default_stub": false
+    },
+    {
+      "symbol": "logb",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "hotpath",
+      "strict_semantics": "pass-through",
+      "hardened_semantics": "heal-non-finite",
+      "default_stub": false
+    },
+    {
+      "symbol": "lrint",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "hotpath",
+      "strict_semantics": "pass-through",
+      "hardened_semantics": "heal-non-finite",
+      "default_stub": false
+    },
+    {
+      "symbol": "lround",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "hotpath",
+      "strict_semantics": "pass-through",
+      "hardened_semantics": "heal-non-finite",
       "default_stub": false
     },
     {
@@ -1944,6 +2061,15 @@
       "default_stub": false
     },
     {
+      "symbol": "modf",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "hotpath",
+      "strict_semantics": "pass-through",
+      "hardened_semantics": "heal-non-finite",
+      "default_stub": false
+    },
+    {
       "symbol": "mprotect",
       "status": "RawSyscall",
       "module": "mmap_abi",
@@ -1991,6 +2117,24 @@
       "perf_class": "coldpath",
       "strict_semantics": "Raw Linux syscall SYS_nanosleep; sets errno EINTR on signal interruption",
       "hardened_semantics": "Raw syscall; validates req pointer",
+      "default_stub": false
+    },
+    {
+      "symbol": "nearbyint",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "hotpath",
+      "strict_semantics": "pass-through",
+      "hardened_semantics": "heal-non-finite",
+      "default_stub": false
+    },
+    {
+      "symbol": "nextafter",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "hotpath",
+      "strict_semantics": "pass-through",
+      "hardened_semantics": "heal-non-finite",
       "default_stub": false
     },
     {
@@ -2529,6 +2673,24 @@
       "perf_class": "coldpath",
       "strict_semantics": "Rust std::f64 math; returns NaN/Inf per IEEE 754; no repair",
       "hardened_semantics": "Rust std::f64 math; no mode difference (pure computation)",
+      "default_stub": false
+    },
+    {
+      "symbol": "scalbln",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "hotpath",
+      "strict_semantics": "pass-through",
+      "hardened_semantics": "heal-non-finite",
+      "default_stub": false
+    },
+    {
+      "symbol": "scalbn",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "hotpath",
+      "strict_semantics": "pass-through",
+      "hardened_semantics": "heal-non-finite",
       "default_stub": false
     },
     {
