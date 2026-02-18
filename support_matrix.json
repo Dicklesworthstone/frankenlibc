@@ -2,7 +2,7 @@
   "version": 2,
   "generated_at_utc": "2026-02-18T04:49:26Z",
   "library": "/data/tmp/cargo-target/release/libfrankenlibc_abi.so",
-  "total_exported": 854,
+  "total_exported": 895,
   "taxonomy": {
     "Implemented": "Native Rust code owns the entire operation. No host libc dependency. Full test coverage required.",
     "RawSyscall": "ABI entrypoint marshals arguments directly to Linux syscall instruction. No glibc call-through.",
@@ -165,6 +165,48 @@
       "status": "Implemented",
       "module": "math_abi",
       "notes": ""
+    },
+    {
+      "symbol": "aio_cancel",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "syscall"
+    },
+    {
+      "symbol": "aio_error",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "fast"
+    },
+    {
+      "symbol": "aio_fsync",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "syscall"
+    },
+    {
+      "symbol": "aio_read",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "syscall"
+    },
+    {
+      "symbol": "aio_return",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "fast"
+    },
+    {
+      "symbol": "aio_suspend",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "syscall"
+    },
+    {
+      "symbol": "aio_write",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "syscall"
     },
     {
       "symbol": "alarm",
@@ -905,6 +947,12 @@
       "default_stub": false
     },
     {
+      "symbol": "endmntent",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "fast"
+    },
+    {
       "symbol": "endpwent",
       "status": "Implemented",
       "module": "pwd_abi",
@@ -1335,6 +1383,12 @@
       "perf_class": "fast"
     },
     {
+      "symbol": "fgetgrent",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "fast"
+    },
+    {
       "symbol": "fgetpos",
       "status": "Implemented",
       "module": "stdio_abi",
@@ -1351,6 +1405,12 @@
       "strict_semantics": "LP64 alias via glibc",
       "hardened_semantics": "LP64 alias via glibc",
       "default_stub": false
+    },
+    {
+      "symbol": "fgetpwent",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "fast"
     },
     {
       "symbol": "fgets",
@@ -2023,6 +2083,12 @@
       "default_stub": false
     },
     {
+      "symbol": "getgrent_r",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "fast"
+    },
+    {
       "symbol": "getgrgid",
       "status": "Implemented",
       "module": "grp_abi",
@@ -2057,6 +2123,12 @@
       "strict_semantics": "NSS files backend: reentrant getgrnam into caller buffer, ERANGE on insufficient space",
       "hardened_semantics": "NSS files backend with membrane validation",
       "default_stub": false
+    },
+    {
+      "symbol": "getgrouplist",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "fast"
     },
     {
       "symbol": "getgroups",
@@ -2134,6 +2206,12 @@
       "strict_semantics": "Read line (newline-delimited); delegates to getdelim",
       "hardened_semantics": "Same as strict; validates all pointer arguments",
       "default_stub": false
+    },
+    {
+      "symbol": "getmntent",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "fast"
     },
     {
       "symbol": "getnameinfo",
@@ -2233,6 +2311,12 @@
       "strict_semantics": "NSS files backend: iterates /etc/passwd entries sequentially",
       "hardened_semantics": "NSS files backend with membrane validation",
       "default_stub": false
+    },
+    {
+      "symbol": "getpwent_r",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "fast"
     },
     {
       "symbol": "getpwnam",
@@ -2446,6 +2530,12 @@
       "default_stub": false
     },
     {
+      "symbol": "hasmntopt",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "fast"
+    },
+    {
       "symbol": "herror",
       "status": "GlibcCallThrough",
       "module": "unistd_abi",
@@ -2619,6 +2709,12 @@
       "default_stub": false
     },
     {
+      "symbol": "initgroups",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "syscall"
+    },
+    {
       "symbol": "inotify_add_watch",
       "status": "RawSyscall",
       "module": "unistd_abi",
@@ -2785,11 +2881,29 @@
       "notes": "Wide character alphabetic test"
     },
     {
+      "symbol": "iswblank",
+      "status": "Implemented",
+      "module": "wchar_abi",
+      "perf_class": "fast"
+    },
+    {
+      "symbol": "iswcntrl",
+      "status": "Implemented",
+      "module": "wchar_abi",
+      "perf_class": "fast"
+    },
+    {
       "symbol": "iswdigit",
       "header": "wctype.h",
       "family": "wctype",
       "status": "Implemented",
       "notes": "Wide character digit test"
+    },
+    {
+      "symbol": "iswgraph",
+      "status": "Implemented",
+      "module": "wchar_abi",
+      "perf_class": "fast"
     },
     {
       "symbol": "iswlower",
@@ -2806,6 +2920,12 @@
       "notes": "Wide character printable test"
     },
     {
+      "symbol": "iswpunct",
+      "status": "Implemented",
+      "module": "wchar_abi",
+      "perf_class": "fast"
+    },
+    {
       "symbol": "iswspace",
       "header": "wctype.h",
       "family": "wctype",
@@ -2818,6 +2938,12 @@
       "family": "wctype",
       "status": "Implemented",
       "notes": "Wide character uppercase test"
+    },
+    {
+      "symbol": "iswxdigit",
+      "status": "Implemented",
+      "module": "wchar_abi",
+      "perf_class": "fast"
     },
     {
       "symbol": "isxdigit",
@@ -2924,6 +3050,12 @@
       "module": "unistd_abi",
       "perf_class": "syscall_veneer",
       "semantics": "POSIX"
+    },
+    {
+      "symbol": "lio_listio",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "syscall"
     },
     {
       "symbol": "listen",
@@ -4850,6 +4982,12 @@
       "default_stub": false
     },
     {
+      "symbol": "recvmmsg",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "syscall"
+    },
+    {
       "symbol": "recvmsg",
       "status": "RawSyscall",
       "module": "socket_abi",
@@ -4941,6 +5079,24 @@
       "module": "unistd_abi",
       "perf_class": "syscall_veneer",
       "semantics": "POSIX"
+    },
+    {
+      "symbol": "res_init",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "fast"
+    },
+    {
+      "symbol": "res_query",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "syscall"
+    },
+    {
+      "symbol": "res_search",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "syscall"
     },
     {
       "symbol": "rewind",
@@ -5115,6 +5271,12 @@
       "strict_semantics": "Passthrough to glibc sched_getscheduler",
       "hardened_semantics": "Passthrough to glibc sched_getscheduler",
       "default_stub": false
+    },
+    {
+      "symbol": "sched_rr_get_interval",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "syscall"
     },
     {
       "symbol": "sched_setaffinity",
@@ -5311,6 +5473,12 @@
       "default_stub": false
     },
     {
+      "symbol": "sendmmsg",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "syscall"
+    },
+    {
       "symbol": "sendmsg",
       "status": "RawSyscall",
       "module": "socket_abi",
@@ -5421,6 +5589,12 @@
       "strict_semantics": "Bootstrap locale implementation: setlocale supports C/POSIX and localeconv returns static C locale struct",
       "hardened_semantics": "Locale implementation with hardened fallback to C locale defaults on invalid input",
       "default_stub": false
+    },
+    {
+      "symbol": "setmntent",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "fast"
     },
     {
       "symbol": "setpgid",
@@ -6513,6 +6687,36 @@
       "default_stub": false
     },
     {
+      "symbol": "timer_create",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "syscall"
+    },
+    {
+      "symbol": "timer_delete",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "syscall"
+    },
+    {
+      "symbol": "timer_getoverrun",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "syscall"
+    },
+    {
+      "symbol": "timer_gettime",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "syscall"
+    },
+    {
+      "symbol": "timer_settime",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "syscall"
+    },
+    {
       "symbol": "timerfd_create",
       "status": "RawSyscall",
       "module": "poll_abi",
@@ -6936,6 +7140,12 @@
       "default_stub": false
     },
     {
+      "symbol": "wcscoll",
+      "status": "GlibcCallThrough",
+      "module": "wchar_abi",
+      "perf_class": "fast"
+    },
+    {
       "symbol": "wcscpy",
       "status": "Implemented",
       "module": "wchar_abi",
@@ -6961,6 +7171,12 @@
       "strict_semantics": "pass-through",
       "hardened_semantics": "bounds-check-and-repair",
       "default_stub": false
+    },
+    {
+      "symbol": "wcsftime",
+      "status": "GlibcCallThrough",
+      "module": "wchar_abi",
+      "perf_class": "fast"
     },
     {
       "symbol": "wcslen",
@@ -7062,6 +7278,12 @@
       "default_stub": false
     },
     {
+      "symbol": "wcstof",
+      "status": "GlibcCallThrough",
+      "module": "wchar_abi",
+      "perf_class": "fast"
+    },
+    {
       "symbol": "wcstok",
       "status": "Implemented",
       "module": "wchar_abi",
@@ -7080,6 +7302,18 @@
       "default_stub": false
     },
     {
+      "symbol": "wcstold",
+      "status": "GlibcCallThrough",
+      "module": "wchar_abi",
+      "perf_class": "fast"
+    },
+    {
+      "symbol": "wcstoll",
+      "status": "GlibcCallThrough",
+      "module": "wchar_abi",
+      "perf_class": "fast"
+    },
+    {
       "symbol": "wcstombs",
       "header": "stdlib.h",
       "family": "wchar",
@@ -7096,6 +7330,12 @@
       "default_stub": false
     },
     {
+      "symbol": "wcstoull",
+      "status": "GlibcCallThrough",
+      "module": "wchar_abi",
+      "perf_class": "fast"
+    },
+    {
       "symbol": "wcswidth",
       "status": "GlibcCallThrough",
       "module": "wchar_abi",
@@ -7103,6 +7343,12 @@
       "strict_semantics": "Passthrough to glibc wcswidth",
       "hardened_semantics": "Passthrough to glibc wcswidth",
       "default_stub": false
+    },
+    {
+      "symbol": "wcsxfrm",
+      "status": "GlibcCallThrough",
+      "module": "wchar_abi",
+      "perf_class": "fast"
     },
     {
       "symbol": "wctob",
@@ -7226,8 +7472,8 @@
     "glibc_call_through": 179,
     "stub": 0
   },
-  "implemented": 389,
-  "raw_syscall": 211,
-  "glibc_call_through": 254,
+  "implemented": 394,
+  "raw_syscall": 213,
+  "glibc_call_through": 288,
   "stub": 0
 }

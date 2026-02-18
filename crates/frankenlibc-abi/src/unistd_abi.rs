@@ -3085,3 +3085,264 @@ pub unsafe extern "C" fn execlp(file: *const c_char, arg: *const c_char, args: .
 pub unsafe extern "C" fn execle(path: *const c_char, arg: *const c_char, args: ...) -> c_int {
     unsafe { libc_execle(path, arg, args) }
 }
+
+// ---------------------------------------------------------------------------
+// timer_* — GlibcCallThrough (POSIX per-process timers)
+// ---------------------------------------------------------------------------
+
+unsafe extern "C" {
+    #[link_name = "timer_create"]
+    fn libc_timer_create(clockid: libc::clockid_t, sevp: *mut c_void, timerid: *mut c_void) -> c_int;
+    #[link_name = "timer_settime"]
+    fn libc_timer_settime(timerid: *mut c_void, flags: c_int, new_value: *const c_void, old_value: *mut c_void) -> c_int;
+    #[link_name = "timer_gettime"]
+    fn libc_timer_gettime(timerid: *mut c_void, curr_value: *mut c_void) -> c_int;
+    #[link_name = "timer_delete"]
+    fn libc_timer_delete(timerid: *mut c_void) -> c_int;
+    #[link_name = "timer_getoverrun"]
+    fn libc_timer_getoverrun(timerid: *mut c_void) -> c_int;
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn timer_create(clockid: libc::clockid_t, sevp: *mut c_void, timerid: *mut c_void) -> c_int {
+    unsafe { libc_timer_create(clockid, sevp, timerid) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn timer_settime(timerid: *mut c_void, flags: c_int, new_value: *const c_void, old_value: *mut c_void) -> c_int {
+    unsafe { libc_timer_settime(timerid, flags, new_value, old_value) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn timer_gettime(timerid: *mut c_void, curr_value: *mut c_void) -> c_int {
+    unsafe { libc_timer_gettime(timerid, curr_value) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn timer_delete(timerid: *mut c_void) -> c_int {
+    unsafe { libc_timer_delete(timerid) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn timer_getoverrun(timerid: *mut c_void) -> c_int {
+    unsafe { libc_timer_getoverrun(timerid) }
+}
+
+// ---------------------------------------------------------------------------
+// aio_* — GlibcCallThrough (POSIX async I/O)
+// ---------------------------------------------------------------------------
+
+unsafe extern "C" {
+    #[link_name = "aio_read"]
+    fn libc_aio_read(aiocbp: *mut c_void) -> c_int;
+    #[link_name = "aio_write"]
+    fn libc_aio_write(aiocbp: *mut c_void) -> c_int;
+    #[link_name = "aio_error"]
+    fn libc_aio_error(aiocbp: *const c_void) -> c_int;
+    #[link_name = "aio_return"]
+    fn libc_aio_return(aiocbp: *mut c_void) -> libc::ssize_t;
+    #[link_name = "aio_cancel"]
+    fn libc_aio_cancel(fd: c_int, aiocbp: *mut c_void) -> c_int;
+    #[link_name = "aio_suspend"]
+    fn libc_aio_suspend(list: *const *const c_void, nent: c_int, timeout: *const libc::timespec) -> c_int;
+    #[link_name = "aio_fsync"]
+    fn libc_aio_fsync(op: c_int, aiocbp: *mut c_void) -> c_int;
+    #[link_name = "lio_listio"]
+    fn libc_lio_listio(mode: c_int, list: *const *mut c_void, nent: c_int, sevp: *mut c_void) -> c_int;
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn aio_read(aiocbp: *mut c_void) -> c_int {
+    unsafe { libc_aio_read(aiocbp) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn aio_write(aiocbp: *mut c_void) -> c_int {
+    unsafe { libc_aio_write(aiocbp) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn aio_error(aiocbp: *const c_void) -> c_int {
+    unsafe { libc_aio_error(aiocbp) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn aio_return(aiocbp: *mut c_void) -> libc::ssize_t {
+    unsafe { libc_aio_return(aiocbp) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn aio_cancel(fd: c_int, aiocbp: *mut c_void) -> c_int {
+    unsafe { libc_aio_cancel(fd, aiocbp) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn aio_suspend(list: *const *const c_void, nent: c_int, timeout: *const libc::timespec) -> c_int {
+    unsafe { libc_aio_suspend(list, nent, timeout) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn aio_fsync(op: c_int, aiocbp: *mut c_void) -> c_int {
+    unsafe { libc_aio_fsync(op, aiocbp) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn lio_listio(mode: c_int, list: *const *mut c_void, nent: c_int, sevp: *mut c_void) -> c_int {
+    unsafe { libc_lio_listio(mode, list, nent, sevp) }
+}
+
+// ---------------------------------------------------------------------------
+// mount table — GlibcCallThrough
+// ---------------------------------------------------------------------------
+
+unsafe extern "C" {
+    #[link_name = "setmntent"]
+    fn libc_setmntent(filename: *const c_char, type_: *const c_char) -> *mut c_void;
+    #[link_name = "getmntent"]
+    fn libc_getmntent(stream: *mut c_void) -> *mut c_void;
+    #[link_name = "endmntent"]
+    fn libc_endmntent(stream: *mut c_void) -> c_int;
+    #[link_name = "hasmntopt"]
+    fn libc_hasmntopt(mnt: *const c_void, opt: *const c_char) -> *mut c_char;
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn setmntent(filename: *const c_char, type_: *const c_char) -> *mut c_void {
+    unsafe { libc_setmntent(filename, type_) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getmntent(stream: *mut c_void) -> *mut c_void {
+    unsafe { libc_getmntent(stream) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn endmntent(stream: *mut c_void) -> c_int {
+    unsafe { libc_endmntent(stream) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn hasmntopt(mnt: *const c_void, opt: *const c_char) -> *mut c_char {
+    unsafe { libc_hasmntopt(mnt, opt) }
+}
+
+// ---------------------------------------------------------------------------
+// sendmmsg / recvmmsg — RawSyscall
+// ---------------------------------------------------------------------------
+
+/// `sendmmsg` — send multiple messages on a socket.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn sendmmsg(
+    sockfd: c_int, msgvec: *mut c_void, vlen: c_uint, flags: c_int,
+) -> c_int {
+    let rc = unsafe { libc::syscall(libc::SYS_sendmmsg, sockfd, msgvec, vlen, flags) } as c_int;
+    if rc < 0 {
+        let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::ENOTSUP);
+        unsafe { set_abi_errno(e) };
+    }
+    rc
+}
+
+/// `recvmmsg` — receive multiple messages on a socket.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn recvmmsg(
+    sockfd: c_int, msgvec: *mut c_void, vlen: c_uint, flags: c_int, timeout: *mut libc::timespec,
+) -> c_int {
+    let rc = unsafe { libc::syscall(libc::SYS_recvmmsg, sockfd, msgvec, vlen, flags, timeout) } as c_int;
+    if rc < 0 {
+        let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::ENOTSUP);
+        unsafe { set_abi_errno(e) };
+    }
+    rc
+}
+
+// ---------------------------------------------------------------------------
+// sched_rr_get_interval / sched_getaffinity CPU_COUNT helper
+// ---------------------------------------------------------------------------
+
+unsafe extern "C" {
+    #[link_name = "sched_rr_get_interval"]
+    fn libc_sched_rr_get_interval(pid: libc::pid_t, tp: *mut libc::timespec) -> c_int;
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn sched_rr_get_interval(pid: libc::pid_t, tp: *mut libc::timespec) -> c_int {
+    unsafe { libc_sched_rr_get_interval(pid, tp) }
+}
+
+// ---------------------------------------------------------------------------
+// res_init / res_query / res_search — GlibcCallThrough (resolver)
+// ---------------------------------------------------------------------------
+
+unsafe extern "C" {
+    #[link_name = "__res_init"]
+    fn libc_res_init() -> c_int;
+    #[link_name = "__res_query"]
+    fn libc_res_query(dname: *const c_char, class: c_int, type_: c_int, answer: *mut u8, anslen: c_int) -> c_int;
+    #[link_name = "__res_search"]
+    fn libc_res_search(dname: *const c_char, class: c_int, type_: c_int, answer: *mut u8, anslen: c_int) -> c_int;
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn res_init() -> c_int {
+    unsafe { libc_res_init() }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn res_query(dname: *const c_char, class: c_int, type_: c_int, answer: *mut u8, anslen: c_int) -> c_int {
+    unsafe { libc_res_query(dname, class, type_, answer, anslen) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn res_search(dname: *const c_char, class: c_int, type_: c_int, answer: *mut u8, anslen: c_int) -> c_int {
+    unsafe { libc_res_search(dname, class, type_, answer, anslen) }
+}
+
+// ---------------------------------------------------------------------------
+// _r variants for passwd/group — GlibcCallThrough
+// ---------------------------------------------------------------------------
+
+unsafe extern "C" {
+    #[link_name = "getpwent_r"]
+    fn libc_getpwent_r(pwd: *mut c_void, buf: *mut c_char, buflen: usize, result: *mut *mut c_void) -> c_int;
+    #[link_name = "getgrent_r"]
+    fn libc_getgrent_r(grp: *mut c_void, buf: *mut c_char, buflen: usize, result: *mut *mut c_void) -> c_int;
+    #[link_name = "fgetpwent"]
+    fn libc_fgetpwent(stream: *mut c_void) -> *mut c_void;
+    #[link_name = "fgetgrent"]
+    fn libc_fgetgrent(stream: *mut c_void) -> *mut c_void;
+    #[link_name = "getgrouplist"]
+    fn libc_getgrouplist(user: *const c_char, group: libc::gid_t, groups: *mut libc::gid_t, ngroups: *mut c_int) -> c_int;
+    #[link_name = "initgroups"]
+    fn libc_initgroups(user: *const c_char, group: libc::gid_t) -> c_int;
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getpwent_r(pwd: *mut c_void, buf: *mut c_char, buflen: usize, result: *mut *mut c_void) -> c_int {
+    unsafe { libc_getpwent_r(pwd, buf, buflen, result) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getgrent_r(grp: *mut c_void, buf: *mut c_char, buflen: usize, result: *mut *mut c_void) -> c_int {
+    unsafe { libc_getgrent_r(grp, buf, buflen, result) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn fgetpwent(stream: *mut c_void) -> *mut c_void {
+    unsafe { libc_fgetpwent(stream) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn fgetgrent(stream: *mut c_void) -> *mut c_void {
+    unsafe { libc_fgetgrent(stream) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getgrouplist(user: *const c_char, group: libc::gid_t, groups: *mut libc::gid_t, ngroups: *mut c_int) -> c_int {
+    unsafe { libc_getgrouplist(user, group, groups, ngroups) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn initgroups(user: *const c_char, group: libc::gid_t) -> c_int {
+    unsafe { libc_initgroups(user, group) }
+}

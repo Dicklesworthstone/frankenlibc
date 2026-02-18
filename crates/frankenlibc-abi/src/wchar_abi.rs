@@ -2111,3 +2111,93 @@ pub unsafe extern "C" fn vwscanf(format: *const libc::wchar_t, ap: *mut std::ffi
 pub unsafe extern "C" fn vswscanf(s: *const libc::wchar_t, format: *const libc::wchar_t, ap: *mut std::ffi::c_void) -> c_int {
     unsafe { libc_vswscanf(s, format, ap) }
 }
+
+// ---------------------------------------------------------------------------
+// Wide char classification extras — Implemented
+// ---------------------------------------------------------------------------
+
+/// POSIX `iswblank` — test for blank wide character.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn iswblank(wc: u32) -> c_int {
+    if wc == 0x20 || wc == 0x09 { 1 } else { 0 }
+}
+
+/// POSIX `iswcntrl` — test for control wide character.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn iswcntrl(wc: u32) -> c_int {
+    if wc < 0x20 || (0x7f..=0x9f).contains(&wc) { 1 } else { 0 }
+}
+
+/// POSIX `iswgraph` — test for graphic wide character.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn iswgraph(wc: u32) -> c_int {
+    if wchar_core::iswprint(wc) && wc != 0x20 { 1 } else { 0 }
+}
+
+/// POSIX `iswpunct` — test for punctuation wide character.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn iswpunct(wc: u32) -> c_int {
+    if wchar_core::iswprint(wc) && !wchar_core::iswalnum(wc) && wc != 0x20 { 1 } else { 0 }
+}
+
+/// POSIX `iswxdigit` — test for hexadecimal digit wide character.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn iswxdigit(wc: u32) -> c_int {
+    if (0x30..=0x39).contains(&wc) || (0x41..=0x46).contains(&wc) || (0x61..=0x66).contains(&wc) { 1 } else { 0 }
+}
+
+// ---------------------------------------------------------------------------
+// Wide string conversion extras — GlibcCallThrough
+// ---------------------------------------------------------------------------
+
+unsafe extern "C" {
+    #[link_name = "wcstoll"]
+    fn libc_wcstoll(nptr: *const libc::wchar_t, endptr: *mut *mut libc::wchar_t, base: c_int) -> i64;
+    #[link_name = "wcstoull"]
+    fn libc_wcstoull(nptr: *const libc::wchar_t, endptr: *mut *mut libc::wchar_t, base: c_int) -> u64;
+    #[link_name = "wcstof"]
+    fn libc_wcstof(nptr: *const libc::wchar_t, endptr: *mut *mut libc::wchar_t) -> f32;
+    #[link_name = "wcstold"]
+    fn libc_wcstold(nptr: *const libc::wchar_t, endptr: *mut *mut libc::wchar_t) -> f64;
+    #[link_name = "wcsftime"]
+    fn libc_wcsftime(s: *mut libc::wchar_t, maxsize: usize, format: *const libc::wchar_t, tm: *const std::ffi::c_void) -> usize;
+    #[link_name = "wcscoll"]
+    fn libc_wcscoll(s1: *const libc::wchar_t, s2: *const libc::wchar_t) -> c_int;
+    #[link_name = "wcsxfrm"]
+    fn libc_wcsxfrm(dest: *mut libc::wchar_t, src: *const libc::wchar_t, n: usize) -> usize;
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn wcstoll(nptr: *const libc::wchar_t, endptr: *mut *mut libc::wchar_t, base: c_int) -> i64 {
+    unsafe { libc_wcstoll(nptr, endptr, base) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn wcstoull(nptr: *const libc::wchar_t, endptr: *mut *mut libc::wchar_t, base: c_int) -> u64 {
+    unsafe { libc_wcstoull(nptr, endptr, base) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn wcstof(nptr: *const libc::wchar_t, endptr: *mut *mut libc::wchar_t) -> f32 {
+    unsafe { libc_wcstof(nptr, endptr) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn wcstold(nptr: *const libc::wchar_t, endptr: *mut *mut libc::wchar_t) -> f64 {
+    unsafe { libc_wcstold(nptr, endptr) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn wcsftime(s: *mut libc::wchar_t, maxsize: usize, format: *const libc::wchar_t, tm: *const std::ffi::c_void) -> usize {
+    unsafe { libc_wcsftime(s, maxsize, format, tm) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn wcscoll(s1: *const libc::wchar_t, s2: *const libc::wchar_t) -> c_int {
+    unsafe { libc_wcscoll(s1, s2) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn wcsxfrm(dest: *mut libc::wchar_t, src: *const libc::wchar_t, n: usize) -> usize {
+    unsafe { libc_wcsxfrm(dest, src, n) }
+}

@@ -95,6 +95,22 @@ GLIBC_2.2.5 {
         wcstoul;
         wcstod;
 
+        /* wide char classification extras */
+        iswblank;
+        iswcntrl;
+        iswgraph;
+        iswpunct;
+        iswxdigit;
+
+        /* wide string conversion extras */
+        wcstoll;
+        wcstoull;
+        wcstof;
+        wcstold;
+        wcsftime;
+        wcscoll;
+        wcsxfrm;
+
         /* wide I/O */
         fgetwc;
         fputwc;
@@ -967,6 +983,49 @@ GLIBC_2.2.5 {
         execl;
         execlp;
         execle;
+
+        /* POSIX timers */
+        timer_create;
+        timer_settime;
+        timer_gettime;
+        timer_delete;
+        timer_getoverrun;
+
+        /* POSIX async I/O */
+        aio_read;
+        aio_write;
+        aio_error;
+        aio_return;
+        aio_cancel;
+        aio_suspend;
+        aio_fsync;
+        lio_listio;
+
+        /* mount table */
+        setmntent;
+        getmntent;
+        endmntent;
+        hasmntopt;
+
+        /* multi-message socket */
+        sendmmsg;
+        recvmmsg;
+
+        /* scheduler */
+        sched_rr_get_interval;
+
+        /* resolver */
+        res_init;
+        res_query;
+        res_search;
+
+        /* passwd/group extras */
+        getpwent_r;
+        getgrent_r;
+        fgetpwent;
+        fgetgrent;
+        getgrouplist;
+        initgroups;
 
         /* utmp */
         getutent;
