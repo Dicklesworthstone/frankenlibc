@@ -333,3 +333,22 @@ pub unsafe extern "C" fn waitid(
 pub unsafe extern "C" fn vfork() -> libc::pid_t {
     unsafe { fork() }
 }
+
+// ---------------------------------------------------------------------------
+// exec family — GlibcCallThrough (variadic exec functions)
+// ---------------------------------------------------------------------------
+
+unsafe extern "C" {
+    #[link_name = "execvpe"]
+    fn libc_execvpe(file: *const c_char, argv: *const *const c_char, envp: *const *const c_char) -> c_int;
+}
+
+/// POSIX `execvpe` — exec with path search and custom environment.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn execvpe(
+    file: *const c_char,
+    argv: *const *const c_char,
+    envp: *const *const c_char,
+) -> c_int {
+    unsafe { libc_execvpe(file, argv, envp) }
+}

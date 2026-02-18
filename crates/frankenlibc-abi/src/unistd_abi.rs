@@ -1755,3 +1755,106 @@ pub unsafe extern "C" fn getopt_long(
 // Note: getopt global variables (optarg, optind, opterr, optopt) are provided
 // by glibc and will be available to programs through the glibc linkage since
 // we delegate to libc_getopt. Programs using LD_PRELOAD will see glibc's globals.
+
+// ---------------------------------------------------------------------------
+// syslog — GlibcCallThrough
+// ---------------------------------------------------------------------------
+
+unsafe extern "C" {
+    #[link_name = "openlog"]
+    fn libc_openlog(ident: *const c_char, option: c_int, facility: c_int);
+    #[link_name = "closelog"]
+    fn libc_closelog();
+    #[link_name = "vsyslog"]
+    fn libc_vsyslog(priority: c_int, format: *const c_char, ap: *mut c_void);
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn openlog(ident: *const c_char, option: c_int, facility: c_int) {
+    unsafe { libc_openlog(ident, option, facility) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn syslog(priority: c_int, format: *const c_char, mut args: ...) {
+    unsafe { libc_vsyslog(priority, format, (&mut args) as *mut _ as *mut c_void) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn closelog() {
+    unsafe { libc_closelog() }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn vsyslog(priority: c_int, format: *const c_char, ap: *mut c_void) {
+    unsafe { libc_vsyslog(priority, format, ap) }
+}
+
+// ---------------------------------------------------------------------------
+// misc POSIX — GlibcCallThrough
+// ---------------------------------------------------------------------------
+
+unsafe extern "C" {
+    #[link_name = "confstr"]
+    fn libc_confstr(name: c_int, buf: *mut c_char, len: usize) -> usize;
+    #[link_name = "pathconf"]
+    fn libc_pathconf(path: *const c_char, name: c_int) -> libc::c_long;
+    #[link_name = "fpathconf"]
+    fn libc_fpathconf(fd: c_int, name: c_int) -> libc::c_long;
+    #[link_name = "nice"]
+    fn libc_nice(inc: c_int) -> c_int;
+    #[link_name = "daemon"]
+    fn libc_daemon(nochdir: c_int, noclose: c_int) -> c_int;
+    #[link_name = "getpagesize"]
+    fn libc_getpagesize() -> c_int;
+    #[link_name = "gethostid"]
+    fn libc_gethostid() -> libc::c_long;
+    #[link_name = "getdomainname"]
+    fn libc_getdomainname(name: *mut c_char, len: usize) -> c_int;
+    #[link_name = "mkdtemp"]
+    fn libc_mkdtemp(template: *mut c_char) -> *mut c_char;
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn confstr(name: c_int, buf: *mut c_char, len: usize) -> usize {
+    unsafe { libc_confstr(name, buf, len) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pathconf(path: *const c_char, name: c_int) -> libc::c_long {
+    unsafe { libc_pathconf(path, name) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn fpathconf(fd: c_int, name: c_int) -> libc::c_long {
+    unsafe { libc_fpathconf(fd, name) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn nice(inc: c_int) -> c_int {
+    unsafe { libc_nice(inc) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn daemon(nochdir: c_int, noclose: c_int) -> c_int {
+    unsafe { libc_daemon(nochdir, noclose) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getpagesize() -> c_int {
+    unsafe { libc_getpagesize() }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn gethostid() -> libc::c_long {
+    unsafe { libc_gethostid() }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getdomainname(name: *mut c_char, len: usize) -> c_int {
+    unsafe { libc_getdomainname(name, len) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn mkdtemp(template: *mut c_char) -> *mut c_char {
+    unsafe { libc_mkdtemp(template) }
+}

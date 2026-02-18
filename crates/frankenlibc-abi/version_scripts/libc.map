@@ -441,6 +441,12 @@ GLIBC_2.2.5 {
         freeaddrinfo;
         getnameinfo;
         gai_strerror;
+        gethostbyname;
+        gethostbyaddr;
+        getservbyname;
+        getservbyport;
+        getprotobyname;
+        getprotobynumber;
 
         /* inet / network byte order */
         htons;
@@ -556,6 +562,7 @@ GLIBC_2.2.5 {
         wait4;
         waitid;
         _exit;
+        execvpe;
 
         /* signal */
         signal;
@@ -573,6 +580,8 @@ GLIBC_2.2.5 {
         pause;
         sigsuspend;
         sigaltstack;
+        sigwait;
+        sigpending;
 
         /* setjmp / longjmp */
         setjmp;
@@ -632,6 +641,10 @@ GLIBC_2.2.5 {
         opendir;
         closedir;
         readdir;
+        seekdir;
+        telldir;
+        rewinddir;
+        scandir;
 
         /* time */
         time;
@@ -677,6 +690,32 @@ GLIBC_2.2.5 {
         dlclose;
         dlsym;
         dlerror;
+
+        /* syslog */
+        openlog;
+        syslog;
+        closelog;
+        vsyslog;
+
+        /* regex / pattern matching */
+        regcomp;
+        regexec;
+        regfree;
+        regerror;
+        fnmatch;
+        glob;
+        globfree;
+
+        /* misc POSIX */
+        confstr;
+        pathconf;
+        fpathconf;
+        nice;
+        daemon;
+        getpagesize;
+        gethostid;
+        getdomainname;
+        mkdtemp;
 
     local:
         *;

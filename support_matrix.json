@@ -5126,13 +5126,311 @@
       "strict_semantics": "One-time initialization with futex-based once control.",
       "hardened_semantics": "Same.",
       "default_stub": "Returns EINVAL"
+    },
+    {
+      "symbol": "seekdir",
+      "status": "GlibcCallThrough",
+      "module": "dirent_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc seekdir",
+      "hardened_semantics": "Passthrough to glibc seekdir",
+      "default_stub": false
+    },
+    {
+      "symbol": "telldir",
+      "status": "GlibcCallThrough",
+      "module": "dirent_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc telldir",
+      "hardened_semantics": "Passthrough to glibc telldir",
+      "default_stub": false
+    },
+    {
+      "symbol": "rewinddir",
+      "status": "GlibcCallThrough",
+      "module": "dirent_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc rewinddir",
+      "hardened_semantics": "Passthrough to glibc rewinddir",
+      "default_stub": false
+    },
+    {
+      "symbol": "scandir",
+      "status": "GlibcCallThrough",
+      "module": "dirent_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc scandir",
+      "hardened_semantics": "Passthrough to glibc scandir",
+      "default_stub": false
+    },
+    {
+      "symbol": "openlog",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc openlog",
+      "hardened_semantics": "Passthrough to glibc openlog",
+      "default_stub": false
+    },
+    {
+      "symbol": "syslog",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "Variadic forwarded via vsyslog to glibc",
+      "hardened_semantics": "Variadic forwarded via vsyslog to glibc",
+      "default_stub": false
+    },
+    {
+      "symbol": "closelog",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc closelog",
+      "hardened_semantics": "Passthrough to glibc closelog",
+      "default_stub": false
+    },
+    {
+      "symbol": "vsyslog",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc vsyslog",
+      "hardened_semantics": "Passthrough to glibc vsyslog",
+      "default_stub": false
+    },
+    {
+      "symbol": "regcomp",
+      "status": "GlibcCallThrough",
+      "module": "string_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc regcomp",
+      "hardened_semantics": "Passthrough to glibc regcomp",
+      "default_stub": false
+    },
+    {
+      "symbol": "regexec",
+      "status": "GlibcCallThrough",
+      "module": "string_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc regexec",
+      "hardened_semantics": "Passthrough to glibc regexec",
+      "default_stub": false
+    },
+    {
+      "symbol": "regfree",
+      "status": "GlibcCallThrough",
+      "module": "string_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc regfree",
+      "hardened_semantics": "Passthrough to glibc regfree",
+      "default_stub": false
+    },
+    {
+      "symbol": "regerror",
+      "status": "GlibcCallThrough",
+      "module": "string_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc regerror",
+      "hardened_semantics": "Passthrough to glibc regerror",
+      "default_stub": false
+    },
+    {
+      "symbol": "fnmatch",
+      "status": "GlibcCallThrough",
+      "module": "string_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc fnmatch",
+      "hardened_semantics": "Passthrough to glibc fnmatch",
+      "default_stub": false
+    },
+    {
+      "symbol": "glob",
+      "status": "GlibcCallThrough",
+      "module": "string_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc glob",
+      "hardened_semantics": "Passthrough to glibc glob",
+      "default_stub": false
+    },
+    {
+      "symbol": "globfree",
+      "status": "GlibcCallThrough",
+      "module": "string_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc globfree",
+      "hardened_semantics": "Passthrough to glibc globfree",
+      "default_stub": false
+    },
+    {
+      "symbol": "execvpe",
+      "status": "GlibcCallThrough",
+      "module": "process_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc execvpe",
+      "hardened_semantics": "Passthrough to glibc execvpe",
+      "default_stub": false
+    },
+    {
+      "symbol": "sigwait",
+      "status": "GlibcCallThrough",
+      "module": "signal_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc sigwait",
+      "hardened_semantics": "Passthrough to glibc sigwait",
+      "default_stub": false
+    },
+    {
+      "symbol": "sigpending",
+      "status": "GlibcCallThrough",
+      "module": "signal_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc sigpending",
+      "hardened_semantics": "Passthrough to glibc sigpending",
+      "default_stub": false
+    },
+    {
+      "symbol": "gethostbyname",
+      "status": "GlibcCallThrough",
+      "module": "resolv_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc gethostbyname",
+      "hardened_semantics": "Passthrough to glibc gethostbyname",
+      "default_stub": false
+    },
+    {
+      "symbol": "gethostbyaddr",
+      "status": "GlibcCallThrough",
+      "module": "resolv_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc gethostbyaddr",
+      "hardened_semantics": "Passthrough to glibc gethostbyaddr",
+      "default_stub": false
+    },
+    {
+      "symbol": "getservbyname",
+      "status": "GlibcCallThrough",
+      "module": "resolv_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc getservbyname",
+      "hardened_semantics": "Passthrough to glibc getservbyname",
+      "default_stub": false
+    },
+    {
+      "symbol": "getservbyport",
+      "status": "GlibcCallThrough",
+      "module": "resolv_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc getservbyport",
+      "hardened_semantics": "Passthrough to glibc getservbyport",
+      "default_stub": false
+    },
+    {
+      "symbol": "getprotobyname",
+      "status": "GlibcCallThrough",
+      "module": "resolv_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc getprotobyname",
+      "hardened_semantics": "Passthrough to glibc getprotobyname",
+      "default_stub": false
+    },
+    {
+      "symbol": "getprotobynumber",
+      "status": "GlibcCallThrough",
+      "module": "resolv_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc getprotobynumber",
+      "hardened_semantics": "Passthrough to glibc getprotobynumber",
+      "default_stub": false
+    },
+    {
+      "symbol": "confstr",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc confstr",
+      "hardened_semantics": "Passthrough to glibc confstr",
+      "default_stub": false
+    },
+    {
+      "symbol": "pathconf",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc pathconf",
+      "hardened_semantics": "Passthrough to glibc pathconf",
+      "default_stub": false
+    },
+    {
+      "symbol": "fpathconf",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc fpathconf",
+      "hardened_semantics": "Passthrough to glibc fpathconf",
+      "default_stub": false
+    },
+    {
+      "symbol": "nice",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc nice",
+      "hardened_semantics": "Passthrough to glibc nice",
+      "default_stub": false
+    },
+    {
+      "symbol": "daemon",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc daemon",
+      "hardened_semantics": "Passthrough to glibc daemon",
+      "default_stub": false
+    },
+    {
+      "symbol": "getpagesize",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc getpagesize",
+      "hardened_semantics": "Passthrough to glibc getpagesize",
+      "default_stub": false
+    },
+    {
+      "symbol": "gethostid",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc gethostid",
+      "hardened_semantics": "Passthrough to glibc gethostid",
+      "default_stub": false
+    },
+    {
+      "symbol": "getdomainname",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc getdomainname",
+      "hardened_semantics": "Passthrough to glibc getdomainname",
+      "default_stub": false
+    },
+    {
+      "symbol": "mkdtemp",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc mkdtemp",
+      "hardened_semantics": "Passthrough to glibc mkdtemp",
+      "default_stub": false
     }
   ],
   "summary": {
-    "Implemented": 383,
-    "RawSyscall": 172,
-    "GlibcCallThrough": 39,
-    "total_exported": 594
+    "total_exported": 627,
+    "implemented": 383,
+    "raw_syscall": 172,
+    "glibc_call_through": 72,
+    "stub": 0
   },
   "implemented": 383,
   "raw_syscall": 172,

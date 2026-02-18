@@ -4,7 +4,7 @@
 //! Parsing of raw kernel dirent buffers delegates to `frankenlibc_core::dirent`.
 
 use std::collections::HashMap;
-use std::ffi::{c_char, c_int};
+use std::ffi::{c_char, c_int, c_void};
 use std::sync::Mutex;
 
 use frankenlibc_core::dirent as dirent_core;
@@ -271,4 +271,51 @@ pub unsafe extern "C" fn closedir(dirp: *mut DIR) -> c_int {
             }
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Additional directory functions — GlibcCallThrough
+// ---------------------------------------------------------------------------
+
+unsafe extern "C" {
+    #[link_name = "seekdir"]
+    fn libc_seekdir(dirp: *mut c_void, loc: c_long);
+    #[link_name = "telldir"]
+    fn libc_telldir(dirp: *mut c_void) -> c_long;
+    #[link_name = "rewinddir"]
+    fn libc_rewinddir(dirp: *mut c_void);
+    #[link_name = "scandir"]
+    fn libc_scandir(
+        dirp: *const c_char,
+        namelist: *mut *mut *mut libc::dirent,
+        filter: Option<unsafe extern "C" fn(*const libc::dirent) -> c_int>,
+        compar: Option<unsafe extern "C" fn(*mut *const libc::dirent, *mut *const libc::dirent) -> c_int>,
+    ) -> c_int;
+}
+
+use std::os::raw::c_long;
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn seekdir(dirp: *mut c_void, loc: c_long) {
+    unsafe { libc_seekdir(dirp, loc) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn telldir(dirp: *mut c_void) -> c_long {
+    unsafe { libc_telldir(dirp) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn rewinddir(dirp: *mut c_void) {
+    unsafe { libc_rewinddir(dirp) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn scandir(
+    dirp: *const c_char,
+    namelist: *mut *mut *mut libc::dirent,
+    filter: Option<unsafe extern "C" fn(*const libc::dirent) -> c_int>,
+    compar: Option<unsafe extern "C" fn(*mut *const libc::dirent, *mut *const libc::dirent) -> c_int>,
+) -> c_int {
+    unsafe { libc_scandir(dirp, namelist, filter, compar) }
 }

@@ -407,3 +407,24 @@ pub unsafe extern "C" fn sigaction(
     runtime_policy::observe(ApiFamily::Signal, decision.profile, 10, adverse);
     rc
 }
+
+// ---------------------------------------------------------------------------
+// Additional signal functions — GlibcCallThrough
+// ---------------------------------------------------------------------------
+
+unsafe extern "C" {
+    #[link_name = "sigwait"]
+    fn libc_sigwait(set: *const libc::sigset_t, sig: *mut c_int) -> c_int;
+    #[link_name = "sigpending"]
+    fn libc_sigpending(set: *mut libc::sigset_t) -> c_int;
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn sigwait(set: *const libc::sigset_t, sig: *mut c_int) -> c_int {
+    unsafe { libc_sigwait(set, sig) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn sigpending(set: *mut libc::sigset_t) -> c_int {
+    unsafe { libc_sigpending(set) }
+}

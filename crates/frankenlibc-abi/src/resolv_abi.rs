@@ -9,7 +9,7 @@
 #![allow(clippy::missing_safety_doc)]
 #![allow(clippy::int_plus_one)]
 
-use std::ffi::{CStr, c_char, c_int};
+use std::ffi::{CStr, c_char, c_int, c_void};
 use std::mem::size_of;
 use std::net::{Ipv4Addr, Ipv6Addr};
 use std::ptr;
@@ -548,4 +548,53 @@ pub unsafe extern "C" fn gai_strerror(errcode: c_int) -> *const c_char {
         libc::EAI_OVERFLOW => c"Argument buffer overflow".as_ptr(),
         _ => c"Unknown getaddrinfo error".as_ptr(),
     }
+}
+
+// ---------------------------------------------------------------------------
+// Legacy network database — GlibcCallThrough (deprecated but widely used)
+// ---------------------------------------------------------------------------
+
+unsafe extern "C" {
+    #[link_name = "gethostbyname"]
+    fn libc_gethostbyname(name: *const c_char) -> *mut c_void;
+    #[link_name = "gethostbyaddr"]
+    fn libc_gethostbyaddr(addr: *const c_void, len: libc::socklen_t, af: c_int) -> *mut c_void;
+    #[link_name = "getservbyname"]
+    fn libc_getservbyname(name: *const c_char, proto: *const c_char) -> *mut c_void;
+    #[link_name = "getservbyport"]
+    fn libc_getservbyport(port: c_int, proto: *const c_char) -> *mut c_void;
+    #[link_name = "getprotobyname"]
+    fn libc_getprotobyname(name: *const c_char) -> *mut c_void;
+    #[link_name = "getprotobynumber"]
+    fn libc_getprotobynumber(proto: c_int) -> *mut c_void;
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn gethostbyname(name: *const c_char) -> *mut c_void {
+    unsafe { libc_gethostbyname(name) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn gethostbyaddr(addr: *const c_void, len: libc::socklen_t, af: c_int) -> *mut c_void {
+    unsafe { libc_gethostbyaddr(addr, len, af) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getservbyname(name: *const c_char, proto: *const c_char) -> *mut c_void {
+    unsafe { libc_getservbyname(name, proto) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getservbyport(port: c_int, proto: *const c_char) -> *mut c_void {
+    unsafe { libc_getservbyport(port, proto) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getprotobyname(name: *const c_char) -> *mut c_void {
+    unsafe { libc_getprotobyname(name) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getprotobynumber(proto: c_int) -> *mut c_void {
+    unsafe { libc_getprotobynumber(proto) }
 }

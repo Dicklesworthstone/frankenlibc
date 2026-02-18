@@ -4266,3 +4266,91 @@ pub unsafe extern "C" fn rindex(s: *const c_char, c: c_int) -> *mut c_char {
     // SAFETY: same contract as strrchr.
     unsafe { strrchr(s, c) }
 }
+
+// ---------------------------------------------------------------------------
+// regex — GlibcCallThrough (POSIX regex.h)
+// ---------------------------------------------------------------------------
+
+unsafe extern "C" {
+    #[link_name = "regcomp"]
+    fn libc_regcomp(preg: *mut c_void, pattern: *const c_char, cflags: c_int) -> c_int;
+    #[link_name = "regexec"]
+    fn libc_regexec(
+        preg: *const c_void,
+        string: *const c_char,
+        nmatch: usize,
+        pmatch: *mut c_void,
+        eflags: c_int,
+    ) -> c_int;
+    #[link_name = "regfree"]
+    fn libc_regfree(preg: *mut c_void);
+    #[link_name = "regerror"]
+    fn libc_regerror(
+        errcode: c_int,
+        preg: *const c_void,
+        errbuf: *mut c_char,
+        errbuf_size: usize,
+    ) -> usize;
+    #[link_name = "fnmatch"]
+    fn libc_fnmatch(pattern: *const c_char, string: *const c_char, flags: c_int) -> c_int;
+    #[link_name = "glob"]
+    fn libc_glob(
+        pattern: *const c_char,
+        flags: c_int,
+        errfunc: Option<unsafe extern "C" fn(*const c_char, c_int) -> c_int>,
+        pglob: *mut c_void,
+    ) -> c_int;
+    #[link_name = "globfree"]
+    fn libc_globfree(pglob: *mut c_void);
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn regcomp(preg: *mut c_void, pattern: *const c_char, cflags: c_int) -> c_int {
+    unsafe { libc_regcomp(preg, pattern, cflags) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn regexec(
+    preg: *const c_void,
+    string: *const c_char,
+    nmatch: usize,
+    pmatch: *mut c_void,
+    eflags: c_int,
+) -> c_int {
+    unsafe { libc_regexec(preg, string, nmatch, pmatch, eflags) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn regfree(preg: *mut c_void) {
+    unsafe { libc_regfree(preg) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn regerror(
+    errcode: c_int,
+    preg: *const c_void,
+    errbuf: *mut c_char,
+    errbuf_size: usize,
+) -> usize {
+    unsafe { libc_regerror(errcode, preg, errbuf, errbuf_size) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn fnmatch(pattern: *const c_char, string: *const c_char, flags: c_int) -> c_int {
+    unsafe { libc_fnmatch(pattern, string, flags) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn glob(
+    pattern: *const c_char,
+    flags: c_int,
+    errfunc: Option<unsafe extern "C" fn(*const c_char, c_int) -> c_int>,
+    pglob: *mut c_void,
+) -> c_int {
+    unsafe { libc_glob(pattern, flags, errfunc, pglob) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn globfree(pglob: *mut c_void) {
+    unsafe { libc_globfree(pglob) }
+}
