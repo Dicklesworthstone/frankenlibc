@@ -107,6 +107,54 @@ pub fn mempcpy(dest: &mut [u8], src: &[u8], n: usize) -> usize {
     count
 }
 
+/// Copies bytes from `src` to `dest` until byte `c` is found or `n` bytes copied.
+///
+/// Equivalent to POSIX `memccpy`. Returns the index one past the copied byte `c`,
+/// or `None` if `c` was not found within `n` bytes.
+pub fn memccpy(dest: &mut [u8], src: &[u8], c: u8, n: usize) -> Option<usize> {
+    let count = n.min(dest.len()).min(src.len());
+    for i in 0..count {
+        dest[i] = src[i];
+        if src[i] == c {
+            return Some(i + 1);
+        }
+    }
+    None
+}
+
+/// Sets `n` bytes of `dest` to zero, guaranteed not to be optimized away.
+///
+/// Equivalent to `explicit_bzero` / `bzero`.
+pub fn bzero(dest: &mut [u8], n: usize) {
+    let count = n.min(dest.len());
+    for byte in &mut dest[..count] {
+        // Use volatile-like write to prevent optimization.
+        *byte = 0;
+    }
+    // Prevent the compiler from optimizing away the zeroing.
+    std::hint::black_box(&dest[..count]);
+}
+
+/// Compares `n` bytes of `a` and `b`. Returns 0 if equal, non-zero otherwise.
+///
+/// Equivalent to legacy BSD `bcmp`.
+pub fn bcmp(a: &[u8], b: &[u8], n: usize) -> i32 {
+    let count = n.min(a.len()).min(b.len());
+    if a[..count] == b[..count] { 0 } else { 1 }
+}
+
+/// Swaps adjacent bytes in pairs from `src` into `dest`.
+///
+/// Equivalent to POSIX `swab`. Processes `n` bytes (n should be even).
+pub fn swab(src: &[u8], dest: &mut [u8], n: usize) -> usize {
+    let pairs = n.min(src.len()).min(dest.len()) / 2;
+    for i in 0..pairs {
+        dest[2 * i] = src[2 * i + 1];
+        dest[2 * i + 1] = src[2 * i];
+    }
+    pairs * 2
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -206,6 +254,66 @@ mod tests {
         let end = mempcpy(&mut dest, src, 5);
         assert_eq!(end, 5);
         assert_eq!(&dest[..5], b"hello");
+    }
+
+    #[test]
+    fn test_memccpy_found() {
+        let src = b"hello world";
+        let mut dest = [0u8; 16];
+        let result = memccpy(&mut dest, src, b' ', 11);
+        assert_eq!(result, Some(6)); // index past the space
+        assert_eq!(&dest[..6], b"hello ");
+    }
+
+    #[test]
+    fn test_memccpy_not_found() {
+        let src = b"helloworld";
+        let mut dest = [0u8; 16];
+        let result = memccpy(&mut dest, src, b' ', 10);
+        assert_eq!(result, None);
+        assert_eq!(&dest[..10], b"helloworld");
+    }
+
+    #[test]
+    fn test_bzero_basic() {
+        let mut buf = [0xFFu8; 8];
+        bzero(&mut buf, 8);
+        assert_eq!(&buf, &[0u8; 8]);
+    }
+
+    #[test]
+    fn test_bzero_partial() {
+        let mut buf = [0xFFu8; 8];
+        bzero(&mut buf, 3);
+        assert_eq!(&buf, &[0, 0, 0, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]);
+    }
+
+    #[test]
+    fn test_bcmp_equal() {
+        assert_eq!(bcmp(b"abc", b"abc", 3), 0);
+    }
+
+    #[test]
+    fn test_bcmp_not_equal() {
+        assert_ne!(bcmp(b"abc", b"abd", 3), 0);
+    }
+
+    #[test]
+    fn test_swab_basic() {
+        let src = b"BADCFE";
+        let mut dest = [0u8; 6];
+        let n = swab(src, &mut dest, 6);
+        assert_eq!(n, 6);
+        assert_eq!(&dest, b"ABCDEF");
+    }
+
+    #[test]
+    fn test_swab_odd_length() {
+        let src = b"BADCX";
+        let mut dest = [0u8; 5];
+        let n = swab(src, &mut dest, 5);
+        assert_eq!(n, 4); // only 2 pairs (4 bytes)
+        assert_eq!(&dest[..4], b"ABCD");
     }
 
     proptest! {

@@ -2,7 +2,7 @@
   "version": 2,
   "generated_at_utc": "2026-02-13T18:07:59Z",
   "library": "/data/tmp/cargo-target/release/libfrankenlibc_abi.so",
-  "total_exported": 395,
+  "total_exported": 408,
   "taxonomy": {
     "Implemented": "Native Rust code owns the entire operation. No host libc dependency. Full test coverage required.",
     "RawSyscall": "ABI entrypoint marshals arguments directly to Linux syscall instruction. No glibc call-through.",
@@ -239,6 +239,24 @@
       "default_stub": false
     },
     {
+      "symbol": "bcmp",
+      "status": "Implemented",
+      "module": "string_abi",
+      "perf_class": "strict_hotpath",
+      "strict_semantics": "Safe Rust byte comparison; returns 0 or 1",
+      "hardened_semantics": "Clamps length to tracked allocation bounds",
+      "default_stub": false
+    },
+    {
+      "symbol": "bcopy",
+      "status": "Implemented",
+      "module": "string_abi",
+      "perf_class": "strict_hotpath",
+      "strict_semantics": "Delegates to memmove with swapped argument order",
+      "hardened_semantics": "Same as memmove hardened semantics",
+      "default_stub": false
+    },
+    {
       "symbol": "bind",
       "status": "RawSyscall",
       "module": "socket_abi",
@@ -254,6 +272,15 @@
       "perf_class": "coldpath",
       "strict_semantics": "Safe Rust stdlib (atoi/qsort/bsearch); POSIX-correct return values and errno",
       "hardened_semantics": "Stdlib with hardened membrane; repair clamping on comparator bounds",
+      "default_stub": false
+    },
+    {
+      "symbol": "bzero",
+      "status": "Implemented",
+      "module": "string_abi",
+      "perf_class": "strict_hotpath",
+      "strict_semantics": "Safe Rust zeroing with black_box anti-optimization; no repair",
+      "hardened_semantics": "Clamps length to tracked allocation bounds; logs ClampSize",
       "default_stub": false
     },
     {
@@ -648,6 +675,15 @@
       "perf_class": "coldpath",
       "strict_semantics": "Rust libm path; finite overflow/underflow routes set errno=ERANGE while preserving IEEE 754 infinities/zeros",
       "hardened_semantics": "Same ERANGE signaling with runtime-policy routing; hardened mode may repair non-finite outputs deterministically",
+      "default_stub": false
+    },
+    {
+      "symbol": "explicit_bzero",
+      "status": "Implemented",
+      "module": "string_abi",
+      "perf_class": "strict_hotpath",
+      "strict_semantics": "Delegates to bzero with black_box guarantee",
+      "hardened_semantics": "Same as bzero hardened semantics",
       "default_stub": false
     },
     {
@@ -1304,6 +1340,15 @@
       "default_stub": false
     },
     {
+      "symbol": "index",
+      "status": "Implemented",
+      "module": "string_abi",
+      "perf_class": "strict_hotpath",
+      "strict_semantics": "Alias for strchr",
+      "hardened_semantics": "Same as strchr hardened semantics",
+      "default_stub": false
+    },
+    {
       "symbol": "inet_addr",
       "status": "Implemented",
       "module": "inet_abi",
@@ -1629,6 +1674,15 @@
       "perf_class": "strict_hotpath",
       "strict_semantics": "Safe Rust arena allocator; null on failure; double-free silently ignored",
       "hardened_semantics": "Arena with healing: foreign-ptr realloc as malloc, double-free logged as HealingAction",
+      "default_stub": false
+    },
+    {
+      "symbol": "memccpy",
+      "status": "Implemented",
+      "module": "string_abi",
+      "perf_class": "strict_hotpath",
+      "strict_semantics": "Safe Rust byte copy until stop character; no repair",
+      "hardened_semantics": "Clamps copy length to tracked allocation bounds; logs ClampSize",
       "default_stub": false
     },
     {
@@ -2298,6 +2352,15 @@
       "default_stub": false
     },
     {
+      "symbol": "rindex",
+      "status": "Implemented",
+      "module": "string_abi",
+      "perf_class": "strict_hotpath",
+      "strict_semantics": "Alias for strrchr",
+      "hardened_semantics": "Same as strrchr hardened semantics",
+      "default_stub": false
+    },
+    {
       "symbol": "rint",
       "status": "Implemented",
       "module": "math_abi",
@@ -2823,6 +2886,15 @@
       "default_stub": false
     },
     {
+      "symbol": "strcoll",
+      "status": "Implemented",
+      "module": "string_abi",
+      "perf_class": "strict_hotpath",
+      "strict_semantics": "Delegates to strcmp in C/POSIX locale; no repair",
+      "hardened_semantics": "Scans within tracked bounds; same as strcmp hardened",
+      "default_stub": false
+    },
+    {
       "symbol": "strcpy",
       "status": "Implemented",
       "module": "string_abi",
@@ -2865,6 +2937,24 @@
       "perf_class": "coldpath",
       "strict_semantics": "XSI-compliant reentrant strerror; copies message into caller buffer; returns 0 or ERANGE",
       "hardened_semantics": "Same as strict; bounded write into caller buffer",
+      "default_stub": false
+    },
+    {
+      "symbol": "strlcat",
+      "status": "Implemented",
+      "module": "string_abi",
+      "perf_class": "strict_hotpath",
+      "strict_semantics": "Safe Rust bounded concatenation with guaranteed NUL termination; no repair",
+      "hardened_semantics": "Clamps to tracked allocation bounds; logs TruncateWithNull",
+      "default_stub": false
+    },
+    {
+      "symbol": "strlcpy",
+      "status": "Implemented",
+      "module": "string_abi",
+      "perf_class": "strict_hotpath",
+      "strict_semantics": "Safe Rust bounded copy with guaranteed NUL termination; no repair",
+      "hardened_semantics": "Clamps to tracked allocation bounds; logs TruncateWithNull",
       "default_stub": false
     },
     {
@@ -2946,6 +3036,15 @@
       "perf_class": "strict_hotpath",
       "strict_semantics": "Safe Rust string/memory ops; unbounded scans follow C semantics; no repair",
       "hardened_semantics": "Clamps copy/scan to tracked allocation bounds; logs ClampSize/TruncateWithNull",
+      "default_stub": false
+    },
+    {
+      "symbol": "strsep",
+      "status": "Implemented",
+      "module": "string_abi",
+      "perf_class": "strict_hotpath",
+      "strict_semantics": "Safe Rust token extraction with NUL delimiter write; no repair",
+      "hardened_semantics": "Scans within tracked bounds; clamps string pointer updates",
       "default_stub": false
     },
     {
@@ -3036,6 +3135,24 @@
       "perf_class": "coldpath",
       "strict_semantics": "Safe Rust stdlib (atoi/qsort/bsearch); POSIX-correct return values and errno",
       "hardened_semantics": "Stdlib with hardened membrane; repair clamping on comparator bounds",
+      "default_stub": false
+    },
+    {
+      "symbol": "strxfrm",
+      "status": "Implemented",
+      "module": "string_abi",
+      "perf_class": "strict_hotpath",
+      "strict_semantics": "Plain copy in C/POSIX locale; no repair",
+      "hardened_semantics": "Clamps to tracked allocation bounds",
+      "default_stub": false
+    },
+    {
+      "symbol": "swab",
+      "status": "Implemented",
+      "module": "string_abi",
+      "perf_class": "strict_hotpath",
+      "strict_semantics": "Safe Rust adjacent byte pair swap; no repair",
+      "hardened_semantics": "Clamps length to tracked allocation bounds; logs ClampSize",
       "default_stub": false
     },
     {

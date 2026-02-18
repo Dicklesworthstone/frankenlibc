@@ -360,6 +360,81 @@ pub fn strndup_bytes(s: &[u8], n: usize) -> Vec<u8> {
     out
 }
 
+/// Extracts the next token from a NUL-terminated string, using `delim` as delimiter set.
+///
+/// Equivalent to BSD `strsep`. Modifies `s` in place by writing a NUL at the delimiter.
+/// Returns `(token_start, next_start)` or `None` if `s` starts with NUL.
+pub fn strsep(s: &mut [u8], delim: &[u8]) -> Option<(usize, usize)> {
+    let s_len = strlen(s);
+    if s_len == 0 {
+        return None;
+    }
+    let delim_len = strlen(delim);
+    let delim_set = &delim[..delim_len];
+
+    for (i, byte) in s[..s_len].iter_mut().enumerate() {
+        if delim_set.contains(byte) {
+            *byte = 0;
+            return Some((0, i + 1));
+        }
+    }
+    // No delimiter found - entire string is the token.
+    Some((0, s_len))
+}
+
+/// Copies `src` into `dest` with size limit, always NUL-terminating.
+///
+/// Equivalent to BSD `strlcpy`. Returns the length of `src` (not counting NUL).
+pub fn strlcpy(dest: &mut [u8], src: &[u8]) -> usize {
+    let src_len = strlen(src);
+    if dest.is_empty() {
+        return src_len;
+    }
+    let copy_len = src_len.min(dest.len() - 1);
+    dest[..copy_len].copy_from_slice(&src[..copy_len]);
+    dest[copy_len] = 0;
+    src_len
+}
+
+/// Appends `src` to `dest` with size limit, always NUL-terminating.
+///
+/// Equivalent to BSD `strlcat`. Returns the total length that would have
+/// resulted without truncation.
+pub fn strlcat(dest: &mut [u8], src: &[u8]) -> usize {
+    let dest_len = strlen(dest);
+    let src_len = strlen(src);
+
+    if dest_len >= dest.len() {
+        return dest.len() + src_len;
+    }
+
+    let available = dest.len() - dest_len - 1;
+    let copy_len = src_len.min(available);
+    dest[dest_len..dest_len + copy_len].copy_from_slice(&src[..copy_len]);
+    dest[dest_len + copy_len] = 0;
+    dest_len + src_len
+}
+
+/// Compares two strings using the current locale's collation order.
+///
+/// In the C/POSIX locale (which FrankenLibC uses), this is identical to `strcmp`.
+pub fn strcoll(s1: &[u8], s2: &[u8]) -> i32 {
+    strcmp(s1, s2)
+}
+
+/// Transforms a string for locale-aware comparison.
+///
+/// In the C/POSIX locale, this is a plain copy. Returns the length needed.
+pub fn strxfrm(dest: &mut [u8], src: &[u8], n: usize) -> usize {
+    let src_len = strlen(src);
+    let copy_len = src_len.min(n.min(dest.len()));
+    dest[..copy_len].copy_from_slice(&src[..copy_len]);
+    if copy_len < dest.len() {
+        dest[copy_len] = 0;
+    }
+    src_len
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -541,6 +616,84 @@ mod tests {
     #[test]
     fn test_strcasestr_exact_match() {
         assert_eq!(strcasestr(b"ABC\0", b"abc\0"), Some(0));
+    }
+
+    #[test]
+    fn test_strsep_basic() {
+        let mut s = *b"hello,world,end\0";
+        let result = strsep(&mut s, b",\0");
+        assert_eq!(result, Some((0, 6))); // "hello" + NUL at index 5, next at 6
+        assert_eq!(s[5], 0); // comma replaced with NUL
+    }
+
+    #[test]
+    fn test_strsep_no_delimiter() {
+        let mut s = *b"hello\0";
+        let result = strsep(&mut s, b",\0");
+        assert_eq!(result, Some((0, 5))); // entire string is token
+    }
+
+    #[test]
+    fn test_strsep_empty_string() {
+        let mut s = *b"\0";
+        assert_eq!(strsep(&mut s, b",\0"), None);
+    }
+
+    #[test]
+    fn test_strlcpy_basic() {
+        let mut dest = [0u8; 10];
+        let result = strlcpy(&mut dest, b"hello\0");
+        assert_eq!(result, 5);
+        assert_eq!(&dest[..6], b"hello\0");
+    }
+
+    #[test]
+    fn test_strlcpy_truncation() {
+        let mut dest = [0u8; 4];
+        let result = strlcpy(&mut dest, b"hello\0");
+        assert_eq!(result, 5); // returns full src length
+        assert_eq!(&dest, b"hel\0"); // truncated + NUL
+    }
+
+    #[test]
+    fn test_strlcat_basic() {
+        let mut dest = [0u8; 12];
+        dest[..6].copy_from_slice(b"hello\0");
+        let result = strlcat(&mut dest, b" world\0");
+        assert_eq!(result, 11);
+        assert_eq!(&dest[..12], b"hello world\0");
+    }
+
+    #[test]
+    fn test_strlcat_truncation() {
+        let mut dest = [0u8; 8];
+        dest[..6].copy_from_slice(b"hello\0");
+        let result = strlcat(&mut dest, b" world\0");
+        assert_eq!(result, 11); // would-have-been length
+        assert_eq!(&dest[..8], b"hello w\0"); // truncated + NUL
+    }
+
+    #[test]
+    fn test_strcoll_delegates_to_strcmp() {
+        assert_eq!(strcoll(b"abc\0", b"abc\0"), 0);
+        assert!(strcoll(b"abc\0", b"abd\0") < 0);
+        assert!(strcoll(b"abd\0", b"abc\0") > 0);
+    }
+
+    #[test]
+    fn test_strxfrm_basic() {
+        let mut dest = [0u8; 10];
+        let result = strxfrm(&mut dest, b"hello\0", 10);
+        assert_eq!(result, 5);
+        assert_eq!(&dest[..6], b"hello\0");
+    }
+
+    #[test]
+    fn test_strxfrm_truncation() {
+        let mut dest = [0u8; 3];
+        let result = strxfrm(&mut dest, b"hello\0", 3);
+        assert_eq!(result, 5); // returns full src length
+        assert_eq!(&dest[..3], b"hel"); // only first 3 bytes copied
     }
 
     proptest! {
