@@ -4250,13 +4250,265 @@
       "strict_semantics": "Generate unique temp filename using pid+counter",
       "hardened_semantics": "Same as strict; thread-safe with atomic counter",
       "default_stub": false
+    },
+    {
+      "symbol": "acoshf",
+      "header": "math.h",
+      "status": "Implemented",
+      "module": "math_abi",
+      "notes": ""
+    },
+    {
+      "symbol": "asinhf",
+      "header": "math.h",
+      "status": "Implemented",
+      "module": "math_abi",
+      "notes": ""
+    },
+    {
+      "symbol": "atanhf",
+      "header": "math.h",
+      "status": "Implemented",
+      "module": "math_abi",
+      "notes": ""
+    },
+    {
+      "symbol": "cbrtf",
+      "header": "math.h",
+      "status": "Implemented",
+      "module": "math_abi",
+      "notes": ""
+    },
+    {
+      "symbol": "copysignf",
+      "header": "math.h",
+      "status": "Implemented",
+      "module": "math_abi",
+      "notes": ""
+    },
+    {
+      "symbol": "coshf",
+      "header": "math.h",
+      "status": "Implemented",
+      "module": "math_abi",
+      "notes": ""
+    },
+    {
+      "symbol": "erfcf",
+      "header": "math.h",
+      "status": "Implemented",
+      "module": "math_abi",
+      "notes": ""
+    },
+    {
+      "symbol": "erff",
+      "header": "math.h",
+      "status": "Implemented",
+      "module": "math_abi",
+      "notes": ""
+    },
+    {
+      "symbol": "exp2f",
+      "header": "math.h",
+      "status": "Implemented",
+      "module": "math_abi",
+      "notes": ""
+    },
+    {
+      "symbol": "expm1f",
+      "header": "math.h",
+      "status": "Implemented",
+      "module": "math_abi",
+      "notes": ""
+    },
+    {
+      "symbol": "fdimf",
+      "header": "math.h",
+      "status": "Implemented",
+      "module": "math_abi",
+      "notes": ""
+    },
+    {
+      "symbol": "fmaf",
+      "header": "math.h",
+      "status": "Implemented",
+      "module": "math_abi",
+      "notes": ""
+    },
+    {
+      "symbol": "fmaxf",
+      "header": "math.h",
+      "status": "Implemented",
+      "module": "math_abi",
+      "notes": ""
+    },
+    {
+      "symbol": "fminf",
+      "header": "math.h",
+      "status": "Implemented",
+      "module": "math_abi",
+      "notes": ""
+    },
+    {
+      "symbol": "frexpf",
+      "header": "math.h",
+      "status": "Implemented",
+      "module": "math_abi",
+      "notes": ""
+    },
+    {
+      "symbol": "hypotf",
+      "header": "math.h",
+      "status": "Implemented",
+      "module": "math_abi",
+      "notes": ""
+    },
+    {
+      "symbol": "ilogbf",
+      "header": "math.h",
+      "status": "Implemented",
+      "module": "math_abi",
+      "notes": ""
+    },
+    {
+      "symbol": "ldexpf",
+      "header": "math.h",
+      "status": "Implemented",
+      "module": "math_abi",
+      "notes": ""
+    },
+    {
+      "symbol": "lgammaf",
+      "header": "math.h",
+      "status": "Implemented",
+      "module": "math_abi",
+      "notes": ""
+    },
+    {
+      "symbol": "llrintf",
+      "header": "math.h",
+      "status": "Implemented",
+      "module": "math_abi",
+      "notes": ""
+    },
+    {
+      "symbol": "llroundf",
+      "header": "math.h",
+      "status": "Implemented",
+      "module": "math_abi",
+      "notes": ""
+    },
+    {
+      "symbol": "log1pf",
+      "header": "math.h",
+      "status": "Implemented",
+      "module": "math_abi",
+      "notes": ""
+    },
+    {
+      "symbol": "logbf",
+      "header": "math.h",
+      "status": "Implemented",
+      "module": "math_abi",
+      "notes": ""
+    },
+    {
+      "symbol": "lrintf",
+      "header": "math.h",
+      "status": "Implemented",
+      "module": "math_abi",
+      "notes": ""
+    },
+    {
+      "symbol": "lroundf",
+      "header": "math.h",
+      "status": "Implemented",
+      "module": "math_abi",
+      "notes": ""
+    },
+    {
+      "symbol": "modff",
+      "header": "math.h",
+      "status": "Implemented",
+      "module": "math_abi",
+      "notes": ""
+    },
+    {
+      "symbol": "nearbyintf",
+      "header": "math.h",
+      "status": "Implemented",
+      "module": "math_abi",
+      "notes": ""
+    },
+    {
+      "symbol": "nextafterf",
+      "header": "math.h",
+      "status": "Implemented",
+      "module": "math_abi",
+      "notes": ""
+    },
+    {
+      "symbol": "remainderf",
+      "header": "math.h",
+      "status": "Implemented",
+      "module": "math_abi",
+      "notes": ""
+    },
+    {
+      "symbol": "rintf",
+      "header": "math.h",
+      "status": "Implemented",
+      "module": "math_abi",
+      "notes": ""
+    },
+    {
+      "symbol": "scalblnf",
+      "header": "math.h",
+      "status": "Implemented",
+      "module": "math_abi",
+      "notes": ""
+    },
+    {
+      "symbol": "scalbnf",
+      "header": "math.h",
+      "status": "Implemented",
+      "module": "math_abi",
+      "notes": ""
+    },
+    {
+      "symbol": "sinhf",
+      "header": "math.h",
+      "status": "Implemented",
+      "module": "math_abi",
+      "notes": ""
+    },
+    {
+      "symbol": "tanhf",
+      "header": "math.h",
+      "status": "Implemented",
+      "module": "math_abi",
+      "notes": ""
+    },
+    {
+      "symbol": "tgammaf",
+      "header": "math.h",
+      "status": "Implemented",
+      "module": "math_abi",
+      "notes": ""
+    },
+    {
+      "symbol": "nl_langinfo",
+      "header": "langinfo.h",
+      "status": "GlibcCallThrough",
+      "module": "locale_abi",
+      "notes": ""
     }
   ],
   "summary": {
-    "total_exported": 482,
-    "Implemented": 306,
+    "total_exported": 518,
+    "Implemented": 341,
     "RawSyscall": 172,
-    "GlibcCallThrough": 4,
+    "GlibcCallThrough": 5,
     "Stub": 0
   }
 }
