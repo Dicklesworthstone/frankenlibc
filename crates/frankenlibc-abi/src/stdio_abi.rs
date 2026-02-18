@@ -1592,6 +1592,506 @@ pub unsafe extern "C" fn sprintf_chk(
     total_len as c_int
 }
 
+// ---------------------------------------------------------------------------
+// getc / putc (function versions of fgetc / fputc)
+// ---------------------------------------------------------------------------
+
+/// POSIX `getc` — identical to `fgetc` but as a function (not macro).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getc(stream: *mut c_void) -> c_int {
+    unsafe { fgetc(stream) }
+}
+
+/// POSIX `putc` — identical to `fputc` but as a function (not macro).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn putc(c: c_int, stream: *mut c_void) -> c_int {
+    unsafe { fputc(c, stream) }
+}
+
+// ---------------------------------------------------------------------------
+// fgetpos / fsetpos
+// ---------------------------------------------------------------------------
+
+/// POSIX `fgetpos` — save the current stream position.
+///
+/// Stores the current value of the stream's file position into `*pos`.
+/// Returns 0 on success, -1 on error with errno set.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn fgetpos(stream: *mut c_void, pos: *mut libc::fpos_t) -> c_int {
+    if stream.is_null() || pos.is_null() {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return -1;
+    }
+
+    let id = stream as usize;
+    let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, id, 0, false, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
+        return -1;
+    }
+
+    let reg = registry().lock().unwrap_or_else(|e| e.into_inner());
+    let Some(s) = reg.streams.get(&id) else {
+        unsafe { set_abi_errno(errno::EBADF) };
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
+        return -1;
+    };
+
+    // fpos_t is opaque; we store the offset as i64 at the start of the struct.
+    // On Linux x86_64, fpos_t starts with __pos: i64.
+    let offset = s.offset();
+    // SAFETY: pos is non-null and points to a valid fpos_t; we write the
+    // offset into the first 8 bytes which correspond to the __pos field.
+    unsafe {
+        std::ptr::write(pos as *mut i64, offset);
+    }
+
+    runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, false);
+    0
+}
+
+/// POSIX `fsetpos` — restore a previously saved stream position.
+///
+/// Restores the file position from `*pos` (previously set by `fgetpos`).
+/// Returns 0 on success, -1 on error with errno set.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn fsetpos(stream: *mut c_void, pos: *const libc::fpos_t) -> c_int {
+    if stream.is_null() || pos.is_null() {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return -1;
+    }
+
+    // Read the offset from the fpos_t (first 8 bytes = __pos field).
+    let offset = unsafe { std::ptr::read(pos as *const i64) };
+
+    // Delegate to fseek with SEEK_SET.
+    unsafe { fseek(stream, offset as c_long, libc::SEEK_SET) }
+}
+
+// ---------------------------------------------------------------------------
+// fdopen
+// ---------------------------------------------------------------------------
+
+/// POSIX `fdopen` — associate a FILE stream with an existing file descriptor.
+///
+/// The mode string must be compatible with the fd's open mode.
+/// The fd is NOT duplicated — the stream takes ownership for buffering/close.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn fdopen(fd: c_int, mode: *const c_char) -> *mut c_void {
+    if fd < 0 || mode.is_null() {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return std::ptr::null_mut();
+    }
+
+    let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, fd as usize, 0, false, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
+        return std::ptr::null_mut();
+    }
+
+    let mode_bytes = unsafe { CStr::from_ptr(mode) }.to_bytes();
+    let Some(open_flags) = parse_mode(mode_bytes) else {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
+        return std::ptr::null_mut();
+    };
+
+    let stream = StdioStream::new(fd, open_flags);
+    let id = alloc_stream_id();
+    let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
+    reg.streams.insert(id, stream);
+
+    runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, false);
+    id as *mut c_void
+}
+
+// ---------------------------------------------------------------------------
+// freopen
+// ---------------------------------------------------------------------------
+
+/// POSIX `freopen` — reopen a stream with a new file.
+///
+/// Closes the existing stream and opens a new file with the given mode.
+/// If pathname is NULL, attempts to change the mode of the existing fd.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn freopen(
+    pathname: *const c_char,
+    mode: *const c_char,
+    stream: *mut c_void,
+) -> *mut c_void {
+    if mode.is_null() || stream.is_null() {
+        return std::ptr::null_mut();
+    }
+
+    let id = stream as usize;
+    let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, id, 0, true, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+        return std::ptr::null_mut();
+    }
+
+    let mode_bytes = unsafe { CStr::from_ptr(mode) }.to_bytes();
+    let Some(open_flags) = parse_mode(mode_bytes) else {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+        return std::ptr::null_mut();
+    };
+
+    let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
+
+    // Close the old stream.
+    if let Some(mut old) = reg.streams.remove(&id) {
+        let pending = old.prepare_close();
+        let old_fd = old.fd();
+        if !pending.is_empty() && old_fd >= 0 {
+            unsafe { sys_write_fd(old_fd, pending.as_ptr().cast(), pending.len()) };
+        }
+        // Close old fd unless it's a sentinel.
+        if old_fd >= 0 && id != STDIN_SENTINEL && id != STDOUT_SENTINEL && id != STDERR_SENTINEL {
+            unsafe { libc::syscall(libc::SYS_close as c_long, old_fd) };
+        }
+    }
+
+    if pathname.is_null() {
+        // NULL pathname: mode change only is not well-supported; return NULL.
+        unsafe { set_abi_errno(errno::EINVAL) };
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+        return std::ptr::null_mut();
+    }
+
+    // Open the new file.
+    let oflags = flags_to_oflags(&open_flags);
+    let create_mode: libc::mode_t = 0o666;
+    let fd = unsafe {
+        libc::syscall(
+            libc::SYS_openat as c_long,
+            libc::AT_FDCWD,
+            pathname,
+            oflags,
+            create_mode,
+        ) as c_int
+    };
+
+    if fd < 0 {
+        unsafe { set_abi_errno(errno::ENOENT) };
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 30, true);
+        return std::ptr::null_mut();
+    }
+
+    let new_stream = StdioStream::new(fd, open_flags);
+    reg.streams.insert(id, new_stream);
+
+    runtime_policy::observe(ApiFamily::Stdio, decision.profile, 30, false);
+    id as *mut c_void
+}
+
+// ---------------------------------------------------------------------------
+// remove / rename
+// ---------------------------------------------------------------------------
+
+/// POSIX `remove` — remove a file or directory.
+///
+/// Equivalent to `unlink` for files and `rmdir` for directories.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn remove(pathname: *const c_char) -> c_int {
+    if pathname.is_null() {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        return -1;
+    }
+
+    let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, 0, 0, false, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
+        return -1;
+    }
+
+    // Try unlink first; if EISDIR, try rmdir.
+    let ret =
+        unsafe { libc::syscall(libc::SYS_unlinkat as c_long, libc::AT_FDCWD, pathname, 0) };
+    if ret == 0 {
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, false);
+        return 0;
+    }
+
+    // Check if it's a directory.
+    let errno_val = std::io::Error::last_os_error()
+        .raw_os_error()
+        .unwrap_or(errno::EIO);
+    if errno_val == errno::EISDIR {
+        let ret = unsafe {
+            libc::syscall(
+                libc::SYS_unlinkat as c_long,
+                libc::AT_FDCWD,
+                pathname,
+                libc::AT_REMOVEDIR,
+            )
+        };
+        if ret == 0 {
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, false);
+            return 0;
+        }
+    }
+
+    let final_errno = std::io::Error::last_os_error()
+        .raw_os_error()
+        .unwrap_or(errno::EIO);
+    unsafe { set_abi_errno(final_errno) };
+    runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
+    -1
+}
+
+// ---------------------------------------------------------------------------
+// getdelim / getline
+// ---------------------------------------------------------------------------
+
+/// POSIX `getdelim` — read until a delimiter, dynamically allocating the buffer.
+///
+/// Reads from `stream` until `delim` is found or EOF. Dynamically (re)allocates
+/// `*lineptr` using `malloc`/`realloc`. Stores the line length in `*n`.
+/// Returns the number of bytes read (including delim), or -1 on error/EOF.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getdelim(
+    lineptr: *mut *mut c_char,
+    n: *mut usize,
+    delim: c_int,
+    stream: *mut c_void,
+) -> isize {
+    if lineptr.is_null() || n.is_null() || stream.is_null() {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return -1;
+    }
+
+    let id = stream as usize;
+    let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, id, 0, false, true, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+        return -1;
+    }
+
+    let delim_byte = delim as u8;
+    let mut buf: Vec<u8> = Vec::with_capacity(128);
+    let mut got_delim = false;
+    let mut got_any = false;
+
+    // Read character by character using fgetc.
+    loop {
+        let ch = unsafe { fgetc(stream) };
+        if ch == libc::EOF {
+            break;
+        }
+        got_any = true;
+        buf.push(ch as u8);
+        if ch as u8 == delim_byte {
+            got_delim = true;
+            break;
+        }
+    }
+
+    if !got_any {
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+        return -1;
+    }
+
+    // Allocate/reallocate the output buffer.
+    let needed = buf.len() + 1; // +1 for NUL terminator
+    let current_buf = unsafe { *lineptr };
+    let current_size = unsafe { *n };
+
+    let out_buf = if current_buf.is_null() || current_size < needed {
+        let new_size = needed.max(128);
+        let new_buf = unsafe { crate::malloc_abi::realloc(current_buf.cast(), new_size) };
+        if new_buf.is_null() {
+            unsafe { set_abi_errno(errno::ENOMEM) };
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+            return -1;
+        }
+        unsafe { *lineptr = new_buf.cast() };
+        unsafe { *n = new_size };
+        new_buf as *mut u8
+    } else {
+        current_buf as *mut u8
+    };
+
+    // Copy data to output buffer.
+    unsafe {
+        std::ptr::copy_nonoverlapping(buf.as_ptr(), out_buf, buf.len());
+        *out_buf.add(buf.len()) = 0; // NUL terminate
+    }
+
+    let _ = got_delim; // suppress unused warning
+    runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, false);
+    buf.len() as isize
+}
+
+/// POSIX `getline` — read a complete line, dynamically allocating the buffer.
+///
+/// Equivalent to `getdelim(lineptr, n, '\n', stream)`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getline(
+    lineptr: *mut *mut c_char,
+    n: *mut usize,
+    stream: *mut c_void,
+) -> isize {
+    unsafe { getdelim(lineptr, n, b'\n' as c_int, stream) }
+}
+
+// ---------------------------------------------------------------------------
+// tmpfile / tmpnam
+// ---------------------------------------------------------------------------
+
+/// POSIX `tmpfile` — create a temporary file opened for update.
+///
+/// Creates and opens a temporary file that is automatically removed when closed.
+/// Returns a FILE stream pointer or NULL on error.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn tmpfile() -> *mut c_void {
+    let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, 0, 0, false, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 20, true);
+        return std::ptr::null_mut();
+    }
+
+    // Use O_TMPFILE for efficient temporary file creation.
+    let fd = unsafe {
+        libc::syscall(
+            libc::SYS_openat as c_long,
+            libc::AT_FDCWD,
+            c"/tmp".as_ptr(),
+            libc::O_RDWR | libc::O_TMPFILE | libc::O_EXCL,
+            0o600 as libc::mode_t,
+        ) as c_int
+    };
+
+    if fd < 0 {
+        // Fallback: create a named temp file and unlink it.
+        let template = b"/tmp/frankenlibc_XXXXXX\0";
+        let mut path = *template;
+        let fd2 = unsafe { libc::mkstemp(path.as_mut_ptr().cast()) };
+        if fd2 < 0 {
+            let e = std::io::Error::last_os_error()
+                .raw_os_error()
+                .unwrap_or(errno::EIO);
+            unsafe { set_abi_errno(e) };
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 20, true);
+            return std::ptr::null_mut();
+        }
+        // Unlink immediately so it's deleted on close.
+        unsafe { libc::syscall(libc::SYS_unlinkat as c_long, libc::AT_FDCWD, path.as_ptr(), 0) };
+
+        let open_flags = OpenFlags {
+            readable: true,
+            writable: true,
+            ..Default::default()
+        };
+        let stream = StdioStream::new(fd2, open_flags);
+        let id = alloc_stream_id();
+        let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
+        reg.streams.insert(id, stream);
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 20, false);
+        return id as *mut c_void;
+    }
+
+    let open_flags = OpenFlags {
+        readable: true,
+        writable: true,
+        ..Default::default()
+    };
+    let stream = StdioStream::new(fd, open_flags);
+    let id = alloc_stream_id();
+    let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
+    reg.streams.insert(id, stream);
+
+    runtime_policy::observe(ApiFamily::Stdio, decision.profile, 20, false);
+    id as *mut c_void
+}
+
+/// Thread-local counter for tmpnam uniqueness.
+static TMPNAM_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// POSIX `tmpnam` — generate a unique temporary file name.
+///
+/// If `s` is not NULL, the name is written to the buffer pointed to by `s`
+/// (which must be at least `L_tmpnam` bytes). If `s` is NULL, a static
+/// buffer is used (NOT thread-safe in that case).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn tmpnam(s: *mut c_char) -> *mut c_char {
+    thread_local! {
+        static BUF: std::cell::UnsafeCell<[u8; 64]> = const { std::cell::UnsafeCell::new([0u8; 64]) };
+    }
+
+    let counter = TMPNAM_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let pid = unsafe { libc::syscall(libc::SYS_getpid as c_long) } as u32;
+
+    // Format: /tmp/flc_<pid>_<counter>
+    let mut name = [0u8; 48];
+    let prefix = b"/tmp/flc_";
+    let prefix_len = prefix.len();
+    name[..prefix_len].copy_from_slice(prefix);
+
+    let mut pos = prefix_len;
+    // Write pid.
+    pos = write_u32_to_buf(&mut name, pos, pid);
+    name[pos] = b'_';
+    pos += 1;
+    // Write counter.
+    pos = write_u64_to_buf(&mut name, pos, counter);
+    name[pos] = 0; // NUL
+
+    let total = pos + 1;
+
+    if !s.is_null() {
+        unsafe { std::ptr::copy_nonoverlapping(name.as_ptr(), s as *mut u8, total) };
+        s
+    } else {
+        BUF.with(|cell| {
+            let buf = cell.get();
+            unsafe {
+                std::ptr::copy_nonoverlapping(name.as_ptr(), (*buf).as_mut_ptr(), total);
+                (*buf).as_ptr() as *mut c_char
+            }
+        })
+    }
+}
+
+/// Write a u32 as decimal digits into `buf` starting at `start`. Returns the new position.
+fn write_u32_to_buf(buf: &mut [u8], start: usize, mut v: u32) -> usize {
+    if v == 0 {
+        buf[start] = b'0';
+        return start + 1;
+    }
+    let mut tmp = [0u8; 10];
+    let mut len = 0;
+    while v > 0 {
+        tmp[len] = b'0' + (v % 10) as u8;
+        v /= 10;
+        len += 1;
+    }
+    // Reverse into buf.
+    for i in 0..len {
+        buf[start + i] = tmp[len - 1 - i];
+    }
+    start + len
+}
+
+/// Write a u64 as decimal digits into `buf` starting at `start`. Returns the new position.
+fn write_u64_to_buf(buf: &mut [u8], start: usize, mut v: u64) -> usize {
+    if v == 0 {
+        buf[start] = b'0';
+        return start + 1;
+    }
+    let mut tmp = [0u8; 20];
+    let mut len = 0;
+    while v > 0 {
+        tmp[len] = b'0' + (v % 10) as u8;
+        v /= 10;
+        len += 1;
+    }
+    for i in 0..len {
+        buf[start + i] = tmp[len - 1 - i];
+    }
+    start + len
+}
+
 /// glibc fortified `__snprintf_chk`.
 #[unsafe(export_name = "__snprintf_chk")]
 pub unsafe extern "C" fn snprintf_chk(

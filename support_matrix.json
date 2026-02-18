@@ -1,8 +1,8 @@
 {
   "version": 2,
-  "generated_at_utc": "2026-02-18T01:40:00Z",
+  "generated_at_utc": "2026-02-18T04:49:26Z",
   "library": "/data/tmp/cargo-target/release/libfrankenlibc_abi.so",
-  "total_exported": 471,
+  "total_exported": 482,
   "taxonomy": {
     "Implemented": "Native Rust code owns the entire operation. No host libc dependency. Full test coverage required.",
     "RawSyscall": "ABI entrypoint marshals arguments directly to Linux syscall instruction. No glibc call-through.",
@@ -4151,13 +4151,112 @@
       "module": "io_abi",
       "perf_class": "syscall_veneer",
       "semantics": "POSIX"
+    },
+    {
+      "symbol": "getc",
+      "status": "Implemented",
+      "module": "stdio_abi",
+      "perf_class": "strict_hotpath",
+      "strict_semantics": "Function alias for fgetc; reads one byte from stream",
+      "hardened_semantics": "Same as strict; inherits fgetc membrane checks",
+      "default_stub": false
+    },
+    {
+      "symbol": "putc",
+      "status": "Implemented",
+      "module": "stdio_abi",
+      "perf_class": "strict_hotpath",
+      "strict_semantics": "Function alias for fputc; writes one byte to stream",
+      "hardened_semantics": "Same as strict; inherits fputc membrane checks",
+      "default_stub": false
+    },
+    {
+      "symbol": "fgetpos",
+      "status": "Implemented",
+      "module": "stdio_abi",
+      "perf_class": "strict_fast",
+      "strict_semantics": "Store current stream position into fpos_t",
+      "hardened_semantics": "Same as strict with null-pointer validation",
+      "default_stub": false
+    },
+    {
+      "symbol": "fsetpos",
+      "status": "Implemented",
+      "module": "stdio_abi",
+      "perf_class": "strict_fast",
+      "strict_semantics": "Restore stream position from fpos_t (delegates to fseek)",
+      "hardened_semantics": "Same as strict with null-pointer validation",
+      "default_stub": false
+    },
+    {
+      "symbol": "fdopen",
+      "status": "Implemented",
+      "module": "stdio_abi",
+      "perf_class": "strict_fast",
+      "strict_semantics": "Associate a FILE stream with an existing fd; mode validation",
+      "hardened_semantics": "Same as strict; invalid mode returns NULL",
+      "default_stub": false
+    },
+    {
+      "symbol": "freopen",
+      "status": "Implemented",
+      "module": "stdio_abi",
+      "perf_class": "strict_slow",
+      "strict_semantics": "Close stream and reopen with new file/mode",
+      "hardened_semantics": "Same as strict; flushes pending writes before close",
+      "default_stub": false
+    },
+    {
+      "symbol": "remove",
+      "status": "Implemented",
+      "module": "stdio_abi",
+      "perf_class": "strict_slow",
+      "strict_semantics": "Remove file via unlinkat; falls back to rmdir for directories",
+      "hardened_semantics": "Same as strict with null-pointer guard",
+      "default_stub": false
+    },
+    {
+      "symbol": "getdelim",
+      "status": "Implemented",
+      "module": "stdio_abi",
+      "perf_class": "strict_slow",
+      "strict_semantics": "Read until delimiter with dynamic buffer allocation via malloc",
+      "hardened_semantics": "Same as strict; validates all pointer arguments",
+      "default_stub": false
+    },
+    {
+      "symbol": "getline",
+      "status": "Implemented",
+      "module": "stdio_abi",
+      "perf_class": "strict_slow",
+      "strict_semantics": "Read line (newline-delimited); delegates to getdelim",
+      "hardened_semantics": "Same as strict; validates all pointer arguments",
+      "default_stub": false
+    },
+    {
+      "symbol": "tmpfile",
+      "status": "Implemented",
+      "module": "stdio_abi",
+      "perf_class": "strict_slow",
+      "strict_semantics": "Create temporary file via O_TMPFILE with fallback to mkstemp+unlink",
+      "hardened_semantics": "Same as strict; auto-deleted on close",
+      "default_stub": false
+    },
+    {
+      "symbol": "tmpnam",
+      "status": "Implemented",
+      "module": "stdio_abi",
+      "perf_class": "strict_fast",
+      "strict_semantics": "Generate unique temp filename using pid+counter",
+      "hardened_semantics": "Same as strict; thread-safe with atomic counter",
+      "default_stub": false
     }
   ],
   "summary": {
-    "Implemented": 158,
-    "RawSyscall": 83,
-    "GlibcCallThrough": 20,
-    "Stub": 0,
-    "DefaultStub": 0
+    "total_exported": 482,
+    "Implemented": 306,
+    "RawSyscall": 172,
+    "GlibcCallThrough": 4,
+    "Stub": 0
   }
 }

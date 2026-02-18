@@ -122,6 +122,17 @@ GLIBC_2.2.5 {
         stdin;
         stdout;
         stderr;
+        getc;
+        putc;
+        fgetpos;
+        fsetpos;
+        fdopen;
+        freopen;
+        remove;
+        getdelim;
+        getline;
+        tmpfile;
+        tmpnam;
 
         /* math operations */
         sin;
