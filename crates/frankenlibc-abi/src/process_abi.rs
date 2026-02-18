@@ -352,3 +352,80 @@ pub unsafe extern "C" fn execvpe(
 ) -> c_int {
     unsafe { libc_execvpe(file, argv, envp) }
 }
+
+// ---------------------------------------------------------------------------
+// posix_spawn family — GlibcCallThrough
+// ---------------------------------------------------------------------------
+
+unsafe extern "C" {
+    #[link_name = "posix_spawn"]
+    fn libc_posix_spawn(
+        pid: *mut libc::pid_t,
+        path: *const c_char,
+        file_actions: *const c_void,
+        attrp: *const c_void,
+        argv: *const *mut c_char,
+        envp: *const *mut c_char,
+    ) -> c_int;
+    #[link_name = "posix_spawnp"]
+    fn libc_posix_spawnp(
+        pid: *mut libc::pid_t,
+        file: *const c_char,
+        file_actions: *const c_void,
+        attrp: *const c_void,
+        argv: *const *mut c_char,
+        envp: *const *mut c_char,
+    ) -> c_int;
+    #[link_name = "posix_spawn_file_actions_init"]
+    fn libc_posix_spawn_file_actions_init(file_actions: *mut c_void) -> c_int;
+    #[link_name = "posix_spawn_file_actions_destroy"]
+    fn libc_posix_spawn_file_actions_destroy(file_actions: *mut c_void) -> c_int;
+    #[link_name = "posix_spawnattr_init"]
+    fn libc_posix_spawnattr_init(attrp: *mut c_void) -> c_int;
+    #[link_name = "posix_spawnattr_destroy"]
+    fn libc_posix_spawnattr_destroy(attrp: *mut c_void) -> c_int;
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn posix_spawn(
+    pid: *mut libc::pid_t,
+    path: *const c_char,
+    file_actions: *const c_void,
+    attrp: *const c_void,
+    argv: *const *mut c_char,
+    envp: *const *mut c_char,
+) -> c_int {
+    unsafe { libc_posix_spawn(pid, path, file_actions, attrp, argv, envp) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn posix_spawnp(
+    pid: *mut libc::pid_t,
+    file: *const c_char,
+    file_actions: *const c_void,
+    attrp: *const c_void,
+    argv: *const *mut c_char,
+    envp: *const *mut c_char,
+) -> c_int {
+    unsafe { libc_posix_spawnp(pid, file, file_actions, attrp, argv, envp) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn posix_spawn_file_actions_init(file_actions: *mut c_void) -> c_int {
+    unsafe { libc_posix_spawn_file_actions_init(file_actions) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn posix_spawn_file_actions_destroy(file_actions: *mut c_void) -> c_int {
+    unsafe { libc_posix_spawn_file_actions_destroy(file_actions) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn posix_spawnattr_init(attrp: *mut c_void) -> c_int {
+    unsafe { libc_posix_spawnattr_init(attrp) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn posix_spawnattr_destroy(attrp: *mut c_void) -> c_int {
+    unsafe { libc_posix_spawnattr_destroy(attrp) }
+}

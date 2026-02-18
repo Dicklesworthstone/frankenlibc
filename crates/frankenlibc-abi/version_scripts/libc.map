@@ -641,10 +641,12 @@ GLIBC_2.2.5 {
         opendir;
         closedir;
         readdir;
+        readdir_r;
         seekdir;
         telldir;
         rewinddir;
         scandir;
+        alphasort;
 
         /* time */
         time;
@@ -716,6 +718,33 @@ GLIBC_2.2.5 {
         gethostid;
         getdomainname;
         mkdtemp;
+
+        /* getrandom / statx / fallocate */
+        getrandom;
+        statx;
+        fallocate;
+
+        /* copy_file_range */
+        copy_file_range;
+
+        /* posix_spawn */
+        posix_spawn;
+        posix_spawnp;
+        posix_spawn_file_actions_init;
+        posix_spawn_file_actions_destroy;
+        posix_spawnattr_init;
+        posix_spawnattr_destroy;
+
+        /* file tree walk */
+        ftw;
+        nftw;
+
+        /* i18n / gettext */
+        gettext;
+        dgettext;
+        ngettext;
+        textdomain;
+        bindtextdomain;
 
     local:
         *;

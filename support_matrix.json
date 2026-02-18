@@ -5423,13 +5423,184 @@
       "strict_semantics": "Passthrough to glibc mkdtemp",
       "hardened_semantics": "Passthrough to glibc mkdtemp",
       "default_stub": false
+    },
+    {
+      "symbol": "getrandom",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "SYS_getrandom \u2014 kernel CSPRNG",
+      "hardened_semantics": "SYS_getrandom \u2014 kernel CSPRNG",
+      "default_stub": false
+    },
+    {
+      "symbol": "statx",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "SYS_statx \u2014 extended file status",
+      "hardened_semantics": "SYS_statx \u2014 extended file status",
+      "default_stub": false
+    },
+    {
+      "symbol": "fallocate",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "SYS_fallocate \u2014 allocate/deallocate file space",
+      "hardened_semantics": "SYS_fallocate \u2014 allocate/deallocate file space",
+      "default_stub": false
+    },
+    {
+      "symbol": "copy_file_range",
+      "status": "RawSyscall",
+      "module": "io_abi",
+      "perf_class": "default",
+      "strict_semantics": "SYS_copy_file_range \u2014 server-side file copy",
+      "hardened_semantics": "SYS_copy_file_range \u2014 server-side file copy",
+      "default_stub": false
+    },
+    {
+      "symbol": "posix_spawn",
+      "status": "GlibcCallThrough",
+      "module": "process_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc posix_spawn",
+      "hardened_semantics": "Passthrough to glibc posix_spawn",
+      "default_stub": false
+    },
+    {
+      "symbol": "posix_spawnp",
+      "status": "GlibcCallThrough",
+      "module": "process_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc posix_spawnp",
+      "hardened_semantics": "Passthrough to glibc posix_spawnp",
+      "default_stub": false
+    },
+    {
+      "symbol": "posix_spawn_file_actions_init",
+      "status": "GlibcCallThrough",
+      "module": "process_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc posix_spawn_file_actions_init",
+      "hardened_semantics": "Passthrough to glibc posix_spawn_file_actions_init",
+      "default_stub": false
+    },
+    {
+      "symbol": "posix_spawn_file_actions_destroy",
+      "status": "GlibcCallThrough",
+      "module": "process_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc posix_spawn_file_actions_destroy",
+      "hardened_semantics": "Passthrough to glibc posix_spawn_file_actions_destroy",
+      "default_stub": false
+    },
+    {
+      "symbol": "posix_spawnattr_init",
+      "status": "GlibcCallThrough",
+      "module": "process_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc posix_spawnattr_init",
+      "hardened_semantics": "Passthrough to glibc posix_spawnattr_init",
+      "default_stub": false
+    },
+    {
+      "symbol": "posix_spawnattr_destroy",
+      "status": "GlibcCallThrough",
+      "module": "process_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc posix_spawnattr_destroy",
+      "hardened_semantics": "Passthrough to glibc posix_spawnattr_destroy",
+      "default_stub": false
+    },
+    {
+      "symbol": "alphasort",
+      "status": "GlibcCallThrough",
+      "module": "dirent_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc alphasort",
+      "hardened_semantics": "Passthrough to glibc alphasort",
+      "default_stub": false
+    },
+    {
+      "symbol": "readdir_r",
+      "status": "GlibcCallThrough",
+      "module": "dirent_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc readdir_r (deprecated but used)",
+      "hardened_semantics": "Passthrough to glibc readdir_r (deprecated but used)",
+      "default_stub": false
+    },
+    {
+      "symbol": "ftw",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc ftw",
+      "hardened_semantics": "Passthrough to glibc ftw",
+      "default_stub": false
+    },
+    {
+      "symbol": "nftw",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc nftw",
+      "hardened_semantics": "Passthrough to glibc nftw",
+      "default_stub": false
+    },
+    {
+      "symbol": "gettext",
+      "status": "GlibcCallThrough",
+      "module": "locale_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc gettext",
+      "hardened_semantics": "Passthrough to glibc gettext",
+      "default_stub": false
+    },
+    {
+      "symbol": "dgettext",
+      "status": "GlibcCallThrough",
+      "module": "locale_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc dgettext",
+      "hardened_semantics": "Passthrough to glibc dgettext",
+      "default_stub": false
+    },
+    {
+      "symbol": "ngettext",
+      "status": "GlibcCallThrough",
+      "module": "locale_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc ngettext",
+      "hardened_semantics": "Passthrough to glibc ngettext",
+      "default_stub": false
+    },
+    {
+      "symbol": "textdomain",
+      "status": "GlibcCallThrough",
+      "module": "locale_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc textdomain",
+      "hardened_semantics": "Passthrough to glibc textdomain",
+      "default_stub": false
+    },
+    {
+      "symbol": "bindtextdomain",
+      "status": "GlibcCallThrough",
+      "module": "locale_abi",
+      "perf_class": "default",
+      "strict_semantics": "Passthrough to glibc bindtextdomain",
+      "hardened_semantics": "Passthrough to glibc bindtextdomain",
+      "default_stub": false
     }
   ],
   "summary": {
-    "total_exported": 627,
+    "total_exported": 646,
     "implemented": 383,
-    "raw_syscall": 172,
-    "glibc_call_through": 72,
+    "raw_syscall": 176,
+    "glibc_call_through": 87,
     "stub": 0
   },
   "implemented": 383,

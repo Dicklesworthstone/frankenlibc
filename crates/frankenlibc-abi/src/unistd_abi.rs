@@ -4,7 +4,7 @@
 //! directory navigation (getcwd/chdir), process identity (getpid/getppid/getuid/...),
 //! link operations (link/symlink/readlink/unlink/rmdir), and sync (fsync/fdatasync).
 
-use std::ffi::{c_char, c_int, c_void};
+use std::ffi::{c_char, c_int, c_uint, c_void};
 
 use frankenlibc_core::errno;
 use frankenlibc_core::syscall;
@@ -1857,4 +1857,138 @@ pub unsafe extern "C" fn getdomainname(name: *mut c_char, len: usize) -> c_int {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn mkdtemp(template: *mut c_char) -> *mut c_char {
     unsafe { libc_mkdtemp(template) }
+}
+
+// ---------------------------------------------------------------------------
+// getrandom — RawSyscall
+// ---------------------------------------------------------------------------
+
+/// Linux `getrandom` — fill buffer with random bytes from the kernel CSPRNG.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getrandom(buf: *mut c_void, buflen: usize, flags: c_uint) -> isize {
+    let (_, decision) =
+        runtime_policy::decide(ApiFamily::IoFd, buf as usize, buflen, false, true, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
+        return -1;
+    }
+
+    let rc = unsafe { libc::syscall(libc::SYS_getrandom, buf, buflen, flags) };
+    if rc < 0 {
+        let e = std::io::Error::last_os_error()
+            .raw_os_error()
+            .unwrap_or(errno::EIO);
+        unsafe { set_abi_errno(e) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+        -1
+    } else {
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, false);
+        rc as isize
+    }
+}
+
+// ---------------------------------------------------------------------------
+// statx — RawSyscall
+// ---------------------------------------------------------------------------
+
+/// Linux `statx` — extended file status.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn statx(
+    dirfd: c_int,
+    pathname: *const c_char,
+    flags: c_int,
+    mask: c_uint,
+    statxbuf: *mut c_void,
+) -> c_int {
+    let (_, decision) =
+        runtime_policy::decide(ApiFamily::IoFd, dirfd as usize, 0, false, true, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
+        return -1;
+    }
+
+    let rc = unsafe {
+        libc::syscall(libc::SYS_statx, dirfd, pathname, flags, mask, statxbuf)
+    } as c_int;
+    if rc < 0 {
+        let e = std::io::Error::last_os_error()
+            .raw_os_error()
+            .unwrap_or(errno::ENOSYS);
+        unsafe { set_abi_errno(e) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+    } else {
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, false);
+    }
+    rc
+}
+
+// ---------------------------------------------------------------------------
+// fallocate — RawSyscall
+// ---------------------------------------------------------------------------
+
+/// Linux `fallocate` — allocate/deallocate file space.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn fallocate(
+    fd: c_int,
+    mode: c_int,
+    offset: i64,
+    len: i64,
+) -> c_int {
+    let (_, decision) =
+        runtime_policy::decide(ApiFamily::IoFd, fd as usize, len as usize, true, true, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
+        return -1;
+    }
+
+    let rc = unsafe { libc::syscall(libc::SYS_fallocate, fd, mode, offset, len) } as c_int;
+    if rc < 0 {
+        let e = std::io::Error::last_os_error()
+            .raw_os_error()
+            .unwrap_or(errno::ENOSPC);
+        unsafe { set_abi_errno(e) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, true);
+    } else {
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, false);
+    }
+    rc
+}
+
+// ---------------------------------------------------------------------------
+// ftw / nftw — GlibcCallThrough
+// ---------------------------------------------------------------------------
+
+unsafe extern "C" {
+    #[link_name = "ftw"]
+    fn libc_ftw(
+        dirpath: *const c_char,
+        func: Option<unsafe extern "C" fn(*const c_char, *const libc::stat, c_int) -> c_int>,
+        nopenfd: c_int,
+    ) -> c_int;
+    #[link_name = "nftw"]
+    fn libc_nftw(
+        dirpath: *const c_char,
+        func: Option<unsafe extern "C" fn(*const c_char, *const libc::stat, c_int, *mut c_void) -> c_int>,
+        nopenfd: c_int,
+        flags: c_int,
+    ) -> c_int;
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ftw(
+    dirpath: *const c_char,
+    func: Option<unsafe extern "C" fn(*const c_char, *const libc::stat, c_int) -> c_int>,
+    nopenfd: c_int,
+) -> c_int {
+    unsafe { libc_ftw(dirpath, func, nopenfd) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn nftw(
+    dirpath: *const c_char,
+    func: Option<unsafe extern "C" fn(*const c_char, *const libc::stat, c_int, *mut c_void) -> c_int>,
+    nopenfd: c_int,
+    flags: c_int,
+) -> c_int {
+    unsafe { libc_nftw(dirpath, func, nopenfd, flags) }
 }

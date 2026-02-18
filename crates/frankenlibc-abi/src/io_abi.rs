@@ -2,7 +2,7 @@
 //!
 //! Validates via `frankenlibc_core::io` helpers, then calls `libc`.
 
-use std::ffi::{c_int, c_void};
+use std::ffi::{c_int, c_uint, c_void};
 
 use frankenlibc_core::errno;
 use frankenlibc_core::io as io_core;
@@ -384,6 +384,43 @@ pub unsafe extern "C" fn sendfile(
         -1
     } else {
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, false);
+        rc as libc::ssize_t
+    }
+}
+
+// ---------------------------------------------------------------------------
+// copy_file_range — RawSyscall
+// ---------------------------------------------------------------------------
+
+/// Linux `copy_file_range` — server-side copy between file descriptors.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn copy_file_range(
+    fd_in: c_int,
+    off_in: *mut i64,
+    fd_out: c_int,
+    off_out: *mut i64,
+    len: usize,
+    flags: c_uint,
+) -> libc::ssize_t {
+    let (_, decision) =
+        runtime_policy::decide(ApiFamily::IoFd, fd_in as usize, len, true, true, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+        return -1;
+    }
+
+    let rc = unsafe {
+        libc::syscall(libc::SYS_copy_file_range, fd_in, off_in, fd_out, off_out, len, flags)
+    };
+    if rc < 0 {
+        let e = std::io::Error::last_os_error()
+            .raw_os_error()
+            .unwrap_or(errno::EIO);
+        unsafe { set_abi_errno(e) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, true);
+        -1
+    } else {
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, false);
         rc as libc::ssize_t
     }
 }

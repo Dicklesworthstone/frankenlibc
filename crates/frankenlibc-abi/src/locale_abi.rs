@@ -167,3 +167,52 @@ pub unsafe extern "C" fn nl_langinfo(item: libc::nl_item) -> *const c_char {
     runtime_policy::observe(ApiFamily::Locale, decision.profile, 6, false);
     value.as_ptr() as *const c_char
 }
+
+// ---------------------------------------------------------------------------
+// gettext family — GlibcCallThrough
+// ---------------------------------------------------------------------------
+
+unsafe extern "C" {
+    #[link_name = "gettext"]
+    fn libc_gettext(msgid: *const c_char) -> *mut c_char;
+    #[link_name = "dgettext"]
+    fn libc_dgettext(domainname: *const c_char, msgid: *const c_char) -> *mut c_char;
+    #[link_name = "ngettext"]
+    fn libc_ngettext(msgid: *const c_char, msgid_plural: *const c_char, n: libc::c_ulong) -> *mut c_char;
+    #[link_name = "textdomain"]
+    fn libc_textdomain(domainname: *const c_char) -> *mut c_char;
+    #[link_name = "bindtextdomain"]
+    fn libc_bindtextdomain(domainname: *const c_char, dirname: *const c_char) -> *mut c_char;
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn gettext(msgid: *const c_char) -> *mut c_char {
+    unsafe { libc_gettext(msgid) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn dgettext(domainname: *const c_char, msgid: *const c_char) -> *mut c_char {
+    unsafe { libc_dgettext(domainname, msgid) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ngettext(
+    msgid: *const c_char,
+    msgid_plural: *const c_char,
+    n: libc::c_ulong,
+) -> *mut c_char {
+    unsafe { libc_ngettext(msgid, msgid_plural, n) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn textdomain(domainname: *const c_char) -> *mut c_char {
+    unsafe { libc_textdomain(domainname) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn bindtextdomain(
+    domainname: *const c_char,
+    dirname: *const c_char,
+) -> *mut c_char {
+    unsafe { libc_bindtextdomain(domainname, dirname) }
+}
