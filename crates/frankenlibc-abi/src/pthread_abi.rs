@@ -1549,6 +1549,176 @@ pub unsafe extern "C" fn pthread_once(
     }
 }
 
+// ---------------------------------------------------------------------------
+// pthread attribute functions — GlibcCallThrough
+//
+// Attribute init/destroy/get/set delegate to glibc since they manipulate
+// opaque structs whose layout is glibc-version-specific.
+// ---------------------------------------------------------------------------
+
+unsafe extern "C" {
+    // Thread attributes
+    #[link_name = "pthread_attr_init"]
+    fn libc_pthread_attr_init(attr: *mut libc::pthread_attr_t) -> c_int;
+    #[link_name = "pthread_attr_destroy"]
+    fn libc_pthread_attr_destroy(attr: *mut libc::pthread_attr_t) -> c_int;
+    #[link_name = "pthread_attr_setdetachstate"]
+    fn libc_pthread_attr_setdetachstate(attr: *mut libc::pthread_attr_t, state: c_int) -> c_int;
+    #[link_name = "pthread_attr_getdetachstate"]
+    fn libc_pthread_attr_getdetachstate(attr: *const libc::pthread_attr_t, state: *mut c_int) -> c_int;
+    #[link_name = "pthread_attr_setstacksize"]
+    fn libc_pthread_attr_setstacksize(attr: *mut libc::pthread_attr_t, size: usize) -> c_int;
+    #[link_name = "pthread_attr_getstacksize"]
+    fn libc_pthread_attr_getstacksize(attr: *const libc::pthread_attr_t, size: *mut usize) -> c_int;
+    // Mutex attributes
+    #[link_name = "pthread_mutexattr_init"]
+    fn libc_pthread_mutexattr_init(attr: *mut libc::pthread_mutexattr_t) -> c_int;
+    #[link_name = "pthread_mutexattr_destroy"]
+    fn libc_pthread_mutexattr_destroy(attr: *mut libc::pthread_mutexattr_t) -> c_int;
+    #[link_name = "pthread_mutexattr_settype"]
+    fn libc_pthread_mutexattr_settype(attr: *mut libc::pthread_mutexattr_t, kind: c_int) -> c_int;
+    #[link_name = "pthread_mutexattr_gettype"]
+    fn libc_pthread_mutexattr_gettype(attr: *const libc::pthread_mutexattr_t, kind: *mut c_int) -> c_int;
+    // Condvar attributes
+    #[link_name = "pthread_condattr_init"]
+    fn libc_pthread_condattr_init(attr: *mut libc::pthread_condattr_t) -> c_int;
+    #[link_name = "pthread_condattr_destroy"]
+    fn libc_pthread_condattr_destroy(attr: *mut libc::pthread_condattr_t) -> c_int;
+    #[link_name = "pthread_condattr_setclock"]
+    fn libc_pthread_condattr_setclock(attr: *mut libc::pthread_condattr_t, clock_id: libc::clockid_t) -> c_int;
+    #[link_name = "pthread_condattr_getclock"]
+    fn libc_pthread_condattr_getclock(attr: *const libc::pthread_condattr_t, clock_id: *mut libc::clockid_t) -> c_int;
+    // Rwlock attributes
+    #[link_name = "pthread_rwlockattr_init"]
+    fn libc_pthread_rwlockattr_init(attr: *mut libc::pthread_rwlockattr_t) -> c_int;
+    #[link_name = "pthread_rwlockattr_destroy"]
+    fn libc_pthread_rwlockattr_destroy(attr: *mut libc::pthread_rwlockattr_t) -> c_int;
+}
+
+// --- Thread attributes ---
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_attr_init(attr: *mut libc::pthread_attr_t) -> c_int {
+    unsafe { libc_pthread_attr_init(attr) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_attr_destroy(attr: *mut libc::pthread_attr_t) -> c_int {
+    unsafe { libc_pthread_attr_destroy(attr) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_attr_setdetachstate(
+    attr: *mut libc::pthread_attr_t,
+    state: c_int,
+) -> c_int {
+    unsafe { libc_pthread_attr_setdetachstate(attr, state) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_attr_getdetachstate(
+    attr: *const libc::pthread_attr_t,
+    state: *mut c_int,
+) -> c_int {
+    unsafe { libc_pthread_attr_getdetachstate(attr, state) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_attr_setstacksize(
+    attr: *mut libc::pthread_attr_t,
+    size: usize,
+) -> c_int {
+    unsafe { libc_pthread_attr_setstacksize(attr, size) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_attr_getstacksize(
+    attr: *const libc::pthread_attr_t,
+    size: *mut usize,
+) -> c_int {
+    unsafe { libc_pthread_attr_getstacksize(attr, size) }
+}
+
+// --- Mutex attributes ---
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_mutexattr_init(
+    attr: *mut libc::pthread_mutexattr_t,
+) -> c_int {
+    unsafe { libc_pthread_mutexattr_init(attr) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_mutexattr_destroy(
+    attr: *mut libc::pthread_mutexattr_t,
+) -> c_int {
+    unsafe { libc_pthread_mutexattr_destroy(attr) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_mutexattr_settype(
+    attr: *mut libc::pthread_mutexattr_t,
+    kind: c_int,
+) -> c_int {
+    unsafe { libc_pthread_mutexattr_settype(attr, kind) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_mutexattr_gettype(
+    attr: *const libc::pthread_mutexattr_t,
+    kind: *mut c_int,
+) -> c_int {
+    unsafe { libc_pthread_mutexattr_gettype(attr, kind) }
+}
+
+// --- Condvar attributes ---
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_condattr_init(
+    attr: *mut libc::pthread_condattr_t,
+) -> c_int {
+    unsafe { libc_pthread_condattr_init(attr) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_condattr_destroy(
+    attr: *mut libc::pthread_condattr_t,
+) -> c_int {
+    unsafe { libc_pthread_condattr_destroy(attr) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_condattr_setclock(
+    attr: *mut libc::pthread_condattr_t,
+    clock_id: libc::clockid_t,
+) -> c_int {
+    unsafe { libc_pthread_condattr_setclock(attr, clock_id) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_condattr_getclock(
+    attr: *const libc::pthread_condattr_t,
+    clock_id: *mut libc::clockid_t,
+) -> c_int {
+    unsafe { libc_pthread_condattr_getclock(attr, clock_id) }
+}
+
+// --- Rwlock attributes ---
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_rwlockattr_init(
+    attr: *mut libc::pthread_rwlockattr_t,
+) -> c_int {
+    unsafe { libc_pthread_rwlockattr_init(attr) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_rwlockattr_destroy(
+    attr: *mut libc::pthread_rwlockattr_t,
+) -> c_int {
+    unsafe { libc_pthread_rwlockattr_destroy(attr) }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

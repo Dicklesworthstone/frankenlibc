@@ -193,6 +193,8 @@ GLIBC_2.2.5 {
         fflush;
         fseek;
         ftell;
+        fseeko;
+        ftello;
         rewind;
         feof;
         ferror;
@@ -221,6 +223,12 @@ GLIBC_2.2.5 {
         tmpnam;
         popen;
         pclose;
+        scanf;
+        fscanf;
+        sscanf;
+        vscanf;
+        vfscanf;
+        vsscanf;
 
         /* math operations — double precision */
         sin;
@@ -365,6 +373,30 @@ GLIBC_2.2.5 {
         pthread_cond_signal;
         pthread_cond_broadcast;
         pthread_cond_wait;
+        pthread_cond_timedwait;
+        pthread_attr_init;
+        pthread_attr_destroy;
+        pthread_attr_setdetachstate;
+        pthread_attr_getdetachstate;
+        pthread_attr_setstacksize;
+        pthread_attr_getstacksize;
+        pthread_mutexattr_init;
+        pthread_mutexattr_destroy;
+        pthread_mutexattr_settype;
+        pthread_mutexattr_gettype;
+        pthread_condattr_init;
+        pthread_condattr_destroy;
+        pthread_condattr_setclock;
+        pthread_condattr_getclock;
+        pthread_rwlockattr_init;
+        pthread_rwlockattr_destroy;
+        pthread_rwlock_tryrdlock;
+        pthread_rwlock_trywrlock;
+        pthread_key_create;
+        pthread_key_delete;
+        pthread_getspecific;
+        pthread_setspecific;
+        pthread_once;
 
         /* passwd database */
         getpwnam;
@@ -496,6 +528,10 @@ GLIBC_2.2.5 {
         /* system configuration */
         sysconf;
 
+        /* command-line parsing */
+        getopt;
+        getopt_long;
+
         /* *at() family — directory-fd-relative operations */
         openat;
         fstatat;
@@ -537,6 +573,14 @@ GLIBC_2.2.5 {
         pause;
         sigsuspend;
         sigaltstack;
+
+        /* setjmp / longjmp */
+        setjmp;
+        _setjmp;
+        sigsetjmp;
+        longjmp;
+        _longjmp;
+        siglongjmp;
 
         /* I/O */
         dup;
@@ -605,6 +649,12 @@ GLIBC_2.2.5 {
         asctime_r;
         ctime_r;
         strftime;
+        gmtime;
+        localtime;
+        asctime;
+        ctime;
+        strptime;
+        tzset;
 
         /* termios */
         tcgetattr;

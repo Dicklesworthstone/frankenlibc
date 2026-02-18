@@ -737,6 +737,18 @@ pub unsafe extern "C" fn ftell(stream: *mut c_void) -> c_long {
     off as c_long
 }
 
+/// POSIX `fseeko` — fseek with off_t offset (identical on LP64).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn fseeko(stream: *mut c_void, offset: i64, whence: c_int) -> c_int {
+    unsafe { fseek(stream, offset as c_long, whence) }
+}
+
+/// POSIX `ftello` — ftell with off_t return (identical on LP64).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ftello(stream: *mut c_void) -> i64 {
+    unsafe { ftell(stream) as i64 }
+}
+
 /// POSIX `rewind`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn rewind(stream: *mut c_void) {
@@ -1529,6 +1541,70 @@ pub unsafe extern "C" fn vasprintf(
     ap: *mut c_void,
 ) -> c_int {
     unsafe { libc_vasprintf(strp, format, ap) }
+}
+
+// ===========================================================================
+// scanf family — GlibcCallThrough
+//
+// Like v*printf, scanf functions need va_list handling that Rust cannot do
+// natively. We link directly to glibc's v*scanf and forward the va_list.
+// ===========================================================================
+
+unsafe extern "C" {
+    #[link_name = "vsscanf"]
+    fn libc_vsscanf(s: *const c_char, fmt: *const c_char, ap: *mut c_void) -> c_int;
+    #[link_name = "vfscanf"]
+    fn libc_vfscanf(stream: *mut c_void, fmt: *const c_char, ap: *mut c_void) -> c_int;
+    #[link_name = "vscanf"]
+    fn libc_vscanf(fmt: *const c_char, ap: *mut c_void) -> c_int;
+}
+
+/// POSIX `sscanf` — scan formatted input from string.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn sscanf(s: *const c_char, format: *const c_char, mut args: ...) -> c_int {
+    unsafe { libc_vsscanf(s, format, (&mut args) as *mut _ as *mut c_void) }
+}
+
+/// POSIX `fscanf` — scan formatted input from stream.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn fscanf(
+    stream: *mut c_void,
+    format: *const c_char,
+    mut args: ...,
+) -> c_int {
+    unsafe { libc_vfscanf(stream, format, (&mut args) as *mut _ as *mut c_void) }
+}
+
+/// POSIX `scanf` — scan formatted input from stdin.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn scanf(format: *const c_char, mut args: ...) -> c_int {
+    unsafe { libc_vscanf(format, (&mut args) as *mut _ as *mut c_void) }
+}
+
+/// POSIX `vsscanf` — scan formatted input from string with va_list.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn vsscanf(
+    s: *const c_char,
+    format: *const c_char,
+    ap: *mut c_void,
+) -> c_int {
+    unsafe { libc_vsscanf(s, format, ap) }
+}
+
+/// POSIX `vfscanf` — scan formatted input from stream with va_list.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn vfscanf(
+    stream: *mut c_void,
+    format: *const c_char,
+    ap: *mut c_void,
+) -> c_int {
+    unsafe { libc_vfscanf(stream, format, ap) }
+}
+
+/// POSIX `vscanf` — scan formatted input from stdin with va_list.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn vscanf(format: *const c_char, ap: *mut c_void) -> c_int {
+    unsafe { libc_vscanf(format, ap) }
 }
 
 /// glibc fortified `__printf_chk`.

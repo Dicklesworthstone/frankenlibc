@@ -385,3 +385,104 @@ pub unsafe extern "C" fn strftime(
     let buf = unsafe { std::slice::from_raw_parts_mut(s as *mut u8, maxsize) };
     time_core::format_strftime(fmt, &bd, buf)
 }
+
+// ---------------------------------------------------------------------------
+// Non-reentrant time wrappers (use thread-local static buffers)
+// ---------------------------------------------------------------------------
+
+std::thread_local! {
+    static GMTIME_BUF: std::cell::UnsafeCell<libc::tm> = const { std::cell::UnsafeCell::new(unsafe { std::mem::zeroed() }) };
+    static LOCALTIME_BUF: std::cell::UnsafeCell<libc::tm> = const { std::cell::UnsafeCell::new(unsafe { std::mem::zeroed() }) };
+    static ASCTIME_BUF: std::cell::UnsafeCell<[u8; 26]> = const { std::cell::UnsafeCell::new([0u8; 26]) };
+    static CTIME_BUF: std::cell::UnsafeCell<[u8; 26]> = const { std::cell::UnsafeCell::new([0u8; 26]) };
+}
+
+/// POSIX `gmtime` — convert time_t to broken-down UTC time (non-reentrant).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn gmtime(timer: *const i64) -> *mut libc::tm {
+    if timer.is_null() {
+        return std::ptr::null_mut();
+    }
+    GMTIME_BUF.with(|cell| {
+        let ptr = cell.get();
+        unsafe {
+            gmtime_r(timer, ptr);
+        }
+        ptr
+    })
+}
+
+/// POSIX `localtime` — convert time_t to broken-down local time (non-reentrant).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn localtime(timer: *const i64) -> *mut libc::tm {
+    if timer.is_null() {
+        return std::ptr::null_mut();
+    }
+    LOCALTIME_BUF.with(|cell| {
+        let ptr = cell.get();
+        unsafe {
+            localtime_r(timer, ptr);
+        }
+        ptr
+    })
+}
+
+/// POSIX `asctime` — convert broken-down time to string (non-reentrant).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn asctime(tm: *const libc::tm) -> *mut std::ffi::c_char {
+    if tm.is_null() {
+        return std::ptr::null_mut();
+    }
+    ASCTIME_BUF.with(|cell| {
+        let ptr = cell.get();
+        unsafe {
+            asctime_r(tm, (*ptr).as_mut_ptr() as *mut std::ffi::c_char);
+        }
+        unsafe { (*ptr).as_mut_ptr() as *mut std::ffi::c_char }
+    })
+}
+
+/// POSIX `ctime` — convert time_t to string (non-reentrant).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ctime(timer: *const i64) -> *mut std::ffi::c_char {
+    if timer.is_null() {
+        return std::ptr::null_mut();
+    }
+    CTIME_BUF.with(|cell| {
+        let ptr = cell.get();
+        unsafe {
+            ctime_r(timer, (*ptr).as_mut_ptr() as *mut std::ffi::c_char);
+        }
+        unsafe { (*ptr).as_mut_ptr() as *mut std::ffi::c_char }
+    })
+}
+
+// ---------------------------------------------------------------------------
+// strptime + tzset — GlibcCallThrough
+// ---------------------------------------------------------------------------
+
+unsafe extern "C" {
+    #[link_name = "strptime"]
+    fn libc_strptime(s: *const std::ffi::c_char, fmt: *const std::ffi::c_char, tm: *mut libc::tm) -> *mut std::ffi::c_char;
+    #[link_name = "tzset"]
+    fn libc_tzset();
+}
+
+/// POSIX `strptime` — parse date/time string into broken-down time.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strptime(
+    s: *const std::ffi::c_char,
+    format: *const std::ffi::c_char,
+    tm: *mut libc::tm,
+) -> *mut std::ffi::c_char {
+    if s.is_null() || format.is_null() || tm.is_null() {
+        return std::ptr::null_mut();
+    }
+    unsafe { libc_strptime(s, format, tm) }
+}
+
+/// POSIX `tzset` — initialize timezone conversion information.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn tzset() {
+    unsafe { libc_tzset() }
+}

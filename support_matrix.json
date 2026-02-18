@@ -2,7 +2,7 @@
   "version": 2,
   "generated_at_utc": "2026-02-18T04:49:26Z",
   "library": "/data/tmp/cargo-target/release/libfrankenlibc_abi.so",
-  "total_exported": 548,
+  "total_exported": 594,
   "taxonomy": {
     "Implemented": "Native Rust code owns the entire operation. No host libc dependency. Full test coverage required.",
     "RawSyscall": "ABI entrypoint marshals arguments directly to Linux syscall instruction. No glibc call-through.",
@@ -4712,17 +4712,430 @@
       "family": "stdio",
       "status": "GlibcCallThrough",
       "notes": "Delegates to libc (va_list forwarding requires C ABI)"
+    },
+    {
+      "symbol": "scanf",
+      "status": "GlibcCallThrough",
+      "module": "stdio_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Delegates to glibc vscanf after membrane validation.",
+      "hardened_semantics": "Same delegation; format string validated by glibc.",
+      "default_stub": "Returns EOF"
+    },
+    {
+      "symbol": "fscanf",
+      "status": "GlibcCallThrough",
+      "module": "stdio_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Delegates to glibc vfscanf after membrane validation.",
+      "hardened_semantics": "Same delegation; format string validated by glibc.",
+      "default_stub": "Returns EOF"
+    },
+    {
+      "symbol": "sscanf",
+      "status": "GlibcCallThrough",
+      "module": "stdio_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Delegates to glibc vsscanf after membrane validation.",
+      "hardened_semantics": "Same delegation; format string validated by glibc.",
+      "default_stub": "Returns EOF"
+    },
+    {
+      "symbol": "vscanf",
+      "status": "GlibcCallThrough",
+      "module": "stdio_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Delegates to glibc vscanf with va_list passthrough.",
+      "hardened_semantics": "Same delegation.",
+      "default_stub": "Returns EOF"
+    },
+    {
+      "symbol": "vfscanf",
+      "status": "GlibcCallThrough",
+      "module": "stdio_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Delegates to glibc vfscanf with va_list passthrough.",
+      "hardened_semantics": "Same delegation.",
+      "default_stub": "Returns EOF"
+    },
+    {
+      "symbol": "vsscanf",
+      "status": "GlibcCallThrough",
+      "module": "stdio_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Delegates to glibc vsscanf with va_list passthrough.",
+      "hardened_semantics": "Same delegation.",
+      "default_stub": "Returns EOF"
+    },
+    {
+      "symbol": "gmtime",
+      "status": "Implemented",
+      "module": "time_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Thread-local buffer wrapping gmtime_r. Returns pointer to static tm.",
+      "hardened_semantics": "Same. Null pointer returns NULL.",
+      "default_stub": "Returns NULL"
+    },
+    {
+      "symbol": "localtime",
+      "status": "Implemented",
+      "module": "time_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Thread-local buffer wrapping localtime_r. Returns pointer to static tm.",
+      "hardened_semantics": "Same. Null pointer returns NULL.",
+      "default_stub": "Returns NULL"
+    },
+    {
+      "symbol": "asctime",
+      "status": "Implemented",
+      "module": "time_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Thread-local buffer wrapping asctime_r. Returns pointer to static string.",
+      "hardened_semantics": "Same. Null pointer returns NULL.",
+      "default_stub": "Returns NULL"
+    },
+    {
+      "symbol": "ctime",
+      "status": "Implemented",
+      "module": "time_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Thread-local buffer wrapping ctime_r. Returns pointer to static string.",
+      "hardened_semantics": "Same. Null pointer returns NULL.",
+      "default_stub": "Returns NULL"
+    },
+    {
+      "symbol": "strptime",
+      "status": "GlibcCallThrough",
+      "module": "time_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Delegates to glibc strptime for date/time parsing.",
+      "hardened_semantics": "Same delegation. Null pointers return NULL.",
+      "default_stub": "Returns NULL"
+    },
+    {
+      "symbol": "tzset",
+      "status": "GlibcCallThrough",
+      "module": "time_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Delegates to glibc tzset for timezone initialization.",
+      "hardened_semantics": "Same delegation.",
+      "default_stub": "No-op"
+    },
+    {
+      "symbol": "getopt",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Delegates to glibc getopt for CLI option parsing.",
+      "hardened_semantics": "Same delegation.",
+      "default_stub": "Returns -1"
+    },
+    {
+      "symbol": "getopt_long",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Delegates to glibc getopt_long for long option parsing.",
+      "hardened_semantics": "Same delegation.",
+      "default_stub": "Returns -1"
+    },
+    {
+      "symbol": "fseeko",
+      "status": "Implemented",
+      "module": "stdio_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Aliases fseek on LP64 (off_t == long).",
+      "hardened_semantics": "Same.",
+      "default_stub": "Returns -1"
+    },
+    {
+      "symbol": "ftello",
+      "status": "Implemented",
+      "module": "stdio_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Aliases ftell on LP64 (off_t == long).",
+      "hardened_semantics": "Same.",
+      "default_stub": "Returns -1"
+    },
+    {
+      "symbol": "setjmp",
+      "status": "Implemented",
+      "module": "setjmp_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Phase-1 capture with metadata tracking.",
+      "hardened_semantics": "Same with additional validation.",
+      "default_stub": "Returns -1"
+    },
+    {
+      "symbol": "_setjmp",
+      "status": "Implemented",
+      "module": "setjmp_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Alias for setjmp (no signal mask save).",
+      "hardened_semantics": "Same.",
+      "default_stub": "Returns -1"
+    },
+    {
+      "symbol": "sigsetjmp",
+      "status": "Implemented",
+      "module": "setjmp_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "setjmp with optional signal mask save.",
+      "hardened_semantics": "Same.",
+      "default_stub": "Returns -1"
+    },
+    {
+      "symbol": "longjmp",
+      "status": "Implemented",
+      "module": "setjmp_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Phase-1 restore with validation. Terminates (deferred backend).",
+      "hardened_semantics": "Same.",
+      "default_stub": "Aborts"
+    },
+    {
+      "symbol": "_longjmp",
+      "status": "Implemented",
+      "module": "setjmp_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Alias for longjmp.",
+      "hardened_semantics": "Same.",
+      "default_stub": "Aborts"
+    },
+    {
+      "symbol": "siglongjmp",
+      "status": "Implemented",
+      "module": "setjmp_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "longjmp with signal mask restore metadata.",
+      "hardened_semantics": "Same.",
+      "default_stub": "Aborts"
+    },
+    {
+      "symbol": "pthread_attr_init",
+      "status": "GlibcCallThrough",
+      "module": "pthread_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Delegates to glibc.",
+      "hardened_semantics": "Same.",
+      "default_stub": "Returns EINVAL"
+    },
+    {
+      "symbol": "pthread_attr_destroy",
+      "status": "GlibcCallThrough",
+      "module": "pthread_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Delegates to glibc.",
+      "hardened_semantics": "Same.",
+      "default_stub": "Returns EINVAL"
+    },
+    {
+      "symbol": "pthread_attr_setdetachstate",
+      "status": "GlibcCallThrough",
+      "module": "pthread_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Delegates to glibc.",
+      "hardened_semantics": "Same.",
+      "default_stub": "Returns EINVAL"
+    },
+    {
+      "symbol": "pthread_attr_getdetachstate",
+      "status": "GlibcCallThrough",
+      "module": "pthread_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Delegates to glibc.",
+      "hardened_semantics": "Same.",
+      "default_stub": "Returns EINVAL"
+    },
+    {
+      "symbol": "pthread_attr_setstacksize",
+      "status": "GlibcCallThrough",
+      "module": "pthread_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Delegates to glibc.",
+      "hardened_semantics": "Same.",
+      "default_stub": "Returns EINVAL"
+    },
+    {
+      "symbol": "pthread_attr_getstacksize",
+      "status": "GlibcCallThrough",
+      "module": "pthread_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Delegates to glibc.",
+      "hardened_semantics": "Same.",
+      "default_stub": "Returns EINVAL"
+    },
+    {
+      "symbol": "pthread_mutexattr_init",
+      "status": "GlibcCallThrough",
+      "module": "pthread_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Delegates to glibc.",
+      "hardened_semantics": "Same.",
+      "default_stub": "Returns EINVAL"
+    },
+    {
+      "symbol": "pthread_mutexattr_destroy",
+      "status": "GlibcCallThrough",
+      "module": "pthread_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Delegates to glibc.",
+      "hardened_semantics": "Same.",
+      "default_stub": "Returns EINVAL"
+    },
+    {
+      "symbol": "pthread_mutexattr_settype",
+      "status": "GlibcCallThrough",
+      "module": "pthread_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Delegates to glibc.",
+      "hardened_semantics": "Same.",
+      "default_stub": "Returns EINVAL"
+    },
+    {
+      "symbol": "pthread_mutexattr_gettype",
+      "status": "GlibcCallThrough",
+      "module": "pthread_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Delegates to glibc.",
+      "hardened_semantics": "Same.",
+      "default_stub": "Returns EINVAL"
+    },
+    {
+      "symbol": "pthread_condattr_init",
+      "status": "GlibcCallThrough",
+      "module": "pthread_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Delegates to glibc.",
+      "hardened_semantics": "Same.",
+      "default_stub": "Returns EINVAL"
+    },
+    {
+      "symbol": "pthread_condattr_destroy",
+      "status": "GlibcCallThrough",
+      "module": "pthread_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Delegates to glibc.",
+      "hardened_semantics": "Same.",
+      "default_stub": "Returns EINVAL"
+    },
+    {
+      "symbol": "pthread_condattr_setclock",
+      "status": "GlibcCallThrough",
+      "module": "pthread_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Delegates to glibc.",
+      "hardened_semantics": "Same.",
+      "default_stub": "Returns EINVAL"
+    },
+    {
+      "symbol": "pthread_condattr_getclock",
+      "status": "GlibcCallThrough",
+      "module": "pthread_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Delegates to glibc.",
+      "hardened_semantics": "Same.",
+      "default_stub": "Returns EINVAL"
+    },
+    {
+      "symbol": "pthread_rwlockattr_init",
+      "status": "GlibcCallThrough",
+      "module": "pthread_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Delegates to glibc.",
+      "hardened_semantics": "Same.",
+      "default_stub": "Returns EINVAL"
+    },
+    {
+      "symbol": "pthread_rwlockattr_destroy",
+      "status": "GlibcCallThrough",
+      "module": "pthread_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Delegates to glibc.",
+      "hardened_semantics": "Same.",
+      "default_stub": "Returns EINVAL"
+    },
+    {
+      "symbol": "pthread_cond_timedwait",
+      "status": "Implemented",
+      "module": "pthread_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Timed condvar wait with futex backend.",
+      "hardened_semantics": "Same.",
+      "default_stub": "Returns EINVAL"
+    },
+    {
+      "symbol": "pthread_rwlock_tryrdlock",
+      "status": "Implemented",
+      "module": "pthread_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Try read lock with futex backend.",
+      "hardened_semantics": "Same.",
+      "default_stub": "Returns EINVAL"
+    },
+    {
+      "symbol": "pthread_rwlock_trywrlock",
+      "status": "Implemented",
+      "module": "pthread_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Try write lock with futex backend.",
+      "hardened_semantics": "Same.",
+      "default_stub": "Returns EINVAL"
+    },
+    {
+      "symbol": "pthread_key_create",
+      "status": "Implemented",
+      "module": "pthread_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Thread-specific data key creation.",
+      "hardened_semantics": "Same.",
+      "default_stub": "Returns EINVAL"
+    },
+    {
+      "symbol": "pthread_key_delete",
+      "status": "Implemented",
+      "module": "pthread_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Thread-specific data key deletion.",
+      "hardened_semantics": "Same.",
+      "default_stub": "Returns EINVAL"
+    },
+    {
+      "symbol": "pthread_getspecific",
+      "status": "Implemented",
+      "module": "pthread_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Thread-specific data retrieval.",
+      "hardened_semantics": "Same.",
+      "default_stub": "Returns NULL"
+    },
+    {
+      "symbol": "pthread_setspecific",
+      "status": "Implemented",
+      "module": "pthread_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Thread-specific data storage.",
+      "hardened_semantics": "Same.",
+      "default_stub": "Returns EINVAL"
+    },
+    {
+      "symbol": "pthread_once",
+      "status": "Implemented",
+      "module": "pthread_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "One-time initialization with futex-based once control.",
+      "hardened_semantics": "Same.",
+      "default_stub": "Returns EINVAL"
     }
   ],
   "summary": {
-    "total_exported": 522,
-    "Implemented": 345,
+    "Implemented": 383,
     "RawSyscall": 172,
-    "GlibcCallThrough": 5,
-    "Stub": 0
+    "GlibcCallThrough": 39,
+    "total_exported": 594
   },
-  "implemented": 363,
+  "implemented": 383,
   "raw_syscall": 172,
-  "glibc_call_through": 13,
+  "glibc_call_through": 39,
   "stub": 0
 }

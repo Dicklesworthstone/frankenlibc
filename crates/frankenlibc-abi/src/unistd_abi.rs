@@ -1712,3 +1712,46 @@ pub unsafe extern "C" fn sysconf(name: c_int) -> libc::c_long {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// getopt — GlibcCallThrough (uses glibc global state: optarg, optind, etc.)
+// ---------------------------------------------------------------------------
+
+unsafe extern "C" {
+    #[link_name = "getopt"]
+    fn libc_getopt(argc: c_int, argv: *const *mut c_char, optstring: *const c_char) -> c_int;
+    #[link_name = "getopt_long"]
+    fn libc_getopt_long(
+        argc: c_int,
+        argv: *const *mut c_char,
+        optstring: *const c_char,
+        longopts: *const libc::option,
+        longindex: *mut c_int,
+    ) -> c_int;
+}
+
+/// POSIX `getopt` — parse command-line options.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getopt(
+    argc: c_int,
+    argv: *const *mut c_char,
+    optstring: *const c_char,
+) -> c_int {
+    unsafe { libc_getopt(argc, argv, optstring) }
+}
+
+/// GNU `getopt_long` — parse long command-line options.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getopt_long(
+    argc: c_int,
+    argv: *const *mut c_char,
+    optstring: *const c_char,
+    longopts: *const libc::option,
+    longindex: *mut c_int,
+) -> c_int {
+    unsafe { libc_getopt_long(argc, argv, optstring, longopts, longindex) }
+}
+
+// Note: getopt global variables (optarg, optind, opterr, optopt) are provided
+// by glibc and will be available to programs through the glibc linkage since
+// we delegate to libc_getopt. Programs using LD_PRELOAD will see glibc's globals.
