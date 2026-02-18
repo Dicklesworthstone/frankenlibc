@@ -15,6 +15,9 @@ GLIBC_2.2.5 {
         memcmp;
         memchr;
         memrchr;
+        memccpy;
+        memmem;
+        mempcpy;
         strlen;
         strnlen;
         strcmp;
@@ -29,19 +32,49 @@ GLIBC_2.2.5 {
         strchrnul;
         strrchr;
         strstr;
+        strspn;
+        strcspn;
+        strpbrk;
+        strcasecmp;
+        strncasecmp;
+        strcasestr;
+        strdup;
+        strndup;
+        strerror;
+        strerror_r;
+        strcoll;
+        strxfrm;
+        strlcat;
+        strlcpy;
+        strsep;
         strtok;
         strtok_r;
+        swab;
+        index;
+        rindex;
+
+        /* BSD/GNU memory operations */
+        bcmp;
+        bcopy;
+        bzero;
+        explicit_bzero;
 
         /* wide string operations */
         wcscat;
         wcschr;
         wcscmp;
         wcscpy;
+        wcscspn;
+        wcsdup;
         wcslen;
+        wcsncat;
         wcsncmp;
         wcsncpy;
+        wcspbrk;
         wcsrchr;
+        wcsspn;
         wcsstr;
+        wcstok;
         wmemchr;
         wmemcmp;
         wmemcpy;
@@ -58,34 +91,54 @@ GLIBC_2.2.5 {
         posix_memalign;
 
         /* stdlib */
+        abs;
+        labs;
+        llabs;
+        div;
+        ldiv;
+        lldiv;
         atoi;
         atol;
         atoll;
+        atof;
         strtol;
         strtoll;
         strtoul;
         strtoull;
         strtoimax;
         strtoumax;
+        strtod;
+        strtof;
         qsort;
         bsearch;
         getenv;
         setenv;
         unsetenv;
         secure_getenv;
+        rand;
+        rand_r;
+        srand;
+        ffs;
+        ffsl;
+        ffsll;
         exit;
         atexit;
 
         /* ctype */
         isalnum;
         isalpha;
+        isascii;
+        isblank;
+        iscntrl;
         isdigit;
+        isgraph;
         islower;
         isprint;
         ispunct;
         isspace;
         isupper;
         isxdigit;
+        toascii;
         tolower;
         toupper;
 
@@ -134,7 +187,7 @@ GLIBC_2.2.5 {
         tmpfile;
         tmpnam;
 
-        /* math operations */
+        /* math operations — double precision */
         sin;
         cos;
         tan;
@@ -161,16 +214,55 @@ GLIBC_2.2.5 {
         hypot;
         copysign;
         fabs;
+        fdim;
+        fma;
+        fmax;
+        fmin;
         ceil;
         floor;
         round;
         trunc;
         rint;
+        nearbyint;
         fmod;
         remainder;
+        modf;
+        frexp;
+        ldexp;
+        ilogb;
+        logb;
+        scalbn;
+        scalbln;
+        nextafter;
+        lrint;
+        llrint;
+        lround;
+        llround;
         erf;
+        erfc;
         tgamma;
         lgamma;
+
+        /* math operations — single precision */
+        sinf;
+        cosf;
+        tanf;
+        asinf;
+        acosf;
+        atanf;
+        atan2f;
+        expf;
+        log2f;
+        log10f;
+        logf;
+        powf;
+        sqrtf;
+        fabsf;
+        fmodf;
+        ceilf;
+        floorf;
+        roundf;
+        truncf;
 
         /* iconv */
         iconv_open;
