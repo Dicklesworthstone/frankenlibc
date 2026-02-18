@@ -835,6 +835,16 @@ GLIBC_2.2.5 {
         glob;
         globfree;
 
+        /* login/tty/hostname */
+        getlogin;
+        getlogin_r;
+        ttyname;
+        ttyname_r;
+        ctermid;
+        getpass;
+        sethostname;
+        setdomainname;
+
         /* misc POSIX */
         confstr;
         pathconf;

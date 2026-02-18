@@ -3346,3 +3346,66 @@ pub unsafe extern "C" fn getgrouplist(user: *const c_char, group: libc::gid_t, g
 pub unsafe extern "C" fn initgroups(user: *const c_char, group: libc::gid_t) -> c_int {
     unsafe { libc_initgroups(user, group) }
 }
+
+// ---------------------------------------------------------------------------
+// Misc POSIX extras — GlibcCallThrough / RawSyscall
+// ---------------------------------------------------------------------------
+
+unsafe extern "C" {
+    #[link_name = "getlogin"]
+    fn libc_getlogin() -> *mut c_char;
+    #[link_name = "getlogin_r"]
+    fn libc_getlogin_r(buf: *mut c_char, bufsize: usize) -> c_int;
+    #[link_name = "ttyname"]
+    fn libc_ttyname(fd: c_int) -> *mut c_char;
+    #[link_name = "ttyname_r"]
+    fn libc_ttyname_r(fd: c_int, buf: *mut c_char, buflen: usize) -> c_int;
+    #[link_name = "ctermid"]
+    fn libc_ctermid(s: *mut c_char) -> *mut c_char;
+    #[link_name = "getpass"]
+    fn libc_getpass(prompt: *const c_char) -> *mut c_char;
+    #[link_name = "sethostname"]
+    fn libc_sethostname(name: *const c_char, len: usize) -> c_int;
+    #[link_name = "setdomainname"]
+    fn libc_setdomainname(name: *const c_char, len: usize) -> c_int;
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getlogin() -> *mut c_char {
+    unsafe { libc_getlogin() }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getlogin_r(buf: *mut c_char, bufsize: usize) -> c_int {
+    unsafe { libc_getlogin_r(buf, bufsize) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ttyname(fd: c_int) -> *mut c_char {
+    unsafe { libc_ttyname(fd) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ttyname_r(fd: c_int, buf: *mut c_char, buflen: usize) -> c_int {
+    unsafe { libc_ttyname_r(fd, buf, buflen) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ctermid(s: *mut c_char) -> *mut c_char {
+    unsafe { libc_ctermid(s) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getpass(prompt: *const c_char) -> *mut c_char {
+    unsafe { libc_getpass(prompt) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn sethostname(name: *const c_char, len: usize) -> c_int {
+    unsafe { libc_sethostname(name, len) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn setdomainname(name: *const c_char, len: usize) -> c_int {
+    unsafe { libc_setdomainname(name, len) }
+}

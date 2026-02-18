@@ -2,7 +2,7 @@
   "version": 2,
   "generated_at_utc": "2026-02-18T04:49:26Z",
   "library": "/data/tmp/cargo-target/release/libfrankenlibc_abi.so",
-  "total_exported": 895,
+  "total_exported": 903,
   "taxonomy": {
     "Implemented": "Native Rust code owns the entire operation. No host libc dependency. Full test coverage required.",
     "RawSyscall": "ABI entrypoint marshals arguments directly to Linux syscall instruction. No glibc call-through.",
@@ -787,6 +787,12 @@
       "strict_semantics": "Passthrough to glibc crypt",
       "hardened_semantics": "Passthrough to glibc crypt",
       "default_stub": false
+    },
+    {
+      "symbol": "ctermid",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "fast"
     },
     {
       "symbol": "ctime",
@@ -2208,6 +2214,18 @@
       "default_stub": false
     },
     {
+      "symbol": "getlogin",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "fast"
+    },
+    {
+      "symbol": "getlogin_r",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "fast"
+    },
+    {
       "symbol": "getmntent",
       "status": "GlibcCallThrough",
       "module": "unistd_abi",
@@ -2248,6 +2266,12 @@
       "strict_semantics": "Passthrough to glibc getpagesize",
       "hardened_semantics": "Passthrough to glibc getpagesize",
       "default_stub": false
+    },
+    {
+      "symbol": "getpass",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "fast"
     },
     {
       "symbol": "getpeername",
@@ -5506,6 +5530,12 @@
       "default_stub": false
     },
     {
+      "symbol": "setdomainname",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "syscall"
+    },
+    {
       "symbol": "setegid",
       "status": "RawSyscall",
       "module": "unistd_abi",
@@ -5558,6 +5588,12 @@
       "strict_semantics": "Raw Linux syscall SYS_setgroups; POSIX errno on failure",
       "hardened_semantics": "Raw syscall; credential change operation",
       "default_stub": false
+    },
+    {
+      "symbol": "sethostname",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "syscall"
     },
     {
       "symbol": "setitimer",
@@ -6840,6 +6876,18 @@
       "default_stub": false
     },
     {
+      "symbol": "ttyname",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "fast"
+    },
+    {
+      "symbol": "ttyname_r",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "fast"
+    },
+    {
       "symbol": "tzset",
       "status": "GlibcCallThrough",
       "module": "time_abi",
@@ -7474,6 +7522,6 @@
   },
   "implemented": 394,
   "raw_syscall": 213,
-  "glibc_call_through": 288,
+  "glibc_call_through": 296,
   "stub": 0
 }
