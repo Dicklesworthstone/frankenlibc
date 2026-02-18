@@ -600,10 +600,17 @@ GLIBC_2.2.5 {
         fcntl;
         ioctl;
         pread;
+        pread64;
         pwrite;
+        pwrite64;
         readv;
         writev;
+        preadv;
+        pwritev;
+        preadv2;
+        pwritev2;
         sendfile;
+        sendfile64;
 
         /* poll/select/epoll */
         poll;
@@ -628,6 +635,7 @@ GLIBC_2.2.5 {
 
         /* mmap */
         mmap;
+        mmap64;
         munmap;
         mprotect;
         msync;
@@ -636,16 +644,19 @@ GLIBC_2.2.5 {
         munlock;
         mlockall;
         munlockall;
+        mremap;
 
         /* directory */
         opendir;
         closedir;
         readdir;
         readdir_r;
+        readdir64;
         seekdir;
         telldir;
         rewinddir;
         scandir;
+        scandir64;
         alphasort;
 
         /* time */
@@ -745,6 +756,34 @@ GLIBC_2.2.5 {
         ngettext;
         textdomain;
         bindtextdomain;
+
+        /* scheduler affinity */
+        sched_getaffinity;
+        sched_setaffinity;
+
+        /* random */
+        getentropy;
+        arc4random;
+        arc4random_buf;
+        arc4random_uniform;
+
+        /* 64-bit LFS variants */
+        open64;
+        creat64;
+        stat64;
+        fstat64;
+        lstat64;
+        fstatat64;
+        lseek64;
+        truncate64;
+        ftruncate64;
+        fopen64;
+        freopen64;
+        tmpfile64;
+        fseeko64;
+        ftello64;
+        fgetpos64;
+        fsetpos64;
 
     local:
         *;

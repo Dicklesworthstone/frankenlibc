@@ -424,3 +424,125 @@ pub unsafe extern "C" fn copy_file_range(
         rc as libc::ssize_t
     }
 }
+
+// ---------------------------------------------------------------------------
+// preadv / pwritev — RawSyscall
+// ---------------------------------------------------------------------------
+
+/// POSIX `preadv` — read from fd at offset into multiple buffers.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn preadv(
+    fd: c_int,
+    iov: *const libc::iovec,
+    iovcnt: c_int,
+    offset: i64,
+) -> libc::ssize_t {
+    let (_, decision) =
+        runtime_policy::decide(ApiFamily::IoFd, fd as usize, iovcnt as usize, false, true, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+        return -1;
+    }
+
+    let rc = unsafe { libc::syscall(libc::SYS_preadv, fd, iov, iovcnt, offset) };
+    if rc < 0 {
+        let e = std::io::Error::last_os_error()
+            .raw_os_error()
+            .unwrap_or(errno::EIO);
+        unsafe { set_abi_errno(e) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+        -1
+    } else {
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, false);
+        rc as libc::ssize_t
+    }
+}
+
+/// POSIX `pwritev` — write to fd at offset from multiple buffers.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pwritev(
+    fd: c_int,
+    iov: *const libc::iovec,
+    iovcnt: c_int,
+    offset: i64,
+) -> libc::ssize_t {
+    let (_, decision) =
+        runtime_policy::decide(ApiFamily::IoFd, fd as usize, iovcnt as usize, true, true, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+        return -1;
+    }
+
+    let rc = unsafe { libc::syscall(libc::SYS_pwritev, fd, iov, iovcnt, offset) };
+    if rc < 0 {
+        let e = std::io::Error::last_os_error()
+            .raw_os_error()
+            .unwrap_or(errno::EIO);
+        unsafe { set_abi_errno(e) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+        -1
+    } else {
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, false);
+        rc as libc::ssize_t
+    }
+}
+
+/// Linux `preadv2` — preadv with flags.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn preadv2(
+    fd: c_int,
+    iov: *const libc::iovec,
+    iovcnt: c_int,
+    offset: i64,
+    flags: c_int,
+) -> libc::ssize_t {
+    let (_, decision) =
+        runtime_policy::decide(ApiFamily::IoFd, fd as usize, iovcnt as usize, false, true, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+        return -1;
+    }
+
+    let rc = unsafe { libc::syscall(libc::SYS_preadv2, fd, iov, iovcnt, offset, flags) };
+    if rc < 0 {
+        let e = std::io::Error::last_os_error()
+            .raw_os_error()
+            .unwrap_or(errno::EIO);
+        unsafe { set_abi_errno(e) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+        -1
+    } else {
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, false);
+        rc as libc::ssize_t
+    }
+}
+
+/// Linux `pwritev2` — pwritev with flags.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pwritev2(
+    fd: c_int,
+    iov: *const libc::iovec,
+    iovcnt: c_int,
+    offset: i64,
+    flags: c_int,
+) -> libc::ssize_t {
+    let (_, decision) =
+        runtime_policy::decide(ApiFamily::IoFd, fd as usize, iovcnt as usize, true, true, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+        return -1;
+    }
+
+    let rc = unsafe { libc::syscall(libc::SYS_pwritev2, fd, iov, iovcnt, offset, flags) };
+    if rc < 0 {
+        let e = std::io::Error::last_os_error()
+            .raw_os_error()
+            .unwrap_or(errno::EIO);
+        unsafe { set_abi_errno(e) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+        -1
+    } else {
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, false);
+        rc as libc::ssize_t
+    }
+}

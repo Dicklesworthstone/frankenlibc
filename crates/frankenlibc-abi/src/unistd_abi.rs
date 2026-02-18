@@ -1992,3 +1992,225 @@ pub unsafe extern "C" fn nftw(
 ) -> c_int {
     unsafe { libc_nftw(dirpath, func, nopenfd, flags) }
 }
+
+// ---------------------------------------------------------------------------
+// sched_getaffinity / sched_setaffinity — RawSyscall
+// ---------------------------------------------------------------------------
+
+/// Linux `sched_getaffinity` — get CPU affinity mask.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn sched_getaffinity(
+    pid: libc::pid_t,
+    cpusetsize: usize,
+    mask: *mut c_void,
+) -> c_int {
+    let rc = unsafe {
+        libc::syscall(libc::SYS_sched_getaffinity, pid, cpusetsize, mask)
+    } as c_int;
+    if rc < 0 {
+        let e = std::io::Error::last_os_error()
+            .raw_os_error()
+            .unwrap_or(errno::EINVAL);
+        unsafe { set_abi_errno(e) };
+    }
+    rc
+}
+
+/// Linux `sched_setaffinity` — set CPU affinity mask.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn sched_setaffinity(
+    pid: libc::pid_t,
+    cpusetsize: usize,
+    mask: *const c_void,
+) -> c_int {
+    let rc = unsafe {
+        libc::syscall(libc::SYS_sched_setaffinity, pid, cpusetsize, mask)
+    } as c_int;
+    if rc < 0 {
+        let e = std::io::Error::last_os_error()
+            .raw_os_error()
+            .unwrap_or(errno::EINVAL);
+        unsafe { set_abi_errno(e) };
+    }
+    rc
+}
+
+// ---------------------------------------------------------------------------
+// getentropy — implemented via SYS_getrandom
+// ---------------------------------------------------------------------------
+
+/// POSIX `getentropy` — fill buffer with random data (up to 256 bytes).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getentropy(buffer: *mut c_void, length: usize) -> c_int {
+    if length > 256 {
+        unsafe { set_abi_errno(libc::EIO) };
+        return -1;
+    }
+    let rc = unsafe { libc::syscall(libc::SYS_getrandom, buffer, length, 0) };
+    if rc < 0 || (rc as usize) < length {
+        unsafe { set_abi_errno(libc::EIO) };
+        -1
+    } else {
+        0
+    }
+}
+
+// ---------------------------------------------------------------------------
+// arc4random family — implemented via SYS_getrandom
+// ---------------------------------------------------------------------------
+
+/// BSD `arc4random` — return a random 32-bit value.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn arc4random() -> u32 {
+    let mut val: u32 = 0;
+    unsafe {
+        libc::syscall(
+            libc::SYS_getrandom,
+            &mut val as *mut u32 as *mut c_void,
+            4usize,
+            0,
+        );
+    }
+    val
+}
+
+/// BSD `arc4random_buf` — fill buffer with random bytes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn arc4random_buf(buf: *mut c_void, nbytes: usize) {
+    unsafe {
+        libc::syscall(libc::SYS_getrandom, buf, nbytes, 0);
+    }
+}
+
+/// BSD `arc4random_uniform` — return a uniform random value less than `upper_bound`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn arc4random_uniform(upper_bound: u32) -> u32 {
+    if upper_bound < 2 {
+        return 0;
+    }
+    // Rejection sampling to avoid modulo bias.
+    let min = upper_bound.wrapping_neg() % upper_bound;
+    loop {
+        let r = unsafe { arc4random() };
+        if r >= min {
+            return r % upper_bound;
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 64-bit file aliases — GlibcCallThrough
+// ---------------------------------------------------------------------------
+// On LP64 (x86_64), these are identical to non-64 variants in glibc but
+// programs compiled with explicit LFS may reference them.
+
+unsafe extern "C" {
+    #[link_name = "open64"]
+    fn libc_open64(pathname: *const c_char, flags: c_int, mode: libc::mode_t) -> c_int;
+    #[link_name = "creat64"]
+    fn libc_creat64(pathname: *const c_char, mode: libc::mode_t) -> c_int;
+    #[link_name = "stat64"]
+    fn libc_stat64(path: *const c_char, buf: *mut c_void) -> c_int;
+    #[link_name = "fstat64"]
+    fn libc_fstat64(fd: c_int, buf: *mut c_void) -> c_int;
+    #[link_name = "lstat64"]
+    fn libc_lstat64(path: *const c_char, buf: *mut c_void) -> c_int;
+    #[link_name = "fstatat64"]
+    fn libc_fstatat64(dirfd: c_int, pathname: *const c_char, buf: *mut c_void, flags: c_int) -> c_int;
+    #[link_name = "lseek64"]
+    fn libc_lseek64(fd: c_int, offset: i64, whence: c_int) -> i64;
+    #[link_name = "truncate64"]
+    fn libc_truncate64(path: *const c_char, length: i64) -> c_int;
+    #[link_name = "ftruncate64"]
+    fn libc_ftruncate64(fd: c_int, length: i64) -> c_int;
+    #[link_name = "pread64"]
+    fn libc_pread64(fd: c_int, buf: *mut c_void, count: usize, offset: i64) -> isize;
+    #[link_name = "pwrite64"]
+    fn libc_pwrite64(fd: c_int, buf: *const c_void, count: usize, offset: i64) -> isize;
+    #[link_name = "mmap64"]
+    fn libc_mmap64(addr: *mut c_void, len: usize, prot: c_int, flags: c_int, fd: c_int, offset: i64) -> *mut c_void;
+    #[link_name = "sendfile64"]
+    fn libc_sendfile64(out_fd: c_int, in_fd: c_int, offset: *mut i64, count: usize) -> isize;
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn open64(pathname: *const c_char, flags: c_int, mode: libc::mode_t) -> c_int {
+    unsafe { libc_open64(pathname, flags, mode) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn creat64(pathname: *const c_char, mode: libc::mode_t) -> c_int {
+    unsafe { libc_creat64(pathname, mode) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn stat64(path: *const c_char, buf: *mut c_void) -> c_int {
+    unsafe { libc_stat64(path, buf) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn fstat64(fd: c_int, buf: *mut c_void) -> c_int {
+    unsafe { libc_fstat64(fd, buf) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn lstat64(path: *const c_char, buf: *mut c_void) -> c_int {
+    unsafe { libc_lstat64(path, buf) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn fstatat64(
+    dirfd: c_int,
+    pathname: *const c_char,
+    buf: *mut c_void,
+    flags: c_int,
+) -> c_int {
+    unsafe { libc_fstatat64(dirfd, pathname, buf, flags) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn lseek64(fd: c_int, offset: i64, whence: c_int) -> i64 {
+    unsafe { libc_lseek64(fd, offset, whence) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn truncate64(path: *const c_char, length: i64) -> c_int {
+    unsafe { libc_truncate64(path, length) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ftruncate64(fd: c_int, length: i64) -> c_int {
+    unsafe { libc_ftruncate64(fd, length) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pread64(fd: c_int, buf: *mut c_void, count: usize, offset: i64) -> isize {
+    unsafe { libc_pread64(fd, buf, count, offset) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pwrite64(fd: c_int, buf: *const c_void, count: usize, offset: i64) -> isize {
+    unsafe { libc_pwrite64(fd, buf, count, offset) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn mmap64(
+    addr: *mut c_void,
+    len: usize,
+    prot: c_int,
+    flags: c_int,
+    fd: c_int,
+    offset: i64,
+) -> *mut c_void {
+    unsafe { libc_mmap64(addr, len, prot, flags, fd, offset) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn sendfile64(
+    out_fd: c_int,
+    in_fd: c_int,
+    offset: *mut i64,
+    count: usize,
+) -> isize {
+    unsafe { libc_sendfile64(out_fd, in_fd, offset, count) }
+}

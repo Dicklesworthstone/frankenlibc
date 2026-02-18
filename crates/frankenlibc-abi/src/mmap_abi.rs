@@ -332,3 +332,45 @@ pub unsafe extern "C" fn munlockall() -> c_int {
     }
     rc
 }
+
+// ---------------------------------------------------------------------------
+// mremap — RawSyscall
+// ---------------------------------------------------------------------------
+
+/// Linux `mremap` — remap a virtual memory address.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn mremap(
+    old_address: *mut c_void,
+    old_size: usize,
+    new_size: usize,
+    flags: c_int,
+) -> *mut c_void {
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::VirtualMemory,
+        old_address as usize,
+        new_size,
+        true,
+        true,
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::VirtualMemory, decision.profile, 15, true);
+        unsafe { set_abi_errno(errno::ENOMEM) };
+        return libc::MAP_FAILED;
+    }
+
+    let rc = unsafe {
+        libc::syscall(libc::SYS_mremap as c_long, old_address, old_size, new_size, flags)
+    };
+    if rc == libc::MAP_FAILED as c_long {
+        let e = std::io::Error::last_os_error()
+            .raw_os_error()
+            .unwrap_or(errno::ENOMEM);
+        unsafe { set_abi_errno(e) };
+        runtime_policy::observe(ApiFamily::VirtualMemory, decision.profile, 15, true);
+        libc::MAP_FAILED
+    } else {
+        runtime_policy::observe(ApiFamily::VirtualMemory, decision.profile, 15, false);
+        rc as *mut c_void
+    }
+}

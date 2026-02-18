@@ -5594,13 +5594,310 @@
       "strict_semantics": "Passthrough to glibc bindtextdomain",
       "hardened_semantics": "Passthrough to glibc bindtextdomain",
       "default_stub": false
+    },
+    {
+      "symbol": "preadv",
+      "status": "RawSyscall",
+      "module": "io_abi",
+      "perf_class": "default",
+      "strict_semantics": "SYS_preadv \u2014 vectored pread",
+      "hardened_semantics": "SYS_preadv \u2014 vectored pread",
+      "default_stub": false
+    },
+    {
+      "symbol": "pwritev",
+      "status": "RawSyscall",
+      "module": "io_abi",
+      "perf_class": "default",
+      "strict_semantics": "SYS_pwritev \u2014 vectored pwrite",
+      "hardened_semantics": "SYS_pwritev \u2014 vectored pwrite",
+      "default_stub": false
+    },
+    {
+      "symbol": "preadv2",
+      "status": "RawSyscall",
+      "module": "io_abi",
+      "perf_class": "default",
+      "strict_semantics": "SYS_preadv2 \u2014 vectored pread with flags",
+      "hardened_semantics": "SYS_preadv2 \u2014 vectored pread with flags",
+      "default_stub": false
+    },
+    {
+      "symbol": "pwritev2",
+      "status": "RawSyscall",
+      "module": "io_abi",
+      "perf_class": "default",
+      "strict_semantics": "SYS_pwritev2 \u2014 vectored pwrite with flags",
+      "hardened_semantics": "SYS_pwritev2 \u2014 vectored pwrite with flags",
+      "default_stub": false
+    },
+    {
+      "symbol": "mremap",
+      "status": "RawSyscall",
+      "module": "mmap_abi",
+      "perf_class": "default",
+      "strict_semantics": "SYS_mremap \u2014 remap virtual memory",
+      "hardened_semantics": "SYS_mremap \u2014 remap virtual memory",
+      "default_stub": false
+    },
+    {
+      "symbol": "sched_getaffinity",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "SYS_sched_getaffinity \u2014 get CPU affinity",
+      "hardened_semantics": "SYS_sched_getaffinity \u2014 get CPU affinity",
+      "default_stub": false
+    },
+    {
+      "symbol": "sched_setaffinity",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "SYS_sched_setaffinity \u2014 set CPU affinity",
+      "hardened_semantics": "SYS_sched_setaffinity \u2014 set CPU affinity",
+      "default_stub": false
+    },
+    {
+      "symbol": "getentropy",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "getentropy via SYS_getrandom (max 256 bytes)",
+      "hardened_semantics": "getentropy via SYS_getrandom (max 256 bytes)",
+      "default_stub": false
+    },
+    {
+      "symbol": "arc4random",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "arc4random via SYS_getrandom",
+      "hardened_semantics": "arc4random via SYS_getrandom",
+      "default_stub": false
+    },
+    {
+      "symbol": "arc4random_buf",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "arc4random_buf via SYS_getrandom",
+      "hardened_semantics": "arc4random_buf via SYS_getrandom",
+      "default_stub": false
+    },
+    {
+      "symbol": "arc4random_uniform",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "arc4random_uniform via rejection sampling + SYS_getrandom",
+      "hardened_semantics": "arc4random_uniform via rejection sampling + SYS_getrandom",
+      "default_stub": false
+    },
+    {
+      "symbol": "open64",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "LP64 alias via glibc",
+      "hardened_semantics": "LP64 alias via glibc",
+      "default_stub": false
+    },
+    {
+      "symbol": "creat64",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "LP64 alias via glibc",
+      "hardened_semantics": "LP64 alias via glibc",
+      "default_stub": false
+    },
+    {
+      "symbol": "stat64",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "LP64 alias via glibc",
+      "hardened_semantics": "LP64 alias via glibc",
+      "default_stub": false
+    },
+    {
+      "symbol": "fstat64",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "LP64 alias via glibc",
+      "hardened_semantics": "LP64 alias via glibc",
+      "default_stub": false
+    },
+    {
+      "symbol": "lstat64",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "LP64 alias via glibc",
+      "hardened_semantics": "LP64 alias via glibc",
+      "default_stub": false
+    },
+    {
+      "symbol": "fstatat64",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "LP64 alias via glibc",
+      "hardened_semantics": "LP64 alias via glibc",
+      "default_stub": false
+    },
+    {
+      "symbol": "lseek64",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "LP64 alias via glibc",
+      "hardened_semantics": "LP64 alias via glibc",
+      "default_stub": false
+    },
+    {
+      "symbol": "truncate64",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "LP64 alias via glibc",
+      "hardened_semantics": "LP64 alias via glibc",
+      "default_stub": false
+    },
+    {
+      "symbol": "ftruncate64",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "LP64 alias via glibc",
+      "hardened_semantics": "LP64 alias via glibc",
+      "default_stub": false
+    },
+    {
+      "symbol": "pread64",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "LP64 alias via glibc",
+      "hardened_semantics": "LP64 alias via glibc",
+      "default_stub": false
+    },
+    {
+      "symbol": "pwrite64",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "LP64 alias via glibc",
+      "hardened_semantics": "LP64 alias via glibc",
+      "default_stub": false
+    },
+    {
+      "symbol": "mmap64",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "LP64 alias via glibc",
+      "hardened_semantics": "LP64 alias via glibc",
+      "default_stub": false
+    },
+    {
+      "symbol": "sendfile64",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "strict_semantics": "LP64 alias via glibc",
+      "hardened_semantics": "LP64 alias via glibc",
+      "default_stub": false
+    },
+    {
+      "symbol": "fopen64",
+      "status": "GlibcCallThrough",
+      "module": "stdio_abi",
+      "perf_class": "default",
+      "strict_semantics": "LP64 alias via glibc",
+      "hardened_semantics": "LP64 alias via glibc",
+      "default_stub": false
+    },
+    {
+      "symbol": "freopen64",
+      "status": "GlibcCallThrough",
+      "module": "stdio_abi",
+      "perf_class": "default",
+      "strict_semantics": "LP64 alias via glibc",
+      "hardened_semantics": "LP64 alias via glibc",
+      "default_stub": false
+    },
+    {
+      "symbol": "tmpfile64",
+      "status": "GlibcCallThrough",
+      "module": "stdio_abi",
+      "perf_class": "default",
+      "strict_semantics": "LP64 alias via glibc",
+      "hardened_semantics": "LP64 alias via glibc",
+      "default_stub": false
+    },
+    {
+      "symbol": "fseeko64",
+      "status": "GlibcCallThrough",
+      "module": "stdio_abi",
+      "perf_class": "default",
+      "strict_semantics": "LP64 alias via glibc",
+      "hardened_semantics": "LP64 alias via glibc",
+      "default_stub": false
+    },
+    {
+      "symbol": "ftello64",
+      "status": "GlibcCallThrough",
+      "module": "stdio_abi",
+      "perf_class": "default",
+      "strict_semantics": "LP64 alias via glibc",
+      "hardened_semantics": "LP64 alias via glibc",
+      "default_stub": false
+    },
+    {
+      "symbol": "fgetpos64",
+      "status": "GlibcCallThrough",
+      "module": "stdio_abi",
+      "perf_class": "default",
+      "strict_semantics": "LP64 alias via glibc",
+      "hardened_semantics": "LP64 alias via glibc",
+      "default_stub": false
+    },
+    {
+      "symbol": "fsetpos64",
+      "status": "GlibcCallThrough",
+      "module": "stdio_abi",
+      "perf_class": "default",
+      "strict_semantics": "LP64 alias via glibc",
+      "hardened_semantics": "LP64 alias via glibc",
+      "default_stub": false
+    },
+    {
+      "symbol": "readdir64",
+      "status": "GlibcCallThrough",
+      "module": "dirent_abi",
+      "perf_class": "default",
+      "strict_semantics": "LP64 alias via glibc",
+      "hardened_semantics": "LP64 alias via glibc",
+      "default_stub": false
+    },
+    {
+      "symbol": "scandir64",
+      "status": "GlibcCallThrough",
+      "module": "dirent_abi",
+      "perf_class": "default",
+      "strict_semantics": "LP64 alias via glibc",
+      "hardened_semantics": "LP64 alias via glibc",
+      "default_stub": false
     }
   ],
   "summary": {
-    "total_exported": 646,
-    "implemented": 383,
-    "raw_syscall": 176,
-    "glibc_call_through": 87,
+    "total_exported": 679,
+    "implemented": 387,
+    "raw_syscall": 183,
+    "glibc_call_through": 109,
     "stub": 0
   },
   "implemented": 383,

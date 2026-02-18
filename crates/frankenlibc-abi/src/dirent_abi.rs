@@ -295,6 +295,15 @@ unsafe extern "C" {
     fn libc_alphasort(a: *mut *const libc::dirent, b: *mut *const libc::dirent) -> c_int;
     #[link_name = "readdir_r"]
     fn libc_readdir_r(dirp: *mut c_void, entry: *mut libc::dirent, result: *mut *mut libc::dirent) -> c_int;
+    #[link_name = "readdir64"]
+    fn libc_readdir64(dirp: *mut c_void) -> *mut c_void;
+    #[link_name = "scandir64"]
+    fn libc_scandir64(
+        dirp: *const c_char,
+        namelist: *mut *mut *mut c_void,
+        filter: Option<unsafe extern "C" fn(*const c_void) -> c_int>,
+        compar: Option<unsafe extern "C" fn(*mut *const c_void, *mut *const c_void) -> c_int>,
+    ) -> c_int;
 }
 
 use std::os::raw::c_long;
@@ -339,4 +348,19 @@ pub unsafe extern "C" fn readdir_r(
     result: *mut *mut libc::dirent,
 ) -> c_int {
     unsafe { libc_readdir_r(dirp, entry, result) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn readdir64(dirp: *mut c_void) -> *mut c_void {
+    unsafe { libc_readdir64(dirp) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn scandir64(
+    dirp: *const c_char,
+    namelist: *mut *mut *mut c_void,
+    filter: Option<unsafe extern "C" fn(*const c_void) -> c_int>,
+    compar: Option<unsafe extern "C" fn(*mut *const c_void, *mut *const c_void) -> c_int>,
+) -> c_int {
+    unsafe { libc_scandir64(dirp, namelist, filter, compar) }
 }

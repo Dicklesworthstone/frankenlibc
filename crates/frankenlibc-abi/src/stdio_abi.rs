@@ -2476,3 +2476,63 @@ pub unsafe extern "C" fn snprintf_chk(
     );
     total_len as c_int
 }
+
+// ---------------------------------------------------------------------------
+// 64-bit aliases — GlibcCallThrough
+// ---------------------------------------------------------------------------
+
+unsafe extern "C" {
+    #[link_name = "fopen64"]
+    fn libc_fopen64(pathname: *const c_char, mode: *const c_char) -> *mut c_void;
+    #[link_name = "freopen64"]
+    fn libc_freopen64(pathname: *const c_char, mode: *const c_char, stream: *mut c_void) -> *mut c_void;
+    #[link_name = "tmpfile64"]
+    fn libc_tmpfile64() -> *mut c_void;
+    #[link_name = "fseeko64"]
+    fn libc_fseeko64(stream: *mut c_void, offset: i64, whence: c_int) -> c_int;
+    #[link_name = "ftello64"]
+    fn libc_ftello64(stream: *mut c_void) -> i64;
+    #[link_name = "fgetpos64"]
+    fn libc_fgetpos64(stream: *mut c_void, pos: *mut c_void) -> c_int;
+    #[link_name = "fsetpos64"]
+    fn libc_fsetpos64(stream: *mut c_void, pos: *const c_void) -> c_int;
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn fopen64(pathname: *const c_char, mode: *const c_char) -> *mut c_void {
+    unsafe { libc_fopen64(pathname, mode) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn freopen64(
+    pathname: *const c_char,
+    mode: *const c_char,
+    stream: *mut c_void,
+) -> *mut c_void {
+    unsafe { libc_freopen64(pathname, mode, stream) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn tmpfile64() -> *mut c_void {
+    unsafe { libc_tmpfile64() }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn fseeko64(stream: *mut c_void, offset: i64, whence: c_int) -> c_int {
+    unsafe { libc_fseeko64(stream, offset, whence) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ftello64(stream: *mut c_void) -> i64 {
+    unsafe { libc_ftello64(stream) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn fgetpos64(stream: *mut c_void, pos: *mut c_void) -> c_int {
+    unsafe { libc_fgetpos64(stream, pos) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn fsetpos64(stream: *mut c_void, pos: *const c_void) -> c_int {
+    unsafe { libc_fsetpos64(stream, pos) }
+}
