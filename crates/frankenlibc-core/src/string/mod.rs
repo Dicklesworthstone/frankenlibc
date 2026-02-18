@@ -5,6 +5,7 @@
 pub mod mem;
 pub mod str;
 pub mod strtok;
+pub mod wchar;
 pub mod wide;
 
 // Re-export commonly used functions.
@@ -17,6 +18,10 @@ pub use str::{
     strndup_bytes, strnlen, strpbrk, strrchr, strsep, strspn, strstr, strxfrm,
 };
 pub use strtok::{strtok, strtok_r};
+pub use wchar::{
+    iswalnum, iswalpha, iswdigit, iswlower, iswprint, iswspace, iswupper, mblen as mb_len,
+    mbstowcs, mbtowc, towlower as wc_tolower, towupper as wc_toupper, wcstombs, wcwidth, wctomb,
+};
 pub use wide::{
     wcscat, wcscmp, wcscpy, wcscspn, wcsdup_len, wcslen, wcsncat, wcsncmp, wcsncpy, wcspbrk,
     wcsrchr, wcsspn, wcsstr, wcstok, wmemchr, wmemcmp, wmemcpy, wmemmove, wmemset,

@@ -2,7 +2,7 @@
   "version": 2,
   "generated_at_utc": "2026-02-18T04:49:26Z",
   "library": "/data/tmp/cargo-target/release/libfrankenlibc_abi.so",
-  "total_exported": 482,
+  "total_exported": 542,
   "taxonomy": {
     "Implemented": "Native Rust code owns the entire operation. No host libc dependency. Full test coverage required.",
     "RawSyscall": "ABI entrypoint marshals arguments directly to Linux syscall instruction. No glibc call-through.",
@@ -4530,6 +4530,146 @@
       "status": "Implemented",
       "module": "stdio_abi",
       "notes": ""
+    },
+    {
+      "symbol": "strftime",
+      "header": "time.h",
+      "family": "time",
+      "status": "Implemented",
+      "notes": "Full POSIX strftime format specifier support (UTC only)"
+    },
+    {
+      "symbol": "mblen",
+      "header": "stdlib.h",
+      "family": "wchar",
+      "status": "Implemented",
+      "notes": "UTF-8 multibyte character length"
+    },
+    {
+      "symbol": "mbtowc",
+      "header": "stdlib.h",
+      "family": "wchar",
+      "status": "Implemented",
+      "notes": "UTF-8 multibyte to wide character"
+    },
+    {
+      "symbol": "wctomb",
+      "header": "stdlib.h",
+      "family": "wchar",
+      "status": "Implemented",
+      "notes": "Wide character to UTF-8 multibyte"
+    },
+    {
+      "symbol": "mbstowcs",
+      "header": "stdlib.h",
+      "family": "wchar",
+      "status": "Implemented",
+      "notes": "UTF-8 multibyte string to wide string"
+    },
+    {
+      "symbol": "wcstombs",
+      "header": "stdlib.h",
+      "family": "wchar",
+      "status": "Implemented",
+      "notes": "Wide string to UTF-8 multibyte string"
+    },
+    {
+      "symbol": "iswalnum",
+      "header": "wctype.h",
+      "family": "wctype",
+      "status": "Implemented",
+      "notes": "Wide character alphanumeric test"
+    },
+    {
+      "symbol": "iswalpha",
+      "header": "wctype.h",
+      "family": "wctype",
+      "status": "Implemented",
+      "notes": "Wide character alphabetic test"
+    },
+    {
+      "symbol": "iswdigit",
+      "header": "wctype.h",
+      "family": "wctype",
+      "status": "Implemented",
+      "notes": "Wide character digit test"
+    },
+    {
+      "symbol": "iswlower",
+      "header": "wctype.h",
+      "family": "wctype",
+      "status": "Implemented",
+      "notes": "Wide character lowercase test"
+    },
+    {
+      "symbol": "iswupper",
+      "header": "wctype.h",
+      "family": "wctype",
+      "status": "Implemented",
+      "notes": "Wide character uppercase test"
+    },
+    {
+      "symbol": "iswspace",
+      "header": "wctype.h",
+      "family": "wctype",
+      "status": "Implemented",
+      "notes": "Wide character whitespace test"
+    },
+    {
+      "symbol": "iswprint",
+      "header": "wctype.h",
+      "family": "wctype",
+      "status": "Implemented",
+      "notes": "Wide character printable test"
+    },
+    {
+      "symbol": "towupper",
+      "header": "wctype.h",
+      "family": "wctype",
+      "status": "Implemented",
+      "notes": "Wide character to uppercase"
+    },
+    {
+      "symbol": "towlower",
+      "header": "wctype.h",
+      "family": "wctype",
+      "status": "Implemented",
+      "notes": "Wide character to lowercase"
+    },
+    {
+      "symbol": "wcwidth",
+      "header": "wchar.h",
+      "family": "wchar",
+      "status": "Implemented",
+      "notes": "Wide character display width"
+    },
+    {
+      "symbol": "basename",
+      "header": "libgen.h",
+      "family": "unistd",
+      "status": "Implemented",
+      "notes": "Extract filename from path"
+    },
+    {
+      "symbol": "dirname",
+      "header": "libgen.h",
+      "family": "unistd",
+      "status": "Implemented",
+      "notes": "Extract directory from path"
+    },
+    {
+      "symbol": "realpath",
+      "header": "stdlib.h",
+      "family": "unistd",
+      "status": "GlibcCallThrough",
+      "notes": "Resolve pathname (delegates to libc)"
+    },
+    {
+      "symbol": "mkstemp",
+      "header": "stdlib.h",
+      "family": "unistd",
+      "status": "GlibcCallThrough",
+      "notes": "Create temporary file (delegates to libc)"
     }
   ],
   "summary": {
@@ -4538,5 +4678,9 @@
     "RawSyscall": 172,
     "GlibcCallThrough": 5,
     "Stub": 0
-  }
+  },
+  "implemented": 363,
+  "raw_syscall": 172,
+  "glibc_call_through": 7,
+  "stub": 0
 }

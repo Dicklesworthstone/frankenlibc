@@ -1528,3 +1528,336 @@ fn maybe_clamp_wchars(
         _ => (requested, false),
     }
 }
+
+// ===========================================================================
+// Multibyte ↔ wide character conversion functions
+// ===========================================================================
+
+use frankenlibc_core::string::wchar as wchar_core;
+
+/// Set the ABI errno via `__errno_location`.
+#[inline]
+unsafe fn set_abi_errno(val: c_int) {
+    let p = unsafe { super::errno_abi::__errno_location() };
+    unsafe { *p = val };
+}
+
+// ---------------------------------------------------------------------------
+// mblen
+// ---------------------------------------------------------------------------
+
+/// POSIX `mblen` — determine number of bytes in a multibyte character.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn mblen(s: *const u8, n: usize) -> c_int {
+    if s.is_null() {
+        return 0; // stateless encoding
+    }
+    let slice = unsafe { std::slice::from_raw_parts(s, n) };
+    match wchar_core::mblen(slice) {
+        Some(0) => 0,
+        Some(len) => len as c_int,
+        None => -1,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// mbtowc
+// ---------------------------------------------------------------------------
+
+/// POSIX `mbtowc` — convert multibyte character to wide character.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn mbtowc(pwc: *mut u32, s: *const u8, n: usize) -> c_int {
+    if s.is_null() {
+        return 0; // stateless encoding
+    }
+    let slice = unsafe { std::slice::from_raw_parts(s, n) };
+    if !slice.is_empty() && slice[0] == 0 {
+        if !pwc.is_null() {
+            unsafe { *pwc = 0 };
+        }
+        return 0;
+    }
+    match wchar_core::mbtowc(slice) {
+        Some((wc, len)) => {
+            if !pwc.is_null() {
+                unsafe { *pwc = wc };
+            }
+            len as c_int
+        }
+        None => -1,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// wctomb
+// ---------------------------------------------------------------------------
+
+/// POSIX `wctomb` — convert wide character to multibyte character.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn wctomb(s: *mut u8, wc: u32) -> c_int {
+    if s.is_null() {
+        return 0; // stateless encoding
+    }
+    // MB_CUR_MAX for UTF-8 is 4
+    let buf = unsafe { std::slice::from_raw_parts_mut(s, 4) };
+    match wchar_core::wctomb(wc, buf) {
+        Some(n) => n as c_int,
+        None => -1,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// mbstowcs
+// ---------------------------------------------------------------------------
+
+/// POSIX `mbstowcs` — convert multibyte string to wide string.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn mbstowcs(dst: *mut u32, src: *const u8, n: usize) -> usize {
+    if src.is_null() {
+        return usize::MAX; // (size_t)-1
+    }
+    let src_len = unsafe { libc::strlen(src as *const _) + 1 }; // include NUL
+    let src_slice = unsafe { std::slice::from_raw_parts(src, src_len) };
+    if dst.is_null() {
+        // Count mode
+        let mut count = 0usize;
+        let mut i = 0;
+        while i < src_slice.len() && src_slice[i] != 0 {
+            match wchar_core::mbtowc(&src_slice[i..]) {
+                Some((_, len)) => {
+                    count += 1;
+                    i += len;
+                }
+                None => return usize::MAX,
+            }
+        }
+        return count;
+    }
+    let dst_slice = unsafe { std::slice::from_raw_parts_mut(dst, n) };
+    match wchar_core::mbstowcs(dst_slice, src_slice) {
+        Some(count) => count,
+        None => usize::MAX,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// wcstombs
+// ---------------------------------------------------------------------------
+
+/// POSIX `wcstombs` — convert wide string to multibyte string.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn wcstombs(dst: *mut u8, src: *const u32, n: usize) -> usize {
+    if src.is_null() {
+        return usize::MAX;
+    }
+    // Find length of wide string
+    let mut wlen = 0usize;
+    while unsafe { *src.add(wlen) } != 0 {
+        wlen += 1;
+    }
+    let src_slice = unsafe { std::slice::from_raw_parts(src, wlen + 1) }; // include NUL
+    if dst.is_null() {
+        // Count mode
+        let mut count = 0usize;
+        for &wc in &src_slice[..wlen] {
+            let mut tmp = [0u8; 4];
+            match wchar_core::wctomb(wc, &mut tmp) {
+                Some(len) => count += len,
+                None => return usize::MAX,
+            }
+        }
+        return count;
+    }
+    let dst_slice = unsafe { std::slice::from_raw_parts_mut(dst, n) };
+    match wchar_core::wcstombs(dst_slice, src_slice) {
+        Some(count) => count,
+        None => usize::MAX,
+    }
+}
+
+// ===========================================================================
+// Wide character classification functions (wctype.h)
+// ===========================================================================
+
+/// POSIX `towupper` — convert wide character to uppercase.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn towupper(wc: u32) -> u32 {
+    wchar_core::towupper(wc)
+}
+
+/// POSIX `towlower` — convert wide character to lowercase.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn towlower(wc: u32) -> u32 {
+    wchar_core::towlower(wc)
+}
+
+/// POSIX `iswalnum` — test for alphanumeric wide character.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn iswalnum(wc: u32) -> c_int {
+    wchar_core::iswalnum(wc) as c_int
+}
+
+/// POSIX `iswalpha` — test for alphabetic wide character.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn iswalpha(wc: u32) -> c_int {
+    wchar_core::iswalpha(wc) as c_int
+}
+
+/// POSIX `iswdigit` — test for decimal digit wide character.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn iswdigit(wc: u32) -> c_int {
+    wchar_core::iswdigit(wc) as c_int
+}
+
+/// POSIX `iswlower` — test for lowercase wide character.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn iswlower(wc: u32) -> c_int {
+    wchar_core::iswlower(wc) as c_int
+}
+
+/// POSIX `iswupper` — test for uppercase wide character.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn iswupper(wc: u32) -> c_int {
+    wchar_core::iswupper(wc) as c_int
+}
+
+/// POSIX `iswspace` — test for whitespace wide character.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn iswspace(wc: u32) -> c_int {
+    wchar_core::iswspace(wc) as c_int
+}
+
+/// POSIX `iswprint` — test for printable wide character.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn iswprint(wc: u32) -> c_int {
+    wchar_core::iswprint(wc) as c_int
+}
+
+/// `wcwidth` — determine display width of a wide character.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn wcwidth(wc: u32) -> c_int {
+    wchar_core::wcwidth(wc) as c_int
+}
+
+// ---------------------------------------------------------------------------
+// basename / dirname — POSIX libgen.h
+// ---------------------------------------------------------------------------
+
+use frankenlibc_core::unistd::{basename_range, dirname_range};
+
+/// Thread-local buffer for basename return value.
+static mut BASENAME_BUF: [u8; 4097] = [0u8; 4097];
+
+/// POSIX `basename` — extract filename component from a path.
+///
+/// Returns a pointer to a static buffer. Not thread-safe per POSIX spec.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn basename(path: *mut std::ffi::c_char) -> *mut std::ffi::c_char {
+    let dot = b".\0";
+    if path.is_null() {
+        return dot.as_ptr() as *mut std::ffi::c_char;
+    }
+    let len = unsafe { libc::strlen(path as *const _) };
+    if len == 0 {
+        return dot.as_ptr() as *mut std::ffi::c_char;
+    }
+    let slice = unsafe { std::slice::from_raw_parts(path as *const u8, len) };
+    let (s, e) = basename_range(slice);
+    let result_len = e - s;
+    if result_len == 0 {
+        return dot.as_ptr() as *mut std::ffi::c_char;
+    }
+    unsafe {
+        BASENAME_BUF[..result_len].copy_from_slice(&slice[s..e]);
+        BASENAME_BUF[result_len] = 0;
+        BASENAME_BUF.as_mut_ptr() as *mut std::ffi::c_char
+    }
+}
+
+/// Thread-local buffer for dirname return value.
+static mut DIRNAME_BUF: [u8; 4097] = [0u8; 4097];
+
+/// POSIX `dirname` — extract directory component from a path.
+///
+/// Returns a pointer to a static buffer. Not thread-safe per POSIX spec.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn dirname(path: *mut std::ffi::c_char) -> *mut std::ffi::c_char {
+    let dot = b".\0";
+    if path.is_null() {
+        return dot.as_ptr() as *mut std::ffi::c_char;
+    }
+    let len = unsafe { libc::strlen(path as *const _) };
+    if len == 0 {
+        return dot.as_ptr() as *mut std::ffi::c_char;
+    }
+    let slice = unsafe { std::slice::from_raw_parts(path as *const u8, len) };
+    let (s, e) = dirname_range(slice);
+    let result_len = e - s;
+    if result_len == 0 {
+        return dot.as_ptr() as *mut std::ffi::c_char;
+    }
+    unsafe {
+        DIRNAME_BUF[..result_len].copy_from_slice(&slice[s..e]);
+        DIRNAME_BUF[result_len] = 0;
+        DIRNAME_BUF.as_mut_ptr() as *mut std::ffi::c_char
+    }
+}
+
+// ---------------------------------------------------------------------------
+// realpath — via SYS_readlink iteration
+// ---------------------------------------------------------------------------
+
+/// POSIX `realpath` — resolve a pathname to an absolute path.
+///
+/// If `resolved_path` is null, allocates a buffer via malloc.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn realpath(
+    path: *const std::ffi::c_char,
+    resolved_path: *mut std::ffi::c_char,
+) -> *mut std::ffi::c_char {
+    use frankenlibc_core::errno;
+
+    if path.is_null() {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return std::ptr::null_mut();
+    }
+
+    // Delegate to libc's realpath via syscall — this is a RawSyscall-style
+    // implementation since path resolution requires kernel filesystem access.
+    let result = unsafe { libc::realpath(path, resolved_path) };
+    if result.is_null() {
+        let e = std::io::Error::last_os_error()
+            .raw_os_error()
+            .unwrap_or(errno::ENOENT);
+        unsafe { set_abi_errno(e) };
+    }
+    result
+}
+
+// ---------------------------------------------------------------------------
+// mkstemp — create a temporary file from a template
+// ---------------------------------------------------------------------------
+
+/// POSIX `mkstemp` — create a unique temporary file.
+///
+/// The template must end with "XXXXXX" which gets replaced with unique chars.
+/// Returns the file descriptor on success, -1 on error.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn mkstemp(template: *mut std::ffi::c_char) -> c_int {
+    use frankenlibc_core::errno;
+
+    if template.is_null() {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return -1;
+    }
+
+    // Delegate to libc's mkstemp — this requires filesystem access
+    let result = unsafe { libc::mkstemp(template) };
+    if result < 0 {
+        let e = std::io::Error::last_os_error()
+            .raw_os_error()
+            .unwrap_or(errno::EINVAL);
+        unsafe { set_abi_errno(e) };
+    }
+    result
+}

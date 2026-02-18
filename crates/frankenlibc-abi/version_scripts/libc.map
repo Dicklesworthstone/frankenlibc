@@ -80,6 +80,31 @@ GLIBC_2.2.5 {
         wmemcpy;
         wmemmove;
         wmemset;
+        wcwidth;
+
+        /* multibyte/wide character conversion */
+        mblen;
+        mbtowc;
+        wctomb;
+        mbstowcs;
+        wcstombs;
+
+        /* wide character classification (wctype.h) */
+        iswalnum;
+        iswalpha;
+        iswdigit;
+        iswlower;
+        iswupper;
+        iswspace;
+        iswprint;
+        towupper;
+        towlower;
+
+        /* path utilities (libgen.h) */
+        basename;
+        dirname;
+        realpath;
+        mkstemp;
 
         /* memory allocation */
         malloc;
@@ -573,6 +598,7 @@ GLIBC_2.2.5 {
         nanosleep;
         asctime_r;
         ctime_r;
+        strftime;
 
         /* termios */
         tcgetattr;

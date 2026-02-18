@@ -353,3 +353,35 @@ pub unsafe extern "C" fn ctime_r(
     }
     buf
 }
+
+// ---------------------------------------------------------------------------
+// strftime
+// ---------------------------------------------------------------------------
+
+/// POSIX `strftime` — format broken-down time into a string.
+///
+/// Writes at most `maxsize` bytes (including the NUL terminator) into `s`.
+/// Returns the number of bytes written (excluding NUL), or 0 if the result
+/// would exceed `maxsize`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strftime(
+    s: *mut std::ffi::c_char,
+    maxsize: usize,
+    format: *const std::ffi::c_char,
+    tm: *const libc::tm,
+) -> usize {
+    if s.is_null() || format.is_null() || tm.is_null() || maxsize == 0 {
+        return 0;
+    }
+
+    // Read the format string as a byte slice.
+    let fmt_len = unsafe { libc::strlen(format as *const _) };
+    let fmt = unsafe { std::slice::from_raw_parts(format as *const u8, fmt_len) };
+
+    // Read the broken-down time.
+    let bd = unsafe { read_tm(tm) };
+
+    // Format into the output buffer.
+    let buf = unsafe { std::slice::from_raw_parts_mut(s as *mut u8, maxsize) };
+    time_core::format_strftime(fmt, &bd, buf)
+}

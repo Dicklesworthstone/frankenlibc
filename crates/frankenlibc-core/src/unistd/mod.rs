@@ -184,6 +184,77 @@ pub fn s_isblk(mode: u32) -> bool {
 }
 
 // ---------------------------------------------------------------------------
+// Path utilities
+// ---------------------------------------------------------------------------
+
+/// POSIX `basename` — extract the filename component of a path.
+///
+/// Returns `(start, end)` byte offsets into `path` giving the basename slice.
+/// The result excludes any trailing slashes. Returns `"."` offsets if empty.
+pub fn basename_range(path: &[u8]) -> (usize, usize) {
+    if path.is_empty() {
+        return (0, 0); // caller should substitute "."
+    }
+
+    // Strip trailing slashes
+    let mut end = path.len();
+    while end > 0 && path[end - 1] == b'/' {
+        end -= 1;
+    }
+
+    // All slashes → "/"
+    if end == 0 {
+        return (0, 1);
+    }
+
+    // Find last slash before the basename
+    let mut start = end;
+    while start > 0 && path[start - 1] != b'/' {
+        start -= 1;
+    }
+
+    (start, end)
+}
+
+/// POSIX `dirname` — extract the directory component of a path.
+///
+/// Returns `(start, end)` byte offsets into `path` giving the dirname slice.
+/// Returns `"."` offsets if there is no directory component.
+pub fn dirname_range(path: &[u8]) -> (usize, usize) {
+    if path.is_empty() {
+        return (0, 0); // caller should substitute "."
+    }
+
+    // Strip trailing slashes
+    let mut end = path.len();
+    while end > 0 && path[end - 1] == b'/' {
+        end -= 1;
+    }
+
+    // All slashes → "/"
+    if end == 0 {
+        return (0, 1);
+    }
+
+    // Strip the basename (last component)
+    while end > 0 && path[end - 1] != b'/' {
+        end -= 1;
+    }
+
+    // No directory component → "."
+    if end == 0 {
+        return (0, 0); // caller should substitute "."
+    }
+
+    // Strip trailing slashes from the directory
+    while end > 1 && path[end - 1] == b'/' {
+        end -= 1;
+    }
+
+    (0, end)
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -457,5 +528,63 @@ mod tests {
     fn s_ifmt_mask_extracts_type() {
         let mode = S_IFREG | S_ISUID | S_ISGID | S_ISVTX | 0o777;
         assert_eq!(mode & S_IFMT, S_IFREG);
+    }
+
+    // -- basename/dirname tests -----------------------------------------------
+
+    #[test]
+    fn basename_normal_path() {
+        let path = b"/usr/lib/libfoo.so";
+        let (s, e) = basename_range(path);
+        assert_eq!(&path[s..e], b"libfoo.so");
+    }
+
+    #[test]
+    fn basename_trailing_slash() {
+        let path = b"/usr/lib/";
+        let (s, e) = basename_range(path);
+        assert_eq!(&path[s..e], b"lib");
+    }
+
+    #[test]
+    fn basename_root() {
+        let path = b"/";
+        let (s, e) = basename_range(path);
+        assert_eq!(&path[s..e], b"/");
+    }
+
+    #[test]
+    fn basename_no_slash() {
+        let path = b"foo.txt";
+        let (s, e) = basename_range(path);
+        assert_eq!(&path[s..e], b"foo.txt");
+    }
+
+    #[test]
+    fn dirname_normal_path() {
+        let path = b"/usr/lib/libfoo.so";
+        let (s, e) = dirname_range(path);
+        assert_eq!(&path[s..e], b"/usr/lib");
+    }
+
+    #[test]
+    fn dirname_trailing_slash() {
+        let path = b"/usr/lib/";
+        let (s, e) = dirname_range(path);
+        assert_eq!(&path[s..e], b"/usr");
+    }
+
+    #[test]
+    fn dirname_root() {
+        let path = b"/";
+        let (s, e) = dirname_range(path);
+        assert_eq!(&path[s..e], b"/");
+    }
+
+    #[test]
+    fn dirname_no_slash() {
+        let (s, e) = dirname_range(b"foo.txt");
+        assert_eq!(s, 0);
+        assert_eq!(e, 0); // caller substitutes "."
     }
 }

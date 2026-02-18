@@ -520,7 +520,7 @@ mod tests {
 
     #[test]
     fn test_atof_basic() {
-        assert!((atof(b"3.14\0") - 3.14).abs() < 1e-10);
+        assert!((atof(b"3.25\0") - 3.25).abs() < 1e-10);
         assert!((atof(b"-42.5\0") - (-42.5)).abs() < 1e-10);
         assert_eq!(atof(b"0\0"), 0.0);
     }
@@ -554,8 +554,8 @@ mod tests {
 
     #[test]
     fn test_strtof_basic() {
-        let (val, consumed) = strtof(b"3.14\0");
-        assert!((val - 3.14f32).abs() < 1e-5);
+        let (val, consumed) = strtof(b"3.25\0");
+        assert!((val - 3.25_f32).abs() < 1e-5);
         assert_eq!(consumed, 4);
     }
 

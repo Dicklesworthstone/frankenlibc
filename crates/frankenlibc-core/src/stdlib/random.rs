@@ -57,7 +57,7 @@ mod tests {
         srand(1);
         for _ in 0..100 {
             let v = rand();
-            assert!(v >= 0 && v <= RAND_MAX);
+            assert!((0..=RAND_MAX).contains(&v));
         }
     }
 
