@@ -567,6 +567,250 @@ pub unsafe extern "C" fn logb(x: f64) -> f64 {
     frankenlibc_core::math::logb(x)
 }
 
+// ===========================================================================
+// Single-precision (f32) functions
+// ===========================================================================
+
+#[inline]
+fn unary_entry_f32(x: f32, base_cost_ns: u64, f: fn(f32) -> f32) -> f32 {
+    let (mode, decision) = runtime_policy::decide(
+        ApiFamily::MathFenv,
+        x.to_bits() as usize,
+        std::mem::size_of::<f32>(),
+        false,
+        false,
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::MathFenv, decision.profile, base_cost_ns, true);
+        return if mode.heals_enabled() { 0.0 } else { f32::NAN };
+    }
+
+    let raw = f(x);
+    let adverse = x.is_finite() && !raw.is_finite();
+    let out = if adverse
+        && mode.heals_enabled()
+        && matches!(decision.action, MembraneAction::Repair(_))
+    {
+        if raw.is_nan() {
+            0.0
+        } else if raw.is_sign_negative() {
+            f32::MIN
+        } else {
+            f32::MAX
+        }
+    } else {
+        raw
+    };
+
+    runtime_policy::observe(
+        ApiFamily::MathFenv,
+        decision.profile,
+        runtime_policy::scaled_cost(base_cost_ns, std::mem::size_of::<f32>()),
+        adverse,
+    );
+    out
+}
+
+#[inline]
+fn binary_entry_f32(x: f32, y: f32, base_cost_ns: u64, f: fn(f32, f32) -> f32) -> f32 {
+    let mixed =
+        (x.to_bits() as usize).wrapping_mul(0x9e37_79b9_7f4a_7c15usize) ^ y.to_bits() as usize;
+    let (mode, decision) = runtime_policy::decide(
+        ApiFamily::MathFenv,
+        mixed,
+        std::mem::size_of::<f32>() * 2,
+        false,
+        false,
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::MathFenv, decision.profile, base_cost_ns, true);
+        return if mode.heals_enabled() { 0.0 } else { f32::NAN };
+    }
+
+    let raw = f(x, y);
+    let adverse = x.is_finite() && y.is_finite() && !raw.is_finite();
+    let out = if adverse
+        && mode.heals_enabled()
+        && matches!(decision.action, MembraneAction::Repair(_))
+    {
+        if raw.is_nan() {
+            0.0
+        } else if raw.is_sign_negative() {
+            f32::MIN
+        } else {
+            f32::MAX
+        }
+    } else {
+        raw
+    };
+
+    runtime_policy::observe(
+        ApiFamily::MathFenv,
+        decision.profile,
+        runtime_policy::scaled_cost(base_cost_ns, std::mem::size_of::<f32>() * 2),
+        adverse,
+    );
+    out
+}
+
+// --- Trigonometric f32 ---
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn sinf(x: f32) -> f32 {
+    unary_entry_f32(x, 5, frankenlibc_core::math::sinf)
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn cosf(x: f32) -> f32 {
+    unary_entry_f32(x, 5, frankenlibc_core::math::cosf)
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn tanf(x: f32) -> f32 {
+    unary_entry_f32(x, 5, frankenlibc_core::math::tanf)
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn asinf(x: f32) -> f32 {
+    let out = unary_entry_f32(x, 5, frankenlibc_core::math::asinf);
+    if x.is_finite() && !(-1.0..=1.0).contains(&x) {
+        set_domain_errno();
+    }
+    out
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn acosf(x: f32) -> f32 {
+    let out = unary_entry_f32(x, 5, frankenlibc_core::math::acosf);
+    if x.is_finite() && !(-1.0..=1.0).contains(&x) {
+        set_domain_errno();
+    }
+    out
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn atanf(x: f32) -> f32 {
+    unary_entry_f32(x, 5, frankenlibc_core::math::atanf)
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn atan2f(y: f32, x: f32) -> f32 {
+    binary_entry_f32(y, x, 6, frankenlibc_core::math::atan2f)
+}
+
+// --- Exponential / logarithmic f32 ---
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn expf(x: f32) -> f32 {
+    let out = unary_entry_f32(x, 6, frankenlibc_core::math::expf);
+    if x.is_finite() && (out.is_infinite() || out == 0.0) {
+        set_range_errno();
+    }
+    out
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn logf(x: f32) -> f32 {
+    let out = unary_entry_f32(x, 6, frankenlibc_core::math::logf);
+    if x.is_finite() {
+        if x < 0.0 {
+            set_domain_errno();
+        } else if x == 0.0 {
+            set_range_errno();
+        }
+    }
+    out
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn log2f(x: f32) -> f32 {
+    let out = unary_entry_f32(x, 6, frankenlibc_core::math::log2f);
+    if x.is_finite() {
+        if x < 0.0 {
+            set_domain_errno();
+        } else if x == 0.0 {
+            set_range_errno();
+        }
+    }
+    out
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn log10f(x: f32) -> f32 {
+    let out = unary_entry_f32(x, 6, frankenlibc_core::math::log10f);
+    if x.is_finite() {
+        if x < 0.0 {
+            set_domain_errno();
+        } else if x == 0.0 {
+            set_range_errno();
+        }
+    }
+    out
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn powf(x: f32, y: f32) -> f32 {
+    let out = binary_entry_f32(x, y, 7, frankenlibc_core::math::powf);
+    if x.is_finite() && y.is_finite() {
+        if x < 0.0 && y.fract() != 0.0 {
+            set_domain_errno();
+        } else if out.is_infinite()
+            || (x == 0.0 && y < 0.0)
+            || (out == 0.0 && y > 0.0 && x != 0.0)
+        {
+            set_range_errno();
+        }
+    }
+    out
+}
+
+// --- Float utilities f32 ---
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn sqrtf(x: f32) -> f32 {
+    let out = unary_entry_f32(x, 3, frankenlibc_core::math::sqrtf);
+    if x.is_finite() && x < 0.0 {
+        set_domain_errno();
+    }
+    out
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn fabsf(x: f32) -> f32 {
+    unary_entry_f32(x, 2, frankenlibc_core::math::fabsf)
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ceilf(x: f32) -> f32 {
+    unary_entry_f32(x, 3, frankenlibc_core::math::ceilf)
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn floorf(x: f32) -> f32 {
+    unary_entry_f32(x, 3, frankenlibc_core::math::floorf)
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn roundf(x: f32) -> f32 {
+    unary_entry_f32(x, 3, frankenlibc_core::math::roundf)
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn truncf(x: f32) -> f32 {
+    unary_entry_f32(x, 3, frankenlibc_core::math::truncf)
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn fmodf(x: f32, y: f32) -> f32 {
+    let out = binary_entry_f32(x, y, 6, frankenlibc_core::math::fmodf);
+    if y == 0.0 || (x.is_infinite() && y.is_finite()) {
+        set_domain_errno();
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

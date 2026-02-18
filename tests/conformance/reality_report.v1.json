@@ -1,8 +1,8 @@
 {
-  "generated_at_utc": "2026-02-18T01:30:00Z",
-  "total_exported": 452,
+  "generated_at_utc": "2026-02-18T01:40:00Z",
+  "total_exported": 471,
   "counts": {
-    "implemented": 276,
+    "implemented": 295,
     "raw_syscall": 172,
     "glibc_call_through": 4,
     "stub": 0

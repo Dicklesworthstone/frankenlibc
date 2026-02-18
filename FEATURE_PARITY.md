@@ -2,12 +2,12 @@
 
 ## Current Reality
 
-Source of truth for implementation parity is `tests/conformance/reality_report.v1.json` (generated `2026-02-18T01:30:00Z`).
-Reality snapshot: total_exported=452, implemented=276, raw_syscall=172, glibc_call_through=4, stub=0.
+Source of truth for implementation parity is `tests/conformance/reality_report.v1.json` (generated `2026-02-18T01:40:00Z`).
+Reality snapshot: total_exported=471, implemented=295, raw_syscall=172, glibc_call_through=4, stub=0.
 Counts below reflect that generated snapshot and will change as matrix drift fixes land.
 
-Current exported ABI surface is **452 symbols**, classified as:
-- `Implemented`: 276
+Current exported ABI surface is **471 symbols**, classified as:
+- `Implemented`: 295
 - `RawSyscall`: 172
 - `GlibcCallThrough`: 4
 - `Stub`: 0
