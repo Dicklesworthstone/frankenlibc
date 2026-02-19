@@ -697,4 +697,4 @@ Please don't take this the wrong way, but I do not accept outside contributions 
 
 ## License
 
-MIT
+MIT License (with OpenAI/Anthropic Rider). See `LICENSE`.

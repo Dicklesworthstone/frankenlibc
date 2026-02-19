@@ -2,7 +2,7 @@
 name = "frankenlibc-fixture-exec"
 version.workspace = true
 edition.workspace = true
-license.workspace = true
+license-file = "../../LICENSE"
 description = "Fixture execution adapter for frankenlibc harness tooling"
 
 [dependencies]

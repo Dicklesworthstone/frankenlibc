@@ -2,7 +2,7 @@
 name = "frankenlibc-membrane"
 version.workspace = true
 edition.workspace = true
-license.workspace = true
+license-file = "../../LICENSE"
 description = "Transparent Safety Membrane for FrankenLibC"
 build = "build.rs"
 

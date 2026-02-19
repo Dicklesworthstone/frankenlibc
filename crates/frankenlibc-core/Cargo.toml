@@ -2,7 +2,7 @@
 name = "frankenlibc-core"
 version.workspace = true
 edition.workspace = true
-license.workspace = true
+license-file = "../../LICENSE"
 description = "Safe Rust implementations of libc functions"
 
 [lints.rust]

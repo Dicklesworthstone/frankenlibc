@@ -2,7 +2,7 @@
 name = "frankenlibc-bench"
 version.workspace = true
 edition.workspace = true
-license.workspace = true
+license-file = "../../LICENSE"
 description = "Benchmarks for FrankenLibC"
 
 [lints.rust]
