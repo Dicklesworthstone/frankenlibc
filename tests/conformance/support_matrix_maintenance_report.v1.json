@@ -1,49 +1,729 @@
 {
   "schema_version": "v1",
   "bead": "bd-3g4p",
-  "generated_at": "2026-02-13T21:35:21Z",
+  "generated_at": "2026-02-18T20:01:16Z",
   "summary": {
-    "total_symbols": 250,
-    "status_validated": 240,
-    "status_invalid": 10,
-    "status_skipped": 0,
-    "status_valid_pct": 96.0,
-    "fixture_linked": 161,
-    "fixture_unlinked": 89,
-    "fixture_coverage_pct": 64.4,
-    "total_warnings": 10
+    "total_symbols": 929,
+    "status_validated": 667,
+    "status_invalid": 210,
+    "status_skipped": 52,
+    "status_valid_pct": 71.8,
+    "fixture_linked": 193,
+    "fixture_unlinked": 736,
+    "fixture_coverage_pct": 20.8,
+    "total_warnings": 210
   },
   "coverage_dashboard": {
-    "total_symbols": 250,
+    "total_symbols": 929,
     "status_counts": {
-      "Implemented": 147,
-      "RawSyscall": 83,
-      "GlibcCallThrough": 20,
+      "Implemented": 394,
+      "RawSyscall": 234,
+      "GlibcCallThrough": 301,
       "Stub": 0
     },
     "status_share_pct": {
-      "Implemented": 58.8,
-      "RawSyscall": 33.2,
-      "GlibcCallThrough": 8.0,
+      "Implemented": 42.4,
+      "RawSyscall": 25.2,
+      "GlibcCallThrough": 32.4,
       "Stub": 0.0
     },
-    "native_coverage_pct": 92.0
+    "native_coverage_pct": 67.6
   },
   "trend": {
     "baseline_report_path": "/data/projects/frankenlibc/tests/conformance/support_matrix_maintenance_report.v1.json",
     "baseline_loaded": true,
     "baseline_symbol_map_loaded": true,
     "status_count_delta": {
-      "GlibcCallThrough": 0,
-      "Implemented": 0,
-      "RawSyscall": 0,
+      "GlibcCallThrough": 281,
+      "Implemented": 247,
+      "RawSyscall": 151,
       "Stub": 0
     },
-    "native_coverage_pct_delta": 0.0,
-    "reclassified_symbol_count": 0,
-    "new_symbol_count": 0,
+    "native_coverage_pct_delta": -24.4,
+    "reclassified_symbol_count": 16,
+    "new_symbol_count": 679,
     "removed_symbol_count": 0,
-    "new_symbols": [],
+    "new_symbols": [
+      "_longjmp",
+      "_setjmp",
+      "abs",
+      "accept4",
+      "acct",
+      "acosf",
+      "acosh",
+      "acoshf",
+      "aio_cancel",
+      "aio_error",
+      "aio_fsync",
+      "aio_read",
+      "aio_return",
+      "aio_suspend",
+      "aio_write",
+      "alarm",
+      "alphasort",
+      "alphasort64",
+      "arc4random",
+      "arc4random_buf",
+      "arc4random_uniform",
+      "asctime",
+      "asctime_r",
+      "asinf",
+      "asinh",
+      "asinhf",
+      "asprintf",
+      "atan2f",
+      "atanf",
+      "atanh",
+      "atanhf",
+      "atof",
+      "atoll",
+      "basename",
+      "bcmp",
+      "bcopy",
+      "bindtextdomain",
+      "btowc",
+      "bzero",
+      "cbrt",
+      "cbrtf",
+      "ceilf",
+      "chmod",
+      "chown",
+      "chroot",
+      "clearenv",
+      "clock_getres",
+      "clock_nanosleep",
+      "clock_settime",
+      "close_range",
+      "closelog",
+      "confstr",
+      "copy_file_range",
+      "copysign",
+      "copysignf",
+      "cosf",
+      "cosh",
+      "coshf",
+      "creat",
+      "creat64",
+      "crypt",
+      "ctermid",
+      "ctime",
+      "ctime_r",
+      "daemon",
+      "dgettext",
+      "difftime",
+      "dirname",
+      "div",
+      "dl_iterate_phdr",
+      "dladdr",
+      "dprintf",
+      "dup3",
+      "endmntent",
+      "endutent",
+      "epoll_create",
+      "epoll_create1",
+      "epoll_ctl",
+      "epoll_pwait",
+      "epoll_wait",
+      "erfc",
+      "erfcf",
+      "erff",
+      "ether_aton",
+      "ether_aton_r",
+      "ether_ntoa",
+      "ether_ntoa_r",
+      "eventfd",
+      "eventfd_read",
+      "eventfd_write",
+      "execl",
+      "execle",
+      "execlp",
+      "execvpe",
+      "exp2",
+      "exp2f",
+      "expf",
+      "explicit_bzero",
+      "expm1",
+      "expm1f",
+      "fabsf",
+      "faccessat",
+      "fallocate",
+      "fanotify_init",
+      "fanotify_mark",
+      "fchmod",
+      "fchmodat",
+      "fchown",
+      "fchownat",
+      "fdim",
+      "fdimf",
+      "fdopen",
+      "ffs",
+      "ffsl",
+      "ffsll",
+      "fgetc_unlocked",
+      "fgetgrent",
+      "fgetpos",
+      "fgetpos64",
+      "fgetpwent",
+      "fgetwc",
+      "fgetws",
+      "fgetxattr",
+      "flistxattr",
+      "flock",
+      "flockfile",
+      "floorf",
+      "fma",
+      "fmaf",
+      "fmax",
+      "fmaxf",
+      "fmemopen",
+      "fmin",
+      "fminf",
+      "fmodf",
+      "fnmatch",
+      "fopen64",
+      "fopencookie",
+      "forkpty",
+      "fpathconf",
+      "fputc_unlocked",
+      "fputwc",
+      "fputws",
+      "freeifaddrs",
+      "fremovexattr",
+      "freopen",
+      "freopen64",
+      "frexp",
+      "frexpf",
+      "fscanf",
+      "fseeko",
+      "fseeko64",
+      "fsetpos",
+      "fsetpos64",
+      "fsetxattr",
+      "fstat64",
+      "fstatat",
+      "fstatat64",
+      "ftello",
+      "ftello64",
+      "ftruncate",
+      "ftruncate64",
+      "ftrylockfile",
+      "ftw",
+      "funlockfile",
+      "fwprintf",
+      "fwscanf",
+      "get_avphys_pages",
+      "get_nprocs",
+      "get_nprocs_conf",
+      "get_phys_pages",
+      "getc",
+      "getc_unlocked",
+      "getdelim",
+      "getdomainname",
+      "getentropy",
+      "getgrent_r",
+      "getgrouplist",
+      "getgroups",
+      "gethostbyaddr",
+      "gethostbyaddr_r",
+      "gethostbyname",
+      "gethostbyname_r",
+      "gethostid",
+      "gethostname",
+      "getifaddrs",
+      "getitimer",
+      "getline",
+      "getlogin",
+      "getlogin_r",
+      "getmntent",
+      "getopt",
+      "getopt_long",
+      "getpagesize",
+      "getpass",
+      "getpgid",
+      "getprotobyname",
+      "getprotobynumber",
+      "getpwent_r",
+      "getrandom",
+      "getresgid",
+      "getresuid",
+      "getrusage",
+      "getservbyname",
+      "getservbyname_r",
+      "getservbyport",
+      "getservbyport_r",
+      "getsid",
+      "gettext",
+      "gettimeofday",
+      "getutent",
+      "getwchar",
+      "getxattr",
+      "glob",
+      "glob64",
+      "globfree",
+      "globfree64",
+      "gmtime",
+      "gmtime_r",
+      "grantpt",
+      "hasmntopt",
+      "herror",
+      "hstrerror",
+      "hypot",
+      "hypotf",
+      "if_freenameindex",
+      "if_indextoname",
+      "if_nameindex",
+      "if_nametoindex",
+      "ilogb",
+      "ilogbf",
+      "index",
+      "inet_aton",
+      "inet_ntoa",
+      "initgroups",
+      "inotify_add_watch",
+      "inotify_init",
+      "inotify_init1",
+      "inotify_rm_watch",
+      "ioctl",
+      "isascii",
+      "isblank",
+      "iscntrl",
+      "isgraph",
+      "iswalnum",
+      "iswalpha",
+      "iswblank",
+      "iswcntrl",
+      "iswdigit",
+      "iswgraph",
+      "iswlower",
+      "iswprint",
+      "iswpunct",
+      "iswspace",
+      "iswupper",
+      "iswxdigit",
+      "killpg",
+      "labs",
+      "lchown",
+      "ldexp",
+      "ldexpf",
+      "ldiv",
+      "lgammaf",
+      "lgetxattr",
+      "linkat",
+      "lio_listio",
+      "listxattr",
+      "llabs",
+      "lldiv",
+      "llistxattr",
+      "llrint",
+      "llrintf",
+      "llround",
+      "llroundf",
+      "localtime",
+      "lockf",
+      "log10f",
+      "log1p",
+      "log1pf",
+      "log2",
+      "log2f",
+      "logb",
+      "logbf",
+      "logf",
+      "login_tty",
+      "longjmp",
+      "lremovexattr",
+      "lrint",
+      "lrintf",
+      "lround",
+      "lroundf",
+      "lseek64",
+      "lsetxattr",
+      "lstat64",
+      "mblen",
+      "mbrtowc",
+      "mbsrtowcs",
+      "mbstowcs",
+      "mbtowc",
+      "memccpy",
+      "memfd_create",
+      "memmem",
+      "mempcpy",
+      "mincore",
+      "mkdir",
+      "mkdirat",
+      "mkdtemp",
+      "mkfifo",
+      "mknod",
+      "mkostemp",
+      "mkostemps",
+      "mkstemp",
+      "mkstemps",
+      "mktime",
+      "mlock",
+      "mlock2",
+      "mlockall",
+      "mmap64",
+      "modf",
+      "modff",
+      "mount",
+      "mq_close",
+      "mq_getattr",
+      "mq_open",
+      "mq_receive",
+      "mq_send",
+      "mq_setattr",
+      "mq_unlink",
+      "mremap",
+      "msgctl",
+      "msgget",
+      "msgrcv",
+      "msgsnd",
+      "munlock",
+      "munlockall",
+      "name_to_handle_at",
+      "nanosleep",
+      "nearbyint",
+      "nearbyintf",
+      "nextafter",
+      "nextafterf",
+      "nftw",
+      "nftw64",
+      "ngettext",
+      "nice",
+      "nl_langinfo",
+      "open",
+      "open64",
+      "open_by_handle_at",
+      "open_memstream",
+      "openat",
+      "openlog",
+      "openpty",
+      "pathconf",
+      "pause",
+      "pclose",
+      "pidfd_open",
+      "pidfd_send_signal",
+      "pipe2",
+      "pivot_root",
+      "popen",
+      "posix_fadvise",
+      "posix_fallocate",
+      "posix_madvise",
+      "posix_openpt",
+      "posix_spawn",
+      "posix_spawn_file_actions_destroy",
+      "posix_spawn_file_actions_init",
+      "posix_spawnattr_destroy",
+      "posix_spawnattr_init",
+      "posix_spawnp",
+      "powf",
+      "prctl",
+      "pread",
+      "pread64",
+      "preadv",
+      "preadv2",
+      "prlimit",
+      "prlimit64",
+      "process_vm_readv",
+      "process_vm_writev",
+      "psignal",
+      "pthread_attr_destroy",
+      "pthread_attr_getdetachstate",
+      "pthread_attr_getstacksize",
+      "pthread_attr_init",
+      "pthread_attr_setdetachstate",
+      "pthread_attr_setstacksize",
+      "pthread_barrier_destroy",
+      "pthread_barrier_init",
+      "pthread_barrier_wait",
+      "pthread_cancel",
+      "pthread_cond_timedwait",
+      "pthread_condattr_destroy",
+      "pthread_condattr_getclock",
+      "pthread_condattr_init",
+      "pthread_condattr_setclock",
+      "pthread_getattr_np",
+      "pthread_getname_np",
+      "pthread_getspecific",
+      "pthread_key_create",
+      "pthread_key_delete",
+      "pthread_mutexattr_destroy",
+      "pthread_mutexattr_gettype",
+      "pthread_mutexattr_init",
+      "pthread_mutexattr_settype",
+      "pthread_once",
+      "pthread_rwlock_tryrdlock",
+      "pthread_rwlock_trywrlock",
+      "pthread_rwlockattr_destroy",
+      "pthread_rwlockattr_init",
+      "pthread_setcancelstate",
+      "pthread_setcanceltype",
+      "pthread_setname_np",
+      "pthread_setspecific",
+      "pthread_sigmask",
+      "pthread_spin_destroy",
+      "pthread_spin_init",
+      "pthread_spin_lock",
+      "pthread_spin_trylock",
+      "pthread_spin_unlock",
+      "pthread_testcancel",
+      "ptsname",
+      "putc",
+      "putc_unlocked",
+      "putenv",
+      "putwchar",
+      "pwrite",
+      "pwrite64",
+      "pwritev",
+      "pwritev2",
+      "rand",
+      "rand_r",
+      "readahead",
+      "readdir64",
+      "readdir_r",
+      "readlinkat",
+      "readv",
+      "reallocarray",
+      "realpath",
+      "reboot",
+      "recvmmsg",
+      "recvmsg",
+      "regcomp",
+      "regerror",
+      "regexec",
+      "regfree",
+      "remainder",
+      "remainderf",
+      "remove",
+      "removexattr",
+      "rename",
+      "renameat",
+      "res_init",
+      "res_query",
+      "res_search",
+      "rewinddir",
+      "rindex",
+      "rint",
+      "rintf",
+      "roundf",
+      "scalbln",
+      "scalblnf",
+      "scalbn",
+      "scalbnf",
+      "scandir",
+      "scandir64",
+      "scanf",
+      "sched_get_priority_max",
+      "sched_get_priority_min",
+      "sched_getaffinity",
+      "sched_getparam",
+      "sched_getscheduler",
+      "sched_rr_get_interval",
+      "sched_setaffinity",
+      "sched_setparam",
+      "sched_setscheduler",
+      "sched_yield",
+      "secure_getenv",
+      "seekdir",
+      "sem_close",
+      "sem_destroy",
+      "sem_getvalue",
+      "sem_init",
+      "sem_open",
+      "sem_post",
+      "sem_timedwait",
+      "sem_trywait",
+      "sem_unlink",
+      "sem_wait",
+      "semctl",
+      "semget",
+      "semop",
+      "sendfile",
+      "sendfile64",
+      "sendmmsg",
+      "sendmsg",
+      "setdomainname",
+      "setegid",
+      "seteuid",
+      "setgid",
+      "setgroups",
+      "sethostname",
+      "setitimer",
+      "setjmp",
+      "setlinebuf",
+      "setmntent",
+      "setns",
+      "setpgid",
+      "setregid",
+      "setresgid",
+      "setresuid",
+      "setreuid",
+      "setsid",
+      "setuid",
+      "setutent",
+      "setxattr",
+      "shm_open",
+      "shm_unlink",
+      "shmat",
+      "shmctl",
+      "shmdt",
+      "shmget",
+      "sigaddset",
+      "sigaltstack",
+      "sigdelset",
+      "sigemptyset",
+      "sigfillset",
+      "sigismember",
+      "siglongjmp",
+      "signalfd",
+      "sigpending",
+      "sigprocmask",
+      "sigqueue",
+      "sigsetjmp",
+      "sigsuspend",
+      "sigtimedwait",
+      "sigwait",
+      "sigwaitinfo",
+      "sinf",
+      "sinh",
+      "sinhf",
+      "socketpair",
+      "splice",
+      "sqrt",
+      "sqrtf",
+      "srand",
+      "sscanf",
+      "stat64",
+      "statx",
+      "stpcpy",
+      "stpncpy",
+      "strcasecmp",
+      "strcasestr",
+      "strchrnul",
+      "strcoll",
+      "strcspn",
+      "strdup",
+      "strerror",
+      "strerror_r",
+      "strftime",
+      "strlcat",
+      "strlcpy",
+      "strncasecmp",
+      "strncmp",
+      "strndup",
+      "strnlen",
+      "strpbrk",
+      "strptime",
+      "strsep",
+      "strsignal",
+      "strspn",
+      "strtod",
+      "strtof",
+      "strtoimax",
+      "strtold",
+      "strtoll",
+      "strtoull",
+      "strtoumax",
+      "strxfrm",
+      "swab",
+      "swapoff",
+      "swapon",
+      "swprintf",
+      "swscanf",
+      "symlinkat",
+      "sync",
+      "syncfs",
+      "sysconf",
+      "syslog",
+      "system",
+      "tanf",
+      "tanh",
+      "tanhf",
+      "tee",
+      "telldir",
+      "textdomain",
+      "tgammaf",
+      "timegm",
+      "timer_create",
+      "timer_delete",
+      "timer_getoverrun",
+      "timer_gettime",
+      "timer_settime",
+      "timerfd_create",
+      "timerfd_gettime",
+      "timerfd_settime",
+      "tmpfile",
+      "tmpfile64",
+      "tmpnam",
+      "toascii",
+      "towlower",
+      "towupper",
+      "trunc",
+      "truncate",
+      "truncate64",
+      "truncf",
+      "ttyname",
+      "ttyname_r",
+      "tzset",
+      "umask",
+      "umount",
+      "umount2",
+      "uname",
+      "ungetwc",
+      "unlinkat",
+      "unlockpt",
+      "unshare",
+      "utmpname",
+      "vasprintf",
+      "vdprintf",
+      "vfork",
+      "vfprintf",
+      "vfscanf",
+      "vfwprintf",
+      "vfwscanf",
+      "vmsplice",
+      "vprintf",
+      "vscanf",
+      "vsnprintf",
+      "vsprintf",
+      "vsscanf",
+      "vswprintf",
+      "vswscanf",
+      "vsyslog",
+      "vwprintf",
+      "vwscanf",
+      "wait3",
+      "wait4",
+      "waitid",
+      "wcrtomb",
+      "wcscoll",
+      "wcscspn",
+      "wcsdup",
+      "wcsftime",
+      "wcsncat",
+      "wcsnlen",
+      "wcspbrk",
+      "wcsrtombs",
+      "wcsspn",
+      "wcstod",
+      "wcstof",
+      "wcstok",
+      "wcstol",
+      "wcstold",
+      "wcstoll",
+      "wcstombs",
+      "wcstoul",
+      "wcstoull",
+      "wcswidth",
+      "wcsxfrm",
+      "wctob",
+      "wctomb",
+      "wcwidth",
+      "wordexp",
+      "wordfree",
+      "wprintf",
+      "writev",
+      "wscanf"
+    ],
     "removed_symbols": []
   },
   "policy_checks": {
@@ -54,41 +734,323 @@
       "delta": 0
     },
     "reclassification_requires_conformance": {
-      "status": "pass",
+      "status": "fail",
       "baseline_symbol_map_loaded": true,
-      "total_reclassified": 0,
-      "violations": []
+      "total_reclassified": 16,
+      "violations": [
+        {
+          "symbol": "fclose",
+          "previous_status": "GlibcCallThrough",
+          "current_status": "Implemented",
+          "strict_fixture_count": 1,
+          "hardened_fixture_count": 0,
+          "strict_conformance": {
+            "total": 1,
+            "passed": 0,
+            "failed": 0,
+            "errors": 1,
+            "pass_rate_percent": 0.0
+          },
+          "hardened_conformance": null,
+          "conformance_evidence_passed": false,
+          "missing_evidence": [
+            "missing_hardened_fixture",
+            "strict_conformance_not_passing",
+            "hardened_conformance_not_passing"
+          ]
+        },
+        {
+          "symbol": "fgets",
+          "previous_status": "GlibcCallThrough",
+          "current_status": "Implemented",
+          "strict_fixture_count": 0,
+          "hardened_fixture_count": 0,
+          "strict_conformance": null,
+          "hardened_conformance": null,
+          "conformance_evidence_passed": false,
+          "missing_evidence": [
+            "missing_strict_fixture",
+            "missing_hardened_fixture",
+            "strict_conformance_not_passing",
+            "hardened_conformance_not_passing"
+          ]
+        },
+        {
+          "symbol": "fopen",
+          "previous_status": "GlibcCallThrough",
+          "current_status": "Implemented",
+          "strict_fixture_count": 2,
+          "hardened_fixture_count": 1,
+          "strict_conformance": {
+            "total": 2,
+            "passed": 0,
+            "failed": 0,
+            "errors": 2,
+            "pass_rate_percent": 0.0
+          },
+          "hardened_conformance": {
+            "total": 1,
+            "passed": 0,
+            "failed": 0,
+            "errors": 1,
+            "pass_rate_percent": 0.0
+          },
+          "conformance_evidence_passed": false,
+          "missing_evidence": [
+            "strict_conformance_not_passing",
+            "hardened_conformance_not_passing"
+          ]
+        },
+        {
+          "symbol": "fprintf",
+          "previous_status": "GlibcCallThrough",
+          "current_status": "Implemented",
+          "strict_fixture_count": 1,
+          "hardened_fixture_count": 0,
+          "strict_conformance": {
+            "total": 1,
+            "passed": 0,
+            "failed": 0,
+            "errors": 1,
+            "pass_rate_percent": 0.0
+          },
+          "hardened_conformance": null,
+          "conformance_evidence_passed": false,
+          "missing_evidence": [
+            "missing_hardened_fixture",
+            "strict_conformance_not_passing",
+            "hardened_conformance_not_passing"
+          ]
+        },
+        {
+          "symbol": "fputs",
+          "previous_status": "GlibcCallThrough",
+          "current_status": "Implemented",
+          "strict_fixture_count": 0,
+          "hardened_fixture_count": 0,
+          "strict_conformance": null,
+          "hardened_conformance": null,
+          "conformance_evidence_passed": false,
+          "missing_evidence": [
+            "missing_strict_fixture",
+            "missing_hardened_fixture",
+            "strict_conformance_not_passing",
+            "hardened_conformance_not_passing"
+          ]
+        },
+        {
+          "symbol": "fread",
+          "previous_status": "GlibcCallThrough",
+          "current_status": "Implemented",
+          "strict_fixture_count": 1,
+          "hardened_fixture_count": 1,
+          "strict_conformance": null,
+          "hardened_conformance": null,
+          "conformance_evidence_passed": false,
+          "missing_evidence": [
+            "strict_conformance_not_passing",
+            "hardened_conformance_not_passing"
+          ]
+        },
+        {
+          "symbol": "fseek",
+          "previous_status": "GlibcCallThrough",
+          "current_status": "Implemented",
+          "strict_fixture_count": 1,
+          "hardened_fixture_count": 0,
+          "strict_conformance": null,
+          "hardened_conformance": null,
+          "conformance_evidence_passed": false,
+          "missing_evidence": [
+            "missing_hardened_fixture",
+            "strict_conformance_not_passing",
+            "hardened_conformance_not_passing"
+          ]
+        },
+        {
+          "symbol": "ftell",
+          "previous_status": "GlibcCallThrough",
+          "current_status": "Implemented",
+          "strict_fixture_count": 1,
+          "hardened_fixture_count": 0,
+          "strict_conformance": null,
+          "hardened_conformance": null,
+          "conformance_evidence_passed": false,
+          "missing_evidence": [
+            "missing_hardened_fixture",
+            "strict_conformance_not_passing",
+            "hardened_conformance_not_passing"
+          ]
+        },
+        {
+          "symbol": "fwrite",
+          "previous_status": "GlibcCallThrough",
+          "current_status": "Implemented",
+          "strict_fixture_count": 1,
+          "hardened_fixture_count": 0,
+          "strict_conformance": null,
+          "hardened_conformance": null,
+          "conformance_evidence_passed": false,
+          "missing_evidence": [
+            "missing_hardened_fixture",
+            "strict_conformance_not_passing",
+            "hardened_conformance_not_passing"
+          ]
+        },
+        {
+          "symbol": "perror",
+          "previous_status": "GlibcCallThrough",
+          "current_status": "Implemented",
+          "strict_fixture_count": 0,
+          "hardened_fixture_count": 0,
+          "strict_conformance": null,
+          "hardened_conformance": null,
+          "conformance_evidence_passed": false,
+          "missing_evidence": [
+            "missing_strict_fixture",
+            "missing_hardened_fixture",
+            "strict_conformance_not_passing",
+            "hardened_conformance_not_passing"
+          ]
+        },
+        {
+          "symbol": "printf",
+          "previous_status": "GlibcCallThrough",
+          "current_status": "Implemented",
+          "strict_fixture_count": 0,
+          "hardened_fixture_count": 0,
+          "strict_conformance": null,
+          "hardened_conformance": null,
+          "conformance_evidence_passed": false,
+          "missing_evidence": [
+            "missing_strict_fixture",
+            "missing_hardened_fixture",
+            "strict_conformance_not_passing",
+            "hardened_conformance_not_passing"
+          ]
+        },
+        {
+          "symbol": "puts",
+          "previous_status": "GlibcCallThrough",
+          "current_status": "Implemented",
+          "strict_fixture_count": 0,
+          "hardened_fixture_count": 0,
+          "strict_conformance": null,
+          "hardened_conformance": null,
+          "conformance_evidence_passed": false,
+          "missing_evidence": [
+            "missing_strict_fixture",
+            "missing_hardened_fixture",
+            "strict_conformance_not_passing",
+            "hardened_conformance_not_passing"
+          ]
+        },
+        {
+          "symbol": "setbuf",
+          "previous_status": "GlibcCallThrough",
+          "current_status": "Implemented",
+          "strict_fixture_count": 0,
+          "hardened_fixture_count": 0,
+          "strict_conformance": null,
+          "hardened_conformance": null,
+          "conformance_evidence_passed": false,
+          "missing_evidence": [
+            "missing_strict_fixture",
+            "missing_hardened_fixture",
+            "strict_conformance_not_passing",
+            "hardened_conformance_not_passing"
+          ]
+        },
+        {
+          "symbol": "setvbuf",
+          "previous_status": "GlibcCallThrough",
+          "current_status": "Implemented",
+          "strict_fixture_count": 0,
+          "hardened_fixture_count": 0,
+          "strict_conformance": null,
+          "hardened_conformance": null,
+          "conformance_evidence_passed": false,
+          "missing_evidence": [
+            "missing_strict_fixture",
+            "missing_hardened_fixture",
+            "strict_conformance_not_passing",
+            "hardened_conformance_not_passing"
+          ]
+        },
+        {
+          "symbol": "snprintf",
+          "previous_status": "GlibcCallThrough",
+          "current_status": "Implemented",
+          "strict_fixture_count": 2,
+          "hardened_fixture_count": 1,
+          "strict_conformance": {
+            "total": 2,
+            "passed": 0,
+            "failed": 0,
+            "errors": 2,
+            "pass_rate_percent": 0.0
+          },
+          "hardened_conformance": {
+            "total": 1,
+            "passed": 0,
+            "failed": 0,
+            "errors": 1,
+            "pass_rate_percent": 0.0
+          },
+          "conformance_evidence_passed": false,
+          "missing_evidence": [
+            "strict_conformance_not_passing",
+            "hardened_conformance_not_passing"
+          ]
+        },
+        {
+          "symbol": "sprintf",
+          "previous_status": "GlibcCallThrough",
+          "current_status": "Implemented",
+          "strict_fixture_count": 0,
+          "hardened_fixture_count": 0,
+          "strict_conformance": null,
+          "hardened_conformance": null,
+          "conformance_evidence_passed": false,
+          "missing_evidence": [
+            "missing_strict_fixture",
+            "missing_hardened_fixture",
+            "strict_conformance_not_passing",
+            "hardened_conformance_not_passing"
+          ]
+        }
+      ]
     }
   },
   "status_distribution": {
     "GlibcCallThrough": {
-      "count": 20,
-      "fixture_linked": 8
+      "count": 301,
+      "fixture_linked": 20
     },
     "Implemented": {
-      "count": 147,
-      "fixture_linked": 109
+      "count": 394,
+      "fixture_linked": 127
     },
     "RawSyscall": {
-      "count": 83,
-      "fixture_linked": 44
+      "count": 234,
+      "fixture_linked": 46
     }
   },
   "module_coverage": {
     "ctype_abi": {
-      "total": 11,
+      "total": 16,
       "linked": 11,
-      "coverage_pct": 100.0
+      "coverage_pct": 68.8
     },
     "dirent_abi": {
-      "total": 3,
+      "total": 11,
       "linked": 3,
-      "coverage_pct": 100.0
+      "coverage_pct": 27.3
     },
     "dlfcn_abi": {
-      "total": 4,
-      "linked": 4,
-      "coverage_pct": 100.0
+      "total": 6,
+      "linked": 5,
+      "coverage_pct": 83.3
     },
     "errno_abi": {
       "total": 1,
@@ -106,19 +1068,19 @@
       "coverage_pct": 100.0
     },
     "inet_abi": {
-      "total": 7,
+      "total": 17,
       "linked": 7,
-      "coverage_pct": 100.0
+      "coverage_pct": 41.2
     },
     "io_abi": {
-      "total": 4,
+      "total": 21,
       "linked": 1,
-      "coverage_pct": 25.0
+      "coverage_pct": 4.8
     },
     "locale_abi": {
-      "total": 2,
-      "linked": 2,
-      "coverage_pct": 100.0
+      "total": 8,
+      "linked": 3,
+      "coverage_pct": 37.5
     },
     "malloc_abi": {
       "total": 7,
@@ -126,29 +1088,29 @@
       "coverage_pct": 57.1
     },
     "math_abi": {
-      "total": 19,
+      "total": 108,
       "linked": 19,
-      "coverage_pct": 100.0
+      "coverage_pct": 17.6
     },
     "mmap_abi": {
-      "total": 5,
+      "total": 10,
       "linked": 4,
-      "coverage_pct": 80.0
+      "coverage_pct": 40.0
     },
     "poll_abi": {
-      "total": 4,
+      "total": 15,
       "linked": 2,
-      "coverage_pct": 50.0
+      "coverage_pct": 13.3
     },
     "process_abi": {
-      "total": 6,
-      "linked": 3,
-      "coverage_pct": 50.0
+      "total": 17,
+      "linked": 4,
+      "coverage_pct": 23.5
     },
     "pthread_abi": {
-      "total": 20,
-      "linked": 15,
-      "coverage_pct": 75.0
+      "total": 59,
+      "linked": 20,
+      "coverage_pct": 33.9
     },
     "pwd_abi": {
       "total": 7,
@@ -156,24 +1118,29 @@
       "coverage_pct": 42.9
     },
     "resolv_abi": {
-      "total": 4,
+      "total": 10,
       "linked": 1,
-      "coverage_pct": 25.0
+      "coverage_pct": 10.0
     },
     "resource_abi": {
       "total": 2,
       "linked": 1,
       "coverage_pct": 50.0
     },
-    "signal_abi": {
-      "total": 4,
+    "setjmp_abi": {
+      "total": 6,
       "linked": 3,
-      "coverage_pct": 75.0
+      "coverage_pct": 50.0
+    },
+    "signal_abi": {
+      "total": 17,
+      "linked": 3,
+      "coverage_pct": 17.6
     },
     "socket_abi": {
-      "total": 14,
+      "total": 18,
       "linked": 5,
-      "coverage_pct": 35.7
+      "coverage_pct": 27.8
     },
     "startup_abi": {
       "total": 3,
@@ -181,19 +1148,19 @@
       "coverage_pct": 100.0
     },
     "stdio_abi": {
-      "total": 30,
-      "linked": 4,
-      "coverage_pct": 13.3
+      "total": 71,
+      "linked": 9,
+      "coverage_pct": 12.7
     },
     "stdlib_abi": {
-      "total": 11,
-      "linked": 6,
-      "coverage_pct": 54.5
+      "total": 40,
+      "linked": 7,
+      "coverage_pct": 17.5
     },
     "string_abi": {
-      "total": 17,
-      "linked": 17,
-      "coverage_pct": 100.0
+      "total": 56,
+      "linked": 21,
+      "coverage_pct": 37.5
     },
     "termios_abi": {
       "total": 10,
@@ -201,19 +1168,24 @@
       "coverage_pct": 50.0
     },
     "time_abi": {
-      "total": 4,
+      "total": 21,
       "linked": 4,
-      "coverage_pct": 100.0
+      "coverage_pct": 19.0
     },
     "unistd_abi": {
-      "total": 27,
-      "linked": 13,
-      "coverage_pct": 48.1
+      "total": 248,
+      "linked": 24,
+      "coverage_pct": 9.7
+    },
+    "unknown": {
+      "total": 52,
+      "linked": 0,
+      "coverage_pct": 0.0
     },
     "wchar_abi": {
-      "total": 14,
+      "total": 62,
       "linked": 14,
-      "coverage_pct": 100.0
+      "coverage_pct": 22.6
     }
   },
   "symbol_status_map": {
@@ -222,254 +1194,1395 @@
     "__frankenlibc_startup_snapshot": "Implemented",
     "__libc_start_main": "Implemented",
     "_exit": "RawSyscall",
+    "_longjmp": "Implemented",
+    "_setjmp": "Implemented",
+    "abs": "Implemented",
     "accept": "RawSyscall",
+    "accept4": "RawSyscall",
     "access": "RawSyscall",
+    "acct": "RawSyscall",
     "acos": "Implemented",
+    "acosf": "Implemented",
+    "acosh": "Implemented",
+    "acoshf": "Implemented",
+    "aio_cancel": "GlibcCallThrough",
+    "aio_error": "GlibcCallThrough",
+    "aio_fsync": "GlibcCallThrough",
+    "aio_read": "GlibcCallThrough",
+    "aio_return": "GlibcCallThrough",
+    "aio_suspend": "GlibcCallThrough",
+    "aio_write": "GlibcCallThrough",
+    "alarm": "RawSyscall",
     "aligned_alloc": "Implemented",
+    "alphasort": "GlibcCallThrough",
+    "alphasort64": "GlibcCallThrough",
+    "arc4random": "Implemented",
+    "arc4random_buf": "Implemented",
+    "arc4random_uniform": "Implemented",
+    "asctime": "Implemented",
+    "asctime_r": "Implemented",
     "asin": "Implemented",
+    "asinf": "Implemented",
+    "asinh": "Implemented",
+    "asinhf": "Implemented",
+    "asprintf": "Implemented",
     "atan": "Implemented",
     "atan2": "Implemented",
+    "atan2f": "Implemented",
+    "atanf": "Implemented",
+    "atanh": "Implemented",
+    "atanhf": "Implemented",
     "atexit": "Implemented",
+    "atof": "Implemented",
     "atoi": "Implemented",
     "atol": "Implemented",
+    "atoll": "Implemented",
+    "basename": "Implemented",
+    "bcmp": "Implemented",
+    "bcopy": "Implemented",
     "bind": "RawSyscall",
+    "bindtextdomain": "GlibcCallThrough",
     "bsearch": "Implemented",
+    "btowc": "GlibcCallThrough",
+    "bzero": "Implemented",
     "calloc": "Implemented",
+    "cbrt": "Implemented",
+    "cbrtf": "Implemented",
     "ceil": "Implemented",
+    "ceilf": "Implemented",
     "cfgetispeed": "RawSyscall",
     "cfgetospeed": "RawSyscall",
     "cfsetispeed": "RawSyscall",
     "cfsetospeed": "RawSyscall",
     "chdir": "RawSyscall",
+    "chmod": "RawSyscall",
+    "chown": "RawSyscall",
+    "chroot": "RawSyscall",
+    "clearenv": "GlibcCallThrough",
     "clearerr": "Implemented",
     "clock": "RawSyscall",
+    "clock_getres": "RawSyscall",
     "clock_gettime": "RawSyscall",
+    "clock_nanosleep": "RawSyscall",
+    "clock_settime": "RawSyscall",
     "close": "RawSyscall",
+    "close_range": "RawSyscall",
     "closedir": "RawSyscall",
+    "closelog": "GlibcCallThrough",
+    "confstr": "GlibcCallThrough",
     "connect": "RawSyscall",
+    "copy_file_range": "RawSyscall",
+    "copysign": "Implemented",
+    "copysignf": "Implemented",
     "cos": "Implemented",
+    "cosf": "Implemented",
+    "cosh": "Implemented",
+    "coshf": "Implemented",
+    "creat": "RawSyscall",
+    "creat64": "GlibcCallThrough",
+    "crypt": "GlibcCallThrough",
+    "ctermid": "GlibcCallThrough",
+    "ctime": "Implemented",
+    "ctime_r": "Implemented",
+    "daemon": "GlibcCallThrough",
+    "dgettext": "GlibcCallThrough",
+    "difftime": "Implemented",
+    "dirname": "Implemented",
+    "div": "Implemented",
+    "dl_iterate_phdr": "GlibcCallThrough",
+    "dladdr": "GlibcCallThrough",
     "dlclose": "GlibcCallThrough",
     "dlerror": "GlibcCallThrough",
     "dlopen": "GlibcCallThrough",
     "dlsym": "GlibcCallThrough",
+    "dprintf": "Implemented",
     "dup": "RawSyscall",
     "dup2": "RawSyscall",
+    "dup3": "RawSyscall",
     "endgrent": "Implemented",
+    "endmntent": "GlibcCallThrough",
     "endpwent": "Implemented",
+    "endutent": "GlibcCallThrough",
+    "epoll_create": "RawSyscall",
+    "epoll_create1": "RawSyscall",
+    "epoll_ctl": "RawSyscall",
+    "epoll_pwait": "RawSyscall",
+    "epoll_wait": "RawSyscall",
     "erf": "Implemented",
+    "erfc": "Implemented",
+    "erfcf": "Implemented",
+    "erff": "Implemented",
+    "ether_aton": "GlibcCallThrough",
+    "ether_aton_r": "GlibcCallThrough",
+    "ether_ntoa": "GlibcCallThrough",
+    "ether_ntoa_r": "GlibcCallThrough",
+    "eventfd": "RawSyscall",
+    "eventfd_read": "Implemented",
+    "eventfd_write": "Implemented",
+    "execl": "GlibcCallThrough",
+    "execle": "GlibcCallThrough",
+    "execlp": "GlibcCallThrough",
     "execve": "RawSyscall",
     "execvp": "RawSyscall",
+    "execvpe": "GlibcCallThrough",
     "exit": "Implemented",
     "exp": "Implemented",
+    "exp2": "Implemented",
+    "exp2f": "Implemented",
+    "expf": "Implemented",
+    "explicit_bzero": "Implemented",
+    "expm1": "Implemented",
+    "expm1f": "Implemented",
     "fabs": "Implemented",
+    "fabsf": "Implemented",
+    "faccessat": "RawSyscall",
+    "fallocate": "RawSyscall",
+    "fanotify_init": "RawSyscall",
+    "fanotify_mark": "RawSyscall",
     "fchdir": "RawSyscall",
-    "fclose": "GlibcCallThrough",
+    "fchmod": "RawSyscall",
+    "fchmodat": "RawSyscall",
+    "fchown": "RawSyscall",
+    "fchownat": "RawSyscall",
+    "fclose": "Implemented",
     "fcntl": "RawSyscall",
     "fdatasync": "RawSyscall",
+    "fdim": "Implemented",
+    "fdimf": "Implemented",
+    "fdopen": "Implemented",
     "feof": "Implemented",
     "ferror": "Implemented",
     "fflush": "Implemented",
+    "ffs": "Implemented",
+    "ffsl": "Implemented",
+    "ffsll": "Implemented",
     "fgetc": "Implemented",
-    "fgets": "GlibcCallThrough",
+    "fgetc_unlocked": "GlibcCallThrough",
+    "fgetgrent": "GlibcCallThrough",
+    "fgetpos": "Implemented",
+    "fgetpos64": "GlibcCallThrough",
+    "fgetpwent": "GlibcCallThrough",
+    "fgets": "Implemented",
+    "fgetwc": "GlibcCallThrough",
+    "fgetws": "GlibcCallThrough",
+    "fgetxattr": "RawSyscall",
     "fileno": "Implemented",
+    "flistxattr": "RawSyscall",
+    "flock": "RawSyscall",
+    "flockfile": "GlibcCallThrough",
     "floor": "Implemented",
+    "floorf": "Implemented",
+    "fma": "Implemented",
+    "fmaf": "Implemented",
+    "fmax": "Implemented",
+    "fmaxf": "Implemented",
+    "fmemopen": "GlibcCallThrough",
+    "fmin": "Implemented",
+    "fminf": "Implemented",
     "fmod": "Implemented",
-    "fopen": "GlibcCallThrough",
+    "fmodf": "Implemented",
+    "fnmatch": "GlibcCallThrough",
+    "fopen": "Implemented",
+    "fopen64": "GlibcCallThrough",
+    "fopencookie": "GlibcCallThrough",
     "fork": "RawSyscall",
-    "fprintf": "GlibcCallThrough",
+    "forkpty": "GlibcCallThrough",
+    "fpathconf": "GlibcCallThrough",
+    "fprintf": "Implemented",
     "fputc": "Implemented",
-    "fputs": "GlibcCallThrough",
-    "fread": "GlibcCallThrough",
+    "fputc_unlocked": "GlibcCallThrough",
+    "fputs": "Implemented",
+    "fputwc": "GlibcCallThrough",
+    "fputws": "GlibcCallThrough",
+    "fread": "Implemented",
     "free": "Implemented",
     "freeaddrinfo": "Implemented",
-    "fseek": "GlibcCallThrough",
+    "freeifaddrs": "GlibcCallThrough",
+    "fremovexattr": "RawSyscall",
+    "freopen": "Implemented",
+    "freopen64": "GlibcCallThrough",
+    "frexp": "Implemented",
+    "frexpf": "Implemented",
+    "fscanf": "GlibcCallThrough",
+    "fseek": "Implemented",
+    "fseeko": "Implemented",
+    "fseeko64": "GlibcCallThrough",
+    "fsetpos": "Implemented",
+    "fsetpos64": "GlibcCallThrough",
+    "fsetxattr": "RawSyscall",
     "fstat": "RawSyscall",
+    "fstat64": "GlibcCallThrough",
+    "fstatat": "RawSyscall",
+    "fstatat64": "GlibcCallThrough",
     "fsync": "RawSyscall",
-    "ftell": "GlibcCallThrough",
-    "fwrite": "GlibcCallThrough",
+    "ftell": "Implemented",
+    "ftello": "Implemented",
+    "ftello64": "GlibcCallThrough",
+    "ftruncate": "RawSyscall",
+    "ftruncate64": "GlibcCallThrough",
+    "ftrylockfile": "GlibcCallThrough",
+    "ftw": "GlibcCallThrough",
+    "funlockfile": "GlibcCallThrough",
+    "fwprintf": "GlibcCallThrough",
+    "fwrite": "Implemented",
+    "fwscanf": "GlibcCallThrough",
     "gai_strerror": "Implemented",
+    "get_avphys_pages": "GlibcCallThrough",
+    "get_nprocs": "GlibcCallThrough",
+    "get_nprocs_conf": "GlibcCallThrough",
+    "get_phys_pages": "GlibcCallThrough",
     "getaddrinfo": "Implemented",
+    "getc": "Implemented",
+    "getc_unlocked": "GlibcCallThrough",
     "getchar": "Implemented",
     "getcwd": "RawSyscall",
+    "getdelim": "Implemented",
+    "getdomainname": "GlibcCallThrough",
     "getegid": "RawSyscall",
+    "getentropy": "Implemented",
     "getenv": "Implemented",
     "geteuid": "RawSyscall",
     "getgid": "RawSyscall",
     "getgrent": "Implemented",
+    "getgrent_r": "GlibcCallThrough",
     "getgrgid": "Implemented",
     "getgrgid_r": "Implemented",
     "getgrnam": "Implemented",
     "getgrnam_r": "Implemented",
+    "getgrouplist": "GlibcCallThrough",
+    "getgroups": "RawSyscall",
+    "gethostbyaddr": "GlibcCallThrough",
+    "gethostbyaddr_r": "GlibcCallThrough",
+    "gethostbyname": "GlibcCallThrough",
+    "gethostbyname_r": "GlibcCallThrough",
+    "gethostid": "GlibcCallThrough",
+    "gethostname": "RawSyscall",
+    "getifaddrs": "GlibcCallThrough",
+    "getitimer": "RawSyscall",
+    "getline": "Implemented",
+    "getlogin": "GlibcCallThrough",
+    "getlogin_r": "GlibcCallThrough",
+    "getmntent": "GlibcCallThrough",
     "getnameinfo": "Implemented",
+    "getopt": "GlibcCallThrough",
+    "getopt_long": "GlibcCallThrough",
+    "getpagesize": "GlibcCallThrough",
+    "getpass": "GlibcCallThrough",
     "getpeername": "RawSyscall",
+    "getpgid": "RawSyscall",
     "getpid": "RawSyscall",
     "getppid": "RawSyscall",
+    "getprotobyname": "GlibcCallThrough",
+    "getprotobynumber": "GlibcCallThrough",
     "getpwent": "Implemented",
+    "getpwent_r": "GlibcCallThrough",
     "getpwnam": "Implemented",
     "getpwnam_r": "Implemented",
     "getpwuid": "Implemented",
     "getpwuid_r": "Implemented",
+    "getrandom": "RawSyscall",
+    "getresgid": "RawSyscall",
+    "getresuid": "RawSyscall",
     "getrlimit": "RawSyscall",
+    "getrusage": "RawSyscall",
+    "getservbyname": "GlibcCallThrough",
+    "getservbyname_r": "GlibcCallThrough",
+    "getservbyport": "GlibcCallThrough",
+    "getservbyport_r": "GlibcCallThrough",
+    "getsid": "RawSyscall",
     "getsockname": "RawSyscall",
     "getsockopt": "RawSyscall",
+    "gettext": "GlibcCallThrough",
+    "gettimeofday": "RawSyscall",
     "getuid": "RawSyscall",
+    "getutent": "GlibcCallThrough",
+    "getwchar": "GlibcCallThrough",
+    "getxattr": "RawSyscall",
+    "glob": "GlibcCallThrough",
+    "glob64": "GlibcCallThrough",
+    "globfree": "GlibcCallThrough",
+    "globfree64": "GlibcCallThrough",
+    "gmtime": "Implemented",
+    "gmtime_r": "Implemented",
+    "grantpt": "GlibcCallThrough",
+    "hasmntopt": "GlibcCallThrough",
+    "herror": "GlibcCallThrough",
+    "hstrerror": "GlibcCallThrough",
     "htonl": "Implemented",
     "htons": "Implemented",
+    "hypot": "Implemented",
+    "hypotf": "Implemented",
     "iconv": "Implemented",
     "iconv_close": "Implemented",
     "iconv_open": "Implemented",
+    "if_freenameindex": "GlibcCallThrough",
+    "if_indextoname": "GlibcCallThrough",
+    "if_nameindex": "GlibcCallThrough",
+    "if_nametoindex": "GlibcCallThrough",
+    "ilogb": "Implemented",
+    "ilogbf": "Implemented",
+    "index": "Implemented",
     "inet_addr": "Implemented",
+    "inet_aton": "Implemented",
+    "inet_ntoa": "Implemented",
     "inet_ntop": "Implemented",
     "inet_pton": "Implemented",
+    "initgroups": "GlibcCallThrough",
+    "inotify_add_watch": "RawSyscall",
+    "inotify_init": "RawSyscall",
+    "inotify_init1": "RawSyscall",
+    "inotify_rm_watch": "RawSyscall",
+    "ioctl": "RawSyscall",
     "isalnum": "Implemented",
     "isalpha": "Implemented",
+    "isascii": "Implemented",
     "isatty": "RawSyscall",
+    "isblank": "Implemented",
+    "iscntrl": "Implemented",
     "isdigit": "Implemented",
+    "isgraph": "Implemented",
     "islower": "Implemented",
     "isprint": "Implemented",
     "ispunct": "Implemented",
     "isspace": "Implemented",
     "isupper": "Implemented",
+    "iswalnum": "Implemented",
+    "iswalpha": "Implemented",
+    "iswblank": "Implemented",
+    "iswcntrl": "Implemented",
+    "iswdigit": "Implemented",
+    "iswgraph": "Implemented",
+    "iswlower": "Implemented",
+    "iswprint": "Implemented",
+    "iswpunct": "Implemented",
+    "iswspace": "Implemented",
+    "iswupper": "Implemented",
+    "iswxdigit": "Implemented",
     "isxdigit": "Implemented",
     "kill": "RawSyscall",
+    "killpg": "RawSyscall",
+    "labs": "Implemented",
+    "lchown": "RawSyscall",
+    "ldexp": "Implemented",
+    "ldexpf": "Implemented",
+    "ldiv": "Implemented",
     "lgamma": "Implemented",
+    "lgammaf": "Implemented",
+    "lgetxattr": "RawSyscall",
     "link": "RawSyscall",
+    "linkat": "RawSyscall",
+    "lio_listio": "GlibcCallThrough",
     "listen": "RawSyscall",
+    "listxattr": "RawSyscall",
+    "llabs": "Implemented",
+    "lldiv": "Implemented",
+    "llistxattr": "RawSyscall",
+    "llrint": "Implemented",
+    "llrintf": "Implemented",
+    "llround": "Implemented",
+    "llroundf": "Implemented",
     "localeconv": "Implemented",
+    "localtime": "Implemented",
     "localtime_r": "RawSyscall",
+    "lockf": "GlibcCallThrough",
     "log": "Implemented",
     "log10": "Implemented",
+    "log10f": "Implemented",
+    "log1p": "Implemented",
+    "log1pf": "Implemented",
+    "log2": "Implemented",
+    "log2f": "Implemented",
+    "logb": "Implemented",
+    "logbf": "Implemented",
+    "logf": "Implemented",
+    "login_tty": "GlibcCallThrough",
+    "longjmp": "Implemented",
+    "lremovexattr": "RawSyscall",
+    "lrint": "Implemented",
+    "lrintf": "Implemented",
+    "lround": "Implemented",
+    "lroundf": "Implemented",
     "lseek": "RawSyscall",
+    "lseek64": "GlibcCallThrough",
+    "lsetxattr": "RawSyscall",
     "lstat": "RawSyscall",
+    "lstat64": "GlibcCallThrough",
     "madvise": "RawSyscall",
     "malloc": "Implemented",
+    "mblen": "Implemented",
+    "mbrtowc": "GlibcCallThrough",
+    "mbsrtowcs": "GlibcCallThrough",
+    "mbstowcs": "Implemented",
+    "mbtowc": "Implemented",
     "memalign": "Implemented",
+    "memccpy": "Implemented",
     "memchr": "Implemented",
     "memcmp": "Implemented",
     "memcpy": "Implemented",
+    "memfd_create": "RawSyscall",
+    "memmem": "Implemented",
     "memmove": "Implemented",
+    "mempcpy": "Implemented",
     "memrchr": "Implemented",
     "memset": "Implemented",
+    "mincore": "RawSyscall",
+    "mkdir": "RawSyscall",
+    "mkdirat": "RawSyscall",
+    "mkdtemp": "GlibcCallThrough",
+    "mkfifo": "RawSyscall",
+    "mknod": "RawSyscall",
+    "mkostemp": "GlibcCallThrough",
+    "mkostemps": "GlibcCallThrough",
+    "mkstemp": "GlibcCallThrough",
+    "mkstemps": "GlibcCallThrough",
+    "mktime": "Implemented",
+    "mlock": "RawSyscall",
+    "mlock2": "RawSyscall",
+    "mlockall": "RawSyscall",
     "mmap": "RawSyscall",
+    "mmap64": "GlibcCallThrough",
+    "modf": "Implemented",
+    "modff": "Implemented",
+    "mount": "RawSyscall",
     "mprotect": "RawSyscall",
+    "mq_close": "GlibcCallThrough",
+    "mq_getattr": "GlibcCallThrough",
+    "mq_open": "GlibcCallThrough",
+    "mq_receive": "GlibcCallThrough",
+    "mq_send": "GlibcCallThrough",
+    "mq_setattr": "GlibcCallThrough",
+    "mq_unlink": "GlibcCallThrough",
+    "mremap": "RawSyscall",
+    "msgctl": "GlibcCallThrough",
+    "msgget": "GlibcCallThrough",
+    "msgrcv": "GlibcCallThrough",
+    "msgsnd": "GlibcCallThrough",
     "msync": "RawSyscall",
+    "munlock": "RawSyscall",
+    "munlockall": "RawSyscall",
     "munmap": "RawSyscall",
+    "name_to_handle_at": "RawSyscall",
+    "nanosleep": "RawSyscall",
+    "nearbyint": "Implemented",
+    "nearbyintf": "Implemented",
+    "nextafter": "Implemented",
+    "nextafterf": "Implemented",
+    "nftw": "GlibcCallThrough",
+    "nftw64": "GlibcCallThrough",
+    "ngettext": "GlibcCallThrough",
+    "nice": "GlibcCallThrough",
+    "nl_langinfo": "GlibcCallThrough",
     "ntohl": "Implemented",
     "ntohs": "Implemented",
+    "open": "RawSyscall",
+    "open64": "GlibcCallThrough",
+    "open_by_handle_at": "RawSyscall",
+    "open_memstream": "GlibcCallThrough",
+    "openat": "RawSyscall",
     "opendir": "RawSyscall",
-    "perror": "GlibcCallThrough",
+    "openlog": "GlibcCallThrough",
+    "openpty": "GlibcCallThrough",
+    "pathconf": "GlibcCallThrough",
+    "pause": "RawSyscall",
+    "pclose": "Implemented",
+    "perror": "Implemented",
+    "pidfd_open": "RawSyscall",
+    "pidfd_send_signal": "RawSyscall",
     "pipe": "RawSyscall",
+    "pipe2": "RawSyscall",
+    "pivot_root": "RawSyscall",
     "poll": "RawSyscall",
+    "popen": "Implemented",
+    "posix_fadvise": "RawSyscall",
+    "posix_fallocate": "GlibcCallThrough",
+    "posix_madvise": "GlibcCallThrough",
     "posix_memalign": "Implemented",
+    "posix_openpt": "GlibcCallThrough",
+    "posix_spawn": "GlibcCallThrough",
+    "posix_spawn_file_actions_destroy": "GlibcCallThrough",
+    "posix_spawn_file_actions_init": "GlibcCallThrough",
+    "posix_spawnattr_destroy": "GlibcCallThrough",
+    "posix_spawnattr_init": "GlibcCallThrough",
+    "posix_spawnp": "GlibcCallThrough",
     "pow": "Implemented",
+    "powf": "Implemented",
     "ppoll": "RawSyscall",
-    "printf": "GlibcCallThrough",
+    "prctl": "RawSyscall",
+    "pread": "RawSyscall",
+    "pread64": "GlibcCallThrough",
+    "preadv": "RawSyscall",
+    "preadv2": "RawSyscall",
+    "printf": "Implemented",
+    "prlimit": "RawSyscall",
+    "prlimit64": "RawSyscall",
+    "process_vm_readv": "RawSyscall",
+    "process_vm_writev": "RawSyscall",
     "pselect": "RawSyscall",
+    "psignal": "GlibcCallThrough",
+    "pthread_attr_destroy": "GlibcCallThrough",
+    "pthread_attr_getdetachstate": "GlibcCallThrough",
+    "pthread_attr_getstacksize": "GlibcCallThrough",
+    "pthread_attr_init": "GlibcCallThrough",
+    "pthread_attr_setdetachstate": "GlibcCallThrough",
+    "pthread_attr_setstacksize": "GlibcCallThrough",
+    "pthread_barrier_destroy": "GlibcCallThrough",
+    "pthread_barrier_init": "GlibcCallThrough",
+    "pthread_barrier_wait": "GlibcCallThrough",
+    "pthread_cancel": "GlibcCallThrough",
     "pthread_cond_broadcast": "Implemented",
     "pthread_cond_destroy": "Implemented",
     "pthread_cond_init": "Implemented",
     "pthread_cond_signal": "Implemented",
+    "pthread_cond_timedwait": "Implemented",
     "pthread_cond_wait": "Implemented",
+    "pthread_condattr_destroy": "GlibcCallThrough",
+    "pthread_condattr_getclock": "GlibcCallThrough",
+    "pthread_condattr_init": "GlibcCallThrough",
+    "pthread_condattr_setclock": "GlibcCallThrough",
     "pthread_create": "Implemented",
     "pthread_detach": "Implemented",
     "pthread_equal": "Implemented",
+    "pthread_getattr_np": "GlibcCallThrough",
+    "pthread_getname_np": "GlibcCallThrough",
+    "pthread_getspecific": "Implemented",
     "pthread_join": "Implemented",
+    "pthread_key_create": "Implemented",
+    "pthread_key_delete": "Implemented",
     "pthread_mutex_destroy": "Implemented",
     "pthread_mutex_init": "Implemented",
     "pthread_mutex_lock": "Implemented",
     "pthread_mutex_trylock": "Implemented",
     "pthread_mutex_unlock": "Implemented",
+    "pthread_mutexattr_destroy": "GlibcCallThrough",
+    "pthread_mutexattr_gettype": "GlibcCallThrough",
+    "pthread_mutexattr_init": "GlibcCallThrough",
+    "pthread_mutexattr_settype": "GlibcCallThrough",
+    "pthread_once": "Implemented",
     "pthread_rwlock_destroy": "Implemented",
     "pthread_rwlock_init": "Implemented",
     "pthread_rwlock_rdlock": "Implemented",
+    "pthread_rwlock_tryrdlock": "Implemented",
+    "pthread_rwlock_trywrlock": "Implemented",
     "pthread_rwlock_unlock": "Implemented",
     "pthread_rwlock_wrlock": "Implemented",
+    "pthread_rwlockattr_destroy": "GlibcCallThrough",
+    "pthread_rwlockattr_init": "GlibcCallThrough",
     "pthread_self": "Implemented",
+    "pthread_setcancelstate": "GlibcCallThrough",
+    "pthread_setcanceltype": "GlibcCallThrough",
+    "pthread_setname_np": "GlibcCallThrough",
+    "pthread_setspecific": "Implemented",
+    "pthread_sigmask": "RawSyscall",
+    "pthread_spin_destroy": "GlibcCallThrough",
+    "pthread_spin_init": "GlibcCallThrough",
+    "pthread_spin_lock": "GlibcCallThrough",
+    "pthread_spin_trylock": "GlibcCallThrough",
+    "pthread_spin_unlock": "GlibcCallThrough",
+    "pthread_testcancel": "GlibcCallThrough",
+    "ptsname": "GlibcCallThrough",
+    "putc": "Implemented",
+    "putc_unlocked": "GlibcCallThrough",
     "putchar": "Implemented",
-    "puts": "GlibcCallThrough",
+    "putenv": "Implemented",
+    "puts": "Implemented",
+    "putwchar": "GlibcCallThrough",
+    "pwrite": "RawSyscall",
+    "pwrite64": "GlibcCallThrough",
+    "pwritev": "RawSyscall",
+    "pwritev2": "RawSyscall",
     "qsort": "Implemented",
     "raise": "RawSyscall",
+    "rand": "Implemented",
+    "rand_r": "Implemented",
     "read": "RawSyscall",
+    "readahead": "RawSyscall",
     "readdir": "RawSyscall",
+    "readdir64": "GlibcCallThrough",
+    "readdir_r": "GlibcCallThrough",
     "readlink": "RawSyscall",
+    "readlinkat": "RawSyscall",
+    "readv": "RawSyscall",
     "realloc": "Implemented",
+    "reallocarray": "GlibcCallThrough",
+    "realpath": "GlibcCallThrough",
+    "reboot": "RawSyscall",
     "recv": "RawSyscall",
     "recvfrom": "RawSyscall",
+    "recvmmsg": "RawSyscall",
+    "recvmsg": "RawSyscall",
+    "regcomp": "GlibcCallThrough",
+    "regerror": "GlibcCallThrough",
+    "regexec": "GlibcCallThrough",
+    "regfree": "GlibcCallThrough",
+    "remainder": "Implemented",
+    "remainderf": "Implemented",
+    "remove": "Implemented",
+    "removexattr": "RawSyscall",
+    "rename": "RawSyscall",
+    "renameat": "RawSyscall",
+    "res_init": "GlibcCallThrough",
+    "res_query": "GlibcCallThrough",
+    "res_search": "GlibcCallThrough",
     "rewind": "Implemented",
+    "rewinddir": "GlibcCallThrough",
+    "rindex": "Implemented",
+    "rint": "Implemented",
+    "rintf": "Implemented",
     "rmdir": "RawSyscall",
     "round": "Implemented",
+    "roundf": "Implemented",
+    "scalbln": "Implemented",
+    "scalblnf": "Implemented",
+    "scalbn": "Implemented",
+    "scalbnf": "Implemented",
+    "scandir": "GlibcCallThrough",
+    "scandir64": "GlibcCallThrough",
+    "scanf": "GlibcCallThrough",
+    "sched_get_priority_max": "GlibcCallThrough",
+    "sched_get_priority_min": "GlibcCallThrough",
+    "sched_getaffinity": "RawSyscall",
+    "sched_getparam": "GlibcCallThrough",
+    "sched_getscheduler": "GlibcCallThrough",
+    "sched_rr_get_interval": "GlibcCallThrough",
+    "sched_setaffinity": "RawSyscall",
+    "sched_setparam": "GlibcCallThrough",
+    "sched_setscheduler": "GlibcCallThrough",
+    "sched_yield": "RawSyscall",
+    "secure_getenv": "Implemented",
+    "seekdir": "GlibcCallThrough",
     "select": "RawSyscall",
+    "sem_close": "GlibcCallThrough",
+    "sem_destroy": "GlibcCallThrough",
+    "sem_getvalue": "GlibcCallThrough",
+    "sem_init": "GlibcCallThrough",
+    "sem_open": "GlibcCallThrough",
+    "sem_post": "GlibcCallThrough",
+    "sem_timedwait": "GlibcCallThrough",
+    "sem_trywait": "GlibcCallThrough",
+    "sem_unlink": "GlibcCallThrough",
+    "sem_wait": "GlibcCallThrough",
+    "semctl": "GlibcCallThrough",
+    "semget": "GlibcCallThrough",
+    "semop": "GlibcCallThrough",
     "send": "RawSyscall",
+    "sendfile": "RawSyscall",
+    "sendfile64": "GlibcCallThrough",
+    "sendmmsg": "RawSyscall",
+    "sendmsg": "RawSyscall",
     "sendto": "RawSyscall",
-    "setbuf": "GlibcCallThrough",
+    "setbuf": "Implemented",
+    "setdomainname": "GlibcCallThrough",
+    "setegid": "RawSyscall",
     "setenv": "Implemented",
+    "seteuid": "RawSyscall",
+    "setgid": "RawSyscall",
     "setgrent": "Implemented",
+    "setgroups": "RawSyscall",
+    "sethostname": "GlibcCallThrough",
+    "setitimer": "RawSyscall",
+    "setjmp": "Implemented",
+    "setlinebuf": "GlibcCallThrough",
     "setlocale": "Implemented",
+    "setmntent": "GlibcCallThrough",
+    "setns": "RawSyscall",
+    "setpgid": "RawSyscall",
     "setpwent": "Implemented",
+    "setregid": "RawSyscall",
+    "setresgid": "RawSyscall",
+    "setresuid": "RawSyscall",
+    "setreuid": "RawSyscall",
     "setrlimit": "RawSyscall",
+    "setsid": "RawSyscall",
     "setsockopt": "RawSyscall",
-    "setvbuf": "GlibcCallThrough",
+    "setuid": "RawSyscall",
+    "setutent": "GlibcCallThrough",
+    "setvbuf": "Implemented",
+    "setxattr": "RawSyscall",
+    "shm_open": "GlibcCallThrough",
+    "shm_unlink": "GlibcCallThrough",
+    "shmat": "GlibcCallThrough",
+    "shmctl": "GlibcCallThrough",
+    "shmdt": "GlibcCallThrough",
+    "shmget": "GlibcCallThrough",
     "shutdown": "RawSyscall",
     "sigaction": "RawSyscall",
+    "sigaddset": "Implemented",
+    "sigaltstack": "RawSyscall",
+    "sigdelset": "Implemented",
+    "sigemptyset": "Implemented",
+    "sigfillset": "Implemented",
+    "sigismember": "Implemented",
+    "siglongjmp": "Implemented",
     "signal": "RawSyscall",
+    "signalfd": "RawSyscall",
+    "sigpending": "GlibcCallThrough",
+    "sigprocmask": "RawSyscall",
+    "sigqueue": "GlibcCallThrough",
+    "sigsetjmp": "Implemented",
+    "sigsuspend": "RawSyscall",
+    "sigtimedwait": "GlibcCallThrough",
+    "sigwait": "GlibcCallThrough",
+    "sigwaitinfo": "GlibcCallThrough",
     "sin": "Implemented",
+    "sinf": "Implemented",
+    "sinh": "Implemented",
+    "sinhf": "Implemented",
     "sleep": "RawSyscall",
-    "snprintf": "GlibcCallThrough",
+    "snprintf": "Implemented",
     "socket": "RawSyscall",
-    "sprintf": "GlibcCallThrough",
+    "socketpair": "RawSyscall",
+    "splice": "RawSyscall",
+    "sprintf": "Implemented",
+    "sqrt": "Implemented",
+    "sqrtf": "Implemented",
+    "srand": "Implemented",
+    "sscanf": "GlibcCallThrough",
     "stat": "RawSyscall",
+    "stat64": "GlibcCallThrough",
+    "statx": "RawSyscall",
     "stderr": "Implemented",
     "stdin": "Implemented",
     "stdout": "Implemented",
+    "stpcpy": "Implemented",
+    "stpncpy": "Implemented",
+    "strcasecmp": "Implemented",
+    "strcasestr": "Implemented",
     "strcat": "Implemented",
     "strchr": "Implemented",
+    "strchrnul": "Implemented",
     "strcmp": "Implemented",
+    "strcoll": "Implemented",
     "strcpy": "Implemented",
+    "strcspn": "Implemented",
+    "strdup": "Implemented",
+    "strerror": "Implemented",
+    "strerror_r": "Implemented",
+    "strftime": "Implemented",
+    "strlcat": "Implemented",
+    "strlcpy": "Implemented",
     "strlen": "Implemented",
+    "strncasecmp": "Implemented",
     "strncat": "Implemented",
+    "strncmp": "Implemented",
     "strncpy": "Implemented",
+    "strndup": "Implemented",
+    "strnlen": "Implemented",
+    "strpbrk": "Implemented",
+    "strptime": "GlibcCallThrough",
     "strrchr": "Implemented",
+    "strsep": "Implemented",
+    "strsignal": "GlibcCallThrough",
+    "strspn": "Implemented",
     "strstr": "Implemented",
+    "strtod": "Implemented",
+    "strtof": "Implemented",
+    "strtoimax": "Implemented",
     "strtok": "Implemented",
     "strtok_r": "Implemented",
     "strtol": "Implemented",
+    "strtold": "GlibcCallThrough",
+    "strtoll": "Implemented",
     "strtoul": "Implemented",
+    "strtoull": "Implemented",
+    "strtoumax": "Implemented",
+    "strxfrm": "Implemented",
+    "swab": "Implemented",
+    "swapoff": "RawSyscall",
+    "swapon": "RawSyscall",
+    "swprintf": "GlibcCallThrough",
+    "swscanf": "GlibcCallThrough",
     "symlink": "RawSyscall",
+    "symlinkat": "RawSyscall",
+    "sync": "RawSyscall",
+    "syncfs": "RawSyscall",
+    "sysconf": "Implemented",
+    "syslog": "GlibcCallThrough",
+    "system": "Implemented",
     "tan": "Implemented",
+    "tanf": "Implemented",
+    "tanh": "Implemented",
+    "tanhf": "Implemented",
     "tcdrain": "RawSyscall",
     "tcflow": "RawSyscall",
     "tcflush": "RawSyscall",
     "tcgetattr": "RawSyscall",
     "tcsendbreak": "RawSyscall",
     "tcsetattr": "RawSyscall",
+    "tee": "RawSyscall",
+    "telldir": "GlibcCallThrough",
+    "textdomain": "GlibcCallThrough",
     "tgamma": "Implemented",
+    "tgammaf": "Implemented",
     "time": "RawSyscall",
+    "timegm": "Implemented",
+    "timer_create": "GlibcCallThrough",
+    "timer_delete": "GlibcCallThrough",
+    "timer_getoverrun": "GlibcCallThrough",
+    "timer_gettime": "GlibcCallThrough",
+    "timer_settime": "GlibcCallThrough",
+    "timerfd_create": "RawSyscall",
+    "timerfd_gettime": "RawSyscall",
+    "timerfd_settime": "RawSyscall",
+    "tmpfile": "Implemented",
+    "tmpfile64": "GlibcCallThrough",
+    "tmpnam": "Implemented",
+    "toascii": "Implemented",
     "tolower": "Implemented",
     "toupper": "Implemented",
+    "towlower": "Implemented",
+    "towupper": "Implemented",
+    "trunc": "Implemented",
+    "truncate": "RawSyscall",
+    "truncate64": "GlibcCallThrough",
+    "truncf": "Implemented",
+    "ttyname": "GlibcCallThrough",
+    "ttyname_r": "GlibcCallThrough",
+    "tzset": "GlibcCallThrough",
+    "umask": "RawSyscall",
+    "umount": "GlibcCallThrough",
+    "umount2": "RawSyscall",
+    "uname": "RawSyscall",
     "ungetc": "Implemented",
+    "ungetwc": "GlibcCallThrough",
     "unlink": "RawSyscall",
+    "unlinkat": "RawSyscall",
+    "unlockpt": "GlibcCallThrough",
     "unsetenv": "Implemented",
+    "unshare": "RawSyscall",
     "usleep": "RawSyscall",
+    "utmpname": "GlibcCallThrough",
+    "vasprintf": "GlibcCallThrough",
+    "vdprintf": "GlibcCallThrough",
+    "vfork": "RawSyscall",
+    "vfprintf": "GlibcCallThrough",
+    "vfscanf": "GlibcCallThrough",
+    "vfwprintf": "GlibcCallThrough",
+    "vfwscanf": "GlibcCallThrough",
+    "vmsplice": "RawSyscall",
+    "vprintf": "GlibcCallThrough",
+    "vscanf": "GlibcCallThrough",
+    "vsnprintf": "GlibcCallThrough",
+    "vsprintf": "GlibcCallThrough",
+    "vsscanf": "GlibcCallThrough",
+    "vswprintf": "GlibcCallThrough",
+    "vswscanf": "GlibcCallThrough",
+    "vsyslog": "GlibcCallThrough",
+    "vwprintf": "GlibcCallThrough",
+    "vwscanf": "GlibcCallThrough",
     "wait": "RawSyscall",
+    "wait3": "RawSyscall",
+    "wait4": "RawSyscall",
+    "waitid": "RawSyscall",
     "waitpid": "RawSyscall",
+    "wcrtomb": "GlibcCallThrough",
     "wcscat": "Implemented",
     "wcschr": "Implemented",
     "wcscmp": "Implemented",
+    "wcscoll": "GlibcCallThrough",
     "wcscpy": "Implemented",
+    "wcscspn": "Implemented",
+    "wcsdup": "Implemented",
+    "wcsftime": "GlibcCallThrough",
     "wcslen": "Implemented",
+    "wcsncat": "Implemented",
     "wcsncmp": "Implemented",
     "wcsncpy": "Implemented",
+    "wcsnlen": "GlibcCallThrough",
+    "wcspbrk": "Implemented",
     "wcsrchr": "Implemented",
+    "wcsrtombs": "GlibcCallThrough",
+    "wcsspn": "Implemented",
     "wcsstr": "Implemented",
+    "wcstod": "GlibcCallThrough",
+    "wcstof": "GlibcCallThrough",
+    "wcstok": "Implemented",
+    "wcstol": "GlibcCallThrough",
+    "wcstold": "GlibcCallThrough",
+    "wcstoll": "GlibcCallThrough",
+    "wcstombs": "Implemented",
+    "wcstoul": "GlibcCallThrough",
+    "wcstoull": "GlibcCallThrough",
+    "wcswidth": "GlibcCallThrough",
+    "wcsxfrm": "GlibcCallThrough",
+    "wctob": "GlibcCallThrough",
+    "wctomb": "Implemented",
+    "wcwidth": "Implemented",
     "wmemchr": "Implemented",
     "wmemcmp": "Implemented",
     "wmemcpy": "Implemented",
     "wmemmove": "Implemented",
     "wmemset": "Implemented",
-    "write": "RawSyscall"
+    "wordexp": "GlibcCallThrough",
+    "wordfree": "GlibcCallThrough",
+    "wprintf": "GlibcCallThrough",
+    "write": "RawSyscall",
+    "writev": "RawSyscall",
+    "wscanf": "GlibcCallThrough"
   },
-  "reclassified_symbols": [],
+  "reclassified_symbols": [
+    {
+      "symbol": "fclose",
+      "previous_status": "GlibcCallThrough",
+      "current_status": "Implemented",
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 0,
+      "strict_conformance": {
+        "total": 1,
+        "passed": 0,
+        "failed": 0,
+        "errors": 1,
+        "pass_rate_percent": 0.0
+      },
+      "hardened_conformance": null,
+      "conformance_evidence_passed": false,
+      "missing_evidence": [
+        "missing_hardened_fixture",
+        "strict_conformance_not_passing",
+        "hardened_conformance_not_passing"
+      ]
+    },
+    {
+      "symbol": "fgets",
+      "previous_status": "GlibcCallThrough",
+      "current_status": "Implemented",
+      "strict_fixture_count": 0,
+      "hardened_fixture_count": 0,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": false,
+      "missing_evidence": [
+        "missing_strict_fixture",
+        "missing_hardened_fixture",
+        "strict_conformance_not_passing",
+        "hardened_conformance_not_passing"
+      ]
+    },
+    {
+      "symbol": "fopen",
+      "previous_status": "GlibcCallThrough",
+      "current_status": "Implemented",
+      "strict_fixture_count": 2,
+      "hardened_fixture_count": 1,
+      "strict_conformance": {
+        "total": 2,
+        "passed": 0,
+        "failed": 0,
+        "errors": 2,
+        "pass_rate_percent": 0.0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 0,
+        "failed": 0,
+        "errors": 1,
+        "pass_rate_percent": 0.0
+      },
+      "conformance_evidence_passed": false,
+      "missing_evidence": [
+        "strict_conformance_not_passing",
+        "hardened_conformance_not_passing"
+      ]
+    },
+    {
+      "symbol": "fprintf",
+      "previous_status": "GlibcCallThrough",
+      "current_status": "Implemented",
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 0,
+      "strict_conformance": {
+        "total": 1,
+        "passed": 0,
+        "failed": 0,
+        "errors": 1,
+        "pass_rate_percent": 0.0
+      },
+      "hardened_conformance": null,
+      "conformance_evidence_passed": false,
+      "missing_evidence": [
+        "missing_hardened_fixture",
+        "strict_conformance_not_passing",
+        "hardened_conformance_not_passing"
+      ]
+    },
+    {
+      "symbol": "fputs",
+      "previous_status": "GlibcCallThrough",
+      "current_status": "Implemented",
+      "strict_fixture_count": 0,
+      "hardened_fixture_count": 0,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": false,
+      "missing_evidence": [
+        "missing_strict_fixture",
+        "missing_hardened_fixture",
+        "strict_conformance_not_passing",
+        "hardened_conformance_not_passing"
+      ]
+    },
+    {
+      "symbol": "fread",
+      "previous_status": "GlibcCallThrough",
+      "current_status": "Implemented",
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": false,
+      "missing_evidence": [
+        "strict_conformance_not_passing",
+        "hardened_conformance_not_passing"
+      ]
+    },
+    {
+      "symbol": "fseek",
+      "previous_status": "GlibcCallThrough",
+      "current_status": "Implemented",
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 0,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": false,
+      "missing_evidence": [
+        "missing_hardened_fixture",
+        "strict_conformance_not_passing",
+        "hardened_conformance_not_passing"
+      ]
+    },
+    {
+      "symbol": "ftell",
+      "previous_status": "GlibcCallThrough",
+      "current_status": "Implemented",
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 0,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": false,
+      "missing_evidence": [
+        "missing_hardened_fixture",
+        "strict_conformance_not_passing",
+        "hardened_conformance_not_passing"
+      ]
+    },
+    {
+      "symbol": "fwrite",
+      "previous_status": "GlibcCallThrough",
+      "current_status": "Implemented",
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 0,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": false,
+      "missing_evidence": [
+        "missing_hardened_fixture",
+        "strict_conformance_not_passing",
+        "hardened_conformance_not_passing"
+      ]
+    },
+    {
+      "symbol": "perror",
+      "previous_status": "GlibcCallThrough",
+      "current_status": "Implemented",
+      "strict_fixture_count": 0,
+      "hardened_fixture_count": 0,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": false,
+      "missing_evidence": [
+        "missing_strict_fixture",
+        "missing_hardened_fixture",
+        "strict_conformance_not_passing",
+        "hardened_conformance_not_passing"
+      ]
+    },
+    {
+      "symbol": "printf",
+      "previous_status": "GlibcCallThrough",
+      "current_status": "Implemented",
+      "strict_fixture_count": 0,
+      "hardened_fixture_count": 0,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": false,
+      "missing_evidence": [
+        "missing_strict_fixture",
+        "missing_hardened_fixture",
+        "strict_conformance_not_passing",
+        "hardened_conformance_not_passing"
+      ]
+    },
+    {
+      "symbol": "puts",
+      "previous_status": "GlibcCallThrough",
+      "current_status": "Implemented",
+      "strict_fixture_count": 0,
+      "hardened_fixture_count": 0,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": false,
+      "missing_evidence": [
+        "missing_strict_fixture",
+        "missing_hardened_fixture",
+        "strict_conformance_not_passing",
+        "hardened_conformance_not_passing"
+      ]
+    },
+    {
+      "symbol": "setbuf",
+      "previous_status": "GlibcCallThrough",
+      "current_status": "Implemented",
+      "strict_fixture_count": 0,
+      "hardened_fixture_count": 0,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": false,
+      "missing_evidence": [
+        "missing_strict_fixture",
+        "missing_hardened_fixture",
+        "strict_conformance_not_passing",
+        "hardened_conformance_not_passing"
+      ]
+    },
+    {
+      "symbol": "setvbuf",
+      "previous_status": "GlibcCallThrough",
+      "current_status": "Implemented",
+      "strict_fixture_count": 0,
+      "hardened_fixture_count": 0,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": false,
+      "missing_evidence": [
+        "missing_strict_fixture",
+        "missing_hardened_fixture",
+        "strict_conformance_not_passing",
+        "hardened_conformance_not_passing"
+      ]
+    },
+    {
+      "symbol": "snprintf",
+      "previous_status": "GlibcCallThrough",
+      "current_status": "Implemented",
+      "strict_fixture_count": 2,
+      "hardened_fixture_count": 1,
+      "strict_conformance": {
+        "total": 2,
+        "passed": 0,
+        "failed": 0,
+        "errors": 2,
+        "pass_rate_percent": 0.0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 0,
+        "failed": 0,
+        "errors": 1,
+        "pass_rate_percent": 0.0
+      },
+      "conformance_evidence_passed": false,
+      "missing_evidence": [
+        "strict_conformance_not_passing",
+        "hardened_conformance_not_passing"
+      ]
+    },
+    {
+      "symbol": "sprintf",
+      "previous_status": "GlibcCallThrough",
+      "current_status": "Implemented",
+      "strict_fixture_count": 0,
+      "hardened_fixture_count": 0,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": false,
+      "missing_evidence": [
+        "missing_strict_fixture",
+        "missing_hardened_fixture",
+        "strict_conformance_not_passing",
+        "hardened_conformance_not_passing"
+      ]
+    }
+  ],
   "status_validation_issues": [
+    {
+      "symbol": "aio_cancel",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "aio_error",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "aio_fsync",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "aio_read",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "aio_write",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "arc4random",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "Implemented but calls libc::{syscall}"
+      ]
+    },
+    {
+      "symbol": "arc4random_buf",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "Implemented but calls libc::{syscall}"
+      ]
+    },
+    {
+      "symbol": "basename",
+      "status": "Implemented",
+      "module": "unknown",
+      "valid": null,
+      "findings": [
+        "module source not found"
+      ]
+    },
+    {
+      "symbol": "bindtextdomain",
+      "status": "GlibcCallThrough",
+      "module": "locale_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "btowc",
+      "status": "GlibcCallThrough",
+      "module": "wchar_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "clearenv",
+      "status": "GlibcCallThrough",
+      "module": "stdlib_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "closelog",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "confstr",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "crypt",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "ctermid",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "daemon",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "dgettext",
+      "status": "GlibcCallThrough",
+      "module": "locale_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "dirname",
+      "status": "Implemented",
+      "module": "unknown",
+      "valid": null,
+      "findings": [
+        "module source not found"
+      ]
+    },
+    {
+      "symbol": "dl_iterate_phdr",
+      "status": "GlibcCallThrough",
+      "module": "dlfcn_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "dladdr",
+      "status": "GlibcCallThrough",
+      "module": "dlfcn_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
     {
       "symbol": "dlerror",
       "status": "GlibcCallThrough",
@@ -480,7 +2593,106 @@
       ]
     },
     {
-      "symbol": "fgets",
+      "symbol": "endmntent",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "endutent",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "ether_aton",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "ether_aton_r",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "ether_ntoa",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "ether_ntoa_r",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "execl",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "execle",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "execlp",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "execvpe",
+      "status": "GlibcCallThrough",
+      "module": "process_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "fclose",
+      "status": "Implemented",
+      "module": "stdio_abi",
+      "valid": false,
+      "findings": [
+        "Implemented but calls libc::{syscall}"
+      ]
+    },
+    {
+      "symbol": "fgetc_unlocked",
       "status": "GlibcCallThrough",
       "module": "stdio_abi",
       "valid": false,
@@ -489,7 +2701,16 @@
       ]
     },
     {
-      "symbol": "fprintf",
+      "symbol": "fgetgrent",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "fgetpos64",
       "status": "GlibcCallThrough",
       "module": "stdio_abi",
       "valid": false,
@@ -498,7 +2719,25 @@
       ]
     },
     {
-      "symbol": "fread",
+      "symbol": "fgetpwent",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "fgetwc",
+      "status": "GlibcCallThrough",
+      "module": "wchar_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "flockfile",
       "status": "GlibcCallThrough",
       "module": "stdio_abi",
       "valid": false,
@@ -507,7 +2746,7 @@
       ]
     },
     {
-      "symbol": "ftell",
+      "symbol": "fmemopen",
       "status": "GlibcCallThrough",
       "module": "stdio_abi",
       "valid": false,
@@ -516,7 +2755,25 @@
       ]
     },
     {
-      "symbol": "fwrite",
+      "symbol": "fnmatch",
+      "status": "GlibcCallThrough",
+      "module": "string_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "fopen",
+      "status": "Implemented",
+      "module": "stdio_abi",
+      "valid": false,
+      "findings": [
+        "Implemented but calls libc::{syscall}"
+      ]
+    },
+    {
+      "symbol": "fopen64",
       "status": "GlibcCallThrough",
       "module": "stdio_abi",
       "valid": false,
@@ -525,7 +2782,7 @@
       ]
     },
     {
-      "symbol": "setbuf",
+      "symbol": "fopencookie",
       "status": "GlibcCallThrough",
       "module": "stdio_abi",
       "valid": false,
@@ -534,7 +2791,7 @@
       ]
     },
     {
-      "symbol": "setvbuf",
+      "symbol": "fputc_unlocked",
       "status": "GlibcCallThrough",
       "module": "stdio_abi",
       "valid": false,
@@ -543,7 +2800,34 @@
       ]
     },
     {
-      "symbol": "snprintf",
+      "symbol": "fputwc",
+      "status": "GlibcCallThrough",
+      "module": "wchar_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "freeifaddrs",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "freopen",
+      "status": "Implemented",
+      "module": "stdio_abi",
+      "valid": false,
+      "findings": [
+        "Implemented but calls libc::{syscall}"
+      ]
+    },
+    {
+      "symbol": "freopen64",
       "status": "GlibcCallThrough",
       "module": "stdio_abi",
       "valid": false,
@@ -552,104 +2836,2668 @@
       ]
     },
     {
-      "symbol": "sprintf",
+      "symbol": "fscanf",
       "status": "GlibcCallThrough",
       "module": "stdio_abi",
       "valid": false,
       "findings": [
         "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "fseek",
+      "status": "Implemented",
+      "module": "stdio_abi",
+      "valid": false,
+      "findings": [
+        "Implemented but calls libc::{syscall}"
+      ]
+    },
+    {
+      "symbol": "fseeko64",
+      "status": "GlibcCallThrough",
+      "module": "stdio_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "fsetpos64",
+      "status": "GlibcCallThrough",
+      "module": "stdio_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "fstat64",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "fstatat64",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "ftello64",
+      "status": "GlibcCallThrough",
+      "module": "stdio_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "ftruncate64",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "ftrylockfile",
+      "status": "GlibcCallThrough",
+      "module": "stdio_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "funlockfile",
+      "status": "GlibcCallThrough",
+      "module": "stdio_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "get_avphys_pages",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "get_nprocs",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "get_nprocs_conf",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "get_phys_pages",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "getc_unlocked",
+      "status": "GlibcCallThrough",
+      "module": "stdio_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "getdomainname",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "getentropy",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "Implemented but calls libc::{syscall}"
+      ]
+    },
+    {
+      "symbol": "getgrent_r",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "gethostbyname",
+      "status": "GlibcCallThrough",
+      "module": "resolv_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "gethostbyname_r",
+      "status": "GlibcCallThrough",
+      "module": "inet_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "getifaddrs",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "getlogin",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "getlogin_r",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "getmntent",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "getopt",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "getpagesize",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "getpass",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "getprotobyname",
+      "status": "GlibcCallThrough",
+      "module": "resolv_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "getprotobynumber",
+      "status": "GlibcCallThrough",
+      "module": "resolv_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "getpwent_r",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "getservbyname",
+      "status": "GlibcCallThrough",
+      "module": "resolv_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "getservbyname_r",
+      "status": "GlibcCallThrough",
+      "module": "inet_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "getservbyport",
+      "status": "GlibcCallThrough",
+      "module": "resolv_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "getservbyport_r",
+      "status": "GlibcCallThrough",
+      "module": "inet_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "gettext",
+      "status": "GlibcCallThrough",
+      "module": "locale_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "getutent",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "getwchar",
+      "status": "GlibcCallThrough",
+      "module": "wchar_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "glob",
+      "status": "GlibcCallThrough",
+      "module": "string_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "globfree",
+      "status": "GlibcCallThrough",
+      "module": "string_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "grantpt",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "hasmntopt",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "herror",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "hstrerror",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "if_freenameindex",
+      "status": "GlibcCallThrough",
+      "module": "inet_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "if_nameindex",
+      "status": "GlibcCallThrough",
+      "module": "inet_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "iswalnum",
+      "status": "Implemented",
+      "module": "unknown",
+      "valid": null,
+      "findings": [
+        "module source not found"
+      ]
+    },
+    {
+      "symbol": "iswalpha",
+      "status": "Implemented",
+      "module": "unknown",
+      "valid": null,
+      "findings": [
+        "module source not found"
+      ]
+    },
+    {
+      "symbol": "iswdigit",
+      "status": "Implemented",
+      "module": "unknown",
+      "valid": null,
+      "findings": [
+        "module source not found"
+      ]
+    },
+    {
+      "symbol": "iswlower",
+      "status": "Implemented",
+      "module": "unknown",
+      "valid": null,
+      "findings": [
+        "module source not found"
+      ]
+    },
+    {
+      "symbol": "iswprint",
+      "status": "Implemented",
+      "module": "unknown",
+      "valid": null,
+      "findings": [
+        "module source not found"
+      ]
+    },
+    {
+      "symbol": "iswspace",
+      "status": "Implemented",
+      "module": "unknown",
+      "valid": null,
+      "findings": [
+        "module source not found"
+      ]
+    },
+    {
+      "symbol": "iswupper",
+      "status": "Implemented",
+      "module": "unknown",
+      "valid": null,
+      "findings": [
+        "module source not found"
+      ]
+    },
+    {
+      "symbol": "lio_listio",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "login_tty",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "lseek64",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "lstat64",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "mblen",
+      "status": "Implemented",
+      "module": "unknown",
+      "valid": null,
+      "findings": [
+        "module source not found"
+      ]
+    },
+    {
+      "symbol": "mbstowcs",
+      "status": "Implemented",
+      "module": "unknown",
+      "valid": null,
+      "findings": [
+        "module source not found"
+      ]
+    },
+    {
+      "symbol": "mbtowc",
+      "status": "Implemented",
+      "module": "unknown",
+      "valid": null,
+      "findings": [
+        "module source not found"
+      ]
+    },
+    {
+      "symbol": "mkdtemp",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "mkostemp",
+      "status": "GlibcCallThrough",
+      "module": "stdlib_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "mkostemps",
+      "status": "GlibcCallThrough",
+      "module": "stdlib_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "mkstemp",
+      "status": "GlibcCallThrough",
+      "module": "unknown",
+      "valid": null,
+      "findings": [
+        "module source not found"
+      ]
+    },
+    {
+      "symbol": "mkstemps",
+      "status": "GlibcCallThrough",
+      "module": "stdlib_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "mmap64",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "mq_close",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "mq_getattr",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "mq_open",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "mq_receive",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "mq_send",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "mq_setattr",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "mq_unlink",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "msgctl",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "msgget",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "msgsnd",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "nice",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "open_memstream",
+      "status": "GlibcCallThrough",
+      "module": "stdio_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "openlog",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "openpty",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "pclose",
+      "status": "Implemented",
+      "module": "stdio_abi",
+      "valid": false,
+      "findings": [
+        "Implemented but calls libc::{syscall}"
+      ]
+    },
+    {
+      "symbol": "popen",
+      "status": "Implemented",
+      "module": "stdio_abi",
+      "valid": false,
+      "findings": [
+        "Implemented but calls libc::{syscall}"
+      ]
+    },
+    {
+      "symbol": "posix_madvise",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "posix_openpt",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "posix_spawn_file_actions_destroy",
+      "status": "GlibcCallThrough",
+      "module": "process_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "posix_spawn_file_actions_init",
+      "status": "GlibcCallThrough",
+      "module": "process_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "posix_spawnattr_destroy",
+      "status": "GlibcCallThrough",
+      "module": "process_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "posix_spawnattr_init",
+      "status": "GlibcCallThrough",
+      "module": "process_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "pread64",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "psignal",
+      "status": "GlibcCallThrough",
+      "module": "string_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "pthread_barrier_destroy",
+      "status": "GlibcCallThrough",
+      "module": "pthread_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "pthread_barrier_wait",
+      "status": "GlibcCallThrough",
+      "module": "pthread_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "pthread_cond_init",
+      "status": "Implemented",
+      "module": "pthread_abi",
+      "valid": false,
+      "findings": [
+        "Implemented but calls libc::{pthread_condattr_getclock}"
+      ]
+    },
+    {
+      "symbol": "pthread_setcancelstate",
+      "status": "GlibcCallThrough",
+      "module": "pthread_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "pthread_setcanceltype",
+      "status": "GlibcCallThrough",
+      "module": "pthread_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "pthread_spin_destroy",
+      "status": "GlibcCallThrough",
+      "module": "pthread_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "pthread_spin_init",
+      "status": "GlibcCallThrough",
+      "module": "pthread_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "pthread_spin_lock",
+      "status": "GlibcCallThrough",
+      "module": "pthread_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "pthread_spin_trylock",
+      "status": "GlibcCallThrough",
+      "module": "pthread_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "pthread_spin_unlock",
+      "status": "GlibcCallThrough",
+      "module": "pthread_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "pthread_testcancel",
+      "status": "GlibcCallThrough",
+      "module": "pthread_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "ptsname",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "putc_unlocked",
+      "status": "GlibcCallThrough",
+      "module": "stdio_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "putwchar",
+      "status": "GlibcCallThrough",
+      "module": "wchar_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "pwrite64",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "readdir64",
+      "status": "GlibcCallThrough",
+      "module": "dirent_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "reallocarray",
+      "status": "GlibcCallThrough",
+      "module": "stdlib_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "realpath",
+      "status": "GlibcCallThrough",
+      "module": "unknown",
+      "valid": null,
+      "findings": [
+        "module source not found"
+      ]
+    },
+    {
+      "symbol": "regcomp",
+      "status": "GlibcCallThrough",
+      "module": "string_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "regerror",
+      "status": "GlibcCallThrough",
+      "module": "string_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "regexec",
+      "status": "GlibcCallThrough",
+      "module": "string_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "regfree",
+      "status": "GlibcCallThrough",
+      "module": "string_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "remove",
+      "status": "Implemented",
+      "module": "stdio_abi",
+      "valid": false,
+      "findings": [
+        "Implemented but calls libc::{syscall}"
+      ]
+    },
+    {
+      "symbol": "res_init",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "res_query",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "res_search",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "rewinddir",
+      "status": "GlibcCallThrough",
+      "module": "dirent_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "scandir64",
+      "status": "GlibcCallThrough",
+      "module": "dirent_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "scanf",
+      "status": "GlibcCallThrough",
+      "module": "stdio_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "sched_get_priority_max",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "sched_get_priority_min",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "seekdir",
+      "status": "GlibcCallThrough",
+      "module": "dirent_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "sem_close",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "sem_destroy",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "sem_getvalue",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "sem_init",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "sem_open",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "sem_post",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "sem_trywait",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "sem_unlink",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "sem_wait",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "semctl",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "semget",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "semop",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "sendfile64",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "setdomainname",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "sethostname",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "setlinebuf",
+      "status": "GlibcCallThrough",
+      "module": "stdio_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "setmntent",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "setutent",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "shm_unlink",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "shmat",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "shmctl",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "shmdt",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "shmget",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "sigwaitinfo",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "sscanf",
+      "status": "GlibcCallThrough",
+      "module": "stdio_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "stat64",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "strftime",
+      "status": "Implemented",
+      "module": "unknown",
+      "valid": null,
+      "findings": [
+        "module source not found"
+      ]
+    },
+    {
+      "symbol": "strsignal",
+      "status": "GlibcCallThrough",
+      "module": "string_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "strtold",
+      "status": "GlibcCallThrough",
+      "module": "stdlib_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "sysconf",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "Implemented but calls libc::{_SC_ARG_MAX, _SC_CHILD_MAX, _SC_CLK_TCK, _SC_HOST_NAME_MAX, _SC_IOV_MAX}"
+      ]
+    },
+    {
+      "symbol": "syslog",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "system",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "valid": false,
+      "findings": [
+        "Implemented but calls libc::{syscall}"
+      ]
+    },
+    {
+      "symbol": "telldir",
+      "status": "GlibcCallThrough",
+      "module": "dirent_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "textdomain",
+      "status": "GlibcCallThrough",
+      "module": "locale_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "timer_delete",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "timer_getoverrun",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "timer_gettime",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "timer_settime",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "tmpfile",
+      "status": "Implemented",
+      "module": "stdio_abi",
+      "valid": false,
+      "findings": [
+        "Implemented but calls libc::{mkstemp, syscall}"
+      ]
+    },
+    {
+      "symbol": "tmpfile64",
+      "status": "GlibcCallThrough",
+      "module": "stdio_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "tmpnam",
+      "status": "Implemented",
+      "module": "stdio_abi",
+      "valid": false,
+      "findings": [
+        "Implemented but calls libc::{syscall}"
+      ]
+    },
+    {
+      "symbol": "towlower",
+      "status": "Implemented",
+      "module": "unknown",
+      "valid": null,
+      "findings": [
+        "module source not found"
+      ]
+    },
+    {
+      "symbol": "towupper",
+      "status": "Implemented",
+      "module": "unknown",
+      "valid": null,
+      "findings": [
+        "module source not found"
+      ]
+    },
+    {
+      "symbol": "truncate64",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "ttyname",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "ttyname_r",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "tzset",
+      "status": "GlibcCallThrough",
+      "module": "time_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "ungetwc",
+      "status": "GlibcCallThrough",
+      "module": "wchar_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "unlockpt",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "utmpname",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "vasprintf",
+      "status": "GlibcCallThrough",
+      "module": "unknown",
+      "valid": null,
+      "findings": [
+        "module source not found"
+      ]
+    },
+    {
+      "symbol": "vdprintf",
+      "status": "GlibcCallThrough",
+      "module": "unknown",
+      "valid": null,
+      "findings": [
+        "module source not found"
+      ]
+    },
+    {
+      "symbol": "vfprintf",
+      "status": "GlibcCallThrough",
+      "module": "unknown",
+      "valid": null,
+      "findings": [
+        "module source not found"
+      ]
+    },
+    {
+      "symbol": "vfscanf",
+      "status": "GlibcCallThrough",
+      "module": "stdio_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "vprintf",
+      "status": "GlibcCallThrough",
+      "module": "unknown",
+      "valid": null,
+      "findings": [
+        "module source not found"
+      ]
+    },
+    {
+      "symbol": "vscanf",
+      "status": "GlibcCallThrough",
+      "module": "stdio_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "vsnprintf",
+      "status": "GlibcCallThrough",
+      "module": "unknown",
+      "valid": null,
+      "findings": [
+        "module source not found"
+      ]
+    },
+    {
+      "symbol": "vsprintf",
+      "status": "GlibcCallThrough",
+      "module": "unknown",
+      "valid": null,
+      "findings": [
+        "module source not found"
+      ]
+    },
+    {
+      "symbol": "vsscanf",
+      "status": "GlibcCallThrough",
+      "module": "stdio_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "vsyslog",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "wcsdup",
+      "status": "Implemented",
+      "module": "wchar_abi",
+      "valid": false,
+      "findings": [
+        "Implemented but calls libc::{malloc}"
+      ]
+    },
+    {
+      "symbol": "wcstombs",
+      "status": "Implemented",
+      "module": "unknown",
+      "valid": null,
+      "findings": [
+        "module source not found"
+      ]
+    },
+    {
+      "symbol": "wctob",
+      "status": "GlibcCallThrough",
+      "module": "wchar_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "wctomb",
+      "status": "Implemented",
+      "module": "unknown",
+      "valid": null,
+      "findings": [
+        "module source not found"
+      ]
+    },
+    {
+      "symbol": "wcwidth",
+      "status": "Implemented",
+      "module": "unknown",
+      "valid": null,
+      "findings": [
+        "module source not found"
+      ]
+    },
+    {
+      "symbol": "wordexp",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "wordfree",
+      "status": "GlibcCallThrough",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "GlibcCallThrough but no libc:: references found"
+      ]
+    },
+    {
+      "symbol": "setns",
+      "status": "RawSyscall",
+      "module": "unknown",
+      "valid": null,
+      "findings": [
+        "module source not found"
+      ]
+    },
+    {
+      "symbol": "unshare",
+      "status": "RawSyscall",
+      "module": "unknown",
+      "valid": null,
+      "findings": [
+        "module source not found"
+      ]
+    },
+    {
+      "symbol": "mount",
+      "status": "RawSyscall",
+      "module": "unknown",
+      "valid": null,
+      "findings": [
+        "module source not found"
+      ]
+    },
+    {
+      "symbol": "umount2",
+      "status": "RawSyscall",
+      "module": "unknown",
+      "valid": null,
+      "findings": [
+        "module source not found"
+      ]
+    },
+    {
+      "symbol": "chroot",
+      "status": "RawSyscall",
+      "module": "unknown",
+      "valid": null,
+      "findings": [
+        "module source not found"
+      ]
+    },
+    {
+      "symbol": "pivot_root",
+      "status": "RawSyscall",
+      "module": "unknown",
+      "valid": null,
+      "findings": [
+        "module source not found"
+      ]
+    },
+    {
+      "symbol": "acct",
+      "status": "RawSyscall",
+      "module": "unknown",
+      "valid": null,
+      "findings": [
+        "module source not found"
+      ]
+    },
+    {
+      "symbol": "reboot",
+      "status": "RawSyscall",
+      "module": "unknown",
+      "valid": null,
+      "findings": [
+        "module source not found"
+      ]
+    },
+    {
+      "symbol": "swapon",
+      "status": "RawSyscall",
+      "module": "unknown",
+      "valid": null,
+      "findings": [
+        "module source not found"
+      ]
+    },
+    {
+      "symbol": "swapoff",
+      "status": "RawSyscall",
+      "module": "unknown",
+      "valid": null,
+      "findings": [
+        "module source not found"
+      ]
+    },
+    {
+      "symbol": "getresuid",
+      "status": "RawSyscall",
+      "module": "unknown",
+      "valid": null,
+      "findings": [
+        "module source not found"
+      ]
+    },
+    {
+      "symbol": "getresgid",
+      "status": "RawSyscall",
+      "module": "unknown",
+      "valid": null,
+      "findings": [
+        "module source not found"
+      ]
+    },
+    {
+      "symbol": "setresuid",
+      "status": "RawSyscall",
+      "module": "unknown",
+      "valid": null,
+      "findings": [
+        "module source not found"
+      ]
+    },
+    {
+      "symbol": "setresgid",
+      "status": "RawSyscall",
+      "module": "unknown",
+      "valid": null,
+      "findings": [
+        "module source not found"
+      ]
+    },
+    {
+      "symbol": "fanotify_init",
+      "status": "RawSyscall",
+      "module": "unknown",
+      "valid": null,
+      "findings": [
+        "module source not found"
+      ]
+    },
+    {
+      "symbol": "fanotify_mark",
+      "status": "RawSyscall",
+      "module": "unknown",
+      "valid": null,
+      "findings": [
+        "module source not found"
+      ]
+    },
+    {
+      "symbol": "process_vm_readv",
+      "status": "RawSyscall",
+      "module": "unknown",
+      "valid": null,
+      "findings": [
+        "module source not found"
+      ]
+    },
+    {
+      "symbol": "process_vm_writev",
+      "status": "RawSyscall",
+      "module": "unknown",
+      "valid": null,
+      "findings": [
+        "module source not found"
+      ]
+    },
+    {
+      "symbol": "mlock2",
+      "status": "RawSyscall",
+      "module": "unknown",
+      "valid": null,
+      "findings": [
+        "module source not found"
+      ]
+    },
+    {
+      "symbol": "name_to_handle_at",
+      "status": "RawSyscall",
+      "module": "unknown",
+      "valid": null,
+      "findings": [
+        "module source not found"
+      ]
+    },
+    {
+      "symbol": "open_by_handle_at",
+      "status": "RawSyscall",
+      "module": "unknown",
+      "valid": null,
+      "findings": [
+        "module source not found"
+      ]
+    },
+    {
+      "symbol": "umount",
+      "status": "GlibcCallThrough",
+      "module": "unknown",
+      "valid": null,
+      "findings": [
+        "module source not found"
+      ]
+    },
+    {
+      "symbol": "glob64",
+      "status": "GlibcCallThrough",
+      "module": "unknown",
+      "valid": null,
+      "findings": [
+        "module source not found"
+      ]
+    },
+    {
+      "symbol": "globfree64",
+      "status": "GlibcCallThrough",
+      "module": "unknown",
+      "valid": null,
+      "findings": [
+        "module source not found"
+      ]
+    },
+    {
+      "symbol": "nftw64",
+      "status": "GlibcCallThrough",
+      "module": "unknown",
+      "valid": null,
+      "findings": [
+        "module source not found"
+      ]
+    },
+    {
+      "symbol": "alphasort64",
+      "status": "GlibcCallThrough",
+      "module": "unknown",
+      "valid": null,
+      "findings": [
+        "module source not found"
       ]
     }
   ],
   "unlinked_symbols": [
     "_exit",
+    "_longjmp",
+    "abs",
     "accept",
+    "accept4",
+    "acosf",
+    "acosh",
+    "acoshf",
+    "aio_cancel",
+    "aio_error",
+    "aio_fsync",
+    "aio_read",
+    "aio_return",
+    "aio_suspend",
+    "aio_write",
+    "alarm",
     "aligned_alloc",
+    "alphasort",
+    "arc4random",
+    "arc4random_buf",
+    "arc4random_uniform",
+    "asctime",
+    "asctime_r",
+    "asinf",
+    "asinh",
+    "asinhf",
+    "asprintf",
+    "atan2f",
+    "atanf",
+    "atanh",
+    "atanhf",
     "atexit",
+    "atof",
+    "atoll",
+    "basename",
+    "bcmp",
+    "bcopy",
+    "bindtextdomain",
+    "btowc",
+    "bzero",
+    "cbrt",
+    "cbrtf",
+    "ceilf",
     "chdir",
+    "chmod",
+    "chown",
+    "clearenv",
     "clearerr",
+    "clock_getres",
+    "clock_nanosleep",
+    "clock_settime",
+    "close_range",
+    "closelog",
+    "confstr",
     "connect",
+    "copy_file_range",
+    "copysign",
+    "copysignf",
+    "cosf",
+    "cosh",
+    "coshf",
+    "creat",
+    "creat64",
+    "crypt",
+    "ctermid",
+    "ctime",
+    "ctime_r",
+    "daemon",
+    "dgettext",
+    "difftime",
+    "dirname",
+    "div",
+    "dl_iterate_phdr",
+    "dprintf",
     "dup",
     "dup2",
+    "dup3",
     "endgrent",
+    "endmntent",
     "endpwent",
+    "endutent",
+    "epoll_create",
+    "epoll_create1",
+    "epoll_ctl",
+    "epoll_pwait",
+    "epoll_wait",
+    "erfc",
+    "erfcf",
+    "erff",
+    "ether_aton",
+    "ether_aton_r",
+    "ether_ntoa",
+    "ether_ntoa_r",
+    "eventfd",
+    "eventfd_read",
+    "eventfd_write",
+    "execl",
+    "execle",
+    "execlp",
     "execvp",
+    "execvpe",
     "exit",
+    "exp2",
+    "exp2f",
+    "expf",
+    "explicit_bzero",
+    "expm1",
+    "expm1f",
+    "fabsf",
+    "faccessat",
+    "fallocate",
     "fchdir",
+    "fchmod",
+    "fchmodat",
+    "fchown",
+    "fchownat",
     "fcntl",
     "fdatasync",
+    "fdim",
+    "fdimf",
+    "fdopen",
     "feof",
     "ferror",
-    "fflush",
+    "ffs",
+    "ffsl",
+    "ffsll",
     "fgetc",
+    "fgetc_unlocked",
+    "fgetgrent",
+    "fgetpos",
+    "fgetpos64",
+    "fgetpwent",
     "fgets",
+    "fgetwc",
+    "fgetws",
+    "fgetxattr",
     "fileno",
+    "flistxattr",
+    "flock",
+    "flockfile",
+    "floorf",
+    "fma",
+    "fmaf",
+    "fmax",
+    "fmaxf",
+    "fmemopen",
+    "fmin",
+    "fminf",
+    "fmodf",
+    "fopen64",
+    "fopencookie",
+    "forkpty",
+    "fpathconf",
     "fputc",
+    "fputc_unlocked",
     "fputs",
-    "fread",
+    "fputwc",
+    "fputws",
     "freeaddrinfo",
-    "fseek",
+    "freeifaddrs",
+    "fremovexattr",
+    "freopen",
+    "freopen64",
+    "frexp",
+    "frexpf",
+    "fscanf",
+    "fseeko",
+    "fseeko64",
+    "fsetpos",
+    "fsetpos64",
+    "fsetxattr",
     "fstat",
+    "fstat64",
+    "fstatat",
+    "fstatat64",
     "fsync",
-    "ftell",
-    "fwrite",
+    "ftello",
+    "ftello64",
+    "ftruncate",
+    "ftruncate64",
+    "ftrylockfile",
+    "ftw",
+    "funlockfile",
+    "fwprintf",
+    "fwscanf",
     "gai_strerror",
+    "get_avphys_pages",
+    "get_nprocs",
+    "get_nprocs_conf",
+    "get_phys_pages",
+    "getc",
+    "getc_unlocked",
     "getchar",
+    "getdelim",
+    "getdomainname",
+    "getentropy",
     "getenv",
     "getgrent",
+    "getgrent_r",
     "getgrgid_r",
     "getgrnam_r",
+    "getgrouplist",
+    "getgroups",
+    "gethostbyaddr",
+    "gethostbyaddr_r",
+    "gethostbyname",
+    "gethostbyname_r",
+    "gethostid",
+    "gethostname",
+    "getifaddrs",
+    "getitimer",
+    "getline",
+    "getmntent",
     "getnameinfo",
+    "getopt",
+    "getopt_long",
+    "getpagesize",
+    "getpass",
     "getpeername",
+    "getpgid",
+    "getprotobyname",
+    "getprotobynumber",
     "getpwent",
+    "getpwent_r",
     "getpwnam_r",
     "getpwuid_r",
+    "getrandom",
+    "getrusage",
+    "getservbyname",
+    "getservbyname_r",
+    "getservbyport",
+    "getservbyport_r",
     "getsockopt",
+    "gettext",
+    "gettimeofday",
+    "getutent",
+    "getwchar",
+    "getxattr",
+    "globfree",
+    "gmtime",
+    "gmtime_r",
+    "grantpt",
+    "hasmntopt",
+    "herror",
+    "hstrerror",
+    "hypot",
+    "hypotf",
+    "if_freenameindex",
+    "if_indextoname",
+    "if_nameindex",
+    "if_nametoindex",
+    "ilogb",
+    "ilogbf",
+    "index",
+    "inet_aton",
+    "inet_ntoa",
+    "initgroups",
+    "inotify_add_watch",
+    "inotify_init",
+    "inotify_init1",
+    "inotify_rm_watch",
+    "ioctl",
+    "isascii",
+    "isblank",
+    "iscntrl",
+    "isgraph",
+    "iswalnum",
+    "iswalpha",
+    "iswblank",
+    "iswcntrl",
+    "iswdigit",
+    "iswgraph",
+    "iswlower",
+    "iswprint",
+    "iswpunct",
+    "iswspace",
+    "iswupper",
+    "iswxdigit",
+    "killpg",
+    "labs",
+    "lchown",
+    "ldexp",
+    "ldexpf",
+    "ldiv",
+    "lgammaf",
+    "lgetxattr",
     "link",
+    "linkat",
+    "lio_listio",
+    "listxattr",
+    "llabs",
+    "lldiv",
+    "llistxattr",
+    "llrint",
+    "llrintf",
+    "llround",
+    "llroundf",
+    "localtime",
+    "lockf",
+    "log10f",
+    "log1p",
+    "log1pf",
+    "log2",
+    "log2f",
+    "logb",
+    "logbf",
+    "logf",
+    "login_tty",
+    "lremovexattr",
+    "lrint",
+    "lrintf",
+    "lround",
+    "lroundf",
+    "lseek64",
+    "lsetxattr",
     "lstat",
+    "lstat64",
+    "mblen",
+    "mbrtowc",
+    "mbsrtowcs",
+    "mbstowcs",
+    "mbtowc",
     "memalign",
+    "memccpy",
+    "memfd_create",
+    "memmem",
+    "mempcpy",
+    "mincore",
+    "mkdir",
+    "mkdirat",
+    "mkdtemp",
+    "mkfifo",
+    "mknod",
+    "mkostemp",
+    "mkostemps",
+    "mkstemp",
+    "mkstemps",
+    "mktime",
+    "mlock",
+    "mlockall",
+    "mmap64",
+    "modf",
+    "modff",
+    "mq_close",
+    "mq_getattr",
+    "mq_open",
+    "mq_receive",
+    "mq_send",
+    "mq_setattr",
+    "mq_unlink",
+    "mremap",
+    "msgctl",
+    "msgrcv",
+    "msgsnd",
     "msync",
+    "munlock",
+    "munlockall",
+    "nanosleep",
+    "nearbyint",
+    "nearbyintf",
+    "nextafter",
+    "nextafterf",
+    "nftw",
+    "ngettext",
+    "nice",
+    "open",
+    "open64",
+    "open_memstream",
+    "openat",
+    "openlog",
+    "openpty",
+    "pathconf",
+    "pause",
+    "pclose",
     "perror",
+    "pidfd_open",
+    "pidfd_send_signal",
+    "pipe2",
+    "popen",
+    "posix_fadvise",
+    "posix_fallocate",
+    "posix_madvise",
     "posix_memalign",
+    "posix_openpt",
+    "posix_spawn_file_actions_destroy",
+    "posix_spawn_file_actions_init",
+    "posix_spawnattr_destroy",
+    "posix_spawnattr_init",
+    "posix_spawnp",
+    "powf",
     "ppoll",
+    "prctl",
+    "pread",
+    "pread64",
+    "preadv",
+    "preadv2",
     "printf",
+    "prlimit",
+    "prlimit64",
     "pselect",
+    "psignal",
+    "pthread_attr_destroy",
+    "pthread_attr_getdetachstate",
+    "pthread_attr_getstacksize",
+    "pthread_attr_init",
+    "pthread_attr_setdetachstate",
+    "pthread_attr_setstacksize",
+    "pthread_barrier_destroy",
+    "pthread_barrier_init",
+    "pthread_barrier_wait",
+    "pthread_cancel",
+    "pthread_condattr_destroy",
+    "pthread_condattr_getclock",
+    "pthread_condattr_init",
+    "pthread_condattr_setclock",
+    "pthread_getattr_np",
+    "pthread_getname_np",
+    "pthread_mutexattr_destroy",
+    "pthread_mutexattr_gettype",
+    "pthread_mutexattr_init",
+    "pthread_mutexattr_settype",
+    "pthread_once",
     "pthread_rwlock_destroy",
     "pthread_rwlock_init",
     "pthread_rwlock_rdlock",
+    "pthread_rwlock_tryrdlock",
+    "pthread_rwlock_trywrlock",
     "pthread_rwlock_unlock",
     "pthread_rwlock_wrlock",
+    "pthread_rwlockattr_destroy",
+    "pthread_rwlockattr_init",
+    "pthread_setcancelstate",
+    "pthread_setcanceltype",
+    "pthread_setname_np",
+    "pthread_sigmask",
+    "pthread_spin_destroy",
+    "pthread_spin_init",
+    "pthread_spin_lock",
+    "pthread_spin_trylock",
+    "pthread_spin_unlock",
+    "pthread_testcancel",
+    "ptsname",
+    "putc",
+    "putc_unlocked",
     "putchar",
+    "putenv",
     "puts",
+    "putwchar",
+    "pwrite",
+    "pwrite64",
+    "pwritev",
+    "pwritev2",
+    "rand",
+    "rand_r",
+    "readahead",
+    "readdir64",
+    "readdir_r",
     "readlink",
+    "readlinkat",
+    "readv",
+    "reallocarray",
+    "realpath",
     "recv",
     "recvfrom",
+    "recvmmsg",
+    "recvmsg",
+    "regerror",
+    "regfree",
+    "remainder",
+    "remainderf",
+    "remove",
+    "removexattr",
+    "rename",
+    "renameat",
+    "res_init",
+    "res_query",
+    "res_search",
     "rewind",
+    "rewinddir",
+    "rindex",
+    "rint",
+    "rintf",
     "rmdir",
+    "roundf",
+    "scalbln",
+    "scalblnf",
+    "scalbn",
+    "scalbnf",
+    "scandir",
+    "scandir64",
+    "scanf",
+    "sched_get_priority_max",
+    "sched_get_priority_min",
+    "sched_getaffinity",
+    "sched_getparam",
+    "sched_getscheduler",
+    "sched_rr_get_interval",
+    "sched_setaffinity",
+    "sched_setparam",
+    "sched_setscheduler",
+    "sched_yield",
+    "secure_getenv",
+    "seekdir",
+    "sem_close",
+    "sem_destroy",
+    "sem_getvalue",
+    "sem_init",
+    "sem_open",
+    "sem_post",
+    "sem_timedwait",
+    "sem_trywait",
+    "sem_unlink",
+    "sem_wait",
     "send",
+    "sendfile",
+    "sendfile64",
+    "sendmmsg",
+    "sendmsg",
     "sendto",
     "setbuf",
+    "setdomainname",
+    "setegid",
     "setenv",
+    "seteuid",
+    "setgid",
+    "setgroups",
+    "sethostname",
+    "setitimer",
+    "setlinebuf",
+    "setmntent",
+    "setpgid",
+    "setregid",
+    "setreuid",
     "setrlimit",
     "setsockopt",
+    "setuid",
+    "setutent",
     "setvbuf",
+    "setxattr",
+    "shm_open",
+    "shm_unlink",
+    "shmctl",
+    "sigaddset",
+    "sigaltstack",
+    "sigdelset",
+    "sigemptyset",
+    "sigfillset",
+    "sigismember",
+    "siglongjmp",
     "signal",
+    "signalfd",
+    "sigpending",
+    "sigprocmask",
+    "sigqueue",
+    "sigsetjmp",
+    "sigsuspend",
+    "sigtimedwait",
+    "sigwait",
+    "sigwaitinfo",
+    "sinf",
+    "sinh",
+    "sinhf",
     "sleep",
+    "socketpair",
+    "splice",
     "sprintf",
+    "sqrt",
+    "sqrtf",
+    "srand",
+    "sscanf",
     "stat",
+    "stat64",
+    "statx",
     "stderr",
     "stdin",
     "stdout",
+    "stpcpy",
+    "stpncpy",
+    "strcasecmp",
+    "strcasestr",
+    "strchrnul",
+    "strcoll",
+    "strcspn",
+    "strdup",
+    "strerror",
+    "strerror_r",
+    "strftime",
+    "strlcat",
+    "strlcpy",
+    "strncasecmp",
+    "strncmp",
+    "strndup",
+    "strnlen",
+    "strpbrk",
+    "strptime",
+    "strsep",
+    "strsignal",
+    "strspn",
+    "strtod",
+    "strtof",
+    "strtoimax",
+    "strtold",
+    "strtoll",
+    "strtoull",
+    "strtoumax",
+    "strxfrm",
+    "swab",
+    "swprintf",
+    "swscanf",
     "symlink",
+    "symlinkat",
+    "sync",
+    "syncfs",
+    "sysconf",
+    "syslog",
+    "tanf",
+    "tanh",
+    "tanhf",
     "tcdrain",
     "tcflow",
     "tcflush",
     "tcsendbreak",
     "tcsetattr",
+    "tee",
+    "telldir",
+    "textdomain",
+    "tgammaf",
+    "timegm",
+    "timer_create",
+    "timer_delete",
+    "timer_getoverrun",
+    "timer_gettime",
+    "timer_settime",
+    "timerfd_create",
+    "timerfd_gettime",
+    "timerfd_settime",
+    "tmpfile",
+    "tmpfile64",
+    "tmpnam",
+    "toascii",
+    "towlower",
+    "towupper",
+    "trunc",
+    "truncate",
+    "truncate64",
+    "truncf",
+    "ttyname",
+    "ttyname_r",
+    "tzset",
+    "umask",
+    "uname",
     "ungetc",
+    "ungetwc",
     "unlink",
+    "unlinkat",
+    "unlockpt",
     "unsetenv",
     "usleep",
-    "wait"
+    "utmpname",
+    "vasprintf",
+    "vdprintf",
+    "vfork",
+    "vfprintf",
+    "vfscanf",
+    "vfwprintf",
+    "vfwscanf",
+    "vmsplice",
+    "vprintf",
+    "vscanf",
+    "vsnprintf",
+    "vsprintf",
+    "vsscanf",
+    "vswprintf",
+    "vswscanf",
+    "vsyslog",
+    "vwprintf",
+    "vwscanf",
+    "wait",
+    "wait3",
+    "wait4",
+    "waitid",
+    "wcrtomb",
+    "wcscoll",
+    "wcscspn",
+    "wcsdup",
+    "wcsftime",
+    "wcsncat",
+    "wcsnlen",
+    "wcspbrk",
+    "wcsrtombs",
+    "wcsspn",
+    "wcstod",
+    "wcstof",
+    "wcstok",
+    "wcstol",
+    "wcstold",
+    "wcstoll",
+    "wcstombs",
+    "wcstoul",
+    "wcstoull",
+    "wcswidth",
+    "wcsxfrm",
+    "wctob",
+    "wctomb",
+    "wcwidth",
+    "wordexp",
+    "wordfree",
+    "wprintf",
+    "writev",
+    "wscanf",
+    "setns",
+    "unshare",
+    "mount",
+    "umount2",
+    "chroot",
+    "pivot_root",
+    "acct",
+    "reboot",
+    "swapon",
+    "swapoff",
+    "getresuid",
+    "getresgid",
+    "setresuid",
+    "setresgid",
+    "fanotify_init",
+    "fanotify_mark",
+    "process_vm_readv",
+    "process_vm_writev",
+    "mlock2",
+    "name_to_handle_at",
+    "open_by_handle_at",
+    "umount",
+    "glob64",
+    "globfree64",
+    "nftw64",
+    "alphasort64"
   ]
 }

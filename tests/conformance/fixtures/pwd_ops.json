@@ -69,6 +69,34 @@
       "expected_output": "PASSWD_PTR",
       "expected_errno": 0,
       "mode": "hardened"
+    },
+    {
+      "name": "getpwnam_nonexistent_hardened",
+      "function": "getpwnam",
+      "spec_section": "POSIX getpwnam",
+      "inputs": { "name": "nonexistent_user_xyz" },
+      "expected_output": "NULL",
+      "expected_errno": 0,
+      "mode": "hardened",
+      "note": "Unknown user remains NULL in hardened mode for files backend lookups"
+    },
+    {
+      "name": "getpwuid_nonexistent_hardened",
+      "function": "getpwuid",
+      "spec_section": "POSIX getpwuid",
+      "inputs": { "uid": 99999 },
+      "expected_output": "NULL",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "setpwent_endpwent_hardened",
+      "function": "setpwent",
+      "spec_section": "POSIX setpwent/endpwent",
+      "inputs": {},
+      "expected_output": "VOID",
+      "expected_errno": 0,
+      "mode": "hardened"
     }
   ]
 }

@@ -276,27 +276,32 @@ unsafe extern "C" {
     fn libc_if_freenameindex(ptr: *mut c_void);
     #[link_name = "getservbyname_r"]
     fn libc_getservbyname_r(
-        name: *const c_char, proto: *const c_char,
-        result_buf: *mut c_void, buf: *mut c_char, buflen: usize,
+        name: *const c_char,
+        proto: *const c_char,
+        result_buf: *mut c_void,
+        buf: *mut c_char,
+        buflen: usize,
         result: *mut *mut c_void,
     ) -> c_int;
     #[link_name = "getservbyport_r"]
     fn libc_getservbyport_r(
-        port: c_int, proto: *const c_char,
-        result_buf: *mut c_void, buf: *mut c_char, buflen: usize,
+        port: c_int,
+        proto: *const c_char,
+        result_buf: *mut c_void,
+        buf: *mut c_char,
+        buflen: usize,
         result: *mut *mut c_void,
-    ) -> c_int;
-    #[link_name = "gethostbyname_r"]
-    fn libc_gethostbyname_r(
-        name: *const c_char, result_buf: *mut c_void,
-        buf: *mut c_char, buflen: usize,
-        result: *mut *mut c_void, h_errnop: *mut c_int,
     ) -> c_int;
     #[link_name = "gethostbyaddr_r"]
     fn libc_gethostbyaddr_r(
-        addr: *const c_void, len: libc::socklen_t, type_: c_int,
-        result_buf: *mut c_void, buf: *mut c_char, buflen: usize,
-        result: *mut *mut c_void, h_errnop: *mut c_int,
+        addr: *const c_void,
+        len: libc::socklen_t,
+        type_: c_int,
+        result_buf: *mut c_void,
+        buf: *mut c_char,
+        buflen: usize,
+        result: *mut *mut c_void,
+        h_errnop: *mut c_int,
     ) -> c_int;
 }
 
@@ -312,8 +317,11 @@ pub unsafe extern "C" fn if_freenameindex(ptr: *mut c_void) {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getservbyname_r(
-    name: *const c_char, proto: *const c_char,
-    result_buf: *mut c_void, buf: *mut c_char, buflen: usize,
+    name: *const c_char,
+    proto: *const c_char,
+    result_buf: *mut c_void,
+    buf: *mut c_char,
+    buflen: usize,
     result: *mut *mut c_void,
 ) -> c_int {
     unsafe { libc_getservbyname_r(name, proto, result_buf, buf, buflen, result) }
@@ -321,8 +329,11 @@ pub unsafe extern "C" fn getservbyname_r(
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getservbyport_r(
-    port: c_int, proto: *const c_char,
-    result_buf: *mut c_void, buf: *mut c_char, buflen: usize,
+    port: c_int,
+    proto: *const c_char,
+    result_buf: *mut c_void,
+    buf: *mut c_char,
+    buflen: usize,
     result: *mut *mut c_void,
 ) -> c_int {
     unsafe { libc_getservbyport_r(port, proto, result_buf, buf, buflen, result) }
@@ -330,18 +341,29 @@ pub unsafe extern "C" fn getservbyport_r(
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn gethostbyname_r(
-    name: *const c_char, result_buf: *mut c_void,
-    buf: *mut c_char, buflen: usize,
-    result: *mut *mut c_void, h_errnop: *mut c_int,
+    name: *const c_char,
+    result_buf: *mut c_void,
+    buf: *mut c_char,
+    buflen: usize,
+    result: *mut *mut c_void,
+    h_errnop: *mut c_int,
 ) -> c_int {
-    unsafe { libc_gethostbyname_r(name, result_buf, buf, buflen, result, h_errnop) }
+    // SAFETY: forwards validated caller arguments to resolver ABI implementation.
+    unsafe {
+        crate::resolv_abi::gethostbyname_r_impl(name, result_buf, buf, buflen, result, h_errnop)
+    }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn gethostbyaddr_r(
-    addr: *const c_void, len: libc::socklen_t, type_: c_int,
-    result_buf: *mut c_void, buf: *mut c_char, buflen: usize,
-    result: *mut *mut c_void, h_errnop: *mut c_int,
+    addr: *const c_void,
+    len: libc::socklen_t,
+    type_: c_int,
+    result_buf: *mut c_void,
+    buf: *mut c_char,
+    buflen: usize,
+    result: *mut *mut c_void,
+    h_errnop: *mut c_int,
 ) -> c_int {
     unsafe { libc_gethostbyaddr_r(addr, len, type_, result_buf, buf, buflen, result, h_errnop) }
 }

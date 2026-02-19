@@ -463,7 +463,11 @@ pub unsafe extern "C" fn ctime(timer: *const i64) -> *mut std::ffi::c_char {
 
 unsafe extern "C" {
     #[link_name = "strptime"]
-    fn libc_strptime(s: *const std::ffi::c_char, fmt: *const std::ffi::c_char, tm: *mut libc::tm) -> *mut std::ffi::c_char;
+    fn libc_strptime(
+        s: *const std::ffi::c_char,
+        fmt: *const std::ffi::c_char,
+        tm: *mut libc::tm,
+    ) -> *mut std::ffi::c_char;
     #[link_name = "tzset"]
     fn libc_tzset();
 }
@@ -497,9 +501,7 @@ pub unsafe extern "C" fn clock_settime(
     clk_id: libc::clockid_t,
     tp: *const libc::timespec,
 ) -> std::ffi::c_int {
-    let rc = unsafe {
-        libc::syscall(libc::SYS_clock_settime, clk_id, tp)
-    } as std::ffi::c_int;
+    let rc = unsafe { libc::syscall(libc::SYS_clock_settime, clk_id, tp) } as std::ffi::c_int;
     if rc < 0 {
         let e = std::io::Error::last_os_error()
             .raw_os_error()

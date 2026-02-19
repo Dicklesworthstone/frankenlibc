@@ -53,7 +53,20 @@ pub fn memset(dest: &mut [u8], value: u8, n: usize) -> usize {
 /// Only compares `min(n, a.len(), b.len())` bytes.
 pub fn memcmp(a: &[u8], b: &[u8], n: usize) -> core::cmp::Ordering {
     let count = n.min(a.len()).min(b.len());
-    a[..count].cmp(&b[..count])
+    let mut i = 0usize;
+    while i < count {
+        let av = a[i];
+        let bv = b[i];
+        if av != bv {
+            return if av < bv {
+                core::cmp::Ordering::Less
+            } else {
+                core::cmp::Ordering::Greater
+            };
+        }
+        i += 1;
+    }
+    core::cmp::Ordering::Equal
 }
 
 /// Scans the first `n` bytes of `haystack` for the byte `needle`.
@@ -140,7 +153,14 @@ pub fn bzero(dest: &mut [u8], n: usize) {
 /// Equivalent to legacy BSD `bcmp`.
 pub fn bcmp(a: &[u8], b: &[u8], n: usize) -> i32 {
     let count = n.min(a.len()).min(b.len());
-    if a[..count] == b[..count] { 0 } else { 1 }
+    let mut i = 0usize;
+    while i < count {
+        if a[i] != b[i] {
+            return 1;
+        }
+        i += 1;
+    }
+    0
 }
 
 /// Swaps adjacent bytes in pairs from `src` into `dest`.

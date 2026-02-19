@@ -231,7 +231,8 @@ pub fn wcwidth(wc: u32) -> i32 {
         || (0xFF01..=0xFF60).contains(&wc)  // Fullwidth forms
         || (0xFFE0..=0xFFE6).contains(&wc)  // Fullwidth signs
         || (0x20000..=0x2FFFD).contains(&wc) // CJK Extension B+
-        || (0x30000..=0x3FFFD).contains(&wc) // CJK Extension G+
+        || (0x30000..=0x3FFFD).contains(&wc)
+    // CJK Extension G+
     {
         return 2;
     }

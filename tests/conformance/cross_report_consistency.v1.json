@@ -1,20 +1,21 @@
 {
   "schema_version": "v1",
   "bead": "bd-2vv.11",
-  "generated_at": "2026-02-13T19:53:37Z",
-  "consistency_hash": "6e8cc0cdbe958d22",
+  "generated_at": "2026-02-18T20:01:32Z",
+  "consistency_hash": "c1e5c0842c09840a",
   "summary": {
     "overall_verdict": "fail",
-    "total_findings": 14,
+    "total_findings": 20,
     "by_severity": {
-      "error": 7,
-      "info": 3,
-      "warning": 4
+      "error": 9,
+      "info": 1,
+      "warning": 10
     },
     "by_verdict": {
-      "drift": 1,
+      "drift": 7,
+      "fail": 2,
       "inconsistent": 10,
-      "pass": 3
+      "pass": 1
     },
     "reports_loaded": 5,
     "reports_total": 5
@@ -28,18 +29,84 @@
   },
   "findings": [
     {
-      "rule": "symbol_count",
-      "severity": "info",
-      "report_pair": "all",
-      "verdict": "pass",
-      "description": "All reports agree on 250 symbols"
+      "rule": "symbol_count_cross",
+      "severity": "error",
+      "report_pair": "support_matrix vs reality_report",
+      "expected": 929,
+      "actual": 471,
+      "affected_symbols": [],
+      "verdict": "fail",
+      "description": "support_matrix total (929) != reality_report total (471)"
+    },
+    {
+      "rule": "symbol_count_cross",
+      "severity": "error",
+      "report_pair": "support_matrix vs replacement_levels",
+      "expected": 929,
+      "actual": 250,
+      "affected_symbols": [],
+      "verdict": "fail",
+      "description": "support_matrix total (929) != replacement_levels total (250)"
     },
     {
       "rule": "status_distribution",
-      "severity": "info",
-      "report_pair": "all",
-      "verdict": "pass",
-      "description": "Status distributions consistent across reports"
+      "severity": "warning",
+      "report_pair": "support_matrix vs reality_report",
+      "expected": 394,
+      "actual": 295,
+      "affected_symbols": [],
+      "verdict": "drift",
+      "description": "Status 'Implemented': support_matrix=394, reality_report=295"
+    },
+    {
+      "rule": "status_distribution",
+      "severity": "warning",
+      "report_pair": "support_matrix vs reality_report",
+      "expected": 234,
+      "actual": 172,
+      "affected_symbols": [],
+      "verdict": "drift",
+      "description": "Status 'RawSyscall': support_matrix=234, reality_report=172"
+    },
+    {
+      "rule": "status_distribution",
+      "severity": "warning",
+      "report_pair": "support_matrix vs reality_report",
+      "expected": 301,
+      "actual": 4,
+      "affected_symbols": [],
+      "verdict": "drift",
+      "description": "Status 'GlibcCallThrough': support_matrix=301, reality_report=4"
+    },
+    {
+      "rule": "status_distribution",
+      "severity": "warning",
+      "report_pair": "support_matrix vs replacement_levels",
+      "expected": 394,
+      "actual": 147,
+      "affected_symbols": [],
+      "verdict": "drift",
+      "description": "Status 'Implemented': support_matrix=394, replacement_levels=147"
+    },
+    {
+      "rule": "status_distribution",
+      "severity": "warning",
+      "report_pair": "support_matrix vs replacement_levels",
+      "expected": 234,
+      "actual": 83,
+      "affected_symbols": [],
+      "verdict": "drift",
+      "description": "Status 'RawSyscall': support_matrix=234, replacement_levels=83"
+    },
+    {
+      "rule": "status_distribution",
+      "severity": "warning",
+      "report_pair": "support_matrix vs replacement_levels",
+      "expected": 301,
+      "actual": 20,
+      "affected_symbols": [],
+      "verdict": "drift",
+      "description": "Status 'GlibcCallThrough': support_matrix=301, replacement_levels=20"
     },
     {
       "rule": "claim_alignment",
@@ -147,7 +214,7 @@
       "report_pair": "support_matrix vs replacement_profile",
       "affected_symbols": [],
       "verdict": "drift",
-      "description": "Module total_call_throughs: support_matrix has 0 callthrough, profile census claims 75"
+      "description": "Module total_call_throughs: support_matrix has 0 callthrough, profile census claims 4"
     },
     {
       "rule": "no_unknown_status",

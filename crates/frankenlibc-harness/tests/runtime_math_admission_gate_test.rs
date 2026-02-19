@@ -54,6 +54,8 @@ fn admission_gate_passes() {
         "findings",
         "feature_gate_config",
         "artifacts_consumed",
+        "controller_manifest_summary",
+        "artifacts_emitted",
     ];
     for key in required_keys {
         assert!(
@@ -76,6 +78,26 @@ fn admission_gate_passes() {
         policies.len() >= 4,
         "Expected at least 4 policies enforced, got {}",
         policies.len()
+    );
+
+    let controller_summary = &report["controller_manifest_summary"];
+    assert!(controller_summary["total_entries"].as_u64().unwrap_or(0) > 0);
+    assert!(
+        controller_summary["production_manifest_entries"]
+            .as_u64()
+            .is_some()
+    );
+    assert!(
+        controller_summary["missing_decision_hook"]
+            .as_u64()
+            .is_some()
+    );
+    assert!(controller_summary["missing_invariant"].as_u64().is_some());
+    assert!(controller_summary["missing_fallback"].as_u64().is_some());
+    assert!(
+        controller_summary["missing_benefit_target"]
+            .as_u64()
+            .is_some()
     );
 }
 
@@ -186,4 +208,61 @@ fn retirement_lockout_invariants() {
         0,
         "No modules should be blocked when governance is complete"
     );
+}
+
+#[test]
+fn controller_manifest_artifact_is_complete() {
+    let repo_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap();
+
+    let manifest_path = repo_root.join("tests/runtime_math/controller_manifest.v1.json");
+    assert!(
+        manifest_path.exists(),
+        "Controller manifest not found at {:?}",
+        manifest_path
+    );
+
+    let content = std::fs::read_to_string(&manifest_path).expect("failed to read manifest");
+    let manifest: serde_json::Value =
+        serde_json::from_str(&content).expect("manifest is not valid JSON");
+
+    for key in [
+        "schema_version",
+        "bead",
+        "summary",
+        "controllers",
+        "sources",
+    ] {
+        assert!(
+            manifest.get(key).is_some(),
+            "controller manifest missing key: {key}"
+        );
+    }
+
+    let controllers = manifest["controllers"]
+        .as_array()
+        .expect("controllers must be an array");
+    assert!(
+        !controllers.is_empty(),
+        "controllers array must be non-empty"
+    );
+
+    for controller in controllers {
+        for key in [
+            "module",
+            "tier",
+            "decision_hook",
+            "invariant",
+            "fallback_when_data_missing",
+            "runtime_cost_target",
+        ] {
+            assert!(
+                controller.get(key).is_some(),
+                "controller entry missing key: {key}"
+            );
+        }
+    }
 }

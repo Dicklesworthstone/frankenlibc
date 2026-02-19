@@ -451,14 +451,12 @@ pub unsafe fn create_thread(start_routine: usize, arg: usize) -> Result<*mut Thr
     };
 
     match result {
-        Ok(child_tid) => {
-            // Publish the child TID immediately in parent context so early
-            // lifecycle checks (for example self-join rejection) observe a
-            // stable non-zero TID before startup synchronization completes.
-            // SAFETY: `handle_ptr` remains owned by this create path until
-            // either cleanup on error or transfer to caller on success.
-            unsafe { (*handle_ptr).tid.store(child_tid, Ordering::Release) };
-
+        Ok(_child_tid) => {
+            // `CLONE_PARENT_SETTID` already published `tid` into `handle.tid`.
+            // Do not write `tid` again in parent context: if the child exits
+            // very quickly, `CLONE_CHILD_CLEARTID` can clear it to 0 before
+            // this point, and a late parent store would reintroduce a stale
+            // non-zero TID that can make `join_thread` wait forever.
             // Wait for the child to signal that it has started and read the args.
             // This ensures the stack-based ThreadStartArgs are consumed before
             // we consider the create operation complete.

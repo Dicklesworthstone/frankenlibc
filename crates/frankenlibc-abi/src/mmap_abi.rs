@@ -360,7 +360,13 @@ pub unsafe extern "C" fn mremap(
     }
 
     let rc = unsafe {
-        libc::syscall(libc::SYS_mremap as c_long, old_address, old_size, new_size, flags)
+        libc::syscall(
+            libc::SYS_mremap as c_long,
+            old_address,
+            old_size,
+            new_size,
+            flags,
+        )
     };
     if rc == libc::MAP_FAILED as c_long {
         let e = std::io::Error::last_os_error()

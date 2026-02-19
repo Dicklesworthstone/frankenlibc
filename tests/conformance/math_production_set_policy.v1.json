@@ -17,17 +17,17 @@
       "research tier modules remaining in manifest require active retirement waiver and migration-wave entry"
     ],
     "change_gate": {
-      "manifest_sha256": "cbac2689484772ff153bff077cb78afd23b6e311c4f7fe02814b9fc4ba8ae15a",
-      "module_count": 69,
+      "manifest_sha256": "b47cd1f6283dc3bb151fb0c57b7f8ef5c1b1afe526cf2b333d92eecc37ef257b",
+      "module_count": 25,
       "retention_threshold": 2.0,
       "update_rule": "Any production manifest set change must update this digest and pass this gate with complete admission/retirement evidence."
     }
   },
   "summary": {
-    "total_production_modules": 69,
+    "total_production_modules": 25,
     "production_tier_modules": 25,
-    "research_tier_modules": 44,
-    "waived_research_modules": 44,
+    "research_tier_modules": 0,
+    "waived_research_modules": 0,
     "missing_classification": 0,
     "missing_linkage": 0,
     "missing_value_proof": 0,

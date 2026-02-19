@@ -472,11 +472,11 @@
     },
     {
       "symbol": "btowc",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "wchar_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc btowc",
-      "hardened_semantics": "Passthrough to glibc btowc",
+      "perf_class": "strict_hotpath",
+      "strict_semantics": "ASCII-only single-byte to wide-char conversion (UTF-8 locale contract); EOF maps to WEOF",
+      "hardened_semantics": "Same conversion semantics with membrane-gated deny/repair paths for invalid ranges",
       "default_stub": false
     },
     {
@@ -592,9 +592,12 @@
     },
     {
       "symbol": "clearenv",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "stdlib_abi",
-      "perf_class": "fast"
+      "perf_class": "fast",
+      "strict_semantics": "Native environment clear via HOST_ENVIRON snapshot + unsetenv loop",
+      "hardened_semantics": "Same clear contract with runtime-policy deny/observe path",
+      "default_stub": false
     },
     {
       "symbol": "clearerr",
@@ -1384,7 +1387,7 @@
     },
     {
       "symbol": "fgetc_unlocked",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "fast"
     },
@@ -1405,11 +1408,11 @@
     },
     {
       "symbol": "fgetpos64",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "default",
-      "strict_semantics": "LP64 alias via glibc",
-      "hardened_semantics": "LP64 alias via glibc",
+      "strict_semantics": "LP64 alias to native fgetpos implementation",
+      "hardened_semantics": "LP64 alias to native fgetpos implementation",
       "default_stub": false
     },
     {
@@ -1429,15 +1432,19 @@
     },
     {
       "symbol": "fgetwc",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "wchar_abi",
-      "perf_class": "fast"
+      "perf_class": "fast",
+      "strict_semantics": "Native UTF-8 stream decode over stdio registry-backed fgetc path",
+      "hardened_semantics": "Same decode path with deterministic EILSEQ/WEOF handling and pushback rollback on partial invalid sequences"
     },
     {
       "symbol": "fgetws",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "wchar_abi",
-      "perf_class": "fast"
+      "perf_class": "fast",
+      "strict_semantics": "Native wide-line read built on fgetwc with newline/length stop contract",
+      "hardened_semantics": "Same bounded read contract with deterministic null-pointer and EOF behavior"
     },
     {
       "symbol": "fgetxattr",
@@ -1475,7 +1482,7 @@
     },
     {
       "symbol": "flockfile",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "fast"
     },
@@ -1589,11 +1596,11 @@
     },
     {
       "symbol": "fopen64",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "default",
-      "strict_semantics": "LP64 alias via glibc",
-      "hardened_semantics": "LP64 alias via glibc",
+      "strict_semantics": "LP64 alias to native fopen implementation",
+      "hardened_semantics": "LP64 alias to native fopen implementation",
       "default_stub": false
     },
     {
@@ -1649,7 +1656,7 @@
     },
     {
       "symbol": "fputc_unlocked",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "fast"
     },
@@ -1664,15 +1671,19 @@
     },
     {
       "symbol": "fputwc",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "wchar_abi",
-      "perf_class": "fast"
+      "perf_class": "fast",
+      "strict_semantics": "Native UTF-8 stream encode over stdio registry-backed fputc path",
+      "hardened_semantics": "Same encode path with deterministic EILSEQ/WEOF behavior on invalid code points"
     },
     {
       "symbol": "fputws",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "wchar_abi",
-      "perf_class": "fast"
+      "perf_class": "fast",
+      "strict_semantics": "Native wide-string write built on fputwc",
+      "hardened_semantics": "Same bounded write contract with deterministic WEOF on write failures"
     },
     {
       "symbol": "fread",
@@ -1727,11 +1738,11 @@
     },
     {
       "symbol": "freopen64",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "default",
-      "strict_semantics": "LP64 alias via glibc",
-      "hardened_semantics": "LP64 alias via glibc",
+      "strict_semantics": "LP64 alias to native freopen implementation",
+      "hardened_semantics": "LP64 alias to native freopen implementation",
       "default_stub": false
     },
     {
@@ -1779,11 +1790,11 @@
     },
     {
       "symbol": "fseeko64",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "default",
-      "strict_semantics": "LP64 alias via glibc",
-      "hardened_semantics": "LP64 alias via glibc",
+      "strict_semantics": "LP64 alias to native fseeko implementation",
+      "hardened_semantics": "LP64 alias to native fseeko implementation",
       "default_stub": false
     },
     {
@@ -1797,11 +1808,11 @@
     },
     {
       "symbol": "fsetpos64",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "default",
-      "strict_semantics": "LP64 alias via glibc",
-      "hardened_semantics": "LP64 alias via glibc",
+      "strict_semantics": "LP64 alias to native fsetpos implementation",
+      "hardened_semantics": "LP64 alias to native fsetpos implementation",
       "default_stub": false
     },
     {
@@ -1876,11 +1887,11 @@
     },
     {
       "symbol": "ftello64",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "default",
-      "strict_semantics": "LP64 alias via glibc",
-      "hardened_semantics": "LP64 alias via glibc",
+      "strict_semantics": "LP64 alias to native ftello implementation",
+      "hardened_semantics": "LP64 alias to native ftello implementation",
       "default_stub": false
     },
     {
@@ -1901,7 +1912,7 @@
     },
     {
       "symbol": "ftrylockfile",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "fast"
     },
@@ -1916,7 +1927,7 @@
     },
     {
       "symbol": "funlockfile",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "fast"
     },
@@ -1994,7 +2005,7 @@
     },
     {
       "symbol": "getc_unlocked",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "fast"
     },
@@ -2162,18 +2173,21 @@
     },
     {
       "symbol": "gethostbyname",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "resolv_abi",
       "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc gethostbyname",
-      "hardened_semantics": "Passthrough to glibc gethostbyname",
+      "strict_semantics": "Deterministic numeric IPv4 + /etc/hosts lookup with thread-local hostent storage",
+      "hardened_semantics": "Deterministic numeric IPv4 + /etc/hosts lookup with safe-default localhost fallback",
       "default_stub": false
     },
     {
       "symbol": "gethostbyname_r",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "inet_abi",
-      "perf_class": "fast"
+      "perf_class": "fast",
+      "strict_semantics": "Deterministic numeric IPv4 + /etc/hosts lookup into caller buffers; ERANGE/ENOENT deterministic failures",
+      "hardened_semantics": "Deterministic lookup with safe-default fallback under repair mode and bounded buffer writes",
+      "default_stub": false
     },
     {
       "symbol": "gethostid",
@@ -2495,9 +2509,11 @@
     },
     {
       "symbol": "getwchar",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "wchar_abi",
-      "perf_class": "fast"
+      "perf_class": "fast",
+      "strict_semantics": "Native stdin wide-char read via fgetwc over stdio sentinel stream",
+      "hardened_semantics": "Same deterministic WEOF contract with UTF-8 validation"
     },
     {
       "symbol": "getxattr",
@@ -3399,20 +3415,20 @@
     },
     {
       "symbol": "mbrtowc",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "wchar_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc mbrtowc",
-      "hardened_semantics": "Passthrough to glibc mbrtowc",
+      "perf_class": "strict_hotpath",
+      "strict_semantics": "Stateless UTF-8 multibyte decode with POSIX mbrtowc return contract for success/incomplete/invalid input",
+      "hardened_semantics": "Same decode semantics with deterministic EILSEQ and membrane-aware deny/repair behavior",
       "default_stub": false
     },
     {
       "symbol": "mbsrtowcs",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "wchar_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc mbsrtowcs",
-      "hardened_semantics": "Passthrough to glibc mbsrtowcs",
+      "perf_class": "strict_hotpath",
+      "strict_semantics": "Stateless UTF-8 multibyte-string to wide-string conversion with source-pointer progress contract",
+      "hardened_semantics": "Same conversion with deterministic EILSEQ on invalid bytes and bounded destination writes",
       "default_stub": false
     },
     {
@@ -3553,11 +3569,11 @@
     },
     {
       "symbol": "mkdtemp",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "unistd_abi",
       "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc mkdtemp",
-      "hardened_semantics": "Passthrough to glibc mkdtemp",
+      "strict_semantics": "Native XXXXXX suffix rewrite with bounded candidate loop and mkdir(0700)",
+      "hardened_semantics": "Same native bounded directory creation path with runtime-policy deny/observe gate",
       "default_stub": false
     },
     {
@@ -3576,31 +3592,41 @@
     },
     {
       "symbol": "mkostemp",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "stdlib_abi",
       "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc mkostemp",
-      "hardened_semantics": "Passthrough to glibc mkostemp",
+      "strict_semantics": "Native template replacement + O_CREAT|O_EXCL open loop with mkostemp-allowed flags",
+      "hardened_semantics": "Same deterministic unique-name open loop with runtime-policy deny/observe path",
       "default_stub": false
     },
     {
       "symbol": "mkostemps",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "stdlib_abi",
-      "perf_class": "syscall"
+      "perf_class": "syscall",
+      "strict_semantics": "Native mkstemp-style creation preserving caller suffix and honoring mkostemps flag subset",
+      "hardened_semantics": "Same suffix-preserving unique-name creation with runtime-policy deny/observe path",
+      "default_stub": false
     },
     {
       "symbol": "mkstemp",
       "header": "stdlib.h",
       "family": "unistd",
-      "status": "GlibcCallThrough",
-      "notes": "Create temporary file (delegates to libc)"
+      "status": "Implemented",
+      "module": "wchar_abi",
+      "perf_class": "syscall",
+      "strict_semantics": "Native alias to mkstemps(template, 0) with XXXXXX replacement and O_CREAT|O_EXCL open",
+      "hardened_semantics": "Same native alias path with runtime-policy deny/observe gate",
+      "default_stub": false
     },
     {
       "symbol": "mkstemps",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "stdlib_abi",
-      "perf_class": "syscall"
+      "perf_class": "syscall",
+      "strict_semantics": "Native mkstemp-style creation preserving caller suffix with O_CREAT|O_EXCL open",
+      "hardened_semantics": "Same suffix-preserving unique-name creation with runtime-policy deny/observe path",
+      "default_stub": false
     },
     {
       "symbol": "mktime",
@@ -4789,7 +4815,7 @@
     },
     {
       "symbol": "putc_unlocked",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "fast"
     },
@@ -4820,9 +4846,11 @@
     },
     {
       "symbol": "putwchar",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "wchar_abi",
-      "perf_class": "fast"
+      "perf_class": "fast",
+      "strict_semantics": "Native stdout wide-char write via fputwc over stdio sentinel stream",
+      "hardened_semantics": "Same deterministic WEOF contract with UTF-8 validation"
     },
     {
       "symbol": "pwrite",
@@ -4973,19 +5001,23 @@
     },
     {
       "symbol": "reallocarray",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "stdlib_abi",
       "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc reallocarray",
-      "hardened_semantics": "Passthrough to glibc reallocarray",
+      "strict_semantics": "Overflow-checked nmemb*size then delegates to realloc semantics",
+      "hardened_semantics": "Overflow-checked nmemb*size with ENOMEM on overflow; delegates to realloc path",
       "default_stub": false
     },
     {
       "symbol": "realpath",
       "header": "stdlib.h",
       "family": "unistd",
-      "status": "GlibcCallThrough",
-      "notes": "Resolve pathname (delegates to libc)"
+      "status": "Implemented",
+      "module": "wchar_abi",
+      "perf_class": "default",
+      "strict_semantics": "Native canonicalization via Rust filesystem path resolution with caller-buffer or malloc output",
+      "hardened_semantics": "Same canonicalization path with runtime-policy deny/observe gating and deterministic errno",
+      "default_stub": false
     },
     {
       "symbol": "recv",
@@ -5613,7 +5645,7 @@
     },
     {
       "symbol": "setlinebuf",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "fast"
     },
@@ -6443,11 +6475,11 @@
     },
     {
       "symbol": "strtold",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "stdlib_abi",
       "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc strtold",
-      "hardened_semantics": "Passthrough to glibc strtold",
+      "strict_semantics": "Native alias to strtod path under current f64 long-double model",
+      "hardened_semantics": "Native alias to strtod with runtime-policy deny/observe path",
       "default_stub": false
     },
     {
@@ -6784,11 +6816,11 @@
     },
     {
       "symbol": "tmpfile64",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "default",
-      "strict_semantics": "LP64 alias via glibc",
-      "hardened_semantics": "LP64 alias via glibc",
+      "strict_semantics": "LP64 alias to native tmpfile implementation",
+      "hardened_semantics": "LP64 alias to native tmpfile implementation",
       "default_stub": false
     },
     {
@@ -6921,9 +6953,11 @@
     },
     {
       "symbol": "ungetwc",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "wchar_abi",
-      "perf_class": "fast"
+      "perf_class": "fast",
+      "strict_semantics": "Native UTF-8 pushback path built on stdio ungetc",
+      "hardened_semantics": "Same pushback contract with deterministic EILSEQ/WEOF behavior"
     },
     {
       "symbol": "unlink",
@@ -7153,11 +7187,11 @@
     },
     {
       "symbol": "wcrtomb",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "wchar_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc wcrtomb",
-      "hardened_semantics": "Passthrough to glibc wcrtomb",
+      "perf_class": "strict_hotpath",
+      "strict_semantics": "Stateless UTF-8 wide-char encode with EILSEQ on invalid code points",
+      "hardened_semantics": "Same encode semantics with deterministic EILSEQ and no host call-through",
       "default_stub": false
     },
     {
@@ -7189,9 +7223,11 @@
     },
     {
       "symbol": "wcscoll",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "wchar_abi",
-      "perf_class": "fast"
+      "perf_class": "fast",
+      "strict_semantics": "C-locale wide collation using native wide-string comparison",
+      "hardened_semantics": "Same deterministic comparison contract with no host libc dependency"
     },
     {
       "symbol": "wcscpy",
@@ -7222,9 +7258,11 @@
     },
     {
       "symbol": "wcsftime",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "wchar_abi",
-      "perf_class": "fast"
+      "perf_class": "fast",
+      "strict_semantics": "Native wide-format strftime bridge via UTF-8 projection and wide-output reconstitution",
+      "hardened_semantics": "Same bridge contract with deterministic EILSEQ on invalid multibyte/wide conversion"
     },
     {
       "symbol": "wcslen",
@@ -7264,11 +7302,11 @@
     },
     {
       "symbol": "wcsnlen",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "wchar_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc wcsnlen",
-      "hardened_semantics": "Passthrough to glibc wcsnlen",
+      "perf_class": "strict_hotpath",
+      "strict_semantics": "Bounded wide-string length scan in Rust with runtime policy gate",
+      "hardened_semantics": "Bounded scan with allocation-aware clamp/repair when tracked extent is shorter than requested bound",
       "default_stub": false
     },
     {
@@ -7291,11 +7329,11 @@
     },
     {
       "symbol": "wcsrtombs",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "wchar_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc wcsrtombs",
-      "hardened_semantics": "Passthrough to glibc wcsrtombs",
+      "perf_class": "strict_hotpath",
+      "strict_semantics": "Stateless wide-string to UTF-8 multibyte conversion with source-pointer progress contract",
+      "hardened_semantics": "Same conversion with deterministic EILSEQ on invalid wide code points and bounded destination writes",
       "default_stub": false
     },
     {
@@ -7318,16 +7356,16 @@
     },
     {
       "symbol": "wcstod",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "wchar_abi",
       "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc wcstod",
-      "hardened_semantics": "Passthrough to glibc wcstod",
+      "strict_semantics": "Native wide-string floating parse via deterministic ASCII projection and endptr progression",
+      "hardened_semantics": "Same conversion contract with deterministic pointer progression and no host libc dependency",
       "default_stub": false
     },
     {
       "symbol": "wcstof",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "wchar_abi",
       "perf_class": "fast"
     },
@@ -7342,22 +7380,22 @@
     },
     {
       "symbol": "wcstol",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "wchar_abi",
       "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc wcstol",
-      "hardened_semantics": "Passthrough to glibc wcstol",
+      "strict_semantics": "Native wide-string signed integer parse with base autodetect and endptr progression",
+      "hardened_semantics": "Same parse contract with deterministic errno for invalid base and range overflow",
       "default_stub": false
     },
     {
       "symbol": "wcstold",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "wchar_abi",
       "perf_class": "fast"
     },
     {
       "symbol": "wcstoll",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "wchar_abi",
       "perf_class": "fast"
     },
@@ -7370,41 +7408,43 @@
     },
     {
       "symbol": "wcstoul",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "wchar_abi",
       "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc wcstoul",
-      "hardened_semantics": "Passthrough to glibc wcstoul",
+      "strict_semantics": "Native wide-string unsigned integer parse with base autodetect and endptr progression",
+      "hardened_semantics": "Same parse contract with deterministic errno for invalid base and range overflow",
       "default_stub": false
     },
     {
       "symbol": "wcstoull",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "wchar_abi",
       "perf_class": "fast"
     },
     {
       "symbol": "wcswidth",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "wchar_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc wcswidth",
-      "hardened_semantics": "Passthrough to glibc wcswidth",
+      "perf_class": "strict_hotpath",
+      "strict_semantics": "Rust display-width accumulation over bounded wide input using wcwidth kernel",
+      "hardened_semantics": "Same width accumulation with bounded scan + membrane-aware length clamping",
       "default_stub": false
     },
     {
       "symbol": "wcsxfrm",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "wchar_abi",
-      "perf_class": "fast"
+      "perf_class": "fast",
+      "strict_semantics": "C-locale wide transform as bounded copy returning source logical length",
+      "hardened_semantics": "Same transform contract with deterministic truncation via caller-provided bound"
     },
     {
       "symbol": "wctob",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "wchar_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc wctob",
-      "hardened_semantics": "Passthrough to glibc wctob",
+      "perf_class": "strict_hotpath",
+      "strict_semantics": "ASCII-only wide-char to single-byte conversion (UTF-8 locale contract); non-ASCII returns EOF",
+      "hardened_semantics": "Same conversion with deterministic EOF on invalid inputs",
       "default_stub": false
     },
     {

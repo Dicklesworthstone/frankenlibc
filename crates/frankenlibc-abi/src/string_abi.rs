@@ -3592,85 +3592,19 @@ pub unsafe extern "C" fn explicit_bzero(s: *mut c_void, n: usize) {
 /// Caller must ensure `s1` and `s2` are valid for `n` bytes.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn bcmp(s1: *const c_void, s2: *const c_void, n: usize) -> c_int {
-    let Some(_membrane_guard) = enter_string_membrane_guard() else {
-        if n == 0 {
-            return 0;
-        }
-        if s1.is_null() || s2.is_null() {
-            return if s1 == s2 { 0 } else { 1 };
-        }
-        // SAFETY: reentrant fallback -- delegate to raw comparison.
-        unsafe {
-            let a = std::slice::from_raw_parts(s1.cast::<u8>(), n);
-            let b = std::slice::from_raw_parts(s2.cast::<u8>(), n);
-            return frankenlibc_core::string::bcmp(a, b, n);
-        }
-    };
-
-    let aligned = ((s1 as usize) | (s2 as usize)) & 0x7 == 0;
-    let recent_page = (!s1.is_null() && known_remaining(s1 as usize).is_some())
-        || (!s2.is_null() && known_remaining(s2 as usize).is_some());
-    let ordering = runtime_policy::check_ordering(ApiFamily::StringMemory, aligned, recent_page);
-
     if n == 0 {
         return 0;
     }
     if s1.is_null() || s2.is_null() {
-        record_string_stage_outcome(
-            &ordering,
-            aligned,
-            recent_page,
-            Some(stage_index(&ordering, CheckStage::Null)),
-        );
         return if s1 == s2 { 0 } else { 1 };
     }
 
-    let (mode, decision) = runtime_policy::decide(
-        ApiFamily::StringMemory,
-        s1 as usize,
-        n,
-        false,
-        known_remaining(s1 as usize).is_none() && known_remaining(s2 as usize).is_none(),
-        0,
-    );
-    if matches!(decision.action, MembraneAction::Deny) {
-        record_string_stage_outcome(
-            &ordering,
-            aligned,
-            recent_page,
-            Some(stage_index(&ordering, CheckStage::Arena)),
-        );
-        runtime_policy::observe(
-            ApiFamily::StringMemory,
-            decision.profile,
-            runtime_policy::scaled_cost(5, n),
-            true,
-        );
-        return 1;
+    // SAFETY: caller contract for bcmp requires both pointers valid for `n` bytes.
+    unsafe {
+        let a = std::slice::from_raw_parts(s1.cast::<u8>(), n);
+        let b = std::slice::from_raw_parts(s2.cast::<u8>(), n);
+        frankenlibc_core::string::bcmp(a, b, n)
     }
-
-    let (cmp_len, clamped) = maybe_clamp_copy_len(
-        n,
-        Some(s1 as usize),
-        Some(s2 as usize),
-        mode.heals_enabled() || matches!(decision.action, MembraneAction::Repair(_)),
-    );
-
-    // SAFETY: `cmp_len` is original `n` or clamped to known bounds.
-    let result = unsafe {
-        let a = std::slice::from_raw_parts(s1.cast::<u8>(), cmp_len);
-        let b = std::slice::from_raw_parts(s2.cast::<u8>(), cmp_len);
-        frankenlibc_core::string::bcmp(a, b, cmp_len)
-    };
-
-    record_string_stage_outcome(&ordering, aligned, recent_page, None);
-    runtime_policy::observe(
-        ApiFamily::StringMemory,
-        decision.profile,
-        runtime_policy::scaled_cost(5, cmp_len),
-        clamped,
-    );
-    result
 }
 
 // ---------------------------------------------------------------------------
@@ -4305,7 +4239,11 @@ unsafe extern "C" {
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn regcomp(preg: *mut c_void, pattern: *const c_char, cflags: c_int) -> c_int {
+pub unsafe extern "C" fn regcomp(
+    preg: *mut c_void,
+    pattern: *const c_char,
+    cflags: c_int,
+) -> c_int {
     unsafe { libc_regcomp(preg, pattern, cflags) }
 }
 
@@ -4336,7 +4274,11 @@ pub unsafe extern "C" fn regerror(
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fnmatch(pattern: *const c_char, string: *const c_char, flags: c_int) -> c_int {
+pub unsafe extern "C" fn fnmatch(
+    pattern: *const c_char,
+    string: *const c_char,
+    flags: c_int,
+) -> c_int {
     unsafe { libc_fnmatch(pattern, string, flags) }
 }
 

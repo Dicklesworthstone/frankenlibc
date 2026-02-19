@@ -402,15 +402,22 @@ pub unsafe extern "C" fn copy_file_range(
     len: usize,
     flags: c_uint,
 ) -> libc::ssize_t {
-    let (_, decision) =
-        runtime_policy::decide(ApiFamily::IoFd, fd_in as usize, len, true, true, 0);
+    let (_, decision) = runtime_policy::decide(ApiFamily::IoFd, fd_in as usize, len, true, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
         return -1;
     }
 
     let rc = unsafe {
-        libc::syscall(libc::SYS_copy_file_range, fd_in, off_in, fd_out, off_out, len, flags)
+        libc::syscall(
+            libc::SYS_copy_file_range,
+            fd_in,
+            off_in,
+            fd_out,
+            off_out,
+            len,
+            flags,
+        )
     };
     if rc < 0 {
         let e = std::io::Error::last_os_error()
@@ -437,8 +444,14 @@ pub unsafe extern "C" fn preadv(
     iovcnt: c_int,
     offset: i64,
 ) -> libc::ssize_t {
-    let (_, decision) =
-        runtime_policy::decide(ApiFamily::IoFd, fd as usize, iovcnt as usize, false, true, 0);
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::IoFd,
+        fd as usize,
+        iovcnt as usize,
+        false,
+        true,
+        0,
+    );
     if matches!(decision.action, MembraneAction::Deny) {
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
         return -1;
@@ -496,8 +509,14 @@ pub unsafe extern "C" fn preadv2(
     offset: i64,
     flags: c_int,
 ) -> libc::ssize_t {
-    let (_, decision) =
-        runtime_policy::decide(ApiFamily::IoFd, fd as usize, iovcnt as usize, false, true, 0);
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::IoFd,
+        fd as usize,
+        iovcnt as usize,
+        false,
+        true,
+        0,
+    );
     if matches!(decision.action, MembraneAction::Deny) {
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
         return -1;
@@ -561,15 +580,12 @@ pub unsafe extern "C" fn splice(
     len: usize,
     flags: c_uint,
 ) -> libc::ssize_t {
-    let (_, decision) =
-        runtime_policy::decide(ApiFamily::IoFd, fd_in as usize, len, true, true, 0);
+    let (_, decision) = runtime_policy::decide(ApiFamily::IoFd, fd_in as usize, len, true, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
         return -1;
     }
-    let rc = unsafe {
-        libc::syscall(libc::SYS_splice, fd_in, off_in, fd_out, off_out, len, flags)
-    };
+    let rc = unsafe { libc::syscall(libc::SYS_splice, fd_in, off_in, fd_out, off_out, len, flags) };
     if rc < 0 {
         let e = std::io::Error::last_os_error()
             .raw_os_error()
@@ -591,8 +607,7 @@ pub unsafe extern "C" fn tee(
     len: usize,
     flags: c_uint,
 ) -> libc::ssize_t {
-    let (_, decision) =
-        runtime_policy::decide(ApiFamily::IoFd, fd_in as usize, len, true, true, 0);
+    let (_, decision) = runtime_policy::decide(ApiFamily::IoFd, fd_in as usize, len, true, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
         return -1;
@@ -646,8 +661,7 @@ pub unsafe extern "C" fn vmsplice(
 /// Linux `memfd_create` — create anonymous file in memory.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn memfd_create(name: *const std::ffi::c_char, flags: c_uint) -> c_int {
-    let (_, decision) =
-        runtime_policy::decide(ApiFamily::IoFd, 0, 0, true, true, 0);
+    let (_, decision) = runtime_policy::decide(ApiFamily::IoFd, 0, 0, true, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
         return -1;

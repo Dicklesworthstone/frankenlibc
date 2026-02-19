@@ -1,0 +1,2065 @@
+{
+  "schema_version": "v1",
+  "bead": "bd-3ot.1",
+  "generated_at": "2026-02-19T16:38:58Z",
+  "description": "Controller-by-controller runtime-math manifest linking decision hook, invariant, fallback behavior, runtime cost target, and measurable value target.",
+  "retention_threshold": 2.0,
+  "sources": {
+    "governance": "tests/conformance/math_governance.json",
+    "manifest": "tests/runtime_math/production_kernel_manifest.v1.json",
+    "linkage": "tests/runtime_math/runtime_math_linkage.v1.json",
+    "value_proof": "tests/conformance/math_value_proof.json",
+    "ablation_report": "tests/runtime_math/controller_ablation_report.v1.json"
+  },
+  "summary": {
+    "total_entries": 69,
+    "production_manifest_entries": 25,
+    "missing_decision_hook": 0,
+    "missing_invariant": 0,
+    "missing_fallback": 0,
+    "missing_benefit_target": 0
+  },
+  "controllers": [
+    {
+      "module": "admm_budget",
+      "tier": "research",
+      "in_manifest": true,
+      "in_production_manifest": false,
+      "in_research_only_manifest": true,
+      "decision_hook": "RuntimeMathKernel::decide via cached admm_budget controller state",
+      "invariant": "Safety monotonicity: admm_budget may only preserve or tighten validation/repair/deny outcomes.",
+      "fallback_when_data_missing": "Treat admm_budget signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
+      "action_outputs": [
+        "risk_ppm_bonus contribution",
+        "validation profile escalation",
+        "membrane action escalation"
+      ],
+      "evidence_inputs": [
+        "RuntimeContext",
+        "ValidationObservation",
+        "cached_admm_budget_state"
+      ],
+      "runtime_cost_target": {
+        "strict_hot_path_ns_max": null,
+        "hardened_hot_path_ns_max": null,
+        "cadence": "research_or_unclassified"
+      },
+      "benefit_target": null
+    },
+    {
+      "module": "alpha_investing",
+      "tier": "production_monitor",
+      "in_manifest": true,
+      "in_production_manifest": true,
+      "in_research_only_manifest": false,
+      "decision_hook": "RuntimeMathKernel::observe_validation_result sequential FDR wealth update",
+      "invariant": "Safety monotonicity: alpha_investing may only preserve or tighten validation/repair/deny outcomes.",
+      "fallback_when_data_missing": "Treat alpha_investing signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
+      "action_outputs": [
+        "significance budget update",
+        "alarm gating pressure"
+      ],
+      "evidence_inputs": [
+        "alarm outcomes",
+        "wealth state",
+        "test stream"
+      ],
+      "runtime_cost_target": {
+        "strict_hot_path_ns_max": null,
+        "hardened_hot_path_ns_max": null,
+        "cadence": "cadence_gated"
+      },
+      "benefit_target": {
+        "value_category": "FDR control",
+        "baseline_alternative": "Bonferroni correction (divide alpha by number of tests).",
+        "measurable_benefit": "Alpha-investing adapts to discovery rate; 3-5x more powerful than Bonferroni under sparse signals.",
+        "impact": 4,
+        "confidence": 4,
+        "effort": 3,
+        "score": 5.3,
+        "retention_threshold": 2.0,
+        "verdict": "retain"
+      }
+    },
+    {
+      "module": "approachability",
+      "tier": "research",
+      "in_manifest": true,
+      "in_production_manifest": false,
+      "in_research_only_manifest": true,
+      "decision_hook": "RuntimeMathKernel::decide multi-objective safe-set projection",
+      "invariant": "Safety monotonicity: approachability may only preserve or tighten validation/repair/deny outcomes.",
+      "fallback_when_data_missing": "Treat approachability signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
+      "action_outputs": [
+        "projected routing vector",
+        "profile/action pressure"
+      ],
+      "evidence_inputs": [
+        "current objective vector",
+        "safe-set distance",
+        "mode"
+      ],
+      "runtime_cost_target": {
+        "strict_hot_path_ns_max": null,
+        "hardened_hot_path_ns_max": null,
+        "cadence": "research_or_unclassified"
+      },
+      "benefit_target": null
+    },
+    {
+      "module": "atiyah_bott",
+      "tier": "research",
+      "in_manifest": true,
+      "in_production_manifest": false,
+      "in_research_only_manifest": true,
+      "decision_hook": "RuntimeMathKernel::decide via cached atiyah_bott controller state",
+      "invariant": "Safety monotonicity: atiyah_bott may only preserve or tighten validation/repair/deny outcomes.",
+      "fallback_when_data_missing": "Treat atiyah_bott signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
+      "action_outputs": [
+        "risk_ppm_bonus contribution",
+        "validation profile escalation",
+        "membrane action escalation"
+      ],
+      "evidence_inputs": [
+        "RuntimeContext",
+        "ValidationObservation",
+        "cached_atiyah_bott_state"
+      ],
+      "runtime_cost_target": {
+        "strict_hot_path_ns_max": null,
+        "hardened_hot_path_ns_max": null,
+        "cadence": "research_or_unclassified"
+      },
+      "benefit_target": null
+    },
+    {
+      "module": "azuma_hoeffding",
+      "tier": "production_monitor",
+      "in_manifest": true,
+      "in_production_manifest": true,
+      "in_research_only_manifest": false,
+      "decision_hook": "RuntimeMathKernel::decide via cached azuma_hoeffding controller state",
+      "invariant": "Safety monotonicity: azuma_hoeffding may only preserve or tighten validation/repair/deny outcomes.",
+      "fallback_when_data_missing": "Treat azuma_hoeffding signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
+      "action_outputs": [
+        "risk_ppm_bonus contribution",
+        "validation profile escalation",
+        "membrane action escalation"
+      ],
+      "evidence_inputs": [
+        "RuntimeContext",
+        "ValidationObservation",
+        "cached_azuma_hoeffding_state"
+      ],
+      "runtime_cost_target": {
+        "strict_hot_path_ns_max": null,
+        "hardened_hot_path_ns_max": null,
+        "cadence": "cadence_gated"
+      },
+      "benefit_target": {
+        "value_category": "Concentration monitoring",
+        "baseline_alternative": "No concentration bound monitoring.",
+        "measurable_benefit": "Detects when noise exceeds martingale concentration bounds \u2014 early warning for instability.",
+        "impact": 3,
+        "confidence": 3,
+        "effort": 2,
+        "score": 4.5,
+        "retention_threshold": 2.0,
+        "verdict": "retain"
+      }
+    },
+    {
+      "module": "bandit",
+      "tier": "production_core",
+      "in_manifest": true,
+      "in_production_manifest": true,
+      "in_research_only_manifest": false,
+      "decision_hook": "RuntimeMathKernel::decide constrained routing of Fast vs Full validation",
+      "invariant": "Bandit policy cannot bypass barrier/policy-table hard constraints.",
+      "fallback_when_data_missing": "Treat bandit signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
+      "action_outputs": [
+        "validation profile selection",
+        "exploration debt telemetry"
+      ],
+      "evidence_inputs": [
+        "ApiFamily",
+        "historical reward/latency",
+        "contention_hint"
+      ],
+      "runtime_cost_target": {
+        "strict_hot_path_ns_max": 20,
+        "hardened_hot_path_ns_max": 200,
+        "cadence": "per_call"
+      },
+      "benefit_target": {
+        "value_category": "Optimization",
+        "baseline_alternative": "Fixed validation schedule (always full-validate or always skip).",
+        "measurable_benefit": "Adaptive scheduling reduces validation overhead by 40-60% on stable workloads while maintaining safety.",
+        "impact": 4,
+        "confidence": 3,
+        "effort": 3,
+        "score": 4.0,
+        "retention_threshold": 2.0,
+        "verdict": "retain"
+      }
+    },
+    {
+      "module": "barrier",
+      "tier": "production_core",
+      "in_manifest": true,
+      "in_production_manifest": true,
+      "in_research_only_manifest": false,
+      "decision_hook": "RuntimeMathKernel::decide admissibility gate",
+      "invariant": "Barrier is one-way: inadmissible states escalate to FullValidate or Deny.",
+      "fallback_when_data_missing": "Fail closed to FullValidate (strict) or Deny (hardened) when admissibility inputs are unavailable.",
+      "action_outputs": [
+        "admissibility boolean",
+        "deny escalation"
+      ],
+      "evidence_inputs": [
+        "RuntimeContext",
+        "risk_ppm",
+        "mode"
+      ],
+      "runtime_cost_target": {
+        "strict_hot_path_ns_max": 20,
+        "hardened_hot_path_ns_max": 200,
+        "cadence": "per_call"
+      },
+      "benefit_target": {
+        "value_category": "Safety critical",
+        "baseline_alternative": "No barrier (permit all operations unconditionally).",
+        "measurable_benefit": "Prevents 100% of unsafe pointer dereferences at ABI boundary.",
+        "impact": 5,
+        "confidence": 5,
+        "effort": 2,
+        "score": 12.5,
+        "retention_threshold": 2.0,
+        "verdict": "retain"
+      }
+    },
+    {
+      "module": "bifurcation_detector",
+      "tier": "research",
+      "in_manifest": true,
+      "in_production_manifest": false,
+      "in_research_only_manifest": true,
+      "decision_hook": "RuntimeMathKernel::decide via cached bifurcation_detector controller state",
+      "invariant": "Safety monotonicity: bifurcation_detector may only preserve or tighten validation/repair/deny outcomes.",
+      "fallback_when_data_missing": "Treat bifurcation_detector signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
+      "action_outputs": [
+        "risk_ppm_bonus contribution",
+        "validation profile escalation",
+        "membrane action escalation"
+      ],
+      "evidence_inputs": [
+        "RuntimeContext",
+        "ValidationObservation",
+        "cached_bifurcation_detector_state"
+      ],
+      "runtime_cost_target": {
+        "strict_hot_path_ns_max": null,
+        "hardened_hot_path_ns_max": null,
+        "cadence": "research_or_unclassified"
+      },
+      "benefit_target": null
+    },
+    {
+      "module": "birkhoff_ergodic",
+      "tier": "research",
+      "in_manifest": true,
+      "in_production_manifest": false,
+      "in_research_only_manifest": true,
+      "decision_hook": "RuntimeMathKernel::decide via cached birkhoff_ergodic controller state",
+      "invariant": "Safety monotonicity: birkhoff_ergodic may only preserve or tighten validation/repair/deny outcomes.",
+      "fallback_when_data_missing": "Treat birkhoff_ergodic signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
+      "action_outputs": [
+        "risk_ppm_bonus contribution",
+        "validation profile escalation",
+        "membrane action escalation"
+      ],
+      "evidence_inputs": [
+        "RuntimeContext",
+        "ValidationObservation",
+        "cached_birkhoff_ergodic_state"
+      ],
+      "runtime_cost_target": {
+        "strict_hot_path_ns_max": null,
+        "hardened_hot_path_ns_max": null,
+        "cadence": "research_or_unclassified"
+      },
+      "benefit_target": null
+    },
+    {
+      "module": "borel_cantelli",
+      "tier": "production_monitor",
+      "in_manifest": true,
+      "in_production_manifest": true,
+      "in_research_only_manifest": false,
+      "decision_hook": "RuntimeMathKernel::decide via cached borel_cantelli controller state",
+      "invariant": "Safety monotonicity: borel_cantelli may only preserve or tighten validation/repair/deny outcomes.",
+      "fallback_when_data_missing": "Treat borel_cantelli signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
+      "action_outputs": [
+        "risk_ppm_bonus contribution",
+        "validation profile escalation",
+        "membrane action escalation"
+      ],
+      "evidence_inputs": [
+        "RuntimeContext",
+        "ValidationObservation",
+        "cached_borel_cantelli_state"
+      ],
+      "runtime_cost_target": {
+        "strict_hot_path_ns_max": null,
+        "hardened_hot_path_ns_max": null,
+        "cadence": "cadence_gated"
+      },
+      "benefit_target": {
+        "value_category": "Recurrence classification",
+        "baseline_alternative": "No recurrence monitoring.",
+        "measurable_benefit": "Classifies exceedances as transient (one-off) vs recurrent (systematic). Avoids false alarms on transients.",
+        "impact": 2,
+        "confidence": 3,
+        "effort": 1,
+        "score": 6.0,
+        "retention_threshold": 2.0,
+        "verdict": "retain"
+      }
+    },
+    {
+      "module": "changepoint",
+      "tier": "production_monitor",
+      "in_manifest": true,
+      "in_production_manifest": true,
+      "in_research_only_manifest": false,
+      "decision_hook": "RuntimeMathKernel::decide via cached changepoint controller state",
+      "invariant": "Safety monotonicity: changepoint may only preserve or tighten validation/repair/deny outcomes.",
+      "fallback_when_data_missing": "Treat changepoint signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
+      "action_outputs": [
+        "risk_ppm_bonus contribution",
+        "validation profile escalation",
+        "membrane action escalation"
+      ],
+      "evidence_inputs": [
+        "RuntimeContext",
+        "ValidationObservation",
+        "cached_changepoint_state"
+      ],
+      "runtime_cost_target": {
+        "strict_hot_path_ns_max": null,
+        "hardened_hot_path_ns_max": null,
+        "cadence": "cadence_gated"
+      },
+      "benefit_target": {
+        "value_category": "Drift detection",
+        "baseline_alternative": "CUSUM or fixed-window mean comparison.",
+        "measurable_benefit": "Bayesian BOCPD gives probabilistic change-point detection with posterior confidence.",
+        "impact": 4,
+        "confidence": 4,
+        "effort": 3,
+        "score": 5.3,
+        "retention_threshold": 2.0,
+        "verdict": "retain"
+      }
+    },
+    {
+      "module": "clifford",
+      "tier": "research",
+      "in_manifest": true,
+      "in_production_manifest": false,
+      "in_research_only_manifest": true,
+      "decision_hook": "RuntimeMathKernel::decide via cached clifford controller state",
+      "invariant": "Safety monotonicity: clifford may only preserve or tighten validation/repair/deny outcomes.",
+      "fallback_when_data_missing": "Treat clifford signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
+      "action_outputs": [
+        "risk_ppm_bonus contribution",
+        "validation profile escalation",
+        "membrane action escalation"
+      ],
+      "evidence_inputs": [
+        "RuntimeContext",
+        "ValidationObservation",
+        "cached_clifford_state"
+      ],
+      "runtime_cost_target": {
+        "strict_hot_path_ns_max": null,
+        "hardened_hot_path_ns_max": null,
+        "cadence": "research_or_unclassified"
+      },
+      "benefit_target": null
+    },
+    {
+      "module": "cohomology",
+      "tier": "research",
+      "in_manifest": true,
+      "in_production_manifest": false,
+      "in_research_only_manifest": true,
+      "decision_hook": "RuntimeMathKernel::decide overlap-consistency fault budget",
+      "invariant": "Safety monotonicity: cohomology may only preserve or tighten validation/repair/deny outcomes.",
+      "fallback_when_data_missing": "Treat cohomology signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
+      "action_outputs": [
+        "consistency penalty",
+        "escalation pressure"
+      ],
+      "evidence_inputs": [
+        "shard overlap observations",
+        "consistency fault counters"
+      ],
+      "runtime_cost_target": {
+        "strict_hot_path_ns_max": null,
+        "hardened_hot_path_ns_max": null,
+        "cadence": "research_or_unclassified"
+      },
+      "benefit_target": null
+    },
+    {
+      "module": "commitment_audit",
+      "tier": "production_core",
+      "in_manifest": true,
+      "in_production_manifest": true,
+      "in_research_only_manifest": false,
+      "decision_hook": "RuntimeMathKernel::decide via cached commitment_audit controller state",
+      "invariant": "Safety monotonicity: commitment_audit may only preserve or tighten validation/repair/deny outcomes.",
+      "fallback_when_data_missing": "Treat commitment_audit signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
+      "action_outputs": [
+        "risk_ppm_bonus contribution",
+        "validation profile escalation",
+        "membrane action escalation"
+      ],
+      "evidence_inputs": [
+        "RuntimeContext",
+        "ValidationObservation",
+        "cached_commitment_audit_state"
+      ],
+      "runtime_cost_target": {
+        "strict_hot_path_ns_max": 20,
+        "hardened_hot_path_ns_max": 200,
+        "cadence": "per_call"
+      },
+      "benefit_target": {
+        "value_category": "Integrity",
+        "baseline_alternative": "No audit trail.",
+        "measurable_benefit": "Cryptographic commitment log ensures non-repudiation of policy decisions.",
+        "impact": 3,
+        "confidence": 4,
+        "effort": 2,
+        "score": 6.0,
+        "retention_threshold": 2.0,
+        "verdict": "retain"
+      }
+    },
+    {
+      "module": "conformal",
+      "tier": "production_core",
+      "in_manifest": true,
+      "in_production_manifest": true,
+      "in_research_only_manifest": false,
+      "decision_hook": "RuntimeMathKernel::decide via cached conformal controller state",
+      "invariant": "Safety monotonicity: conformal may only preserve or tighten validation/repair/deny outcomes.",
+      "fallback_when_data_missing": "Treat conformal signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
+      "action_outputs": [
+        "risk_ppm_bonus contribution",
+        "validation profile escalation",
+        "membrane action escalation"
+      ],
+      "evidence_inputs": [
+        "RuntimeContext",
+        "ValidationObservation",
+        "cached_conformal_state"
+      ],
+      "runtime_cost_target": {
+        "strict_hot_path_ns_max": 20,
+        "hardened_hot_path_ns_max": 200,
+        "cadence": "per_call"
+      },
+      "benefit_target": {
+        "value_category": "Optimization",
+        "baseline_alternative": "Fixed confidence interval (e.g., Hoeffding bound).",
+        "measurable_benefit": "Distribution-free prediction intervals adapt to actual workload distribution. 20-40% tighter intervals.",
+        "impact": 3,
+        "confidence": 3,
+        "effort": 3,
+        "score": 3.0,
+        "retention_threshold": 2.0,
+        "verdict": "retain"
+      }
+    },
+    {
+      "module": "control",
+      "tier": "production_core",
+      "in_manifest": true,
+      "in_production_manifest": true,
+      "in_research_only_manifest": false,
+      "decision_hook": "RuntimeMathKernel::decide primal-dual trigger control for full-check and repair",
+      "invariant": "Safety monotonicity: control may only preserve or tighten validation/repair/deny outcomes.",
+      "fallback_when_data_missing": "Treat control signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
+      "action_outputs": [
+        "full_validation trigger",
+        "repair trigger",
+        "threshold updates"
+      ],
+      "evidence_inputs": [
+        "risk_ppm",
+        "latency_budget_ns",
+        "violation counters"
+      ],
+      "runtime_cost_target": {
+        "strict_hot_path_ns_max": 20,
+        "hardened_hot_path_ns_max": 200,
+        "cadence": "per_call"
+      },
+      "benefit_target": {
+        "value_category": "Safety critical",
+        "baseline_alternative": "Static risk thresholds.",
+        "measurable_benefit": "Adaptive thresholds track workload changes; prevents false-alarm cascades under shifting loads.",
+        "impact": 4,
+        "confidence": 4,
+        "effort": 3,
+        "score": 5.3,
+        "retention_threshold": 2.0,
+        "verdict": "retain"
+      }
+    },
+    {
+      "module": "coupling",
+      "tier": "research",
+      "in_manifest": true,
+      "in_production_manifest": false,
+      "in_research_only_manifest": true,
+      "decision_hook": "RuntimeMathKernel::decide via cached coupling controller state",
+      "invariant": "Safety monotonicity: coupling may only preserve or tighten validation/repair/deny outcomes.",
+      "fallback_when_data_missing": "Treat coupling signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
+      "action_outputs": [
+        "risk_ppm_bonus contribution",
+        "validation profile escalation",
+        "membrane action escalation"
+      ],
+      "evidence_inputs": [
+        "RuntimeContext",
+        "ValidationObservation",
+        "cached_coupling_state"
+      ],
+      "runtime_cost_target": {
+        "strict_hot_path_ns_max": null,
+        "hardened_hot_path_ns_max": null,
+        "cadence": "research_or_unclassified"
+      },
+      "benefit_target": null
+    },
+    {
+      "module": "covering_array",
+      "tier": "production_monitor",
+      "in_manifest": true,
+      "in_production_manifest": true,
+      "in_research_only_manifest": false,
+      "decision_hook": "RuntimeMathKernel::decide via cached covering_array controller state",
+      "invariant": "Safety monotonicity: covering_array may only preserve or tighten validation/repair/deny outcomes.",
+      "fallback_when_data_missing": "Treat covering_array signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
+      "action_outputs": [
+        "risk_ppm_bonus contribution",
+        "validation profile escalation",
+        "membrane action escalation"
+      ],
+      "evidence_inputs": [
+        "RuntimeContext",
+        "ValidationObservation",
+        "cached_covering_array_state"
+      ],
+      "runtime_cost_target": {
+        "strict_hot_path_ns_max": null,
+        "hardened_hot_path_ns_max": null,
+        "cadence": "cadence_gated"
+      },
+      "benefit_target": {
+        "value_category": "Interaction coverage",
+        "baseline_alternative": "Exhaustive pairwise testing.",
+        "measurable_benefit": "t-wise covering arrays achieve interaction coverage with logarithmically fewer configurations.",
+        "impact": 2,
+        "confidence": 3,
+        "effort": 2,
+        "score": 3.0,
+        "retention_threshold": 2.0,
+        "verdict": "retain"
+      }
+    },
+    {
+      "module": "cvar",
+      "tier": "production_monitor",
+      "in_manifest": true,
+      "in_production_manifest": true,
+      "in_research_only_manifest": false,
+      "decision_hook": "RuntimeMathKernel::decide via cached cvar controller state",
+      "invariant": "Safety monotonicity: cvar may only preserve or tighten validation/repair/deny outcomes.",
+      "fallback_when_data_missing": "Treat cvar signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
+      "action_outputs": [
+        "risk_ppm_bonus contribution",
+        "validation profile escalation",
+        "membrane action escalation"
+      ],
+      "evidence_inputs": [
+        "RuntimeContext",
+        "ValidationObservation",
+        "cached_cvar_state"
+      ],
+      "runtime_cost_target": {
+        "strict_hot_path_ns_max": null,
+        "hardened_hot_path_ns_max": null,
+        "cadence": "cadence_gated"
+      },
+      "benefit_target": {
+        "value_category": "Tail protection",
+        "baseline_alternative": "Simple p99 threshold.",
+        "measurable_benefit": "CVaR gives expected loss in the tail, not just a quantile. Distributionally robust.",
+        "impact": 3,
+        "confidence": 3,
+        "effort": 2,
+        "score": 4.5,
+        "retention_threshold": 2.0,
+        "verdict": "retain"
+      }
+    },
+    {
+      "module": "derived_tstructure",
+      "tier": "research",
+      "in_manifest": true,
+      "in_production_manifest": false,
+      "in_research_only_manifest": true,
+      "decision_hook": "RuntimeMathKernel::decide via cached derived_tstructure controller state",
+      "invariant": "Safety monotonicity: derived_tstructure may only preserve or tighten validation/repair/deny outcomes.",
+      "fallback_when_data_missing": "Treat derived_tstructure signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
+      "action_outputs": [
+        "risk_ppm_bonus contribution",
+        "validation profile escalation",
+        "membrane action escalation"
+      ],
+      "evidence_inputs": [
+        "RuntimeContext",
+        "ValidationObservation",
+        "cached_derived_tstructure_state"
+      ],
+      "runtime_cost_target": {
+        "strict_hot_path_ns_max": null,
+        "hardened_hot_path_ns_max": null,
+        "cadence": "research_or_unclassified"
+      },
+      "benefit_target": null
+    },
+    {
+      "module": "design",
+      "tier": "research",
+      "in_manifest": true,
+      "in_production_manifest": false,
+      "in_research_only_manifest": true,
+      "decision_hook": "RuntimeMathKernel::resample_high_order_kernels D-optimal probe scheduling",
+      "invariant": "Safety monotonicity: design may only preserve or tighten validation/repair/deny outcomes.",
+      "fallback_when_data_missing": "Treat design signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
+      "action_outputs": [
+        "probe plan",
+        "probe cadence",
+        "coverage pressure"
+      ],
+      "evidence_inputs": [
+        "identifiability state",
+        "sobol sample",
+        "budget headroom"
+      ],
+      "runtime_cost_target": {
+        "strict_hot_path_ns_max": null,
+        "hardened_hot_path_ns_max": null,
+        "cadence": "research_or_unclassified"
+      },
+      "benefit_target": null
+    },
+    {
+      "module": "dispersion_index",
+      "tier": "production_monitor",
+      "in_manifest": true,
+      "in_production_manifest": true,
+      "in_research_only_manifest": false,
+      "decision_hook": "RuntimeMathKernel::decide via cached dispersion_index controller state",
+      "invariant": "Safety monotonicity: dispersion_index may only preserve or tighten validation/repair/deny outcomes.",
+      "fallback_when_data_missing": "Treat dispersion_index signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
+      "action_outputs": [
+        "risk_ppm_bonus contribution",
+        "validation profile escalation",
+        "membrane action escalation"
+      ],
+      "evidence_inputs": [
+        "RuntimeContext",
+        "ValidationObservation",
+        "cached_dispersion_index_state"
+      ],
+      "runtime_cost_target": {
+        "strict_hot_path_ns_max": null,
+        "hardened_hot_path_ns_max": null,
+        "cadence": "cadence_gated"
+      },
+      "benefit_target": {
+        "value_category": "Variance monitoring",
+        "baseline_alternative": "No variance monitoring.",
+        "measurable_benefit": "Detects overdispersion (clustered failures) vs underdispersion (too-regular patterns).",
+        "impact": 2,
+        "confidence": 3,
+        "effort": 1,
+        "score": 6.0,
+        "retention_threshold": 2.0,
+        "verdict": "retain"
+      }
+    },
+    {
+      "module": "dobrushin_contraction",
+      "tier": "research",
+      "in_manifest": true,
+      "in_production_manifest": false,
+      "in_research_only_manifest": true,
+      "decision_hook": "RuntimeMathKernel::decide via cached dobrushin_contraction controller state",
+      "invariant": "Safety monotonicity: dobrushin_contraction may only preserve or tighten validation/repair/deny outcomes.",
+      "fallback_when_data_missing": "Treat dobrushin_contraction signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
+      "action_outputs": [
+        "risk_ppm_bonus contribution",
+        "validation profile escalation",
+        "membrane action escalation"
+      ],
+      "evidence_inputs": [
+        "RuntimeContext",
+        "ValidationObservation",
+        "cached_dobrushin_contraction_state"
+      ],
+      "runtime_cost_target": {
+        "strict_hot_path_ns_max": null,
+        "hardened_hot_path_ns_max": null,
+        "cadence": "research_or_unclassified"
+      },
+      "benefit_target": null
+    },
+    {
+      "module": "doob_decomposition",
+      "tier": "production_monitor",
+      "in_manifest": true,
+      "in_production_manifest": true,
+      "in_research_only_manifest": false,
+      "decision_hook": "RuntimeMathKernel::decide via cached doob_decomposition controller state",
+      "invariant": "Safety monotonicity: doob_decomposition may only preserve or tighten validation/repair/deny outcomes.",
+      "fallback_when_data_missing": "Treat doob_decomposition signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
+      "action_outputs": [
+        "risk_ppm_bonus contribution",
+        "validation profile escalation",
+        "membrane action escalation"
+      ],
+      "evidence_inputs": [
+        "RuntimeContext",
+        "ValidationObservation",
+        "cached_doob_decomposition_state"
+      ],
+      "runtime_cost_target": {
+        "strict_hot_path_ns_max": null,
+        "hardened_hot_path_ns_max": null,
+        "cadence": "cadence_gated"
+      },
+      "benefit_target": {
+        "value_category": "Drift separation",
+        "baseline_alternative": "Raw signal monitoring (drift + noise combined).",
+        "measurable_benefit": "Separates systematic drift from pure noise; prevents noise from triggering drift alarms.",
+        "impact": 2,
+        "confidence": 3,
+        "effort": 1,
+        "score": 6.0,
+        "retention_threshold": 2.0,
+        "verdict": "retain"
+      }
+    },
+    {
+      "module": "entropy_rate",
+      "tier": "research",
+      "in_manifest": true,
+      "in_production_manifest": false,
+      "in_research_only_manifest": true,
+      "decision_hook": "RuntimeMathKernel::decide via cached entropy_rate controller state",
+      "invariant": "Safety monotonicity: entropy_rate may only preserve or tighten validation/repair/deny outcomes.",
+      "fallback_when_data_missing": "Treat entropy_rate signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
+      "action_outputs": [
+        "risk_ppm_bonus contribution",
+        "validation profile escalation",
+        "membrane action escalation"
+      ],
+      "evidence_inputs": [
+        "RuntimeContext",
+        "ValidationObservation",
+        "cached_entropy_rate_state"
+      ],
+      "runtime_cost_target": {
+        "strict_hot_path_ns_max": null,
+        "hardened_hot_path_ns_max": null,
+        "cadence": "research_or_unclassified"
+      },
+      "benefit_target": null
+    },
+    {
+      "module": "eprocess",
+      "tier": "production_monitor",
+      "in_manifest": true,
+      "in_production_manifest": true,
+      "in_research_only_manifest": false,
+      "decision_hook": "RuntimeMathKernel::decide via cached eprocess controller state",
+      "invariant": "Safety monotonicity: eprocess may only preserve or tighten validation/repair/deny outcomes.",
+      "fallback_when_data_missing": "Treat eprocess signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
+      "action_outputs": [
+        "risk_ppm_bonus contribution",
+        "validation profile escalation",
+        "membrane action escalation"
+      ],
+      "evidence_inputs": [
+        "RuntimeContext",
+        "ValidationObservation",
+        "cached_eprocess_state"
+      ],
+      "runtime_cost_target": {
+        "strict_hot_path_ns_max": null,
+        "hardened_hot_path_ns_max": null,
+        "cadence": "cadence_gated"
+      },
+      "benefit_target": {
+        "value_category": "Safety monitoring",
+        "baseline_alternative": "Fixed-threshold alarm (e.g., adverse rate > 5% triggers alarm).",
+        "measurable_benefit": "Anytime-valid: can stop and inspect at any time without inflating false-alarm rate.",
+        "impact": 4,
+        "confidence": 5,
+        "effort": 2,
+        "score": 10.0,
+        "retention_threshold": 2.0,
+        "verdict": "retain"
+      }
+    },
+    {
+      "module": "equivariant",
+      "tier": "research",
+      "in_manifest": true,
+      "in_production_manifest": false,
+      "in_research_only_manifest": true,
+      "decision_hook": "RuntimeMathKernel::decide via cached equivariant controller state",
+      "invariant": "Safety monotonicity: equivariant may only preserve or tighten validation/repair/deny outcomes.",
+      "fallback_when_data_missing": "Treat equivariant signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
+      "action_outputs": [
+        "risk_ppm_bonus contribution",
+        "validation profile escalation",
+        "membrane action escalation"
+      ],
+      "evidence_inputs": [
+        "RuntimeContext",
+        "ValidationObservation",
+        "cached_equivariant_state"
+      ],
+      "runtime_cost_target": {
+        "strict_hot_path_ns_max": null,
+        "hardened_hot_path_ns_max": null,
+        "cadence": "research_or_unclassified"
+      },
+      "benefit_target": null
+    },
+    {
+      "module": "evidence",
+      "tier": "production_core",
+      "in_manifest": true,
+      "in_production_manifest": true,
+      "in_research_only_manifest": false,
+      "decision_hook": "RuntimeMathKernel::decide and observe_validation_result evidence emission",
+      "invariant": "Evidence logging is append-only and cannot mutate routing decisions.",
+      "fallback_when_data_missing": "If evidence buffers are unavailable, continue with routing decision and increment drop counters.",
+      "action_outputs": [
+        "bd-kom event record",
+        "audit telemetry"
+      ],
+      "evidence_inputs": [
+        "RuntimeDecision",
+        "policy_id",
+        "risk upper bound",
+        "healing action"
+      ],
+      "runtime_cost_target": {
+        "strict_hot_path_ns_max": 20,
+        "hardened_hot_path_ns_max": 200,
+        "cadence": "per_call"
+      },
+      "benefit_target": {
+        "value_category": "Diagnostics critical",
+        "baseline_alternative": "No evidence trail (black-box validation).",
+        "measurable_benefit": "Deterministic evidence ring enables offline failure reproduction. Required by crash bundle spec (bd-6yd).",
+        "impact": 5,
+        "confidence": 5,
+        "effort": 3,
+        "score": 8.3,
+        "retention_threshold": 2.0,
+        "verdict": "retain"
+      }
+    },
+    {
+      "module": "fano_bound",
+      "tier": "research",
+      "in_manifest": true,
+      "in_production_manifest": false,
+      "in_research_only_manifest": true,
+      "decision_hook": "RuntimeMathKernel::decide via cached fano_bound controller state",
+      "invariant": "Safety monotonicity: fano_bound may only preserve or tighten validation/repair/deny outcomes.",
+      "fallback_when_data_missing": "Treat fano_bound signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
+      "action_outputs": [
+        "risk_ppm_bonus contribution",
+        "validation profile escalation",
+        "membrane action escalation"
+      ],
+      "evidence_inputs": [
+        "RuntimeContext",
+        "ValidationObservation",
+        "cached_fano_bound_state"
+      ],
+      "runtime_cost_target": {
+        "strict_hot_path_ns_max": null,
+        "hardened_hot_path_ns_max": null,
+        "cadence": "research_or_unclassified"
+      },
+      "benefit_target": null
+    },
+    {
+      "module": "fusion",
+      "tier": "production_core",
+      "in_manifest": true,
+      "in_production_manifest": true,
+      "in_research_only_manifest": false,
+      "decision_hook": "RuntimeMathKernel::decide robust fusion over severity channels",
+      "invariant": "Fusion output is bounded and cannot reduce hard barrier/deny outcomes.",
+      "fallback_when_data_missing": "Treat fusion signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
+      "action_outputs": [
+        "fused severity bonus",
+        "confidence telemetry"
+      ],
+      "evidence_inputs": [
+        "severity vector",
+        "trust weights",
+        "drift indicators"
+      ],
+      "runtime_cost_target": {
+        "strict_hot_path_ns_max": 20,
+        "hardened_hot_path_ns_max": 200,
+        "cadence": "per_call"
+      },
+      "benefit_target": {
+        "value_category": "Safety critical",
+        "baseline_alternative": "Single-signal decision (e.g., only bloom filter check).",
+        "measurable_benefit": "Multi-signal fusion catches threats that single detectors miss. Required for defense-in-depth.",
+        "impact": 5,
+        "confidence": 4,
+        "effort": 3,
+        "score": 6.7,
+        "retention_threshold": 2.0,
+        "verdict": "retain"
+      }
+    },
+    {
+      "module": "grobner_normalizer",
+      "tier": "research",
+      "in_manifest": true,
+      "in_production_manifest": false,
+      "in_research_only_manifest": true,
+      "decision_hook": "RuntimeMathKernel::decide via cached grobner_normalizer controller state",
+      "invariant": "Safety monotonicity: grobner_normalizer may only preserve or tighten validation/repair/deny outcomes.",
+      "fallback_when_data_missing": "Treat grobner_normalizer signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
+      "action_outputs": [
+        "risk_ppm_bonus contribution",
+        "validation profile escalation",
+        "membrane action escalation"
+      ],
+      "evidence_inputs": [
+        "RuntimeContext",
+        "ValidationObservation",
+        "cached_grobner_normalizer_state"
+      ],
+      "runtime_cost_target": {
+        "strict_hot_path_ns_max": null,
+        "hardened_hot_path_ns_max": null,
+        "cadence": "research_or_unclassified"
+      },
+      "benefit_target": null
+    },
+    {
+      "module": "grothendieck_glue",
+      "tier": "research",
+      "in_manifest": true,
+      "in_production_manifest": false,
+      "in_research_only_manifest": true,
+      "decision_hook": "RuntimeMathKernel::decide via cached grothendieck_glue controller state",
+      "invariant": "Safety monotonicity: grothendieck_glue may only preserve or tighten validation/repair/deny outcomes.",
+      "fallback_when_data_missing": "Treat grothendieck_glue signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
+      "action_outputs": [
+        "risk_ppm_bonus contribution",
+        "validation profile escalation",
+        "membrane action escalation"
+      ],
+      "evidence_inputs": [
+        "RuntimeContext",
+        "ValidationObservation",
+        "cached_grothendieck_glue_state"
+      ],
+      "runtime_cost_target": {
+        "strict_hot_path_ns_max": null,
+        "hardened_hot_path_ns_max": null,
+        "cadence": "research_or_unclassified"
+      },
+      "benefit_target": null
+    },
+    {
+      "module": "higher_topos",
+      "tier": "research",
+      "in_manifest": true,
+      "in_production_manifest": false,
+      "in_research_only_manifest": true,
+      "decision_hook": "RuntimeMathKernel::decide via cached higher_topos controller state",
+      "invariant": "Safety monotonicity: higher_topos may only preserve or tighten validation/repair/deny outcomes.",
+      "fallback_when_data_missing": "Treat higher_topos signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
+      "action_outputs": [
+        "risk_ppm_bonus contribution",
+        "validation profile escalation",
+        "membrane action escalation"
+      ],
+      "evidence_inputs": [
+        "RuntimeContext",
+        "ValidationObservation",
+        "cached_higher_topos_state"
+      ],
+      "runtime_cost_target": {
+        "strict_hot_path_ns_max": null,
+        "hardened_hot_path_ns_max": null,
+        "cadence": "research_or_unclassified"
+      },
+      "benefit_target": null
+    },
+    {
+      "module": "hodge_decomposition",
+      "tier": "research",
+      "in_manifest": true,
+      "in_production_manifest": false,
+      "in_research_only_manifest": true,
+      "decision_hook": "RuntimeMathKernel::decide via cached hodge_decomposition controller state",
+      "invariant": "Safety monotonicity: hodge_decomposition may only preserve or tighten validation/repair/deny outcomes.",
+      "fallback_when_data_missing": "Treat hodge_decomposition signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
+      "action_outputs": [
+        "risk_ppm_bonus contribution",
+        "validation profile escalation",
+        "membrane action escalation"
+      ],
+      "evidence_inputs": [
+        "RuntimeContext",
+        "ValidationObservation",
+        "cached_hodge_decomposition_state"
+      ],
+      "runtime_cost_target": {
+        "strict_hot_path_ns_max": null,
+        "hardened_hot_path_ns_max": null,
+        "cadence": "research_or_unclassified"
+      },
+      "benefit_target": null
+    },
+    {
+      "module": "hurst_exponent",
+      "tier": "research",
+      "in_manifest": true,
+      "in_production_manifest": false,
+      "in_research_only_manifest": true,
+      "decision_hook": "RuntimeMathKernel::decide via cached hurst_exponent controller state",
+      "invariant": "Safety monotonicity: hurst_exponent may only preserve or tighten validation/repair/deny outcomes.",
+      "fallback_when_data_missing": "Treat hurst_exponent signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
+      "action_outputs": [
+        "risk_ppm_bonus contribution",
+        "validation profile escalation",
+        "membrane action escalation"
+      ],
+      "evidence_inputs": [
+        "RuntimeContext",
+        "ValidationObservation",
+        "cached_hurst_exponent_state"
+      ],
+      "runtime_cost_target": {
+        "strict_hot_path_ns_max": null,
+        "hardened_hot_path_ns_max": null,
+        "cadence": "research_or_unclassified"
+      },
+      "benefit_target": null
+    },
+    {
+      "module": "info_geometry",
+      "tier": "research",
+      "in_manifest": true,
+      "in_production_manifest": false,
+      "in_research_only_manifest": true,
+      "decision_hook": "RuntimeMathKernel::decide via cached info_geometry controller state",
+      "invariant": "Safety monotonicity: info_geometry may only preserve or tighten validation/repair/deny outcomes.",
+      "fallback_when_data_missing": "Treat info_geometry signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
+      "action_outputs": [
+        "risk_ppm_bonus contribution",
+        "validation profile escalation",
+        "membrane action escalation"
+      ],
+      "evidence_inputs": [
+        "RuntimeContext",
+        "ValidationObservation",
+        "cached_info_geometry_state"
+      ],
+      "runtime_cost_target": {
+        "strict_hot_path_ns_max": null,
+        "hardened_hot_path_ns_max": null,
+        "cadence": "research_or_unclassified"
+      },
+      "benefit_target": null
+    },
+    {
+      "module": "ito_quadratic_variation",
+      "tier": "research",
+      "in_manifest": true,
+      "in_production_manifest": false,
+      "in_research_only_manifest": true,
+      "decision_hook": "RuntimeMathKernel::decide via cached ito_quadratic_variation controller state",
+      "invariant": "Safety monotonicity: ito_quadratic_variation may only preserve or tighten validation/repair/deny outcomes.",
+      "fallback_when_data_missing": "Treat ito_quadratic_variation signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
+      "action_outputs": [
+        "risk_ppm_bonus contribution",
+        "validation profile escalation",
+        "membrane action escalation"
+      ],
+      "evidence_inputs": [
+        "RuntimeContext",
+        "ValidationObservation",
+        "cached_ito_quadratic_variation_state"
+      ],
+      "runtime_cost_target": {
+        "strict_hot_path_ns_max": null,
+        "hardened_hot_path_ns_max": null,
+        "cadence": "research_or_unclassified"
+      },
+      "benefit_target": null
+    },
+    {
+      "module": "kernel_mmd",
+      "tier": "research",
+      "in_manifest": true,
+      "in_production_manifest": false,
+      "in_research_only_manifest": true,
+      "decision_hook": "RuntimeMathKernel::decide via cached kernel_mmd controller state",
+      "invariant": "Safety monotonicity: kernel_mmd may only preserve or tighten validation/repair/deny outcomes.",
+      "fallback_when_data_missing": "Treat kernel_mmd signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
+      "action_outputs": [
+        "risk_ppm_bonus contribution",
+        "validation profile escalation",
+        "membrane action escalation"
+      ],
+      "evidence_inputs": [
+        "RuntimeContext",
+        "ValidationObservation",
+        "cached_kernel_mmd_state"
+      ],
+      "runtime_cost_target": {
+        "strict_hot_path_ns_max": null,
+        "hardened_hot_path_ns_max": null,
+        "cadence": "research_or_unclassified"
+      },
+      "benefit_target": null
+    },
+    {
+      "module": "ktheory",
+      "tier": "research",
+      "in_manifest": true,
+      "in_production_manifest": false,
+      "in_research_only_manifest": true,
+      "decision_hook": "RuntimeMathKernel::decide ABI transport compatibility pressure",
+      "invariant": "Safety monotonicity: ktheory may only preserve or tighten validation/repair/deny outcomes.",
+      "fallback_when_data_missing": "Treat ktheory signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
+      "action_outputs": [
+        "compatibility penalty",
+        "escalation pressure"
+      ],
+      "evidence_inputs": [
+        "family transport state",
+        "compatibility drift",
+        "index witness"
+      ],
+      "runtime_cost_target": {
+        "strict_hot_path_ns_max": null,
+        "hardened_hot_path_ns_max": null,
+        "cadence": "research_or_unclassified"
+      },
+      "benefit_target": null
+    },
+    {
+      "module": "lempel_ziv",
+      "tier": "research",
+      "in_manifest": true,
+      "in_production_manifest": false,
+      "in_research_only_manifest": true,
+      "decision_hook": "RuntimeMathKernel::decide via cached lempel_ziv controller state",
+      "invariant": "Safety monotonicity: lempel_ziv may only preserve or tighten validation/repair/deny outcomes.",
+      "fallback_when_data_missing": "Treat lempel_ziv signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
+      "action_outputs": [
+        "risk_ppm_bonus contribution",
+        "validation profile escalation",
+        "membrane action escalation"
+      ],
+      "evidence_inputs": [
+        "RuntimeContext",
+        "ValidationObservation",
+        "cached_lempel_ziv_state"
+      ],
+      "runtime_cost_target": {
+        "strict_hot_path_ns_max": null,
+        "hardened_hot_path_ns_max": null,
+        "cadence": "research_or_unclassified"
+      },
+      "benefit_target": null
+    },
+    {
+      "module": "localization_chooser",
+      "tier": "research",
+      "in_manifest": true,
+      "in_production_manifest": false,
+      "in_research_only_manifest": true,
+      "decision_hook": "RuntimeMathKernel::decide localization policy selection for concentrated anomaly regimes",
+      "invariant": "Safety monotonicity: localization_chooser may only preserve or tighten validation/repair/deny outcomes.",
+      "fallback_when_data_missing": "Treat localization_chooser signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
+      "action_outputs": [
+        "localization policy choice",
+        "escalation pressure"
+      ],
+      "evidence_inputs": [
+        "fixed-point concentration",
+        "regime persistence",
+        "chooser state"
+      ],
+      "runtime_cost_target": {
+        "strict_hot_path_ns_max": null,
+        "hardened_hot_path_ns_max": null,
+        "cadence": "research_or_unclassified"
+      },
+      "benefit_target": null
+    },
+    {
+      "module": "loss_minimizer",
+      "tier": "production_core",
+      "in_manifest": true,
+      "in_production_manifest": true,
+      "in_research_only_manifest": false,
+      "decision_hook": "RuntimeMathKernel::decide via cached loss_minimizer controller state",
+      "invariant": "Safety monotonicity: loss_minimizer may only preserve or tighten validation/repair/deny outcomes.",
+      "fallback_when_data_missing": "Treat loss_minimizer signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
+      "action_outputs": [
+        "evidence payload: posterior/selected/competing expected-loss costs",
+        "membrane action escalation",
+        "risk_ppm_bonus contribution",
+        "validation profile escalation"
+      ],
+      "evidence_inputs": [
+        "RuntimeContext",
+        "ValidationObservation",
+        "cached_loss_competing_action",
+        "cached_loss_competing_cost_milli",
+        "cached_loss_minimizer_state",
+        "cached_loss_posterior_ppm",
+        "cached_loss_selected_action",
+        "cached_loss_selected_cost_milli"
+      ],
+      "runtime_cost_target": {
+        "strict_hot_path_ns_max": 20,
+        "hardened_hot_path_ns_max": 200,
+        "cadence": "per_call"
+      },
+      "benefit_target": {
+        "value_category": "Optimization",
+        "baseline_alternative": "Fixed overhead allocation (e.g., always 10% overhead).",
+        "measurable_benefit": "Dynamic loss minimization adapts overhead to measured adverse rates. Expected loss reduction of 15-30%.",
+        "impact": 3,
+        "confidence": 3,
+        "effort": 3,
+        "score": 3.0,
+        "retention_threshold": 2.0,
+        "verdict": "retain"
+      }
+    },
+    {
+      "module": "lyapunov_stability",
+      "tier": "research",
+      "in_manifest": true,
+      "in_production_manifest": false,
+      "in_research_only_manifest": true,
+      "decision_hook": "RuntimeMathKernel::decide via cached lyapunov_stability controller state",
+      "invariant": "Safety monotonicity: lyapunov_stability may only preserve or tighten validation/repair/deny outcomes.",
+      "fallback_when_data_missing": "Treat lyapunov_stability signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
+      "action_outputs": [
+        "risk_ppm_bonus contribution",
+        "validation profile escalation",
+        "membrane action escalation"
+      ],
+      "evidence_inputs": [
+        "RuntimeContext",
+        "ValidationObservation",
+        "cached_lyapunov_stability_state"
+      ],
+      "runtime_cost_target": {
+        "strict_hot_path_ns_max": null,
+        "hardened_hot_path_ns_max": null,
+        "cadence": "research_or_unclassified"
+      },
+      "benefit_target": null
+    },
+    {
+      "module": "malliavin_sensitivity",
+      "tier": "research",
+      "in_manifest": true,
+      "in_production_manifest": false,
+      "in_research_only_manifest": true,
+      "decision_hook": "RuntimeMathKernel::decide via cached malliavin_sensitivity controller state",
+      "invariant": "Safety monotonicity: malliavin_sensitivity may only preserve or tighten validation/repair/deny outcomes.",
+      "fallback_when_data_missing": "Treat malliavin_sensitivity signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
+      "action_outputs": [
+        "risk_ppm_bonus contribution",
+        "validation profile escalation",
+        "membrane action escalation"
+      ],
+      "evidence_inputs": [
+        "RuntimeContext",
+        "ValidationObservation",
+        "cached_malliavin_sensitivity_state"
+      ],
+      "runtime_cost_target": {
+        "strict_hot_path_ns_max": null,
+        "hardened_hot_path_ns_max": null,
+        "cadence": "research_or_unclassified"
+      },
+      "benefit_target": null
+    },
+    {
+      "module": "matrix_concentration",
+      "tier": "research",
+      "in_manifest": true,
+      "in_production_manifest": false,
+      "in_research_only_manifest": true,
+      "decision_hook": "RuntimeMathKernel::decide via cached matrix_concentration controller state",
+      "invariant": "Safety monotonicity: matrix_concentration may only preserve or tighten validation/repair/deny outcomes.",
+      "fallback_when_data_missing": "Treat matrix_concentration signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
+      "action_outputs": [
+        "risk_ppm_bonus contribution",
+        "validation profile escalation",
+        "membrane action escalation"
+      ],
+      "evidence_inputs": [
+        "RuntimeContext",
+        "ValidationObservation",
+        "cached_matrix_concentration_state"
+      ],
+      "runtime_cost_target": {
+        "strict_hot_path_ns_max": null,
+        "hardened_hot_path_ns_max": null,
+        "cadence": "research_or_unclassified"
+      },
+      "benefit_target": null
+    },
+    {
+      "module": "microlocal",
+      "tier": "research",
+      "in_manifest": true,
+      "in_production_manifest": false,
+      "in_research_only_manifest": true,
+      "decision_hook": "RuntimeMathKernel::decide via cached microlocal controller state",
+      "invariant": "Safety monotonicity: microlocal may only preserve or tighten validation/repair/deny outcomes.",
+      "fallback_when_data_missing": "Treat microlocal signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
+      "action_outputs": [
+        "risk_ppm_bonus contribution",
+        "validation profile escalation",
+        "membrane action escalation"
+      ],
+      "evidence_inputs": [
+        "RuntimeContext",
+        "ValidationObservation",
+        "cached_microlocal_state"
+      ],
+      "runtime_cost_target": {
+        "strict_hot_path_ns_max": null,
+        "hardened_hot_path_ns_max": null,
+        "cadence": "research_or_unclassified"
+      },
+      "benefit_target": null
+    },
+    {
+      "module": "nerve_complex",
+      "tier": "research",
+      "in_manifest": true,
+      "in_production_manifest": false,
+      "in_research_only_manifest": true,
+      "decision_hook": "RuntimeMathKernel::decide via cached nerve_complex controller state",
+      "invariant": "Safety monotonicity: nerve_complex may only preserve or tighten validation/repair/deny outcomes.",
+      "fallback_when_data_missing": "Treat nerve_complex signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
+      "action_outputs": [
+        "risk_ppm_bonus contribution",
+        "validation profile escalation",
+        "membrane action escalation"
+      ],
+      "evidence_inputs": [
+        "RuntimeContext",
+        "ValidationObservation",
+        "cached_nerve_complex_state"
+      ],
+      "runtime_cost_target": {
+        "strict_hot_path_ns_max": null,
+        "hardened_hot_path_ns_max": null,
+        "cadence": "research_or_unclassified"
+      },
+      "benefit_target": null
+    },
+    {
+      "module": "obstruction_detector",
+      "tier": "research",
+      "in_manifest": true,
+      "in_production_manifest": false,
+      "in_research_only_manifest": true,
+      "decision_hook": "RuntimeMathKernel::decide via cached obstruction_detector controller state",
+      "invariant": "Safety monotonicity: obstruction_detector may only preserve or tighten validation/repair/deny outcomes.",
+      "fallback_when_data_missing": "Treat obstruction_detector signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
+      "action_outputs": [
+        "risk_ppm_bonus contribution",
+        "validation profile escalation",
+        "membrane action escalation"
+      ],
+      "evidence_inputs": [
+        "RuntimeContext",
+        "ValidationObservation",
+        "cached_obstruction_detector_state"
+      ],
+      "runtime_cost_target": {
+        "strict_hot_path_ns_max": null,
+        "hardened_hot_path_ns_max": null,
+        "cadence": "research_or_unclassified"
+      },
+      "benefit_target": null
+    },
+    {
+      "module": "operator_norm",
+      "tier": "research",
+      "in_manifest": true,
+      "in_production_manifest": false,
+      "in_research_only_manifest": true,
+      "decision_hook": "RuntimeMathKernel::decide via cached operator_norm controller state",
+      "invariant": "Safety monotonicity: operator_norm may only preserve or tighten validation/repair/deny outcomes.",
+      "fallback_when_data_missing": "Treat operator_norm signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
+      "action_outputs": [
+        "risk_ppm_bonus contribution",
+        "validation profile escalation",
+        "membrane action escalation"
+      ],
+      "evidence_inputs": [
+        "RuntimeContext",
+        "ValidationObservation",
+        "cached_operator_norm_state"
+      ],
+      "runtime_cost_target": {
+        "strict_hot_path_ns_max": null,
+        "hardened_hot_path_ns_max": null,
+        "cadence": "research_or_unclassified"
+      },
+      "benefit_target": null
+    },
+    {
+      "module": "ornstein_uhlenbeck",
+      "tier": "research",
+      "in_manifest": true,
+      "in_production_manifest": false,
+      "in_research_only_manifest": true,
+      "decision_hook": "RuntimeMathKernel::decide via cached ornstein_uhlenbeck controller state",
+      "invariant": "Safety monotonicity: ornstein_uhlenbeck may only preserve or tighten validation/repair/deny outcomes.",
+      "fallback_when_data_missing": "Treat ornstein_uhlenbeck signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
+      "action_outputs": [
+        "risk_ppm_bonus contribution",
+        "validation profile escalation",
+        "membrane action escalation"
+      ],
+      "evidence_inputs": [
+        "RuntimeContext",
+        "ValidationObservation",
+        "cached_ornstein_uhlenbeck_state"
+      ],
+      "runtime_cost_target": {
+        "strict_hot_path_ns_max": null,
+        "hardened_hot_path_ns_max": null,
+        "cadence": "research_or_unclassified"
+      },
+      "benefit_target": null
+    },
+    {
+      "module": "pac_bayes",
+      "tier": "research",
+      "in_manifest": true,
+      "in_production_manifest": false,
+      "in_research_only_manifest": true,
+      "decision_hook": "RuntimeMathKernel::decide via cached pac_bayes controller state",
+      "invariant": "Safety monotonicity: pac_bayes may only preserve or tighten validation/repair/deny outcomes.",
+      "fallback_when_data_missing": "Treat pac_bayes signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
+      "action_outputs": [
+        "risk_ppm_bonus contribution",
+        "validation profile escalation",
+        "membrane action escalation"
+      ],
+      "evidence_inputs": [
+        "RuntimeContext",
+        "ValidationObservation",
+        "cached_pac_bayes_state"
+      ],
+      "runtime_cost_target": {
+        "strict_hot_path_ns_max": null,
+        "hardened_hot_path_ns_max": null,
+        "cadence": "research_or_unclassified"
+      },
+      "benefit_target": null
+    },
+    {
+      "module": "pareto",
+      "tier": "production_monitor",
+      "in_manifest": true,
+      "in_production_manifest": true,
+      "in_research_only_manifest": false,
+      "decision_hook": "RuntimeMathKernel::decide latency/risk Pareto selector",
+      "invariant": "Safety monotonicity: pareto may only preserve or tighten validation/repair/deny outcomes.",
+      "fallback_when_data_missing": "Treat pareto signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
+      "action_outputs": [
+        "frontier point selection",
+        "regret updates",
+        "profile pressure"
+      ],
+      "evidence_inputs": [
+        "latency estimate",
+        "risk estimate",
+        "mode budget"
+      ],
+      "runtime_cost_target": {
+        "strict_hot_path_ns_max": null,
+        "hardened_hot_path_ns_max": null,
+        "cadence": "cadence_gated"
+      },
+      "benefit_target": {
+        "value_category": "Multi-objective optimization",
+        "baseline_alternative": "Single-objective latency minimization.",
+        "measurable_benefit": "Pareto controller balances latency vs safety with regret accounting.",
+        "impact": 3,
+        "confidence": 3,
+        "effort": 3,
+        "score": 3.0,
+        "retention_threshold": 2.0,
+        "verdict": "retain"
+      }
+    },
+    {
+      "module": "policy_table",
+      "tier": "production_core",
+      "in_manifest": true,
+      "in_production_manifest": true,
+      "in_research_only_manifest": false,
+      "decision_hook": "RuntimeMathKernel::decide proof-carrying policy table lookup",
+      "invariant": "Policy table override is deterministic and keyed by mode/family/risk/budget/consistency buckets.",
+      "fallback_when_data_missing": "Use built-in conservative table defaults when policy artifact or bucket data is unavailable.",
+      "action_outputs": [
+        "profile override",
+        "action override",
+        "repair override",
+        "policy_id"
+      ],
+      "evidence_inputs": [
+        "mode",
+        "ApiFamily",
+        "risk bucket",
+        "budget bucket",
+        "consistency bucket",
+        "policy hash"
+      ],
+      "runtime_cost_target": {
+        "strict_hot_path_ns_max": 20,
+        "hardened_hot_path_ns_max": 200,
+        "cadence": "per_call"
+      },
+      "benefit_target": {
+        "value_category": "Configuration",
+        "baseline_alternative": "Hardcoded per-symbol policy.",
+        "measurable_benefit": "Table-driven policy enables per-symbol tuning without recompilation. Reduces configuration errors.",
+        "impact": 3,
+        "confidence": 4,
+        "effort": 2,
+        "score": 6.0,
+        "retention_threshold": 2.0,
+        "verdict": "retain"
+      }
+    },
+    {
+      "module": "pomdp_repair",
+      "tier": "research",
+      "in_manifest": true,
+      "in_production_manifest": false,
+      "in_research_only_manifest": true,
+      "decision_hook": "RuntimeMathKernel::decide via cached pomdp_repair controller state",
+      "invariant": "Safety monotonicity: pomdp_repair may only preserve or tighten validation/repair/deny outcomes.",
+      "fallback_when_data_missing": "Treat pomdp_repair signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
+      "action_outputs": [
+        "risk_ppm_bonus contribution",
+        "validation profile escalation",
+        "membrane action escalation"
+      ],
+      "evidence_inputs": [
+        "RuntimeContext",
+        "ValidationObservation",
+        "cached_pomdp_repair_state"
+      ],
+      "runtime_cost_target": {
+        "strict_hot_path_ns_max": null,
+        "hardened_hot_path_ns_max": null,
+        "cadence": "research_or_unclassified"
+      },
+      "benefit_target": null
+    },
+    {
+      "module": "provenance_info",
+      "tier": "production_core",
+      "in_manifest": true,
+      "in_production_manifest": true,
+      "in_research_only_manifest": false,
+      "decision_hook": "RuntimeMathKernel::decide via cached provenance_info controller state",
+      "invariant": "Safety monotonicity: provenance_info may only preserve or tighten validation/repair/deny outcomes.",
+      "fallback_when_data_missing": "Treat provenance_info signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
+      "action_outputs": [
+        "risk_ppm_bonus contribution",
+        "validation profile escalation",
+        "membrane action escalation"
+      ],
+      "evidence_inputs": [
+        "RuntimeContext",
+        "ValidationObservation",
+        "cached_provenance_info_state"
+      ],
+      "runtime_cost_target": {
+        "strict_hot_path_ns_max": 20,
+        "hardened_hot_path_ns_max": 200,
+        "cadence": "per_call"
+      },
+      "benefit_target": {
+        "value_category": "Diagnostics",
+        "baseline_alternative": "No pointer provenance tracking.",
+        "measurable_benefit": "Pointer provenance enables root-cause analysis for UAF/double-free failures.",
+        "impact": 3,
+        "confidence": 3,
+        "effort": 2,
+        "score": 4.5,
+        "retention_threshold": 2.0,
+        "verdict": "retain"
+      }
+    },
+    {
+      "module": "rademacher_complexity",
+      "tier": "research",
+      "in_manifest": true,
+      "in_production_manifest": false,
+      "in_research_only_manifest": true,
+      "decision_hook": "RuntimeMathKernel::decide via cached rademacher_complexity controller state",
+      "invariant": "Safety monotonicity: rademacher_complexity may only preserve or tighten validation/repair/deny outcomes.",
+      "fallback_when_data_missing": "Treat rademacher_complexity signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
+      "action_outputs": [
+        "risk_ppm_bonus contribution",
+        "validation profile escalation",
+        "membrane action escalation"
+      ],
+      "evidence_inputs": [
+        "RuntimeContext",
+        "ValidationObservation",
+        "cached_rademacher_complexity_state"
+      ],
+      "runtime_cost_target": {
+        "strict_hot_path_ns_max": null,
+        "hardened_hot_path_ns_max": null,
+        "cadence": "research_or_unclassified"
+      },
+      "benefit_target": null
+    },
+    {
+      "module": "redundancy_tuner",
+      "tier": "production_core",
+      "in_manifest": true,
+      "in_production_manifest": true,
+      "in_research_only_manifest": false,
+      "decision_hook": "RuntimeMathKernel::observe_validation_result evidence redundancy overhead tuning",
+      "invariant": "Safety monotonicity: redundancy_tuner may only preserve or tighten validation/repair/deny outcomes.",
+      "fallback_when_data_missing": "Treat redundancy_tuner signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
+      "action_outputs": [
+        "redundancy target",
+        "overhead control signal"
+      ],
+      "evidence_inputs": [
+        "e-process updates",
+        "overhead budget",
+        "recent alarm rate"
+      ],
+      "runtime_cost_target": {
+        "strict_hot_path_ns_max": 20,
+        "hardened_hot_path_ns_max": 200,
+        "cadence": "per_call"
+      },
+      "benefit_target": {
+        "value_category": "Optimization",
+        "baseline_alternative": "Fixed redundancy overhead.",
+        "measurable_benefit": "Adaptive XOR redundancy adjusts evidence overhead based on measured loss rates. Saves 5-15% overhead.",
+        "impact": 3,
+        "confidence": 3,
+        "effort": 2,
+        "score": 4.5,
+        "retention_threshold": 2.0,
+        "verdict": "retain"
+      }
+    },
+    {
+      "module": "renewal_theory",
+      "tier": "production_monitor",
+      "in_manifest": true,
+      "in_production_manifest": true,
+      "in_research_only_manifest": false,
+      "decision_hook": "RuntimeMathKernel::decide via cached renewal_theory controller state",
+      "invariant": "Safety monotonicity: renewal_theory may only preserve or tighten validation/repair/deny outcomes.",
+      "fallback_when_data_missing": "Treat renewal_theory signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
+      "action_outputs": [
+        "risk_ppm_bonus contribution",
+        "validation profile escalation",
+        "membrane action escalation"
+      ],
+      "evidence_inputs": [
+        "RuntimeContext",
+        "ValidationObservation",
+        "cached_renewal_theory_state"
+      ],
+      "runtime_cost_target": {
+        "strict_hot_path_ns_max": null,
+        "hardened_hot_path_ns_max": null,
+        "cadence": "cadence_gated"
+      },
+      "benefit_target": {
+        "value_category": "Recovery tracking",
+        "baseline_alternative": "Fixed recovery window.",
+        "measurable_benefit": "Inter-arrival time monitoring detects whether recovery is actually happening or failure rate increasing.",
+        "impact": 2,
+        "confidence": 3,
+        "effort": 1,
+        "score": 6.0,
+        "retention_threshold": 2.0,
+        "verdict": "retain"
+      }
+    },
+    {
+      "module": "risk",
+      "tier": "production_core",
+      "in_manifest": true,
+      "in_production_manifest": true,
+      "in_research_only_manifest": false,
+      "decision_hook": "RuntimeMathKernel::decide sampled risk envelope computation",
+      "invariant": "Risk envelope remains conservative (upper-bound) across updates.",
+      "fallback_when_data_missing": "Treat risk signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
+      "action_outputs": [
+        "risk_ppm baseline",
+        "profile escalation pressure",
+        "deny pressure"
+      ],
+      "evidence_inputs": [
+        "RuntimeContext",
+        "RiskEngine sample",
+        "recent validation outcomes"
+      ],
+      "runtime_cost_target": {
+        "strict_hot_path_ns_max": 20,
+        "hardened_hot_path_ns_max": 200,
+        "cadence": "per_call"
+      },
+      "benefit_target": {
+        "value_category": "Safety critical",
+        "baseline_alternative": "Binary safe/unsafe classification.",
+        "measurable_benefit": "Continuous risk scoring enables proportional response; reduces unnecessary full-validation by ~30%.",
+        "impact": 4,
+        "confidence": 4,
+        "effort": 2,
+        "score": 8.0,
+        "retention_threshold": 2.0,
+        "verdict": "retain"
+      }
+    },
+    {
+      "module": "serre_spectral",
+      "tier": "research",
+      "in_manifest": true,
+      "in_production_manifest": false,
+      "in_research_only_manifest": true,
+      "decision_hook": "RuntimeMathKernel::decide via cached serre_spectral controller state",
+      "invariant": "Safety monotonicity: serre_spectral may only preserve or tighten validation/repair/deny outcomes.",
+      "fallback_when_data_missing": "Treat serre_spectral signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
+      "action_outputs": [
+        "risk_ppm_bonus contribution",
+        "validation profile escalation",
+        "membrane action escalation"
+      ],
+      "evidence_inputs": [
+        "RuntimeContext",
+        "ValidationObservation",
+        "cached_serre_spectral_state"
+      ],
+      "runtime_cost_target": {
+        "strict_hot_path_ns_max": null,
+        "hardened_hot_path_ns_max": null,
+        "cadence": "research_or_unclassified"
+      },
+      "benefit_target": null
+    },
+    {
+      "module": "sobol",
+      "tier": "production_monitor",
+      "in_manifest": true,
+      "in_production_manifest": true,
+      "in_research_only_manifest": false,
+      "decision_hook": "RuntimeMathKernel::resample_high_order_kernels deterministic low-discrepancy sequencing",
+      "invariant": "Sequence generation remains deterministic for identical seeds and counters.",
+      "fallback_when_data_missing": "Fall back to deterministic fixed-step probe schedule when Sobol state is unavailable.",
+      "action_outputs": [
+        "deterministic probe sample",
+        "design scheduler input"
+      ],
+      "evidence_inputs": [
+        "sobol seed",
+        "dimension",
+        "counter"
+      ],
+      "runtime_cost_target": {
+        "strict_hot_path_ns_max": null,
+        "hardened_hot_path_ns_max": null,
+        "cadence": "cadence_gated"
+      },
+      "benefit_target": {
+        "value_category": "Coverage scheduling",
+        "baseline_alternative": "Random uniform sampling.",
+        "measurable_benefit": "Low-discrepancy sequences achieve better coverage with fewer samples. ~40% fewer probes needed.",
+        "impact": 3,
+        "confidence": 3,
+        "effort": 1,
+        "score": 9.0,
+        "retention_threshold": 2.0,
+        "verdict": "retain"
+      }
+    },
+    {
+      "module": "sos_barrier",
+      "tier": "research",
+      "in_manifest": true,
+      "in_production_manifest": false,
+      "in_research_only_manifest": true,
+      "decision_hook": "RuntimeMathKernel::decide polynomial barrier certificate evaluation",
+      "invariant": "Safety monotonicity: sos_barrier may only preserve or tighten validation/repair/deny outcomes.",
+      "fallback_when_data_missing": "Use static conservative barrier margin floor when certificate state is unavailable.",
+      "action_outputs": [
+        "barrier margin",
+        "deny/full-validate pressure"
+      ],
+      "evidence_inputs": [
+        "state vector",
+        "certificate coefficients",
+        "mode"
+      ],
+      "runtime_cost_target": {
+        "strict_hot_path_ns_max": null,
+        "hardened_hot_path_ns_max": null,
+        "cadence": "research_or_unclassified"
+      },
+      "benefit_target": null
+    },
+    {
+      "module": "sos_invariant",
+      "tier": "research",
+      "in_manifest": true,
+      "in_production_manifest": false,
+      "in_research_only_manifest": true,
+      "decision_hook": "RuntimeMathKernel::decide via cached sos_invariant controller state",
+      "invariant": "Safety monotonicity: sos_invariant may only preserve or tighten validation/repair/deny outcomes.",
+      "fallback_when_data_missing": "Treat sos_invariant signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
+      "action_outputs": [
+        "risk_ppm_bonus contribution",
+        "validation profile escalation",
+        "membrane action escalation"
+      ],
+      "evidence_inputs": [
+        "RuntimeContext",
+        "ValidationObservation",
+        "cached_sos_invariant_state"
+      ],
+      "runtime_cost_target": {
+        "strict_hot_path_ns_max": null,
+        "hardened_hot_path_ns_max": null,
+        "cadence": "research_or_unclassified"
+      },
+      "benefit_target": null
+    },
+    {
+      "module": "sparse",
+      "tier": "research",
+      "in_manifest": true,
+      "in_production_manifest": false,
+      "in_research_only_manifest": true,
+      "decision_hook": "RuntimeMathKernel::observe_validation_result latent fault-source concentration updates",
+      "invariant": "Safety monotonicity: sparse may only preserve or tighten validation/repair/deny outcomes.",
+      "fallback_when_data_missing": "Treat sparse signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
+      "action_outputs": [
+        "concentration bonus",
+        "targeted escalation pressure"
+      ],
+      "evidence_inputs": [
+        "probe anomalies",
+        "family-level severities",
+        "sparse state"
+      ],
+      "runtime_cost_target": {
+        "strict_hot_path_ns_max": null,
+        "hardened_hot_path_ns_max": null,
+        "cadence": "research_or_unclassified"
+      },
+      "benefit_target": null
+    },
+    {
+      "module": "spectral_gap",
+      "tier": "research",
+      "in_manifest": true,
+      "in_production_manifest": false,
+      "in_research_only_manifest": true,
+      "decision_hook": "RuntimeMathKernel::decide via cached spectral_gap controller state",
+      "invariant": "Safety monotonicity: spectral_gap may only preserve or tighten validation/repair/deny outcomes.",
+      "fallback_when_data_missing": "Treat spectral_gap signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
+      "action_outputs": [
+        "risk_ppm_bonus contribution",
+        "validation profile escalation",
+        "membrane action escalation"
+      ],
+      "evidence_inputs": [
+        "RuntimeContext",
+        "ValidationObservation",
+        "cached_spectral_gap_state"
+      ],
+      "runtime_cost_target": {
+        "strict_hot_path_ns_max": null,
+        "hardened_hot_path_ns_max": null,
+        "cadence": "research_or_unclassified"
+      },
+      "benefit_target": null
+    },
+    {
+      "module": "stein_discrepancy",
+      "tier": "research",
+      "in_manifest": true,
+      "in_production_manifest": false,
+      "in_research_only_manifest": true,
+      "decision_hook": "RuntimeMathKernel::decide via cached stein_discrepancy controller state",
+      "invariant": "Safety monotonicity: stein_discrepancy may only preserve or tighten validation/repair/deny outcomes.",
+      "fallback_when_data_missing": "Treat stein_discrepancy signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
+      "action_outputs": [
+        "risk_ppm_bonus contribution",
+        "validation profile escalation",
+        "membrane action escalation"
+      ],
+      "evidence_inputs": [
+        "RuntimeContext",
+        "ValidationObservation",
+        "cached_stein_discrepancy_state"
+      ],
+      "runtime_cost_target": {
+        "strict_hot_path_ns_max": null,
+        "hardened_hot_path_ns_max": null,
+        "cadence": "research_or_unclassified"
+      },
+      "benefit_target": null
+    },
+    {
+      "module": "submodular_coverage",
+      "tier": "production_monitor",
+      "in_manifest": true,
+      "in_production_manifest": true,
+      "in_research_only_manifest": false,
+      "decision_hook": "RuntimeMathKernel::decide via cached submodular_coverage controller state",
+      "invariant": "Safety monotonicity: submodular_coverage may only preserve or tighten validation/repair/deny outcomes.",
+      "fallback_when_data_missing": "Treat submodular_coverage signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
+      "action_outputs": [
+        "risk_ppm_bonus contribution",
+        "validation profile escalation",
+        "membrane action escalation"
+      ],
+      "evidence_inputs": [
+        "RuntimeContext",
+        "ValidationObservation",
+        "cached_submodular_coverage_state"
+      ],
+      "runtime_cost_target": {
+        "strict_hot_path_ns_max": null,
+        "hardened_hot_path_ns_max": null,
+        "cadence": "cadence_gated"
+      },
+      "benefit_target": {
+        "value_category": "Validation optimization",
+        "baseline_alternative": "Fixed validation stage ordering.",
+        "measurable_benefit": "Greedy submodular optimization selects validation stages for maximum marginal coverage.",
+        "impact": 2,
+        "confidence": 3,
+        "effort": 2,
+        "score": 3.0,
+        "retention_threshold": 2.0,
+        "verdict": "retain"
+      }
+    },
+    {
+      "module": "transfer_entropy",
+      "tier": "research",
+      "in_manifest": true,
+      "in_production_manifest": false,
+      "in_research_only_manifest": true,
+      "decision_hook": "RuntimeMathKernel::decide via cached transfer_entropy controller state",
+      "invariant": "Safety monotonicity: transfer_entropy may only preserve or tighten validation/repair/deny outcomes.",
+      "fallback_when_data_missing": "Treat transfer_entropy signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
+      "action_outputs": [
+        "risk_ppm_bonus contribution",
+        "validation profile escalation",
+        "membrane action escalation"
+      ],
+      "evidence_inputs": [
+        "RuntimeContext",
+        "ValidationObservation",
+        "cached_transfer_entropy_state"
+      ],
+      "runtime_cost_target": {
+        "strict_hot_path_ns_max": null,
+        "hardened_hot_path_ns_max": null,
+        "cadence": "research_or_unclassified"
+      },
+      "benefit_target": null
+    },
+    {
+      "module": "wasserstein_drift",
+      "tier": "research",
+      "in_manifest": true,
+      "in_production_manifest": false,
+      "in_research_only_manifest": true,
+      "decision_hook": "RuntimeMathKernel::decide via cached wasserstein_drift controller state",
+      "invariant": "Safety monotonicity: wasserstein_drift may only preserve or tighten validation/repair/deny outcomes.",
+      "fallback_when_data_missing": "Treat wasserstein_drift signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
+      "action_outputs": [
+        "risk_ppm_bonus contribution",
+        "validation profile escalation",
+        "membrane action escalation"
+      ],
+      "evidence_inputs": [
+        "RuntimeContext",
+        "ValidationObservation",
+        "cached_wasserstein_drift_state"
+      ],
+      "runtime_cost_target": {
+        "strict_hot_path_ns_max": null,
+        "hardened_hot_path_ns_max": null,
+        "cadence": "research_or_unclassified"
+      },
+      "benefit_target": null
+    }
+  ]
+}

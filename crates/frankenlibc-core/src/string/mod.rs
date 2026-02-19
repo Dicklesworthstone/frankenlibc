@@ -20,9 +20,10 @@ pub use str::{
 pub use strtok::{strtok, strtok_r};
 pub use wchar::{
     iswalnum, iswalpha, iswdigit, iswlower, iswprint, iswspace, iswupper, mblen as mb_len,
-    mbstowcs, mbtowc, towlower as wc_tolower, towupper as wc_toupper, wcstombs, wcwidth, wctomb,
+    mbstowcs, mbtowc, towlower as wc_tolower, towupper as wc_toupper, wcstombs, wctomb, wcwidth,
 };
 pub use wide::{
-    wcscat, wcscmp, wcscpy, wcscspn, wcsdup_len, wcslen, wcsncat, wcsncmp, wcsncpy, wcspbrk,
-    wcsrchr, wcsspn, wcsstr, wcstok, wmemchr, wmemcmp, wmemcpy, wmemmove, wmemset,
+    wcscat, wcscmp, wcscpy, wcscspn, wcsdup_len, wcslen, wcsncat, wcsncmp, wcsncpy, wcsnlen,
+    wcspbrk, wcsrchr, wcsspn, wcsstr, wcstok, wcswidth, wmemchr, wmemcmp, wmemcpy, wmemmove,
+    wmemset,
 };

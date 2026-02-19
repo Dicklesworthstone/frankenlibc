@@ -260,6 +260,13 @@ pub fn execute_fixture_case(
         "encode_domain_name" => execute_encode_domain_name_case(inputs, mode),
         "lookup_hosts" => execute_lookup_hosts_case(inputs, mode),
         "getaddrinfo" => execute_getaddrinfo_case(inputs, mode),
+        "gethostbyname" => execute_gethostbyname_case(inputs, mode),
+        "getpwnam" => execute_getpwnam_case(inputs, mode),
+        "getpwuid" => execute_getpwuid_case(inputs, mode),
+        "setpwent" => execute_setpwent_case(inputs, mode),
+        "getgrnam" => execute_getgrnam_case(inputs, mode),
+        "getgrgid" => execute_getgrgid_case(inputs, mode),
+        "setgrent" => execute_setgrent_case(inputs, mode),
         // stdio
         "fopen" => execute_fopen_case(inputs, mode),
         "fclose" => execute_fclose_case(inputs, mode),
@@ -763,6 +770,109 @@ fn execute_getaddrinfo_case(
     };
 
     Ok(non_host_execution(impl_output))
+}
+
+fn execute_gethostbyname_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let name = parse_string(inputs, "name")?;
+    let name_c = CString::new(name).map_err(|_| String::from("name contains interior NUL"))?;
+    // SAFETY: CString guarantees valid NUL-terminated C string input.
+    let hostent = unsafe { frankenlibc_abi::resolv_abi::gethostbyname(name_c.as_ptr()) };
+    let impl_output = if hostent.is_null() {
+        "NULL"
+    } else {
+        "HOSTENT_PTR"
+    };
+    Ok(non_host_execution(impl_output.to_string()))
+}
+
+fn execute_getpwnam_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let name = parse_string(inputs, "name")?;
+    let name_c = CString::new(name).map_err(|_| String::from("name contains interior NUL"))?;
+    // SAFETY: CString guarantees a valid NUL-terminated C string input.
+    let entry = unsafe { frankenlibc_abi::pwd_abi::getpwnam(name_c.as_ptr()) };
+    let impl_output = if entry.is_null() {
+        "NULL"
+    } else {
+        "PASSWD_PTR"
+    };
+    Ok(non_host_execution(impl_output.to_string()))
+}
+
+fn execute_getpwuid_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let uid = parse_u64(inputs, "uid")?;
+    let uid = libc::uid_t::try_from(uid).map_err(|_| format!("uid out of range: {uid}"))?;
+    // SAFETY: getpwuid accepts any uid_t value.
+    let entry = unsafe { frankenlibc_abi::pwd_abi::getpwuid(uid) };
+    let impl_output = if entry.is_null() {
+        "NULL"
+    } else {
+        "PASSWD_PTR"
+    };
+    Ok(non_host_execution(impl_output.to_string()))
+}
+
+fn execute_setpwent_case(
+    _inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    // SAFETY: setpwent/endpwent are side-effect-only libc enumeration controls.
+    unsafe {
+        frankenlibc_abi::pwd_abi::setpwent();
+        frankenlibc_abi::pwd_abi::endpwent();
+    }
+    Ok(non_host_execution(String::from("VOID")))
+}
+
+fn execute_getgrnam_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let name = parse_string(inputs, "name")?;
+    let name_c = CString::new(name).map_err(|_| String::from("name contains interior NUL"))?;
+    // SAFETY: CString guarantees a valid NUL-terminated C string input.
+    let entry = unsafe { frankenlibc_abi::grp_abi::getgrnam(name_c.as_ptr()) };
+    let impl_output = if entry.is_null() { "NULL" } else { "GROUP_PTR" };
+    Ok(non_host_execution(impl_output.to_string()))
+}
+
+fn execute_getgrgid_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let gid = parse_u64(inputs, "gid")?;
+    let gid = libc::gid_t::try_from(gid).map_err(|_| format!("gid out of range: {gid}"))?;
+    // SAFETY: getgrgid accepts any gid_t value.
+    let entry = unsafe { frankenlibc_abi::grp_abi::getgrgid(gid) };
+    let impl_output = if entry.is_null() { "NULL" } else { "GROUP_PTR" };
+    Ok(non_host_execution(impl_output.to_string()))
+}
+
+fn execute_setgrent_case(
+    _inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    // SAFETY: setgrent/endgrent are side-effect-only libc enumeration controls.
+    unsafe {
+        frankenlibc_abi::grp_abi::setgrent();
+        frankenlibc_abi::grp_abi::endgrent();
+    }
+    Ok(non_host_execution(String::from("VOID")))
 }
 
 #[must_use]
@@ -5208,6 +5318,115 @@ mod tests {
     }
 
     #[test]
+    fn pwd_ops_fixture_cases_match_execute_fixture_case() {
+        #[derive(Deserialize)]
+        struct FixtureCaseLite {
+            name: String,
+            function: String,
+            inputs: serde_json::Value,
+            expected_output: String,
+            mode: String,
+        }
+
+        #[derive(Deserialize)]
+        struct FixtureSetLite {
+            cases: Vec<FixtureCaseLite>,
+        }
+
+        let raw = include_str!("../../../tests/conformance/fixtures/pwd_ops.json");
+        let fixture: FixtureSetLite =
+            serde_json::from_str(raw).expect("pwd_ops fixture should parse");
+
+        for case in fixture.cases {
+            let result = execute_fixture_case(&case.function, &case.inputs, &case.mode)
+                .unwrap_or_else(|err| {
+                    panic!("fixture case {} failed to execute: {err}", case.name)
+                });
+            assert_eq!(
+                result.impl_output, case.expected_output,
+                "fixture expected_output mismatch for {}",
+                case.name
+            );
+        }
+    }
+
+    #[test]
+    fn grp_ops_fixture_cases_match_execute_fixture_case() {
+        #[derive(Deserialize)]
+        struct FixtureCaseLite {
+            name: String,
+            function: String,
+            inputs: serde_json::Value,
+            expected_output: String,
+            mode: String,
+        }
+
+        #[derive(Deserialize)]
+        struct FixtureSetLite {
+            cases: Vec<FixtureCaseLite>,
+        }
+
+        let raw = include_str!("../../../tests/conformance/fixtures/grp_ops.json");
+        let fixture: FixtureSetLite =
+            serde_json::from_str(raw).expect("grp_ops fixture should parse");
+
+        for case in fixture.cases {
+            let result = execute_fixture_case(&case.function, &case.inputs, &case.mode)
+                .unwrap_or_else(|err| {
+                    panic!("fixture case {} failed to execute: {err}", case.name)
+                });
+            assert_eq!(
+                result.impl_output, case.expected_output,
+                "fixture expected_output mismatch for {}",
+                case.name
+            );
+        }
+    }
+
+    #[test]
+    fn execute_getpwnam_hardened_missing_user_returns_null() {
+        let inputs = serde_json::json!({
+            "name": "definitely_missing_frankenlibc_test_user"
+        });
+        let result =
+            execute_fixture_case("getpwnam", &inputs, "hardened").expect("getpwnam should execute");
+        assert_eq!(result.impl_output, "NULL");
+        assert_eq!(result.host_output, "SKIP");
+        assert!(result.host_parity);
+    }
+
+    #[test]
+    fn execute_setgrent_hardened_returns_void_shape() {
+        let result = execute_fixture_case("setgrent", &serde_json::json!({}), "hardened")
+            .expect("setgrent should execute");
+        assert_eq!(result.impl_output, "VOID");
+        assert_eq!(result.host_output, "SKIP");
+        assert!(result.host_parity);
+    }
+
+    #[test]
+    fn execute_getaddrinfo_hosts_subset_hardened_matches_fixture_shape() {
+        let result = execute_fixture_case(
+            "getaddrinfo",
+            &serde_json::json!({
+                "node": "app",
+                "service": "8080",
+                "hosts_content": "127.0.0.1 localhost\n10.20.30.40 app app.internal\n"
+            }),
+            "hardened",
+        )
+        .expect("getaddrinfo should execute");
+        let parsed: serde_json::Value =
+            serde_json::from_str(&result.impl_output).expect("output must be json object");
+        assert_eq!(
+            parsed,
+            serde_json::json!({"ai_family": 2, "ai_addr": [10, 20, 30, 40]})
+        );
+        assert_eq!(result.host_output, "SKIP");
+        assert!(result.host_parity);
+    }
+
+    #[test]
     fn execute_iconv_case_strict_success() {
         let inputs = serde_json::json!({
             "tocode": "UTF-16LE",
@@ -5503,6 +5722,24 @@ mod tests {
                 "hosts_content": "127.0.0.1 localhost\n10.20.30.40 app app.internal\n"
             }),
             "{\"ai_addr\":[10,20,30,40],\"ai_family\":2}",
+            Some("SKIP"),
+            true,
+            None,
+        );
+    }
+
+    #[test]
+    fn execute_gethostbyname_case_numeric_ipv4_returns_pointer_shape() {
+        assert_differential_contract(
+            "nss",
+            "gethostbyname-numeric-ipv4",
+            "tests/conformance/fixtures/resolver.json#/cases/gethostbyname_numeric_ipv4",
+            "gethostbyname",
+            "strict",
+            serde_json::json!({
+                "name": "127.0.0.1"
+            }),
+            "HOSTENT_PTR",
             Some("SKIP"),
             true,
             None,

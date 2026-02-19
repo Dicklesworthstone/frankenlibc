@@ -11,6 +11,32 @@ pub fn wcslen(s: &[u32]) -> usize {
     s.iter().position(|&c| c == 0).unwrap_or(s.len())
 }
 
+/// Returns the length of a wide string, bounded by `maxlen`.
+///
+/// Equivalent to C `wcsnlen`.
+pub fn wcsnlen(s: &[u32], maxlen: usize) -> usize {
+    let limit = maxlen.min(s.len());
+    s.iter().take(limit).position(|&c| c == 0).unwrap_or(limit)
+}
+
+/// Computes the display width of up to `n` wide characters.
+///
+/// Equivalent to C `wcswidth`. Returns `-1` if any character is non-printable.
+pub fn wcswidth(s: &[u32], n: usize) -> i32 {
+    let mut total = 0_i32;
+    for &wc in s.iter().take(n) {
+        if wc == 0 {
+            break;
+        }
+        let width = super::wchar::wcwidth(wc);
+        if width < 0 {
+            return -1;
+        }
+        total = total.saturating_add(width);
+    }
+    total
+}
+
 /// Copies a NUL-terminated wide string from `src` into `dest`.
 ///
 /// Equivalent to C `wcscpy`. Copies elements from `src` until (and including)
@@ -382,6 +408,22 @@ mod tests {
         assert_eq!(wcslen(&[b'h' as u32, b'i' as u32, 0]), 2);
         assert_eq!(wcslen(&[0]), 0);
         assert_eq!(wcslen(&[65, 66, 67]), 3); // no NUL found
+    }
+
+    #[test]
+    fn test_wcsnlen_basic() {
+        let value = [b'a' as u32, b'b' as u32, 0, b'c' as u32];
+        assert_eq!(wcsnlen(&value, 8), 2);
+        assert_eq!(wcsnlen(&value, 1), 1);
+        assert_eq!(wcsnlen(&[b'a' as u32, b'b' as u32], 8), 2);
+    }
+
+    #[test]
+    fn test_wcswidth_basic() {
+        let value = [b'A' as u32, '界' as u32, 0];
+        assert_eq!(wcswidth(&value, 8), 3);
+        assert_eq!(wcswidth(&value, 1), 1);
+        assert_eq!(wcswidth(&[0x07, 0], 8), -1);
     }
 
     #[test]

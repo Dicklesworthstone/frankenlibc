@@ -70,6 +70,34 @@
       "expected_output": "GROUP_PTR",
       "expected_errno": 0,
       "mode": "hardened"
+    },
+    {
+      "name": "getgrnam_nonexistent_hardened",
+      "function": "getgrnam",
+      "spec_section": "POSIX getgrnam",
+      "inputs": { "name": "nonexistent_group_xyz" },
+      "expected_output": "NULL",
+      "expected_errno": 0,
+      "mode": "hardened",
+      "note": "Unknown group remains NULL in hardened mode for files backend lookups"
+    },
+    {
+      "name": "getgrgid_nonexistent_hardened",
+      "function": "getgrgid",
+      "spec_section": "POSIX getgrgid",
+      "inputs": { "gid": 99999 },
+      "expected_output": "NULL",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "setgrent_endgrent_hardened",
+      "function": "setgrent",
+      "spec_section": "POSIX setgrent/endgrent",
+      "inputs": {},
+      "expected_output": "VOID",
+      "expected_errno": 0,
+      "mode": "hardened"
     }
   ]
 }

@@ -151,6 +151,54 @@
       "mode": "strict"
     },
     {
+      "name": "hosts_lookup_basic_hardened",
+      "function": "lookup_hosts",
+      "spec_section": "/etc/hosts format",
+      "inputs": {
+        "content": "127.0.0.1 localhost\n192.168.1.1 myhost\n",
+        "name": "myhost"
+      },
+      "expected_output": ["192.168.1.1"],
+      "mode": "hardened"
+    },
+    {
+      "name": "hosts_lookup_case_insensitive_hardened",
+      "function": "lookup_hosts",
+      "spec_section": "/etc/hosts format",
+      "inputs": {
+        "content": "10.0.0.1 MyHost\n",
+        "name": "myhost"
+      },
+      "expected_output": ["10.0.0.1"],
+      "mode": "hardened"
+    },
+    {
+      "name": "hosts_lookup_inline_comments_and_aliases_hardened",
+      "function": "lookup_hosts",
+      "spec_section": "/etc/hosts format",
+      "inputs": {
+        "content": "# resolver fixture\n::1 localhost localhost6 # loopback\n10.0.0.7 api api.internal # primary\n10.0.0.8 API # duplicate in different case\n",
+        "name": "api"
+      },
+      "expected_output": ["10.0.0.7", "10.0.0.8"],
+      "mode": "hardened"
+    },
+    {
+      "name": "getaddrinfo_hosts_file_subset_hardened",
+      "function": "getaddrinfo",
+      "spec_section": "/etc/hosts files backend subset",
+      "inputs": {
+        "node": "app",
+        "service": "8080",
+        "hosts_content": "127.0.0.1 localhost\n10.20.30.40 app app.internal\n"
+      },
+      "expected_output": {
+        "ai_family": 2,
+        "ai_addr": [10, 20, 30, 40]
+      },
+      "mode": "hardened"
+    },
+    {
       "name": "getaddrinfo_numeric_ipv4",
       "function": "getaddrinfo",
       "spec_section": "POSIX getaddrinfo",
@@ -179,6 +227,22 @@
       "inputs": { "node": "nonexistent.example", "service": null },
       "expected_output": "Err(EAI_NONAME)",
       "mode": "strict"
+    },
+    {
+      "name": "gethostbyname_numeric_ipv4",
+      "function": "gethostbyname",
+      "spec_section": "POSIX gethostbyname",
+      "inputs": { "name": "127.0.0.1" },
+      "expected_output": "HOSTENT_PTR",
+      "mode": "strict"
+    },
+    {
+      "name": "gethostbyname_numeric_ipv4_hardened",
+      "function": "gethostbyname",
+      "spec_section": "POSIX gethostbyname",
+      "inputs": { "name": "127.0.0.1" },
+      "expected_output": "HOSTENT_PTR",
+      "mode": "hardened"
     }
   ],
   "dns_protocol": {

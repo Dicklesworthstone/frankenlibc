@@ -340,7 +340,11 @@ pub unsafe extern "C" fn vfork() -> libc::pid_t {
 
 unsafe extern "C" {
     #[link_name = "execvpe"]
-    fn libc_execvpe(file: *const c_char, argv: *const *const c_char, envp: *const *const c_char) -> c_int;
+    fn libc_execvpe(
+        file: *const c_char,
+        argv: *const *const c_char,
+        envp: *const *const c_char,
+    ) -> c_int;
 }
 
 /// POSIX `execvpe` — exec with path search and custom environment.

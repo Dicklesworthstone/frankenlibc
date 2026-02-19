@@ -178,7 +178,11 @@ unsafe extern "C" {
     #[link_name = "dgettext"]
     fn libc_dgettext(domainname: *const c_char, msgid: *const c_char) -> *mut c_char;
     #[link_name = "ngettext"]
-    fn libc_ngettext(msgid: *const c_char, msgid_plural: *const c_char, n: libc::c_ulong) -> *mut c_char;
+    fn libc_ngettext(
+        msgid: *const c_char,
+        msgid_plural: *const c_char,
+        n: libc::c_ulong,
+    ) -> *mut c_char;
     #[link_name = "textdomain"]
     fn libc_textdomain(domainname: *const c_char) -> *mut c_char;
     #[link_name = "bindtextdomain"]

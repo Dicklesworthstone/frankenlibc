@@ -1570,7 +1570,7 @@ pub unsafe extern "C" fn sscanf(s: *const c_char, format: *const c_char, mut arg
 pub unsafe extern "C" fn fscanf(
     stream: *mut c_void,
     format: *const c_char,
-    mut args: ...,
+    mut args: ...
 ) -> c_int {
     unsafe { libc_vfscanf(stream, format, (&mut args) as *mut _ as *mut c_void) }
 }
@@ -1958,8 +1958,7 @@ pub unsafe extern "C" fn remove(pathname: *const c_char) -> c_int {
     }
 
     // Try unlink first; if EISDIR, try rmdir.
-    let ret =
-        unsafe { libc::syscall(libc::SYS_unlinkat as c_long, libc::AT_FDCWD, pathname, 0) };
+    let ret = unsafe { libc::syscall(libc::SYS_unlinkat as c_long, libc::AT_FDCWD, pathname, 0) };
     if ret == 0 {
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, false);
         return 0;
@@ -2128,7 +2127,14 @@ pub unsafe extern "C" fn tmpfile() -> *mut c_void {
             return std::ptr::null_mut();
         }
         // Unlink immediately so it's deleted on close.
-        unsafe { libc::syscall(libc::SYS_unlinkat as c_long, libc::AT_FDCWD, path.as_ptr(), 0) };
+        unsafe {
+            libc::syscall(
+                libc::SYS_unlinkat as c_long,
+                libc::AT_FDCWD,
+                path.as_ptr(),
+                0,
+            )
+        };
 
         let open_flags = OpenFlags {
             readable: true,
@@ -2478,29 +2484,12 @@ pub unsafe extern "C" fn snprintf_chk(
 }
 
 // ---------------------------------------------------------------------------
-// 64-bit aliases — GlibcCallThrough
+// 64-bit aliases
 // ---------------------------------------------------------------------------
-
-unsafe extern "C" {
-    #[link_name = "fopen64"]
-    fn libc_fopen64(pathname: *const c_char, mode: *const c_char) -> *mut c_void;
-    #[link_name = "freopen64"]
-    fn libc_freopen64(pathname: *const c_char, mode: *const c_char, stream: *mut c_void) -> *mut c_void;
-    #[link_name = "tmpfile64"]
-    fn libc_tmpfile64() -> *mut c_void;
-    #[link_name = "fseeko64"]
-    fn libc_fseeko64(stream: *mut c_void, offset: i64, whence: c_int) -> c_int;
-    #[link_name = "ftello64"]
-    fn libc_ftello64(stream: *mut c_void) -> i64;
-    #[link_name = "fgetpos64"]
-    fn libc_fgetpos64(stream: *mut c_void, pos: *mut c_void) -> c_int;
-    #[link_name = "fsetpos64"]
-    fn libc_fsetpos64(stream: *mut c_void, pos: *const c_void) -> c_int;
-}
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fopen64(pathname: *const c_char, mode: *const c_char) -> *mut c_void {
-    unsafe { libc_fopen64(pathname, mode) }
+    unsafe { fopen(pathname, mode) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -2509,105 +2498,113 @@ pub unsafe extern "C" fn freopen64(
     mode: *const c_char,
     stream: *mut c_void,
 ) -> *mut c_void {
-    unsafe { libc_freopen64(pathname, mode, stream) }
+    unsafe { freopen(pathname, mode, stream) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn tmpfile64() -> *mut c_void {
-    unsafe { libc_tmpfile64() }
+    unsafe { tmpfile() }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fseeko64(stream: *mut c_void, offset: i64, whence: c_int) -> c_int {
-    unsafe { libc_fseeko64(stream, offset, whence) }
+    unsafe { fseeko(stream, offset, whence) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn ftello64(stream: *mut c_void) -> i64 {
-    unsafe { libc_ftello64(stream) }
+    unsafe { ftello(stream) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fgetpos64(stream: *mut c_void, pos: *mut c_void) -> c_int {
-    unsafe { libc_fgetpos64(stream, pos) }
+    if pos.is_null() {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return -1;
+    }
+    unsafe { fgetpos(stream, pos.cast::<libc::fpos_t>()) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fsetpos64(stream: *mut c_void, pos: *const c_void) -> c_int {
-    unsafe { libc_fsetpos64(stream, pos) }
+    if pos.is_null() {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return -1;
+    }
+    unsafe { fsetpos(stream, pos.cast::<libc::fpos_t>()) }
 }
 
 // ---------------------------------------------------------------------------
-// stdio extras — GlibcCallThrough
+// stdio extras
 // ---------------------------------------------------------------------------
 
 unsafe extern "C" {
-    #[link_name = "setlinebuf"]
-    fn libc_setlinebuf(stream: *mut c_void);
-    #[link_name = "flockfile"]
-    fn libc_flockfile(stream: *mut c_void);
-    #[link_name = "ftrylockfile"]
-    fn libc_ftrylockfile(stream: *mut c_void) -> c_int;
-    #[link_name = "funlockfile"]
-    fn libc_funlockfile(stream: *mut c_void);
-    #[link_name = "getc_unlocked"]
-    fn libc_getc_unlocked(stream: *mut c_void) -> c_int;
-    #[link_name = "putc_unlocked"]
-    fn libc_putc_unlocked(c: c_int, stream: *mut c_void) -> c_int;
-    #[link_name = "fgetc_unlocked"]
-    fn libc_fgetc_unlocked(stream: *mut c_void) -> c_int;
-    #[link_name = "fputc_unlocked"]
-    fn libc_fputc_unlocked(c: c_int, stream: *mut c_void) -> c_int;
     #[link_name = "fmemopen"]
     fn libc_fmemopen(buf: *mut c_void, size: usize, mode: *const c_char) -> *mut c_void;
     #[link_name = "open_memstream"]
     fn libc_open_memstream(ptr: *mut *mut c_char, sizeloc: *mut usize) -> *mut c_void;
     #[link_name = "fopencookie"]
-    fn libc_fopencookie(cookie: *mut c_void, mode: *const c_char, funcs: *const c_void) -> *mut c_void;
+    fn libc_fopencookie(
+        cookie: *mut c_void,
+        mode: *const c_char,
+        funcs: *const c_void,
+    ) -> *mut c_void;
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn setlinebuf(stream: *mut c_void) {
-    unsafe { libc_setlinebuf(stream) }
+    let _ = unsafe { setvbuf(stream, std::ptr::null_mut(), 1, 0) };
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn flockfile(stream: *mut c_void) {
-    unsafe { libc_flockfile(stream) }
+    if stream.is_null() {
+        unsafe { set_abi_errno(errno::EINVAL) };
+    }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn ftrylockfile(stream: *mut c_void) -> c_int {
-    unsafe { libc_ftrylockfile(stream) }
+    if stream.is_null() {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return -1;
+    }
+    0
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn funlockfile(stream: *mut c_void) {
-    unsafe { libc_funlockfile(stream) }
+    if stream.is_null() {
+        unsafe { set_abi_errno(errno::EINVAL) };
+    }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getc_unlocked(stream: *mut c_void) -> c_int {
-    unsafe { libc_getc_unlocked(stream) }
+    unsafe { getc(stream) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn putc_unlocked(c: c_int, stream: *mut c_void) -> c_int {
-    unsafe { libc_putc_unlocked(c, stream) }
+    unsafe { putc(c, stream) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fgetc_unlocked(stream: *mut c_void) -> c_int {
-    unsafe { libc_fgetc_unlocked(stream) }
+    unsafe { fgetc(stream) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fputc_unlocked(c: c_int, stream: *mut c_void) -> c_int {
-    unsafe { libc_fputc_unlocked(c, stream) }
+    unsafe { fputc(c, stream) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fmemopen(buf: *mut c_void, size: usize, mode: *const c_char) -> *mut c_void {
+pub unsafe extern "C" fn fmemopen(
+    buf: *mut c_void,
+    size: usize,
+    mode: *const c_char,
+) -> *mut c_void {
     unsafe { libc_fmemopen(buf, size, mode) }
 }
 
@@ -2617,6 +2614,10 @@ pub unsafe extern "C" fn open_memstream(ptr: *mut *mut c_char, sizeloc: *mut usi
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fopencookie(cookie: *mut c_void, mode: *const c_char, funcs: *const c_void) -> *mut c_void {
+pub unsafe extern "C" fn fopencookie(
+    cookie: *mut c_void,
+    mode: *const c_char,
+    funcs: *const c_void,
+) -> *mut c_void {
     unsafe { libc_fopencookie(cookie, mode, funcs) }
 }

@@ -4,6 +4,7 @@
 //! On Linux/glibc, `wchar_t` is 32-bit (UTF-32).
 //!
 use std::ffi::c_int;
+use std::os::unix::ffi::OsStrExt;
 
 use frankenlibc_membrane::heal::{HealingAction, global_healing_policy};
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
@@ -1533,7 +1534,8 @@ fn maybe_clamp_wchars(
 // Multibyte ↔ wide character conversion functions
 // ===========================================================================
 
-use frankenlibc_core::string::wchar as wchar_core;
+use frankenlibc_core::string::{wchar as wchar_core, wide as wide_core};
+use frankenlibc_core::stdlib::conversion::ConversionStatus;
 
 /// Set the ABI errno via `__errno_location`.
 #[inline]
@@ -1822,16 +1824,63 @@ pub unsafe extern "C" fn realpath(
         return std::ptr::null_mut();
     }
 
-    // Delegate to libc's realpath via syscall — this is a RawSyscall-style
-    // implementation since path resolution requires kernel filesystem access.
-    let result = unsafe { libc::realpath(path, resolved_path) };
-    if result.is_null() {
-        let e = std::io::Error::last_os_error()
-            .raw_os_error()
-            .unwrap_or(errno::ENOENT);
-        unsafe { set_abi_errno(e) };
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::IoFd,
+        path as usize,
+        0,
+        false,
+        known_remaining(path as usize).is_none(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, true);
+        return std::ptr::null_mut();
     }
-    result
+
+    // SAFETY: `path` is non-null and must point to a NUL-terminated C string by ABI contract.
+    let path_bytes = unsafe { std::ffi::CStr::from_ptr(path) }.to_bytes();
+    let canonical = match std::fs::canonicalize(std::ffi::OsStr::from_bytes(path_bytes)) {
+        Ok(p) => p,
+        Err(e) => {
+            unsafe { set_abi_errno(e.raw_os_error().unwrap_or(errno::ENOENT)) };
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 16, true);
+            return std::ptr::null_mut();
+        }
+    };
+
+    let out = canonical.as_os_str().as_bytes();
+    if out.iter().any(|&b| b == 0) {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 16, true);
+        return std::ptr::null_mut();
+    }
+
+    let dst = if resolved_path.is_null() {
+        // SAFETY: allocates writable C-compatible storage for the canonical path plus terminator.
+        let alloc = unsafe { crate::malloc_abi::malloc(out.len() + 1) as *mut std::ffi::c_char };
+        if alloc.is_null() {
+            unsafe { set_abi_errno(errno::ENOMEM) };
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 16, true);
+            return std::ptr::null_mut();
+        }
+        alloc
+    } else {
+        resolved_path
+    };
+
+    // SAFETY: caller guarantees destination capacity when `resolved_path` is non-null.
+    unsafe {
+        std::ptr::copy_nonoverlapping(out.as_ptr() as *const std::ffi::c_char, dst, out.len());
+        *dst.add(out.len()) = 0;
+    }
+    runtime_policy::observe(
+        ApiFamily::IoFd,
+        decision.profile,
+        runtime_policy::scaled_cost(18, out.len().max(1)),
+        false,
+    );
+    dst
 }
 
 // ---------------------------------------------------------------------------
@@ -1844,76 +1893,129 @@ pub unsafe extern "C" fn realpath(
 /// Returns the file descriptor on success, -1 on error.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn mkstemp(template: *mut std::ffi::c_char) -> c_int {
-    use frankenlibc_core::errno;
-
-    if template.is_null() {
-        unsafe { set_abi_errno(errno::EINVAL) };
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Stdlib,
+        template as usize,
+        0,
+        true,
+        template.is_null() || known_remaining(template as usize).is_none(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(libc::EPERM) };
+        runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 8, true);
         return -1;
     }
 
-    // Delegate to libc's mkstemp — this requires filesystem access
-    let result = unsafe { libc::mkstemp(template) };
-    if result < 0 {
-        let e = std::io::Error::last_os_error()
-            .raw_os_error()
-            .unwrap_or(errno::EINVAL);
-        unsafe { set_abi_errno(e) };
-    }
-    result
-}
-
-// ---------------------------------------------------------------------------
-// Additional wide char / multibyte functions — GlibcCallThrough
-// ---------------------------------------------------------------------------
-
-unsafe extern "C" {
-    #[link_name = "wcsnlen"]
-    fn libc_wcsnlen(s: *const libc::wchar_t, maxlen: usize) -> usize;
-    #[link_name = "wcswidth"]
-    fn libc_wcswidth(s: *const libc::wchar_t, n: usize) -> c_int;
-    #[link_name = "wctob"]
-    fn libc_wctob(c: u32) -> c_int;
-    #[link_name = "btowc"]
-    fn libc_btowc(c: c_int) -> u32;
-    #[link_name = "wcrtomb"]
-    fn libc_wcrtomb(s: *mut std::ffi::c_char, wc: libc::wchar_t, ps: *mut std::ffi::c_void) -> usize;
-    #[link_name = "mbrtowc"]
-    fn libc_mbrtowc(pwc: *mut libc::wchar_t, s: *const std::ffi::c_char, n: usize, ps: *mut std::ffi::c_void) -> usize;
-    #[link_name = "mbsrtowcs"]
-    fn libc_mbsrtowcs(dst: *mut libc::wchar_t, src: *mut *const std::ffi::c_char, len: usize, ps: *mut std::ffi::c_void) -> usize;
-    #[link_name = "wcsrtombs"]
-    fn libc_wcsrtombs(dst: *mut std::ffi::c_char, src: *mut *const libc::wchar_t, len: usize, ps: *mut std::ffi::c_void) -> usize;
-    #[link_name = "wcstol"]
-    fn libc_wcstol(nptr: *const libc::wchar_t, endptr: *mut *mut libc::wchar_t, base: c_int) -> std::ffi::c_long;
-    #[link_name = "wcstoul"]
-    fn libc_wcstoul(nptr: *const libc::wchar_t, endptr: *mut *mut libc::wchar_t, base: c_int) -> std::ffi::c_ulong;
-    #[link_name = "wcstod"]
-    fn libc_wcstod(nptr: *const libc::wchar_t, endptr: *mut *mut libc::wchar_t) -> f64;
+    // SAFETY: mkstemp is equivalent to mkstemps with suffix length 0.
+    let fd = unsafe { crate::stdlib_abi::mkstemps(template, 0) };
+    runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 12, fd < 0);
+    fd
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn wcsnlen(s: *const libc::wchar_t, maxlen: usize) -> usize {
-    unsafe { libc_wcsnlen(s, maxlen) }
+    if s.is_null() || maxlen == 0 {
+        return 0;
+    }
+
+    let (mode, decision) = runtime_policy::decide(
+        ApiFamily::StringMemory,
+        s as usize,
+        maxlen.saturating_mul(4),
+        false,
+        known_remaining(s as usize).is_none(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::StringMemory, decision.profile, 5, true);
+        return 0;
+    }
+
+    let mut limit = maxlen;
+    if repair_enabled(mode.heals_enabled(), decision.action)
+        && let Some(bytes) = known_remaining(s as usize)
+    {
+        let bounded = bytes_to_wchars(bytes).min(maxlen);
+        if bounded < maxlen {
+            record_truncation(maxlen, bounded);
+        }
+        limit = bounded;
+    }
+
+    // SAFETY: `limit` bounds all reads from `s`.
+    let len = unsafe { wide_core::wcsnlen(std::slice::from_raw_parts(s as *const u32, limit), limit) };
+    runtime_policy::observe(
+        ApiFamily::StringMemory,
+        decision.profile,
+        runtime_policy::scaled_cost(5, len.saturating_mul(4)),
+        false,
+    );
+    len
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn wcswidth(s: *const libc::wchar_t, n: usize) -> c_int {
-    unsafe { libc_wcswidth(s, n) }
+    if s.is_null() {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return -1;
+    }
+    // SAFETY: `wcsnlen` bounds the visible logical string length by `n`.
+    let len = unsafe { wcsnlen(s, n) };
+    // SAFETY: `len <= n`; this limits reads to the caller-provided bound.
+    let slice = unsafe { std::slice::from_raw_parts(s as *const u32, len) };
+    wide_core::wcswidth(slice, len) as c_int
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn wctob(c: u32) -> c_int {
-    unsafe { libc_wctob(c) }
+    if c == u32::MAX {
+        return libc::EOF;
+    }
+    if c <= 0x7F {
+        c as c_int
+    } else {
+        libc::EOF
+    }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn btowc(c: c_int) -> u32 {
-    unsafe { libc_btowc(c) }
+    if c == libc::EOF {
+        return u32::MAX;
+    }
+    if (0..=0x7F).contains(&c) {
+        c as u32
+    } else {
+        u32::MAX
+    }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn wcrtomb(s: *mut std::ffi::c_char, wc: libc::wchar_t, ps: *mut std::ffi::c_void) -> usize {
-    unsafe { libc_wcrtomb(s, wc, ps) }
+pub unsafe extern "C" fn wcrtomb(
+    s: *mut std::ffi::c_char,
+    wc: libc::wchar_t,
+    _ps: *mut std::ffi::c_void,
+) -> usize {
+    let mut tmp = [0u8; 4];
+
+    // Stateless UTF-8 locale: resetting state is equivalent to encoding NUL.
+    if s.is_null() {
+        return 1;
+    }
+
+    match wchar_core::wctomb(wc as u32, &mut tmp) {
+        Some(len) => {
+            // SAFETY: caller guarantees `s` points to writable storage for the resulting sequence.
+            unsafe { std::ptr::copy_nonoverlapping(tmp.as_ptr(), s as *mut u8, len) };
+            len
+        }
+        None => {
+            // SAFETY: setting thread-local errno through libc ABI helper.
+            unsafe { set_abi_errno(libc::EILSEQ) };
+            usize::MAX
+        }
+    }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -1921,9 +2023,65 @@ pub unsafe extern "C" fn mbrtowc(
     pwc: *mut libc::wchar_t,
     s: *const std::ffi::c_char,
     n: usize,
-    ps: *mut std::ffi::c_void,
+    _ps: *mut std::ffi::c_void,
 ) -> usize {
-    unsafe { libc_mbrtowc(pwc, s, n, ps) }
+    const MB_INCOMPLETE: usize = usize::MAX - 1;
+
+    // Stateless UTF-8 locale reset path.
+    if s.is_null() {
+        if !pwc.is_null() {
+            // SAFETY: pwc is caller-provided out pointer.
+            unsafe { *pwc = 0 };
+        }
+        return 0;
+    }
+    if n == 0 {
+        return MB_INCOMPLETE;
+    }
+
+    // SAFETY: caller guarantees `s` points to at least `n` bytes.
+    let bytes = unsafe { std::slice::from_raw_parts(s as *const u8, n) };
+    let first = bytes[0];
+    if first == 0 {
+        if !pwc.is_null() {
+            // SAFETY: pwc is caller-provided out pointer.
+            unsafe { *pwc = 0 };
+        }
+        return 0;
+    }
+
+    let expected_len = if first < 0x80 {
+        1
+    } else if first & 0xE0 == 0xC0 {
+        2
+    } else if first & 0xF0 == 0xE0 {
+        3
+    } else if first & 0xF8 == 0xF0 {
+        4
+    } else {
+        // SAFETY: setting thread-local errno through libc ABI helper.
+        unsafe { set_abi_errno(libc::EILSEQ) };
+        return usize::MAX;
+    };
+
+    if n < expected_len {
+        return MB_INCOMPLETE;
+    }
+
+    match wchar_core::mbtowc(&bytes[..expected_len]) {
+        Some((wc, used)) => {
+            if !pwc.is_null() {
+                // SAFETY: pwc is caller-provided out pointer.
+                unsafe { *pwc = wc as libc::wchar_t };
+            }
+            used
+        }
+        None => {
+            // SAFETY: setting thread-local errno through libc ABI helper.
+            unsafe { set_abi_errno(libc::EILSEQ) };
+            usize::MAX
+        }
+    }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -1931,9 +2089,85 @@ pub unsafe extern "C" fn mbsrtowcs(
     dst: *mut libc::wchar_t,
     src: *mut *const std::ffi::c_char,
     len: usize,
-    ps: *mut std::ffi::c_void,
+    _ps: *mut std::ffi::c_void,
 ) -> usize {
-    unsafe { libc_mbsrtowcs(dst, src, len, ps) }
+    if src.is_null() {
+        // SAFETY: setting thread-local errno through libc ABI helper.
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return usize::MAX;
+    }
+
+    // SAFETY: src is validated non-null above.
+    let src_ptr = unsafe { *src };
+    if src_ptr.is_null() {
+        return 0;
+    }
+
+    // SAFETY: source pointer references a NUL-terminated byte string.
+    let src_len_with_nul = unsafe { libc::strlen(src_ptr) + 1 };
+    // SAFETY: bounded by strlen + NUL.
+    let src_bytes = unsafe { std::slice::from_raw_parts(src_ptr as *const u8, src_len_with_nul) };
+
+    // Count-only mode.
+    if dst.is_null() {
+        let mut i = 0usize;
+        let mut count = 0usize;
+        while i < src_bytes.len() {
+            if src_bytes[i] == 0 {
+                return count;
+            }
+            match wchar_core::mbtowc(&src_bytes[i..]) {
+                Some((_, used)) => {
+                    i += used;
+                    count += 1;
+                }
+                None => {
+                    // SAFETY: setting thread-local errno through libc ABI helper.
+                    unsafe { set_abi_errno(libc::EILSEQ) };
+                    return usize::MAX;
+                }
+            }
+        }
+        return count;
+    }
+
+    // SAFETY: caller guarantees writable destination of at least `len` wchar_t elements.
+    let dst_slice = unsafe { std::slice::from_raw_parts_mut(dst as *mut u32, len) };
+    let mut i = 0usize;
+    let mut written = 0usize;
+    while i < src_bytes.len() {
+        if src_bytes[i] == 0 {
+            if written < dst_slice.len() {
+                dst_slice[written] = 0;
+            }
+            // SAFETY: src is non-null and points to caller-owned pointer storage.
+            unsafe { *src = std::ptr::null() };
+            return written;
+        }
+        if written >= dst_slice.len() {
+            // SAFETY: src is non-null and points to caller-owned pointer storage.
+            unsafe { *src = src_ptr.add(i) };
+            return written;
+        }
+        match wchar_core::mbtowc(&src_bytes[i..]) {
+            Some((wc, used)) => {
+                dst_slice[written] = wc;
+                written += 1;
+                i += used;
+            }
+            None => {
+                // SAFETY: src is non-null and points to caller-owned pointer storage.
+                unsafe { *src = src_ptr.add(i) };
+                // SAFETY: setting thread-local errno through libc ABI helper.
+                unsafe { set_abi_errno(libc::EILSEQ) };
+                return usize::MAX;
+            }
+        }
+    }
+
+    // SAFETY: src is non-null and points to caller-owned pointer storage.
+    unsafe { *src = src_ptr.add(i) };
+    written
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -1941,9 +2175,293 @@ pub unsafe extern "C" fn wcsrtombs(
     dst: *mut std::ffi::c_char,
     src: *mut *const libc::wchar_t,
     len: usize,
-    ps: *mut std::ffi::c_void,
+    _ps: *mut std::ffi::c_void,
 ) -> usize {
-    unsafe { libc_wcsrtombs(dst, src, len, ps) }
+    if src.is_null() {
+        // SAFETY: setting thread-local errno through libc ABI helper.
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return usize::MAX;
+    }
+
+    // SAFETY: src is validated non-null above.
+    let src_ptr = unsafe { *src };
+    if src_ptr.is_null() {
+        return 0;
+    }
+
+    // SAFETY: source pointer references a NUL-terminated wide string.
+    let src_len = unsafe { wcslen(src_ptr as *const u32) };
+    // SAFETY: include terminating NUL.
+    let src_slice = unsafe { std::slice::from_raw_parts(src_ptr as *const u32, src_len + 1) };
+
+    // Count-only mode.
+    if dst.is_null() {
+        let mut bytes = 0usize;
+        for &wc in &src_slice[..src_len] {
+            let mut tmp = [0u8; 4];
+            match wchar_core::wctomb(wc, &mut tmp) {
+                Some(n) => bytes += n,
+                None => {
+                    // SAFETY: setting thread-local errno through libc ABI helper.
+                    unsafe { set_abi_errno(libc::EILSEQ) };
+                    return usize::MAX;
+                }
+            }
+        }
+        return bytes;
+    }
+
+    // SAFETY: caller guarantees writable destination of at least `len` bytes.
+    let dst_slice = unsafe { std::slice::from_raw_parts_mut(dst as *mut u8, len) };
+    let mut written = 0usize;
+    let mut idx = 0usize;
+    while idx < src_len {
+        let wc = src_slice[idx];
+        let mut tmp = [0u8; 4];
+        let n = match wchar_core::wctomb(wc, &mut tmp) {
+            Some(v) => v,
+            None => {
+                // SAFETY: src is non-null and points to caller-owned pointer storage.
+                unsafe { *src = src_ptr.add(idx) };
+                // SAFETY: setting thread-local errno through libc ABI helper.
+                unsafe { set_abi_errno(libc::EILSEQ) };
+                return usize::MAX;
+            }
+        };
+        if written + n > dst_slice.len() {
+            // SAFETY: src is non-null and points to caller-owned pointer storage.
+            unsafe { *src = src_ptr.add(idx) };
+            return written;
+        }
+        dst_slice[written..written + n].copy_from_slice(&tmp[..n]);
+        written += n;
+        idx += 1;
+    }
+
+    if written < dst_slice.len() {
+        dst_slice[written] = 0;
+        // SAFETY: src is non-null and points to caller-owned pointer storage.
+        unsafe { *src = std::ptr::null() };
+    } else {
+        // SAFETY: src is non-null and points to caller-owned pointer storage.
+        unsafe { *src = src_ptr.add(idx) };
+    }
+    written
+}
+
+#[inline]
+fn wide_is_space(wc: u32) -> bool {
+    char::from_u32(wc).is_some_and(|c| c.is_whitespace())
+}
+
+#[inline]
+fn wide_digit_value(wc: u32) -> Option<u32> {
+    match wc {
+        wc if (b'0' as u32..=b'9' as u32).contains(&wc) => Some(wc - b'0' as u32),
+        wc if (b'a' as u32..=b'z' as u32).contains(&wc) => Some(wc - b'a' as u32 + 10),
+        wc if (b'A' as u32..=b'Z' as u32).contains(&wc) => Some(wc - b'A' as u32 + 10),
+        _ => None,
+    }
+}
+
+#[inline]
+fn wide_is_ascii_hexdigit(wc: u32) -> bool {
+    matches!(wide_digit_value(wc), Some(0..=15))
+}
+
+fn parse_wide_signed(s: &[u32], base: c_int) -> (i64, usize, ConversionStatus) {
+    let mut i = 0usize;
+    let len = s.len();
+
+    while i < len && wide_is_space(s[i]) {
+        i += 1;
+    }
+    if i == len {
+        return (0, 0, ConversionStatus::Success);
+    }
+
+    let mut negative = false;
+    if s[i] == b'-' as u32 {
+        negative = true;
+        i += 1;
+    } else if s[i] == b'+' as u32 {
+        i += 1;
+    }
+
+    if i == len {
+        return (0, 0, ConversionStatus::Success);
+    }
+
+    let mut effective_base = base as u64;
+    let has_0x_prefix = i + 1 < len
+        && s[i] == b'0' as u32
+        && (s[i + 1] == b'x' as u32 || s[i + 1] == b'X' as u32);
+
+    if base == 0 {
+        if has_0x_prefix && i + 2 < len && wide_is_ascii_hexdigit(s[i + 2]) {
+            effective_base = 16;
+            i += 2;
+        } else if s[i] == b'0' as u32 {
+            effective_base = 8;
+        } else {
+            effective_base = 10;
+        }
+    } else if base == 16 && has_0x_prefix && i + 2 < len && wide_is_ascii_hexdigit(s[i + 2]) {
+        i += 2;
+    }
+
+    if !(2..=36).contains(&effective_base) {
+        return (0, 0, ConversionStatus::InvalidBase);
+    }
+
+    let abs_max = if negative {
+        9_223_372_036_854_775_808u64
+    } else {
+        9_223_372_036_854_775_807u64
+    };
+    let cutoff = abs_max / effective_base;
+    let cutlim = abs_max % effective_base;
+
+    let mut acc = 0u64;
+    let mut any_digits = false;
+    let mut overflow = false;
+
+    while i < len {
+        let Some(digit) = wide_digit_value(s[i]) else {
+            break;
+        };
+        if (digit as u64) >= effective_base {
+            break;
+        }
+
+        any_digits = true;
+        if overflow {
+            i += 1;
+            continue;
+        }
+
+        if acc > cutoff || (acc == cutoff && (digit as u64) > cutlim) {
+            overflow = true;
+        } else {
+            acc = acc * effective_base + digit as u64;
+        }
+        i += 1;
+    }
+
+    if !any_digits {
+        return (0, 0, ConversionStatus::Success);
+    }
+
+    if overflow {
+        if negative {
+            return (i64::MIN, i, ConversionStatus::Underflow);
+        }
+        return (i64::MAX, i, ConversionStatus::Overflow);
+    }
+
+    let value = if negative {
+        (acc as i64).wrapping_neg()
+    } else {
+        acc as i64
+    };
+    (value, i, ConversionStatus::Success)
+}
+
+fn parse_wide_unsigned(s: &[u32], base: c_int) -> (u64, usize, ConversionStatus) {
+    let mut i = 0usize;
+    let len = s.len();
+
+    while i < len && wide_is_space(s[i]) {
+        i += 1;
+    }
+    if i == len {
+        return (0, 0, ConversionStatus::Success);
+    }
+
+    let mut negative = false;
+    if s[i] == b'-' as u32 {
+        negative = true;
+        i += 1;
+    } else if s[i] == b'+' as u32 {
+        i += 1;
+    }
+
+    if i == len {
+        return (0, 0, ConversionStatus::Success);
+    }
+
+    let mut effective_base = base as u64;
+    let has_0x_prefix = i + 1 < len
+        && s[i] == b'0' as u32
+        && (s[i + 1] == b'x' as u32 || s[i + 1] == b'X' as u32);
+
+    if base == 0 {
+        if has_0x_prefix && i + 2 < len && wide_is_ascii_hexdigit(s[i + 2]) {
+            effective_base = 16;
+            i += 2;
+        } else if s[i] == b'0' as u32 {
+            effective_base = 8;
+        } else {
+            effective_base = 10;
+        }
+    } else if base == 16 && has_0x_prefix && i + 2 < len && wide_is_ascii_hexdigit(s[i + 2]) {
+        i += 2;
+    }
+
+    if !(2..=36).contains(&effective_base) {
+        return (0, 0, ConversionStatus::InvalidBase);
+    }
+
+    let cutoff = u64::MAX / effective_base;
+    let cutlim = u64::MAX % effective_base;
+
+    let mut acc = 0u64;
+    let mut any_digits = false;
+    let mut overflow = false;
+
+    while i < len {
+        let Some(digit) = wide_digit_value(s[i]) else {
+            break;
+        };
+        if (digit as u64) >= effective_base {
+            break;
+        }
+
+        any_digits = true;
+        if overflow {
+            i += 1;
+            continue;
+        }
+
+        if acc > cutoff || (acc == cutoff && (digit as u64) > cutlim) {
+            overflow = true;
+        } else {
+            acc = acc * effective_base + digit as u64;
+        }
+        i += 1;
+    }
+
+    if !any_digits {
+        return (0, 0, ConversionStatus::Success);
+    }
+    if overflow {
+        return (u64::MAX, i, ConversionStatus::Overflow);
+    }
+
+    let value = if negative { acc.wrapping_neg() } else { acc };
+    (value, i, ConversionStatus::Success)
+}
+
+fn project_wide_ascii(s: &[u32]) -> Vec<u8> {
+    let mut projected = Vec::with_capacity(s.len().saturating_add(1));
+    for &wc in s {
+        if wc > 0x7f {
+            break;
+        }
+        projected.push(wc as u8);
+    }
+    projected.push(0);
+    projected
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -1952,7 +2470,34 @@ pub unsafe extern "C" fn wcstol(
     endptr: *mut *mut libc::wchar_t,
     base: c_int,
 ) -> std::ffi::c_long {
-    unsafe { libc_wcstol(nptr, endptr, base) }
+    if nptr.is_null() {
+        if !endptr.is_null() {
+            // SAFETY: caller-provided endptr is writable when non-null.
+            unsafe { *endptr = nptr as *mut libc::wchar_t };
+        }
+        return 0;
+    }
+
+    // SAFETY: strict mode follows C semantics and scans until NUL.
+    let (len, _) = unsafe { scan_w_string(nptr as *const u32, None) };
+    // SAFETY: bounded by measured wide-string length.
+    let slice = unsafe { std::slice::from_raw_parts(nptr as *const u32, len) };
+    let (value, consumed, status) = parse_wide_signed(slice, base);
+
+    if !endptr.is_null() {
+        // SAFETY: consumed is bounded by scanned string length.
+        unsafe { *endptr = (nptr as *mut libc::wchar_t).add(consumed) };
+    }
+
+    match status {
+        ConversionStatus::InvalidBase => unsafe { set_abi_errno(libc::EINVAL) },
+        ConversionStatus::Overflow | ConversionStatus::Underflow => unsafe {
+            set_abi_errno(libc::ERANGE)
+        },
+        ConversionStatus::Success => {}
+    }
+
+    value as std::ffi::c_long
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -1961,7 +2506,32 @@ pub unsafe extern "C" fn wcstoul(
     endptr: *mut *mut libc::wchar_t,
     base: c_int,
 ) -> std::ffi::c_ulong {
-    unsafe { libc_wcstoul(nptr, endptr, base) }
+    if nptr.is_null() {
+        if !endptr.is_null() {
+            // SAFETY: caller-provided endptr is writable when non-null.
+            unsafe { *endptr = nptr as *mut libc::wchar_t };
+        }
+        return 0;
+    }
+
+    // SAFETY: strict mode follows C semantics and scans until NUL.
+    let (len, _) = unsafe { scan_w_string(nptr as *const u32, None) };
+    // SAFETY: bounded by measured wide-string length.
+    let slice = unsafe { std::slice::from_raw_parts(nptr as *const u32, len) };
+    let (value, consumed, status) = parse_wide_unsigned(slice, base);
+
+    if !endptr.is_null() {
+        // SAFETY: consumed is bounded by scanned string length.
+        unsafe { *endptr = (nptr as *mut libc::wchar_t).add(consumed) };
+    }
+
+    match status {
+        ConversionStatus::InvalidBase => unsafe { set_abi_errno(libc::EINVAL) },
+        ConversionStatus::Overflow => unsafe { set_abi_errno(libc::ERANGE) },
+        ConversionStatus::Underflow | ConversionStatus::Success => {}
+    }
+
+    value as std::ffi::c_ulong
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -1969,28 +2539,36 @@ pub unsafe extern "C" fn wcstod(
     nptr: *const libc::wchar_t,
     endptr: *mut *mut libc::wchar_t,
 ) -> f64 {
-    unsafe { libc_wcstod(nptr, endptr) }
+    if nptr.is_null() {
+        if !endptr.is_null() {
+            // SAFETY: caller-provided endptr is writable when non-null.
+            unsafe { *endptr = nptr as *mut libc::wchar_t };
+        }
+        return 0.0;
+    }
+
+    // SAFETY: strict mode follows C semantics and scans until NUL.
+    let (len, _) = unsafe { scan_w_string(nptr as *const u32, None) };
+    // SAFETY: bounded by measured wide-string length.
+    let slice = unsafe { std::slice::from_raw_parts(nptr as *const u32, len) };
+    let projected = project_wide_ascii(slice);
+    let (value, consumed) = frankenlibc_core::stdlib::conversion::strtod_impl(&projected);
+
+    if !endptr.is_null() {
+        // SAFETY: consumed is bounded by projected input length.
+        unsafe { *endptr = (nptr as *mut libc::wchar_t).add(consumed.min(len)) };
+    }
+
+    value
 }
 
 // ---------------------------------------------------------------------------
-// Wide I/O functions — GlibcCallThrough
+// Wide I/O functions — mixed (implemented + glibc passthrough)
 // ---------------------------------------------------------------------------
 
+const WEOF_VALUE: u32 = u32::MAX;
+
 unsafe extern "C" {
-    #[link_name = "fgetwc"]
-    fn libc_fgetwc(stream: *mut std::ffi::c_void) -> u32;
-    #[link_name = "fputwc"]
-    fn libc_fputwc(wc: u32, stream: *mut std::ffi::c_void) -> u32;
-    #[link_name = "ungetwc"]
-    fn libc_ungetwc(wc: u32, stream: *mut std::ffi::c_void) -> u32;
-    #[link_name = "fgetws"]
-    fn libc_fgetws(ws: *mut libc::wchar_t, n: c_int, stream: *mut std::ffi::c_void) -> *mut libc::wchar_t;
-    #[link_name = "fputws"]
-    fn libc_fputws(ws: *const libc::wchar_t, stream: *mut std::ffi::c_void) -> c_int;
-    #[link_name = "getwchar"]
-    fn libc_getwchar() -> u32;
-    #[link_name = "putwchar"]
-    fn libc_putwchar(wc: u32) -> u32;
     #[link_name = "fwprintf"]
     fn libc_fwprintf(stream: *mut std::ffi::c_void, format: *const libc::wchar_t, ...) -> c_int;
     #[link_name = "wprintf"]
@@ -1998,11 +2576,20 @@ unsafe extern "C" {
     #[link_name = "swprintf"]
     fn libc_swprintf(s: *mut libc::wchar_t, n: usize, format: *const libc::wchar_t, ...) -> c_int;
     #[link_name = "vfwprintf"]
-    fn libc_vfwprintf(stream: *mut std::ffi::c_void, format: *const libc::wchar_t, ap: *mut std::ffi::c_void) -> c_int;
+    fn libc_vfwprintf(
+        stream: *mut std::ffi::c_void,
+        format: *const libc::wchar_t,
+        ap: *mut std::ffi::c_void,
+    ) -> c_int;
     #[link_name = "vwprintf"]
     fn libc_vwprintf(format: *const libc::wchar_t, ap: *mut std::ffi::c_void) -> c_int;
     #[link_name = "vswprintf"]
-    fn libc_vswprintf(s: *mut libc::wchar_t, n: usize, format: *const libc::wchar_t, ap: *mut std::ffi::c_void) -> c_int;
+    fn libc_vswprintf(
+        s: *mut libc::wchar_t,
+        n: usize,
+        format: *const libc::wchar_t,
+        ap: *mut std::ffi::c_void,
+    ) -> c_int;
     #[link_name = "fwscanf"]
     fn libc_fwscanf(stream: *mut std::ffi::c_void, format: *const libc::wchar_t, ...) -> c_int;
     #[link_name = "wscanf"]
@@ -2010,50 +2597,196 @@ unsafe extern "C" {
     #[link_name = "swscanf"]
     fn libc_swscanf(s: *const libc::wchar_t, format: *const libc::wchar_t, ...) -> c_int;
     #[link_name = "vfwscanf"]
-    fn libc_vfwscanf(stream: *mut std::ffi::c_void, format: *const libc::wchar_t, ap: *mut std::ffi::c_void) -> c_int;
+    fn libc_vfwscanf(
+        stream: *mut std::ffi::c_void,
+        format: *const libc::wchar_t,
+        ap: *mut std::ffi::c_void,
+    ) -> c_int;
     #[link_name = "vwscanf"]
     fn libc_vwscanf(format: *const libc::wchar_t, ap: *mut std::ffi::c_void) -> c_int;
     #[link_name = "vswscanf"]
-    fn libc_vswscanf(s: *const libc::wchar_t, format: *const libc::wchar_t, ap: *mut std::ffi::c_void) -> c_int;
+    fn libc_vswscanf(
+        s: *const libc::wchar_t,
+        format: *const libc::wchar_t,
+        ap: *mut std::ffi::c_void,
+    ) -> c_int;
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fgetwc(stream: *mut std::ffi::c_void) -> u32 {
-    unsafe { libc_fgetwc(stream) }
+    if stream.is_null() {
+        return WEOF_VALUE;
+    }
+
+    // SAFETY: delegated to stdio ABI layer with validated stream handle.
+    let first = unsafe { super::stdio_abi::fgetc(stream) };
+    if first == libc::EOF {
+        return WEOF_VALUE;
+    }
+
+    let mut bytes = [0u8; 4];
+    bytes[0] = first as u8;
+    let expected = if bytes[0] < 0x80 {
+        1
+    } else if bytes[0] & 0xE0 == 0xC0 {
+        2
+    } else if bytes[0] & 0xF0 == 0xE0 {
+        3
+    } else if bytes[0] & 0xF8 == 0xF0 {
+        4
+    } else {
+        // SAFETY: thread-local errno update.
+        unsafe { set_abi_errno(libc::EILSEQ) };
+        return WEOF_VALUE;
+    };
+
+    for idx in 1..expected {
+        // SAFETY: delegated to stdio ABI layer with validated stream handle.
+        let next = unsafe { super::stdio_abi::fgetc(stream) };
+        if next == libc::EOF {
+            // Put back already consumed bytes to avoid partial-read corruption.
+            for rollback in (0..idx).rev() {
+                // SAFETY: push-back into the same stream.
+                unsafe { super::stdio_abi::ungetc(bytes[rollback] as c_int, stream) };
+            }
+            return WEOF_VALUE;
+        }
+        bytes[idx] = next as u8;
+    }
+
+    match wchar_core::mbtowc(&bytes[..expected]) {
+        Some((wc, _)) => wc,
+        None => {
+            for rollback in (0..expected).rev() {
+                // SAFETY: push-back into the same stream.
+                unsafe { super::stdio_abi::ungetc(bytes[rollback] as c_int, stream) };
+            }
+            // SAFETY: thread-local errno update.
+            unsafe { set_abi_errno(libc::EILSEQ) };
+            WEOF_VALUE
+        }
+    }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fputwc(wc: u32, stream: *mut std::ffi::c_void) -> u32 {
-    unsafe { libc_fputwc(wc, stream) }
+    if stream.is_null() {
+        return WEOF_VALUE;
+    }
+
+    let mut bytes = [0u8; 4];
+    let Some(encoded_len) = wchar_core::wctomb(wc, &mut bytes) else {
+        // SAFETY: thread-local errno update.
+        unsafe { set_abi_errno(libc::EILSEQ) };
+        return WEOF_VALUE;
+    };
+
+    for &byte in &bytes[..encoded_len] {
+        // SAFETY: delegated to stdio ABI layer with validated stream handle.
+        if unsafe { super::stdio_abi::fputc(byte as c_int, stream) } == libc::EOF {
+            return WEOF_VALUE;
+        }
+    }
+    wc
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn ungetwc(wc: u32, stream: *mut std::ffi::c_void) -> u32 {
-    unsafe { libc_ungetwc(wc, stream) }
+    if stream.is_null() || wc == WEOF_VALUE {
+        return WEOF_VALUE;
+    }
+
+    let mut bytes = [0u8; 4];
+    let Some(encoded_len) = wchar_core::wctomb(wc, &mut bytes) else {
+        // SAFETY: thread-local errno update.
+        unsafe { set_abi_errno(libc::EILSEQ) };
+        return WEOF_VALUE;
+    };
+
+    for &byte in bytes[..encoded_len].iter().rev() {
+        // SAFETY: delegated to stdio ABI layer with validated stream handle.
+        if unsafe { super::stdio_abi::ungetc(byte as c_int, stream) } == libc::EOF {
+            return WEOF_VALUE;
+        }
+    }
+    wc
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fgetws(ws: *mut libc::wchar_t, n: c_int, stream: *mut std::ffi::c_void) -> *mut libc::wchar_t {
-    unsafe { libc_fgetws(ws, n, stream) }
+pub unsafe extern "C" fn fgetws(
+    ws: *mut libc::wchar_t,
+    n: c_int,
+    stream: *mut std::ffi::c_void,
+) -> *mut libc::wchar_t {
+    if ws.is_null() || stream.is_null() || n <= 0 {
+        return std::ptr::null_mut();
+    }
+
+    let cap = n as usize;
+    let mut written = 0usize;
+    while written + 1 < cap {
+        // SAFETY: delegated to this ABI implementation with validated stream.
+        let wc = unsafe { fgetwc(stream) };
+        if wc == WEOF_VALUE {
+            break;
+        }
+
+        // SAFETY: bounded by `cap`.
+        unsafe { *ws.add(written) = wc as libc::wchar_t };
+        written += 1;
+        if wc == b'\n' as u32 {
+            break;
+        }
+    }
+
+    if written == 0 {
+        return std::ptr::null_mut();
+    }
+
+    // SAFETY: bounded by `cap`.
+    unsafe { *ws.add(written) = 0 };
+    ws
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fputws(ws: *const libc::wchar_t, stream: *mut std::ffi::c_void) -> c_int {
-    unsafe { libc_fputws(ws, stream) }
+    if ws.is_null() || stream.is_null() {
+        return libc::EOF;
+    }
+
+    let mut idx = 0usize;
+    loop {
+        // SAFETY: caller provides NUL-terminated wide string.
+        let wc = unsafe { *ws.add(idx) as u32 };
+        if wc == 0 {
+            return 0;
+        }
+        // SAFETY: delegated to this ABI implementation with validated stream.
+        if unsafe { fputwc(wc, stream) } == WEOF_VALUE {
+            return libc::EOF;
+        }
+        idx += 1;
+    }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getwchar() -> u32 {
-    unsafe { libc_getwchar() }
+    // SAFETY: stdio_abi exports `stdin` as a FILE-handle sentinel value.
+    unsafe { fgetwc(super::stdio_abi::stdin as *mut std::ffi::c_void) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn putwchar(wc: u32) -> u32 {
-    unsafe { libc_putwchar(wc) }
+    // SAFETY: stdio_abi exports `stdout` as a FILE-handle sentinel value.
+    unsafe { fputwc(wc, super::stdio_abi::stdout as *mut std::ffi::c_void) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fwprintf(stream: *mut std::ffi::c_void, format: *const libc::wchar_t, args: ...) -> c_int {
+pub unsafe extern "C" fn fwprintf(
+    stream: *mut std::ffi::c_void,
+    format: *const libc::wchar_t,
+    args: ...
+) -> c_int {
     unsafe { libc_fwprintf(stream, format, args) }
 }
 
@@ -2063,27 +2796,48 @@ pub unsafe extern "C" fn wprintf(format: *const libc::wchar_t, args: ...) -> c_i
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn swprintf(s: *mut libc::wchar_t, n: usize, format: *const libc::wchar_t, args: ...) -> c_int {
+pub unsafe extern "C" fn swprintf(
+    s: *mut libc::wchar_t,
+    n: usize,
+    format: *const libc::wchar_t,
+    args: ...
+) -> c_int {
     unsafe { libc_swprintf(s, n, format, args) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn vfwprintf(stream: *mut std::ffi::c_void, format: *const libc::wchar_t, ap: *mut std::ffi::c_void) -> c_int {
+pub unsafe extern "C" fn vfwprintf(
+    stream: *mut std::ffi::c_void,
+    format: *const libc::wchar_t,
+    ap: *mut std::ffi::c_void,
+) -> c_int {
     unsafe { libc_vfwprintf(stream, format, ap) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn vwprintf(format: *const libc::wchar_t, ap: *mut std::ffi::c_void) -> c_int {
+pub unsafe extern "C" fn vwprintf(
+    format: *const libc::wchar_t,
+    ap: *mut std::ffi::c_void,
+) -> c_int {
     unsafe { libc_vwprintf(format, ap) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn vswprintf(s: *mut libc::wchar_t, n: usize, format: *const libc::wchar_t, ap: *mut std::ffi::c_void) -> c_int {
+pub unsafe extern "C" fn vswprintf(
+    s: *mut libc::wchar_t,
+    n: usize,
+    format: *const libc::wchar_t,
+    ap: *mut std::ffi::c_void,
+) -> c_int {
     unsafe { libc_vswprintf(s, n, format, ap) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fwscanf(stream: *mut std::ffi::c_void, format: *const libc::wchar_t, args: ...) -> c_int {
+pub unsafe extern "C" fn fwscanf(
+    stream: *mut std::ffi::c_void,
+    format: *const libc::wchar_t,
+    args: ...
+) -> c_int {
     unsafe { libc_fwscanf(stream, format, args) }
 }
 
@@ -2093,12 +2847,20 @@ pub unsafe extern "C" fn wscanf(format: *const libc::wchar_t, args: ...) -> c_in
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn swscanf(s: *const libc::wchar_t, format: *const libc::wchar_t, args: ...) -> c_int {
+pub unsafe extern "C" fn swscanf(
+    s: *const libc::wchar_t,
+    format: *const libc::wchar_t,
+    args: ...
+) -> c_int {
     unsafe { libc_swscanf(s, format, args) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn vfwscanf(stream: *mut std::ffi::c_void, format: *const libc::wchar_t, ap: *mut std::ffi::c_void) -> c_int {
+pub unsafe extern "C" fn vfwscanf(
+    stream: *mut std::ffi::c_void,
+    format: *const libc::wchar_t,
+    ap: *mut std::ffi::c_void,
+) -> c_int {
     unsafe { libc_vfwscanf(stream, format, ap) }
 }
 
@@ -2108,7 +2870,11 @@ pub unsafe extern "C" fn vwscanf(format: *const libc::wchar_t, ap: *mut std::ffi
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn vswscanf(s: *const libc::wchar_t, format: *const libc::wchar_t, ap: *mut std::ffi::c_void) -> c_int {
+pub unsafe extern "C" fn vswscanf(
+    s: *const libc::wchar_t,
+    format: *const libc::wchar_t,
+    ap: *mut std::ffi::c_void,
+) -> c_int {
     unsafe { libc_vswscanf(s, format, ap) }
 }
 
@@ -2125,79 +2891,194 @@ pub unsafe extern "C" fn iswblank(wc: u32) -> c_int {
 /// POSIX `iswcntrl` — test for control wide character.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn iswcntrl(wc: u32) -> c_int {
-    if wc < 0x20 || (0x7f..=0x9f).contains(&wc) { 1 } else { 0 }
+    if wc < 0x20 || (0x7f..=0x9f).contains(&wc) {
+        1
+    } else {
+        0
+    }
 }
 
 /// POSIX `iswgraph` — test for graphic wide character.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn iswgraph(wc: u32) -> c_int {
-    if wchar_core::iswprint(wc) && wc != 0x20 { 1 } else { 0 }
+    if wchar_core::iswprint(wc) && wc != 0x20 {
+        1
+    } else {
+        0
+    }
 }
 
 /// POSIX `iswpunct` — test for punctuation wide character.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn iswpunct(wc: u32) -> c_int {
-    if wchar_core::iswprint(wc) && !wchar_core::iswalnum(wc) && wc != 0x20 { 1 } else { 0 }
+    if wchar_core::iswprint(wc) && !wchar_core::iswalnum(wc) && wc != 0x20 {
+        1
+    } else {
+        0
+    }
 }
 
 /// POSIX `iswxdigit` — test for hexadecimal digit wide character.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn iswxdigit(wc: u32) -> c_int {
-    if (0x30..=0x39).contains(&wc) || (0x41..=0x46).contains(&wc) || (0x61..=0x66).contains(&wc) { 1 } else { 0 }
+    if (0x30..=0x39).contains(&wc) || (0x41..=0x46).contains(&wc) || (0x61..=0x66).contains(&wc) {
+        1
+    } else {
+        0
+    }
 }
 
 // ---------------------------------------------------------------------------
-// Wide string conversion extras — GlibcCallThrough
+// Wide string conversion extras — Implemented
 // ---------------------------------------------------------------------------
 
-unsafe extern "C" {
-    #[link_name = "wcstoll"]
-    fn libc_wcstoll(nptr: *const libc::wchar_t, endptr: *mut *mut libc::wchar_t, base: c_int) -> i64;
-    #[link_name = "wcstoull"]
-    fn libc_wcstoull(nptr: *const libc::wchar_t, endptr: *mut *mut libc::wchar_t, base: c_int) -> u64;
-    #[link_name = "wcstof"]
-    fn libc_wcstof(nptr: *const libc::wchar_t, endptr: *mut *mut libc::wchar_t) -> f32;
-    #[link_name = "wcstold"]
-    fn libc_wcstold(nptr: *const libc::wchar_t, endptr: *mut *mut libc::wchar_t) -> f64;
-    #[link_name = "wcsftime"]
-    fn libc_wcsftime(s: *mut libc::wchar_t, maxsize: usize, format: *const libc::wchar_t, tm: *const std::ffi::c_void) -> usize;
-    #[link_name = "wcscoll"]
-    fn libc_wcscoll(s1: *const libc::wchar_t, s2: *const libc::wchar_t) -> c_int;
-    #[link_name = "wcsxfrm"]
-    fn libc_wcsxfrm(dest: *mut libc::wchar_t, src: *const libc::wchar_t, n: usize) -> usize;
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn wcstoll(
+    nptr: *const libc::wchar_t,
+    endptr: *mut *mut libc::wchar_t,
+    base: c_int,
+) -> i64 {
+    // SAFETY: `wcstol` already enforces conversion contract and pointer progression.
+    unsafe { wcstol(nptr, endptr, base) as i64 }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn wcstoll(nptr: *const libc::wchar_t, endptr: *mut *mut libc::wchar_t, base: c_int) -> i64 {
-    unsafe { libc_wcstoll(nptr, endptr, base) }
+pub unsafe extern "C" fn wcstoull(
+    nptr: *const libc::wchar_t,
+    endptr: *mut *mut libc::wchar_t,
+    base: c_int,
+) -> u64 {
+    // SAFETY: `wcstoul` already enforces conversion contract and pointer progression.
+    unsafe { wcstoul(nptr, endptr, base) as u64 }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn wcstoull(nptr: *const libc::wchar_t, endptr: *mut *mut libc::wchar_t, base: c_int) -> u64 {
-    unsafe { libc_wcstoull(nptr, endptr, base) }
+pub unsafe extern "C" fn wcstof(
+    nptr: *const libc::wchar_t,
+    endptr: *mut *mut libc::wchar_t,
+) -> f32 {
+    // SAFETY: `wcstod` handles null/endptr contracts and ASCII projection.
+    unsafe { wcstod(nptr, endptr) as f32 }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn wcstof(nptr: *const libc::wchar_t, endptr: *mut *mut libc::wchar_t) -> f32 {
-    unsafe { libc_wcstof(nptr, endptr) }
+pub unsafe extern "C" fn wcstold(
+    nptr: *const libc::wchar_t,
+    endptr: *mut *mut libc::wchar_t,
+) -> f64 {
+    // SAFETY: current ABI models long double as f64.
+    unsafe { wcstod(nptr, endptr) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn wcstold(nptr: *const libc::wchar_t, endptr: *mut *mut libc::wchar_t) -> f64 {
-    unsafe { libc_wcstold(nptr, endptr) }
-}
+pub unsafe extern "C" fn wcsftime(
+    s: *mut libc::wchar_t,
+    maxsize: usize,
+    format: *const libc::wchar_t,
+    tm: *const std::ffi::c_void,
+) -> usize {
+    if s.is_null() || format.is_null() || tm.is_null() || maxsize == 0 {
+        return 0;
+    }
 
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn wcsftime(s: *mut libc::wchar_t, maxsize: usize, format: *const libc::wchar_t, tm: *const std::ffi::c_void) -> usize {
-    unsafe { libc_wcsftime(s, maxsize, format, tm) }
+    // SAFETY: format is non-null and scanned until NUL.
+    let fmt_len = unsafe { wcslen(format as *const u32) };
+    // SAFETY: bounded by measured format length.
+    let fmt_slice = unsafe { std::slice::from_raw_parts(format as *const u32, fmt_len) };
+
+    let mut fmt_mb = Vec::with_capacity(fmt_len.saturating_mul(4).saturating_add(1));
+    for &wc in fmt_slice {
+        let mut tmp = [0u8; 4];
+        let Some(n) = wchar_core::wctomb(wc, &mut tmp) else {
+            // SAFETY: thread-local errno update.
+            unsafe { set_abi_errno(libc::EILSEQ) };
+            return 0;
+        };
+        fmt_mb.extend_from_slice(&tmp[..n]);
+    }
+    fmt_mb.push(0);
+
+    // Conservative UTF-8 output budget before converting back to wide chars.
+    let mut out_mb = vec![0u8; maxsize.saturating_mul(4).max(1)];
+    // SAFETY: buffers are valid; time_abi::strftime enforces byte-capacity + NUL semantics.
+    let out_len = unsafe {
+        super::time_abi::strftime(
+            out_mb.as_mut_ptr() as *mut std::ffi::c_char,
+            out_mb.len(),
+            fmt_mb.as_ptr() as *const std::ffi::c_char,
+            tm as *const libc::tm,
+        )
+    };
+    if out_len == 0 {
+        return 0;
+    }
+
+    let mut mb_i = 0usize;
+    let mut wide_i = 0usize;
+    while mb_i < out_len {
+        if wide_i.saturating_add(1) >= maxsize {
+            return 0;
+        }
+        match wchar_core::mbtowc(&out_mb[mb_i..out_len]) {
+            Some((wc, used)) => {
+                // SAFETY: `wide_i < maxsize` is enforced above.
+                unsafe { *s.add(wide_i) = wc as libc::wchar_t };
+                wide_i += 1;
+                mb_i += used;
+            }
+            None => {
+                // SAFETY: thread-local errno update.
+                unsafe { set_abi_errno(libc::EILSEQ) };
+                return 0;
+            }
+        }
+    }
+
+    // SAFETY: `wide_i < maxsize` is enforced in the loop.
+    unsafe { *s.add(wide_i) = 0 };
+    wide_i
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn wcscoll(s1: *const libc::wchar_t, s2: *const libc::wchar_t) -> c_int {
-    unsafe { libc_wcscoll(s1, s2) }
+    if s1.is_null() || s2.is_null() {
+        return 0;
+    }
+
+    // SAFETY: both strings are scanned until NUL.
+    let len1 = unsafe { wcslen(s1 as *const u32) };
+    // SAFETY: both strings are scanned until NUL.
+    let len2 = unsafe { wcslen(s2 as *const u32) };
+    // SAFETY: include NUL terminators for comparison semantics.
+    let lhs = unsafe { std::slice::from_raw_parts(s1 as *const u32, len1 + 1) };
+    // SAFETY: include NUL terminators for comparison semantics.
+    let rhs = unsafe { std::slice::from_raw_parts(s2 as *const u32, len2 + 1) };
+    wide_core::wcscmp(lhs, rhs) as c_int
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn wcsxfrm(dest: *mut libc::wchar_t, src: *const libc::wchar_t, n: usize) -> usize {
-    unsafe { libc_wcsxfrm(dest, src, n) }
+pub unsafe extern "C" fn wcsxfrm(
+    dest: *mut libc::wchar_t,
+    src: *const libc::wchar_t,
+    n: usize,
+) -> usize {
+    if src.is_null() {
+        return 0;
+    }
+
+    // SAFETY: source string is scanned until NUL.
+    let src_len = unsafe { wcslen(src as *const u32) };
+    if dest.is_null() || n == 0 {
+        return src_len;
+    }
+
+    let copy_len = src_len.min(n.saturating_sub(1));
+    // SAFETY: destination and source are caller-provided valid buffers for the requested range.
+    unsafe {
+        if copy_len > 0 {
+            std::ptr::copy_nonoverlapping(src, dest, copy_len);
+        }
+        *dest.add(copy_len) = 0;
+    }
+    src_len
 }

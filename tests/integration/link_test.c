@@ -4,6 +4,10 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <errno.h>
+#include <grp.h>
+#include <netdb.h>
+#include <pwd.h>
 
 int main(void) {
     /* Test memcpy */
@@ -45,6 +49,41 @@ int main(void) {
         }
     }
     free(arr);
+
+    /* Test basic NSS passwd/group lookups (files backend). */
+    errno = 0;
+    struct passwd *pw = getpwnam("root");
+    if (pw == NULL) {
+        fprintf(stderr, "FAIL: getpwnam(root) returned NULL errno=%d\n", errno);
+        return 1;
+    }
+    if (pw->pw_name == NULL || strcmp(pw->pw_name, "root") != 0) {
+        fprintf(stderr, "FAIL: getpwnam(root) returned unexpected name\n");
+        return 1;
+    }
+
+    errno = 0;
+    struct group *gr = getgrnam("root");
+    if (gr == NULL) {
+        fprintf(stderr, "FAIL: getgrnam(root) returned NULL errno=%d\n", errno);
+        return 1;
+    }
+    if (gr->gr_name == NULL || strcmp(gr->gr_name, "root") != 0) {
+        fprintf(stderr, "FAIL: getgrnam(root) returned unexpected name\n");
+        return 1;
+    }
+
+    /* Test resolver bootstrap: getaddrinfo should succeed for localhost via numeric/hosts subset. */
+    struct addrinfo hints;
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_socktype = SOCK_STREAM;
+    struct addrinfo *ai = NULL;
+    int gai_rc = getaddrinfo("localhost", "80", &hints, &ai);
+    if (gai_rc != 0 || ai == NULL) {
+        fprintf(stderr, "FAIL: getaddrinfo(localhost,80) rc=%d (%s)\n", gai_rc, gai_strerror(gai_rc));
+        return 1;
+    }
+    freeaddrinfo(ai);
 
     printf("PASS: all integration tests passed\n");
     return 0;

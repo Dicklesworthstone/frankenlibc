@@ -9,8 +9,9 @@
 #![allow(clippy::missing_safety_doc)]
 #![allow(clippy::int_plus_one)]
 
+use std::cell::RefCell;
 use std::ffi::{CStr, c_char, c_int, c_void};
-use std::mem::size_of;
+use std::mem::{align_of, size_of};
 use std::net::{Ipv4Addr, Ipv6Addr};
 use std::ptr;
 
@@ -20,6 +21,9 @@ use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
 use crate::malloc_abi::known_remaining;
 use crate::runtime_policy;
+
+const HOST_NOT_FOUND_ERRNO: c_int = 1;
+const NO_RECOVERY_ERRNO: c_int = 3;
 
 #[inline]
 fn repair_enabled(mode_heals: bool, action: MembraneAction) -> bool {
@@ -115,6 +119,183 @@ fn parse_port(service: Option<&CStr>, repair: bool) -> Result<u16, c_int> {
             }
         }
     }
+}
+
+fn resolve_gethostbyname_ipv4(node: &str) -> Option<Ipv4Addr> {
+    if let Ok(v4) = node.parse::<Ipv4Addr>() {
+        return Some(v4);
+    }
+    match resolve_hosts_subset(node, libc::AF_INET) {
+        Some(HostsAddress::V4(v4)) => Some(v4),
+        _ => None,
+    }
+}
+
+fn resolve_gethostbyname_target(name: Option<&CStr>, repair: bool) -> Option<(Vec<u8>, Ipv4Addr)> {
+    if let Some(name_cstr) = name
+        && let Ok(node) = name_cstr.to_str()
+        && let Some(v4) = resolve_gethostbyname_ipv4(node)
+    {
+        return Some((name_cstr.to_bytes().to_vec(), v4));
+    }
+    if repair {
+        global_healing_policy().record(&HealingAction::ReturnSafeDefault);
+        return Some((b"localhost".to_vec(), Ipv4Addr::LOCALHOST));
+    }
+    None
+}
+
+#[inline]
+fn align_up(offset: usize, align: usize) -> usize {
+    if align <= 1 {
+        return offset;
+    }
+    (offset + (align - 1)) & !(align - 1)
+}
+
+#[inline]
+unsafe fn set_h_errnop(h_errnop: *mut c_int, value: c_int) {
+    if !h_errnop.is_null() {
+        // SAFETY: caller-provided out-parameter pointer.
+        unsafe { *h_errnop = value };
+    }
+}
+
+struct HostentTlsStorage {
+    name: [c_char; 256],
+    aliases: [*mut c_char; 1],
+    addr_list: [*mut c_char; 2],
+    addr: [u8; 4],
+    hostent: libc::hostent,
+}
+
+impl HostentTlsStorage {
+    fn new() -> Self {
+        Self {
+            name: [0; 256],
+            aliases: [ptr::null_mut(); 1],
+            addr_list: [ptr::null_mut(); 2],
+            addr: [0; 4],
+            hostent: libc::hostent {
+                h_name: ptr::null_mut(),
+                h_aliases: ptr::null_mut(),
+                h_addrtype: 0,
+                h_length: 0,
+                h_addr_list: ptr::null_mut(),
+            },
+        }
+    }
+}
+
+thread_local! {
+    static GETHOSTBYNAME_TLS: RefCell<HostentTlsStorage> =
+        RefCell::new(HostentTlsStorage::new());
+}
+
+fn with_tls_hostent<R>(f: impl FnOnce(&mut HostentTlsStorage) -> R) -> R {
+    GETHOSTBYNAME_TLS.with(|cell| {
+        let mut storage = cell.borrow_mut();
+        f(&mut storage)
+    })
+}
+
+unsafe fn populate_tls_hostent(name_bytes: &[u8], ip: Ipv4Addr) -> *mut c_void {
+    with_tls_hostent(|storage| {
+        storage.name.fill(0);
+        let max_name = storage.name.len().saturating_sub(1);
+        let copy_len = name_bytes.len().min(max_name);
+        for (index, byte) in name_bytes.iter().take(copy_len).copied().enumerate() {
+            storage.name[index] = byte as c_char;
+        }
+
+        storage.addr = ip.octets();
+        storage.aliases[0] = ptr::null_mut();
+        storage.addr_list[0] = storage.addr.as_mut_ptr().cast::<c_char>();
+        storage.addr_list[1] = ptr::null_mut();
+        storage.hostent = libc::hostent {
+            h_name: storage.name.as_mut_ptr(),
+            h_aliases: storage.aliases.as_mut_ptr(),
+            h_addrtype: libc::AF_INET,
+            h_length: 4,
+            h_addr_list: storage.addr_list.as_mut_ptr(),
+        };
+        (&mut storage.hostent as *mut libc::hostent).cast::<c_void>()
+    })
+}
+
+unsafe fn write_reentrant_hostent(
+    name_bytes: &[u8],
+    ip: Ipv4Addr,
+    result_buf: *mut c_void,
+    buf: *mut c_char,
+    buflen: usize,
+    result: *mut *mut c_void,
+) -> Result<(), c_int> {
+    if result_buf.is_null() || buf.is_null() {
+        return Err(libc::EINVAL);
+    }
+    if result.is_null() {
+        return Err(libc::EINVAL);
+    }
+
+    let name_len = name_bytes.len().saturating_add(1);
+    if name_len > buflen {
+        return Err(libc::ERANGE);
+    }
+    // SAFETY: bounds checked above against buflen.
+    unsafe {
+        ptr::copy_nonoverlapping(name_bytes.as_ptr().cast::<c_char>(), buf, name_bytes.len());
+        *buf.add(name_bytes.len()) = 0;
+    }
+    let name_ptr = buf;
+    let mut offset = name_len;
+
+    offset = align_up(offset, align_of::<*mut c_char>());
+    if offset + 4 > buflen {
+        return Err(libc::ERANGE);
+    }
+    // SAFETY: bounds checked above.
+    let addr_ptr = unsafe { buf.add(offset).cast::<u8>() };
+    let addr = ip.octets();
+    // SAFETY: addr_ptr points to at least 4 writable bytes.
+    unsafe { ptr::copy_nonoverlapping(addr.as_ptr(), addr_ptr, addr.len()) };
+    offset += 4;
+
+    offset = align_up(offset, align_of::<*mut c_char>());
+    let aliases_bytes = size_of::<*mut c_char>();
+    if offset + aliases_bytes > buflen {
+        return Err(libc::ERANGE);
+    }
+    // SAFETY: bounds checked above and alignment enforced.
+    let aliases_ptr = unsafe { buf.add(offset).cast::<*mut c_char>() };
+    // SAFETY: aliases_ptr points to one pointer-sized slot.
+    unsafe { *aliases_ptr = ptr::null_mut() };
+    offset += aliases_bytes;
+
+    offset = align_up(offset, align_of::<*mut c_char>());
+    let addr_list_bytes = size_of::<*mut c_char>() * 2;
+    if offset + addr_list_bytes > buflen {
+        return Err(libc::ERANGE);
+    }
+    // SAFETY: bounds checked above and alignment enforced.
+    let addr_list_ptr = unsafe { buf.add(offset).cast::<*mut c_char>() };
+    // SAFETY: addr_list_ptr points to two pointer-sized slots.
+    unsafe {
+        *addr_list_ptr = addr_ptr.cast::<c_char>();
+        *addr_list_ptr.add(1) = ptr::null_mut();
+    }
+
+    // SAFETY: result_buf points to caller-owned hostent storage.
+    let hostent = unsafe { &mut *result_buf.cast::<libc::hostent>() };
+    hostent.h_name = name_ptr;
+    hostent.h_aliases = aliases_ptr;
+    hostent.h_addrtype = libc::AF_INET;
+    hostent.h_length = 4;
+    hostent.h_addr_list = addr_list_ptr;
+
+    // SAFETY: result pointer is valid and writable by caller contract.
+    unsafe { *result = result_buf };
+    Ok(())
 }
 
 unsafe fn build_addrinfo_v4(
@@ -555,8 +736,6 @@ pub unsafe extern "C" fn gai_strerror(errcode: c_int) -> *const c_char {
 // ---------------------------------------------------------------------------
 
 unsafe extern "C" {
-    #[link_name = "gethostbyname"]
-    fn libc_gethostbyname(name: *const c_char) -> *mut c_void;
     #[link_name = "gethostbyaddr"]
     fn libc_gethostbyaddr(addr: *const c_void, len: libc::socklen_t, af: c_int) -> *mut c_void;
     #[link_name = "getservbyname"]
@@ -571,11 +750,94 @@ unsafe extern "C" {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn gethostbyname(name: *const c_char) -> *mut c_void {
-    unsafe { libc_gethostbyname(name) }
+    let (mode, decision) = runtime_policy::decide(
+        ApiFamily::Resolver,
+        name as usize,
+        0,
+        true,
+        name.is_null(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Resolver, decision.profile, 18, true);
+        return ptr::null_mut();
+    }
+
+    let repair = repair_enabled(mode.heals_enabled(), decision.action);
+    // SAFETY: optional C string pointer follows gethostbyname contract.
+    let name_cstr = unsafe { opt_cstr(name) };
+    let Some((resolved_name, addr)) = resolve_gethostbyname_target(name_cstr, repair) else {
+        runtime_policy::observe(ApiFamily::Resolver, decision.profile, 18, true);
+        return ptr::null_mut();
+    };
+
+    // SAFETY: pointer returned references thread-local hostent storage.
+    let hostent_ptr = unsafe { populate_tls_hostent(&resolved_name, addr) };
+    runtime_policy::observe(ApiFamily::Resolver, decision.profile, 18, false);
+    hostent_ptr
+}
+
+pub(crate) unsafe fn gethostbyname_r_impl(
+    name: *const c_char,
+    result_buf: *mut c_void,
+    buf: *mut c_char,
+    buflen: usize,
+    result: *mut *mut c_void,
+    h_errnop: *mut c_int,
+) -> c_int {
+    let (mode, decision) = runtime_policy::decide(
+        ApiFamily::Resolver,
+        name as usize,
+        buflen,
+        true,
+        name.is_null(),
+        0,
+    );
+    if !result.is_null() {
+        // SAFETY: caller-provided out-parameter pointer.
+        unsafe { *result = ptr::null_mut() };
+    }
+    if matches!(decision.action, MembraneAction::Deny) {
+        // SAFETY: optional h_errno pointer from caller.
+        unsafe { set_h_errnop(h_errnop, NO_RECOVERY_ERRNO) };
+        runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
+        return libc::EACCES;
+    }
+
+    let repair = repair_enabled(mode.heals_enabled(), decision.action);
+    // SAFETY: optional C string pointer follows gethostbyname_r contract.
+    let name_cstr = unsafe { opt_cstr(name) };
+    let Some((resolved_name, addr)) = resolve_gethostbyname_target(name_cstr, repair) else {
+        // SAFETY: optional h_errno pointer from caller.
+        unsafe { set_h_errnop(h_errnop, HOST_NOT_FOUND_ERRNO) };
+        runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
+        return libc::ENOENT;
+    };
+
+    // SAFETY: all pointers/length validated within helper.
+    match unsafe { write_reentrant_hostent(&resolved_name, addr, result_buf, buf, buflen, result) }
+    {
+        Ok(()) => {
+            // SAFETY: optional h_errno pointer from caller.
+            unsafe { set_h_errnop(h_errnop, 0) };
+            runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, false);
+            0
+        }
+        Err(code) => {
+            // SAFETY: optional h_errno pointer from caller.
+            unsafe { set_h_errnop(h_errnop, NO_RECOVERY_ERRNO) };
+            runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
+            code
+        }
+    }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn gethostbyaddr(addr: *const c_void, len: libc::socklen_t, af: c_int) -> *mut c_void {
+pub unsafe extern "C" fn gethostbyaddr(
+    addr: *const c_void,
+    len: libc::socklen_t,
+    af: c_int,
+) -> *mut c_void {
     unsafe { libc_gethostbyaddr(addr, len, af) }
 }
 

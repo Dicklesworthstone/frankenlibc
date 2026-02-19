@@ -289,12 +289,18 @@ unsafe extern "C" {
         dirp: *const c_char,
         namelist: *mut *mut *mut libc::dirent,
         filter: Option<unsafe extern "C" fn(*const libc::dirent) -> c_int>,
-        compar: Option<unsafe extern "C" fn(*mut *const libc::dirent, *mut *const libc::dirent) -> c_int>,
+        compar: Option<
+            unsafe extern "C" fn(*mut *const libc::dirent, *mut *const libc::dirent) -> c_int,
+        >,
     ) -> c_int;
     #[link_name = "alphasort"]
     fn libc_alphasort(a: *mut *const libc::dirent, b: *mut *const libc::dirent) -> c_int;
     #[link_name = "readdir_r"]
-    fn libc_readdir_r(dirp: *mut c_void, entry: *mut libc::dirent, result: *mut *mut libc::dirent) -> c_int;
+    fn libc_readdir_r(
+        dirp: *mut c_void,
+        entry: *mut libc::dirent,
+        result: *mut *mut libc::dirent,
+    ) -> c_int;
     #[link_name = "readdir64"]
     fn libc_readdir64(dirp: *mut c_void) -> *mut c_void;
     #[link_name = "scandir64"]
@@ -328,7 +334,9 @@ pub unsafe extern "C" fn scandir(
     dirp: *const c_char,
     namelist: *mut *mut *mut libc::dirent,
     filter: Option<unsafe extern "C" fn(*const libc::dirent) -> c_int>,
-    compar: Option<unsafe extern "C" fn(*mut *const libc::dirent, *mut *const libc::dirent) -> c_int>,
+    compar: Option<
+        unsafe extern "C" fn(*mut *const libc::dirent, *mut *const libc::dirent) -> c_int,
+    >,
 ) -> c_int {
     unsafe { libc_scandir(dirp, namelist, filter, compar) }
 }

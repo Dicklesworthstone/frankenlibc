@@ -1,2 +1,0 @@
-FAIL: bind(-1,...) expected EBADF got errno=0
-fixture_socket: 1 FAILED

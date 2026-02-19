@@ -19,16 +19,29 @@ unsafe fn set_abi_errno(val: c_int) {
 }
 
 #[inline]
-fn last_host_errno(default_errno: c_int) -> c_int {
-    std::io::Error::last_os_error()
-        .raw_os_error()
-        .unwrap_or(default_errno)
+fn errno_from_syscall_failure(ret: libc::c_long, default_errno: c_int) -> c_int {
+    if let Some(host_errno) = std::io::Error::last_os_error().raw_os_error()
+        && host_errno != 0
+    {
+        return host_errno;
+    }
+
+    // Some libc/syscall combinations may surface raw negative errno values
+    // without populating host errno. Recover a deterministic errno in that case.
+    if ret < 0 {
+        let inferred = ret.saturating_neg();
+        if (1..=4095).contains(&inferred) {
+            return inferred as c_int;
+        }
+    }
+
+    default_errno
 }
 
 #[inline]
 unsafe fn syscall_ret_int(ret: libc::c_long) -> c_int {
     if ret < 0 {
-        unsafe { set_abi_errno(last_host_errno(errno::EINVAL)) };
+        unsafe { set_abi_errno(errno_from_syscall_failure(ret, errno::EINVAL)) };
         -1
     } else {
         ret as c_int
@@ -38,7 +51,7 @@ unsafe fn syscall_ret_int(ret: libc::c_long) -> c_int {
 #[inline]
 unsafe fn syscall_ret_size(ret: libc::c_long) -> isize {
     if ret < 0 {
-        unsafe { set_abi_errno(last_host_errno(errno::EINVAL)) };
+        unsafe { set_abi_errno(errno_from_syscall_failure(ret, errno::EINVAL)) };
         -1
     } else {
         ret as isize
@@ -85,6 +98,11 @@ pub unsafe extern "C" fn socket(domain: c_int, sock_type: c_int, protocol: c_int
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn bind(sockfd: c_int, addr: *const libc::sockaddr, addrlen: u32) -> c_int {
+    if sockfd < 0 {
+        unsafe { set_abi_errno(errno::EBADF) };
+        return -1;
+    }
+
     let (_, decision) = runtime_policy::decide(
         ApiFamily::Socket,
         sockfd as usize,
@@ -199,6 +217,11 @@ pub unsafe extern "C" fn send(
     len: usize,
     flags: c_int,
 ) -> isize {
+    if sockfd < 0 {
+        unsafe { set_abi_errno(errno::EBADF) };
+        return -1;
+    }
+
     let (_, decision) =
         runtime_policy::decide(ApiFamily::Socket, buf as usize, len, false, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
@@ -244,6 +267,11 @@ pub unsafe extern "C" fn send(
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn recv(sockfd: c_int, buf: *mut c_void, len: usize, flags: c_int) -> isize {
+    if sockfd < 0 {
+        unsafe { set_abi_errno(errno::EBADF) };
+        return -1;
+    }
+
     let (_, decision) = runtime_policy::decide(ApiFamily::Socket, buf as usize, len, true, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         runtime_policy::observe(
@@ -391,6 +419,11 @@ pub unsafe extern "C" fn recvfrom(
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn shutdown(sockfd: c_int, how: c_int) -> c_int {
+    if sockfd < 0 {
+        unsafe { set_abi_errno(errno::EBADF) };
+        return -1;
+    }
+
     let (mode, decision) =
         runtime_policy::decide(ApiFamily::Socket, sockfd as usize, 0, true, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {

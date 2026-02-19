@@ -63,6 +63,33 @@ type HostPthreadCondTimedwaitFn = unsafe extern "C" fn(
     *mut libc::pthread_mutex_t,
     *const libc::timespec,
 ) -> c_int;
+type HostPthreadGetattrNpFn =
+    unsafe extern "C" fn(libc::pthread_t, *mut libc::pthread_attr_t) -> c_int;
+type HostPthreadAttrInitFn = unsafe extern "C" fn(*mut libc::pthread_attr_t) -> c_int;
+type HostPthreadAttrDestroyFn = unsafe extern "C" fn(*mut libc::pthread_attr_t) -> c_int;
+type HostPthreadAttrSetdetachstateFn =
+    unsafe extern "C" fn(*mut libc::pthread_attr_t, c_int) -> c_int;
+type HostPthreadAttrGetdetachstateFn =
+    unsafe extern "C" fn(*const libc::pthread_attr_t, *mut c_int) -> c_int;
+type HostPthreadAttrSetstacksizeFn = unsafe extern "C" fn(*mut libc::pthread_attr_t, usize) -> c_int;
+type HostPthreadAttrGetstacksizeFn =
+    unsafe extern "C" fn(*const libc::pthread_attr_t, *mut usize) -> c_int;
+type HostPthreadMutexattrInitFn = unsafe extern "C" fn(*mut libc::pthread_mutexattr_t) -> c_int;
+type HostPthreadMutexattrDestroyFn =
+    unsafe extern "C" fn(*mut libc::pthread_mutexattr_t) -> c_int;
+type HostPthreadMutexattrSettypeFn =
+    unsafe extern "C" fn(*mut libc::pthread_mutexattr_t, c_int) -> c_int;
+type HostPthreadMutexattrGettypeFn =
+    unsafe extern "C" fn(*const libc::pthread_mutexattr_t, *mut c_int) -> c_int;
+type HostPthreadCondattrInitFn = unsafe extern "C" fn(*mut libc::pthread_condattr_t) -> c_int;
+type HostPthreadCondattrDestroyFn = unsafe extern "C" fn(*mut libc::pthread_condattr_t) -> c_int;
+type HostPthreadCondattrSetclockFn =
+    unsafe extern "C" fn(*mut libc::pthread_condattr_t, libc::clockid_t) -> c_int;
+type HostPthreadCondattrGetclockFn =
+    unsafe extern "C" fn(*const libc::pthread_condattr_t, *mut libc::clockid_t) -> c_int;
+type HostPthreadRwlockattrInitFn = unsafe extern "C" fn(*mut libc::pthread_rwlockattr_t) -> c_int;
+type HostPthreadRwlockattrDestroyFn =
+    unsafe extern "C" fn(*mut libc::pthread_rwlockattr_t) -> c_int;
 
 // ---------------------------------------------------------------------------
 // Futex-backed NORMAL mutex core (bd-z84)
@@ -87,25 +114,36 @@ const MANAGED_MUTEX_MAGIC: u32 = 0x474d_5854; // "GMXT"
 const MANAGED_RWLOCK_MAGIC: u32 = 0x4752_5758; // "GRWX"
 static THREAD_HANDLE_REGISTRY: LazyLock<Mutex<HashMap<usize, usize>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
+static HOST_SYMBOL_CACHE: LazyLock<Mutex<HashMap<&'static [u8], usize>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 thread_local! {
     static THREADING_POLICY_DEPTH: Cell<u32> = const { Cell::new(0) };
 }
 
-unsafe fn resolve_host_symbol(name: &[u8]) -> *mut c_void {
-    let glibc_v34 = b"GLIBC_2.34\0";
-    let glibc_v232 = b"GLIBC_2.3.2\0";
+unsafe fn resolve_host_symbol(name: &'static [u8]) -> *mut c_void {
+    if let Some(ptr) = HOST_SYMBOL_CACHE
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(name)
+        .copied()
+    {
+        return ptr as *mut c_void;
+    }
+
     let glibc_v225 = b"GLIBC_2.2.5\0";
+    let glibc_v232 = b"GLIBC_2.3.2\0";
+    let glibc_v34 = b"GLIBC_2.34\0";
     // SAFETY: versioned lookup in next object after this interposed library.
     let mut ptr = unsafe {
         libc::dlvsym(
             libc::RTLD_NEXT,
             name.as_ptr().cast::<libc::c_char>(),
-            glibc_v34.as_ptr().cast::<libc::c_char>(),
+            glibc_v225.as_ptr().cast::<libc::c_char>(),
         )
     };
     if ptr.is_null() {
-        // SAFETY: many pthread interfaces have modern canonical symbols at 2.3.2.
+        // SAFETY: common modern pthread baseline.
         ptr = unsafe {
             libc::dlvsym(
                 libc::RTLD_NEXT,
@@ -115,21 +153,27 @@ unsafe fn resolve_host_symbol(name: &[u8]) -> *mut c_void {
         };
     }
     if ptr.is_null() {
-        // SAFETY: older baseline for distributions exposing legacy pthread version.
+        // SAFETY: symbols that only exist in newer libc.
         ptr = unsafe {
             libc::dlvsym(
                 libc::RTLD_NEXT,
                 name.as_ptr().cast::<libc::c_char>(),
-                glibc_v225.as_ptr().cast::<libc::c_char>(),
+                glibc_v34.as_ptr().cast::<libc::c_char>(),
             )
         };
     }
-    if ptr.is_null() {
+    let resolved = if ptr.is_null() {
         // SAFETY: final unversioned fallback.
         unsafe { libc::dlsym(libc::RTLD_NEXT, name.as_ptr().cast::<libc::c_char>()) }
     } else {
         ptr
-    }
+    };
+
+    HOST_SYMBOL_CACHE
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(name, resolved as usize);
+    resolved
 }
 
 unsafe fn host_pthread_create_fn() -> Option<HostPthreadCreateFn> {
@@ -289,6 +333,178 @@ unsafe fn host_pthread_cond_timedwait_fn() -> Option<HostPthreadCondTimedwaitFn>
     } else {
         // SAFETY: resolved symbol has pthread_cond_timedwait ABI.
         Some(unsafe { std::mem::transmute::<*mut c_void, HostPthreadCondTimedwaitFn>(ptr) })
+    }
+}
+
+unsafe fn host_pthread_getattr_np_fn() -> Option<HostPthreadGetattrNpFn> {
+    let ptr = unsafe { resolve_host_symbol(b"pthread_getattr_np\0") };
+    if ptr.is_null() {
+        None
+    } else {
+        // SAFETY: symbol resolved from host pthread implementation with matching ABI.
+        Some(unsafe { std::mem::transmute::<*mut c_void, HostPthreadGetattrNpFn>(ptr) })
+    }
+}
+
+unsafe fn host_pthread_attr_init_fn() -> Option<HostPthreadAttrInitFn> {
+    let ptr = unsafe { resolve_host_symbol(b"pthread_attr_init\0") };
+    if ptr.is_null() {
+        None
+    } else {
+        // SAFETY: symbol resolved from host pthread implementation with matching ABI.
+        Some(unsafe { std::mem::transmute::<*mut c_void, HostPthreadAttrInitFn>(ptr) })
+    }
+}
+
+unsafe fn host_pthread_attr_destroy_fn() -> Option<HostPthreadAttrDestroyFn> {
+    let ptr = unsafe { resolve_host_symbol(b"pthread_attr_destroy\0") };
+    if ptr.is_null() {
+        None
+    } else {
+        // SAFETY: symbol resolved from host pthread implementation with matching ABI.
+        Some(unsafe { std::mem::transmute::<*mut c_void, HostPthreadAttrDestroyFn>(ptr) })
+    }
+}
+
+unsafe fn host_pthread_attr_setdetachstate_fn() -> Option<HostPthreadAttrSetdetachstateFn> {
+    let ptr = unsafe { resolve_host_symbol(b"pthread_attr_setdetachstate\0") };
+    if ptr.is_null() {
+        None
+    } else {
+        // SAFETY: symbol resolved from host pthread implementation with matching ABI.
+        Some(unsafe { std::mem::transmute::<*mut c_void, HostPthreadAttrSetdetachstateFn>(ptr) })
+    }
+}
+
+unsafe fn host_pthread_attr_getdetachstate_fn() -> Option<HostPthreadAttrGetdetachstateFn> {
+    let ptr = unsafe { resolve_host_symbol(b"pthread_attr_getdetachstate\0") };
+    if ptr.is_null() {
+        None
+    } else {
+        // SAFETY: symbol resolved from host pthread implementation with matching ABI.
+        Some(unsafe { std::mem::transmute::<*mut c_void, HostPthreadAttrGetdetachstateFn>(ptr) })
+    }
+}
+
+unsafe fn host_pthread_attr_setstacksize_fn() -> Option<HostPthreadAttrSetstacksizeFn> {
+    let ptr = unsafe { resolve_host_symbol(b"pthread_attr_setstacksize\0") };
+    if ptr.is_null() {
+        None
+    } else {
+        // SAFETY: symbol resolved from host pthread implementation with matching ABI.
+        Some(unsafe { std::mem::transmute::<*mut c_void, HostPthreadAttrSetstacksizeFn>(ptr) })
+    }
+}
+
+unsafe fn host_pthread_attr_getstacksize_fn() -> Option<HostPthreadAttrGetstacksizeFn> {
+    let ptr = unsafe { resolve_host_symbol(b"pthread_attr_getstacksize\0") };
+    if ptr.is_null() {
+        None
+    } else {
+        // SAFETY: symbol resolved from host pthread implementation with matching ABI.
+        Some(unsafe { std::mem::transmute::<*mut c_void, HostPthreadAttrGetstacksizeFn>(ptr) })
+    }
+}
+
+unsafe fn host_pthread_mutexattr_init_fn() -> Option<HostPthreadMutexattrInitFn> {
+    let ptr = unsafe { resolve_host_symbol(b"pthread_mutexattr_init\0") };
+    if ptr.is_null() {
+        None
+    } else {
+        // SAFETY: symbol resolved from host pthread implementation with matching ABI.
+        Some(unsafe { std::mem::transmute::<*mut c_void, HostPthreadMutexattrInitFn>(ptr) })
+    }
+}
+
+unsafe fn host_pthread_mutexattr_destroy_fn() -> Option<HostPthreadMutexattrDestroyFn> {
+    let ptr = unsafe { resolve_host_symbol(b"pthread_mutexattr_destroy\0") };
+    if ptr.is_null() {
+        None
+    } else {
+        // SAFETY: symbol resolved from host pthread implementation with matching ABI.
+        Some(unsafe { std::mem::transmute::<*mut c_void, HostPthreadMutexattrDestroyFn>(ptr) })
+    }
+}
+
+unsafe fn host_pthread_mutexattr_settype_fn() -> Option<HostPthreadMutexattrSettypeFn> {
+    let ptr = unsafe { resolve_host_symbol(b"pthread_mutexattr_settype\0") };
+    if ptr.is_null() {
+        None
+    } else {
+        // SAFETY: symbol resolved from host pthread implementation with matching ABI.
+        Some(unsafe { std::mem::transmute::<*mut c_void, HostPthreadMutexattrSettypeFn>(ptr) })
+    }
+}
+
+unsafe fn host_pthread_mutexattr_gettype_fn() -> Option<HostPthreadMutexattrGettypeFn> {
+    let ptr = unsafe { resolve_host_symbol(b"pthread_mutexattr_gettype\0") };
+    if ptr.is_null() {
+        None
+    } else {
+        // SAFETY: symbol resolved from host pthread implementation with matching ABI.
+        Some(unsafe { std::mem::transmute::<*mut c_void, HostPthreadMutexattrGettypeFn>(ptr) })
+    }
+}
+
+unsafe fn host_pthread_condattr_init_fn() -> Option<HostPthreadCondattrInitFn> {
+    let ptr = unsafe { resolve_host_symbol(b"pthread_condattr_init\0") };
+    if ptr.is_null() {
+        None
+    } else {
+        // SAFETY: symbol resolved from host pthread implementation with matching ABI.
+        Some(unsafe { std::mem::transmute::<*mut c_void, HostPthreadCondattrInitFn>(ptr) })
+    }
+}
+
+unsafe fn host_pthread_condattr_destroy_fn() -> Option<HostPthreadCondattrDestroyFn> {
+    let ptr = unsafe { resolve_host_symbol(b"pthread_condattr_destroy\0") };
+    if ptr.is_null() {
+        None
+    } else {
+        // SAFETY: symbol resolved from host pthread implementation with matching ABI.
+        Some(unsafe { std::mem::transmute::<*mut c_void, HostPthreadCondattrDestroyFn>(ptr) })
+    }
+}
+
+unsafe fn host_pthread_condattr_setclock_fn() -> Option<HostPthreadCondattrSetclockFn> {
+    let ptr = unsafe { resolve_host_symbol(b"pthread_condattr_setclock\0") };
+    if ptr.is_null() {
+        None
+    } else {
+        // SAFETY: symbol resolved from host pthread implementation with matching ABI.
+        Some(unsafe { std::mem::transmute::<*mut c_void, HostPthreadCondattrSetclockFn>(ptr) })
+    }
+}
+
+unsafe fn host_pthread_condattr_getclock_fn() -> Option<HostPthreadCondattrGetclockFn> {
+    let ptr = unsafe { resolve_host_symbol(b"pthread_condattr_getclock\0") };
+    if ptr.is_null() {
+        None
+    } else {
+        // SAFETY: symbol resolved from host pthread implementation with matching ABI.
+        Some(unsafe { std::mem::transmute::<*mut c_void, HostPthreadCondattrGetclockFn>(ptr) })
+    }
+}
+
+unsafe fn host_pthread_rwlockattr_init_fn() -> Option<HostPthreadRwlockattrInitFn> {
+    let ptr = unsafe { resolve_host_symbol(b"pthread_rwlockattr_init\0") };
+    if ptr.is_null() {
+        None
+    } else {
+        // SAFETY: symbol resolved from host pthread implementation with matching ABI.
+        Some(unsafe { std::mem::transmute::<*mut c_void, HostPthreadRwlockattrInitFn>(ptr) })
+    }
+}
+
+unsafe fn host_pthread_rwlockattr_destroy_fn() -> Option<HostPthreadRwlockattrDestroyFn> {
+    let ptr = unsafe { resolve_host_symbol(b"pthread_rwlockattr_destroy\0") };
+    if ptr.is_null() {
+        None
+    } else {
+        // SAFETY: symbol resolved from host pthread implementation with matching ABI.
+        Some(unsafe {
+            std::mem::transmute::<*mut c_void, HostPthreadRwlockattrDestroyFn>(ptr)
+        })
     }
 }
 
@@ -1550,61 +1766,30 @@ pub unsafe extern "C" fn pthread_once(
 }
 
 // ---------------------------------------------------------------------------
-// pthread attribute functions — GlibcCallThrough
+// pthread attribute functions
 //
-// Attribute init/destroy/get/set delegate to glibc since they manipulate
-// opaque structs whose layout is glibc-version-specific.
+// Attribute init/destroy/get/set delegate to the host pthread via RTLD_NEXT
+// because they manipulate opaque structs with glibc-version-specific layout.
 // ---------------------------------------------------------------------------
-
-unsafe extern "C" {
-    // Thread attributes
-    #[link_name = "pthread_attr_init"]
-    fn libc_pthread_attr_init(attr: *mut libc::pthread_attr_t) -> c_int;
-    #[link_name = "pthread_attr_destroy"]
-    fn libc_pthread_attr_destroy(attr: *mut libc::pthread_attr_t) -> c_int;
-    #[link_name = "pthread_attr_setdetachstate"]
-    fn libc_pthread_attr_setdetachstate(attr: *mut libc::pthread_attr_t, state: c_int) -> c_int;
-    #[link_name = "pthread_attr_getdetachstate"]
-    fn libc_pthread_attr_getdetachstate(attr: *const libc::pthread_attr_t, state: *mut c_int) -> c_int;
-    #[link_name = "pthread_attr_setstacksize"]
-    fn libc_pthread_attr_setstacksize(attr: *mut libc::pthread_attr_t, size: usize) -> c_int;
-    #[link_name = "pthread_attr_getstacksize"]
-    fn libc_pthread_attr_getstacksize(attr: *const libc::pthread_attr_t, size: *mut usize) -> c_int;
-    // Mutex attributes
-    #[link_name = "pthread_mutexattr_init"]
-    fn libc_pthread_mutexattr_init(attr: *mut libc::pthread_mutexattr_t) -> c_int;
-    #[link_name = "pthread_mutexattr_destroy"]
-    fn libc_pthread_mutexattr_destroy(attr: *mut libc::pthread_mutexattr_t) -> c_int;
-    #[link_name = "pthread_mutexattr_settype"]
-    fn libc_pthread_mutexattr_settype(attr: *mut libc::pthread_mutexattr_t, kind: c_int) -> c_int;
-    #[link_name = "pthread_mutexattr_gettype"]
-    fn libc_pthread_mutexattr_gettype(attr: *const libc::pthread_mutexattr_t, kind: *mut c_int) -> c_int;
-    // Condvar attributes
-    #[link_name = "pthread_condattr_init"]
-    fn libc_pthread_condattr_init(attr: *mut libc::pthread_condattr_t) -> c_int;
-    #[link_name = "pthread_condattr_destroy"]
-    fn libc_pthread_condattr_destroy(attr: *mut libc::pthread_condattr_t) -> c_int;
-    #[link_name = "pthread_condattr_setclock"]
-    fn libc_pthread_condattr_setclock(attr: *mut libc::pthread_condattr_t, clock_id: libc::clockid_t) -> c_int;
-    #[link_name = "pthread_condattr_getclock"]
-    fn libc_pthread_condattr_getclock(attr: *const libc::pthread_condattr_t, clock_id: *mut libc::clockid_t) -> c_int;
-    // Rwlock attributes
-    #[link_name = "pthread_rwlockattr_init"]
-    fn libc_pthread_rwlockattr_init(attr: *mut libc::pthread_rwlockattr_t) -> c_int;
-    #[link_name = "pthread_rwlockattr_destroy"]
-    fn libc_pthread_rwlockattr_destroy(attr: *mut libc::pthread_rwlockattr_t) -> c_int;
-}
 
 // --- Thread attributes ---
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pthread_attr_init(attr: *mut libc::pthread_attr_t) -> c_int {
-    unsafe { libc_pthread_attr_init(attr) }
+    match unsafe { host_pthread_attr_init_fn() } {
+        // SAFETY: resolved symbol ABI matches pthread_attr_init.
+        Some(func) => unsafe { func(attr) },
+        None => libc::ENOSYS,
+    }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pthread_attr_destroy(attr: *mut libc::pthread_attr_t) -> c_int {
-    unsafe { libc_pthread_attr_destroy(attr) }
+    match unsafe { host_pthread_attr_destroy_fn() } {
+        // SAFETY: resolved symbol ABI matches pthread_attr_destroy.
+        Some(func) => unsafe { func(attr) },
+        None => libc::ENOSYS,
+    }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -1612,7 +1797,11 @@ pub unsafe extern "C" fn pthread_attr_setdetachstate(
     attr: *mut libc::pthread_attr_t,
     state: c_int,
 ) -> c_int {
-    unsafe { libc_pthread_attr_setdetachstate(attr, state) }
+    match unsafe { host_pthread_attr_setdetachstate_fn() } {
+        // SAFETY: resolved symbol ABI matches pthread_attr_setdetachstate.
+        Some(func) => unsafe { func(attr, state) },
+        None => libc::ENOSYS,
+    }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -1620,7 +1809,11 @@ pub unsafe extern "C" fn pthread_attr_getdetachstate(
     attr: *const libc::pthread_attr_t,
     state: *mut c_int,
 ) -> c_int {
-    unsafe { libc_pthread_attr_getdetachstate(attr, state) }
+    match unsafe { host_pthread_attr_getdetachstate_fn() } {
+        // SAFETY: resolved symbol ABI matches pthread_attr_getdetachstate.
+        Some(func) => unsafe { func(attr, state) },
+        None => libc::ENOSYS,
+    }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -1628,7 +1821,11 @@ pub unsafe extern "C" fn pthread_attr_setstacksize(
     attr: *mut libc::pthread_attr_t,
     size: usize,
 ) -> c_int {
-    unsafe { libc_pthread_attr_setstacksize(attr, size) }
+    match unsafe { host_pthread_attr_setstacksize_fn() } {
+        // SAFETY: resolved symbol ABI matches pthread_attr_setstacksize.
+        Some(func) => unsafe { func(attr, size) },
+        None => libc::ENOSYS,
+    }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -1636,23 +1833,31 @@ pub unsafe extern "C" fn pthread_attr_getstacksize(
     attr: *const libc::pthread_attr_t,
     size: *mut usize,
 ) -> c_int {
-    unsafe { libc_pthread_attr_getstacksize(attr, size) }
+    match unsafe { host_pthread_attr_getstacksize_fn() } {
+        // SAFETY: resolved symbol ABI matches pthread_attr_getstacksize.
+        Some(func) => unsafe { func(attr, size) },
+        None => libc::ENOSYS,
+    }
 }
 
 // --- Mutex attributes ---
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn pthread_mutexattr_init(
-    attr: *mut libc::pthread_mutexattr_t,
-) -> c_int {
-    unsafe { libc_pthread_mutexattr_init(attr) }
+pub unsafe extern "C" fn pthread_mutexattr_init(attr: *mut libc::pthread_mutexattr_t) -> c_int {
+    match unsafe { host_pthread_mutexattr_init_fn() } {
+        // SAFETY: resolved symbol ABI matches pthread_mutexattr_init.
+        Some(func) => unsafe { func(attr) },
+        None => libc::ENOSYS,
+    }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn pthread_mutexattr_destroy(
-    attr: *mut libc::pthread_mutexattr_t,
-) -> c_int {
-    unsafe { libc_pthread_mutexattr_destroy(attr) }
+pub unsafe extern "C" fn pthread_mutexattr_destroy(attr: *mut libc::pthread_mutexattr_t) -> c_int {
+    match unsafe { host_pthread_mutexattr_destroy_fn() } {
+        // SAFETY: resolved symbol ABI matches pthread_mutexattr_destroy.
+        Some(func) => unsafe { func(attr) },
+        None => libc::ENOSYS,
+    }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -1660,7 +1865,11 @@ pub unsafe extern "C" fn pthread_mutexattr_settype(
     attr: *mut libc::pthread_mutexattr_t,
     kind: c_int,
 ) -> c_int {
-    unsafe { libc_pthread_mutexattr_settype(attr, kind) }
+    match unsafe { host_pthread_mutexattr_settype_fn() } {
+        // SAFETY: resolved symbol ABI matches pthread_mutexattr_settype.
+        Some(func) => unsafe { func(attr, kind) },
+        None => libc::ENOSYS,
+    }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -1668,23 +1877,31 @@ pub unsafe extern "C" fn pthread_mutexattr_gettype(
     attr: *const libc::pthread_mutexattr_t,
     kind: *mut c_int,
 ) -> c_int {
-    unsafe { libc_pthread_mutexattr_gettype(attr, kind) }
+    match unsafe { host_pthread_mutexattr_gettype_fn() } {
+        // SAFETY: resolved symbol ABI matches pthread_mutexattr_gettype.
+        Some(func) => unsafe { func(attr, kind) },
+        None => libc::ENOSYS,
+    }
 }
 
 // --- Condvar attributes ---
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn pthread_condattr_init(
-    attr: *mut libc::pthread_condattr_t,
-) -> c_int {
-    unsafe { libc_pthread_condattr_init(attr) }
+pub unsafe extern "C" fn pthread_condattr_init(attr: *mut libc::pthread_condattr_t) -> c_int {
+    match unsafe { host_pthread_condattr_init_fn() } {
+        // SAFETY: resolved symbol ABI matches pthread_condattr_init.
+        Some(func) => unsafe { func(attr) },
+        None => libc::ENOSYS,
+    }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn pthread_condattr_destroy(
-    attr: *mut libc::pthread_condattr_t,
-) -> c_int {
-    unsafe { libc_pthread_condattr_destroy(attr) }
+pub unsafe extern "C" fn pthread_condattr_destroy(attr: *mut libc::pthread_condattr_t) -> c_int {
+    match unsafe { host_pthread_condattr_destroy_fn() } {
+        // SAFETY: resolved symbol ABI matches pthread_condattr_destroy.
+        Some(func) => unsafe { func(attr) },
+        None => libc::ENOSYS,
+    }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -1692,7 +1909,11 @@ pub unsafe extern "C" fn pthread_condattr_setclock(
     attr: *mut libc::pthread_condattr_t,
     clock_id: libc::clockid_t,
 ) -> c_int {
-    unsafe { libc_pthread_condattr_setclock(attr, clock_id) }
+    match unsafe { host_pthread_condattr_setclock_fn() } {
+        // SAFETY: resolved symbol ABI matches pthread_condattr_setclock.
+        Some(func) => unsafe { func(attr, clock_id) },
+        None => libc::ENOSYS,
+    }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -1700,23 +1921,33 @@ pub unsafe extern "C" fn pthread_condattr_getclock(
     attr: *const libc::pthread_condattr_t,
     clock_id: *mut libc::clockid_t,
 ) -> c_int {
-    unsafe { libc_pthread_condattr_getclock(attr, clock_id) }
+    match unsafe { host_pthread_condattr_getclock_fn() } {
+        // SAFETY: resolved symbol ABI matches pthread_condattr_getclock.
+        Some(func) => unsafe { func(attr, clock_id) },
+        None => libc::ENOSYS,
+    }
 }
 
 // --- Rwlock attributes ---
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn pthread_rwlockattr_init(
-    attr: *mut libc::pthread_rwlockattr_t,
-) -> c_int {
-    unsafe { libc_pthread_rwlockattr_init(attr) }
+pub unsafe extern "C" fn pthread_rwlockattr_init(attr: *mut libc::pthread_rwlockattr_t) -> c_int {
+    match unsafe { host_pthread_rwlockattr_init_fn() } {
+        // SAFETY: resolved symbol ABI matches pthread_rwlockattr_init.
+        Some(func) => unsafe { func(attr) },
+        None => libc::ENOSYS,
+    }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pthread_rwlockattr_destroy(
     attr: *mut libc::pthread_rwlockattr_t,
 ) -> c_int {
-    unsafe { libc_pthread_rwlockattr_destroy(attr) }
+    match unsafe { host_pthread_rwlockattr_destroy_fn() } {
+        // SAFETY: resolved symbol ABI matches pthread_rwlockattr_destroy.
+        Some(func) => unsafe { func(attr) },
+        None => libc::ENOSYS,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1732,8 +1963,6 @@ unsafe extern "C" {
     fn libc_pthread_setcanceltype(typ: c_int, oldtype: *mut c_int) -> c_int;
     #[link_name = "pthread_testcancel"]
     fn libc_pthread_testcancel();
-    #[link_name = "pthread_getattr_np"]
-    fn libc_pthread_getattr_np(thread: libc::pthread_t, attr: *mut libc::pthread_attr_t) -> c_int;
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -1761,7 +1990,11 @@ pub unsafe extern "C" fn pthread_getattr_np(
     thread: libc::pthread_t,
     attr: *mut libc::pthread_attr_t,
 ) -> c_int {
-    unsafe { libc_pthread_getattr_np(thread, attr) }
+    match unsafe { host_pthread_getattr_np_fn() } {
+        // SAFETY: resolved symbol ABI matches pthread_getattr_np.
+        Some(func) => unsafe { func(thread, attr) },
+        None => libc::ENOSYS,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1780,7 +2013,11 @@ unsafe extern "C" {
     #[link_name = "pthread_spin_unlock"]
     fn libc_pthread_spin_unlock(lock: *mut c_void) -> c_int;
     #[link_name = "pthread_barrier_init"]
-    fn libc_pthread_barrier_init(barrier: *mut c_void, attr: *const c_void, count: libc::c_uint) -> c_int;
+    fn libc_pthread_barrier_init(
+        barrier: *mut c_void,
+        attr: *const c_void,
+        count: libc::c_uint,
+    ) -> c_int;
     #[link_name = "pthread_barrier_destroy"]
     fn libc_pthread_barrier_destroy(barrier: *mut c_void) -> c_int;
     #[link_name = "pthread_barrier_wait"]
@@ -1788,7 +2025,11 @@ unsafe extern "C" {
     #[link_name = "pthread_setname_np"]
     fn libc_pthread_setname_np(thread: libc::pthread_t, name: *const std::ffi::c_char) -> c_int;
     #[link_name = "pthread_getname_np"]
-    fn libc_pthread_getname_np(thread: libc::pthread_t, name: *mut std::ffi::c_char, len: usize) -> c_int;
+    fn libc_pthread_getname_np(
+        thread: libc::pthread_t,
+        name: *mut std::ffi::c_char,
+        len: usize,
+    ) -> c_int;
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -1818,7 +2059,9 @@ pub unsafe extern "C" fn pthread_spin_unlock(lock: *mut c_void) -> c_int {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pthread_barrier_init(
-    barrier: *mut c_void, attr: *const c_void, count: libc::c_uint,
+    barrier: *mut c_void,
+    attr: *const c_void,
+    count: libc::c_uint,
 ) -> c_int {
     unsafe { libc_pthread_barrier_init(barrier, attr, count) }
 }
@@ -1835,14 +2078,17 @@ pub unsafe extern "C" fn pthread_barrier_wait(barrier: *mut c_void) -> c_int {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pthread_setname_np(
-    thread: libc::pthread_t, name: *const std::ffi::c_char,
+    thread: libc::pthread_t,
+    name: *const std::ffi::c_char,
 ) -> c_int {
     unsafe { libc_pthread_setname_np(thread, name) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pthread_getname_np(
-    thread: libc::pthread_t, name: *mut std::ffi::c_char, len: usize,
+    thread: libc::pthread_t,
+    name: *mut std::ffi::c_char,
+    len: usize,
 ) -> c_int {
     unsafe { libc_pthread_getname_np(thread, name, len) }
 }

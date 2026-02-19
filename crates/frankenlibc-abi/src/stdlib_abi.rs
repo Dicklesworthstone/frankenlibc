@@ -1254,58 +1254,247 @@ pub unsafe extern "C" fn putenv(string: *mut c_char) -> c_int {
 }
 
 // ---------------------------------------------------------------------------
-// Additional stdlib — GlibcCallThrough
+// Additional stdlib — temp file helpers
 // ---------------------------------------------------------------------------
 
-unsafe extern "C" {
-    #[link_name = "reallocarray"]
-    fn libc_reallocarray(ptr: *mut c_void, nmemb: usize, size: usize) -> *mut c_void;
-    #[link_name = "strtold"]
-    fn libc_strtold(nptr: *const c_char, endptr: *mut *mut c_char) -> f64;
-    #[link_name = "mkostemp"]
-    fn libc_mkostemp(template: *mut c_char, flags: c_int) -> c_int;
+const MKTEMP_SUFFIX_LEN: usize = 6;
+const MKTEMP_CHARS: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+const MKOSTEMP_ALLOWED_FLAGS: c_int =
+    libc::O_APPEND | libc::O_CLOEXEC | libc::O_SYNC | libc::O_DSYNC | libc::O_RSYNC;
+
+static MKTEMP_NONCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+#[inline]
+fn mix64(mut x: u64) -> u64 {
+    x ^= x >> 30;
+    x = x.wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    x ^= x >> 27;
+    x = x.wrapping_mul(0x94d0_49bb_1331_11eb);
+    x ^ (x >> 31)
+}
+
+unsafe fn mkostemps_inner(template: *mut c_char, suffixlen: c_int, flags: c_int) -> (c_int, bool) {
+    if template.is_null() || suffixlen < 0 {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return (-1, true);
+    }
+    if flags & !MKOSTEMP_ALLOWED_FLAGS != 0 {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return (-1, true);
+    }
+
+    // SAFETY: `template` must be a writable, NUL-terminated byte string by ABI contract.
+    let template_bytes = unsafe { std::ffi::CStr::from_ptr(template) }.to_bytes();
+    let total_len = template_bytes.len();
+    let suffix_len = suffixlen as usize;
+    if total_len < MKTEMP_SUFFIX_LEN || suffix_len > total_len.saturating_sub(MKTEMP_SUFFIX_LEN) {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return (-1, true);
+    }
+
+    let x_start = total_len - suffix_len - MKTEMP_SUFFIX_LEN;
+    if !template_bytes[x_start..x_start + MKTEMP_SUFFIX_LEN]
+        .iter()
+        .all(|&b| b == b'X')
+    {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return (-1, true);
+    }
+
+    // SAFETY: `template` points to writable storage at least `total_len + 1` bytes long.
+    let buf = unsafe { std::slice::from_raw_parts_mut(template as *mut u8, total_len) };
+    let seed = mix64(
+        (std::process::id() as u64).wrapping_shl(32)
+            ^ (std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos() as u64)
+                .unwrap_or(0))
+            ^ MKTEMP_NONCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+    );
+
+    for attempt in 0_u64..256 {
+        let mut state = mix64(seed ^ attempt.wrapping_mul(0x9e37_79b9_7f4a_7c15));
+        for idx in 0..MKTEMP_SUFFIX_LEN {
+            state = mix64(state.wrapping_add(idx as u64));
+            buf[x_start + idx] = MKTEMP_CHARS[(state as usize) % MKTEMP_CHARS.len()];
+        }
+
+        // SAFETY: `template` now names a candidate pathname and points to NUL-terminated bytes.
+        let fd = unsafe {
+            libc::open(
+                template as *const c_char,
+                libc::O_RDWR | libc::O_CREAT | libc::O_EXCL | flags,
+                0o600,
+            )
+        };
+        if fd >= 0 {
+            return (fd, false);
+        }
+
+        let err = std::io::Error::last_os_error()
+            .raw_os_error()
+            .unwrap_or(libc::EIO);
+        if err != libc::EEXIST {
+            unsafe { set_abi_errno(err) };
+            return (-1, true);
+        }
+    }
+
+    unsafe { set_abi_errno(libc::EEXIST) };
+    (-1, true)
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn reallocarray(ptr: *mut c_void, nmemb: usize, size: usize) -> *mut c_void {
-    unsafe { libc_reallocarray(ptr, nmemb, size) }
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Stdlib,
+        ptr as usize,
+        nmemb,
+        true,
+        ptr.is_null() || known_remaining(ptr as usize).is_none(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        if nmemb.checked_mul(size).is_none() {
+            unsafe { set_abi_errno(libc::ENOMEM) };
+        }
+        runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 6, true);
+        return ptr::null_mut();
+    }
+
+    let Some(total_size) = nmemb.checked_mul(size) else {
+        // POSIX/glibc semantics: overflow is an allocation failure with ENOMEM.
+        unsafe { set_abi_errno(libc::ENOMEM) };
+        runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 6, true);
+        return ptr::null_mut();
+    };
+
+    // SAFETY: ABI contract matches realloc; overflow has already been checked.
+    let out = unsafe { crate::malloc_abi::realloc(ptr, total_size) };
+    runtime_policy::observe(
+        ApiFamily::Stdlib,
+        decision.profile,
+        runtime_policy::scaled_cost(8, total_size.max(1)),
+        out.is_null(),
+    );
+    out
 }
 
 /// `strtold` — convert string to long double (on x86_64, same as f64).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn strtold(nptr: *const c_char, endptr: *mut *mut c_char) -> f64 {
-    unsafe { libc_strtold(nptr, endptr) }
+    // SAFETY: ABI contract mirrors strtod and current ABI model treats long double as f64.
+    unsafe { strtod(nptr, endptr) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn mkostemp(template: *mut c_char, flags: c_int) -> c_int {
-    unsafe { libc_mkostemp(template, flags) }
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Stdlib,
+        template as usize,
+        0,
+        true,
+        template.is_null() || known_remaining(template as usize).is_none(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(libc::EPERM) };
+        runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 8, true);
+        return -1;
+    }
+
+    let (fd, failed) = unsafe { mkostemps_inner(template, 0, flags) };
+    runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 18, failed);
+    fd
 }
 
 // ---------------------------------------------------------------------------
-// mkstemps / mkostemps / clearenv — GlibcCallThrough
+// mkstemps / mkostemps / clearenv
 // ---------------------------------------------------------------------------
-
-unsafe extern "C" {
-    #[link_name = "mkstemps"]
-    fn libc_mkstemps(template: *mut c_char, suffixlen: c_int) -> c_int;
-    #[link_name = "mkostemps"]
-    fn libc_mkostemps(template: *mut c_char, suffixlen: c_int, flags: c_int) -> c_int;
-    #[link_name = "clearenv"]
-    fn libc_clearenv() -> c_int;
-}
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn mkstemps(template: *mut c_char, suffixlen: c_int) -> c_int {
-    unsafe { libc_mkstemps(template, suffixlen) }
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Stdlib,
+        template as usize,
+        0,
+        true,
+        template.is_null() || known_remaining(template as usize).is_none(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(libc::EPERM) };
+        runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 8, true);
+        return -1;
+    }
+
+    let (fd, failed) = unsafe { mkostemps_inner(template, suffixlen, 0) };
+    runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 18, failed);
+    fd
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn mkostemps(template: *mut c_char, suffixlen: c_int, flags: c_int) -> c_int {
-    unsafe { libc_mkostemps(template, suffixlen, flags) }
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Stdlib,
+        template as usize,
+        0,
+        true,
+        template.is_null() || known_remaining(template as usize).is_none(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(libc::EPERM) };
+        runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 8, true);
+        return -1;
+    }
+
+    let (fd, failed) = unsafe { mkostemps_inner(template, suffixlen, flags) };
+    runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 18, failed);
+    fd
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn clearenv() -> c_int {
-    unsafe { libc_clearenv() }
+    let (_, decision) = runtime_policy::decide(ApiFamily::Stdlib, 0, 0, true, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(libc::EPERM) };
+        runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 6, true);
+        return -1;
+    }
+
+    let mut names = Vec::<Vec<u8>>::new();
+    // SAFETY: HOST_ENVIRON is owned by libc; we only read and copy entry names.
+    unsafe {
+        let mut cursor = HOST_ENVIRON;
+        while !cursor.is_null() && !(*cursor).is_null() {
+            let entry = std::ffi::CStr::from_ptr(*cursor).to_bytes();
+            if let Some(eq_pos) = entry.iter().position(|&b| b == b'=') {
+                let name = &entry[..eq_pos];
+                if frankenlibc_core::stdlib::valid_env_name(name) {
+                    let mut owned = Vec::with_capacity(name.len() + 1);
+                    owned.extend_from_slice(name);
+                    owned.push(0);
+                    names.push(owned);
+                }
+            }
+            cursor = cursor.add(1);
+        }
+    }
+
+    let mut had_error = false;
+    for name in &names {
+        // SAFETY: names are copied from environ keys and explicitly NUL-terminated.
+        if unsafe { native_unsetenv(name.as_ptr() as *const c_char) } != 0 {
+            had_error = true;
+        }
+    }
+
+    runtime_policy::observe(
+        ApiFamily::Stdlib,
+        decision.profile,
+        runtime_policy::scaled_cost(8, names.len()),
+        had_error,
+    );
+    if had_error { -1 } else { 0 }
 }

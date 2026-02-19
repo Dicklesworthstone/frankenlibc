@@ -43,27 +43,45 @@
         "feature_gate": "runtime-math-production",
         "compiled_by_default": true,
         "grace_period_days": 30,
-        "actions": ["Add #[deprecated] attribute", "Update linkage_status to 'Deprecated'", "Create migration note"]
+        "actions": [
+          "Add #[deprecated] attribute",
+          "Update linkage_status to 'Deprecated'",
+          "Create migration note"
+        ]
       },
       {
         "stage": "research_only",
         "description": "Module moved behind research feature gate. No longer in production binary by default.",
         "feature_gate": "runtime-math-research",
         "compiled_by_default": false,
-        "actions": ["Move to research_only_modules in manifest", "Remove from production_modules", "Update governance classification if needed"]
+        "actions": [
+          "Move to research_only_modules in manifest",
+          "Remove from production_modules",
+          "Update governance classification if needed"
+        ]
       },
       {
         "stage": "removed",
         "description": "Module source deleted. Only reachable via git history.",
         "feature_gate": null,
         "compiled_by_default": false,
-        "actions": ["Delete source file", "Remove from all manifests", "Archive final benchmark data"]
+        "actions": [
+          "Delete source file",
+          "Remove from all manifests",
+          "Archive final benchmark data"
+        ]
       }
     ]
   },
   "waiver_policy": {
     "description": "Waivers allow a module to remain in production despite meeting retirement criteria.",
-    "required_fields": ["module", "waiver_bead", "justification", "expires_date", "reviewer"],
+    "required_fields": [
+      "module",
+      "waiver_bead",
+      "justification",
+      "expires_date",
+      "reviewer"
+    ],
     "max_duration_days": 90,
     "review_cadence": "monthly",
     "escalation": "Expired waivers without renewal automatically trigger deprecation stage transition."
@@ -74,21 +92,9 @@
     "manifest_source": "tests/runtime_math/production_kernel_manifest.v1.json",
     "linkage_source": "tests/runtime_math/runtime_math_linkage.v1.json",
     "rc1_candidates": {
-      "description": "Research-classified modules still in production manifest (governance_mismatch).",
-      "count": 44,
-      "modules": [
-        "grothendieck_glue", "higher_topos", "serre_spectral", "microlocal", "ktheory",
-        "clifford", "derived_tstructure", "hodge_decomposition", "nerve_complex", "cohomology",
-        "equivariant", "atiyah_bott", "localization_chooser", "grobner_normalizer",
-        "sos_barrier", "sos_invariant", "birkhoff_ergodic", "ornstein_uhlenbeck",
-        "lyapunov_stability", "operator_norm", "spectral_gap", "hurst_exponent",
-        "entropy_rate", "lempel_ziv", "fano_bound", "transfer_entropy", "info_geometry",
-        "kernel_mmd", "matrix_concentration", "coupling", "pac_bayes",
-        "rademacher_complexity", "wasserstein_drift", "stein_discrepancy",
-        "bifurcation_detector", "ito_quadratic_variation", "malliavin_sensitivity",
-        "dobrushin_contraction", "pomdp_repair", "sparse", "design", "admm_budget",
-        "approachability", "obstruction_detector"
-      ]
+      "description": "Research-classified modules currently present in production manifest (governance_mismatch).",
+      "count": 0,
+      "modules": []
     },
     "rc2_candidates": {
       "description": "Modules with non-Production linkage status still in production manifest.",
@@ -103,72 +109,52 @@
     "production_compliant": {
       "description": "Modules classified as production_core or production_monitor in governance AND in production manifest.",
       "count": 25,
-      "production_core": ["barrier", "bandit", "control", "risk", "fusion", "evidence", "policy_table", "loss_minimizer", "conformal", "redundancy_tuner", "commitment_audit", "provenance_info"],
-      "production_monitor": ["changepoint", "eprocess", "cvar", "azuma_hoeffding", "alpha_investing", "pareto", "sobol", "covering_array", "submodular_coverage", "dispersion_index", "borel_cantelli", "doob_decomposition", "renewal_theory"]
+      "production_core": [
+        "barrier",
+        "bandit",
+        "control",
+        "risk",
+        "fusion",
+        "evidence",
+        "policy_table",
+        "loss_minimizer",
+        "conformal",
+        "redundancy_tuner",
+        "commitment_audit",
+        "provenance_info"
+      ],
+      "production_monitor": [
+        "changepoint",
+        "eprocess",
+        "cvar",
+        "azuma_hoeffding",
+        "alpha_investing",
+        "pareto",
+        "sobol",
+        "covering_array",
+        "submodular_coverage",
+        "dispersion_index",
+        "borel_cantelli",
+        "doob_decomposition",
+        "renewal_theory"
+      ]
     }
   },
-  "active_waivers": [
-    {
-      "module": "ALL_RESEARCH",
-      "waiver_bead": "bd-kan",
-      "justification": "EPIC bd-kan (Math Kernel Rebuild) governs the production/research split. All 44 research modules have a blanket waiver pending the phased migration tracked by bd-kan milestones.",
-      "expires_date": "2026-05-11",
-      "reviewer": "CrimsonCove",
-      "scope": "Covers all 44 RC-1 candidates during the migration period.",
-      "migration_plan_bead": "bd-kan"
-    }
-  ],
+  "active_waivers": [],
   "migration_notes": {
-    "description": "Per-wave migration plan for retiring research modules from production manifest.",
-    "waves": [
-      {
-        "wave": 1,
-        "title": "Algebraic topology modules",
-        "modules": ["grothendieck_glue", "higher_topos", "serre_spectral", "microlocal", "ktheory", "clifford", "derived_tstructure", "hodge_decomposition", "nerve_complex", "cohomology", "equivariant", "atiyah_bott", "localization_chooser"],
-        "count": 13,
-        "target_stage": "research_only",
-        "rationale": "Most abstract mathematical theory. No direct decision linkage to ABI-level safety. All use cached state that can fall back to conservative defaults.",
-        "prerequisite_beads": ["bd-kan"]
-      },
-      {
-        "wave": 2,
-        "title": "Optimization and constraint modules",
-        "modules": ["grobner_normalizer", "sos_barrier", "sos_invariant", "sparse", "design", "admm_budget", "approachability", "pomdp_repair"],
-        "count": 8,
-        "target_stage": "research_only",
-        "rationale": "Advanced optimization solvers. Production decisions use simpler barrier+control+bandit path. These add analytical depth but not safety-critical functionality.",
-        "prerequisite_beads": ["bd-kan"]
-      },
-      {
-        "wave": 3,
-        "title": "Dynamical systems and stochastic modules",
-        "modules": ["birkhoff_ergodic", "ornstein_uhlenbeck", "lyapunov_stability", "operator_norm", "spectral_gap", "bifurcation_detector", "ito_quadratic_variation", "malliavin_sensitivity", "dobrushin_contraction"],
-        "count": 9,
-        "target_stage": "research_only",
-        "rationale": "Dynamical systems monitors. Useful for research characterization but not required for safe runtime decisions.",
-        "prerequisite_beads": ["bd-kan"]
-      },
-      {
-        "wave": 4,
-        "title": "Information theory and statistical learning modules",
-        "modules": ["hurst_exponent", "entropy_rate", "lempel_ziv", "fano_bound", "transfer_entropy", "info_geometry", "kernel_mmd", "matrix_concentration", "coupling", "pac_bayes", "rademacher_complexity", "wasserstein_drift", "stein_discrepancy", "obstruction_detector"],
-        "count": 14,
-        "target_stage": "research_only",
-        "rationale": "Statistical learning and information-theoretic monitors. Provide deep analytical power but production decisions do not depend on them.",
-        "prerequisite_beads": ["bd-kan"]
-      }
-    ],
-    "total_waves": 4,
-    "total_modules_to_migrate": 44
+    "description": "Migration to research_only manifest routing is complete for current governance classification.",
+    "waves": [],
+    "total_waves": 0,
+    "total_modules_to_migrate": 0
   },
   "summary": {
-    "total_modules_in_manifest": 69,
+    "total_modules_in_manifest": 25,
     "production_compliant": 25,
-    "retirement_candidates_rc1": 44,
+    "retirement_candidates_rc1": 0,
     "retirement_candidates_rc2": 0,
-    "active_waivers": 1,
-    "waiver_coverage": "ALL_RESEARCH (44 modules)",
-    "migration_waves": 4,
-    "policy_status": "enforcing_with_waivers"
+    "active_waivers": 0,
+    "waiver_coverage": "none (all research modules already routed to research_only_manifest)",
+    "migration_waves": 0,
+    "policy_status": "enforcing_no_waivers"
   }
 }

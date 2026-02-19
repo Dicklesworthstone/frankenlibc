@@ -124,7 +124,11 @@ pub fn strncpy(dest: &mut [u8], src: &[u8], n: usize) -> usize {
 pub fn stpncpy(dest: &mut [u8], src: &[u8], n: usize) -> usize {
     let count = strncpy(dest, src, n);
     let src_len = strlen(src);
-    if src_len < count { src_len } else { count }
+    if src_len < count {
+        src_len
+    } else {
+        count
+    }
 }
 
 /// Appends `src` to the end of the NUL-terminated string in `dest`.
