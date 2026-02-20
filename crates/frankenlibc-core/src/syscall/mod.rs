@@ -90,6 +90,8 @@ pub const SYS_MADVISE: usize = 28;
 #[cfg(target_arch = "x86_64")]
 pub const SYS_FDATASYNC: usize = 75;
 #[cfg(target_arch = "x86_64")]
+pub const SYS_FALLOCATE: usize = 285;
+#[cfg(target_arch = "x86_64")]
 pub const SYS_GETDENTS64: usize = 217;
 #[cfg(target_arch = "x86_64")]
 pub const SYS_EXIT_GROUP: usize = 231;
@@ -159,6 +161,8 @@ pub const SYS_MSYNC: usize = 227;
 pub const SYS_MADVISE: usize = 233;
 #[cfg(target_arch = "aarch64")]
 pub const SYS_FDATASYNC: usize = 83;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_FALLOCATE: usize = 47;
 #[cfg(target_arch = "aarch64")]
 pub const SYS_GETDENTS64: usize = 61;
 #[cfg(target_arch = "aarch64")]
@@ -456,6 +460,23 @@ pub unsafe fn sys_fcntl(fd: i32, cmd: i32, arg: usize) -> Result<i32, i32> {
 pub fn sys_fdatasync(fd: i32) -> Result<(), i32> {
     // SAFETY: fdatasync is safe on any fd.
     let ret = unsafe { raw::syscall1(SYS_FDATASYNC, fd as usize) };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `fallocate(fd, mode, offset, len)` — manipulate file space.
+#[inline]
+#[allow(unsafe_code)]
+pub fn sys_fallocate(fd: i32, mode: i32, offset: i64, len: i64) -> Result<(), i32> {
+    // SAFETY: kernel validates fd/mode/ranges; invalid inputs return errno.
+    let ret = unsafe {
+        raw::syscall4(
+            SYS_FALLOCATE,
+            fd as usize,
+            mode as usize,
+            offset as usize,
+            len as usize,
+        )
+    };
     syscall_result(ret).map(|_| ())
 }
 

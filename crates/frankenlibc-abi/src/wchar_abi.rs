@@ -1850,7 +1850,7 @@ pub unsafe extern "C" fn realpath(
     };
 
     let out = canonical.as_os_str().as_bytes();
-    if out.iter().any(|&b| b == 0) {
+    if out.contains(&0) {
         unsafe { set_abi_errno(errno::EINVAL) };
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 16, true);
         return std::ptr::null_mut();

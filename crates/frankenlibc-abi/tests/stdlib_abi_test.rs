@@ -4,10 +4,16 @@
 
 use frankenlibc_abi::errno_abi::__errno_location;
 use frankenlibc_abi::stdlib_abi::{
-    atoll, clearenv, getenv, mkostemp, mkostemps, mkstemps, reallocarray, setenv, strtold,
-    strtoll, strtoull,
+    atoll, clearenv, getenv, mkostemp, mkostemps, mkstemps, reallocarray, setenv, strtold, strtoll,
+    strtoull,
 };
-use frankenlibc_abi::unistd_abi::mkdtemp;
+use frankenlibc_abi::unistd_abi::{
+    confstr, creat64, ctermid, fpathconf, fstat64, fstatat64, ftruncate64, get_avphys_pages,
+    get_nprocs, get_nprocs_conf, get_phys_pages, getdomainname, gethostid, getpagesize, lockf,
+    lseek64, lstat64, mkdtemp, open64, pathconf, posix_fallocate, posix_madvise, pread64, pwrite64,
+    setdomainname, sethostname, stat64, sysconf, truncate64,
+};
+use std::os::fd::AsRawFd;
 use std::ptr;
 
 #[test]
@@ -130,6 +136,10 @@ fn temp_template(prefix: &str, suffix: &str) -> Vec<u8> {
     format!("/tmp/frankenlibc-{prefix}-{stamp}-XXXXXX{suffix}\0").into_bytes()
 }
 
+const LOCKF_ULOCK: i32 = 0;
+const LOCKF_TLOCK: i32 = 2;
+const LOCKF_TEST: i32 = 3;
+
 #[test]
 fn mkostemp_creates_unique_file_and_honors_cloexec() {
     let mut template = temp_template("mkostemp", "");
@@ -221,4 +231,399 @@ fn mkdtemp_creates_directory_and_rewrites_suffix() {
     let meta = std::fs::metadata(&path).expect("mkdtemp should create directory");
     assert!(meta.is_dir());
     let _ = std::fs::remove_dir(path);
+}
+
+#[test]
+fn lockf_tlock_test_and_unlock_roundtrip() {
+    let template = temp_template("lockf", ".tmp");
+    // SAFETY: template is NUL-terminated by construction.
+    let path = unsafe { std::ffi::CStr::from_ptr(template.as_ptr().cast()) }
+        .to_string_lossy()
+        .into_owned();
+
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .truncate(true)
+        .open(&path)
+        .expect("create temp file for lockf");
+    let fd = file.as_raw_fd();
+
+    // SAFETY: fd is a valid open descriptor.
+    assert_eq!(unsafe { lockf(fd, LOCKF_TLOCK, 0) }, 0);
+    // SAFETY: fd is valid and uses same lock region.
+    assert_eq!(unsafe { lockf(fd, LOCKF_TEST, 0) }, 0);
+    // SAFETY: fd is valid and unlocks the same region.
+    assert_eq!(unsafe { lockf(fd, LOCKF_ULOCK, 0) }, 0);
+
+    drop(file);
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn posix_fallocate_validates_negative_ranges() {
+    let template = temp_template("posix-fallocate", ".tmp");
+    // SAFETY: template is NUL-terminated by construction.
+    let path = unsafe { std::ffi::CStr::from_ptr(template.as_ptr().cast()) }
+        .to_string_lossy()
+        .into_owned();
+
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .truncate(true)
+        .open(&path)
+        .expect("create temp file for posix_fallocate");
+    let fd = file.as_raw_fd();
+
+    // SAFETY: fd is valid; negative offset/len are invalid by contract.
+    assert_eq!(unsafe { posix_fallocate(fd, -1, 16) }, libc::EINVAL);
+    // SAFETY: fd is valid; negative offset/len are invalid by contract.
+    assert_eq!(unsafe { posix_fallocate(fd, 0, -1) }, libc::EINVAL);
+    drop(file);
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn posix_madvise_returns_error_code_without_touching_errno() {
+    let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) } as usize;
+    assert!(page_size > 0);
+
+    // SAFETY: request anonymous private mapping for one page.
+    let mapping = unsafe {
+        libc::mmap(
+            ptr::null_mut(),
+            page_size,
+            libc::PROT_READ | libc::PROT_WRITE,
+            libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
+            -1,
+            0,
+        )
+    };
+    assert_ne!(mapping, libc::MAP_FAILED);
+
+    // SAFETY: set and then read thread-local errno around a posix_madvise call.
+    unsafe {
+        *__errno_location() = 0;
+    }
+
+    // POSIX madvise returns error codes directly and should not modify errno.
+    // SAFETY: mapped range is valid; advice intentionally invalid.
+    let invalid_rc = unsafe { posix_madvise(mapping, page_size, 0x7fff) };
+    assert_eq!(invalid_rc, libc::EINVAL);
+    // SAFETY: read thread-local errno after call.
+    assert_eq!(unsafe { *__errno_location() }, 0);
+
+    // SAFETY: mapped range is valid; advice value 0 maps to NORMAL behavior.
+    assert_eq!(unsafe { posix_madvise(mapping, page_size, 0) }, 0);
+
+    // SAFETY: unmap the mapping allocated above.
+    assert_eq!(unsafe { libc::munmap(mapping, page_size) }, 0);
+}
+
+#[test]
+fn confstr_path_reports_required_length_and_copies_value() {
+    // SAFETY: read-only query with null destination is valid.
+    let needed = unsafe { confstr(libc::_CS_PATH, ptr::null_mut(), 0) };
+    assert!(needed >= 2);
+
+    let mut buf = vec![0_i8; needed];
+    // SAFETY: destination buffer is writable and size matches call contract.
+    let returned = unsafe { confstr(libc::_CS_PATH, buf.as_mut_ptr(), buf.len()) };
+    assert_eq!(returned, needed);
+
+    // SAFETY: confstr writes a C string for _CS_PATH.
+    let value = unsafe { std::ffi::CStr::from_ptr(buf.as_ptr()) }
+        .to_string_lossy()
+        .into_owned();
+    assert!(value.contains("/bin"));
+}
+
+#[test]
+fn confstr_rejects_unknown_name_with_einval() {
+    // SAFETY: __errno_location points to this thread-local errno.
+    unsafe {
+        *__errno_location() = 0;
+    }
+
+    let mut buf = [0_i8; 16];
+    // SAFETY: destination buffer is writable.
+    let rc = unsafe { confstr(-1, buf.as_mut_ptr(), buf.len()) };
+    assert_eq!(rc, 0);
+    // SAFETY: read thread-local errno after call.
+    assert_eq!(unsafe { *__errno_location() }, libc::EINVAL);
+}
+
+#[test]
+fn pathconf_and_fpathconf_validate_inputs() {
+    // SAFETY: __errno_location points to this thread-local errno.
+    unsafe {
+        *__errno_location() = 0;
+    }
+    // SAFETY: null path is invalid.
+    assert_eq!(unsafe { pathconf(ptr::null(), libc::_PC_PATH_MAX) }, -1);
+    // SAFETY: read thread-local errno after call.
+    assert_eq!(unsafe { *__errno_location() }, libc::EINVAL);
+
+    let path = c"/tmp";
+    // SAFETY: valid NUL-terminated path literal.
+    let path_max = unsafe { pathconf(path.as_ptr(), libc::_PC_PATH_MAX) };
+    assert!(path_max > 0);
+
+    // SAFETY: __errno_location points to this thread-local errno.
+    unsafe {
+        *__errno_location() = 0;
+    }
+    // SAFETY: bad fd should fail.
+    assert_eq!(unsafe { fpathconf(-1, libc::_PC_PATH_MAX) }, -1);
+    // SAFETY: read thread-local errno after call.
+    assert_eq!(unsafe { *__errno_location() }, libc::EBADF);
+}
+
+#[test]
+fn getpagesize_matches_sysconf_table_value() {
+    // SAFETY: getpagesize has no pointer preconditions.
+    let page_size = unsafe { getpagesize() };
+    assert!(page_size > 0);
+    assert_eq!(page_size as libc::c_long, 4096);
+}
+
+#[test]
+fn getdomainname_matches_uname_and_supports_truncation() {
+    let mut uts = std::mem::MaybeUninit::<libc::utsname>::zeroed();
+    // SAFETY: provides writable pointer for uname output.
+    assert_eq!(unsafe { libc::uname(uts.as_mut_ptr()) }, 0);
+    // SAFETY: uname succeeded and initialized `uts`.
+    let uts = unsafe { uts.assume_init() };
+    let expected_len = uts
+        .domainname
+        .iter()
+        .position(|&c| c == 0)
+        .unwrap_or(uts.domainname.len());
+
+    let mut full = [0_i8; 65];
+    // SAFETY: destination buffer is valid and writable.
+    assert_eq!(unsafe { getdomainname(full.as_mut_ptr(), full.len()) }, 0);
+
+    if expected_len < full.len() {
+        assert_eq!(full[expected_len], 0);
+    }
+
+    if expected_len > 0 {
+        assert_eq!(full[0], uts.domainname[0]);
+    }
+
+    let mut truncated = [0_i8; 1];
+    // SAFETY: destination buffer is valid and writable.
+    assert_eq!(
+        unsafe { getdomainname(truncated.as_mut_ptr(), truncated.len()) },
+        0
+    );
+    if expected_len > 0 {
+        assert_eq!(truncated[0], uts.domainname[0]);
+    }
+}
+
+#[test]
+fn gethostid_is_deterministic() {
+    // SAFETY: gethostid has no pointer preconditions.
+    let first = unsafe { gethostid() };
+    // SAFETY: gethostid has no pointer preconditions.
+    let second = unsafe { gethostid() };
+    assert_eq!(first, second);
+}
+
+#[test]
+fn sethostname_null_pointer_returns_efault() {
+    // SAFETY: __errno_location points to this thread-local errno.
+    unsafe {
+        *__errno_location() = 0;
+    }
+    // SAFETY: null pointer with nonzero len is invalid by API contract.
+    let rc = unsafe { sethostname(ptr::null(), 1) };
+    assert_eq!(rc, -1);
+    // SAFETY: read thread-local errno after call.
+    assert_eq!(unsafe { *__errno_location() }, libc::EFAULT);
+}
+
+#[test]
+fn setdomainname_null_pointer_returns_efault() {
+    // SAFETY: __errno_location points to this thread-local errno.
+    unsafe {
+        *__errno_location() = 0;
+    }
+    // SAFETY: null pointer with nonzero len is invalid by API contract.
+    let rc = unsafe { setdomainname(ptr::null(), 1) };
+    assert_eq!(rc, -1);
+    // SAFETY: read thread-local errno after call.
+    assert_eq!(unsafe { *__errno_location() }, libc::EFAULT);
+}
+
+#[test]
+fn ctermid_null_returns_static_dev_tty() {
+    // SAFETY: null pointer requests static storage from ctermid.
+    let out = unsafe { ctermid(ptr::null_mut()) };
+    assert!(!out.is_null());
+
+    // SAFETY: ctermid returns a valid NUL-terminated pointer.
+    let value = unsafe { std::ffi::CStr::from_ptr(out) }
+        .to_string_lossy()
+        .into_owned();
+    assert_eq!(value, "/dev/tty");
+}
+
+#[test]
+fn ctermid_writes_into_caller_buffer() {
+    let mut buf = [0_i8; 32];
+    // SAFETY: caller-provided writable buffer is valid.
+    let out = unsafe { ctermid(buf.as_mut_ptr()) };
+    assert_eq!(out, buf.as_mut_ptr());
+
+    // SAFETY: ctermid wrote a valid NUL-terminated string into `buf`.
+    let value = unsafe { std::ffi::CStr::from_ptr(buf.as_ptr()) }
+        .to_string_lossy()
+        .into_owned();
+    assert_eq!(value, "/dev/tty");
+}
+
+#[test]
+fn get_nprocs_helpers_match_sysconf_values() {
+    // SAFETY: no pointer preconditions.
+    let online = unsafe { get_nprocs() };
+    // SAFETY: no pointer preconditions.
+    let conf = unsafe { get_nprocs_conf() };
+
+    assert!(online > 0);
+    assert!(conf > 0);
+
+    // SAFETY: sysconf has no pointer preconditions.
+    let expected_online = unsafe { sysconf(libc::_SC_NPROCESSORS_ONLN) };
+    // SAFETY: sysconf has no pointer preconditions.
+    let expected_conf = unsafe { sysconf(libc::_SC_NPROCESSORS_CONF) };
+
+    assert_eq!(online as libc::c_long, expected_online);
+    assert_eq!(conf as libc::c_long, expected_conf);
+}
+
+#[test]
+fn get_phys_and_avphys_pages_match_sysinfo_projection() {
+    let mut info = std::mem::MaybeUninit::<libc::sysinfo>::zeroed();
+    // SAFETY: valid writable pointer for kernel sysinfo payload.
+    assert_eq!(
+        unsafe { libc::syscall(libc::SYS_sysinfo, info.as_mut_ptr()) },
+        0
+    );
+    // SAFETY: syscall succeeded and initialized `info`.
+    let info = unsafe { info.assume_init() };
+
+    // SAFETY: sysconf has no pointer preconditions.
+    let page_size = unsafe { sysconf(libc::_SC_PAGESIZE) };
+    assert!(page_size > 0);
+    let page_size_u128 = page_size as u128;
+    let mem_unit = if info.mem_unit == 0 {
+        1_u128
+    } else {
+        info.mem_unit as u128
+    };
+
+    let expected_phys = ((info.totalram as u128).saturating_mul(mem_unit) / page_size_u128)
+        .min(libc::c_long::MAX as u128) as libc::c_long;
+    let expected_avphys = ((info.freeram as u128).saturating_mul(mem_unit) / page_size_u128)
+        .min(libc::c_long::MAX as u128) as libc::c_long;
+
+    // SAFETY: no pointer preconditions.
+    assert_eq!(unsafe { get_phys_pages() }, expected_phys);
+    // SAFETY: no pointer preconditions.
+    assert_eq!(unsafe { get_avphys_pages() }, expected_avphys);
+}
+
+#[test]
+fn lfs64_aliases_io_roundtrip_and_fd_truncate() {
+    let template = temp_template("lfs64-io", ".tmp");
+    // SAFETY: template is NUL-terminated by construction.
+    let path_c = unsafe { std::ffi::CStr::from_ptr(template.as_ptr().cast()) };
+    let path = path_c.to_string_lossy().into_owned();
+
+    // SAFETY: valid path + mode for file creation.
+    let create_fd = unsafe { creat64(path_c.as_ptr(), 0o600) };
+    assert!(create_fd >= 0);
+    // SAFETY: close descriptor opened above.
+    assert_eq!(unsafe { libc::close(create_fd) }, 0);
+
+    // SAFETY: valid path and flags for reopen.
+    let fd = unsafe { open64(path_c.as_ptr(), libc::O_RDWR, 0) };
+    assert!(fd >= 0);
+
+    let payload = *b"frank64!";
+    // SAFETY: fd is valid and payload pointer/len are valid.
+    assert_eq!(
+        unsafe { pwrite64(fd, payload.as_ptr().cast(), payload.len(), 0) },
+        payload.len() as isize
+    );
+
+    let mut out = [0_u8; 8];
+    // SAFETY: fd is valid and output buffer is writable.
+    assert_eq!(
+        unsafe { pread64(fd, out.as_mut_ptr().cast(), out.len(), 0) },
+        out.len() as isize
+    );
+    assert_eq!(out, payload);
+
+    // SAFETY: valid fd and truncate length.
+    assert_eq!(unsafe { ftruncate64(fd, 4) }, 0);
+    // SAFETY: valid fd and whence.
+    assert_eq!(unsafe { lseek64(fd, 0, libc::SEEK_END) }, 4);
+
+    let mut st = std::mem::MaybeUninit::<libc::stat>::zeroed();
+    // SAFETY: valid fd and writable stat buffer.
+    assert_eq!(unsafe { fstat64(fd, st.as_mut_ptr().cast()) }, 0);
+    // SAFETY: fstat64 succeeded.
+    let st = unsafe { st.assume_init() };
+    assert_eq!(st.st_size, 4);
+
+    // SAFETY: close descriptor opened above.
+    assert_eq!(unsafe { libc::close(fd) }, 0);
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn lfs64_aliases_path_stat_and_truncate() {
+    let template = temp_template("lfs64-path", ".tmp");
+    // SAFETY: template is NUL-terminated by construction.
+    let path_c = unsafe { std::ffi::CStr::from_ptr(template.as_ptr().cast()) };
+    let path = path_c.to_string_lossy().into_owned();
+    std::fs::write(&path, b"abcdef").expect("seed temp file");
+
+    let mut st = std::mem::MaybeUninit::<libc::stat>::zeroed();
+    // SAFETY: valid path and writable stat buffer.
+    assert_eq!(
+        unsafe { stat64(path_c.as_ptr(), st.as_mut_ptr().cast()) },
+        0
+    );
+    // SAFETY: stat64 succeeded.
+    let st = unsafe { st.assume_init() };
+    assert_eq!(st.st_size, 6);
+
+    let mut lst = std::mem::MaybeUninit::<libc::stat>::zeroed();
+    // SAFETY: valid path and writable stat buffer.
+    assert_eq!(
+        unsafe { lstat64(path_c.as_ptr(), lst.as_mut_ptr().cast()) },
+        0
+    );
+
+    let mut at = std::mem::MaybeUninit::<libc::stat>::zeroed();
+    // SAFETY: valid arguments and writable stat buffer.
+    assert_eq!(
+        unsafe { fstatat64(libc::AT_FDCWD, path_c.as_ptr(), at.as_mut_ptr().cast(), 0,) },
+        0
+    );
+
+    // SAFETY: valid path and target length.
+    assert_eq!(unsafe { truncate64(path_c.as_ptr(), 2) }, 0);
+    let shrunk = std::fs::metadata(&path).expect("metadata should exist after truncate64");
+    assert_eq!(shrunk.len(), 2);
+
+    let _ = std::fs::remove_file(path);
 }

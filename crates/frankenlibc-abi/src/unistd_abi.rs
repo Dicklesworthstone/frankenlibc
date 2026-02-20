@@ -1427,6 +1427,22 @@ pub unsafe extern "C" fn linkat(
 // uname / gethostname
 // ---------------------------------------------------------------------------
 
+#[inline]
+fn read_utsname() -> Result<libc::utsname, c_int> {
+    let mut uts = std::mem::MaybeUninit::<libc::utsname>::zeroed();
+    let rc = unsafe { libc::syscall(libc::SYS_uname, uts.as_mut_ptr()) };
+    if rc < 0 {
+        Err(last_host_errno(errno::EFAULT))
+    } else {
+        Ok(unsafe { uts.assume_init() })
+    }
+}
+
+#[inline]
+fn uts_field_len(field: &[c_char]) -> usize {
+    field.iter().position(|&c| c == 0).unwrap_or(field.len())
+}
+
 /// POSIX `uname` — get system identification.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn uname(buf: *mut libc::utsname) -> c_int {
@@ -1444,18 +1460,15 @@ pub unsafe extern "C" fn gethostname(name: *mut c_char, len: usize) -> c_int {
         unsafe { set_abi_errno(errno::EFAULT) };
         return -1;
     }
-    let mut uts = std::mem::MaybeUninit::<libc::utsname>::zeroed();
-    let rc = unsafe { libc::syscall(libc::SYS_uname, uts.as_mut_ptr()) };
-    if rc < 0 {
-        unsafe { set_abi_errno(last_host_errno(errno::EFAULT)) };
-        return -1;
-    }
-    let uts = unsafe { uts.assume_init() };
+    let uts = match read_utsname() {
+        Ok(uts) => uts,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            return -1;
+        }
+    };
     let nodename = &uts.nodename;
-    let hostname_len = nodename
-        .iter()
-        .position(|&c| c == 0)
-        .unwrap_or(nodename.len());
+    let hostname_len = uts_field_len(nodename);
     if hostname_len >= len {
         unsafe { set_abi_errno(errno::ENAMETOOLONG) };
         return -1;
@@ -1790,31 +1803,46 @@ pub unsafe extern "C" fn vsyslog(priority: c_int, format: *const c_char, ap: *mu
 }
 
 // ---------------------------------------------------------------------------
-// misc POSIX — GlibcCallThrough
+// misc POSIX — mixed (implemented + call-through)
 // ---------------------------------------------------------------------------
 
 unsafe extern "C" {
-    #[link_name = "confstr"]
-    fn libc_confstr(name: c_int, buf: *mut c_char, len: usize) -> usize;
-    #[link_name = "pathconf"]
-    fn libc_pathconf(path: *const c_char, name: c_int) -> libc::c_long;
-    #[link_name = "fpathconf"]
-    fn libc_fpathconf(fd: c_int, name: c_int) -> libc::c_long;
     #[link_name = "nice"]
     fn libc_nice(inc: c_int) -> c_int;
     #[link_name = "daemon"]
     fn libc_daemon(nochdir: c_int, noclose: c_int) -> c_int;
-    #[link_name = "getpagesize"]
-    fn libc_getpagesize() -> c_int;
-    #[link_name = "gethostid"]
-    fn libc_gethostid() -> libc::c_long;
-    #[link_name = "getdomainname"]
-    fn libc_getdomainname(name: *mut c_char, len: usize) -> c_int;
 }
 
 const MKDTEMP_SUFFIX_LEN: usize = 6;
 const MKDTEMP_CHARS: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
 static MKDTEMP_NONCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+const CONFSTR_PATH: &[u8] = b"/bin:/usr/bin\0";
+const CTERMID_PATH: &[u8] = b"/dev/tty\0";
+static mut CTERMID_FALLBACK: [c_char; CTERMID_PATH.len()] = [0; CTERMID_PATH.len()];
+
+#[inline]
+fn confstr_value(name: c_int) -> Option<&'static [u8]> {
+    match name {
+        libc::_CS_PATH => Some(CONFSTR_PATH),
+        _ => None,
+    }
+}
+
+#[inline]
+fn pathconf_value(name: c_int) -> Option<libc::c_long> {
+    match name {
+        libc::_PC_LINK_MAX => Some(127),
+        libc::_PC_MAX_CANON => Some(255),
+        libc::_PC_MAX_INPUT => Some(255),
+        libc::_PC_NAME_MAX => Some(255),
+        libc::_PC_PATH_MAX => Some(4096),
+        libc::_PC_PIPE_BUF => Some(4096),
+        libc::_PC_CHOWN_RESTRICTED => Some(1),
+        libc::_PC_NO_TRUNC => Some(1),
+        libc::_PC_VDISABLE => Some(0),
+        _ => None,
+    }
+}
 
 #[inline]
 fn mix64(mut x: u64) -> u64 {
@@ -1879,17 +1907,110 @@ unsafe fn mkdtemp_inner(template: *mut c_char) -> (*mut c_char, bool) {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn confstr(name: c_int, buf: *mut c_char, len: usize) -> usize {
-    unsafe { libc_confstr(name, buf, len) }
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::IoFd,
+        buf as usize,
+        len,
+        true,
+        buf.is_null() && len > 0,
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(libc::EPERM) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+        return 0;
+    }
+
+    let value = match confstr_value(name) {
+        Some(v) => v,
+        None => {
+            unsafe { set_abi_errno(libc::EINVAL) };
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+            return 0;
+        }
+    };
+
+    if !buf.is_null() && len > 0 {
+        let copy_len = std::cmp::min(len, value.len());
+        unsafe { std::ptr::copy_nonoverlapping(value.as_ptr(), buf.cast::<u8>(), copy_len) };
+        if copy_len == len {
+            unsafe { *buf.add(len - 1) = 0 };
+        }
+    }
+
+    runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, false);
+    value.len()
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pathconf(path: *const c_char, name: c_int) -> libc::c_long {
-    unsafe { libc_pathconf(path, name) }
+    let (_, decision) =
+        runtime_policy::decide(ApiFamily::IoFd, path as usize, 0, true, path.is_null(), 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(libc::EPERM) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+        return -1;
+    }
+
+    if path.is_null() {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+        return -1;
+    }
+
+    let mut st = std::mem::MaybeUninit::<libc::stat>::zeroed();
+    let stat_rc = unsafe {
+        libc::syscall(
+            libc::SYS_newfstatat,
+            libc::AT_FDCWD,
+            path,
+            st.as_mut_ptr(),
+            0,
+        )
+    };
+    if stat_rc < 0 {
+        unsafe { set_abi_errno(last_host_errno(libc::ENOENT)) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+        return -1;
+    }
+
+    let out = match pathconf_value(name) {
+        Some(v) => v,
+        None => {
+            unsafe { set_abi_errno(libc::EINVAL) };
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+            return -1;
+        }
+    };
+    runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, false);
+    out
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fpathconf(fd: c_int, name: c_int) -> libc::c_long {
-    unsafe { libc_fpathconf(fd, name) }
+    let (_, decision) = runtime_policy::decide(ApiFamily::IoFd, fd as usize, 0, true, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(libc::EPERM) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+        return -1;
+    }
+
+    if let Err(e) = unsafe { syscall::sys_fcntl(fd, libc::F_GETFD, 0) } {
+        unsafe { set_abi_errno(e) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+        return -1;
+    }
+
+    let out = match pathconf_value(name) {
+        Some(v) => v,
+        None => {
+            unsafe { set_abi_errno(libc::EINVAL) };
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+            return -1;
+        }
+    };
+    runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, false);
+    out
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -1904,17 +2025,61 @@ pub unsafe extern "C" fn daemon(nochdir: c_int, noclose: c_int) -> c_int {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getpagesize() -> c_int {
-    unsafe { libc_getpagesize() }
+    let page_size = unsafe { sysconf(libc::_SC_PAGESIZE) };
+    if page_size <= 0 || page_size > c_int::MAX as libc::c_long {
+        4096
+    } else {
+        page_size as c_int
+    }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn gethostid() -> libc::c_long {
-    unsafe { libc_gethostid() }
+    let uts = match read_utsname() {
+        Ok(uts) => uts,
+        Err(_) => return 0,
+    };
+    let nodename = &uts.nodename;
+    let nodename_len = uts_field_len(nodename);
+    if nodename_len == 0 {
+        return 0;
+    }
+    let mut hash = 0xcbf2_9ce4_8422_2325u64;
+    for &byte in &nodename[..nodename_len] {
+        hash ^= byte as u8 as u64;
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    let hostid32 = mix64(hash) as u32 as i32;
+    hostid32 as libc::c_long
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getdomainname(name: *mut c_char, len: usize) -> c_int {
-    unsafe { libc_getdomainname(name, len) }
+    if name.is_null() {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        return -1;
+    }
+    let uts = match read_utsname() {
+        Ok(uts) => uts,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            return -1;
+        }
+    };
+    let domainname = &uts.domainname;
+    let domain_len = uts_field_len(domainname);
+    if len == 0 {
+        return 0;
+    }
+
+    let copy_len = domain_len.min(len);
+    unsafe {
+        std::ptr::copy_nonoverlapping(domainname.as_ptr(), name.cast(), copy_len);
+        if copy_len < len {
+            *name.add(copy_len) = 0;
+        }
+    }
+    0
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -2991,14 +3156,6 @@ pub unsafe extern "C" fn prlimit64(
 // ---------------------------------------------------------------------------
 
 unsafe extern "C" {
-    #[link_name = "get_nprocs"]
-    fn libc_get_nprocs() -> c_int;
-    #[link_name = "get_nprocs_conf"]
-    fn libc_get_nprocs_conf() -> c_int;
-    #[link_name = "get_phys_pages"]
-    fn libc_get_phys_pages() -> std::ffi::c_long;
-    #[link_name = "get_avphys_pages"]
-    fn libc_get_avphys_pages() -> std::ffi::c_long;
     #[link_name = "getutent"]
     fn libc_getutent() -> *mut c_void;
     #[link_name = "setutent"]
@@ -3009,24 +3166,62 @@ unsafe extern "C" {
     fn libc_utmpname(file: *const c_char) -> c_int;
 }
 
+#[inline]
+fn normalized_nprocs(name: c_int) -> c_int {
+    let value = unsafe { sysconf(name) };
+    if value <= 0 || value > c_int::MAX as libc::c_long {
+        1
+    } else {
+        value as c_int
+    }
+}
+
+#[inline]
+fn sysinfo_pages(free: bool) -> libc::c_long {
+    let mut info = std::mem::MaybeUninit::<libc::sysinfo>::zeroed();
+    let rc = unsafe { libc::syscall(libc::SYS_sysinfo, info.as_mut_ptr()) };
+    if rc < 0 {
+        return -1;
+    }
+    let info = unsafe { info.assume_init() };
+
+    let page_size = unsafe { sysconf(libc::_SC_PAGESIZE) };
+    if page_size <= 0 {
+        return -1;
+    }
+
+    let mem_unit = if info.mem_unit == 0 {
+        1_u128
+    } else {
+        info.mem_unit as u128
+    };
+    let ram = if free {
+        info.freeram as u128
+    } else {
+        info.totalram as u128
+    };
+    let pages = ram.saturating_mul(mem_unit) / page_size as u128;
+    pages.min(libc::c_long::MAX as u128) as libc::c_long
+}
+
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn get_nprocs() -> c_int {
-    unsafe { libc_get_nprocs() }
+    normalized_nprocs(libc::_SC_NPROCESSORS_ONLN)
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn get_nprocs_conf() -> c_int {
-    unsafe { libc_get_nprocs_conf() }
+    normalized_nprocs(libc::_SC_NPROCESSORS_CONF)
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn get_phys_pages() -> std::ffi::c_long {
-    unsafe { libc_get_phys_pages() }
+    sysinfo_pages(false)
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn get_avphys_pages() -> std::ffi::c_long {
-    unsafe { libc_get_avphys_pages() }
+    sysinfo_pages(true)
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -3081,22 +3276,83 @@ pub unsafe extern "C" fn eventfd_write(fd: c_int, value: u64) -> c_int {
 }
 
 // ---------------------------------------------------------------------------
-// lockf / posix_fallocate / posix_madvise — GlibcCallThrough
+// lockf / posix_fallocate / posix_madvise — RawSyscall
 // ---------------------------------------------------------------------------
 
-unsafe extern "C" {
-    #[link_name = "lockf"]
-    fn libc_lockf(fd: c_int, cmd: c_int, len: libc::off_t) -> c_int;
-    #[link_name = "posix_fallocate"]
-    fn libc_posix_fallocate(fd: c_int, offset: libc::off_t, len: libc::off_t) -> c_int;
-    #[link_name = "posix_madvise"]
-    fn libc_posix_madvise(addr: *mut c_void, len: usize, advice: c_int) -> c_int;
-}
+const LOCKF_ULOCK: c_int = 0;
+const LOCKF_LOCK: c_int = 1;
+const LOCKF_TLOCK: c_int = 2;
+const LOCKF_TEST: c_int = 3;
 
 /// `lockf` — apply, test or remove a POSIX lock on a file section.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn lockf(fd: c_int, cmd: c_int, len: libc::off_t) -> c_int {
-    unsafe { libc_lockf(fd, cmd, len) }
+    let (_, decision) = runtime_policy::decide(ApiFamily::IoFd, fd as usize, 0, true, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(libc::EPERM) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, true);
+        return -1;
+    }
+
+    let start = match syscall::sys_lseek(fd, 0, unistd_core::SEEK_CUR) {
+        Ok(pos) => pos,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, true);
+            return -1;
+        }
+    };
+
+    let mut lock: libc::flock = unsafe { std::mem::zeroed() };
+    lock.l_whence = libc::SEEK_SET as libc::c_short;
+    lock.l_start = start as libc::off_t;
+    lock.l_len = len;
+
+    let rc = match cmd {
+        LOCKF_ULOCK => {
+            lock.l_type = libc::F_UNLCK as libc::c_short;
+            unsafe { syscall::sys_fcntl(fd, libc::F_SETLK, (&lock as *const libc::flock) as usize) }
+        }
+        LOCKF_LOCK => {
+            lock.l_type = libc::F_WRLCK as libc::c_short;
+            unsafe {
+                syscall::sys_fcntl(fd, libc::F_SETLKW, (&lock as *const libc::flock) as usize)
+            }
+        }
+        LOCKF_TLOCK => {
+            lock.l_type = libc::F_WRLCK as libc::c_short;
+            unsafe { syscall::sys_fcntl(fd, libc::F_SETLK, (&lock as *const libc::flock) as usize) }
+        }
+        LOCKF_TEST => {
+            lock.l_type = libc::F_WRLCK as libc::c_short;
+            match unsafe {
+                syscall::sys_fcntl(fd, libc::F_GETLK, (&mut lock as *mut libc::flock) as usize)
+            } {
+                Ok(_) => {
+                    if lock.l_type == libc::F_UNLCK as libc::c_short
+                        || lock.l_pid == syscall::sys_getpid()
+                    {
+                        Ok(0)
+                    } else {
+                        Err(libc::EACCES)
+                    }
+                }
+                Err(e) => Err(e),
+            }
+        }
+        _ => Err(libc::EINVAL),
+    };
+
+    let failed = rc.is_err();
+    let out = match rc {
+        Ok(_) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    };
+    runtime_policy::observe(ApiFamily::IoFd, decision.profile, 12, failed);
+    out
 }
 
 /// `posix_fallocate` — allocate file space.
@@ -3106,13 +3362,47 @@ pub unsafe extern "C" fn posix_fallocate(
     offset: libc::off_t,
     len: libc::off_t,
 ) -> c_int {
-    unsafe { libc_posix_fallocate(fd, offset, len) }
+    if offset < 0 || len < 0 {
+        return libc::EINVAL;
+    }
+
+    let (_, decision) =
+        runtime_policy::decide(ApiFamily::IoFd, fd as usize, len as usize, true, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 12, true);
+        return libc::EPERM;
+    }
+
+    let rc = match syscall::sys_fallocate(fd, 0, offset, len) {
+        Ok(()) => 0,
+        Err(e) => e,
+    };
+    runtime_policy::observe(ApiFamily::IoFd, decision.profile, 12, rc != 0);
+    rc
 }
 
 /// `posix_madvise` — POSIX advisory information on memory usage.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn posix_madvise(addr: *mut c_void, len: usize, advice: c_int) -> c_int {
-    unsafe { libc_posix_madvise(addr, len, advice) }
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::IoFd,
+        addr as usize,
+        len,
+        false,
+        addr.is_null() && len > 0,
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+        return libc::EPERM;
+    }
+
+    let rc = match unsafe { syscall::sys_madvise(addr.cast(), len, advice) } {
+        Ok(()) => 0,
+        Err(e) => e,
+    };
+    runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, rc != 0);
+    rc
 }
 
 // ---------------------------------------------------------------------------
@@ -3735,14 +4025,8 @@ unsafe extern "C" {
     fn libc_ttyname(fd: c_int) -> *mut c_char;
     #[link_name = "ttyname_r"]
     fn libc_ttyname_r(fd: c_int, buf: *mut c_char, buflen: usize) -> c_int;
-    #[link_name = "ctermid"]
-    fn libc_ctermid(s: *mut c_char) -> *mut c_char;
     #[link_name = "getpass"]
     fn libc_getpass(prompt: *const c_char) -> *mut c_char;
-    #[link_name = "sethostname"]
-    fn libc_sethostname(name: *const c_char, len: usize) -> c_int;
-    #[link_name = "setdomainname"]
-    fn libc_setdomainname(name: *const c_char, len: usize) -> c_int;
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -3767,7 +4051,19 @@ pub unsafe extern "C" fn ttyname_r(fd: c_int, buf: *mut c_char, buflen: usize) -
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn ctermid(s: *mut c_char) -> *mut c_char {
-    unsafe { libc_ctermid(s) }
+    let dst = if s.is_null() {
+        std::ptr::addr_of_mut!(CTERMID_FALLBACK).cast::<c_char>()
+    } else {
+        s
+    };
+    unsafe {
+        std::ptr::copy_nonoverlapping(
+            CTERMID_PATH.as_ptr().cast::<c_char>(),
+            dst,
+            CTERMID_PATH.len(),
+        );
+    }
+    dst
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -3777,12 +4073,92 @@ pub unsafe extern "C" fn getpass(prompt: *const c_char) -> *mut c_char {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sethostname(name: *const c_char, len: usize) -> c_int {
-    unsafe { libc_sethostname(name, len) }
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Process,
+        name as usize,
+        len,
+        false,
+        name.is_null() && len > 0,
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
+        runtime_policy::observe(
+            ApiFamily::Process,
+            decision.profile,
+            runtime_policy::scaled_cost(8, len),
+            true,
+        );
+        return -1;
+    }
+    if name.is_null() && len > 0 {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        runtime_policy::observe(
+            ApiFamily::Process,
+            decision.profile,
+            runtime_policy::scaled_cost(8, len),
+            true,
+        );
+        return -1;
+    }
+    let rc = unsafe {
+        syscall_ret_int(
+            libc::syscall(libc::SYS_sethostname, name, len),
+            errno::EPERM,
+        )
+    };
+    runtime_policy::observe(
+        ApiFamily::Process,
+        decision.profile,
+        runtime_policy::scaled_cost(8, len),
+        rc != 0,
+    );
+    rc
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn setdomainname(name: *const c_char, len: usize) -> c_int {
-    unsafe { libc_setdomainname(name, len) }
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Process,
+        name as usize,
+        len,
+        false,
+        name.is_null() && len > 0,
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
+        runtime_policy::observe(
+            ApiFamily::Process,
+            decision.profile,
+            runtime_policy::scaled_cost(8, len),
+            true,
+        );
+        return -1;
+    }
+    if name.is_null() && len > 0 {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        runtime_policy::observe(
+            ApiFamily::Process,
+            decision.profile,
+            runtime_policy::scaled_cost(8, len),
+            true,
+        );
+        return -1;
+    }
+    let rc = unsafe {
+        syscall_ret_int(
+            libc::syscall(libc::SYS_setdomainname, name, len),
+            errno::EPERM,
+        )
+    };
+    runtime_policy::observe(
+        ApiFamily::Process,
+        decision.profile,
+        runtime_policy::scaled_cost(8, len),
+        rc != 0,
+    );
+    rc
 }
 
 // ---------------------------------------------------------------------------

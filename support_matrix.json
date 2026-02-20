@@ -691,11 +691,11 @@
     },
     {
       "symbol": "confstr",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "unistd_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc confstr",
-      "hardened_semantics": "Passthrough to glibc confstr",
+      "perf_class": "coldpath",
+      "strict_semantics": "Native confstr for supported names (currently _CS_PATH) with POSIX copy/length behavior and errno contract",
+      "hardened_semantics": "Same semantics with runtime-policy deny handling and deterministic EPERM failure path",
       "default_stub": false
     },
     {
@@ -775,11 +775,11 @@
     },
     {
       "symbol": "creat64",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "unistd_abi",
       "perf_class": "default",
-      "strict_semantics": "LP64 alias via glibc",
-      "hardened_semantics": "LP64 alias via glibc",
+      "strict_semantics": "LP64 alias to native unistd/io/mmap entrypoints (no glibc call-through)",
+      "hardened_semantics": "Same alias routing with membrane behavior inherited from target entrypoints",
       "default_stub": false
     },
     {
@@ -793,9 +793,12 @@
     },
     {
       "symbol": "ctermid",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "unistd_abi",
-      "perf_class": "fast"
+      "perf_class": "fast",
+      "strict_semantics": "Native constant-path implementation returning /dev/tty",
+      "hardened_semantics": "Same constant-path implementation; no mode divergence",
+      "default_stub": false
     },
     {
       "symbol": "ctime",
@@ -1629,11 +1632,11 @@
     },
     {
       "symbol": "fpathconf",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "unistd_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc fpathconf",
-      "hardened_semantics": "Passthrough to glibc fpathconf",
+      "perf_class": "coldpath",
+      "strict_semantics": "Native fd-validated pathconf value table; EBADF/EINVAL contract preserved",
+      "hardened_semantics": "Same value table with runtime-policy deny handling and deterministic EPERM failure path",
       "default_stub": false
     },
     {
@@ -1835,11 +1838,11 @@
     },
     {
       "symbol": "fstat64",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "unistd_abi",
       "perf_class": "default",
-      "strict_semantics": "LP64 alias via glibc",
-      "hardened_semantics": "LP64 alias via glibc",
+      "strict_semantics": "LP64 alias to native unistd/io/mmap entrypoints (no glibc call-through)",
+      "hardened_semantics": "Same alias routing with membrane behavior inherited from target entrypoints",
       "default_stub": false
     },
     {
@@ -1851,11 +1854,11 @@
     },
     {
       "symbol": "fstatat64",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "unistd_abi",
       "perf_class": "default",
-      "strict_semantics": "LP64 alias via glibc",
-      "hardened_semantics": "LP64 alias via glibc",
+      "strict_semantics": "LP64 alias to native unistd/io/mmap entrypoints (no glibc call-through)",
+      "hardened_semantics": "Same alias routing with membrane behavior inherited from target entrypoints",
       "default_stub": false
     },
     {
@@ -1903,11 +1906,11 @@
     },
     {
       "symbol": "ftruncate64",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "unistd_abi",
       "perf_class": "default",
-      "strict_semantics": "LP64 alias via glibc",
-      "hardened_semantics": "LP64 alias via glibc",
+      "strict_semantics": "LP64 alias to native unistd/io/mmap entrypoints (no glibc call-through)",
+      "hardened_semantics": "Same alias routing with membrane behavior inherited from target entrypoints",
       "default_stub": false
     },
     {
@@ -1963,27 +1966,39 @@
     },
     {
       "symbol": "get_avphys_pages",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "unistd_abi",
-      "perf_class": "fast"
+      "perf_class": "fast",
+      "strict_semantics": "SYS_sysinfo-backed available-physical-page estimate normalized by sysconf page size",
+      "hardened_semantics": "Same SYS_sysinfo projection with bounded arithmetic",
+      "default_stub": false
     },
     {
       "symbol": "get_nprocs",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "unistd_abi",
-      "perf_class": "fast"
+      "perf_class": "fast",
+      "strict_semantics": "Native CPU-online count via existing sysconf(_SC_NPROCESSORS_ONLN)",
+      "hardened_semantics": "Same native sysconf-backed count with positive fallback",
+      "default_stub": false
     },
     {
       "symbol": "get_nprocs_conf",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "unistd_abi",
-      "perf_class": "fast"
+      "perf_class": "fast",
+      "strict_semantics": "Native configured-CPU count via existing sysconf(_SC_NPROCESSORS_CONF)",
+      "hardened_semantics": "Same native sysconf-backed count with positive fallback",
+      "default_stub": false
     },
     {
       "symbol": "get_phys_pages",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "unistd_abi",
-      "perf_class": "fast"
+      "perf_class": "fast",
+      "strict_semantics": "SYS_sysinfo total-physical-page estimate normalized by sysconf page size",
+      "hardened_semantics": "Same SYS_sysinfo projection with bounded arithmetic",
+      "default_stub": false
     },
     {
       "symbol": "getaddrinfo",
@@ -2038,11 +2053,11 @@
     },
     {
       "symbol": "getdomainname",
-      "status": "GlibcCallThrough",
+      "status": "RawSyscall",
       "module": "unistd_abi",
       "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc getdomainname",
-      "hardened_semantics": "Passthrough to glibc getdomainname",
+      "strict_semantics": "SYS_uname-backed domainname extraction with Linux-compatible truncation semantics",
+      "hardened_semantics": "SYS_uname-backed domainname extraction with bounded copy/truncation",
       "default_stub": false
     },
     {
@@ -2191,11 +2206,11 @@
     },
     {
       "symbol": "gethostid",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "unistd_abi",
       "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc gethostid",
-      "hardened_semantics": "Passthrough to glibc gethostid",
+      "strict_semantics": "Deterministic hostid derived from uname nodename hash; no glibc dependency",
+      "hardened_semantics": "Same deterministic hostid derivation; no mode divergence",
       "default_stub": false
     },
     {
@@ -2274,11 +2289,11 @@
     },
     {
       "symbol": "getpagesize",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "unistd_abi",
       "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc getpagesize",
-      "hardened_semantics": "Passthrough to glibc getpagesize",
+      "strict_semantics": "Native page-size resolution via unistd sysconf table",
+      "hardened_semantics": "Same native page-size resolution",
       "default_stub": false
     },
     {
@@ -3200,9 +3215,12 @@
     },
     {
       "symbol": "lockf",
-      "status": "GlibcCallThrough",
+      "status": "RawSyscall",
       "module": "unistd_abi",
-      "perf_class": "syscall"
+      "perf_class": "coldpath",
+      "strict_semantics": "Translates lockf commands to fcntl byte-range lock operations via raw lseek/fcntl syscalls; sets errno on failure",
+      "hardened_semantics": "Same syscall path with runtime-policy deny gate and deterministic errno mapping",
+      "default_stub": false
     },
     {
       "symbol": "log",
@@ -3357,11 +3375,11 @@
     },
     {
       "symbol": "lseek64",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "unistd_abi",
       "perf_class": "default",
-      "strict_semantics": "LP64 alias via glibc",
-      "hardened_semantics": "LP64 alias via glibc",
+      "strict_semantics": "LP64 alias to native unistd/io/mmap entrypoints (no glibc call-through)",
+      "hardened_semantics": "Same alias routing with membrane behavior inherited from target entrypoints",
       "default_stub": false
     },
     {
@@ -3381,11 +3399,11 @@
     },
     {
       "symbol": "lstat64",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "unistd_abi",
       "perf_class": "default",
-      "strict_semantics": "LP64 alias via glibc",
-      "hardened_semantics": "LP64 alias via glibc",
+      "strict_semantics": "LP64 alias to native unistd/io/mmap entrypoints (no glibc call-through)",
+      "hardened_semantics": "Same alias routing with membrane behavior inherited from target entrypoints",
       "default_stub": false
     },
     {
@@ -3662,11 +3680,11 @@
     },
     {
       "symbol": "mmap64",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "unistd_abi",
       "perf_class": "default",
-      "strict_semantics": "LP64 alias via glibc",
-      "hardened_semantics": "LP64 alias via glibc",
+      "strict_semantics": "LP64 alias to native unistd/io/mmap entrypoints (no glibc call-through)",
+      "hardened_semantics": "Same alias routing with membrane behavior inherited from target entrypoints",
       "default_stub": false
     },
     {
@@ -3924,11 +3942,11 @@
     },
     {
       "symbol": "open64",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "unistd_abi",
       "perf_class": "default",
-      "strict_semantics": "LP64 alias via glibc",
-      "hardened_semantics": "LP64 alias via glibc",
+      "strict_semantics": "LP64 alias to native unistd/io/mmap entrypoints (no glibc call-through)",
+      "hardened_semantics": "Same alias routing with membrane behavior inherited from target entrypoints",
       "default_stub": false
     },
     {
@@ -3973,11 +3991,11 @@
     },
     {
       "symbol": "pathconf",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "unistd_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc pathconf",
-      "hardened_semantics": "Passthrough to glibc pathconf",
+      "perf_class": "coldpath",
+      "strict_semantics": "Native path existence validation + pathconf value table; ENOENT/EINVAL contract preserved",
+      "hardened_semantics": "Same value table with runtime-policy deny handling and deterministic EPERM failure path",
       "default_stub": false
     },
     {
@@ -4066,15 +4084,21 @@
     },
     {
       "symbol": "posix_fallocate",
-      "status": "GlibcCallThrough",
+      "status": "RawSyscall",
       "module": "unistd_abi",
-      "perf_class": "syscall"
+      "perf_class": "coldpath",
+      "strict_semantics": "Invokes Linux fallocate syscall and returns POSIX error codes directly (0 on success, errno value on failure)",
+      "hardened_semantics": "Same syscall path with runtime-policy gate; invalid ranges return EINVAL and deny returns EPERM code",
+      "default_stub": false
     },
     {
       "symbol": "posix_madvise",
-      "status": "GlibcCallThrough",
+      "status": "RawSyscall",
       "module": "unistd_abi",
-      "perf_class": "syscall"
+      "perf_class": "coldpath",
+      "strict_semantics": "Invokes Linux madvise syscall and returns POSIX error codes directly without mutating errno",
+      "hardened_semantics": "Same syscall path with runtime-policy gate; deny returns EPERM code",
+      "default_stub": false
     },
     {
       "symbol": "posix_memalign",
@@ -4191,11 +4215,11 @@
     },
     {
       "symbol": "pread64",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "unistd_abi",
       "perf_class": "default",
-      "strict_semantics": "LP64 alias via glibc",
-      "hardened_semantics": "LP64 alias via glibc",
+      "strict_semantics": "LP64 alias to native unistd/io/mmap entrypoints (no glibc call-through)",
+      "hardened_semantics": "Same alias routing with membrane behavior inherited from target entrypoints",
       "default_stub": false
     },
     {
@@ -4861,11 +4885,11 @@
     },
     {
       "symbol": "pwrite64",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "unistd_abi",
       "perf_class": "default",
-      "strict_semantics": "LP64 alias via glibc",
-      "hardened_semantics": "LP64 alias via glibc",
+      "strict_semantics": "LP64 alias to native unistd/io/mmap entrypoints (no glibc call-through)",
+      "hardened_semantics": "Same alias routing with membrane behavior inherited from target entrypoints",
       "default_stub": false
     },
     {
@@ -5521,11 +5545,11 @@
     },
     {
       "symbol": "sendfile64",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "unistd_abi",
       "perf_class": "default",
-      "strict_semantics": "LP64 alias via glibc",
-      "hardened_semantics": "LP64 alias via glibc",
+      "strict_semantics": "LP64 alias to native unistd/io/mmap entrypoints (no glibc call-through)",
+      "hardened_semantics": "Same alias routing with membrane behavior inherited from target entrypoints",
       "default_stub": false
     },
     {
@@ -5563,9 +5587,12 @@
     },
     {
       "symbol": "setdomainname",
-      "status": "GlibcCallThrough",
+      "status": "RawSyscall",
       "module": "unistd_abi",
-      "perf_class": "syscall"
+      "perf_class": "syscall",
+      "strict_semantics": "Raw Linux syscall SYS_setdomainname with POSIX errno mapping",
+      "hardened_semantics": "Raw syscall with membrane policy gating and deterministic null-pointer rejection",
+      "default_stub": false
     },
     {
       "symbol": "setegid",
@@ -5623,9 +5650,12 @@
     },
     {
       "symbol": "sethostname",
-      "status": "GlibcCallThrough",
+      "status": "RawSyscall",
       "module": "unistd_abi",
-      "perf_class": "syscall"
+      "perf_class": "syscall",
+      "strict_semantics": "Raw Linux syscall SYS_sethostname with POSIX errno mapping",
+      "hardened_semantics": "Raw syscall with membrane policy gating and deterministic null-pointer rejection",
+      "default_stub": false
     },
     {
       "symbol": "setitimer",
@@ -6099,11 +6129,11 @@
     },
     {
       "symbol": "stat64",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "unistd_abi",
       "perf_class": "default",
-      "strict_semantics": "LP64 alias via glibc",
-      "hardened_semantics": "LP64 alias via glibc",
+      "strict_semantics": "LP64 alias to native unistd/io/mmap entrypoints (no glibc call-through)",
+      "hardened_semantics": "Same alias routing with membrane behavior inherited from target entrypoints",
       "default_stub": false
     },
     {
@@ -6891,11 +6921,11 @@
     },
     {
       "symbol": "truncate64",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "unistd_abi",
       "perf_class": "default",
-      "strict_semantics": "LP64 alias via glibc",
-      "hardened_semantics": "LP64 alias via glibc",
+      "strict_semantics": "LP64 alias to native unistd/io/mmap entrypoints (no glibc call-through)",
+      "hardened_semantics": "Same alias routing with membrane behavior inherited from target entrypoints",
       "default_stub": false
     },
     {
