@@ -4,7 +4,7 @@
 //! directory navigation (getcwd/chdir), process identity (getpid/getppid/getuid/...),
 //! link operations (link/symlink/readlink/unlink/rmdir), and sync (fsync/fdatasync).
 
-use std::ffi::{c_char, c_int, c_uint, c_void};
+use std::ffi::{c_char, c_int, c_uint, c_void, CStr};
 
 use frankenlibc_core::errno;
 use frankenlibc_core::syscall;
@@ -1818,7 +1818,23 @@ const MKDTEMP_CHARS: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVW
 static MKDTEMP_NONCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 const CONFSTR_PATH: &[u8] = b"/bin:/usr/bin\0";
 const CTERMID_PATH: &[u8] = b"/dev/tty\0";
+const GETLOGIN_MAX_LEN: usize = 256;
 static mut CTERMID_FALLBACK: [c_char; CTERMID_PATH.len()] = [0; CTERMID_PATH.len()];
+static mut GETLOGIN_FALLBACK: [c_char; GETLOGIN_MAX_LEN] = [0; GETLOGIN_MAX_LEN];
+
+#[inline]
+unsafe fn lookup_login_name_ptr() -> *const c_char {
+    let pwd = unsafe { crate::pwd_abi::getpwuid(libc::geteuid()) };
+    if pwd.is_null() {
+        return std::ptr::null();
+    }
+    let name = unsafe { (*pwd).pw_name };
+    if name.is_null() {
+        std::ptr::null()
+    } else {
+        name.cast_const()
+    }
+}
 
 #[inline]
 fn confstr_value(name: c_int) -> Option<&'static [u8]> {
@@ -4017,10 +4033,6 @@ pub unsafe extern "C" fn initgroups(user: *const c_char, group: libc::gid_t) -> 
 // ---------------------------------------------------------------------------
 
 unsafe extern "C" {
-    #[link_name = "getlogin"]
-    fn libc_getlogin() -> *mut c_char;
-    #[link_name = "getlogin_r"]
-    fn libc_getlogin_r(buf: *mut c_char, bufsize: usize) -> c_int;
     #[link_name = "ttyname"]
     fn libc_ttyname(fd: c_int) -> *mut c_char;
     #[link_name = "ttyname_r"]
@@ -4031,12 +4043,88 @@ unsafe extern "C" {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getlogin() -> *mut c_char {
-    unsafe { libc_getlogin() }
+    let (_, decision) = runtime_policy::decide(ApiFamily::Resolver, 0, 0, false, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
+        runtime_policy::observe(ApiFamily::Resolver, decision.profile, 10, true);
+        return std::ptr::null_mut();
+    }
+    let name_ptr = unsafe { lookup_login_name_ptr() };
+    if name_ptr.is_null() {
+        unsafe { set_abi_errno(errno::ENOENT) };
+        runtime_policy::observe(ApiFamily::Resolver, decision.profile, 10, true);
+        return std::ptr::null_mut();
+    }
+    let name = unsafe { CStr::from_ptr(name_ptr) };
+    let bytes = name.to_bytes_with_nul();
+    if bytes.len() > GETLOGIN_MAX_LEN {
+        unsafe { set_abi_errno(errno::ERANGE) };
+        runtime_policy::observe(ApiFamily::Resolver, decision.profile, 10, true);
+        return std::ptr::null_mut();
+    }
+    let dst = std::ptr::addr_of_mut!(GETLOGIN_FALLBACK).cast::<c_char>();
+    unsafe {
+        std::ptr::copy_nonoverlapping(bytes.as_ptr().cast::<c_char>(), dst, bytes.len());
+    }
+    runtime_policy::observe(
+        ApiFamily::Resolver,
+        decision.profile,
+        runtime_policy::scaled_cost(10, bytes.len()),
+        false,
+    );
+    dst
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getlogin_r(buf: *mut c_char, bufsize: usize) -> c_int {
-    unsafe { libc_getlogin_r(buf, bufsize) }
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Resolver,
+        buf as usize,
+        bufsize,
+        true,
+        buf.is_null() && bufsize > 0,
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(
+            ApiFamily::Resolver,
+            decision.profile,
+            runtime_policy::scaled_cost(10, bufsize),
+            true,
+        );
+        return errno::EPERM;
+    }
+    if buf.is_null() || bufsize == 0 {
+        runtime_policy::observe(ApiFamily::Resolver, decision.profile, 10, true);
+        return errno::EINVAL;
+    }
+
+    let name_ptr = unsafe { lookup_login_name_ptr() };
+    if name_ptr.is_null() {
+        runtime_policy::observe(ApiFamily::Resolver, decision.profile, 10, true);
+        return errno::ENOENT;
+    }
+    let name = unsafe { CStr::from_ptr(name_ptr) };
+    let bytes = name.to_bytes_with_nul();
+    if bytes.len() > bufsize {
+        runtime_policy::observe(
+            ApiFamily::Resolver,
+            decision.profile,
+            runtime_policy::scaled_cost(10, bytes.len()),
+            true,
+        );
+        return errno::ERANGE;
+    }
+    unsafe {
+        std::ptr::copy_nonoverlapping(bytes.as_ptr().cast::<c_char>(), buf, bytes.len());
+    }
+    runtime_policy::observe(
+        ApiFamily::Resolver,
+        decision.profile,
+        runtime_policy::scaled_cost(10, bytes.len()),
+        false,
+    );
+    0
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]

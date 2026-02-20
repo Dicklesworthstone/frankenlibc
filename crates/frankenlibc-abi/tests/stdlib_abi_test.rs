@@ -9,9 +9,9 @@ use frankenlibc_abi::stdlib_abi::{
 };
 use frankenlibc_abi::unistd_abi::{
     confstr, creat64, ctermid, fpathconf, fstat64, fstatat64, ftruncate64, get_avphys_pages,
-    get_nprocs, get_nprocs_conf, get_phys_pages, getdomainname, gethostid, getpagesize, lockf,
-    lseek64, lstat64, mkdtemp, open64, pathconf, posix_fallocate, posix_madvise, pread64, pwrite64,
-    setdomainname, sethostname, stat64, sysconf, truncate64,
+    get_nprocs, get_nprocs_conf, get_phys_pages, getdomainname, gethostid, getlogin, getlogin_r,
+    getpagesize, lockf, lseek64, lstat64, mkdtemp, open64, pathconf, posix_fallocate,
+    posix_madvise, pread64, pwrite64, setdomainname, sethostname, stat64, sysconf, truncate64,
 };
 use std::os::fd::AsRawFd;
 use std::ptr;
@@ -433,6 +433,66 @@ fn gethostid_is_deterministic() {
     // SAFETY: gethostid has no pointer preconditions.
     let second = unsafe { gethostid() };
     assert_eq!(first, second);
+}
+
+#[test]
+fn getlogin_and_getlogin_r_match_pwd_lookup() {
+    // SAFETY: geteuid has no pointer preconditions.
+    let uid = unsafe { libc::geteuid() };
+    // SAFETY: getpwuid has no pointer preconditions.
+    let pwd = unsafe { frankenlibc_abi::pwd_abi::getpwuid(uid) };
+    assert!(!pwd.is_null(), "getpwuid should resolve current effective uid");
+
+    // SAFETY: `pwd` is non-null and points to libc::passwd storage.
+    let name_ptr = unsafe { (*pwd).pw_name };
+    assert!(!name_ptr.is_null(), "pw_name should be present");
+    // SAFETY: passwd entry contains a NUL-terminated username.
+    let expected = unsafe { std::ffi::CStr::from_ptr(name_ptr) }
+        .to_string_lossy()
+        .into_owned();
+
+    // SAFETY: getlogin has no pointer preconditions.
+    let login_ptr = unsafe { getlogin() };
+    assert!(!login_ptr.is_null(), "getlogin should resolve current user");
+    // SAFETY: getlogin result is expected to be a NUL-terminated username.
+    let login = unsafe { std::ffi::CStr::from_ptr(login_ptr) }
+        .to_string_lossy()
+        .into_owned();
+    assert_eq!(login, expected);
+
+    let mut buf = vec![0_i8; expected.as_bytes().len() + 1];
+    // SAFETY: buffer pointer is writable and length matches the provided capacity.
+    assert_eq!(unsafe { getlogin_r(buf.as_mut_ptr(), buf.len()) }, 0);
+    // SAFETY: successful getlogin_r writes a NUL-terminated username.
+    let login_r = unsafe { std::ffi::CStr::from_ptr(buf.as_ptr()) }
+        .to_string_lossy()
+        .into_owned();
+    assert_eq!(login_r, expected);
+}
+
+#[test]
+fn getlogin_r_validates_buffer_and_reports_erange() {
+    // SAFETY: null destination is invalid.
+    assert_eq!(unsafe { getlogin_r(ptr::null_mut(), 8) }, libc::EINVAL);
+
+    // SAFETY: geteuid has no pointer preconditions.
+    let uid = unsafe { libc::geteuid() };
+    // SAFETY: getpwuid has no pointer preconditions.
+    let pwd = unsafe { frankenlibc_abi::pwd_abi::getpwuid(uid) };
+    assert!(!pwd.is_null(), "getpwuid should resolve current effective uid");
+    // SAFETY: `pwd` is non-null and points to libc::passwd storage.
+    let name_ptr = unsafe { (*pwd).pw_name };
+    assert!(!name_ptr.is_null(), "pw_name should be present");
+    // SAFETY: passwd entry contains a NUL-terminated username.
+    let required_len = unsafe { std::ffi::CStr::from_ptr(name_ptr) }
+        .to_bytes_with_nul()
+        .len();
+
+    if required_len > 1 {
+        let mut tiny = [0_i8; 1];
+        // SAFETY: tiny is writable but intentionally too small.
+        assert_eq!(unsafe { getlogin_r(tiny.as_mut_ptr(), tiny.len()) }, libc::ERANGE);
+    }
 }
 
 #[test]

@@ -2244,15 +2244,21 @@
     },
     {
       "symbol": "getlogin",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "unistd_abi",
-      "perf_class": "fast"
+      "perf_class": "coldpath",
+      "strict_semantics": "Resolves current effective UID through getpwuid and returns username via process-static buffer; sets errno on failure",
+      "hardened_semantics": "Same as strict with runtime-policy resolver gating and deterministic failure paths",
+      "default_stub": false
     },
     {
       "symbol": "getlogin_r",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "unistd_abi",
-      "perf_class": "fast"
+      "perf_class": "coldpath",
+      "strict_semantics": "Resolves current effective UID through getpwuid and copies username to caller buffer; returns EINVAL/ERANGE/ENOENT codes",
+      "hardened_semantics": "Same as strict with runtime-policy resolver gating and deterministic error-code returns",
+      "default_stub": false
     },
     {
       "symbol": "getmntent",
