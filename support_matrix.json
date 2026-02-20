@@ -1048,27 +1048,39 @@
     },
     {
       "symbol": "ether_aton",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "unistd_abi",
-      "perf_class": "fast"
+      "perf_class": "fast",
+      "strict_semantics": "Parses colon-delimited MAC string into six-byte static ether_addr storage and returns null on invalid syntax",
+      "hardened_semantics": "Same parser path with deterministic null return for invalid/null inputs",
+      "default_stub": false
     },
     {
       "symbol": "ether_aton_r",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "unistd_abi",
-      "perf_class": "fast"
+      "perf_class": "fast",
+      "strict_semantics": "Parses colon-delimited MAC string into caller-provided ether_addr output and returns null on invalid syntax",
+      "hardened_semantics": "Same parser path with deterministic null return for invalid/null inputs",
+      "default_stub": false
     },
     {
       "symbol": "ether_ntoa",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "unistd_abi",
-      "perf_class": "fast"
+      "perf_class": "fast",
+      "strict_semantics": "Formats six-byte ether_addr into lowercase colon-delimited static buffer string",
+      "hardened_semantics": "Same formatter path with deterministic null return for null input",
+      "default_stub": false
     },
     {
       "symbol": "ether_ntoa_r",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "unistd_abi",
-      "perf_class": "fast"
+      "perf_class": "fast",
+      "strict_semantics": "Formats six-byte ether_addr into caller-provided lowercase colon-delimited buffer string",
+      "hardened_semantics": "Same formatter path with deterministic null return for null input/output pointers",
+      "default_stub": false
     },
     {
       "symbol": "eventfd",
@@ -2598,15 +2610,21 @@
     },
     {
       "symbol": "herror",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "unistd_abi",
-      "perf_class": "fast"
+      "perf_class": "fast",
+      "strict_semantics": "Formats `<prefix>: <resolver-message>\\n` to stderr using thread-local h_errno",
+      "hardened_semantics": "Same stderr formatting path with deterministic message mapping and write semantics",
+      "default_stub": false
     },
     {
       "symbol": "hstrerror",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "unistd_abi",
-      "perf_class": "fast"
+      "perf_class": "fast",
+      "strict_semantics": "Maps resolver error codes to stable static C-string messages",
+      "hardened_semantics": "Same deterministic resolver error-message mapping for all input codes",
+      "default_stub": false
     },
     {
       "symbol": "htonl",
@@ -3720,65 +3738,65 @@
     },
     {
       "symbol": "mq_close",
-      "status": "GlibcCallThrough",
+      "status": "RawSyscall",
       "module": "unistd_abi",
       "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc mq_close",
-      "hardened_semantics": "Passthrough to glibc mq_close",
+      "strict_semantics": "SYS_close on message-queue descriptor",
+      "hardened_semantics": "SYS_close on message-queue descriptor",
       "default_stub": false
     },
     {
       "symbol": "mq_getattr",
-      "status": "GlibcCallThrough",
+      "status": "RawSyscall",
       "module": "unistd_abi",
       "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc mq_getattr",
-      "hardened_semantics": "Passthrough to glibc mq_getattr",
+      "strict_semantics": "SYS_mq_getsetattr with newattr=NULL",
+      "hardened_semantics": "SYS_mq_getsetattr with newattr=NULL",
       "default_stub": false
     },
     {
       "symbol": "mq_open",
-      "status": "GlibcCallThrough",
+      "status": "RawSyscall",
       "module": "unistd_abi",
       "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc mq_open",
-      "hardened_semantics": "Passthrough to glibc mq_open",
+      "strict_semantics": "SYS_mq_open with O_CREAT varargs (mode, attr)",
+      "hardened_semantics": "SYS_mq_open with O_CREAT varargs (mode, attr)",
       "default_stub": false
     },
     {
       "symbol": "mq_receive",
-      "status": "GlibcCallThrough",
+      "status": "RawSyscall",
       "module": "unistd_abi",
       "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc mq_receive",
-      "hardened_semantics": "Passthrough to glibc mq_receive",
+      "strict_semantics": "SYS_mq_timedreceive with timeout=NULL",
+      "hardened_semantics": "SYS_mq_timedreceive with timeout=NULL",
       "default_stub": false
     },
     {
       "symbol": "mq_send",
-      "status": "GlibcCallThrough",
+      "status": "RawSyscall",
       "module": "unistd_abi",
       "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc mq_send",
-      "hardened_semantics": "Passthrough to glibc mq_send",
+      "strict_semantics": "SYS_mq_timedsend with timeout=NULL",
+      "hardened_semantics": "SYS_mq_timedsend with timeout=NULL",
       "default_stub": false
     },
     {
       "symbol": "mq_setattr",
-      "status": "GlibcCallThrough",
+      "status": "RawSyscall",
       "module": "unistd_abi",
       "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc mq_setattr",
-      "hardened_semantics": "Passthrough to glibc mq_setattr",
+      "strict_semantics": "SYS_mq_getsetattr with oldattr capture",
+      "hardened_semantics": "SYS_mq_getsetattr with oldattr capture",
       "default_stub": false
     },
     {
       "symbol": "mq_unlink",
-      "status": "GlibcCallThrough",
+      "status": "RawSyscall",
       "module": "unistd_abi",
       "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc mq_unlink",
-      "hardened_semantics": "Passthrough to glibc mq_unlink",
+      "strict_semantics": "SYS_mq_unlink",
+      "hardened_semantics": "SYS_mq_unlink",
       "default_stub": false
     },
     {
@@ -3792,27 +3810,39 @@
     },
     {
       "symbol": "msgctl",
-      "status": "GlibcCallThrough",
+      "status": "RawSyscall",
       "module": "unistd_abi",
-      "perf_class": "syscall"
+      "perf_class": "syscall",
+      "strict_semantics": "SYS_msgctl",
+      "hardened_semantics": "SYS_msgctl",
+      "default_stub": false
     },
     {
       "symbol": "msgget",
-      "status": "GlibcCallThrough",
+      "status": "RawSyscall",
       "module": "unistd_abi",
-      "perf_class": "syscall"
+      "perf_class": "syscall",
+      "strict_semantics": "SYS_msgget",
+      "hardened_semantics": "SYS_msgget",
+      "default_stub": false
     },
     {
       "symbol": "msgrcv",
-      "status": "GlibcCallThrough",
+      "status": "RawSyscall",
       "module": "unistd_abi",
-      "perf_class": "syscall"
+      "perf_class": "syscall",
+      "strict_semantics": "SYS_msgrcv",
+      "hardened_semantics": "SYS_msgrcv",
+      "default_stub": false
     },
     {
       "symbol": "msgsnd",
-      "status": "GlibcCallThrough",
+      "status": "RawSyscall",
       "module": "unistd_abi",
-      "perf_class": "syscall"
+      "perf_class": "syscall",
+      "strict_semantics": "SYS_msgsnd",
+      "hardened_semantics": "SYS_msgsnd",
+      "default_stub": false
     },
     {
       "symbol": "msync",
@@ -5520,21 +5550,30 @@
     },
     {
       "symbol": "semctl",
-      "status": "GlibcCallThrough",
+      "status": "RawSyscall",
       "module": "unistd_abi",
-      "perf_class": "syscall"
+      "perf_class": "syscall",
+      "strict_semantics": "SYS_semctl with vararg command routing",
+      "hardened_semantics": "SYS_semctl with vararg command routing",
+      "default_stub": false
     },
     {
       "symbol": "semget",
-      "status": "GlibcCallThrough",
+      "status": "RawSyscall",
       "module": "unistd_abi",
-      "perf_class": "syscall"
+      "perf_class": "syscall",
+      "strict_semantics": "SYS_semget",
+      "hardened_semantics": "SYS_semget",
+      "default_stub": false
     },
     {
       "symbol": "semop",
-      "status": "GlibcCallThrough",
+      "status": "RawSyscall",
       "module": "unistd_abi",
-      "perf_class": "syscall"
+      "perf_class": "syscall",
+      "strict_semantics": "SYS_semop",
+      "hardened_semantics": "SYS_semop",
+      "default_stub": false
     },
     {
       "symbol": "send",
@@ -5801,45 +5840,57 @@
     },
     {
       "symbol": "shm_open",
-      "status": "GlibcCallThrough",
+      "status": "RawSyscall",
       "module": "unistd_abi",
       "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc shm_open",
-      "hardened_semantics": "Passthrough to glibc shm_open",
+      "strict_semantics": "SYS_openat on /dev/shm/<name> mapping",
+      "hardened_semantics": "SYS_openat on /dev/shm/<name> mapping with name validation",
       "default_stub": false
     },
     {
       "symbol": "shm_unlink",
-      "status": "GlibcCallThrough",
+      "status": "RawSyscall",
       "module": "unistd_abi",
       "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc shm_unlink",
-      "hardened_semantics": "Passthrough to glibc shm_unlink",
+      "strict_semantics": "SYS_unlinkat on /dev/shm/<name> mapping",
+      "hardened_semantics": "SYS_unlinkat on /dev/shm/<name> mapping with name validation",
       "default_stub": false
     },
     {
       "symbol": "shmat",
-      "status": "GlibcCallThrough",
+      "status": "RawSyscall",
       "module": "unistd_abi",
-      "perf_class": "syscall"
+      "perf_class": "syscall",
+      "strict_semantics": "SYS_shmat",
+      "hardened_semantics": "SYS_shmat",
+      "default_stub": false
     },
     {
       "symbol": "shmctl",
-      "status": "GlibcCallThrough",
+      "status": "RawSyscall",
       "module": "unistd_abi",
-      "perf_class": "syscall"
+      "perf_class": "syscall",
+      "strict_semantics": "SYS_shmctl",
+      "hardened_semantics": "SYS_shmctl",
+      "default_stub": false
     },
     {
       "symbol": "shmdt",
-      "status": "GlibcCallThrough",
+      "status": "RawSyscall",
       "module": "unistd_abi",
-      "perf_class": "syscall"
+      "perf_class": "syscall",
+      "strict_semantics": "SYS_shmdt",
+      "hardened_semantics": "SYS_shmdt",
+      "default_stub": false
     },
     {
       "symbol": "shmget",
-      "status": "GlibcCallThrough",
+      "status": "RawSyscall",
       "module": "unistd_abi",
-      "perf_class": "syscall"
+      "perf_class": "syscall",
+      "strict_semantics": "SYS_shmget",
+      "hardened_semantics": "SYS_shmget",
+      "default_stub": false
     },
     {
       "symbol": "shutdown",
@@ -5960,9 +6011,12 @@
     },
     {
       "symbol": "sigqueue",
-      "status": "GlibcCallThrough",
+      "status": "RawSyscall",
       "module": "unistd_abi",
-      "perf_class": "syscall"
+      "perf_class": "syscall",
+      "strict_semantics": "SYS_rt_sigqueueinfo with SI_QUEUE metadata and queued payload bits",
+      "hardened_semantics": "SYS_rt_sigqueueinfo with deterministic errno propagation",
+      "default_stub": false
     },
     {
       "symbol": "sigsetjmp",
@@ -5984,9 +6038,12 @@
     },
     {
       "symbol": "sigtimedwait",
-      "status": "GlibcCallThrough",
+      "status": "RawSyscall",
       "module": "unistd_abi",
-      "perf_class": "syscall"
+      "perf_class": "syscall",
+      "strict_semantics": "SYS_rt_sigtimedwait with explicit sigset_t size argument",
+      "hardened_semantics": "SYS_rt_sigtimedwait with deterministic errno propagation",
+      "default_stub": false
     },
     {
       "symbol": "sigwait",
@@ -5999,9 +6056,12 @@
     },
     {
       "symbol": "sigwaitinfo",
-      "status": "GlibcCallThrough",
+      "status": "RawSyscall",
       "module": "unistd_abi",
-      "perf_class": "syscall"
+      "perf_class": "syscall",
+      "strict_semantics": "SYS_rt_sigtimedwait with null timeout for sigwaitinfo semantics",
+      "hardened_semantics": "SYS_rt_sigtimedwait (null timeout) with deterministic errno propagation",
+      "default_stub": false
     },
     {
       "symbol": "sin",
@@ -6795,33 +6855,48 @@
     },
     {
       "symbol": "timer_create",
-      "status": "GlibcCallThrough",
+      "status": "RawSyscall",
       "module": "unistd_abi",
-      "perf_class": "syscall"
+      "perf_class": "syscall",
+      "strict_semantics": "SYS_timer_create — create POSIX per-process timer using kernel timer id output",
+      "hardened_semantics": "SYS_timer_create — same syscall path with deterministic errno propagation",
+      "default_stub": false
     },
     {
       "symbol": "timer_delete",
-      "status": "GlibcCallThrough",
+      "status": "RawSyscall",
       "module": "unistd_abi",
-      "perf_class": "syscall"
+      "perf_class": "syscall",
+      "strict_semantics": "SYS_timer_delete — delete POSIX per-process timer by kernel timer id",
+      "hardened_semantics": "SYS_timer_delete — same syscall path with deterministic errno propagation",
+      "default_stub": false
     },
     {
       "symbol": "timer_getoverrun",
-      "status": "GlibcCallThrough",
+      "status": "RawSyscall",
       "module": "unistd_abi",
-      "perf_class": "syscall"
+      "perf_class": "syscall",
+      "strict_semantics": "SYS_timer_getoverrun — fetch timer overrun count from kernel timer id",
+      "hardened_semantics": "SYS_timer_getoverrun — same syscall path with deterministic errno propagation",
+      "default_stub": false
     },
     {
       "symbol": "timer_gettime",
-      "status": "GlibcCallThrough",
+      "status": "RawSyscall",
       "module": "unistd_abi",
-      "perf_class": "syscall"
+      "perf_class": "syscall",
+      "strict_semantics": "SYS_timer_gettime — read timer expiration state into itimerspec",
+      "hardened_semantics": "SYS_timer_gettime — same syscall path with deterministic errno propagation",
+      "default_stub": false
     },
     {
       "symbol": "timer_settime",
-      "status": "GlibcCallThrough",
+      "status": "RawSyscall",
       "module": "unistd_abi",
-      "perf_class": "syscall"
+      "perf_class": "syscall",
+      "strict_semantics": "SYS_timer_settime — arm/disarm timer using itimerspec payload",
+      "hardened_semantics": "SYS_timer_settime — same syscall path with deterministic errno propagation",
+      "default_stub": false
     },
     {
       "symbol": "timerfd_create",

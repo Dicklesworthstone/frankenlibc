@@ -8,16 +8,22 @@ use frankenlibc_abi::stdlib_abi::{
     strtoull,
 };
 use frankenlibc_abi::unistd_abi::{
-    confstr, creat64, ctermid, fpathconf, fstat64, fstatat64, ftruncate64, get_avphys_pages,
-    get_nprocs, get_nprocs_conf, get_phys_pages, getdomainname, gethostid, getlogin, getlogin_r,
-    getopt, getopt_long, getpagesize, grantpt, lockf, lseek64, lstat64, mkdtemp, nice, open64,
-    pathconf, posix_fallocate, posix_madvise, posix_openpt, pread64, ptsname, pwrite64,
+    confstr, creat64, ctermid, ether_aton, ether_aton_r, ether_ntoa, ether_ntoa_r, fpathconf,
+    fstat64, fstatat64, ftruncate64, get_avphys_pages, get_nprocs, get_nprocs_conf, get_phys_pages,
+    getdomainname, gethostid, getlogin, getlogin_r, getopt, getopt_long, getpagesize, grantpt,
+    herror, hstrerror, lockf, lseek64, lstat64, mkdtemp, mq_close, mq_getattr, mq_open, mq_receive,
+    mq_send, mq_setattr, mq_unlink, msgctl, msgget, msgrcv, msgsnd, nice, open64, pathconf,
+    posix_fallocate, posix_madvise, posix_openpt, pread64, ptsname, pwrite64,
     sched_get_priority_max, sched_get_priority_min, sched_getparam, sched_getscheduler,
-    sched_rr_get_interval, sched_setparam, sched_setscheduler, setdomainname, sethostname, stat64,
-    sysconf, truncate64, ttyname, ttyname_r, unlockpt,
+    sched_rr_get_interval, sched_setparam, sched_setscheduler, semctl, semget, semop,
+    setdomainname, sethostname, shm_open, shm_unlink, shmat, shmctl, shmdt, shmget, sigqueue,
+    sigtimedwait, sigwaitinfo, stat64, sysconf, timer_create, timer_delete, timer_getoverrun,
+    timer_gettime, timer_settime, truncate64, ttyname, ttyname_r, unlockpt,
 };
+use std::ffi::CString;
 use std::os::fd::AsRawFd;
 use std::ptr;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 unsafe extern "C" {
     #[link_name = "optarg"]
@@ -28,6 +34,8 @@ unsafe extern "C" {
     static mut OPTERR_TEST: libc::c_int;
     #[link_name = "optopt"]
     static mut OPTOPT_TEST: libc::c_int;
+
+    fn __h_errno_location() -> *mut libc::c_int;
 }
 
 unsafe fn reset_getopt_globals() {
@@ -37,6 +45,63 @@ unsafe fn reset_getopt_globals() {
         OPTERR_TEST = 0;
         OPTOPT_TEST = 0;
     }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct SysvMsg {
+    mtype: libc::c_long,
+    mtext: [u8; 64],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct EtherAddr {
+    octet: [u8; 6],
+}
+
+static SHM_NAME_NONCE: AtomicU64 = AtomicU64::new(1);
+static MQ_NAME_NONCE: AtomicU64 = AtomicU64::new(1);
+
+fn unique_shm_name(prefix: &str) -> CString {
+    let n = SHM_NAME_NONCE.fetch_add(1, Ordering::Relaxed);
+    CString::new(format!("/{prefix}-{}-{n}", std::process::id())).expect("valid shm name")
+}
+
+fn unique_mq_name(prefix: &str) -> CString {
+    let n = MQ_NAME_NONCE.fetch_add(1, Ordering::Relaxed);
+    CString::new(format!("/{prefix}-{}-{n}", std::process::id())).expect("valid mq name")
+}
+
+fn open_test_timer() -> Option<*mut libc::c_void> {
+    let mut timer_id: *mut libc::c_void = ptr::null_mut();
+    // SAFETY: __errno_location points to thread-local errno.
+    unsafe {
+        *__errno_location() = 0;
+    }
+
+    // SAFETY: timer_create accepts a null sigevent pointer and a writable timer-id output.
+    let rc = unsafe {
+        timer_create(
+            libc::CLOCK_MONOTONIC,
+            ptr::null_mut(),
+            (&mut timer_id as *mut *mut libc::c_void).cast(),
+        )
+    };
+    if rc == 0 {
+        return Some(timer_id);
+    }
+
+    // SAFETY: read errno after call.
+    let err = unsafe { *__errno_location() };
+    if matches!(
+        err,
+        libc::ENOSYS | libc::EPERM | libc::EACCES | libc::ENOTSUP
+    ) {
+        return None;
+    }
+
+    panic!("timer_create failed unexpectedly with errno={err}");
 }
 
 #[test]
@@ -699,6 +764,196 @@ fn sched_rr_get_interval_null_pointer_sets_efault() {
 }
 
 #[test]
+fn timer_settime_gettime_getoverrun_and_delete_roundtrip() {
+    let Some(timer_id) = open_test_timer() else {
+        return;
+    };
+
+    let new_value = libc::itimerspec {
+        it_interval: libc::timespec {
+            tv_sec: 0,
+            tv_nsec: 0,
+        },
+        it_value: libc::timespec {
+            tv_sec: 1,
+            tv_nsec: 0,
+        },
+    };
+    let mut old_value: libc::itimerspec = unsafe { std::mem::zeroed() };
+    // SAFETY: timer id was created successfully, and pointers are valid.
+    let set_rc = unsafe {
+        timer_settime(
+            timer_id,
+            0,
+            (&new_value as *const libc::itimerspec).cast(),
+            (&mut old_value as *mut libc::itimerspec).cast(),
+        )
+    };
+    assert_eq!(set_rc, 0);
+
+    let mut current: libc::itimerspec = unsafe { std::mem::zeroed() };
+    // SAFETY: timer id is valid and output pointer is writable.
+    assert_eq!(
+        unsafe { timer_gettime(timer_id, (&mut current as *mut libc::itimerspec).cast()) },
+        0
+    );
+    assert!(current.it_value.tv_sec >= 0);
+    assert!(current.it_value.tv_nsec >= 0);
+    assert!(current.it_value.tv_nsec < 1_000_000_000);
+
+    // SAFETY: timer id is valid.
+    let overrun = unsafe { timer_getoverrun(timer_id) };
+    assert!(overrun >= 0);
+
+    // SAFETY: timer id is valid and must be cleaned up.
+    assert_eq!(unsafe { timer_delete(timer_id) }, 0);
+}
+
+#[test]
+fn timer_invalid_inputs_match_kernel_syscalls() {
+    let invalid_timer = (-1_isize) as *mut libc::c_void;
+    let mut observed_curr: libc::itimerspec = unsafe { std::mem::zeroed() };
+    let new_value = libc::itimerspec {
+        it_interval: libc::timespec {
+            tv_sec: 0,
+            tv_nsec: 0,
+        },
+        it_value: libc::timespec {
+            tv_sec: 0,
+            tv_nsec: 1,
+        },
+    };
+
+    // SAFETY: __errno_location points to thread-local errno.
+    unsafe {
+        *__errno_location() = 0;
+    }
+    // SAFETY: invalid timer id + valid output pointer intentionally exercises kernel error path.
+    let observed_get = unsafe {
+        timer_gettime(
+            invalid_timer,
+            (&mut observed_curr as *mut libc::itimerspec).cast(),
+        )
+    };
+    // SAFETY: read errno after call.
+    let observed_get_errno = unsafe { *__errno_location() };
+
+    assert_eq!(observed_get, -1);
+    assert_eq!(observed_get_errno, libc::EINVAL);
+
+    // SAFETY: __errno_location points to thread-local errno.
+    unsafe {
+        *__errno_location() = 0;
+    }
+    // SAFETY: invalid timer id + valid new-value pointer intentionally exercises kernel error path.
+    let observed_set = unsafe {
+        timer_settime(
+            invalid_timer,
+            0,
+            (&new_value as *const libc::itimerspec).cast(),
+            ptr::null_mut(),
+        )
+    };
+    // SAFETY: read errno after call.
+    let observed_set_errno = unsafe { *__errno_location() };
+
+    assert_eq!(observed_set, -1);
+    assert_eq!(observed_set_errno, libc::EINVAL);
+
+    // SAFETY: __errno_location points to thread-local errno.
+    unsafe {
+        *__errno_location() = 0;
+    }
+    // SAFETY: invalid timer id intentionally exercises kernel error path.
+    let observed_delete = unsafe { timer_delete(invalid_timer) };
+    // SAFETY: read errno after call.
+    let observed_delete_errno = unsafe { *__errno_location() };
+
+    assert_eq!(observed_delete, -1);
+    assert_eq!(observed_delete_errno, libc::EINVAL);
+
+    // SAFETY: __errno_location points to thread-local errno.
+    unsafe {
+        *__errno_location() = 0;
+    }
+    // SAFETY: invalid timer id intentionally exercises kernel error path.
+    let observed_overrun = unsafe { timer_getoverrun(invalid_timer) };
+    // SAFETY: read errno after call.
+    let observed_overrun_errno = unsafe { *__errno_location() };
+
+    assert_eq!(observed_overrun, -1);
+    assert_eq!(observed_overrun_errno, libc::EINVAL);
+
+    let mut observed_timer_id: *mut libc::c_void = ptr::null_mut();
+    // SAFETY: __errno_location points to thread-local errno.
+    unsafe {
+        *__errno_location() = 0;
+    }
+    // SAFETY: invalid clock id intentionally exercises kernel error path.
+    let observed_create = unsafe {
+        timer_create(
+            libc::clockid_t::MAX,
+            ptr::null_mut(),
+            (&mut observed_timer_id as *mut *mut libc::c_void).cast(),
+        )
+    };
+    // SAFETY: read errno after call.
+    let observed_create_errno = unsafe { *__errno_location() };
+
+    assert_eq!(observed_create, -1);
+    assert_eq!(observed_create_errno, libc::EINVAL);
+}
+
+#[test]
+fn sigtimedwait_and_sigwaitinfo_invalid_inputs_match_kernel_syscalls() {
+    let timeout = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+
+    // SAFETY: __errno_location points to thread-local errno.
+    unsafe {
+        *__errno_location() = 0;
+    }
+    // SAFETY: null sigset/info pointers intentionally exercise kernel failure path.
+    let observed_timed = unsafe { sigtimedwait(ptr::null(), ptr::null_mut(), &timeout) };
+    // SAFETY: read errno after call.
+    let observed_timed_errno = unsafe { *__errno_location() };
+
+    assert_eq!(observed_timed, -1);
+    assert_eq!(observed_timed_errno, libc::EINVAL);
+
+    // SAFETY: __errno_location points to thread-local errno.
+    unsafe {
+        *__errno_location() = 0;
+    }
+    // SAFETY: null sigset/info pointers intentionally exercise kernel failure path.
+    let observed_wait = unsafe { sigwaitinfo(ptr::null(), ptr::null_mut()) };
+    // SAFETY: read errno after call.
+    let observed_wait_errno = unsafe { *__errno_location() };
+
+    assert_eq!(observed_wait, -1);
+    assert_eq!(observed_wait_errno, libc::EINVAL);
+}
+
+#[test]
+fn sigqueue_invalid_signal_sets_einval() {
+    // SAFETY: __errno_location points to thread-local errno.
+    unsafe {
+        *__errno_location() = 0;
+    }
+    // SAFETY: getpid has no pointer preconditions.
+    let pid = unsafe { libc::getpid() };
+    // SAFETY: invalid signal number should deterministically fail.
+    let rc = unsafe { sigqueue(pid, -1, ptr::null()) };
+    // SAFETY: read errno after call.
+    let err = unsafe { *__errno_location() };
+
+    assert_eq!(rc, -1);
+    assert_eq!(err, libc::EINVAL);
+}
+
+#[test]
 fn getlogin_and_getlogin_r_match_pwd_lookup() {
     // SAFETY: geteuid has no pointer preconditions.
     let uid = unsafe { libc::geteuid() };
@@ -1025,6 +1280,151 @@ fn pty_helpers_reject_invalid_fd() {
 }
 
 #[test]
+fn ether_aton_and_ether_ntoa_roundtrip() {
+    // SAFETY: source is a valid NUL-terminated C string.
+    let parsed = unsafe { ether_aton(c"00:1a:2B:3c:4D:5e".as_ptr()) };
+    assert!(!parsed.is_null());
+
+    // SAFETY: parser returns pointer to an internal six-octet ethernet address.
+    let addr = unsafe { *(parsed.cast::<EtherAddr>()) };
+    assert_eq!(addr.octet, [0x00, 0x1a, 0x2b, 0x3c, 0x4d, 0x5e]);
+
+    // SAFETY: parsed pointer came from successful ether_aton call.
+    let rendered_ptr = unsafe { ether_ntoa(parsed) };
+    assert!(!rendered_ptr.is_null());
+    // SAFETY: successful formatter returns a NUL-terminated string.
+    let rendered = unsafe { std::ffi::CStr::from_ptr(rendered_ptr) }
+        .to_string_lossy()
+        .into_owned();
+    assert_eq!(rendered, "00:1a:2b:3c:4d:5e");
+}
+
+#[test]
+fn ether_r_variants_validate_inputs() {
+    let mut out = EtherAddr { octet: [0; 6] };
+    // SAFETY: source string and output pointer are valid.
+    let parsed = unsafe {
+        ether_aton_r(
+            c"10:20:30:40:50:60".as_ptr(),
+            (&mut out as *mut EtherAddr).cast::<libc::c_void>(),
+        )
+    };
+    assert!(!parsed.is_null());
+    assert_eq!(out.octet, [0x10, 0x20, 0x30, 0x40, 0x50, 0x60]);
+
+    let mut buf = [0_i8; 18];
+    // SAFETY: address and output buffer pointers are valid.
+    let formatted = unsafe {
+        ether_ntoa_r(
+            (&out as *const EtherAddr).cast::<libc::c_void>(),
+            buf.as_mut_ptr(),
+        )
+    };
+    assert_eq!(formatted, buf.as_mut_ptr());
+    // SAFETY: successful formatter writes a NUL-terminated string.
+    let rendered = unsafe { std::ffi::CStr::from_ptr(buf.as_ptr()) }
+        .to_string_lossy()
+        .into_owned();
+    assert_eq!(rendered, "10:20:30:40:50:60");
+
+    // SAFETY: invalid parse input is expected to return null.
+    assert!(unsafe { ether_aton(c"00:11:22:33:44".as_ptr()) }.is_null());
+    // SAFETY: invalid parse input is expected to return null.
+    assert!(
+        unsafe {
+            ether_aton_r(
+                c"00:11:22:33:44:gg".as_ptr(),
+                (&mut out as *mut EtherAddr).cast::<libc::c_void>(),
+            )
+        }
+        .is_null()
+    );
+    // SAFETY: null address pointer should return null.
+    assert!(unsafe { ether_ntoa_r(ptr::null(), buf.as_mut_ptr()) }.is_null());
+    // SAFETY: null destination pointer should return null.
+    assert!(
+        unsafe {
+            ether_ntoa_r(
+                (&out as *const EtherAddr).cast::<libc::c_void>(),
+                ptr::null_mut(),
+            )
+        }
+        .is_null()
+    );
+}
+
+#[test]
+fn hstrerror_reports_known_and_unknown_codes() {
+    // SAFETY: hstrerror returns stable pointers to static NUL-terminated messages.
+    let known = unsafe { hstrerror(1) };
+    assert!(!known.is_null());
+    // SAFETY: pointer was validated non-null.
+    let known_text = unsafe { std::ffi::CStr::from_ptr(known) }
+        .to_string_lossy()
+        .into_owned();
+    assert_eq!(known_text, "Unknown host");
+
+    // SAFETY: unknown code should still return a stable message pointer.
+    let unknown = unsafe { hstrerror(9999) };
+    assert!(!unknown.is_null());
+    // SAFETY: pointer was validated non-null.
+    let unknown_text = unsafe { std::ffi::CStr::from_ptr(unknown) }
+        .to_string_lossy()
+        .into_owned();
+    assert_eq!(unknown_text, "Resolver internal error");
+}
+
+#[test]
+fn herror_writes_prefixed_message_to_stderr() {
+    let mut pipe_fds = [0; 2];
+    // SAFETY: provides writable space for pipe fd pair.
+    assert_eq!(unsafe { libc::pipe(pipe_fds.as_mut_ptr()) }, 0);
+    let read_fd = pipe_fds[0];
+    let write_fd = pipe_fds[1];
+
+    // SAFETY: duplicate current stderr so we can restore it after capture.
+    let saved_stderr = unsafe { libc::dup(libc::STDERR_FILENO) };
+    assert!(saved_stderr >= 0);
+
+    // SAFETY: redirect stderr to pipe writer for deterministic capture.
+    assert_eq!(
+        unsafe { libc::dup2(write_fd, libc::STDERR_FILENO) },
+        libc::STDERR_FILENO
+    );
+
+    // SAFETY: set thread-local h_errno and call herror with valid prefix string.
+    unsafe {
+        let h_err = __h_errno_location();
+        assert!(!h_err.is_null());
+        *h_err = 1;
+        herror(c"lookup".as_ptr());
+    }
+
+    // SAFETY: restore stderr and release duplicated fds.
+    assert_eq!(
+        unsafe { libc::dup2(saved_stderr, libc::STDERR_FILENO) },
+        libc::STDERR_FILENO
+    );
+    // SAFETY: close duplicated descriptor and write-end once restored.
+    unsafe {
+        libc::close(saved_stderr);
+        libc::close(write_fd);
+    }
+
+    let mut capture = [0_u8; 128];
+    // SAFETY: read into writable capture buffer from pipe read end.
+    let nread = unsafe { libc::read(read_fd, capture.as_mut_ptr().cast(), capture.len()) };
+    assert!(nread > 0);
+    // SAFETY: release read-end descriptor after capture.
+    unsafe {
+        libc::close(read_fd);
+    }
+
+    let text = std::str::from_utf8(&capture[..nread as usize]).expect("stderr capture is utf-8");
+    assert_eq!(text, "lookup: Unknown host\n");
+}
+
+#[test]
 fn sethostname_null_pointer_returns_efault() {
     // SAFETY: __errno_location points to this thread-local errno.
     unsafe {
@@ -1215,4 +1615,552 @@ fn lfs64_aliases_path_stat_and_truncate() {
     assert_eq!(shrunk.len(), 2);
 
     let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn msgsysv_roundtrip_and_cleanup() {
+    // SAFETY: IPC_PRIVATE with create flags requests a new queue id.
+    let msqid = unsafe { msgget(libc::IPC_PRIVATE, libc::IPC_CREAT | libc::IPC_EXCL | 0o600) };
+    if msqid < 0 {
+        // SAFETY: read thread-local errno after syscall failure.
+        let err = unsafe { *__errno_location() };
+        if err == libc::ENOSYS {
+            return;
+        }
+        panic!("msgget failed with errno={err}");
+    }
+
+    let payload = b"sysv-msg";
+    let mut send = SysvMsg {
+        mtype: 1,
+        mtext: [0; 64],
+    };
+    send.mtext[..payload.len()].copy_from_slice(payload);
+
+    // SAFETY: msqid is valid and pointer/size cover initialized payload bytes.
+    assert_eq!(
+        unsafe {
+            msgsnd(
+                msqid,
+                (&send as *const SysvMsg).cast::<libc::c_void>(),
+                payload.len(),
+                0,
+            )
+        },
+        0
+    );
+
+    let mut recv = SysvMsg {
+        mtype: 0,
+        mtext: [0; 64],
+    };
+    // SAFETY: receive buffer is writable and large enough.
+    let received = unsafe {
+        msgrcv(
+            msqid,
+            (&mut recv as *mut SysvMsg).cast::<libc::c_void>(),
+            recv.mtext.len(),
+            1,
+            0,
+        )
+    };
+    assert_eq!(received, payload.len() as isize);
+    assert_eq!(recv.mtype, 1);
+    assert_eq!(&recv.mtext[..payload.len()], payload);
+
+    // SAFETY: remove queue id allocated in this test.
+    assert_eq!(unsafe { msgctl(msqid, libc::IPC_RMID, ptr::null_mut()) }, 0);
+}
+
+#[test]
+fn msgsysv_invalid_inputs_match_kernel_syscalls() {
+    let msg = SysvMsg {
+        mtype: 1,
+        mtext: [0; 64],
+    };
+
+    // SAFETY: reset thread-local errno before wrapper call.
+    unsafe {
+        *__errno_location() = 0;
+    }
+    // SAFETY: intentionally invalid queue id for error-path contract.
+    let observed_send =
+        unsafe { msgsnd(-1, (&msg as *const SysvMsg).cast::<libc::c_void>(), 1, 0) };
+    // SAFETY: read errno after wrapper call.
+    let observed_send_errno = unsafe { *__errno_location() };
+
+    assert_eq!(observed_send, -1);
+    assert_eq!(observed_send_errno, libc::EINVAL);
+
+    let mut recv = SysvMsg {
+        mtype: 0,
+        mtext: [0; 64],
+    };
+    // SAFETY: reset thread-local errno before wrapper call.
+    unsafe {
+        *__errno_location() = 0;
+    }
+    // SAFETY: intentionally invalid queue id for error-path contract.
+    let observed_recv = unsafe {
+        msgrcv(
+            -1,
+            (&mut recv as *mut SysvMsg).cast::<libc::c_void>(),
+            1,
+            0,
+            0,
+        )
+    };
+    // SAFETY: read errno after wrapper call.
+    let observed_recv_errno = unsafe { *__errno_location() };
+
+    assert_eq!(observed_recv, -1);
+    assert_eq!(observed_recv_errno, libc::EINVAL);
+
+    // SAFETY: reset thread-local errno before wrapper call.
+    unsafe {
+        *__errno_location() = 0;
+    }
+    // SAFETY: intentionally invalid queue id for error-path contract.
+    let observed_ctl = unsafe { msgctl(-1, libc::IPC_RMID, ptr::null_mut()) };
+    // SAFETY: read errno after wrapper call.
+    let observed_ctl_errno = unsafe { *__errno_location() };
+
+    assert_eq!(observed_ctl, -1);
+    assert_eq!(observed_ctl_errno, libc::EINVAL);
+}
+
+#[test]
+fn shm_sysv_roundtrip_and_cleanup() {
+    // SAFETY: IPC_PRIVATE with create flags requests a new segment id.
+    let shmid = unsafe {
+        shmget(
+            libc::IPC_PRIVATE,
+            4096,
+            libc::IPC_CREAT | libc::IPC_EXCL | 0o600,
+        )
+    };
+    if shmid < 0 {
+        // SAFETY: read thread-local errno after syscall failure.
+        let err = unsafe { *__errno_location() };
+        if err == libc::ENOSYS {
+            return;
+        }
+        panic!("shmget failed with errno={err}");
+    }
+
+    // SAFETY: attach newly created shared-memory segment.
+    let addr = unsafe { shmat(shmid, ptr::null(), 0) };
+    assert_ne!(addr, (-1_isize) as *mut libc::c_void);
+
+    // SAFETY: attached address is writable for at least one byte.
+    unsafe {
+        *(addr as *mut u8) = 0x5a;
+    }
+
+    // SAFETY: detach and remove resources allocated in this test.
+    assert_eq!(unsafe { shmdt(addr.cast()) }, 0);
+    // SAFETY: remove segment id allocated in this test.
+    assert_eq!(unsafe { shmctl(shmid, libc::IPC_RMID, ptr::null_mut()) }, 0);
+}
+
+#[test]
+fn shm_sysv_invalid_inputs_match_kernel_syscalls() {
+    // SAFETY: reset thread-local errno before wrapper call.
+    unsafe {
+        *__errno_location() = 0;
+    }
+    // SAFETY: size=0 is invalid for new segment creation.
+    let observed_get = unsafe { shmget(libc::IPC_PRIVATE, 0, libc::IPC_CREAT | 0o600) };
+    // SAFETY: read errno after wrapper call.
+    let observed_get_errno = unsafe { *__errno_location() };
+
+    assert_eq!(observed_get, -1);
+    assert_eq!(observed_get_errno, libc::EINVAL);
+
+    // SAFETY: reset thread-local errno before wrapper call.
+    unsafe {
+        *__errno_location() = 0;
+    }
+    // SAFETY: intentionally invalid segment id.
+    let observed_at = unsafe { shmat(-1, ptr::null(), 0) } as isize;
+    // SAFETY: read errno after wrapper call.
+    let observed_at_errno = unsafe { *__errno_location() };
+
+    assert_eq!(observed_at, -1);
+    assert_eq!(observed_at_errno, libc::EINVAL);
+}
+
+#[test]
+fn sem_sysv_roundtrip_and_cleanup() {
+    // SAFETY: IPC_PRIVATE with create flags requests a new semaphore set.
+    let semid = unsafe {
+        semget(
+            libc::IPC_PRIVATE,
+            1,
+            libc::IPC_CREAT | libc::IPC_EXCL | 0o600,
+        )
+    };
+    if semid < 0 {
+        // SAFETY: read thread-local errno after syscall failure.
+        let err = unsafe { *__errno_location() };
+        if err == libc::ENOSYS {
+            return;
+        }
+        panic!("semget failed with errno={err}");
+    }
+
+    // SAFETY: SETVAL command with explicit value argument.
+    assert_eq!(
+        unsafe { semctl(semid, 0, libc::SETVAL, 1 as libc::c_int) },
+        0
+    );
+
+    let mut wait_op = libc::sembuf {
+        sem_num: 0,
+        sem_op: -1,
+        sem_flg: 0,
+    };
+    // SAFETY: valid semaphore set id and operation buffer.
+    assert_eq!(
+        unsafe { semop(semid, (&mut wait_op as *mut libc::sembuf).cast(), 1) },
+        0
+    );
+
+    let mut post_op = libc::sembuf {
+        sem_num: 0,
+        sem_op: 1,
+        sem_flg: 0,
+    };
+    // SAFETY: valid semaphore set id and operation buffer.
+    assert_eq!(
+        unsafe { semop(semid, (&mut post_op as *mut libc::sembuf).cast(), 1) },
+        0
+    );
+
+    // SAFETY: remove semaphore set allocated in this test.
+    assert_eq!(unsafe { semctl(semid, 0, libc::IPC_RMID) }, 0);
+}
+
+#[test]
+fn sem_sysv_invalid_inputs_match_kernel_syscalls() {
+    // SAFETY: reset thread-local errno before wrapper call.
+    unsafe {
+        *__errno_location() = 0;
+    }
+    // SAFETY: nsems=0 is invalid for creating new semaphore set.
+    let observed_get = unsafe { semget(libc::IPC_PRIVATE, 0, libc::IPC_CREAT | 0o600) };
+    // SAFETY: read errno after wrapper call.
+    let observed_get_errno = unsafe { *__errno_location() };
+
+    assert_eq!(observed_get, -1);
+    assert_eq!(observed_get_errno, libc::EINVAL);
+
+    // SAFETY: reset thread-local errno before wrapper call.
+    unsafe {
+        *__errno_location() = 0;
+    }
+    // SAFETY: invalid semid and null op list intentionally exercise failure path.
+    let observed_op = unsafe { semop(-1, ptr::null_mut(), 0) };
+    // SAFETY: read errno after wrapper call.
+    let observed_op_errno = unsafe { *__errno_location() };
+
+    assert_eq!(observed_op, -1);
+    assert_eq!(observed_op_errno, libc::EINVAL);
+}
+
+#[test]
+fn semctl_invalid_inputs_match_kernel_syscalls() {
+    // SAFETY: reset thread-local errno before wrapper call.
+    unsafe {
+        *__errno_location() = 0;
+    }
+    // SAFETY: invalid semid with no-arg command.
+    let observed_getval = unsafe { semctl(-1, 0, libc::GETVAL) };
+    // SAFETY: read errno after wrapper call.
+    let observed_getval_errno = unsafe { *__errno_location() };
+
+    assert_eq!(observed_getval, -1);
+    assert_eq!(observed_getval_errno, libc::EINVAL);
+
+    // SAFETY: reset thread-local errno before wrapper call.
+    unsafe {
+        *__errno_location() = 0;
+    }
+    // SAFETY: invalid semid with arg-using command.
+    let observed_setval = unsafe { semctl(-1, 0, libc::SETVAL, 1 as libc::c_int) };
+    // SAFETY: read errno after wrapper call.
+    let observed_setval_errno = unsafe { *__errno_location() };
+
+    assert_eq!(observed_setval, -1);
+    assert_eq!(observed_setval_errno, libc::EINVAL);
+}
+
+#[test]
+fn shm_open_and_unlink_roundtrip() {
+    let name = unique_shm_name("frankenlibc-shm");
+
+    // SAFETY: valid POSIX shm object name and open flags.
+    let fd = unsafe {
+        shm_open(
+            name.as_ptr(),
+            libc::O_CREAT | libc::O_EXCL | libc::O_RDWR,
+            0o600,
+        )
+    };
+    if fd < 0 {
+        // SAFETY: read thread-local errno after syscall failure.
+        let err = unsafe { *__errno_location() };
+        if matches!(err, libc::ENOENT | libc::ENOSYS) {
+            return;
+        }
+        panic!("shm_open failed with errno={err}");
+    }
+
+    // SAFETY: close descriptor opened above.
+    assert_eq!(unsafe { libc::close(fd) }, 0);
+    // SAFETY: unlink object created above.
+    assert_eq!(unsafe { shm_unlink(name.as_ptr()) }, 0);
+}
+
+#[test]
+fn shm_open_rejects_invalid_names() {
+    let invalid = CString::new("invalid").expect("valid C string");
+    // SAFETY: reset thread-local errno before wrapper call.
+    unsafe {
+        *__errno_location() = 0;
+    }
+    // SAFETY: missing leading slash is invalid per shm name contract.
+    assert_eq!(unsafe { shm_open(invalid.as_ptr(), libc::O_RDONLY, 0) }, -1);
+    // SAFETY: read thread-local errno after call.
+    assert_eq!(unsafe { *__errno_location() }, libc::EINVAL);
+
+    let nested = CString::new("/bad/name").expect("valid C string");
+    // SAFETY: reset thread-local errno before wrapper call.
+    unsafe {
+        *__errno_location() = 0;
+    }
+    // SAFETY: interior slash is invalid in this wrapper's shm namespace mapping.
+    assert_eq!(unsafe { shm_open(nested.as_ptr(), libc::O_RDONLY, 0) }, -1);
+    // SAFETY: read thread-local errno after call.
+    assert_eq!(unsafe { *__errno_location() }, libc::EINVAL);
+
+    let root = CString::new("/").expect("valid C string");
+    // SAFETY: reset thread-local errno before wrapper call.
+    unsafe {
+        *__errno_location() = 0;
+    }
+    // SAFETY: root-only shm object names are invalid.
+    assert_eq!(unsafe { shm_unlink(root.as_ptr()) }, -1);
+    // SAFETY: read thread-local errno after call.
+    assert_eq!(unsafe { *__errno_location() }, libc::EINVAL);
+}
+
+fn open_test_mq(tag: &str) -> Option<(libc::c_int, CString)> {
+    let name = unique_mq_name(tag);
+    let mut attr: libc::mq_attr = unsafe { std::mem::zeroed() };
+    attr.mq_flags = 0;
+    attr.mq_maxmsg = 8;
+    attr.mq_msgsize = 64;
+    attr.mq_curmsgs = 0;
+
+    // SAFETY: valid queue name, create flags, mode, and attr pointer.
+    let mqd = unsafe {
+        mq_open(
+            name.as_ptr(),
+            libc::O_CREAT | libc::O_EXCL | libc::O_RDWR,
+            0o600,
+            &attr as *const libc::mq_attr,
+        )
+    };
+
+    if mqd >= 0 {
+        return Some((mqd, name));
+    }
+
+    // SAFETY: read thread-local errno after failed open.
+    let err = unsafe { *__errno_location() };
+    if matches!(
+        err,
+        libc::ENOSYS | libc::ENODEV | libc::ENOENT | libc::ENOTSUP | libc::EACCES | libc::EPERM
+    ) {
+        return None;
+    }
+
+    panic!("mq_open failed unexpectedly with errno={err}");
+}
+
+#[test]
+fn mq_open_roundtrip_and_cleanup() {
+    let Some((mqd, name)) = open_test_mq("frankenlibc-mq-open") else {
+        return;
+    };
+
+    // SAFETY: descriptor returned from mq_open is valid.
+    assert_eq!(unsafe { mq_close(mqd) }, 0);
+    // SAFETY: name references queue created above.
+    assert_eq!(unsafe { mq_unlink(name.as_ptr()) }, 0);
+}
+
+#[test]
+fn mq_send_and_receive_roundtrip() {
+    let Some((mqd, name)) = open_test_mq("frankenlibc-mq-io") else {
+        return;
+    };
+
+    let payload = b"queue-msg";
+    // SAFETY: valid descriptor and initialized payload buffer.
+    assert_eq!(
+        unsafe { mq_send(mqd, payload.as_ptr().cast(), payload.len(), 7) },
+        0
+    );
+
+    let mut buf = [0_u8; 64];
+    let mut prio: libc::c_uint = 0;
+    // SAFETY: valid descriptor and writable output buffers.
+    let n = unsafe { mq_receive(mqd, buf.as_mut_ptr().cast(), buf.len(), &mut prio) };
+    assert_eq!(n, payload.len() as isize);
+    assert_eq!(prio, 7);
+    assert_eq!(&buf[..payload.len()], payload);
+
+    // SAFETY: descriptor/name belong to queue created in this test.
+    assert_eq!(unsafe { mq_close(mqd) }, 0);
+    // SAFETY: descriptor/name belong to queue created in this test.
+    assert_eq!(unsafe { mq_unlink(name.as_ptr()) }, 0);
+}
+
+#[test]
+fn mq_getattr_and_setattr_roundtrip() {
+    let Some((mqd, name)) = open_test_mq("frankenlibc-mq-attr") else {
+        return;
+    };
+
+    let mut attr: libc::mq_attr = unsafe { std::mem::zeroed() };
+    // SAFETY: valid descriptor and writable attr pointer.
+    assert_eq!(
+        unsafe { mq_getattr(mqd, (&mut attr as *mut libc::mq_attr).cast()) },
+        0
+    );
+    assert!(attr.mq_maxmsg > 0);
+    assert!(attr.mq_msgsize > 0);
+
+    let mut requested = attr;
+    requested.mq_flags = libc::O_NONBLOCK as _;
+    let mut oldattr: libc::mq_attr = unsafe { std::mem::zeroed() };
+    // SAFETY: valid descriptor and attr pointers.
+    assert_eq!(
+        unsafe {
+            mq_setattr(
+                mqd,
+                (&requested as *const libc::mq_attr).cast(),
+                (&mut oldattr as *mut libc::mq_attr).cast(),
+            )
+        },
+        0
+    );
+    assert_eq!(oldattr.mq_msgsize, attr.mq_msgsize);
+
+    // SAFETY: descriptor/name belong to queue created in this test.
+    assert_eq!(unsafe { mq_close(mqd) }, 0);
+    // SAFETY: descriptor/name belong to queue created in this test.
+    assert_eq!(unsafe { mq_unlink(name.as_ptr()) }, 0);
+}
+
+#[test]
+fn mq_close_and_unlink_invalid_inputs_report_expected_errno() {
+    // SAFETY: reset errno before wrapper call.
+    unsafe {
+        *__errno_location() = 0;
+    }
+    // SAFETY: invalid descriptor exercises failure path.
+    let observed_close = unsafe { mq_close(-1) };
+    // SAFETY: read errno after wrapper call.
+    let observed_close_errno = unsafe { *__errno_location() };
+
+    assert_eq!(observed_close, -1);
+    assert_eq!(observed_close_errno, libc::EBADF);
+
+    // SAFETY: reset errno before wrapper call.
+    unsafe {
+        *__errno_location() = 0;
+    }
+    // SAFETY: null name exercises failure path.
+    let observed_unlink = unsafe { mq_unlink(ptr::null()) };
+    // SAFETY: read errno after wrapper call.
+    let observed_unlink_errno = unsafe { *__errno_location() };
+
+    assert_eq!(observed_unlink, -1);
+    assert_eq!(observed_unlink_errno, libc::EFAULT);
+}
+
+#[test]
+fn mq_getattr_and_setattr_invalid_inputs_report_expected_errno() {
+    // SAFETY: reset errno before wrapper call.
+    unsafe {
+        *__errno_location() = 0;
+    }
+    // SAFETY: invalid descriptor and null attr pointers.
+    let observed_get = unsafe { mq_getattr(-1, ptr::null_mut()) };
+    // SAFETY: read errno after wrapper call.
+    let observed_get_errno = unsafe { *__errno_location() };
+
+    assert_eq!(observed_get, -1);
+    assert_eq!(observed_get_errno, libc::EBADF);
+
+    // SAFETY: reset errno before wrapper call.
+    unsafe {
+        *__errno_location() = 0;
+    }
+    // SAFETY: invalid descriptor and null attr pointers.
+    let observed_set = unsafe { mq_setattr(-1, ptr::null(), ptr::null_mut()) };
+    // SAFETY: read errno after wrapper call.
+    let observed_set_errno = unsafe { *__errno_location() };
+
+    assert_eq!(observed_set, -1);
+    assert_eq!(observed_set_errno, libc::EBADF);
+}
+
+#[test]
+fn mq_send_and_receive_invalid_inputs_report_expected_errno() {
+    let payload = b"x";
+    let mut recv = [0_u8; 8];
+    let mut prio: libc::c_uint = 0;
+
+    // SAFETY: reset errno before wrapper call.
+    unsafe {
+        *__errno_location() = 0;
+    }
+    // SAFETY: invalid descriptor for send.
+    let observed_send = unsafe { mq_send(-1, payload.as_ptr().cast(), payload.len(), 0) };
+    // SAFETY: read errno after wrapper call.
+    let observed_send_errno = unsafe { *__errno_location() };
+
+    assert_eq!(observed_send, -1);
+    assert_eq!(observed_send_errno, libc::EBADF);
+
+    // SAFETY: reset errno before wrapper call.
+    unsafe {
+        *__errno_location() = 0;
+    }
+    // SAFETY: invalid descriptor for receive.
+    let observed_recv = unsafe { mq_receive(-1, recv.as_mut_ptr().cast(), recv.len(), &mut prio) };
+    // SAFETY: read errno after wrapper call.
+    let observed_recv_errno = unsafe { *__errno_location() };
+
+    assert_eq!(observed_recv, -1);
+    assert_eq!(observed_recv_errno, libc::EBADF);
+}
+
+#[test]
+fn mq_open_null_name_reports_expected_errno() {
+    // SAFETY: reset errno before wrapper call.
+    unsafe {
+        *__errno_location() = 0;
+    }
+    // SAFETY: null name intentionally exercises failure path.
+    let observed = unsafe { mq_open(ptr::null(), libc::O_RDONLY) };
+    // SAFETY: read errno after wrapper call.
+    let observed_errno = unsafe { *__errno_location() };
+
+    assert_eq!(observed, -1);
+    assert_eq!(observed_errno, libc::EFAULT);
 }
