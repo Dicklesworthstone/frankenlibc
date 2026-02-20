@@ -10,11 +10,34 @@ use frankenlibc_abi::stdlib_abi::{
 use frankenlibc_abi::unistd_abi::{
     confstr, creat64, ctermid, fpathconf, fstat64, fstatat64, ftruncate64, get_avphys_pages,
     get_nprocs, get_nprocs_conf, get_phys_pages, getdomainname, gethostid, getlogin, getlogin_r,
-    getpagesize, lockf, lseek64, lstat64, mkdtemp, open64, pathconf, posix_fallocate,
-    posix_madvise, pread64, pwrite64, setdomainname, sethostname, stat64, sysconf, truncate64,
+    getopt, getopt_long, getpagesize, grantpt, lockf, lseek64, lstat64, mkdtemp, nice, open64,
+    pathconf, posix_fallocate, posix_madvise, posix_openpt, pread64, ptsname, pwrite64,
+    sched_get_priority_max, sched_get_priority_min, sched_getparam, sched_getscheduler,
+    sched_rr_get_interval, sched_setparam, sched_setscheduler, setdomainname, sethostname, stat64,
+    sysconf, truncate64, ttyname, ttyname_r, unlockpt,
 };
 use std::os::fd::AsRawFd;
 use std::ptr;
+
+unsafe extern "C" {
+    #[link_name = "optarg"]
+    static mut OPTARG_TEST: *mut libc::c_char;
+    #[link_name = "optind"]
+    static mut OPTIND_TEST: libc::c_int;
+    #[link_name = "opterr"]
+    static mut OPTERR_TEST: libc::c_int;
+    #[link_name = "optopt"]
+    static mut OPTOPT_TEST: libc::c_int;
+}
+
+unsafe fn reset_getopt_globals() {
+    unsafe {
+        OPTARG_TEST = ptr::null_mut();
+        OPTIND_TEST = 1;
+        OPTERR_TEST = 0;
+        OPTOPT_TEST = 0;
+    }
+}
 
 #[test]
 fn atoll_parses_i64_limits() {
@@ -383,6 +406,30 @@ fn pathconf_and_fpathconf_validate_inputs() {
 }
 
 #[test]
+fn nice_zero_increment_matches_getpriority_state() {
+    // SAFETY: __errno_location points to this thread-local errno.
+    unsafe {
+        *__errno_location() = 0;
+    }
+    // SAFETY: nice accepts integer increments; zero is side-effect free.
+    let observed = unsafe { nice(0) };
+    // SAFETY: read errno after call.
+    let observed_errno = unsafe { *__errno_location() };
+
+    // SAFETY: __errno_location points to this thread-local errno.
+    unsafe {
+        *__errno_location() = 0;
+    }
+    // SAFETY: getpriority query for current process.
+    let expected = unsafe { libc::getpriority(libc::PRIO_PROCESS, 0) };
+    // SAFETY: read errno after call.
+    let expected_errno = unsafe { *__errno_location() };
+
+    assert_eq!(observed, expected);
+    assert_eq!(observed_errno, expected_errno);
+}
+
+#[test]
 fn getpagesize_matches_sysconf_table_value() {
     // SAFETY: getpagesize has no pointer preconditions.
     let page_size = unsafe { getpagesize() };
@@ -436,12 +483,231 @@ fn gethostid_is_deterministic() {
 }
 
 #[test]
+fn sched_priority_bounds_match_kernel_syscalls() {
+    let policies = [libc::SCHED_OTHER, libc::SCHED_FIFO, libc::SCHED_RR];
+    let mut compared = 0;
+
+    for policy in policies {
+        // SAFETY: direct raw syscall with integer policy argument.
+        let expected_min =
+            unsafe { libc::syscall(libc::SYS_sched_get_priority_min, policy) as libc::c_int };
+        // SAFETY: direct raw syscall with integer policy argument.
+        let expected_max =
+            unsafe { libc::syscall(libc::SYS_sched_get_priority_max, policy) as libc::c_int };
+
+        if expected_min < 0 || expected_max < 0 {
+            continue;
+        }
+
+        // SAFETY: exported ABI wrappers accept any integer policy.
+        let observed_min = unsafe { sched_get_priority_min(policy) };
+        // SAFETY: exported ABI wrappers accept any integer policy.
+        let observed_max = unsafe { sched_get_priority_max(policy) };
+
+        assert_eq!(observed_min, expected_min);
+        assert_eq!(observed_max, expected_max);
+        assert!(observed_min <= observed_max);
+        compared += 1;
+    }
+
+    assert!(
+        compared > 0,
+        "expected at least one scheduler policy to report priority bounds"
+    );
+}
+
+#[test]
+fn sched_priority_bounds_invalid_policy_set_errno() {
+    let invalid_policy = libc::c_int::MAX;
+
+    // SAFETY: __errno_location points to thread-local errno.
+    unsafe {
+        *__errno_location() = 0;
+    }
+    // SAFETY: invalid policy is accepted as input and should fail with EINVAL.
+    let min = unsafe { sched_get_priority_min(invalid_policy) };
+    assert_eq!(min, -1);
+    // SAFETY: read errno after call.
+    assert_eq!(unsafe { *__errno_location() }, libc::EINVAL);
+
+    // SAFETY: __errno_location points to thread-local errno.
+    unsafe {
+        *__errno_location() = 0;
+    }
+    // SAFETY: invalid policy is accepted as input and should fail with EINVAL.
+    let max = unsafe { sched_get_priority_max(invalid_policy) };
+    assert_eq!(max, -1);
+    // SAFETY: read errno after call.
+    assert_eq!(unsafe { *__errno_location() }, libc::EINVAL);
+}
+
+#[test]
+fn sched_getscheduler_matches_kernel_syscall() {
+    // SAFETY: __errno_location points to thread-local errno.
+    unsafe {
+        *__errno_location() = 0;
+    }
+    // SAFETY: pid 0 targets current thread group per Linux scheduler APIs.
+    let observed = unsafe { sched_getscheduler(0) };
+    // SAFETY: read errno after call.
+    let observed_errno = unsafe { *__errno_location() };
+
+    // SAFETY: __errno_location points to thread-local errno.
+    unsafe {
+        *__errno_location() = 0;
+    }
+    // SAFETY: direct kernel syscall with same arguments for parity check.
+    let expected = unsafe { libc::syscall(libc::SYS_sched_getscheduler, 0) as libc::c_int };
+    // SAFETY: read errno after call.
+    let expected_errno = unsafe { *__errno_location() };
+
+    assert_eq!(observed, expected);
+    assert_eq!(observed_errno, expected_errno);
+}
+
+#[test]
+fn sched_getparam_matches_kernel_syscall() {
+    let mut observed_param = libc::sched_param { sched_priority: -1 };
+    // SAFETY: __errno_location points to thread-local errno.
+    unsafe {
+        *__errno_location() = 0;
+    }
+    // SAFETY: param pointer is valid and writable.
+    let observed =
+        unsafe { sched_getparam(0, (&mut observed_param as *mut libc::sched_param).cast()) };
+    // SAFETY: read errno after call.
+    let observed_errno = unsafe { *__errno_location() };
+
+    let mut expected_param = libc::sched_param { sched_priority: -1 };
+    // SAFETY: __errno_location points to thread-local errno.
+    unsafe {
+        *__errno_location() = 0;
+    }
+    // SAFETY: direct kernel syscall with same arguments for parity check.
+    let expected = unsafe {
+        libc::syscall(
+            libc::SYS_sched_getparam,
+            0,
+            &mut expected_param as *mut libc::sched_param,
+        ) as libc::c_int
+    };
+    // SAFETY: read errno after call.
+    let expected_errno = unsafe { *__errno_location() };
+
+    assert_eq!(observed, expected);
+    assert_eq!(observed_errno, expected_errno);
+    if observed == 0 {
+        assert_eq!(observed_param.sched_priority, expected_param.sched_priority);
+    }
+}
+
+#[test]
+fn sched_setparam_invalid_pid_sets_einval() {
+    let param = libc::sched_param { sched_priority: 0 };
+
+    // SAFETY: __errno_location points to thread-local errno.
+    unsafe {
+        *__errno_location() = 0;
+    }
+    // SAFETY: invalid pid and valid param pointer for parity check.
+    let observed = unsafe { sched_setparam(-1, (&param as *const libc::sched_param).cast()) };
+    // SAFETY: read errno after call.
+    let observed_errno = unsafe { *__errno_location() };
+
+    assert_eq!(observed, -1);
+    assert_eq!(observed_errno, libc::EINVAL);
+}
+
+#[test]
+fn sched_setscheduler_invalid_pid_sets_einval() {
+    let param = libc::sched_param { sched_priority: 0 };
+
+    // SAFETY: __errno_location points to thread-local errno.
+    unsafe {
+        *__errno_location() = 0;
+    }
+    // SAFETY: invalid pid and valid policy/param pointer for parity check.
+    let observed = unsafe {
+        sched_setscheduler(
+            -1,
+            libc::SCHED_OTHER,
+            (&param as *const libc::sched_param).cast(),
+        )
+    };
+    // SAFETY: read errno after call.
+    let observed_errno = unsafe { *__errno_location() };
+
+    assert_eq!(observed, -1);
+    assert_eq!(observed_errno, libc::EINVAL);
+}
+
+#[test]
+fn sched_rr_get_interval_matches_kernel_syscall() {
+    let mut observed_tp = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    // SAFETY: __errno_location points to thread-local errno.
+    unsafe {
+        *__errno_location() = 0;
+    }
+    // SAFETY: pointer is valid and writable.
+    let observed = unsafe { sched_rr_get_interval(0, &mut observed_tp) };
+    // SAFETY: read errno after call.
+    let observed_errno = unsafe { *__errno_location() };
+
+    let mut expected_tp = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    // SAFETY: __errno_location points to thread-local errno.
+    unsafe {
+        *__errno_location() = 0;
+    }
+    // SAFETY: direct kernel syscall with same arguments for parity check.
+    let expected = unsafe {
+        libc::syscall(
+            libc::SYS_sched_rr_get_interval,
+            0,
+            &mut expected_tp as *mut libc::timespec,
+        ) as libc::c_int
+    };
+    // SAFETY: read errno after call.
+    let expected_errno = unsafe { *__errno_location() };
+
+    assert_eq!(observed, expected);
+    assert_eq!(observed_errno, expected_errno);
+    if observed == 0 {
+        assert_eq!(observed_tp.tv_sec, expected_tp.tv_sec);
+        assert_eq!(observed_tp.tv_nsec, expected_tp.tv_nsec);
+    }
+}
+
+#[test]
+fn sched_rr_get_interval_null_pointer_sets_efault() {
+    // SAFETY: __errno_location points to thread-local errno.
+    unsafe {
+        *__errno_location() = 0;
+    }
+    // SAFETY: null timespec pointer intentionally exercises failure path.
+    let observed = unsafe { sched_rr_get_interval(0, ptr::null_mut()) };
+    // SAFETY: read errno after call.
+    let observed_errno = unsafe { *__errno_location() };
+
+    assert_eq!(observed, -1);
+    assert_eq!(observed_errno, libc::EFAULT);
+}
+
+#[test]
 fn getlogin_and_getlogin_r_match_pwd_lookup() {
     // SAFETY: geteuid has no pointer preconditions.
     let uid = unsafe { libc::geteuid() };
     // SAFETY: getpwuid has no pointer preconditions.
     let pwd = unsafe { frankenlibc_abi::pwd_abi::getpwuid(uid) };
-    assert!(!pwd.is_null(), "getpwuid should resolve current effective uid");
+    assert!(
+        !pwd.is_null(),
+        "getpwuid should resolve current effective uid"
+    );
 
     // SAFETY: `pwd` is non-null and points to libc::passwd storage.
     let name_ptr = unsafe { (*pwd).pw_name };
@@ -460,7 +726,7 @@ fn getlogin_and_getlogin_r_match_pwd_lookup() {
         .into_owned();
     assert_eq!(login, expected);
 
-    let mut buf = vec![0_i8; expected.as_bytes().len() + 1];
+    let mut buf = vec![0_i8; expected.len() + 1];
     // SAFETY: buffer pointer is writable and length matches the provided capacity.
     assert_eq!(unsafe { getlogin_r(buf.as_mut_ptr(), buf.len()) }, 0);
     // SAFETY: successful getlogin_r writes a NUL-terminated username.
@@ -479,7 +745,10 @@ fn getlogin_r_validates_buffer_and_reports_erange() {
     let uid = unsafe { libc::geteuid() };
     // SAFETY: getpwuid has no pointer preconditions.
     let pwd = unsafe { frankenlibc_abi::pwd_abi::getpwuid(uid) };
-    assert!(!pwd.is_null(), "getpwuid should resolve current effective uid");
+    assert!(
+        !pwd.is_null(),
+        "getpwuid should resolve current effective uid"
+    );
     // SAFETY: `pwd` is non-null and points to libc::passwd storage.
     let name_ptr = unsafe { (*pwd).pw_name };
     assert!(!name_ptr.is_null(), "pw_name should be present");
@@ -491,8 +760,268 @@ fn getlogin_r_validates_buffer_and_reports_erange() {
     if required_len > 1 {
         let mut tiny = [0_i8; 1];
         // SAFETY: tiny is writable but intentionally too small.
-        assert_eq!(unsafe { getlogin_r(tiny.as_mut_ptr(), tiny.len()) }, libc::ERANGE);
+        assert_eq!(
+            unsafe { getlogin_r(tiny.as_mut_ptr(), tiny.len()) },
+            libc::ERANGE
+        );
     }
+}
+
+#[test]
+fn getopt_parses_short_options_and_required_argument() {
+    let args = [
+        std::ffi::CString::new("prog").expect("valid argv"),
+        std::ffi::CString::new("-a").expect("valid argv"),
+        std::ffi::CString::new("-b").expect("valid argv"),
+        std::ffi::CString::new("value").expect("valid argv"),
+    ];
+    let mut argv: Vec<*mut libc::c_char> = args
+        .iter()
+        .map(|arg| arg.as_ptr() as *mut libc::c_char)
+        .collect();
+    let argc = argv.len() as libc::c_int;
+    argv.push(ptr::null_mut());
+
+    // SAFETY: reset shared getopt globals before deterministic assertions.
+    unsafe { reset_getopt_globals() };
+
+    // SAFETY: argv/optstring pointers are valid.
+    assert_eq!(
+        unsafe { getopt(argc, argv.as_ptr(), c"ab:".as_ptr()) },
+        b'a' as libc::c_int
+    );
+    // SAFETY: inspect getopt globals after parse.
+    assert!(unsafe { OPTARG_TEST.is_null() });
+    // SAFETY: inspect getopt globals after parse.
+    assert_eq!(unsafe { OPTIND_TEST }, 2);
+
+    // SAFETY: argv/optstring pointers are valid.
+    assert_eq!(
+        unsafe { getopt(argc, argv.as_ptr(), c"ab:".as_ptr()) },
+        b'b' as libc::c_int
+    );
+    // SAFETY: getopt set optarg to the required argument.
+    let optarg = unsafe { std::ffi::CStr::from_ptr(OPTARG_TEST) }
+        .to_string_lossy()
+        .into_owned();
+    assert_eq!(optarg, "value");
+    // SAFETY: inspect getopt globals after parse.
+    assert_eq!(unsafe { OPTIND_TEST }, 4);
+
+    // SAFETY: parser is at end of option stream.
+    assert_eq!(unsafe { getopt(argc, argv.as_ptr(), c"ab:".as_ptr()) }, -1);
+}
+
+#[test]
+fn getopt_long_parses_named_options_and_inline_values() {
+    let args = [
+        std::ffi::CString::new("prog").expect("valid argv"),
+        std::ffi::CString::new("--alpha").expect("valid argv"),
+        std::ffi::CString::new("--beta=world").expect("valid argv"),
+    ];
+    let mut argv: Vec<*mut libc::c_char> = args
+        .iter()
+        .map(|arg| arg.as_ptr() as *mut libc::c_char)
+        .collect();
+    let argc = argv.len() as libc::c_int;
+    argv.push(ptr::null_mut());
+
+    let mut longindex: libc::c_int = -1;
+    let alpha = c"alpha";
+    let beta = c"beta";
+    let longopts = [
+        libc::option {
+            name: alpha.as_ptr(),
+            has_arg: 0,
+            flag: ptr::null_mut(),
+            val: b'a' as libc::c_int,
+        },
+        libc::option {
+            name: beta.as_ptr(),
+            has_arg: 1,
+            flag: ptr::null_mut(),
+            val: b'b' as libc::c_int,
+        },
+        libc::option {
+            name: ptr::null(),
+            has_arg: 0,
+            flag: ptr::null_mut(),
+            val: 0,
+        },
+    ];
+
+    // SAFETY: reset shared getopt globals before deterministic assertions.
+    unsafe { reset_getopt_globals() };
+
+    // SAFETY: argv/optstring/longopts pointers are valid.
+    assert_eq!(
+        unsafe {
+            getopt_long(
+                argc,
+                argv.as_ptr(),
+                c"ab:".as_ptr(),
+                longopts.as_ptr(),
+                &mut longindex,
+            )
+        },
+        b'a' as libc::c_int
+    );
+    assert_eq!(longindex, 0);
+    // SAFETY: inspect getopt globals after parse.
+    assert!(unsafe { OPTARG_TEST.is_null() });
+
+    // SAFETY: argv/optstring/longopts pointers are valid.
+    assert_eq!(
+        unsafe {
+            getopt_long(
+                argc,
+                argv.as_ptr(),
+                c"ab:".as_ptr(),
+                longopts.as_ptr(),
+                &mut longindex,
+            )
+        },
+        b'b' as libc::c_int
+    );
+    assert_eq!(longindex, 1);
+    // SAFETY: getopt_long set optarg to inline value.
+    let optarg = unsafe { std::ffi::CStr::from_ptr(OPTARG_TEST) }
+        .to_string_lossy()
+        .into_owned();
+    assert_eq!(optarg, "world");
+
+    // SAFETY: parser is at end of option stream.
+    assert_eq!(
+        unsafe {
+            getopt_long(
+                argc,
+                argv.as_ptr(),
+                c"ab:".as_ptr(),
+                longopts.as_ptr(),
+                &mut longindex,
+            )
+        },
+        -1
+    );
+}
+
+#[test]
+fn ttyname_and_ttyname_r_report_ebadf_for_invalid_fd() {
+    // SAFETY: __errno_location points to this thread-local errno.
+    unsafe {
+        *__errno_location() = 0;
+    }
+    // SAFETY: negative fd is invalid.
+    let out = unsafe { ttyname(-1) };
+    assert!(out.is_null());
+    // SAFETY: read thread-local errno after call.
+    assert_eq!(unsafe { *__errno_location() }, libc::EBADF);
+
+    let mut buf = [0_i8; 64];
+    // SAFETY: destination buffer is valid; fd is intentionally invalid.
+    assert_eq!(
+        unsafe { ttyname_r(-1, buf.as_mut_ptr(), buf.len()) },
+        libc::EBADF
+    );
+}
+
+#[test]
+fn ttyname_and_ttyname_r_report_enotty_for_regular_file() {
+    let template = temp_template("ttyname", ".tmp");
+    // SAFETY: template is NUL-terminated by construction.
+    let path_c = unsafe { std::ffi::CStr::from_ptr(template.as_ptr().cast()) };
+    let path = path_c.to_string_lossy().into_owned();
+
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .truncate(true)
+        .open(&path)
+        .expect("create temp file for ttyname");
+    let fd = file.as_raw_fd();
+
+    // SAFETY: __errno_location points to this thread-local errno.
+    unsafe {
+        *__errno_location() = 0;
+    }
+    // SAFETY: fd is valid but does not refer to a terminal.
+    let out = unsafe { ttyname(fd) };
+    assert!(out.is_null());
+    // SAFETY: read thread-local errno after call.
+    assert_eq!(unsafe { *__errno_location() }, libc::ENOTTY);
+
+    let mut buf = [0_i8; 256];
+    // SAFETY: destination buffer is valid; fd is a regular file and should report ENOTTY.
+    assert_eq!(
+        unsafe { ttyname_r(fd, buf.as_mut_ptr(), buf.len()) },
+        libc::ENOTTY
+    );
+
+    drop(file);
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn posix_openpt_and_pts_helpers_roundtrip() {
+    // SAFETY: request PTY master with valid flags.
+    let fd = unsafe { posix_openpt(libc::O_RDWR | libc::O_NOCTTY) };
+    assert!(
+        fd >= 0,
+        "posix_openpt should open /dev/ptmx: errno={}",
+        // SAFETY: read errno after failed call.
+        unsafe { *__errno_location() }
+    );
+
+    // SAFETY: valid PTY master fd should succeed.
+    assert_eq!(unsafe { grantpt(fd) }, 0);
+    // SAFETY: valid PTY master fd should succeed.
+    assert_eq!(unsafe { unlockpt(fd) }, 0);
+
+    // SAFETY: valid PTY master fd should yield slave path pointer.
+    let name_ptr = unsafe { ptsname(fd) };
+    assert!(!name_ptr.is_null(), "ptsname should resolve slave device");
+    // SAFETY: non-null pointer from ptsname references NUL-terminated path.
+    let name = unsafe { std::ffi::CStr::from_ptr(name_ptr) }
+        .to_string_lossy()
+        .into_owned();
+    assert!(name.starts_with("/dev/pts/"), "unexpected ptsname: {name}");
+
+    // SAFETY: fd came from posix_openpt.
+    unsafe {
+        libc::close(fd);
+    }
+}
+
+#[test]
+fn pty_helpers_reject_invalid_fd() {
+    // SAFETY: __errno_location points to thread-local errno.
+    unsafe {
+        *__errno_location() = 0;
+    }
+    // SAFETY: invalid fd should fail.
+    assert_eq!(unsafe { grantpt(-1) }, -1);
+    // SAFETY: read errno after call.
+    assert_eq!(unsafe { *__errno_location() }, libc::EBADF);
+
+    // SAFETY: __errno_location points to thread-local errno.
+    unsafe {
+        *__errno_location() = 0;
+    }
+    // SAFETY: invalid fd should fail.
+    assert_eq!(unsafe { unlockpt(-1) }, -1);
+    // SAFETY: read errno after call.
+    assert_eq!(unsafe { *__errno_location() }, libc::EBADF);
+
+    // SAFETY: __errno_location points to thread-local errno.
+    unsafe {
+        *__errno_location() = 0;
+    }
+    // SAFETY: invalid fd should fail.
+    let name_ptr = unsafe { ptsname(-1) };
+    assert!(name_ptr.is_null());
+    // SAFETY: read errno after call.
+    assert_eq!(unsafe { *__errno_location() }, libc::EBADF);
 }
 
 #[test]

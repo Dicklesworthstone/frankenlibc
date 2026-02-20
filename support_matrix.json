@@ -2277,21 +2277,21 @@
     },
     {
       "symbol": "getopt",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "unistd_abi",
       "perf_class": "coldpath",
-      "strict_semantics": "Delegates to glibc getopt for CLI option parsing.",
-      "hardened_semantics": "Same delegation.",
-      "default_stub": "Returns -1"
+      "strict_semantics": "Native short-option parser honoring optarg/optind/opterr/optopt global state and POSIX '?' / ':' signaling",
+      "hardened_semantics": "Same parser with runtime-policy observation and deterministic state updates",
+      "default_stub": false
     },
     {
       "symbol": "getopt_long",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "unistd_abi",
       "perf_class": "coldpath",
-      "strict_semantics": "Delegates to glibc getopt_long for long option parsing.",
-      "hardened_semantics": "Same delegation.",
-      "default_stub": "Returns -1"
+      "strict_semantics": "Native long-option parser supporting no/required/optional args plus fallback to short-option parsing",
+      "hardened_semantics": "Same parser with runtime-policy observation and deterministic state updates",
+      "default_stub": false
     },
     {
       "symbol": "getpagesize",
@@ -2583,11 +2583,11 @@
     },
     {
       "symbol": "grantpt",
-      "status": "GlibcCallThrough",
+      "status": "RawSyscall",
       "module": "unistd_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc grantpt",
-      "hardened_semantics": "Passthrough to glibc grantpt",
+      "perf_class": "coldpath",
+      "strict_semantics": "Validates PTY master fd via ioctl(TIOCGPTN); returns 0 or -1 with POSIX errno",
+      "hardened_semantics": "Same ioctl validation path with deterministic errno propagation for invalid descriptors",
       "default_stub": false
     },
     {
@@ -3907,11 +3907,11 @@
     },
     {
       "symbol": "nice",
-      "status": "GlibcCallThrough",
+      "status": "RawSyscall",
       "module": "unistd_abi",
       "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc nice",
-      "hardened_semantics": "Passthrough to glibc nice",
+      "strict_semantics": "SYS_nice — adjust calling process niceness by increment and return updated value",
+      "hardened_semantics": "SYS_nice — same syscall path with deterministic errno propagation",
       "default_stub": false
     },
     {
@@ -4117,11 +4117,11 @@
     },
     {
       "symbol": "posix_openpt",
-      "status": "GlibcCallThrough",
+      "status": "RawSyscall",
       "module": "unistd_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc posix_openpt",
-      "hardened_semantics": "Passthrough to glibc posix_openpt",
+      "perf_class": "coldpath",
+      "strict_semantics": "Invokes SYS_openat on /dev/ptmx with caller flags; returns fd or -1 with POSIX errno",
+      "hardened_semantics": "Same raw openat path; invalid flags/descriptors surface deterministic kernel errno",
       "default_stub": false
     },
     {
@@ -4827,11 +4827,11 @@
     },
     {
       "symbol": "ptsname",
-      "status": "GlibcCallThrough",
+      "status": "RawSyscall",
       "module": "unistd_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc ptsname",
-      "hardened_semantics": "Passthrough to glibc ptsname",
+      "perf_class": "coldpath",
+      "strict_semantics": "Resolves PTY slave path using ioctl(TIOCGPTN) and returns static NUL-terminated /dev/pts/<n> buffer",
+      "hardened_semantics": "Same resolver; invalid/non-PTY fds map to deterministic errno and NULL return",
       "default_stub": false
     },
     {
@@ -5315,20 +5315,20 @@
     },
     {
       "symbol": "sched_get_priority_max",
-      "status": "GlibcCallThrough",
+      "status": "RawSyscall",
       "module": "unistd_abi",
       "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc sched_get_priority_max",
-      "hardened_semantics": "Passthrough to glibc sched_get_priority_max",
+      "strict_semantics": "SYS_sched_get_priority_max — query kernel scheduler priority ceiling for a policy",
+      "hardened_semantics": "SYS_sched_get_priority_max — same query path with deterministic errno propagation",
       "default_stub": false
     },
     {
       "symbol": "sched_get_priority_min",
-      "status": "GlibcCallThrough",
+      "status": "RawSyscall",
       "module": "unistd_abi",
       "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc sched_get_priority_min",
-      "hardened_semantics": "Passthrough to glibc sched_get_priority_min",
+      "strict_semantics": "SYS_sched_get_priority_min — query kernel scheduler priority floor for a policy",
+      "hardened_semantics": "SYS_sched_get_priority_min — same query path with deterministic errno propagation",
       "default_stub": false
     },
     {
@@ -5342,27 +5342,30 @@
     },
     {
       "symbol": "sched_getparam",
-      "status": "GlibcCallThrough",
+      "status": "RawSyscall",
       "module": "unistd_abi",
       "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc sched_getparam",
-      "hardened_semantics": "Passthrough to glibc sched_getparam",
+      "strict_semantics": "SYS_sched_getparam — query scheduler parameters for a process",
+      "hardened_semantics": "SYS_sched_getparam — same query path with deterministic errno propagation",
       "default_stub": false
     },
     {
       "symbol": "sched_getscheduler",
-      "status": "GlibcCallThrough",
+      "status": "RawSyscall",
       "module": "unistd_abi",
       "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc sched_getscheduler",
-      "hardened_semantics": "Passthrough to glibc sched_getscheduler",
+      "strict_semantics": "SYS_sched_getscheduler — query scheduler policy for a process",
+      "hardened_semantics": "SYS_sched_getscheduler — same query path with deterministic errno propagation",
       "default_stub": false
     },
     {
       "symbol": "sched_rr_get_interval",
-      "status": "GlibcCallThrough",
+      "status": "RawSyscall",
       "module": "unistd_abi",
-      "perf_class": "syscall"
+      "perf_class": "syscall",
+      "strict_semantics": "SYS_sched_rr_get_interval — query round-robin timeslice interval",
+      "hardened_semantics": "SYS_sched_rr_get_interval — same query path with deterministic errno propagation",
+      "default_stub": false
     },
     {
       "symbol": "sched_setaffinity",
@@ -5375,20 +5378,20 @@
     },
     {
       "symbol": "sched_setparam",
-      "status": "GlibcCallThrough",
+      "status": "RawSyscall",
       "module": "unistd_abi",
       "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc sched_setparam",
-      "hardened_semantics": "Passthrough to glibc sched_setparam",
+      "strict_semantics": "SYS_sched_setparam — set scheduler parameters for a process",
+      "hardened_semantics": "SYS_sched_setparam — same syscall path with deterministic errno propagation",
       "default_stub": false
     },
     {
       "symbol": "sched_setscheduler",
-      "status": "GlibcCallThrough",
+      "status": "RawSyscall",
       "module": "unistd_abi",
       "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc sched_setscheduler",
-      "hardened_semantics": "Passthrough to glibc sched_setscheduler",
+      "strict_semantics": "SYS_sched_setscheduler — set scheduler policy/parameters for a process",
+      "hardened_semantics": "SYS_sched_setscheduler — same syscall path with deterministic errno propagation",
       "default_stub": false
     },
     {
@@ -6945,15 +6948,21 @@
     },
     {
       "symbol": "ttyname",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "unistd_abi",
-      "perf_class": "fast"
+      "perf_class": "coldpath",
+      "strict_semantics": "Validates fd/terminal state and resolves tty path via /proc/self/fd/<fd>; returns static buffer pointer with errno on failure",
+      "hardened_semantics": "Same as strict with runtime-policy observation and deterministic errno mapping",
+      "default_stub": false
     },
     {
       "symbol": "ttyname_r",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "unistd_abi",
-      "perf_class": "fast"
+      "perf_class": "coldpath",
+      "strict_semantics": "Reentrant tty path resolution into caller buffer; returns EINVAL/EBADF/ENOTTY/ERANGE error codes",
+      "hardened_semantics": "Same as strict with runtime-policy observation and deterministic error-code returns",
+      "default_stub": false
     },
     {
       "symbol": "tzset",
@@ -7013,11 +7022,11 @@
     },
     {
       "symbol": "unlockpt",
-      "status": "GlibcCallThrough",
+      "status": "RawSyscall",
       "module": "unistd_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc unlockpt",
-      "hardened_semantics": "Passthrough to glibc unlockpt",
+      "perf_class": "coldpath",
+      "strict_semantics": "Clears PTY slave lock via ioctl(TIOCSPTLCK, 0); returns 0 or -1 with POSIX errno",
+      "hardened_semantics": "Same ioctl lock-clear path with deterministic errno propagation",
       "default_stub": false
     },
     {

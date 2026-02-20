@@ -4,7 +4,7 @@
 //! directory navigation (getcwd/chdir), process identity (getpid/getppid/getuid/...),
 //! link operations (link/symlink/readlink/unlink/rmdir), and sync (fsync/fdatasync).
 
-use std::ffi::{c_char, c_int, c_uint, c_void, CStr};
+use std::ffi::{CStr, CString, c_char, c_int, c_uint, c_void};
 
 use frankenlibc_core::errno;
 use frankenlibc_core::syscall;
@@ -1727,20 +1727,308 @@ pub unsafe extern "C" fn sysconf(name: c_int) -> libc::c_long {
 }
 
 // ---------------------------------------------------------------------------
-// getopt — GlibcCallThrough (uses glibc global state: optarg, optind, etc.)
+// getopt — Implemented
 // ---------------------------------------------------------------------------
 
 unsafe extern "C" {
-    #[link_name = "getopt"]
-    fn libc_getopt(argc: c_int, argv: *const *mut c_char, optstring: *const c_char) -> c_int;
-    #[link_name = "getopt_long"]
-    fn libc_getopt_long(
-        argc: c_int,
-        argv: *const *mut c_char,
-        optstring: *const c_char,
-        longopts: *const libc::option,
-        longindex: *mut c_int,
-    ) -> c_int;
+    #[link_name = "optarg"]
+    static mut libc_optarg: *mut c_char;
+    #[link_name = "optind"]
+    static mut libc_optind: c_int;
+    #[link_name = "optopt"]
+    static mut libc_optopt: c_int;
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum GetoptArgMode {
+    None,
+    Required,
+    Optional,
+}
+
+static mut GETOPT_NEXTCHAR: *const c_char = std::ptr::null();
+
+#[inline]
+fn getopt_prefers_colon(optspec: &[u8]) -> bool {
+    optspec.first().copied() == Some(b':')
+}
+
+#[inline]
+fn getopt_arg_mode(optspec: &[u8], option: u8) -> Option<GetoptArgMode> {
+    for (idx, &byte) in optspec.iter().enumerate() {
+        if byte != option {
+            continue;
+        }
+        let requires = optspec.get(idx + 1).copied() == Some(b':');
+        let optional = optspec.get(idx + 2).copied() == Some(b':');
+        return Some(if requires && optional {
+            GetoptArgMode::Optional
+        } else if requires {
+            GetoptArgMode::Required
+        } else {
+            GetoptArgMode::None
+        });
+    }
+    None
+}
+
+unsafe fn parse_getopt_short(argc: c_int, argv: *const *mut c_char, optspec: &[u8]) -> c_int {
+    if argc <= 0 || argv.is_null() {
+        return -1;
+    }
+    if unsafe { libc_optind <= 0 } {
+        unsafe {
+            libc_optind = 1;
+            GETOPT_NEXTCHAR = std::ptr::null();
+        }
+    }
+    if unsafe { libc_optind >= argc } {
+        unsafe {
+            GETOPT_NEXTCHAR = std::ptr::null();
+        }
+        return -1;
+    }
+
+    if unsafe { GETOPT_NEXTCHAR.is_null() || *GETOPT_NEXTCHAR == 0 } {
+        let current = unsafe { *argv.add(libc_optind as usize) };
+        if current.is_null() {
+            return -1;
+        }
+        if unsafe { *current != b'-' as c_char || *current.add(1) == 0 } {
+            return -1;
+        }
+        if unsafe { *current.add(1) == b'-' as c_char && *current.add(2) == 0 } {
+            unsafe {
+                libc_optind += 1;
+                GETOPT_NEXTCHAR = std::ptr::null();
+            }
+            return -1;
+        }
+        unsafe {
+            GETOPT_NEXTCHAR = current.add(1);
+        }
+    }
+
+    let option = unsafe { *GETOPT_NEXTCHAR as u8 };
+    unsafe {
+        GETOPT_NEXTCHAR = GETOPT_NEXTCHAR.add(1);
+        libc_optarg = std::ptr::null_mut();
+    }
+
+    let missing_code = if getopt_prefers_colon(optspec) {
+        b':' as c_int
+    } else {
+        b'?' as c_int
+    };
+
+    match getopt_arg_mode(optspec, option) {
+        None => {
+            unsafe {
+                libc_optopt = option as c_int;
+                if *GETOPT_NEXTCHAR == 0 {
+                    libc_optind += 1;
+                    GETOPT_NEXTCHAR = std::ptr::null();
+                }
+            }
+            b'?' as c_int
+        }
+        Some(GetoptArgMode::None) => {
+            unsafe {
+                if *GETOPT_NEXTCHAR == 0 {
+                    libc_optind += 1;
+                    GETOPT_NEXTCHAR = std::ptr::null();
+                }
+            }
+            option as c_int
+        }
+        Some(GetoptArgMode::Required) => {
+            if unsafe { *GETOPT_NEXTCHAR != 0 } {
+                unsafe {
+                    libc_optarg = GETOPT_NEXTCHAR as *mut c_char;
+                    libc_optind += 1;
+                    GETOPT_NEXTCHAR = std::ptr::null();
+                }
+                return option as c_int;
+            }
+            if unsafe { libc_optind + 1 >= argc } {
+                unsafe {
+                    libc_optopt = option as c_int;
+                    libc_optind += 1;
+                    GETOPT_NEXTCHAR = std::ptr::null();
+                }
+                return missing_code;
+            }
+            unsafe {
+                libc_optind += 1;
+                let value = *argv.add(libc_optind as usize);
+                if value.is_null() {
+                    libc_optopt = option as c_int;
+                    GETOPT_NEXTCHAR = std::ptr::null();
+                    return missing_code;
+                }
+                libc_optarg = value;
+                libc_optind += 1;
+                GETOPT_NEXTCHAR = std::ptr::null();
+            }
+            option as c_int
+        }
+        Some(GetoptArgMode::Optional) => {
+            unsafe {
+                if *GETOPT_NEXTCHAR != 0 {
+                    libc_optarg = GETOPT_NEXTCHAR as *mut c_char;
+                }
+                libc_optind += 1;
+                GETOPT_NEXTCHAR = std::ptr::null();
+            }
+            option as c_int
+        }
+    }
+}
+
+unsafe fn parse_getopt_long(
+    argc: c_int,
+    argv: *const *mut c_char,
+    optspec: &[u8],
+    longopts: *const libc::option,
+    longindex: *mut c_int,
+) -> Option<c_int> {
+    if argc <= 0 || argv.is_null() || longopts.is_null() {
+        return None;
+    }
+    if unsafe { libc_optind <= 0 } {
+        unsafe {
+            libc_optind = 1;
+            GETOPT_NEXTCHAR = std::ptr::null();
+        }
+    }
+    if unsafe { libc_optind >= argc } {
+        unsafe {
+            GETOPT_NEXTCHAR = std::ptr::null();
+        }
+        return Some(-1);
+    }
+
+    let current = unsafe { *argv.add(libc_optind as usize) };
+    if current.is_null() {
+        return Some(-1);
+    }
+    if unsafe { *current != b'-' as c_char || *current.add(1) != b'-' as c_char } {
+        return None;
+    }
+    if unsafe { *current.add(2) == 0 } {
+        unsafe {
+            libc_optind += 1;
+            GETOPT_NEXTCHAR = std::ptr::null();
+        }
+        return Some(-1);
+    }
+
+    let mut split = unsafe { current.add(2) };
+    while unsafe { *split != 0 && *split != b'=' as c_char } {
+        split = unsafe { split.add(1) };
+    }
+    let name_ptr = unsafe { current.add(2) };
+    let name_len = unsafe { split.offset_from(name_ptr) as usize };
+    let name = unsafe { std::slice::from_raw_parts(name_ptr.cast::<u8>(), name_len) };
+    let inline_value = if unsafe { *split == b'=' as c_char } {
+        unsafe { split.add(1) }
+    } else {
+        std::ptr::null()
+    };
+    let missing_code = if getopt_prefers_colon(optspec) {
+        b':' as c_int
+    } else {
+        b'?' as c_int
+    };
+
+    let mut idx = 0usize;
+    loop {
+        let opt_ptr = unsafe { longopts.add(idx) };
+        let long_name = unsafe { (*opt_ptr).name };
+        if long_name.is_null() {
+            break;
+        }
+        let candidate = unsafe { CStr::from_ptr(long_name).to_bytes() };
+        if candidate == name {
+            if !longindex.is_null() {
+                unsafe {
+                    *longindex = idx as c_int;
+                }
+            }
+            unsafe {
+                libc_optarg = std::ptr::null_mut();
+                libc_optopt = 0;
+                GETOPT_NEXTCHAR = std::ptr::null();
+            }
+            let mut next_index = unsafe { libc_optind + 1 };
+            match unsafe { (*opt_ptr).has_arg } {
+                0 => {
+                    if !inline_value.is_null() && unsafe { *inline_value != 0 } {
+                        unsafe {
+                            libc_optopt = (*opt_ptr).val;
+                            libc_optind = next_index;
+                        }
+                        return Some(b'?' as c_int);
+                    }
+                }
+                1 => {
+                    if !inline_value.is_null() && unsafe { *inline_value != 0 } {
+                        unsafe {
+                            libc_optarg = inline_value as *mut c_char;
+                        }
+                    } else {
+                        if next_index >= argc {
+                            unsafe {
+                                libc_optopt = (*opt_ptr).val;
+                                libc_optind = next_index;
+                            }
+                            return Some(missing_code);
+                        }
+                        let value = unsafe { *argv.add(next_index as usize) };
+                        if value.is_null() {
+                            unsafe {
+                                libc_optopt = (*opt_ptr).val;
+                                libc_optind = next_index;
+                            }
+                            return Some(missing_code);
+                        }
+                        unsafe {
+                            libc_optarg = value;
+                        }
+                        next_index += 1;
+                    }
+                }
+                2 => {
+                    if !inline_value.is_null() && unsafe { *inline_value != 0 } {
+                        unsafe {
+                            libc_optarg = inline_value as *mut c_char;
+                        }
+                    }
+                }
+                _ => {}
+            }
+            unsafe {
+                libc_optind = next_index;
+            }
+            let flag_ptr = unsafe { (*opt_ptr).flag };
+            if !flag_ptr.is_null() {
+                unsafe {
+                    *flag_ptr = (*opt_ptr).val;
+                }
+                return Some(0);
+            }
+            return Some(unsafe { (*opt_ptr).val });
+        }
+        idx += 1;
+    }
+
+    unsafe {
+        libc_optarg = std::ptr::null_mut();
+        libc_optopt = 0;
+        libc_optind += 1;
+        GETOPT_NEXTCHAR = std::ptr::null();
+    }
+    Some(b'?' as c_int)
 }
 
 /// POSIX `getopt` — parse command-line options.
@@ -1750,7 +2038,32 @@ pub unsafe extern "C" fn getopt(
     argv: *const *mut c_char,
     optstring: *const c_char,
 ) -> c_int {
-    unsafe { libc_getopt(argc, argv, optstring) }
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Stdio,
+        argv as usize,
+        argc.max(0) as usize,
+        false,
+        argv.is_null() || optstring.is_null(),
+        argc.clamp(0, u16::MAX as c_int) as u16,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 12, true);
+        return -1;
+    }
+    if argv.is_null() || optstring.is_null() {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 12, true);
+        return -1;
+    }
+    let optspec = unsafe { CStr::from_ptr(optstring).to_bytes() };
+    let rc = unsafe { parse_getopt_short(argc, argv, optspec) };
+    runtime_policy::observe(
+        ApiFamily::Stdio,
+        decision.profile,
+        runtime_policy::scaled_cost(12, argc.max(0) as usize),
+        rc == (b'?' as c_int) || rc == (b':' as c_int),
+    );
+    rc
 }
 
 /// GNU `getopt_long` — parse long command-line options.
@@ -1762,12 +2075,36 @@ pub unsafe extern "C" fn getopt_long(
     longopts: *const libc::option,
     longindex: *mut c_int,
 ) -> c_int {
-    unsafe { libc_getopt_long(argc, argv, optstring, longopts, longindex) }
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Stdio,
+        argv as usize,
+        argc.max(0) as usize,
+        false,
+        argv.is_null() || optstring.is_null(),
+        argc.clamp(0, u16::MAX as c_int) as u16,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 12, true);
+        return -1;
+    }
+    if argv.is_null() || optstring.is_null() {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 12, true);
+        return -1;
+    }
+    let optspec = unsafe { CStr::from_ptr(optstring).to_bytes() };
+    let rc = match unsafe { parse_getopt_long(argc, argv, optspec, longopts, longindex) } {
+        Some(value) => value,
+        None => unsafe { parse_getopt_short(argc, argv, optspec) },
+    };
+    runtime_policy::observe(
+        ApiFamily::Stdio,
+        decision.profile,
+        runtime_policy::scaled_cost(12, argc.max(0) as usize),
+        rc == (b'?' as c_int) || rc == (b':' as c_int),
+    );
+    rc
 }
-
-// Note: getopt global variables (optarg, optind, opterr, optopt) are provided
-// by glibc and will be available to programs through the glibc linkage since
-// we delegate to libc_getopt. Programs using LD_PRELOAD will see glibc's globals.
 
 // ---------------------------------------------------------------------------
 // syslog — GlibcCallThrough
@@ -1807,8 +2144,6 @@ pub unsafe extern "C" fn vsyslog(priority: c_int, format: *const c_char, ap: *mu
 // ---------------------------------------------------------------------------
 
 unsafe extern "C" {
-    #[link_name = "nice"]
-    fn libc_nice(inc: c_int) -> c_int;
     #[link_name = "daemon"]
     fn libc_daemon(nochdir: c_int, noclose: c_int) -> c_int;
 }
@@ -1819,8 +2154,13 @@ static MKDTEMP_NONCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU6
 const CONFSTR_PATH: &[u8] = b"/bin:/usr/bin\0";
 const CTERMID_PATH: &[u8] = b"/dev/tty\0";
 const GETLOGIN_MAX_LEN: usize = 256;
+const TTYNAME_MAX_LEN: usize = 4096;
+const PTSNAME_MAX_LEN: usize = 128;
+const PTMX_PATH: &[u8] = b"/dev/ptmx\0";
 static mut CTERMID_FALLBACK: [c_char; CTERMID_PATH.len()] = [0; CTERMID_PATH.len()];
 static mut GETLOGIN_FALLBACK: [c_char; GETLOGIN_MAX_LEN] = [0; GETLOGIN_MAX_LEN];
+static mut TTYNAME_FALLBACK: [c_char; TTYNAME_MAX_LEN] = [0; TTYNAME_MAX_LEN];
+static mut PTSNAME_FALLBACK: [c_char; PTSNAME_MAX_LEN] = [0; PTSNAME_MAX_LEN];
 
 #[inline]
 unsafe fn lookup_login_name_ptr() -> *const c_char {
@@ -1834,6 +2174,72 @@ unsafe fn lookup_login_name_ptr() -> *const c_char {
     } else {
         name.cast_const()
     }
+}
+
+#[inline]
+unsafe fn resolve_ttyname_into(fd: c_int, dst: *mut c_char, cap: usize) -> Result<usize, c_int> {
+    if cap == 0 {
+        return Err(errno::ERANGE);
+    }
+
+    // Validate descriptor first so callers can distinguish EBADF from ENOTTY.
+    let fcntl_rc = unsafe { libc::fcntl(fd, libc::F_GETFD) };
+    if fcntl_rc < 0 {
+        return Err(last_host_errno(errno::EBADF));
+    }
+
+    let mut winsize = std::mem::MaybeUninit::<libc::winsize>::zeroed();
+    // SAFETY: ioctl writes winsize on success and performs terminal capability check.
+    unsafe { syscall::sys_ioctl(fd, libc::TIOCGWINSZ as usize, winsize.as_mut_ptr() as usize) }?;
+
+    let proc_link = CString::new(format!("/proc/self/fd/{fd}")).map_err(|_| errno::EINVAL)?;
+    let mut resolved = [0 as c_char; TTYNAME_MAX_LEN];
+    let link_rc = unsafe {
+        libc::syscall(
+            libc::SYS_readlink,
+            proc_link.as_ptr(),
+            resolved.as_mut_ptr(),
+            resolved.len() - 1,
+        )
+    };
+    if link_rc < 0 {
+        return Err(last_host_errno(errno::ENOENT));
+    }
+    let len = link_rc as usize;
+    if len + 1 > cap {
+        return Err(errno::ERANGE);
+    }
+    resolved[len] = 0;
+    unsafe {
+        std::ptr::copy_nonoverlapping(resolved.as_ptr(), dst, len + 1);
+    }
+    Ok(len)
+}
+
+#[inline]
+unsafe fn resolve_ptsname_into(fd: c_int, dst: *mut c_char, cap: usize) -> Result<usize, c_int> {
+    if cap == 0 {
+        return Err(errno::ERANGE);
+    }
+
+    let mut pty_num: c_int = 0;
+    // SAFETY: ioctl writes PTY slave index into `pty_num` on success.
+    let rc = unsafe { libc::ioctl(fd, libc::TIOCGPTN, &mut pty_num) };
+    if rc < 0 {
+        return Err(last_host_errno(errno::EBADF));
+    }
+
+    let path = format!("/dev/pts/{pty_num}");
+    let c_path = CString::new(path).map_err(|_| errno::EINVAL)?;
+    let src = c_path.as_bytes_with_nul();
+    if src.len() > cap {
+        return Err(errno::ERANGE);
+    }
+
+    unsafe {
+        std::ptr::copy_nonoverlapping(src.as_ptr().cast::<c_char>(), dst, src.len());
+    }
+    Ok(src.len() - 1)
 }
 
 #[inline]
@@ -2029,9 +2435,39 @@ pub unsafe extern "C" fn fpathconf(fd: c_int, name: c_int) -> libc::c_long {
     out
 }
 
+#[inline]
+unsafe fn sys_current_nice() -> Result<c_int, c_int> {
+    let raw = unsafe { libc::syscall(libc::SYS_getpriority, libc::PRIO_PROCESS, 0) };
+    if raw < 0 {
+        return Err(last_host_errno(errno::EPERM));
+    }
+    Ok(20_i32.saturating_sub(raw as c_int))
+}
+
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn nice(inc: c_int) -> c_int {
-    unsafe { libc_nice(inc) }
+    let current = match unsafe { sys_current_nice() } {
+        Ok(v) => v,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            return -1;
+        }
+    };
+
+    let target = current.saturating_add(inc).clamp(-20, 19);
+    let set_rc = unsafe { libc::syscall(libc::SYS_setpriority, libc::PRIO_PROCESS, 0, target) };
+    if set_rc < 0 {
+        unsafe { set_abi_errno(last_host_errno(errno::EPERM)) };
+        return -1;
+    }
+
+    match unsafe { sys_current_nice() } {
+        Ok(v) => v,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -2630,27 +3066,17 @@ pub unsafe extern "C" fn mq_setattr(
 }
 
 // ---------------------------------------------------------------------------
-// Scheduler — GlibcCallThrough
+// Scheduler — RawSyscall
 // ---------------------------------------------------------------------------
-
-unsafe extern "C" {
-    #[link_name = "sched_getscheduler"]
-    fn libc_sched_getscheduler(pid: libc::pid_t) -> c_int;
-    #[link_name = "sched_setscheduler"]
-    fn libc_sched_setscheduler(pid: libc::pid_t, policy: c_int, param: *const c_void) -> c_int;
-    #[link_name = "sched_getparam"]
-    fn libc_sched_getparam(pid: libc::pid_t, param: *mut c_void) -> c_int;
-    #[link_name = "sched_setparam"]
-    fn libc_sched_setparam(pid: libc::pid_t, param: *const c_void) -> c_int;
-    #[link_name = "sched_get_priority_min"]
-    fn libc_sched_get_priority_min(policy: c_int) -> c_int;
-    #[link_name = "sched_get_priority_max"]
-    fn libc_sched_get_priority_max(policy: c_int) -> c_int;
-}
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sched_getscheduler(pid: libc::pid_t) -> c_int {
-    unsafe { libc_sched_getscheduler(pid) }
+    unsafe {
+        syscall_ret_int(
+            libc::syscall(libc::SYS_sched_getscheduler, pid),
+            errno::EINVAL,
+        )
+    }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -2659,27 +3085,52 @@ pub unsafe extern "C" fn sched_setscheduler(
     policy: c_int,
     param: *const c_void,
 ) -> c_int {
-    unsafe { libc_sched_setscheduler(pid, policy, param) }
+    unsafe {
+        syscall_ret_int(
+            libc::syscall(libc::SYS_sched_setscheduler, pid, policy, param),
+            errno::EINVAL,
+        )
+    }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sched_getparam(pid: libc::pid_t, param: *mut c_void) -> c_int {
-    unsafe { libc_sched_getparam(pid, param) }
+    unsafe {
+        syscall_ret_int(
+            libc::syscall(libc::SYS_sched_getparam, pid, param),
+            errno::EINVAL,
+        )
+    }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sched_setparam(pid: libc::pid_t, param: *const c_void) -> c_int {
-    unsafe { libc_sched_setparam(pid, param) }
+    unsafe {
+        syscall_ret_int(
+            libc::syscall(libc::SYS_sched_setparam, pid, param),
+            errno::EINVAL,
+        )
+    }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sched_get_priority_min(policy: c_int) -> c_int {
-    unsafe { libc_sched_get_priority_min(policy) }
+    unsafe {
+        syscall_ret_int(
+            libc::syscall(libc::SYS_sched_get_priority_min, policy),
+            errno::EINVAL,
+        )
+    }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sched_get_priority_max(policy: c_int) -> c_int {
-    unsafe { libc_sched_get_priority_max(policy) }
+    unsafe {
+        syscall_ret_int(
+            libc::syscall(libc::SYS_sched_get_priority_max, policy),
+            errno::EINVAL,
+        )
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -2975,7 +3426,7 @@ pub unsafe extern "C" fn sync() {
 }
 
 // ---------------------------------------------------------------------------
-// PTY / crypt / utmp — GlibcCallThrough
+// PTY / crypt / utmp — mixed (implemented + call-through)
 // ---------------------------------------------------------------------------
 
 unsafe extern "C" {
@@ -2996,14 +3447,6 @@ unsafe extern "C" {
         termp: *const c_void,
         winp: *const c_void,
     ) -> libc::pid_t;
-    #[link_name = "grantpt"]
-    fn libc_grantpt(fd: c_int) -> c_int;
-    #[link_name = "unlockpt"]
-    fn libc_unlockpt(fd: c_int) -> c_int;
-    #[link_name = "ptsname"]
-    fn libc_ptsname(fd: c_int) -> *mut c_char;
-    #[link_name = "posix_openpt"]
-    fn libc_posix_openpt(flags: c_int) -> c_int;
     #[link_name = "crypt"]
     fn libc_crypt(key: *const c_char, salt: *const c_char) -> *mut c_char;
 }
@@ -3036,22 +3479,54 @@ pub unsafe extern "C" fn forkpty(
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn grantpt(fd: c_int) -> c_int {
-    unsafe { libc_grantpt(fd) }
+    let mut pty_num: c_int = 0;
+    // SAFETY: ioctl validates `fd` as PTY master and writes index on success.
+    let rc = unsafe { libc::ioctl(fd, libc::TIOCGPTN, &mut pty_num) } as c_int;
+    if rc < 0 {
+        unsafe { set_abi_errno(last_host_errno(errno::EBADF)) };
+        return -1;
+    }
+    0
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn unlockpt(fd: c_int) -> c_int {
-    unsafe { libc_unlockpt(fd) }
+    let mut unlock: c_int = 0;
+    // SAFETY: ioctl reads lock toggle value from `unlock`.
+    let rc = unsafe { libc::ioctl(fd, libc::TIOCSPTLCK, &mut unlock) } as c_int;
+    if rc < 0 {
+        unsafe { set_abi_errno(last_host_errno(errno::EBADF)) };
+        return -1;
+    }
+    0
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn ptsname(fd: c_int) -> *mut c_char {
-    unsafe { libc_ptsname(fd) }
+    let dst = core::ptr::addr_of_mut!(PTSNAME_FALLBACK).cast::<c_char>();
+    match unsafe { resolve_ptsname_into(fd, dst, PTSNAME_MAX_LEN) } {
+        Ok(_) => dst,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            std::ptr::null_mut()
+        }
+    }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn posix_openpt(flags: c_int) -> c_int {
-    unsafe { libc_posix_openpt(flags) }
+    unsafe {
+        syscall_ret_int(
+            libc::syscall(
+                libc::SYS_openat,
+                libc::AT_FDCWD,
+                PTMX_PATH.as_ptr().cast::<c_char>(),
+                flags,
+                0,
+            ),
+            errno::EINVAL,
+        )
+    }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -3887,14 +4362,14 @@ pub unsafe extern "C" fn recvmmsg(
 // sched_rr_get_interval / sched_getaffinity CPU_COUNT helper
 // ---------------------------------------------------------------------------
 
-unsafe extern "C" {
-    #[link_name = "sched_rr_get_interval"]
-    fn libc_sched_rr_get_interval(pid: libc::pid_t, tp: *mut libc::timespec) -> c_int;
-}
-
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sched_rr_get_interval(pid: libc::pid_t, tp: *mut libc::timespec) -> c_int {
-    unsafe { libc_sched_rr_get_interval(pid, tp) }
+    unsafe {
+        syscall_ret_int(
+            libc::syscall(libc::SYS_sched_rr_get_interval, pid, tp),
+            errno::EINVAL,
+        )
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -4033,10 +4508,6 @@ pub unsafe extern "C" fn initgroups(user: *const c_char, group: libc::gid_t) -> 
 // ---------------------------------------------------------------------------
 
 unsafe extern "C" {
-    #[link_name = "ttyname"]
-    fn libc_ttyname(fd: c_int) -> *mut c_char;
-    #[link_name = "ttyname_r"]
-    fn libc_ttyname_r(fd: c_int, buf: *mut c_char, buflen: usize) -> c_int;
     #[link_name = "getpass"]
     fn libc_getpass(prompt: *const c_char) -> *mut c_char;
 }
@@ -4129,12 +4600,76 @@ pub unsafe extern "C" fn getlogin_r(buf: *mut c_char, bufsize: usize) -> c_int {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn ttyname(fd: c_int) -> *mut c_char {
-    unsafe { libc_ttyname(fd) }
+    let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, fd as usize, 0, false, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 12, true);
+        return std::ptr::null_mut();
+    }
+
+    let dst = std::ptr::addr_of_mut!(TTYNAME_FALLBACK).cast::<c_char>();
+    match unsafe { resolve_ttyname_into(fd, dst, TTYNAME_MAX_LEN) } {
+        Ok(path_len) => {
+            runtime_policy::observe(
+                ApiFamily::Stdio,
+                decision.profile,
+                runtime_policy::scaled_cost(12, path_len + 1),
+                false,
+            );
+            dst
+        }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 12, true);
+            std::ptr::null_mut()
+        }
+    }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn ttyname_r(fd: c_int, buf: *mut c_char, buflen: usize) -> c_int {
-    unsafe { libc_ttyname_r(fd, buf, buflen) }
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Stdio,
+        buf as usize,
+        buflen,
+        true,
+        buf.is_null() && buflen > 0,
+        fd.clamp(0, u16::MAX as c_int) as u16,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(
+            ApiFamily::Stdio,
+            decision.profile,
+            runtime_policy::scaled_cost(12, buflen),
+            true,
+        );
+        return errno::EPERM;
+    }
+    if buf.is_null() || buflen == 0 {
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 12, true);
+        return errno::EINVAL;
+    }
+
+    match unsafe { resolve_ttyname_into(fd, buf, buflen) } {
+        Ok(path_len) => {
+            runtime_policy::observe(
+                ApiFamily::Stdio,
+                decision.profile,
+                runtime_policy::scaled_cost(12, path_len + 1),
+                false,
+            );
+            0
+        }
+        Err(e) => {
+            runtime_policy::observe(
+                ApiFamily::Stdio,
+                decision.profile,
+                runtime_policy::scaled_cost(12, buflen),
+                true,
+            );
+            e
+        }
+    }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
