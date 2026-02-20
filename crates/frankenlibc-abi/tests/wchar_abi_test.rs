@@ -3,9 +3,9 @@
 //! Integration tests for selected `<wchar.h>` ABI entrypoints.
 
 use frankenlibc_abi::wchar_abi::{
-    btowc, fgetwc, fgetws, fputwc, fputws, mbrtowc, mbsrtowcs, mkstemp, realpath, ungetwc,
-    wcrtomb, wcscoll, wcsftime, wcsnlen, wcsrtombs, wcswidth, wcsxfrm, wcstod, wcstof, wcstol,
-    wcstold, wcstoll, wcstoul, wcstoull, wctob,
+    btowc, fgetwc, fgetws, fputwc, fputws, mbrtowc, mbsrtowcs, mkstemp, realpath, ungetwc, wcrtomb,
+    wcscoll, wcsftime, wcsnlen, wcsrtombs, wcstod, wcstof, wcstol, wcstold, wcstoll, wcstoul,
+    wcstoull, wcswidth, wcsxfrm, wctob,
 };
 
 fn errno_value() -> i32 {
@@ -124,7 +124,13 @@ fn wcrtomb_encodes_ascii_and_reports_invalid() {
     let mut out = [0_i8; 4];
 
     // SAFETY: out buffer is writable and large enough for UTF-8 sequence.
-    let n = unsafe { wcrtomb(out.as_mut_ptr(), b'A' as libc::wchar_t, std::ptr::null_mut()) };
+    let n = unsafe {
+        wcrtomb(
+            out.as_mut_ptr(),
+            b'A' as libc::wchar_t,
+            std::ptr::null_mut(),
+        )
+    };
     assert_eq!(n, 1);
     assert_eq!(out[0] as u8, b'A');
 
@@ -239,7 +245,10 @@ fn wcstol_parses_and_updates_endptr() {
     let value = unsafe { wcstol(input.as_ptr(), &mut end as *mut *mut libc::wchar_t, 10) };
     assert_eq!(value, -12);
     // SAFETY: both pointers originate from the same input array.
-    assert_eq!(unsafe { end.offset_from(input.as_ptr() as *mut libc::wchar_t) }, 4);
+    assert_eq!(
+        unsafe { end.offset_from(input.as_ptr() as *mut libc::wchar_t) },
+        4
+    );
 
     set_errno(0);
     end = std::ptr::null_mut();
@@ -248,7 +257,10 @@ fn wcstol_parses_and_updates_endptr() {
     assert_eq!(invalid_base, 0);
     assert_eq!(errno_value(), libc::EINVAL);
     // SAFETY: both pointers originate from the same input array.
-    assert_eq!(unsafe { end.offset_from(input.as_ptr() as *mut libc::wchar_t) }, 0);
+    assert_eq!(
+        unsafe { end.offset_from(input.as_ptr() as *mut libc::wchar_t) },
+        0
+    );
 }
 
 #[test]
@@ -264,7 +276,10 @@ fn wcstoul_reports_overflow_and_aliases_follow() {
     assert_eq!(value as u64, u64::MAX);
     assert_eq!(errno_value(), libc::ERANGE);
     // SAFETY: both pointers originate from the same input buffer.
-    assert_eq!(unsafe { end.offset_from(wide.as_ptr() as *mut libc::wchar_t) }, digits.len() as isize);
+    assert_eq!(
+        unsafe { end.offset_from(wide.as_ptr() as *mut libc::wchar_t) },
+        digits.len() as isize
+    );
 
     end = std::ptr::null_mut();
     set_errno(0);
@@ -290,14 +305,20 @@ fn wcstod_family_parses_ascii_and_updates_endptr() {
     let d = unsafe { wcstod(input.as_ptr(), &mut end as *mut *mut libc::wchar_t) };
     assert!((d - 12.5).abs() < 1e-10);
     // SAFETY: both pointers originate from the same input array.
-    assert_eq!(unsafe { end.offset_from(input.as_ptr() as *mut libc::wchar_t) }, 4);
+    assert_eq!(
+        unsafe { end.offset_from(input.as_ptr() as *mut libc::wchar_t) },
+        4
+    );
 
     end = std::ptr::null_mut();
     // SAFETY: alias should share conversion and pointer progression.
     let f = unsafe { wcstof(input.as_ptr(), &mut end as *mut *mut libc::wchar_t) };
     assert!((f - 12.5_f32).abs() < 1e-5);
     // SAFETY: both pointers originate from the same input array.
-    assert_eq!(unsafe { end.offset_from(input.as_ptr() as *mut libc::wchar_t) }, 4);
+    assert_eq!(
+        unsafe { end.offset_from(input.as_ptr() as *mut libc::wchar_t) },
+        4
+    );
 
     end = std::ptr::null_mut();
     // SAFETY: long double is currently modeled as f64 in this ABI.
@@ -383,7 +404,10 @@ fn wcsftime_formats_via_native_bridge() {
     };
     assert_eq!(written, 10);
     let rendered: Vec<u32> = out[..written].iter().map(|&ch| ch as u32).collect();
-    assert_eq!(rendered, "2026-01-02".bytes().map(u32::from).collect::<Vec<_>>());
+    assert_eq!(
+        rendered,
+        "2026-01-02".bytes().map(u32::from).collect::<Vec<_>>()
+    );
 }
 
 #[test]
@@ -397,7 +421,10 @@ fn wide_stream_char_roundtrip_and_pushback() {
     // SAFETY: valid stream handle from tmpfile.
     assert_eq!(unsafe { fputwc('A' as u32, stream) }, 'A' as u32);
     // SAFETY: reposition to stream start for reading.
-    assert_eq!(unsafe { frankenlibc_abi::stdio_abi::fseek(stream, 0, libc::SEEK_SET) }, 0);
+    assert_eq!(
+        unsafe { frankenlibc_abi::stdio_abi::fseek(stream, 0, libc::SEEK_SET) },
+        0
+    );
 
     // SAFETY: valid stream handle.
     assert_eq!(unsafe { fgetwc(stream) }, 'é' as u32);
@@ -407,7 +434,10 @@ fn wide_stream_char_roundtrip_and_pushback() {
     assert_eq!(unsafe { fgetwc(stream) }, u32::MAX);
 
     // SAFETY: reset and exercise ungetwc ordering.
-    assert_eq!(unsafe { frankenlibc_abi::stdio_abi::fseek(stream, 0, libc::SEEK_SET) }, 0);
+    assert_eq!(
+        unsafe { frankenlibc_abi::stdio_abi::fseek(stream, 0, libc::SEEK_SET) },
+        0
+    );
     // SAFETY: valid stream handle.
     assert_eq!(unsafe { ungetwc('Z' as u32, stream) }, 'Z' as u32);
     // SAFETY: pushback character is returned first.
@@ -440,7 +470,10 @@ fn wide_stream_string_io_handles_newline_splitting() {
     // SAFETY: valid stream and NUL-terminated source.
     assert_eq!(unsafe { fputws(src.as_ptr(), stream) }, 0);
     // SAFETY: rewind to beginning.
-    assert_eq!(unsafe { frankenlibc_abi::stdio_abi::fseek(stream, 0, libc::SEEK_SET) }, 0);
+    assert_eq!(
+        unsafe { frankenlibc_abi::stdio_abi::fseek(stream, 0, libc::SEEK_SET) },
+        0
+    );
 
     let mut buf = [0_i32; 16];
     // SAFETY: valid destination and stream.

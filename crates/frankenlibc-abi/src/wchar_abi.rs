@@ -1534,8 +1534,8 @@ fn maybe_clamp_wchars(
 // Multibyte ↔ wide character conversion functions
 // ===========================================================================
 
-use frankenlibc_core::string::{wchar as wchar_core, wide as wide_core};
 use frankenlibc_core::stdlib::conversion::ConversionStatus;
+use frankenlibc_core::string::{wchar as wchar_core, wide as wide_core};
 
 /// Set the ABI errno via `__errno_location`.
 #[inline]
@@ -1944,7 +1944,8 @@ pub unsafe extern "C" fn wcsnlen(s: *const libc::wchar_t, maxlen: usize) -> usiz
     }
 
     // SAFETY: `limit` bounds all reads from `s`.
-    let len = unsafe { wide_core::wcsnlen(std::slice::from_raw_parts(s as *const u32, limit), limit) };
+    let len =
+        unsafe { wide_core::wcsnlen(std::slice::from_raw_parts(s as *const u32, limit), limit) };
     runtime_policy::observe(
         ApiFamily::StringMemory,
         decision.profile,
@@ -1972,11 +1973,7 @@ pub unsafe extern "C" fn wctob(c: u32) -> c_int {
     if c == u32::MAX {
         return libc::EOF;
     }
-    if c <= 0x7F {
-        c as c_int
-    } else {
-        libc::EOF
-    }
+    if c <= 0x7F { c as c_int } else { libc::EOF }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -2293,9 +2290,8 @@ fn parse_wide_signed(s: &[u32], base: c_int) -> (i64, usize, ConversionStatus) {
     }
 
     let mut effective_base = base as u64;
-    let has_0x_prefix = i + 1 < len
-        && s[i] == b'0' as u32
-        && (s[i + 1] == b'x' as u32 || s[i + 1] == b'X' as u32);
+    let has_0x_prefix =
+        i + 1 < len && s[i] == b'0' as u32 && (s[i + 1] == b'x' as u32 || s[i + 1] == b'X' as u32);
 
     if base == 0 {
         if has_0x_prefix && i + 2 < len && wide_is_ascii_hexdigit(s[i + 2]) {
@@ -2391,9 +2387,8 @@ fn parse_wide_unsigned(s: &[u32], base: c_int) -> (u64, usize, ConversionStatus)
     }
 
     let mut effective_base = base as u64;
-    let has_0x_prefix = i + 1 < len
-        && s[i] == b'0' as u32
-        && (s[i + 1] == b'x' as u32 || s[i + 1] == b'X' as u32);
+    let has_0x_prefix =
+        i + 1 < len && s[i] == b'0' as u32 && (s[i + 1] == b'x' as u32 || s[i + 1] == b'X' as u32);
 
     if base == 0 {
         if has_0x_prefix && i + 2 < len && wide_is_ascii_hexdigit(s[i + 2]) {

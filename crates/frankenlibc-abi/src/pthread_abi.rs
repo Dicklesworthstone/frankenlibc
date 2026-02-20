@@ -71,12 +71,12 @@ type HostPthreadAttrSetdetachstateFn =
     unsafe extern "C" fn(*mut libc::pthread_attr_t, c_int) -> c_int;
 type HostPthreadAttrGetdetachstateFn =
     unsafe extern "C" fn(*const libc::pthread_attr_t, *mut c_int) -> c_int;
-type HostPthreadAttrSetstacksizeFn = unsafe extern "C" fn(*mut libc::pthread_attr_t, usize) -> c_int;
+type HostPthreadAttrSetstacksizeFn =
+    unsafe extern "C" fn(*mut libc::pthread_attr_t, usize) -> c_int;
 type HostPthreadAttrGetstacksizeFn =
     unsafe extern "C" fn(*const libc::pthread_attr_t, *mut usize) -> c_int;
 type HostPthreadMutexattrInitFn = unsafe extern "C" fn(*mut libc::pthread_mutexattr_t) -> c_int;
-type HostPthreadMutexattrDestroyFn =
-    unsafe extern "C" fn(*mut libc::pthread_mutexattr_t) -> c_int;
+type HostPthreadMutexattrDestroyFn = unsafe extern "C" fn(*mut libc::pthread_mutexattr_t) -> c_int;
 type HostPthreadMutexattrSettypeFn =
     unsafe extern "C" fn(*mut libc::pthread_mutexattr_t, c_int) -> c_int;
 type HostPthreadMutexattrGettypeFn =
@@ -502,9 +502,7 @@ unsafe fn host_pthread_rwlockattr_destroy_fn() -> Option<HostPthreadRwlockattrDe
         None
     } else {
         // SAFETY: symbol resolved from host pthread implementation with matching ABI.
-        Some(unsafe {
-            std::mem::transmute::<*mut c_void, HostPthreadRwlockattrDestroyFn>(ptr)
-        })
+        Some(unsafe { std::mem::transmute::<*mut c_void, HostPthreadRwlockattrDestroyFn>(ptr) })
     }
 }
 
