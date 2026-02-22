@@ -82,13 +82,13 @@ fn swap_chunks(buffer: &mut [u8], i: usize, j: usize, width: usize) {
     } else {
         buffer.split_at_mut(i * width)
     };
-    
+
     let first = if i < j {
         &mut head[i * width..(i + 1) * width]
     } else {
         &mut head[j * width..(j + 1) * width]
     };
-    
+
     first.swap_with_slice(&mut tail[0..width]);
 }
 

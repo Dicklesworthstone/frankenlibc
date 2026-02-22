@@ -43,6 +43,13 @@ pub const PTHREAD_DESTRUCTOR_ITERATIONS: usize = 4;
 /// Maximum concurrent threads tracked in the TLS table.
 const TLS_TABLE_SLOTS: usize = 4096;
 
+/// Empty slot marker in `TLS_TIDS`.
+const TLS_SLOT_EMPTY: i32 = 0;
+/// Tombstone marker for deleted slots in `TLS_TIDS`.
+///
+/// Thread IDs are strictly positive, so `-1` is never a real TID.
+const TLS_SLOT_TOMBSTONE: i32 = -1;
+
 const EAGAIN: i32 = 11;
 const EINVAL: i32 = 22;
 
@@ -90,7 +97,11 @@ static KEY_WRITE_LOCK: Mutex<()> = Mutex::new(());
 // Per-thread value storage — allocation-free concurrent table
 // ---------------------------------------------------------------------------
 
-/// TID array for open-addressed hash table. 0 = empty slot.
+/// TID array for open-addressed hash table.
+///
+/// - `TLS_SLOT_EMPTY` (`0`) means never occupied and terminates lookups.
+/// - `TLS_SLOT_TOMBSTONE` (`-1`) means previously occupied (deleted) and must
+///   not terminate lookups.
 static TLS_TIDS: [AtomicI32; TLS_TABLE_SLOTS] = [const { AtomicI32::new(0) }; TLS_TABLE_SLOTS];
 
 /// Pointer array (paired with TLS_TIDS). Stores `*mut [u64; PTHREAD_KEYS_MAX]`
@@ -120,28 +131,57 @@ impl MainTlsBlock {
 ///
 /// This function is **allocation-free** and safe to call from clone-based threads.
 fn table_register(tid: i32, values_ptr: *mut u64) {
+    if tid <= 0 {
+        return;
+    }
     let start = (tid as u32 as usize) % TLS_TABLE_SLOTS;
+    let mut first_tombstone: Option<usize> = None;
     for i in 0..TLS_TABLE_SLOTS {
         let idx = (start + i) % TLS_TABLE_SLOTS;
         let current = TLS_TIDS[idx].load(Ordering::Acquire);
-        if current == 0 {
-            // Try to claim this empty slot.
-            if TLS_TIDS[idx]
-                .compare_exchange(0, tid, Ordering::AcqRel, Ordering::Acquire)
-                .is_ok()
-            {
-                TLS_PTRS[idx].store(values_ptr as usize, Ordering::Release);
-                return;
-            }
-            // CAS failed — another thread took this slot. Continue probing.
-        }
         if current == tid {
             // Already registered (shouldn't happen, but handle gracefully).
             TLS_PTRS[idx].store(values_ptr as usize, Ordering::Release);
             return;
         }
+
+        if current == TLS_SLOT_TOMBSTONE {
+            if first_tombstone.is_none() {
+                first_tombstone = Some(idx);
+            }
+            continue;
+        }
+
+        if current == TLS_SLOT_EMPTY {
+            if let Some(tomb_idx) = first_tombstone {
+                if TLS_TIDS[tomb_idx]
+                    .compare_exchange(TLS_SLOT_TOMBSTONE, tid, Ordering::AcqRel, Ordering::Acquire)
+                    .is_ok()
+                {
+                    TLS_PTRS[tomb_idx].store(values_ptr as usize, Ordering::Release);
+                    return;
+                }
+                first_tombstone = None;
+                continue;
+            }
+
+            if TLS_TIDS[idx]
+                .compare_exchange(TLS_SLOT_EMPTY, tid, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
+            {
+                TLS_PTRS[idx].store(values_ptr as usize, Ordering::Release);
+                return;
+            }
+        }
     }
-    // Table full. In practice, 4096 slots is sufficient.
+    // Table full. Best effort: if we observed a tombstone, retry claiming it.
+    if let Some(tomb_idx) = first_tombstone
+        && TLS_TIDS[tomb_idx]
+            .compare_exchange(TLS_SLOT_TOMBSTONE, tid, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+    {
+        TLS_PTRS[tomb_idx].store(values_ptr as usize, Ordering::Release);
+    }
 }
 
 /// Look up the TLS values pointer for a given TID.
@@ -149,6 +189,9 @@ fn table_register(tid: i32, values_ptr: *mut u64) {
 /// Returns a raw pointer to `[u64; PTHREAD_KEYS_MAX]`, or null if not found.
 /// **Allocation-free.**
 fn table_lookup(tid: i32) -> *mut u64 {
+    if tid <= 0 {
+        return core::ptr::null_mut();
+    }
     let start = (tid as u32 as usize) % TLS_TABLE_SLOTS;
     for i in 0..TLS_TABLE_SLOTS {
         let idx = (start + i) % TLS_TABLE_SLOTS;
@@ -157,7 +200,7 @@ fn table_lookup(tid: i32) -> *mut u64 {
             let ptr = TLS_PTRS[idx].load(Ordering::Acquire);
             return ptr as *mut u64;
         }
-        if stored_tid == 0 {
+        if stored_tid == TLS_SLOT_EMPTY {
             return core::ptr::null_mut();
         }
     }
@@ -168,16 +211,19 @@ fn table_lookup(tid: i32) -> *mut u64 {
 ///
 /// **Allocation-free.**
 fn table_remove(tid: i32) -> *mut u64 {
+    if tid <= 0 {
+        return core::ptr::null_mut();
+    }
     let start = (tid as u32 as usize) % TLS_TABLE_SLOTS;
     for i in 0..TLS_TABLE_SLOTS {
         let idx = (start + i) % TLS_TABLE_SLOTS;
         let stored_tid = TLS_TIDS[idx].load(Ordering::Acquire);
         if stored_tid == tid {
             let ptr = TLS_PTRS[idx].swap(0, Ordering::AcqRel);
-            TLS_TIDS[idx].store(0, Ordering::Release);
+            TLS_TIDS[idx].store(TLS_SLOT_TOMBSTONE, Ordering::Release);
             return ptr as *mut u64;
         }
-        if stored_tid == 0 {
+        if stored_tid == TLS_SLOT_EMPTY {
             return core::ptr::null_mut();
         }
     }
@@ -466,7 +512,7 @@ pub(crate) fn reset_tls_state() {
 
     // Clear the table.
     for i in 0..TLS_TABLE_SLOTS {
-        TLS_TIDS[i].store(0, Ordering::Release);
+        TLS_TIDS[i].store(TLS_SLOT_EMPTY, Ordering::Release);
         TLS_PTRS[i].store(0, Ordering::Release);
     }
     // Clear main thread values.
@@ -865,6 +911,71 @@ mod tests {
         let _g = lock_and_reset();
         let ptr = table_lookup(99999);
         assert!(ptr.is_null());
+    }
+
+    #[test]
+    fn table_remove_keeps_collision_probe_chain_intact() {
+        let _g = lock_and_reset();
+        let tid_a = 1_i32;
+        let tid_b = tid_a + TLS_TABLE_SLOTS as i32;
+
+        let mut block_a = TestTlsBlock::new();
+        let mut block_b = TestTlsBlock::new();
+        block_a.values[0] = 111;
+        block_b.values[0] = 222;
+
+        table_register(tid_a, block_a.as_mut_ptr());
+        table_register(tid_b, block_b.as_mut_ptr());
+
+        assert!(!table_lookup(tid_a).is_null());
+        assert!(!table_lookup(tid_b).is_null());
+
+        let removed = table_remove(tid_a);
+        assert!(!removed.is_null());
+
+        let ptr_b = table_lookup(tid_b);
+        assert!(
+            !ptr_b.is_null(),
+            "collision-chain lookup broke after removing earlier slot"
+        );
+        // SAFETY: ptr_b points to block_b values for key index 0.
+        assert_eq!(unsafe { *ptr_b }, 222);
+    }
+
+    #[test]
+    fn table_register_reuses_tombstone_without_hiding_colliders() {
+        let _g = lock_and_reset();
+        let tid_a = 5_i32;
+        let tid_b = tid_a + TLS_TABLE_SLOTS as i32;
+        let tid_c = tid_b + TLS_TABLE_SLOTS as i32;
+
+        let mut block_a = TestTlsBlock::new();
+        let mut block_b = TestTlsBlock::new();
+        let mut block_c = TestTlsBlock::new();
+        block_a.values[0] = 11;
+        block_b.values[0] = 22;
+        block_c.values[0] = 33;
+
+        table_register(tid_a, block_a.as_mut_ptr());
+        table_register(tid_b, block_b.as_mut_ptr());
+        let _ = table_remove(tid_a);
+
+        table_register(tid_c, block_c.as_mut_ptr());
+
+        let ptr_b = table_lookup(tid_b);
+        let ptr_c = table_lookup(tid_c);
+        assert!(
+            !ptr_b.is_null(),
+            "existing collider should remain discoverable"
+        );
+        assert!(
+            !ptr_c.is_null(),
+            "new collider should be inserted successfully"
+        );
+        // SAFETY: ptr_b/ptr_c point to valid test blocks for key index 0.
+        assert_eq!(unsafe { *ptr_b }, 22);
+        // SAFETY: ptr_b/ptr_c point to valid test blocks for key index 0.
+        assert_eq!(unsafe { *ptr_c }, 33);
     }
 
     #[test]

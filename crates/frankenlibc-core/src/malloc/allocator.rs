@@ -431,6 +431,9 @@ impl MallocState {
             // Large allocation
             self.large_allocator.free(ptr);
             self.recently_freed.insert(ptr);
+            if self.recently_freed.len() > 8192 {
+                self.recently_freed.clear();
+            }
             self.record_lifecycle(
                 AllocatorLogLevel::Trace,
                 "free",
@@ -473,6 +476,9 @@ impl MallocState {
             );
         }
         self.recently_freed.insert(ptr);
+        if self.recently_freed.len() > 8192 {
+            self.recently_freed.clear();
+        }
         self.record_allocator_stats("free");
     }
 
@@ -572,7 +578,7 @@ impl MallocState {
             if let Some(record) = self.active.get_mut(&ptr) {
                 self.total_allocated = self.total_allocated.saturating_sub(record.user_size);
                 record.user_size = new_size;
-                self.total_allocated += new_size;
+                self.total_allocated = self.total_allocated.saturating_add(new_size);
             }
             self.record_lifecycle(
                 AllocatorLogLevel::Trace,

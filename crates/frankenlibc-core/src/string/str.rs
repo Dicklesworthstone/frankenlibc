@@ -427,9 +427,10 @@ pub fn strcoll(s1: &[u8], s2: &[u8]) -> i32 {
 /// In the C/POSIX locale, this is a plain copy. Returns the length needed.
 pub fn strxfrm(dest: &mut [u8], src: &[u8], n: usize) -> usize {
     let src_len = strlen(src);
-    let copy_len = src_len.min(n.min(dest.len()));
-    dest[..copy_len].copy_from_slice(&src[..copy_len]);
-    if copy_len < dest.len() {
+    let limit = n.min(dest.len());
+    if limit > 0 {
+        let copy_len = src_len.min(limit - 1);
+        dest[..copy_len].copy_from_slice(&src[..copy_len]);
         dest[copy_len] = 0;
     }
     src_len
