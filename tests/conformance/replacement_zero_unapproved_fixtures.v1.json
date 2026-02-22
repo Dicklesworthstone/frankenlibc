@@ -9,10 +9,10 @@
   },
   "fixtures": [
     {
-      "id": "interpose_allow_stdio_fopen",
+      "id": "interpose_allow_none_vprintf",
       "mode": "interpose",
-      "module": "stdio_abi",
-      "symbol": "fopen",
+      "module": "None",
+      "symbol": "vprintf",
       "expected_outcome": "allowed",
       "evidence_source": "support_matrix"
     },
@@ -22,13 +22,85 @@
       "module": "dlfcn_abi",
       "symbol": "dlopen",
       "expected_outcome": "allowed",
-      "evidence_source": "source_scan"
+      "evidence_source": "support_matrix"
     },
     {
-      "id": "replacement_forbid_stdio_printf",
-      "mode": "replacement",
+      "id": "interpose_allow_inet_if_nameindex",
+      "mode": "interpose",
+      "module": "inet_abi",
+      "symbol": "if_nameindex",
+      "expected_outcome": "allowed",
+      "evidence_source": "support_matrix"
+    },
+    {
+      "id": "interpose_allow_locale_nl_langinfo",
+      "mode": "interpose",
+      "module": "locale_abi",
+      "symbol": "nl_langinfo",
+      "expected_outcome": "allowed",
+      "evidence_source": "support_matrix"
+    },
+    {
+      "id": "interpose_allow_process_posix_spawn",
+      "mode": "interpose",
+      "module": "process_abi",
+      "symbol": "posix_spawn",
+      "expected_outcome": "allowed",
+      "evidence_source": "support_matrix"
+    },
+    {
+      "id": "interpose_allow_pthread_pthread_cancel",
+      "mode": "interpose",
+      "module": "pthread_abi",
+      "symbol": "pthread_cancel",
+      "expected_outcome": "allowed",
+      "evidence_source": "support_matrix"
+    },
+    {
+      "id": "interpose_allow_stdio_scanf",
+      "mode": "interpose",
       "module": "stdio_abi",
-      "symbol": "printf",
+      "symbol": "scanf",
+      "expected_outcome": "allowed",
+      "evidence_source": "support_matrix"
+    },
+    {
+      "id": "interpose_allow_string_glob",
+      "mode": "interpose",
+      "module": "string_abi",
+      "symbol": "glob",
+      "expected_outcome": "allowed",
+      "evidence_source": "support_matrix"
+    },
+    {
+      "id": "interpose_allow_time_strptime",
+      "mode": "interpose",
+      "module": "time_abi",
+      "symbol": "strptime",
+      "expected_outcome": "allowed",
+      "evidence_source": "support_matrix"
+    },
+    {
+      "id": "interpose_allow_unistd_openlog",
+      "mode": "interpose",
+      "module": "unistd_abi",
+      "symbol": "openlog",
+      "expected_outcome": "allowed",
+      "evidence_source": "support_matrix"
+    },
+    {
+      "id": "interpose_allow_wchar_wprintf",
+      "mode": "interpose",
+      "module": "wchar_abi",
+      "symbol": "wprintf",
+      "expected_outcome": "allowed",
+      "evidence_source": "support_matrix"
+    },
+    {
+      "id": "replacement_forbid_none_vprintf",
+      "mode": "replacement",
+      "module": "None",
+      "symbol": "vprintf",
       "expected_outcome": "forbidden",
       "evidence_source": "support_matrix"
     },
@@ -37,6 +109,78 @@
       "mode": "replacement",
       "module": "dlfcn_abi",
       "symbol": "dlsym",
+      "expected_outcome": "forbidden",
+      "evidence_source": "support_matrix"
+    },
+    {
+      "id": "replacement_forbid_inet_if_freenameindex",
+      "mode": "replacement",
+      "module": "inet_abi",
+      "symbol": "if_freenameindex",
+      "expected_outcome": "forbidden",
+      "evidence_source": "support_matrix"
+    },
+    {
+      "id": "replacement_forbid_locale_nl_langinfo",
+      "mode": "replacement",
+      "module": "locale_abi",
+      "symbol": "nl_langinfo",
+      "expected_outcome": "forbidden",
+      "evidence_source": "support_matrix"
+    },
+    {
+      "id": "replacement_forbid_process_posix_spawnp",
+      "mode": "replacement",
+      "module": "process_abi",
+      "symbol": "posix_spawnp",
+      "expected_outcome": "forbidden",
+      "evidence_source": "support_matrix"
+    },
+    {
+      "id": "replacement_forbid_pthread_pthread_testcancel",
+      "mode": "replacement",
+      "module": "pthread_abi",
+      "symbol": "pthread_testcancel",
+      "expected_outcome": "forbidden",
+      "evidence_source": "support_matrix"
+    },
+    {
+      "id": "replacement_forbid_stdio_sscanf",
+      "mode": "replacement",
+      "module": "stdio_abi",
+      "symbol": "sscanf",
+      "expected_outcome": "forbidden",
+      "evidence_source": "support_matrix"
+    },
+    {
+      "id": "replacement_forbid_string_regexec",
+      "mode": "replacement",
+      "module": "string_abi",
+      "symbol": "regexec",
+      "expected_outcome": "forbidden",
+      "evidence_source": "support_matrix"
+    },
+    {
+      "id": "replacement_forbid_time_strptime",
+      "mode": "replacement",
+      "module": "time_abi",
+      "symbol": "strptime",
+      "expected_outcome": "forbidden",
+      "evidence_source": "support_matrix"
+    },
+    {
+      "id": "replacement_forbid_unistd_wordexp",
+      "mode": "replacement",
+      "module": "unistd_abi",
+      "symbol": "wordexp",
+      "expected_outcome": "forbidden",
+      "evidence_source": "support_matrix"
+    },
+    {
+      "id": "replacement_forbid_wchar_vswscanf",
+      "mode": "replacement",
+      "module": "wchar_abi",
+      "symbol": "vswscanf",
       "expected_outcome": "forbidden",
       "evidence_source": "support_matrix"
     }
@@ -53,12 +197,21 @@
     "artifact_ref"
   ],
   "summary": {
-    "fixture_count": 4,
-    "interpose_allowed_count": 2,
-    "replacement_forbidden_count": 2,
+    "fixture_count": 22,
+    "interpose_allowed_count": 11,
+    "replacement_forbidden_count": 11,
     "covered_callthrough_modules": [
+      "None",
+      "dlfcn_abi",
+      "inet_abi",
+      "locale_abi",
+      "process_abi",
+      "pthread_abi",
       "stdio_abi",
-      "dlfcn_abi"
+      "string_abi",
+      "time_abi",
+      "unistd_abi",
+      "wchar_abi"
     ]
   }
 }

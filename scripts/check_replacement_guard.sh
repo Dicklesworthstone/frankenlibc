@@ -327,8 +327,8 @@ for row in fixture_rows:
     if symbol not in support_symbol_map:
         errors.append(f'{row_id}: symbol {symbol!r} not found as GlibcCallThrough in support_matrix')
     else:
-        support_module = support_symbol_map[symbol].get('module')
-        if support_module != module:
+        support_module = str(support_symbol_map[symbol].get('module'))
+        if support_module != str(module):
             errors.append(
                 f'{row_id}: symbol/module mismatch (fixture {module}, support_matrix {support_module})'
             )

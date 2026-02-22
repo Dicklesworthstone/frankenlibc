@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "bead": "bd-4ia",
-  "description": "Stub priority ranking for frankenlibc remediation. Ranks non-implemented symbols (Stub + GlibcCallThrough) by severity and workload impact to guide implementation priority. Feeds next-wave implementation beads.",
+  "description": "Stub priority ranking for frankenlibc remediation. Ranks non-implemented symbols (Stub + GlibcCallThrough) by severity and workload impact to guide implementation priority. Auto-generated from support_matrix/workload_matrix.",
   "scoring": {
     "description": "Per-symbol priority score combining status severity and workload impact.",
     "formula": "score = severity_weight * workloads_blocked",
@@ -25,48 +25,152 @@
     "description": "Modules ranked by total remediation urgency (sum of per-symbol scores).",
     "entries": [
       {
-        "rank": 1,
         "module": "stdio_abi",
-        "symbols_remaining": 30,
+        "symbols_remaining": 9,
         "status": "GlibcCallThrough",
         "perf_class": "coldpath",
         "severity_weight": 1.0,
         "workloads_blocked": 7,
         "per_symbol_score": 7.0,
-        "total_urgency": 210.0,
-        "implementation_bead": null,
-        "note": "Highest total urgency. FILE* reimplementation is massive but unblocks 7/10 workloads."
+        "total_urgency": 63.0,
+        "implementation_bead": "bd-h5x.3",
+        "note": "Auto-generated from support_matrix/workload_matrix.",
+        "rank": 1
       },
       {
-        "rank": 2,
         "module": "pthread_abi",
-        "symbols_remaining": 20,
+        "symbols_remaining": 4,
         "status": "GlibcCallThrough",
-        "perf_class": "strict_hotpath",
-        "severity_weight": 2.0,
+        "perf_class": "coldpath",
+        "severity_weight": 1.0,
         "workloads_blocked": 4,
-        "per_symbol_score": 8.0,
-        "total_urgency": 160.0,
-        "implementation_bead": "bd-z84 (futex mutex), bd-yos (thread bootstrap)",
-        "note": "Highest per-symbol score among callthroughs. Active implementation by WhiteMeadow (bd-z84)."
+        "per_symbol_score": 4.0,
+        "total_urgency": 16.0,
+        "implementation_bead": "bd-h5x.2",
+        "note": "Auto-generated from support_matrix/workload_matrix.",
+        "rank": 2
       },
       {
-        "rank": 3,
         "module": "dlfcn_abi",
-        "symbols_remaining": 4,
+        "symbols_remaining": 6,
         "status": "GlibcCallThrough",
         "perf_class": "coldpath",
         "severity_weight": 1.0,
         "workloads_blocked": 2,
         "per_symbol_score": 2.0,
-        "total_urgency": 8.0,
-        "implementation_bead": "bd-3rn (rtld phase-1)",
-        "note": "Low urgency per-symbol but critical for L2 transition. Requires ELF relocation engine."
+        "total_urgency": 12.0,
+        "implementation_bead": "bd-33zg",
+        "note": "Auto-generated from support_matrix/workload_matrix.",
+        "rank": 3
+      },
+      {
+        "module": "locale_abi",
+        "symbols_remaining": 1,
+        "status": "GlibcCallThrough",
+        "perf_class": "coldpath",
+        "severity_weight": 1.0,
+        "workloads_blocked": 2,
+        "per_symbol_score": 2.0,
+        "total_urgency": 2.0,
+        "implementation_bead": "bd-2vv.7",
+        "note": "Auto-generated from support_matrix/workload_matrix.",
+        "rank": 4
+      },
+      {
+        "module": "inet_abi",
+        "symbols_remaining": 2,
+        "status": "GlibcCallThrough",
+        "perf_class": "coldpath",
+        "severity_weight": 1.0,
+        "workloads_blocked": 0,
+        "per_symbol_score": 0.0,
+        "total_urgency": 0.0,
+        "implementation_bead": null,
+        "note": "Auto-generated from support_matrix/workload_matrix.",
+        "rank": 5
+      },
+      {
+        "module": "process_abi",
+        "symbols_remaining": 6,
+        "status": "GlibcCallThrough",
+        "perf_class": "coldpath",
+        "severity_weight": 1.0,
+        "workloads_blocked": 0,
+        "per_symbol_score": 0.0,
+        "total_urgency": 0.0,
+        "implementation_bead": null,
+        "note": "Auto-generated from support_matrix/workload_matrix.",
+        "rank": 6
+      },
+      {
+        "module": "string_abi",
+        "symbols_remaining": 7,
+        "status": "GlibcCallThrough",
+        "perf_class": "coldpath",
+        "severity_weight": 1.0,
+        "workloads_blocked": 0,
+        "per_symbol_score": 0.0,
+        "total_urgency": 0.0,
+        "implementation_bead": null,
+        "note": "Auto-generated from support_matrix/workload_matrix.",
+        "rank": 7
+      },
+      {
+        "module": "time_abi",
+        "symbols_remaining": 1,
+        "status": "GlibcCallThrough",
+        "perf_class": "coldpath",
+        "severity_weight": 1.0,
+        "workloads_blocked": 0,
+        "per_symbol_score": 0.0,
+        "total_urgency": 0.0,
+        "implementation_bead": null,
+        "note": "Auto-generated from support_matrix/workload_matrix.",
+        "rank": 8
+      },
+      {
+        "module": "unistd_abi",
+        "symbols_remaining": 36,
+        "status": "GlibcCallThrough",
+        "perf_class": "coldpath",
+        "severity_weight": 1.0,
+        "workloads_blocked": 0,
+        "per_symbol_score": 0.0,
+        "total_urgency": 0.0,
+        "implementation_bead": null,
+        "note": "Auto-generated from support_matrix/workload_matrix.",
+        "rank": 9
+      },
+      {
+        "module": "unknown",
+        "symbols_remaining": 9,
+        "status": "GlibcCallThrough",
+        "perf_class": "coldpath",
+        "severity_weight": 1.0,
+        "workloads_blocked": 0,
+        "per_symbol_score": 0.0,
+        "total_urgency": 0.0,
+        "implementation_bead": null,
+        "note": "Auto-generated from support_matrix/workload_matrix.",
+        "rank": 10
+      },
+      {
+        "module": "wchar_abi",
+        "symbols_remaining": 12,
+        "status": "GlibcCallThrough",
+        "perf_class": "coldpath",
+        "severity_weight": 1.0,
+        "workloads_blocked": 0,
+        "per_symbol_score": 0.0,
+        "total_urgency": 0.0,
+        "implementation_bead": null,
+        "note": "Auto-generated from support_matrix/workload_matrix.",
+        "rank": 11
       }
     ]
   },
   "symbol_ranking": {
-    "description": "All 54 non-implemented symbols ranked by priority score (severity_weight * workloads_blocked). Higher score = implement first.",
+    "description": "All 93 non-implemented symbols ranked by priority score (severity_weight * workloads_blocked). Higher score = implement first.",
     "tiers": [
       {
         "tier": "T1_critical",
@@ -79,71 +183,667 @@
         "tier": "T2_hotpath",
         "criteria": "status == GlibcCallThrough AND perf_class == strict_hotpath",
         "description": "Hotpath callthroughs defeating safety membrane on performance-critical paths.",
-        "symbols": [
-          {"symbol": "pthread_mutex_lock", "module": "pthread_abi", "status": "GlibcCallThrough", "perf_class": "strict_hotpath", "score": 8.0},
-          {"symbol": "pthread_mutex_unlock", "module": "pthread_abi", "status": "GlibcCallThrough", "perf_class": "strict_hotpath", "score": 8.0},
-          {"symbol": "pthread_mutex_trylock", "module": "pthread_abi", "status": "GlibcCallThrough", "perf_class": "strict_hotpath", "score": 8.0},
-          {"symbol": "pthread_mutex_init", "module": "pthread_abi", "status": "GlibcCallThrough", "perf_class": "strict_hotpath", "score": 8.0},
-          {"symbol": "pthread_mutex_destroy", "module": "pthread_abi", "status": "GlibcCallThrough", "perf_class": "strict_hotpath", "score": 8.0},
-          {"symbol": "pthread_create", "module": "pthread_abi", "status": "GlibcCallThrough", "perf_class": "strict_hotpath", "score": 8.0},
-          {"symbol": "pthread_join", "module": "pthread_abi", "status": "GlibcCallThrough", "perf_class": "strict_hotpath", "score": 8.0},
-          {"symbol": "pthread_detach", "module": "pthread_abi", "status": "GlibcCallThrough", "perf_class": "strict_hotpath", "score": 8.0},
-          {"symbol": "pthread_self", "module": "pthread_abi", "status": "GlibcCallThrough", "perf_class": "strict_hotpath", "score": 8.0},
-          {"symbol": "pthread_equal", "module": "pthread_abi", "status": "GlibcCallThrough", "perf_class": "strict_hotpath", "score": 8.0},
-          {"symbol": "pthread_rwlock_rdlock", "module": "pthread_abi", "status": "GlibcCallThrough", "perf_class": "strict_hotpath", "score": 8.0},
-          {"symbol": "pthread_rwlock_wrlock", "module": "pthread_abi", "status": "GlibcCallThrough", "perf_class": "strict_hotpath", "score": 8.0},
-          {"symbol": "pthread_rwlock_unlock", "module": "pthread_abi", "status": "GlibcCallThrough", "perf_class": "strict_hotpath", "score": 8.0},
-          {"symbol": "pthread_rwlock_init", "module": "pthread_abi", "status": "GlibcCallThrough", "perf_class": "strict_hotpath", "score": 8.0},
-          {"symbol": "pthread_rwlock_destroy", "module": "pthread_abi", "status": "GlibcCallThrough", "perf_class": "strict_hotpath", "score": 8.0},
-          {"symbol": "pthread_cond_init", "module": "pthread_abi", "status": "GlibcCallThrough", "perf_class": "strict_hotpath", "score": 8.0},
-          {"symbol": "pthread_cond_destroy", "module": "pthread_abi", "status": "GlibcCallThrough", "perf_class": "strict_hotpath", "score": 8.0},
-          {"symbol": "pthread_cond_wait", "module": "pthread_abi", "status": "GlibcCallThrough", "perf_class": "strict_hotpath", "score": 8.0},
-          {"symbol": "pthread_cond_signal", "module": "pthread_abi", "status": "GlibcCallThrough", "perf_class": "strict_hotpath", "score": 8.0},
-          {"symbol": "pthread_cond_broadcast", "module": "pthread_abi", "status": "GlibcCallThrough", "perf_class": "strict_hotpath", "score": 8.0}
-        ],
-        "count": 20
+        "symbols": [],
+        "count": 0
       },
       {
         "tier": "T3_coldpath",
         "criteria": "status == GlibcCallThrough AND perf_class == coldpath",
         "description": "Coldpath callthroughs. Functional passthrough, no safety membrane coverage.",
         "symbols": [
-          {"symbol": "fopen", "module": "stdio_abi", "status": "GlibcCallThrough", "perf_class": "coldpath", "score": 7.0},
-          {"symbol": "fclose", "module": "stdio_abi", "status": "GlibcCallThrough", "perf_class": "coldpath", "score": 7.0},
-          {"symbol": "fread", "module": "stdio_abi", "status": "GlibcCallThrough", "perf_class": "coldpath", "score": 7.0},
-          {"symbol": "fwrite", "module": "stdio_abi", "status": "GlibcCallThrough", "perf_class": "coldpath", "score": 7.0},
-          {"symbol": "fprintf", "module": "stdio_abi", "status": "GlibcCallThrough", "perf_class": "coldpath", "score": 7.0},
-          {"symbol": "printf", "module": "stdio_abi", "status": "GlibcCallThrough", "perf_class": "coldpath", "score": 7.0},
-          {"symbol": "fflush", "module": "stdio_abi", "status": "GlibcCallThrough", "perf_class": "coldpath", "score": 7.0},
-          {"symbol": "fseek", "module": "stdio_abi", "status": "GlibcCallThrough", "perf_class": "coldpath", "score": 7.0},
-          {"symbol": "ftell", "module": "stdio_abi", "status": "GlibcCallThrough", "perf_class": "coldpath", "score": 7.0},
-          {"symbol": "rewind", "module": "stdio_abi", "status": "GlibcCallThrough", "perf_class": "coldpath", "score": 7.0},
-          {"symbol": "fgetc", "module": "stdio_abi", "status": "GlibcCallThrough", "perf_class": "coldpath", "score": 7.0},
-          {"symbol": "fgets", "module": "stdio_abi", "status": "GlibcCallThrough", "perf_class": "coldpath", "score": 7.0},
-          {"symbol": "fputc", "module": "stdio_abi", "status": "GlibcCallThrough", "perf_class": "coldpath", "score": 7.0},
-          {"symbol": "fputs", "module": "stdio_abi", "status": "GlibcCallThrough", "perf_class": "coldpath", "score": 7.0},
-          {"symbol": "getchar", "module": "stdio_abi", "status": "GlibcCallThrough", "perf_class": "coldpath", "score": 7.0},
-          {"symbol": "putchar", "module": "stdio_abi", "status": "GlibcCallThrough", "perf_class": "coldpath", "score": 7.0},
-          {"symbol": "puts", "module": "stdio_abi", "status": "GlibcCallThrough", "perf_class": "coldpath", "score": 7.0},
-          {"symbol": "perror", "module": "stdio_abi", "status": "GlibcCallThrough", "perf_class": "coldpath", "score": 7.0},
-          {"symbol": "snprintf", "module": "stdio_abi", "status": "GlibcCallThrough", "perf_class": "coldpath", "score": 7.0},
-          {"symbol": "sprintf", "module": "stdio_abi", "status": "GlibcCallThrough", "perf_class": "coldpath", "score": 7.0},
-          {"symbol": "clearerr", "module": "stdio_abi", "status": "GlibcCallThrough", "perf_class": "coldpath", "score": 7.0},
-          {"symbol": "feof", "module": "stdio_abi", "status": "GlibcCallThrough", "perf_class": "coldpath", "score": 7.0},
-          {"symbol": "ferror", "module": "stdio_abi", "status": "GlibcCallThrough", "perf_class": "coldpath", "score": 7.0},
-          {"symbol": "fileno", "module": "stdio_abi", "status": "GlibcCallThrough", "perf_class": "coldpath", "score": 7.0},
-          {"symbol": "setbuf", "module": "stdio_abi", "status": "GlibcCallThrough", "perf_class": "coldpath", "score": 7.0},
-          {"symbol": "setvbuf", "module": "stdio_abi", "status": "GlibcCallThrough", "perf_class": "coldpath", "score": 7.0},
-          {"symbol": "ungetc", "module": "stdio_abi", "status": "GlibcCallThrough", "perf_class": "coldpath", "score": 7.0},
-          {"symbol": "stdin", "module": "stdio_abi", "status": "GlibcCallThrough", "perf_class": "coldpath", "score": 7.0},
-          {"symbol": "stdout", "module": "stdio_abi", "status": "GlibcCallThrough", "perf_class": "coldpath", "score": 7.0},
-          {"symbol": "stderr", "module": "stdio_abi", "status": "GlibcCallThrough", "perf_class": "coldpath", "score": 7.0},
-          {"symbol": "dlopen", "module": "dlfcn_abi", "status": "GlibcCallThrough", "perf_class": "coldpath", "score": 2.0},
-          {"symbol": "dlclose", "module": "dlfcn_abi", "status": "GlibcCallThrough", "perf_class": "coldpath", "score": 2.0},
-          {"symbol": "dlsym", "module": "dlfcn_abi", "status": "GlibcCallThrough", "perf_class": "coldpath", "score": 2.0},
-          {"symbol": "dlerror", "module": "dlfcn_abi", "status": "GlibcCallThrough", "perf_class": "coldpath", "score": 2.0}
+          {
+            "symbol": "fmemopen",
+            "module": "stdio_abi",
+            "status": "GlibcCallThrough",
+            "perf_class": "coldpath",
+            "score": 7.0
+          },
+          {
+            "symbol": "fopencookie",
+            "module": "stdio_abi",
+            "status": "GlibcCallThrough",
+            "perf_class": "coldpath",
+            "score": 7.0
+          },
+          {
+            "symbol": "fscanf",
+            "module": "stdio_abi",
+            "status": "GlibcCallThrough",
+            "perf_class": "coldpath",
+            "score": 7.0
+          },
+          {
+            "symbol": "open_memstream",
+            "module": "stdio_abi",
+            "status": "GlibcCallThrough",
+            "perf_class": "coldpath",
+            "score": 7.0
+          },
+          {
+            "symbol": "scanf",
+            "module": "stdio_abi",
+            "status": "GlibcCallThrough",
+            "perf_class": "coldpath",
+            "score": 7.0
+          },
+          {
+            "symbol": "sscanf",
+            "module": "stdio_abi",
+            "status": "GlibcCallThrough",
+            "perf_class": "coldpath",
+            "score": 7.0
+          },
+          {
+            "symbol": "vfscanf",
+            "module": "stdio_abi",
+            "status": "GlibcCallThrough",
+            "perf_class": "coldpath",
+            "score": 7.0
+          },
+          {
+            "symbol": "vscanf",
+            "module": "stdio_abi",
+            "status": "GlibcCallThrough",
+            "perf_class": "coldpath",
+            "score": 7.0
+          },
+          {
+            "symbol": "vsscanf",
+            "module": "stdio_abi",
+            "status": "GlibcCallThrough",
+            "perf_class": "coldpath",
+            "score": 7.0
+          },
+          {
+            "symbol": "pthread_cancel",
+            "module": "pthread_abi",
+            "status": "GlibcCallThrough",
+            "perf_class": "coldpath",
+            "score": 4.0
+          },
+          {
+            "symbol": "pthread_setcancelstate",
+            "module": "pthread_abi",
+            "status": "GlibcCallThrough",
+            "perf_class": "coldpath",
+            "score": 4.0
+          },
+          {
+            "symbol": "pthread_setcanceltype",
+            "module": "pthread_abi",
+            "status": "GlibcCallThrough",
+            "perf_class": "coldpath",
+            "score": 4.0
+          },
+          {
+            "symbol": "pthread_testcancel",
+            "module": "pthread_abi",
+            "status": "GlibcCallThrough",
+            "perf_class": "coldpath",
+            "score": 4.0
+          },
+          {
+            "symbol": "dl_iterate_phdr",
+            "module": "dlfcn_abi",
+            "status": "GlibcCallThrough",
+            "perf_class": "coldpath",
+            "score": 2.0
+          },
+          {
+            "symbol": "dladdr",
+            "module": "dlfcn_abi",
+            "status": "GlibcCallThrough",
+            "perf_class": "coldpath",
+            "score": 2.0
+          },
+          {
+            "symbol": "dlclose",
+            "module": "dlfcn_abi",
+            "status": "GlibcCallThrough",
+            "perf_class": "coldpath",
+            "score": 2.0
+          },
+          {
+            "symbol": "dlerror",
+            "module": "dlfcn_abi",
+            "status": "GlibcCallThrough",
+            "perf_class": "coldpath",
+            "score": 2.0
+          },
+          {
+            "symbol": "dlopen",
+            "module": "dlfcn_abi",
+            "status": "GlibcCallThrough",
+            "perf_class": "coldpath",
+            "score": 2.0
+          },
+          {
+            "symbol": "dlsym",
+            "module": "dlfcn_abi",
+            "status": "GlibcCallThrough",
+            "perf_class": "coldpath",
+            "score": 2.0
+          },
+          {
+            "symbol": "nl_langinfo",
+            "module": "locale_abi",
+            "status": "GlibcCallThrough",
+            "perf_class": "coldpath",
+            "score": 2.0
+          },
+          {
+            "symbol": "if_freenameindex",
+            "module": "inet_abi",
+            "status": "GlibcCallThrough",
+            "perf_class": "coldpath",
+            "score": 0.0
+          },
+          {
+            "symbol": "if_nameindex",
+            "module": "inet_abi",
+            "status": "GlibcCallThrough",
+            "perf_class": "coldpath",
+            "score": 0.0
+          },
+          {
+            "symbol": "posix_spawn",
+            "module": "process_abi",
+            "status": "GlibcCallThrough",
+            "perf_class": "coldpath",
+            "score": 0.0
+          },
+          {
+            "symbol": "posix_spawn_file_actions_destroy",
+            "module": "process_abi",
+            "status": "GlibcCallThrough",
+            "perf_class": "coldpath",
+            "score": 0.0
+          },
+          {
+            "symbol": "posix_spawn_file_actions_init",
+            "module": "process_abi",
+            "status": "GlibcCallThrough",
+            "perf_class": "coldpath",
+            "score": 0.0
+          },
+          {
+            "symbol": "posix_spawnattr_destroy",
+            "module": "process_abi",
+            "status": "GlibcCallThrough",
+            "perf_class": "coldpath",
+            "score": 0.0
+          },
+          {
+            "symbol": "posix_spawnattr_init",
+            "module": "process_abi",
+            "status": "GlibcCallThrough",
+            "perf_class": "coldpath",
+            "score": 0.0
+          },
+          {
+            "symbol": "posix_spawnp",
+            "module": "process_abi",
+            "status": "GlibcCallThrough",
+            "perf_class": "coldpath",
+            "score": 0.0
+          },
+          {
+            "symbol": "fnmatch",
+            "module": "string_abi",
+            "status": "GlibcCallThrough",
+            "perf_class": "coldpath",
+            "score": 0.0
+          },
+          {
+            "symbol": "glob",
+            "module": "string_abi",
+            "status": "GlibcCallThrough",
+            "perf_class": "coldpath",
+            "score": 0.0
+          },
+          {
+            "symbol": "globfree",
+            "module": "string_abi",
+            "status": "GlibcCallThrough",
+            "perf_class": "coldpath",
+            "score": 0.0
+          },
+          {
+            "symbol": "regcomp",
+            "module": "string_abi",
+            "status": "GlibcCallThrough",
+            "perf_class": "coldpath",
+            "score": 0.0
+          },
+          {
+            "symbol": "regerror",
+            "module": "string_abi",
+            "status": "GlibcCallThrough",
+            "perf_class": "coldpath",
+            "score": 0.0
+          },
+          {
+            "symbol": "regexec",
+            "module": "string_abi",
+            "status": "GlibcCallThrough",
+            "perf_class": "coldpath",
+            "score": 0.0
+          },
+          {
+            "symbol": "regfree",
+            "module": "string_abi",
+            "status": "GlibcCallThrough",
+            "perf_class": "coldpath",
+            "score": 0.0
+          },
+          {
+            "symbol": "strptime",
+            "module": "time_abi",
+            "status": "GlibcCallThrough",
+            "perf_class": "coldpath",
+            "score": 0.0
+          },
+          {
+            "symbol": "aio_cancel",
+            "module": "unistd_abi",
+            "status": "GlibcCallThrough",
+            "perf_class": "coldpath",
+            "score": 0.0
+          },
+          {
+            "symbol": "aio_error",
+            "module": "unistd_abi",
+            "status": "GlibcCallThrough",
+            "perf_class": "coldpath",
+            "score": 0.0
+          },
+          {
+            "symbol": "aio_fsync",
+            "module": "unistd_abi",
+            "status": "GlibcCallThrough",
+            "perf_class": "coldpath",
+            "score": 0.0
+          },
+          {
+            "symbol": "aio_read",
+            "module": "unistd_abi",
+            "status": "GlibcCallThrough",
+            "perf_class": "coldpath",
+            "score": 0.0
+          },
+          {
+            "symbol": "aio_return",
+            "module": "unistd_abi",
+            "status": "GlibcCallThrough",
+            "perf_class": "coldpath",
+            "score": 0.0
+          },
+          {
+            "symbol": "aio_suspend",
+            "module": "unistd_abi",
+            "status": "GlibcCallThrough",
+            "perf_class": "coldpath",
+            "score": 0.0
+          },
+          {
+            "symbol": "aio_write",
+            "module": "unistd_abi",
+            "status": "GlibcCallThrough",
+            "perf_class": "coldpath",
+            "score": 0.0
+          },
+          {
+            "symbol": "closelog",
+            "module": "unistd_abi",
+            "status": "GlibcCallThrough",
+            "perf_class": "coldpath",
+            "score": 0.0
+          },
+          {
+            "symbol": "crypt",
+            "module": "unistd_abi",
+            "status": "GlibcCallThrough",
+            "perf_class": "coldpath",
+            "score": 0.0
+          },
+          {
+            "symbol": "endmntent",
+            "module": "unistd_abi",
+            "status": "GlibcCallThrough",
+            "perf_class": "coldpath",
+            "score": 0.0
+          },
+          {
+            "symbol": "fgetgrent",
+            "module": "unistd_abi",
+            "status": "GlibcCallThrough",
+            "perf_class": "coldpath",
+            "score": 0.0
+          },
+          {
+            "symbol": "fgetpwent",
+            "module": "unistd_abi",
+            "status": "GlibcCallThrough",
+            "perf_class": "coldpath",
+            "score": 0.0
+          },
+          {
+            "symbol": "forkpty",
+            "module": "unistd_abi",
+            "status": "GlibcCallThrough",
+            "perf_class": "coldpath",
+            "score": 0.0
+          },
+          {
+            "symbol": "freeifaddrs",
+            "module": "unistd_abi",
+            "status": "GlibcCallThrough",
+            "perf_class": "coldpath",
+            "score": 0.0
+          },
+          {
+            "symbol": "ftw",
+            "module": "unistd_abi",
+            "status": "GlibcCallThrough",
+            "perf_class": "coldpath",
+            "score": 0.0
+          },
+          {
+            "symbol": "getgrent_r",
+            "module": "unistd_abi",
+            "status": "GlibcCallThrough",
+            "perf_class": "coldpath",
+            "score": 0.0
+          },
+          {
+            "symbol": "getifaddrs",
+            "module": "unistd_abi",
+            "status": "GlibcCallThrough",
+            "perf_class": "coldpath",
+            "score": 0.0
+          },
+          {
+            "symbol": "getmntent",
+            "module": "unistd_abi",
+            "status": "GlibcCallThrough",
+            "perf_class": "coldpath",
+            "score": 0.0
+          },
+          {
+            "symbol": "getpwent_r",
+            "module": "unistd_abi",
+            "status": "GlibcCallThrough",
+            "perf_class": "coldpath",
+            "score": 0.0
+          },
+          {
+            "symbol": "getutent",
+            "module": "unistd_abi",
+            "status": "GlibcCallThrough",
+            "perf_class": "coldpath",
+            "score": 0.0
+          },
+          {
+            "symbol": "lio_listio",
+            "module": "unistd_abi",
+            "status": "GlibcCallThrough",
+            "perf_class": "coldpath",
+            "score": 0.0
+          },
+          {
+            "symbol": "nftw",
+            "module": "unistd_abi",
+            "status": "GlibcCallThrough",
+            "perf_class": "coldpath",
+            "score": 0.0
+          },
+          {
+            "symbol": "openlog",
+            "module": "unistd_abi",
+            "status": "GlibcCallThrough",
+            "perf_class": "coldpath",
+            "score": 0.0
+          },
+          {
+            "symbol": "openpty",
+            "module": "unistd_abi",
+            "status": "GlibcCallThrough",
+            "perf_class": "coldpath",
+            "score": 0.0
+          },
+          {
+            "symbol": "res_init",
+            "module": "unistd_abi",
+            "status": "GlibcCallThrough",
+            "perf_class": "coldpath",
+            "score": 0.0
+          },
+          {
+            "symbol": "res_query",
+            "module": "unistd_abi",
+            "status": "GlibcCallThrough",
+            "perf_class": "coldpath",
+            "score": 0.0
+          },
+          {
+            "symbol": "res_search",
+            "module": "unistd_abi",
+            "status": "GlibcCallThrough",
+            "perf_class": "coldpath",
+            "score": 0.0
+          },
+          {
+            "symbol": "sem_close",
+            "module": "unistd_abi",
+            "status": "GlibcCallThrough",
+            "perf_class": "coldpath",
+            "score": 0.0
+          },
+          {
+            "symbol": "sem_open",
+            "module": "unistd_abi",
+            "status": "GlibcCallThrough",
+            "perf_class": "coldpath",
+            "score": 0.0
+          },
+          {
+            "symbol": "sem_unlink",
+            "module": "unistd_abi",
+            "status": "GlibcCallThrough",
+            "perf_class": "coldpath",
+            "score": 0.0
+          },
+          {
+            "symbol": "setmntent",
+            "module": "unistd_abi",
+            "status": "GlibcCallThrough",
+            "perf_class": "coldpath",
+            "score": 0.0
+          },
+          {
+            "symbol": "syslog",
+            "module": "unistd_abi",
+            "status": "GlibcCallThrough",
+            "perf_class": "coldpath",
+            "score": 0.0
+          },
+          {
+            "symbol": "utmpname",
+            "module": "unistd_abi",
+            "status": "GlibcCallThrough",
+            "perf_class": "coldpath",
+            "score": 0.0
+          },
+          {
+            "symbol": "vsyslog",
+            "module": "unistd_abi",
+            "status": "GlibcCallThrough",
+            "perf_class": "coldpath",
+            "score": 0.0
+          },
+          {
+            "symbol": "wordexp",
+            "module": "unistd_abi",
+            "status": "GlibcCallThrough",
+            "perf_class": "coldpath",
+            "score": 0.0
+          },
+          {
+            "symbol": "wordfree",
+            "module": "unistd_abi",
+            "status": "GlibcCallThrough",
+            "perf_class": "coldpath",
+            "score": 0.0
+          },
+          {
+            "symbol": "glob64",
+            "module": "unknown",
+            "status": "GlibcCallThrough",
+            "perf_class": "coldpath",
+            "score": 0.0
+          },
+          {
+            "symbol": "globfree64",
+            "module": "unknown",
+            "status": "GlibcCallThrough",
+            "perf_class": "coldpath",
+            "score": 0.0
+          },
+          {
+            "symbol": "nftw64",
+            "module": "unknown",
+            "status": "GlibcCallThrough",
+            "perf_class": "coldpath",
+            "score": 0.0
+          },
+          {
+            "symbol": "vasprintf",
+            "module": "unknown",
+            "status": "GlibcCallThrough",
+            "perf_class": "coldpath",
+            "score": 0.0
+          },
+          {
+            "symbol": "vdprintf",
+            "module": "unknown",
+            "status": "GlibcCallThrough",
+            "perf_class": "coldpath",
+            "score": 0.0
+          },
+          {
+            "symbol": "vfprintf",
+            "module": "unknown",
+            "status": "GlibcCallThrough",
+            "perf_class": "coldpath",
+            "score": 0.0
+          },
+          {
+            "symbol": "vprintf",
+            "module": "unknown",
+            "status": "GlibcCallThrough",
+            "perf_class": "coldpath",
+            "score": 0.0
+          },
+          {
+            "symbol": "vsnprintf",
+            "module": "unknown",
+            "status": "GlibcCallThrough",
+            "perf_class": "coldpath",
+            "score": 0.0
+          },
+          {
+            "symbol": "vsprintf",
+            "module": "unknown",
+            "status": "GlibcCallThrough",
+            "perf_class": "coldpath",
+            "score": 0.0
+          },
+          {
+            "symbol": "fwprintf",
+            "module": "wchar_abi",
+            "status": "GlibcCallThrough",
+            "perf_class": "coldpath",
+            "score": 0.0
+          },
+          {
+            "symbol": "fwscanf",
+            "module": "wchar_abi",
+            "status": "GlibcCallThrough",
+            "perf_class": "coldpath",
+            "score": 0.0
+          },
+          {
+            "symbol": "swprintf",
+            "module": "wchar_abi",
+            "status": "GlibcCallThrough",
+            "perf_class": "coldpath",
+            "score": 0.0
+          },
+          {
+            "symbol": "swscanf",
+            "module": "wchar_abi",
+            "status": "GlibcCallThrough",
+            "perf_class": "coldpath",
+            "score": 0.0
+          },
+          {
+            "symbol": "vfwprintf",
+            "module": "wchar_abi",
+            "status": "GlibcCallThrough",
+            "perf_class": "coldpath",
+            "score": 0.0
+          },
+          {
+            "symbol": "vfwscanf",
+            "module": "wchar_abi",
+            "status": "GlibcCallThrough",
+            "perf_class": "coldpath",
+            "score": 0.0
+          },
+          {
+            "symbol": "vswprintf",
+            "module": "wchar_abi",
+            "status": "GlibcCallThrough",
+            "perf_class": "coldpath",
+            "score": 0.0
+          },
+          {
+            "symbol": "vswscanf",
+            "module": "wchar_abi",
+            "status": "GlibcCallThrough",
+            "perf_class": "coldpath",
+            "score": 0.0
+          },
+          {
+            "symbol": "vwprintf",
+            "module": "wchar_abi",
+            "status": "GlibcCallThrough",
+            "perf_class": "coldpath",
+            "score": 0.0
+          },
+          {
+            "symbol": "vwscanf",
+            "module": "wchar_abi",
+            "status": "GlibcCallThrough",
+            "perf_class": "coldpath",
+            "score": 0.0
+          },
+          {
+            "symbol": "wprintf",
+            "module": "wchar_abi",
+            "status": "GlibcCallThrough",
+            "perf_class": "coldpath",
+            "score": 0.0
+          },
+          {
+            "symbol": "wscanf",
+            "module": "wchar_abi",
+            "status": "GlibcCallThrough",
+            "perf_class": "coldpath",
+            "score": 0.0
+          }
         ],
-        "count": 34
+        "count": 93
       }
     ]
   },
@@ -161,45 +861,135 @@
     },
     "collection_script": "scripts/ld_preload_smoke.sh",
     "output_path": "tests/cve_arena/results/stub_traces/",
-    "note": "Dynamic trace collection requires LD_PRELOAD of libfrankenlibc_abi.so against target binary. Static ranking (this file) is used until dynamic data is available."
+    "note": "Dynamic trace collection requires LD_PRELOAD of libfrankenlibc_abi.so against target binary. Static ranking is used until dynamic data is available."
   },
   "burn_down": {
     "description": "Burn-down tracking for stub/callthrough remediation waves.",
-    "total_non_implemented": 54,
+    "total_non_implemented": 93,
     "by_status": {
       "Stub": 0,
-      "GlibcCallThrough": 54
+      "GlibcCallThrough": 93
     },
     "by_perf_class": {
-      "strict_hotpath": 20,
-      "coldpath": 34
+      "strict_hotpath": 0,
+      "coldpath": 93
     },
     "wave_plan": [
-      {"wave": 1, "bead": "bd-z84", "module": "pthread_abi", "scope": "mutex core (lock/unlock/trylock/init/destroy)", "symbols": 5, "status": "in_progress"},
-      {"wave": 2, "bead": "bd-yos", "module": "pthread_abi", "scope": "thread bootstrap (create/join/detach)", "symbols": 3, "status": "planned"},
-      {"wave": 3, "bead": "bd-66s", "module": "resolv_abi", "scope": "getaddrinfo/getnameinfo numeric+files", "symbols": 0, "status": "complete", "note": "4 symbols implemented, removed from non-implemented count"},
-      {"wave": 4, "bead": "bd-3pe", "module": "locale_abi", "scope": "C/POSIX locale (setlocale/localeconv)", "symbols": 0, "status": "complete", "note": "2 symbols implemented, removed from non-implemented count"},
-      {"wave": 5, "bead": "bd-3rn", "module": "dlfcn_abi", "scope": "rtld phase-1 (dlopen/dlclose/dlsym/dlerror)", "symbols": 4, "status": "planned"},
-      {"wave": 6, "bead": null, "module": "pthread_abi", "scope": "rwlock + condvar remaining", "symbols": 12, "status": "unscheduled"},
-      {"wave": 7, "bead": null, "module": "stdio_abi", "scope": "FILE* full reimplementation", "symbols": 30, "status": "unscheduled"}
+      {
+        "wave": 1,
+        "bead": "bd-h5x.3",
+        "module": "stdio_abi",
+        "scope": "non-implemented surface remediation",
+        "symbols": 9,
+        "status": "unscheduled"
+      },
+      {
+        "wave": 2,
+        "bead": "bd-h5x.2",
+        "module": "pthread_abi",
+        "scope": "non-implemented surface remediation",
+        "symbols": 4,
+        "status": "unscheduled"
+      },
+      {
+        "wave": 3,
+        "bead": "bd-33zg",
+        "module": "dlfcn_abi",
+        "scope": "non-implemented surface remediation",
+        "symbols": 6,
+        "status": "unscheduled"
+      },
+      {
+        "wave": 4,
+        "bead": "bd-2vv.7",
+        "module": "locale_abi",
+        "scope": "non-implemented surface remediation",
+        "symbols": 1,
+        "status": "unscheduled"
+      },
+      {
+        "wave": 5,
+        "bead": null,
+        "module": "inet_abi",
+        "scope": "non-implemented surface remediation",
+        "symbols": 2,
+        "status": "unscheduled"
+      },
+      {
+        "wave": 6,
+        "bead": null,
+        "module": "process_abi",
+        "scope": "non-implemented surface remediation",
+        "symbols": 6,
+        "status": "unscheduled"
+      },
+      {
+        "wave": 7,
+        "bead": null,
+        "module": "string_abi",
+        "scope": "non-implemented surface remediation",
+        "symbols": 7,
+        "status": "unscheduled"
+      },
+      {
+        "wave": 8,
+        "bead": null,
+        "module": "time_abi",
+        "scope": "non-implemented surface remediation",
+        "symbols": 1,
+        "status": "unscheduled"
+      },
+      {
+        "wave": 9,
+        "bead": null,
+        "module": "unistd_abi",
+        "scope": "non-implemented surface remediation",
+        "symbols": 36,
+        "status": "unscheduled"
+      },
+      {
+        "wave": 10,
+        "bead": null,
+        "module": "unknown",
+        "scope": "non-implemented surface remediation",
+        "symbols": 9,
+        "status": "unscheduled"
+      },
+      {
+        "wave": 11,
+        "bead": null,
+        "module": "wchar_abi",
+        "scope": "non-implemented surface remediation",
+        "symbols": 12,
+        "status": "unscheduled"
+      }
     ],
-    "waves_in_progress": 1,
-    "symbols_in_progress": 5,
-    "symbols_planned": 7,
-    "symbols_unscheduled": 42
+    "waves_in_progress": 0,
+    "symbols_in_progress": 0,
+    "symbols_planned": 0,
+    "symbols_unscheduled": 93
   },
   "summary": {
-    "total_non_implemented": 54,
+    "total_non_implemented": 93,
     "stubs": 0,
-    "callthroughs": 54,
-    "modules_affected": 3,
+    "callthroughs": 93,
+    "modules_affected": 11,
     "tier_counts": {
       "T1_critical": 0,
-      "T2_hotpath": 20,
-      "T3_coldpath": 34
+      "T2_hotpath": 0,
+      "T3_coldpath": 93
     },
-    "highest_per_symbol_score": {"symbol": "pthread_mutex_lock", "score": 8.0},
-    "highest_total_urgency": {"module": "stdio_abi", "urgency": 210.0},
-    "most_impactful_quick_win": {"module": "dlfcn_abi", "reason": "4 callthroughs, small scope, critical for L2 transition"}
+    "highest_per_symbol_score": {
+      "symbol": "fmemopen",
+      "score": 7.0
+    },
+    "highest_total_urgency": {
+      "module": "stdio_abi",
+      "urgency": 63.0
+    },
+    "most_impactful_quick_win": {
+      "module": "locale_abi",
+      "reason": "Smallest remaining non-implemented module by symbol count."
+    }
   }
 }

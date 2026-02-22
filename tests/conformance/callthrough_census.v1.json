@@ -4,11 +4,11 @@
   "description": "Current glibc callthrough census from support_matrix plus dependency-aware decommission sequencing.",
   "source": {
     "support_matrix_path": "support_matrix.json",
-    "support_matrix_sha256": "2fbd45131d2a6eb097f0201cbff8ccd1ac7a4b014edd98ac811ce432727119c5",
-    "total_exported": 250,
-    "status_summary_callthrough": 20,
-    "derived_callthrough_symbols": 20,
-    "summary_delta": 0
+    "support_matrix_sha256": "2d50a39dfd24ac4e79d5439bcd4a426ef82f5d5006f47342592ba7603aba91fe",
+    "total_exported": 929,
+    "status_summary_callthrough": 0,
+    "derived_callthrough_symbols": 93,
+    "summary_delta": -93
   },
   "ranking_policy": {
     "runtime_impact_weights": {
@@ -25,37 +25,260 @@
   },
   "module_census": [
     {
-      "module": "stdio_abi",
-      "count": 16,
+      "module": "unistd_abi",
+      "count": 36,
       "strict_hotpath_count": 0,
       "hardened_hotpath_count": 0,
-      "coldpath_count": 16,
-      "runtime_impact_weight": 16,
-      "avg_complexity_weight": 3.0,
+      "coldpath_count": 36,
+      "runtime_impact_weight": 36,
+      "avg_complexity_weight": 2.0,
       "complexity_mix": {
         "low": 0,
-        "medium": 0,
-        "high": 16
+        "medium": 36,
+        "high": 0
       },
       "runtime_impact_rank": 1
     },
     {
+      "module": "wchar_abi",
+      "count": 12,
+      "strict_hotpath_count": 0,
+      "hardened_hotpath_count": 0,
+      "coldpath_count": 12,
+      "runtime_impact_weight": 12,
+      "avg_complexity_weight": 2.0,
+      "complexity_mix": {
+        "low": 0,
+        "medium": 12,
+        "high": 0
+      },
+      "runtime_impact_rank": 2
+    },
+    {
+      "module": "None",
+      "count": 9,
+      "strict_hotpath_count": 0,
+      "hardened_hotpath_count": 0,
+      "coldpath_count": 9,
+      "runtime_impact_weight": 9,
+      "avg_complexity_weight": 2.0,
+      "complexity_mix": {
+        "low": 0,
+        "medium": 9,
+        "high": 0
+      },
+      "runtime_impact_rank": 3
+    },
+    {
+      "module": "stdio_abi",
+      "count": 9,
+      "strict_hotpath_count": 0,
+      "hardened_hotpath_count": 0,
+      "coldpath_count": 9,
+      "runtime_impact_weight": 9,
+      "avg_complexity_weight": 3.0,
+      "complexity_mix": {
+        "low": 0,
+        "medium": 0,
+        "high": 9
+      },
+      "runtime_impact_rank": 4
+    },
+    {
+      "module": "string_abi",
+      "count": 7,
+      "strict_hotpath_count": 0,
+      "hardened_hotpath_count": 0,
+      "coldpath_count": 7,
+      "runtime_impact_weight": 7,
+      "avg_complexity_weight": 2.0,
+      "complexity_mix": {
+        "low": 0,
+        "medium": 7,
+        "high": 0
+      },
+      "runtime_impact_rank": 5
+    },
+    {
       "module": "dlfcn_abi",
+      "count": 6,
+      "strict_hotpath_count": 0,
+      "hardened_hotpath_count": 0,
+      "coldpath_count": 6,
+      "runtime_impact_weight": 6,
+      "avg_complexity_weight": 2.0,
+      "complexity_mix": {
+        "low": 0,
+        "medium": 6,
+        "high": 0
+      },
+      "runtime_impact_rank": 6
+    },
+    {
+      "module": "process_abi",
+      "count": 6,
+      "strict_hotpath_count": 0,
+      "hardened_hotpath_count": 0,
+      "coldpath_count": 6,
+      "runtime_impact_weight": 6,
+      "avg_complexity_weight": 2.0,
+      "complexity_mix": {
+        "low": 0,
+        "medium": 6,
+        "high": 0
+      },
+      "runtime_impact_rank": 7
+    },
+    {
+      "module": "pthread_abi",
       "count": 4,
       "strict_hotpath_count": 0,
       "hardened_hotpath_count": 0,
       "coldpath_count": 4,
       "runtime_impact_weight": 4,
+      "avg_complexity_weight": 3.0,
+      "complexity_mix": {
+        "low": 0,
+        "medium": 0,
+        "high": 4
+      },
+      "runtime_impact_rank": 8
+    },
+    {
+      "module": "inet_abi",
+      "count": 2,
+      "strict_hotpath_count": 0,
+      "hardened_hotpath_count": 0,
+      "coldpath_count": 2,
+      "runtime_impact_weight": 2,
       "avg_complexity_weight": 2.0,
       "complexity_mix": {
         "low": 0,
-        "medium": 4,
+        "medium": 2,
         "high": 0
       },
-      "runtime_impact_rank": 2
+      "runtime_impact_rank": 9
+    },
+    {
+      "module": "locale_abi",
+      "count": 1,
+      "strict_hotpath_count": 0,
+      "hardened_hotpath_count": 0,
+      "coldpath_count": 1,
+      "runtime_impact_weight": 1,
+      "avg_complexity_weight": 2.0,
+      "complexity_mix": {
+        "low": 0,
+        "medium": 1,
+        "high": 0
+      },
+      "runtime_impact_rank": 10
+    },
+    {
+      "module": "time_abi",
+      "count": 1,
+      "strict_hotpath_count": 0,
+      "hardened_hotpath_count": 0,
+      "coldpath_count": 1,
+      "runtime_impact_weight": 1,
+      "avg_complexity_weight": 2.0,
+      "complexity_mix": {
+        "low": 0,
+        "medium": 1,
+        "high": 0
+      },
+      "runtime_impact_rank": 11
     }
   ],
   "symbol_census": [
+    {
+      "symbol": "glob64",
+      "module": "None",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "medium",
+      "priority_score": 80
+    },
+    {
+      "symbol": "globfree64",
+      "module": "None",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "medium",
+      "priority_score": 80
+    },
+    {
+      "symbol": "nftw64",
+      "module": "None",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "medium",
+      "priority_score": 80
+    },
+    {
+      "symbol": "vasprintf",
+      "module": "None",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "medium",
+      "priority_score": 80
+    },
+    {
+      "symbol": "vdprintf",
+      "module": "None",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "medium",
+      "priority_score": 80
+    },
+    {
+      "symbol": "vfprintf",
+      "module": "None",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "medium",
+      "priority_score": 80
+    },
+    {
+      "symbol": "vprintf",
+      "module": "None",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "medium",
+      "priority_score": 80
+    },
+    {
+      "symbol": "vsnprintf",
+      "module": "None",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "medium",
+      "priority_score": 80
+    },
+    {
+      "symbol": "vsprintf",
+      "module": "None",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "medium",
+      "priority_score": 80
+    },
+    {
+      "symbol": "dl_iterate_phdr",
+      "module": "dlfcn_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "medium",
+      "priority_score": 80
+    },
+    {
+      "symbol": "dladdr",
+      "module": "dlfcn_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "medium",
+      "priority_score": 80
+    },
     {
       "symbol": "dlclose",
       "module": "dlfcn_abi",
@@ -89,7 +312,559 @@
       "priority_score": 80
     },
     {
-      "symbol": "fclose",
+      "symbol": "if_freenameindex",
+      "module": "inet_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "medium",
+      "priority_score": 80
+    },
+    {
+      "symbol": "if_nameindex",
+      "module": "inet_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "medium",
+      "priority_score": 80
+    },
+    {
+      "symbol": "nl_langinfo",
+      "module": "locale_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "medium",
+      "priority_score": 80
+    },
+    {
+      "symbol": "posix_spawn",
+      "module": "process_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "medium",
+      "priority_score": 80
+    },
+    {
+      "symbol": "posix_spawn_file_actions_destroy",
+      "module": "process_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "medium",
+      "priority_score": 80
+    },
+    {
+      "symbol": "posix_spawn_file_actions_init",
+      "module": "process_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "medium",
+      "priority_score": 80
+    },
+    {
+      "symbol": "posix_spawnattr_destroy",
+      "module": "process_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "medium",
+      "priority_score": 80
+    },
+    {
+      "symbol": "posix_spawnattr_init",
+      "module": "process_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "medium",
+      "priority_score": 80
+    },
+    {
+      "symbol": "posix_spawnp",
+      "module": "process_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "medium",
+      "priority_score": 80
+    },
+    {
+      "symbol": "fnmatch",
+      "module": "string_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "medium",
+      "priority_score": 80
+    },
+    {
+      "symbol": "glob",
+      "module": "string_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "medium",
+      "priority_score": 80
+    },
+    {
+      "symbol": "globfree",
+      "module": "string_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "medium",
+      "priority_score": 80
+    },
+    {
+      "symbol": "regcomp",
+      "module": "string_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "medium",
+      "priority_score": 80
+    },
+    {
+      "symbol": "regerror",
+      "module": "string_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "medium",
+      "priority_score": 80
+    },
+    {
+      "symbol": "regexec",
+      "module": "string_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "medium",
+      "priority_score": 80
+    },
+    {
+      "symbol": "regfree",
+      "module": "string_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "medium",
+      "priority_score": 80
+    },
+    {
+      "symbol": "strptime",
+      "module": "time_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "medium",
+      "priority_score": 80
+    },
+    {
+      "symbol": "aio_cancel",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "medium",
+      "priority_score": 80
+    },
+    {
+      "symbol": "aio_error",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "medium",
+      "priority_score": 80
+    },
+    {
+      "symbol": "aio_fsync",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "medium",
+      "priority_score": 80
+    },
+    {
+      "symbol": "aio_read",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "medium",
+      "priority_score": 80
+    },
+    {
+      "symbol": "aio_return",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "medium",
+      "priority_score": 80
+    },
+    {
+      "symbol": "aio_suspend",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "medium",
+      "priority_score": 80
+    },
+    {
+      "symbol": "aio_write",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "medium",
+      "priority_score": 80
+    },
+    {
+      "symbol": "closelog",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "medium",
+      "priority_score": 80
+    },
+    {
+      "symbol": "crypt",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "medium",
+      "priority_score": 80
+    },
+    {
+      "symbol": "endmntent",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "medium",
+      "priority_score": 80
+    },
+    {
+      "symbol": "fgetgrent",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "medium",
+      "priority_score": 80
+    },
+    {
+      "symbol": "fgetpwent",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "medium",
+      "priority_score": 80
+    },
+    {
+      "symbol": "forkpty",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "medium",
+      "priority_score": 80
+    },
+    {
+      "symbol": "freeifaddrs",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "medium",
+      "priority_score": 80
+    },
+    {
+      "symbol": "ftw",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "medium",
+      "priority_score": 80
+    },
+    {
+      "symbol": "getgrent_r",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "medium",
+      "priority_score": 80
+    },
+    {
+      "symbol": "getifaddrs",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "medium",
+      "priority_score": 80
+    },
+    {
+      "symbol": "getmntent",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "medium",
+      "priority_score": 80
+    },
+    {
+      "symbol": "getpwent_r",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "medium",
+      "priority_score": 80
+    },
+    {
+      "symbol": "getutent",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "medium",
+      "priority_score": 80
+    },
+    {
+      "symbol": "lio_listio",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "medium",
+      "priority_score": 80
+    },
+    {
+      "symbol": "nftw",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "medium",
+      "priority_score": 80
+    },
+    {
+      "symbol": "openlog",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "medium",
+      "priority_score": 80
+    },
+    {
+      "symbol": "openpty",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "medium",
+      "priority_score": 80
+    },
+    {
+      "symbol": "res_init",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "medium",
+      "priority_score": 80
+    },
+    {
+      "symbol": "res_query",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "medium",
+      "priority_score": 80
+    },
+    {
+      "symbol": "res_search",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "medium",
+      "priority_score": 80
+    },
+    {
+      "symbol": "sem_close",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "medium",
+      "priority_score": 80
+    },
+    {
+      "symbol": "sem_open",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "medium",
+      "priority_score": 80
+    },
+    {
+      "symbol": "sem_unlink",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "medium",
+      "priority_score": 80
+    },
+    {
+      "symbol": "setmntent",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "medium",
+      "priority_score": 80
+    },
+    {
+      "symbol": "syslog",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "medium",
+      "priority_score": 80
+    },
+    {
+      "symbol": "utmpname",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "medium",
+      "priority_score": 80
+    },
+    {
+      "symbol": "vsyslog",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "medium",
+      "priority_score": 80
+    },
+    {
+      "symbol": "wordexp",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "medium",
+      "priority_score": 80
+    },
+    {
+      "symbol": "wordfree",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "medium",
+      "priority_score": 80
+    },
+    {
+      "symbol": "fwprintf",
+      "module": "wchar_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "medium",
+      "priority_score": 80
+    },
+    {
+      "symbol": "fwscanf",
+      "module": "wchar_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "medium",
+      "priority_score": 80
+    },
+    {
+      "symbol": "swprintf",
+      "module": "wchar_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "medium",
+      "priority_score": 80
+    },
+    {
+      "symbol": "swscanf",
+      "module": "wchar_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "medium",
+      "priority_score": 80
+    },
+    {
+      "symbol": "vfwprintf",
+      "module": "wchar_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "medium",
+      "priority_score": 80
+    },
+    {
+      "symbol": "vfwscanf",
+      "module": "wchar_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "medium",
+      "priority_score": 80
+    },
+    {
+      "symbol": "vswprintf",
+      "module": "wchar_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "medium",
+      "priority_score": 80
+    },
+    {
+      "symbol": "vswscanf",
+      "module": "wchar_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "medium",
+      "priority_score": 80
+    },
+    {
+      "symbol": "vwprintf",
+      "module": "wchar_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "medium",
+      "priority_score": 80
+    },
+    {
+      "symbol": "vwscanf",
+      "module": "wchar_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "medium",
+      "priority_score": 80
+    },
+    {
+      "symbol": "wprintf",
+      "module": "wchar_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "medium",
+      "priority_score": 80
+    },
+    {
+      "symbol": "wscanf",
+      "module": "wchar_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "medium",
+      "priority_score": 80
+    },
+    {
+      "symbol": "pthread_cancel",
+      "module": "pthread_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "high",
+      "priority_score": 70
+    },
+    {
+      "symbol": "pthread_setcancelstate",
+      "module": "pthread_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "high",
+      "priority_score": 70
+    },
+    {
+      "symbol": "pthread_setcanceltype",
+      "module": "pthread_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "high",
+      "priority_score": 70
+    },
+    {
+      "symbol": "pthread_testcancel",
+      "module": "pthread_abi",
+      "perf_class": "coldpath",
+      "runtime_impact": "low",
+      "replacement_complexity": "high",
+      "priority_score": 70
+    },
+    {
+      "symbol": "fmemopen",
       "module": "stdio_abi",
       "perf_class": "coldpath",
       "runtime_impact": "low",
@@ -97,7 +872,7 @@
       "priority_score": 70
     },
     {
-      "symbol": "fgets",
+      "symbol": "fopencookie",
       "module": "stdio_abi",
       "perf_class": "coldpath",
       "runtime_impact": "low",
@@ -105,7 +880,7 @@
       "priority_score": 70
     },
     {
-      "symbol": "fopen",
+      "symbol": "fscanf",
       "module": "stdio_abi",
       "perf_class": "coldpath",
       "runtime_impact": "low",
@@ -113,7 +888,7 @@
       "priority_score": 70
     },
     {
-      "symbol": "fprintf",
+      "symbol": "open_memstream",
       "module": "stdio_abi",
       "perf_class": "coldpath",
       "runtime_impact": "low",
@@ -121,7 +896,7 @@
       "priority_score": 70
     },
     {
-      "symbol": "fputs",
+      "symbol": "scanf",
       "module": "stdio_abi",
       "perf_class": "coldpath",
       "runtime_impact": "low",
@@ -129,7 +904,7 @@
       "priority_score": 70
     },
     {
-      "symbol": "fread",
+      "symbol": "sscanf",
       "module": "stdio_abi",
       "perf_class": "coldpath",
       "runtime_impact": "low",
@@ -137,7 +912,7 @@
       "priority_score": 70
     },
     {
-      "symbol": "fseek",
+      "symbol": "vfscanf",
       "module": "stdio_abi",
       "perf_class": "coldpath",
       "runtime_impact": "low",
@@ -145,7 +920,7 @@
       "priority_score": 70
     },
     {
-      "symbol": "ftell",
+      "symbol": "vscanf",
       "module": "stdio_abi",
       "perf_class": "coldpath",
       "runtime_impact": "low",
@@ -153,63 +928,7 @@
       "priority_score": 70
     },
     {
-      "symbol": "fwrite",
-      "module": "stdio_abi",
-      "perf_class": "coldpath",
-      "runtime_impact": "low",
-      "replacement_complexity": "high",
-      "priority_score": 70
-    },
-    {
-      "symbol": "perror",
-      "module": "stdio_abi",
-      "perf_class": "coldpath",
-      "runtime_impact": "low",
-      "replacement_complexity": "high",
-      "priority_score": 70
-    },
-    {
-      "symbol": "printf",
-      "module": "stdio_abi",
-      "perf_class": "coldpath",
-      "runtime_impact": "low",
-      "replacement_complexity": "high",
-      "priority_score": 70
-    },
-    {
-      "symbol": "puts",
-      "module": "stdio_abi",
-      "perf_class": "coldpath",
-      "runtime_impact": "low",
-      "replacement_complexity": "high",
-      "priority_score": 70
-    },
-    {
-      "symbol": "setbuf",
-      "module": "stdio_abi",
-      "perf_class": "coldpath",
-      "runtime_impact": "low",
-      "replacement_complexity": "high",
-      "priority_score": 70
-    },
-    {
-      "symbol": "setvbuf",
-      "module": "stdio_abi",
-      "perf_class": "coldpath",
-      "runtime_impact": "low",
-      "replacement_complexity": "high",
-      "priority_score": 70
-    },
-    {
-      "symbol": "snprintf",
-      "module": "stdio_abi",
-      "perf_class": "coldpath",
-      "runtime_impact": "low",
-      "replacement_complexity": "high",
-      "priority_score": 70
-    },
-    {
-      "symbol": "sprintf",
+      "symbol": "vsscanf",
       "module": "stdio_abi",
       "perf_class": "coldpath",
       "runtime_impact": "low",
@@ -220,10 +939,26 @@
   "decommission_waves": [
     {
       "wave": 1,
+      "wave_id": "pthread-lifecycle",
+      "title": "Pthread lifecycle operations (create/join/detach)",
+      "depends_on": [],
+      "symbols": [
+        "pthread_cancel",
+        "pthread_setcancelstate",
+        "pthread_setcanceltype",
+        "pthread_testcancel"
+      ],
+      "rationale": "Lifecycle transitions are highest complexity and depend on prior synchronization correctness.",
+      "rollback_strategy": "Disable native lifecycle path behind routing flag and fall back to host calls."
+    },
+    {
+      "wave": 2,
       "wave_id": "loader-boundary",
       "title": "dlfcn boundary migration",
       "depends_on": [],
       "symbols": [
+        "dl_iterate_phdr",
+        "dladdr",
         "dlclose",
         "dlerror",
         "dlopen",
@@ -233,39 +968,203 @@
       "rollback_strategy": "Re-enable host dlfcn call-through via module-scoped routing switch."
     },
     {
-      "wave": 2,
+      "wave": 3,
       "wave_id": "stdio-surface",
       "title": "stdio callthrough surface consolidation",
       "depends_on": [
+        "pthread-lifecycle",
         "loader-boundary"
       ],
       "symbols": [
-        "fclose",
-        "fgets",
-        "fopen",
-        "fprintf",
-        "fputs",
-        "fread",
-        "fseek",
-        "ftell",
-        "fwrite",
-        "perror",
-        "printf",
-        "puts",
-        "setbuf",
-        "setvbuf",
-        "snprintf",
-        "sprintf"
+        "fmemopen",
+        "fopencookie",
+        "fscanf",
+        "open_memstream",
+        "scanf",
+        "sscanf",
+        "vfscanf",
+        "vscanf",
+        "vsscanf"
       ],
       "rationale": "Largest callthrough surface; schedule last to avoid masking independent high-risk migrations.",
       "rollback_strategy": "Rollback by restoring stdio family call-through while keeping completed non-stdio waves."
+    },
+    {
+      "wave": 4,
+      "wave_id": "fallback-None",
+      "title": "Fallback migration wave for None",
+      "depends_on": [
+        "stdio-surface"
+      ],
+      "symbols": [
+        "glob64",
+        "globfree64",
+        "nftw64",
+        "vasprintf",
+        "vdprintf",
+        "vfprintf",
+        "vprintf",
+        "vsnprintf",
+        "vsprintf"
+      ],
+      "rationale": "Covers residual callthrough symbols not matched by primary module sequencing.",
+      "rollback_strategy": "Rollback by restoring None call-through routing table entries."
+    },
+    {
+      "wave": 5,
+      "wave_id": "fallback-inet_abi",
+      "title": "Fallback migration wave for inet_abi",
+      "depends_on": [
+        "fallback-None"
+      ],
+      "symbols": [
+        "if_freenameindex",
+        "if_nameindex"
+      ],
+      "rationale": "Covers residual callthrough symbols not matched by primary module sequencing.",
+      "rollback_strategy": "Rollback by restoring inet_abi call-through routing table entries."
+    },
+    {
+      "wave": 6,
+      "wave_id": "fallback-locale_abi",
+      "title": "Fallback migration wave for locale_abi",
+      "depends_on": [
+        "fallback-inet_abi"
+      ],
+      "symbols": [
+        "nl_langinfo"
+      ],
+      "rationale": "Covers residual callthrough symbols not matched by primary module sequencing.",
+      "rollback_strategy": "Rollback by restoring locale_abi call-through routing table entries."
+    },
+    {
+      "wave": 7,
+      "wave_id": "fallback-process_abi",
+      "title": "Fallback migration wave for process_abi",
+      "depends_on": [
+        "fallback-locale_abi"
+      ],
+      "symbols": [
+        "posix_spawn",
+        "posix_spawn_file_actions_destroy",
+        "posix_spawn_file_actions_init",
+        "posix_spawnattr_destroy",
+        "posix_spawnattr_init",
+        "posix_spawnp"
+      ],
+      "rationale": "Covers residual callthrough symbols not matched by primary module sequencing.",
+      "rollback_strategy": "Rollback by restoring process_abi call-through routing table entries."
+    },
+    {
+      "wave": 8,
+      "wave_id": "fallback-string_abi",
+      "title": "Fallback migration wave for string_abi",
+      "depends_on": [
+        "fallback-process_abi"
+      ],
+      "symbols": [
+        "fnmatch",
+        "glob",
+        "globfree",
+        "regcomp",
+        "regerror",
+        "regexec",
+        "regfree"
+      ],
+      "rationale": "Covers residual callthrough symbols not matched by primary module sequencing.",
+      "rollback_strategy": "Rollback by restoring string_abi call-through routing table entries."
+    },
+    {
+      "wave": 9,
+      "wave_id": "fallback-time_abi",
+      "title": "Fallback migration wave for time_abi",
+      "depends_on": [
+        "fallback-string_abi"
+      ],
+      "symbols": [
+        "strptime"
+      ],
+      "rationale": "Covers residual callthrough symbols not matched by primary module sequencing.",
+      "rollback_strategy": "Rollback by restoring time_abi call-through routing table entries."
+    },
+    {
+      "wave": 10,
+      "wave_id": "fallback-unistd_abi",
+      "title": "Fallback migration wave for unistd_abi",
+      "depends_on": [
+        "fallback-time_abi"
+      ],
+      "symbols": [
+        "aio_cancel",
+        "aio_error",
+        "aio_fsync",
+        "aio_read",
+        "aio_return",
+        "aio_suspend",
+        "aio_write",
+        "closelog",
+        "crypt",
+        "endmntent",
+        "fgetgrent",
+        "fgetpwent",
+        "forkpty",
+        "freeifaddrs",
+        "ftw",
+        "getgrent_r",
+        "getifaddrs",
+        "getmntent",
+        "getpwent_r",
+        "getutent",
+        "lio_listio",
+        "nftw",
+        "openlog",
+        "openpty",
+        "res_init",
+        "res_query",
+        "res_search",
+        "sem_close",
+        "sem_open",
+        "sem_unlink",
+        "setmntent",
+        "syslog",
+        "utmpname",
+        "vsyslog",
+        "wordexp",
+        "wordfree"
+      ],
+      "rationale": "Covers residual callthrough symbols not matched by primary module sequencing.",
+      "rollback_strategy": "Rollback by restoring unistd_abi call-through routing table entries."
+    },
+    {
+      "wave": 11,
+      "wave_id": "fallback-wchar_abi",
+      "title": "Fallback migration wave for wchar_abi",
+      "depends_on": [
+        "fallback-unistd_abi"
+      ],
+      "symbols": [
+        "fwprintf",
+        "fwscanf",
+        "swprintf",
+        "swscanf",
+        "vfwprintf",
+        "vfwscanf",
+        "vswprintf",
+        "vswscanf",
+        "vwprintf",
+        "vwscanf",
+        "wprintf",
+        "wscanf"
+      ],
+      "rationale": "Covers residual callthrough symbols not matched by primary module sequencing.",
+      "rollback_strategy": "Rollback by restoring wchar_abi call-through routing table entries."
     }
   ],
   "summary": {
-    "module_count": 2,
-    "symbol_count": 20,
+    "module_count": 11,
+    "symbol_count": 93,
     "strict_hotpath_count": 0,
-    "coldpath_count": 20,
-    "wave_count": 2
+    "coldpath_count": 93,
+    "wave_count": 11
   }
 }

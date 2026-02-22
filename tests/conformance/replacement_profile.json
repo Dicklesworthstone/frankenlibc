@@ -104,15 +104,29 @@
       "dirent_abi",
       "unistd_abi",
       "process_abi",
-      "startup_abi"
+      "startup_abi",
+      "inet_abi",
+      "locale_abi",
+      "string_abi",
+      "wchar_abi",
+      "None"
     ],
     "rationale": "These modules delegate to host glibc for operations not yet reimplemented as RawSyscall or Implemented. They are safe in interpose mode because the host glibc is still loaded."
   },
   "callthrough_families": {
     "source": "support_matrix.json",
     "modules": [
+      "None",
+      "dlfcn_abi",
+      "inet_abi",
+      "locale_abi",
+      "process_abi",
+      "pthread_abi",
       "stdio_abi",
-      "dlfcn_abi"
+      "string_abi",
+      "time_abi",
+      "unistd_abi",
+      "wchar_abi"
     ],
     "require_fixture_coverage": true
   },

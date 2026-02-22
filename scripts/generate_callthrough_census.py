@@ -27,6 +27,20 @@ REPLACEMENT_COMPLEXITY_WEIGHTS = {
 }
 
 
+def normalize_perf_class(raw_perf_class: Any) -> str:
+    """Map support-matrix perf classes into census-supported buckets."""
+    perf_class = str(raw_perf_class or "").strip()
+    if perf_class in RUNTIME_IMPACT_WEIGHTS:
+        return perf_class
+    return "coldpath"
+
+
+def normalize_module(raw_module: Any) -> str:
+    """Normalize module names; preserve explicit unknown bucket for blanks/nulls."""
+    module = str(raw_module or "").strip()
+    return module if module else "None"
+
+
 def runtime_impact_class(perf_class: str) -> str:
     weight = RUNTIME_IMPACT_WEIGHTS.get(perf_class, 2)
     if weight >= 5:
@@ -203,8 +217,8 @@ def build_payload(support_matrix_path: Path) -> dict[str, Any]:
     symbol_rows = []
     for row in callthrough_rows:
         symbol = str(row.get("symbol", ""))
-        module = str(row.get("module", ""))
-        perf_class = str(row.get("perf_class", "coldpath"))
+        module = normalize_module(row.get("module"))
+        perf_class = normalize_perf_class(row.get("perf_class"))
         complexity = replacement_complexity(symbol, module)
         symbol_rows.append(
             {

@@ -4,7 +4,7 @@
   "description": "Unified stub/TODO debt census combining exported taxonomy status with critical non-exported source debt and deterministic risk ranking.",
   "source": {
     "support_matrix_path": "support_matrix.json",
-    "support_matrix_sha256": "0769c3d2b3e8fd4cbaf536b9adeba996eb55f71a48f71b0816c99067c44ff6f4",
+    "support_matrix_sha256": "2d50a39dfd24ac4e79d5439bcd4a426ef82f5d5006f47342592ba7603aba91fe",
     "scan_roots": [
       "crates/frankenlibc-core/src",
       "crates/frankenlibc-abi/src"
@@ -17,37 +17,37 @@
   },
   "exported_taxonomy_view": {
     "declared_summary": {
-      "Implemented": 113,
-      "RawSyscall": 83,
-      "GlibcCallThrough": 54,
-      "Stub": 0,
-      "DefaultStub": 0
+      "total_exported": 929,
+      "implemented": 539,
+      "raw_syscall": 297,
+      "glibc_call_through": 93,
+      "stub": 0
     },
     "derived_summary": {
-      "Implemented": 118,
-      "RawSyscall": 83,
-      "GlibcCallThrough": 49,
+      "Implemented": 539,
+      "RawSyscall": 297,
+      "GlibcCallThrough": 93,
       "Stub": 0,
       "DefaultStub": 0
     },
     "summary_delta": [
       {
         "status": "Implemented",
-        "declared": 113,
-        "derived": 118,
-        "delta_derived_minus_declared": 5
+        "declared": 0,
+        "derived": 539,
+        "delta_derived_minus_declared": 539
       },
       {
         "status": "RawSyscall",
-        "declared": 83,
-        "derived": 83,
-        "delta_derived_minus_declared": 0
+        "declared": 0,
+        "derived": 297,
+        "delta_derived_minus_declared": 297
       },
       {
         "status": "GlibcCallThrough",
-        "declared": 54,
-        "derived": 49,
-        "delta_derived_minus_declared": -5
+        "declared": 0,
+        "derived": 93,
+        "delta_derived_minus_declared": 93
       },
       {
         "status": "Stub",
@@ -62,10 +62,87 @@
         "delta_derived_minus_declared": 0
       }
     ],
-    "total_exported_declared": 250,
-    "total_exported_derived": 250,
+    "total_exported_declared": 929,
+    "total_exported_derived": 929,
     "stub_symbols": [],
     "non_implemented_exported_symbols": [
+      {
+        "symbol": "glob64",
+        "status": "GlibcCallThrough",
+        "module": "",
+        "perf_class": "",
+        "priority": 0
+      },
+      {
+        "symbol": "globfree64",
+        "status": "GlibcCallThrough",
+        "module": "",
+        "perf_class": "",
+        "priority": 0
+      },
+      {
+        "symbol": "nftw64",
+        "status": "GlibcCallThrough",
+        "module": "",
+        "perf_class": "",
+        "priority": 0
+      },
+      {
+        "symbol": "vasprintf",
+        "status": "GlibcCallThrough",
+        "module": "",
+        "perf_class": "",
+        "priority": 0
+      },
+      {
+        "symbol": "vdprintf",
+        "status": "GlibcCallThrough",
+        "module": "",
+        "perf_class": "",
+        "priority": 0
+      },
+      {
+        "symbol": "vfprintf",
+        "status": "GlibcCallThrough",
+        "module": "",
+        "perf_class": "",
+        "priority": 0
+      },
+      {
+        "symbol": "vprintf",
+        "status": "GlibcCallThrough",
+        "module": "",
+        "perf_class": "",
+        "priority": 0
+      },
+      {
+        "symbol": "vsnprintf",
+        "status": "GlibcCallThrough",
+        "module": "",
+        "perf_class": "",
+        "priority": 0
+      },
+      {
+        "symbol": "vsprintf",
+        "status": "GlibcCallThrough",
+        "module": "",
+        "perf_class": "",
+        "priority": 0
+      },
+      {
+        "symbol": "dl_iterate_phdr",
+        "status": "GlibcCallThrough",
+        "module": "dlfcn_abi",
+        "perf_class": "default",
+        "priority": 0
+      },
+      {
+        "symbol": "dladdr",
+        "status": "GlibcCallThrough",
+        "module": "dlfcn_abi",
+        "perf_class": "default",
+        "priority": 0
+      },
       {
         "symbol": "dlclose",
         "status": "GlibcCallThrough",
@@ -95,334 +172,562 @@
         "priority": 0
       },
       {
-        "symbol": "pthread_cond_broadcast",
+        "symbol": "if_freenameindex",
+        "status": "GlibcCallThrough",
+        "module": "inet_abi",
+        "perf_class": "fast",
+        "priority": 0
+      },
+      {
+        "symbol": "if_nameindex",
+        "status": "GlibcCallThrough",
+        "module": "inet_abi",
+        "perf_class": "fast",
+        "priority": 0
+      },
+      {
+        "symbol": "nl_langinfo",
+        "status": "GlibcCallThrough",
+        "module": "locale_abi",
+        "perf_class": "",
+        "priority": 0
+      },
+      {
+        "symbol": "posix_spawn",
+        "status": "GlibcCallThrough",
+        "module": "process_abi",
+        "perf_class": "default",
+        "priority": 0
+      },
+      {
+        "symbol": "posix_spawn_file_actions_destroy",
+        "status": "GlibcCallThrough",
+        "module": "process_abi",
+        "perf_class": "default",
+        "priority": 0
+      },
+      {
+        "symbol": "posix_spawn_file_actions_init",
+        "status": "GlibcCallThrough",
+        "module": "process_abi",
+        "perf_class": "default",
+        "priority": 0
+      },
+      {
+        "symbol": "posix_spawnattr_destroy",
+        "status": "GlibcCallThrough",
+        "module": "process_abi",
+        "perf_class": "default",
+        "priority": 0
+      },
+      {
+        "symbol": "posix_spawnattr_init",
+        "status": "GlibcCallThrough",
+        "module": "process_abi",
+        "perf_class": "default",
+        "priority": 0
+      },
+      {
+        "symbol": "posix_spawnp",
+        "status": "GlibcCallThrough",
+        "module": "process_abi",
+        "perf_class": "default",
+        "priority": 0
+      },
+      {
+        "symbol": "pthread_cancel",
         "status": "GlibcCallThrough",
         "module": "pthread_abi",
-        "perf_class": "strict_hotpath",
+        "perf_class": "default",
         "priority": 0
       },
       {
-        "symbol": "pthread_cond_destroy",
+        "symbol": "pthread_setcancelstate",
         "status": "GlibcCallThrough",
         "module": "pthread_abi",
-        "perf_class": "strict_hotpath",
+        "perf_class": "default",
         "priority": 0
       },
       {
-        "symbol": "pthread_cond_init",
+        "symbol": "pthread_setcanceltype",
         "status": "GlibcCallThrough",
         "module": "pthread_abi",
-        "perf_class": "strict_hotpath",
+        "perf_class": "default",
         "priority": 0
       },
       {
-        "symbol": "pthread_cond_signal",
+        "symbol": "pthread_testcancel",
         "status": "GlibcCallThrough",
         "module": "pthread_abi",
-        "perf_class": "strict_hotpath",
+        "perf_class": "default",
         "priority": 0
       },
       {
-        "symbol": "pthread_cond_wait",
+        "symbol": "fmemopen",
         "status": "GlibcCallThrough",
-        "module": "pthread_abi",
-        "perf_class": "strict_hotpath",
+        "module": "stdio_abi",
+        "perf_class": "fast",
         "priority": 0
       },
       {
-        "symbol": "pthread_create",
+        "symbol": "fopencookie",
         "status": "GlibcCallThrough",
-        "module": "pthread_abi",
-        "perf_class": "strict_hotpath",
+        "module": "stdio_abi",
+        "perf_class": "fast",
         "priority": 0
       },
       {
-        "symbol": "pthread_detach",
-        "status": "GlibcCallThrough",
-        "module": "pthread_abi",
-        "perf_class": "strict_hotpath",
-        "priority": 0
-      },
-      {
-        "symbol": "pthread_equal",
-        "status": "GlibcCallThrough",
-        "module": "pthread_abi",
-        "perf_class": "strict_hotpath",
-        "priority": 0
-      },
-      {
-        "symbol": "pthread_join",
-        "status": "GlibcCallThrough",
-        "module": "pthread_abi",
-        "perf_class": "strict_hotpath",
-        "priority": 0
-      },
-      {
-        "symbol": "pthread_rwlock_destroy",
-        "status": "GlibcCallThrough",
-        "module": "pthread_abi",
-        "perf_class": "strict_hotpath",
-        "priority": 0
-      },
-      {
-        "symbol": "pthread_rwlock_init",
-        "status": "GlibcCallThrough",
-        "module": "pthread_abi",
-        "perf_class": "strict_hotpath",
-        "priority": 0
-      },
-      {
-        "symbol": "pthread_rwlock_rdlock",
-        "status": "GlibcCallThrough",
-        "module": "pthread_abi",
-        "perf_class": "strict_hotpath",
-        "priority": 0
-      },
-      {
-        "symbol": "pthread_rwlock_unlock",
-        "status": "GlibcCallThrough",
-        "module": "pthread_abi",
-        "perf_class": "strict_hotpath",
-        "priority": 0
-      },
-      {
-        "symbol": "pthread_rwlock_wrlock",
-        "status": "GlibcCallThrough",
-        "module": "pthread_abi",
-        "perf_class": "strict_hotpath",
-        "priority": 0
-      },
-      {
-        "symbol": "pthread_self",
-        "status": "GlibcCallThrough",
-        "module": "pthread_abi",
-        "perf_class": "strict_hotpath",
-        "priority": 0
-      },
-      {
-        "symbol": "clearerr",
+        "symbol": "fscanf",
         "status": "GlibcCallThrough",
         "module": "stdio_abi",
         "perf_class": "coldpath",
         "priority": 0
       },
       {
-        "symbol": "fclose",
+        "symbol": "open_memstream",
+        "status": "GlibcCallThrough",
+        "module": "stdio_abi",
+        "perf_class": "fast",
+        "priority": 0
+      },
+      {
+        "symbol": "scanf",
         "status": "GlibcCallThrough",
         "module": "stdio_abi",
         "perf_class": "coldpath",
         "priority": 0
       },
       {
-        "symbol": "feof",
+        "symbol": "sscanf",
         "status": "GlibcCallThrough",
         "module": "stdio_abi",
         "perf_class": "coldpath",
         "priority": 0
       },
       {
-        "symbol": "ferror",
+        "symbol": "vfscanf",
         "status": "GlibcCallThrough",
         "module": "stdio_abi",
         "perf_class": "coldpath",
         "priority": 0
       },
       {
-        "symbol": "fflush",
+        "symbol": "vscanf",
         "status": "GlibcCallThrough",
         "module": "stdio_abi",
         "perf_class": "coldpath",
         "priority": 0
       },
       {
-        "symbol": "fgetc",
+        "symbol": "vsscanf",
         "status": "GlibcCallThrough",
         "module": "stdio_abi",
         "perf_class": "coldpath",
         "priority": 0
       },
       {
-        "symbol": "fgets",
+        "symbol": "fnmatch",
         "status": "GlibcCallThrough",
-        "module": "stdio_abi",
+        "module": "string_abi",
+        "perf_class": "default",
+        "priority": 0
+      },
+      {
+        "symbol": "glob",
+        "status": "GlibcCallThrough",
+        "module": "string_abi",
+        "perf_class": "default",
+        "priority": 0
+      },
+      {
+        "symbol": "globfree",
+        "status": "GlibcCallThrough",
+        "module": "string_abi",
+        "perf_class": "default",
+        "priority": 0
+      },
+      {
+        "symbol": "regcomp",
+        "status": "GlibcCallThrough",
+        "module": "string_abi",
+        "perf_class": "default",
+        "priority": 0
+      },
+      {
+        "symbol": "regerror",
+        "status": "GlibcCallThrough",
+        "module": "string_abi",
+        "perf_class": "default",
+        "priority": 0
+      },
+      {
+        "symbol": "regexec",
+        "status": "GlibcCallThrough",
+        "module": "string_abi",
+        "perf_class": "default",
+        "priority": 0
+      },
+      {
+        "symbol": "regfree",
+        "status": "GlibcCallThrough",
+        "module": "string_abi",
+        "perf_class": "default",
+        "priority": 0
+      },
+      {
+        "symbol": "strptime",
+        "status": "GlibcCallThrough",
+        "module": "time_abi",
         "perf_class": "coldpath",
         "priority": 0
       },
       {
-        "symbol": "fileno",
+        "symbol": "aio_cancel",
         "status": "GlibcCallThrough",
-        "module": "stdio_abi",
-        "perf_class": "coldpath",
+        "module": "unistd_abi",
+        "perf_class": "syscall",
         "priority": 0
       },
       {
-        "symbol": "fopen",
+        "symbol": "aio_error",
         "status": "GlibcCallThrough",
-        "module": "stdio_abi",
-        "perf_class": "coldpath",
+        "module": "unistd_abi",
+        "perf_class": "fast",
         "priority": 0
       },
       {
-        "symbol": "fprintf",
+        "symbol": "aio_fsync",
         "status": "GlibcCallThrough",
-        "module": "stdio_abi",
-        "perf_class": "coldpath",
+        "module": "unistd_abi",
+        "perf_class": "syscall",
         "priority": 0
       },
       {
-        "symbol": "fputc",
+        "symbol": "aio_read",
         "status": "GlibcCallThrough",
-        "module": "stdio_abi",
-        "perf_class": "coldpath",
+        "module": "unistd_abi",
+        "perf_class": "syscall",
         "priority": 0
       },
       {
-        "symbol": "fputs",
+        "symbol": "aio_return",
         "status": "GlibcCallThrough",
-        "module": "stdio_abi",
-        "perf_class": "coldpath",
+        "module": "unistd_abi",
+        "perf_class": "fast",
         "priority": 0
       },
       {
-        "symbol": "fread",
+        "symbol": "aio_suspend",
         "status": "GlibcCallThrough",
-        "module": "stdio_abi",
-        "perf_class": "coldpath",
+        "module": "unistd_abi",
+        "perf_class": "syscall",
         "priority": 0
       },
       {
-        "symbol": "fseek",
+        "symbol": "aio_write",
         "status": "GlibcCallThrough",
-        "module": "stdio_abi",
-        "perf_class": "coldpath",
+        "module": "unistd_abi",
+        "perf_class": "syscall",
         "priority": 0
       },
       {
-        "symbol": "ftell",
+        "symbol": "closelog",
         "status": "GlibcCallThrough",
-        "module": "stdio_abi",
-        "perf_class": "coldpath",
+        "module": "unistd_abi",
+        "perf_class": "default",
         "priority": 0
       },
       {
-        "symbol": "fwrite",
+        "symbol": "crypt",
         "status": "GlibcCallThrough",
-        "module": "stdio_abi",
-        "perf_class": "coldpath",
+        "module": "unistd_abi",
+        "perf_class": "default",
         "priority": 0
       },
       {
-        "symbol": "getchar",
+        "symbol": "endmntent",
         "status": "GlibcCallThrough",
-        "module": "stdio_abi",
-        "perf_class": "coldpath",
+        "module": "unistd_abi",
+        "perf_class": "fast",
         "priority": 0
       },
       {
-        "symbol": "perror",
+        "symbol": "fgetgrent",
         "status": "GlibcCallThrough",
-        "module": "stdio_abi",
-        "perf_class": "coldpath",
+        "module": "unistd_abi",
+        "perf_class": "fast",
         "priority": 0
       },
       {
-        "symbol": "printf",
+        "symbol": "fgetpwent",
         "status": "GlibcCallThrough",
-        "module": "stdio_abi",
-        "perf_class": "coldpath",
+        "module": "unistd_abi",
+        "perf_class": "fast",
         "priority": 0
       },
       {
-        "symbol": "putchar",
+        "symbol": "forkpty",
         "status": "GlibcCallThrough",
-        "module": "stdio_abi",
-        "perf_class": "coldpath",
+        "module": "unistd_abi",
+        "perf_class": "default",
         "priority": 0
       },
       {
-        "symbol": "puts",
+        "symbol": "freeifaddrs",
         "status": "GlibcCallThrough",
-        "module": "stdio_abi",
-        "perf_class": "coldpath",
+        "module": "unistd_abi",
+        "perf_class": "fast",
         "priority": 0
       },
       {
-        "symbol": "rewind",
+        "symbol": "ftw",
         "status": "GlibcCallThrough",
-        "module": "stdio_abi",
-        "perf_class": "coldpath",
+        "module": "unistd_abi",
+        "perf_class": "default",
         "priority": 0
       },
       {
-        "symbol": "setbuf",
+        "symbol": "getgrent_r",
         "status": "GlibcCallThrough",
-        "module": "stdio_abi",
-        "perf_class": "coldpath",
+        "module": "unistd_abi",
+        "perf_class": "fast",
         "priority": 0
       },
       {
-        "symbol": "setvbuf",
+        "symbol": "getifaddrs",
         "status": "GlibcCallThrough",
-        "module": "stdio_abi",
-        "perf_class": "coldpath",
+        "module": "unistd_abi",
+        "perf_class": "fast",
         "priority": 0
       },
       {
-        "symbol": "snprintf",
+        "symbol": "getmntent",
         "status": "GlibcCallThrough",
-        "module": "stdio_abi",
-        "perf_class": "coldpath",
+        "module": "unistd_abi",
+        "perf_class": "fast",
         "priority": 0
       },
       {
-        "symbol": "sprintf",
+        "symbol": "getpwent_r",
         "status": "GlibcCallThrough",
-        "module": "stdio_abi",
-        "perf_class": "coldpath",
+        "module": "unistd_abi",
+        "perf_class": "fast",
         "priority": 0
       },
       {
-        "symbol": "stderr",
+        "symbol": "getutent",
         "status": "GlibcCallThrough",
-        "module": "stdio_abi",
-        "perf_class": "coldpath",
+        "module": "unistd_abi",
+        "perf_class": "fast",
         "priority": 0
       },
       {
-        "symbol": "stdin",
+        "symbol": "lio_listio",
         "status": "GlibcCallThrough",
-        "module": "stdio_abi",
-        "perf_class": "coldpath",
+        "module": "unistd_abi",
+        "perf_class": "syscall",
         "priority": 0
       },
       {
-        "symbol": "stdout",
+        "symbol": "nftw",
         "status": "GlibcCallThrough",
-        "module": "stdio_abi",
-        "perf_class": "coldpath",
+        "module": "unistd_abi",
+        "perf_class": "default",
         "priority": 0
       },
       {
-        "symbol": "ungetc",
+        "symbol": "openlog",
         "status": "GlibcCallThrough",
-        "module": "stdio_abi",
-        "perf_class": "coldpath",
+        "module": "unistd_abi",
+        "perf_class": "default",
+        "priority": 0
+      },
+      {
+        "symbol": "openpty",
+        "status": "GlibcCallThrough",
+        "module": "unistd_abi",
+        "perf_class": "default",
+        "priority": 0
+      },
+      {
+        "symbol": "res_init",
+        "status": "GlibcCallThrough",
+        "module": "unistd_abi",
+        "perf_class": "fast",
+        "priority": 0
+      },
+      {
+        "symbol": "res_query",
+        "status": "GlibcCallThrough",
+        "module": "unistd_abi",
+        "perf_class": "syscall",
+        "priority": 0
+      },
+      {
+        "symbol": "res_search",
+        "status": "GlibcCallThrough",
+        "module": "unistd_abi",
+        "perf_class": "syscall",
+        "priority": 0
+      },
+      {
+        "symbol": "sem_close",
+        "status": "GlibcCallThrough",
+        "module": "unistd_abi",
+        "perf_class": "default",
+        "priority": 0
+      },
+      {
+        "symbol": "sem_open",
+        "status": "GlibcCallThrough",
+        "module": "unistd_abi",
+        "perf_class": "default",
+        "priority": 0
+      },
+      {
+        "symbol": "sem_unlink",
+        "status": "GlibcCallThrough",
+        "module": "unistd_abi",
+        "perf_class": "default",
+        "priority": 0
+      },
+      {
+        "symbol": "setmntent",
+        "status": "GlibcCallThrough",
+        "module": "unistd_abi",
+        "perf_class": "fast",
+        "priority": 0
+      },
+      {
+        "symbol": "syslog",
+        "status": "GlibcCallThrough",
+        "module": "unistd_abi",
+        "perf_class": "default",
+        "priority": 0
+      },
+      {
+        "symbol": "utmpname",
+        "status": "GlibcCallThrough",
+        "module": "unistd_abi",
+        "perf_class": "fast",
+        "priority": 0
+      },
+      {
+        "symbol": "vsyslog",
+        "status": "GlibcCallThrough",
+        "module": "unistd_abi",
+        "perf_class": "default",
+        "priority": 0
+      },
+      {
+        "symbol": "wordexp",
+        "status": "GlibcCallThrough",
+        "module": "unistd_abi",
+        "perf_class": "default",
+        "priority": 0
+      },
+      {
+        "symbol": "wordfree",
+        "status": "GlibcCallThrough",
+        "module": "unistd_abi",
+        "perf_class": "default",
+        "priority": 0
+      },
+      {
+        "symbol": "fwprintf",
+        "status": "GlibcCallThrough",
+        "module": "wchar_abi",
+        "perf_class": "fast",
+        "priority": 0
+      },
+      {
+        "symbol": "fwscanf",
+        "status": "GlibcCallThrough",
+        "module": "wchar_abi",
+        "perf_class": "fast",
+        "priority": 0
+      },
+      {
+        "symbol": "swprintf",
+        "status": "GlibcCallThrough",
+        "module": "wchar_abi",
+        "perf_class": "fast",
+        "priority": 0
+      },
+      {
+        "symbol": "swscanf",
+        "status": "GlibcCallThrough",
+        "module": "wchar_abi",
+        "perf_class": "fast",
+        "priority": 0
+      },
+      {
+        "symbol": "vfwprintf",
+        "status": "GlibcCallThrough",
+        "module": "wchar_abi",
+        "perf_class": "fast",
+        "priority": 0
+      },
+      {
+        "symbol": "vfwscanf",
+        "status": "GlibcCallThrough",
+        "module": "wchar_abi",
+        "perf_class": "fast",
+        "priority": 0
+      },
+      {
+        "symbol": "vswprintf",
+        "status": "GlibcCallThrough",
+        "module": "wchar_abi",
+        "perf_class": "fast",
+        "priority": 0
+      },
+      {
+        "symbol": "vswscanf",
+        "status": "GlibcCallThrough",
+        "module": "wchar_abi",
+        "perf_class": "fast",
+        "priority": 0
+      },
+      {
+        "symbol": "vwprintf",
+        "status": "GlibcCallThrough",
+        "module": "wchar_abi",
+        "perf_class": "fast",
+        "priority": 0
+      },
+      {
+        "symbol": "vwscanf",
+        "status": "GlibcCallThrough",
+        "module": "wchar_abi",
+        "perf_class": "fast",
+        "priority": 0
+      },
+      {
+        "symbol": "wprintf",
+        "status": "GlibcCallThrough",
+        "module": "wchar_abi",
+        "perf_class": "fast",
+        "priority": 0
+      },
+      {
+        "symbol": "wscanf",
+        "status": "GlibcCallThrough",
+        "module": "wchar_abi",
+        "perf_class": "fast",
         "priority": 0
       }
     ]
   },
   "critical_source_debt": {
-    "occurrence_count": 10,
-    "unique_symbol_count": 10,
+    "occurrence_count": 4,
+    "unique_symbol_count": 4,
     "by_scope": {
-      "critical_non_exported_debt": 8,
-      "exported_shadow_debt": 2
+      "exported_shadow_debt": 4
     },
     "by_family": {
       "setjmp": 2,
-      "stdlib": 2,
-      "terminal": 2,
-      "threading": 4
+      "terminal": 2
     },
     "entries": [
       {
@@ -431,13 +736,13 @@
         "macro": "todo!",
         "message": "POSIX longjmp: implementation pending (requires unsafe for real impl)",
         "path": "crates/frankenlibc-core/src/setjmp/mod.rs",
-        "line": 31,
-        "in_support_matrix": false,
-        "support_status": null,
-        "support_module": null,
-        "perf_class": null,
-        "debt_scope": "critical_non_exported_debt",
-        "occurrence_risk_score": 110
+        "line": 212,
+        "in_support_matrix": true,
+        "support_status": "Implemented",
+        "support_module": "setjmp_abi",
+        "perf_class": "coldpath",
+        "debt_scope": "exported_shadow_debt",
+        "occurrence_risk_score": 108
       },
       {
         "symbol": "setjmp",
@@ -445,97 +750,13 @@
         "macro": "todo!",
         "message": "POSIX setjmp: implementation pending (requires unsafe for real impl)",
         "path": "crates/frankenlibc-core/src/setjmp/mod.rs",
-        "line": 21,
-        "in_support_matrix": false,
-        "support_status": null,
-        "support_module": null,
-        "perf_class": null,
-        "debt_scope": "critical_non_exported_debt",
-        "occurrence_risk_score": 110
-      },
-      {
-        "symbol": "rand",
-        "family": "stdlib",
-        "macro": "todo!",
-        "message": "",
-        "path": "crates/frankenlibc-core/src/stdlib/random.rs",
-        "line": 5,
-        "in_support_matrix": false,
-        "support_status": null,
-        "support_module": null,
-        "perf_class": null,
-        "debt_scope": "critical_non_exported_debt",
-        "occurrence_risk_score": 90
-      },
-      {
-        "symbol": "srand",
-        "family": "stdlib",
-        "macro": "todo!",
-        "message": "",
-        "path": "crates/frankenlibc-core/src/stdlib/random.rs",
-        "line": 8,
-        "in_support_matrix": false,
-        "support_status": null,
-        "support_module": null,
-        "perf_class": null,
-        "debt_scope": "critical_non_exported_debt",
-        "occurrence_risk_score": 90
-      },
-      {
-        "symbol": "pthread_getspecific",
-        "family": "threading",
-        "macro": "todo!",
-        "message": "POSIX pthread_getspecific: implementation pending",
-        "path": "crates/frankenlibc-core/src/pthread/tls.rs",
-        "line": 32,
-        "in_support_matrix": false,
-        "support_status": null,
-        "support_module": null,
-        "perf_class": null,
-        "debt_scope": "critical_non_exported_debt",
-        "occurrence_risk_score": 112
-      },
-      {
-        "symbol": "pthread_key_create",
-        "family": "threading",
-        "macro": "todo!",
-        "message": "POSIX pthread_key_create: implementation pending",
-        "path": "crates/frankenlibc-core/src/pthread/tls.rs",
-        "line": 17,
-        "in_support_matrix": false,
-        "support_status": null,
-        "support_module": null,
-        "perf_class": null,
-        "debt_scope": "critical_non_exported_debt",
-        "occurrence_risk_score": 112
-      },
-      {
-        "symbol": "pthread_key_delete",
-        "family": "threading",
-        "macro": "todo!",
-        "message": "POSIX pthread_key_delete: implementation pending",
-        "path": "crates/frankenlibc-core/src/pthread/tls.rs",
-        "line": 24,
-        "in_support_matrix": false,
-        "support_status": null,
-        "support_module": null,
-        "perf_class": null,
-        "debt_scope": "critical_non_exported_debt",
-        "occurrence_risk_score": 112
-      },
-      {
-        "symbol": "pthread_setspecific",
-        "family": "threading",
-        "macro": "todo!",
-        "message": "POSIX pthread_setspecific: implementation pending",
-        "path": "crates/frankenlibc-core/src/pthread/tls.rs",
-        "line": 39,
-        "in_support_matrix": false,
-        "support_status": null,
-        "support_module": null,
-        "perf_class": null,
-        "debt_scope": "critical_non_exported_debt",
-        "occurrence_risk_score": 112
+        "line": 202,
+        "in_support_matrix": true,
+        "support_status": "Implemented",
+        "support_module": "setjmp_abi",
+        "perf_class": "coldpath",
+        "debt_scope": "exported_shadow_debt",
+        "occurrence_risk_score": 108
       },
       {
         "symbol": "tcgetattr",
@@ -593,130 +814,46 @@
   },
   "risk_ranked_debt": [
     {
-      "symbol": "pthread_getspecific",
-      "family": "threading",
-      "debt_scope": "critical_non_exported_debt",
-      "in_support_matrix": false,
-      "support_status": null,
+      "symbol": "longjmp",
+      "family": "setjmp",
+      "debt_scope": "exported_shadow_debt",
+      "in_support_matrix": true,
+      "support_status": "Implemented",
       "occurrences": 1,
-      "risk_score": 124,
-      "risk_tier": "critical",
+      "risk_score": 112,
+      "risk_tier": "high",
       "rationale": [
-        "family=threading",
-        "scope=critical_non_exported_debt",
-        "support_status=non_exported",
+        "family=setjmp",
+        "scope=exported_shadow_debt",
+        "support_status=Implemented",
         "occurrences=1",
-        "hidden_from_exported_taxonomy=true"
+        "shadow_debt_against_reported_status=true"
       ],
       "locations": [
-        "crates/frankenlibc-core/src/pthread/tls.rs:32"
+        "crates/frankenlibc-core/src/setjmp/mod.rs:212"
       ],
       "rank": 1
     },
     {
-      "symbol": "pthread_key_create",
-      "family": "threading",
-      "debt_scope": "critical_non_exported_debt",
-      "in_support_matrix": false,
-      "support_status": null,
-      "occurrences": 1,
-      "risk_score": 124,
-      "risk_tier": "critical",
-      "rationale": [
-        "family=threading",
-        "scope=critical_non_exported_debt",
-        "support_status=non_exported",
-        "occurrences=1",
-        "hidden_from_exported_taxonomy=true"
-      ],
-      "locations": [
-        "crates/frankenlibc-core/src/pthread/tls.rs:17"
-      ],
-      "rank": 2
-    },
-    {
-      "symbol": "pthread_key_delete",
-      "family": "threading",
-      "debt_scope": "critical_non_exported_debt",
-      "in_support_matrix": false,
-      "support_status": null,
-      "occurrences": 1,
-      "risk_score": 124,
-      "risk_tier": "critical",
-      "rationale": [
-        "family=threading",
-        "scope=critical_non_exported_debt",
-        "support_status=non_exported",
-        "occurrences=1",
-        "hidden_from_exported_taxonomy=true"
-      ],
-      "locations": [
-        "crates/frankenlibc-core/src/pthread/tls.rs:24"
-      ],
-      "rank": 3
-    },
-    {
-      "symbol": "pthread_setspecific",
-      "family": "threading",
-      "debt_scope": "critical_non_exported_debt",
-      "in_support_matrix": false,
-      "support_status": null,
-      "occurrences": 1,
-      "risk_score": 124,
-      "risk_tier": "critical",
-      "rationale": [
-        "family=threading",
-        "scope=critical_non_exported_debt",
-        "support_status=non_exported",
-        "occurrences=1",
-        "hidden_from_exported_taxonomy=true"
-      ],
-      "locations": [
-        "crates/frankenlibc-core/src/pthread/tls.rs:39"
-      ],
-      "rank": 4
-    },
-    {
-      "symbol": "longjmp",
-      "family": "setjmp",
-      "debt_scope": "critical_non_exported_debt",
-      "in_support_matrix": false,
-      "support_status": null,
-      "occurrences": 1,
-      "risk_score": 122,
-      "risk_tier": "critical",
-      "rationale": [
-        "family=setjmp",
-        "scope=critical_non_exported_debt",
-        "support_status=non_exported",
-        "occurrences=1",
-        "hidden_from_exported_taxonomy=true"
-      ],
-      "locations": [
-        "crates/frankenlibc-core/src/setjmp/mod.rs:31"
-      ],
-      "rank": 5
-    },
-    {
       "symbol": "setjmp",
       "family": "setjmp",
-      "debt_scope": "critical_non_exported_debt",
-      "in_support_matrix": false,
-      "support_status": null,
+      "debt_scope": "exported_shadow_debt",
+      "in_support_matrix": true,
+      "support_status": "Implemented",
       "occurrences": 1,
-      "risk_score": 122,
-      "risk_tier": "critical",
+      "risk_score": 112,
+      "risk_tier": "high",
       "rationale": [
         "family=setjmp",
-        "scope=critical_non_exported_debt",
-        "support_status=non_exported",
+        "scope=exported_shadow_debt",
+        "support_status=Implemented",
         "occurrences=1",
-        "hidden_from_exported_taxonomy=true"
+        "shadow_debt_against_reported_status=true"
       ],
       "locations": [
-        "crates/frankenlibc-core/src/setjmp/mod.rs:21"
+        "crates/frankenlibc-core/src/setjmp/mod.rs:202"
       ],
-      "rank": 6
+      "rank": 2
     },
     {
       "symbol": "tcgetattr",
@@ -737,7 +874,7 @@
       "locations": [
         "crates/frankenlibc-core/src/termios/mod.rs:295"
       ],
-      "rank": 7
+      "rank": 3
     },
     {
       "symbol": "tcsetattr",
@@ -758,82 +895,39 @@
       "locations": [
         "crates/frankenlibc-core/src/termios/mod.rs:303"
       ],
-      "rank": 8
-    },
-    {
-      "symbol": "rand",
-      "family": "stdlib",
-      "debt_scope": "critical_non_exported_debt",
-      "in_support_matrix": false,
-      "support_status": null,
-      "occurrences": 1,
-      "risk_score": 102,
-      "risk_tier": "high",
-      "rationale": [
-        "family=stdlib",
-        "scope=critical_non_exported_debt",
-        "support_status=non_exported",
-        "occurrences=1",
-        "hidden_from_exported_taxonomy=true"
-      ],
-      "locations": [
-        "crates/frankenlibc-core/src/stdlib/random.rs:5"
-      ],
-      "rank": 9
-    },
-    {
-      "symbol": "srand",
-      "family": "stdlib",
-      "debt_scope": "critical_non_exported_debt",
-      "in_support_matrix": false,
-      "support_status": null,
-      "occurrences": 1,
-      "risk_score": 102,
-      "risk_tier": "high",
-      "rationale": [
-        "family=stdlib",
-        "scope=critical_non_exported_debt",
-        "support_status=non_exported",
-        "occurrences=1",
-        "hidden_from_exported_taxonomy=true"
-      ],
-      "locations": [
-        "crates/frankenlibc-core/src/stdlib/random.rs:8"
-      ],
-      "rank": 10
+      "rank": 4
     }
   ],
   "reconciliation": {
     "exported_stub_count": 0,
-    "exported_non_implemented_count": 49,
-    "critical_non_exported_todo_count": 8,
-    "critical_exported_shadow_todo_count": 2,
-    "critical_non_exported_symbols": [
-      "longjmp",
-      "pthread_getspecific",
-      "pthread_key_create",
-      "pthread_key_delete",
-      "pthread_setspecific",
-      "rand",
-      "setjmp",
-      "srand"
-    ],
+    "exported_non_implemented_count": 93,
+    "critical_non_exported_todo_count": 0,
+    "critical_exported_shadow_todo_count": 4,
+    "critical_non_exported_symbols": [],
     "critical_exported_shadow_symbols": [
+      "longjmp",
+      "setjmp",
       "tcgetattr",
       "tcsetattr"
     ],
     "matrix_summary_deltas": [
       {
         "status": "Implemented",
-        "declared": 113,
-        "derived": 118,
-        "delta_derived_minus_declared": 5
+        "declared": 0,
+        "derived": 539,
+        "delta_derived_minus_declared": 539
+      },
+      {
+        "status": "RawSyscall",
+        "declared": 0,
+        "derived": 297,
+        "delta_derived_minus_declared": 297
       },
       {
         "status": "GlibcCallThrough",
-        "declared": 54,
-        "derived": 49,
-        "delta_derived_minus_declared": -5
+        "declared": 0,
+        "derived": 93,
+        "delta_derived_minus_declared": 93
       }
     ],
     "ambiguity_resolved": true,
@@ -843,10 +937,10 @@
     ]
   },
   "summary": {
-    "priority_item_count": 10,
-    "top_priority_symbol": "pthread_getspecific",
-    "top_priority_risk_score": 124,
-    "critical_non_exported_share_pct": 80.0,
-    "nonzero_matrix_delta_count": 2
+    "priority_item_count": 4,
+    "top_priority_symbol": "longjmp",
+    "top_priority_risk_score": 112,
+    "critical_non_exported_share_pct": 0.0,
+    "nonzero_matrix_delta_count": 3
   }
 }

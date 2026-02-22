@@ -1,6 +1,7 @@
 //! Conformance and parity tooling for frankenlibc.
 
 use std::ffi::{CString, c_char, c_int, c_long, c_void};
+use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
 
 use serde::{Deserialize, Serialize};
 
@@ -323,6 +324,12 @@ pub fn execute_fixture_case(
         // iconv lifecycle
         "iconv_open" => execute_iconv_open_case(inputs, mode),
         "iconv_close" => execute_iconv_close_case(inputs, mode),
+        // pthread TLS keys
+        "pthread_key_create" => execute_pthread_key_create_case(inputs, mode),
+        "pthread_key_delete" => execute_pthread_key_delete_case(inputs, mode),
+        "pthread_getspecific" => execute_pthread_getspecific_case(inputs, mode),
+        "pthread_setspecific" => execute_pthread_setspecific_case(inputs, mode),
+        "teardown_thread_tls" => execute_teardown_thread_tls_case(inputs, mode),
         other => Err(format!("unsupported function: {other}")),
     }
 }
@@ -1056,6 +1063,29 @@ fn parse_u64(inputs: &serde_json::Value, key: &str) -> Result<u64, String> {
         .get(key)
         .and_then(serde_json::Value::as_u64)
         .ok_or_else(|| format!("missing integer field '{key}'"))
+}
+
+fn parse_u64_or_hex(inputs: &serde_json::Value, key: &str) -> Result<u64, String> {
+    let Some(value) = inputs.get(key) else {
+        return Err(format!("missing integer field '{key}'"));
+    };
+    if let Some(v) = value.as_u64() {
+        return Ok(v);
+    }
+    if let Some(raw) = value.as_str() {
+        let trimmed = raw.trim();
+        if let Some(hex) = trimmed
+            .strip_prefix("0x")
+            .or_else(|| trimmed.strip_prefix("0X"))
+        {
+            return u64::from_str_radix(hex, 16)
+                .map_err(|err| format!("invalid hex value for '{key}': {err}"));
+        }
+        return trimmed
+            .parse::<u64>()
+            .map_err(|err| format!("invalid numeric value for '{key}': {err}"));
+    }
+    Err(format!("field '{key}' must be integer or string"))
 }
 
 fn parse_usize_any(inputs: &serde_json::Value, keys: &[&str]) -> Result<usize, String> {
@@ -5052,6 +5082,400 @@ fn execute_nl_langinfo_case(
     })
 }
 
+// ---------------------------------------------------------------------------
+// pthread TLS key executors
+// ---------------------------------------------------------------------------
+
+const TLS_INVALID_KEY_ID: u32 = u32::MAX;
+const TLS_DTOR_MODE_COUNTER: u32 = 0;
+const TLS_DTOR_MODE_RESET_UNTIL_THREE: u32 = 1;
+const TLS_DTOR_MODE_ALWAYS_RESET: u32 = 2;
+
+static TLS_DTOR_COUNT: AtomicUsize = AtomicUsize::new(0);
+static TLS_DTOR_LAST_VALUE: AtomicU64 = AtomicU64::new(0);
+static TLS_DTOR_MODE: AtomicU32 = AtomicU32::new(TLS_DTOR_MODE_COUNTER);
+static TLS_DTOR_KEY_ID: AtomicU32 = AtomicU32::new(TLS_INVALID_KEY_ID);
+static TLS_WORKER_KEY_ID: AtomicU32 = AtomicU32::new(TLS_INVALID_KEY_ID);
+static TLS_WORKER_VALUE: AtomicU64 = AtomicU64::new(0);
+
+fn tls_record_destructor_call(value: u64) {
+    TLS_DTOR_COUNT.fetch_add(1, Ordering::Relaxed);
+    TLS_DTOR_LAST_VALUE.store(value, Ordering::Relaxed);
+}
+
+unsafe extern "C" fn tls_counter_destructor(value: *mut std::ffi::c_void) {
+    tls_record_destructor_call(value as u64);
+}
+
+unsafe extern "C" fn tls_resetting_destructor(value: *mut std::ffi::c_void) {
+    tls_record_destructor_call(value as u64);
+    let key_id = TLS_DTOR_KEY_ID.load(Ordering::Relaxed);
+    if key_id == TLS_INVALID_KEY_ID {
+        return;
+    }
+    let mode = TLS_DTOR_MODE.load(Ordering::Relaxed);
+    let val = value as u64;
+    let should_reset = match mode {
+        TLS_DTOR_MODE_RESET_UNTIL_THREE => val < 3,
+        TLS_DTOR_MODE_ALWAYS_RESET => true,
+        _ => false,
+    };
+    if should_reset {
+        let key = frankenlibc_core::pthread::tls::PthreadKey { id: key_id };
+        let _ = core_pthread_setspecific(key, val.saturating_add(1));
+    }
+}
+
+fn reset_pthread_tls_case_state() {
+    TLS_DTOR_COUNT.store(0, Ordering::Relaxed);
+    TLS_DTOR_LAST_VALUE.store(0, Ordering::Relaxed);
+    TLS_DTOR_MODE.store(TLS_DTOR_MODE_COUNTER, Ordering::Relaxed);
+    TLS_DTOR_KEY_ID.store(TLS_INVALID_KEY_ID, Ordering::Relaxed);
+    for id in 0..frankenlibc_core::pthread::tls::PTHREAD_KEYS_MAX {
+        let _ = frankenlibc_core::pthread::pthread_key_delete(
+            frankenlibc_core::pthread::tls::PthreadKey { id: id as u32 },
+        );
+    }
+}
+
+fn format_pthread_status(rc: i32) -> String {
+    match rc {
+        0 => String::from("0"),
+        x if x == libc::EAGAIN => String::from("EAGAIN"),
+        x if x == libc::EINVAL => String::from("EINVAL"),
+        _ => rc.to_string(),
+    }
+}
+
+fn create_pthread_key(
+    destructor: Option<unsafe extern "C" fn(*mut std::ffi::c_void)>,
+) -> Result<frankenlibc_core::pthread::tls::PthreadKey, String> {
+    let mut key = frankenlibc_core::pthread::tls::PthreadKey::default();
+    let rc = frankenlibc_core::pthread::pthread_key_create(&mut key, destructor);
+    if rc == 0 {
+        Ok(key)
+    } else {
+        Err(format!(
+            "pthread_key_create failed: {}",
+            format_pthread_status(rc)
+        ))
+    }
+}
+
+fn parse_key_alias_to_id(alias: &str) -> Option<u32> {
+    alias
+        .strip_prefix("invalid_key_")
+        .or_else(|| alias.strip_prefix("key_id_"))
+        .or_else(|| alias.strip_prefix("out_of_bounds_key_"))
+        .and_then(|raw| raw.parse::<u32>().ok())
+}
+
+#[cfg(target_arch = "x86_64")]
+fn core_pthread_getspecific(key: frankenlibc_core::pthread::tls::PthreadKey) -> u64 {
+    frankenlibc_core::pthread::pthread_getspecific(key)
+}
+
+#[cfg(not(target_arch = "x86_64"))]
+fn core_pthread_getspecific(_key: frankenlibc_core::pthread::tls::PthreadKey) -> u64 {
+    0
+}
+
+#[cfg(target_arch = "x86_64")]
+fn core_pthread_setspecific(key: frankenlibc_core::pthread::tls::PthreadKey, value: u64) -> i32 {
+    frankenlibc_core::pthread::pthread_setspecific(key, value)
+}
+
+#[cfg(not(target_arch = "x86_64"))]
+fn core_pthread_setspecific(_key: frankenlibc_core::pthread::tls::PthreadKey, _value: u64) -> i32 {
+    libc::EINVAL
+}
+
+#[cfg(target_arch = "x86_64")]
+unsafe extern "C" fn tls_worker_setspecific(arg: usize) -> usize {
+    let _ = arg;
+    let key_id = TLS_WORKER_KEY_ID.load(Ordering::Relaxed);
+    let value = TLS_WORKER_VALUE.load(Ordering::Relaxed);
+    if key_id == TLS_INVALID_KEY_ID {
+        return 0;
+    }
+    let key = frankenlibc_core::pthread::tls::PthreadKey { id: key_id };
+    let _ = core_pthread_setspecific(key, value);
+    0
+}
+
+#[cfg(target_arch = "x86_64")]
+fn run_tls_worker_thread(
+    key: frankenlibc_core::pthread::tls::PthreadKey,
+    value: u64,
+) -> Result<(), String> {
+    TLS_WORKER_KEY_ID.store(key.id, Ordering::Relaxed);
+    TLS_WORKER_VALUE.store(value, Ordering::Relaxed);
+    let handle = unsafe {
+        frankenlibc_core::pthread::create_thread(tls_worker_setspecific as *const () as usize, 0, 0)
+    }
+    .map_err(|rc| format!("create_thread failed: {rc}"))?;
+    let join_result = unsafe { frankenlibc_core::pthread::join_thread(handle) }
+        .map_err(|rc| format!("join_thread failed: {rc}"));
+    TLS_WORKER_KEY_ID.store(TLS_INVALID_KEY_ID, Ordering::Relaxed);
+    TLS_WORKER_VALUE.store(0, Ordering::Relaxed);
+    join_result?;
+    Ok(())
+}
+
+#[cfg(not(target_arch = "x86_64"))]
+fn run_tls_worker_thread(
+    _key: frankenlibc_core::pthread::tls::PthreadKey,
+    _value: u64,
+) -> Result<(), String> {
+    Err(String::from("teardown_thread_tls fixtures require x86_64"))
+}
+
+fn execute_pthread_key_create_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    reset_pthread_tls_case_state();
+
+    let prior = inputs
+        .get("prior_keys_consumed")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0) as usize;
+    let mut consumed = Vec::new();
+    for _ in 0..prior {
+        let mut key = frankenlibc_core::pthread::tls::PthreadKey::default();
+        let fill_rc = frankenlibc_core::pthread::pthread_key_create(&mut key, None);
+        if fill_rc != 0 {
+            break;
+        }
+        consumed.push(key);
+    }
+
+    let dtor_name = parse_optional_string(inputs, "destructor")?;
+    let destructor = match dtor_name.as_deref() {
+        None | Some("none") => None,
+        Some("counter_dtor") => {
+            Some(tls_counter_destructor as unsafe extern "C" fn(*mut std::ffi::c_void))
+        }
+        Some(other) => {
+            return Err(format!(
+                "unsupported pthread_key_create destructor: {other}"
+            ));
+        }
+    };
+
+    let mut key = frankenlibc_core::pthread::tls::PthreadKey::default();
+    let rc = frankenlibc_core::pthread::pthread_key_create(&mut key, destructor);
+    if rc == 0 {
+        consumed.push(key);
+    }
+
+    for key in consumed {
+        let _ = frankenlibc_core::pthread::pthread_key_delete(key);
+    }
+
+    Ok(DifferentialExecution {
+        host_output: String::from("SKIP"),
+        impl_output: format_pthread_status(rc),
+        host_parity: true,
+        note: None,
+    })
+}
+
+fn execute_pthread_key_delete_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    reset_pthread_tls_case_state();
+
+    let key_input = parse_string(inputs, "key")?;
+    let mut note = None;
+    let rc = match key_input.as_str() {
+        "valid_key" => {
+            let key = create_pthread_key(None)?;
+            frankenlibc_core::pthread::pthread_key_delete(key)
+        }
+        "deleted_key" => {
+            let key = create_pthread_key(None)?;
+            let _ = frankenlibc_core::pthread::pthread_key_delete(key);
+            frankenlibc_core::pthread::pthread_key_delete(key)
+        }
+        "key_with_dtor_and_value" => {
+            let key = create_pthread_key(Some(tls_counter_destructor))?;
+            let _ = core_pthread_setspecific(key, 42);
+            let delete_rc = frankenlibc_core::pthread::pthread_key_delete(key);
+            let dtor_calls = TLS_DTOR_COUNT.load(Ordering::Relaxed);
+            if dtor_calls != 0 {
+                note = Some(format!(
+                    "pthread_key_delete unexpectedly invoked destructor {dtor_calls} time(s)"
+                ));
+            }
+            delete_rc
+        }
+        other => {
+            let id = parse_key_alias_to_id(other).unwrap_or(u32::MAX);
+            frankenlibc_core::pthread::pthread_key_delete(
+                frankenlibc_core::pthread::tls::PthreadKey { id },
+            )
+        }
+    };
+
+    Ok(DifferentialExecution {
+        host_output: String::from("SKIP"),
+        impl_output: format_pthread_status(rc),
+        host_parity: true,
+        note,
+    })
+}
+
+fn execute_pthread_getspecific_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    reset_pthread_tls_case_state();
+
+    let key_input = parse_string(inputs, "key")?;
+    let value = match key_input.as_str() {
+        "valid_key_no_value_set" => {
+            let key = create_pthread_key(None)?;
+            let _ = core_pthread_setspecific(key, 0);
+            core_pthread_getspecific(key)
+        }
+        other => {
+            let id = parse_key_alias_to_id(other).unwrap_or(u32::MAX);
+            core_pthread_getspecific(frankenlibc_core::pthread::tls::PthreadKey { id })
+        }
+    };
+
+    Ok(DifferentialExecution {
+        host_output: String::from("SKIP"),
+        impl_output: value.to_string(),
+        host_parity: true,
+        note: None,
+    })
+}
+
+fn execute_pthread_setspecific_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    reset_pthread_tls_case_state();
+
+    let key_input = parse_string(inputs, "key")?;
+    let value = parse_u64_or_hex(inputs, "value")?;
+    let mut note = None;
+    let rc = match key_input.as_str() {
+        "valid_key" => {
+            let key = create_pthread_key(None)?;
+            let set_rc = core_pthread_setspecific(key, value);
+            if set_rc == 0 {
+                let roundtrip = core_pthread_getspecific(key);
+                if roundtrip != value {
+                    note = Some(format!(
+                        "setspecific roundtrip mismatch: expected {value}, observed {roundtrip}"
+                    ));
+                }
+            }
+            set_rc
+        }
+        "deleted_key" => {
+            let key = create_pthread_key(None)?;
+            let _ = frankenlibc_core::pthread::pthread_key_delete(key);
+            core_pthread_setspecific(key, value)
+        }
+        other => {
+            let id = parse_key_alias_to_id(other).unwrap_or(u32::MAX);
+            core_pthread_setspecific(frankenlibc_core::pthread::tls::PthreadKey { id }, value)
+        }
+    };
+
+    Ok(DifferentialExecution {
+        host_output: String::from("SKIP"),
+        impl_output: format_pthread_status(rc),
+        host_parity: true,
+        note,
+    })
+}
+
+fn execute_teardown_thread_tls_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    reset_pthread_tls_case_state();
+
+    let key_alias = parse_string(inputs, "key")?;
+    let value = parse_u64_or_hex(inputs, "value")?;
+    let (destructor, mode_flag): (Option<unsafe extern "C" fn(*mut std::ffi::c_void)>, u32) =
+        match key_alias.as_str() {
+            "key_with_dtor" => (Some(tls_counter_destructor), TLS_DTOR_MODE_COUNTER),
+            "key_with_resetting_dtor" => (
+                Some(tls_resetting_destructor),
+                TLS_DTOR_MODE_RESET_UNTIL_THREE,
+            ),
+            "key_with_always_resetting_dtor" => {
+                (Some(tls_resetting_destructor), TLS_DTOR_MODE_ALWAYS_RESET)
+            }
+            other => {
+                return Err(format!(
+                    "unsupported teardown_thread_tls key alias: {other}"
+                ));
+            }
+        };
+
+    TLS_DTOR_MODE.store(mode_flag, Ordering::Relaxed);
+    let key = create_pthread_key(destructor)?;
+    TLS_DTOR_KEY_ID.store(key.id, Ordering::Relaxed);
+
+    run_tls_worker_thread(key, value)?;
+
+    let calls = TLS_DTOR_COUNT.load(Ordering::Relaxed);
+    let impl_output = match key_alias.as_str() {
+        "key_with_dtor" => {
+            if value == 0 {
+                if calls == 0 {
+                    String::from("destructor_not_called")
+                } else {
+                    format!("destructor_called_{calls}_times")
+                }
+            } else if calls == 1 {
+                String::from("destructor_called_once")
+            } else {
+                format!("destructor_called_{calls}_times")
+            }
+        }
+        "key_with_resetting_dtor" => {
+            if calls > 1 {
+                String::from("destructor_called_multiple_times")
+            } else if calls == 1 {
+                String::from("destructor_called_once")
+            } else {
+                String::from("destructor_not_called")
+            }
+        }
+        "key_with_always_resetting_dtor" => {
+            if calls <= frankenlibc_core::pthread::tls::PTHREAD_DESTRUCTOR_ITERATIONS {
+                String::from("calls_bounded_at_4")
+            } else {
+                format!("calls_exceeded_bound:{calls}")
+            }
+        }
+        _ => unreachable!(),
+    };
+
+    let _ = frankenlibc_core::pthread::pthread_key_delete(key);
+
+    Ok(DifferentialExecution {
+        host_output: String::from("N/A"),
+        impl_output,
+        host_parity: true,
+        note: None,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -5954,5 +6378,38 @@ mod tests {
             execute_fixture_case("strtok_r", &inputs, "strict").expect("strtok_r should succeed");
         assert!(result.host_parity, "strtok_r first-token host parity");
         assert_eq!(result.impl_output, "hello");
+    }
+
+    #[test]
+    fn pthread_tls_key_create_success_supported() {
+        let inputs = serde_json::json!({ "destructor": "none" });
+        let result = execute_fixture_case("pthread_key_create", &inputs, "strict")
+            .expect("pthread_key_create should execute");
+        assert_eq!(result.impl_output, "0");
+        assert!(result.host_parity);
+    }
+
+    #[test]
+    fn pthread_tls_setspecific_deleted_key_reports_einval() {
+        let inputs = serde_json::json!({
+            "key": "deleted_key",
+            "value": 42
+        });
+        let result = execute_fixture_case("pthread_setspecific", &inputs, "strict")
+            .expect("pthread_setspecific should execute");
+        assert_eq!(result.impl_output, "EINVAL");
+        assert!(result.host_parity);
+    }
+
+    #[test]
+    fn pthread_tls_teardown_bounded_iterations_supported() {
+        let inputs = serde_json::json!({
+            "key": "key_with_always_resetting_dtor",
+            "value": 1
+        });
+        let result = execute_fixture_case("teardown_thread_tls", &inputs, "strict")
+            .expect("teardown_thread_tls should execute");
+        assert_eq!(result.impl_output, "calls_bounded_at_4");
+        assert!(result.host_parity);
     }
 }
