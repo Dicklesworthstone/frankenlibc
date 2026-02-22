@@ -185,3 +185,118 @@ fn pressure_sensing_scenario_invariants() {
         .expect("Missing regimes_tested");
     assert_eq!(regimes.len(), 4, "Expected 4 regimes tested");
 }
+
+#[test]
+fn pressure_sensing_gate_emits_structured_artifacts() {
+    let root = repo_root();
+    let script = root.join("scripts/check_pressure_sensing.sh");
+    assert!(script.exists(), "Missing gate script: {}", script.display());
+
+    let output = Command::new("bash")
+        .arg(&script)
+        .current_dir(&root)
+        .output()
+        .expect("failed to run check_pressure_sensing.sh");
+    assert!(
+        output.status.success(),
+        "check_pressure_sensing.sh failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let report_path = root.join("target/conformance/pressure_sensing.report.json");
+    let log_path = root.join("target/conformance/pressure_sensing.log.jsonl");
+    assert!(
+        report_path.exists(),
+        "Missing report: {}",
+        report_path.display()
+    );
+    assert!(log_path.exists(), "Missing log: {}", log_path.display());
+
+    let report = load_json(&report_path);
+    for key in [
+        "schema_version",
+        "bead",
+        "status",
+        "summary",
+        "thresholds",
+        "scenarios",
+        "findings",
+        "artifacts_consumed",
+        "artifacts_emitted",
+        "tooling_contract",
+    ] {
+        assert!(report.get(key).is_some(), "report missing key: {key}");
+    }
+    assert_eq!(report["bead"].as_str(), Some("bd-w2c3.7.1"));
+    assert_eq!(report["status"].as_str(), Some("pass"));
+
+    let scenarios = report["scenarios"]
+        .as_array()
+        .expect("scenarios must be array");
+    assert!(!scenarios.is_empty(), "scenarios must be non-empty");
+    let scenario_count = report["summary"]["scenario_count"]
+        .as_u64()
+        .expect("summary.scenario_count must be u64");
+    assert_eq!(
+        scenario_count as usize,
+        scenarios.len(),
+        "summary.scenario_count should match scenarios length"
+    );
+
+    let tooling = report["tooling_contract"]
+        .as_object()
+        .expect("tooling_contract should be object");
+    for key in [
+        "has_asupersync_dependency",
+        "asupersync_feature_present",
+        "default_enables_asupersync_tooling",
+        "frankentui_feature_present",
+        "frankentui_dependency_set_complete",
+    ] {
+        assert_eq!(
+            tooling.get(key).and_then(serde_json::Value::as_bool),
+            Some(true),
+            "tooling_contract expectation failed for key: {key}"
+        );
+    }
+
+    let (line_count, errors) = frankenlibc_harness::structured_log::validate_log_file(&log_path)
+        .expect("structured log should be readable");
+    assert_eq!(
+        line_count,
+        scenarios.len(),
+        "structured log should emit one event per scenario"
+    );
+    assert!(
+        errors.is_empty(),
+        "structured log validation errors: {errors:#?}"
+    );
+
+    let content = std::fs::read_to_string(&log_path).expect("failed to read structured log");
+    let first = content
+        .lines()
+        .find(|line| !line.trim().is_empty())
+        .expect("log should contain at least one event");
+    let row: serde_json::Value = serde_json::from_str(first).expect("first log row should be JSON");
+    for key in [
+        "trace_id",
+        "mode",
+        "api_family",
+        "symbol",
+        "decision_path",
+        "healing_action",
+        "errno",
+        "latency_ns",
+        "artifact_refs",
+    ] {
+        assert!(row.get(key).is_some(), "log row missing key: {key}");
+    }
+    assert_eq!(row["event"].as_str(), Some("pressure_sensing_scenario"));
+    assert_eq!(row["api_family"].as_str(), Some("pressure_sensing"));
+    let decision_path = row["decision_path"].as_str().unwrap_or_default();
+    assert!(
+        decision_path.contains("tooling_contract"),
+        "decision_path should include tooling_contract, got {decision_path}"
+    );
+}
