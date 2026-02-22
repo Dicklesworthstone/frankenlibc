@@ -44,6 +44,12 @@ static LCONV: LConv = LConv {
     n_sep_by_space: 127,
     p_sign_posn: 127,
     n_sign_posn: 127,
+    int_p_cs_precedes: 127,
+    int_p_sep_by_space: 127,
+    int_n_cs_precedes: 127,
+    int_n_sep_by_space: 127,
+    int_p_sign_posn: 127,
+    int_n_sign_posn: 127,
 };
 
 /// C-compatible `struct lconv`.
@@ -67,6 +73,12 @@ pub struct LConv {
     n_sep_by_space: c_char,
     p_sign_posn: c_char,
     n_sign_posn: c_char,
+    int_p_cs_precedes: c_char,
+    int_p_sep_by_space: c_char,
+    int_n_cs_precedes: c_char,
+    int_n_sep_by_space: c_char,
+    int_p_sign_posn: c_char,
+    int_n_sign_posn: c_char,
 }
 
 // SAFETY: LConv contains only static pointers and scalars, all read-only.

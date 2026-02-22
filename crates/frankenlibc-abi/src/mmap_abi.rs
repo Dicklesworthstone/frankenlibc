@@ -338,12 +338,16 @@ pub unsafe extern "C" fn munlockall() -> c_int {
 // ---------------------------------------------------------------------------
 
 /// Linux `mremap` — remap a virtual memory address.
+///
+/// When `flags` includes `MREMAP_FIXED`, the `new_address` parameter specifies
+/// the new mapping target. Without `MREMAP_FIXED`, `new_address` is ignored.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn mremap(
     old_address: *mut c_void,
     old_size: usize,
     new_size: usize,
     flags: c_int,
+    new_address: *mut c_void,
 ) -> *mut c_void {
     let (_, decision) = runtime_policy::decide(
         ApiFamily::VirtualMemory,
@@ -366,6 +370,7 @@ pub unsafe extern "C" fn mremap(
             old_size,
             new_size,
             flags,
+            new_address,
         )
     };
     if rc == libc::MAP_FAILED as c_long {

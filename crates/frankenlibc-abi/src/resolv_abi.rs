@@ -79,7 +79,9 @@ fn resolve_hosts_subset(node: &str, family: c_int) -> Option<HostsAddress> {
     let content = std::fs::read("/etc/hosts").ok()?;
     let candidates = frankenlibc_core::resolv::lookup_hosts(&content, node.as_bytes());
     for candidate in candidates {
-        let text = core::str::from_utf8(&candidate).ok()?;
+        let Ok(text) = core::str::from_utf8(&candidate) else {
+            continue;
+        };
         if (family == libc::AF_UNSPEC || family == libc::AF_INET)
             && let Ok(v4) = text.parse::<Ipv4Addr>()
         {
@@ -1051,7 +1053,7 @@ pub unsafe extern "C" fn getservbyname(name: *const c_char, proto: *const c_char
         storage.servent = libc::servent {
             s_name: storage.name.as_mut_ptr(),
             s_aliases: storage.aliases.as_mut_ptr(),
-            s_port: (port as c_int).to_be(),
+            s_port: (port as u16).to_be() as c_int,
             s_proto: storage.proto.as_mut_ptr(),
         };
         (&mut storage.servent as *mut libc::servent).cast::<c_void>()
