@@ -3,27 +3,28 @@
 //! Implements a simple linear congruential generator compatible with
 //! glibc's `rand`/`srand` contract. Constants match glibc's TYPE_0 LCG.
 
-use std::cell::Cell;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 /// RAND_MAX = 2^31 - 1 (matching glibc).
 pub const RAND_MAX: i32 = 0x7FFF_FFFF;
 
-thread_local! {
-    static SEED: Cell<u32> = const { Cell::new(1) };
-}
+static SEED: AtomicU32 = AtomicU32::new(1);
 
 /// Returns a pseudo-random integer in [0, RAND_MAX].
 pub fn rand() -> i32 {
-    SEED.with(|s| {
-        let next = lcg_next(s.get());
-        s.set(next);
-        (next >> 1) as i32 & RAND_MAX
-    })
+    let mut current = SEED.load(Ordering::Relaxed);
+    loop {
+        let next = lcg_next(current);
+        match SEED.compare_exchange_weak(current, next, Ordering::Relaxed, Ordering::Relaxed) {
+            Ok(_) => return (next >> 1) as i32 & RAND_MAX,
+            Err(new_current) => current = new_current,
+        }
+    }
 }
 
 /// Seeds the random number generator.
 pub fn srand(seed: u32) {
-    SEED.with(|s| s.set(seed));
+    SEED.store(seed, Ordering::Relaxed);
 }
 
 /// Reentrant variant: uses `*seedp` as state.

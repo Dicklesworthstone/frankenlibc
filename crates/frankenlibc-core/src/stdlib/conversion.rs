@@ -363,7 +363,7 @@ pub fn strtod_impl(s: &[u8]) -> (f64, usize) {
             i += 1;
             while i < slice.len() && slice[i].is_ascii_hexdigit() {
                 has_digits = true;
-                frac_hex_digits += 1;
+                frac_hex_digits = frac_hex_digits.saturating_add(1);
                 significand = significand * 16.0 + hex_digit_val(slice[i]) as f64;
                 i += 1;
             }
@@ -397,7 +397,7 @@ pub fn strtod_impl(s: &[u8]) -> (f64, usize) {
 
         // Each hex fractional digit shifts by 4 binary positions, so adjust.
         // result = significand * 2^(bin_exp - 4 * frac_hex_digits)
-        let effective_exp = bin_exp - 4 * frac_hex_digits;
+        let effective_exp = bin_exp.saturating_sub(frac_hex_digits.saturating_mul(4));
         let val = libm::ldexp(significand, effective_exp);
 
         let val = if negative { -val } else { val };
