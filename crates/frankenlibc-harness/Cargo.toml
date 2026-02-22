@@ -28,11 +28,11 @@ thiserror = { workspace = true }
 sha2 = { workspace = true }
 asupersync-conformance = { workspace = true, optional = true }
 ftui-harness = { workspace = true, optional = true }
-ftui-core = { version = "0.2.0", path = "/dp/frankentui/crates/ftui-core", optional = true }
-ftui-layout = { version = "0.2.0", path = "/dp/frankentui/crates/ftui-layout", optional = true }
-ftui-render = { version = "0.2.0", path = "/dp/frankentui/crates/ftui-render", optional = true }
-ftui-style = { version = "0.2.0", path = "/dp/frankentui/crates/ftui-style", optional = true }
-ftui-widgets = { version = "0.2.0", path = "/dp/frankentui/crates/ftui-widgets", optional = true }
+ftui-core = { version = "0.2.1", optional = true }
+ftui-layout = { version = "0.2.1", optional = true }
+ftui-render = { version = "0.2.1", optional = true }
+ftui-style = { version = "0.2.1", optional = true }
+ftui-widgets = { version = "0.2.1", optional = true }
 frankenlibc-membrane = { workspace = true }
 frankenlibc-fixture-exec = { workspace = true }
 
