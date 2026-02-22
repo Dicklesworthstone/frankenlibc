@@ -232,7 +232,11 @@ impl PacBayesMonitor {
 
         // PAC-Bayes bound (McAllester form):
         // E_ρ[L] ≤ Ê_ρ[L] + √((KL(ρ‖π) + ln(2√n/δ)) / (2n))
-        let n = self.count as f64;
+        let n = if self.count <= WARMUP {
+            self.count as f64
+        } else {
+            (2.0 / ALPHA - 1.0).min(self.count as f64)
+        };
         let complexity_term = self.kl_divergence + (2.0 * n.sqrt() / DELTA).ln();
         let slack = (complexity_term / (2.0 * n)).sqrt();
         self.bound = (self.empirical_error + slack).clamp(0.0, 1.0);

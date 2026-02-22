@@ -5,6 +5,7 @@
 
 use std::collections::HashMap;
 use std::ffi::{c_char, c_int, c_void};
+use std::os::raw::c_long;
 use std::sync::Mutex;
 
 use frankenlibc_core::dirent as dirent_core;
@@ -27,6 +28,22 @@ struct DirState {
     offset: usize,
     valid_bytes: usize,
     eof: bool,
+    /// Kernel d_off of the last returned entry (for telldir/seekdir).
+    last_d_off: i64,
+}
+
+/// Extract the kernel `d_off` field from a raw linux_dirent64 at the given buffer offset.
+/// Layout: d_ino(8) | d_off(8) | d_reclen(2) | d_type(1) | d_name(...)
+#[inline]
+fn extract_d_off(buffer: &[u8], offset: usize) -> i64 {
+    if offset + 16 > buffer.len() {
+        return 0;
+    }
+    i64::from_ne_bytes(
+        buffer[offset + 8..offset + 16]
+            .try_into()
+            .unwrap_or([0; 8]),
+    )
 }
 
 /// Global registry of open directory streams, keyed by a unique handle.
@@ -92,6 +109,7 @@ pub unsafe extern "C" fn opendir(name: *const c_char) -> *mut DIR {
         offset: 0,
         valid_bytes: 0,
         eof: false,
+        last_d_off: 0,
     };
 
     let mut registry = DIR_REGISTRY.lock().unwrap();
@@ -152,6 +170,7 @@ pub unsafe extern "C" fn readdir(dirp: *mut DIR) -> *mut libc::dirent {
         && let Some((entry, next_off)) =
             dirent_core::parse_dirent64(&state.buffer[..state.valid_bytes], state.offset)
     {
+        state.last_d_off = extract_d_off(&state.buffer, state.offset);
         state.offset = next_off;
         return ENTRY_BUF.with(|cell| {
             let ptr = cell.get();
@@ -198,6 +217,7 @@ pub unsafe extern "C" fn readdir(dirp: *mut DIR) -> *mut libc::dirent {
     if let Some((entry, next_off)) =
         dirent_core::parse_dirent64(&state.buffer[..state.valid_bytes], 0)
     {
+        state.last_d_off = extract_d_off(&state.buffer, 0);
         state.offset = next_off;
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, false);
         return ENTRY_BUF.with(|cell| {
@@ -274,101 +294,276 @@ pub unsafe extern "C" fn closedir(dirp: *mut DIR) -> c_int {
 }
 
 // ---------------------------------------------------------------------------
-// Additional directory functions — GlibcCallThrough
+// seekdir — native implementation using our DIR registry
 // ---------------------------------------------------------------------------
 
-unsafe extern "C" {
-    #[link_name = "seekdir"]
-    fn libc_seekdir(dirp: *mut c_void, loc: c_long);
-    #[link_name = "telldir"]
-    fn libc_telldir(dirp: *mut c_void) -> c_long;
-    #[link_name = "rewinddir"]
-    fn libc_rewinddir(dirp: *mut c_void);
-    #[link_name = "scandir"]
-    fn libc_scandir(
-        dirp: *const c_char,
-        namelist: *mut *mut *mut libc::dirent,
-        filter: Option<unsafe extern "C" fn(*const libc::dirent) -> c_int>,
-        compar: Option<
-            unsafe extern "C" fn(*mut *const libc::dirent, *mut *const libc::dirent) -> c_int,
-        >,
-    ) -> c_int;
-    #[link_name = "alphasort"]
-    fn libc_alphasort(a: *mut *const libc::dirent, b: *mut *const libc::dirent) -> c_int;
-    #[link_name = "readdir_r"]
-    fn libc_readdir_r(
-        dirp: *mut c_void,
-        entry: *mut libc::dirent,
-        result: *mut *mut libc::dirent,
-    ) -> c_int;
-    #[link_name = "readdir64"]
-    fn libc_readdir64(dirp: *mut c_void) -> *mut c_void;
-    #[link_name = "scandir64"]
-    fn libc_scandir64(
-        dirp: *const c_char,
-        namelist: *mut *mut *mut c_void,
-        filter: Option<unsafe extern "C" fn(*const c_void) -> c_int>,
-        compar: Option<unsafe extern "C" fn(*mut *const c_void, *mut *const c_void) -> c_int>,
-    ) -> c_int;
-}
-
-use std::os::raw::c_long;
-
+/// POSIX `seekdir` — set position in directory stream.
+///
+/// Uses lseek on the underlying fd to restore the kernel position,
+/// then resets the buffer so the next readdir refills from that point.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn seekdir(dirp: *mut c_void, loc: c_long) {
-    unsafe { libc_seekdir(dirp, loc) }
+pub unsafe extern "C" fn seekdir(dirp: *mut DIR, loc: c_long) {
+    if dirp.is_null() {
+        return;
+    }
+    let handle = dirp as usize;
+    let mut registry = DIR_REGISTRY.lock().unwrap();
+    if let Some(map) = registry.as_mut() {
+        if let Some(state) = map.get_mut(&handle) {
+            let _ = syscall::sys_lseek(state.fd, loc as i64, libc::SEEK_SET);
+            state.offset = 0;
+            state.valid_bytes = 0;
+            state.eof = false;
+            state.last_d_off = loc as i64;
+        }
+    }
 }
 
+// ---------------------------------------------------------------------------
+// telldir — native implementation using tracked d_off
+// ---------------------------------------------------------------------------
+
+/// POSIX `telldir` — get current position in directory stream.
+///
+/// Returns the kernel d_off of the last entry returned by readdir.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn telldir(dirp: *mut c_void) -> c_long {
-    unsafe { libc_telldir(dirp) }
+pub unsafe extern "C" fn telldir(dirp: *mut DIR) -> c_long {
+    if dirp.is_null() {
+        return -1;
+    }
+    let handle = dirp as usize;
+    let registry = DIR_REGISTRY.lock().unwrap();
+    match registry.as_ref().and_then(|m| m.get(&handle)) {
+        Some(state) => state.last_d_off as c_long,
+        None => -1,
+    }
 }
 
+// ---------------------------------------------------------------------------
+// rewinddir — native implementation
+// ---------------------------------------------------------------------------
+
+/// POSIX `rewinddir` — reset directory stream to beginning.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn rewinddir(dirp: *mut c_void) {
-    unsafe { libc_rewinddir(dirp) }
+pub unsafe extern "C" fn rewinddir(dirp: *mut DIR) {
+    if dirp.is_null() {
+        return;
+    }
+    let handle = dirp as usize;
+    let mut registry = DIR_REGISTRY.lock().unwrap();
+    if let Some(map) = registry.as_mut() {
+        if let Some(state) = map.get_mut(&handle) {
+            let _ = syscall::sys_lseek(state.fd, 0, libc::SEEK_SET);
+            state.offset = 0;
+            state.valid_bytes = 0;
+            state.eof = false;
+            state.last_d_off = 0;
+        }
+    }
 }
 
+// ---------------------------------------------------------------------------
+// readdir_r — native implementation (deprecated but widely used)
+// ---------------------------------------------------------------------------
+
+/// POSIX `readdir_r` — reentrant directory read.
+///
+/// Reads the next entry into the caller-provided `entry` buffer.
+/// Sets `*result` to `entry` on success, or null at end-of-directory.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn readdir_r(
+    dirp: *mut DIR,
+    entry: *mut libc::dirent,
+    result: *mut *mut libc::dirent,
+) -> c_int {
+    if dirp.is_null() || entry.is_null() || result.is_null() {
+        return libc::EINVAL;
+    }
+    // readdir returns a thread-local pointer; copy into caller's buffer.
+    let ptr = unsafe { readdir(dirp) };
+    if ptr.is_null() {
+        unsafe { *result = std::ptr::null_mut() };
+        0 // End of directory — not an error
+    } else {
+        unsafe {
+            std::ptr::copy_nonoverlapping(ptr, entry, 1);
+            *result = entry;
+        }
+        0
+    }
+}
+
+// ---------------------------------------------------------------------------
+// readdir64 — on 64-bit Linux, identical layout to readdir
+// ---------------------------------------------------------------------------
+
+/// `readdir64` — 64-bit variant of readdir.
+///
+/// On 64-bit Linux, `struct dirent` and `struct dirent64` have identical
+/// layouts (both use 64-bit d_ino). Delegates to our native readdir.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn readdir64(dirp: *mut DIR) -> *mut c_void {
+    unsafe { readdir(dirp) as *mut c_void }
+}
+
+// ---------------------------------------------------------------------------
+// alphasort — pure comparison function
+// ---------------------------------------------------------------------------
+
+/// POSIX `alphasort` — compare two directory entries by name.
+///
+/// Implements strcmp semantics on d_name for use with scandir.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn alphasort(
+    a: *mut *const libc::dirent,
+    b: *mut *const libc::dirent,
+) -> c_int {
+    if a.is_null() || b.is_null() {
+        return 0;
+    }
+    let da = unsafe { *a };
+    let db = unsafe { *b };
+    if da.is_null() || db.is_null() {
+        return 0;
+    }
+    let na = unsafe { &(*da).d_name };
+    let nb = unsafe { &(*db).d_name };
+    for i in 0..na.len().min(nb.len()) {
+        let ca = na[i] as u8;
+        let cb = nb[i] as u8;
+        if ca != cb {
+            return (ca as c_int) - (cb as c_int);
+        }
+        if ca == 0 {
+            return 0;
+        }
+    }
+    0
+}
+
+// ---------------------------------------------------------------------------
+// scandir — native implementation using our opendir/readdir
+// ---------------------------------------------------------------------------
+
+/// POSIX `scandir` — scan a directory for matching entries.
+///
+/// Opens the directory at `path`, reads all entries (applying `filter`
+/// if provided), sorts with `compar` if provided, and returns the
+/// result in a malloc-allocated array that the caller must free.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn scandir(
-    dirp: *const c_char,
+    path: *const c_char,
     namelist: *mut *mut *mut libc::dirent,
     filter: Option<unsafe extern "C" fn(*const libc::dirent) -> c_int>,
     compar: Option<
         unsafe extern "C" fn(*mut *const libc::dirent, *mut *const libc::dirent) -> c_int,
     >,
 ) -> c_int {
-    unsafe { libc_scandir(dirp, namelist, filter, compar) }
+    if path.is_null() || namelist.is_null() {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return -1;
+    }
+
+    let dir = unsafe { opendir(path) };
+    if dir.is_null() {
+        return -1; // errno set by opendir
+    }
+
+    let mut entries: Vec<*mut libc::dirent> = Vec::new();
+
+    loop {
+        let entry = unsafe { readdir(dir) };
+        if entry.is_null() {
+            break;
+        }
+
+        let include = match filter {
+            Some(f) => {
+                let r = unsafe { f(entry) };
+                r != 0
+            }
+            None => true,
+        };
+
+        if include {
+            let size = std::mem::size_of::<libc::dirent>();
+            let copy = unsafe { libc::malloc(size) } as *mut libc::dirent;
+            if copy.is_null() {
+                for &e in &entries {
+                    unsafe { libc::free(e as *mut c_void) };
+                }
+                unsafe { closedir(dir) };
+                unsafe { set_abi_errno(errno::ENOMEM) };
+                return -1;
+            }
+            unsafe { std::ptr::copy_nonoverlapping(entry, copy, 1) };
+            entries.push(copy);
+        }
+    }
+
+    unsafe { closedir(dir) };
+
+    let count = entries.len();
+
+    // Allocate the namelist array
+    if count == 0 {
+        // Empty result — allocate a minimal array
+        let array = unsafe { libc::malloc(std::mem::size_of::<*mut libc::dirent>()) }
+            as *mut *mut libc::dirent;
+        unsafe { *namelist = array };
+        return 0;
+    }
+
+    let array_size = count * std::mem::size_of::<*mut libc::dirent>();
+    let array = unsafe { libc::malloc(array_size) } as *mut *mut libc::dirent;
+    if array.is_null() {
+        for &e in &entries {
+            unsafe { libc::free(e as *mut c_void) };
+        }
+        unsafe { set_abi_errno(errno::ENOMEM) };
+        return -1;
+    }
+
+    for (i, &e) in entries.iter().enumerate() {
+        unsafe { *array.add(i) = e };
+    }
+
+    // Sort if comparator provided
+    if let Some(cmp) = compar {
+        let slice = unsafe { std::slice::from_raw_parts_mut(array, count) };
+        slice.sort_unstable_by(|a, b| {
+            let pa = a as *const *mut libc::dirent as *mut *const libc::dirent;
+            let pb = b as *const *mut libc::dirent as *mut *const libc::dirent;
+            let r = unsafe { cmp(pa, pb) };
+            r.cmp(&0)
+        });
+    }
+
+    unsafe { *namelist = array };
+    count as c_int
 }
 
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn alphasort(
-    a: *mut *const libc::dirent,
-    b: *mut *const libc::dirent,
-) -> c_int {
-    unsafe { libc_alphasort(a, b) }
-}
+// ---------------------------------------------------------------------------
+// scandir64 — on 64-bit Linux, identical to scandir
+// ---------------------------------------------------------------------------
 
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn readdir_r(
-    dirp: *mut c_void,
-    entry: *mut libc::dirent,
-    result: *mut *mut libc::dirent,
-) -> c_int {
-    unsafe { libc_readdir_r(dirp, entry, result) }
-}
-
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn readdir64(dirp: *mut c_void) -> *mut c_void {
-    unsafe { libc_readdir64(dirp) }
-}
-
+/// `scandir64` — 64-bit variant of scandir.
+///
+/// On 64-bit Linux, dirent and dirent64 have identical layouts.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn scandir64(
-    dirp: *const c_char,
+    path: *const c_char,
     namelist: *mut *mut *mut c_void,
     filter: Option<unsafe extern "C" fn(*const c_void) -> c_int>,
     compar: Option<unsafe extern "C" fn(*mut *const c_void, *mut *const c_void) -> c_int>,
 ) -> c_int {
-    unsafe { libc_scandir64(dirp, namelist, filter, compar) }
+    // On 64-bit Linux, dirent64 == dirent. Transmute function pointers.
+    unsafe {
+        scandir(
+            path,
+            namelist as *mut *mut *mut libc::dirent,
+            std::mem::transmute(filter),
+            std::mem::transmute(compar),
+        )
+    }
 }

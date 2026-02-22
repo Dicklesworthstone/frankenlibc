@@ -178,9 +178,9 @@ impl BorelCantelliMonitor {
 
         let mean_rate = sum_rate / N as f64;
 
-        // EWMA smooth aggregates.
-        self.max_exceedance_rate += alpha * (max_rate - self.max_exceedance_rate);
-        self.mean_exceedance_rate += alpha * (mean_rate - self.mean_exceedance_rate);
+        // Use aggregates directly (they are derived from EWMA-smoothed components).
+        self.max_exceedance_rate = max_rate;
+        self.mean_exceedance_rate = mean_rate;
 
         // State classification based on max exceedance rate.
         self.state = if self.count < WARMUP {

@@ -256,6 +256,8 @@ impl AdmmBudgetController {
             let t = (cumsum - cap) / (k as f64 + 1.0);
             if val - t > 0.0 {
                 threshold = t;
+            } else {
+                break;
             }
         }
 

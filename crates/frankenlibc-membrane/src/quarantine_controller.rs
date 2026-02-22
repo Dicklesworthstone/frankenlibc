@@ -219,7 +219,7 @@ impl QuarantineController {
 
         // Barrier certificate: repulsive force near boundaries
         let barrier_grad =
-            -1.0 / (depth_max_f - depth_f).max(1.0) + 1.0 / (depth_f - depth_min_f).max(1.0);
+            1.0 / (depth_max_f - depth_f).max(1.0) - 1.0 / (depth_f - depth_min_f).max(1.0);
 
         let total_grad = lagrangian_grad + 0.01 * barrier_grad;
 

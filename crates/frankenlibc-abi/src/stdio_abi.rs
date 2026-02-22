@@ -703,7 +703,13 @@ pub unsafe extern "C" fn fseek(stream: *mut c_void, offset: c_long, whence: c_in
         }
     }
 
-    let new_off = unsafe { libc::syscall(libc::SYS_lseek as c_long, fd, offset, whence) as i64 };
+    let (target_off, target_whence) = if whence == libc::SEEK_CUR {
+        (s.offset().saturating_add(offset as i64), libc::SEEK_SET)
+    } else {
+        (offset as i64, whence)
+    };
+
+    let new_off = unsafe { libc::syscall(libc::SYS_lseek as c_long, fd, target_off, target_whence) as i64 };
     if new_off < 0 {
         unsafe { set_abi_errno(errno::EINVAL) };
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);

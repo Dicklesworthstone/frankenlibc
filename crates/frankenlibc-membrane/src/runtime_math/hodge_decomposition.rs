@@ -215,8 +215,7 @@ impl HodgeDecompositionMonitor {
             let residual = d_ij + d_jk + d_ki;
             curl_sum += residual * residual;
         }
-        let raw_curl = curl_sum / self.triples.len() as f64;
-        self.curl_energy += alpha * (raw_curl - self.curl_energy);
+        self.curl_energy = curl_sum / self.triples.len() as f64;
 
         // Estimate gradient energy: variance of row-means.
         // Row-mean[i] = (1/N) Σ_j d_{ij} ≈ the global score of controller i.
@@ -239,12 +238,11 @@ impl HodgeDecompositionMonitor {
 
         // Inconsistency ratio.
         let total_energy = gradient_energy + self.curl_energy;
-        let raw_ratio = if total_energy > 1e-12 {
+        self.inconsistency_ratio = if total_energy > 1e-12 {
             self.curl_energy / total_energy
         } else {
             0.0
         };
-        self.inconsistency_ratio += alpha * (raw_ratio - self.inconsistency_ratio);
 
         // State classification.
         self.state = if self.count < WARMUP {

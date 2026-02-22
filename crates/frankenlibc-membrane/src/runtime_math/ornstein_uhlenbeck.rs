@@ -211,8 +211,9 @@ impl OrnsteinUhlenbeckMonitor {
             let raw_min = min_theta;
             let raw_mean = sum_theta / valid_count as f64;
 
-            self.min_theta += alpha * (raw_min - self.min_theta);
-            self.mean_theta += alpha * (raw_mean - self.mean_theta);
+            // Use aggregates directly (they are derived from EWMA-smoothed components).
+            self.min_theta = raw_min;
+            self.mean_theta = raw_mean;
         }
 
         // State classification based on minimum θ (worst-case controller).

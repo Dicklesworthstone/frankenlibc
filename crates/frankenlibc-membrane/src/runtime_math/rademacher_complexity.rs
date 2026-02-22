@@ -220,7 +220,11 @@ impl RademacherComplexityMonitor {
 
     /// Generalization gap bound: 2R̂ + √(ln(2/δ)/(2n)) with δ=0.05.
     pub fn gen_gap_bound(&self) -> f64 {
-        let n = (self.count as f64).max(1.0);
+        let n = if self.count <= WARMUP {
+            (self.count as f64).max(1.0)
+        } else {
+            (2.0 / ALPHA - 1.0).min(self.count as f64)
+        };
         let delta = 0.05;
         let concentration = ((2.0_f64 / delta).ln() / (2.0 * n)).sqrt();
         2.0 * self.complexity + concentration

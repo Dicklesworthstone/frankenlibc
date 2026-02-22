@@ -11,11 +11,13 @@
 //!
 //! Fast exits at each stage. Budget: Fast mode <20ns, Full mode <200ns.
 
+#![allow(unsafe_code)]
+
 use crate::arena::{AllocationArena, ArenaSlot, FreeResult};
 use crate::bloom::PointerBloomFilter;
 use crate::check_oracle::CheckStage;
 use crate::config::safety_level;
-use crate::fingerprint::CANARY_SIZE;
+use crate::fingerprint::{AllocationFingerprint, CANARY_SIZE, FINGERPRINT_SIZE};
 use crate::galois::PointerAbstraction;
 use crate::metrics::{MembraneMetrics, global_metrics};
 use crate::page_oracle::PageOracle;
@@ -116,6 +118,12 @@ impl ValidationPipeline {
         if !mode.validation_enabled() {
             return ValidationOutcome::Bypassed;
         }
+
+        // Snapshot the cache epoch before validation starts.
+        // This prevents a TOCTOU race where a concurrent free() bumps the epoch
+        // *after* we look up the pointer's valid state in the arena but *before* we
+        // insert the CachedValid entry.
+        let validation_epoch = crate::tls_cache::current_epoch();
 
         // Stage 1: Null check (~1ns)
         if addr == 0 {
@@ -280,17 +288,84 @@ impl ValidationPipeline {
                     slot = Some(found);
                 }
                 CheckStage::Fingerprint => {
-                    if slot.is_some() {
+                    if let Some(s) = slot {
                         elapsed_ns =
                             elapsed_ns.saturating_add(u64::from(CheckStage::Fingerprint.cost_ns()));
+                        let mut fp_bytes = [0u8; FINGERPRINT_SIZE];
+                        // SAFETY: Valid memory within our allocation header.
+                        unsafe {
+                            std::ptr::copy_nonoverlapping(
+                                (s.user_base - FINGERPRINT_SIZE) as *const u8,
+                                fp_bytes.as_mut_ptr(),
+                                FINGERPRINT_SIZE,
+                            );
+                        }
+                        let fp = AllocationFingerprint::from_bytes(&fp_bytes);
+                        if fp.generation != s.generation
+                            || fp.size as usize != s.user_size
+                            || !fp.verify(s.user_base)
+                        {
+                            let abs = self.abstraction_from_slot(addr, &s);
+                            self.runtime_math.note_check_order_outcome(
+                                mode,
+                                ApiFamily::PointerValidation,
+                                aligned,
+                                recent_page,
+                                &ordering,
+                                Some(idx),
+                            );
+                            self.runtime_math.observe_validation_result(
+                                mode,
+                                ApiFamily::PointerValidation,
+                                ValidationProfile::Full,
+                                elapsed_ns,
+                                true,
+                            );
+                            return ValidationOutcome::TemporalViolation(abs);
+                        }
                         MembraneMetrics::inc(&metrics.fingerprint_passes);
                         saw_fingerprint = true;
                     }
                 }
                 CheckStage::Canary => {
-                    if slot.is_some() {
+                    if let Some(s) = slot {
                         elapsed_ns =
                             elapsed_ns.saturating_add(u64::from(CheckStage::Canary.cost_ns()));
+                        let fp = AllocationFingerprint::compute(
+                            s.user_base,
+                            s.user_size as u32,
+                            s.generation,
+                        );
+                        let expected_canary = fp.canary();
+                        let canary_addr = s.user_base + s.user_size;
+                        let mut actual = [0u8; CANARY_SIZE];
+                        // SAFETY: Valid memory within the allocation's total size.
+                        unsafe {
+                            std::ptr::copy_nonoverlapping(
+                                canary_addr as *const u8,
+                                actual.as_mut_ptr(),
+                                CANARY_SIZE,
+                            );
+                        }
+                        if !expected_canary.verify(&actual) {
+                            let abs = self.abstraction_from_slot(addr, &s);
+                            self.runtime_math.note_check_order_outcome(
+                                mode,
+                                ApiFamily::PointerValidation,
+                                aligned,
+                                recent_page,
+                                &ordering,
+                                Some(idx),
+                            );
+                            self.runtime_math.observe_validation_result(
+                                mode,
+                                ApiFamily::PointerValidation,
+                                ValidationProfile::Full,
+                                elapsed_ns,
+                                true,
+                            );
+                            return ValidationOutcome::TemporalViolation(abs);
+                        }
                         MembraneMetrics::inc(&metrics.canary_passes);
                         saw_canary = true;
                     }
@@ -331,7 +406,7 @@ impl ValidationPipeline {
         // Runtime-math fast profile in strict mode skips deep integrity checks.
         if !deep_decision.requires_full_validation() && !mode.heals_enabled() {
             let abs = self.abstraction_from_slot(addr, &slot);
-            self.cache_validation(addr, &slot);
+            self.cache_validation(addr, &slot, validation_epoch);
             self.runtime_math.note_check_order_outcome(
                 mode,
                 ApiFamily::PointerValidation,
@@ -354,15 +429,82 @@ impl ValidationPipeline {
         // force their accounting now so integrity checks remain complete.
         if !saw_fingerprint {
             elapsed_ns = elapsed_ns.saturating_add(u64::from(CheckStage::Fingerprint.cost_ns()));
+            let mut fp_bytes = [0u8; FINGERPRINT_SIZE];
+            // SAFETY: Valid memory within our allocation header.
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    (slot.user_base - FINGERPRINT_SIZE) as *const u8,
+                    fp_bytes.as_mut_ptr(),
+                    FINGERPRINT_SIZE,
+                );
+            }
+            let fp = AllocationFingerprint::from_bytes(&fp_bytes);
+            if fp.generation != slot.generation
+                || fp.size as usize != slot.user_size
+                || !fp.verify(slot.user_base)
+            {
+                let abs = self.abstraction_from_slot(addr, &slot);
+                self.runtime_math.note_check_order_outcome(
+                    mode,
+                    ApiFamily::PointerValidation,
+                    aligned,
+                    recent_page,
+                    &ordering,
+                    None,
+                );
+                self.runtime_math.observe_validation_result(
+                    mode,
+                    ApiFamily::PointerValidation,
+                    deep_decision.profile,
+                    elapsed_ns,
+                    true,
+                );
+                return ValidationOutcome::TemporalViolation(abs);
+            }
             MembraneMetrics::inc(&metrics.fingerprint_passes);
         }
         if !saw_canary {
             elapsed_ns = elapsed_ns.saturating_add(u64::from(CheckStage::Canary.cost_ns()));
+            let fp = AllocationFingerprint::compute(
+                slot.user_base,
+                slot.user_size as u32,
+                slot.generation,
+            );
+            let expected_canary = fp.canary();
+            let canary_addr = slot.user_base + slot.user_size;
+            let mut actual = [0u8; CANARY_SIZE];
+            // SAFETY: Valid memory within the allocation's total size.
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    canary_addr as *const u8,
+                    actual.as_mut_ptr(),
+                    CANARY_SIZE,
+                );
+            }
+            if !expected_canary.verify(&actual) {
+                let abs = self.abstraction_from_slot(addr, &slot);
+                self.runtime_math.note_check_order_outcome(
+                    mode,
+                    ApiFamily::PointerValidation,
+                    aligned,
+                    recent_page,
+                    &ordering,
+                    None,
+                );
+                self.runtime_math.observe_validation_result(
+                    mode,
+                    ApiFamily::PointerValidation,
+                    deep_decision.profile,
+                    elapsed_ns,
+                    true,
+                );
+                return ValidationOutcome::TemporalViolation(abs);
+            }
             MembraneMetrics::inc(&metrics.canary_passes);
         }
 
         let abs = self.abstraction_from_slot(addr, &slot);
-        self.cache_validation(addr, &slot);
+        self.cache_validation(addr, &slot, validation_epoch);
         self.runtime_math.note_check_order_outcome(
             mode,
             ApiFamily::PointerValidation,
@@ -429,7 +571,7 @@ impl ValidationPipeline {
         PointerAbstraction::validated(addr, slot.state, slot.user_base, remaining, slot.generation)
     }
 
-    fn cache_validation(&self, addr: usize, slot: &ArenaSlot) {
+    fn cache_validation(&self, addr: usize, slot: &ArenaSlot, epoch: u64) {
         with_tls_cache(|cache| {
             cache.insert(
                 addr,
@@ -439,6 +581,7 @@ impl ValidationPipeline {
                     generation: slot.generation,
                     state: slot.state,
                 },
+                epoch,
             );
         });
     }

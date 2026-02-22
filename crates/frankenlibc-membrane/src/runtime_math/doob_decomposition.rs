@@ -188,17 +188,17 @@ impl DoobDecompositionMonitor {
                 let from = (prev_s as usize).min(K - 1);
                 let to = (cur_s as usize).min(K - 1);
 
+                // Compute predictable increment using prior transition matrix: E[X_n | X_{n-1}] - X_{n-1}.
+                let expected = self.conditional_expectation(i, from);
+                let increment = expected - from as f64;
+                self.drift[i] += increment;
+                step_drift_sum += increment.abs();
+
                 // Update transition matrix for this controller.
                 for s in 0..K {
                     let target = if s == to { 1.0 } else { 0.0 };
                     self.transitions[i][from][s] += alpha * (target - self.transitions[i][from][s]);
                 }
-
-                // Compute predictable increment: E[X_{n+1} | X_n] - X_n.
-                let expected = self.conditional_expectation(i, from);
-                let increment = expected - from as f64;
-                self.drift[i] += increment;
-                step_drift_sum += increment.abs();
             }
 
             // Smoothed drift rate: average |ΔA| per controller per step.

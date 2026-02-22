@@ -458,7 +458,7 @@ pub unsafe extern "C" fn ctime(timer: *const i64) -> *mut std::ffi::c_char {
 }
 
 // ---------------------------------------------------------------------------
-// strptime + tzset — GlibcCallThrough
+// strptime — GlibcCallThrough (complex format parser, kept for now)
 // ---------------------------------------------------------------------------
 
 unsafe extern "C" {
@@ -468,8 +468,6 @@ unsafe extern "C" {
         fmt: *const std::ffi::c_char,
         tm: *mut libc::tm,
     ) -> *mut std::ffi::c_char;
-    #[link_name = "tzset"]
-    fn libc_tzset();
 }
 
 /// POSIX `strptime` — parse date/time string into broken-down time.
@@ -485,10 +483,19 @@ pub unsafe extern "C" fn strptime(
     unsafe { libc_strptime(s, format, tm) }
 }
 
+// ---------------------------------------------------------------------------
+// tzset — native implementation (UTC-only)
+// ---------------------------------------------------------------------------
+
 /// POSIX `tzset` — initialize timezone conversion information.
+///
+/// FrankenLibC operates in UTC-only mode: no timezone database is loaded,
+/// `TZ` environment variable is not consulted, and all conversions assume UTC.
+/// This is intentional — timezone support requires significant complexity
+/// (Olson database parsing, DST rules) that is out of scope.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn tzset() {
-    unsafe { libc_tzset() }
+    // No-op: FrankenLibC is UTC-only.
 }
 
 // ---------------------------------------------------------------------------

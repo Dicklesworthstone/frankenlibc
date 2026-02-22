@@ -9,7 +9,7 @@
 use std::cell::{Cell, RefCell};
 use std::ffi::c_char;
 use std::panic::{self, AssertUnwindSafe};
-use std::sync::atomic::{AtomicPtr, AtomicU8, AtomicU32, Ordering as AtomicOrdering};
+use std::sync::atomic::{AtomicPtr, AtomicU8, AtomicU32, AtomicU64, Ordering as AtomicOrdering};
 
 use frankenlibc_core::syscall;
 use frankenlibc_membrane::check_oracle::CheckStage;
@@ -643,6 +643,81 @@ const PASSTHROUGH_ORDERING: [CheckStage; 7] = [
     CheckStage::Bounds,
 ];
 
+// Last observed stage-outcome fingerprints by API family.
+// Used to connect cross-family overlap witnesses into the cohomology monitor.
+static COHOMOLOGY_STAGE_HASHES: [AtomicU64; ApiFamily::COUNT] =
+    [const { AtomicU64::new(0) }; ApiFamily::COUNT];
+
+#[inline]
+const fn cohomology_peer_family(family: ApiFamily) -> Option<ApiFamily> {
+    match family {
+        ApiFamily::StringMemory => Some(ApiFamily::Resolver),
+        ApiFamily::Resolver => Some(ApiFamily::StringMemory),
+        _ => None,
+    }
+}
+
+#[inline]
+fn compact_stage_hash(
+    ordering: &[CheckStage; 7],
+    aligned: bool,
+    recent_page: bool,
+    exit_stage: Option<usize>,
+) -> u64 {
+    // FNV-style rolling hash over ordering + compact context bits.
+    let mut hash = 0xcbf29ce484222325_u64;
+    for stage in ordering {
+        hash ^= u64::from(*stage as u8) + 1;
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash ^= if aligned {
+        0x9e3779b97f4a7c15
+    } else {
+        0x165667919e3779f9
+    };
+    hash = hash.wrapping_mul(0xff51afd7ed558ccd);
+    hash ^= if recent_page {
+        0xa24baed4963ee407
+    } else {
+        0x3c6ef372fe94f82b
+    };
+    let exit_component = exit_stage
+        .map(|idx| u64::from((idx.min(7) + 1) as u8))
+        .unwrap_or(0);
+    hash ^= exit_component.wrapping_mul(0xc2b2ae3d27d4eb4f);
+    if hash == 0 { 1 } else { hash }
+}
+
+#[inline]
+fn note_cross_family_overlap(
+    kernel: &RuntimeMathKernel,
+    family: ApiFamily,
+    ordering_used: &[CheckStage; 7],
+    aligned: bool,
+    recent_page: bool,
+    exit_stage: Option<usize>,
+) {
+    let Some(peer) = cohomology_peer_family(family) else {
+        return;
+    };
+
+    let family_idx = usize::from(family as u8);
+    let peer_idx = usize::from(peer as u8);
+
+    let family_hash = compact_stage_hash(ordering_used, aligned, recent_page, exit_stage);
+    COHOMOLOGY_STAGE_HASHES[family_idx].store(family_hash, AtomicOrdering::Relaxed);
+    kernel.set_overlap_section_hash(family_idx, family_hash);
+
+    let peer_hash = COHOMOLOGY_STAGE_HASHES[peer_idx].load(AtomicOrdering::Relaxed);
+    if peer_hash == 0 {
+        return;
+    }
+
+    kernel.set_overlap_section_hash(peer_idx, peer_hash);
+    let witness = family_hash ^ peer_hash;
+    let _ = kernel.note_overlap(family_idx, peer_idx, witness);
+}
+
 pub(crate) fn decide(
     family: ApiFamily,
     addr_hint: usize,
@@ -660,18 +735,6 @@ pub(crate) fn decide(
         contention_hint,
         bloom_negative,
     };
-
-    // Scoped mitigation: allocator/string families currently run in passthrough
-    // policy mode under LD_PRELOAD to prevent recursive runtime-kernel lock
-    // paths during hot bootstrap operations.
-    if matches!(
-        family,
-        ApiFamily::Allocator | ApiFamily::StringMemory | ApiFamily::Stdio | ApiFamily::Threading
-    ) {
-        let decision = passthrough_decision();
-        record_last_explainability(mode, ctx, decision);
-        return (mode, decision);
-    }
 
     let Some(_reentry_guard) = enter_policy_reentry_guard() else {
         let decision = passthrough_decision();
@@ -704,10 +767,19 @@ pub(crate) fn observe(
     estimated_cost_ns: u64,
     adverse: bool,
 ) {
-    // Temporary preload safety mitigation: runtime-math feedback updates can
-    // recurse into allocator/lock paths and deadlock under heavy interposition.
-    // Keep decision path active, but suppress observe-side state mutation.
-    let _ = (family, profile, estimated_cost_ns, adverse);
+    let mode = mode();
+    let Some(_reentry_guard) = enter_policy_reentry_guard() else {
+        return;
+    };
+    ensure_minimal_panic_hook();
+    if let Some(k) = kernel()
+        && panic::catch_unwind(AssertUnwindSafe(|| {
+            k.observe_validation_result(mode, family, profile, estimated_cost_ns, adverse);
+        }))
+        .is_err()
+    {
+        mark_kernel_broken();
+    }
 }
 
 #[must_use]
@@ -716,12 +788,6 @@ pub(crate) fn check_ordering(
     aligned: bool,
     recent_page: bool,
 ) -> [CheckStage; 7] {
-    if matches!(
-        family,
-        ApiFamily::Allocator | ApiFamily::StringMemory | ApiFamily::Stdio | ApiFamily::Threading
-    ) {
-        return PASSTHROUGH_ORDERING;
-    }
     let Some(_reentry_guard) = enter_policy_reentry_guard() else {
         return PASSTHROUGH_ORDERING;
     };
@@ -747,12 +813,6 @@ pub(crate) fn note_check_order_outcome(
     ordering_used: &[CheckStage; 7],
     exit_stage: Option<usize>,
 ) {
-    if matches!(
-        family,
-        ApiFamily::Allocator | ApiFamily::StringMemory | ApiFamily::Stdio | ApiFamily::Threading
-    ) {
-        return;
-    }
     let mode = mode();
     let Some(_reentry_guard) = enter_policy_reentry_guard() else {
         return;
@@ -768,6 +828,7 @@ pub(crate) fn note_check_order_outcome(
                 ordering_used,
                 exit_stage,
             );
+            note_cross_family_overlap(k, family, ordering_used, aligned, recent_page, exit_stage);
         }))
         .is_err()
     {
@@ -786,6 +847,12 @@ mod tests {
     use super::*;
     use std::ffi::OsString;
     use std::sync::{Mutex, MutexGuard, OnceLock};
+
+    fn reset_cohomology_stage_hashes_for_tests() {
+        for slot in &COHOMOLOGY_STAGE_HASHES {
+            slot.store(0, AtomicOrdering::Relaxed);
+        }
+    }
 
     struct ModeStateGuard {
         previous: u8,
@@ -1065,5 +1132,71 @@ mod tests {
 
         let restored_ctx = active_trace_context();
         assert_eq!(restored_ctx.symbol, "outer_symbol");
+    }
+
+    #[test]
+    fn compact_stage_hash_is_deterministic_and_sensitive_to_context() {
+        let h1 = compact_stage_hash(&PASSTHROUGH_ORDERING, true, false, Some(2));
+        let h2 = compact_stage_hash(&PASSTHROUGH_ORDERING, true, false, Some(2));
+        let h3 = compact_stage_hash(&PASSTHROUGH_ORDERING, true, false, Some(3));
+
+        assert_ne!(h1, 0);
+        assert_eq!(h1, h2);
+        assert_ne!(h1, h3);
+    }
+
+    #[test]
+    fn cross_family_overlap_tracks_string_resolver_consistently() {
+        reset_cohomology_stage_hashes_for_tests();
+        let kernel = RuntimeMathKernel::new_for_mode(SafetyLevel::Strict);
+
+        note_cross_family_overlap(
+            &kernel,
+            ApiFamily::StringMemory,
+            &PASSTHROUGH_ORDERING,
+            true,
+            true,
+            Some(2),
+        );
+        assert_eq!(kernel.snapshot(SafetyLevel::Strict).consistency_faults, 0);
+
+        note_cross_family_overlap(
+            &kernel,
+            ApiFamily::Resolver,
+            &PASSTHROUGH_ORDERING,
+            true,
+            true,
+            Some(2),
+        );
+        assert_eq!(kernel.snapshot(SafetyLevel::Strict).consistency_faults, 0);
+    }
+
+    #[test]
+    fn cohomology_overlap_replay_detects_corrupted_witness() {
+        reset_cohomology_stage_hashes_for_tests();
+        let kernel = RuntimeMathKernel::new_for_mode(SafetyLevel::Strict);
+        let ordering = PASSTHROUGH_ORDERING;
+
+        note_cross_family_overlap(
+            &kernel,
+            ApiFamily::StringMemory,
+            &ordering,
+            true,
+            true,
+            Some(1),
+        );
+        note_cross_family_overlap(&kernel, ApiFamily::Resolver, &ordering, true, true, Some(1));
+
+        let string_hash = compact_stage_hash(&ordering, true, true, Some(1));
+        let resolver_hash = compact_stage_hash(&ordering, true, true, Some(1));
+        let corrupted_witness = (string_hash ^ resolver_hash) ^ 1;
+
+        let ok = kernel.note_overlap(
+            usize::from(ApiFamily::StringMemory as u8),
+            usize::from(ApiFamily::Resolver as u8),
+            corrupted_witness,
+        );
+        assert!(!ok);
+        assert_eq!(kernel.snapshot(SafetyLevel::Strict).consistency_faults, 1);
     }
 }

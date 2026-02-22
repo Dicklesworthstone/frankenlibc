@@ -10,16 +10,21 @@
       "is_blocked": false,
       "root_blockers": []
     },
+    "bd-w2c3.1.2": {
+      "available": true,
+      "chain_ids": [
+        "bd-w2c3.1.2"
+      ],
+      "chain_length": 0,
+      "is_blocked": false,
+      "root_blockers": []
+    },
     "bd-w2c3.10": {
       "available": true,
       "chain_ids": [
         "bd-w2c3.10",
-        "bd-29b",
-        "bd-5fw",
         "bd-gtf",
-        "bd-w2c3.1",
         "bd-w2c3.2",
-        "bd-w2c3.3",
         "bd-w2c3.4",
         "bd-w2c3.5",
         "bd-w2c3.6",
@@ -29,56 +34,22 @@
         "bd-1j4",
         "bd-2vv",
         "bd-h5x",
-        "bd-15n",
-        "bd-3ot",
-        "bd-kan",
-        "bd-30o",
-        "bd-25n",
-        "bd-33p",
-        "bd-b5a",
         "bd-1rf",
         "bd-1y7",
-        "bd-2mwc",
         "bd-3bg",
         "bd-3rn",
-        "bd-8sho",
         "bd-qwm",
-        "bd-y45u",
-        "bd-24ug",
-        "bd-27kh",
-        "bd-33zg",
-        "bd-7ef9",
         "bd-c1x",
         "bd-yos",
-        "bd-z84",
-        "bd-rqn",
-        "bd-1ff3",
-        "bd-xxd9",
-        "bd-2yhf",
-        "bd-3ehb",
-        "bd-3rag",
-        "bd-3vtx",
         "bd-x2sq",
-        "bd-13ya",
         "bd-7cba",
         "bd-by8c",
         "bd-z7gt",
-        "bd-11nb",
         "bd-1ah8",
-        "bd-320s",
         "bd-3bvo",
-        "bd-21k",
-        "bd-2nzx",
-        "bd-blg",
-        "bd-gcy",
-        "bd-18rq",
-        "bd-1f35",
-        "bd-3hud",
-        "bd-mjon",
-        "bd-rth1",
-        "bd-300"
+        "bd-rth1"
       ],
-      "chain_length": 63,
+      "chain_length": 25,
       "is_blocked": true,
       "root_blockers": []
     },
@@ -107,53 +78,19 @@
       "chain_ids": [
         "bd-w2c3.4",
         "bd-1j4",
-        "bd-w2c3.1",
-        "bd-w2c3.3",
         "bd-1rf",
         "bd-1y7",
-        "bd-25n",
-        "bd-2mwc",
         "bd-3bg",
         "bd-3rn",
-        "bd-8sho",
         "bd-qwm",
-        "bd-y45u",
-        "bd-15n",
-        "bd-2yhf",
-        "bd-3ehb",
-        "bd-3rag",
-        "bd-3vtx",
         "bd-x2sq",
-        "bd-1ff3",
-        "bd-xxd9",
-        "bd-13ya",
         "bd-7cba",
         "bd-by8c",
         "bd-z7gt",
-        "bd-11nb",
         "bd-1ah8",
-        "bd-320s",
         "bd-3bvo"
       ],
-      "chain_length": 28,
-      "is_blocked": true,
-      "root_blockers": []
-    },
-    "bd-w2c3.5": {
-      "available": true,
-      "chain_ids": [
-        "bd-w2c3.5",
-        "bd-3ot",
-        "bd-kan",
-        "bd-w2c3.1",
-        "bd-w2c3.3",
-        "bd-25n",
-        "bd-rqn",
-        "bd-15n",
-        "bd-1ff3",
-        "bd-xxd9"
-      ],
-      "chain_length": 9,
+      "chain_length": 12,
       "is_blocked": true,
       "root_blockers": []
     },
@@ -161,29 +98,56 @@
       "available": true,
       "chain_ids": [
         "bd-w2c3.6",
-        "bd-5fw",
-        "bd-w2c3.1",
-        "bd-w2c3.3",
-        "bd-w2c3.5",
-        "bd-15n",
-        "bd-3ot",
-        "bd-kan",
-        "bd-25n",
-        "bd-rqn",
-        "bd-1ff3",
-        "bd-xxd9"
+        "bd-w2c3.5"
       ],
-      "chain_length": 11,
+      "chain_length": 1,
       "is_blocked": true,
       "root_blockers": []
     }
   },
-  "critical_blockers": [],
+  "critical_blockers": [
+    {
+      "assignee": null,
+      "dependency_path": [
+        "bd-w2c3.1",
+        "bd-w2c3"
+      ],
+      "gap_count": 7,
+      "owner_bead": "bd-w2c3.1",
+      "owner_status": "closed",
+      "priority": 0
+    },
+    {
+      "assignee": "SnowyWaterfall",
+      "dependency_path": [
+        "bd-w2c3.1.2",
+        "bd-w2c3.1",
+        "bd-w2c3"
+      ],
+      "gap_count": 2,
+      "owner_bead": "bd-w2c3.1.2",
+      "owner_status": "closed",
+      "priority": 0
+    },
+    {
+      "assignee": null,
+      "dependency_path": [
+        "bd-w2c3.10.1",
+        "bd-w2c3.1.1",
+        "bd-w2c3.1",
+        "bd-w2c3"
+      ],
+      "gap_count": 1,
+      "owner_bead": "bd-w2c3.10.1",
+      "owner_status": "closed",
+      "priority": 0
+    }
+  ],
   "dependency_bottlenecks": [
     {
       "assignee": null,
-      "blocked_dependency_count": 225,
-      "bv_chain_length": 11,
+      "blocked_dependency_count": 90,
+      "bv_chain_length": 1,
       "bv_root_blockers": [],
       "gap_count": 45,
       "owner_bead": "bd-w2c3.6",
@@ -192,8 +156,8 @@
     },
     {
       "assignee": null,
-      "blocked_dependency_count": 481,
-      "bv_chain_length": 63,
+      "blocked_dependency_count": 333,
+      "bv_chain_length": 25,
       "bv_root_blockers": [],
       "gap_count": 37,
       "owner_bead": "bd-w2c3.10",
@@ -202,8 +166,8 @@
     },
     {
       "assignee": null,
-      "blocked_dependency_count": 80,
-      "bv_chain_length": 28,
+      "blocked_dependency_count": 40,
+      "bv_chain_length": 12,
       "bv_root_blockers": [],
       "gap_count": 20,
       "owner_bead": "bd-w2c3.4",
@@ -217,17 +181,17 @@
       "bv_root_blockers": [],
       "gap_count": 7,
       "owner_bead": "bd-w2c3.1",
-      "owner_status": "in_progress",
+      "owner_status": "closed",
       "priority": 0
     },
     {
-      "assignee": null,
-      "blocked_dependency_count": 25,
-      "bv_chain_length": 9,
+      "assignee": "SnowyWaterfall",
+      "blocked_dependency_count": 0,
+      "bv_chain_length": 0,
       "bv_root_blockers": [],
-      "gap_count": 5,
-      "owner_bead": "bd-w2c3.5",
-      "owner_status": "open",
+      "gap_count": 2,
+      "owner_bead": "bd-w2c3.1.2",
+      "owner_status": "closed",
       "priority": 0
     },
     {
@@ -237,7 +201,7 @@
       "bv_root_blockers": [],
       "gap_count": 1,
       "owner_bead": "bd-w2c3.10.1",
-      "owner_status": "open",
+      "owner_status": "closed",
       "priority": 0
     },
     {
@@ -251,7 +215,7 @@
       "priority": 0
     }
   ],
-  "generated_at": "2026-02-11T19:17:31Z",
+  "generated_at": "2026-02-18T04:49:26Z",
   "rows": [
     {
       "blocking_dependencies": [
@@ -284,12 +248,12 @@
       "gap_id": "fp-macro-targets-025864627e97",
       "gap_kind": "feature_parity_row_status",
       "message": "",
-      "owner_active": true,
+      "owner_active": false,
       "owner_assignee": null,
       "owner_bead": "bd-w2c3.1",
       "owner_found": true,
       "owner_priority": 0,
-      "owner_status": "in_progress",
+      "owner_status": "closed",
       "owner_title": "Track 0: Gap Truth Sync + Anti-Drift Governance",
       "section": "macro_targets",
       "source_file": "FEATURE_PARITY.md",
@@ -326,12 +290,12 @@
       "gap_id": "fp-macro-targets-1e330b896784",
       "gap_kind": "feature_parity_row_status",
       "message": "",
-      "owner_active": true,
+      "owner_active": false,
       "owner_assignee": null,
       "owner_bead": "bd-w2c3.1",
       "owner_found": true,
       "owner_priority": 0,
-      "owner_status": "in_progress",
+      "owner_status": "closed",
       "owner_title": "Track 0: Gap Truth Sync + Anti-Drift Governance",
       "section": "macro_targets",
       "source_file": "FEATURE_PARITY.md",
@@ -368,12 +332,12 @@
       "gap_id": "fp-macro-targets-556631616b22",
       "gap_kind": "feature_parity_row_status",
       "message": "",
-      "owner_active": true,
+      "owner_active": false,
       "owner_assignee": null,
       "owner_bead": "bd-w2c3.1",
       "owner_found": true,
       "owner_priority": 0,
-      "owner_status": "in_progress",
+      "owner_status": "closed",
       "owner_title": "Track 0: Gap Truth Sync + Anti-Drift Governance",
       "section": "macro_targets",
       "source_file": "FEATURE_PARITY.md",
@@ -410,12 +374,12 @@
       "gap_id": "fp-macro-targets-7b75050a0f03",
       "gap_kind": "feature_parity_row_status",
       "message": "",
-      "owner_active": true,
+      "owner_active": false,
       "owner_assignee": null,
       "owner_bead": "bd-w2c3.1",
       "owner_found": true,
       "owner_priority": 0,
-      "owner_status": "in_progress",
+      "owner_status": "closed",
       "owner_title": "Track 0: Gap Truth Sync + Anti-Drift Governance",
       "section": "macro_targets",
       "source_file": "FEATURE_PARITY.md",
@@ -452,12 +416,12 @@
       "gap_id": "fp-macro-targets-b1983d62901c",
       "gap_kind": "feature_parity_row_status",
       "message": "",
-      "owner_active": true,
+      "owner_active": false,
       "owner_assignee": null,
       "owner_bead": "bd-w2c3.1",
       "owner_found": true,
       "owner_priority": 0,
-      "owner_status": "in_progress",
+      "owner_status": "closed",
       "owner_title": "Track 0: Gap Truth Sync + Anti-Drift Governance",
       "section": "macro_targets",
       "source_file": "FEATURE_PARITY.md",
@@ -494,12 +458,12 @@
       "gap_id": "fp-macro-targets-b1b8d5acbeff",
       "gap_kind": "feature_parity_row_status",
       "message": "",
-      "owner_active": true,
+      "owner_active": false,
       "owner_assignee": null,
       "owner_bead": "bd-w2c3.1",
       "owner_found": true,
       "owner_priority": 0,
-      "owner_status": "in_progress",
+      "owner_status": "closed",
       "owner_title": "Track 0: Gap Truth Sync + Anti-Drift Governance",
       "section": "macro_targets",
       "source_file": "FEATURE_PARITY.md",
@@ -536,27 +500,99 @@
       "gap_id": "fp-macro-targets-fa7a23e18f01",
       "gap_kind": "feature_parity_row_status",
       "message": "",
-      "owner_active": true,
+      "owner_active": false,
       "owner_assignee": null,
       "owner_bead": "bd-w2c3.1",
       "owner_found": true,
       "owner_priority": 0,
-      "owner_status": "in_progress",
+      "owner_status": "closed",
       "owner_title": "Track 0: Gap Truth Sync + Anti-Drift Governance",
       "section": "macro_targets",
       "source_file": "FEATURE_PARITY.md",
       "status": "IN_PROGRESS"
     },
     {
+      "blocking_dependencies": [],
+      "bv_blocker_chain": {
+        "available": true,
+        "chain_ids": [
+          "bd-w2c3.1.2"
+        ],
+        "chain_length": 0,
+        "is_blocked": false,
+        "root_blockers": []
+      },
+      "dependency_path": [
+        "bd-w2c3.1.2",
+        "bd-w2c3.1",
+        "bd-w2c3"
+      ],
+      "expected_vs_actual": {
+        "actual": {
+          "sum_counts_equals_total": false,
+          "support_count_sum": 0,
+          "support_total_exported": 929,
+          "symbols_count_equals_total": true
+        },
+        "expected": {
+          "sum_counts_equals_total": true,
+          "symbols_count_equals_total": true
+        }
+      },
+      "gap_id": "gap-machine-support-classification-complete",
+      "gap_kind": "machine_delta_drift",
+      "message": "support_matrix classification completeness",
+      "owner_active": false,
+      "owner_assignee": "SnowyWaterfall",
+      "owner_bead": "bd-w2c3.1.2",
+      "owner_found": true,
+      "owner_priority": 0,
+      "owner_status": "closed",
+      "owner_title": "T0.2 Drift Gates: fail-fast parity-truth enforcement",
+      "section": "",
+      "source_file": "support_matrix.json",
+      "status": "drift"
+    },
+    {
+      "blocking_dependencies": [],
+      "bv_blocker_chain": {
+        "available": true,
+        "chain_ids": [
+          "bd-w2c3.1.2"
+        ],
+        "chain_length": 0,
+        "is_blocked": false,
+        "root_blockers": []
+      },
+      "dependency_path": [
+        "bd-w2c3.1.2",
+        "bd-w2c3.1",
+        "bd-w2c3"
+      ],
+      "expected_vs_actual": {
+        "actual": {
+          "status": "DONE"
+        },
+        "expected": {
+          "status": "IN_PROGRESS"
+        }
+      },
+      "gap_id": "gap-macro-fp-macro-targets-3a739065b069",
+      "gap_kind": "machine_delta_drift",
+      "message": "derived from support_matrix classification coverage",
+      "owner_active": false,
+      "owner_assignee": "SnowyWaterfall",
+      "owner_bead": "bd-w2c3.1.2",
+      "owner_found": true,
+      "owner_priority": 0,
+      "owner_status": "closed",
+      "owner_title": "T0.2 Drift Gates: fail-fast parity-truth enforcement",
+      "section": "",
+      "source_file": "FEATURE_PARITY.md",
+      "status": "drift"
+    },
+    {
       "blocking_dependencies": [
-        {
-          "issue_id": "bd-29b",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-5fw",
-          "status": "open"
-        },
         {
           "issue_id": "bd-gtf",
           "status": "open"
@@ -566,15 +602,7 @@
           "status": "open"
         },
         {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
           "issue_id": "bd-w2c3.2",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
           "status": "open"
         },
         {
@@ -606,12 +634,8 @@
         "available": true,
         "chain_ids": [
           "bd-w2c3.10",
-          "bd-29b",
-          "bd-5fw",
           "bd-gtf",
-          "bd-w2c3.1",
           "bd-w2c3.2",
-          "bd-w2c3.3",
           "bd-w2c3.4",
           "bd-w2c3.5",
           "bd-w2c3.6",
@@ -621,56 +645,22 @@
           "bd-1j4",
           "bd-2vv",
           "bd-h5x",
-          "bd-15n",
-          "bd-3ot",
-          "bd-kan",
-          "bd-30o",
-          "bd-25n",
-          "bd-33p",
-          "bd-b5a",
           "bd-1rf",
           "bd-1y7",
-          "bd-2mwc",
           "bd-3bg",
           "bd-3rn",
-          "bd-8sho",
           "bd-qwm",
-          "bd-y45u",
-          "bd-24ug",
-          "bd-27kh",
-          "bd-33zg",
-          "bd-7ef9",
           "bd-c1x",
           "bd-yos",
-          "bd-z84",
-          "bd-rqn",
-          "bd-1ff3",
-          "bd-xxd9",
-          "bd-2yhf",
-          "bd-3ehb",
-          "bd-3rag",
-          "bd-3vtx",
           "bd-x2sq",
-          "bd-13ya",
           "bd-7cba",
           "bd-by8c",
           "bd-z7gt",
-          "bd-11nb",
           "bd-1ah8",
-          "bd-320s",
           "bd-3bvo",
-          "bd-21k",
-          "bd-2nzx",
-          "bd-blg",
-          "bd-gcy",
-          "bd-18rq",
-          "bd-1f35",
-          "bd-3hud",
-          "bd-mjon",
-          "bd-rth1",
-          "bd-300"
+          "bd-rth1"
         ],
-        "chain_length": 63,
+        "chain_length": 25,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -703,14 +693,6 @@
     {
       "blocking_dependencies": [
         {
-          "issue_id": "bd-29b",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-5fw",
-          "status": "open"
-        },
-        {
           "issue_id": "bd-gtf",
           "status": "open"
         },
@@ -719,15 +701,7 @@
           "status": "open"
         },
         {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
           "issue_id": "bd-w2c3.2",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
           "status": "open"
         },
         {
@@ -759,12 +733,8 @@
         "available": true,
         "chain_ids": [
           "bd-w2c3.10",
-          "bd-29b",
-          "bd-5fw",
           "bd-gtf",
-          "bd-w2c3.1",
           "bd-w2c3.2",
-          "bd-w2c3.3",
           "bd-w2c3.4",
           "bd-w2c3.5",
           "bd-w2c3.6",
@@ -774,56 +744,22 @@
           "bd-1j4",
           "bd-2vv",
           "bd-h5x",
-          "bd-15n",
-          "bd-3ot",
-          "bd-kan",
-          "bd-30o",
-          "bd-25n",
-          "bd-33p",
-          "bd-b5a",
           "bd-1rf",
           "bd-1y7",
-          "bd-2mwc",
           "bd-3bg",
           "bd-3rn",
-          "bd-8sho",
           "bd-qwm",
-          "bd-y45u",
-          "bd-24ug",
-          "bd-27kh",
-          "bd-33zg",
-          "bd-7ef9",
           "bd-c1x",
           "bd-yos",
-          "bd-z84",
-          "bd-rqn",
-          "bd-1ff3",
-          "bd-xxd9",
-          "bd-2yhf",
-          "bd-3ehb",
-          "bd-3rag",
-          "bd-3vtx",
           "bd-x2sq",
-          "bd-13ya",
           "bd-7cba",
           "bd-by8c",
           "bd-z7gt",
-          "bd-11nb",
           "bd-1ah8",
-          "bd-320s",
           "bd-3bvo",
-          "bd-21k",
-          "bd-2nzx",
-          "bd-blg",
-          "bd-gcy",
-          "bd-18rq",
-          "bd-1f35",
-          "bd-3hud",
-          "bd-mjon",
-          "bd-rth1",
-          "bd-300"
+          "bd-rth1"
         ],
-        "chain_length": 63,
+        "chain_length": 25,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -856,14 +792,6 @@
     {
       "blocking_dependencies": [
         {
-          "issue_id": "bd-29b",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-5fw",
-          "status": "open"
-        },
-        {
           "issue_id": "bd-gtf",
           "status": "open"
         },
@@ -872,15 +800,7 @@
           "status": "open"
         },
         {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
           "issue_id": "bd-w2c3.2",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
           "status": "open"
         },
         {
@@ -912,12 +832,8 @@
         "available": true,
         "chain_ids": [
           "bd-w2c3.10",
-          "bd-29b",
-          "bd-5fw",
           "bd-gtf",
-          "bd-w2c3.1",
           "bd-w2c3.2",
-          "bd-w2c3.3",
           "bd-w2c3.4",
           "bd-w2c3.5",
           "bd-w2c3.6",
@@ -927,56 +843,22 @@
           "bd-1j4",
           "bd-2vv",
           "bd-h5x",
-          "bd-15n",
-          "bd-3ot",
-          "bd-kan",
-          "bd-30o",
-          "bd-25n",
-          "bd-33p",
-          "bd-b5a",
           "bd-1rf",
           "bd-1y7",
-          "bd-2mwc",
           "bd-3bg",
           "bd-3rn",
-          "bd-8sho",
           "bd-qwm",
-          "bd-y45u",
-          "bd-24ug",
-          "bd-27kh",
-          "bd-33zg",
-          "bd-7ef9",
           "bd-c1x",
           "bd-yos",
-          "bd-z84",
-          "bd-rqn",
-          "bd-1ff3",
-          "bd-xxd9",
-          "bd-2yhf",
-          "bd-3ehb",
-          "bd-3rag",
-          "bd-3vtx",
           "bd-x2sq",
-          "bd-13ya",
           "bd-7cba",
           "bd-by8c",
           "bd-z7gt",
-          "bd-11nb",
           "bd-1ah8",
-          "bd-320s",
           "bd-3bvo",
-          "bd-21k",
-          "bd-2nzx",
-          "bd-blg",
-          "bd-gcy",
-          "bd-18rq",
-          "bd-1f35",
-          "bd-3hud",
-          "bd-mjon",
-          "bd-rth1",
-          "bd-300"
+          "bd-rth1"
         ],
-        "chain_length": 63,
+        "chain_length": 25,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -1009,14 +891,6 @@
     {
       "blocking_dependencies": [
         {
-          "issue_id": "bd-29b",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-5fw",
-          "status": "open"
-        },
-        {
           "issue_id": "bd-gtf",
           "status": "open"
         },
@@ -1025,15 +899,7 @@
           "status": "open"
         },
         {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
           "issue_id": "bd-w2c3.2",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
           "status": "open"
         },
         {
@@ -1065,12 +931,8 @@
         "available": true,
         "chain_ids": [
           "bd-w2c3.10",
-          "bd-29b",
-          "bd-5fw",
           "bd-gtf",
-          "bd-w2c3.1",
           "bd-w2c3.2",
-          "bd-w2c3.3",
           "bd-w2c3.4",
           "bd-w2c3.5",
           "bd-w2c3.6",
@@ -1080,56 +942,22 @@
           "bd-1j4",
           "bd-2vv",
           "bd-h5x",
-          "bd-15n",
-          "bd-3ot",
-          "bd-kan",
-          "bd-30o",
-          "bd-25n",
-          "bd-33p",
-          "bd-b5a",
           "bd-1rf",
           "bd-1y7",
-          "bd-2mwc",
           "bd-3bg",
           "bd-3rn",
-          "bd-8sho",
           "bd-qwm",
-          "bd-y45u",
-          "bd-24ug",
-          "bd-27kh",
-          "bd-33zg",
-          "bd-7ef9",
           "bd-c1x",
           "bd-yos",
-          "bd-z84",
-          "bd-rqn",
-          "bd-1ff3",
-          "bd-xxd9",
-          "bd-2yhf",
-          "bd-3ehb",
-          "bd-3rag",
-          "bd-3vtx",
           "bd-x2sq",
-          "bd-13ya",
           "bd-7cba",
           "bd-by8c",
           "bd-z7gt",
-          "bd-11nb",
           "bd-1ah8",
-          "bd-320s",
           "bd-3bvo",
-          "bd-21k",
-          "bd-2nzx",
-          "bd-blg",
-          "bd-gcy",
-          "bd-18rq",
-          "bd-1f35",
-          "bd-3hud",
-          "bd-mjon",
-          "bd-rth1",
-          "bd-300"
+          "bd-rth1"
         ],
-        "chain_length": 63,
+        "chain_length": 25,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -1162,14 +990,6 @@
     {
       "blocking_dependencies": [
         {
-          "issue_id": "bd-29b",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-5fw",
-          "status": "open"
-        },
-        {
           "issue_id": "bd-gtf",
           "status": "open"
         },
@@ -1178,15 +998,7 @@
           "status": "open"
         },
         {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
           "issue_id": "bd-w2c3.2",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
           "status": "open"
         },
         {
@@ -1218,12 +1030,8 @@
         "available": true,
         "chain_ids": [
           "bd-w2c3.10",
-          "bd-29b",
-          "bd-5fw",
           "bd-gtf",
-          "bd-w2c3.1",
           "bd-w2c3.2",
-          "bd-w2c3.3",
           "bd-w2c3.4",
           "bd-w2c3.5",
           "bd-w2c3.6",
@@ -1233,56 +1041,22 @@
           "bd-1j4",
           "bd-2vv",
           "bd-h5x",
-          "bd-15n",
-          "bd-3ot",
-          "bd-kan",
-          "bd-30o",
-          "bd-25n",
-          "bd-33p",
-          "bd-b5a",
           "bd-1rf",
           "bd-1y7",
-          "bd-2mwc",
           "bd-3bg",
           "bd-3rn",
-          "bd-8sho",
           "bd-qwm",
-          "bd-y45u",
-          "bd-24ug",
-          "bd-27kh",
-          "bd-33zg",
-          "bd-7ef9",
           "bd-c1x",
           "bd-yos",
-          "bd-z84",
-          "bd-rqn",
-          "bd-1ff3",
-          "bd-xxd9",
-          "bd-2yhf",
-          "bd-3ehb",
-          "bd-3rag",
-          "bd-3vtx",
           "bd-x2sq",
-          "bd-13ya",
           "bd-7cba",
           "bd-by8c",
           "bd-z7gt",
-          "bd-11nb",
           "bd-1ah8",
-          "bd-320s",
           "bd-3bvo",
-          "bd-21k",
-          "bd-2nzx",
-          "bd-blg",
-          "bd-gcy",
-          "bd-18rq",
-          "bd-1f35",
-          "bd-3hud",
-          "bd-mjon",
-          "bd-rth1",
-          "bd-300"
+          "bd-rth1"
         ],
-        "chain_length": 63,
+        "chain_length": 25,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -1315,14 +1089,6 @@
     {
       "blocking_dependencies": [
         {
-          "issue_id": "bd-29b",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-5fw",
-          "status": "open"
-        },
-        {
           "issue_id": "bd-gtf",
           "status": "open"
         },
@@ -1331,15 +1097,7 @@
           "status": "open"
         },
         {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
           "issue_id": "bd-w2c3.2",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
           "status": "open"
         },
         {
@@ -1371,12 +1129,8 @@
         "available": true,
         "chain_ids": [
           "bd-w2c3.10",
-          "bd-29b",
-          "bd-5fw",
           "bd-gtf",
-          "bd-w2c3.1",
           "bd-w2c3.2",
-          "bd-w2c3.3",
           "bd-w2c3.4",
           "bd-w2c3.5",
           "bd-w2c3.6",
@@ -1386,56 +1140,22 @@
           "bd-1j4",
           "bd-2vv",
           "bd-h5x",
-          "bd-15n",
-          "bd-3ot",
-          "bd-kan",
-          "bd-30o",
-          "bd-25n",
-          "bd-33p",
-          "bd-b5a",
           "bd-1rf",
           "bd-1y7",
-          "bd-2mwc",
           "bd-3bg",
           "bd-3rn",
-          "bd-8sho",
           "bd-qwm",
-          "bd-y45u",
-          "bd-24ug",
-          "bd-27kh",
-          "bd-33zg",
-          "bd-7ef9",
           "bd-c1x",
           "bd-yos",
-          "bd-z84",
-          "bd-rqn",
-          "bd-1ff3",
-          "bd-xxd9",
-          "bd-2yhf",
-          "bd-3ehb",
-          "bd-3rag",
-          "bd-3vtx",
           "bd-x2sq",
-          "bd-13ya",
           "bd-7cba",
           "bd-by8c",
           "bd-z7gt",
-          "bd-11nb",
           "bd-1ah8",
-          "bd-320s",
           "bd-3bvo",
-          "bd-21k",
-          "bd-2nzx",
-          "bd-blg",
-          "bd-gcy",
-          "bd-18rq",
-          "bd-1f35",
-          "bd-3hud",
-          "bd-mjon",
-          "bd-rth1",
-          "bd-300"
+          "bd-rth1"
         ],
-        "chain_length": 63,
+        "chain_length": 25,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -1468,14 +1188,6 @@
     {
       "blocking_dependencies": [
         {
-          "issue_id": "bd-29b",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-5fw",
-          "status": "open"
-        },
-        {
           "issue_id": "bd-gtf",
           "status": "open"
         },
@@ -1484,15 +1196,7 @@
           "status": "open"
         },
         {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
           "issue_id": "bd-w2c3.2",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
           "status": "open"
         },
         {
@@ -1524,12 +1228,8 @@
         "available": true,
         "chain_ids": [
           "bd-w2c3.10",
-          "bd-29b",
-          "bd-5fw",
           "bd-gtf",
-          "bd-w2c3.1",
           "bd-w2c3.2",
-          "bd-w2c3.3",
           "bd-w2c3.4",
           "bd-w2c3.5",
           "bd-w2c3.6",
@@ -1539,56 +1239,22 @@
           "bd-1j4",
           "bd-2vv",
           "bd-h5x",
-          "bd-15n",
-          "bd-3ot",
-          "bd-kan",
-          "bd-30o",
-          "bd-25n",
-          "bd-33p",
-          "bd-b5a",
           "bd-1rf",
           "bd-1y7",
-          "bd-2mwc",
           "bd-3bg",
           "bd-3rn",
-          "bd-8sho",
           "bd-qwm",
-          "bd-y45u",
-          "bd-24ug",
-          "bd-27kh",
-          "bd-33zg",
-          "bd-7ef9",
           "bd-c1x",
           "bd-yos",
-          "bd-z84",
-          "bd-rqn",
-          "bd-1ff3",
-          "bd-xxd9",
-          "bd-2yhf",
-          "bd-3ehb",
-          "bd-3rag",
-          "bd-3vtx",
           "bd-x2sq",
-          "bd-13ya",
           "bd-7cba",
           "bd-by8c",
           "bd-z7gt",
-          "bd-11nb",
           "bd-1ah8",
-          "bd-320s",
           "bd-3bvo",
-          "bd-21k",
-          "bd-2nzx",
-          "bd-blg",
-          "bd-gcy",
-          "bd-18rq",
-          "bd-1f35",
-          "bd-3hud",
-          "bd-mjon",
-          "bd-rth1",
-          "bd-300"
+          "bd-rth1"
         ],
-        "chain_length": 63,
+        "chain_length": 25,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -1621,14 +1287,6 @@
     {
       "blocking_dependencies": [
         {
-          "issue_id": "bd-29b",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-5fw",
-          "status": "open"
-        },
-        {
           "issue_id": "bd-gtf",
           "status": "open"
         },
@@ -1637,15 +1295,7 @@
           "status": "open"
         },
         {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
           "issue_id": "bd-w2c3.2",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
           "status": "open"
         },
         {
@@ -1677,12 +1327,8 @@
         "available": true,
         "chain_ids": [
           "bd-w2c3.10",
-          "bd-29b",
-          "bd-5fw",
           "bd-gtf",
-          "bd-w2c3.1",
           "bd-w2c3.2",
-          "bd-w2c3.3",
           "bd-w2c3.4",
           "bd-w2c3.5",
           "bd-w2c3.6",
@@ -1692,56 +1338,22 @@
           "bd-1j4",
           "bd-2vv",
           "bd-h5x",
-          "bd-15n",
-          "bd-3ot",
-          "bd-kan",
-          "bd-30o",
-          "bd-25n",
-          "bd-33p",
-          "bd-b5a",
           "bd-1rf",
           "bd-1y7",
-          "bd-2mwc",
           "bd-3bg",
           "bd-3rn",
-          "bd-8sho",
           "bd-qwm",
-          "bd-y45u",
-          "bd-24ug",
-          "bd-27kh",
-          "bd-33zg",
-          "bd-7ef9",
           "bd-c1x",
           "bd-yos",
-          "bd-z84",
-          "bd-rqn",
-          "bd-1ff3",
-          "bd-xxd9",
-          "bd-2yhf",
-          "bd-3ehb",
-          "bd-3rag",
-          "bd-3vtx",
           "bd-x2sq",
-          "bd-13ya",
           "bd-7cba",
           "bd-by8c",
           "bd-z7gt",
-          "bd-11nb",
           "bd-1ah8",
-          "bd-320s",
           "bd-3bvo",
-          "bd-21k",
-          "bd-2nzx",
-          "bd-blg",
-          "bd-gcy",
-          "bd-18rq",
-          "bd-1f35",
-          "bd-3hud",
-          "bd-mjon",
-          "bd-rth1",
-          "bd-300"
+          "bd-rth1"
         ],
-        "chain_length": 63,
+        "chain_length": 25,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -1774,14 +1386,6 @@
     {
       "blocking_dependencies": [
         {
-          "issue_id": "bd-29b",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-5fw",
-          "status": "open"
-        },
-        {
           "issue_id": "bd-gtf",
           "status": "open"
         },
@@ -1790,15 +1394,7 @@
           "status": "open"
         },
         {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
           "issue_id": "bd-w2c3.2",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
           "status": "open"
         },
         {
@@ -1830,12 +1426,8 @@
         "available": true,
         "chain_ids": [
           "bd-w2c3.10",
-          "bd-29b",
-          "bd-5fw",
           "bd-gtf",
-          "bd-w2c3.1",
           "bd-w2c3.2",
-          "bd-w2c3.3",
           "bd-w2c3.4",
           "bd-w2c3.5",
           "bd-w2c3.6",
@@ -1845,56 +1437,22 @@
           "bd-1j4",
           "bd-2vv",
           "bd-h5x",
-          "bd-15n",
-          "bd-3ot",
-          "bd-kan",
-          "bd-30o",
-          "bd-25n",
-          "bd-33p",
-          "bd-b5a",
           "bd-1rf",
           "bd-1y7",
-          "bd-2mwc",
           "bd-3bg",
           "bd-3rn",
-          "bd-8sho",
           "bd-qwm",
-          "bd-y45u",
-          "bd-24ug",
-          "bd-27kh",
-          "bd-33zg",
-          "bd-7ef9",
           "bd-c1x",
           "bd-yos",
-          "bd-z84",
-          "bd-rqn",
-          "bd-1ff3",
-          "bd-xxd9",
-          "bd-2yhf",
-          "bd-3ehb",
-          "bd-3rag",
-          "bd-3vtx",
           "bd-x2sq",
-          "bd-13ya",
           "bd-7cba",
           "bd-by8c",
           "bd-z7gt",
-          "bd-11nb",
           "bd-1ah8",
-          "bd-320s",
           "bd-3bvo",
-          "bd-21k",
-          "bd-2nzx",
-          "bd-blg",
-          "bd-gcy",
-          "bd-18rq",
-          "bd-1f35",
-          "bd-3hud",
-          "bd-mjon",
-          "bd-rth1",
-          "bd-300"
+          "bd-rth1"
         ],
-        "chain_length": 63,
+        "chain_length": 25,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -1927,14 +1485,6 @@
     {
       "blocking_dependencies": [
         {
-          "issue_id": "bd-29b",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-5fw",
-          "status": "open"
-        },
-        {
           "issue_id": "bd-gtf",
           "status": "open"
         },
@@ -1943,15 +1493,7 @@
           "status": "open"
         },
         {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
           "issue_id": "bd-w2c3.2",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
           "status": "open"
         },
         {
@@ -1983,12 +1525,8 @@
         "available": true,
         "chain_ids": [
           "bd-w2c3.10",
-          "bd-29b",
-          "bd-5fw",
           "bd-gtf",
-          "bd-w2c3.1",
           "bd-w2c3.2",
-          "bd-w2c3.3",
           "bd-w2c3.4",
           "bd-w2c3.5",
           "bd-w2c3.6",
@@ -1998,56 +1536,22 @@
           "bd-1j4",
           "bd-2vv",
           "bd-h5x",
-          "bd-15n",
-          "bd-3ot",
-          "bd-kan",
-          "bd-30o",
-          "bd-25n",
-          "bd-33p",
-          "bd-b5a",
           "bd-1rf",
           "bd-1y7",
-          "bd-2mwc",
           "bd-3bg",
           "bd-3rn",
-          "bd-8sho",
           "bd-qwm",
-          "bd-y45u",
-          "bd-24ug",
-          "bd-27kh",
-          "bd-33zg",
-          "bd-7ef9",
           "bd-c1x",
           "bd-yos",
-          "bd-z84",
-          "bd-rqn",
-          "bd-1ff3",
-          "bd-xxd9",
-          "bd-2yhf",
-          "bd-3ehb",
-          "bd-3rag",
-          "bd-3vtx",
           "bd-x2sq",
-          "bd-13ya",
           "bd-7cba",
           "bd-by8c",
           "bd-z7gt",
-          "bd-11nb",
           "bd-1ah8",
-          "bd-320s",
           "bd-3bvo",
-          "bd-21k",
-          "bd-2nzx",
-          "bd-blg",
-          "bd-gcy",
-          "bd-18rq",
-          "bd-1f35",
-          "bd-3hud",
-          "bd-mjon",
-          "bd-rth1",
-          "bd-300"
+          "bd-rth1"
         ],
-        "chain_length": 63,
+        "chain_length": 25,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -2080,14 +1584,6 @@
     {
       "blocking_dependencies": [
         {
-          "issue_id": "bd-29b",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-5fw",
-          "status": "open"
-        },
-        {
           "issue_id": "bd-gtf",
           "status": "open"
         },
@@ -2096,15 +1592,7 @@
           "status": "open"
         },
         {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
           "issue_id": "bd-w2c3.2",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
           "status": "open"
         },
         {
@@ -2136,12 +1624,8 @@
         "available": true,
         "chain_ids": [
           "bd-w2c3.10",
-          "bd-29b",
-          "bd-5fw",
           "bd-gtf",
-          "bd-w2c3.1",
           "bd-w2c3.2",
-          "bd-w2c3.3",
           "bd-w2c3.4",
           "bd-w2c3.5",
           "bd-w2c3.6",
@@ -2151,209 +1635,22 @@
           "bd-1j4",
           "bd-2vv",
           "bd-h5x",
-          "bd-15n",
-          "bd-3ot",
-          "bd-kan",
-          "bd-30o",
-          "bd-25n",
-          "bd-33p",
-          "bd-b5a",
           "bd-1rf",
           "bd-1y7",
-          "bd-2mwc",
           "bd-3bg",
           "bd-3rn",
-          "bd-8sho",
           "bd-qwm",
-          "bd-y45u",
-          "bd-24ug",
-          "bd-27kh",
-          "bd-33zg",
-          "bd-7ef9",
           "bd-c1x",
           "bd-yos",
-          "bd-z84",
-          "bd-rqn",
-          "bd-1ff3",
-          "bd-xxd9",
-          "bd-2yhf",
-          "bd-3ehb",
-          "bd-3rag",
-          "bd-3vtx",
           "bd-x2sq",
-          "bd-13ya",
           "bd-7cba",
           "bd-by8c",
           "bd-z7gt",
-          "bd-11nb",
           "bd-1ah8",
-          "bd-320s",
           "bd-3bvo",
-          "bd-21k",
-          "bd-2nzx",
-          "bd-blg",
-          "bd-gcy",
-          "bd-18rq",
-          "bd-1f35",
-          "bd-3hud",
-          "bd-mjon",
-          "bd-rth1",
-          "bd-300"
+          "bd-rth1"
         ],
-        "chain_length": 63,
-        "is_blocked": true,
-        "root_blockers": []
-      },
-      "dependency_path": [
-        "bd-w2c3.10",
-        "bd-29b"
-      ],
-      "expected_vs_actual": {
-        "actual": {
-          "status": "IN_PROGRESS"
-        },
-        "expected": {
-          "status": "DONE"
-        }
-      },
-      "gap_id": "fp-gap-summary-3c4132e4799a",
-      "gap_kind": "feature_parity_row_status",
-      "message": "",
-      "owner_active": true,
-      "owner_assignee": null,
-      "owner_bead": "bd-w2c3.10",
-      "owner_found": true,
-      "owner_priority": 0,
-      "owner_status": "open",
-      "owner_title": "Track 9: Release Claim-Control + Closure Protocol",
-      "section": "gap_summary",
-      "source_file": "FEATURE_PARITY.md",
-      "status": "IN_PROGRESS"
-    },
-    {
-      "blocking_dependencies": [
-        {
-          "issue_id": "bd-29b",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-5fw",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-gtf",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
-          "issue_id": "bd-w2c3.2",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.4",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.5",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.6",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.7",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.8",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.9",
-          "status": "open"
-        }
-      ],
-      "bv_blocker_chain": {
-        "available": true,
-        "chain_ids": [
-          "bd-w2c3.10",
-          "bd-29b",
-          "bd-5fw",
-          "bd-gtf",
-          "bd-w2c3.1",
-          "bd-w2c3.2",
-          "bd-w2c3.3",
-          "bd-w2c3.4",
-          "bd-w2c3.5",
-          "bd-w2c3.6",
-          "bd-w2c3.7",
-          "bd-w2c3.8",
-          "bd-w2c3.9",
-          "bd-1j4",
-          "bd-2vv",
-          "bd-h5x",
-          "bd-15n",
-          "bd-3ot",
-          "bd-kan",
-          "bd-30o",
-          "bd-25n",
-          "bd-33p",
-          "bd-b5a",
-          "bd-1rf",
-          "bd-1y7",
-          "bd-2mwc",
-          "bd-3bg",
-          "bd-3rn",
-          "bd-8sho",
-          "bd-qwm",
-          "bd-y45u",
-          "bd-24ug",
-          "bd-27kh",
-          "bd-33zg",
-          "bd-7ef9",
-          "bd-c1x",
-          "bd-yos",
-          "bd-z84",
-          "bd-rqn",
-          "bd-1ff3",
-          "bd-xxd9",
-          "bd-2yhf",
-          "bd-3ehb",
-          "bd-3rag",
-          "bd-3vtx",
-          "bd-x2sq",
-          "bd-13ya",
-          "bd-7cba",
-          "bd-by8c",
-          "bd-z7gt",
-          "bd-11nb",
-          "bd-1ah8",
-          "bd-320s",
-          "bd-3bvo",
-          "bd-21k",
-          "bd-2nzx",
-          "bd-blg",
-          "bd-gcy",
-          "bd-18rq",
-          "bd-1f35",
-          "bd-3hud",
-          "bd-mjon",
-          "bd-rth1",
-          "bd-300"
-        ],
-        "chain_length": 63,
+        "chain_length": 25,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -2386,14 +1683,6 @@
     {
       "blocking_dependencies": [
         {
-          "issue_id": "bd-29b",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-5fw",
-          "status": "open"
-        },
-        {
           "issue_id": "bd-gtf",
           "status": "open"
         },
@@ -2402,15 +1691,7 @@
           "status": "open"
         },
         {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
           "issue_id": "bd-w2c3.2",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
           "status": "open"
         },
         {
@@ -2442,12 +1723,8 @@
         "available": true,
         "chain_ids": [
           "bd-w2c3.10",
-          "bd-29b",
-          "bd-5fw",
           "bd-gtf",
-          "bd-w2c3.1",
           "bd-w2c3.2",
-          "bd-w2c3.3",
           "bd-w2c3.4",
           "bd-w2c3.5",
           "bd-w2c3.6",
@@ -2457,56 +1734,22 @@
           "bd-1j4",
           "bd-2vv",
           "bd-h5x",
-          "bd-15n",
-          "bd-3ot",
-          "bd-kan",
-          "bd-30o",
-          "bd-25n",
-          "bd-33p",
-          "bd-b5a",
           "bd-1rf",
           "bd-1y7",
-          "bd-2mwc",
           "bd-3bg",
           "bd-3rn",
-          "bd-8sho",
           "bd-qwm",
-          "bd-y45u",
-          "bd-24ug",
-          "bd-27kh",
-          "bd-33zg",
-          "bd-7ef9",
           "bd-c1x",
           "bd-yos",
-          "bd-z84",
-          "bd-rqn",
-          "bd-1ff3",
-          "bd-xxd9",
-          "bd-2yhf",
-          "bd-3ehb",
-          "bd-3rag",
-          "bd-3vtx",
           "bd-x2sq",
-          "bd-13ya",
           "bd-7cba",
           "bd-by8c",
           "bd-z7gt",
-          "bd-11nb",
           "bd-1ah8",
-          "bd-320s",
           "bd-3bvo",
-          "bd-21k",
-          "bd-2nzx",
-          "bd-blg",
-          "bd-gcy",
-          "bd-18rq",
-          "bd-1f35",
-          "bd-3hud",
-          "bd-mjon",
-          "bd-rth1",
-          "bd-300"
+          "bd-rth1"
         ],
-        "chain_length": 63,
+        "chain_length": 25,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -2539,14 +1782,6 @@
     {
       "blocking_dependencies": [
         {
-          "issue_id": "bd-29b",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-5fw",
-          "status": "open"
-        },
-        {
           "issue_id": "bd-gtf",
           "status": "open"
         },
@@ -2555,15 +1790,7 @@
           "status": "open"
         },
         {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
           "issue_id": "bd-w2c3.2",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
           "status": "open"
         },
         {
@@ -2595,12 +1822,8 @@
         "available": true,
         "chain_ids": [
           "bd-w2c3.10",
-          "bd-29b",
-          "bd-5fw",
           "bd-gtf",
-          "bd-w2c3.1",
           "bd-w2c3.2",
-          "bd-w2c3.3",
           "bd-w2c3.4",
           "bd-w2c3.5",
           "bd-w2c3.6",
@@ -2610,56 +1833,22 @@
           "bd-1j4",
           "bd-2vv",
           "bd-h5x",
-          "bd-15n",
-          "bd-3ot",
-          "bd-kan",
-          "bd-30o",
-          "bd-25n",
-          "bd-33p",
-          "bd-b5a",
           "bd-1rf",
           "bd-1y7",
-          "bd-2mwc",
           "bd-3bg",
           "bd-3rn",
-          "bd-8sho",
           "bd-qwm",
-          "bd-y45u",
-          "bd-24ug",
-          "bd-27kh",
-          "bd-33zg",
-          "bd-7ef9",
           "bd-c1x",
           "bd-yos",
-          "bd-z84",
-          "bd-rqn",
-          "bd-1ff3",
-          "bd-xxd9",
-          "bd-2yhf",
-          "bd-3ehb",
-          "bd-3rag",
-          "bd-3vtx",
           "bd-x2sq",
-          "bd-13ya",
           "bd-7cba",
           "bd-by8c",
           "bd-z7gt",
-          "bd-11nb",
           "bd-1ah8",
-          "bd-320s",
           "bd-3bvo",
-          "bd-21k",
-          "bd-2nzx",
-          "bd-blg",
-          "bd-gcy",
-          "bd-18rq",
-          "bd-1f35",
-          "bd-3hud",
-          "bd-mjon",
-          "bd-rth1",
-          "bd-300"
+          "bd-rth1"
         ],
-        "chain_length": 63,
+        "chain_length": 25,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -2692,14 +1881,6 @@
     {
       "blocking_dependencies": [
         {
-          "issue_id": "bd-29b",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-5fw",
-          "status": "open"
-        },
-        {
           "issue_id": "bd-gtf",
           "status": "open"
         },
@@ -2708,15 +1889,7 @@
           "status": "open"
         },
         {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
           "issue_id": "bd-w2c3.2",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
           "status": "open"
         },
         {
@@ -2748,12 +1921,8 @@
         "available": true,
         "chain_ids": [
           "bd-w2c3.10",
-          "bd-29b",
-          "bd-5fw",
           "bd-gtf",
-          "bd-w2c3.1",
           "bd-w2c3.2",
-          "bd-w2c3.3",
           "bd-w2c3.4",
           "bd-w2c3.5",
           "bd-w2c3.6",
@@ -2763,56 +1932,22 @@
           "bd-1j4",
           "bd-2vv",
           "bd-h5x",
-          "bd-15n",
-          "bd-3ot",
-          "bd-kan",
-          "bd-30o",
-          "bd-25n",
-          "bd-33p",
-          "bd-b5a",
           "bd-1rf",
           "bd-1y7",
-          "bd-2mwc",
           "bd-3bg",
           "bd-3rn",
-          "bd-8sho",
           "bd-qwm",
-          "bd-y45u",
-          "bd-24ug",
-          "bd-27kh",
-          "bd-33zg",
-          "bd-7ef9",
           "bd-c1x",
           "bd-yos",
-          "bd-z84",
-          "bd-rqn",
-          "bd-1ff3",
-          "bd-xxd9",
-          "bd-2yhf",
-          "bd-3ehb",
-          "bd-3rag",
-          "bd-3vtx",
           "bd-x2sq",
-          "bd-13ya",
           "bd-7cba",
           "bd-by8c",
           "bd-z7gt",
-          "bd-11nb",
           "bd-1ah8",
-          "bd-320s",
           "bd-3bvo",
-          "bd-21k",
-          "bd-2nzx",
-          "bd-blg",
-          "bd-gcy",
-          "bd-18rq",
-          "bd-1f35",
-          "bd-3hud",
-          "bd-mjon",
-          "bd-rth1",
-          "bd-300"
+          "bd-rth1"
         ],
-        "chain_length": 63,
+        "chain_length": 25,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -2845,14 +1980,6 @@
     {
       "blocking_dependencies": [
         {
-          "issue_id": "bd-29b",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-5fw",
-          "status": "open"
-        },
-        {
           "issue_id": "bd-gtf",
           "status": "open"
         },
@@ -2861,15 +1988,7 @@
           "status": "open"
         },
         {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
           "issue_id": "bd-w2c3.2",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
           "status": "open"
         },
         {
@@ -2901,12 +2020,8 @@
         "available": true,
         "chain_ids": [
           "bd-w2c3.10",
-          "bd-29b",
-          "bd-5fw",
           "bd-gtf",
-          "bd-w2c3.1",
           "bd-w2c3.2",
-          "bd-w2c3.3",
           "bd-w2c3.4",
           "bd-w2c3.5",
           "bd-w2c3.6",
@@ -2916,56 +2031,22 @@
           "bd-1j4",
           "bd-2vv",
           "bd-h5x",
-          "bd-15n",
-          "bd-3ot",
-          "bd-kan",
-          "bd-30o",
-          "bd-25n",
-          "bd-33p",
-          "bd-b5a",
           "bd-1rf",
           "bd-1y7",
-          "bd-2mwc",
           "bd-3bg",
           "bd-3rn",
-          "bd-8sho",
           "bd-qwm",
-          "bd-y45u",
-          "bd-24ug",
-          "bd-27kh",
-          "bd-33zg",
-          "bd-7ef9",
           "bd-c1x",
           "bd-yos",
-          "bd-z84",
-          "bd-rqn",
-          "bd-1ff3",
-          "bd-xxd9",
-          "bd-2yhf",
-          "bd-3ehb",
-          "bd-3rag",
-          "bd-3vtx",
           "bd-x2sq",
-          "bd-13ya",
           "bd-7cba",
           "bd-by8c",
           "bd-z7gt",
-          "bd-11nb",
           "bd-1ah8",
-          "bd-320s",
           "bd-3bvo",
-          "bd-21k",
-          "bd-2nzx",
-          "bd-blg",
-          "bd-gcy",
-          "bd-18rq",
-          "bd-1f35",
-          "bd-3hud",
-          "bd-mjon",
-          "bd-rth1",
-          "bd-300"
+          "bd-rth1"
         ],
-        "chain_length": 63,
+        "chain_length": 25,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -2998,14 +2079,6 @@
     {
       "blocking_dependencies": [
         {
-          "issue_id": "bd-29b",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-5fw",
-          "status": "open"
-        },
-        {
           "issue_id": "bd-gtf",
           "status": "open"
         },
@@ -3014,15 +2087,7 @@
           "status": "open"
         },
         {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
           "issue_id": "bd-w2c3.2",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
           "status": "open"
         },
         {
@@ -3054,12 +2119,8 @@
         "available": true,
         "chain_ids": [
           "bd-w2c3.10",
-          "bd-29b",
-          "bd-5fw",
           "bd-gtf",
-          "bd-w2c3.1",
           "bd-w2c3.2",
-          "bd-w2c3.3",
           "bd-w2c3.4",
           "bd-w2c3.5",
           "bd-w2c3.6",
@@ -3069,209 +2130,22 @@
           "bd-1j4",
           "bd-2vv",
           "bd-h5x",
-          "bd-15n",
-          "bd-3ot",
-          "bd-kan",
-          "bd-30o",
-          "bd-25n",
-          "bd-33p",
-          "bd-b5a",
           "bd-1rf",
           "bd-1y7",
-          "bd-2mwc",
           "bd-3bg",
           "bd-3rn",
-          "bd-8sho",
           "bd-qwm",
-          "bd-y45u",
-          "bd-24ug",
-          "bd-27kh",
-          "bd-33zg",
-          "bd-7ef9",
           "bd-c1x",
           "bd-yos",
-          "bd-z84",
-          "bd-rqn",
-          "bd-1ff3",
-          "bd-xxd9",
-          "bd-2yhf",
-          "bd-3ehb",
-          "bd-3rag",
-          "bd-3vtx",
           "bd-x2sq",
-          "bd-13ya",
           "bd-7cba",
           "bd-by8c",
           "bd-z7gt",
-          "bd-11nb",
           "bd-1ah8",
-          "bd-320s",
           "bd-3bvo",
-          "bd-21k",
-          "bd-2nzx",
-          "bd-blg",
-          "bd-gcy",
-          "bd-18rq",
-          "bd-1f35",
-          "bd-3hud",
-          "bd-mjon",
-          "bd-rth1",
-          "bd-300"
+          "bd-rth1"
         ],
-        "chain_length": 63,
-        "is_blocked": true,
-        "root_blockers": []
-      },
-      "dependency_path": [
-        "bd-w2c3.10",
-        "bd-29b"
-      ],
-      "expected_vs_actual": {
-        "actual": {
-          "status": "IN_PROGRESS"
-        },
-        "expected": {
-          "status": "DONE"
-        }
-      },
-      "gap_id": "fp-gap-summary-6973ad91485b",
-      "gap_kind": "feature_parity_row_status",
-      "message": "",
-      "owner_active": true,
-      "owner_assignee": null,
-      "owner_bead": "bd-w2c3.10",
-      "owner_found": true,
-      "owner_priority": 0,
-      "owner_status": "open",
-      "owner_title": "Track 9: Release Claim-Control + Closure Protocol",
-      "section": "gap_summary",
-      "source_file": "FEATURE_PARITY.md",
-      "status": "IN_PROGRESS"
-    },
-    {
-      "blocking_dependencies": [
-        {
-          "issue_id": "bd-29b",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-5fw",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-gtf",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
-          "issue_id": "bd-w2c3.2",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.4",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.5",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.6",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.7",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.8",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.9",
-          "status": "open"
-        }
-      ],
-      "bv_blocker_chain": {
-        "available": true,
-        "chain_ids": [
-          "bd-w2c3.10",
-          "bd-29b",
-          "bd-5fw",
-          "bd-gtf",
-          "bd-w2c3.1",
-          "bd-w2c3.2",
-          "bd-w2c3.3",
-          "bd-w2c3.4",
-          "bd-w2c3.5",
-          "bd-w2c3.6",
-          "bd-w2c3.7",
-          "bd-w2c3.8",
-          "bd-w2c3.9",
-          "bd-1j4",
-          "bd-2vv",
-          "bd-h5x",
-          "bd-15n",
-          "bd-3ot",
-          "bd-kan",
-          "bd-30o",
-          "bd-25n",
-          "bd-33p",
-          "bd-b5a",
-          "bd-1rf",
-          "bd-1y7",
-          "bd-2mwc",
-          "bd-3bg",
-          "bd-3rn",
-          "bd-8sho",
-          "bd-qwm",
-          "bd-y45u",
-          "bd-24ug",
-          "bd-27kh",
-          "bd-33zg",
-          "bd-7ef9",
-          "bd-c1x",
-          "bd-yos",
-          "bd-z84",
-          "bd-rqn",
-          "bd-1ff3",
-          "bd-xxd9",
-          "bd-2yhf",
-          "bd-3ehb",
-          "bd-3rag",
-          "bd-3vtx",
-          "bd-x2sq",
-          "bd-13ya",
-          "bd-7cba",
-          "bd-by8c",
-          "bd-z7gt",
-          "bd-11nb",
-          "bd-1ah8",
-          "bd-320s",
-          "bd-3bvo",
-          "bd-21k",
-          "bd-2nzx",
-          "bd-blg",
-          "bd-gcy",
-          "bd-18rq",
-          "bd-1f35",
-          "bd-3hud",
-          "bd-mjon",
-          "bd-rth1",
-          "bd-300"
-        ],
-        "chain_length": 63,
+        "chain_length": 25,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -3304,14 +2178,6 @@
     {
       "blocking_dependencies": [
         {
-          "issue_id": "bd-29b",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-5fw",
-          "status": "open"
-        },
-        {
           "issue_id": "bd-gtf",
           "status": "open"
         },
@@ -3320,15 +2186,7 @@
           "status": "open"
         },
         {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
           "issue_id": "bd-w2c3.2",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
           "status": "open"
         },
         {
@@ -3360,12 +2218,8 @@
         "available": true,
         "chain_ids": [
           "bd-w2c3.10",
-          "bd-29b",
-          "bd-5fw",
           "bd-gtf",
-          "bd-w2c3.1",
           "bd-w2c3.2",
-          "bd-w2c3.3",
           "bd-w2c3.4",
           "bd-w2c3.5",
           "bd-w2c3.6",
@@ -3375,56 +2229,121 @@
           "bd-1j4",
           "bd-2vv",
           "bd-h5x",
-          "bd-15n",
-          "bd-3ot",
-          "bd-kan",
-          "bd-30o",
-          "bd-25n",
-          "bd-33p",
-          "bd-b5a",
           "bd-1rf",
           "bd-1y7",
-          "bd-2mwc",
           "bd-3bg",
           "bd-3rn",
-          "bd-8sho",
           "bd-qwm",
-          "bd-y45u",
-          "bd-24ug",
-          "bd-27kh",
-          "bd-33zg",
-          "bd-7ef9",
           "bd-c1x",
           "bd-yos",
-          "bd-z84",
-          "bd-rqn",
-          "bd-1ff3",
-          "bd-xxd9",
-          "bd-2yhf",
-          "bd-3ehb",
-          "bd-3rag",
-          "bd-3vtx",
           "bd-x2sq",
-          "bd-13ya",
           "bd-7cba",
           "bd-by8c",
           "bd-z7gt",
-          "bd-11nb",
           "bd-1ah8",
-          "bd-320s",
           "bd-3bvo",
-          "bd-21k",
-          "bd-2nzx",
-          "bd-blg",
-          "bd-gcy",
-          "bd-18rq",
-          "bd-1f35",
-          "bd-3hud",
-          "bd-mjon",
-          "bd-rth1",
-          "bd-300"
+          "bd-rth1"
         ],
-        "chain_length": 63,
+        "chain_length": 25,
+        "is_blocked": true,
+        "root_blockers": []
+      },
+      "dependency_path": [
+        "bd-w2c3.10",
+        "bd-29b"
+      ],
+      "expected_vs_actual": {
+        "actual": {
+          "status": "IN_PROGRESS"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-gap-summary-750f708084bd",
+      "gap_kind": "feature_parity_row_status",
+      "message": "",
+      "owner_active": true,
+      "owner_assignee": null,
+      "owner_bead": "bd-w2c3.10",
+      "owner_found": true,
+      "owner_priority": 0,
+      "owner_status": "open",
+      "owner_title": "Track 9: Release Claim-Control + Closure Protocol",
+      "section": "gap_summary",
+      "source_file": "FEATURE_PARITY.md",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "blocking_dependencies": [
+        {
+          "issue_id": "bd-gtf",
+          "status": "open"
+        },
+        {
+          "issue_id": "bd-w2c3",
+          "status": "open"
+        },
+        {
+          "issue_id": "bd-w2c3.2",
+          "status": "open"
+        },
+        {
+          "issue_id": "bd-w2c3.4",
+          "status": "open"
+        },
+        {
+          "issue_id": "bd-w2c3.5",
+          "status": "open"
+        },
+        {
+          "issue_id": "bd-w2c3.6",
+          "status": "open"
+        },
+        {
+          "issue_id": "bd-w2c3.7",
+          "status": "open"
+        },
+        {
+          "issue_id": "bd-w2c3.8",
+          "status": "open"
+        },
+        {
+          "issue_id": "bd-w2c3.9",
+          "status": "open"
+        }
+      ],
+      "bv_blocker_chain": {
+        "available": true,
+        "chain_ids": [
+          "bd-w2c3.10",
+          "bd-gtf",
+          "bd-w2c3.2",
+          "bd-w2c3.4",
+          "bd-w2c3.5",
+          "bd-w2c3.6",
+          "bd-w2c3.7",
+          "bd-w2c3.8",
+          "bd-w2c3.9",
+          "bd-1j4",
+          "bd-2vv",
+          "bd-h5x",
+          "bd-1rf",
+          "bd-1y7",
+          "bd-3bg",
+          "bd-3rn",
+          "bd-qwm",
+          "bd-c1x",
+          "bd-yos",
+          "bd-x2sq",
+          "bd-7cba",
+          "bd-by8c",
+          "bd-z7gt",
+          "bd-1ah8",
+          "bd-3bvo",
+          "bd-rth1"
+        ],
+        "chain_length": 25,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -3457,14 +2376,6 @@
     {
       "blocking_dependencies": [
         {
-          "issue_id": "bd-29b",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-5fw",
-          "status": "open"
-        },
-        {
           "issue_id": "bd-gtf",
           "status": "open"
         },
@@ -3473,15 +2384,7 @@
           "status": "open"
         },
         {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
           "issue_id": "bd-w2c3.2",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
           "status": "open"
         },
         {
@@ -3513,12 +2416,8 @@
         "available": true,
         "chain_ids": [
           "bd-w2c3.10",
-          "bd-29b",
-          "bd-5fw",
           "bd-gtf",
-          "bd-w2c3.1",
           "bd-w2c3.2",
-          "bd-w2c3.3",
           "bd-w2c3.4",
           "bd-w2c3.5",
           "bd-w2c3.6",
@@ -3528,56 +2427,22 @@
           "bd-1j4",
           "bd-2vv",
           "bd-h5x",
-          "bd-15n",
-          "bd-3ot",
-          "bd-kan",
-          "bd-30o",
-          "bd-25n",
-          "bd-33p",
-          "bd-b5a",
           "bd-1rf",
           "bd-1y7",
-          "bd-2mwc",
           "bd-3bg",
           "bd-3rn",
-          "bd-8sho",
           "bd-qwm",
-          "bd-y45u",
-          "bd-24ug",
-          "bd-27kh",
-          "bd-33zg",
-          "bd-7ef9",
           "bd-c1x",
           "bd-yos",
-          "bd-z84",
-          "bd-rqn",
-          "bd-1ff3",
-          "bd-xxd9",
-          "bd-2yhf",
-          "bd-3ehb",
-          "bd-3rag",
-          "bd-3vtx",
           "bd-x2sq",
-          "bd-13ya",
           "bd-7cba",
           "bd-by8c",
           "bd-z7gt",
-          "bd-11nb",
           "bd-1ah8",
-          "bd-320s",
           "bd-3bvo",
-          "bd-21k",
-          "bd-2nzx",
-          "bd-blg",
-          "bd-gcy",
-          "bd-18rq",
-          "bd-1f35",
-          "bd-3hud",
-          "bd-mjon",
-          "bd-rth1",
-          "bd-300"
+          "bd-rth1"
         ],
-        "chain_length": 63,
+        "chain_length": 25,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -3610,14 +2475,6 @@
     {
       "blocking_dependencies": [
         {
-          "issue_id": "bd-29b",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-5fw",
-          "status": "open"
-        },
-        {
           "issue_id": "bd-gtf",
           "status": "open"
         },
@@ -3626,15 +2483,7 @@
           "status": "open"
         },
         {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
           "issue_id": "bd-w2c3.2",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
           "status": "open"
         },
         {
@@ -3666,12 +2515,8 @@
         "available": true,
         "chain_ids": [
           "bd-w2c3.10",
-          "bd-29b",
-          "bd-5fw",
           "bd-gtf",
-          "bd-w2c3.1",
           "bd-w2c3.2",
-          "bd-w2c3.3",
           "bd-w2c3.4",
           "bd-w2c3.5",
           "bd-w2c3.6",
@@ -3681,56 +2526,22 @@
           "bd-1j4",
           "bd-2vv",
           "bd-h5x",
-          "bd-15n",
-          "bd-3ot",
-          "bd-kan",
-          "bd-30o",
-          "bd-25n",
-          "bd-33p",
-          "bd-b5a",
           "bd-1rf",
           "bd-1y7",
-          "bd-2mwc",
           "bd-3bg",
           "bd-3rn",
-          "bd-8sho",
           "bd-qwm",
-          "bd-y45u",
-          "bd-24ug",
-          "bd-27kh",
-          "bd-33zg",
-          "bd-7ef9",
           "bd-c1x",
           "bd-yos",
-          "bd-z84",
-          "bd-rqn",
-          "bd-1ff3",
-          "bd-xxd9",
-          "bd-2yhf",
-          "bd-3ehb",
-          "bd-3rag",
-          "bd-3vtx",
           "bd-x2sq",
-          "bd-13ya",
           "bd-7cba",
           "bd-by8c",
           "bd-z7gt",
-          "bd-11nb",
           "bd-1ah8",
-          "bd-320s",
           "bd-3bvo",
-          "bd-21k",
-          "bd-2nzx",
-          "bd-blg",
-          "bd-gcy",
-          "bd-18rq",
-          "bd-1f35",
-          "bd-3hud",
-          "bd-mjon",
-          "bd-rth1",
-          "bd-300"
+          "bd-rth1"
         ],
-        "chain_length": 63,
+        "chain_length": 25,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -3763,14 +2574,6 @@
     {
       "blocking_dependencies": [
         {
-          "issue_id": "bd-29b",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-5fw",
-          "status": "open"
-        },
-        {
           "issue_id": "bd-gtf",
           "status": "open"
         },
@@ -3779,15 +2582,7 @@
           "status": "open"
         },
         {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
           "issue_id": "bd-w2c3.2",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
           "status": "open"
         },
         {
@@ -3819,12 +2614,8 @@
         "available": true,
         "chain_ids": [
           "bd-w2c3.10",
-          "bd-29b",
-          "bd-5fw",
           "bd-gtf",
-          "bd-w2c3.1",
           "bd-w2c3.2",
-          "bd-w2c3.3",
           "bd-w2c3.4",
           "bd-w2c3.5",
           "bd-w2c3.6",
@@ -3834,56 +2625,22 @@
           "bd-1j4",
           "bd-2vv",
           "bd-h5x",
-          "bd-15n",
-          "bd-3ot",
-          "bd-kan",
-          "bd-30o",
-          "bd-25n",
-          "bd-33p",
-          "bd-b5a",
           "bd-1rf",
           "bd-1y7",
-          "bd-2mwc",
           "bd-3bg",
           "bd-3rn",
-          "bd-8sho",
           "bd-qwm",
-          "bd-y45u",
-          "bd-24ug",
-          "bd-27kh",
-          "bd-33zg",
-          "bd-7ef9",
           "bd-c1x",
           "bd-yos",
-          "bd-z84",
-          "bd-rqn",
-          "bd-1ff3",
-          "bd-xxd9",
-          "bd-2yhf",
-          "bd-3ehb",
-          "bd-3rag",
-          "bd-3vtx",
           "bd-x2sq",
-          "bd-13ya",
           "bd-7cba",
           "bd-by8c",
           "bd-z7gt",
-          "bd-11nb",
           "bd-1ah8",
-          "bd-320s",
           "bd-3bvo",
-          "bd-21k",
-          "bd-2nzx",
-          "bd-blg",
-          "bd-gcy",
-          "bd-18rq",
-          "bd-1f35",
-          "bd-3hud",
-          "bd-mjon",
-          "bd-rth1",
-          "bd-300"
+          "bd-rth1"
         ],
-        "chain_length": 63,
+        "chain_length": 25,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -3916,14 +2673,6 @@
     {
       "blocking_dependencies": [
         {
-          "issue_id": "bd-29b",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-5fw",
-          "status": "open"
-        },
-        {
           "issue_id": "bd-gtf",
           "status": "open"
         },
@@ -3932,15 +2681,7 @@
           "status": "open"
         },
         {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
           "issue_id": "bd-w2c3.2",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
           "status": "open"
         },
         {
@@ -3972,12 +2713,8 @@
         "available": true,
         "chain_ids": [
           "bd-w2c3.10",
-          "bd-29b",
-          "bd-5fw",
           "bd-gtf",
-          "bd-w2c3.1",
           "bd-w2c3.2",
-          "bd-w2c3.3",
           "bd-w2c3.4",
           "bd-w2c3.5",
           "bd-w2c3.6",
@@ -3987,56 +2724,22 @@
           "bd-1j4",
           "bd-2vv",
           "bd-h5x",
-          "bd-15n",
-          "bd-3ot",
-          "bd-kan",
-          "bd-30o",
-          "bd-25n",
-          "bd-33p",
-          "bd-b5a",
           "bd-1rf",
           "bd-1y7",
-          "bd-2mwc",
           "bd-3bg",
           "bd-3rn",
-          "bd-8sho",
           "bd-qwm",
-          "bd-y45u",
-          "bd-24ug",
-          "bd-27kh",
-          "bd-33zg",
-          "bd-7ef9",
           "bd-c1x",
           "bd-yos",
-          "bd-z84",
-          "bd-rqn",
-          "bd-1ff3",
-          "bd-xxd9",
-          "bd-2yhf",
-          "bd-3ehb",
-          "bd-3rag",
-          "bd-3vtx",
           "bd-x2sq",
-          "bd-13ya",
           "bd-7cba",
           "bd-by8c",
           "bd-z7gt",
-          "bd-11nb",
           "bd-1ah8",
-          "bd-320s",
           "bd-3bvo",
-          "bd-21k",
-          "bd-2nzx",
-          "bd-blg",
-          "bd-gcy",
-          "bd-18rq",
-          "bd-1f35",
-          "bd-3hud",
-          "bd-mjon",
-          "bd-rth1",
-          "bd-300"
+          "bd-rth1"
         ],
-        "chain_length": 63,
+        "chain_length": 25,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -4069,14 +2772,6 @@
     {
       "blocking_dependencies": [
         {
-          "issue_id": "bd-29b",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-5fw",
-          "status": "open"
-        },
-        {
           "issue_id": "bd-gtf",
           "status": "open"
         },
@@ -4085,15 +2780,7 @@
           "status": "open"
         },
         {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
           "issue_id": "bd-w2c3.2",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
           "status": "open"
         },
         {
@@ -4125,12 +2812,8 @@
         "available": true,
         "chain_ids": [
           "bd-w2c3.10",
-          "bd-29b",
-          "bd-5fw",
           "bd-gtf",
-          "bd-w2c3.1",
           "bd-w2c3.2",
-          "bd-w2c3.3",
           "bd-w2c3.4",
           "bd-w2c3.5",
           "bd-w2c3.6",
@@ -4140,56 +2823,22 @@
           "bd-1j4",
           "bd-2vv",
           "bd-h5x",
-          "bd-15n",
-          "bd-3ot",
-          "bd-kan",
-          "bd-30o",
-          "bd-25n",
-          "bd-33p",
-          "bd-b5a",
           "bd-1rf",
           "bd-1y7",
-          "bd-2mwc",
           "bd-3bg",
           "bd-3rn",
-          "bd-8sho",
           "bd-qwm",
-          "bd-y45u",
-          "bd-24ug",
-          "bd-27kh",
-          "bd-33zg",
-          "bd-7ef9",
           "bd-c1x",
           "bd-yos",
-          "bd-z84",
-          "bd-rqn",
-          "bd-1ff3",
-          "bd-xxd9",
-          "bd-2yhf",
-          "bd-3ehb",
-          "bd-3rag",
-          "bd-3vtx",
           "bd-x2sq",
-          "bd-13ya",
           "bd-7cba",
           "bd-by8c",
           "bd-z7gt",
-          "bd-11nb",
           "bd-1ah8",
-          "bd-320s",
           "bd-3bvo",
-          "bd-21k",
-          "bd-2nzx",
-          "bd-blg",
-          "bd-gcy",
-          "bd-18rq",
-          "bd-1f35",
-          "bd-3hud",
-          "bd-mjon",
-          "bd-rth1",
-          "bd-300"
+          "bd-rth1"
         ],
-        "chain_length": 63,
+        "chain_length": 25,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -4222,14 +2871,6 @@
     {
       "blocking_dependencies": [
         {
-          "issue_id": "bd-29b",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-5fw",
-          "status": "open"
-        },
-        {
           "issue_id": "bd-gtf",
           "status": "open"
         },
@@ -4238,15 +2879,7 @@
           "status": "open"
         },
         {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
           "issue_id": "bd-w2c3.2",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
           "status": "open"
         },
         {
@@ -4278,12 +2911,8 @@
         "available": true,
         "chain_ids": [
           "bd-w2c3.10",
-          "bd-29b",
-          "bd-5fw",
           "bd-gtf",
-          "bd-w2c3.1",
           "bd-w2c3.2",
-          "bd-w2c3.3",
           "bd-w2c3.4",
           "bd-w2c3.5",
           "bd-w2c3.6",
@@ -4293,56 +2922,22 @@
           "bd-1j4",
           "bd-2vv",
           "bd-h5x",
-          "bd-15n",
-          "bd-3ot",
-          "bd-kan",
-          "bd-30o",
-          "bd-25n",
-          "bd-33p",
-          "bd-b5a",
           "bd-1rf",
           "bd-1y7",
-          "bd-2mwc",
           "bd-3bg",
           "bd-3rn",
-          "bd-8sho",
           "bd-qwm",
-          "bd-y45u",
-          "bd-24ug",
-          "bd-27kh",
-          "bd-33zg",
-          "bd-7ef9",
           "bd-c1x",
           "bd-yos",
-          "bd-z84",
-          "bd-rqn",
-          "bd-1ff3",
-          "bd-xxd9",
-          "bd-2yhf",
-          "bd-3ehb",
-          "bd-3rag",
-          "bd-3vtx",
           "bd-x2sq",
-          "bd-13ya",
           "bd-7cba",
           "bd-by8c",
           "bd-z7gt",
-          "bd-11nb",
           "bd-1ah8",
-          "bd-320s",
           "bd-3bvo",
-          "bd-21k",
-          "bd-2nzx",
-          "bd-blg",
-          "bd-gcy",
-          "bd-18rq",
-          "bd-1f35",
-          "bd-3hud",
-          "bd-mjon",
-          "bd-rth1",
-          "bd-300"
+          "bd-rth1"
         ],
-        "chain_length": 63,
+        "chain_length": 25,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -4375,14 +2970,6 @@
     {
       "blocking_dependencies": [
         {
-          "issue_id": "bd-29b",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-5fw",
-          "status": "open"
-        },
-        {
           "issue_id": "bd-gtf",
           "status": "open"
         },
@@ -4391,15 +2978,7 @@
           "status": "open"
         },
         {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
           "issue_id": "bd-w2c3.2",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
           "status": "open"
         },
         {
@@ -4431,12 +3010,8 @@
         "available": true,
         "chain_ids": [
           "bd-w2c3.10",
-          "bd-29b",
-          "bd-5fw",
           "bd-gtf",
-          "bd-w2c3.1",
           "bd-w2c3.2",
-          "bd-w2c3.3",
           "bd-w2c3.4",
           "bd-w2c3.5",
           "bd-w2c3.6",
@@ -4446,56 +3021,22 @@
           "bd-1j4",
           "bd-2vv",
           "bd-h5x",
-          "bd-15n",
-          "bd-3ot",
-          "bd-kan",
-          "bd-30o",
-          "bd-25n",
-          "bd-33p",
-          "bd-b5a",
           "bd-1rf",
           "bd-1y7",
-          "bd-2mwc",
           "bd-3bg",
           "bd-3rn",
-          "bd-8sho",
           "bd-qwm",
-          "bd-y45u",
-          "bd-24ug",
-          "bd-27kh",
-          "bd-33zg",
-          "bd-7ef9",
           "bd-c1x",
           "bd-yos",
-          "bd-z84",
-          "bd-rqn",
-          "bd-1ff3",
-          "bd-xxd9",
-          "bd-2yhf",
-          "bd-3ehb",
-          "bd-3rag",
-          "bd-3vtx",
           "bd-x2sq",
-          "bd-13ya",
           "bd-7cba",
           "bd-by8c",
           "bd-z7gt",
-          "bd-11nb",
           "bd-1ah8",
-          "bd-320s",
           "bd-3bvo",
-          "bd-21k",
-          "bd-2nzx",
-          "bd-blg",
-          "bd-gcy",
-          "bd-18rq",
-          "bd-1f35",
-          "bd-3hud",
-          "bd-mjon",
-          "bd-rth1",
-          "bd-300"
+          "bd-rth1"
         ],
-        "chain_length": 63,
+        "chain_length": 25,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -4528,14 +3069,6 @@
     {
       "blocking_dependencies": [
         {
-          "issue_id": "bd-29b",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-5fw",
-          "status": "open"
-        },
-        {
           "issue_id": "bd-gtf",
           "status": "open"
         },
@@ -4544,15 +3077,7 @@
           "status": "open"
         },
         {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
           "issue_id": "bd-w2c3.2",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
           "status": "open"
         },
         {
@@ -4584,12 +3109,8 @@
         "available": true,
         "chain_ids": [
           "bd-w2c3.10",
-          "bd-29b",
-          "bd-5fw",
           "bd-gtf",
-          "bd-w2c3.1",
           "bd-w2c3.2",
-          "bd-w2c3.3",
           "bd-w2c3.4",
           "bd-w2c3.5",
           "bd-w2c3.6",
@@ -4599,56 +3120,22 @@
           "bd-1j4",
           "bd-2vv",
           "bd-h5x",
-          "bd-15n",
-          "bd-3ot",
-          "bd-kan",
-          "bd-30o",
-          "bd-25n",
-          "bd-33p",
-          "bd-b5a",
           "bd-1rf",
           "bd-1y7",
-          "bd-2mwc",
           "bd-3bg",
           "bd-3rn",
-          "bd-8sho",
           "bd-qwm",
-          "bd-y45u",
-          "bd-24ug",
-          "bd-27kh",
-          "bd-33zg",
-          "bd-7ef9",
           "bd-c1x",
           "bd-yos",
-          "bd-z84",
-          "bd-rqn",
-          "bd-1ff3",
-          "bd-xxd9",
-          "bd-2yhf",
-          "bd-3ehb",
-          "bd-3rag",
-          "bd-3vtx",
           "bd-x2sq",
-          "bd-13ya",
           "bd-7cba",
           "bd-by8c",
           "bd-z7gt",
-          "bd-11nb",
           "bd-1ah8",
-          "bd-320s",
           "bd-3bvo",
-          "bd-21k",
-          "bd-2nzx",
-          "bd-blg",
-          "bd-gcy",
-          "bd-18rq",
-          "bd-1f35",
-          "bd-3hud",
-          "bd-mjon",
-          "bd-rth1",
-          "bd-300"
+          "bd-rth1"
         ],
-        "chain_length": 63,
+        "chain_length": 25,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -4681,14 +3168,6 @@
     {
       "blocking_dependencies": [
         {
-          "issue_id": "bd-29b",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-5fw",
-          "status": "open"
-        },
-        {
           "issue_id": "bd-gtf",
           "status": "open"
         },
@@ -4697,15 +3176,7 @@
           "status": "open"
         },
         {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
           "issue_id": "bd-w2c3.2",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
           "status": "open"
         },
         {
@@ -4737,12 +3208,8 @@
         "available": true,
         "chain_ids": [
           "bd-w2c3.10",
-          "bd-29b",
-          "bd-5fw",
           "bd-gtf",
-          "bd-w2c3.1",
           "bd-w2c3.2",
-          "bd-w2c3.3",
           "bd-w2c3.4",
           "bd-w2c3.5",
           "bd-w2c3.6",
@@ -4752,56 +3219,22 @@
           "bd-1j4",
           "bd-2vv",
           "bd-h5x",
-          "bd-15n",
-          "bd-3ot",
-          "bd-kan",
-          "bd-30o",
-          "bd-25n",
-          "bd-33p",
-          "bd-b5a",
           "bd-1rf",
           "bd-1y7",
-          "bd-2mwc",
           "bd-3bg",
           "bd-3rn",
-          "bd-8sho",
           "bd-qwm",
-          "bd-y45u",
-          "bd-24ug",
-          "bd-27kh",
-          "bd-33zg",
-          "bd-7ef9",
           "bd-c1x",
           "bd-yos",
-          "bd-z84",
-          "bd-rqn",
-          "bd-1ff3",
-          "bd-xxd9",
-          "bd-2yhf",
-          "bd-3ehb",
-          "bd-3rag",
-          "bd-3vtx",
           "bd-x2sq",
-          "bd-13ya",
           "bd-7cba",
           "bd-by8c",
           "bd-z7gt",
-          "bd-11nb",
           "bd-1ah8",
-          "bd-320s",
           "bd-3bvo",
-          "bd-21k",
-          "bd-2nzx",
-          "bd-blg",
-          "bd-gcy",
-          "bd-18rq",
-          "bd-1f35",
-          "bd-3hud",
-          "bd-mjon",
-          "bd-rth1",
-          "bd-300"
+          "bd-rth1"
         ],
-        "chain_length": 63,
+        "chain_length": 25,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -4834,14 +3267,6 @@
     {
       "blocking_dependencies": [
         {
-          "issue_id": "bd-29b",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-5fw",
-          "status": "open"
-        },
-        {
           "issue_id": "bd-gtf",
           "status": "open"
         },
@@ -4850,15 +3275,7 @@
           "status": "open"
         },
         {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
           "issue_id": "bd-w2c3.2",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
           "status": "open"
         },
         {
@@ -4890,12 +3307,8 @@
         "available": true,
         "chain_ids": [
           "bd-w2c3.10",
-          "bd-29b",
-          "bd-5fw",
           "bd-gtf",
-          "bd-w2c3.1",
           "bd-w2c3.2",
-          "bd-w2c3.3",
           "bd-w2c3.4",
           "bd-w2c3.5",
           "bd-w2c3.6",
@@ -4905,56 +3318,22 @@
           "bd-1j4",
           "bd-2vv",
           "bd-h5x",
-          "bd-15n",
-          "bd-3ot",
-          "bd-kan",
-          "bd-30o",
-          "bd-25n",
-          "bd-33p",
-          "bd-b5a",
           "bd-1rf",
           "bd-1y7",
-          "bd-2mwc",
           "bd-3bg",
           "bd-3rn",
-          "bd-8sho",
           "bd-qwm",
-          "bd-y45u",
-          "bd-24ug",
-          "bd-27kh",
-          "bd-33zg",
-          "bd-7ef9",
           "bd-c1x",
           "bd-yos",
-          "bd-z84",
-          "bd-rqn",
-          "bd-1ff3",
-          "bd-xxd9",
-          "bd-2yhf",
-          "bd-3ehb",
-          "bd-3rag",
-          "bd-3vtx",
           "bd-x2sq",
-          "bd-13ya",
           "bd-7cba",
           "bd-by8c",
           "bd-z7gt",
-          "bd-11nb",
           "bd-1ah8",
-          "bd-320s",
           "bd-3bvo",
-          "bd-21k",
-          "bd-2nzx",
-          "bd-blg",
-          "bd-gcy",
-          "bd-18rq",
-          "bd-1f35",
-          "bd-3hud",
-          "bd-mjon",
-          "bd-rth1",
-          "bd-300"
+          "bd-rth1"
         ],
-        "chain_length": 63,
+        "chain_length": 25,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -4987,14 +3366,6 @@
     {
       "blocking_dependencies": [
         {
-          "issue_id": "bd-29b",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-5fw",
-          "status": "open"
-        },
-        {
           "issue_id": "bd-gtf",
           "status": "open"
         },
@@ -5003,15 +3374,7 @@
           "status": "open"
         },
         {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
           "issue_id": "bd-w2c3.2",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
           "status": "open"
         },
         {
@@ -5043,12 +3406,8 @@
         "available": true,
         "chain_ids": [
           "bd-w2c3.10",
-          "bd-29b",
-          "bd-5fw",
           "bd-gtf",
-          "bd-w2c3.1",
           "bd-w2c3.2",
-          "bd-w2c3.3",
           "bd-w2c3.4",
           "bd-w2c3.5",
           "bd-w2c3.6",
@@ -5058,56 +3417,22 @@
           "bd-1j4",
           "bd-2vv",
           "bd-h5x",
-          "bd-15n",
-          "bd-3ot",
-          "bd-kan",
-          "bd-30o",
-          "bd-25n",
-          "bd-33p",
-          "bd-b5a",
           "bd-1rf",
           "bd-1y7",
-          "bd-2mwc",
           "bd-3bg",
           "bd-3rn",
-          "bd-8sho",
           "bd-qwm",
-          "bd-y45u",
-          "bd-24ug",
-          "bd-27kh",
-          "bd-33zg",
-          "bd-7ef9",
           "bd-c1x",
           "bd-yos",
-          "bd-z84",
-          "bd-rqn",
-          "bd-1ff3",
-          "bd-xxd9",
-          "bd-2yhf",
-          "bd-3ehb",
-          "bd-3rag",
-          "bd-3vtx",
           "bd-x2sq",
-          "bd-13ya",
           "bd-7cba",
           "bd-by8c",
           "bd-z7gt",
-          "bd-11nb",
           "bd-1ah8",
-          "bd-320s",
           "bd-3bvo",
-          "bd-21k",
-          "bd-2nzx",
-          "bd-blg",
-          "bd-gcy",
-          "bd-18rq",
-          "bd-1f35",
-          "bd-3hud",
-          "bd-mjon",
-          "bd-rth1",
-          "bd-300"
+          "bd-rth1"
         ],
-        "chain_length": 63,
+        "chain_length": 25,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -5140,14 +3465,6 @@
     {
       "blocking_dependencies": [
         {
-          "issue_id": "bd-29b",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-5fw",
-          "status": "open"
-        },
-        {
           "issue_id": "bd-gtf",
           "status": "open"
         },
@@ -5156,15 +3473,7 @@
           "status": "open"
         },
         {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
           "issue_id": "bd-w2c3.2",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
           "status": "open"
         },
         {
@@ -5196,12 +3505,8 @@
         "available": true,
         "chain_ids": [
           "bd-w2c3.10",
-          "bd-29b",
-          "bd-5fw",
           "bd-gtf",
-          "bd-w2c3.1",
           "bd-w2c3.2",
-          "bd-w2c3.3",
           "bd-w2c3.4",
           "bd-w2c3.5",
           "bd-w2c3.6",
@@ -5211,56 +3516,22 @@
           "bd-1j4",
           "bd-2vv",
           "bd-h5x",
-          "bd-15n",
-          "bd-3ot",
-          "bd-kan",
-          "bd-30o",
-          "bd-25n",
-          "bd-33p",
-          "bd-b5a",
           "bd-1rf",
           "bd-1y7",
-          "bd-2mwc",
           "bd-3bg",
           "bd-3rn",
-          "bd-8sho",
           "bd-qwm",
-          "bd-y45u",
-          "bd-24ug",
-          "bd-27kh",
-          "bd-33zg",
-          "bd-7ef9",
           "bd-c1x",
           "bd-yos",
-          "bd-z84",
-          "bd-rqn",
-          "bd-1ff3",
-          "bd-xxd9",
-          "bd-2yhf",
-          "bd-3ehb",
-          "bd-3rag",
-          "bd-3vtx",
           "bd-x2sq",
-          "bd-13ya",
           "bd-7cba",
           "bd-by8c",
           "bd-z7gt",
-          "bd-11nb",
           "bd-1ah8",
-          "bd-320s",
           "bd-3bvo",
-          "bd-21k",
-          "bd-2nzx",
-          "bd-blg",
-          "bd-gcy",
-          "bd-18rq",
-          "bd-1f35",
-          "bd-3hud",
-          "bd-mjon",
-          "bd-rth1",
-          "bd-300"
+          "bd-rth1"
         ],
-        "chain_length": 63,
+        "chain_length": 25,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -5293,14 +3564,6 @@
     {
       "blocking_dependencies": [
         {
-          "issue_id": "bd-29b",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-5fw",
-          "status": "open"
-        },
-        {
           "issue_id": "bd-gtf",
           "status": "open"
         },
@@ -5309,15 +3572,7 @@
           "status": "open"
         },
         {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
           "issue_id": "bd-w2c3.2",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
           "status": "open"
         },
         {
@@ -5349,12 +3604,8 @@
         "available": true,
         "chain_ids": [
           "bd-w2c3.10",
-          "bd-29b",
-          "bd-5fw",
           "bd-gtf",
-          "bd-w2c3.1",
           "bd-w2c3.2",
-          "bd-w2c3.3",
           "bd-w2c3.4",
           "bd-w2c3.5",
           "bd-w2c3.6",
@@ -5364,56 +3615,22 @@
           "bd-1j4",
           "bd-2vv",
           "bd-h5x",
-          "bd-15n",
-          "bd-3ot",
-          "bd-kan",
-          "bd-30o",
-          "bd-25n",
-          "bd-33p",
-          "bd-b5a",
           "bd-1rf",
           "bd-1y7",
-          "bd-2mwc",
           "bd-3bg",
           "bd-3rn",
-          "bd-8sho",
           "bd-qwm",
-          "bd-y45u",
-          "bd-24ug",
-          "bd-27kh",
-          "bd-33zg",
-          "bd-7ef9",
           "bd-c1x",
           "bd-yos",
-          "bd-z84",
-          "bd-rqn",
-          "bd-1ff3",
-          "bd-xxd9",
-          "bd-2yhf",
-          "bd-3ehb",
-          "bd-3rag",
-          "bd-3vtx",
           "bd-x2sq",
-          "bd-13ya",
           "bd-7cba",
           "bd-by8c",
           "bd-z7gt",
-          "bd-11nb",
           "bd-1ah8",
-          "bd-320s",
           "bd-3bvo",
-          "bd-21k",
-          "bd-2nzx",
-          "bd-blg",
-          "bd-gcy",
-          "bd-18rq",
-          "bd-1f35",
-          "bd-3hud",
-          "bd-mjon",
-          "bd-rth1",
-          "bd-300"
+          "bd-rth1"
         ],
-        "chain_length": 63,
+        "chain_length": 25,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -5446,14 +3663,6 @@
     {
       "blocking_dependencies": [
         {
-          "issue_id": "bd-29b",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-5fw",
-          "status": "open"
-        },
-        {
           "issue_id": "bd-gtf",
           "status": "open"
         },
@@ -5462,15 +3671,7 @@
           "status": "open"
         },
         {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
           "issue_id": "bd-w2c3.2",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
           "status": "open"
         },
         {
@@ -5502,12 +3703,8 @@
         "available": true,
         "chain_ids": [
           "bd-w2c3.10",
-          "bd-29b",
-          "bd-5fw",
           "bd-gtf",
-          "bd-w2c3.1",
           "bd-w2c3.2",
-          "bd-w2c3.3",
           "bd-w2c3.4",
           "bd-w2c3.5",
           "bd-w2c3.6",
@@ -5517,56 +3714,22 @@
           "bd-1j4",
           "bd-2vv",
           "bd-h5x",
-          "bd-15n",
-          "bd-3ot",
-          "bd-kan",
-          "bd-30o",
-          "bd-25n",
-          "bd-33p",
-          "bd-b5a",
           "bd-1rf",
           "bd-1y7",
-          "bd-2mwc",
           "bd-3bg",
           "bd-3rn",
-          "bd-8sho",
           "bd-qwm",
-          "bd-y45u",
-          "bd-24ug",
-          "bd-27kh",
-          "bd-33zg",
-          "bd-7ef9",
           "bd-c1x",
           "bd-yos",
-          "bd-z84",
-          "bd-rqn",
-          "bd-1ff3",
-          "bd-xxd9",
-          "bd-2yhf",
-          "bd-3ehb",
-          "bd-3rag",
-          "bd-3vtx",
           "bd-x2sq",
-          "bd-13ya",
           "bd-7cba",
           "bd-by8c",
           "bd-z7gt",
-          "bd-11nb",
           "bd-1ah8",
-          "bd-320s",
           "bd-3bvo",
-          "bd-21k",
-          "bd-2nzx",
-          "bd-blg",
-          "bd-gcy",
-          "bd-18rq",
-          "bd-1f35",
-          "bd-3hud",
-          "bd-mjon",
-          "bd-rth1",
-          "bd-300"
+          "bd-rth1"
         ],
-        "chain_length": 63,
+        "chain_length": 25,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -5599,14 +3762,6 @@
     {
       "blocking_dependencies": [
         {
-          "issue_id": "bd-29b",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-5fw",
-          "status": "open"
-        },
-        {
           "issue_id": "bd-gtf",
           "status": "open"
         },
@@ -5615,15 +3770,7 @@
           "status": "open"
         },
         {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
           "issue_id": "bd-w2c3.2",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
           "status": "open"
         },
         {
@@ -5655,12 +3802,8 @@
         "available": true,
         "chain_ids": [
           "bd-w2c3.10",
-          "bd-29b",
-          "bd-5fw",
           "bd-gtf",
-          "bd-w2c3.1",
           "bd-w2c3.2",
-          "bd-w2c3.3",
           "bd-w2c3.4",
           "bd-w2c3.5",
           "bd-w2c3.6",
@@ -5670,56 +3813,22 @@
           "bd-1j4",
           "bd-2vv",
           "bd-h5x",
-          "bd-15n",
-          "bd-3ot",
-          "bd-kan",
-          "bd-30o",
-          "bd-25n",
-          "bd-33p",
-          "bd-b5a",
           "bd-1rf",
           "bd-1y7",
-          "bd-2mwc",
           "bd-3bg",
           "bd-3rn",
-          "bd-8sho",
           "bd-qwm",
-          "bd-y45u",
-          "bd-24ug",
-          "bd-27kh",
-          "bd-33zg",
-          "bd-7ef9",
           "bd-c1x",
           "bd-yos",
-          "bd-z84",
-          "bd-rqn",
-          "bd-1ff3",
-          "bd-xxd9",
-          "bd-2yhf",
-          "bd-3ehb",
-          "bd-3rag",
-          "bd-3vtx",
           "bd-x2sq",
-          "bd-13ya",
           "bd-7cba",
           "bd-by8c",
           "bd-z7gt",
-          "bd-11nb",
           "bd-1ah8",
-          "bd-320s",
           "bd-3bvo",
-          "bd-21k",
-          "bd-2nzx",
-          "bd-blg",
-          "bd-gcy",
-          "bd-18rq",
-          "bd-1f35",
-          "bd-3hud",
-          "bd-mjon",
-          "bd-rth1",
-          "bd-300"
+          "bd-rth1"
         ],
-        "chain_length": 63,
+        "chain_length": 25,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -5752,14 +3861,6 @@
     {
       "blocking_dependencies": [
         {
-          "issue_id": "bd-29b",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-5fw",
-          "status": "open"
-        },
-        {
           "issue_id": "bd-gtf",
           "status": "open"
         },
@@ -5768,15 +3869,7 @@
           "status": "open"
         },
         {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
           "issue_id": "bd-w2c3.2",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
           "status": "open"
         },
         {
@@ -5808,12 +3901,8 @@
         "available": true,
         "chain_ids": [
           "bd-w2c3.10",
-          "bd-29b",
-          "bd-5fw",
           "bd-gtf",
-          "bd-w2c3.1",
           "bd-w2c3.2",
-          "bd-w2c3.3",
           "bd-w2c3.4",
           "bd-w2c3.5",
           "bd-w2c3.6",
@@ -5823,56 +3912,22 @@
           "bd-1j4",
           "bd-2vv",
           "bd-h5x",
-          "bd-15n",
-          "bd-3ot",
-          "bd-kan",
-          "bd-30o",
-          "bd-25n",
-          "bd-33p",
-          "bd-b5a",
           "bd-1rf",
           "bd-1y7",
-          "bd-2mwc",
           "bd-3bg",
           "bd-3rn",
-          "bd-8sho",
           "bd-qwm",
-          "bd-y45u",
-          "bd-24ug",
-          "bd-27kh",
-          "bd-33zg",
-          "bd-7ef9",
           "bd-c1x",
           "bd-yos",
-          "bd-z84",
-          "bd-rqn",
-          "bd-1ff3",
-          "bd-xxd9",
-          "bd-2yhf",
-          "bd-3ehb",
-          "bd-3rag",
-          "bd-3vtx",
           "bd-x2sq",
-          "bd-13ya",
           "bd-7cba",
           "bd-by8c",
           "bd-z7gt",
-          "bd-11nb",
           "bd-1ah8",
-          "bd-320s",
           "bd-3bvo",
-          "bd-21k",
-          "bd-2nzx",
-          "bd-blg",
-          "bd-gcy",
-          "bd-18rq",
-          "bd-1f35",
-          "bd-3hud",
-          "bd-mjon",
-          "bd-rth1",
-          "bd-300"
+          "bd-rth1"
         ],
-        "chain_length": 63,
+        "chain_length": 25,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -5905,14 +3960,6 @@
     {
       "blocking_dependencies": [
         {
-          "issue_id": "bd-29b",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-5fw",
-          "status": "open"
-        },
-        {
           "issue_id": "bd-gtf",
           "status": "open"
         },
@@ -5921,15 +3968,7 @@
           "status": "open"
         },
         {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
           "issue_id": "bd-w2c3.2",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
           "status": "open"
         },
         {
@@ -5961,12 +4000,8 @@
         "available": true,
         "chain_ids": [
           "bd-w2c3.10",
-          "bd-29b",
-          "bd-5fw",
           "bd-gtf",
-          "bd-w2c3.1",
           "bd-w2c3.2",
-          "bd-w2c3.3",
           "bd-w2c3.4",
           "bd-w2c3.5",
           "bd-w2c3.6",
@@ -5976,56 +4011,121 @@
           "bd-1j4",
           "bd-2vv",
           "bd-h5x",
-          "bd-15n",
-          "bd-3ot",
-          "bd-kan",
-          "bd-30o",
-          "bd-25n",
-          "bd-33p",
-          "bd-b5a",
           "bd-1rf",
           "bd-1y7",
-          "bd-2mwc",
           "bd-3bg",
           "bd-3rn",
-          "bd-8sho",
           "bd-qwm",
-          "bd-y45u",
-          "bd-24ug",
-          "bd-27kh",
-          "bd-33zg",
-          "bd-7ef9",
           "bd-c1x",
           "bd-yos",
-          "bd-z84",
-          "bd-rqn",
-          "bd-1ff3",
-          "bd-xxd9",
-          "bd-2yhf",
-          "bd-3ehb",
-          "bd-3rag",
-          "bd-3vtx",
           "bd-x2sq",
-          "bd-13ya",
           "bd-7cba",
           "bd-by8c",
           "bd-z7gt",
-          "bd-11nb",
           "bd-1ah8",
-          "bd-320s",
           "bd-3bvo",
-          "bd-21k",
-          "bd-2nzx",
-          "bd-blg",
-          "bd-gcy",
-          "bd-18rq",
-          "bd-1f35",
-          "bd-3hud",
-          "bd-mjon",
-          "bd-rth1",
-          "bd-300"
+          "bd-rth1"
         ],
-        "chain_length": 63,
+        "chain_length": 25,
+        "is_blocked": true,
+        "root_blockers": []
+      },
+      "dependency_path": [
+        "bd-w2c3.10",
+        "bd-29b"
+      ],
+      "expected_vs_actual": {
+        "actual": {
+          "status": "IN_PROGRESS"
+        },
+        "expected": {
+          "status": "DONE"
+        }
+      },
+      "gap_id": "fp-gap-summary-e0624b12f6a0",
+      "gap_kind": "feature_parity_row_status",
+      "message": "",
+      "owner_active": true,
+      "owner_assignee": null,
+      "owner_bead": "bd-w2c3.10",
+      "owner_found": true,
+      "owner_priority": 0,
+      "owner_status": "open",
+      "owner_title": "Track 9: Release Claim-Control + Closure Protocol",
+      "section": "gap_summary",
+      "source_file": "FEATURE_PARITY.md",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "blocking_dependencies": [
+        {
+          "issue_id": "bd-gtf",
+          "status": "open"
+        },
+        {
+          "issue_id": "bd-w2c3",
+          "status": "open"
+        },
+        {
+          "issue_id": "bd-w2c3.2",
+          "status": "open"
+        },
+        {
+          "issue_id": "bd-w2c3.4",
+          "status": "open"
+        },
+        {
+          "issue_id": "bd-w2c3.5",
+          "status": "open"
+        },
+        {
+          "issue_id": "bd-w2c3.6",
+          "status": "open"
+        },
+        {
+          "issue_id": "bd-w2c3.7",
+          "status": "open"
+        },
+        {
+          "issue_id": "bd-w2c3.8",
+          "status": "open"
+        },
+        {
+          "issue_id": "bd-w2c3.9",
+          "status": "open"
+        }
+      ],
+      "bv_blocker_chain": {
+        "available": true,
+        "chain_ids": [
+          "bd-w2c3.10",
+          "bd-gtf",
+          "bd-w2c3.2",
+          "bd-w2c3.4",
+          "bd-w2c3.5",
+          "bd-w2c3.6",
+          "bd-w2c3.7",
+          "bd-w2c3.8",
+          "bd-w2c3.9",
+          "bd-1j4",
+          "bd-2vv",
+          "bd-h5x",
+          "bd-1rf",
+          "bd-1y7",
+          "bd-3bg",
+          "bd-3rn",
+          "bd-qwm",
+          "bd-c1x",
+          "bd-yos",
+          "bd-x2sq",
+          "bd-7cba",
+          "bd-by8c",
+          "bd-z7gt",
+          "bd-1ah8",
+          "bd-3bvo",
+          "bd-rth1"
+        ],
+        "chain_length": 25,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -6058,14 +4158,6 @@
     {
       "blocking_dependencies": [
         {
-          "issue_id": "bd-29b",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-5fw",
-          "status": "open"
-        },
-        {
           "issue_id": "bd-gtf",
           "status": "open"
         },
@@ -6074,15 +4166,7 @@
           "status": "open"
         },
         {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
           "issue_id": "bd-w2c3.2",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
           "status": "open"
         },
         {
@@ -6114,12 +4198,8 @@
         "available": true,
         "chain_ids": [
           "bd-w2c3.10",
-          "bd-29b",
-          "bd-5fw",
           "bd-gtf",
-          "bd-w2c3.1",
           "bd-w2c3.2",
-          "bd-w2c3.3",
           "bd-w2c3.4",
           "bd-w2c3.5",
           "bd-w2c3.6",
@@ -6129,56 +4209,22 @@
           "bd-1j4",
           "bd-2vv",
           "bd-h5x",
-          "bd-15n",
-          "bd-3ot",
-          "bd-kan",
-          "bd-30o",
-          "bd-25n",
-          "bd-33p",
-          "bd-b5a",
           "bd-1rf",
           "bd-1y7",
-          "bd-2mwc",
           "bd-3bg",
           "bd-3rn",
-          "bd-8sho",
           "bd-qwm",
-          "bd-y45u",
-          "bd-24ug",
-          "bd-27kh",
-          "bd-33zg",
-          "bd-7ef9",
           "bd-c1x",
           "bd-yos",
-          "bd-z84",
-          "bd-rqn",
-          "bd-1ff3",
-          "bd-xxd9",
-          "bd-2yhf",
-          "bd-3ehb",
-          "bd-3rag",
-          "bd-3vtx",
           "bd-x2sq",
-          "bd-13ya",
           "bd-7cba",
           "bd-by8c",
           "bd-z7gt",
-          "bd-11nb",
           "bd-1ah8",
-          "bd-320s",
           "bd-3bvo",
-          "bd-21k",
-          "bd-2nzx",
-          "bd-blg",
-          "bd-gcy",
-          "bd-18rq",
-          "bd-1f35",
-          "bd-3hud",
-          "bd-mjon",
-          "bd-rth1",
-          "bd-300"
+          "bd-rth1"
         ],
-        "chain_length": 63,
+        "chain_length": 25,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -6233,32 +4279,32 @@
       "expected_vs_actual": {
         "actual": {
           "reality_counts": {
-            "glibc_call_through": 49,
-            "implemented": 118,
-            "raw_syscall": 83,
+            "glibc_call_through": 286,
+            "implemented": 409,
+            "raw_syscall": 234,
             "stub": 0
           },
-          "reality_total": 250
+          "reality_total": 929
         },
         "expected": {
           "support_counts": {
-            "glibc_call_through": 54,
-            "implemented": 113,
-            "raw_syscall": 83,
+            "glibc_call_through": 0,
+            "implemented": 0,
+            "raw_syscall": 0,
             "stub": 0
           },
-          "support_total": 250
+          "support_total": 929
         }
       },
       "gap_id": "gap-machine-support-vs-reality",
       "gap_kind": "machine_delta_drift",
       "message": "support_matrix and reality_report should agree",
-      "owner_active": true,
+      "owner_active": false,
       "owner_assignee": null,
       "owner_bead": "bd-w2c3.10.1",
       "owner_found": true,
       "owner_priority": 0,
-      "owner_status": "open",
+      "owner_status": "closed",
       "owner_title": "T9.1 Claim Reconciliation: FEATURE_PARITY/support/reality/replacement/docs",
       "section": "",
       "source_file": "support_matrix.json",
@@ -6299,8 +4345,8 @@
       "expected_vs_actual": {
         "actual": {
           "replacement_counts": {
-            "glibc_call_through": 54,
-            "implemented": 113,
+            "glibc_call_through": 20,
+            "implemented": 147,
             "raw_syscall": 83,
             "stub": 0
           },
@@ -6308,12 +4354,12 @@
         },
         "expected": {
           "reality_counts": {
-            "glibc_call_through": 49,
-            "implemented": 118,
-            "raw_syscall": 83,
+            "glibc_call_through": 286,
+            "implemented": 409,
+            "raw_syscall": 234,
             "stub": 0
           },
-          "reality_total": 250
+          "reality_total": 929
         }
       },
       "gap_id": "gap-machine-replacement-vs-reality",
@@ -6339,14 +4385,6 @@
         {
           "issue_id": "bd-w2c3",
           "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
-          "status": "open"
         }
       ],
       "bv_blocker_chain": {
@@ -6354,35 +4392,19 @@
         "chain_ids": [
           "bd-w2c3.4",
           "bd-1j4",
-          "bd-w2c3.1",
-          "bd-w2c3.3",
           "bd-1rf",
           "bd-1y7",
-          "bd-25n",
-          "bd-2mwc",
           "bd-3bg",
           "bd-3rn",
-          "bd-8sho",
           "bd-qwm",
-          "bd-y45u",
-          "bd-15n",
-          "bd-2yhf",
-          "bd-3ehb",
-          "bd-3rag",
-          "bd-3vtx",
           "bd-x2sq",
-          "bd-1ff3",
-          "bd-xxd9",
-          "bd-13ya",
           "bd-7cba",
           "bd-by8c",
           "bd-z7gt",
-          "bd-11nb",
           "bd-1ah8",
-          "bd-320s",
           "bd-3bvo"
         ],
-        "chain_length": 28,
+        "chain_length": 12,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -6424,14 +4446,6 @@
         {
           "issue_id": "bd-w2c3",
           "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
-          "status": "open"
         }
       ],
       "bv_blocker_chain": {
@@ -6439,35 +4453,19 @@
         "chain_ids": [
           "bd-w2c3.4",
           "bd-1j4",
-          "bd-w2c3.1",
-          "bd-w2c3.3",
           "bd-1rf",
           "bd-1y7",
-          "bd-25n",
-          "bd-2mwc",
           "bd-3bg",
           "bd-3rn",
-          "bd-8sho",
           "bd-qwm",
-          "bd-y45u",
-          "bd-15n",
-          "bd-2yhf",
-          "bd-3ehb",
-          "bd-3rag",
-          "bd-3vtx",
           "bd-x2sq",
-          "bd-1ff3",
-          "bd-xxd9",
-          "bd-13ya",
           "bd-7cba",
           "bd-by8c",
           "bd-z7gt",
-          "bd-11nb",
           "bd-1ah8",
-          "bd-320s",
           "bd-3bvo"
         ],
-        "chain_length": 28,
+        "chain_length": 12,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -6509,14 +4507,6 @@
         {
           "issue_id": "bd-w2c3",
           "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
-          "status": "open"
         }
       ],
       "bv_blocker_chain": {
@@ -6524,35 +4514,19 @@
         "chain_ids": [
           "bd-w2c3.4",
           "bd-1j4",
-          "bd-w2c3.1",
-          "bd-w2c3.3",
           "bd-1rf",
           "bd-1y7",
-          "bd-25n",
-          "bd-2mwc",
           "bd-3bg",
           "bd-3rn",
-          "bd-8sho",
           "bd-qwm",
-          "bd-y45u",
-          "bd-15n",
-          "bd-2yhf",
-          "bd-3ehb",
-          "bd-3rag",
-          "bd-3vtx",
           "bd-x2sq",
-          "bd-1ff3",
-          "bd-xxd9",
-          "bd-13ya",
           "bd-7cba",
           "bd-by8c",
           "bd-z7gt",
-          "bd-11nb",
           "bd-1ah8",
-          "bd-320s",
           "bd-3bvo"
         ],
-        "chain_length": 28,
+        "chain_length": 12,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -6594,14 +4568,6 @@
         {
           "issue_id": "bd-w2c3",
           "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
-          "status": "open"
         }
       ],
       "bv_blocker_chain": {
@@ -6609,35 +4575,19 @@
         "chain_ids": [
           "bd-w2c3.4",
           "bd-1j4",
-          "bd-w2c3.1",
-          "bd-w2c3.3",
           "bd-1rf",
           "bd-1y7",
-          "bd-25n",
-          "bd-2mwc",
           "bd-3bg",
           "bd-3rn",
-          "bd-8sho",
           "bd-qwm",
-          "bd-y45u",
-          "bd-15n",
-          "bd-2yhf",
-          "bd-3ehb",
-          "bd-3rag",
-          "bd-3vtx",
           "bd-x2sq",
-          "bd-1ff3",
-          "bd-xxd9",
-          "bd-13ya",
           "bd-7cba",
           "bd-by8c",
           "bd-z7gt",
-          "bd-11nb",
           "bd-1ah8",
-          "bd-320s",
           "bd-3bvo"
         ],
-        "chain_length": 28,
+        "chain_length": 12,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -6679,14 +4629,6 @@
         {
           "issue_id": "bd-w2c3",
           "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
-          "status": "open"
         }
       ],
       "bv_blocker_chain": {
@@ -6694,35 +4636,19 @@
         "chain_ids": [
           "bd-w2c3.4",
           "bd-1j4",
-          "bd-w2c3.1",
-          "bd-w2c3.3",
           "bd-1rf",
           "bd-1y7",
-          "bd-25n",
-          "bd-2mwc",
           "bd-3bg",
           "bd-3rn",
-          "bd-8sho",
           "bd-qwm",
-          "bd-y45u",
-          "bd-15n",
-          "bd-2yhf",
-          "bd-3ehb",
-          "bd-3rag",
-          "bd-3vtx",
           "bd-x2sq",
-          "bd-1ff3",
-          "bd-xxd9",
-          "bd-13ya",
           "bd-7cba",
           "bd-by8c",
           "bd-z7gt",
-          "bd-11nb",
           "bd-1ah8",
-          "bd-320s",
           "bd-3bvo"
         ],
-        "chain_length": 28,
+        "chain_length": 12,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -6764,14 +4690,6 @@
         {
           "issue_id": "bd-w2c3",
           "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
-          "status": "open"
         }
       ],
       "bv_blocker_chain": {
@@ -6779,35 +4697,19 @@
         "chain_ids": [
           "bd-w2c3.4",
           "bd-1j4",
-          "bd-w2c3.1",
-          "bd-w2c3.3",
           "bd-1rf",
           "bd-1y7",
-          "bd-25n",
-          "bd-2mwc",
           "bd-3bg",
           "bd-3rn",
-          "bd-8sho",
           "bd-qwm",
-          "bd-y45u",
-          "bd-15n",
-          "bd-2yhf",
-          "bd-3ehb",
-          "bd-3rag",
-          "bd-3vtx",
           "bd-x2sq",
-          "bd-1ff3",
-          "bd-xxd9",
-          "bd-13ya",
           "bd-7cba",
           "bd-by8c",
           "bd-z7gt",
-          "bd-11nb",
           "bd-1ah8",
-          "bd-320s",
           "bd-3bvo"
         ],
-        "chain_length": 28,
+        "chain_length": 12,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -6849,14 +4751,6 @@
         {
           "issue_id": "bd-w2c3",
           "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
-          "status": "open"
         }
       ],
       "bv_blocker_chain": {
@@ -6864,35 +4758,19 @@
         "chain_ids": [
           "bd-w2c3.4",
           "bd-1j4",
-          "bd-w2c3.1",
-          "bd-w2c3.3",
           "bd-1rf",
           "bd-1y7",
-          "bd-25n",
-          "bd-2mwc",
           "bd-3bg",
           "bd-3rn",
-          "bd-8sho",
           "bd-qwm",
-          "bd-y45u",
-          "bd-15n",
-          "bd-2yhf",
-          "bd-3ehb",
-          "bd-3rag",
-          "bd-3vtx",
           "bd-x2sq",
-          "bd-1ff3",
-          "bd-xxd9",
-          "bd-13ya",
           "bd-7cba",
           "bd-by8c",
           "bd-z7gt",
-          "bd-11nb",
           "bd-1ah8",
-          "bd-320s",
           "bd-3bvo"
         ],
-        "chain_length": 28,
+        "chain_length": 12,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -6934,14 +4812,6 @@
         {
           "issue_id": "bd-w2c3",
           "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
-          "status": "open"
         }
       ],
       "bv_blocker_chain": {
@@ -6949,35 +4819,19 @@
         "chain_ids": [
           "bd-w2c3.4",
           "bd-1j4",
-          "bd-w2c3.1",
-          "bd-w2c3.3",
           "bd-1rf",
           "bd-1y7",
-          "bd-25n",
-          "bd-2mwc",
           "bd-3bg",
           "bd-3rn",
-          "bd-8sho",
           "bd-qwm",
-          "bd-y45u",
-          "bd-15n",
-          "bd-2yhf",
-          "bd-3ehb",
-          "bd-3rag",
-          "bd-3vtx",
           "bd-x2sq",
-          "bd-1ff3",
-          "bd-xxd9",
-          "bd-13ya",
           "bd-7cba",
           "bd-by8c",
           "bd-z7gt",
-          "bd-11nb",
           "bd-1ah8",
-          "bd-320s",
           "bd-3bvo"
         ],
-        "chain_length": 28,
+        "chain_length": 12,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -7019,14 +4873,6 @@
         {
           "issue_id": "bd-w2c3",
           "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
-          "status": "open"
         }
       ],
       "bv_blocker_chain": {
@@ -7034,35 +4880,19 @@
         "chain_ids": [
           "bd-w2c3.4",
           "bd-1j4",
-          "bd-w2c3.1",
-          "bd-w2c3.3",
           "bd-1rf",
           "bd-1y7",
-          "bd-25n",
-          "bd-2mwc",
           "bd-3bg",
           "bd-3rn",
-          "bd-8sho",
           "bd-qwm",
-          "bd-y45u",
-          "bd-15n",
-          "bd-2yhf",
-          "bd-3ehb",
-          "bd-3rag",
-          "bd-3vtx",
           "bd-x2sq",
-          "bd-1ff3",
-          "bd-xxd9",
-          "bd-13ya",
           "bd-7cba",
           "bd-by8c",
           "bd-z7gt",
-          "bd-11nb",
           "bd-1ah8",
-          "bd-320s",
           "bd-3bvo"
         ],
-        "chain_length": 28,
+        "chain_length": 12,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -7104,14 +4934,6 @@
         {
           "issue_id": "bd-w2c3",
           "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
-          "status": "open"
         }
       ],
       "bv_blocker_chain": {
@@ -7119,35 +4941,19 @@
         "chain_ids": [
           "bd-w2c3.4",
           "bd-1j4",
-          "bd-w2c3.1",
-          "bd-w2c3.3",
           "bd-1rf",
           "bd-1y7",
-          "bd-25n",
-          "bd-2mwc",
           "bd-3bg",
           "bd-3rn",
-          "bd-8sho",
           "bd-qwm",
-          "bd-y45u",
-          "bd-15n",
-          "bd-2yhf",
-          "bd-3ehb",
-          "bd-3rag",
-          "bd-3vtx",
           "bd-x2sq",
-          "bd-1ff3",
-          "bd-xxd9",
-          "bd-13ya",
           "bd-7cba",
           "bd-by8c",
           "bd-z7gt",
-          "bd-11nb",
           "bd-1ah8",
-          "bd-320s",
           "bd-3bvo"
         ],
-        "chain_length": 28,
+        "chain_length": 12,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -7189,14 +4995,6 @@
         {
           "issue_id": "bd-w2c3",
           "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
-          "status": "open"
         }
       ],
       "bv_blocker_chain": {
@@ -7204,35 +5002,19 @@
         "chain_ids": [
           "bd-w2c3.4",
           "bd-1j4",
-          "bd-w2c3.1",
-          "bd-w2c3.3",
           "bd-1rf",
           "bd-1y7",
-          "bd-25n",
-          "bd-2mwc",
           "bd-3bg",
           "bd-3rn",
-          "bd-8sho",
           "bd-qwm",
-          "bd-y45u",
-          "bd-15n",
-          "bd-2yhf",
-          "bd-3ehb",
-          "bd-3rag",
-          "bd-3vtx",
           "bd-x2sq",
-          "bd-1ff3",
-          "bd-xxd9",
-          "bd-13ya",
           "bd-7cba",
           "bd-by8c",
           "bd-z7gt",
-          "bd-11nb",
           "bd-1ah8",
-          "bd-320s",
           "bd-3bvo"
         ],
-        "chain_length": 28,
+        "chain_length": 12,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -7274,14 +5056,6 @@
         {
           "issue_id": "bd-w2c3",
           "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
-          "status": "open"
         }
       ],
       "bv_blocker_chain": {
@@ -7289,35 +5063,19 @@
         "chain_ids": [
           "bd-w2c3.4",
           "bd-1j4",
-          "bd-w2c3.1",
-          "bd-w2c3.3",
           "bd-1rf",
           "bd-1y7",
-          "bd-25n",
-          "bd-2mwc",
           "bd-3bg",
           "bd-3rn",
-          "bd-8sho",
           "bd-qwm",
-          "bd-y45u",
-          "bd-15n",
-          "bd-2yhf",
-          "bd-3ehb",
-          "bd-3rag",
-          "bd-3vtx",
           "bd-x2sq",
-          "bd-1ff3",
-          "bd-xxd9",
-          "bd-13ya",
           "bd-7cba",
           "bd-by8c",
           "bd-z7gt",
-          "bd-11nb",
           "bd-1ah8",
-          "bd-320s",
           "bd-3bvo"
         ],
-        "chain_length": 28,
+        "chain_length": 12,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -7359,14 +5117,6 @@
         {
           "issue_id": "bd-w2c3",
           "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
-          "status": "open"
         }
       ],
       "bv_blocker_chain": {
@@ -7374,35 +5124,19 @@
         "chain_ids": [
           "bd-w2c3.4",
           "bd-1j4",
-          "bd-w2c3.1",
-          "bd-w2c3.3",
           "bd-1rf",
           "bd-1y7",
-          "bd-25n",
-          "bd-2mwc",
           "bd-3bg",
           "bd-3rn",
-          "bd-8sho",
           "bd-qwm",
-          "bd-y45u",
-          "bd-15n",
-          "bd-2yhf",
-          "bd-3ehb",
-          "bd-3rag",
-          "bd-3vtx",
           "bd-x2sq",
-          "bd-1ff3",
-          "bd-xxd9",
-          "bd-13ya",
           "bd-7cba",
           "bd-by8c",
           "bd-z7gt",
-          "bd-11nb",
           "bd-1ah8",
-          "bd-320s",
           "bd-3bvo"
         ],
-        "chain_length": 28,
+        "chain_length": 12,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -7444,14 +5178,6 @@
         {
           "issue_id": "bd-w2c3",
           "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
-          "status": "open"
         }
       ],
       "bv_blocker_chain": {
@@ -7459,35 +5185,19 @@
         "chain_ids": [
           "bd-w2c3.4",
           "bd-1j4",
-          "bd-w2c3.1",
-          "bd-w2c3.3",
           "bd-1rf",
           "bd-1y7",
-          "bd-25n",
-          "bd-2mwc",
           "bd-3bg",
           "bd-3rn",
-          "bd-8sho",
           "bd-qwm",
-          "bd-y45u",
-          "bd-15n",
-          "bd-2yhf",
-          "bd-3ehb",
-          "bd-3rag",
-          "bd-3vtx",
           "bd-x2sq",
-          "bd-1ff3",
-          "bd-xxd9",
-          "bd-13ya",
           "bd-7cba",
           "bd-by8c",
           "bd-z7gt",
-          "bd-11nb",
           "bd-1ah8",
-          "bd-320s",
           "bd-3bvo"
         ],
-        "chain_length": 28,
+        "chain_length": 12,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -7529,14 +5239,6 @@
         {
           "issue_id": "bd-w2c3",
           "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
-          "status": "open"
         }
       ],
       "bv_blocker_chain": {
@@ -7544,35 +5246,19 @@
         "chain_ids": [
           "bd-w2c3.4",
           "bd-1j4",
-          "bd-w2c3.1",
-          "bd-w2c3.3",
           "bd-1rf",
           "bd-1y7",
-          "bd-25n",
-          "bd-2mwc",
           "bd-3bg",
           "bd-3rn",
-          "bd-8sho",
           "bd-qwm",
-          "bd-y45u",
-          "bd-15n",
-          "bd-2yhf",
-          "bd-3ehb",
-          "bd-3rag",
-          "bd-3vtx",
           "bd-x2sq",
-          "bd-1ff3",
-          "bd-xxd9",
-          "bd-13ya",
           "bd-7cba",
           "bd-by8c",
           "bd-z7gt",
-          "bd-11nb",
           "bd-1ah8",
-          "bd-320s",
           "bd-3bvo"
         ],
-        "chain_length": 28,
+        "chain_length": 12,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -7614,14 +5300,6 @@
         {
           "issue_id": "bd-w2c3",
           "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
-          "status": "open"
         }
       ],
       "bv_blocker_chain": {
@@ -7629,35 +5307,19 @@
         "chain_ids": [
           "bd-w2c3.4",
           "bd-1j4",
-          "bd-w2c3.1",
-          "bd-w2c3.3",
           "bd-1rf",
           "bd-1y7",
-          "bd-25n",
-          "bd-2mwc",
           "bd-3bg",
           "bd-3rn",
-          "bd-8sho",
           "bd-qwm",
-          "bd-y45u",
-          "bd-15n",
-          "bd-2yhf",
-          "bd-3ehb",
-          "bd-3rag",
-          "bd-3vtx",
           "bd-x2sq",
-          "bd-1ff3",
-          "bd-xxd9",
-          "bd-13ya",
           "bd-7cba",
           "bd-by8c",
           "bd-z7gt",
-          "bd-11nb",
           "bd-1ah8",
-          "bd-320s",
           "bd-3bvo"
         ],
-        "chain_length": 28,
+        "chain_length": 12,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -7699,14 +5361,6 @@
         {
           "issue_id": "bd-w2c3",
           "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
-          "status": "open"
         }
       ],
       "bv_blocker_chain": {
@@ -7714,35 +5368,19 @@
         "chain_ids": [
           "bd-w2c3.4",
           "bd-1j4",
-          "bd-w2c3.1",
-          "bd-w2c3.3",
           "bd-1rf",
           "bd-1y7",
-          "bd-25n",
-          "bd-2mwc",
           "bd-3bg",
           "bd-3rn",
-          "bd-8sho",
           "bd-qwm",
-          "bd-y45u",
-          "bd-15n",
-          "bd-2yhf",
-          "bd-3ehb",
-          "bd-3rag",
-          "bd-3vtx",
           "bd-x2sq",
-          "bd-1ff3",
-          "bd-xxd9",
-          "bd-13ya",
           "bd-7cba",
           "bd-by8c",
           "bd-z7gt",
-          "bd-11nb",
           "bd-1ah8",
-          "bd-320s",
           "bd-3bvo"
         ],
-        "chain_length": 28,
+        "chain_length": 12,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -7784,14 +5422,6 @@
         {
           "issue_id": "bd-w2c3",
           "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
-          "status": "open"
         }
       ],
       "bv_blocker_chain": {
@@ -7799,35 +5429,19 @@
         "chain_ids": [
           "bd-w2c3.4",
           "bd-1j4",
-          "bd-w2c3.1",
-          "bd-w2c3.3",
           "bd-1rf",
           "bd-1y7",
-          "bd-25n",
-          "bd-2mwc",
           "bd-3bg",
           "bd-3rn",
-          "bd-8sho",
           "bd-qwm",
-          "bd-y45u",
-          "bd-15n",
-          "bd-2yhf",
-          "bd-3ehb",
-          "bd-3rag",
-          "bd-3vtx",
           "bd-x2sq",
-          "bd-1ff3",
-          "bd-xxd9",
-          "bd-13ya",
           "bd-7cba",
           "bd-by8c",
           "bd-z7gt",
-          "bd-11nb",
           "bd-1ah8",
-          "bd-320s",
           "bd-3bvo"
         ],
-        "chain_length": 28,
+        "chain_length": 12,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -7869,14 +5483,6 @@
         {
           "issue_id": "bd-w2c3",
           "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
-          "status": "open"
         }
       ],
       "bv_blocker_chain": {
@@ -7884,35 +5490,19 @@
         "chain_ids": [
           "bd-w2c3.4",
           "bd-1j4",
-          "bd-w2c3.1",
-          "bd-w2c3.3",
           "bd-1rf",
           "bd-1y7",
-          "bd-25n",
-          "bd-2mwc",
           "bd-3bg",
           "bd-3rn",
-          "bd-8sho",
           "bd-qwm",
-          "bd-y45u",
-          "bd-15n",
-          "bd-2yhf",
-          "bd-3ehb",
-          "bd-3rag",
-          "bd-3vtx",
           "bd-x2sq",
-          "bd-1ff3",
-          "bd-xxd9",
-          "bd-13ya",
           "bd-7cba",
           "bd-by8c",
           "bd-z7gt",
-          "bd-11nb",
           "bd-1ah8",
-          "bd-320s",
           "bd-3bvo"
         ],
-        "chain_length": 28,
+        "chain_length": 12,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -7954,14 +5544,6 @@
         {
           "issue_id": "bd-w2c3",
           "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
-          "status": "open"
         }
       ],
       "bv_blocker_chain": {
@@ -7969,35 +5551,19 @@
         "chain_ids": [
           "bd-w2c3.4",
           "bd-1j4",
-          "bd-w2c3.1",
-          "bd-w2c3.3",
           "bd-1rf",
           "bd-1y7",
-          "bd-25n",
-          "bd-2mwc",
           "bd-3bg",
           "bd-3rn",
-          "bd-8sho",
           "bd-qwm",
-          "bd-y45u",
-          "bd-15n",
-          "bd-2yhf",
-          "bd-3ehb",
-          "bd-3rag",
-          "bd-3vtx",
           "bd-x2sq",
-          "bd-1ff3",
-          "bd-xxd9",
-          "bd-13ya",
           "bd-7cba",
           "bd-by8c",
           "bd-z7gt",
-          "bd-11nb",
           "bd-1ah8",
-          "bd-320s",
           "bd-3bvo"
         ],
-        "chain_length": 28,
+        "chain_length": 12,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -8033,354 +5599,7 @@
     {
       "blocking_dependencies": [
         {
-          "issue_id": "bd-3ot",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-kan",
-          "status": "open"
-        },
-        {
           "issue_id": "bd-w2c3",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
-          "status": "open"
-        }
-      ],
-      "bv_blocker_chain": {
-        "available": true,
-        "chain_ids": [
-          "bd-w2c3.5",
-          "bd-3ot",
-          "bd-kan",
-          "bd-w2c3.1",
-          "bd-w2c3.3",
-          "bd-25n",
-          "bd-rqn",
-          "bd-15n",
-          "bd-1ff3",
-          "bd-xxd9"
-        ],
-        "chain_length": 9,
-        "is_blocked": true,
-        "root_blockers": []
-      },
-      "dependency_path": [
-        "bd-w2c3.5",
-        "bd-3ot"
-      ],
-      "expected_vs_actual": {
-        "actual": {
-          "status": "IN_PROGRESS"
-        },
-        "expected": {
-          "status": "DONE"
-        }
-      },
-      "gap_id": "fp-runtime-math-3781ffdeb99f",
-      "gap_kind": "feature_parity_row_status",
-      "message": "",
-      "owner_active": true,
-      "owner_assignee": null,
-      "owner_bead": "bd-w2c3.5",
-      "owner_found": true,
-      "owner_priority": 0,
-      "owner_status": "open",
-      "owner_title": "Track 4: Runtime-Math In-Progress Closure",
-      "section": "runtime_math",
-      "source_file": "FEATURE_PARITY.md",
-      "status": "IN_PROGRESS"
-    },
-    {
-      "blocking_dependencies": [
-        {
-          "issue_id": "bd-3ot",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-kan",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
-          "status": "open"
-        }
-      ],
-      "bv_blocker_chain": {
-        "available": true,
-        "chain_ids": [
-          "bd-w2c3.5",
-          "bd-3ot",
-          "bd-kan",
-          "bd-w2c3.1",
-          "bd-w2c3.3",
-          "bd-25n",
-          "bd-rqn",
-          "bd-15n",
-          "bd-1ff3",
-          "bd-xxd9"
-        ],
-        "chain_length": 9,
-        "is_blocked": true,
-        "root_blockers": []
-      },
-      "dependency_path": [
-        "bd-w2c3.5",
-        "bd-3ot"
-      ],
-      "expected_vs_actual": {
-        "actual": {
-          "status": "IN_PROGRESS"
-        },
-        "expected": {
-          "status": "DONE"
-        }
-      },
-      "gap_id": "fp-runtime-math-3e7761feb3e4",
-      "gap_kind": "feature_parity_row_status",
-      "message": "",
-      "owner_active": true,
-      "owner_assignee": null,
-      "owner_bead": "bd-w2c3.5",
-      "owner_found": true,
-      "owner_priority": 0,
-      "owner_status": "open",
-      "owner_title": "Track 4: Runtime-Math In-Progress Closure",
-      "section": "runtime_math",
-      "source_file": "FEATURE_PARITY.md",
-      "status": "IN_PROGRESS"
-    },
-    {
-      "blocking_dependencies": [
-        {
-          "issue_id": "bd-3ot",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-kan",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
-          "status": "open"
-        }
-      ],
-      "bv_blocker_chain": {
-        "available": true,
-        "chain_ids": [
-          "bd-w2c3.5",
-          "bd-3ot",
-          "bd-kan",
-          "bd-w2c3.1",
-          "bd-w2c3.3",
-          "bd-25n",
-          "bd-rqn",
-          "bd-15n",
-          "bd-1ff3",
-          "bd-xxd9"
-        ],
-        "chain_length": 9,
-        "is_blocked": true,
-        "root_blockers": []
-      },
-      "dependency_path": [
-        "bd-w2c3.5",
-        "bd-3ot"
-      ],
-      "expected_vs_actual": {
-        "actual": {
-          "status": "IN_PROGRESS"
-        },
-        "expected": {
-          "status": "DONE"
-        }
-      },
-      "gap_id": "fp-runtime-math-69775144f57d",
-      "gap_kind": "feature_parity_row_status",
-      "message": "",
-      "owner_active": true,
-      "owner_assignee": null,
-      "owner_bead": "bd-w2c3.5",
-      "owner_found": true,
-      "owner_priority": 0,
-      "owner_status": "open",
-      "owner_title": "Track 4: Runtime-Math In-Progress Closure",
-      "section": "runtime_math",
-      "source_file": "FEATURE_PARITY.md",
-      "status": "IN_PROGRESS"
-    },
-    {
-      "blocking_dependencies": [
-        {
-          "issue_id": "bd-3ot",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-kan",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
-          "status": "open"
-        }
-      ],
-      "bv_blocker_chain": {
-        "available": true,
-        "chain_ids": [
-          "bd-w2c3.5",
-          "bd-3ot",
-          "bd-kan",
-          "bd-w2c3.1",
-          "bd-w2c3.3",
-          "bd-25n",
-          "bd-rqn",
-          "bd-15n",
-          "bd-1ff3",
-          "bd-xxd9"
-        ],
-        "chain_length": 9,
-        "is_blocked": true,
-        "root_blockers": []
-      },
-      "dependency_path": [
-        "bd-w2c3.5",
-        "bd-3ot"
-      ],
-      "expected_vs_actual": {
-        "actual": {
-          "status": "IN_PROGRESS"
-        },
-        "expected": {
-          "status": "DONE"
-        }
-      },
-      "gap_id": "fp-runtime-math-8ff0b9637eb6",
-      "gap_kind": "feature_parity_row_status",
-      "message": "",
-      "owner_active": true,
-      "owner_assignee": null,
-      "owner_bead": "bd-w2c3.5",
-      "owner_found": true,
-      "owner_priority": 0,
-      "owner_status": "open",
-      "owner_title": "Track 4: Runtime-Math In-Progress Closure",
-      "section": "runtime_math",
-      "source_file": "FEATURE_PARITY.md",
-      "status": "IN_PROGRESS"
-    },
-    {
-      "blocking_dependencies": [
-        {
-          "issue_id": "bd-3ot",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-kan",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
-          "status": "open"
-        }
-      ],
-      "bv_blocker_chain": {
-        "available": true,
-        "chain_ids": [
-          "bd-w2c3.5",
-          "bd-3ot",
-          "bd-kan",
-          "bd-w2c3.1",
-          "bd-w2c3.3",
-          "bd-25n",
-          "bd-rqn",
-          "bd-15n",
-          "bd-1ff3",
-          "bd-xxd9"
-        ],
-        "chain_length": 9,
-        "is_blocked": true,
-        "root_blockers": []
-      },
-      "dependency_path": [
-        "bd-w2c3.5",
-        "bd-3ot"
-      ],
-      "expected_vs_actual": {
-        "actual": {
-          "status": "IN_PROGRESS"
-        },
-        "expected": {
-          "status": "DONE"
-        }
-      },
-      "gap_id": "fp-runtime-math-a94b6554ba63",
-      "gap_kind": "feature_parity_row_status",
-      "message": "",
-      "owner_active": true,
-      "owner_assignee": null,
-      "owner_bead": "bd-w2c3.5",
-      "owner_found": true,
-      "owner_priority": 0,
-      "owner_status": "open",
-      "owner_title": "Track 4: Runtime-Math In-Progress Closure",
-      "section": "runtime_math",
-      "source_file": "FEATURE_PARITY.md",
-      "status": "IN_PROGRESS"
-    },
-    {
-      "blocking_dependencies": [
-        {
-          "issue_id": "bd-5fw",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
           "status": "open"
         },
         {
@@ -8392,19 +5611,9 @@
         "available": true,
         "chain_ids": [
           "bd-w2c3.6",
-          "bd-5fw",
-          "bd-w2c3.1",
-          "bd-w2c3.3",
-          "bd-w2c3.5",
-          "bd-15n",
-          "bd-3ot",
-          "bd-kan",
-          "bd-25n",
-          "bd-rqn",
-          "bd-1ff3",
-          "bd-xxd9"
+          "bd-w2c3.5"
         ],
-        "chain_length": 11,
+        "chain_length": 1,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -8437,19 +5646,7 @@
     {
       "blocking_dependencies": [
         {
-          "issue_id": "bd-5fw",
-          "status": "open"
-        },
-        {
           "issue_id": "bd-w2c3",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
           "status": "open"
         },
         {
@@ -8461,19 +5658,9 @@
         "available": true,
         "chain_ids": [
           "bd-w2c3.6",
-          "bd-5fw",
-          "bd-w2c3.1",
-          "bd-w2c3.3",
-          "bd-w2c3.5",
-          "bd-15n",
-          "bd-3ot",
-          "bd-kan",
-          "bd-25n",
-          "bd-rqn",
-          "bd-1ff3",
-          "bd-xxd9"
+          "bd-w2c3.5"
         ],
-        "chain_length": 11,
+        "chain_length": 1,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -8506,19 +5693,7 @@
     {
       "blocking_dependencies": [
         {
-          "issue_id": "bd-5fw",
-          "status": "open"
-        },
-        {
           "issue_id": "bd-w2c3",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
           "status": "open"
         },
         {
@@ -8530,19 +5705,9 @@
         "available": true,
         "chain_ids": [
           "bd-w2c3.6",
-          "bd-5fw",
-          "bd-w2c3.1",
-          "bd-w2c3.3",
-          "bd-w2c3.5",
-          "bd-15n",
-          "bd-3ot",
-          "bd-kan",
-          "bd-25n",
-          "bd-rqn",
-          "bd-1ff3",
-          "bd-xxd9"
+          "bd-w2c3.5"
         ],
-        "chain_length": 11,
+        "chain_length": 1,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -8575,19 +5740,7 @@
     {
       "blocking_dependencies": [
         {
-          "issue_id": "bd-5fw",
-          "status": "open"
-        },
-        {
           "issue_id": "bd-w2c3",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
           "status": "open"
         },
         {
@@ -8599,19 +5752,9 @@
         "available": true,
         "chain_ids": [
           "bd-w2c3.6",
-          "bd-5fw",
-          "bd-w2c3.1",
-          "bd-w2c3.3",
-          "bd-w2c3.5",
-          "bd-15n",
-          "bd-3ot",
-          "bd-kan",
-          "bd-25n",
-          "bd-rqn",
-          "bd-1ff3",
-          "bd-xxd9"
+          "bd-w2c3.5"
         ],
-        "chain_length": 11,
+        "chain_length": 1,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -8644,19 +5787,7 @@
     {
       "blocking_dependencies": [
         {
-          "issue_id": "bd-5fw",
-          "status": "open"
-        },
-        {
           "issue_id": "bd-w2c3",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
           "status": "open"
         },
         {
@@ -8668,19 +5799,9 @@
         "available": true,
         "chain_ids": [
           "bd-w2c3.6",
-          "bd-5fw",
-          "bd-w2c3.1",
-          "bd-w2c3.3",
-          "bd-w2c3.5",
-          "bd-15n",
-          "bd-3ot",
-          "bd-kan",
-          "bd-25n",
-          "bd-rqn",
-          "bd-1ff3",
-          "bd-xxd9"
+          "bd-w2c3.5"
         ],
-        "chain_length": 11,
+        "chain_length": 1,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -8713,19 +5834,7 @@
     {
       "blocking_dependencies": [
         {
-          "issue_id": "bd-5fw",
-          "status": "open"
-        },
-        {
           "issue_id": "bd-w2c3",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
           "status": "open"
         },
         {
@@ -8737,19 +5846,9 @@
         "available": true,
         "chain_ids": [
           "bd-w2c3.6",
-          "bd-5fw",
-          "bd-w2c3.1",
-          "bd-w2c3.3",
-          "bd-w2c3.5",
-          "bd-15n",
-          "bd-3ot",
-          "bd-kan",
-          "bd-25n",
-          "bd-rqn",
-          "bd-1ff3",
-          "bd-xxd9"
+          "bd-w2c3.5"
         ],
-        "chain_length": 11,
+        "chain_length": 1,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -8782,19 +5881,7 @@
     {
       "blocking_dependencies": [
         {
-          "issue_id": "bd-5fw",
-          "status": "open"
-        },
-        {
           "issue_id": "bd-w2c3",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
           "status": "open"
         },
         {
@@ -8806,19 +5893,9 @@
         "available": true,
         "chain_ids": [
           "bd-w2c3.6",
-          "bd-5fw",
-          "bd-w2c3.1",
-          "bd-w2c3.3",
-          "bd-w2c3.5",
-          "bd-15n",
-          "bd-3ot",
-          "bd-kan",
-          "bd-25n",
-          "bd-rqn",
-          "bd-1ff3",
-          "bd-xxd9"
+          "bd-w2c3.5"
         ],
-        "chain_length": 11,
+        "chain_length": 1,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -8851,19 +5928,7 @@
     {
       "blocking_dependencies": [
         {
-          "issue_id": "bd-5fw",
-          "status": "open"
-        },
-        {
           "issue_id": "bd-w2c3",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
           "status": "open"
         },
         {
@@ -8875,19 +5940,9 @@
         "available": true,
         "chain_ids": [
           "bd-w2c3.6",
-          "bd-5fw",
-          "bd-w2c3.1",
-          "bd-w2c3.3",
-          "bd-w2c3.5",
-          "bd-15n",
-          "bd-3ot",
-          "bd-kan",
-          "bd-25n",
-          "bd-rqn",
-          "bd-1ff3",
-          "bd-xxd9"
+          "bd-w2c3.5"
         ],
-        "chain_length": 11,
+        "chain_length": 1,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -8920,19 +5975,7 @@
     {
       "blocking_dependencies": [
         {
-          "issue_id": "bd-5fw",
-          "status": "open"
-        },
-        {
           "issue_id": "bd-w2c3",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
           "status": "open"
         },
         {
@@ -8944,19 +5987,9 @@
         "available": true,
         "chain_ids": [
           "bd-w2c3.6",
-          "bd-5fw",
-          "bd-w2c3.1",
-          "bd-w2c3.3",
-          "bd-w2c3.5",
-          "bd-15n",
-          "bd-3ot",
-          "bd-kan",
-          "bd-25n",
-          "bd-rqn",
-          "bd-1ff3",
-          "bd-xxd9"
+          "bd-w2c3.5"
         ],
-        "chain_length": 11,
+        "chain_length": 1,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -8989,19 +6022,7 @@
     {
       "blocking_dependencies": [
         {
-          "issue_id": "bd-5fw",
-          "status": "open"
-        },
-        {
           "issue_id": "bd-w2c3",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
           "status": "open"
         },
         {
@@ -9013,19 +6034,9 @@
         "available": true,
         "chain_ids": [
           "bd-w2c3.6",
-          "bd-5fw",
-          "bd-w2c3.1",
-          "bd-w2c3.3",
-          "bd-w2c3.5",
-          "bd-15n",
-          "bd-3ot",
-          "bd-kan",
-          "bd-25n",
-          "bd-rqn",
-          "bd-1ff3",
-          "bd-xxd9"
+          "bd-w2c3.5"
         ],
-        "chain_length": 11,
+        "chain_length": 1,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -9058,19 +6069,7 @@
     {
       "blocking_dependencies": [
         {
-          "issue_id": "bd-5fw",
-          "status": "open"
-        },
-        {
           "issue_id": "bd-w2c3",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
           "status": "open"
         },
         {
@@ -9082,19 +6081,9 @@
         "available": true,
         "chain_ids": [
           "bd-w2c3.6",
-          "bd-5fw",
-          "bd-w2c3.1",
-          "bd-w2c3.3",
-          "bd-w2c3.5",
-          "bd-15n",
-          "bd-3ot",
-          "bd-kan",
-          "bd-25n",
-          "bd-rqn",
-          "bd-1ff3",
-          "bd-xxd9"
+          "bd-w2c3.5"
         ],
-        "chain_length": 11,
+        "chain_length": 1,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -9127,19 +6116,7 @@
     {
       "blocking_dependencies": [
         {
-          "issue_id": "bd-5fw",
-          "status": "open"
-        },
-        {
           "issue_id": "bd-w2c3",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
           "status": "open"
         },
         {
@@ -9151,19 +6128,9 @@
         "available": true,
         "chain_ids": [
           "bd-w2c3.6",
-          "bd-5fw",
-          "bd-w2c3.1",
-          "bd-w2c3.3",
-          "bd-w2c3.5",
-          "bd-15n",
-          "bd-3ot",
-          "bd-kan",
-          "bd-25n",
-          "bd-rqn",
-          "bd-1ff3",
-          "bd-xxd9"
+          "bd-w2c3.5"
         ],
-        "chain_length": 11,
+        "chain_length": 1,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -9196,19 +6163,7 @@
     {
       "blocking_dependencies": [
         {
-          "issue_id": "bd-5fw",
-          "status": "open"
-        },
-        {
           "issue_id": "bd-w2c3",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
           "status": "open"
         },
         {
@@ -9220,19 +6175,9 @@
         "available": true,
         "chain_ids": [
           "bd-w2c3.6",
-          "bd-5fw",
-          "bd-w2c3.1",
-          "bd-w2c3.3",
-          "bd-w2c3.5",
-          "bd-15n",
-          "bd-3ot",
-          "bd-kan",
-          "bd-25n",
-          "bd-rqn",
-          "bd-1ff3",
-          "bd-xxd9"
+          "bd-w2c3.5"
         ],
-        "chain_length": 11,
+        "chain_length": 1,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -9265,19 +6210,7 @@
     {
       "blocking_dependencies": [
         {
-          "issue_id": "bd-5fw",
-          "status": "open"
-        },
-        {
           "issue_id": "bd-w2c3",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
           "status": "open"
         },
         {
@@ -9289,19 +6222,9 @@
         "available": true,
         "chain_ids": [
           "bd-w2c3.6",
-          "bd-5fw",
-          "bd-w2c3.1",
-          "bd-w2c3.3",
-          "bd-w2c3.5",
-          "bd-15n",
-          "bd-3ot",
-          "bd-kan",
-          "bd-25n",
-          "bd-rqn",
-          "bd-1ff3",
-          "bd-xxd9"
+          "bd-w2c3.5"
         ],
-        "chain_length": 11,
+        "chain_length": 1,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -9334,19 +6257,7 @@
     {
       "blocking_dependencies": [
         {
-          "issue_id": "bd-5fw",
-          "status": "open"
-        },
-        {
           "issue_id": "bd-w2c3",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
           "status": "open"
         },
         {
@@ -9358,19 +6269,9 @@
         "available": true,
         "chain_ids": [
           "bd-w2c3.6",
-          "bd-5fw",
-          "bd-w2c3.1",
-          "bd-w2c3.3",
-          "bd-w2c3.5",
-          "bd-15n",
-          "bd-3ot",
-          "bd-kan",
-          "bd-25n",
-          "bd-rqn",
-          "bd-1ff3",
-          "bd-xxd9"
+          "bd-w2c3.5"
         ],
-        "chain_length": 11,
+        "chain_length": 1,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -9403,19 +6304,7 @@
     {
       "blocking_dependencies": [
         {
-          "issue_id": "bd-5fw",
-          "status": "open"
-        },
-        {
           "issue_id": "bd-w2c3",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
           "status": "open"
         },
         {
@@ -9427,19 +6316,9 @@
         "available": true,
         "chain_ids": [
           "bd-w2c3.6",
-          "bd-5fw",
-          "bd-w2c3.1",
-          "bd-w2c3.3",
-          "bd-w2c3.5",
-          "bd-15n",
-          "bd-3ot",
-          "bd-kan",
-          "bd-25n",
-          "bd-rqn",
-          "bd-1ff3",
-          "bd-xxd9"
+          "bd-w2c3.5"
         ],
-        "chain_length": 11,
+        "chain_length": 1,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -9472,19 +6351,7 @@
     {
       "blocking_dependencies": [
         {
-          "issue_id": "bd-5fw",
-          "status": "open"
-        },
-        {
           "issue_id": "bd-w2c3",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
           "status": "open"
         },
         {
@@ -9496,19 +6363,9 @@
         "available": true,
         "chain_ids": [
           "bd-w2c3.6",
-          "bd-5fw",
-          "bd-w2c3.1",
-          "bd-w2c3.3",
-          "bd-w2c3.5",
-          "bd-15n",
-          "bd-3ot",
-          "bd-kan",
-          "bd-25n",
-          "bd-rqn",
-          "bd-1ff3",
-          "bd-xxd9"
+          "bd-w2c3.5"
         ],
-        "chain_length": 11,
+        "chain_length": 1,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -9541,19 +6398,7 @@
     {
       "blocking_dependencies": [
         {
-          "issue_id": "bd-5fw",
-          "status": "open"
-        },
-        {
           "issue_id": "bd-w2c3",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
           "status": "open"
         },
         {
@@ -9565,19 +6410,9 @@
         "available": true,
         "chain_ids": [
           "bd-w2c3.6",
-          "bd-5fw",
-          "bd-w2c3.1",
-          "bd-w2c3.3",
-          "bd-w2c3.5",
-          "bd-15n",
-          "bd-3ot",
-          "bd-kan",
-          "bd-25n",
-          "bd-rqn",
-          "bd-1ff3",
-          "bd-xxd9"
+          "bd-w2c3.5"
         ],
-        "chain_length": 11,
+        "chain_length": 1,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -9610,19 +6445,7 @@
     {
       "blocking_dependencies": [
         {
-          "issue_id": "bd-5fw",
-          "status": "open"
-        },
-        {
           "issue_id": "bd-w2c3",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
           "status": "open"
         },
         {
@@ -9634,19 +6457,9 @@
         "available": true,
         "chain_ids": [
           "bd-w2c3.6",
-          "bd-5fw",
-          "bd-w2c3.1",
-          "bd-w2c3.3",
-          "bd-w2c3.5",
-          "bd-15n",
-          "bd-3ot",
-          "bd-kan",
-          "bd-25n",
-          "bd-rqn",
-          "bd-1ff3",
-          "bd-xxd9"
+          "bd-w2c3.5"
         ],
-        "chain_length": 11,
+        "chain_length": 1,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -9679,19 +6492,7 @@
     {
       "blocking_dependencies": [
         {
-          "issue_id": "bd-5fw",
-          "status": "open"
-        },
-        {
           "issue_id": "bd-w2c3",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
           "status": "open"
         },
         {
@@ -9703,19 +6504,9 @@
         "available": true,
         "chain_ids": [
           "bd-w2c3.6",
-          "bd-5fw",
-          "bd-w2c3.1",
-          "bd-w2c3.3",
-          "bd-w2c3.5",
-          "bd-15n",
-          "bd-3ot",
-          "bd-kan",
-          "bd-25n",
-          "bd-rqn",
-          "bd-1ff3",
-          "bd-xxd9"
+          "bd-w2c3.5"
         ],
-        "chain_length": 11,
+        "chain_length": 1,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -9748,19 +6539,7 @@
     {
       "blocking_dependencies": [
         {
-          "issue_id": "bd-5fw",
-          "status": "open"
-        },
-        {
           "issue_id": "bd-w2c3",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
           "status": "open"
         },
         {
@@ -9772,19 +6551,9 @@
         "available": true,
         "chain_ids": [
           "bd-w2c3.6",
-          "bd-5fw",
-          "bd-w2c3.1",
-          "bd-w2c3.3",
-          "bd-w2c3.5",
-          "bd-15n",
-          "bd-3ot",
-          "bd-kan",
-          "bd-25n",
-          "bd-rqn",
-          "bd-1ff3",
-          "bd-xxd9"
+          "bd-w2c3.5"
         ],
-        "chain_length": 11,
+        "chain_length": 1,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -9817,19 +6586,7 @@
     {
       "blocking_dependencies": [
         {
-          "issue_id": "bd-5fw",
-          "status": "open"
-        },
-        {
           "issue_id": "bd-w2c3",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
           "status": "open"
         },
         {
@@ -9841,19 +6598,9 @@
         "available": true,
         "chain_ids": [
           "bd-w2c3.6",
-          "bd-5fw",
-          "bd-w2c3.1",
-          "bd-w2c3.3",
-          "bd-w2c3.5",
-          "bd-15n",
-          "bd-3ot",
-          "bd-kan",
-          "bd-25n",
-          "bd-rqn",
-          "bd-1ff3",
-          "bd-xxd9"
+          "bd-w2c3.5"
         ],
-        "chain_length": 11,
+        "chain_length": 1,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -9886,19 +6633,7 @@
     {
       "blocking_dependencies": [
         {
-          "issue_id": "bd-5fw",
-          "status": "open"
-        },
-        {
           "issue_id": "bd-w2c3",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
           "status": "open"
         },
         {
@@ -9910,19 +6645,9 @@
         "available": true,
         "chain_ids": [
           "bd-w2c3.6",
-          "bd-5fw",
-          "bd-w2c3.1",
-          "bd-w2c3.3",
-          "bd-w2c3.5",
-          "bd-15n",
-          "bd-3ot",
-          "bd-kan",
-          "bd-25n",
-          "bd-rqn",
-          "bd-1ff3",
-          "bd-xxd9"
+          "bd-w2c3.5"
         ],
-        "chain_length": 11,
+        "chain_length": 1,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -9955,19 +6680,7 @@
     {
       "blocking_dependencies": [
         {
-          "issue_id": "bd-5fw",
-          "status": "open"
-        },
-        {
           "issue_id": "bd-w2c3",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
           "status": "open"
         },
         {
@@ -9979,19 +6692,9 @@
         "available": true,
         "chain_ids": [
           "bd-w2c3.6",
-          "bd-5fw",
-          "bd-w2c3.1",
-          "bd-w2c3.3",
-          "bd-w2c3.5",
-          "bd-15n",
-          "bd-3ot",
-          "bd-kan",
-          "bd-25n",
-          "bd-rqn",
-          "bd-1ff3",
-          "bd-xxd9"
+          "bd-w2c3.5"
         ],
-        "chain_length": 11,
+        "chain_length": 1,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -10024,19 +6727,7 @@
     {
       "blocking_dependencies": [
         {
-          "issue_id": "bd-5fw",
-          "status": "open"
-        },
-        {
           "issue_id": "bd-w2c3",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
           "status": "open"
         },
         {
@@ -10048,19 +6739,9 @@
         "available": true,
         "chain_ids": [
           "bd-w2c3.6",
-          "bd-5fw",
-          "bd-w2c3.1",
-          "bd-w2c3.3",
-          "bd-w2c3.5",
-          "bd-15n",
-          "bd-3ot",
-          "bd-kan",
-          "bd-25n",
-          "bd-rqn",
-          "bd-1ff3",
-          "bd-xxd9"
+          "bd-w2c3.5"
         ],
-        "chain_length": 11,
+        "chain_length": 1,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -10093,19 +6774,7 @@
     {
       "blocking_dependencies": [
         {
-          "issue_id": "bd-5fw",
-          "status": "open"
-        },
-        {
           "issue_id": "bd-w2c3",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
           "status": "open"
         },
         {
@@ -10117,19 +6786,9 @@
         "available": true,
         "chain_ids": [
           "bd-w2c3.6",
-          "bd-5fw",
-          "bd-w2c3.1",
-          "bd-w2c3.3",
-          "bd-w2c3.5",
-          "bd-15n",
-          "bd-3ot",
-          "bd-kan",
-          "bd-25n",
-          "bd-rqn",
-          "bd-1ff3",
-          "bd-xxd9"
+          "bd-w2c3.5"
         ],
-        "chain_length": 11,
+        "chain_length": 1,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -10162,19 +6821,7 @@
     {
       "blocking_dependencies": [
         {
-          "issue_id": "bd-5fw",
-          "status": "open"
-        },
-        {
           "issue_id": "bd-w2c3",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
           "status": "open"
         },
         {
@@ -10186,19 +6833,9 @@
         "available": true,
         "chain_ids": [
           "bd-w2c3.6",
-          "bd-5fw",
-          "bd-w2c3.1",
-          "bd-w2c3.3",
-          "bd-w2c3.5",
-          "bd-15n",
-          "bd-3ot",
-          "bd-kan",
-          "bd-25n",
-          "bd-rqn",
-          "bd-1ff3",
-          "bd-xxd9"
+          "bd-w2c3.5"
         ],
-        "chain_length": 11,
+        "chain_length": 1,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -10231,19 +6868,7 @@
     {
       "blocking_dependencies": [
         {
-          "issue_id": "bd-5fw",
-          "status": "open"
-        },
-        {
           "issue_id": "bd-w2c3",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
           "status": "open"
         },
         {
@@ -10255,19 +6880,9 @@
         "available": true,
         "chain_ids": [
           "bd-w2c3.6",
-          "bd-5fw",
-          "bd-w2c3.1",
-          "bd-w2c3.3",
-          "bd-w2c3.5",
-          "bd-15n",
-          "bd-3ot",
-          "bd-kan",
-          "bd-25n",
-          "bd-rqn",
-          "bd-1ff3",
-          "bd-xxd9"
+          "bd-w2c3.5"
         ],
-        "chain_length": 11,
+        "chain_length": 1,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -10300,19 +6915,7 @@
     {
       "blocking_dependencies": [
         {
-          "issue_id": "bd-5fw",
-          "status": "open"
-        },
-        {
           "issue_id": "bd-w2c3",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
           "status": "open"
         },
         {
@@ -10324,19 +6927,9 @@
         "available": true,
         "chain_ids": [
           "bd-w2c3.6",
-          "bd-5fw",
-          "bd-w2c3.1",
-          "bd-w2c3.3",
-          "bd-w2c3.5",
-          "bd-15n",
-          "bd-3ot",
-          "bd-kan",
-          "bd-25n",
-          "bd-rqn",
-          "bd-1ff3",
-          "bd-xxd9"
+          "bd-w2c3.5"
         ],
-        "chain_length": 11,
+        "chain_length": 1,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -10369,19 +6962,7 @@
     {
       "blocking_dependencies": [
         {
-          "issue_id": "bd-5fw",
-          "status": "open"
-        },
-        {
           "issue_id": "bd-w2c3",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
           "status": "open"
         },
         {
@@ -10393,19 +6974,9 @@
         "available": true,
         "chain_ids": [
           "bd-w2c3.6",
-          "bd-5fw",
-          "bd-w2c3.1",
-          "bd-w2c3.3",
-          "bd-w2c3.5",
-          "bd-15n",
-          "bd-3ot",
-          "bd-kan",
-          "bd-25n",
-          "bd-rqn",
-          "bd-1ff3",
-          "bd-xxd9"
+          "bd-w2c3.5"
         ],
-        "chain_length": 11,
+        "chain_length": 1,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -10438,19 +7009,7 @@
     {
       "blocking_dependencies": [
         {
-          "issue_id": "bd-5fw",
-          "status": "open"
-        },
-        {
           "issue_id": "bd-w2c3",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
           "status": "open"
         },
         {
@@ -10462,19 +7021,9 @@
         "available": true,
         "chain_ids": [
           "bd-w2c3.6",
-          "bd-5fw",
-          "bd-w2c3.1",
-          "bd-w2c3.3",
-          "bd-w2c3.5",
-          "bd-15n",
-          "bd-3ot",
-          "bd-kan",
-          "bd-25n",
-          "bd-rqn",
-          "bd-1ff3",
-          "bd-xxd9"
+          "bd-w2c3.5"
         ],
-        "chain_length": 11,
+        "chain_length": 1,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -10507,19 +7056,7 @@
     {
       "blocking_dependencies": [
         {
-          "issue_id": "bd-5fw",
-          "status": "open"
-        },
-        {
           "issue_id": "bd-w2c3",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
           "status": "open"
         },
         {
@@ -10531,19 +7068,9 @@
         "available": true,
         "chain_ids": [
           "bd-w2c3.6",
-          "bd-5fw",
-          "bd-w2c3.1",
-          "bd-w2c3.3",
-          "bd-w2c3.5",
-          "bd-15n",
-          "bd-3ot",
-          "bd-kan",
-          "bd-25n",
-          "bd-rqn",
-          "bd-1ff3",
-          "bd-xxd9"
+          "bd-w2c3.5"
         ],
-        "chain_length": 11,
+        "chain_length": 1,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -10576,19 +7103,7 @@
     {
       "blocking_dependencies": [
         {
-          "issue_id": "bd-5fw",
-          "status": "open"
-        },
-        {
           "issue_id": "bd-w2c3",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
           "status": "open"
         },
         {
@@ -10600,19 +7115,9 @@
         "available": true,
         "chain_ids": [
           "bd-w2c3.6",
-          "bd-5fw",
-          "bd-w2c3.1",
-          "bd-w2c3.3",
-          "bd-w2c3.5",
-          "bd-15n",
-          "bd-3ot",
-          "bd-kan",
-          "bd-25n",
-          "bd-rqn",
-          "bd-1ff3",
-          "bd-xxd9"
+          "bd-w2c3.5"
         ],
-        "chain_length": 11,
+        "chain_length": 1,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -10645,19 +7150,7 @@
     {
       "blocking_dependencies": [
         {
-          "issue_id": "bd-5fw",
-          "status": "open"
-        },
-        {
           "issue_id": "bd-w2c3",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
           "status": "open"
         },
         {
@@ -10669,19 +7162,9 @@
         "available": true,
         "chain_ids": [
           "bd-w2c3.6",
-          "bd-5fw",
-          "bd-w2c3.1",
-          "bd-w2c3.3",
-          "bd-w2c3.5",
-          "bd-15n",
-          "bd-3ot",
-          "bd-kan",
-          "bd-25n",
-          "bd-rqn",
-          "bd-1ff3",
-          "bd-xxd9"
+          "bd-w2c3.5"
         ],
-        "chain_length": 11,
+        "chain_length": 1,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -10714,19 +7197,7 @@
     {
       "blocking_dependencies": [
         {
-          "issue_id": "bd-5fw",
-          "status": "open"
-        },
-        {
           "issue_id": "bd-w2c3",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
           "status": "open"
         },
         {
@@ -10738,19 +7209,9 @@
         "available": true,
         "chain_ids": [
           "bd-w2c3.6",
-          "bd-5fw",
-          "bd-w2c3.1",
-          "bd-w2c3.3",
-          "bd-w2c3.5",
-          "bd-15n",
-          "bd-3ot",
-          "bd-kan",
-          "bd-25n",
-          "bd-rqn",
-          "bd-1ff3",
-          "bd-xxd9"
+          "bd-w2c3.5"
         ],
-        "chain_length": 11,
+        "chain_length": 1,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -10783,19 +7244,7 @@
     {
       "blocking_dependencies": [
         {
-          "issue_id": "bd-5fw",
-          "status": "open"
-        },
-        {
           "issue_id": "bd-w2c3",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
           "status": "open"
         },
         {
@@ -10807,19 +7256,9 @@
         "available": true,
         "chain_ids": [
           "bd-w2c3.6",
-          "bd-5fw",
-          "bd-w2c3.1",
-          "bd-w2c3.3",
-          "bd-w2c3.5",
-          "bd-15n",
-          "bd-3ot",
-          "bd-kan",
-          "bd-25n",
-          "bd-rqn",
-          "bd-1ff3",
-          "bd-xxd9"
+          "bd-w2c3.5"
         ],
-        "chain_length": 11,
+        "chain_length": 1,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -10852,19 +7291,7 @@
     {
       "blocking_dependencies": [
         {
-          "issue_id": "bd-5fw",
-          "status": "open"
-        },
-        {
           "issue_id": "bd-w2c3",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
           "status": "open"
         },
         {
@@ -10876,19 +7303,9 @@
         "available": true,
         "chain_ids": [
           "bd-w2c3.6",
-          "bd-5fw",
-          "bd-w2c3.1",
-          "bd-w2c3.3",
-          "bd-w2c3.5",
-          "bd-15n",
-          "bd-3ot",
-          "bd-kan",
-          "bd-25n",
-          "bd-rqn",
-          "bd-1ff3",
-          "bd-xxd9"
+          "bd-w2c3.5"
         ],
-        "chain_length": 11,
+        "chain_length": 1,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -10921,19 +7338,7 @@
     {
       "blocking_dependencies": [
         {
-          "issue_id": "bd-5fw",
-          "status": "open"
-        },
-        {
           "issue_id": "bd-w2c3",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
           "status": "open"
         },
         {
@@ -10945,19 +7350,9 @@
         "available": true,
         "chain_ids": [
           "bd-w2c3.6",
-          "bd-5fw",
-          "bd-w2c3.1",
-          "bd-w2c3.3",
-          "bd-w2c3.5",
-          "bd-15n",
-          "bd-3ot",
-          "bd-kan",
-          "bd-25n",
-          "bd-rqn",
-          "bd-1ff3",
-          "bd-xxd9"
+          "bd-w2c3.5"
         ],
-        "chain_length": 11,
+        "chain_length": 1,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -10990,19 +7385,7 @@
     {
       "blocking_dependencies": [
         {
-          "issue_id": "bd-5fw",
-          "status": "open"
-        },
-        {
           "issue_id": "bd-w2c3",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
           "status": "open"
         },
         {
@@ -11014,19 +7397,9 @@
         "available": true,
         "chain_ids": [
           "bd-w2c3.6",
-          "bd-5fw",
-          "bd-w2c3.1",
-          "bd-w2c3.3",
-          "bd-w2c3.5",
-          "bd-15n",
-          "bd-3ot",
-          "bd-kan",
-          "bd-25n",
-          "bd-rqn",
-          "bd-1ff3",
-          "bd-xxd9"
+          "bd-w2c3.5"
         ],
-        "chain_length": 11,
+        "chain_length": 1,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -11059,19 +7432,7 @@
     {
       "blocking_dependencies": [
         {
-          "issue_id": "bd-5fw",
-          "status": "open"
-        },
-        {
           "issue_id": "bd-w2c3",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
           "status": "open"
         },
         {
@@ -11083,19 +7444,9 @@
         "available": true,
         "chain_ids": [
           "bd-w2c3.6",
-          "bd-5fw",
-          "bd-w2c3.1",
-          "bd-w2c3.3",
-          "bd-w2c3.5",
-          "bd-15n",
-          "bd-3ot",
-          "bd-kan",
-          "bd-25n",
-          "bd-rqn",
-          "bd-1ff3",
-          "bd-xxd9"
+          "bd-w2c3.5"
         ],
-        "chain_length": 11,
+        "chain_length": 1,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -11105,7 +7456,7 @@
       ],
       "expected_vs_actual": {
         "actual": {
-          "status": "PLANNED"
+          "status": "IN_PROGRESS"
         },
         "expected": {
           "status": "DONE"
@@ -11123,24 +7474,12 @@
       "owner_title": "Track 5: Formal Proof Artifact Factory",
       "section": "proof_math",
       "source_file": "FEATURE_PARITY.md",
-      "status": "PLANNED"
+      "status": "IN_PROGRESS"
     },
     {
       "blocking_dependencies": [
         {
-          "issue_id": "bd-5fw",
-          "status": "open"
-        },
-        {
           "issue_id": "bd-w2c3",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
           "status": "open"
         },
         {
@@ -11152,19 +7491,9 @@
         "available": true,
         "chain_ids": [
           "bd-w2c3.6",
-          "bd-5fw",
-          "bd-w2c3.1",
-          "bd-w2c3.3",
-          "bd-w2c3.5",
-          "bd-15n",
-          "bd-3ot",
-          "bd-kan",
-          "bd-25n",
-          "bd-rqn",
-          "bd-1ff3",
-          "bd-xxd9"
+          "bd-w2c3.5"
         ],
-        "chain_length": 11,
+        "chain_length": 1,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -11197,19 +7526,7 @@
     {
       "blocking_dependencies": [
         {
-          "issue_id": "bd-5fw",
-          "status": "open"
-        },
-        {
           "issue_id": "bd-w2c3",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
           "status": "open"
         },
         {
@@ -11221,19 +7538,9 @@
         "available": true,
         "chain_ids": [
           "bd-w2c3.6",
-          "bd-5fw",
-          "bd-w2c3.1",
-          "bd-w2c3.3",
-          "bd-w2c3.5",
-          "bd-15n",
-          "bd-3ot",
-          "bd-kan",
-          "bd-25n",
-          "bd-rqn",
-          "bd-1ff3",
-          "bd-xxd9"
+          "bd-w2c3.5"
         ],
-        "chain_length": 11,
+        "chain_length": 1,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -11266,19 +7573,7 @@
     {
       "blocking_dependencies": [
         {
-          "issue_id": "bd-5fw",
-          "status": "open"
-        },
-        {
           "issue_id": "bd-w2c3",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
           "status": "open"
         },
         {
@@ -11290,19 +7585,9 @@
         "available": true,
         "chain_ids": [
           "bd-w2c3.6",
-          "bd-5fw",
-          "bd-w2c3.1",
-          "bd-w2c3.3",
-          "bd-w2c3.5",
-          "bd-15n",
-          "bd-3ot",
-          "bd-kan",
-          "bd-25n",
-          "bd-rqn",
-          "bd-1ff3",
-          "bd-xxd9"
+          "bd-w2c3.5"
         ],
-        "chain_length": 11,
+        "chain_length": 1,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -11335,19 +7620,7 @@
     {
       "blocking_dependencies": [
         {
-          "issue_id": "bd-5fw",
-          "status": "open"
-        },
-        {
           "issue_id": "bd-w2c3",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
           "status": "open"
         },
         {
@@ -11359,19 +7632,9 @@
         "available": true,
         "chain_ids": [
           "bd-w2c3.6",
-          "bd-5fw",
-          "bd-w2c3.1",
-          "bd-w2c3.3",
-          "bd-w2c3.5",
-          "bd-15n",
-          "bd-3ot",
-          "bd-kan",
-          "bd-25n",
-          "bd-rqn",
-          "bd-1ff3",
-          "bd-xxd9"
+          "bd-w2c3.5"
         ],
-        "chain_length": 11,
+        "chain_length": 1,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -11404,19 +7667,7 @@
     {
       "blocking_dependencies": [
         {
-          "issue_id": "bd-5fw",
-          "status": "open"
-        },
-        {
           "issue_id": "bd-w2c3",
-          "status": "open"
-        },
-        {
-          "issue_id": "bd-w2c3.1",
-          "status": "in_progress"
-        },
-        {
-          "issue_id": "bd-w2c3.3",
           "status": "open"
         },
         {
@@ -11428,19 +7679,9 @@
         "available": true,
         "chain_ids": [
           "bd-w2c3.6",
-          "bd-5fw",
-          "bd-w2c3.1",
-          "bd-w2c3.3",
-          "bd-w2c3.5",
-          "bd-15n",
-          "bd-3ot",
-          "bd-kan",
-          "bd-25n",
-          "bd-rqn",
-          "bd-1ff3",
-          "bd-xxd9"
+          "bd-w2c3.5"
         ],
-        "chain_length": 11,
+        "chain_length": 1,
         "is_blocked": true,
         "root_blockers": []
       },
@@ -11477,12 +7718,12 @@
     "issues": ".beads/issues.jsonl"
   },
   "summary": {
-    "active_owner_gaps": 116,
-    "covered_gaps": 116,
-    "critical_blocker_count": 0,
-    "inactive_owner_gaps": 0,
+    "active_owner_gaps": 103,
+    "covered_gaps": 113,
+    "critical_blocker_count": 3,
+    "inactive_owner_gaps": 10,
     "owner_count": 7,
-    "total_unresolved_gaps": 116,
+    "total_unresolved_gaps": 113,
     "uncovered_gaps": 0
   }
 }

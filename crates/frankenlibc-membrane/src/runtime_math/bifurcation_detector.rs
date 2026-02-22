@@ -198,7 +198,7 @@ impl BifurcationDetector {
         };
 
         if self.count > 1 {
-            let mut max_rho = 0.0_f64;
+            let mut max_rho = -1.0_f64;
             let mut sum_rho = 0.0_f64;
 
             for (i, (&cur_s, &prev_s)) in severity.iter().zip(self.prev_severity.iter()).enumerate()
@@ -229,8 +229,13 @@ impl BifurcationDetector {
             let mean_rho = sum_rho / N as f64;
 
             // Smooth the aggregate statistics.
-            self.max_sensitivity += alpha * (max_rho - self.max_sensitivity);
-            self.mean_sensitivity += alpha * (mean_rho - self.mean_sensitivity);
+            if self.count == 2 {
+                self.max_sensitivity = max_rho;
+                self.mean_sensitivity = mean_rho;
+            } else {
+                self.max_sensitivity += alpha * (max_rho - self.max_sensitivity);
+                self.mean_sensitivity += alpha * (mean_rho - self.mean_sensitivity);
+            }
         } else {
             // First observation: just initialize moments from the first sample.
             for (i, &s) in severity.iter().enumerate() {

@@ -1907,12 +1907,12 @@ impl RuntimeMathKernel {
             }
         } else if let Some(escalated) = policy_escalation {
             escalated
+        } else if mode.heals_enabled() && risk_upper_bound_ppm >= limits.repair_trigger_ppm {
+            MembraneAction::Repair(HealingAction::UpgradeToSafeVariant)
         } else if profile.requires_full()
             || risk_upper_bound_ppm >= limits.full_validation_trigger_ppm
         {
             MembraneAction::FullValidate
-        } else if mode.heals_enabled() && risk_upper_bound_ppm >= limits.repair_trigger_ppm {
-            MembraneAction::Repair(HealingAction::UpgradeToSafeVariant)
         } else {
             MembraneAction::Allow
         };
@@ -3854,6 +3854,14 @@ impl RuntimeMathKernel {
     pub fn note_overlap(&self, left_shard: usize, right_shard: usize, witness_hash: u64) -> bool {
         self.cohomology
             .note_overlap(left_shard, right_shard, witness_hash)
+    }
+
+    /// Publish the current section hash for a cohomology shard.
+    ///
+    /// Callers use this to keep overlap witnesses grounded in latest stage
+    /// observations before invoking `note_overlap`.
+    pub fn set_overlap_section_hash(&self, shard: usize, hash: u64) {
+        self.cohomology.set_section_hash(shard, hash);
     }
 
     /// Point-in-time kernel snapshot.

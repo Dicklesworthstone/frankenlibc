@@ -243,7 +243,8 @@ impl CheckOracle {
             if let Some(pos) = null_pos
                 && pos != 0
             {
-                stages.swap(0, pos);
+                let null_element = stages.remove(pos);
+                stages.insert(0, null_element);
             }
 
             let mut ordering = DEFAULT_ORDER;

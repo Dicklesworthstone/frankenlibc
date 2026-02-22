@@ -70,7 +70,9 @@ pub fn parse_mode(mode: &[u8]) -> Option<OpenFlags> {
     }
     pos += 1;
 
-    // Modifiers: '+', 'b', 'x' in any order.
+    // Modifiers: '+', 'b', 'x', 'e', 'm', 'c' in any order.
+    // We ignore unrecognized extensions (like 'e' for O_CLOEXEC) for glibc compatibility
+    // instead of failing the open.
     while pos < mode.len() {
         match mode[pos] {
             b'+' => {
@@ -79,7 +81,7 @@ pub fn parse_mode(mode: &[u8]) -> Option<OpenFlags> {
             }
             b'b' => flags.binary = true,
             b'x' => flags.exclusive = true,
-            _ => return None,
+            _ => {} // Ignore unrecognized modifiers like 'e', 'm', 'c'
         }
         pos += 1;
     }

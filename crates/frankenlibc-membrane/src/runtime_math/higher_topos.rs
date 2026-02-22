@@ -166,7 +166,8 @@ impl HigherToposController {
             self.violation_count += 1;
         } else {
             // Fold consistent resolution into coherence witness.
-            self.coherence_witness_hash ^= scope_hash.wrapping_mul(0x517cc1b727220a95)
+            self.coherence_witness_hash = self.coherence_witness_hash.rotate_left(13)
+                ^ scope_hash.wrapping_mul(0x517cc1b727220a95)
                 ^ result_hash.wrapping_mul(0x6c62272e07bb0142);
         }
 

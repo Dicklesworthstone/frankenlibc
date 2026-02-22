@@ -76,7 +76,7 @@ impl EquivariantTransportController {
         let raw = feature_vector(mode, profile, estimated_cost_ns, adverse, risk_bound_ppm);
         let canon = canonicalize_by_action(raw, family, mode, profile);
 
-        if self.observations == 0 {
+        if self.orbit_mass[orbit] == 0.0 {
             self.centroids[orbit] = canon;
         }
 

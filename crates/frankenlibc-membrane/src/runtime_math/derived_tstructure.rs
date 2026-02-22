@@ -179,31 +179,34 @@ impl TStructureController {
             // Track worst incomplete predecessor.
             let degree = tracker.degree;
             if degree > 0 {
-                // Check which lower-degree stages are not yet complete.
+                // Find the highest-degree incomplete predecessor.
+                let mut worst: Option<u8> = None;
                 for d in (0..degree).rev() {
                     if self.completed_mask & (1u8 << d) == 0 {
-                        let tracker = &mut self.stages[stage_idx];
-                        match tracker.max_incomplete_predecessor {
-                            Some(prev) if d > prev => {
-                                tracker.max_incomplete_predecessor = Some(d);
-                            }
-                            None => {
-                                tracker.max_incomplete_predecessor = Some(d);
-                            }
-                            _ => {}
-                        }
+                        worst = Some(d as u8);
                         break;
+                    }
+                }
+                if let Some(d) = worst {
+                    match tracker.max_incomplete_predecessor {
+                        Some(prev) if d > prev => {
+                            tracker.max_incomplete_predecessor = Some(d);
+                        }
+                        None => {
+                            tracker.max_incomplete_predecessor = Some(d);
+                        }
+                        _ => {}
                     }
                 }
             }
         } else {
             tracker.violation_rate *= 1.0 - EWMA_ALPHA;
+        }
 
-            // Mark this stage as completed.
-            self.completed_mask |= 1u8 << stage_idx;
-            if tracker.degree > self.max_completed_degree {
-                self.max_completed_degree = tracker.degree;
-            }
+        // Mark this stage as completed regardless of order.
+        self.completed_mask |= 1u8 << stage_idx;
+        if tracker.degree > self.max_completed_degree {
+            self.max_completed_degree = tracker.degree;
         }
     }
 

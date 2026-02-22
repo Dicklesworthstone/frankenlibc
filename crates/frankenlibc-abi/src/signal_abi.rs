@@ -409,22 +409,52 @@ pub unsafe extern "C" fn sigaction(
 }
 
 // ---------------------------------------------------------------------------
-// Additional signal functions — GlibcCallThrough
+// Additional signal functions — native raw-syscall implementation
 // ---------------------------------------------------------------------------
 
-unsafe extern "C" {
-    #[link_name = "sigwait"]
-    fn libc_sigwait(set: *const libc::sigset_t, sig: *mut c_int) -> c_int;
-    #[link_name = "sigpending"]
-    fn libc_sigpending(set: *mut libc::sigset_t) -> c_int;
-}
-
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn sigwait(set: *const libc::sigset_t, sig: *mut c_int) -> c_int {
-    unsafe { libc_sigwait(set, sig) }
-}
-
+/// `sigpending` — get pending signals via `rt_sigpending` syscall.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sigpending(set: *mut libc::sigset_t) -> c_int {
-    unsafe { libc_sigpending(set) }
+    if set.is_null() {
+        unsafe { set_abi_errno(libc::EFAULT as c_int) };
+        return -1;
+    }
+    let kernel_sigset_size = std::mem::size_of::<libc::c_ulong>();
+    // SAFETY: rt_sigpending writes to the provided set pointer.
+    let rc = unsafe {
+        libc::syscall(libc::SYS_rt_sigpending, set, kernel_sigset_size) as c_int
+    };
+    if rc != 0 {
+        unsafe { set_abi_errno(last_host_errno(errno::EFAULT)) };
+    }
+    rc
+}
+
+/// `sigwait` — wait for a signal from `set` via `rt_sigtimedwait` syscall.
+/// Returns 0 on success with the signal number stored in `*sig`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn sigwait(set: *const libc::sigset_t, sig: *mut c_int) -> c_int {
+    if set.is_null() || sig.is_null() {
+        return libc::EINVAL;
+    }
+    let kernel_sigset_size = std::mem::size_of::<libc::c_ulong>();
+    // SAFETY: rt_sigtimedwait blocks until a signal from `set` is pending.
+    // With null timeout, it blocks indefinitely. Returns the signal number.
+    let rc = unsafe {
+        libc::syscall(
+            libc::SYS_rt_sigtimedwait,
+            set,
+            std::ptr::null::<libc::siginfo_t>(),
+            std::ptr::null::<libc::timespec>(),
+            kernel_sigset_size,
+        ) as c_int
+    };
+    if rc > 0 {
+        // SAFETY: sig is non-null; we checked above.
+        unsafe { *sig = rc };
+        0
+    } else {
+        // On error, return the errno value per POSIX sigwait semantics.
+        unsafe { *libc::__errno_location() }
+    }
 }

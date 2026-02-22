@@ -261,20 +261,39 @@ impl AllocationArena {
     /// @separation-alias: `generation_check`.
     #[must_use]
     pub fn lookup(&self, user_ptr: usize) -> Option<ArenaSlot> {
-        let shard_idx = self.shard_for(user_ptr);
-        let shard = self.shards[shard_idx].lock();
+        let exact_shard_idx = self.shard_for(user_ptr);
 
-        // Try exact match first
-        if let Some(&slot_idx) = shard.addr_to_slot.get(&user_ptr) {
-            return Some(shard.slots[slot_idx]);
+        {
+            let shard = self.shards[exact_shard_idx].lock();
+            // Try exact match first
+            if let Some(&slot_idx) = shard.addr_to_slot.get(&user_ptr) {
+                return Some(shard.slots[slot_idx]);
+            }
+
+            // Try containing lookup in this shard
+            for slot in &shard.slots {
+                if slot.state.is_live() || slot.state == SafetyState::Quarantined {
+                    let end = slot.user_base.saturating_add(slot.user_size);
+                    if user_ptr >= slot.user_base && user_ptr < end {
+                        return Some(*slot);
+                    }
+                }
+            }
         }
 
-        // Try containing lookup (pointer into middle of allocation)
-        for slot in &shard.slots {
-            if slot.state.is_live() || slot.state == SafetyState::Quarantined {
-                let end = slot.user_base.saturating_add(slot.user_size);
-                if user_ptr >= slot.user_base && user_ptr < end {
-                    return Some(*slot);
+        // Try containing lookup in all other shards since an inner pointer
+        // might cross a page boundary and thus hash to a different shard.
+        for (idx, mutex) in self.shards.iter().enumerate() {
+            if idx == exact_shard_idx {
+                continue;
+            }
+            let shard = mutex.lock();
+            for slot in &shard.slots {
+                if slot.state.is_live() || slot.state == SafetyState::Quarantined {
+                    let end = slot.user_base.saturating_add(slot.user_size);
+                    if user_ptr >= slot.user_base && user_ptr < end {
+                        return Some(*slot);
+                    }
                 }
             }
         }
@@ -315,7 +334,7 @@ impl AllocationArena {
         let fp =
             AllocationFingerprint::compute(slot.user_base, slot.user_size as u32, slot.generation);
         let expected_canary = fp.canary();
-        let canary_addr = slot.raw_base + FINGERPRINT_SIZE + slot.user_size;
+        let canary_addr = slot.user_base + slot.user_size;
 
         let mut actual = [0u8; CANARY_SIZE];
         // SAFETY: canary_addr points to valid memory within the allocation's total size.

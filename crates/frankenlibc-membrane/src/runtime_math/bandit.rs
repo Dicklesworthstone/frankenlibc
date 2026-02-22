@@ -135,7 +135,12 @@ impl ConstrainedBanditRouter {
         let total = (fast_pulls + full_pulls) as f64;
         let log_total = total.ln().max(1.0);
         let mode = crate::config::safety_level();
-        let c = if mode.heals_enabled() { 0.55 } else { 0.35 };
+        // Utility values are around 100,000, so scale c accordingly.
+        let c = if mode.heals_enabled() {
+            55_000.0
+        } else {
+            35_000.0
+        };
 
         let fast_mean =
             self.utility_milli[fast_idx].load(Ordering::Relaxed) as f64 / fast_pulls as f64;

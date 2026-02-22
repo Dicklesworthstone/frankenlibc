@@ -332,15 +332,18 @@ pub fn format_signed(value: i64, spec: &FormatSpec, buf: &mut Vec<u8>) {
     let width = resolve_width(spec);
     let pad_total = width.saturating_sub(effective_content);
 
+    let has_precision = !matches!(spec.precision, Precision::None);
+    let zero_pad = spec.flags.zero_pad && !has_precision;
+
     // Emit.
-    if !spec.flags.left_justify && !spec.flags.zero_pad {
+    if !spec.flags.left_justify && !zero_pad {
         pad(buf, b' ', pad_total);
     }
     if let Some(s) = sign {
         buf.push(s);
     }
     buf.extend_from_slice(prefix);
-    if !spec.flags.left_justify && spec.flags.zero_pad {
+    if !spec.flags.left_justify && zero_pad {
         pad(buf, b'0', pad_total);
     }
     if !suppress_zero {
@@ -383,11 +386,14 @@ pub fn format_unsigned(value: u64, spec: &FormatSpec, buf: &mut Vec<u8>) {
     let width = resolve_width(spec);
     let pad_total = width.saturating_sub(effective_content);
 
-    if !spec.flags.left_justify && !spec.flags.zero_pad {
+    let has_precision = !matches!(spec.precision, Precision::None);
+    let zero_pad = spec.flags.zero_pad && !has_precision;
+
+    if !spec.flags.left_justify && !zero_pad {
         pad(buf, b' ', pad_total);
     }
     buf.extend_from_slice(prefix);
-    if !spec.flags.left_justify && spec.flags.zero_pad {
+    if !spec.flags.left_justify && zero_pad {
         pad(buf, b'0', pad_total);
     }
     if !suppress_zero {

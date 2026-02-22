@@ -27,7 +27,7 @@ static GLOBAL_TLS_CACHE_EPOCH: AtomicU64 = AtomicU64::new(1);
 static TLS_CACHE_EPOCH_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[inline]
-fn current_epoch() -> u64 {
+pub(crate) fn current_epoch() -> u64 {
     GLOBAL_TLS_CACHE_EPOCH.load(Ordering::Relaxed)
 }
 
@@ -125,9 +125,8 @@ impl TlsValidationCache {
     }
 
     /// Insert or update a cache entry.
-    pub fn insert(&mut self, addr: usize, validation: CachedValidation) {
+    pub fn insert(&mut self, addr: usize, validation: CachedValidation, epoch: u64) {
         let idx = Self::index(addr);
-        let epoch = current_epoch();
         self.entries[idx] = CacheEntry {
             addr,
             user_base: validation.user_base,
@@ -169,8 +168,9 @@ impl TlsValidationCache {
 
     /// Compute cache index from pointer address.
     fn index(addr: usize) -> usize {
-        // Use bits [12..22] (page-aligned, skip low bits)
-        (addr >> 12) & CACHE_MASK
+        // Use bits [4..14] (assume 16-byte alignment) to avoid massive collisions
+        // for different allocations within the same page.
+        (addr >> 4) & CACHE_MASK
     }
 }
 
@@ -238,7 +238,7 @@ mod tests {
             state: SafetyState::Valid,
         };
         let _epoch_guard = lock_tls_cache_epoch_for_tests();
-        cache.insert(0x1000, val);
+        cache.insert(0x1000, val, current_epoch());
 
         let result = cache.lookup(0x1000).expect("should hit");
         assert_eq!(result.user_base, 0x1000);
@@ -257,7 +257,7 @@ mod tests {
             state: SafetyState::Valid,
         };
         let _epoch_guard = lock_tls_cache_epoch_for_tests();
-        cache.insert(0x2000, val);
+        cache.insert(0x2000, val, current_epoch());
         assert!(cache.lookup(0x2000).is_some());
 
         cache.invalidate(0x2000);
@@ -278,6 +278,7 @@ mod tests {
                     generation: 1,
                     state: SafetyState::Valid,
                 },
+                current_epoch(),
             );
         }
         cache.invalidate_all();
@@ -300,7 +301,7 @@ mod tests {
 
         {
             let _epoch_guard = lock_tls_cache_epoch_for_tests();
-            cache.insert(addr, val);
+            cache.insert(addr, val, current_epoch());
             assert!(
                 cache.lookup(addr).is_some(),
                 "expected cache hit before epoch bump"
@@ -321,7 +322,7 @@ mod tests {
 
         {
             let _epoch_guard = lock_tls_cache_epoch_for_tests();
-            cache.insert(addr, val);
+            cache.insert(addr, val, current_epoch());
             assert!(
                 cache.lookup(addr).is_some(),
                 "expected cache hit after reinsert at current epoch"

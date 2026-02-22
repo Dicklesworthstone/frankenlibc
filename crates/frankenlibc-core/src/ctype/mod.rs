@@ -50,7 +50,7 @@ pub fn is_print(c: u8) -> bool {
 /// Returns `true` if `c` is a punctuation character.
 #[inline]
 pub fn is_punct(c: u8) -> bool {
-    is_print(c) && !is_alnum(c) && c != b' '
+    is_print(c) && !is_alnum(c) && !is_space(c)
 }
 
 /// Returns `true` if `c` is a hexadecimal digit (`[0-9A-Fa-f]`).

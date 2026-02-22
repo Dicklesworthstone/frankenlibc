@@ -319,6 +319,9 @@ pub fn strtod_impl(s: &[u8]) -> (f64, usize) {
     }
 
     // Check for hex float (0x...)
+    // Note: Rust's core::str::parse::<f64>() does not support hex floats.
+    // A complete C99 strtod implementation would require a custom hex float parser.
+    // For now, we will parse the prefix, but `parse::<f64>()` will fail and return 0.0.
     let is_hex =
         i + 1 < slice.len() && slice[i] == b'0' && (slice[i + 1] == b'x' || slice[i + 1] == b'X');
     if is_hex {

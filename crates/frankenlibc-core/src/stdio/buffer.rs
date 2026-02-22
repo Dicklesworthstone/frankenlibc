@@ -248,21 +248,27 @@ impl StreamBuffer {
 
         match last_nl {
             Some(nl_pos) => {
-                // Flush everything up to and including the last newline.
                 let flush_end = nl_pos + 1;
+                let remainder = &data[flush_end..];
+
+                // If the remainder exceeds buffer capacity, we cannot buffer it
+                // without losing data. Fall back to flushing the entire write.
+                if remainder.len() > self.data.len() {
+                    return self.write_full(data);
+                }
+
+                // Flush everything up to and including the last newline.
                 let mut flush = Vec::with_capacity(self.pos + flush_end);
                 flush.extend_from_slice(&self.data[..self.pos]);
                 flush.extend_from_slice(&data[..flush_end]);
                 self.pos = 0;
 
                 // Buffer the remainder after the newline.
-                let remainder = &data[flush_end..];
-                let take = remainder.len().min(self.data.len());
-                self.data[..take].copy_from_slice(&remainder[..take]);
-                self.pos = take;
+                self.data[..remainder.len()].copy_from_slice(remainder);
+                self.pos = remainder.len();
 
                 WriteResult {
-                    buffered: take,
+                    buffered: remainder.len(),
                     flush_needed: true,
                     flush_data: flush,
                 }

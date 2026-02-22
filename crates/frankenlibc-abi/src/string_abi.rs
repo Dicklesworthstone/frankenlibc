@@ -1296,15 +1296,15 @@ pub unsafe extern "C" fn strcpy(dst: *mut c_char, src: *const c_char) -> *mut c_
                     (copy_payload.saturating_add(1), truncated)
                 }
                 None => {
-                    let mut i = 0usize;
-                    loop {
-                        let ch = *src.add(i);
-                        *dst.add(i) = ch;
-                        if ch == 0 {
-                            break (i.saturating_add(1), false);
-                        }
-                        i += 1;
+                    if src_len > 0 {
+                        raw_memcpy_bytes(dst.cast::<u8>(), src.cast::<u8>(), src_len);
                     }
+                    *dst.add(src_len) = 0;
+                    let truncated = !src_terminated;
+                    if truncated {
+                        record_truncation(requested, src_len);
+                    }
+                    (src_len.saturating_add(1), truncated)
                 }
             }
         } else {
@@ -1591,17 +1591,15 @@ pub unsafe extern "C" fn strcat(dst: *mut c_char, src: *const c_char) -> *mut c_
                     }
                 }
                 None => {
-                    let mut d = dst_len;
-                    let mut s = 0usize;
-                    loop {
-                        let ch = *src.add(s);
-                        *dst.add(d) = ch;
-                        if ch == 0 {
-                            break (d.saturating_add(1), false);
-                        }
-                        d += 1;
-                        s += 1;
+                    if src_len > 0 {
+                        raw_memcpy_bytes(dst.add(dst_len).cast::<u8>(), src.cast::<u8>(), src_len);
                     }
+                    *dst.add(dst_len.saturating_add(src_len)) = 0;
+                    let truncated = !src_terminated;
+                    if truncated {
+                        record_truncation(src_len.saturating_add(1), src_len);
+                    }
+                    (dst_len.saturating_add(src_len).saturating_add(1), truncated)
                 }
             }
         } else {
@@ -1699,7 +1697,7 @@ pub unsafe extern "C" fn strncat(dst: *mut c_char, src: *const c_char, n: usize)
     // SAFETY: strict mode preserves raw strncat behavior; hardened mode bounds writes.
     let (work, adverse) = unsafe {
         let (dst_len, dst_terminated) = scan_c_string(dst.cast_const(), dst_bound);
-        let src_scan_bound = src_bound.map(|v| v.min(n));
+        let src_scan_bound = Some(src_bound.unwrap_or(usize::MAX).min(n));
         let (src_len, src_terminated) = scan_c_string(src, src_scan_bound);
         if repair {
             match dst_bound {
@@ -1736,17 +1734,15 @@ pub unsafe extern "C" fn strncat(dst: *mut c_char, src: *const c_char, n: usize)
                     }
                 }
                 None => {
-                    let mut i = 0usize;
-                    while i < n {
-                        let ch = *src.add(i);
-                        if ch == 0 {
-                            break;
-                        }
-                        *dst.add(dst_len + i) = ch;
-                        i += 1;
+                    if src_len > 0 {
+                        raw_memcpy_bytes(dst.add(dst_len).cast::<u8>(), src.cast::<u8>(), src_len);
                     }
-                    *dst.add(dst_len + i) = 0;
-                    (dst_len.saturating_add(i).saturating_add(1), false)
+                    *dst.add(dst_len.saturating_add(src_len)) = 0;
+                    let truncated = !src_terminated && src_scan_bound == Some(src_len);
+                    if truncated {
+                        record_truncation(n.saturating_add(1), src_len);
+                    }
+                    (dst_len.saturating_add(src_len).saturating_add(1), truncated)
                 }
             }
         } else {

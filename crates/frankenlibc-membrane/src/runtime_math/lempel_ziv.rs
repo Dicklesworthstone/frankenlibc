@@ -133,7 +133,7 @@ fn lz76_complexity(seq: &[u8], len: usize) -> usize {
         let mut best_match = 0;
         for j in 0..i {
             let mut m = 0;
-            while i + m < len && j + m < i && seq[j + m] == seq[i + m] {
+            while j + m < i && i + m < len && seq[j + m] == seq[i + m] {
                 m += 1;
             }
             if m > best_match {
@@ -141,7 +141,7 @@ fn lz76_complexity(seq: &[u8], len: usize) -> usize {
             }
         }
         complexity += 1;
-        i += if best_match > 0 { best_match } else { 1 };
+        i += best_match + 1;
     }
 
     complexity

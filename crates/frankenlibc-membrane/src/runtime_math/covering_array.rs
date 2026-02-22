@@ -64,10 +64,10 @@ const TOTAL_TUPLES: usize = NUM_PAIRS * (NUM_LEVELS * NUM_LEVELS); // 15 * 4 = 6
 const CALIBRATION_THRESHOLD: u64 = 128;
 
 /// Coverage fraction below which we signal a gap.
-const COVERAGE_GAP_THRESHOLD: f64 = 0.70;
+const COVERAGE_GAP_THRESHOLD: f64 = 0.95;
 
 /// Coverage fraction below which coverage is critically incomplete.
-const CRITICAL_COVERAGE_THRESHOLD: f64 = 0.45;
+const CRITICAL_COVERAGE_THRESHOLD: f64 = 0.80;
 
 /// Matroid rank: max heavy interactions per observation epoch.
 const MATROID_RANK: usize = 3;
@@ -349,9 +349,9 @@ mod tests {
         assert!(
             matches!(
                 state,
-                CoverageState::CoverageGap | CoverageState::CriticalGap | CoverageState::Complete
+                CoverageState::CoverageGap | CoverageState::CriticalGap
             ),
-            "Expected gap or complete, got {state:?}"
+            "Expected gap, got {state:?}"
         );
     }
 }

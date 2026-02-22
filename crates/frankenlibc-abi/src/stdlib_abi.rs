@@ -1346,12 +1346,13 @@ unsafe fn mkostemps_inner(template: *mut c_char, suffixlen: c_int, flags: c_int)
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn reallocarray(ptr: *mut c_void, nmemb: usize, size: usize) -> *mut c_void {
+    let adverse_pointer = !ptr.is_null() && known_remaining(ptr as usize).is_none();
     let (_, decision) = runtime_policy::decide(
         ApiFamily::Stdlib,
         ptr as usize,
         nmemb,
         true,
-        ptr.is_null() || known_remaining(ptr as usize).is_none(),
+        adverse_pointer,
         0,
     );
     if matches!(decision.action, MembraneAction::Deny) {
@@ -1467,18 +1468,20 @@ pub unsafe extern "C" fn clearenv() -> c_int {
     // SAFETY: HOST_ENVIRON is owned by libc; we only read and copy entry names.
     unsafe {
         let mut cursor = HOST_ENVIRON;
-        while !cursor.is_null() && !(*cursor).is_null() {
-            let entry = std::ffi::CStr::from_ptr(*cursor).to_bytes();
-            if let Some(eq_pos) = entry.iter().position(|&b| b == b'=') {
-                let name = &entry[..eq_pos];
-                if frankenlibc_core::stdlib::valid_env_name(name) {
-                    let mut owned = Vec::with_capacity(name.len() + 1);
-                    owned.extend_from_slice(name);
-                    owned.push(0);
-                    names.push(owned);
+        if !cursor.is_null() {
+            while !(*cursor).is_null() {
+                let entry = std::ffi::CStr::from_ptr(*cursor).to_bytes();
+                if let Some(eq_pos) = entry.iter().position(|&b| b == b'=') {
+                    let name = &entry[..eq_pos];
+                    if frankenlibc_core::stdlib::valid_env_name(name) {
+                        let mut owned = Vec::with_capacity(name.len() + 1);
+                        owned.extend_from_slice(name);
+                        owned.push(0);
+                        names.push(owned);
+                    }
                 }
+                cursor = cursor.add(1);
             }
-            cursor = cursor.add(1);
         }
     }
 

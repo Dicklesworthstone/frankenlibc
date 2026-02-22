@@ -91,7 +91,7 @@ pub fn strcpy(dest: &mut [u8], src: &[u8]) -> usize {
 /// index relative to `dest`.
 pub fn stpcpy(dest: &mut [u8], src: &[u8]) -> usize {
     let copied = strcpy(dest, src);
-    copied.saturating_sub(1)
+    copied - 1
 }
 
 /// Copies at most `n` bytes from `src` into `dest`.

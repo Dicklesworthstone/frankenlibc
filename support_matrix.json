@@ -3940,8 +3940,8 @@
       "status": "RawSyscall",
       "module": "unistd_abi",
       "perf_class": "default",
-      "strict_semantics": "SYS_nice — adjust calling process niceness by increment and return updated value",
-      "hardened_semantics": "SYS_nice — same syscall path with deterministic errno propagation",
+      "strict_semantics": "SYS_nice \u2014 adjust calling process niceness by increment and return updated value",
+      "hardened_semantics": "SYS_nice \u2014 same syscall path with deterministic errno propagation",
       "default_stub": false
     },
     {
@@ -4317,7 +4317,7 @@
     },
     {
       "symbol": "pthread_attr_destroy",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Delegates to glibc.",
@@ -4326,7 +4326,7 @@
     },
     {
       "symbol": "pthread_attr_getdetachstate",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Delegates to glibc.",
@@ -4335,7 +4335,7 @@
     },
     {
       "symbol": "pthread_attr_getstacksize",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Delegates to glibc.",
@@ -4344,7 +4344,7 @@
     },
     {
       "symbol": "pthread_attr_init",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Delegates to glibc.",
@@ -4353,7 +4353,7 @@
     },
     {
       "symbol": "pthread_attr_setdetachstate",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Delegates to glibc.",
@@ -4362,7 +4362,7 @@
     },
     {
       "symbol": "pthread_attr_setstacksize",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Delegates to glibc.",
@@ -4371,7 +4371,7 @@
     },
     {
       "symbol": "pthread_barrier_destroy",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "default",
       "strict_semantics": "Passthrough",
@@ -4380,7 +4380,7 @@
     },
     {
       "symbol": "pthread_barrier_init",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "default",
       "strict_semantics": "Passthrough",
@@ -4389,7 +4389,7 @@
     },
     {
       "symbol": "pthread_barrier_wait",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "default",
       "strict_semantics": "Passthrough",
@@ -4461,7 +4461,7 @@
     },
     {
       "symbol": "pthread_condattr_destroy",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Delegates to glibc.",
@@ -4470,7 +4470,7 @@
     },
     {
       "symbol": "pthread_condattr_getclock",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Delegates to glibc.",
@@ -4479,7 +4479,7 @@
     },
     {
       "symbol": "pthread_condattr_init",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Delegates to glibc.",
@@ -4488,7 +4488,7 @@
     },
     {
       "symbol": "pthread_condattr_setclock",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Delegates to glibc.",
@@ -4524,7 +4524,7 @@
     },
     {
       "symbol": "pthread_getattr_np",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "default",
       "strict_semantics": "Passthrough to glibc pthread_getattr_np",
@@ -4533,7 +4533,7 @@
     },
     {
       "symbol": "pthread_getname_np",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "default",
       "strict_semantics": "Passthrough",
@@ -4623,7 +4623,7 @@
     },
     {
       "symbol": "pthread_mutexattr_destroy",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Delegates to glibc.",
@@ -4632,7 +4632,7 @@
     },
     {
       "symbol": "pthread_mutexattr_gettype",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Delegates to glibc.",
@@ -4641,7 +4641,7 @@
     },
     {
       "symbol": "pthread_mutexattr_init",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Delegates to glibc.",
@@ -4650,7 +4650,7 @@
     },
     {
       "symbol": "pthread_mutexattr_settype",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Delegates to glibc.",
@@ -4731,7 +4731,7 @@
     },
     {
       "symbol": "pthread_rwlockattr_destroy",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Delegates to glibc.",
@@ -4740,7 +4740,7 @@
     },
     {
       "symbol": "pthread_rwlockattr_init",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Delegates to glibc.",
@@ -4776,7 +4776,7 @@
     },
     {
       "symbol": "pthread_setname_np",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "default",
       "strict_semantics": "Passthrough",
@@ -4803,7 +4803,7 @@
     },
     {
       "symbol": "pthread_spin_destroy",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "default",
       "strict_semantics": "Passthrough",
@@ -4812,7 +4812,7 @@
     },
     {
       "symbol": "pthread_spin_init",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "default",
       "strict_semantics": "Passthrough",
@@ -4821,7 +4821,7 @@
     },
     {
       "symbol": "pthread_spin_lock",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "default",
       "strict_semantics": "Passthrough",
@@ -4830,7 +4830,7 @@
     },
     {
       "symbol": "pthread_spin_trylock",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "default",
       "strict_semantics": "Passthrough",
@@ -4839,7 +4839,7 @@
     },
     {
       "symbol": "pthread_spin_unlock",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "default",
       "strict_semantics": "Passthrough",
@@ -5348,8 +5348,8 @@
       "status": "RawSyscall",
       "module": "unistd_abi",
       "perf_class": "default",
-      "strict_semantics": "SYS_sched_get_priority_max — query kernel scheduler priority ceiling for a policy",
-      "hardened_semantics": "SYS_sched_get_priority_max — same query path with deterministic errno propagation",
+      "strict_semantics": "SYS_sched_get_priority_max \u2014 query kernel scheduler priority ceiling for a policy",
+      "hardened_semantics": "SYS_sched_get_priority_max \u2014 same query path with deterministic errno propagation",
       "default_stub": false
     },
     {
@@ -5357,8 +5357,8 @@
       "status": "RawSyscall",
       "module": "unistd_abi",
       "perf_class": "default",
-      "strict_semantics": "SYS_sched_get_priority_min — query kernel scheduler priority floor for a policy",
-      "hardened_semantics": "SYS_sched_get_priority_min — same query path with deterministic errno propagation",
+      "strict_semantics": "SYS_sched_get_priority_min \u2014 query kernel scheduler priority floor for a policy",
+      "hardened_semantics": "SYS_sched_get_priority_min \u2014 same query path with deterministic errno propagation",
       "default_stub": false
     },
     {
@@ -5375,8 +5375,8 @@
       "status": "RawSyscall",
       "module": "unistd_abi",
       "perf_class": "default",
-      "strict_semantics": "SYS_sched_getparam — query scheduler parameters for a process",
-      "hardened_semantics": "SYS_sched_getparam — same query path with deterministic errno propagation",
+      "strict_semantics": "SYS_sched_getparam \u2014 query scheduler parameters for a process",
+      "hardened_semantics": "SYS_sched_getparam \u2014 same query path with deterministic errno propagation",
       "default_stub": false
     },
     {
@@ -5384,8 +5384,8 @@
       "status": "RawSyscall",
       "module": "unistd_abi",
       "perf_class": "default",
-      "strict_semantics": "SYS_sched_getscheduler — query scheduler policy for a process",
-      "hardened_semantics": "SYS_sched_getscheduler — same query path with deterministic errno propagation",
+      "strict_semantics": "SYS_sched_getscheduler \u2014 query scheduler policy for a process",
+      "hardened_semantics": "SYS_sched_getscheduler \u2014 same query path with deterministic errno propagation",
       "default_stub": false
     },
     {
@@ -5393,8 +5393,8 @@
       "status": "RawSyscall",
       "module": "unistd_abi",
       "perf_class": "syscall",
-      "strict_semantics": "SYS_sched_rr_get_interval — query round-robin timeslice interval",
-      "hardened_semantics": "SYS_sched_rr_get_interval — same query path with deterministic errno propagation",
+      "strict_semantics": "SYS_sched_rr_get_interval \u2014 query round-robin timeslice interval",
+      "hardened_semantics": "SYS_sched_rr_get_interval \u2014 same query path with deterministic errno propagation",
       "default_stub": false
     },
     {
@@ -5411,8 +5411,8 @@
       "status": "RawSyscall",
       "module": "unistd_abi",
       "perf_class": "default",
-      "strict_semantics": "SYS_sched_setparam — set scheduler parameters for a process",
-      "hardened_semantics": "SYS_sched_setparam — same syscall path with deterministic errno propagation",
+      "strict_semantics": "SYS_sched_setparam \u2014 set scheduler parameters for a process",
+      "hardened_semantics": "SYS_sched_setparam \u2014 same syscall path with deterministic errno propagation",
       "default_stub": false
     },
     {
@@ -5420,8 +5420,8 @@
       "status": "RawSyscall",
       "module": "unistd_abi",
       "perf_class": "default",
-      "strict_semantics": "SYS_sched_setscheduler — set scheduler policy/parameters for a process",
-      "hardened_semantics": "SYS_sched_setscheduler — same syscall path with deterministic errno propagation",
+      "strict_semantics": "SYS_sched_setscheduler \u2014 set scheduler policy/parameters for a process",
+      "hardened_semantics": "SYS_sched_setscheduler \u2014 same syscall path with deterministic errno propagation",
       "default_stub": false
     },
     {
@@ -5993,7 +5993,7 @@
     },
     {
       "symbol": "sigpending",
-      "status": "GlibcCallThrough",
+      "status": "RawSyscall",
       "module": "signal_abi",
       "perf_class": "default",
       "strict_semantics": "Passthrough to glibc sigpending",
@@ -6047,7 +6047,7 @@
     },
     {
       "symbol": "sigwait",
-      "status": "GlibcCallThrough",
+      "status": "RawSyscall",
       "module": "signal_abi",
       "perf_class": "default",
       "strict_semantics": "Passthrough to glibc sigwait",
@@ -6858,8 +6858,8 @@
       "status": "RawSyscall",
       "module": "unistd_abi",
       "perf_class": "syscall",
-      "strict_semantics": "SYS_timer_create — create POSIX per-process timer using kernel timer id output",
-      "hardened_semantics": "SYS_timer_create — same syscall path with deterministic errno propagation",
+      "strict_semantics": "SYS_timer_create \u2014 create POSIX per-process timer using kernel timer id output",
+      "hardened_semantics": "SYS_timer_create \u2014 same syscall path with deterministic errno propagation",
       "default_stub": false
     },
     {
@@ -6867,8 +6867,8 @@
       "status": "RawSyscall",
       "module": "unistd_abi",
       "perf_class": "syscall",
-      "strict_semantics": "SYS_timer_delete — delete POSIX per-process timer by kernel timer id",
-      "hardened_semantics": "SYS_timer_delete — same syscall path with deterministic errno propagation",
+      "strict_semantics": "SYS_timer_delete \u2014 delete POSIX per-process timer by kernel timer id",
+      "hardened_semantics": "SYS_timer_delete \u2014 same syscall path with deterministic errno propagation",
       "default_stub": false
     },
     {
@@ -6876,8 +6876,8 @@
       "status": "RawSyscall",
       "module": "unistd_abi",
       "perf_class": "syscall",
-      "strict_semantics": "SYS_timer_getoverrun — fetch timer overrun count from kernel timer id",
-      "hardened_semantics": "SYS_timer_getoverrun — same syscall path with deterministic errno propagation",
+      "strict_semantics": "SYS_timer_getoverrun \u2014 fetch timer overrun count from kernel timer id",
+      "hardened_semantics": "SYS_timer_getoverrun \u2014 same syscall path with deterministic errno propagation",
       "default_stub": false
     },
     {
@@ -6885,8 +6885,8 @@
       "status": "RawSyscall",
       "module": "unistd_abi",
       "perf_class": "syscall",
-      "strict_semantics": "SYS_timer_gettime — read timer expiration state into itimerspec",
-      "hardened_semantics": "SYS_timer_gettime — same syscall path with deterministic errno propagation",
+      "strict_semantics": "SYS_timer_gettime \u2014 read timer expiration state into itimerspec",
+      "hardened_semantics": "SYS_timer_gettime \u2014 same syscall path with deterministic errno propagation",
       "default_stub": false
     },
     {
@@ -6894,8 +6894,8 @@
       "status": "RawSyscall",
       "module": "unistd_abi",
       "perf_class": "syscall",
-      "strict_semantics": "SYS_timer_settime — arm/disarm timer using itimerspec payload",
-      "hardened_semantics": "SYS_timer_settime — same syscall path with deterministic errno propagation",
+      "strict_semantics": "SYS_timer_settime \u2014 arm/disarm timer using itimerspec payload",
+      "hardened_semantics": "SYS_timer_settime \u2014 same syscall path with deterministic errno propagation",
       "default_stub": false
     },
     {
@@ -7830,14 +7830,14 @@
     }
   ],
   "summary": {
-    "total_exported": 771,
-    "implemented": 387,
-    "raw_syscall": 205,
-    "glibc_call_through": 179,
+    "total_exported": 929,
+    "implemented": 507,
+    "raw_syscall": 282,
+    "glibc_call_through": 140,
     "stub": 0
   },
-  "implemented": 394,
-  "raw_syscall": 234,
-  "glibc_call_through": 301,
+  "implemented": 507,
+  "raw_syscall": 280,
+  "glibc_call_through": 142,
   "stub": 0
 }

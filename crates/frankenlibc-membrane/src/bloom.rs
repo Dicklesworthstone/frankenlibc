@@ -47,8 +47,8 @@ impl PointerBloomFilter {
         let k = ((m as f64 / n) * ln2).ceil() as u32;
         let k = k.clamp(1, 16); // clamp to reasonable range
 
-        // Round up to whole u64 words
-        let num_words = m.div_ceil(64);
+        // Round up to whole u64 words, and ensure it's a power of 2 for double hashing
+        let num_words = m.div_ceil(64).next_power_of_two();
         let num_bits = num_words * 64;
 
         let bits: Vec<AtomicU64> = (0..num_words).map(|_| AtomicU64::new(0)).collect();

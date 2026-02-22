@@ -53,20 +53,18 @@ where
     F: Fn(&[u8], &[u8]) -> i32,
 {
     let count = buffer.len() / width;
-    let pivot_idx = count - 1; // Use last element as pivot
-
-    // We can't hold reference to pivot while mutating buffer.
-    // We copy pivot to a temporary buffer?
-    // If width is large, allocation is bad.
-    // But we are in core, allocation is available (Vec).
-    let mut pivot = Vec::with_capacity(width);
-    pivot.extend_from_slice(&buffer[pivot_idx * width..(pivot_idx + 1) * width]);
+    let pivot_idx = count - 1;
 
     let mut i = 0;
     for j in 0..pivot_idx {
-        // Compare buffer[j] with pivot
-        let val_j = &buffer[j * width..(j + 1) * width];
-        if compare(val_j, &pivot) <= 0 {
+        let cmp = {
+            let (head, tail) = buffer.split_at(pivot_idx * width);
+            let val_j = &head[j * width..(j + 1) * width];
+            let pivot = &tail[0..width];
+            compare(val_j, pivot)
+        };
+
+        if cmp <= 0 {
             swap_chunks(buffer, i, j, width);
             i += 1;
         }
@@ -79,15 +77,19 @@ fn swap_chunks(buffer: &mut [u8], i: usize, j: usize, width: usize) {
     if i == j {
         return;
     }
-    // Safe swap of non-overlapping chunks
-    let (first, second) = if i < j {
-        let (head, tail) = buffer.split_at_mut(j * width);
-        (&mut head[i * width..(i + 1) * width], &mut tail[0..width])
+    let (head, tail) = if i < j {
+        buffer.split_at_mut(j * width)
     } else {
-        let (head, tail) = buffer.split_at_mut(i * width);
-        (&mut tail[0..width], &mut head[j * width..(j + 1) * width])
+        buffer.split_at_mut(i * width)
     };
-    first.swap_with_slice(second);
+    
+    let first = if i < j {
+        &mut head[i * width..(i + 1) * width]
+    } else {
+        &mut head[j * width..(j + 1) * width]
+    };
+    
+    first.swap_with_slice(&mut tail[0..width]);
 }
 
 /// Generic bsearch implementation.

@@ -343,8 +343,12 @@ impl GrobnerNormalizerController {
         self.max_excess = max_excess;
 
         let violation_frac = f64::from(violations) / NUM_CONSTRAINTS as f64;
-        self.violation_rate =
-            (1.0 - EWMA_ALPHA) * self.violation_rate + EWMA_ALPHA * violation_frac;
+        if self.checks == 1 {
+            self.violation_rate = violation_frac;
+        } else {
+            self.violation_rate =
+                (1.0 - EWMA_ALPHA) * self.violation_rate + EWMA_ALPHA * violation_frac;
+        }
 
         // State transition.
         if self.checks < CALIBRATION_OBS {

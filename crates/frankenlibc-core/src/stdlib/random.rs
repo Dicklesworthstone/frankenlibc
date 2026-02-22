@@ -9,7 +9,7 @@ use std::cell::Cell;
 pub const RAND_MAX: i32 = 0x7FFF_FFFF;
 
 thread_local! {
-    static SEED: Cell<u64> = const { Cell::new(1) };
+    static SEED: Cell<u32> = const { Cell::new(1) };
 }
 
 /// Returns a pseudo-random integer in [0, RAND_MAX].
@@ -23,20 +23,20 @@ pub fn rand() -> i32 {
 
 /// Seeds the random number generator.
 pub fn srand(seed: u32) {
-    SEED.with(|s| s.set(seed as u64));
+    SEED.with(|s| s.set(seed));
 }
 
 /// Reentrant variant: uses `*seedp` as state.
 pub fn rand_r(seed: &mut u32) -> i32 {
-    let next = lcg_next(*seed as u64);
-    *seed = next as u32;
+    let next = lcg_next(*seed);
+    *seed = next;
     (next >> 1) as i32 & RAND_MAX
 }
 
-/// glibc TYPE_0 LCG: next = seed * 1103515245 + 12345
+/// glibc TYPE_0 LCG: next = (seed * 1103515245 + 12345)
 #[inline]
-fn lcg_next(seed: u64) -> u64 {
-    seed.wrapping_mul(1_103_515_245).wrapping_add(12345) & 0xFFFF_FFFF
+fn lcg_next(seed: u32) -> u32 {
+    seed.wrapping_mul(1_103_515_245).wrapping_add(12345)
 }
 
 #[cfg(test)]

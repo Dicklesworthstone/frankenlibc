@@ -266,7 +266,7 @@ impl PomdpRepairController {
         let optimal_cost = self.compute_optimal_value();
 
         // Compute observed cost (cost of the action actually taken).
-        let observed_cost = self.compute_expected_cost(action_idx);
+        let observed_cost = self.compute_q_value(action_idx);
 
         // Optimality gap: (observed_cost - optimal_cost) / optimal_cost.
         // When observed matches optimal, gap ≈ 0. When observed is worse, gap > 0.
@@ -339,32 +339,36 @@ impl PomdpRepairController {
         likelihood
     }
 
-    /// One-step Bellman lookahead: min_a Σ_s C(s,a) b(s) + γ Σ_s' V_approx(s')
+    /// One-step Bellman lookahead Q-value for a specific action: C(b,a) + γ Σ_s' P(s'|b,a) V_approx(s')
+    fn compute_q_value(&self, action: usize) -> f64 {
+        let immediate = self.compute_expected_cost(action);
+        let trans_a = &TRANSITIONS[action];
+
+        // Approximate future cost via steady-state value estimate.
+        let mut future_cost = 0.0;
+        for (s_prime, cost_row) in COSTS.iter().enumerate() {
+            let mut reach_prob = 0.0;
+            for (s, &b) in self.belief.iter().enumerate() {
+                reach_prob += trans_a[s][s_prime] * b;
+            }
+            // Approximate future value: cost of best action in s_prime.
+            let min_future = cost_row.iter().copied().fold(f64::MAX, f64::min);
+            future_cost += reach_prob * min_future;
+        }
+
+        immediate + GAMMA * future_cost
+    }
+
+    /// One-step Bellman lookahead: min_a Q(b, a)
     /// Returns the minimum expected cost (lower is better).
     fn compute_optimal_value(&self) -> f64 {
         let mut best_cost = f64::MAX;
-
-        for (a, trans_a) in TRANSITIONS.iter().enumerate() {
-            let immediate = self.compute_expected_cost(a);
-
-            // Approximate future cost via steady-state value estimate.
-            let mut future_cost = 0.0;
-            for (s_prime, cost_row) in COSTS.iter().enumerate() {
-                let mut reach_prob = 0.0;
-                for (s, &b) in self.belief.iter().enumerate() {
-                    reach_prob += trans_a[s][s_prime] * b;
-                }
-                // Approximate future value: cost of best action in s_prime.
-                let min_future = cost_row.iter().copied().fold(f64::MAX, f64::min);
-                future_cost += reach_prob * min_future;
-            }
-
-            let total = immediate + GAMMA * future_cost;
+        for a in 0..NUM_ACTIONS {
+            let total = self.compute_q_value(a);
             if total < best_cost {
                 best_cost = total;
             }
         }
-
         best_cost
     }
 
