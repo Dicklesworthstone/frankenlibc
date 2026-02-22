@@ -66,6 +66,7 @@ pub unsafe extern "C" fn ntohl(netlong: u32) -> u32 {
 pub unsafe extern "C" fn inet_pton(af: c_int, src: *const c_char, dst: *mut c_void) -> c_int {
     let (_, decision) = runtime_policy::decide(ApiFamily::Inet, src as usize, 0, false, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EAFNOSUPPORT) };
         runtime_policy::observe(ApiFamily::Inet, decision.profile, 5, true);
         return -1;
     }
@@ -111,6 +112,7 @@ pub unsafe extern "C" fn inet_ntop(
 ) -> *const c_char {
     let (_, decision) = runtime_policy::decide(ApiFamily::Inet, src as usize, 0, false, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EAFNOSUPPORT) };
         runtime_policy::observe(ApiFamily::Inet, decision.profile, 5, true);
         return std::ptr::null();
     }

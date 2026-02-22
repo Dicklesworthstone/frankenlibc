@@ -27,6 +27,7 @@ unsafe fn set_abi_errno(val: c_int) {
 pub unsafe extern "C" fn tcgetattr(fd: c_int, termios_p: *mut libc::termios) -> c_int {
     let (_, decision) = runtime_policy::decide(ApiFamily::Termios, fd as usize, 0, false, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
         runtime_policy::observe(ApiFamily::Termios, decision.profile, 5, true);
         return -1;
     }
@@ -63,6 +64,7 @@ pub unsafe extern "C" fn tcsetattr(
     let (mode, decision) =
         runtime_policy::decide(ApiFamily::Termios, fd as usize, 0, true, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
         runtime_policy::observe(ApiFamily::Termios, decision.profile, 5, true);
         return -1;
     }
@@ -176,6 +178,7 @@ pub unsafe extern "C" fn cfsetospeed(termios_p: *mut libc::termios, speed: u32) 
 pub unsafe extern "C" fn tcdrain(fd: c_int) -> c_int {
     let (_, decision) = runtime_policy::decide(ApiFamily::Termios, fd as usize, 0, true, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
         runtime_policy::observe(ApiFamily::Termios, decision.profile, 5, true);
         return -1;
     }
@@ -199,6 +202,7 @@ pub unsafe extern "C" fn tcflush(fd: c_int, queue_selector: c_int) -> c_int {
     let (mode, decision) =
         runtime_policy::decide(ApiFamily::Termios, fd as usize, 0, true, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
         runtime_policy::observe(ApiFamily::Termios, decision.profile, 5, true);
         return -1;
     }
@@ -235,6 +239,7 @@ pub unsafe extern "C" fn tcflow(fd: c_int, action: c_int) -> c_int {
     let (mode, decision) =
         runtime_policy::decide(ApiFamily::Termios, fd as usize, 0, true, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
         runtime_policy::observe(ApiFamily::Termios, decision.profile, 5, true);
         return -1;
     }
@@ -268,6 +273,7 @@ pub unsafe extern "C" fn tcflow(fd: c_int, action: c_int) -> c_int {
 pub unsafe extern "C" fn tcsendbreak(fd: c_int, duration: c_int) -> c_int {
     let (_, decision) = runtime_policy::decide(ApiFamily::Termios, fd as usize, 0, false, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
         runtime_policy::observe(ApiFamily::Termios, decision.profile, 5, true);
         return -1;
     }

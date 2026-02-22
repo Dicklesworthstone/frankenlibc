@@ -67,6 +67,7 @@ pub unsafe extern "C" fn socket(domain: c_int, sock_type: c_int, protocol: c_int
     let (mode, decision) =
         runtime_policy::decide(ApiFamily::Socket, domain as usize, 0, false, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EACCES) };
         runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
         return -1;
     }
@@ -112,6 +113,7 @@ pub unsafe extern "C" fn bind(sockfd: c_int, addr: *const libc::sockaddr, addrle
         0,
     );
     if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EACCES) };
         runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
         return -1;
     }
@@ -137,6 +139,7 @@ pub unsafe extern "C" fn listen(sockfd: c_int, backlog: c_int) -> c_int {
     let (_, decision) =
         runtime_policy::decide(ApiFamily::Socket, sockfd as usize, 0, false, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EACCES) };
         runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
         return -1;
     }
@@ -161,6 +164,7 @@ pub unsafe extern "C" fn accept(
     let (_, decision) =
         runtime_policy::decide(ApiFamily::Socket, sockfd as usize, 0, true, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EACCES) };
         runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
         return -1;
     }
@@ -190,6 +194,7 @@ pub unsafe extern "C" fn connect(
         0,
     );
     if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EACCES) };
         runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
         return -1;
     }
@@ -225,6 +230,7 @@ pub unsafe extern "C" fn send(
     let (_, decision) =
         runtime_policy::decide(ApiFamily::Socket, buf as usize, len, false, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EACCES) };
         runtime_policy::observe(
             ApiFamily::Socket,
             decision.profile,
@@ -274,6 +280,7 @@ pub unsafe extern "C" fn recv(sockfd: c_int, buf: *mut c_void, len: usize, flags
 
     let (_, decision) = runtime_policy::decide(ApiFamily::Socket, buf as usize, len, true, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EACCES) };
         runtime_policy::observe(
             ApiFamily::Socket,
             decision.profile,
@@ -326,6 +333,7 @@ pub unsafe extern "C" fn sendto(
     let (_, decision) =
         runtime_policy::decide(ApiFamily::Socket, buf as usize, len, false, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EACCES) };
         runtime_policy::observe(
             ApiFamily::Socket,
             decision.profile,
@@ -377,6 +385,7 @@ pub unsafe extern "C" fn recvfrom(
 ) -> isize {
     let (_, decision) = runtime_policy::decide(ApiFamily::Socket, buf as usize, len, true, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EACCES) };
         runtime_policy::observe(
             ApiFamily::Socket,
             decision.profile,
@@ -427,6 +436,7 @@ pub unsafe extern "C" fn shutdown(sockfd: c_int, how: c_int) -> c_int {
     let (mode, decision) =
         runtime_policy::decide(ApiFamily::Socket, sockfd as usize, 0, true, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EACCES) };
         runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
         return -1;
     }
@@ -470,6 +480,7 @@ pub unsafe extern "C" fn setsockopt(
         0,
     );
     if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EACCES) };
         runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
         return -1;
     }
@@ -504,6 +515,7 @@ pub unsafe extern "C" fn getsockopt(
     let (_, decision) =
         runtime_policy::decide(ApiFamily::Socket, sockfd as usize, 0, false, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EACCES) };
         runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
         return -1;
     }
@@ -536,6 +548,7 @@ pub unsafe extern "C" fn getpeername(
     let (_, decision) =
         runtime_policy::decide(ApiFamily::Socket, sockfd as usize, 0, false, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EACCES) };
         runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
         return -1;
     }
@@ -560,6 +573,7 @@ pub unsafe extern "C" fn getsockname(
     let (_, decision) =
         runtime_policy::decide(ApiFamily::Socket, sockfd as usize, 0, false, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EACCES) };
         runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
         return -1;
     }
@@ -584,6 +598,7 @@ pub unsafe extern "C" fn socketpair(
 ) -> c_int {
     let (mode, decision) = runtime_policy::decide(ApiFamily::Socket, sv as usize, 0, true, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EACCES) };
         runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
         return -1;
     }
@@ -628,6 +643,7 @@ pub unsafe extern "C" fn socketpair(
 pub unsafe extern "C" fn sendmsg(sockfd: c_int, msg: *const libc::msghdr, flags: c_int) -> isize {
     let (_, decision) = runtime_policy::decide(ApiFamily::Socket, msg as usize, 0, false, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EACCES) };
         runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
         return -1;
     }

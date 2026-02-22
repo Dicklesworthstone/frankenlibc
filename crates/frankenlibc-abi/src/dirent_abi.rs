@@ -245,6 +245,7 @@ pub unsafe extern "C" fn closedir(dirp: *mut DIR) -> c_int {
     let (mode, decision) =
         runtime_policy::decide(ApiFamily::IoFd, dirp as usize, 0, false, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EBADF) };
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
         return -1;
     }

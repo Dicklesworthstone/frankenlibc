@@ -43,6 +43,7 @@ pub unsafe extern "C" fn getrlimit(resource: c_int, rlim: *mut libc::rlimit) -> 
     let (_mode, decision) =
         runtime_policy::decide(ApiFamily::IoFd, resource as usize, 0, false, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
         return -1;
     }
@@ -77,6 +78,7 @@ pub unsafe extern "C" fn setrlimit(resource: c_int, rlim: *const libc::rlimit) -
     let (mode, decision) =
         runtime_policy::decide(ApiFamily::IoFd, resource as usize, 0, true, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
         return -1;
     }

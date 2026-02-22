@@ -502,6 +502,7 @@ pub unsafe extern "C" fn exit(status: c_int) -> ! {
 pub unsafe extern "C" fn atexit(func: Option<unsafe extern "C" fn()>) -> c_int {
     let (_, decision) = runtime_policy::decide(ApiFamily::Stdlib, 0, 0, false, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(libc::EPERM) };
         runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 10, true);
         return -1;
     }
@@ -1119,6 +1120,7 @@ pub unsafe extern "C" fn strtof(nptr: *const c_char, endptr: *mut *mut c_char) -
 pub unsafe extern "C" fn system(command: *const c_char) -> c_int {
     let (_, decision) = runtime_policy::decide(ApiFamily::Stdlib, 0, 0, false, false, 0);
     if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(libc::EPERM) };
         runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 50, true);
         return -1;
     }
@@ -1216,6 +1218,7 @@ pub unsafe extern "C" fn putenv(string: *mut c_char) -> c_int {
 
     let (_, decision) = runtime_policy::decide(ApiFamily::Stdlib, 0, 0, false, false, 0);
     if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(libc::EPERM) };
         runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 10, true);
         return -1;
     }

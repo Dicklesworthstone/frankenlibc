@@ -25,6 +25,7 @@ unsafe fn set_abi_errno(val: c_int) {
 pub unsafe extern "C" fn dup(oldfd: c_int) -> c_int {
     let (_, decision) = runtime_policy::decide(ApiFamily::IoFd, oldfd as usize, 0, false, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
         return -1;
     }
@@ -56,6 +57,7 @@ pub unsafe extern "C" fn dup(oldfd: c_int) -> c_int {
 pub unsafe extern "C" fn dup2(oldfd: c_int, newfd: c_int) -> c_int {
     let (_, decision) = runtime_policy::decide(ApiFamily::IoFd, oldfd as usize, 0, false, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
         return -1;
     }
@@ -87,6 +89,7 @@ pub unsafe extern "C" fn dup2(oldfd: c_int, newfd: c_int) -> c_int {
 pub unsafe extern "C" fn pipe(pipefd: *mut c_int) -> c_int {
     let (mode, decision) = runtime_policy::decide(ApiFamily::IoFd, 0, 0, true, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
         return -1;
     }
@@ -120,6 +123,7 @@ pub unsafe extern "C" fn pipe(pipefd: *mut c_int) -> c_int {
 pub unsafe extern "C" fn fcntl(fd: c_int, cmd: c_int, arg: libc::c_long) -> c_int {
     let (_, decision) = runtime_policy::decide(ApiFamily::IoFd, fd as usize, 0, false, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
         return -1;
     }
@@ -152,6 +156,7 @@ pub unsafe extern "C" fn fcntl(fd: c_int, cmd: c_int, arg: libc::c_long) -> c_in
 pub unsafe extern "C" fn pipe2(pipefd: *mut c_int, flags: c_int) -> c_int {
     let (_, decision) = runtime_policy::decide(ApiFamily::IoFd, 0, 0, true, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
         return -1;
     }
@@ -180,6 +185,7 @@ pub unsafe extern "C" fn pipe2(pipefd: *mut c_int, flags: c_int) -> c_int {
 pub unsafe extern "C" fn dup3(oldfd: c_int, newfd: c_int, flags: c_int) -> c_int {
     let (_, decision) = runtime_policy::decide(ApiFamily::IoFd, oldfd as usize, 0, false, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
         return -1;
     }
@@ -211,6 +217,7 @@ pub unsafe extern "C" fn dup3(oldfd: c_int, newfd: c_int, flags: c_int) -> c_int
 pub unsafe extern "C" fn ioctl(fd: c_int, request: libc::c_ulong, arg: libc::c_ulong) -> c_int {
     let (_, decision) = runtime_policy::decide(ApiFamily::IoFd, fd as usize, 0, false, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
         return -1;
     }
@@ -241,6 +248,7 @@ pub unsafe extern "C" fn pread(
 ) -> libc::ssize_t {
     let (_, decision) = runtime_policy::decide(ApiFamily::IoFd, buf as usize, count, true, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
         return -1;
     }
@@ -273,6 +281,7 @@ pub unsafe extern "C" fn pwrite(
     let (_, decision) =
         runtime_policy::decide(ApiFamily::IoFd, buf as usize, count, false, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
         return -1;
     }
@@ -303,6 +312,7 @@ pub unsafe extern "C" fn pwrite(
 pub unsafe extern "C" fn readv(fd: c_int, iov: *const libc::iovec, iovcnt: c_int) -> libc::ssize_t {
     let (_, decision) = runtime_policy::decide(ApiFamily::IoFd, fd as usize, 0, true, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
         return -1;
     }
@@ -334,6 +344,7 @@ pub unsafe extern "C" fn writev(
 ) -> libc::ssize_t {
     let (_, decision) = runtime_policy::decide(ApiFamily::IoFd, fd as usize, 0, false, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
         return -1;
     }
@@ -371,6 +382,7 @@ pub unsafe extern "C" fn sendfile(
     let (_, decision) =
         runtime_policy::decide(ApiFamily::IoFd, out_fd as usize, count, true, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
         return -1;
     }
@@ -404,6 +416,7 @@ pub unsafe extern "C" fn copy_file_range(
 ) -> libc::ssize_t {
     let (_, decision) = runtime_policy::decide(ApiFamily::IoFd, fd_in as usize, len, true, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
         return -1;
     }
@@ -453,6 +466,7 @@ pub unsafe extern "C" fn preadv(
         0,
     );
     if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
         return -1;
     }
@@ -482,6 +496,7 @@ pub unsafe extern "C" fn pwritev(
     let (_, decision) =
         runtime_policy::decide(ApiFamily::IoFd, fd as usize, iovcnt as usize, true, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
         return -1;
     }
@@ -518,6 +533,7 @@ pub unsafe extern "C" fn preadv2(
         0,
     );
     if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
         return -1;
     }
@@ -548,6 +564,7 @@ pub unsafe extern "C" fn pwritev2(
     let (_, decision) =
         runtime_policy::decide(ApiFamily::IoFd, fd as usize, iovcnt as usize, true, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
         return -1;
     }
@@ -582,6 +599,7 @@ pub unsafe extern "C" fn splice(
 ) -> libc::ssize_t {
     let (_, decision) = runtime_policy::decide(ApiFamily::IoFd, fd_in as usize, len, true, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
         return -1;
     }
@@ -609,6 +627,7 @@ pub unsafe extern "C" fn tee(
 ) -> libc::ssize_t {
     let (_, decision) = runtime_policy::decide(ApiFamily::IoFd, fd_in as usize, len, true, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
         return -1;
     }
@@ -637,6 +656,7 @@ pub unsafe extern "C" fn vmsplice(
     let (_, decision) =
         runtime_policy::decide(ApiFamily::IoFd, fd as usize, nr_segs, true, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
         return -1;
     }
@@ -663,6 +683,7 @@ pub unsafe extern "C" fn vmsplice(
 pub unsafe extern "C" fn memfd_create(name: *const std::ffi::c_char, flags: c_uint) -> c_int {
     let (_, decision) = runtime_policy::decide(ApiFamily::IoFd, 0, 0, true, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
         return -1;
     }

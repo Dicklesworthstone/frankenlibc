@@ -123,6 +123,10 @@ pub unsafe extern "C" fn dlclose(handle: *mut c_void) -> c_int {
     let (_, decision) =
         runtime_policy::decide(ApiFamily::Loader, handle as usize, 0, false, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
+        unsafe {
+            let p = super::errno_abi::__errno_location();
+            *p = libc::EPERM;
+        }
         set_dlerror(dlfcn_core::ERR_INVALID_HANDLE);
         runtime_policy::observe(ApiFamily::Loader, decision.profile, 5, true);
         return -1;
