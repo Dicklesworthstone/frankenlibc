@@ -50,7 +50,7 @@ impl PrimalDualController {
             let total_cost = self.total_cost_ns.load(Ordering::Relaxed);
             let bad = self.adverse_events.load(Ordering::Relaxed);
             let avg_cost = total_cost / calls.max(1);
-            let adverse_ppm = (bad.saturating_mul(1_000_000) / calls.max(1)) as i64;
+            let adverse_ppm = ((bad as u128 * 1_000_000) / (calls.max(1) as u128)) as i64;
 
             let latency_target_ns = 60_i64;
             let risk_target_ppm = 8_000_i64;
@@ -58,10 +58,12 @@ impl PrimalDualController {
             let latency_err = avg_cost as i64 - latency_target_ns;
             let risk_err = adverse_ppm - risk_target_ppm;
 
-            self.lambda_latency
-                .fetch_add((latency_err / 4).clamp(-64, 64), Ordering::Relaxed);
-            self.lambda_risk
-                .fetch_add((risk_err / 256).clamp(-128, 128), Ordering::Relaxed);
+            let _ = self.lambda_latency.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |x| {
+                Some(x.saturating_add((latency_err / 4).clamp(-64, 64)).clamp(-2_000_000, 2_000_000))
+            });
+            let _ = self.lambda_risk.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |x| {
+                Some(x.saturating_add((risk_err / 256).clamp(-128, 128)).clamp(-2_000_000, 2_000_000))
+            });
         }
     }
 

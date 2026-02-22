@@ -149,9 +149,7 @@ impl TlsValidationCache {
 
     /// Invalidate all entries.
     pub fn invalidate_all(&mut self) {
-        for entry in self.entries.iter_mut() {
-            entry.valid = false;
-        }
+        self.entries.fill(CacheEntry::EMPTY);
     }
 
     /// Get cache hit count.

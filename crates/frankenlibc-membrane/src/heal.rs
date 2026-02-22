@@ -143,6 +143,10 @@ impl HealingPolicy {
         dst_remaining: Option<usize>,
     ) -> HealingAction {
         match dst_remaining {
+            Some(0) => HealingAction::ClampSize {
+                requested: src_len,
+                clamped: 0,
+            },
             Some(remaining) if src_len >= remaining => HealingAction::TruncateWithNull {
                 requested: src_len,
                 truncated: remaining.saturating_sub(1), // leave room for null

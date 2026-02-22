@@ -107,8 +107,8 @@ impl AllocationArena {
     /// Alignment must be a power of 2.
     /// Returns the user-visible pointer (past the fingerprint header).
     pub fn allocate_aligned(&self, user_size: usize, align: usize) -> Option<*mut u8> {
-        // Ensure alignment is at least 16 (for fingerprint) and power of 2
-        let align = align.max(16);
+        // Ensure alignment is at least 32 (>= FINGERPRINT_SIZE=20, power of 2) and power of 2
+        let align = align.max(32);
         if !align.is_power_of_two() {
             return None;
         }
@@ -117,7 +117,7 @@ impl AllocationArena {
         // The fingerprint header sits at `user_base - FINGERPRINT_SIZE`.
         // The raw allocation starts at `raw_base`.
         // We need `user_base >= raw_base + FINGERPRINT_SIZE`.
-        // We choose `offset = align` (since align >= 16 >= FINGERPRINT_SIZE).
+        // We choose `offset = align` (since align >= 32 >= FINGERPRINT_SIZE=20).
         // So `user_base = raw_base + align`.
         // This ensures `user_base` is aligned (since raw_base is aligned)
         // and there is enough space for the header.
@@ -142,7 +142,7 @@ impl AllocationArena {
         let user_base = raw_base + offset;
 
         // Write fingerprint header at `user_base - FINGERPRINT_SIZE`
-        let fp = AllocationFingerprint::compute(user_base, user_size as u32, generation);
+        let fp = AllocationFingerprint::compute(user_base, user_size as u64, generation);
         let fp_bytes = fp.to_bytes();
         // SAFETY: raw_ptr is valid for total_size. Header location is within [raw_base, raw_base + offset).
         unsafe {
@@ -346,7 +346,7 @@ impl AllocationArena {
 
     fn verify_canary_for_slot(&self, slot: &ArenaSlot) -> bool {
         let fp =
-            AllocationFingerprint::compute(slot.user_base, slot.user_size as u32, slot.generation);
+            AllocationFingerprint::compute(slot.user_base, slot.user_size as u64, slot.generation);
         let expected_canary = fp.canary();
         let canary_addr = slot.user_base + slot.user_size;
 

@@ -11,7 +11,7 @@
 //! the full arena.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use parking_lot::RwLock;
 
@@ -27,17 +27,17 @@ pub struct PageOracle {
     l2_maps: RwLock<HashMap<usize, L2Bitmap>>,
 }
 
-/// A 512-byte bitmap covering PAGES_PER_L2 pages.
+/// A bitmap covering PAGES_PER_L2 pages.
 struct L2Bitmap {
-    /// Atomic byte array for lock-free refcounting (one byte per page).
-    counts: Box<[AtomicU8; PAGES_PER_L2]>,
+    /// Atomic array for lock-free refcounting.
+    counts: Box<[AtomicU32; PAGES_PER_L2]>,
 }
 
 impl L2Bitmap {
     fn new() -> Self {
         // Initialize all counts to 0
-        let counts: Vec<AtomicU8> = (0..PAGES_PER_L2).map(|_| AtomicU8::new(0)).collect();
-        let counts_array: Box<[AtomicU8; PAGES_PER_L2]> =
+        let counts: Vec<AtomicU32> = (0..PAGES_PER_L2).map(|_| AtomicU32::new(0)).collect();
+        let counts_array: Box<[AtomicU32; PAGES_PER_L2]> =
             counts.into_boxed_slice().try_into().expect("correct size");
         Self {
             counts: counts_array,
@@ -49,7 +49,7 @@ impl L2Bitmap {
         let _ = self.counts[page_within_chunk].fetch_update(
             Ordering::Relaxed,
             Ordering::Relaxed,
-            |x| Some(if x == 255 { 255 } else { x + 1 }),
+            |x| Some(if x == u32::MAX { u32::MAX } else { x + 1 }),
         );
     }
 
@@ -65,7 +65,7 @@ impl L2Bitmap {
             |x| {
                 match x {
                     0 => Some(0),     // Should not happen if balanced
-                    255 => Some(255), // Saturated, sticky
+                    u32::MAX => Some(u32::MAX), // Saturated, sticky
                     _ => Some(x - 1),
                 }
             },

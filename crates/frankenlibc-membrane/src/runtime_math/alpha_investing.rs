@@ -204,7 +204,7 @@ impl AlphaInvestingController {
         let spend = if self.wealth_milli == 0 {
             0
         } else {
-            (self.wealth_milli * SPEND_FRACTION_MILLI / 1000).max(MIN_SPEND_MILLI)
+            (self.wealth_milli.saturating_mul(SPEND_FRACTION_MILLI) / 1000).max(MIN_SPEND_MILLI)
         };
 
         if spend == 0 {

@@ -206,9 +206,12 @@ impl ConformalRiskController {
         let active = &mut scratch[..self.fill];
         active.sort_unstable_by(|a, b| a.partial_cmp(b).unwrap_or(core::cmp::Ordering::Equal));
 
-        // Quantile index: ceil((1 - alpha) * (fill + 1)) - 1, clamped.
+        // Quantile index: ceil((1 - alpha) * (fill + 1)) - 1.
         let raw_rank = ((1.0 - TARGET_ALPHA) * (self.fill as f64 + 1.0)).ceil() as usize;
-        let idx = raw_rank.saturating_sub(1).min(self.fill - 1);
+        if raw_rank > self.fill {
+            return f64::INFINITY;
+        }
+        let idx = raw_rank.saturating_sub(1);
 
         active[idx]
     }

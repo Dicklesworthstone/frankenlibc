@@ -158,12 +158,22 @@ impl ValidationPipeline {
                     let cached = with_tls_cache(|cache| cache.lookup(addr));
                     if let Some(cv) = cached {
                         MembraneMetrics::inc(&metrics.tls_cache_hits);
+                        let (remaining, state) =
+                            if addr >= cv.user_base && addr < cv.user_base.saturating_add(cv.user_size) {
+                                (
+                                    cv.user_base
+                                        .saturating_add(cv.user_size)
+                                        .saturating_sub(addr),
+                                    cv.state,
+                                )
+                            } else {
+                                (0, crate::lattice::SafetyState::Invalid)
+                            };
                         let abs = PointerAbstraction::validated(
                             addr,
-                            cv.state,
+                            state,
                             cv.user_base,
-                            cv.user_size
-                                .saturating_sub(addr.saturating_sub(cv.user_base)),
+                            remaining,
                             cv.generation,
                         );
                         self.runtime_math.note_check_order_outcome(
@@ -302,7 +312,7 @@ impl ValidationPipeline {
                         }
                         let fp = AllocationFingerprint::from_bytes(&fp_bytes);
                         if fp.generation != s.generation
-                            || fp.size as usize != s.user_size
+                            || fp.size != s.user_size as u64
                             || !fp.verify(s.user_base)
                         {
                             let abs = self.abstraction_from_slot(addr, &s);
@@ -333,7 +343,7 @@ impl ValidationPipeline {
                             elapsed_ns.saturating_add(u64::from(CheckStage::Canary.cost_ns()));
                         let fp = AllocationFingerprint::compute(
                             s.user_base,
-                            s.user_size as u32,
+                            s.user_size as u64,
                             s.generation,
                         );
                         let expected_canary = fp.canary();
@@ -440,7 +450,7 @@ impl ValidationPipeline {
             }
             let fp = AllocationFingerprint::from_bytes(&fp_bytes);
             if fp.generation != slot.generation
-                || fp.size as usize != slot.user_size
+                || fp.size != slot.user_size as u64
                 || !fp.verify(slot.user_base)
             {
                 let abs = self.abstraction_from_slot(addr, &slot);
@@ -467,7 +477,7 @@ impl ValidationPipeline {
             elapsed_ns = elapsed_ns.saturating_add(u64::from(CheckStage::Canary.cost_ns()));
             let fp = AllocationFingerprint::compute(
                 slot.user_base,
-                slot.user_size as u32,
+                slot.user_size as u64,
                 slot.generation,
             );
             let expected_canary = fp.canary();
