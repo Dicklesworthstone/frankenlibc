@@ -183,7 +183,7 @@ impl TStructureController {
                 let mut worst: Option<u8> = None;
                 for d in (0..degree).rev() {
                     if self.completed_mask & (1u8 << d) == 0 {
-                        worst = Some(d as u8);
+                        worst = Some(d);
                         break;
                     }
                 }

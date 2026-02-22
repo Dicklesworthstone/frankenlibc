@@ -216,13 +216,12 @@ impl WassersteinDriftMonitor {
         let mut sum = 0.0;
         for i in 0..N {
             let w = self.current[i].wasserstein_1(&self.baseline[i]);
-            self.distances[i] += ALPHA * (w - self.distances[i]);
-            sum += self.distances[i];
+            self.distances[i] = w;
+            sum += w;
         }
 
         // Aggregate: mean Wasserstein distance.
-        let raw_agg = sum / N as f64;
-        self.aggregate_distance += ALPHA * (raw_agg - self.aggregate_distance);
+        self.aggregate_distance = sum / N as f64;
 
         // State classification.
         self.state = if self.count < WARMUP {

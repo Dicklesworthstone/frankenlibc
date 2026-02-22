@@ -296,8 +296,14 @@ impl SpectralGapMonitor {
                 }
 
                 let mean_lam2 = sum_lam2 / N as f64;
-                self.max_second_eigenvalue += alpha * (max_lam2 - self.max_second_eigenvalue);
-                self.mean_second_eigenvalue += alpha * (mean_lam2 - self.mean_second_eigenvalue);
+                if self.count == SAMPLE_INTERVAL {
+                    self.max_second_eigenvalue = max_lam2;
+                    self.mean_second_eigenvalue = mean_lam2;
+                } else {
+                    self.max_second_eigenvalue += alpha * (max_lam2 - self.max_second_eigenvalue);
+                    self.mean_second_eigenvalue +=
+                        alpha * (mean_lam2 - self.mean_second_eigenvalue);
+                }
             }
         }
 

@@ -208,7 +208,7 @@ impl KernelMmdMonitor {
 
         // Combined MMD²: mean embedding + variance correction.
         let raw_mmd_sq = self.mean_mmd_sq + var_shift * 0.5;
-        self.mmd_sq += ALPHA * (raw_mmd_sq - self.mmd_sq);
+        self.mmd_sq = raw_mmd_sq;
 
         // State classification.
         self.state = if self.mmd_sq >= ANOMALOUS_THRESHOLD {

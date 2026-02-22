@@ -564,11 +564,18 @@ impl ValidationPipeline {
     }
 
     fn abstraction_from_slot(&self, addr: usize, slot: &ArenaSlot) -> PointerAbstraction {
-        let remaining = slot
-            .user_base
-            .saturating_add(slot.user_size)
-            .saturating_sub(addr);
-        PointerAbstraction::validated(addr, slot.state, slot.user_base, remaining, slot.generation)
+        let (remaining, state) =
+            if addr >= slot.user_base && addr < slot.user_base.saturating_add(slot.user_size) {
+                (
+                    slot.user_base
+                        .saturating_add(slot.user_size)
+                        .saturating_sub(addr),
+                    slot.state,
+                )
+            } else {
+                (0, crate::lattice::SafetyState::Invalid)
+            };
+        PointerAbstraction::validated(addr, state, slot.user_base, remaining, slot.generation)
     }
 
     fn cache_validation(&self, addr: usize, slot: &ArenaSlot, epoch: u64) {

@@ -53,7 +53,7 @@ pub struct QuarantineEntry {
 struct ArenaShard {
     slots: Vec<ArenaSlot>,
     /// Map from user_base address to slot index.
-    addr_to_slot: std::collections::HashMap<usize, usize>,
+    addr_to_slot: std::collections::BTreeMap<usize, usize>,
     /// Free slot indices for reuse.
     free_list: Vec<usize>,
     /// Quarantine queue for freed allocations.
@@ -66,7 +66,7 @@ impl ArenaShard {
     fn new() -> Self {
         Self {
             slots: Vec::new(),
-            addr_to_slot: std::collections::HashMap::new(),
+            addr_to_slot: std::collections::BTreeMap::new(),
             free_list: Vec::new(),
             quarantine: VecDeque::new(),
             quarantine_bytes: 0,
@@ -263,37 +263,51 @@ impl AllocationArena {
     pub fn lookup(&self, user_ptr: usize) -> Option<ArenaSlot> {
         let exact_shard_idx = self.shard_for(user_ptr);
 
-        {
-            let shard = self.shards[exact_shard_idx].lock();
-            // Try exact match first
-            if let Some(&slot_idx) = shard.addr_to_slot.get(&user_ptr) {
-                return Some(shard.slots[slot_idx]);
-            }
-
-            // Try containing lookup in this shard
-            for slot in &shard.slots {
-                if slot.state.is_live() || slot.state == SafetyState::Quarantined {
-                    let end = slot.user_base.saturating_add(slot.user_size);
-                    if user_ptr >= slot.user_base && user_ptr < end {
-                        return Some(*slot);
-                    }
-                }
-            }
+        if let Some(slot) = self.lookup_in_shard(exact_shard_idx, user_ptr) {
+            return Some(slot);
         }
 
         // Try containing lookup in all other shards since an inner pointer
         // might cross a page boundary and thus hash to a different shard.
-        for (idx, mutex) in self.shards.iter().enumerate() {
+        for idx in 0..NUM_SHARDS {
             if idx == exact_shard_idx {
                 continue;
             }
-            let shard = mutex.lock();
-            for slot in &shard.slots {
-                if slot.state.is_live() || slot.state == SafetyState::Quarantined {
-                    let end = slot.user_base.saturating_add(slot.user_size);
-                    if user_ptr >= slot.user_base && user_ptr < end {
-                        return Some(*slot);
-                    }
+            if let Some(slot) = self.lookup_in_shard(idx, user_ptr) {
+                return Some(slot);
+            }
+        }
+
+        None
+    }
+
+    fn lookup_in_shard(&self, shard_idx: usize, user_ptr: usize) -> Option<ArenaSlot> {
+        let shard = self.shards[shard_idx].lock();
+
+        // Check exact match or inner pointer / canary (user_base <= user_ptr)
+        if let Some((&_base, &slot_idx)) = shard.addr_to_slot.range(..=user_ptr).next_back() {
+            let slot = &shard.slots[slot_idx];
+            if slot.state.is_live() || slot.state == SafetyState::Quarantined {
+                let end = slot
+                    .user_base
+                    .saturating_add(slot.user_size)
+                    .saturating_add(CANARY_SIZE);
+                if user_ptr >= slot.raw_base && user_ptr < end {
+                    return Some(*slot);
+                }
+            }
+        }
+
+        // Check fingerprint header (user_base > user_ptr)
+        if let Some((&_base, &slot_idx)) = shard.addr_to_slot.range(user_ptr..).next() {
+            let slot = &shard.slots[slot_idx];
+            if slot.state.is_live() || slot.state == SafetyState::Quarantined {
+                let end = slot
+                    .user_base
+                    .saturating_add(slot.user_size)
+                    .saturating_add(CANARY_SIZE);
+                if user_ptr >= slot.raw_base && user_ptr < end {
+                    return Some(*slot);
                 }
             }
         }

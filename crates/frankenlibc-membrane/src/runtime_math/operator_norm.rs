@@ -191,26 +191,32 @@ impl OperatorNormMonitor {
         self.current_norm = norm;
 
         // Compute amplification ratio and directional coherence.
-        if self.observations >= 2 && self.prev_norm > MIN_NORM && norm > MIN_NORM {
-            // Spectral radius estimate: ‖deviation_t‖ / ‖deviation_{t-1}‖.
-            let rho = norm / self.prev_norm;
+        if self.observations >= 2 {
+            if self.prev_norm > MIN_NORM && norm > MIN_NORM {
+                // Spectral radius estimate: ‖deviation_t‖ / ‖deviation_{t-1}‖.
+                let rho = norm / self.prev_norm;
 
-            // Directional coherence: cosine similarity between successive deviations.
-            let dot: f64 = deviation
-                .iter()
-                .zip(self.prev_deviation.iter())
-                .map(|(&d, &pd)| d * pd)
-                .sum();
-            let coherence = (dot / (norm * self.prev_norm)).clamp(-1.0, 1.0).abs();
+                // Directional coherence: cosine similarity between successive deviations.
+                let dot: f64 = deviation
+                    .iter()
+                    .zip(self.prev_deviation.iter())
+                    .map(|(&d, &pd)| d * pd)
+                    .sum();
+                let coherence = (dot / (norm * self.prev_norm)).clamp(-1.0, 1.0).abs();
 
-            // Weight the spectral radius by directional coherence.
-            // High coherence → the amplification is in a consistent direction
-            // (true spectral behavior). Low coherence → random fluctuation.
-            let weighted_rho = rho * coherence + (1.0 - coherence) * 1.0;
+                // Weight the spectral radius by directional coherence.
+                // High coherence → the amplification is in a consistent direction
+                // (true spectral behavior). Low coherence → random fluctuation.
+                let weighted_rho = rho * coherence + (1.0 - coherence) * 1.0;
 
-            // EWMA update.
-            self.smoothed_rho += EWMA_ALPHA * (weighted_rho - self.smoothed_rho);
-            self.smoothed_coherence += EWMA_ALPHA * (coherence - self.smoothed_coherence);
+                // EWMA update.
+                self.smoothed_rho += EWMA_ALPHA * (weighted_rho - self.smoothed_rho);
+                self.smoothed_coherence += EWMA_ALPHA * (coherence - self.smoothed_coherence);
+            } else {
+                // Deviation is vanishingly small — strongly contractive.
+                self.smoothed_rho += EWMA_ALPHA * (0.0 - self.smoothed_rho);
+                self.smoothed_coherence += EWMA_ALPHA * (0.0 - self.smoothed_coherence);
+            }
         } else if self.observations == 1 {
             self.smoothed_rho = 0.5;
             self.smoothed_coherence = 0.0;

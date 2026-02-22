@@ -309,8 +309,8 @@ impl TransferEntropyMonitor {
                 sum_te / self.pairs.len() as f64
             };
 
-            self.max_te += alpha * (max_te - self.max_te);
-            self.mean_te += alpha * (mean_te - self.mean_te);
+            self.max_te = max_te;
+            self.mean_te = mean_te;
         }
 
         // State classification.

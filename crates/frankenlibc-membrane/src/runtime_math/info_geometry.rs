@@ -217,13 +217,12 @@ impl InfoGeometryMonitor {
         let mut sum_sq = 0.0;
         for i in 0..N {
             let d = self.current[i].fisher_rao_distance(&self.baseline[i]);
-            self.distances[i] += ALPHA * (d - self.distances[i]);
-            sum_sq += self.distances[i] * self.distances[i];
+            self.distances[i] = d;
+            sum_sq += d * d;
         }
 
         // Aggregate geodesic distance on product manifold.
-        let raw_agg = sum_sq.sqrt();
-        self.aggregate_distance += ALPHA * (raw_agg - self.aggregate_distance);
+        self.aggregate_distance = sum_sq.sqrt();
 
         // State classification.
         self.state = if self.count < WARMUP {

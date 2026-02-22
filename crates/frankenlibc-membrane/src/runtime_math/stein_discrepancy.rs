@@ -232,12 +232,12 @@ impl SteinDiscrepancyMonitor {
         for i in 0..N {
             let kl_i = self.reference[i].kl_from(&self.current[i]);
             self.kl_per_ctrl[i] = kl_i;
-            self.score_deviation[i] += alpha * (kl_i - self.score_deviation[i]);
+            self.score_deviation[i] = kl_i;
         }
 
         // Total divergence: average per-controller KL.
         let total_kl: f64 = self.kl_per_ctrl.iter().sum::<f64>() / N as f64;
-        self.ksd_sq += alpha * (total_kl - self.ksd_sq);
+        self.ksd_sq = total_kl;
 
         // State classification.
         self.state = if self.count < WARMUP {
