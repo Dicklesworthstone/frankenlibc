@@ -245,28 +245,106 @@ pub unsafe extern "C" fn inet_addr(cp: *const c_char) -> u32 {
 }
 
 // ---------------------------------------------------------------------------
-// Network interface name/index — GlibcCallThrough
+// Network interface name/index — native via ioctl
 // ---------------------------------------------------------------------------
 
-unsafe extern "C" {
-    #[link_name = "if_nametoindex"]
-    fn libc_if_nametoindex(ifname: *const c_char) -> libc::c_uint;
-    #[link_name = "if_indextoname"]
-    fn libc_if_indextoname(ifindex: libc::c_uint, ifname: *mut c_char) -> *mut c_char;
+use std::ffi::CStr;
+use std::os::raw::c_long;
+
+/// Compact ifreq-compatible struct for SIOCGIFINDEX / SIOCGIFNAME ioctls.
+/// Layout: ifr_name[16] + ifr_ifindex(i32) + padding.
+#[repr(C)]
+struct IfreqCompat {
+    ifr_name: [u8; 16],
+    ifr_ifindex: i32,
+    _pad: [u8; 20],
 }
 
+/// POSIX `if_nametoindex` — map interface name to index via ioctl.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn if_nametoindex(ifname: *const c_char) -> libc::c_uint {
-    unsafe { libc_if_nametoindex(ifname) }
+    if ifname.is_null() {
+        return 0;
+    }
+    let sock = unsafe {
+        libc::syscall(
+            libc::SYS_socket as c_long,
+            libc::AF_INET,
+            libc::SOCK_DGRAM | libc::SOCK_CLOEXEC,
+            0,
+        ) as c_int
+    };
+    if sock < 0 {
+        return 0;
+    }
+
+    let mut ifr: IfreqCompat = unsafe { std::mem::zeroed() };
+    let name = unsafe { CStr::from_ptr(ifname) };
+    let name_bytes = name.to_bytes();
+    let copy_len = name_bytes.len().min(15);
+    ifr.ifr_name[..copy_len].copy_from_slice(&name_bytes[..copy_len]);
+
+    let rc = unsafe {
+        libc::syscall(
+            libc::SYS_ioctl as c_long,
+            sock,
+            libc::SIOCGIFINDEX as c_long,
+            &ifr,
+        ) as c_int
+    };
+    unsafe { libc::syscall(libc::SYS_close as c_long, sock) };
+
+    if rc < 0 {
+        0
+    } else {
+        ifr.ifr_ifindex as libc::c_uint
+    }
 }
 
+/// POSIX `if_indextoname` — map interface index to name via ioctl.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn if_indextoname(ifindex: libc::c_uint, ifname: *mut c_char) -> *mut c_char {
-    unsafe { libc_if_indextoname(ifindex, ifname) }
+    if ifname.is_null() {
+        return std::ptr::null_mut();
+    }
+    let sock = unsafe {
+        libc::syscall(
+            libc::SYS_socket as c_long,
+            libc::AF_INET,
+            libc::SOCK_DGRAM | libc::SOCK_CLOEXEC,
+            0,
+        ) as c_int
+    };
+    if sock < 0 {
+        return std::ptr::null_mut();
+    }
+
+    let mut ifr: IfreqCompat = unsafe { std::mem::zeroed() };
+    ifr.ifr_ifindex = ifindex as i32;
+
+    let rc = unsafe {
+        libc::syscall(
+            libc::SYS_ioctl as c_long,
+            sock,
+            libc::SIOCGIFNAME as c_long,
+            &ifr,
+        ) as c_int
+    };
+    unsafe { libc::syscall(libc::SYS_close as c_long, sock) };
+
+    if rc < 0 {
+        return std::ptr::null_mut();
+    }
+
+    // Copy the name to the caller's buffer (must be >= IFNAMSIZ = 16)
+    unsafe {
+        std::ptr::copy_nonoverlapping(ifr.ifr_name.as_ptr() as *const c_char, ifname, 16);
+    }
+    ifname
 }
 
 // ---------------------------------------------------------------------------
-// if_nameindex / if_freenameindex — GlibcCallThrough
+// if_nameindex / if_freenameindex — GlibcCallThrough (complex enumeration)
 // ---------------------------------------------------------------------------
 
 unsafe extern "C" {
@@ -274,35 +352,6 @@ unsafe extern "C" {
     fn libc_if_nameindex() -> *mut c_void;
     #[link_name = "if_freenameindex"]
     fn libc_if_freenameindex(ptr: *mut c_void);
-    #[link_name = "getservbyname_r"]
-    fn libc_getservbyname_r(
-        name: *const c_char,
-        proto: *const c_char,
-        result_buf: *mut c_void,
-        buf: *mut c_char,
-        buflen: usize,
-        result: *mut *mut c_void,
-    ) -> c_int;
-    #[link_name = "getservbyport_r"]
-    fn libc_getservbyport_r(
-        port: c_int,
-        proto: *const c_char,
-        result_buf: *mut c_void,
-        buf: *mut c_char,
-        buflen: usize,
-        result: *mut *mut c_void,
-    ) -> c_int;
-    #[link_name = "gethostbyaddr_r"]
-    fn libc_gethostbyaddr_r(
-        addr: *const c_void,
-        len: libc::socklen_t,
-        type_: c_int,
-        result_buf: *mut c_void,
-        buf: *mut c_char,
-        buflen: usize,
-        result: *mut *mut c_void,
-        h_errnop: *mut c_int,
-    ) -> c_int;
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -315,6 +364,13 @@ pub unsafe extern "C" fn if_freenameindex(ptr: *mut c_void) {
     unsafe { libc_if_freenameindex(ptr) }
 }
 
+// ---------------------------------------------------------------------------
+// getservbyname_r / getservbyport_r — native /etc/services parsing
+// ---------------------------------------------------------------------------
+
+/// Reentrant `getservbyname_r` — look up service by name in /etc/services.
+///
+/// Writes the result into the caller-provided buffer.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getservbyname_r(
     name: *const c_char,
@@ -324,9 +380,84 @@ pub unsafe extern "C" fn getservbyname_r(
     buflen: usize,
     result: *mut *mut c_void,
 ) -> c_int {
-    unsafe { libc_getservbyname_r(name, proto, result_buf, buf, buflen, result) }
+    if name.is_null() || result_buf.is_null() || buf.is_null() || result.is_null() {
+        if !result.is_null() {
+            unsafe { *result = std::ptr::null_mut() };
+        }
+        return libc::EINVAL;
+    }
+    unsafe { *result = std::ptr::null_mut() };
+
+    let name_cstr = unsafe { CStr::from_ptr(name) };
+    let proto_filter = if proto.is_null() {
+        None
+    } else {
+        Some(unsafe { CStr::from_ptr(proto) }.to_bytes())
+    };
+
+    let content = match std::fs::read("/etc/services") {
+        Ok(c) => c,
+        Err(_) => return libc::ENOENT,
+    };
+
+    // Find the matching service entry
+    let entry = content.split(|&b| b == b'\n').find_map(|line| {
+        let (svc_name, port, svc_proto) = frankenlibc_core::resolv::parse_services_line(line)?;
+        if !svc_name.eq_ignore_ascii_case(name_cstr.to_bytes()) {
+            return None;
+        }
+        if let Some(pf) = proto_filter
+            && !svc_proto.eq_ignore_ascii_case(pf)
+        {
+            return None;
+        }
+        Some((svc_name, port, svc_proto))
+    });
+
+    let (svc_name, port, svc_proto) = match entry {
+        Some(e) => e,
+        None => return libc::ENOENT,
+    };
+
+    // Write name + proto into caller's buffer
+    let name_len = svc_name.len() + 1; // +NUL
+    let proto_len = svc_proto.len() + 1;
+    let aliases_size = std::mem::size_of::<*mut c_char>();
+    let needed = name_len + proto_len + aliases_size;
+    if needed > buflen {
+        return libc::ERANGE;
+    }
+
+    let name_ptr = buf;
+    unsafe {
+        std::ptr::copy_nonoverlapping(svc_name.as_ptr() as *const c_char, name_ptr, svc_name.len());
+        *name_ptr.add(svc_name.len()) = 0;
+    }
+
+    let proto_ptr = unsafe { buf.add(name_len) };
+    unsafe {
+        std::ptr::copy_nonoverlapping(
+            svc_proto.as_ptr() as *const c_char,
+            proto_ptr,
+            svc_proto.len(),
+        );
+        *proto_ptr.add(svc_proto.len()) = 0;
+    }
+
+    let aliases_ptr = unsafe { buf.add(name_len + proto_len) as *mut *mut c_char };
+    unsafe { *aliases_ptr = std::ptr::null_mut() };
+
+    let servent = unsafe { &mut *result_buf.cast::<libc::servent>() };
+    servent.s_name = name_ptr;
+    servent.s_aliases = aliases_ptr;
+    servent.s_port = (port as c_int).to_be();
+    servent.s_proto = proto_ptr;
+
+    unsafe { *result = result_buf };
+    0
 }
 
+/// Reentrant `getservbyport_r` — look up service by port in /etc/services.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getservbyport_r(
     port: c_int,
@@ -336,7 +467,79 @@ pub unsafe extern "C" fn getservbyport_r(
     buflen: usize,
     result: *mut *mut c_void,
 ) -> c_int {
-    unsafe { libc_getservbyport_r(port, proto, result_buf, buf, buflen, result) }
+    if result_buf.is_null() || buf.is_null() || result.is_null() {
+        if !result.is_null() {
+            unsafe { *result = std::ptr::null_mut() };
+        }
+        return libc::EINVAL;
+    }
+    unsafe { *result = std::ptr::null_mut() };
+
+    let port_host = u16::from_be(port as u16);
+    let proto_filter = if proto.is_null() {
+        None
+    } else {
+        Some(unsafe { CStr::from_ptr(proto) }.to_bytes())
+    };
+
+    let content = match std::fs::read("/etc/services") {
+        Ok(c) => c,
+        Err(_) => return libc::ENOENT,
+    };
+
+    let entry = content.split(|&b| b == b'\n').find_map(|line| {
+        let (svc_name, p, svc_proto) = frankenlibc_core::resolv::parse_services_line(line)?;
+        if p != port_host {
+            return None;
+        }
+        if let Some(pf) = proto_filter
+            && !svc_proto.eq_ignore_ascii_case(pf)
+        {
+            return None;
+        }
+        Some((svc_name, p, svc_proto))
+    });
+
+    let (svc_name, _, svc_proto) = match entry {
+        Some(e) => e,
+        None => return libc::ENOENT,
+    };
+
+    let name_len = svc_name.len() + 1;
+    let proto_len = svc_proto.len() + 1;
+    let aliases_size = std::mem::size_of::<*mut c_char>();
+    let needed = name_len + proto_len + aliases_size;
+    if needed > buflen {
+        return libc::ERANGE;
+    }
+
+    let name_ptr = buf;
+    unsafe {
+        std::ptr::copy_nonoverlapping(svc_name.as_ptr() as *const c_char, name_ptr, svc_name.len());
+        *name_ptr.add(svc_name.len()) = 0;
+    }
+
+    let proto_ptr = unsafe { buf.add(name_len) };
+    unsafe {
+        std::ptr::copy_nonoverlapping(
+            svc_proto.as_ptr() as *const c_char,
+            proto_ptr,
+            svc_proto.len(),
+        );
+        *proto_ptr.add(svc_proto.len()) = 0;
+    }
+
+    let aliases_ptr = unsafe { buf.add(name_len + proto_len) as *mut *mut c_char };
+    unsafe { *aliases_ptr = std::ptr::null_mut() };
+
+    let servent = unsafe { &mut *result_buf.cast::<libc::servent>() };
+    servent.s_name = name_ptr;
+    servent.s_aliases = aliases_ptr;
+    servent.s_port = port;
+    servent.s_proto = proto_ptr;
+
+    unsafe { *result = result_buf };
+    0
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -365,5 +568,10 @@ pub unsafe extern "C" fn gethostbyaddr_r(
     result: *mut *mut c_void,
     h_errnop: *mut c_int,
 ) -> c_int {
-    unsafe { libc_gethostbyaddr_r(addr, len, type_, result_buf, buf, buflen, result, h_errnop) }
+    // SAFETY: forwards validated caller arguments to resolver ABI implementation.
+    unsafe {
+        crate::resolv_abi::gethostbyaddr_r_impl(
+            addr, len, type_, result_buf, buf, buflen, result, h_errnop,
+        )
+    }
 }

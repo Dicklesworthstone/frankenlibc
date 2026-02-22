@@ -36,6 +36,7 @@ pub unsafe extern "C" fn signal(signum: c_int, handler: libc::sighandler_t) -> l
     let (_mode, decision) =
         runtime_policy::decide(ApiFamily::Signal, signum as usize, 0, false, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EINVAL) };
         runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, true);
         return sig_err;
     }
@@ -68,6 +69,7 @@ pub unsafe extern "C" fn raise(signum: c_int) -> c_int {
     let (_, decision) =
         runtime_policy::decide(ApiFamily::Signal, signum as usize, 0, false, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EINVAL) };
         runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, true);
         return -1;
     }
@@ -94,6 +96,7 @@ pub unsafe extern "C" fn kill(pid: libc::pid_t, signum: c_int) -> c_int {
     let (_, decision) =
         runtime_policy::decide(ApiFamily::Signal, signum as usize, 0, false, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
         runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, true);
         return -1;
     }
@@ -107,7 +110,7 @@ pub unsafe extern "C" fn kill(pid: libc::pid_t, signum: c_int) -> c_int {
     let rc = unsafe { libc::syscall(libc::SYS_kill, pid, signum) as c_int };
     let adverse = rc != 0;
     if adverse {
-        unsafe { set_abi_errno(errno::EINVAL) };
+        unsafe { set_abi_errno(last_host_errno(errno::ESRCH)) };
     }
     runtime_policy::observe(ApiFamily::Signal, decision.profile, 10, adverse);
     rc
@@ -125,6 +128,7 @@ pub unsafe extern "C" fn killpg(pgrp: libc::pid_t, signum: c_int) -> c_int {
     let (_, decision) =
         runtime_policy::decide(ApiFamily::Signal, signum as usize, 0, false, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
         runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, true);
         return -1;
     }
@@ -164,6 +168,7 @@ pub unsafe extern "C" fn sigprocmask(
 ) -> c_int {
     let (_, decision) = runtime_policy::decide(ApiFamily::Signal, how as usize, 0, false, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EINVAL) };
         runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, true);
         return -1;
     }
@@ -304,6 +309,7 @@ pub unsafe extern "C" fn sigismember(set: *const libc::sigset_t, signum: c_int) 
 pub unsafe extern "C" fn pause() -> c_int {
     let (_, decision) = runtime_policy::decide(ApiFamily::Signal, 0, 0, false, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
         runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, true);
         return -1;
     }
@@ -323,6 +329,7 @@ pub unsafe extern "C" fn pause() -> c_int {
 pub unsafe extern "C" fn sigsuspend(mask: *const libc::sigset_t) -> c_int {
     let (_, decision) = runtime_policy::decide(ApiFamily::Signal, mask as usize, 0, false, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
         runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, true);
         return -1;
     }
@@ -352,6 +359,7 @@ pub unsafe extern "C" fn sigaltstack(
 ) -> c_int {
     let (_, decision) = runtime_policy::decide(ApiFamily::Signal, ss as usize, 0, false, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
         runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, true);
         return -1;
     }
@@ -378,6 +386,7 @@ pub unsafe extern "C" fn sigaction(
     let (_mode, decision) =
         runtime_policy::decide(ApiFamily::Signal, signum as usize, 0, false, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EINVAL) };
         runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, true);
         return -1;
     }
@@ -421,9 +430,7 @@ pub unsafe extern "C" fn sigpending(set: *mut libc::sigset_t) -> c_int {
     }
     let kernel_sigset_size = std::mem::size_of::<libc::c_ulong>();
     // SAFETY: rt_sigpending writes to the provided set pointer.
-    let rc = unsafe {
-        libc::syscall(libc::SYS_rt_sigpending, set, kernel_sigset_size) as c_int
-    };
+    let rc = unsafe { libc::syscall(libc::SYS_rt_sigpending, set, kernel_sigset_size) as c_int };
     if rc != 0 {
         unsafe { set_abi_errno(last_host_errno(errno::EFAULT)) };
     }

@@ -732,20 +732,94 @@ pub unsafe extern "C" fn gai_strerror(errcode: c_int) -> *const c_char {
 }
 
 // ---------------------------------------------------------------------------
-// Legacy network database — GlibcCallThrough (deprecated but widely used)
+// Legacy network database — native implementations
 // ---------------------------------------------------------------------------
 
-unsafe extern "C" {
-    #[link_name = "gethostbyaddr"]
-    fn libc_gethostbyaddr(addr: *const c_void, len: libc::socklen_t, af: c_int) -> *mut c_void;
-    #[link_name = "getservbyname"]
-    fn libc_getservbyname(name: *const c_char, proto: *const c_char) -> *mut c_void;
-    #[link_name = "getservbyport"]
-    fn libc_getservbyport(port: c_int, proto: *const c_char) -> *mut c_void;
-    #[link_name = "getprotobyname"]
-    fn libc_getprotobyname(name: *const c_char) -> *mut c_void;
-    #[link_name = "getprotobynumber"]
-    fn libc_getprotobynumber(proto: c_int) -> *mut c_void;
+/// Thread-local storage for servent results.
+struct ServentTlsStorage {
+    name: [c_char; 256],
+    proto: [c_char; 32],
+    aliases: [*mut c_char; 1],
+    servent: libc::servent,
+}
+
+impl ServentTlsStorage {
+    fn new() -> Self {
+        Self {
+            name: [0; 256],
+            proto: [0; 32],
+            aliases: [ptr::null_mut(); 1],
+            servent: libc::servent {
+                s_name: ptr::null_mut(),
+                s_aliases: ptr::null_mut(),
+                s_port: 0,
+                s_proto: ptr::null_mut(),
+            },
+        }
+    }
+}
+
+thread_local! {
+    static SERVENT_TLS: RefCell<ServentTlsStorage> =
+        RefCell::new(ServentTlsStorage::new());
+}
+
+/// Thread-local storage for protoent results.
+struct ProtoentTlsStorage {
+    name: [c_char; 256],
+    aliases: [*mut c_char; 1],
+    protoent: libc::protoent,
+}
+
+impl ProtoentTlsStorage {
+    fn new() -> Self {
+        Self {
+            name: [0; 256],
+            aliases: [ptr::null_mut(); 1],
+            protoent: libc::protoent {
+                p_name: ptr::null_mut(),
+                p_aliases: ptr::null_mut(),
+                p_proto: 0,
+            },
+        }
+    }
+}
+
+thread_local! {
+    static PROTOENT_TLS: RefCell<ProtoentTlsStorage> =
+        RefCell::new(ProtoentTlsStorage::new());
+}
+
+/// Parse a single line from /etc/protocols.
+///
+/// Format: `<protocol-name> <number> [<alias>...]`
+fn parse_protocols_line(line: &[u8]) -> Option<(Vec<u8>, i32)> {
+    let line = if let Some(pos) = line.iter().position(|&b| b == b'#') {
+        &line[..pos]
+    } else {
+        line
+    };
+
+    let mut fields = line
+        .split(|&b| b == b' ' || b == b'\t')
+        .filter(|f| !f.is_empty());
+
+    let name = fields.next()?;
+    let number_str = core::str::from_utf8(fields.next()?).ok()?;
+    let number: i32 = number_str.parse().ok()?;
+
+    Some((name.to_vec(), number))
+}
+
+/// Copy a byte slice into a c_char buffer with NUL termination.
+fn copy_to_cchar_buf(dst: &mut [c_char], src: &[u8]) {
+    let copy_len = src.len().min(dst.len().saturating_sub(1));
+    for (i, &b) in src[..copy_len].iter().enumerate() {
+        dst[i] = b as c_char;
+    }
+    if copy_len < dst.len() {
+        dst[copy_len] = 0;
+    }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -832,31 +906,275 @@ pub(crate) unsafe fn gethostbyname_r_impl(
     }
 }
 
+/// Reentrant reverse lookup implementation for `gethostbyaddr_r`.
+#[allow(clippy::too_many_arguments)]
+pub(crate) unsafe fn gethostbyaddr_r_impl(
+    addr: *const c_void,
+    len: libc::socklen_t,
+    af: c_int,
+    result_buf: *mut c_void,
+    buf: *mut c_char,
+    buflen: usize,
+    result: *mut *mut c_void,
+    h_errnop: *mut c_int,
+) -> c_int {
+    if !result.is_null() {
+        unsafe { *result = ptr::null_mut() };
+    }
+
+    if addr.is_null() || af != libc::AF_INET || (len as usize) < 4 {
+        unsafe { set_h_errnop(h_errnop, NO_RECOVERY_ERRNO) };
+        return libc::EINVAL;
+    }
+
+    let octets = unsafe { std::slice::from_raw_parts(addr as *const u8, 4) };
+    let ip = std::net::Ipv4Addr::new(octets[0], octets[1], octets[2], octets[3]);
+    let ip_str = ip.to_string();
+
+    let content = match std::fs::read("/etc/hosts") {
+        Ok(c) => c,
+        Err(_) => {
+            unsafe { set_h_errnop(h_errnop, HOST_NOT_FOUND_ERRNO) };
+            return libc::ENOENT;
+        }
+    };
+
+    let hostnames = frankenlibc_core::resolv::reverse_lookup_hosts(&content, ip_str.as_bytes());
+    if hostnames.is_empty() {
+        unsafe { set_h_errnop(h_errnop, HOST_NOT_FOUND_ERRNO) };
+        return libc::ENOENT;
+    }
+
+    match unsafe { write_reentrant_hostent(&hostnames[0], ip, result_buf, buf, buflen, result) } {
+        Ok(()) => {
+            unsafe { set_h_errnop(h_errnop, 0) };
+            0
+        }
+        Err(code) => {
+            unsafe { set_h_errnop(h_errnop, NO_RECOVERY_ERRNO) };
+            code
+        }
+    }
+}
+
+/// POSIX `gethostbyaddr` — reverse DNS lookup by address.
+///
+/// Uses /etc/hosts for reverse lookup (no DNS queries).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn gethostbyaddr(
     addr: *const c_void,
     len: libc::socklen_t,
     af: c_int,
 ) -> *mut c_void {
-    unsafe { libc_gethostbyaddr(addr, len, af) }
+    if addr.is_null() {
+        return ptr::null_mut();
+    }
+
+    // Only support AF_INET for reverse lookup
+    if af != libc::AF_INET || (len as usize) < 4 {
+        return ptr::null_mut();
+    }
+
+    // Read the IPv4 address
+    let octets = unsafe { std::slice::from_raw_parts(addr as *const u8, 4) };
+    let ip = std::net::Ipv4Addr::new(octets[0], octets[1], octets[2], octets[3]);
+    let ip_str = ip.to_string();
+
+    // Look up in /etc/hosts
+    let content = match std::fs::read("/etc/hosts") {
+        Ok(c) => c,
+        Err(_) => return ptr::null_mut(),
+    };
+
+    let hostnames = frankenlibc_core::resolv::reverse_lookup_hosts(&content, ip_str.as_bytes());
+    if hostnames.is_empty() {
+        return ptr::null_mut();
+    }
+
+    // Populate thread-local hostent storage with the first matching hostname
+    unsafe { populate_tls_hostent(&hostnames[0], ip) }
 }
 
+/// POSIX `getservbyname` — look up a service by name in /etc/services.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getservbyname(name: *const c_char, proto: *const c_char) -> *mut c_void {
-    unsafe { libc_getservbyname(name, proto) }
+    if name.is_null() {
+        return ptr::null_mut();
+    }
+
+    let name_cstr = unsafe { CStr::from_ptr(name) };
+    let proto_filter = if proto.is_null() {
+        None
+    } else {
+        Some(unsafe { CStr::from_ptr(proto) }.to_bytes())
+    };
+
+    let content = match std::fs::read("/etc/services") {
+        Ok(c) => c,
+        Err(_) => return ptr::null_mut(),
+    };
+
+    // Use core parser to find the service
+    let port = match frankenlibc_core::resolv::lookup_service(
+        &content,
+        name_cstr.to_bytes(),
+        proto_filter,
+    ) {
+        Some(p) => p,
+        None => return ptr::null_mut(),
+    };
+
+    // Find the protocol string for this entry
+    let proto_bytes: Vec<u8> = if let Some(pf) = proto_filter {
+        pf.to_vec()
+    } else {
+        // Re-scan to find the actual protocol
+        content
+            .split(|&b| b == b'\n')
+            .find_map(|line| {
+                let (svc_name, svc_port, svc_proto) =
+                    frankenlibc_core::resolv::parse_services_line(line)?;
+                if svc_port == port && svc_name.eq_ignore_ascii_case(name_cstr.to_bytes()) {
+                    Some(svc_proto)
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_else(|| b"tcp".to_vec())
+    };
+
+    SERVENT_TLS.with(|cell| {
+        let mut storage = cell.borrow_mut();
+        copy_to_cchar_buf(&mut storage.name, name_cstr.to_bytes());
+        copy_to_cchar_buf(&mut storage.proto, &proto_bytes);
+        storage.aliases[0] = ptr::null_mut();
+        storage.servent = libc::servent {
+            s_name: storage.name.as_mut_ptr(),
+            s_aliases: storage.aliases.as_mut_ptr(),
+            s_port: (port as c_int).to_be(),
+            s_proto: storage.proto.as_mut_ptr(),
+        };
+        (&mut storage.servent as *mut libc::servent).cast::<c_void>()
+    })
 }
 
+/// POSIX `getservbyport` — look up a service by port number in /etc/services.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getservbyport(port: c_int, proto: *const c_char) -> *mut c_void {
-    unsafe { libc_getservbyport(port, proto) }
+    let port_host = u16::from_be(port as u16);
+
+    let proto_filter = if proto.is_null() {
+        None
+    } else {
+        Some(unsafe { CStr::from_ptr(proto) }.to_bytes())
+    };
+
+    let content = match std::fs::read("/etc/services") {
+        Ok(c) => c,
+        Err(_) => return ptr::null_mut(),
+    };
+
+    // Find the service entry matching this port
+    let (svc_name, svc_proto) = match content.split(|&b| b == b'\n').find_map(|line| {
+        let (name, p, pr) = frankenlibc_core::resolv::parse_services_line(line)?;
+        if p != port_host {
+            return None;
+        }
+        if let Some(pf) = proto_filter
+            && !pr.eq_ignore_ascii_case(pf)
+        {
+            return None;
+        }
+        Some((name, pr))
+    }) {
+        Some(entry) => entry,
+        None => return ptr::null_mut(),
+    };
+
+    SERVENT_TLS.with(|cell| {
+        let mut storage = cell.borrow_mut();
+        copy_to_cchar_buf(&mut storage.name, &svc_name);
+        copy_to_cchar_buf(&mut storage.proto, &svc_proto);
+        storage.aliases[0] = ptr::null_mut();
+        storage.servent = libc::servent {
+            s_name: storage.name.as_mut_ptr(),
+            s_aliases: storage.aliases.as_mut_ptr(),
+            s_port: port,
+            s_proto: storage.proto.as_mut_ptr(),
+        };
+        (&mut storage.servent as *mut libc::servent).cast::<c_void>()
+    })
 }
 
+/// POSIX `getprotobyname` — look up a protocol by name in /etc/protocols.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getprotobyname(name: *const c_char) -> *mut c_void {
-    unsafe { libc_getprotobyname(name) }
+    if name.is_null() {
+        return ptr::null_mut();
+    }
+
+    let name_cstr = unsafe { CStr::from_ptr(name) };
+    let name_bytes = name_cstr.to_bytes();
+
+    let content = match std::fs::read("/etc/protocols") {
+        Ok(c) => c,
+        Err(_) => return ptr::null_mut(),
+    };
+
+    let (proto_name, proto_num) = match content.split(|&b| b == b'\n').find_map(|line| {
+        let (pname, pnum) = parse_protocols_line(line)?;
+        if pname.eq_ignore_ascii_case(name_bytes) {
+            Some((pname, pnum))
+        } else {
+            None
+        }
+    }) {
+        Some(entry) => entry,
+        None => return ptr::null_mut(),
+    };
+
+    PROTOENT_TLS.with(|cell| {
+        let mut storage = cell.borrow_mut();
+        copy_to_cchar_buf(&mut storage.name, &proto_name);
+        storage.aliases[0] = ptr::null_mut();
+        storage.protoent = libc::protoent {
+            p_name: storage.name.as_mut_ptr(),
+            p_aliases: storage.aliases.as_mut_ptr(),
+            p_proto: proto_num,
+        };
+        (&mut storage.protoent as *mut libc::protoent).cast::<c_void>()
+    })
 }
 
+/// POSIX `getprotobynumber` — look up a protocol by number in /etc/protocols.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getprotobynumber(proto: c_int) -> *mut c_void {
-    unsafe { libc_getprotobynumber(proto) }
+    let content = match std::fs::read("/etc/protocols") {
+        Ok(c) => c,
+        Err(_) => return ptr::null_mut(),
+    };
+
+    let (proto_name, proto_num) = match content.split(|&b| b == b'\n').find_map(|line| {
+        let (pname, pnum) = parse_protocols_line(line)?;
+        if pnum == proto {
+            Some((pname, pnum))
+        } else {
+            None
+        }
+    }) {
+        Some(entry) => entry,
+        None => return ptr::null_mut(),
+    };
+
+    PROTOENT_TLS.with(|cell| {
+        let mut storage = cell.borrow_mut();
+        copy_to_cchar_buf(&mut storage.name, &proto_name);
+        storage.aliases[0] = ptr::null_mut();
+        storage.protoent = libc::protoent {
+            p_name: storage.name.as_mut_ptr(),
+            p_aliases: storage.aliases.as_mut_ptr(),
+            p_proto: proto_num,
+        };
+        (&mut storage.protoent as *mut libc::protoent).cast::<c_void>()
+    })
 }

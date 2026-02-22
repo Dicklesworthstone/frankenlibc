@@ -1076,7 +1076,9 @@ pub unsafe extern "C" fn strcmp(s1: *const c_char, s2: *const c_char) -> c_int {
     };
     let cmp_bound = match (lhs_bound, rhs_bound) {
         (Some(a), Some(b)) => Some(a.min(b)),
-        _ => None,
+        (Some(a), None) => Some(a),
+        (None, Some(b)) => Some(b),
+        (None, None) => None,
     };
 
     // SAFETY: strict mode follows libc semantics; hardened mode bounds reads.
@@ -4294,22 +4296,88 @@ pub unsafe extern "C" fn globfree(pglob: *mut c_void) {
 }
 
 // ---------------------------------------------------------------------------
-// Signal/error description functions — GlibcCallThrough
+// Signal/error description functions — native implementation
 // ---------------------------------------------------------------------------
 
-unsafe extern "C" {
-    #[link_name = "strsignal"]
-    fn libc_strsignal(sig: c_int) -> *mut c_char;
-    #[link_name = "psignal"]
-    fn libc_psignal(sig: c_int, s: *const c_char);
+/// Signal name table (POSIX standard signals, Linux numbering).
+fn signal_name(sig: c_int) -> &'static [u8] {
+    match sig {
+        1 => b"Hangup",
+        2 => b"Interrupt",
+        3 => b"Quit",
+        4 => b"Illegal instruction",
+        5 => b"Trace/breakpoint trap",
+        6 => b"Aborted",
+        7 => b"Bus error",
+        8 => b"Floating point exception",
+        9 => b"Killed",
+        10 => b"User defined signal 1",
+        11 => b"Segmentation fault",
+        12 => b"User defined signal 2",
+        13 => b"Broken pipe",
+        14 => b"Alarm clock",
+        15 => b"Terminated",
+        16 => b"Stack fault",
+        17 => b"Child exited",
+        18 => b"Continued",
+        19 => b"Stopped (signal)",
+        20 => b"Stopped",
+        21 => b"Stopped (tty input)",
+        22 => b"Stopped (tty output)",
+        23 => b"Urgent I/O condition",
+        24 => b"CPU time limit exceeded",
+        25 => b"File size limit exceeded",
+        26 => b"Virtual timer expired",
+        27 => b"Profiling timer expired",
+        28 => b"Window changed",
+        29 => b"I/O possible",
+        30 => b"Power failure",
+        31 => b"Bad system call",
+        _ => b"Unknown signal",
+    }
 }
 
+std::thread_local! {
+    static STRSIGNAL_BUF: std::cell::RefCell<[u8; 64]> = const { std::cell::RefCell::new([0u8; 64]) };
+}
+
+/// POSIX `strsignal` — returns a string describing a signal number.
+///
+/// Returns a thread-local buffer with the signal description.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn strsignal(sig: c_int) -> *mut c_char {
-    unsafe { libc_strsignal(sig) }
+    STRSIGNAL_BUF.with(|cell| {
+        let mut buf = cell.borrow_mut();
+        let name = signal_name(sig);
+        let len = name.len().min(buf.len() - 1);
+        buf[..len].copy_from_slice(&name[..len]);
+        buf[len] = 0;
+        buf.as_mut_ptr() as *mut c_char
+    })
 }
 
+/// POSIX `psignal` — print a signal description to stderr.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn psignal(sig: c_int, s: *const c_char) {
-    unsafe { libc_psignal(sig, s) }
+    let name = signal_name(sig);
+
+    // Build message: "s: signal_name\n" or "signal_name\n"
+    let mut msg = Vec::with_capacity(256);
+    if !s.is_null() {
+        let prefix = unsafe { std::ffi::CStr::from_ptr(s) }.to_bytes();
+        msg.extend_from_slice(prefix);
+        msg.extend_from_slice(b": ");
+    }
+    msg.extend_from_slice(name);
+    msg.push(b'\n');
+
+    // Write to stderr via raw syscall
+    unsafe {
+        libc::syscall(
+            libc::SYS_write,
+            2i64, // STDERR_FILENO
+            msg.as_ptr() as i64,
+            msg.len() as i64,
+        );
+    }
 }

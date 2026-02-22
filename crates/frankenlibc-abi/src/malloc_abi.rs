@@ -492,7 +492,23 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
     // Look up old allocation to get its size
     let old_addr = ptr as usize;
     let old_size = match arena.lookup(old_addr) {
-        Some(slot) => slot.user_size,
+        Some(slot) if slot.user_base == old_addr => slot.user_size,
+        Some(_) => {
+            // Inner pointer or metadata pointer. Invalid to realloc.
+            record_allocator_stage_outcome(
+                &ordering,
+                aligned,
+                recent_page,
+                Some(stage_index(&ordering, CheckStage::Arena)),
+            );
+            runtime_policy::observe(
+                ApiFamily::Allocator,
+                decision.profile,
+                runtime_policy::scaled_cost(6, size),
+                true,
+            );
+            return std::ptr::null_mut();
+        }
         None => {
             // Foreign pointer -- in hardened mode, treat as malloc
             if runtime_policy::mode().heals_enabled() {

@@ -39,11 +39,7 @@ fn extract_d_off(buffer: &[u8], offset: usize) -> i64 {
     if offset + 16 > buffer.len() {
         return 0;
     }
-    i64::from_ne_bytes(
-        buffer[offset + 8..offset + 16]
-            .try_into()
-            .unwrap_or([0; 8]),
-    )
+    i64::from_ne_bytes(buffer[offset + 8..offset + 16].try_into().unwrap_or([0; 8]))
 }
 
 /// Global registry of open directory streams, keyed by a unique handle.
@@ -308,14 +304,14 @@ pub unsafe extern "C" fn seekdir(dirp: *mut DIR, loc: c_long) {
     }
     let handle = dirp as usize;
     let mut registry = DIR_REGISTRY.lock().unwrap();
-    if let Some(map) = registry.as_mut() {
-        if let Some(state) = map.get_mut(&handle) {
-            let _ = syscall::sys_lseek(state.fd, loc as i64, libc::SEEK_SET);
-            state.offset = 0;
-            state.valid_bytes = 0;
-            state.eof = false;
-            state.last_d_off = loc as i64;
-        }
+    if let Some(map) = registry.as_mut()
+        && let Some(state) = map.get_mut(&handle)
+    {
+        let _ = syscall::sys_lseek(state.fd, loc, libc::SEEK_SET);
+        state.offset = 0;
+        state.valid_bytes = 0;
+        state.eof = false;
+        state.last_d_off = loc;
     }
 }
 
@@ -334,7 +330,7 @@ pub unsafe extern "C" fn telldir(dirp: *mut DIR) -> c_long {
     let handle = dirp as usize;
     let registry = DIR_REGISTRY.lock().unwrap();
     match registry.as_ref().and_then(|m| m.get(&handle)) {
-        Some(state) => state.last_d_off as c_long,
+        Some(state) => state.last_d_off,
         None => -1,
     }
 }
@@ -351,14 +347,14 @@ pub unsafe extern "C" fn rewinddir(dirp: *mut DIR) {
     }
     let handle = dirp as usize;
     let mut registry = DIR_REGISTRY.lock().unwrap();
-    if let Some(map) = registry.as_mut() {
-        if let Some(state) = map.get_mut(&handle) {
-            let _ = syscall::sys_lseek(state.fd, 0, libc::SEEK_SET);
-            state.offset = 0;
-            state.valid_bytes = 0;
-            state.eof = false;
-            state.last_d_off = 0;
-        }
+    if let Some(map) = registry.as_mut()
+        && let Some(state) = map.get_mut(&handle)
+    {
+        let _ = syscall::sys_lseek(state.fd, 0, libc::SEEK_SET);
+        state.offset = 0;
+        state.valid_bytes = 0;
+        state.eof = false;
+        state.last_d_off = 0;
     }
 }
 
@@ -510,6 +506,10 @@ pub unsafe extern "C" fn scandir(
         // Empty result — allocate a minimal array
         let array = unsafe { libc::malloc(std::mem::size_of::<*mut libc::dirent>()) }
             as *mut *mut libc::dirent;
+        if array.is_null() {
+            unsafe { set_abi_errno(errno::ENOMEM) };
+            return -1;
+        }
         unsafe { *namelist = array };
         return 0;
     }
@@ -562,8 +562,19 @@ pub unsafe extern "C" fn scandir64(
         scandir(
             path,
             namelist as *mut *mut *mut libc::dirent,
-            std::mem::transmute(filter),
-            std::mem::transmute(compar),
+            std::mem::transmute::<
+                Option<unsafe extern "C" fn(*const c_void) -> c_int>,
+                Option<unsafe extern "C" fn(*const libc::dirent) -> c_int>,
+            >(filter),
+            std::mem::transmute::<
+                Option<unsafe extern "C" fn(*mut *const c_void, *mut *const c_void) -> c_int>,
+                Option<
+                    unsafe extern "C" fn(
+                        *mut *const libc::dirent,
+                        *mut *const libc::dirent,
+                    ) -> c_int,
+                >,
+            >(compar),
         )
     }
 }

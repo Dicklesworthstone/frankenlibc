@@ -24,6 +24,13 @@ unsafe fn set_abi_errno(val: c_int) {
     unsafe { *p = val };
 }
 
+#[inline]
+fn last_host_errno(default_errno: c_int) -> c_int {
+    std::io::Error::last_os_error()
+        .raw_os_error()
+        .unwrap_or(default_errno)
+}
+
 unsafe fn execvp_via_execve(file: *const c_char, argv: *const *const c_char) -> c_int {
     if file.is_null() || argv.is_null() {
         unsafe { set_abi_errno(libc::EFAULT) };
@@ -52,7 +59,7 @@ unsafe fn execvp_via_execve(file: *const c_char, argv: *const *const c_char) -> 
         candidate.extend_from_slice(file_bytes);
         candidate.push(0);
 
-        let rc = unsafe {
+        let _rc = unsafe {
             libc::syscall(
                 libc::SYS_execve as c_long,
                 candidate.as_ptr().cast::<c_char>(),
@@ -60,9 +67,7 @@ unsafe fn execvp_via_execve(file: *const c_char, argv: *const *const c_char) -> 
                 environ,
             ) as c_int
         };
-        if rc == 0 {
-            return rc;
-        }
+        // execve only returns on failure (rc == -1); on success the process is replaced.
 
         let err = unsafe { *super::errno_abi::__errno_location() };
         if err != libc::ENOENT && err != libc::ENOTDIR {
@@ -229,7 +234,7 @@ pub unsafe extern "C" fn waitpid(
 
     let adverse = rc < 0;
     if adverse {
-        unsafe { set_abi_errno(libc::ECHILD) };
+        unsafe { set_abi_errno(last_host_errno(libc::ECHILD)) };
     }
     runtime_policy::observe(ApiFamily::Process, decision.profile, 30, adverse);
     rc
@@ -286,7 +291,7 @@ pub unsafe extern "C" fn wait4(
     };
     let adverse = rc < 0;
     if adverse {
-        unsafe { set_abi_errno(libc::ECHILD) };
+        unsafe { set_abi_errno(last_host_errno(libc::ECHILD)) };
     }
     runtime_policy::observe(ApiFamily::Process, decision.profile, 30, adverse);
     rc
@@ -316,7 +321,7 @@ pub unsafe extern "C" fn waitid(
         unsafe { libc::syscall(libc::SYS_waitid as c_long, idtype, id, infop, options) as c_int };
     let adverse = rc < 0;
     if adverse {
-        unsafe { set_abi_errno(libc::ECHILD) };
+        unsafe { set_abi_errno(last_host_errno(libc::ECHILD)) };
     }
     runtime_policy::observe(ApiFamily::Process, decision.profile, 30, adverse);
     rc
@@ -335,26 +340,67 @@ pub unsafe extern "C" fn vfork() -> libc::pid_t {
 }
 
 // ---------------------------------------------------------------------------
-// exec family — GlibcCallThrough (variadic exec functions)
+// execvpe — native implementation (PATH search + custom environment)
 // ---------------------------------------------------------------------------
 
-unsafe extern "C" {
-    #[link_name = "execvpe"]
-    fn libc_execvpe(
-        file: *const c_char,
-        argv: *const *const c_char,
-        envp: *const *const c_char,
-    ) -> c_int;
-}
-
-/// POSIX `execvpe` — exec with path search and custom environment.
+/// GNU `execvpe` — execute a file with PATH search and custom environment.
+///
+/// Like `execvp` but uses `envp` instead of the inherited environment.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn execvpe(
     file: *const c_char,
     argv: *const *const c_char,
     envp: *const *const c_char,
 ) -> c_int {
-    unsafe { libc_execvpe(file, argv, envp) }
+    if file.is_null() || argv.is_null() {
+        unsafe { set_abi_errno(libc::EFAULT) };
+        return -1;
+    }
+
+    let file_bytes = unsafe { std::ffi::CStr::from_ptr(file) }.to_bytes();
+    if file_bytes.is_empty() {
+        unsafe { set_abi_errno(libc::ENOENT) };
+        return -1;
+    }
+
+    // If file contains '/', execute directly without PATH search.
+    if file_bytes.contains(&b'/') {
+        return unsafe { libc::syscall(libc::SYS_execve as c_long, file, argv, envp) as c_int };
+    }
+
+    // Search PATH for the executable.
+    let path =
+        std::env::var_os("PATH").unwrap_or_else(|| std::ffi::OsString::from("/bin:/usr/bin"));
+    let path_bytes = path.as_os_str().as_bytes();
+
+    for dir in path_bytes.split(|b| *b == b':') {
+        let dir = if dir.is_empty() { b"." as &[u8] } else { dir };
+        let mut candidate = Vec::with_capacity(dir.len() + 1 + file_bytes.len() + 1);
+        candidate.extend_from_slice(dir);
+        candidate.push(b'/');
+        candidate.extend_from_slice(file_bytes);
+        candidate.push(0);
+
+        let rc = unsafe {
+            libc::syscall(
+                libc::SYS_execve as c_long,
+                candidate.as_ptr().cast::<c_char>(),
+                argv,
+                envp,
+            ) as c_int
+        };
+        if rc == 0 {
+            return rc;
+        }
+
+        let err = unsafe { *super::errno_abi::__errno_location() };
+        if err != libc::ENOENT && err != libc::ENOTDIR {
+            return -1;
+        }
+    }
+
+    unsafe { set_abi_errno(libc::ENOENT) };
+    -1
 }
 
 // ---------------------------------------------------------------------------

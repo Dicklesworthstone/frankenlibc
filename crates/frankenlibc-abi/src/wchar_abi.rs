@@ -442,7 +442,9 @@ pub unsafe extern "C" fn wcscmp(s1: *const u32, s2: *const u32) -> c_int {
     };
     let cmp_bound = match (lhs_bound, rhs_bound) {
         (Some(a), Some(b)) => Some(a.min(b)),
-        _ => None,
+        (Some(a), None) => Some(a),
+        (None, Some(b)) => Some(b),
+        (None, None) => None,
     };
 
     let (result, adverse, span) = unsafe {
@@ -518,7 +520,9 @@ pub unsafe extern "C" fn wcsncmp(s1: *const u32, s2: *const u32, n: usize) -> c_
     };
     let cmp_bound = match (lhs_bound, rhs_bound) {
         (Some(a), Some(b)) => Some(a.min(b).min(n)),
-        _ => Some(n),
+        (Some(a), None) => Some(a.min(n)),
+        (None, Some(b)) => Some(b.min(n)),
+        (None, None) => Some(n),
     };
 
     let (result, adverse, span) = unsafe {

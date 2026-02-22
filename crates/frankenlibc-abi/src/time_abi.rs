@@ -17,6 +17,13 @@ unsafe fn set_abi_errno(val: c_int) {
 }
 
 #[inline]
+fn last_host_errno(default_errno: c_int) -> c_int {
+    std::io::Error::last_os_error()
+        .raw_os_error()
+        .unwrap_or(default_errno)
+}
+
+#[inline]
 unsafe fn raw_clock_gettime(clock_id: c_int, tp: *mut libc::timespec) -> c_int {
     unsafe { libc::syscall(libc::SYS_clock_gettime as c_long, clock_id, tp) as c_int }
 }
@@ -57,7 +64,7 @@ pub unsafe extern "C" fn clock_gettime(clock_id: c_int, tp: *mut libc::timespec)
 
     let rc = unsafe { raw_clock_gettime(clock_id, tp) };
     if rc != 0 {
-        unsafe { set_abi_errno(errno::EINVAL) };
+        unsafe { set_abi_errno(last_host_errno(errno::EINVAL)) };
     }
     rc
 }
@@ -239,7 +246,7 @@ pub unsafe extern "C" fn clock_getres(clock_id: c_int, res: *mut libc::timespec)
 
     let rc = unsafe { libc::syscall(libc::SYS_clock_getres as c_long, clock_id, res) as c_int };
     if rc != 0 {
-        unsafe { set_abi_errno(errno::EINVAL) };
+        unsafe { set_abi_errno(last_host_errno(errno::EINVAL)) };
     }
     rc
 }

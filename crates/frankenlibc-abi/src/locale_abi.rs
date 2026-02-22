@@ -169,54 +169,70 @@ pub unsafe extern "C" fn nl_langinfo(item: libc::nl_item) -> *const c_char {
 }
 
 // ---------------------------------------------------------------------------
-// gettext family — GlibcCallThrough
+// gettext family — native C-locale implementation
 // ---------------------------------------------------------------------------
+//
+// FrankenLibC supports only the C/POSIX locale. In the C locale, the gettext
+// family acts as identity functions — no message catalog is loaded, so msgid
+// is returned unmodified. This is the correct POSIX behavior when no
+// translations are installed.
 
-unsafe extern "C" {
-    #[link_name = "gettext"]
-    fn libc_gettext(msgid: *const c_char) -> *mut c_char;
-    #[link_name = "dgettext"]
-    fn libc_dgettext(domainname: *const c_char, msgid: *const c_char) -> *mut c_char;
-    #[link_name = "ngettext"]
-    fn libc_ngettext(
-        msgid: *const c_char,
-        msgid_plural: *const c_char,
-        n: libc::c_ulong,
-    ) -> *mut c_char;
-    #[link_name = "textdomain"]
-    fn libc_textdomain(domainname: *const c_char) -> *mut c_char;
-    #[link_name = "bindtextdomain"]
-    fn libc_bindtextdomain(domainname: *const c_char, dirname: *const c_char) -> *mut c_char;
-}
-
+/// GNU `gettext` — returns msgid unchanged (C locale: no translation).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn gettext(msgid: *const c_char) -> *mut c_char {
-    unsafe { libc_gettext(msgid) }
+    msgid as *mut c_char
 }
 
+/// GNU `dgettext` — returns msgid unchanged (C locale: domain ignored).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn dgettext(domainname: *const c_char, msgid: *const c_char) -> *mut c_char {
-    unsafe { libc_dgettext(domainname, msgid) }
+pub unsafe extern "C" fn dgettext(_domainname: *const c_char, msgid: *const c_char) -> *mut c_char {
+    msgid as *mut c_char
 }
 
+/// GNU `ngettext` — returns singular or plural form (C locale: no translation).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn ngettext(
     msgid: *const c_char,
     msgid_plural: *const c_char,
     n: libc::c_ulong,
 ) -> *mut c_char {
-    unsafe { libc_ngettext(msgid, msgid_plural, n) }
+    if n == 1 {
+        msgid as *mut c_char
+    } else {
+        msgid_plural as *mut c_char
+    }
 }
 
+/// Default text domain name.
+static DEFAULT_TEXT_DOMAIN: &[u8] = b"messages\0";
+/// Default locale directory.
+static DEFAULT_LOCALE_DIR: &[u8] = b"/usr/share/locale\0";
+
+/// GNU `textdomain` — set/query current text domain.
+///
+/// In C-locale mode, the domain is irrelevant since no translations are loaded.
+/// Returns the domain name for API compatibility.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn textdomain(domainname: *const c_char) -> *mut c_char {
-    unsafe { libc_textdomain(domainname) }
+    if domainname.is_null() {
+        DEFAULT_TEXT_DOMAIN.as_ptr() as *mut c_char
+    } else {
+        domainname as *mut c_char
+    }
 }
 
+/// GNU `bindtextdomain` — bind a text domain to a locale directory.
+///
+/// In C-locale mode, no catalog lookup occurs. Returns the dirname for
+/// API compatibility.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn bindtextdomain(
-    domainname: *const c_char,
+    _domainname: *const c_char,
     dirname: *const c_char,
 ) -> *mut c_char {
-    unsafe { libc_bindtextdomain(domainname, dirname) }
+    if dirname.is_null() {
+        DEFAULT_LOCALE_DIR.as_ptr() as *mut c_char
+    } else {
+        dirname as *mut c_char
+    }
 }

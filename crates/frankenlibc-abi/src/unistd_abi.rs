@@ -2143,11 +2143,6 @@ pub unsafe extern "C" fn vsyslog(priority: c_int, format: *const c_char, ap: *mu
 // misc POSIX — mixed (implemented + call-through)
 // ---------------------------------------------------------------------------
 
-unsafe extern "C" {
-    #[link_name = "daemon"]
-    fn libc_daemon(nochdir: c_int, noclose: c_int) -> c_int;
-}
-
 const MKDTEMP_SUFFIX_LEN: usize = 6;
 const MKDTEMP_CHARS: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
 static MKDTEMP_NONCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
@@ -2470,9 +2465,51 @@ pub unsafe extern "C" fn nice(inc: c_int) -> c_int {
     }
 }
 
+/// BSD `daemon` — detach from controlling terminal.
+///
+/// fork(), parent exits, child calls setsid(), optionally chdir("/")
+/// and redirects stdin/stdout/stderr to /dev/null.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn daemon(nochdir: c_int, noclose: c_int) -> c_int {
-    unsafe { libc_daemon(nochdir, noclose) }
+    // SAFETY: fork via raw syscall
+    let pid = unsafe { libc::syscall(libc::SYS_fork) };
+    if pid < 0 {
+        return -1;
+    }
+    if pid > 0 {
+        // Parent: exit immediately
+        unsafe { libc::syscall(libc::SYS_exit_group, 0i64) };
+        unreachable!();
+    }
+
+    // Child: create new session
+    if unsafe { libc::syscall(libc::SYS_setsid) } < 0 {
+        return -1;
+    }
+
+    if nochdir == 0 {
+        let root = b"/\0";
+        unsafe {
+            libc::syscall(libc::SYS_chdir, root.as_ptr());
+        };
+    }
+
+    if noclose == 0 {
+        let dev_null = b"/dev/null\0";
+        let fd = unsafe { libc::syscall(libc::SYS_open, dev_null.as_ptr(), libc::O_RDWR, 0i64) }
+            as c_int;
+        if fd >= 0 {
+            unsafe {
+                libc::syscall(libc::SYS_dup2, fd as i64, 0i64); // stdin
+                libc::syscall(libc::SYS_dup2, fd as i64, 1i64); // stdout
+                libc::syscall(libc::SYS_dup2, fd as i64, 2i64); // stderr
+            };
+            if fd > 2 {
+                unsafe { libc::syscall(libc::SYS_close, fd as i64) };
+            }
+        }
+    }
+    0
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -2950,9 +2987,55 @@ pub unsafe extern "C" fn shm_unlink(name: *const c_char) -> c_int {
 }
 
 // ---------------------------------------------------------------------------
-// POSIX semaphores — GlibcCallThrough
+// POSIX semaphores — native futex-based (unnamed) + GlibcCallThrough (named)
 // ---------------------------------------------------------------------------
 
+/// SEM_VALUE_MAX — POSIX specifies at least 32767.
+const SEM_VALUE_MAX: c_uint = 0x7fff_ffff;
+
+/// Interpret the sem_t pointer as a pointer to an atomic i32 counter.
+/// On Linux/glibc, sem_t is a 32-byte union; the first 4 bytes hold the
+/// unsigned counter for unnamed semaphores.
+unsafe fn sem_as_atomic(sem: *mut c_void) -> &'static std::sync::atomic::AtomicI32 {
+    unsafe { &*(sem as *const std::sync::atomic::AtomicI32) }
+}
+
+fn sem_futex_wait(word: *mut c_void, expected: i32) -> i64 {
+    unsafe {
+        libc::syscall(
+            libc::SYS_futex,
+            word as *const i32,
+            libc::FUTEX_WAIT | libc::FUTEX_PRIVATE_FLAG,
+            expected,
+            std::ptr::null::<libc::timespec>(),
+        )
+    }
+}
+
+fn sem_futex_wait_timed(word: *mut c_void, expected: i32, ts: *const libc::timespec) -> i64 {
+    unsafe {
+        libc::syscall(
+            libc::SYS_futex,
+            word as *const i32,
+            libc::FUTEX_WAIT | libc::FUTEX_PRIVATE_FLAG,
+            expected,
+            ts,
+        )
+    }
+}
+
+fn sem_futex_wake(word: *mut c_void, count: i32) -> i64 {
+    unsafe {
+        libc::syscall(
+            libc::SYS_futex,
+            word as *const i32,
+            libc::FUTEX_WAKE | libc::FUTEX_PRIVATE_FLAG,
+            count,
+        )
+    }
+}
+
+// Named semaphores — GlibcCallThrough (require SHM file operations)
 unsafe extern "C" {
     #[link_name = "sem_open"]
     fn libc_sem_open(name: *const c_char, oflag: c_int, ...) -> *mut c_void;
@@ -2960,20 +3043,6 @@ unsafe extern "C" {
     fn libc_sem_close(sem: *mut c_void) -> c_int;
     #[link_name = "sem_unlink"]
     fn libc_sem_unlink(name: *const c_char) -> c_int;
-    #[link_name = "sem_wait"]
-    fn libc_sem_wait(sem: *mut c_void) -> c_int;
-    #[link_name = "sem_trywait"]
-    fn libc_sem_trywait(sem: *mut c_void) -> c_int;
-    #[link_name = "sem_timedwait"]
-    fn libc_sem_timedwait(sem: *mut c_void, abs_timeout: *const libc::timespec) -> c_int;
-    #[link_name = "sem_post"]
-    fn libc_sem_post(sem: *mut c_void) -> c_int;
-    #[link_name = "sem_getvalue"]
-    fn libc_sem_getvalue(sem: *mut c_void, sval: *mut c_int) -> c_int;
-    #[link_name = "sem_init"]
-    fn libc_sem_init(sem: *mut c_void, pshared: c_int, value: c_uint) -> c_int;
-    #[link_name = "sem_destroy"]
-    fn libc_sem_destroy(sem: *mut c_void) -> c_int;
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -2991,42 +3060,170 @@ pub unsafe extern "C" fn sem_unlink(name: *const c_char) -> c_int {
     unsafe { libc_sem_unlink(name) }
 }
 
+/// POSIX `sem_init` — initialize an unnamed semaphore.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn sem_init(sem: *mut c_void, _pshared: c_int, value: c_uint) -> c_int {
+    if sem.is_null() || value > SEM_VALUE_MAX {
+        unsafe { *libc::__errno_location() = libc::EINVAL };
+        return -1;
+    }
+    let atom = unsafe { sem_as_atomic(sem) };
+    atom.store(value as i32, std::sync::atomic::Ordering::Release);
+    0
+}
+
+/// POSIX `sem_destroy` — destroy an unnamed semaphore.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn sem_destroy(sem: *mut c_void) -> c_int {
+    if sem.is_null() {
+        unsafe { *libc::__errno_location() = libc::EINVAL };
+        return -1;
+    }
+    // No resources to reclaim for futex-based semaphores.
+    0
+}
+
+/// POSIX `sem_post` — increment the semaphore and wake one waiter.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn sem_post(sem: *mut c_void) -> c_int {
+    if sem.is_null() {
+        unsafe { *libc::__errno_location() = libc::EINVAL };
+        return -1;
+    }
+    let atom = unsafe { sem_as_atomic(sem) };
+    let old = atom.fetch_add(1, std::sync::atomic::Ordering::Release);
+    if old < 0 || old == i32::MAX {
+        // Overflow protection
+        atom.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+        unsafe { *libc::__errno_location() = libc::EOVERFLOW };
+        return -1;
+    }
+    // Wake one waiter
+    sem_futex_wake(sem, 1);
+    0
+}
+
+/// POSIX `sem_wait` — decrement the semaphore, blocking if zero.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sem_wait(sem: *mut c_void) -> c_int {
-    unsafe { libc_sem_wait(sem) }
+    if sem.is_null() {
+        unsafe { *libc::__errno_location() = libc::EINVAL };
+        return -1;
+    }
+    let atom = unsafe { sem_as_atomic(sem) };
+    loop {
+        let val = atom.load(std::sync::atomic::Ordering::Acquire);
+        if val > 0
+            && atom
+                .compare_exchange_weak(
+                    val,
+                    val - 1,
+                    std::sync::atomic::Ordering::AcqRel,
+                    std::sync::atomic::Ordering::Relaxed,
+                )
+                .is_ok()
+        {
+            return 0;
+        }
+        if val <= 0 {
+            let ret = sem_futex_wait(sem, val);
+            if ret < 0 {
+                let err = unsafe { *libc::__errno_location() };
+                if err == libc::EINTR {
+                    unsafe { *libc::__errno_location() = libc::EINTR };
+                    return -1;
+                }
+                // EAGAIN is spurious wakeup — retry
+            }
+        }
+    }
 }
 
+/// POSIX `sem_trywait` — non-blocking decrement.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sem_trywait(sem: *mut c_void) -> c_int {
-    unsafe { libc_sem_trywait(sem) }
+    if sem.is_null() {
+        unsafe { *libc::__errno_location() = libc::EINVAL };
+        return -1;
+    }
+    let atom = unsafe { sem_as_atomic(sem) };
+    loop {
+        let val = atom.load(std::sync::atomic::Ordering::Acquire);
+        if val <= 0 {
+            unsafe { *libc::__errno_location() = libc::EAGAIN };
+            return -1;
+        }
+        if atom
+            .compare_exchange_weak(
+                val,
+                val - 1,
+                std::sync::atomic::Ordering::AcqRel,
+                std::sync::atomic::Ordering::Relaxed,
+            )
+            .is_ok()
+        {
+            return 0;
+        }
+    }
 }
 
+/// POSIX `sem_timedwait` — decrement with absolute timeout.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sem_timedwait(
     sem: *mut c_void,
     abs_timeout: *const libc::timespec,
 ) -> c_int {
-    unsafe { libc_sem_timedwait(sem, abs_timeout) }
+    if sem.is_null() {
+        unsafe { *libc::__errno_location() = libc::EINVAL };
+        return -1;
+    }
+    let atom = unsafe { sem_as_atomic(sem) };
+    loop {
+        let val = atom.load(std::sync::atomic::Ordering::Acquire);
+        if val > 0
+            && atom
+                .compare_exchange_weak(
+                    val,
+                    val - 1,
+                    std::sync::atomic::Ordering::AcqRel,
+                    std::sync::atomic::Ordering::Relaxed,
+                )
+                .is_ok()
+        {
+            return 0;
+        }
+        if val <= 0 {
+            if abs_timeout.is_null() {
+                unsafe { *libc::__errno_location() = libc::EINVAL };
+                return -1;
+            }
+            let ret = sem_futex_wait_timed(sem, val, abs_timeout);
+            if ret < 0 {
+                let err = unsafe { *libc::__errno_location() };
+                if err == libc::ETIMEDOUT {
+                    unsafe { *libc::__errno_location() = libc::ETIMEDOUT };
+                    return -1;
+                }
+                if err == libc::EINTR {
+                    unsafe { *libc::__errno_location() = libc::EINTR };
+                    return -1;
+                }
+            }
+        }
+    }
 }
 
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn sem_post(sem: *mut c_void) -> c_int {
-    unsafe { libc_sem_post(sem) }
-}
-
+/// POSIX `sem_getvalue` — read the current semaphore value.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sem_getvalue(sem: *mut c_void, sval: *mut c_int) -> c_int {
-    unsafe { libc_sem_getvalue(sem, sval) }
-}
-
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn sem_init(sem: *mut c_void, pshared: c_int, value: c_uint) -> c_int {
-    unsafe { libc_sem_init(sem, pshared, value) }
-}
-
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn sem_destroy(sem: *mut c_void) -> c_int {
-    unsafe { libc_sem_destroy(sem) }
+    if sem.is_null() || sval.is_null() {
+        unsafe { *libc::__errno_location() = libc::EINVAL };
+        return -1;
+    }
+    let atom = unsafe { sem_as_atomic(sem) };
+    let val = atom.load(std::sync::atomic::Ordering::Relaxed);
+    unsafe { *sval = val.max(0) };
+    0
 }
 
 // ---------------------------------------------------------------------------
@@ -3507,8 +3704,6 @@ unsafe extern "C" {
         termp: *const c_void,
         winp: *const c_void,
     ) -> c_int;
-    #[link_name = "login_tty"]
-    fn libc_login_tty(fd: c_int) -> c_int;
     #[link_name = "forkpty"]
     fn libc_forkpty(
         amaster: *mut c_int,
@@ -3531,9 +3726,34 @@ pub unsafe extern "C" fn openpty(
     unsafe { libc_openpty(amaster, aslave, name, termp, winp) }
 }
 
+/// BSD `login_tty` — prepare a terminal for a login session.
+///
+/// Creates a new session, sets the given fd as the controlling terminal,
+/// dups it to stdin/stdout/stderr, then closes the original fd.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn login_tty(fd: c_int) -> c_int {
-    unsafe { libc_login_tty(fd) }
+    // Create new session
+    if unsafe { libc::syscall(libc::SYS_setsid) } < 0 {
+        return -1;
+    }
+
+    // Set controlling terminal (TIOCSCTTY = 0x540E on Linux)
+    const TIOCSCTTY: u64 = 0x540E;
+    if unsafe { libc::syscall(libc::SYS_ioctl, fd as i64, TIOCSCTTY as i64, 0i64) } < 0 {
+        return -1;
+    }
+
+    // Dup fd to stdin/stdout/stderr
+    unsafe {
+        libc::syscall(libc::SYS_dup2, fd as i64, 0i64);
+        libc::syscall(libc::SYS_dup2, fd as i64, 1i64);
+        libc::syscall(libc::SYS_dup2, fd as i64, 2i64);
+    };
+
+    if fd > 2 {
+        unsafe { libc::syscall(libc::SYS_close, fd as i64) };
+    }
+    0
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -3718,10 +3938,6 @@ pub unsafe extern "C" fn prlimit64(
 unsafe extern "C" {
     #[link_name = "getutent"]
     fn libc_getutent() -> *mut c_void;
-    #[link_name = "setutent"]
-    fn libc_setutent();
-    #[link_name = "endutent"]
-    fn libc_endutent();
     #[link_name = "utmpname"]
     fn libc_utmpname(file: *const c_char) -> c_int;
 }
@@ -3789,14 +4005,20 @@ pub unsafe extern "C" fn getutent() -> *mut c_void {
     unsafe { libc_getutent() }
 }
 
+/// POSIX `setutent` — rewind utmp file to beginning.
+///
+/// No-op: FrankenLibC's utmp support is minimal in container environments.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn setutent() {
-    unsafe { libc_setutent() }
+    // No-op in container-only mode.
 }
 
+/// POSIX `endutent` — close utmp file.
+///
+/// No-op: FrankenLibC's utmp support is minimal in container environments.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn endutent() {
-    unsafe { libc_endutent() }
+    // No-op in container-only mode.
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -4327,21 +4549,20 @@ const H_ERR_TRY_AGAIN: c_int = 2;
 const H_ERR_NO_RECOVERY: c_int = 3;
 const H_ERR_NO_DATA: c_int = 4;
 
-unsafe extern "C" {
-    #[link_name = "__h_errno_location"]
-    fn libc_h_errno_location() -> *mut c_int;
+std::thread_local! {
+    static H_ERRNO_TLS: std::cell::Cell<c_int> = const { std::cell::Cell::new(0) };
+}
+
+/// POSIX `__h_errno_location` — return pointer to thread-local h_errno.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __h_errno_location() -> *mut c_int {
+    H_ERRNO_TLS.with(|cell| cell.as_ptr())
 }
 
 #[inline]
 unsafe fn current_h_errno() -> c_int {
-    // SAFETY: glibc provides a thread-local h_errno location.
-    let ptr = unsafe { libc_h_errno_location() };
-    if ptr.is_null() {
-        0
-    } else {
-        // SAFETY: pointer comes from libc and is valid for thread-local h_errno access.
-        unsafe { *ptr }
-    }
+    let ptr = unsafe { __h_errno_location() };
+    unsafe { *ptr }
 }
 
 #[inline]
@@ -4394,31 +4615,60 @@ pub unsafe extern "C" fn hstrerror(err: c_int) -> *const c_char {
 }
 
 // ---------------------------------------------------------------------------
-// execl / execlp / execle — GlibcCallThrough (variadic)
+// execl / execlp / execle — native (variadic → argv → execve/execvp)
 // ---------------------------------------------------------------------------
 
 unsafe extern "C" {
-    #[link_name = "execl"]
-    fn libc_execl(path: *const c_char, arg: *const c_char, ...) -> c_int;
-    #[link_name = "execlp"]
-    fn libc_execlp(file: *const c_char, arg: *const c_char, ...) -> c_int;
-    #[link_name = "execle"]
-    fn libc_execle(path: *const c_char, arg: *const c_char, ...) -> c_int;
+    static mut environ: *mut *mut c_char;
 }
 
+/// POSIX `execl` — execute path with variadic args, inheriting environ.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn execl(path: *const c_char, arg: *const c_char, args: ...) -> c_int {
-    unsafe { libc_execl(path, arg, args) }
+pub unsafe extern "C" fn execl(path: *const c_char, arg: *const c_char, mut args: ...) -> c_int {
+    let mut argv: Vec<*const c_char> = Vec::with_capacity(8);
+    argv.push(arg);
+    loop {
+        let next = unsafe { args.arg::<*const c_char>() };
+        argv.push(next);
+        if next.is_null() {
+            break;
+        }
+    }
+    unsafe { crate::process_abi::execve(path, argv.as_ptr(), environ as *const *const c_char) }
 }
 
+/// POSIX `execlp` — execute file (PATH search) with variadic args, inheriting environ.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn execlp(file: *const c_char, arg: *const c_char, args: ...) -> c_int {
-    unsafe { libc_execlp(file, arg, args) }
+pub unsafe extern "C" fn execlp(file: *const c_char, arg: *const c_char, mut args: ...) -> c_int {
+    let mut argv: Vec<*const c_char> = Vec::with_capacity(8);
+    argv.push(arg);
+    loop {
+        let next = unsafe { args.arg::<*const c_char>() };
+        argv.push(next);
+        if next.is_null() {
+            break;
+        }
+    }
+    unsafe { crate::process_abi::execvp(file, argv.as_ptr()) }
 }
 
+/// POSIX `execle` — execute path with variadic args + explicit envp.
+///
+/// The envp pointer follows the NULL sentinel of the arg list.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn execle(path: *const c_char, arg: *const c_char, args: ...) -> c_int {
-    unsafe { libc_execle(path, arg, args) }
+pub unsafe extern "C" fn execle(path: *const c_char, arg: *const c_char, mut args: ...) -> c_int {
+    let mut argv: Vec<*const c_char> = Vec::with_capacity(8);
+    argv.push(arg);
+    loop {
+        let next = unsafe { args.arg::<*const c_char>() };
+        argv.push(next);
+        if next.is_null() {
+            break;
+        }
+    }
+    // The next variadic argument after NULL is the envp pointer.
+    let envp = unsafe { args.arg::<*const *const c_char>() };
+    unsafe { crate::process_abi::execve(path, argv.as_ptr(), envp) }
 }
 
 // ---------------------------------------------------------------------------
@@ -4582,8 +4832,6 @@ unsafe extern "C" {
     fn libc_getmntent(stream: *mut c_void) -> *mut c_void;
     #[link_name = "endmntent"]
     fn libc_endmntent(stream: *mut c_void) -> c_int;
-    #[link_name = "hasmntopt"]
-    fn libc_hasmntopt(mnt: *const c_void, opt: *const c_char) -> *mut c_char;
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -4601,9 +4849,39 @@ pub unsafe extern "C" fn endmntent(stream: *mut c_void) -> c_int {
     unsafe { libc_endmntent(stream) }
 }
 
+/// POSIX `hasmntopt` — search for a mount option in the mntent options string.
+///
+/// The mntent struct has `mnt_opts` as the 4th pointer field (at offset 3*ptr).
+/// Searches the comma-separated options string for the specified option.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn hasmntopt(mnt: *const c_void, opt: *const c_char) -> *mut c_char {
-    unsafe { libc_hasmntopt(mnt, opt) }
+    if mnt.is_null() || opt.is_null() {
+        return std::ptr::null_mut();
+    }
+    // mntent struct: { mnt_fsname, mnt_dir, mnt_type, mnt_opts, ... }
+    // mnt_opts is at offset 3 * sizeof(*const c_char)
+    let opts_ptr_ptr = unsafe { (mnt as *const *const c_char).add(3) };
+    let opts_ptr = unsafe { *opts_ptr_ptr };
+    if opts_ptr.is_null() {
+        return std::ptr::null_mut();
+    }
+    let opts = unsafe { std::ffi::CStr::from_ptr(opts_ptr) }.to_bytes();
+    let needle = unsafe { std::ffi::CStr::from_ptr(opt) }.to_bytes();
+    if needle.is_empty() {
+        return std::ptr::null_mut();
+    }
+    // Search for needle as a comma-delimited token within opts
+    for (i, window) in opts.windows(needle.len()).enumerate() {
+        if window == needle {
+            // Check that it's a whole token (bounded by comma, start, or end)
+            let at_start = i == 0 || opts[i - 1] == b',';
+            let at_end = i + needle.len() == opts.len() || opts[i + needle.len()] == b',';
+            if at_start && at_end {
+                return unsafe { opts_ptr.add(i) as *mut c_char };
+            }
+        }
+    }
+    std::ptr::null_mut()
 }
 
 // ---------------------------------------------------------------------------
@@ -4737,15 +5015,6 @@ unsafe extern "C" {
     fn libc_fgetpwent(stream: *mut c_void) -> *mut c_void;
     #[link_name = "fgetgrent"]
     fn libc_fgetgrent(stream: *mut c_void) -> *mut c_void;
-    #[link_name = "getgrouplist"]
-    fn libc_getgrouplist(
-        user: *const c_char,
-        group: libc::gid_t,
-        groups: *mut libc::gid_t,
-        ngroups: *mut c_int,
-    ) -> c_int;
-    #[link_name = "initgroups"]
-    fn libc_initgroups(user: *const c_char, group: libc::gid_t) -> c_int;
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -4778,6 +5047,10 @@ pub unsafe extern "C" fn fgetgrent(stream: *mut c_void) -> *mut c_void {
     unsafe { libc_fgetgrent(stream) }
 }
 
+/// POSIX `getgrouplist` — get list of groups a user belongs to.
+///
+/// Fills `groups` with GIDs, stores count in `*ngroups`.
+/// Returns -1 if buffer too small (setting *ngroups to required count).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getgrouplist(
     user: *const c_char,
@@ -4785,22 +5058,112 @@ pub unsafe extern "C" fn getgrouplist(
     groups: *mut libc::gid_t,
     ngroups: *mut c_int,
 ) -> c_int {
-    unsafe { libc_getgrouplist(user, group, groups, ngroups) }
+    if user.is_null() || groups.is_null() || ngroups.is_null() {
+        return -1;
+    }
+    let user_name = unsafe { std::ffi::CStr::from_ptr(user) }.to_bytes();
+    let max_groups = unsafe { *ngroups } as usize;
+
+    let mut result: Vec<libc::gid_t> = Vec::with_capacity(32);
+    result.push(group);
+
+    if let Ok(content) = std::fs::read("/etc/group") {
+        for line in content.split(|&b| b == b'\n') {
+            if line.is_empty() || line[0] == b'#' {
+                continue;
+            }
+            let fields: Vec<&[u8]> = line.splitn(4, |&b| b == b':').collect();
+            if fields.len() < 4 {
+                continue;
+            }
+            let gid: libc::gid_t = match std::str::from_utf8(fields[2]).unwrap_or("").parse() {
+                Ok(g) => g,
+                Err(_) => continue,
+            };
+            if gid == group {
+                continue;
+            }
+            for member in fields[3].split(|&b| b == b',') {
+                let member = member.strip_suffix(b"\r").unwrap_or(member);
+                if member == user_name && !result.contains(&gid) {
+                    result.push(gid);
+                    break;
+                }
+            }
+        }
+    }
+
+    unsafe { *ngroups = result.len() as c_int };
+    if result.len() > max_groups {
+        return -1;
+    }
+    for (i, &gid) in result.iter().enumerate() {
+        unsafe { *groups.add(i) = gid };
+    }
+    result.len() as c_int
 }
 
+/// POSIX `initgroups` — initialize supplementary group access list.
+///
+/// Reads /etc/group to find all groups the user belongs to, then calls
+/// SYS_setgroups with the resulting list plus the primary group.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn initgroups(user: *const c_char, group: libc::gid_t) -> c_int {
-    unsafe { libc_initgroups(user, group) }
+    if user.is_null() {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return -1;
+    }
+    let user_name = unsafe { std::ffi::CStr::from_ptr(user) }.to_bytes();
+
+    let mut groups: Vec<libc::gid_t> = Vec::with_capacity(32);
+    groups.push(group);
+
+    // Parse /etc/group for supplementary memberships
+    if let Ok(content) = std::fs::read("/etc/group") {
+        for line in content.split(|&b| b == b'\n') {
+            if line.is_empty() || line[0] == b'#' {
+                continue;
+            }
+            // Format: name:password:gid:member1,member2,...
+            let fields: Vec<&[u8]> = line.splitn(4, |&b| b == b':').collect();
+            if fields.len() < 4 {
+                continue;
+            }
+            let gid_str = std::str::from_utf8(fields[2]).unwrap_or("");
+            let gid: libc::gid_t = match gid_str.parse() {
+                Ok(g) => g,
+                Err(_) => continue,
+            };
+            if gid == group {
+                continue; // Already in list
+            }
+            // Check if user is in the member list
+            for member in fields[3].split(|&b| b == b',') {
+                let member = member.strip_suffix(b"\r").unwrap_or(member);
+                if member == user_name && !groups.contains(&gid) {
+                    groups.push(gid);
+                    break;
+                }
+            }
+        }
+    }
+
+    let ret = unsafe {
+        libc::syscall(
+            libc::SYS_setgroups,
+            groups.len() as i64,
+            groups.as_ptr() as i64,
+        )
+    } as c_int;
+    if ret < 0 {
+        return -1;
+    }
+    0
 }
 
 // ---------------------------------------------------------------------------
 // Misc POSIX extras — GlibcCallThrough / RawSyscall
 // ---------------------------------------------------------------------------
-
-unsafe extern "C" {
-    #[link_name = "getpass"]
-    fn libc_getpass(prompt: *const c_char) -> *mut c_char;
-}
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getlogin() -> *mut c_char {
@@ -4979,9 +5342,115 @@ pub unsafe extern "C" fn ctermid(s: *mut c_char) -> *mut c_char {
     dst
 }
 
+/// Maximum password length for getpass.
+const GETPASS_MAX: usize = 128;
+
+std::thread_local! {
+    static GETPASS_BUF: std::cell::RefCell<[c_char; GETPASS_MAX]> = const { std::cell::RefCell::new([0; GETPASS_MAX]) };
+}
+
+/// POSIX `getpass` — read a password from /dev/tty with echo disabled.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getpass(prompt: *const c_char) -> *mut c_char {
-    unsafe { libc_getpass(prompt) }
+    let tty = b"/dev/tty\0";
+    let fd = unsafe {
+        libc::syscall(
+            libc::SYS_open,
+            tty.as_ptr(),
+            libc::O_RDWR | libc::O_NOCTTY,
+            0i64,
+        )
+    } as c_int;
+    if fd < 0 {
+        return std::ptr::null_mut();
+    }
+
+    // Write prompt
+    if !prompt.is_null() {
+        let prompt_cstr = unsafe { std::ffi::CStr::from_ptr(prompt) };
+        let prompt_bytes = prompt_cstr.to_bytes();
+        unsafe {
+            libc::syscall(
+                libc::SYS_write,
+                fd as i64,
+                prompt_bytes.as_ptr() as i64,
+                prompt_bytes.len() as i64,
+            );
+        }
+    }
+
+    // Disable echo via ioctl (TCGETS=0x5401, TCSETS=0x5402)
+    const TCGETS: u64 = 0x5401;
+    const TCSETS: u64 = 0x5402;
+    const ECHO_FLAG: u32 = 0o10; // ECHO in termios c_lflag
+    let mut termios_buf = [0u8; 60]; // struct termios size on Linux
+    let saved_ok = unsafe {
+        libc::syscall(
+            libc::SYS_ioctl,
+            fd as i64,
+            TCGETS as i64,
+            termios_buf.as_mut_ptr() as i64,
+        )
+    } >= 0;
+
+    if saved_ok {
+        let mut modified = termios_buf;
+        // c_lflag is at offset 12 in struct termios (after c_iflag, c_oflag, c_cflag)
+        let lflag_offset = 12;
+        let lflag = u32::from_ne_bytes(
+            modified[lflag_offset..lflag_offset + 4]
+                .try_into()
+                .unwrap_or([0; 4]),
+        );
+        let new_lflag = lflag & !ECHO_FLAG;
+        modified[lflag_offset..lflag_offset + 4].copy_from_slice(&new_lflag.to_ne_bytes());
+        unsafe {
+            libc::syscall(
+                libc::SYS_ioctl,
+                fd as i64,
+                TCSETS as i64,
+                modified.as_ptr() as i64,
+            );
+        }
+    }
+
+    // Read password
+    let result = GETPASS_BUF.with(|cell| {
+        let mut buf = cell.borrow_mut();
+        let mut pos = 0usize;
+        loop {
+            let mut ch = 0u8;
+            let n = unsafe {
+                libc::syscall(libc::SYS_read, fd as i64, &mut ch as *mut u8 as i64, 1i64)
+            };
+            if n <= 0 || ch == b'\n' || ch == b'\r' {
+                break;
+            }
+            if pos < GETPASS_MAX - 1 {
+                buf[pos] = ch as c_char;
+                pos += 1;
+            }
+        }
+        buf[pos] = 0;
+        buf.as_mut_ptr()
+    });
+
+    // Restore terminal settings
+    if saved_ok {
+        unsafe {
+            libc::syscall(
+                libc::SYS_ioctl,
+                fd as i64,
+                TCSETS as i64,
+                termios_buf.as_ptr() as i64,
+            );
+        }
+        // Print newline since echo was off
+        unsafe { libc::syscall(libc::SYS_write, fd as i64, b"\n".as_ptr() as i64, 1i64) };
+    }
+
+    unsafe { libc::syscall(libc::SYS_close, fd as i64) };
+    result
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -5402,8 +5871,6 @@ pub unsafe extern "C" fn process_vm_writev(
 // ---------------------------------------------------------------------------
 
 unsafe extern "C" {
-    #[link_name = "umount"]
-    fn libc_umount(target: *const c_char) -> c_int;
     #[link_name = "glob64"]
     fn libc_glob64(
         pattern: *const c_char,
@@ -5420,13 +5887,16 @@ unsafe extern "C" {
         nopenfd: c_int,
         flags: c_int,
     ) -> c_int;
-    #[link_name = "alphasort64"]
-    fn libc_alphasort64(a: *mut *const c_void, b: *mut *const c_void) -> c_int;
 }
 
+/// Linux `umount` — unmount a filesystem via raw syscall.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn umount(target: *const c_char) -> c_int {
-    unsafe { libc_umount(target) }
+    let ret = unsafe { libc::syscall(libc::SYS_umount2, target, 0i64) } as c_int;
+    if ret < 0 {
+        return -1;
+    }
+    0
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -5454,7 +5924,13 @@ pub unsafe extern "C" fn nftw64(
     unsafe { libc_nftw64(dirpath, fn_, nopenfd, flags) }
 }
 
+/// `alphasort64` — compare two directory entries by name (64-bit alias).
+///
+/// On 64-bit Linux, dirent64 == dirent, so this delegates to the
+/// native alphasort implementation.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn alphasort64(a: *mut *const c_void, b: *mut *const c_void) -> c_int {
-    unsafe { libc_alphasort64(a, b) }
+    unsafe {
+        crate::dirent_abi::alphasort(a as *mut *const libc::dirent, b as *mut *const libc::dirent)
+    }
 }
