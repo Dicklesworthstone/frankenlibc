@@ -525,13 +525,11 @@ mod tests {
     use super::*;
     use core::sync::atomic::{AtomicU32, AtomicU64, Ordering as AtomicOrdering};
 
-    // All TLS tests share global state (KEY_REGISTRY, TLS table). Serialize
-    // them with a mutex so `reset_tls_state()` doesn't race with other tests.
-    static TEST_LOCK: Mutex<()> = Mutex::new(());
-
-    /// Acquire the test lock and reset global state.
+    /// Acquire the shared RCU/TLS test lock and reset global state.
     fn lock_and_reset() -> std::sync::MutexGuard<'static, ()> {
-        let guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let guard = crate::rcu::rcu_test_global_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         reset_tls_state();
         guard
     }

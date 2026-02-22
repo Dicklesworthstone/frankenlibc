@@ -23,6 +23,7 @@ use frankenlibc_abi::unistd_abi::{
 use std::ffi::CString;
 use std::os::fd::AsRawFd;
 use std::ptr;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 unsafe extern "C" {
@@ -61,6 +62,7 @@ struct EtherAddr {
 
 static SHM_NAME_NONCE: AtomicU64 = AtomicU64::new(1);
 static MQ_NAME_NONCE: AtomicU64 = AtomicU64::new(1);
+static GETOPT_TEST_GUARD: Mutex<()> = Mutex::new(());
 
 fn unique_shm_name(prefix: &str) -> CString {
     let n = SHM_NAME_NONCE.fetch_add(1, Ordering::Relaxed);
@@ -1023,6 +1025,7 @@ fn getlogin_r_validates_buffer_and_reports_erange() {
 
 #[test]
 fn getopt_parses_short_options_and_required_argument() {
+    let _guard = GETOPT_TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     let args = [
         std::ffi::CString::new("prog").expect("valid argv"),
         std::ffi::CString::new("-a").expect("valid argv"),
@@ -1068,6 +1071,7 @@ fn getopt_parses_short_options_and_required_argument() {
 
 #[test]
 fn getopt_long_parses_named_options_and_inline_values() {
+    let _guard = GETOPT_TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     let args = [
         std::ffi::CString::new("prog").expect("valid argv"),
         std::ffi::CString::new("--alpha").expect("valid argv"),

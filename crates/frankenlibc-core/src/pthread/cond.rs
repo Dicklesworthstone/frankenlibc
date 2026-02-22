@@ -186,9 +186,9 @@ pub unsafe fn condvar_wait(condvar_ptr: *mut CondvarData, mutex_futex_word: *con
         .assoc_mutex
         .compare_exchange(0, mutex_addr, Ordering::AcqRel, Ordering::Acquire)
     {
-        Ok(_) => {} // Successfully associated this mutex.
+        Ok(_) => {}                                   // Successfully associated this mutex.
         Err(existing) if existing == mutex_addr => {} // Already associated with same mutex.
-        Err(_) => return errno::EINVAL, // Different mutex -- POSIX violation.
+        Err(_) => return errno::EINVAL,               // Different mutex -- POSIX violation.
     }
 
     // Capture seq before releasing mutex.
@@ -231,10 +231,11 @@ pub unsafe fn condvar_wait(condvar_ptr: *mut CondvarData, mutex_futex_word: *con
         }
     }
 
-    cv.nwaiters.fetch_sub(1, Ordering::AcqRel);
+    let prev_waiters = cv.nwaiters.fetch_sub(1, Ordering::AcqRel);
 
-    // Clear mutex association if we're the last waiter.
-    if cv.nwaiters.load(Ordering::Acquire) == 0 {
+    // Clear mutex association if we were the last waiter.
+    // Use the return value of fetch_sub (previous value) to avoid TOCTOU.
+    if prev_waiters == 1 {
         cv.assoc_mutex.store(0, Ordering::Release);
     }
 
@@ -276,9 +277,9 @@ pub unsafe fn condvar_timedwait(
         .assoc_mutex
         .compare_exchange(0, mutex_addr, Ordering::AcqRel, Ordering::Acquire)
     {
-        Ok(_) => {} // Successfully associated this mutex.
+        Ok(_) => {}                                   // Successfully associated this mutex.
         Err(existing) if existing == mutex_addr => {} // Already associated with same mutex.
-        Err(_) => return errno::EINVAL, // Different mutex -- POSIX violation.
+        Err(_) => return errno::EINVAL,               // Different mutex -- POSIX violation.
     }
 
     let expected_seq = cv.seq.load(Ordering::Acquire);
@@ -341,8 +342,8 @@ pub unsafe fn condvar_timedwait(
         }
     }
 
-    cv.nwaiters.fetch_sub(1, Ordering::AcqRel);
-    if cv.nwaiters.load(Ordering::Acquire) == 0 {
+    let prev_waiters = cv.nwaiters.fetch_sub(1, Ordering::AcqRel);
+    if prev_waiters == 1 {
         cv.assoc_mutex.store(0, Ordering::Release);
     }
 

@@ -3,7 +3,7 @@
 //! Integration tests for pthread thread-specific data (TSD / pthread_key_*).
 
 use std::ffi::c_void;
-use std::sync::Mutex;
+use std::sync::{Mutex, Once};
 
 use frankenlibc_abi::pthread_abi::{
     pthread_create, pthread_join, pthread_key_create, pthread_key_delete,
@@ -14,10 +14,11 @@ use frankenlibc_abi::pthread_abi::{
 use frankenlibc_abi::pthread_abi::{pthread_getspecific, pthread_setspecific};
 
 static TEST_GUARD: Mutex<()> = Mutex::new(());
+static FORCE_NATIVE_ONCE: Once = Once::new();
 
 fn lock_and_force_native() -> std::sync::MutexGuard<'static, ()> {
     let guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
-    pthread_threading_force_native_for_tests();
+    FORCE_NATIVE_ONCE.call_once(pthread_threading_force_native_for_tests);
     guard
 }
 

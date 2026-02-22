@@ -509,6 +509,15 @@ impl<T> RcuDomain<T> {
 // Utility: reset for testing
 // ---------------------------------------------------------------------------
 
+/// Shared lock used by test modules that mutate global RCU state.
+#[cfg(test)]
+pub(crate) fn rcu_test_global_lock() -> &'static std::sync::Mutex<()> {
+    use std::sync::{Mutex, OnceLock};
+
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
+
 /// Reset all RCU state (for testing only).
 ///
 /// # Safety
@@ -538,12 +547,11 @@ pub(crate) fn reset_rcu_state() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
-
-    static TEST_LOCK: Mutex<()> = Mutex::new(());
 
     fn lock_and_reset() -> std::sync::MutexGuard<'static, ()> {
-        let guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let guard = rcu_test_global_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         reset_rcu_state();
         guard
     }

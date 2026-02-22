@@ -301,7 +301,9 @@ unsafe extern "C" fn thread_trampoline(args_raw: usize) -> usize {
 #[cfg(target_arch = "x86_64")]
 #[allow(unsafe_code)]
 fn allocate_thread_stack(stack_size: usize) -> Result<(usize, usize, usize), i32> {
-    let total_size = GUARD_PAGE_SIZE + stack_size;
+    let total_size = GUARD_PAGE_SIZE
+        .checked_add(stack_size)
+        .ok_or(crate::errno::ENOMEM)?;
 
     // Allocate the full region as read+write.
     // SAFETY: anonymous mmap with no fd, valid parameters.
@@ -623,7 +625,10 @@ pub unsafe fn join_thread(handle_ptr: *mut ThreadHandle) -> Result<usize, i32> {
         // SAFETY: futex_ptr points to a valid, aligned i32 in the handle.
         let _ = unsafe {
             syscall::sys_futex(
-                futex_ptr, 0x80,       // FUTEX_WAIT_PRIVATE
+                // CLONE_CHILD_CLEARTID issues a non-private FUTEX_WAKE from
+                // the kernel. Waiting with FUTEX_WAIT_PRIVATE can miss that
+                // wake and deadlock joiners.
+                futex_ptr, 0x00,       // FUTEX_WAIT
                 tid as u32, // expected value
                 0, 0, 0,
             )
