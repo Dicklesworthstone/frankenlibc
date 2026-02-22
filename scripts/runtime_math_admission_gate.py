@@ -29,10 +29,18 @@ Exit codes:
   2 = missing required artifact
 """
 import json
+import os
 import sys
+import time
+import hashlib
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+try:
+    import tomllib
+except ModuleNotFoundError:
+    tomllib = None
 
 
 def load_json(path: Path) -> Any:
@@ -96,15 +104,121 @@ def _extract_value_targets(value_proof: dict[str, Any]) -> tuple[dict[str, dict[
     return targets, retention_threshold
 
 
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(65536), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _artifact_integrity_snapshot(
+    repo_root: Path,
+    artifacts: dict[str, Path],
+) -> dict[str, dict[str, Any]]:
+    snapshot: dict[str, dict[str, Any]] = {}
+    for key, path in artifacts.items():
+        snapshot[key] = {
+            "path": str(path.relative_to(repo_root)),
+            "sha256": _sha256_file(path),
+            "size_bytes": path.stat().st_size,
+        }
+    return snapshot
+
+
+def _analyze_harness_tooling_contract(repo_root: Path, harness_cargo_path: Path) -> dict[str, Any]:
+    contract: dict[str, Any] = {
+        "cargo_manifest": str(harness_cargo_path.relative_to(repo_root)),
+        "parse_mode": "tomllib" if tomllib is not None else "text_fallback",
+        "has_asupersync_dependency": False,
+        "has_ftui_harness_dependency": False,
+        "asupersync_feature_present": False,
+        "default_enables_asupersync_tooling": False,
+        "frankentui_feature_present": False,
+        "frankentui_dependency_set_complete": False,
+    }
+    if not harness_cargo_path.exists():
+        contract["parse_error"] = "missing_harness_cargo_toml"
+        return contract
+
+    content = harness_cargo_path.read_text(encoding="utf-8")
+    if tomllib is not None:
+        try:
+            cargo = tomllib.loads(content)
+        except Exception as exc:  # pragma: no cover - defensive parsing guard
+            contract["parse_error"] = f"toml_parse_error: {exc}"
+        else:
+            features = cargo.get("features", {})
+            deps = cargo.get("dependencies", {})
+
+            default_features = set(features.get("default", []))
+            asupersync_feature = set(features.get("asupersync-tooling", []))
+            frankentui_feature = set(features.get("frankentui-ui", []))
+
+            contract["has_asupersync_dependency"] = "asupersync-conformance" in deps
+            contract["has_ftui_harness_dependency"] = "ftui-harness" in deps
+            contract["asupersync_feature_present"] = (
+                "asupersync-tooling" in features and "dep:asupersync-conformance" in asupersync_feature
+            )
+            contract["default_enables_asupersync_tooling"] = "asupersync-tooling" in default_features
+            contract["frankentui_feature_present"] = (
+                "frankentui-ui" in features and "dep:ftui-harness" in frankentui_feature
+            )
+            contract["frankentui_dependency_set_complete"] = all(
+                dep in deps
+                for dep in (
+                    "ftui-harness",
+                    "ftui-core",
+                    "ftui-layout",
+                    "ftui-render",
+                    "ftui-style",
+                    "ftui-widgets",
+                )
+            )
+            return contract
+
+    # Fallback parsing for older Python builds that do not ship tomllib.
+    contract["has_asupersync_dependency"] = "asupersync-conformance" in content
+    contract["has_ftui_harness_dependency"] = "ftui-harness" in content
+    contract["asupersync_feature_present"] = (
+        "asupersync-tooling" in content and "dep:asupersync-conformance" in content
+    )
+    contract["default_enables_asupersync_tooling"] = (
+        'default = ["asupersync-tooling"]' in content
+    )
+    contract["frankentui_feature_present"] = (
+        "frankentui-ui" in content and "dep:ftui-harness" in content
+    )
+    contract["frankentui_dependency_set_complete"] = all(
+        needle in content
+        for needle in (
+            "ftui-harness",
+            "ftui-core",
+            "ftui-layout",
+            "ftui-render",
+            "ftui-style",
+            "ftui-widgets",
+        )
+    )
+    return contract
+
+
 def main() -> int:
     repo_root = Path(__file__).resolve().parent.parent
+    start_ns = time.time_ns()
+    trace_id = (
+        f"bd-w2c3.5.3::admission-gate::"
+        f"{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}::{os.getpid()}"
+    )
 
     governance_path = repo_root / "tests/conformance/math_governance.json"
     manifest_path = repo_root / "tests/runtime_math/production_kernel_manifest.v1.json"
     ablation_path = repo_root / "tests/runtime_math/controller_ablation_report.v1.json"
     linkage_path = repo_root / "tests/runtime_math/runtime_math_linkage.v1.json"
     value_proof_path = repo_root / "tests/conformance/math_value_proof.json"
+    harness_cargo_path = repo_root / "crates/frankenlibc-harness/Cargo.toml"
     controller_manifest_path = repo_root / "tests/runtime_math/controller_manifest.v1.json"
+    structured_log_path = repo_root / "target/conformance/runtime_math_admission_gate.log.jsonl"
 
     governance = load_json(governance_path)
     manifest = load_json(manifest_path)
@@ -124,10 +238,22 @@ def main() -> int:
         missing.append("runtime_math_linkage.v1.json")
     if value_proof is None:
         missing.append("math_value_proof.json")
+    if not harness_cargo_path.exists():
+        missing.append("crates/frankenlibc-harness/Cargo.toml")
 
     if missing:
         print(f"FAIL: missing required artifacts: {missing}", file=sys.stderr)
         return 2
+
+    artifacts_consumed_paths = {
+        "governance": governance_path,
+        "manifest": manifest_path,
+        "ablation_report": ablation_path,
+        "linkage": linkage_path,
+        "value_proof": value_proof_path,
+        "harness_cargo_manifest": harness_cargo_path,
+    }
+    artifact_integrity = _artifact_integrity_snapshot(repo_root, artifacts_consumed_paths)
 
     # Extract governance modules by tier
     governance_modules: dict[str, str] = {}  # module -> tier
@@ -173,6 +299,7 @@ def main() -> int:
     # Extract feature sets
     default_features = set(manifest.get("default_feature_set", []))
     optional_features = set(manifest.get("optional_feature_set", []))
+    tooling_contract = _analyze_harness_tooling_contract(repo_root, harness_cargo_path)
 
     findings: list[dict[str, str]] = []
 
@@ -291,6 +418,14 @@ def main() -> int:
     # "ADMITTED" modules must still come from production_modules.
     for module in sorted(retired_modules):
         tier = governance_modules.get(module, "unknown")
+        if module in production_modules:
+            findings.append({
+                "severity": "error",
+                "policy": "retirement_lockout",
+                "rule": "retired_module_not_in_production_manifest",
+                "module": module,
+                "message": f"Module '{module}' is RETIRE but still present in production_modules",
+            })
         if tier == "research":
             # Research modules are expected to be retired — verify they are
             # acknowledged as needing research feature gate
@@ -303,6 +438,23 @@ def main() -> int:
                     "module": module,
                     "message": f"Research module '{module}' has RETIRE decision but no migration action",
                 })
+
+    if production_feature not in default_features:
+        findings.append({
+            "severity": "error",
+            "policy": "retirement_lockout",
+            "rule": "production_feature_must_be_default",
+            "module": production_feature,
+            "message": f"Manifest default_feature_set must include '{production_feature}'",
+        })
+    if research_feature not in optional_features:
+        findings.append({
+            "severity": "error",
+            "policy": "retirement_lockout",
+            "rule": "research_feature_must_be_optional",
+            "module": research_feature,
+            "message": f"Manifest optional_feature_set must include '{research_feature}'",
+        })
 
     # === POLICY 3: UNKNOWN BLOCK ===
     # Modules with BLOCK decision in ablation are hard-blocked
@@ -347,6 +499,55 @@ def main() -> int:
                     f"tier is '{tier}' — possible silent reactivation. "
                     f"Re-run ablation after governance reclassification."
                 ),
+            })
+
+    # === POLICY 6: TOOLING CONTRACT ===
+    # Admission evidence must be traceable through asupersync + frankentui tooling hooks.
+    if "parse_error" in tooling_contract:
+        findings.append({
+            "severity": "error",
+            "policy": "tooling_contract",
+            "rule": "harness_manifest_parseable_required",
+            "module": "frankenlibc-harness",
+            "message": (
+                f"Harness Cargo manifest parse failed: {tooling_contract['parse_error']}"
+            ),
+        })
+    tooling_rules = [
+        (
+            "asupersync_dependency_required",
+            "has_asupersync_dependency",
+            "Harness must depend on asupersync-conformance",
+        ),
+        (
+            "asupersync_feature_required",
+            "asupersync_feature_present",
+            "Harness must expose asupersync-tooling feature bound to dep:asupersync-conformance",
+        ),
+        (
+            "asupersync_default_enable_required",
+            "default_enables_asupersync_tooling",
+            "Harness default feature set must include asupersync-tooling",
+        ),
+        (
+            "frankentui_feature_required",
+            "frankentui_feature_present",
+            "Harness must expose frankentui-ui feature bound to dep:ftui-harness",
+        ),
+        (
+            "frankentui_dependency_set_required",
+            "frankentui_dependency_set_complete",
+            "Harness frankentui-ui feature requires ftui-* dependency set",
+        ),
+    ]
+    for rule, key, message in tooling_rules:
+        if not tooling_contract.get(key, False):
+            findings.append({
+                "severity": "error",
+                "policy": "tooling_contract",
+                "rule": rule,
+                "module": "frankenlibc-harness",
+                "message": message,
             })
 
     # Build controller manifest dossier entries (explicit audit surface).
@@ -445,7 +646,7 @@ def main() -> int:
 
     report = {
         "schema_version": "v1",
-        "bead": "bd-3ot.3",
+        "bead": "bd-w2c3.5.3",
         "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "status": status,
         "summary": {
@@ -466,15 +667,23 @@ def main() -> int:
             "controller_manifest: fallback_when_data_missing_required",
             "controller_manifest: value_target_required",
             "retirement_lockout: research_must_have_migration_action",
+            "retirement_lockout: retired_module_not_in_production_manifest",
+            "retirement_lockout: production_feature_must_be_default",
+            "retirement_lockout: research_feature_must_be_optional",
             "retirement_lockout: retired_module_cannot_be_production",
             "unknown_block: unclassified_module_blocked",
             "completeness: production_core_must_be_in_manifest",
+            "tooling_contract: asupersync_dependency_required",
+            "tooling_contract: asupersync_feature_required",
+            "tooling_contract: asupersync_default_enable_required",
+            "tooling_contract: frankentui_feature_required",
+            "tooling_contract: frankentui_dependency_set_required",
         ],
         "admission_ledger": admission_ledger,
         "findings": findings,
         "feature_gate_config": {
-            "default": list(default_features),
-            "optional": list(optional_features),
+            "default": sorted(default_features),
+            "optional": sorted(optional_features),
             "production_gate": production_feature,
             "research_gate": research_feature,
         },
@@ -484,16 +693,20 @@ def main() -> int:
             "ablation_report": str(ablation_path.relative_to(repo_root)),
             "linkage": str(linkage_path.relative_to(repo_root)),
             "value_proof": str(value_proof_path.relative_to(repo_root)),
+            "harness_cargo_manifest": str(harness_cargo_path.relative_to(repo_root)),
         },
+        "artifact_integrity": artifact_integrity,
+        "tooling_contract": tooling_contract,
         "artifacts_emitted": {
             "admission_gate_report": "tests/runtime_math/admission_gate_report.v1.json",
             "controller_manifest": "tests/runtime_math/controller_manifest.v1.json",
+            "structured_log": "target/conformance/runtime_math_admission_gate.log.jsonl",
         },
     }
 
     controller_manifest = {
         "schema_version": "v1",
-        "bead": "bd-3ot.1",
+        "bead": "bd-w2c3.5.3",
         "generated_at": report["generated_at"],
         "description": (
             "Controller-by-controller runtime-math manifest linking decision hook, "
@@ -524,6 +737,44 @@ def main() -> int:
     with controller_manifest_path.open("w", encoding="utf-8") as f:
         json.dump(controller_manifest, f, indent=2)
         f.write("\n")
+
+    log_event = {
+        "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "trace_id": trace_id,
+        "level": "error" if errors > 0 else "info",
+        "event": "runtime_math_admission_gate",
+        "bead_id": "bd-w2c3.5.3",
+        "mode": "strict",
+        "api_family": "runtime_math",
+        "symbol": "production_admission_retirement_gate",
+        "decision_path": "governance+ablation+linkage+value_target+integrity+tooling_contract",
+        "healing_action": "None",
+        "outcome": "fail" if errors > 0 else "pass",
+        "errno": 1 if errors > 0 else 0,
+        "latency_ns": time.time_ns() - start_ns,
+        "artifact_refs": [
+            str(artifact_path.relative_to(repo_root)),
+            str(controller_manifest_path.relative_to(repo_root)),
+            str(structured_log_path.relative_to(repo_root)),
+            str(governance_path.relative_to(repo_root)),
+            str(manifest_path.relative_to(repo_root)),
+            str(ablation_path.relative_to(repo_root)),
+            str(linkage_path.relative_to(repo_root)),
+            str(value_proof_path.relative_to(repo_root)),
+            str(harness_cargo_path.relative_to(repo_root)),
+        ],
+        "details": {
+            "status": status,
+            "summary": report["summary"],
+            "finding_count": len(findings),
+            "policies_enforced": report["policies_enforced"],
+            "artifact_integrity": report["artifact_integrity"],
+            "tooling_contract": report["tooling_contract"],
+        },
+    }
+    structured_log_path.parent.mkdir(parents=True, exist_ok=True)
+    with structured_log_path.open("w", encoding="utf-8") as f:
+        f.write(json.dumps(log_event, separators=(",", ":")) + "\n")
 
     if errors > 0:
         return 1

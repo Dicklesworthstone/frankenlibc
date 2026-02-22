@@ -1,7 +1,7 @@
 {
   "schema_version": "v1",
-  "bead": "bd-3ot.1",
-  "generated_at": "2026-02-19T16:38:58Z",
+  "bead": "bd-w2c3.5.3",
+  "generated_at": "2026-02-22T04:35:13Z",
   "description": "Controller-by-controller runtime-math manifest linking decision hook, invariant, fallback behavior, runtime cost target, and measurable value target.",
   "retention_threshold": 2.0,
   "sources": {

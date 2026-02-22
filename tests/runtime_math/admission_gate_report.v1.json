@@ -1,7 +1,7 @@
 {
   "schema_version": "v1",
-  "bead": "bd-3ot.3",
-  "generated_at": "2026-02-19T16:38:58Z",
+  "bead": "bd-w2c3.5.3",
+  "generated_at": "2026-02-22T04:35:13Z",
   "status": "pass",
   "summary": {
     "total_modules": 69,
@@ -28,9 +28,17 @@
     "controller_manifest: fallback_when_data_missing_required",
     "controller_manifest: value_target_required",
     "retirement_lockout: research_must_have_migration_action",
+    "retirement_lockout: retired_module_not_in_production_manifest",
+    "retirement_lockout: production_feature_must_be_default",
+    "retirement_lockout: research_feature_must_be_optional",
     "retirement_lockout: retired_module_cannot_be_production",
     "unknown_block: unclassified_module_blocked",
-    "completeness: production_core_must_be_in_manifest"
+    "completeness: production_core_must_be_in_manifest",
+    "tooling_contract: asupersync_dependency_required",
+    "tooling_contract: asupersync_feature_required",
+    "tooling_contract: asupersync_default_enable_required",
+    "tooling_contract: frankentui_feature_required",
+    "tooling_contract: frankentui_dependency_set_required"
   ],
   "admission_ledger": [
     {
@@ -740,10 +748,54 @@
     "manifest": "tests/runtime_math/production_kernel_manifest.v1.json",
     "ablation_report": "tests/runtime_math/controller_ablation_report.v1.json",
     "linkage": "tests/runtime_math/runtime_math_linkage.v1.json",
-    "value_proof": "tests/conformance/math_value_proof.json"
+    "value_proof": "tests/conformance/math_value_proof.json",
+    "harness_cargo_manifest": "crates/frankenlibc-harness/Cargo.toml"
+  },
+  "artifact_integrity": {
+    "governance": {
+      "path": "tests/conformance/math_governance.json",
+      "sha256": "6eb3ebf8ca062357a010be1ab5344034c91003295def1aa32a75ff1d33acbc4b",
+      "size_bytes": 10618
+    },
+    "manifest": {
+      "path": "tests/runtime_math/production_kernel_manifest.v1.json",
+      "sha256": "61ce88e5be9aae5d645337c4060c10bbf2a9ad0ff735b64fe7365a7938f188cf",
+      "size_bytes": 2523
+    },
+    "ablation_report": {
+      "path": "tests/runtime_math/controller_ablation_report.v1.json",
+      "sha256": "c00cbdf0d1cde452d023f93d40996dbd12441fa74d826f7af84a9e05859a341f",
+      "size_bytes": 27378
+    },
+    "linkage": {
+      "path": "tests/runtime_math/runtime_math_linkage.v1.json",
+      "sha256": "28b262728e6e10869aac46a3c487d31454eaeb16d4145231a5757f06924c7e83",
+      "size_bytes": 49342
+    },
+    "value_proof": {
+      "path": "tests/conformance/math_value_proof.json",
+      "sha256": "64fe4f300cc4078aba047426ec82755a2369db16949553f22ad507065c69630c",
+      "size_bytes": 15584
+    },
+    "harness_cargo_manifest": {
+      "path": "crates/frankenlibc-harness/Cargo.toml",
+      "sha256": "c2bfddb35a23e9c07fcf5619ebcc9bcf4f453380995ea618814e74465c0382fa",
+      "size_bytes": 1152
+    }
+  },
+  "tooling_contract": {
+    "cargo_manifest": "crates/frankenlibc-harness/Cargo.toml",
+    "parse_mode": "tomllib",
+    "has_asupersync_dependency": true,
+    "has_ftui_harness_dependency": true,
+    "asupersync_feature_present": true,
+    "default_enables_asupersync_tooling": true,
+    "frankentui_feature_present": true,
+    "frankentui_dependency_set_complete": true
   },
   "artifacts_emitted": {
     "admission_gate_report": "tests/runtime_math/admission_gate_report.v1.json",
-    "controller_manifest": "tests/runtime_math/controller_manifest.v1.json"
+    "controller_manifest": "tests/runtime_math/controller_manifest.v1.json",
+    "structured_log": "target/conformance/runtime_math_admission_gate.log.jsonl"
   }
 }

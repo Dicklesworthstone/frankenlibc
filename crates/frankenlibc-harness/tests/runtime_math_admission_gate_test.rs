@@ -55,6 +55,8 @@ fn admission_gate_passes() {
         "feature_gate_config",
         "artifacts_consumed",
         "controller_manifest_summary",
+        "artifact_integrity",
+        "tooling_contract",
         "artifacts_emitted",
     ];
     for key in required_keys {
@@ -99,6 +101,71 @@ fn admission_gate_passes() {
             .as_u64()
             .is_some()
     );
+
+    let emitted = report["artifacts_emitted"]
+        .as_object()
+        .expect("artifacts_emitted should be object");
+    assert_eq!(
+        emitted
+            .get("structured_log")
+            .and_then(serde_json::Value::as_str),
+        Some("target/conformance/runtime_math_admission_gate.log.jsonl")
+    );
+
+    let tooling_contract = report["tooling_contract"]
+        .as_object()
+        .expect("tooling_contract should be object");
+    for key in [
+        "has_asupersync_dependency",
+        "asupersync_feature_present",
+        "default_enables_asupersync_tooling",
+        "frankentui_feature_present",
+        "frankentui_dependency_set_complete",
+    ] {
+        assert_eq!(
+            tooling_contract
+                .get(key)
+                .and_then(serde_json::Value::as_bool),
+            Some(true),
+            "tooling contract expectation failed for key: {key}"
+        );
+    }
+    assert!(
+        tooling_contract.get("parse_error").is_none(),
+        "tooling_contract.parse_error should not be present"
+    );
+
+    let integrity = report["artifact_integrity"]
+        .as_object()
+        .expect("artifact_integrity should be object");
+    for key in [
+        "governance",
+        "manifest",
+        "ablation_report",
+        "linkage",
+        "value_proof",
+        "harness_cargo_manifest",
+    ] {
+        let entry = integrity.get(key).unwrap_or_else(|| {
+            panic!("artifact_integrity missing entry: {key}");
+        });
+        let sha = entry["sha256"]
+            .as_str()
+            .unwrap_or_else(|| panic!("artifact_integrity.{key}.sha256 missing"));
+        assert_eq!(
+            sha.len(),
+            64,
+            "artifact_integrity.{key}.sha256 must be 64 hex chars"
+        );
+        assert!(
+            sha.chars().all(|c| c.is_ascii_hexdigit()),
+            "artifact_integrity.{key}.sha256 must be hex"
+        );
+        assert!(
+            entry["size_bytes"].as_u64().unwrap_or(0) > 0,
+            "artifact_integrity.{key}.size_bytes must be positive"
+        );
+    }
 }
 
 #[test]
@@ -265,4 +332,67 @@ fn controller_manifest_artifact_is_complete() {
             );
         }
     }
+}
+
+#[test]
+fn admission_gate_emits_structured_log_with_required_fields() {
+    let repo_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap();
+
+    let script = repo_root.join("scripts/runtime_math_admission_gate.py");
+    let output = Command::new("python3")
+        .arg(&script)
+        .current_dir(repo_root)
+        .output()
+        .expect("failed to run runtime_math_admission_gate.py");
+    assert!(
+        output.status.success(),
+        "runtime_math_admission_gate.py failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let log_path = repo_root.join("target/conformance/runtime_math_admission_gate.log.jsonl");
+    assert!(
+        log_path.exists(),
+        "missing structured log at {:?}",
+        log_path
+    );
+
+    let (line_count, errors) = frankenlibc_harness::structured_log::validate_log_file(&log_path)
+        .expect("structured log should be readable");
+    assert_eq!(line_count, 1, "expected exactly one summary log line");
+    assert!(errors.is_empty(), "structured log errors: {errors:#?}");
+
+    let content = std::fs::read_to_string(&log_path).expect("failed to read structured log");
+    let line = content
+        .lines()
+        .find(|row| !row.trim().is_empty())
+        .expect("structured log should contain one event");
+    let row: serde_json::Value = serde_json::from_str(line).expect("log row should parse");
+
+    for key in [
+        "trace_id",
+        "mode",
+        "api_family",
+        "symbol",
+        "decision_path",
+        "healing_action",
+        "errno",
+        "latency_ns",
+        "artifact_refs",
+    ] {
+        assert!(row.get(key).is_some(), "structured log missing key: {key}");
+    }
+    assert_eq!(row["event"].as_str(), Some("runtime_math_admission_gate"));
+    assert_eq!(row["bead_id"].as_str(), Some("bd-w2c3.5.3"));
+    assert_eq!(row["outcome"].as_str(), Some("pass"));
+    let decision_path = row["decision_path"].as_str().unwrap_or_default();
+    assert!(
+        decision_path.contains("integrity") && decision_path.contains("tooling_contract"),
+        "decision_path should include integrity + tooling_contract stages, got {decision_path}"
+    );
 }
