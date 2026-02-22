@@ -365,7 +365,8 @@ pub fn format_strftime(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> usize
         ($val:expr, $width:expr) => {{
             let mut tmp = [0u8; 20];
             let v = $val as i64;
-            let mut uv = v as u64;
+            let negative = v < 0;
+            let mut uv = if negative { (-v) as u64 } else { v as u64 };
             let mut len = 0usize;
             if uv == 0 {
                 tmp[0] = b'0';
@@ -378,10 +379,14 @@ pub fn format_strftime(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> usize
                 }
             }
             let w: usize = $width;
-            if len < w {
-                for _ in 0..(w - len) {
+            let total_len = if negative { len + 1 } else { len };
+            if total_len < w {
+                for _ in 0..(w - total_len) {
                     push!(b' ');
                 }
+            }
+            if negative {
+                push!(b'-');
             }
             for j in (0..len).rev() {
                 push!(tmp[j]);

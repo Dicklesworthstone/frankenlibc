@@ -648,11 +648,13 @@ fn format_float_special(s: &[u8], spec: &FormatSpec, buf: &mut Vec<u8>) {
 /// `%f` / `%F` formatting: fixed-point decimal.
 fn format_f(value: f64, precision: usize, alt_form: bool) -> String {
     if precision == 0 {
-        let int_part = value as u64;
+        // Use Rust's Display to format the integer part rather than casting to u64,
+        // which would saturate for values > u64::MAX (~1.8e19).
+        let rounded = value.round();
         if alt_form {
-            alloc::format!("{}.", int_part)
+            alloc::format!("{rounded:.0}.")
         } else {
-            alloc::format!("{}", int_part)
+            alloc::format!("{rounded:.0}")
         }
     } else {
         alloc::format!("{:.prec$}", value, prec = precision)
@@ -670,7 +672,22 @@ fn format_e(value: f64, precision: usize, uppercase: bool, _alt_form: bool) -> S
         return alloc::format!("0.{zeros}{e_char}+00");
     }
     let exp = value.log10().floor() as i32;
-    let mantissa = value / 10_f64.powi(exp);
+    // For subnormal floats, 10^exp can underflow to 0.0. Use iterative scaling instead.
+    let mantissa = if exp.abs() > 300 {
+        let mut m = value;
+        if exp > 0 {
+            for _ in 0..exp {
+                m /= 10.0;
+            }
+        } else {
+            for _ in 0..(-exp) {
+                m *= 10.0;
+            }
+        }
+        m
+    } else {
+        value / 10_f64.powi(exp)
+    };
     let e_char = if uppercase { 'E' } else { 'e' };
     let sign = if exp < 0 { '-' } else { '+' };
     let abs_exp = exp.unsigned_abs();
