@@ -226,7 +226,7 @@
     },
     {
       "symbol": "alphasort",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "dirent_abi",
       "perf_class": "default",
       "strict_semantics": "Passthrough to glibc alphasort",
@@ -454,7 +454,7 @@
     },
     {
       "symbol": "bindtextdomain",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "locale_abi",
       "perf_class": "default",
       "strict_semantics": "Passthrough to glibc bindtextdomain",
@@ -820,16 +820,16 @@
     },
     {
       "symbol": "daemon",
-      "status": "GlibcCallThrough",
+      "status": "RawSyscall",
       "module": "unistd_abi",
       "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc daemon",
-      "hardened_semantics": "Passthrough to glibc daemon",
+      "strict_semantics": "Native fork+setsid+chdir+dup2 via raw syscalls",
+      "hardened_semantics": "Native fork+setsid+chdir+dup2 via raw syscalls",
       "default_stub": false
     },
     {
       "symbol": "dgettext",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "locale_abi",
       "perf_class": "default",
       "strict_semantics": "Passthrough to glibc dgettext",
@@ -975,7 +975,7 @@
     },
     {
       "symbol": "endutent",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "unistd_abi",
       "perf_class": "fast"
     },
@@ -1103,19 +1103,19 @@
     },
     {
       "symbol": "execl",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "unistd_abi",
       "perf_class": "syscall"
     },
     {
       "symbol": "execle",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "unistd_abi",
       "perf_class": "syscall"
     },
     {
       "symbol": "execlp",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "unistd_abi",
       "perf_class": "syscall"
     },
@@ -1139,7 +1139,7 @@
     },
     {
       "symbol": "execvpe",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "process_abi",
       "perf_class": "default",
       "strict_semantics": "Passthrough to glibc execvpe",
@@ -2170,7 +2170,7 @@
     },
     {
       "symbol": "getgrouplist",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "unistd_abi",
       "perf_class": "fast"
     },
@@ -2185,7 +2185,7 @@
     },
     {
       "symbol": "gethostbyaddr",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "resolv_abi",
       "perf_class": "default",
       "strict_semantics": "Passthrough to glibc gethostbyaddr",
@@ -2194,7 +2194,7 @@
     },
     {
       "symbol": "gethostbyaddr_r",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "inet_abi",
       "perf_class": "fast"
     },
@@ -2316,7 +2316,7 @@
     },
     {
       "symbol": "getpass",
-      "status": "GlibcCallThrough",
+      "status": "RawSyscall",
       "module": "unistd_abi",
       "perf_class": "fast"
     },
@@ -2358,7 +2358,7 @@
     },
     {
       "symbol": "getprotobyname",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "resolv_abi",
       "perf_class": "default",
       "strict_semantics": "Passthrough to glibc getprotobyname",
@@ -2367,7 +2367,7 @@
     },
     {
       "symbol": "getprotobynumber",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "resolv_abi",
       "perf_class": "default",
       "strict_semantics": "Passthrough to glibc getprotobynumber",
@@ -2452,7 +2452,7 @@
     },
     {
       "symbol": "getservbyname",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "resolv_abi",
       "perf_class": "default",
       "strict_semantics": "Passthrough to glibc getservbyname",
@@ -2461,13 +2461,13 @@
     },
     {
       "symbol": "getservbyname_r",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "inet_abi",
       "perf_class": "fast"
     },
     {
       "symbol": "getservbyport",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "resolv_abi",
       "perf_class": "default",
       "strict_semantics": "Passthrough to glibc getservbyport",
@@ -2476,7 +2476,7 @@
     },
     {
       "symbol": "getservbyport_r",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "inet_abi",
       "perf_class": "fast"
     },
@@ -2509,7 +2509,7 @@
     },
     {
       "symbol": "gettext",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "locale_abi",
       "perf_class": "default",
       "strict_semantics": "Passthrough to glibc gettext",
@@ -2604,7 +2604,7 @@
     },
     {
       "symbol": "hasmntopt",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "unistd_abi",
       "perf_class": "fast"
     },
@@ -2695,11 +2695,11 @@
     },
     {
       "symbol": "if_indextoname",
-      "status": "GlibcCallThrough",
+      "status": "RawSyscall",
       "module": "inet_abi",
       "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc if_indextoname",
-      "hardened_semantics": "Passthrough to glibc if_indextoname",
+      "strict_semantics": "ioctl SIOCGIFNAME via raw syscall",
+      "hardened_semantics": "ioctl SIOCGIFNAME via raw syscall",
       "default_stub": false
     },
     {
@@ -2710,11 +2710,11 @@
     },
     {
       "symbol": "if_nametoindex",
-      "status": "GlibcCallThrough",
+      "status": "RawSyscall",
       "module": "inet_abi",
       "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc if_nametoindex",
-      "hardened_semantics": "Passthrough to glibc if_nametoindex",
+      "strict_semantics": "ioctl SIOCGIFINDEX via raw syscall",
+      "hardened_semantics": "ioctl SIOCGIFINDEX via raw syscall",
       "default_stub": false
     },
     {
@@ -2789,7 +2789,7 @@
     },
     {
       "symbol": "initgroups",
-      "status": "GlibcCallThrough",
+      "status": "RawSyscall",
       "module": "unistd_abi",
       "perf_class": "syscall"
     },
@@ -3334,11 +3334,11 @@
     },
     {
       "symbol": "login_tty",
-      "status": "GlibcCallThrough",
+      "status": "RawSyscall",
       "module": "unistd_abi",
       "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc login_tty",
-      "hardened_semantics": "Passthrough to glibc login_tty",
+      "strict_semantics": "Native setsid+ioctl TIOCSCTTY+dup2 via raw syscalls",
+      "hardened_semantics": "Native setsid+ioctl TIOCSCTTY+dup2 via raw syscalls",
       "default_stub": false
     },
     {
@@ -3928,7 +3928,7 @@
     },
     {
       "symbol": "ngettext",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "locale_abi",
       "perf_class": "default",
       "strict_semantics": "Passthrough to glibc ngettext",
@@ -4308,11 +4308,11 @@
     },
     {
       "symbol": "psignal",
-      "status": "GlibcCallThrough",
+      "status": "RawSyscall",
       "module": "string_abi",
       "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc psignal",
-      "hardened_semantics": "Passthrough to glibc psignal",
+      "strict_semantics": "Native signal name lookup + SYS_write to stderr",
+      "hardened_semantics": "Native signal name lookup + SYS_write to stderr",
       "default_stub": false
     },
     {
@@ -5011,7 +5011,7 @@
     },
     {
       "symbol": "readdir64",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "dirent_abi",
       "perf_class": "default",
       "strict_semantics": "LP64 alias via glibc",
@@ -5020,7 +5020,7 @@
     },
     {
       "symbol": "readdir_r",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "dirent_abi",
       "perf_class": "default",
       "strict_semantics": "Passthrough to glibc readdir_r (deprecated but used)",
@@ -5225,7 +5225,7 @@
     },
     {
       "symbol": "rewinddir",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "dirent_abi",
       "perf_class": "default",
       "strict_semantics": "Passthrough to glibc rewinddir",
@@ -5318,7 +5318,7 @@
     },
     {
       "symbol": "scandir",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "dirent_abi",
       "perf_class": "default",
       "strict_semantics": "Passthrough to glibc scandir",
@@ -5327,7 +5327,7 @@
     },
     {
       "symbol": "scandir64",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "dirent_abi",
       "perf_class": "default",
       "strict_semantics": "LP64 alias via glibc",
@@ -5442,7 +5442,7 @@
     },
     {
       "symbol": "seekdir",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "dirent_abi",
       "perf_class": "default",
       "strict_semantics": "Passthrough to glibc seekdir",
@@ -5469,29 +5469,29 @@
     },
     {
       "symbol": "sem_destroy",
-      "status": "GlibcCallThrough",
+      "status": "RawSyscall",
       "module": "unistd_abi",
       "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc sem_destroy",
-      "hardened_semantics": "Passthrough to glibc sem_destroy",
+      "strict_semantics": "Futex-based unnamed semaphore destroy (no-op)",
+      "hardened_semantics": "Futex-based unnamed semaphore destroy (no-op)",
       "default_stub": false
     },
     {
       "symbol": "sem_getvalue",
-      "status": "GlibcCallThrough",
+      "status": "RawSyscall",
       "module": "unistd_abi",
       "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc sem_getvalue",
-      "hardened_semantics": "Passthrough to glibc sem_getvalue",
+      "strict_semantics": "Futex-based atomic read of semaphore counter",
+      "hardened_semantics": "Futex-based atomic read of semaphore counter",
       "default_stub": false
     },
     {
       "symbol": "sem_init",
-      "status": "GlibcCallThrough",
+      "status": "RawSyscall",
       "module": "unistd_abi",
       "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc sem_init",
-      "hardened_semantics": "Passthrough to glibc sem_init",
+      "strict_semantics": "Futex-based unnamed semaphore init with atomic store",
+      "hardened_semantics": "Futex-based unnamed semaphore init with atomic store",
       "default_stub": false
     },
     {
@@ -5505,29 +5505,29 @@
     },
     {
       "symbol": "sem_post",
-      "status": "GlibcCallThrough",
+      "status": "RawSyscall",
       "module": "unistd_abi",
       "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc sem_post",
-      "hardened_semantics": "Passthrough to glibc sem_post",
+      "strict_semantics": "Futex-based atomic increment + FUTEX_WAKE",
+      "hardened_semantics": "Futex-based atomic increment + FUTEX_WAKE with overflow check",
       "default_stub": false
     },
     {
       "symbol": "sem_timedwait",
-      "status": "GlibcCallThrough",
+      "status": "RawSyscall",
       "module": "unistd_abi",
       "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc sem_timedwait",
-      "hardened_semantics": "Passthrough to glibc sem_timedwait",
+      "strict_semantics": "Futex-based CAS decrement with FUTEX_WAIT timeout",
+      "hardened_semantics": "Futex-based CAS decrement with FUTEX_WAIT timeout",
       "default_stub": false
     },
     {
       "symbol": "sem_trywait",
-      "status": "GlibcCallThrough",
+      "status": "RawSyscall",
       "module": "unistd_abi",
       "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc sem_trywait",
-      "hardened_semantics": "Passthrough to glibc sem_trywait",
+      "strict_semantics": "Futex-based non-blocking CAS decrement",
+      "hardened_semantics": "Futex-based non-blocking CAS decrement",
       "default_stub": false
     },
     {
@@ -5541,11 +5541,11 @@
     },
     {
       "symbol": "sem_wait",
-      "status": "GlibcCallThrough",
+      "status": "RawSyscall",
       "module": "unistd_abi",
       "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc sem_wait",
-      "hardened_semantics": "Passthrough to glibc sem_wait",
+      "strict_semantics": "Futex-based CAS decrement with FUTEX_WAIT blocking",
+      "hardened_semantics": "Futex-based CAS decrement with FUTEX_WAIT blocking",
       "default_stub": false
     },
     {
@@ -5816,7 +5816,7 @@
     },
     {
       "symbol": "setutent",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "unistd_abi",
       "perf_class": "fast"
     },
@@ -6493,11 +6493,11 @@
     },
     {
       "symbol": "strsignal",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "string_abi",
       "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc strsignal",
-      "hardened_semantics": "Passthrough to glibc strsignal",
+      "strict_semantics": "Native signal name lookup via static table + TLS buffer",
+      "hardened_semantics": "Native signal name lookup via static table + TLS buffer",
       "default_stub": false
     },
     {
@@ -6803,7 +6803,7 @@
     },
     {
       "symbol": "telldir",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "dirent_abi",
       "perf_class": "default",
       "strict_semantics": "Passthrough to glibc telldir",
@@ -6812,7 +6812,7 @@
     },
     {
       "symbol": "textdomain",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "locale_abi",
       "perf_class": "default",
       "strict_semantics": "Passthrough to glibc textdomain",
@@ -7041,7 +7041,7 @@
     },
     {
       "symbol": "tzset",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "time_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Delegates to glibc tzset for timezone initialization.",
@@ -7801,8 +7801,8 @@
     {
       "symbol": "umount",
       "header": "<unistd.h>",
-      "status": "GlibcCallThrough",
-      "notes": "Tier 10"
+      "status": "RawSyscall",
+      "notes": "Native SYS_umount2 raw syscall"
     },
     {
       "symbol": "glob64",
@@ -7825,15 +7825,15 @@
     {
       "symbol": "alphasort64",
       "header": "<unistd.h>",
-      "status": "GlibcCallThrough",
-      "notes": "Tier 10"
+      "status": "Implemented",
+      "notes": "Delegates to native alphasort (64-bit Linux alias)"
     }
   ],
   "summary": {
     "total_exported": 929,
-    "implemented": 507,
-    "raw_syscall": 282,
-    "glibc_call_through": 140,
+    "implemented": 539,
+    "raw_syscall": 297,
+    "glibc_call_through": 93,
     "stub": 0
   },
   "implemented": 507,
