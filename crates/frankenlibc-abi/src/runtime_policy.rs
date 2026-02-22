@@ -1172,6 +1172,32 @@ mod tests {
     }
 
     #[test]
+    fn cross_family_overlap_tracks_string_resolver_consistently_hardened() {
+        reset_cohomology_stage_hashes_for_tests();
+        let kernel = RuntimeMathKernel::new_for_mode(SafetyLevel::Hardened);
+
+        note_cross_family_overlap(
+            &kernel,
+            ApiFamily::StringMemory,
+            &PASSTHROUGH_ORDERING,
+            true,
+            true,
+            Some(2),
+        );
+        assert_eq!(kernel.snapshot(SafetyLevel::Hardened).consistency_faults, 0);
+
+        note_cross_family_overlap(
+            &kernel,
+            ApiFamily::Resolver,
+            &PASSTHROUGH_ORDERING,
+            true,
+            true,
+            Some(2),
+        );
+        assert_eq!(kernel.snapshot(SafetyLevel::Hardened).consistency_faults, 0);
+    }
+
+    #[test]
     fn cohomology_overlap_replay_detects_corrupted_witness() {
         reset_cohomology_stage_hashes_for_tests();
         let kernel = RuntimeMathKernel::new_for_mode(SafetyLevel::Strict);
@@ -1198,5 +1224,34 @@ mod tests {
         );
         assert!(!ok);
         assert_eq!(kernel.snapshot(SafetyLevel::Strict).consistency_faults, 1);
+    }
+
+    #[test]
+    fn cohomology_overlap_replay_detects_corrupted_witness_hardened() {
+        reset_cohomology_stage_hashes_for_tests();
+        let kernel = RuntimeMathKernel::new_for_mode(SafetyLevel::Hardened);
+        let ordering = PASSTHROUGH_ORDERING;
+
+        note_cross_family_overlap(
+            &kernel,
+            ApiFamily::StringMemory,
+            &ordering,
+            true,
+            true,
+            Some(1),
+        );
+        note_cross_family_overlap(&kernel, ApiFamily::Resolver, &ordering, true, true, Some(1));
+
+        let string_hash = compact_stage_hash(&ordering, true, true, Some(1));
+        let resolver_hash = compact_stage_hash(&ordering, true, true, Some(1));
+        let corrupted_witness = (string_hash ^ resolver_hash) ^ 1;
+
+        let ok = kernel.note_overlap(
+            usize::from(ApiFamily::StringMemory as u8),
+            usize::from(ApiFamily::Resolver as u8),
+            corrupted_witness,
+        );
+        assert!(!ok);
+        assert_eq!(kernel.snapshot(SafetyLevel::Hardened).consistency_faults, 1);
     }
 }
