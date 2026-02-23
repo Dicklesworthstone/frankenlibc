@@ -210,17 +210,23 @@ impl KTheoryController {
 
         let mut fractured_count = 0u8;
         let mut drifting_count = 0u8;
+        let mut frozen_count = 0u8;
 
         for bundle in &self.bundles {
             if !bundle.baseline_frozen {
                 continue;
             }
+            frozen_count += 1;
             let dist = bundle.transport_distance_sq().sqrt();
             if dist >= FRACTURE_THRESHOLD {
                 fractured_count += 1;
             } else if dist >= DRIFT_THRESHOLD {
                 drifting_count += 1;
             }
+        }
+
+        if frozen_count == 0 {
+            return KTheoryState::Calibrating;
         }
 
         if fractured_count >= 2 {
