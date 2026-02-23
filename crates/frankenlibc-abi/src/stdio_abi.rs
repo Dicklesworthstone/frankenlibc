@@ -302,7 +302,14 @@ pub unsafe extern "C" fn fclose(stream: *mut c_void) -> c_int {
                     pending.len() - written,
                 )
             };
-            if rc <= 0 {
+            if rc < 0 {
+                let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+                if e == errno::EINTR {
+                    continue;
+                }
+                adverse = true;
+                break;
+            } else if rc == 0 {
                 adverse = true;
                 break;
             }
@@ -463,7 +470,14 @@ pub unsafe extern "C" fn fputc(c: c_int, stream: *mut c_void) -> c_int {
                     flush_data.len() - written,
                 )
             };
-            if rc <= 0 {
+            if rc < 0 {
+                let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+                if e == errno::EINTR {
+                    continue;
+                }
+                success = false;
+                break;
+            } else if rc == 0 {
                 success = false;
                 break;
             }
@@ -650,7 +664,14 @@ pub unsafe extern "C" fn fputs(s: *const c_char, stream: *mut c_void) -> c_int {
                     flush_data.len() - written,
                 )
             };
-            if rc <= 0 {
+            if rc < 0 {
+                let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+                if e == errno::EINTR {
+                    continue;
+                }
+                success = false;
+                break;
+            } else if rc == 0 {
                 success = false;
                 break;
             }
@@ -807,7 +828,14 @@ pub unsafe extern "C" fn fwrite(
                     flush_data.len() - written,
                 )
             };
-            if rc <= 0 {
+            if rc < 0 {
+                let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+                if e == errno::EINTR {
+                    continue;
+                }
+                success = false;
+                break;
+            } else if rc == 0 {
                 success = false;
                 break;
             }
@@ -871,7 +899,15 @@ pub unsafe extern "C" fn fseek(stream: *mut c_void, offset: c_long, whence: c_in
                     pending.len() - written,
                 )
             };
-            if rc <= 0 {
+            if rc < 0 {
+                let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+                if e == errno::EINTR {
+                    continue;
+                }
+                s.set_error();
+                runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+                return -1;
+            } else if rc == 0 {
                 s.set_error();
                 runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
                 return -1;
@@ -1646,8 +1682,29 @@ pub unsafe extern "C" fn printf(format: *const c_char, mut args: ...) -> c_int {
     } else {
         // Fallback: direct write if stream not in registry.
         drop(reg);
-        let rc = unsafe { sys_write_fd(libc::STDOUT_FILENO, rendered.as_ptr().cast(), total_len) };
-        let adverse = rc < 0 || rc as usize != total_len;
+        let mut written = 0usize;
+        let mut adverse = false;
+        while written < total_len {
+            let rc = unsafe {
+                sys_write_fd(
+                    libc::STDOUT_FILENO,
+                    rendered[written..].as_ptr().cast(),
+                    total_len - written,
+                )
+            };
+            if rc < 0 {
+                let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+                if e == errno::EINTR {
+                    continue;
+                }
+                adverse = true;
+                break;
+            } else if rc == 0 {
+                adverse = true;
+                break;
+            }
+            written += rc as usize;
+        }
         runtime_policy::observe(
             ApiFamily::Stdio,
             decision.profile,
@@ -1689,8 +1746,29 @@ pub unsafe extern "C" fn dprintf(fd: c_int, format: *const c_char, mut args: ...
     let rendered = unsafe { render_printf(fmt_bytes, arg_buf.as_ptr(), extract_count) };
     let total_len = rendered.len();
 
-    let rc = unsafe { sys_write_fd(fd, rendered.as_ptr().cast(), total_len) };
-    let adverse = rc < 0 || rc as usize != total_len;
+    let mut written = 0usize;
+    let mut adverse = false;
+    while written < total_len {
+        let rc = unsafe {
+            sys_write_fd(
+                fd,
+                rendered[written..].as_ptr().cast(),
+                total_len - written,
+            )
+        };
+        if rc < 0 {
+            let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+            if e == errno::EINTR {
+                continue;
+            }
+            adverse = true;
+            break;
+        } else if rc == 0 {
+            adverse = true;
+            break;
+        }
+        written += rc as usize;
+    }
     runtime_policy::observe(
         ApiFamily::Stdio,
         decision.profile,
