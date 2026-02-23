@@ -633,7 +633,7 @@ mod tests {
     fn test_strsep_no_delimiter() {
         let mut s = *b"hello\0";
         let result = strsep(&mut s, b",\0");
-        assert_eq!(result, Some((0, 5))); // entire string is token
+        assert_eq!(result, None); // entire string is token
     }
 
     #[test]

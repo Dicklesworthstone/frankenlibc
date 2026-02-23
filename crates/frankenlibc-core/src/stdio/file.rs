@@ -343,9 +343,15 @@ impl StdioStream {
 
     /// Push a byte back (ungetc). Returns false if already one pushed back.
     pub fn ungetc(&mut self, byte: u8) -> bool {
-        let pushed = if self.ungetc_byte.is_some() {
-            // Try the buffer's unget.
-            self.buffer.unget(byte)
+        let pushed = if let Some(existing) = self.ungetc_byte {
+            // Push the existing byte into the buffer, and replace ungetc_byte
+            // with the new byte, maintaining LIFO order.
+            if self.buffer.unget(existing) {
+                self.ungetc_byte = Some(byte);
+                true
+            } else {
+                false
+            }
         } else {
             self.ungetc_byte = Some(byte);
             true
