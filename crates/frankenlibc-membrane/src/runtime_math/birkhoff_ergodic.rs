@@ -150,9 +150,14 @@ impl BirkhoffErgodicMonitor {
         for (i, &sev) in severity.iter().enumerate() {
             let x = sev.min(3) as f64;
 
-            // Update dual-timescale EWMAs.
-            self.fast_mean[i] += ALPHA_FAST * (x - self.fast_mean[i]);
-            self.slow_mean[i] += ALPHA_SLOW * (x - self.slow_mean[i]);
+            if self.count == 1 {
+                self.fast_mean[i] = x;
+                self.slow_mean[i] = x;
+            } else {
+                // Update dual-timescale EWMAs.
+                self.fast_mean[i] += ALPHA_FAST * (x - self.fast_mean[i]);
+                self.slow_mean[i] += ALPHA_SLOW * (x - self.slow_mean[i]);
+            }
 
             // Convergence gap: normalized by max possible range (3.0).
             let gap = (self.fast_mean[i] - self.slow_mean[i]).abs() / 3.0;
@@ -162,9 +167,14 @@ impl BirkhoffErgodicMonitor {
 
         let mean_gap = sum_gap / N as f64;
 
-        // EWMA smooth the convergence gap.
-        self.max_convergence_gap += ALPHA_GAP * (max_gap - self.max_convergence_gap);
-        self.mean_convergence_gap += ALPHA_GAP * (mean_gap - self.mean_convergence_gap);
+        if self.count == 1 {
+            self.max_convergence_gap = max_gap;
+            self.mean_convergence_gap = mean_gap;
+        } else {
+            // EWMA smooth the convergence gap.
+            self.max_convergence_gap += ALPHA_GAP * (max_gap - self.max_convergence_gap);
+            self.mean_convergence_gap += ALPHA_GAP * (mean_gap - self.mean_convergence_gap);
+        }
 
         // State classification.
         self.state = if self.count < WARMUP {
