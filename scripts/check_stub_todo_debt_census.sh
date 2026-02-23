@@ -17,7 +17,7 @@ OUT_DIR="${ROOT}/target/conformance"
 REPORT="${OUT_DIR}/stub_todo_debt_census.report.json"
 LOG="${OUT_DIR}/stub_todo_debt_census.log.jsonl"
 
-TRACE_ID="bd-1pbw::run-$(date -u +%Y%m%dT%H%M%SZ)-$$::001"
+TRACE_ID="bd-1x3.1::run-$(date -u +%Y%m%dT%H%M%SZ)-$$::001"
 START_NS="$(python3 - <<'PY'
 import time
 print(time.time_ns())
