@@ -102,8 +102,14 @@ fn summary_counts_match_rows_and_hooks_present() {
         Some(waves.len() as u64),
         "summary.wave_count mismatch"
     );
-    let top50_size = summary.get("top50_size").and_then(|v| v.as_u64()).unwrap_or(0);
-    let top200_size = summary.get("top200_size").and_then(|v| v.as_u64()).unwrap_or(0);
+    let top50_size = summary
+        .get("top50_size")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let top200_size = summary
+        .get("top200_size")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
     let downgrade_count = summary
         .get("downgrade_symbol_count")
         .and_then(|v| v.as_u64())
@@ -117,8 +123,16 @@ fn summary_counts_match_rows_and_hooks_present() {
     let downgraded = artifact["downgrade_policy"]["waived_symbols"]
         .as_array()
         .expect("downgrade_policy.waived_symbols must be array");
-    assert_eq!(top50_size, top50_symbols.len() as u64, "summary.top50_size mismatch");
-    assert_eq!(top200_size, top200_symbols.len() as u64, "summary.top200_size mismatch");
+    assert_eq!(
+        top50_size,
+        top50_symbols.len() as u64,
+        "summary.top50_size mismatch"
+    );
+    assert_eq!(
+        top200_size,
+        top200_symbols.len() as u64,
+        "summary.top200_size mismatch"
+    );
     assert_eq!(
         downgrade_count,
         downgraded.len() as u64,

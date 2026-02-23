@@ -2726,10 +2726,12 @@ pub unsafe extern "C" fn strspn(s: *const c_char, accept: *const c_char) -> usiz
 
     // SAFETY: bounded scan.
     let (result, span) = unsafe {
-        let (s_len, _) = scan_c_string(s, s_bound);
-        let (accept_len, _) = scan_c_string(accept, accept_bound);
-        let s_slice = std::slice::from_raw_parts(s.cast::<u8>(), s_len + 1);
-        let accept_slice = std::slice::from_raw_parts(accept.cast::<u8>(), accept_len + 1);
+        let (s_len, s_terminated) = scan_c_string(s, s_bound);
+        let (accept_len, accept_terminated) = scan_c_string(accept, accept_bound);
+        let s_slice_len = if s_terminated { s_len + 1 } else { s_len };
+        let accept_slice_len = if accept_terminated { accept_len + 1 } else { accept_len };
+        let s_slice = std::slice::from_raw_parts(s.cast::<u8>(), s_slice_len);
+        let accept_slice = std::slice::from_raw_parts(accept.cast::<u8>(), accept_slice_len);
         let r = frankenlibc_core::string::str::strspn(s_slice, accept_slice);
         (r, s_len)
     };
@@ -2805,10 +2807,12 @@ pub unsafe extern "C" fn strcspn(s: *const c_char, reject: *const c_char) -> usi
 
     // SAFETY: bounded scan.
     let (result, span) = unsafe {
-        let (s_len, _) = scan_c_string(s, s_bound);
-        let (reject_len, _) = scan_c_string(reject, reject_bound);
-        let s_slice = std::slice::from_raw_parts(s.cast::<u8>(), s_len + 1);
-        let reject_slice = std::slice::from_raw_parts(reject.cast::<u8>(), reject_len + 1);
+        let (s_len, s_terminated) = scan_c_string(s, s_bound);
+        let (reject_len, reject_terminated) = scan_c_string(reject, reject_bound);
+        let s_slice_len = if s_terminated { s_len + 1 } else { s_len };
+        let reject_slice_len = if reject_terminated { reject_len + 1 } else { reject_len };
+        let s_slice = std::slice::from_raw_parts(s.cast::<u8>(), s_slice_len);
+        let reject_slice = std::slice::from_raw_parts(reject.cast::<u8>(), reject_slice_len);
         let r = frankenlibc_core::string::str::strcspn(s_slice, reject_slice);
         (r, s_len)
     };
@@ -2885,10 +2889,12 @@ pub unsafe extern "C" fn strpbrk(s: *const c_char, accept: *const c_char) -> *mu
 
     // SAFETY: bounded scan.
     let (result, span) = unsafe {
-        let (s_len, _) = scan_c_string(s, s_bound);
-        let (accept_len, _) = scan_c_string(accept, accept_bound);
-        let s_slice = std::slice::from_raw_parts(s.cast::<u8>(), s_len + 1);
-        let accept_slice = std::slice::from_raw_parts(accept.cast::<u8>(), accept_len + 1);
+        let (s_len, s_terminated) = scan_c_string(s, s_bound);
+        let (accept_len, accept_terminated) = scan_c_string(accept, accept_bound);
+        let s_slice_len = if s_terminated { s_len + 1 } else { s_len };
+        let accept_slice_len = if accept_terminated { accept_len + 1 } else { accept_len };
+        let s_slice = std::slice::from_raw_parts(s.cast::<u8>(), s_slice_len);
+        let accept_slice = std::slice::from_raw_parts(accept.cast::<u8>(), accept_slice_len);
         match frankenlibc_core::string::str::strpbrk(s_slice, accept_slice) {
             Some(idx) => (s.add(idx) as *mut c_char, s_len),
             None => (std::ptr::null_mut(), s_len),
@@ -3369,10 +3375,12 @@ pub unsafe extern "C" fn strcasestr(haystack: *const c_char, needle: *const c_ch
 
     // SAFETY: bounded scan.
     let (out, span) = unsafe {
-        let (hay_len, _) = scan_c_string(haystack, hay_bound);
-        let (needle_len, _) = scan_c_string(needle, needle_bound);
-        let h_slice = std::slice::from_raw_parts(haystack.cast::<u8>(), hay_len + 1);
-        let n_slice = std::slice::from_raw_parts(needle.cast::<u8>(), needle_len + 1);
+        let (hay_len, hay_terminated) = scan_c_string(haystack, hay_bound);
+        let (needle_len, needle_terminated) = scan_c_string(needle, needle_bound);
+        let h_slice_len = if hay_terminated { hay_len + 1 } else { hay_len };
+        let n_slice_len = if needle_terminated { needle_len + 1 } else { needle_len };
+        let h_slice = std::slice::from_raw_parts(haystack.cast::<u8>(), h_slice_len);
+        let n_slice = std::slice::from_raw_parts(needle.cast::<u8>(), n_slice_len);
         match frankenlibc_core::string::str::strcasestr(h_slice, n_slice) {
             Some(idx) => (haystack.add(idx) as *mut c_char, hay_len),
             None => (std::ptr::null_mut(), hay_len),
@@ -3974,8 +3982,9 @@ pub unsafe extern "C" fn strlcpy(dst: *mut c_char, src: *const c_char, dstsize: 
 
     // SAFETY: bounded scan.
     let (result, span) = unsafe {
-        let (src_len, _) = scan_c_string(src, src_bound);
-        let src_slice = std::slice::from_raw_parts(src.cast::<u8>(), src_len + 1);
+        let (src_len, src_terminated) = scan_c_string(src, src_bound);
+        let src_slice_len = if src_terminated { src_len + 1 } else { src_len };
+        let src_slice = std::slice::from_raw_parts(src.cast::<u8>(), src_slice_len);
         let dst_slice = std::slice::from_raw_parts_mut(dst.cast::<u8>(), dstsize);
         let r = frankenlibc_core::string::str::strlcpy(dst_slice, src_slice);
         (r, src_len.max(dstsize))
@@ -4064,8 +4073,9 @@ pub unsafe extern "C" fn strlcat(dst: *mut c_char, src: *const c_char, dstsize: 
 
     // SAFETY: bounded scan.
     let (result, span) = unsafe {
-        let (src_len, _) = scan_c_string(src, src_bound);
-        let src_slice = std::slice::from_raw_parts(src.cast::<u8>(), src_len + 1);
+        let (src_len, src_terminated) = scan_c_string(src, src_bound);
+        let src_slice_len = if src_terminated { src_len + 1 } else { src_len };
+        let src_slice = std::slice::from_raw_parts(src.cast::<u8>(), src_slice_len);
         let dst_slice = std::slice::from_raw_parts_mut(dst.cast::<u8>(), dstsize);
         let r = frankenlibc_core::string::str::strlcat(dst_slice, src_slice);
         (r, src_len + dstsize)
@@ -4143,10 +4153,12 @@ pub unsafe extern "C" fn strcoll(s1: *const c_char, s2: *const c_char) -> c_int 
 
     // SAFETY: bounded scan.
     let (result, span) = unsafe {
-        let (s1_len, _) = scan_c_string(s1, lhs_bound);
-        let (s2_len, _) = scan_c_string(s2, rhs_bound);
-        let s1_slice = std::slice::from_raw_parts(s1.cast::<u8>(), s1_len + 1);
-        let s2_slice = std::slice::from_raw_parts(s2.cast::<u8>(), s2_len + 1);
+        let (s1_len, s1_terminated) = scan_c_string(s1, lhs_bound);
+        let (s2_len, s2_terminated) = scan_c_string(s2, rhs_bound);
+        let s1_slice_len = if s1_terminated { s1_len + 1 } else { s1_len };
+        let s2_slice_len = if s2_terminated { s2_len + 1 } else { s2_len };
+        let s1_slice = std::slice::from_raw_parts(s1.cast::<u8>(), s1_slice_len);
+        let s2_slice = std::slice::from_raw_parts(s2.cast::<u8>(), s2_slice_len);
         let r = frankenlibc_core::string::str::strcoll(s1_slice, s2_slice);
         (r, s1_len.max(s2_len))
     };
@@ -4224,8 +4236,9 @@ pub unsafe extern "C" fn strxfrm(dst: *mut c_char, src: *const c_char, n: usize)
 
     // SAFETY: bounded scan.
     let (result, span) = unsafe {
-        let (src_len, _) = scan_c_string(src, src_bound);
-        let src_slice = std::slice::from_raw_parts(src.cast::<u8>(), src_len + 1);
+        let (src_len, src_terminated) = scan_c_string(src, src_bound);
+        let src_slice_len = if src_terminated { src_len + 1 } else { src_len };
+        let src_slice = std::slice::from_raw_parts(src.cast::<u8>(), src_slice_len);
         if dst.is_null() || n == 0 {
             // Just return strlen(src).
             (src_len, src_len)
@@ -4447,8 +4460,10 @@ pub unsafe extern "C" fn psignal(sig: c_int, s: *const c_char) {
     let mut msg = Vec::with_capacity(256);
     if !s.is_null() {
         let prefix = unsafe { std::ffi::CStr::from_ptr(s) }.to_bytes();
-        msg.extend_from_slice(prefix);
-        msg.extend_from_slice(b": ");
+        if !prefix.is_empty() {
+            msg.extend_from_slice(prefix);
+            msg.extend_from_slice(b": ");
+        }
     }
     msg.extend_from_slice(name);
     msg.push(b'\n');
