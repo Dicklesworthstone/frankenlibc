@@ -27,6 +27,50 @@ fn load_json(path: &Path) -> serde_json::Value {
     serde_json::from_str(&content).expect("json should parse")
 }
 
+fn healing_action_variants_from_source(root: &Path) -> Vec<String> {
+    let heal_source = std::fs::read_to_string(root.join("crates/frankenlibc-membrane/src/heal.rs"))
+        .expect("heal.rs should be readable");
+    let marker = "pub enum HealingAction";
+    let start = heal_source
+        .find(marker)
+        .expect("HealingAction enum declaration should exist");
+    let body_start = heal_source[start..]
+        .find('{')
+        .map(|offset| start + offset + 1)
+        .expect("HealingAction enum should include opening brace");
+    let body_end = heal_source[body_start..]
+        .find('}')
+        .map(|offset| body_start + offset)
+        .expect("HealingAction enum should include closing brace");
+    let body = &heal_source[body_start..body_end];
+    let mut variants = Vec::new();
+    for line in body.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty()
+            || trimmed.starts_with("///")
+            || trimmed.starts_with("//")
+            || trimmed.starts_with('#')
+        {
+            continue;
+        }
+        let name = trimmed
+            .split('{')
+            .next()
+            .unwrap()
+            .split('(')
+            .next()
+            .unwrap()
+            .split(',')
+            .next()
+            .unwrap()
+            .trim();
+        if !name.is_empty() && name.as_bytes()[0].is_ascii_alphabetic() {
+            variants.push(name.to_string());
+        }
+    }
+    variants
+}
+
 #[test]
 fn matrix_exists_and_summary_is_consistent() {
     let root = workspace_root();
@@ -115,6 +159,33 @@ fn matrix_exists_and_summary_is_consistent() {
 }
 
 #[test]
+fn known_healing_actions_match_live_healing_action_enum() {
+    let root = workspace_root();
+    let matrix_path = root.join("tests/conformance/hardened_repair_deny_matrix.v1.json");
+    let matrix = load_json(&matrix_path);
+    let matrix_actions: std::collections::HashSet<String> = matrix["known_healing_actions"]
+        .as_array()
+        .expect("known_healing_actions must be array")
+        .iter()
+        .map(|value| {
+            value
+                .as_str()
+                .expect("known_healing_actions[] must be string")
+                .to_string()
+        })
+        .collect();
+    let enum_actions: std::collections::HashSet<String> =
+        healing_action_variants_from_source(&root)
+            .into_iter()
+            .collect();
+
+    assert_eq!(
+        matrix_actions, enum_actions,
+        "matrix known_healing_actions must stay in sync with HealingAction enum variants"
+    );
+}
+
+#[test]
 fn fixture_refs_exist_and_are_hardened_cases() {
     let root = workspace_root();
     let matrix_path = root.join("tests/conformance/hardened_repair_deny_matrix.v1.json");
@@ -181,6 +252,77 @@ fn gate_script_is_executable_and_passes() {
         "gate script failed:\nstdout={}\nstderr={}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
+    );
+
+    let matrix_path = root.join("tests/conformance/hardened_repair_deny_matrix.v1.json");
+    let matrix = load_json(&matrix_path);
+    let matrix_summary = matrix["summary"]
+        .as_object()
+        .expect("matrix summary must be object");
+
+    let report_path = root.join("target/conformance/hardened_repair_deny_matrix.report.json");
+    assert!(
+        report_path.exists(),
+        "gate script must emit report artifact at {}",
+        report_path.display()
+    );
+    let report = load_json(&report_path);
+    assert_eq!(report["schema_version"].as_str(), Some("v1"));
+    assert_eq!(report["bead"].as_str(), Some("bd-249m.2"));
+    assert_eq!(report["source_matrix_bead"].as_str(), Some("bd-w2c3.3.2"));
+    assert_eq!(
+        report["summary"]["entry_count"].as_u64(),
+        matrix_summary
+            .get("entry_count")
+            .and_then(serde_json::Value::as_u64)
+    );
+    assert_eq!(
+        report["summary"]["repair_entries"].as_u64(),
+        matrix_summary
+            .get("repair_entries")
+            .and_then(serde_json::Value::as_u64)
+    );
+    assert_eq!(
+        report["summary"]["deny_entries"].as_u64(),
+        matrix_summary
+            .get("deny_entries")
+            .and_then(serde_json::Value::as_u64)
+    );
+    let mapping_hash = report["summary"]["policy_mapping_sha256"]
+        .as_str()
+        .expect("report summary must include policy_mapping_sha256");
+    assert_eq!(
+        mapping_hash.len(),
+        64,
+        "policy_mapping_sha256 must be a 64-char hex digest"
+    );
+
+    let log_path = root.join("target/conformance/hardened_repair_deny_matrix.log.jsonl");
+    assert!(
+        log_path.exists(),
+        "gate script must emit log artifact at {}",
+        log_path.display()
+    );
+    let log_contents = std::fs::read_to_string(&log_path).expect("log jsonl should be readable");
+    let log_line = log_contents
+        .lines()
+        .find(|line| !line.trim().is_empty())
+        .expect("log jsonl must contain at least one line");
+    let event: serde_json::Value =
+        serde_json::from_str(log_line).expect("log line must be valid json");
+    assert_eq!(
+        event["policy_mapping_sha256"].as_str(),
+        Some(mapping_hash),
+        "log event hash must match report hash"
+    );
+    let artifact_refs = event["artifact_refs"]
+        .as_array()
+        .expect("log event artifact_refs must be array");
+    assert!(
+        artifact_refs
+            .iter()
+            .any(|value| value.as_str() == Some(report_path.to_string_lossy().as_ref())),
+        "log event must reference the generated report artifact"
     );
 }
 

@@ -6,8 +6,8 @@
     {
       "id": "PO-01",
       "statement": "Strict Refinement Theorem: strict mode matches reference glibc on defined inputs.",
-      "status": "planned",
-      "owner": "bd-w2c3.6.1",
+      "status": "in_progress",
+      "owner": "bd-249m.1",
       "artifact_schema": "proof_obligation_record.v1",
       "verification_command": "bash scripts/conformance_golden_gate.sh",
       "scope": {"modes": ["strict"], "families": ["all"], "input_domain": "POSIX-defined"},
@@ -17,16 +17,18 @@
         "tests/conformance/proof_traceability_check.json"
       ],
       "gates": ["scripts/conformance_golden_gate.sh", "scripts/check_proof_binder.sh"],
-      "join_keys": ["mode=strict", "gate=conformance_golden", "gate=proof_binder"],
+      "join_keys": ["mode=strict", "gate=conformance_golden", "gate=proof_binder", "bead=bd-249m.1"],
       "source_refs": [
         "crates/frankenlibc-membrane/src/config.rs:99",
-        "crates/frankenlibc-membrane/src/ptr_validator.rs:325",
+        "crates/frankenlibc-membrane/src/ptr_validator.rs:1197",
         "crates/frankenlibc-membrane/src/decision_contract.rs:214",
-        "crates/frankenlibc-abi/src/runtime_policy.rs:861",
+        "crates/frankenlibc-abi/src/runtime_policy.rs:673",
+        "crates/frankenlibc-abi/src/runtime_policy.rs:1399",
         "crates/frankenlibc-abi/src/errno_abi.rs:10",
-        "crates/frankenlibc-core/src/errno/mod.rs:69",
-        "crates/frankenlibc-abi/src/math_abi.rs:33",
-        "crates/frankenlibc-core/src/math/float.rs:19"
+        "crates/frankenlibc-core/src/errno/mod.rs:7",
+        "crates/frankenlibc-core/src/errno/mod.rs:133",
+        "crates/frankenlibc-abi/src/math_abi.rs:69",
+        "crates/frankenlibc-abi/src/fenv_abi.rs:74"
       ],
       "category": "core_safety"
     },

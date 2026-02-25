@@ -16,12 +16,13 @@ For covered valid inputs, hardened mode remains behavior-compatible with the str
 
 ## Determinism Obligations
 - Decision identity is stable and auditable via deterministic `policy_id` strings (`tsm.(repair|deny).<family>.<class>.v1`) in `tests/conformance/hardened_repair_deny_matrix.v1.json`.
-- Gate enforcement: `scripts/check_hardened_repair_deny_matrix.sh` rejects non-deterministic/duplicate policy IDs and missing class coverage.
+- Gate enforcement: `scripts/check_hardened_repair_deny_matrix.sh` rejects non-deterministic/duplicate policy IDs, missing class coverage, and drift between matrix `known_healing_actions` and live `HealingAction` variants in `crates/frankenlibc-membrane/src/heal.rs`.
 - Integration enforcement: `crates/frankenlibc-harness/tests/hardened_repair_deny_matrix_test.rs` runs the gate in CI/test flow.
 
 ## Totality and Safety Mapping
 - Every declared invalid-input class in the matrix has at least one entry (totality over the declared set).
 - Every matrix entry resolves to a hardened fixture case and a deterministic expected outcome.
+- Gate output includes a deterministic canonical policy mapping hash (`summary.policy_mapping_sha256`) so matrix drift is immediately detectable.
 - Repair/deny to POSIX-facing outcomes is enumerated in `docs/proofs/repair_posix_mapping.md`.
 
 ## Traceability Anchors
@@ -40,6 +41,8 @@ For covered valid inputs, hardened mode remains behavior-compatible with the str
 - Deterministic matrix: `tests/conformance/hardened_repair_deny_matrix.v1.json`
 - Gate script: `scripts/check_hardened_repair_deny_matrix.sh`
 - Harness integration test: `crates/frankenlibc-harness/tests/hardened_repair_deny_matrix_test.rs`
+- Deterministic coverage report: `target/conformance/hardened_repair_deny_matrix.report.json`
+- Structured gate log: `target/conformance/hardened_repair_deny_matrix.log.jsonl`
 - Fixture corpus: `tests/conformance/fixtures/*.json` (referenced per entry in matrix)
 - POSIX mapping companion: `docs/proofs/repair_posix_mapping.md`
 
