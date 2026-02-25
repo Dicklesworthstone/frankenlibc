@@ -1636,7 +1636,7 @@ pub unsafe extern "C" fn srand48(seedval: c_long) {
         runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 4, true);
         return;
     }
-    frankenlibc_core::stdlib::srand48(seedval as i64);
+    frankenlibc_core::stdlib::srand48(seedval);
     runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 4, false);
 }
 
@@ -1797,15 +1797,12 @@ pub unsafe extern "C" fn qsort_r(
     let total = nmemb.saturating_mul(size);
     let slice = unsafe { std::slice::from_raw_parts_mut(base as *mut u8, total) };
 
-    frankenlibc_core::stdlib::qsort(slice, size, |a, b| {
-        let r = unsafe {
-            cmp_fn(
-                a.as_ptr() as *const c_void,
-                b.as_ptr() as *const c_void,
-                arg,
-            )
-        };
-        r
+    frankenlibc_core::stdlib::qsort(slice, size, |a, b| unsafe {
+        cmp_fn(
+            a.as_ptr() as *const c_void,
+            b.as_ptr() as *const c_void,
+            arg,
+        )
     });
 
     runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 12, false);
@@ -1846,7 +1843,7 @@ pub unsafe extern "C" fn l64a(value: c_long) -> *mut c_char {
             return p as *mut u8 as *mut c_char;
         }
     }
-    let encoded = frankenlibc_core::stdlib::l64a(value as i64);
+    let encoded = frankenlibc_core::stdlib::l64a(value);
     unsafe {
         let p = std::ptr::addr_of_mut!(BUF);
         let buf = &mut *p;
@@ -1980,6 +1977,7 @@ pub unsafe extern "C" fn abort() -> ! {
 }
 
 /// Exit handler entry for `on_exit` — stores function pointer + arg.
+#[allow(dead_code)]
 struct OnExitEntry {
     func: unsafe extern "C" fn(c_int, *mut c_void),
     arg: *mut c_void,
@@ -2179,9 +2177,9 @@ pub unsafe extern "C" fn confstr(name: c_int, buf: *mut c_char, len: usize) -> u
     // _CS_GNU_LIBPTHREAD_VERSION = 3
     // _CS_PATH = 0
     let value: &[u8] = match name {
-        0 => b"/usr/bin\0",                            // _CS_PATH
-        2 => b"glibc 2.38\0",                          // _CS_GNU_LIBC_VERSION
-        3 => b"NPTL 2.38\0",                           // _CS_GNU_LIBPTHREAD_VERSION
+        0 => b"/usr/bin\0",   // _CS_PATH
+        2 => b"glibc 2.38\0", // _CS_GNU_LIBC_VERSION
+        3 => b"NPTL 2.38\0",  // _CS_GNU_LIBPTHREAD_VERSION
         _ => {
             unsafe { set_abi_errno(libc::EINVAL) };
             return 0;

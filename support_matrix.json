@@ -2,7 +2,7 @@
   "version": 2,
   "generated_at_utc": "2026-02-18T04:49:26Z",
   "library": "/data/tmp/cargo-target/release/libfrankenlibc_abi.so",
-  "total_exported": 1042,
+  "total_exported": 1184,
   "taxonomy": {
     "Implemented": "Native Rust code owns the entire operation. No host libc dependency. Full test coverage required.",
     "RawSyscall": "ABI entrypoint marshals arguments directly to Linux syscall instruction. No glibc call-through.",
@@ -171,43 +171,43 @@
     },
     {
       "symbol": "aio_cancel",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "unistd_abi",
-      "perf_class": "syscall"
+      "perf_class": "fast"
     },
     {
       "symbol": "aio_error",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "unistd_abi",
       "perf_class": "fast"
     },
     {
       "symbol": "aio_fsync",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "unistd_abi",
       "perf_class": "syscall"
     },
     {
       "symbol": "aio_read",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "unistd_abi",
       "perf_class": "syscall"
     },
     {
       "symbol": "aio_return",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "unistd_abi",
       "perf_class": "fast"
     },
     {
       "symbol": "aio_suspend",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "unistd_abi",
       "perf_class": "syscall"
     },
     {
       "symbol": "aio_write",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "unistd_abi",
       "perf_class": "syscall"
     },
@@ -1776,9 +1776,11 @@
     },
     {
       "symbol": "fopencookie",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "stdio_abi",
-      "perf_class": "fast"
+      "perf_class": "fast",
+      "strict_semantics": "Native cookie-based stream with user-defined I/O callbacks",
+      "hardened_semantics": "Same as strict with pointer validation on cookie and funcs"
     },
     {
       "symbol": "fork",
@@ -3436,7 +3438,7 @@
     },
     {
       "symbol": "lio_listio",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "unistd_abi",
       "perf_class": "syscall"
     },
@@ -5584,13 +5586,13 @@
     },
     {
       "symbol": "res_query",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "unistd_abi",
       "perf_class": "syscall"
     },
     {
       "symbol": "res_search",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "unistd_abi",
       "perf_class": "syscall"
     },
@@ -9007,15 +9009,6 @@
       "default_stub": false
     },
     {
-      "symbol": "confstr",
-      "status": "Implemented",
-      "module": "stdlib_abi",
-      "perf_class": "cold",
-      "strict_semantics": "Get configuration-dependent string variables (_CS_PATH, version info)",
-      "hardened_semantics": "Same as strict",
-      "default_stub": false
-    },
-    {
       "symbol": "posix_spawn_file_actions_addclose",
       "status": "Implemented",
       "module": "process_abi",
@@ -9041,16 +9034,1303 @@
       "strict_semantics": "POSIX spawn file action: open file as fd",
       "hardened_semantics": "Same as strict (setup call, not safety-sensitive)",
       "default_stub": false
+    },
+    {
+      "symbol": "sysinfo",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Get system memory/uptime info via SYS_sysinfo",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "getpgrp",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Get process group ID via SYS_getpgrp",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "setpgrp",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Set process group via SYS_setpgid(0,0)",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "getpriority",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Get process scheduling priority via SYS_getpriority",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "setpriority",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Set process scheduling priority via SYS_setpriority",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "getdtablesize",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Get fd table size via getrlimit(RLIMIT_NOFILE)",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "brk",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Set program break via SYS_brk",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "sbrk",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Increment program break via SYS_brk",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "setlogmask",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Set syslog priority mask (atomic)",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "get_current_dir_name",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "GNU getcwd variant, allocates and returns CWD",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "canonicalize_file_name",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "GNU realpath(path, NULL) wrapper",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "strerror_l",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Locale-aware strerror (delegates to strerror, C locale)",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "__xpg_basename",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "hotpath",
+      "strict_semantics": "XSI POSIX basename (modifies input string)",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "memfrob",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "hotpath",
+      "strict_semantics": "GNU memfrob: XOR each byte with 42",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "strfry",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "GNU strfry: randomly shuffle string characters",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "getpt",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "GNU getpt: open /dev/ptmx pseudoterminal master",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "ptsname_r",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "POSIX reentrant ptsname via TIOCGPTN ioctl",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "cuserid",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Deprecated POSIX cuserid: return login name from uid",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "sockatmark",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "POSIX sockatmark: check OOB mark via SIOCATMARK ioctl",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "tempnam",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "POSIX tempnam: create unique temporary file name",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "execveat",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Linux execveat: execute program relative to dirfd",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "pidfd_getfd",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Linux pidfd_getfd: duplicate fd from another process",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "epoll_pwait2",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "hotpath",
+      "strict_semantics": "Linux epoll_pwait2: nanosecond-precision epoll wait",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "ptrace",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Linux ptrace: process trace/debug",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "seccomp",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Linux seccomp: secure computing filter",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "capget",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Linux capget: get process capabilities",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "capset",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Linux capset: set process capabilities",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "futex",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "hotpath",
+      "strict_semantics": "Linux futex: fast userspace locking",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "membarrier",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Linux membarrier: issue memory barriers across threads",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "io_setup",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Linux io_setup: create async I/O context",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "io_destroy",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Linux io_destroy: destroy async I/O context",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "io_submit",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "hotpath",
+      "strict_semantics": "Linux io_submit: submit async I/O blocks",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "io_cancel",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Linux io_cancel: cancel outstanding I/O",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "io_getevents",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "hotpath",
+      "strict_semantics": "Linux io_getevents: read async I/O events",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "tcgetpgrp",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "POSIX tcgetpgrp: get terminal foreground pgrp via ioctl",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "tcsetpgrp",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "POSIX tcsetpgrp: set terminal foreground pgrp via ioctl",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "tcgetsid",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "POSIX tcgetsid: get session leader via ioctl",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "pkey_alloc",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Linux pkey_alloc: allocate memory protection key",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "pkey_free",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Linux pkey_free: free memory protection key",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "pkey_mprotect",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Linux pkey_mprotect: mprotect with key",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "pthread_setschedparam",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "POSIX pthread_setschedparam: set thread scheduling",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "pthread_getschedparam",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "POSIX pthread_getschedparam: get thread scheduling",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "dcgettext",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "GNU dcgettext: domain+category gettext (passthrough)",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "dcngettext",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "GNU dcngettext: domain+category plural gettext",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "dngettext",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "GNU dngettext: domain plural gettext",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "io_uring_setup",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Linux io_uring_setup: create io_uring instance",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "io_uring_enter",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "hotpath",
+      "strict_semantics": "Linux io_uring_enter: submit/wait for io_uring",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "io_uring_register",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Linux io_uring_register: register resources",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "kcmp",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Linux kcmp: compare kernel objects between processes",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "ioprio_set",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Linux ioprio_set: set I/O scheduling priority",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "ioprio_get",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Linux ioprio_get: get I/O scheduling priority",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "userfaultfd",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Linux userfaultfd: create userfault fd",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "landlock_create_ruleset",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Linux landlock: create security ruleset",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "landlock_add_rule",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Linux landlock: add rule to ruleset",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "landlock_restrict_self",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Linux landlock: enforce ruleset on self",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "posix_fadvise64",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "POSIX fadvise64: file access hint (64-bit)",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "sync_file_range",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Linux sync_file_range: sync file segment",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "remap_file_pages",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Linux remap_file_pages: nonlinear mapping (deprecated)",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "tgkill",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Linux tgkill: send signal to specific thread",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "tkill",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Linux tkill: send signal to thread (deprecated)",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "sched_setattr",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Linux sched_setattr: extended scheduling attributes",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "sched_getattr",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Linux sched_getattr: get extended scheduling attributes",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "quotactl",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Linux quotactl: manipulate disk quotas",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "lookup_dcookie",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Linux lookup_dcookie: directory entry path lookup",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "perf_event_open",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Linux perf_event_open: performance monitoring",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "add_key",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Linux add_key: add key to kernel keyring",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "request_key",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Linux request_key: request key from keyring",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "keyctl",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Linux keyctl: keyring operations",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "isalpha_l",
+      "status": "Implemented",
+      "module": "ctype_abi",
+      "perf_class": "hotpath",
+      "strict_semantics": "Locale-aware isalpha (C locale passthrough)",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "isdigit_l",
+      "status": "Implemented",
+      "module": "ctype_abi",
+      "perf_class": "hotpath",
+      "strict_semantics": "Locale-aware isdigit (C locale passthrough)",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "isalnum_l",
+      "status": "Implemented",
+      "module": "ctype_abi",
+      "perf_class": "hotpath",
+      "strict_semantics": "Locale-aware isalnum (C locale passthrough)",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "isspace_l",
+      "status": "Implemented",
+      "module": "ctype_abi",
+      "perf_class": "hotpath",
+      "strict_semantics": "Locale-aware isspace (C locale passthrough)",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "isupper_l",
+      "status": "Implemented",
+      "module": "ctype_abi",
+      "perf_class": "hotpath",
+      "strict_semantics": "Locale-aware isupper (C locale passthrough)",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "islower_l",
+      "status": "Implemented",
+      "module": "ctype_abi",
+      "perf_class": "hotpath",
+      "strict_semantics": "Locale-aware islower (C locale passthrough)",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "isprint_l",
+      "status": "Implemented",
+      "module": "ctype_abi",
+      "perf_class": "hotpath",
+      "strict_semantics": "Locale-aware isprint (C locale passthrough)",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "ispunct_l",
+      "status": "Implemented",
+      "module": "ctype_abi",
+      "perf_class": "hotpath",
+      "strict_semantics": "Locale-aware ispunct (C locale passthrough)",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "isxdigit_l",
+      "status": "Implemented",
+      "module": "ctype_abi",
+      "perf_class": "hotpath",
+      "strict_semantics": "Locale-aware isxdigit (C locale passthrough)",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "isblank_l",
+      "status": "Implemented",
+      "module": "ctype_abi",
+      "perf_class": "hotpath",
+      "strict_semantics": "Locale-aware isblank (C locale passthrough)",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "iscntrl_l",
+      "status": "Implemented",
+      "module": "ctype_abi",
+      "perf_class": "hotpath",
+      "strict_semantics": "Locale-aware iscntrl (C locale passthrough)",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "isgraph_l",
+      "status": "Implemented",
+      "module": "ctype_abi",
+      "perf_class": "hotpath",
+      "strict_semantics": "Locale-aware isgraph (C locale passthrough)",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "toupper_l",
+      "status": "Implemented",
+      "module": "ctype_abi",
+      "perf_class": "hotpath",
+      "strict_semantics": "Locale-aware toupper (C locale passthrough)",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "tolower_l",
+      "status": "Implemented",
+      "module": "ctype_abi",
+      "perf_class": "hotpath",
+      "strict_semantics": "Locale-aware tolower (C locale passthrough)",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "wctype",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Get wide-char classification descriptor",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "iswctype",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "hotpath",
+      "strict_semantics": "Classify wide character by descriptor",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "wctrans",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Get wide-char transformation descriptor",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "towctrans",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "hotpath",
+      "strict_semantics": "Transform wide character by descriptor",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "statfs",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Get filesystem statistics",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "fstatfs",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Get filesystem statistics by fd",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "statvfs",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "POSIX filesystem statistics",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "fstatvfs",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "POSIX filesystem statistics by fd",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "getdents64",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Linux getdents64: get directory entries",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "__cxa_atexit",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "C++ atexit handler registration",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "__cxa_finalize",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "C++ finalization (run atexit handlers)",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "__stack_chk_fail",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Stack smashing detection abort",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "__stack_chk_guard",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Stack canary guard value",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "gethostbyname2",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "IPv6-aware hostname lookup",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "gethostent",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Get next /etc/hosts entry",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "sethostent",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Rewind /etc/hosts enumeration",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "endhostent",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Close /etc/hosts enumeration",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "getnetent",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Get next /etc/networks entry",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "setnetent",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Rewind /etc/networks enumeration",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "endnetent",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Close /etc/networks enumeration",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "getnetbyname",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Look up network by name",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "getnetbyaddr",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Look up network by address",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "getservent",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Get next /etc/services entry",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "setservent",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Rewind /etc/services enumeration",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "endservent",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Close /etc/services enumeration",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "getprotoent",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Get next /etc/protocols entry",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "setprotoent",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Rewind /etc/protocols enumeration",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "endprotoent",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Close /etc/protocols enumeration",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "strcoll_l",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Locale-aware string comparison",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "strxfrm_l",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Locale-aware string transformation",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "strftime_l",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Locale-aware time formatting",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "thrd_create",
+      "status": "Implemented",
+      "module": "c11threads_abi",
+      "perf_class": "cold",
+      "strict_semantics": "C11 thread creation via pthread_create trampoline",
+      "hardened_semantics": "Same as strict (delegates to pthread)",
+      "default_stub": false
+    },
+    {
+      "symbol": "thrd_join",
+      "status": "Implemented",
+      "module": "c11threads_abi",
+      "perf_class": "cold",
+      "strict_semantics": "C11 thread join via pthread_join",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "thrd_detach",
+      "status": "Implemented",
+      "module": "c11threads_abi",
+      "perf_class": "cold",
+      "strict_semantics": "C11 thread detach via pthread_detach",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "thrd_exit",
+      "status": "Implemented",
+      "module": "c11threads_abi",
+      "perf_class": "cold",
+      "strict_semantics": "C11 thread exit via pthread_exit",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "thrd_current",
+      "status": "Implemented",
+      "module": "c11threads_abi",
+      "perf_class": "strict_hotpath",
+      "strict_semantics": "Returns calling thread ID via pthread_self",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "thrd_equal",
+      "status": "Implemented",
+      "module": "c11threads_abi",
+      "perf_class": "strict_hotpath",
+      "strict_semantics": "Compare thread IDs via pthread_equal",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "thrd_sleep",
+      "status": "Implemented",
+      "module": "c11threads_abi",
+      "perf_class": "cold",
+      "strict_semantics": "C11 sleep via nanosleep; returns 0/-1/-2",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "thrd_yield",
+      "status": "Implemented",
+      "module": "c11threads_abi",
+      "perf_class": "cold",
+      "strict_semantics": "Yield processor via sched_yield",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "mtx_init",
+      "status": "Implemented",
+      "module": "c11threads_abi",
+      "perf_class": "cold",
+      "strict_semantics": "C11 mutex init via pthread_mutex_init; supports MTX_RECURSIVE",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "mtx_lock",
+      "status": "Implemented",
+      "module": "c11threads_abi",
+      "perf_class": "strict_hotpath",
+      "strict_semantics": "C11 mutex lock via pthread_mutex_lock",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "mtx_trylock",
+      "status": "Implemented",
+      "module": "c11threads_abi",
+      "perf_class": "strict_hotpath",
+      "strict_semantics": "C11 non-blocking mutex lock via pthread_mutex_trylock",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "mtx_timedlock",
+      "status": "Implemented",
+      "module": "c11threads_abi",
+      "perf_class": "cold",
+      "strict_semantics": "C11 timed mutex lock via pthread_mutex_timedlock",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "mtx_unlock",
+      "status": "Implemented",
+      "module": "c11threads_abi",
+      "perf_class": "strict_hotpath",
+      "strict_semantics": "C11 mutex unlock via pthread_mutex_unlock",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "mtx_destroy",
+      "status": "Implemented",
+      "module": "c11threads_abi",
+      "perf_class": "cold",
+      "strict_semantics": "C11 mutex destroy via pthread_mutex_destroy",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "cnd_init",
+      "status": "Implemented",
+      "module": "c11threads_abi",
+      "perf_class": "cold",
+      "strict_semantics": "C11 condition variable init via pthread_cond_init",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "cnd_signal",
+      "status": "Implemented",
+      "module": "c11threads_abi",
+      "perf_class": "cold",
+      "strict_semantics": "C11 cond signal via pthread_cond_signal",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "cnd_broadcast",
+      "status": "Implemented",
+      "module": "c11threads_abi",
+      "perf_class": "cold",
+      "strict_semantics": "C11 cond broadcast via pthread_cond_broadcast",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "cnd_wait",
+      "status": "Implemented",
+      "module": "c11threads_abi",
+      "perf_class": "cold",
+      "strict_semantics": "C11 cond wait via pthread_cond_wait",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "cnd_timedwait",
+      "status": "Implemented",
+      "module": "c11threads_abi",
+      "perf_class": "cold",
+      "strict_semantics": "C11 timed cond wait via pthread_cond_timedwait",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "cnd_destroy",
+      "status": "Implemented",
+      "module": "c11threads_abi",
+      "perf_class": "cold",
+      "strict_semantics": "C11 cond destroy via pthread_cond_destroy",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "tss_create",
+      "status": "Implemented",
+      "module": "c11threads_abi",
+      "perf_class": "cold",
+      "strict_semantics": "C11 thread-local storage create via pthread_key_create",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "tss_get",
+      "status": "Implemented",
+      "module": "c11threads_abi",
+      "perf_class": "strict_hotpath",
+      "strict_semantics": "C11 TLS get via pthread_getspecific",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "tss_set",
+      "status": "Implemented",
+      "module": "c11threads_abi",
+      "perf_class": "cold",
+      "strict_semantics": "C11 TLS set via pthread_setspecific",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "tss_delete",
+      "status": "Implemented",
+      "module": "c11threads_abi",
+      "perf_class": "cold",
+      "strict_semantics": "C11 TLS delete via pthread_key_delete",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "call_once",
+      "status": "Implemented",
+      "module": "c11threads_abi",
+      "perf_class": "cold",
+      "strict_semantics": "C11 call_once via pthread_once",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "timespec_get",
+      "status": "Implemented",
+      "module": "time_abi",
+      "perf_class": "strict_hotpath",
+      "strict_semantics": "C11 timespec_get via clock_gettime(CLOCK_REALTIME); returns base on success",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "timespec_getres",
+      "status": "Implemented",
+      "module": "time_abi",
+      "perf_class": "cold",
+      "strict_semantics": "C23 timespec_getres via clock_getres; returns base on success",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "versionsort",
+      "status": "Implemented",
+      "module": "dirent_abi",
+      "perf_class": "cold",
+      "strict_semantics": "GNU versionsort via strverscmp on d_name fields",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "posix_spawn_file_actions_addchdir_np",
+      "status": "Implemented",
+      "module": "process_abi",
+      "perf_class": "cold",
+      "strict_semantics": "GNU extension: adds chdir action to posix_spawn file actions list",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "posix_spawn_file_actions_addfchdir_np",
+      "status": "Implemented",
+      "module": "process_abi",
+      "perf_class": "cold",
+      "strict_semantics": "GNU extension: adds fchdir action to posix_spawn file actions list",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
     }
   ],
   "summary": {
-    "total": 1039,
-    "implemented": 684,
-    "raw_syscall": 297,
-    "glibc_call_through": 58,
+    "total_exported": 1184,
+    "implemented": 816,
+    "raw_syscall": 352,
+    "glibc_call_through": 16,
     "stub": 0
   },
-  "implemented": 684,
+  "implemented": 816,
   "raw_syscall": 297,
   "glibc_call_through": 58,
   "stub": 0,

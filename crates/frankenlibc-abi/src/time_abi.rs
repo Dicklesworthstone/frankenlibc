@@ -508,7 +508,7 @@ unsafe fn skip_ws(input: *const u8, mut pos: usize) -> usize {
 unsafe fn match_name(input: *const u8, pos: usize, name: &[u8]) -> Option<usize> {
     for (i, &expected) in name.iter().enumerate() {
         let ch = unsafe { *input.add(pos + i) };
-        if ch.to_ascii_lowercase() != expected.to_ascii_lowercase() {
+        if !ch.eq_ignore_ascii_case(&expected) {
             return None;
         }
     }
@@ -718,7 +718,7 @@ pub unsafe extern "C" fn strptime(
                     let result = unsafe {
                         strptime(
                             input.add(si) as *const std::ffi::c_char,
-                            b"%m/%d/%y\0".as_ptr() as *const std::ffi::c_char,
+                            c"%m/%d/%y".as_ptr(),
                             tm,
                         )
                     };
@@ -733,7 +733,7 @@ pub unsafe extern "C" fn strptime(
                     let result = unsafe {
                         strptime(
                             input.add(si) as *const std::ffi::c_char,
-                            b"%H:%M:%S\0".as_ptr() as *const std::ffi::c_char,
+                            c"%H:%M:%S".as_ptr(),
                             tm,
                         )
                     };
@@ -748,7 +748,7 @@ pub unsafe extern "C" fn strptime(
                     let result = unsafe {
                         strptime(
                             input.add(si) as *const std::ffi::c_char,
-                            b"%H:%M\0".as_ptr() as *const std::ffi::c_char,
+                            c"%H:%M".as_ptr(),
                             tm,
                         )
                     };
@@ -763,7 +763,7 @@ pub unsafe extern "C" fn strptime(
                     let result = unsafe {
                         strptime(
                             input.add(si) as *const std::ffi::c_char,
-                            b"%Y-%m-%d\0".as_ptr() as *const std::ffi::c_char,
+                            c"%Y-%m-%d".as_ptr(),
                             tm,
                         )
                     };
@@ -799,12 +799,12 @@ pub unsafe extern "C" fn strptime(
     }
 
     // Post-processing: apply AM/PM
-    if let Some(pm) = is_pm {
-        if pm {
-            let h = unsafe { (*tm).tm_hour };
-            if h < 12 {
-                unsafe { (*tm).tm_hour = h + 12 };
-            }
+    if let Some(pm) = is_pm
+        && pm
+    {
+        let h = unsafe { (*tm).tm_hour };
+        if h < 12 {
+            unsafe { (*tm).tm_hour = h + 12 };
         }
     }
 
@@ -845,6 +845,45 @@ pub unsafe extern "C" fn clock_settime(
         unsafe { *p = e };
     }
     rc
+}
+
+// ---------------------------------------------------------------------------
+// timespec_get — Implemented (C11)
+// ---------------------------------------------------------------------------
+
+/// C11 `timespec_get` — get the current calendar time based on a given time base.
+///
+/// Returns `base` on success, 0 on failure.
+/// TIME_UTC (1) maps to CLOCK_REALTIME.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn timespec_get(ts: *mut libc::timespec, base: c_int) -> c_int {
+    const TIME_UTC: c_int = 1;
+    if ts.is_null() || base != TIME_UTC {
+        return 0;
+    }
+    let rc = unsafe { raw_clock_gettime(libc::CLOCK_REALTIME, ts) };
+    if rc == 0 { base } else { 0 }
+}
+
+// ---------------------------------------------------------------------------
+// timespec_getres — Implemented (C23)
+// ---------------------------------------------------------------------------
+
+/// C23 `timespec_getres` — get the resolution for a time base.
+///
+/// Returns `base` on success, 0 on failure.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn timespec_getres(ts: *mut libc::timespec, base: c_int) -> c_int {
+    const TIME_UTC: c_int = 1;
+    if base != TIME_UTC {
+        return 0;
+    }
+    if ts.is_null() {
+        // Per spec, null ts is allowed — just verifies base is supported.
+        return base;
+    }
+    let rc = unsafe { libc::syscall(libc::SYS_clock_getres, libc::CLOCK_REALTIME, ts) };
+    if rc == 0 { base } else { 0 }
 }
 
 // Tests for time_abi are in crates/frankenlibc-abi/tests/time_abi_test.rs

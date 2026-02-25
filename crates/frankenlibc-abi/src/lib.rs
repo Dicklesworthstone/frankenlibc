@@ -50,11 +50,13 @@ pub mod startup_helpers;
 
 // Phase 2+ ABI modules — call libc syscalls, gated to prevent symbol recursion in tests
 #[cfg(not(test))]
+pub mod c11threads_abi;
+#[cfg(not(test))]
 pub mod dirent_abi;
 #[cfg(not(test))]
-pub mod err_abi;
-#[cfg(not(test))]
 pub mod dlfcn_abi;
+#[cfg(not(test))]
+pub mod err_abi;
 #[cfg(not(test))]
 pub mod fenv_abi;
 #[cfg(not(test))]
@@ -78,9 +80,9 @@ pub mod pwd_abi;
 #[cfg(not(test))]
 pub mod resolv_abi;
 #[cfg(not(test))]
-pub mod search_abi;
-#[cfg(not(test))]
 pub mod resource_abi;
+#[cfg(not(test))]
+pub mod search_abi;
 pub mod setjmp_abi;
 #[cfg(not(test))]
 pub mod signal_abi;

@@ -134,6 +134,12 @@ fn alloc_stream_id() -> usize {
     id
 }
 
+#[inline]
+fn stream_exists(id: usize) -> bool {
+    let reg = registry().lock().unwrap_or_else(|e| e.into_inner());
+    reg.streams.contains_key(&id)
+}
+
 /// Flush a stream's pending write data to its fd. Returns true on success.
 unsafe fn flush_stream(stream: &mut StdioStream) -> bool {
     let len = stream.pending_flush().len();
@@ -274,6 +280,13 @@ pub unsafe extern "C" fn fclose(stream: *mut c_void) -> c_int {
         unsafe { set_abi_errno(errno::EBADF) };
         return libc::EOF;
     };
+    drop(reg);
+
+    // Cookie-backed streams close via callback and cookie-registry teardown.
+    if is_cookie_stream(id) {
+        let rc = unsafe { cookie_stream_close(id) };
+        return if rc == 0 { 0 } else { libc::EOF };
+    }
 
     // Memory-backed streams: sync data, then clean up.
     if s.is_mem_backed() {
@@ -349,10 +362,18 @@ pub unsafe extern "C" fn fflush(stream: *mut c_void) -> c_int {
         let mut any_fail = false;
         let ids: Vec<usize> = reg.streams.keys().copied().collect();
         for id in ids {
-            if let Some(s) = reg.streams.get_mut(&id)
-                && !unsafe { flush_stream(s) }
-            {
-                any_fail = true;
+            if let Some(s) = reg.streams.get_mut(&id) {
+                let ok = if is_cookie_stream(id) {
+                    true
+                } else if s.is_mem_backed() {
+                    unsafe { sync_memstream_to_caller(id, s) };
+                    true
+                } else {
+                    unsafe { flush_stream(s) }
+                };
+                if !ok {
+                    any_fail = true;
+                }
             }
         }
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 20, any_fail);
@@ -360,6 +381,12 @@ pub unsafe extern "C" fn fflush(stream: *mut c_void) -> c_int {
     }
 
     let id = stream as usize;
+    if is_cookie_stream(id) {
+        let adverse = !stream_exists(id);
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 8, adverse);
+        return if adverse { libc::EOF } else { 0 };
+    }
+
     let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
     if let Some(s) = reg.streams.get_mut(&id) {
         // Memory-backed streams: sync data to C caller's pointers (open_memstream).
@@ -387,6 +414,37 @@ pub unsafe extern "C" fn fgetc(stream: *mut c_void) -> c_int {
     let id = stream as usize;
     let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, id, 1, true, false, 0);
     if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
+        return libc::EOF;
+    }
+
+    if is_cookie_stream(id) {
+        if !stream_exists(id) {
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
+            return libc::EOF;
+        }
+
+        let mut byte = [0u8; 1];
+        let rc = unsafe { cookie_stream_read(id, byte.as_mut_ptr(), 1) };
+
+        let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
+        let Some(s) = reg.streams.get_mut(&id) else {
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
+            return libc::EOF;
+        };
+
+        if rc > 0 {
+            s.set_offset(s.offset().saturating_add(1));
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, false);
+            return byte[0] as c_int;
+        }
+        if rc == 0 {
+            s.set_eof();
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
+            return libc::EOF;
+        }
+
+        s.set_error();
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
         return libc::EOF;
     }
@@ -468,6 +526,28 @@ pub unsafe extern "C" fn fputc(c: c_int, stream: *mut c_void) -> c_int {
     }
 
     let byte = c as u8;
+
+    if is_cookie_stream(id) {
+        if !stream_exists(id) {
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
+            return libc::EOF;
+        }
+        let rc = unsafe { cookie_stream_write(id, [byte].as_ptr(), 1) };
+        let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
+        let Some(s) = reg.streams.get_mut(&id) else {
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
+            return libc::EOF;
+        };
+        if rc > 0 {
+            s.set_offset(s.offset().saturating_add(1));
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, false);
+            return c;
+        }
+        s.set_error();
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
+        return libc::EOF;
+    }
+
     let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
     let Some(s) = reg.streams.get_mut(&id) else {
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
@@ -545,6 +625,66 @@ pub unsafe extern "C" fn fgets(buf: *mut c_char, size: c_int, stream: *mut c_voi
     if matches!(decision.action, MembraneAction::Deny) {
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
         return std::ptr::null_mut();
+    }
+
+    if is_cookie_stream(id) {
+        if !stream_exists(id) {
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
+            return std::ptr::null_mut();
+        }
+
+        let mut written = 0usize;
+        let mut had_error = false;
+        let mut reached_eof = false;
+        while written < max {
+            let mut byte = [0u8; 1];
+            let rc = unsafe { cookie_stream_read(id, byte.as_mut_ptr(), 1) };
+            if rc > 0 {
+                unsafe { *buf.add(written) = byte[0] as c_char };
+                written += 1;
+                if byte[0] == b'\n' {
+                    break;
+                }
+                continue;
+            }
+            if rc == 0 {
+                reached_eof = true;
+            } else {
+                had_error = true;
+            }
+            break;
+        }
+
+        let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(s) = reg.streams.get_mut(&id) {
+            let delta = written.min(i64::MAX as usize) as i64;
+            s.set_offset(s.offset().saturating_add(delta));
+            if reached_eof {
+                s.set_eof();
+            }
+            if had_error {
+                s.set_error();
+            }
+        }
+
+        if (written == 0 && max > 0) || had_error {
+            runtime_policy::observe(
+                ApiFamily::Stdio,
+                decision.profile,
+                runtime_policy::scaled_cost(10, max),
+                true,
+            );
+            return std::ptr::null_mut();
+        }
+
+        unsafe { *buf.add(written) = 0 };
+        runtime_policy::observe(
+            ApiFamily::Stdio,
+            decision.profile,
+            runtime_policy::scaled_cost(10, written),
+            false,
+        );
+        return buf;
     }
 
     let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
@@ -673,6 +813,50 @@ pub unsafe extern "C" fn fputs(s: *const c_char, stream: *mut c_void) -> c_int {
 
     let bytes = unsafe { std::slice::from_raw_parts(s as *const u8, len) };
 
+    if is_cookie_stream(id) {
+        if !stream_exists(id) {
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
+            return libc::EOF;
+        }
+
+        let mut written = 0usize;
+        while written < bytes.len() {
+            let rc = unsafe {
+                cookie_stream_write(
+                    id,
+                    bytes[written..].as_ptr(),
+                    bytes.len().saturating_sub(written),
+                )
+            };
+            if rc <= 0 {
+                break;
+            }
+            let advanced = (rc as usize).min(bytes.len() - written);
+            if advanced == 0 {
+                break;
+            }
+            written += advanced;
+        }
+
+        let adverse = written < bytes.len();
+        let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(stream_obj) = reg.streams.get_mut(&id) {
+            let delta = written.min(i64::MAX as usize) as i64;
+            stream_obj.set_offset(stream_obj.offset().saturating_add(delta));
+            if adverse {
+                stream_obj.set_error();
+            }
+        }
+
+        runtime_policy::observe(
+            ApiFamily::Stdio,
+            decision.profile,
+            runtime_policy::scaled_cost(10, len),
+            adverse,
+        );
+        return if adverse { libc::EOF } else { 0 };
+    }
+
     let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
     let Some(stream_obj) = reg.streams.get_mut(&id) else {
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
@@ -749,13 +933,62 @@ pub unsafe extern "C" fn fread(
     }
 
     let id = stream as usize;
+    let dst = unsafe { std::slice::from_raw_parts_mut(ptr as *mut u8, total) };
+
+    if is_cookie_stream(id) {
+        if !stream_exists(id) {
+            return 0;
+        }
+
+        let mut read_total = 0usize;
+        let mut reached_eof = false;
+        let mut had_error = false;
+
+        while read_total < total {
+            let rc = unsafe {
+                cookie_stream_read(
+                    id,
+                    dst[read_total..].as_mut_ptr(),
+                    total.saturating_sub(read_total),
+                )
+            };
+            if rc > 0 {
+                let advanced = (rc as usize).min(total - read_total);
+                if advanced == 0 {
+                    had_error = true;
+                    break;
+                }
+                read_total += advanced;
+                continue;
+            }
+            if rc == 0 {
+                reached_eof = true;
+            } else {
+                had_error = true;
+            }
+            break;
+        }
+
+        let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(s) = reg.streams.get_mut(&id) {
+            let delta = read_total.min(i64::MAX as usize) as i64;
+            s.set_offset(s.offset().saturating_add(delta));
+            if reached_eof {
+                s.set_eof();
+            }
+            if had_error {
+                s.set_error();
+            }
+        }
+
+        return read_total.checked_div(size).unwrap_or(0);
+    }
 
     let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
     let Some(s) = reg.streams.get_mut(&id) else {
         return 0;
     };
 
-    let dst = unsafe { std::slice::from_raw_parts_mut(ptr as *mut u8, total) };
     let mut read_total = 0usize;
 
     // Memory-backed streams: read directly from the backing.
@@ -818,6 +1051,50 @@ pub unsafe extern "C" fn fwrite(
 
     let src = unsafe { std::slice::from_raw_parts(ptr as *const u8, total) };
 
+    if is_cookie_stream(id) {
+        if !stream_exists(id) {
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+            return 0;
+        }
+
+        let mut written_total = 0usize;
+        while written_total < total {
+            let rc = unsafe {
+                cookie_stream_write(
+                    id,
+                    src[written_total..].as_ptr(),
+                    total.saturating_sub(written_total),
+                )
+            };
+            if rc <= 0 {
+                break;
+            }
+            let advanced = (rc as usize).min(total - written_total);
+            if advanced == 0 {
+                break;
+            }
+            written_total += advanced;
+        }
+
+        let adverse = written_total < total;
+        let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(s) = reg.streams.get_mut(&id) {
+            let delta = written_total.min(i64::MAX as usize) as i64;
+            s.set_offset(s.offset().saturating_add(delta));
+            if adverse {
+                s.set_error();
+            }
+        }
+        let complete_items = written_total.checked_div(size).unwrap_or(0);
+        runtime_policy::observe(
+            ApiFamily::Stdio,
+            decision.profile,
+            runtime_policy::scaled_cost(15, total),
+            adverse,
+        );
+        return complete_items;
+    }
+
     let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
     let Some(s) = reg.streams.get_mut(&id) else {
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
@@ -827,7 +1104,7 @@ pub unsafe extern "C" fn fwrite(
     // Memory-backed streams: write directly to the backing.
     if s.is_mem_backed() {
         let written = s.mem_write(src);
-        let complete_items = if size > 0 { written / size } else { 0 };
+        let complete_items = written.checked_div(size).unwrap_or(0);
         runtime_policy::observe(
             ApiFamily::Stdio,
             decision.profile,
@@ -899,6 +1176,34 @@ pub unsafe extern "C" fn fseek(stream: *mut c_void, offset: c_long, whence: c_in
         unsafe { set_abi_errno(errno::EACCES) };
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
         return -1;
+    }
+
+    if is_cookie_stream(id) {
+        if !stream_exists(id) {
+            unsafe { set_abi_errno(errno::EBADF) };
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
+            return -1;
+        }
+
+        let mut cookie_off = offset;
+        let rc = unsafe { cookie_stream_seek(id, &mut cookie_off as *mut i64, whence) };
+
+        let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
+        let Some(s) = reg.streams.get_mut(&id) else {
+            unsafe { set_abi_errno(errno::EBADF) };
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
+            return -1;
+        };
+
+        if rc != 0 {
+            s.set_error();
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
+            return -1;
+        }
+
+        s.set_offset(cookie_off);
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, false);
+        return 0;
     }
 
     let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
@@ -1568,17 +1873,17 @@ pub unsafe extern "C" fn sprintf(
     let mut copy_len = total_len;
     let mut adverse = false;
 
-    if repair_enabled(mode.heals_enabled(), decision.action) {
-        if let Some(bound) = known_remaining(str_buf as usize) {
-            let max_payload = bound.saturating_sub(1);
-            if copy_len > max_payload {
-                copy_len = max_payload;
-                adverse = true;
-                global_healing_policy().record(&HealingAction::TruncateWithNull {
-                    requested: total_len.saturating_add(1),
-                    truncated: copy_len,
-                });
-            }
+    if repair_enabled(mode.heals_enabled(), decision.action)
+        && let Some(bound) = known_remaining(str_buf as usize)
+    {
+        let max_payload = bound.saturating_sub(1);
+        if copy_len > max_payload {
+            copy_len = max_payload;
+            adverse = true;
+            global_healing_policy().record(&HealingAction::TruncateWithNull {
+                requested: total_len.saturating_add(1),
+                truncated: copy_len,
+            });
         }
     }
 
@@ -1990,17 +2295,17 @@ pub unsafe extern "C" fn vsprintf(
     let mut copy_len = total_len;
     let mut adverse = false;
 
-    if repair_enabled(mode.heals_enabled(), decision.action) {
-        if let Some(bound) = known_remaining(str_buf as usize) {
-            let max_payload = bound.saturating_sub(1);
-            if copy_len > max_payload {
-                copy_len = max_payload;
-                adverse = true;
-                global_healing_policy().record(&HealingAction::TruncateWithNull {
-                    requested: total_len.saturating_add(1),
-                    truncated: copy_len,
-                });
-            }
+    if repair_enabled(mode.heals_enabled(), decision.action)
+        && let Some(bound) = known_remaining(str_buf as usize)
+    {
+        let max_payload = bound.saturating_sub(1);
+        if copy_len > max_payload {
+            copy_len = max_payload;
+            adverse = true;
+            global_healing_policy().record(&HealingAction::TruncateWithNull {
+                requested: total_len.saturating_add(1),
+                truncated: copy_len,
+            });
         }
     }
 
@@ -2217,7 +2522,7 @@ pub unsafe extern "C" fn vasprintf(
 // ===========================================================================
 
 use frankenlibc_core::stdio::scanf::{
-    ScanDirective, ScanResult, ScanSpec, ScanValue, parse_scanf_format, scan_input,
+    ScanDirective, ScanResult, ScanValue, parse_scanf_format, scan_input,
 };
 
 /// Write scanned values through va_list pointers.
@@ -2391,9 +2696,7 @@ pub unsafe extern "C" fn sscanf(s: *const c_char, format: *const c_char, mut arg
         return libc::EOF;
     }
 
-    unsafe {
-        scanf_write_values!(&result.values, &directives, args);
-    }
+    scanf_write_values!(&result.values, &directives, args);
     runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, false);
     result.count
 }
@@ -2428,9 +2731,7 @@ pub unsafe extern "C" fn fscanf(
         return libc::EOF;
     }
 
-    unsafe {
-        scanf_write_values!(&result.values, &directives, args);
-    }
+    scanf_write_values!(&result.values, &directives, args);
     runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, false);
     result.count
 }
@@ -2462,9 +2763,7 @@ pub unsafe extern "C" fn scanf(format: *const c_char, mut args: ...) -> c_int {
         return libc::EOF;
     }
 
-    unsafe {
-        scanf_write_values!(&result.values, &directives, args);
-    }
+    scanf_write_values!(&result.values, &directives, args);
     runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, false);
     result.count
 }
@@ -3646,13 +3945,117 @@ pub unsafe extern "C" fn fsetpos64(stream: *mut c_void, pos: *const c_void) -> c
 // stdio extras
 // ---------------------------------------------------------------------------
 
-unsafe extern "C" {
-    #[link_name = "fopencookie"]
-    fn libc_fopencookie(
-        cookie: *mut c_void,
-        mode: *const c_char,
-        funcs: *const c_void,
-    ) -> *mut c_void;
+// ---------------------------------------------------------------------------
+// fopencookie — Implemented (native cookie-based stream)
+// ---------------------------------------------------------------------------
+
+/// cookie_io_functions_t layout (matches glibc x86_64):
+///   read:  fn(*mut c_void, *mut c_char, usize) -> isize
+///   write: fn(*mut c_void, *const c_char, usize) -> isize
+///   seek:  fn(*mut c_void, *mut i64, c_int) -> c_int
+///   close: fn(*mut c_void) -> c_int
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct CookieIoFuncs {
+    read: Option<unsafe extern "C" fn(*mut c_void, *mut c_char, usize) -> isize>,
+    write: Option<unsafe extern "C" fn(*mut c_void, *const c_char, usize) -> isize>,
+    seek: Option<unsafe extern "C" fn(*mut c_void, *mut i64, c_int) -> c_int>,
+    close: Option<unsafe extern "C" fn(*mut c_void) -> c_int>,
+}
+
+/// Metadata for a cookie-backed stream.
+struct CookieStreamInfo {
+    cookie: *mut c_void,
+    funcs: CookieIoFuncs,
+}
+
+// SAFETY: The C caller is responsible for ensuring the cookie and
+// function pointers remain valid for the lifetime of the stream.
+unsafe impl Send for CookieStreamInfo {}
+unsafe impl Sync for CookieStreamInfo {}
+
+/// Registry of cookie streams, keyed by stream sentinel ID.
+static COOKIE_REGISTRY: Mutex<Option<HashMap<usize, CookieStreamInfo>>> = Mutex::new(None);
+
+fn cookie_registry() -> &'static Mutex<Option<HashMap<usize, CookieStreamInfo>>> {
+    &COOKIE_REGISTRY
+}
+
+/// Read from a cookie-backed stream. Called by fread/fgetc for cookie streams.
+pub(crate) unsafe fn cookie_stream_read(id: usize, buf: *mut u8, count: usize) -> isize {
+    let guard = cookie_registry().lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(ref map) = *guard
+        && let Some(info) = map.get(&id)
+    {
+        if let Some(read_fn) = info.funcs.read {
+            let cookie = info.cookie;
+            drop(guard);
+            return unsafe { read_fn(cookie, buf as *mut c_char, count) };
+        }
+        unsafe { set_abi_errno(errno::EBADF) };
+        return -1;
+    }
+    unsafe { set_abi_errno(errno::EBADF) };
+    -1
+}
+
+/// Write to a cookie-backed stream. Called by fwrite/fputc for cookie streams.
+pub(crate) unsafe fn cookie_stream_write(id: usize, buf: *const u8, count: usize) -> isize {
+    let guard = cookie_registry().lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(ref map) = *guard
+        && let Some(info) = map.get(&id)
+    {
+        if let Some(write_fn) = info.funcs.write {
+            let cookie = info.cookie;
+            drop(guard);
+            return unsafe { write_fn(cookie, buf as *const c_char, count) };
+        }
+        unsafe { set_abi_errno(errno::EBADF) };
+        return -1;
+    }
+    unsafe { set_abi_errno(errno::EBADF) };
+    -1
+}
+
+/// Seek a cookie-backed stream.
+pub(crate) unsafe fn cookie_stream_seek(id: usize, offset: *mut i64, whence: c_int) -> c_int {
+    let guard = cookie_registry().lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(ref map) = *guard
+        && let Some(info) = map.get(&id)
+    {
+        if let Some(seek_fn) = info.funcs.seek {
+            let cookie = info.cookie;
+            drop(guard);
+            return unsafe { seek_fn(cookie, offset, whence) };
+        }
+        unsafe { set_abi_errno(errno::ESPIPE) };
+        return -1;
+    }
+    unsafe { set_abi_errno(errno::EBADF) };
+    -1
+}
+
+/// Close a cookie-backed stream: call the close callback and remove from registry.
+pub(crate) unsafe fn cookie_stream_close(id: usize) -> c_int {
+    let mut guard = cookie_registry().lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(ref mut map) = *guard
+        && let Some(info) = map.remove(&id)
+        && let Some(close_fn) = info.funcs.close
+    {
+        let cookie = info.cookie;
+        drop(guard);
+        return unsafe { close_fn(cookie) };
+    }
+    0
+}
+
+/// Check if a stream ID is cookie-backed.
+pub(crate) fn is_cookie_stream(id: usize) -> bool {
+    let guard = cookie_registry().lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(ref map) = *guard {
+        return map.contains_key(&id);
+    }
+    false
 }
 
 /// Metadata for open_memstream: tracks the C caller's pointer and size locations.
@@ -3677,23 +4080,22 @@ fn mem_sync_registry() -> &'static Mutex<Option<HashMap<usize, MemStreamSync>>> 
 /// Synchronize open_memstream data to the C caller's pointers.
 /// Called after fflush and fclose for open_memstream streams.
 unsafe fn sync_memstream_to_caller(id: usize, stream: &StdioStream) {
-    let mut sync_guard = mem_sync_registry()
+    let sync_guard = mem_sync_registry()
         .lock()
         .unwrap_or_else(|e| e.into_inner());
-    if let Some(ref map) = *sync_guard {
-        if let Some(info) = map.get(&id) {
-            if let Some(data) = stream.mem_data() {
-                let len = data.len();
-                // Allocate a new buffer via malloc and copy data + NUL terminator.
-                let buf = unsafe { malloc(len + 1) };
-                if !buf.is_null() {
-                    unsafe {
-                        std::ptr::copy_nonoverlapping(data.as_ptr(), buf.cast::<u8>(), len);
-                        *buf.cast::<u8>().add(len) = 0; // NUL-terminate
-                        *info.ptr_loc = buf.cast::<c_char>();
-                        *info.size_loc = len;
-                    }
-                }
+    if let Some(ref map) = *sync_guard
+        && let Some(info) = map.get(&id)
+        && let Some(data) = stream.mem_data()
+    {
+        let len = data.len();
+        // Allocate a new buffer via malloc and copy data + NUL terminator.
+        let buf = unsafe { malloc(len + 1) };
+        if !buf.is_null() {
+            unsafe {
+                std::ptr::copy_nonoverlapping(data.as_ptr(), buf.cast::<u8>(), len);
+                *buf.cast::<u8>().add(len) = 0; // NUL-terminate
+                *info.ptr_loc = buf.cast::<c_char>();
+                *info.size_loc = len;
             }
         }
     }
@@ -3853,11 +4255,53 @@ pub unsafe extern "C" fn open_memstream(ptr: *mut *mut c_char, sizeloc: *mut usi
     id as *mut c_void
 }
 
+/// GNU `fopencookie` — open a custom stream with user-defined I/O callbacks.
+///
+/// `funcs` points to a `cookie_io_functions_t` struct containing read, write,
+/// seek, and close function pointers. The `cookie` pointer is passed as the
+/// first argument to each callback.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fopencookie(
     cookie: *mut c_void,
     mode: *const c_char,
     funcs: *const c_void,
 ) -> *mut c_void {
-    unsafe { libc_fopencookie(cookie, mode, funcs) }
+    if mode.is_null() || funcs.is_null() {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return std::ptr::null_mut();
+    }
+
+    // Parse mode string
+    let mode_bytes = unsafe { CStr::from_ptr(mode) }.to_bytes();
+    let Some(open_flags) = parse_mode(mode_bytes) else {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return std::ptr::null_mut();
+    };
+
+    // Read the cookie_io_functions_t from the caller's struct.
+    // SAFETY: caller guarantees funcs points to a valid cookie_io_functions_t.
+    let io_funcs = unsafe { *(funcs as *const CookieIoFuncs) };
+
+    // Create a memory-backed stream as the underlying container.
+    // Cookie streams use an empty dynamic buffer; actual I/O goes through callbacks.
+    let stream = StdioStream::new_mem_dynamic_with_flags(open_flags);
+    let id = alloc_stream_id();
+
+    let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
+    reg.streams.insert(id, stream);
+    drop(reg);
+
+    // Register the cookie info
+    let mut cookie_guard = cookie_registry().lock().unwrap_or_else(|e| e.into_inner());
+    let map = cookie_guard.get_or_insert_with(HashMap::new);
+    map.insert(
+        id,
+        CookieStreamInfo {
+            cookie,
+            funcs: io_funcs,
+        },
+    );
+    drop(cookie_guard);
+
+    id as *mut c_void
 }

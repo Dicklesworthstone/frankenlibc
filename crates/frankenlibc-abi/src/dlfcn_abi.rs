@@ -45,37 +45,40 @@ macro_rules! host_delegate {
     ($name:ident, $sym:expr, $ty:ty) => {
         #[inline(always)]
         unsafe fn $name() -> Option<$ty> {
-            static PTR: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
-            let mut ptr = PTR.load(Ordering::Relaxed);
-            if ptr.is_null() {
-                let sym_bytes = concat!($sym, "\0").as_bytes();
-                let v34 = b"GLIBC_2.34\0";
-                let v225 = b"GLIBC_2.2.5\0";
-                let v217 = b"GLIBC_2.17\0";
-                ptr = dlvsym_next(
-                    sym_bytes.as_ptr().cast::<c_char>(),
-                    v34.as_ptr().cast::<c_char>(),
-                );
+            // SAFETY: dlvsym_next and transmute require unsafe context.
+            unsafe {
+                static PTR: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
+                let mut ptr = PTR.load(Ordering::Relaxed);
                 if ptr.is_null() {
+                    let sym_bytes = concat!($sym, "\0").as_bytes();
+                    let v34 = b"GLIBC_2.34\0";
+                    let v225 = b"GLIBC_2.2.5\0";
+                    let v217 = b"GLIBC_2.17\0";
                     ptr = dlvsym_next(
                         sym_bytes.as_ptr().cast::<c_char>(),
-                        v225.as_ptr().cast::<c_char>(),
+                        v34.as_ptr().cast::<c_char>(),
                     );
+                    if ptr.is_null() {
+                        ptr = dlvsym_next(
+                            sym_bytes.as_ptr().cast::<c_char>(),
+                            v225.as_ptr().cast::<c_char>(),
+                        );
+                    }
+                    if ptr.is_null() {
+                        ptr = dlvsym_next(
+                            sym_bytes.as_ptr().cast::<c_char>(),
+                            v217.as_ptr().cast::<c_char>(),
+                        );
+                    }
+                    if !ptr.is_null() {
+                        PTR.store(ptr, Ordering::Relaxed);
+                    }
                 }
                 if ptr.is_null() {
-                    ptr = dlvsym_next(
-                        sym_bytes.as_ptr().cast::<c_char>(),
-                        v217.as_ptr().cast::<c_char>(),
-                    );
+                    None
+                } else {
+                    Some(std::mem::transmute::<*mut c_void, $ty>(ptr))
                 }
-                if !ptr.is_null() {
-                    PTR.store(ptr, Ordering::Relaxed);
-                }
-            }
-            if ptr.is_null() {
-                None
-            } else {
-                Some(std::mem::transmute::<*mut c_void, $ty>(ptr))
             }
         }
     };

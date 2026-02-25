@@ -38,13 +38,13 @@ fn if_nameindex_returns_at_least_lo() {
             break; // Sentinel
         }
 
-        assert!(!name_ptr.is_null(), "interface name pointer should not be null");
+        assert!(
+            !name_ptr.is_null(),
+            "interface name pointer should not be null"
+        );
         let name = unsafe { std::ffi::CStr::from_ptr(name_ptr) };
         let name_bytes = name.to_bytes();
-        assert!(
-            !name_bytes.is_empty(),
-            "interface name should not be empty"
-        );
+        assert!(!name_bytes.is_empty(), "interface name should not be empty");
 
         if name_bytes == b"lo" {
             found_lo = true;

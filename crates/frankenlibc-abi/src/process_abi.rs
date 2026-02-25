@@ -421,8 +421,20 @@ pub unsafe extern "C" fn execvpe(
 /// Internal file action kinds.
 enum SpawnFileAction {
     Close(c_int),
-    Dup2 { oldfd: c_int, newfd: c_int },
-    Open { fd: c_int, path: Vec<u8>, oflag: c_int, mode: libc::mode_t },
+    Dup2 {
+        oldfd: c_int,
+        newfd: c_int,
+    },
+    Open {
+        fd: c_int,
+        path: Vec<u8>,
+        oflag: c_int,
+        mode: libc::mode_t,
+    },
+    Chdir {
+        path: Vec<u8>,
+    },
+    Fchdir(c_int),
 }
 
 /// Internal file actions list, heap-allocated.
@@ -431,6 +443,7 @@ struct SpawnFileActions {
 }
 
 /// Internal spawn attributes (flags + signal masks, etc.)
+#[allow(dead_code)]
 struct SpawnAttrs {
     flags: libc::c_short,
     pgroup: libc::pid_t,
@@ -606,6 +619,22 @@ unsafe fn apply_file_actions(fa: &SpawnFileActions) -> c_int {
                     }
                 }
             }
+            SpawnFileAction::Chdir { path } => {
+                let rc = unsafe { libc::syscall(libc::SYS_chdir, path.as_ptr()) };
+                if rc < 0 {
+                    return std::io::Error::last_os_error()
+                        .raw_os_error()
+                        .unwrap_or(libc::ENOENT);
+                }
+            }
+            SpawnFileAction::Fchdir(fd) => {
+                let rc = unsafe { libc::syscall(libc::SYS_fchdir, *fd) };
+                if rc < 0 {
+                    return std::io::Error::last_os_error()
+                        .raw_os_error()
+                        .unwrap_or(libc::EBADF);
+                }
+            }
         }
     }
     0
@@ -627,8 +656,8 @@ unsafe fn posix_spawn_impl(
     }
 
     // Fork using clone syscall (minimal flags = just SIGCHLD for basic fork)
-    let child_pid = unsafe { libc::syscall(libc::SYS_clone, libc::SIGCHLD, 0, 0, 0, 0) }
-        as libc::pid_t;
+    let child_pid =
+        unsafe { libc::syscall(libc::SYS_clone, libc::SIGCHLD, 0, 0, 0, 0) } as libc::pid_t;
 
     if child_pid < 0 {
         return std::io::Error::last_os_error()
@@ -798,5 +827,62 @@ pub unsafe extern "C" fn posix_spawn_file_actions_addopen(
         oflag,
         mode,
     });
+    0
+}
+
+// ---------------------------------------------------------------------------
+// posix_spawn_file_actions_addchdir_np — Implemented (glibc 2.29+)
+// ---------------------------------------------------------------------------
+
+/// GNU extension `posix_spawn_file_actions_addchdir_np` — add a chdir action.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn posix_spawn_file_actions_addchdir_np(
+    file_actions: *mut c_void,
+    path: *const c_char,
+) -> c_int {
+    if file_actions.is_null() || path.is_null() {
+        return libc::EINVAL;
+    }
+    let p = file_actions as *mut u8;
+    let magic = unsafe { *(p.add(FA_MAGIC_OFF) as *const u64) };
+    if magic != SPAWN_FA_MAGIC {
+        return libc::EINVAL;
+    }
+    let raw = unsafe { *(p.add(FA_PTR_OFF) as *mut *mut SpawnFileActions) };
+    if raw.is_null() {
+        return libc::EINVAL;
+    }
+    let path_cstr = unsafe { std::ffi::CStr::from_ptr(path) };
+    let mut path_bytes = path_cstr.to_bytes().to_vec();
+    path_bytes.push(0); // NUL terminate
+    let fa = unsafe { &mut *raw };
+    fa.actions.push(SpawnFileAction::Chdir { path: path_bytes });
+    0
+}
+
+// ---------------------------------------------------------------------------
+// posix_spawn_file_actions_addfchdir_np — Implemented (glibc 2.29+)
+// ---------------------------------------------------------------------------
+
+/// GNU extension `posix_spawn_file_actions_addfchdir_np` — add an fchdir action.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn posix_spawn_file_actions_addfchdir_np(
+    file_actions: *mut c_void,
+    fd: c_int,
+) -> c_int {
+    if file_actions.is_null() || fd < 0 {
+        return libc::EINVAL;
+    }
+    let p = file_actions as *mut u8;
+    let magic = unsafe { *(p.add(FA_MAGIC_OFF) as *const u64) };
+    if magic != SPAWN_FA_MAGIC {
+        return libc::EINVAL;
+    }
+    let raw = unsafe { *(p.add(FA_PTR_OFF) as *mut *mut SpawnFileActions) };
+    if raw.is_null() {
+        return libc::EINVAL;
+    }
+    let fa = unsafe { &mut *raw };
+    fa.actions.push(SpawnFileAction::Fchdir(fd));
     0
 }

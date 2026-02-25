@@ -967,7 +967,7 @@ pub unsafe extern "C" fn memalign(alignment: usize, size: usize) -> *mut c_void 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn aligned_alloc(alignment: usize, size: usize) -> *mut c_void {
     // C11 requires size to be a multiple of alignment
-    if alignment == 0 || size % alignment != 0 {
+    if alignment == 0 || !size.is_multiple_of(alignment) {
         unsafe { set_abi_errno(EINVAL as c_int) };
         return std::ptr::null_mut();
     }
@@ -1125,12 +1125,11 @@ pub unsafe extern "C" fn malloc_usable_size(ptr: *mut c_void) -> usize {
     let addr = ptr as usize;
 
     // Look up in membrane arena first
-    if let Some(pipeline) = crate::membrane_state::try_global_pipeline() {
-        if let Some(slot) = pipeline.arena.lookup(addr) {
-            if slot.user_base == addr {
-                return slot.user_size;
-            }
-        }
+    if let Some(pipeline) = crate::membrane_state::try_global_pipeline()
+        && let Some(slot) = pipeline.arena.lookup(addr)
+        && slot.user_base == addr
+    {
+        return slot.user_size;
     }
 
     // Check fallback allocation table - delegate to native

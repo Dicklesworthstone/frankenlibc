@@ -4,7 +4,7 @@
 //! Each function masks the input to u8, delegates to `frankenlibc_core::ctype`,
 //! and feeds the membrane kernel for online control telemetry.
 
-use std::ffi::c_int;
+use std::ffi::{c_int, c_void};
 
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
@@ -123,4 +123,78 @@ pub unsafe extern "C" fn isascii(c: c_int) -> c_int {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn toascii(c: c_int) -> c_int {
     c & 0x7F
+}
+
+// ---------------------------------------------------------------------------
+// Locale-aware _l variants — Implemented (C locale passthrough)
+// ---------------------------------------------------------------------------
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn isalpha_l(c: c_int, _locale: *mut c_void) -> c_int {
+    classify(c, frankenlibc_core::ctype::is_alpha)
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn isdigit_l(c: c_int, _locale: *mut c_void) -> c_int {
+    classify(c, frankenlibc_core::ctype::is_digit)
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn isalnum_l(c: c_int, _locale: *mut c_void) -> c_int {
+    classify(c, frankenlibc_core::ctype::is_alnum)
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn isspace_l(c: c_int, _locale: *mut c_void) -> c_int {
+    classify(c, frankenlibc_core::ctype::is_space)
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn isupper_l(c: c_int, _locale: *mut c_void) -> c_int {
+    classify(c, frankenlibc_core::ctype::is_upper)
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn islower_l(c: c_int, _locale: *mut c_void) -> c_int {
+    classify(c, frankenlibc_core::ctype::is_lower)
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn isprint_l(c: c_int, _locale: *mut c_void) -> c_int {
+    classify(c, frankenlibc_core::ctype::is_print)
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ispunct_l(c: c_int, _locale: *mut c_void) -> c_int {
+    classify(c, frankenlibc_core::ctype::is_punct)
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn isxdigit_l(c: c_int, _locale: *mut c_void) -> c_int {
+    classify(c, frankenlibc_core::ctype::is_xdigit)
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn isblank_l(c: c_int, _locale: *mut c_void) -> c_int {
+    classify(c, frankenlibc_core::ctype::is_blank)
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn iscntrl_l(c: c_int, _locale: *mut c_void) -> c_int {
+    classify(c, frankenlibc_core::ctype::is_cntrl)
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn isgraph_l(c: c_int, _locale: *mut c_void) -> c_int {
+    classify(c, frankenlibc_core::ctype::is_graph)
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn toupper_l(c: c_int, _locale: *mut c_void) -> c_int {
+    convert(c, frankenlibc_core::ctype::to_upper)
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn tolower_l(c: c_int, _locale: *mut c_void) -> c_int {
+    convert(c, frankenlibc_core::ctype::to_lower)
 }

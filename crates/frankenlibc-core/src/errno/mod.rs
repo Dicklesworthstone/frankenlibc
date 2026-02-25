@@ -62,6 +62,7 @@ pub const ETIMEDOUT: i32 = 110;
 pub const ECONNREFUSED: i32 = 111;
 pub const EALREADY: i32 = 114;
 pub const EINPROGRESS: i32 = 115;
+pub const ECANCELED: i32 = 125;
 
 /// Returns the error message string for the given errno value.
 ///
@@ -123,6 +124,7 @@ pub fn strerror_message(errnum: i32) -> &'static str {
         ECONNREFUSED => "Connection refused",
         EALREADY => "Operation already in progress",
         EINPROGRESS => "Operation now in progress",
+        ECANCELED => "Operation canceled",
         _ => "Unknown error",
     }
 }

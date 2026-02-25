@@ -67,7 +67,7 @@ fn test_pvalloc_rounds_up() {
     // The usable size should be at least 2 * page_sz
     let usable = unsafe { malloc_usable_size(p) };
     assert!(
-        usable >= page_sz + 1,
+        usable > page_sz,
         "pvalloc({}) usable {} should be >= {}",
         page_sz + 1,
         usable,

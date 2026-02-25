@@ -1148,12 +1148,8 @@ pub unsafe extern "C" fn tgammaf(x: f32) -> f32 {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn lgammaf(x: f32) -> f32 {
     let out = unary_entry_f32(x, 10, frankenlibc_core::math::lgammaf);
-    if x.is_finite() {
-        if x <= 0.0 && x == x.floor() {
-            set_range_errno();
-        } else if out.is_infinite() {
-            set_range_errno();
-        }
+    if x.is_finite() && ((x <= 0.0 && x == x.floor()) || out.is_infinite()) {
+        set_range_errno();
     }
     out
 }

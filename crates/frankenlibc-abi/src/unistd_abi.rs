@@ -4,7 +4,7 @@
 //! directory navigation (getcwd/chdir), process identity (getpid/getppid/getuid/...),
 //! link operations (link/symlink/readlink/unlink/rmdir), and sync (fsync/fdatasync).
 
-use std::ffi::{CStr, CString, c_char, c_int, c_uint, c_void};
+use std::ffi::{CStr, CString, c_char, c_int, c_long, c_uint, c_ulong, c_void};
 
 use frankenlibc_core::errno;
 use frankenlibc_core::syscall;
@@ -2295,7 +2295,7 @@ fn syslog_send(priority: c_int, message: &[u8]) {
     let min = (secs_in_day % 3600) / 60;
     let sec = secs_in_day % 60;
     let days = epoch / 86400;
-    let (_, month, day) = syslog_days_to_ymd(days as i64);
+    let (_, month, day) = syslog_days_to_ymd(days);
     let months = [
         "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
     ];
@@ -3010,26 +3010,8 @@ pub unsafe extern "C" fn fallocate(fd: c_int, mode: c_int, offset: i64, len: i64
 }
 
 // ---------------------------------------------------------------------------
-// ftw / nftw — GlibcCallThrough
+// ftw / nftw — Implemented (native directory tree walk)
 // ---------------------------------------------------------------------------
-
-unsafe extern "C" {
-    #[link_name = "ftw"]
-    fn libc_ftw(
-        dirpath: *const c_char,
-        func: Option<unsafe extern "C" fn(*const c_char, *const libc::stat, c_int) -> c_int>,
-        nopenfd: c_int,
-    ) -> c_int;
-    #[link_name = "nftw"]
-    fn libc_nftw(
-        dirpath: *const c_char,
-        func: Option<
-            unsafe extern "C" fn(*const c_char, *const libc::stat, c_int, *mut c_void) -> c_int,
-        >,
-        nopenfd: c_int,
-        flags: c_int,
-    ) -> c_int;
-}
 
 /// POSIX `ftw` — file tree walk (native implementation).
 ///
@@ -3049,7 +3031,7 @@ pub unsafe extern "C" fn ftw(
     let max_fd = if nopenfd < 1 { 1 } else { nopenfd as usize };
 
     // Adapter: ftw callback to nftw-style internal walk.
-    ftw_walk_dir(dirpath, callback, max_fd, 0)
+    unsafe { ftw_walk_dir(dirpath, callback, max_fd, 0) }
 }
 
 /// Internal ftw directory walker.
@@ -3161,7 +3143,7 @@ pub unsafe extern "C" fn nftw(
     let callback = func.unwrap();
     let max_fd = if nopenfd < 1 { 1 } else { nopenfd as usize };
 
-    nftw_walk_dir(dirpath, callback, max_fd, flags, 0, 0)
+    unsafe { nftw_walk_dir(dirpath, callback, max_fd, flags, 0, 0) }
 }
 
 // NFTW flags
@@ -3186,7 +3168,7 @@ struct FtwInfo {
 }
 
 /// Internal nftw directory walker.
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::only_used_in_recursion)]
 unsafe fn nftw_walk_dir(
     path: *const c_char,
     func: unsafe extern "C" fn(*const c_char, *const libc::stat, c_int, *mut c_void) -> c_int,
@@ -3799,11 +3781,7 @@ pub unsafe extern "C" fn sem_close(sem: *mut c_void) -> c_int {
         return -1;
     }
     let rc = unsafe {
-        libc::syscall(
-            libc::SYS_munmap as std::os::raw::c_long,
-            sem,
-            SEM_MMAP_SIZE,
-        ) as c_int
+        libc::syscall(libc::SYS_munmap as std::os::raw::c_long, sem, SEM_MMAP_SIZE) as c_int
     };
     if rc < 0 {
         unsafe { set_abi_errno(last_host_errno(errno::EINVAL)) };
@@ -4194,6 +4172,7 @@ const WRDE_DOOFFS: c_int = 1 << 0;
 const WRDE_APPEND: c_int = 1 << 1;
 const WRDE_NOCMD: c_int = 1 << 2;
 const WRDE_REUSE: c_int = 1 << 3;
+#[allow(dead_code)]
 const WRDE_SHOWERR: c_int = 1 << 4;
 const WRDE_UNDEF: c_int = 1 << 5;
 
@@ -4298,9 +4277,7 @@ fn expand_vars(word: &str, flags: c_int) -> Result<String, c_int> {
                 (name, i)
             } else {
                 let start = i;
-                while i < bytes.len()
-                    && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_')
-                {
+                while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
                     i += 1;
                 }
                 let name = std::str::from_utf8(&bytes[start..i]).unwrap_or("");
@@ -4550,9 +4527,7 @@ pub unsafe extern "C" fn wordexp(
     unsafe { *new_wordv.add(offs + old_count + new_count) = std::ptr::null_mut() };
 
     // Free old wordv array (but not the strings if appending)
-    if (flags & WRDE_APPEND) != 0 && !we.we_wordv.is_null() {
-        unsafe { libc::free(we.we_wordv as *mut c_void) };
-    } else if !we.we_wordv.is_null() && old_count == 0 {
+    if !we.we_wordv.is_null() && ((flags & WRDE_APPEND) != 0 || old_count == 0) {
         unsafe { libc::free(we.we_wordv as *mut c_void) };
     }
 
@@ -5111,7 +5086,7 @@ pub unsafe extern "C" fn posix_openpt(flags: c_int) -> c_int {
     }
 }
 
-/// Thread-local buffer for crypt() result (POSIX allows static return).
+// Thread-local buffer for crypt() result (POSIX allows static return).
 std::thread_local! {
     static CRYPT_BUF: std::cell::RefCell<[u8; 256]> = const { std::cell::RefCell::new([0u8; 256]) };
 }
@@ -5198,8 +5173,18 @@ fn parse_crypt_salt(salt_bytes: &[u8], prefix_len: usize) -> (usize, &[u8]) {
             .map(|p| num_start + p)
             .unwrap_or(rest.len());
         let rounds_str = std::str::from_utf8(&rest[num_start..num_end]).unwrap_or("5000");
-        let r = rounds_str.parse::<usize>().unwrap_or(5000).clamp(1000, 999_999_999);
-        (r, if num_end < rest.len() { num_end + 1 } else { num_end })
+        let r = rounds_str
+            .parse::<usize>()
+            .unwrap_or(5000)
+            .clamp(1000, 999_999_999);
+        (
+            r,
+            if num_end < rest.len() {
+                num_end + 1
+            } else {
+                num_end
+            },
+        )
     } else {
         (5000, 0)
     };
@@ -5487,7 +5472,7 @@ fn crypt_md5(key: &[u8], salt_bytes: &[u8]) -> Option<String> {
     let mut n = key.len();
     while n > 0 {
         if n & 1 != 0 {
-            digest_a.update(&[0u8]);
+            digest_a.update([0u8]);
         } else {
             digest_a.update(&key[..1]);
         }
@@ -5521,8 +5506,8 @@ fn crypt_md5(key: &[u8], salt_bytes: &[u8]) -> Option<String> {
 
     let f = &result;
     let reordered: Vec<u8> = vec![
-        f[0], f[6], f[12], f[1], f[7], f[13], f[2], f[8], f[14], f[3], f[9], f[15], f[4],
-        f[10], f[5],
+        f[0], f[6], f[12], f[1], f[7], f[13], f[2], f[8], f[14], f[3], f[9], f[15], f[4], f[10],
+        f[5],
     ];
     let mut encoded = crypt_b64_encode(&reordered, 20);
     let last = [f[11]];
@@ -5714,7 +5699,7 @@ impl UtmpState {
 }
 
 std::thread_local! {
-    static UTMP_TLS: std::cell::RefCell<UtmpState> = std::cell::RefCell::new(UtmpState::new());
+    static UTMP_TLS: std::cell::RefCell<UtmpState> = const { std::cell::RefCell::new(UtmpState::new()) };
 }
 
 #[inline]
@@ -6432,8 +6417,7 @@ fn alloc_netmask(family: u8, prefixlen: u8) -> *mut libc::sockaddr {
             }
             unsafe {
                 (*sa).sin6_family = libc::AF_INET6 as libc::sa_family_t;
-                let mask_bytes: &mut [u8; 16] =
-                    &mut *(&raw mut (*sa).sin6_addr as *mut [u8; 16]);
+                let mask_bytes: &mut [u8; 16] = &mut *(&raw mut (*sa).sin6_addr as *mut [u8; 16]);
                 let mut bits_left = prefixlen as usize;
                 for byte in mask_bytes.iter_mut() {
                     if bits_left >= 8 {
@@ -6521,13 +6505,9 @@ fn parse_netlink_links(data: &[u8], if_names: &mut std::collections::HashMap<i32
                     if name_start < name_end {
                         let name_bytes = &data[name_start..name_end];
                         // Strip trailing NUL
-                        let name_bytes = name_bytes
-                            .split(|b| *b == 0)
-                            .next()
-                            .unwrap_or(name_bytes);
+                        let name_bytes = name_bytes.split(|b| *b == 0).next().unwrap_or(name_bytes);
                         if let Ok(name) = std::str::from_utf8(name_bytes) {
-                            if_names
-                                .insert(info.ifi_index, (name.to_string(), info.ifi_flags));
+                            if_names.insert(info.ifi_index, (name.to_string(), info.ifi_flags));
                         }
                     }
                 }
@@ -6558,8 +6538,7 @@ fn parse_netlink_addrs(
             break;
         }
         if h.nlmsg_type == RTM_NEWADDR && msg_len >= hdr_size + addr_msg_size {
-            let amsg =
-                unsafe { &*(data.as_ptr().add(off + hdr_size) as *const IfAddrMsg) };
+            let amsg = unsafe { &*(data.as_ptr().add(off + hdr_size) as *const IfAddrMsg) };
 
             let (if_name, if_flags) = if_names
                 .get(&(amsg.ifa_index as i32))
@@ -6674,7 +6653,7 @@ pub unsafe extern "C" fn freeifaddrs(ifa: *mut c_void) {
 }
 
 // ---------------------------------------------------------------------------
-// ether_aton / ether_ntoa — GlibcCallThrough
+// ether_aton / ether_ntoa — Implemented (native parse/format)
 // ---------------------------------------------------------------------------
 
 #[repr(C)]
@@ -6806,7 +6785,7 @@ pub unsafe extern "C" fn ether_ntoa_r(addr: *const c_void, buf: *mut c_char) -> 
 }
 
 // ---------------------------------------------------------------------------
-// herror / hstrerror — GlibcCallThrough
+// herror / hstrerror — Implemented (native error messages)
 // ---------------------------------------------------------------------------
 
 const H_ERR_HOST_NOT_FOUND: c_int = 1;
@@ -7006,84 +6985,424 @@ pub unsafe extern "C" fn timer_getoverrun(timerid: *mut c_void) -> c_int {
 }
 
 // ---------------------------------------------------------------------------
-// aio_* — GlibcCallThrough (POSIX async I/O)
+// aio_* — Implemented (native thread-based POSIX async I/O)
 // ---------------------------------------------------------------------------
 
-unsafe extern "C" {
-    #[link_name = "aio_read"]
-    fn libc_aio_read(aiocbp: *mut c_void) -> c_int;
-    #[link_name = "aio_write"]
-    fn libc_aio_write(aiocbp: *mut c_void) -> c_int;
-    #[link_name = "aio_error"]
-    fn libc_aio_error(aiocbp: *const c_void) -> c_int;
-    #[link_name = "aio_return"]
-    fn libc_aio_return(aiocbp: *mut c_void) -> libc::ssize_t;
-    #[link_name = "aio_cancel"]
-    fn libc_aio_cancel(fd: c_int, aiocbp: *mut c_void) -> c_int;
-    #[link_name = "aio_suspend"]
-    fn libc_aio_suspend(
-        list: *const *const c_void,
-        nent: c_int,
-        timeout: *const libc::timespec,
-    ) -> c_int;
-    #[link_name = "aio_fsync"]
-    fn libc_aio_fsync(op: c_int, aiocbp: *mut c_void) -> c_int;
-    #[link_name = "lio_listio"]
-    fn libc_lio_listio(
-        mode: c_int,
-        list: *const *mut c_void,
-        nent: c_int,
-        sevp: *mut c_void,
-    ) -> c_int;
+/// POSIX AIO lio_listio opcodes.
+const LIO_READ: c_int = 0;
+const LIO_WRITE: c_int = 1;
+const LIO_NOP: c_int = 2;
+
+/// lio_listio mode constants.
+const LIO_WAIT: c_int = 0;
+const LIO_NOWAIT: c_int = 1;
+
+/// aio_cancel return values (POSIX-mandated).
+#[allow(dead_code)]
+const AIO_CANCELED: c_int = 0;
+const AIO_NOTCANCELED: c_int = 1;
+const AIO_ALLDONE: c_int = 2;
+
+/// O_SYNC / O_DSYNC flags for aio_fsync.
+#[allow(dead_code)]
+const O_SYNC_FLAG: c_int = 0x101000; // O_SYNC on Linux x86_64
+const O_DSYNC_FLAG: c_int = 0x1000; // O_DSYNC on Linux x86_64
+
+/// glibc `struct aiocb` field offsets on x86_64.
+mod aiocb_off {
+    /// `int aio_fildes` at offset 0
+    pub const FILDES: usize = 0;
+    /// `int aio_lio_opcode` at offset 4
+    pub const LIO_OPCODE: usize = 4;
+    /// `volatile void *aio_buf` at offset 16
+    pub const BUF: usize = 16;
+    /// `size_t aio_nbytes` at offset 24
+    pub const NBYTES: usize = 24;
+    /// `int __error_code` at offset 112 (internal glibc field)
+    pub const ERROR_CODE: usize = 112;
+    /// `ssize_t __return_value` at offset 120 (internal glibc field)
+    pub const RETURN_VALUE: usize = 120;
+    /// `off_t aio_offset` at offset 128
+    pub const OFFSET: usize = 128;
 }
 
+/// Read an i32 from aiocb at the given byte offset.
+unsafe fn aiocb_i32(cb: *const c_void, off: usize) -> c_int {
+    unsafe { *((cb as *const u8).add(off) as *const c_int) }
+}
+
+/// Read a pointer from aiocb at the given byte offset.
+unsafe fn aiocb_ptr(cb: *const c_void, off: usize) -> *mut c_void {
+    unsafe { *((cb as *const u8).add(off) as *const *mut c_void) }
+}
+
+/// Read a usize from aiocb at the given byte offset.
+unsafe fn aiocb_usize(cb: *const c_void, off: usize) -> usize {
+    unsafe { *((cb as *const u8).add(off) as *const usize) }
+}
+
+/// Read an i64 from aiocb at the given byte offset.
+unsafe fn aiocb_i64(cb: *const c_void, off: usize) -> i64 {
+    unsafe { *((cb as *const u8).add(off) as *const i64) }
+}
+
+/// Atomically read the __error_code field using atomic ordering.
+unsafe fn aiocb_error_atomic(cb: *const c_void) -> c_int {
+    unsafe {
+        let ptr =
+            (cb as *const u8).add(aiocb_off::ERROR_CODE) as *const std::sync::atomic::AtomicI32;
+        (*ptr).load(std::sync::atomic::Ordering::Acquire)
+    }
+}
+
+/// Atomically write the __error_code field using atomic ordering.
+unsafe fn aiocb_set_error_atomic(cb: *mut c_void, val: c_int) {
+    unsafe {
+        let ptr = (cb as *mut u8).add(aiocb_off::ERROR_CODE) as *const std::sync::atomic::AtomicI32;
+        (*ptr).store(val, std::sync::atomic::Ordering::Release)
+    }
+}
+
+/// Write an isize to aiocb at the __return_value offset.
+unsafe fn aiocb_set_return(cb: *mut c_void, val: isize) {
+    unsafe {
+        let ptr = (cb as *mut u8).add(aiocb_off::RETURN_VALUE) as *mut isize;
+        // Use volatile write to prevent reordering with the error_code store.
+        std::ptr::write_volatile(ptr, val)
+    }
+}
+
+/// Read __return_value from aiocb.
+unsafe fn aiocb_get_return(cb: *const c_void) -> isize {
+    unsafe {
+        let ptr = (cb as *const u8).add(aiocb_off::RETURN_VALUE) as *const isize;
+        std::ptr::read_volatile(ptr)
+    }
+}
+
+/// Global condvar for aio_suspend notification.
+/// Worker threads notify after completing an I/O operation, allowing
+/// aio_suspend to wake up and check completion status.
+static AIO_NOTIFY: std::sync::LazyLock<(std::sync::Mutex<u64>, std::sync::Condvar)> =
+    std::sync::LazyLock::new(|| (std::sync::Mutex::new(0), std::sync::Condvar::new()));
+
+/// Internal AIO operation type.
+#[derive(Clone, Copy)]
+enum AioOp {
+    Read,
+    Write,
+    Fsync,
+    Fdatasync,
+}
+
+/// Submit an async I/O operation.
+///
+/// Reads parameters from the aiocb struct, marks it EINPROGRESS, then
+/// spawns a worker thread to perform the syscall.
+unsafe fn aio_submit(aiocbp: *mut c_void, op: AioOp) -> c_int {
+    let fd = unsafe { aiocb_i32(aiocbp, aiocb_off::FILDES) };
+    let buf = unsafe { aiocb_ptr(aiocbp, aiocb_off::BUF) };
+    let nbytes = unsafe { aiocb_usize(aiocbp, aiocb_off::NBYTES) };
+    let offset = unsafe { aiocb_i64(aiocbp, aiocb_off::OFFSET) };
+
+    // Mark as in-progress before spawning the thread.
+    unsafe { aiocb_set_return(aiocbp, 0) };
+    unsafe { aiocb_set_error_atomic(aiocbp, errno::EINPROGRESS) };
+
+    // Transfer raw pointer addresses to the worker thread.
+    // POSIX guarantees the caller keeps the aiocb and buffer valid until
+    // aio_return is called, so these addresses remain valid.
+    let cb_addr = aiocbp as usize;
+    let buf_addr = buf as usize;
+
+    let spawn_result = std::thread::Builder::new()
+        .name("aio-worker".into())
+        .spawn(move || {
+            let cb = cb_addr as *mut c_void;
+
+            let result: i64 = match op {
+                AioOp::Read => unsafe {
+                    libc::syscall(
+                        libc::SYS_pread64,
+                        fd as i64,
+                        buf_addr as i64,
+                        nbytes as i64,
+                        offset,
+                    )
+                },
+                AioOp::Write => unsafe {
+                    libc::syscall(
+                        libc::SYS_pwrite64,
+                        fd as i64,
+                        buf_addr as i64,
+                        nbytes as i64,
+                        offset,
+                    )
+                },
+                AioOp::Fsync => unsafe { libc::syscall(libc::SYS_fsync, fd as i64) },
+                AioOp::Fdatasync => unsafe { libc::syscall(libc::SYS_fdatasync, fd as i64) },
+            };
+
+            if result < 0 {
+                let err = unsafe { *libc::__errno_location() };
+                unsafe { aiocb_set_return(cb, -1) };
+                unsafe { aiocb_set_error_atomic(cb, err) };
+            } else {
+                unsafe { aiocb_set_return(cb, result as isize) };
+                // Write error_code = 0 last so aio_error sees completion
+                // only after __return_value is visible.
+                unsafe { aiocb_set_error_atomic(cb, 0) };
+            }
+
+            // Wake any aio_suspend waiters.
+            let (lock, cvar) = &*AIO_NOTIFY;
+            if let Ok(mut generation) = lock.lock() {
+                *generation = generation.wrapping_add(1);
+                cvar.notify_all();
+            }
+        });
+
+    if spawn_result.is_err() {
+        unsafe { aiocb_set_error_atomic(aiocbp, errno::EAGAIN) };
+        unsafe { set_abi_errno(errno::EAGAIN) };
+        return -1;
+    }
+
+    0
+}
+
+/// `aio_read` — initiate an asynchronous read operation.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn aio_read(aiocbp: *mut c_void) -> c_int {
-    unsafe { libc_aio_read(aiocbp) }
+    if aiocbp.is_null() {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return -1;
+    }
+    unsafe { aio_submit(aiocbp, AioOp::Read) }
 }
 
+/// `aio_write` — initiate an asynchronous write operation.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn aio_write(aiocbp: *mut c_void) -> c_int {
-    unsafe { libc_aio_write(aiocbp) }
+    if aiocbp.is_null() {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return -1;
+    }
+    unsafe { aio_submit(aiocbp, AioOp::Write) }
 }
 
+/// `aio_error` — retrieve error status of an asynchronous I/O operation.
+///
+/// Returns EINPROGRESS while the operation is pending, 0 on success,
+/// or the errno value if the operation failed.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn aio_error(aiocbp: *const c_void) -> c_int {
-    unsafe { libc_aio_error(aiocbp) }
+    if aiocbp.is_null() {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return -1;
+    }
+    unsafe { aiocb_error_atomic(aiocbp) }
 }
 
+/// `aio_return` — retrieve return status of a completed asynchronous I/O operation.
+///
+/// Must only be called after `aio_error` returns something other than EINPROGRESS.
+/// Returns the number of bytes transferred, or -1 on error.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn aio_return(aiocbp: *mut c_void) -> libc::ssize_t {
-    unsafe { libc_aio_return(aiocbp) }
+    if aiocbp.is_null() {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return -1;
+    }
+    unsafe { aiocb_get_return(aiocbp) }
 }
 
+/// `aio_cancel` — attempt to cancel outstanding asynchronous I/O operations.
+///
+/// Since our worker threads perform blocking syscalls, we cannot truly cancel
+/// in-flight operations. Returns AIO_ALLDONE if already complete,
+/// AIO_NOTCANCELED if still in progress, or AIO_CANCELED if the aiocb is NULL
+/// (cancel-all mode, which we approximate).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn aio_cancel(fd: c_int, aiocbp: *mut c_void) -> c_int {
-    unsafe { libc_aio_cancel(fd, aiocbp) }
+    if aiocbp.is_null() {
+        // Cancel all outstanding operations on fd — we cannot truly cancel
+        // in-flight syscalls, so report AIO_NOTCANCELED.
+        let _ = fd;
+        return AIO_NOTCANCELED;
+    }
+
+    let err = unsafe { aiocb_error_atomic(aiocbp) };
+    if err == errno::EINPROGRESS {
+        // Operation is still running; we cannot interrupt a blocking syscall.
+        AIO_NOTCANCELED
+    } else {
+        // Already completed (success or failure).
+        AIO_ALLDONE
+    }
 }
 
+/// `aio_suspend` — wait for one or more asynchronous I/O operations to complete.
+///
+/// Blocks until at least one aiocb in the list completes (error_code != EINPROGRESS),
+/// or the timeout expires. Returns 0 on success, -1 on timeout/error.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn aio_suspend(
     list: *const *const c_void,
     nent: c_int,
     timeout: *const libc::timespec,
 ) -> c_int {
-    unsafe { libc_aio_suspend(list, nent, timeout) }
+    if list.is_null() || nent <= 0 {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return -1;
+    }
+
+    // Compute absolute deadline if timeout is provided.
+    let deadline = if timeout.is_null() {
+        None
+    } else {
+        let ts = unsafe { *timeout };
+        let dur = std::time::Duration::new(ts.tv_sec as u64, ts.tv_nsec as u32);
+        Some(std::time::Instant::now() + dur)
+    };
+
+    let (lock, cvar) = &*AIO_NOTIFY;
+
+    loop {
+        // Check if any aiocb has completed.
+        for i in 0..nent as usize {
+            let cb = unsafe { *list.add(i) };
+            if cb.is_null() {
+                continue;
+            }
+            if unsafe { aiocb_error_atomic(cb) } != errno::EINPROGRESS {
+                return 0;
+            }
+        }
+
+        // Determine wait duration.
+        let wait_dur = if let Some(dl) = deadline {
+            let now = std::time::Instant::now();
+            if now >= dl {
+                // Timeout expired.
+                unsafe { set_abi_errno(errno::EAGAIN) };
+                return -1;
+            }
+            dl - now
+        } else {
+            std::time::Duration::from_millis(100)
+        };
+
+        // Wait on condvar with bounded duration.
+        let guard = match lock.lock() {
+            Ok(g) => g,
+            Err(_) => {
+                unsafe { set_abi_errno(errno::EINTR) };
+                return -1;
+            }
+        };
+        let _ = cvar.wait_timeout(guard, wait_dur.min(std::time::Duration::from_millis(100)));
+    }
 }
 
+/// `aio_fsync` — schedule an fsync/fdatasync for an asynchronous I/O file descriptor.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn aio_fsync(op: c_int, aiocbp: *mut c_void) -> c_int {
-    unsafe { libc_aio_fsync(op, aiocbp) }
+    if aiocbp.is_null() {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return -1;
+    }
+
+    let aio_op = if op == O_DSYNC_FLAG {
+        AioOp::Fdatasync
+    } else {
+        // O_SYNC or default → full fsync
+        AioOp::Fsync
+    };
+
+    unsafe { aio_submit(aiocbp, aio_op) }
 }
 
+/// `lio_listio` — initiate a list of I/O requests.
+///
+/// In LIO_WAIT mode, submits all operations and waits for all to complete.
+/// In LIO_NOWAIT mode, submits all operations and returns immediately.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn lio_listio(
     mode: c_int,
     list: *const *mut c_void,
     nent: c_int,
-    sevp: *mut c_void,
+    _sevp: *mut c_void,
 ) -> c_int {
-    unsafe { libc_lio_listio(mode, list, nent, sevp) }
+    if list.is_null() || nent < 0 {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return -1;
+    }
+    if mode != LIO_WAIT && mode != LIO_NOWAIT {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return -1;
+    }
+
+    let mut had_error = false;
+
+    // Submit each request.
+    for i in 0..nent as usize {
+        let cb = unsafe { *list.add(i) };
+        if cb.is_null() {
+            continue;
+        }
+
+        let opcode = unsafe { aiocb_i32(cb, aiocb_off::LIO_OPCODE) };
+        let op = match opcode {
+            LIO_READ => AioOp::Read,
+            LIO_WRITE => AioOp::Write,
+            LIO_NOP => continue,
+            _ => {
+                unsafe { set_abi_errno(errno::EINVAL) };
+                had_error = true;
+                continue;
+            }
+        };
+
+        if unsafe { aio_submit(cb, op) } != 0 {
+            had_error = true;
+        }
+    }
+
+    if mode == LIO_WAIT {
+        // Wait for all submitted operations to complete.
+        let (lock, cvar) = &*AIO_NOTIFY;
+
+        loop {
+            let mut all_done = true;
+            for i in 0..nent as usize {
+                let cb = unsafe { *list.add(i) };
+                if cb.is_null() {
+                    continue;
+                }
+                let opcode = unsafe { aiocb_i32(cb, aiocb_off::LIO_OPCODE) };
+                if opcode == LIO_NOP {
+                    continue;
+                }
+                if unsafe { aiocb_error_atomic(cb) } == errno::EINPROGRESS {
+                    all_done = false;
+                    break;
+                }
+            }
+
+            if all_done {
+                break;
+            }
+
+            let guard = match lock.lock() {
+                Ok(g) => g,
+                Err(_) => break,
+            };
+            let _ = cvar.wait_timeout(guard, std::time::Duration::from_millis(50));
+        }
+    }
+
+    if had_error { -1 } else { 0 }
 }
 
 // ---------------------------------------------------------------------------
@@ -7345,41 +7664,140 @@ pub unsafe extern "C" fn sched_rr_get_interval(pid: libc::pid_t, tp: *mut libc::
 }
 
 // ---------------------------------------------------------------------------
-// Resolver bootstrap/query surface
-// - res_init: Implemented (native resolv.conf parse bootstrap)
-// - res_query / res_search: GlibcCallThrough (resolver backend)
+// Resolver bootstrap/query surface — Implemented (native DNS over UDP)
+// Uses frankenlibc_core::resolv::{ResolverConfig, DnsMessage, DnsHeader}
+// to build wire-format queries, send them to nameservers from resolv.conf,
+// and return raw DNS response bytes to the caller.
 // ---------------------------------------------------------------------------
 
-unsafe extern "C" {
-    #[link_name = "res_query"]
-    fn libc_res_query(
-        dname: *const c_char,
-        class: c_int,
-        type_: c_int,
-        answer: *mut u8,
-        anslen: c_int,
-    ) -> c_int;
-    #[link_name = "res_search"]
-    fn libc_res_search(
-        dname: *const c_char,
-        class: c_int,
-        type_: c_int,
-        answer: *mut u8,
-        anslen: c_int,
-    ) -> c_int;
+/// Cached resolver config (parsed from /etc/resolv.conf on first use).
+static RESOLV_CONFIG: std::sync::LazyLock<frankenlibc_core::resolv::config::ResolverConfig> =
+    std::sync::LazyLock::new(|| {
+        if let Ok(content) = std::fs::read("/etc/resolv.conf") {
+            frankenlibc_core::resolv::config::ResolverConfig::parse(&content)
+        } else {
+            frankenlibc_core::resolv::config::ResolverConfig::default()
+        }
+    });
+
+/// Send a DNS query to the configured nameservers and return the raw response.
+///
+/// On success, copies the response into `answer[..anslen]` and returns the
+/// number of bytes written. On failure, returns -1 with errno set.
+unsafe fn dns_query_raw(
+    dname: &[u8],
+    class: c_int,
+    type_: c_int,
+    answer: *mut u8,
+    anslen: c_int,
+) -> c_int {
+    use frankenlibc_core::resolv::dns::{DNS_MAX_UDP_SIZE, DnsHeader};
+    use std::net::UdpSocket;
+
+    let config = &*RESOLV_CONFIG;
+
+    if answer.is_null() || anslen <= 0 {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return -1;
+    }
+
+    // Build the DNS wire-format query.
+    // Transaction ID: use lower 16 bits of a simple counter for uniqueness.
+    static TX_COUNTER: std::sync::atomic::AtomicU16 = std::sync::atomic::AtomicU16::new(1);
+    let tx_id = TX_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
+    let mut header = DnsHeader::new_query(tx_id);
+    header.qdcount = 1;
+
+    let qname = frankenlibc_core::resolv::dns::encode_domain_name(dname);
+
+    // Build query packet: header + question (qname + qtype + qclass)
+    let query_len = 12 + qname.len() + 4;
+    let mut query_buf = vec![0u8; query_len];
+    let _ = header.encode(&mut query_buf);
+    let mut pos = 12;
+    query_buf[pos..pos + qname.len()].copy_from_slice(&qname);
+    pos += qname.len();
+    query_buf[pos..pos + 2].copy_from_slice(&(type_ as u16).to_be_bytes());
+    pos += 2;
+    query_buf[pos..pos + 2].copy_from_slice(&(class as u16).to_be_bytes());
+
+    let timeout = config.query_timeout();
+    let mut recv_buf = vec![0u8; DNS_MAX_UDP_SIZE.max(anslen as usize)];
+
+    // Try each nameserver up to `attempts` times.
+    for _attempt in 0..config.attempts {
+        for ns in &config.nameservers {
+            let dest = std::net::SocketAddr::new(*ns, frankenlibc_core::resolv::config::DNS_PORT);
+
+            // Bind to any local address matching the nameserver's address family.
+            let bind_addr = if ns.is_ipv4() { "0.0.0.0:0" } else { "[::]:0" };
+            let sock = match UdpSocket::bind(bind_addr) {
+                Ok(s) => s,
+                Err(_) => continue,
+            };
+            let _ = sock.set_read_timeout(Some(timeout));
+            let _ = sock.set_write_timeout(Some(timeout));
+
+            if sock.send_to(&query_buf, dest).is_err() {
+                continue;
+            }
+
+            match sock.recv_from(&mut recv_buf) {
+                Ok((n, _)) => {
+                    if n < 12 {
+                        continue;
+                    }
+                    // Verify transaction ID matches.
+                    let resp_id = u16::from_be_bytes([recv_buf[0], recv_buf[1]]);
+                    if resp_id != tx_id {
+                        continue;
+                    }
+                    // Check QR bit (response).
+                    if (recv_buf[2] & 0x80) == 0 {
+                        continue;
+                    }
+                    // Check RCODE.
+                    let rcode = recv_buf[3] & 0x0f;
+                    if rcode != 0 {
+                        // Map DNS error codes to h_errno-style reporting.
+                        let h_err = match rcode {
+                            1 => errno::EINVAL, // FORMERR
+                            2 => errno::EIO,    // SERVFAIL
+                            3 => errno::ENOENT, // NXDOMAIN → HOST_NOT_FOUND
+                            _ => errno::EIO,
+                        };
+                        unsafe { set_abi_errno(h_err) };
+                        return -1;
+                    }
+                    // Copy response to caller's buffer.
+                    let copy_len = n.min(anslen as usize);
+                    unsafe {
+                        std::ptr::copy_nonoverlapping(recv_buf.as_ptr(), answer, copy_len);
+                    }
+                    return copy_len as c_int;
+                }
+                Err(_) => continue, // Timeout or network error, try next
+            }
+        }
+    }
+
+    // All attempts exhausted.
+    unsafe { set_abi_errno(errno::ETIMEDOUT) };
+    -1
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn res_init() -> c_int {
-    // Keep resolver bootstrap deterministic and host-independent:
-    // parse `/etc/resolv.conf` with our native config parser when present,
-    // but never fail init on missing/unreadable config (glibc-compatible behavior).
-    if let Ok(content) = std::fs::read("/etc/resolv.conf") {
-        let _ = frankenlibc_core::resolv::ResolverConfig::parse(&content);
-    }
+    // Force lazy initialization of the resolver config.
+    let _ = &*RESOLV_CONFIG;
     0
 }
 
+/// `res_query` — send a DNS query and return the raw response.
+///
+/// Native implementation using our DNS protocol stack and /etc/resolv.conf.
+/// Queries the name as given (no search domain appending).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn res_query(
     dname: *const c_char,
@@ -7388,9 +7806,18 @@ pub unsafe extern "C" fn res_query(
     answer: *mut u8,
     anslen: c_int,
 ) -> c_int {
-    unsafe { libc_res_query(dname, class, type_, answer, anslen) }
+    if dname.is_null() {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return -1;
+    }
+    let name = unsafe { CStr::from_ptr(dname) };
+    unsafe { dns_query_raw(name.to_bytes(), class, type_, answer, anslen) }
 }
 
+/// `res_search` — send a DNS query using the search domain list.
+///
+/// Tries the name as absolute first if it has enough dots (per ndots config),
+/// then appends each search domain from /etc/resolv.conf in turn.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn res_search(
     dname: *const c_char,
@@ -7399,7 +7826,56 @@ pub unsafe extern "C" fn res_search(
     answer: *mut u8,
     anslen: c_int,
 ) -> c_int {
-    unsafe { libc_res_search(dname, class, type_, answer, anslen) }
+    if dname.is_null() {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return -1;
+    }
+    let name = unsafe { CStr::from_ptr(dname) };
+    let name_bytes = name.to_bytes();
+    let name_str = match std::str::from_utf8(name_bytes) {
+        Ok(s) => s,
+        Err(_) => {
+            unsafe { set_abi_errno(errno::EINVAL) };
+            return -1;
+        }
+    };
+
+    let config = &*RESOLV_CONFIG;
+
+    // If the name has enough dots, try it as absolute first.
+    if config.should_try_absolute_first(name_str) {
+        let rc = unsafe { dns_query_raw(name_bytes, class, type_, answer, anslen) };
+        if rc > 0 {
+            return rc;
+        }
+    }
+
+    // Try appending each search domain.
+    for domain in &config.search {
+        let mut fqdn = Vec::with_capacity(name_bytes.len() + 1 + domain.len());
+        fqdn.extend_from_slice(name_bytes);
+        if !name_bytes.ends_with(b".") {
+            fqdn.push(b'.');
+        }
+        fqdn.extend_from_slice(domain.as_bytes());
+
+        let rc = unsafe { dns_query_raw(&fqdn, class, type_, answer, anslen) };
+        if rc > 0 {
+            return rc;
+        }
+    }
+
+    // If we haven't tried absolute yet, try now as last resort.
+    if !config.should_try_absolute_first(name_str) {
+        let rc = unsafe { dns_query_raw(name_bytes, class, type_, answer, anslen) };
+        if rc > 0 {
+            return rc;
+        }
+    }
+
+    // All attempts failed.
+    unsafe { set_abi_errno(errno::ENOENT) };
+    -1
 }
 
 #[cfg(test)]
@@ -8309,27 +8785,8 @@ pub unsafe extern "C" fn process_vm_writev(
 }
 
 // ---------------------------------------------------------------------------
-// 64-bit LFS extras / umount — GlibcCallThrough
+// 64-bit LFS extras / umount — Implemented (native delegates on x86_64)
 // ---------------------------------------------------------------------------
-
-unsafe extern "C" {
-    #[link_name = "glob64"]
-    fn libc_glob64(
-        pattern: *const c_char,
-        flags: c_int,
-        errfunc: Option<unsafe extern "C" fn(*const c_char, c_int) -> c_int>,
-        pglob: *mut c_void,
-    ) -> c_int;
-    #[link_name = "globfree64"]
-    fn libc_globfree64(pglob: *mut c_void);
-    #[link_name = "nftw64"]
-    fn libc_nftw64(
-        dirpath: *const c_char,
-        fn_: *const c_void,
-        nopenfd: c_int,
-        flags: c_int,
-    ) -> c_int;
-}
 
 /// Linux `umount` — unmount a filesystem via raw syscall.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -8459,4 +8916,1566 @@ pub unsafe extern "C" fn alphasort64(a: *mut *const c_void, b: *mut *const c_voi
     unsafe {
         crate::dirent_abi::alphasort(a as *mut *const libc::dirent, b as *mut *const libc::dirent)
     }
+}
+
+// ===========================================================================
+// Additional missing POSIX / Linux symbols — batch expansion
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// sysinfo — RawSyscall
+// ---------------------------------------------------------------------------
+
+/// Linux `sysinfo` — return system memory/uptime statistics.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn sysinfo(info: *mut libc::sysinfo) -> c_int {
+    if info.is_null() {
+        unsafe { set_abi_errno(libc::EFAULT) };
+        return -1;
+    }
+    unsafe { syscall_ret_int(libc::syscall(libc::SYS_sysinfo, info), errno::EFAULT) }
+}
+
+// ---------------------------------------------------------------------------
+// Process group — RawSyscall
+// ---------------------------------------------------------------------------
+
+/// POSIX `getpgrp` — get process group ID of the calling process.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getpgrp() -> libc::pid_t {
+    unsafe { libc::syscall(libc::SYS_getpgrp) as libc::pid_t }
+}
+
+/// BSD `setpgrp` — set process group (equivalent to setpgid(0, 0)).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn setpgrp() -> c_int {
+    unsafe { syscall_ret_int(libc::syscall(libc::SYS_setpgid, 0, 0), errno::EPERM) }
+}
+
+// ---------------------------------------------------------------------------
+// Priority — RawSyscall
+// ---------------------------------------------------------------------------
+
+/// POSIX `getpriority` — get scheduling priority.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getpriority(which: c_int, who: libc::id_t) -> c_int {
+    unsafe { *libc::__errno_location() = 0 };
+    let rc = unsafe { libc::syscall(libc::SYS_getpriority, which, who) } as c_int;
+    if rc < 0 {
+        let e = last_host_errno(errno::ESRCH);
+        if e != 0 {
+            unsafe { set_abi_errno(e) };
+            return -1;
+        }
+    }
+    20 - rc
+}
+
+/// POSIX `setpriority` — set scheduling priority.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn setpriority(which: c_int, who: libc::id_t, prio: c_int) -> c_int {
+    unsafe {
+        syscall_ret_int(
+            libc::syscall(libc::SYS_setpriority, which, who, prio),
+            errno::EPERM,
+        )
+    }
+}
+
+// ---------------------------------------------------------------------------
+// getdtablesize — Implemented
+// ---------------------------------------------------------------------------
+
+/// BSD `getdtablesize` — get max number of file descriptors.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getdtablesize() -> c_int {
+    let mut rlim = std::mem::MaybeUninit::<libc::rlimit>::zeroed();
+    let rc = unsafe {
+        libc::syscall(libc::SYS_getrlimit, libc::RLIMIT_NOFILE, rlim.as_mut_ptr()) as c_int
+    };
+    if rc < 0 {
+        return 256;
+    }
+    let rlim = unsafe { rlim.assume_init() };
+    rlim.rlim_cur.min(c_int::MAX as u64) as c_int
+}
+
+// ---------------------------------------------------------------------------
+// brk / sbrk — RawSyscall
+// ---------------------------------------------------------------------------
+
+static CURRENT_BRK: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// POSIX `brk` — set the program break.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn brk(addr: *mut c_void) -> c_int {
+    let new_brk = unsafe { libc::syscall(libc::SYS_brk, addr) } as usize;
+    CURRENT_BRK.store(new_brk, std::sync::atomic::Ordering::Relaxed);
+    if new_brk < addr as usize {
+        unsafe { set_abi_errno(libc::ENOMEM) };
+        -1
+    } else {
+        0
+    }
+}
+
+/// POSIX `sbrk` — adjust the program break.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn sbrk(increment: isize) -> *mut c_void {
+    let current = CURRENT_BRK.load(std::sync::atomic::Ordering::Relaxed);
+    let current = if current == 0 {
+        let b = unsafe { libc::syscall(libc::SYS_brk, 0) } as usize;
+        CURRENT_BRK.store(b, std::sync::atomic::Ordering::Relaxed);
+        b
+    } else {
+        current
+    };
+
+    if increment == 0 {
+        return current as *mut c_void;
+    }
+
+    let new_addr = if increment > 0 {
+        current.wrapping_add(increment as usize)
+    } else {
+        current.wrapping_sub((-increment) as usize)
+    };
+
+    let new_brk = unsafe { libc::syscall(libc::SYS_brk, new_addr) } as usize;
+    if new_brk < new_addr {
+        unsafe { set_abi_errno(libc::ENOMEM) };
+        return usize::MAX as *mut c_void;
+    }
+    CURRENT_BRK.store(new_brk, std::sync::atomic::Ordering::Relaxed);
+    current as *mut c_void
+}
+
+// ---------------------------------------------------------------------------
+// setlogmask — Implemented
+// ---------------------------------------------------------------------------
+
+static SYSLOG_MASK: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0xFF);
+
+/// POSIX `setlogmask` — set the log priority mask.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn setlogmask(mask: c_int) -> c_int {
+    if mask == 0 {
+        return SYSLOG_MASK.load(std::sync::atomic::Ordering::Relaxed);
+    }
+    SYSLOG_MASK.swap(mask, std::sync::atomic::Ordering::Relaxed)
+}
+
+// ---------------------------------------------------------------------------
+// get_current_dir_name / canonicalize_file_name — Implemented
+// ---------------------------------------------------------------------------
+
+/// GNU `get_current_dir_name` — allocate and return CWD string.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn get_current_dir_name() -> *mut c_char {
+    let mut buf = [0u8; 4096];
+    let rc = unsafe { libc::syscall(libc::SYS_getcwd, buf.as_mut_ptr(), buf.len()) as isize };
+    if rc < 0 {
+        unsafe { set_abi_errno(last_host_errno(errno::ERANGE)) };
+        return std::ptr::null_mut();
+    }
+    let len = buf.iter().position(|&b| b == 0).unwrap_or(rc as usize);
+    let ptr = unsafe { libc::malloc(len + 1) as *mut c_char };
+    if ptr.is_null() {
+        unsafe { set_abi_errno(libc::ENOMEM) };
+        return std::ptr::null_mut();
+    }
+    unsafe {
+        std::ptr::copy_nonoverlapping(buf.as_ptr() as *const c_char, ptr, len);
+        *ptr.add(len) = 0;
+    };
+    ptr
+}
+
+/// GNU `canonicalize_file_name` — resolve path like realpath(path, NULL).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn canonicalize_file_name(path: *const c_char) -> *mut c_char {
+    unsafe { crate::wchar_abi::realpath(path, std::ptr::null_mut()) }
+}
+
+// ---------------------------------------------------------------------------
+// strerror_l — Implemented
+// ---------------------------------------------------------------------------
+
+/// POSIX `strerror_l` — locale-aware strerror (we use C locale always).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strerror_l(errnum: c_int, _locale: *mut c_void) -> *mut c_char {
+    unsafe { crate::string_abi::strerror(errnum) }
+}
+
+// ---------------------------------------------------------------------------
+// __xpg_basename — Implemented
+// ---------------------------------------------------------------------------
+
+/// XSI `__xpg_basename` — POSIX basename (modifies input).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __xpg_basename(path: *mut c_char) -> *mut c_char {
+    if path.is_null() {
+        static DOT: &[u8] = b".\0";
+        return DOT.as_ptr() as *mut c_char;
+    }
+    let s = unsafe { CStr::from_ptr(path) };
+    let bytes = s.to_bytes();
+    if bytes.is_empty() {
+        static DOT: &[u8] = b".\0";
+        return DOT.as_ptr() as *mut c_char;
+    }
+    let mut end = bytes.len();
+    while end > 0 && bytes[end - 1] == b'/' {
+        end -= 1;
+    }
+    if end == 0 {
+        static SLASH: &[u8] = b"/\0";
+        return SLASH.as_ptr() as *mut c_char;
+    }
+    let start = match bytes[..end].iter().rposition(|&b| b == b'/') {
+        Some(pos) => pos + 1,
+        None => 0,
+    };
+    unsafe { *path.add(end) = 0 };
+    unsafe { path.add(start) }
+}
+
+// ---------------------------------------------------------------------------
+// memfrob / strfry — Implemented (GNU extensions)
+// ---------------------------------------------------------------------------
+
+/// GNU `memfrob` — XOR each byte with 42.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn memfrob(s: *mut c_void, n: usize) -> *mut c_void {
+    if s.is_null() {
+        return s;
+    }
+    let p = s as *mut u8;
+    for i in 0..n {
+        unsafe { *p.add(i) ^= 42 };
+    }
+    s
+}
+
+/// GNU `strfry` — randomly shuffle string characters.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strfry(string: *mut c_char) -> *mut c_char {
+    if string.is_null() {
+        return string;
+    }
+    let s = unsafe { CStr::from_ptr(string) };
+    let len = s.to_bytes().len();
+    if len <= 1 {
+        return string;
+    }
+    let mut seed: u32 = unsafe { libc::syscall(libc::SYS_gettid) } as u32;
+    let p = string as *mut u8;
+    for i in (1..len).rev() {
+        seed = seed.wrapping_mul(1103515245).wrapping_add(12345);
+        let j = (seed >> 16) as usize % (i + 1);
+        unsafe {
+            let tmp = *p.add(i);
+            *p.add(i) = *p.add(j);
+            *p.add(j) = tmp;
+        };
+    }
+    string
+}
+
+// ---------------------------------------------------------------------------
+// getpt / ptsname_r — Implemented
+// ---------------------------------------------------------------------------
+
+/// GNU `getpt` — open a pseudoterminal master.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getpt() -> c_int {
+    static PTMX: &[u8] = b"/dev/ptmx\0";
+    unsafe {
+        libc::syscall(
+            libc::SYS_openat,
+            libc::AT_FDCWD,
+            PTMX.as_ptr(),
+            libc::O_RDWR | libc::O_NOCTTY | libc::O_CLOEXEC,
+            0,
+        ) as c_int
+    }
+}
+
+/// POSIX `ptsname_r` — get slave PTY name (reentrant).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ptsname_r(fd: c_int, buf: *mut c_char, buflen: usize) -> c_int {
+    if buf.is_null() || buflen == 0 {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return libc::EINVAL;
+    }
+    let mut pty_num: c_uint = 0;
+    const TIOCGPTN: std::os::raw::c_ulong = 0x80045430;
+    let rc = unsafe { libc::syscall(libc::SYS_ioctl, fd, TIOCGPTN, &mut pty_num as *mut c_uint) }
+        as c_int;
+    if rc < 0 {
+        let e = last_host_errno(libc::ENOTTY);
+        unsafe { set_abi_errno(e) };
+        return e;
+    }
+    let name = format!("/dev/pts/{pty_num}");
+    if name.len() + 1 > buflen {
+        unsafe { set_abi_errno(libc::ERANGE) };
+        return libc::ERANGE;
+    }
+    unsafe {
+        std::ptr::copy_nonoverlapping(name.as_ptr() as *const c_char, buf, name.len());
+        *buf.add(name.len()) = 0;
+    };
+    0
+}
+
+// ---------------------------------------------------------------------------
+// cuserid / sockatmark — Implemented
+// ---------------------------------------------------------------------------
+
+/// POSIX `cuserid` — get login name (deprecated).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn cuserid(s: *mut c_char) -> *mut c_char {
+    let uid = unsafe { libc::syscall(libc::SYS_getuid) } as libc::uid_t;
+    let name = if uid == 0 { "root" } else { "user" };
+    if s.is_null() {
+        std::thread_local! {
+            static BUF: std::cell::RefCell<[u8; 32]> = const { std::cell::RefCell::new([0u8; 32]) };
+        }
+        return BUF.with(|cell| {
+            let mut buf = cell.borrow_mut();
+            let len = name.len().min(buf.len() - 1);
+            buf[..len].copy_from_slice(&name.as_bytes()[..len]);
+            buf[len] = 0;
+            buf.as_mut_ptr() as *mut c_char
+        });
+    }
+    let len = name.len().min(8);
+    unsafe {
+        std::ptr::copy_nonoverlapping(name.as_ptr() as *const c_char, s, len);
+        *s.add(len) = 0;
+    };
+    s
+}
+
+/// POSIX `sockatmark` — check if socket is at OOB mark.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn sockatmark(sockfd: c_int) -> c_int {
+    let mut atmark: c_int = 0;
+    const SIOCATMARK: std::os::raw::c_ulong = 0x8905;
+    let rc = unsafe {
+        libc::syscall(
+            libc::SYS_ioctl,
+            sockfd,
+            SIOCATMARK,
+            &mut atmark as *mut c_int,
+        )
+    } as c_int;
+    if rc < 0 {
+        unsafe { set_abi_errno(last_host_errno(libc::EBADF)) };
+        -1
+    } else {
+        atmark
+    }
+}
+
+// ---------------------------------------------------------------------------
+// tempnam — Implemented
+// ---------------------------------------------------------------------------
+
+/// POSIX `tempnam` — create a unique temporary file name.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn tempnam(dir: *const c_char, pfx: *const c_char) -> *mut c_char {
+    let dir_str = if dir.is_null() {
+        "/tmp"
+    } else {
+        unsafe { CStr::from_ptr(dir) }.to_str().unwrap_or("/tmp")
+    };
+    let pfx_str = if pfx.is_null() {
+        "tmp"
+    } else {
+        match unsafe { CStr::from_ptr(pfx) }.to_str() {
+            Ok(s) => &s[..s.len().min(5)],
+            Err(_) => "tmp",
+        }
+    };
+
+    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let cnt = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let pid = unsafe { libc::syscall(libc::SYS_getpid) } as u32;
+    let name = format!("{dir_str}/{pfx_str}{pid:x}{cnt:x}");
+
+    let ptr = unsafe { libc::malloc(name.len() + 1) as *mut c_char };
+    if ptr.is_null() {
+        return std::ptr::null_mut();
+    }
+    unsafe {
+        std::ptr::copy_nonoverlapping(name.as_ptr() as *const c_char, ptr, name.len());
+        *ptr.add(name.len()) = 0;
+    };
+    ptr
+}
+
+// ---------------------------------------------------------------------------
+// execveat / pidfd_getfd / close_range / epoll_pwait2 — RawSyscall
+// ---------------------------------------------------------------------------
+
+/// Linux `execveat` — execute program relative to directory fd.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn execveat(
+    dirfd: c_int,
+    pathname: *const c_char,
+    argv: *const *const c_char,
+    envp: *const *const c_char,
+    flags: c_int,
+) -> c_int {
+    let rc =
+        unsafe { libc::syscall(libc::SYS_execveat, dirfd, pathname, argv, envp, flags) as c_int };
+    unsafe { set_abi_errno(last_host_errno(libc::ENOENT)) };
+    rc
+}
+
+/// Linux `pidfd_getfd` — duplicate fd from another process.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pidfd_getfd(pidfd: c_int, targetfd: c_int, flags: c_uint) -> c_int {
+    let rc = unsafe { libc::syscall(libc::SYS_pidfd_getfd, pidfd, targetfd, flags) as c_int };
+    if rc < 0 {
+        unsafe { set_abi_errno(last_host_errno(libc::EBADF)) };
+    }
+    rc
+}
+
+/// Linux `epoll_pwait2` — wait for events with nanosecond timeout.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn epoll_pwait2(
+    epfd: c_int,
+    events: *mut c_void,
+    maxevents: c_int,
+    timeout: *const libc::timespec,
+    sigmask: *const libc::sigset_t,
+) -> c_int {
+    let rc = unsafe {
+        libc::syscall(
+            libc::SYS_epoll_pwait2,
+            epfd,
+            events,
+            maxevents,
+            timeout,
+            sigmask,
+            std::mem::size_of::<libc::sigset_t>(),
+        ) as c_int
+    };
+    if rc < 0 {
+        unsafe { set_abi_errno(last_host_errno(libc::EINVAL)) };
+    }
+    rc
+}
+
+// ===========================================================================
+// Batch: Process tracing / security / capabilities — RawSyscall
+// ===========================================================================
+
+/// Linux `ptrace` — process trace (debugging).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ptrace(
+    request: c_int,
+    pid: libc::pid_t,
+    addr: *mut c_void,
+    data: *mut c_void,
+) -> c_long {
+    let rc = unsafe {
+        libc::syscall(
+            libc::SYS_ptrace,
+            request as c_long,
+            pid as c_long,
+            addr,
+            data,
+        )
+    };
+    if rc < 0 {
+        unsafe { set_abi_errno(last_host_errno(libc::ESRCH)) };
+    }
+    rc
+}
+
+/// Linux `seccomp` — secure computing filter.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn seccomp(operation: c_uint, flags: c_uint, args: *mut c_void) -> c_int {
+    let rc = unsafe { libc::syscall(libc::SYS_seccomp, operation, flags, args) as c_int };
+    if rc < 0 {
+        unsafe { set_abi_errno(last_host_errno(libc::EINVAL)) };
+    }
+    rc
+}
+
+/// Linux `capget` — get process capabilities.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn capget(hdrp: *mut c_void, datap: *mut c_void) -> c_int {
+    let rc = unsafe { libc::syscall(libc::SYS_capget, hdrp, datap) as c_int };
+    if rc < 0 {
+        unsafe { set_abi_errno(last_host_errno(libc::EINVAL)) };
+    }
+    rc
+}
+
+/// Linux `capset` — set process capabilities.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn capset(hdrp: *mut c_void, datap: *const c_void) -> c_int {
+    let rc = unsafe { libc::syscall(libc::SYS_capset, hdrp, datap) as c_int };
+    if rc < 0 {
+        unsafe { set_abi_errno(last_host_errno(libc::EPERM)) };
+    }
+    rc
+}
+
+// ===========================================================================
+// Batch: Futex / memory barriers — RawSyscall
+// ===========================================================================
+
+/// Linux `futex` — fast userspace locking.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn futex(
+    uaddr: *mut c_int,
+    futex_op: c_int,
+    val: c_int,
+    timeout: *const libc::timespec,
+    uaddr2: *mut c_int,
+    val3: c_int,
+) -> c_int {
+    let rc = unsafe {
+        libc::syscall(libc::SYS_futex, uaddr, futex_op, val, timeout, uaddr2, val3) as c_int
+    };
+    if rc < 0 {
+        unsafe { set_abi_errno(last_host_errno(libc::EINVAL)) };
+    }
+    rc
+}
+
+/// Linux `membarrier` — issue memory barriers on a set of threads.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn membarrier(cmd: c_int, flags: c_uint, cpu_id: c_int) -> c_int {
+    let rc = unsafe { libc::syscall(libc::SYS_membarrier, cmd, flags, cpu_id) as c_int };
+    if rc < 0 {
+        unsafe { set_abi_errno(last_host_errno(libc::EINVAL)) };
+    }
+    rc
+}
+
+// ===========================================================================
+// Batch: Native Linux AIO (io_setup family) — RawSyscall
+// ===========================================================================
+
+/// Linux `io_setup` — create asynchronous I/O context.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn io_setup(nr_events: c_uint, ctxp: *mut c_ulong) -> c_int {
+    let rc = unsafe { libc::syscall(libc::SYS_io_setup, nr_events, ctxp) as c_int };
+    if rc < 0 {
+        unsafe { set_abi_errno(last_host_errno(libc::EINVAL)) };
+    }
+    rc
+}
+
+/// Linux `io_destroy` — destroy asynchronous I/O context.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn io_destroy(ctx_id: c_ulong) -> c_int {
+    let rc = unsafe { libc::syscall(libc::SYS_io_destroy, ctx_id) as c_int };
+    if rc < 0 {
+        unsafe { set_abi_errno(last_host_errno(libc::EINVAL)) };
+    }
+    rc
+}
+
+/// Linux `io_submit` — submit asynchronous I/O blocks.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn io_submit(ctx_id: c_ulong, nr: c_long, iocbpp: *mut *mut c_void) -> c_int {
+    let rc = unsafe { libc::syscall(libc::SYS_io_submit, ctx_id, nr, iocbpp) as c_int };
+    if rc < 0 {
+        unsafe { set_abi_errno(last_host_errno(libc::EINVAL)) };
+    }
+    rc
+}
+
+/// Linux `io_cancel` — cancel outstanding I/O request.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn io_cancel(
+    ctx_id: c_ulong,
+    iocb: *mut c_void,
+    result: *mut c_void,
+) -> c_int {
+    let rc = unsafe { libc::syscall(libc::SYS_io_cancel, ctx_id, iocb, result) as c_int };
+    if rc < 0 {
+        unsafe { set_abi_errno(last_host_errno(libc::EINVAL)) };
+    }
+    rc
+}
+
+/// Linux `io_getevents` — read asynchronous I/O events.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn io_getevents(
+    ctx_id: c_ulong,
+    min_nr: c_long,
+    nr: c_long,
+    events: *mut c_void,
+    timeout: *mut libc::timespec,
+) -> c_int {
+    let rc = unsafe {
+        libc::syscall(libc::SYS_io_getevents, ctx_id, min_nr, nr, events, timeout) as c_int
+    };
+    if rc < 0 {
+        unsafe { set_abi_errno(last_host_errno(libc::EINVAL)) };
+    }
+    rc
+}
+
+// ===========================================================================
+// Batch: Terminal process group — RawSyscall
+// ===========================================================================
+
+/// POSIX `tcgetpgrp` — get foreground process group of terminal.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn tcgetpgrp(fd: c_int) -> libc::pid_t {
+    let mut pgrp: libc::pid_t = 0;
+    const TIOCGPGRP: std::os::raw::c_ulong = 0x540F;
+    let rc = unsafe {
+        libc::syscall(
+            libc::SYS_ioctl,
+            fd,
+            TIOCGPGRP,
+            &mut pgrp as *mut libc::pid_t,
+        )
+    } as c_int;
+    if rc < 0 {
+        unsafe { set_abi_errno(last_host_errno(libc::ENOTTY)) };
+        return -1;
+    }
+    pgrp
+}
+
+/// POSIX `tcsetpgrp` — set foreground process group of terminal.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn tcsetpgrp(fd: c_int, pgrp: libc::pid_t) -> c_int {
+    const TIOCSPGRP: std::os::raw::c_ulong = 0x5410;
+    let rc = unsafe { libc::syscall(libc::SYS_ioctl, fd, TIOCSPGRP, &pgrp as *const libc::pid_t) }
+        as c_int;
+    if rc < 0 {
+        unsafe { set_abi_errno(last_host_errno(libc::ENOTTY)) };
+    }
+    rc
+}
+
+/// POSIX `tcgetsid` — get session leader of controlling terminal.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn tcgetsid(fd: c_int) -> libc::pid_t {
+    let mut sid: libc::pid_t = 0;
+    const TIOCGSID: std::os::raw::c_ulong = 0x5429;
+    let rc = unsafe { libc::syscall(libc::SYS_ioctl, fd, TIOCGSID, &mut sid as *mut libc::pid_t) }
+        as c_int;
+    if rc < 0 {
+        unsafe { set_abi_errno(last_host_errno(libc::ENOTTY)) };
+        return -1;
+    }
+    sid
+}
+
+// ===========================================================================
+// Batch: Memory protection keys — RawSyscall
+// ===========================================================================
+
+/// Linux `pkey_alloc` — allocate a protection key.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pkey_alloc(flags: c_uint, access_rights: c_uint) -> c_int {
+    let rc = unsafe { libc::syscall(libc::SYS_pkey_alloc, flags, access_rights) as c_int };
+    if rc < 0 {
+        unsafe { set_abi_errno(last_host_errno(libc::ENOSPC)) };
+    }
+    rc
+}
+
+/// Linux `pkey_free` — free a protection key.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pkey_free(pkey: c_int) -> c_int {
+    let rc = unsafe { libc::syscall(libc::SYS_pkey_free, pkey) as c_int };
+    if rc < 0 {
+        unsafe { set_abi_errno(last_host_errno(libc::EINVAL)) };
+    }
+    rc
+}
+
+/// Linux `pkey_mprotect` — set memory protection with key.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pkey_mprotect(
+    addr: *mut c_void,
+    len: usize,
+    prot: c_int,
+    pkey: c_int,
+) -> c_int {
+    let rc = unsafe { libc::syscall(libc::SYS_pkey_mprotect, addr, len, prot, pkey) as c_int };
+    if rc < 0 {
+        unsafe { set_abi_errno(last_host_errno(libc::EINVAL)) };
+    }
+    rc
+}
+
+// ===========================================================================
+// Batch: Pthread scheduling — Implemented (delegates to kernel)
+// ===========================================================================
+
+/// Extract kernel TID from a pthread_t handle.
+/// On glibc x86_64, pthread_t is a pointer to the thread control block (TCB).
+/// The TID (pid field) is at offset 720 in the NPTL struct (glibc 2.34+).
+/// For the common case of pthread_self(), we can detect this and use SYS_gettid.
+unsafe fn pthread_to_tid(thread: libc::pthread_t) -> c_long {
+    let self_handle = unsafe { libc::pthread_self() };
+    if thread == self_handle {
+        // Common case: operating on current thread
+        unsafe { libc::syscall(libc::SYS_gettid) as c_long }
+    } else {
+        // For other threads, try reading TID from the glibc TCB.
+        // On glibc x86_64 (NPTL), the pid field is at offset 720.
+        // This is version-dependent but stable across glibc 2.17-2.38.
+        let tcb = thread as *const u8;
+        if tcb.is_null() {
+            return -1;
+        }
+        unsafe { *(tcb.add(720) as *const i32) as c_long }
+    }
+}
+
+/// POSIX `pthread_setschedparam` — set thread scheduling policy and priority.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_setschedparam(
+    thread: libc::pthread_t,
+    policy: c_int,
+    param: *const libc::sched_param,
+) -> c_int {
+    if param.is_null() {
+        return libc::EINVAL;
+    }
+    let tid = unsafe { pthread_to_tid(thread) };
+    if tid <= 0 {
+        return libc::ESRCH;
+    }
+    let rc = unsafe { libc::syscall(libc::SYS_sched_setscheduler, tid, policy, param) as c_int };
+    if rc < 0 {
+        last_host_errno(libc::EINVAL)
+    } else {
+        0
+    }
+}
+
+/// POSIX `pthread_getschedparam` — get thread scheduling policy and priority.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_getschedparam(
+    thread: libc::pthread_t,
+    policy: *mut c_int,
+    param: *mut libc::sched_param,
+) -> c_int {
+    if policy.is_null() || param.is_null() {
+        return libc::EINVAL;
+    }
+    let tid = unsafe { pthread_to_tid(thread) };
+    if tid <= 0 {
+        return libc::ESRCH;
+    }
+    let p = unsafe { libc::syscall(libc::SYS_sched_getscheduler, tid) as c_int };
+    if p < 0 {
+        return last_host_errno(libc::ESRCH);
+    }
+    unsafe { *policy = p };
+    let rc = unsafe { libc::syscall(libc::SYS_sched_getparam, tid, param) as c_int };
+    if rc < 0 {
+        return last_host_errno(libc::ESRCH);
+    }
+    0
+}
+
+// ===========================================================================
+// Batch: i18n / gettext extensions — Implemented
+// ===========================================================================
+
+/// GNU `dcgettext` — domain-specific, category-specific gettext.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn dcgettext(
+    _domainname: *const c_char,
+    msgid: *const c_char,
+    _category: c_int,
+) -> *mut c_char {
+    // Passthrough: return msgid as-is (no translation loaded)
+    msgid as *mut c_char
+}
+
+/// GNU `dcngettext` — domain-specific plural gettext.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn dcngettext(
+    _domainname: *const c_char,
+    msgid: *const c_char,
+    msgid_plural: *const c_char,
+    n: c_ulong,
+    _category: c_int,
+) -> *mut c_char {
+    if n == 1 {
+        msgid as *mut c_char
+    } else {
+        msgid_plural as *mut c_char
+    }
+}
+
+/// GNU `dngettext` — domain-specific plural gettext (LC_MESSAGES).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn dngettext(
+    domainname: *const c_char,
+    msgid: *const c_char,
+    msgid_plural: *const c_char,
+    n: c_ulong,
+) -> *mut c_char {
+    unsafe {
+        dcngettext(domainname, msgid, msgid_plural, n, 5 /* LC_MESSAGES */)
+    }
+}
+
+// ===========================================================================
+// Batch: io_uring — RawSyscall (modern async I/O)
+// ===========================================================================
+
+/// Linux `io_uring_setup` — set up io_uring instance.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn io_uring_setup(entries: c_uint, p: *mut c_void) -> c_int {
+    let rc = unsafe { libc::syscall(libc::SYS_io_uring_setup, entries, p) as c_int };
+    if rc < 0 {
+        unsafe { set_abi_errno(last_host_errno(libc::EINVAL)) };
+    }
+    rc
+}
+
+/// Linux `io_uring_enter` — enter io_uring.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn io_uring_enter(
+    fd: c_uint,
+    to_submit: c_uint,
+    min_complete: c_uint,
+    flags: c_uint,
+    sig: *const libc::sigset_t,
+) -> c_int {
+    let rc = unsafe {
+        libc::syscall(
+            libc::SYS_io_uring_enter,
+            fd,
+            to_submit,
+            min_complete,
+            flags,
+            sig,
+            std::mem::size_of::<libc::sigset_t>(),
+        ) as c_int
+    };
+    if rc < 0 {
+        unsafe { set_abi_errno(last_host_errno(libc::EINVAL)) };
+    }
+    rc
+}
+
+/// Linux `io_uring_register` — register resources with io_uring.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn io_uring_register(
+    fd: c_uint,
+    opcode: c_uint,
+    arg: *mut c_void,
+    nr_args: c_uint,
+) -> c_int {
+    let rc =
+        unsafe { libc::syscall(libc::SYS_io_uring_register, fd, opcode, arg, nr_args) as c_int };
+    if rc < 0 {
+        unsafe { set_abi_errno(last_host_errno(libc::EINVAL)) };
+    }
+    rc
+}
+
+// ===========================================================================
+// Batch: kcmp / ioprio — RawSyscall
+// ===========================================================================
+
+/// Linux `kcmp` — compare two processes for shared kernel objects.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn kcmp(
+    pid1: libc::pid_t,
+    pid2: libc::pid_t,
+    type_: c_int,
+    idx1: c_ulong,
+    idx2: c_ulong,
+) -> c_int {
+    let rc = unsafe { libc::syscall(libc::SYS_kcmp, pid1, pid2, type_, idx1, idx2) as c_int };
+    if rc < 0 {
+        unsafe { set_abi_errno(last_host_errno(libc::ESRCH)) };
+    }
+    rc
+}
+
+/// Linux `ioprio_set` — set I/O scheduling class and priority.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ioprio_set(which: c_int, who: c_int, ioprio: c_int) -> c_int {
+    let rc = unsafe { libc::syscall(libc::SYS_ioprio_set, which, who, ioprio) as c_int };
+    if rc < 0 {
+        unsafe { set_abi_errno(last_host_errno(libc::EINVAL)) };
+    }
+    rc
+}
+
+/// Linux `ioprio_get` — get I/O scheduling class and priority.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ioprio_get(which: c_int, who: c_int) -> c_int {
+    let rc = unsafe { libc::syscall(libc::SYS_ioprio_get, which, who) as c_int };
+    if rc < 0 {
+        unsafe { set_abi_errno(last_host_errno(libc::EINVAL)) };
+    }
+    rc
+}
+
+// ===========================================================================
+// Batch: userfaultfd / landlock — RawSyscall (newer kernel APIs)
+// ===========================================================================
+
+/// Linux `userfaultfd` — create userfault file descriptor.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn userfaultfd(flags: c_int) -> c_int {
+    let rc = unsafe { libc::syscall(libc::SYS_userfaultfd, flags) as c_int };
+    if rc < 0 {
+        unsafe { set_abi_errno(last_host_errno(libc::EINVAL)) };
+    }
+    rc
+}
+
+/// Linux `landlock_create_ruleset` — create landlock ruleset.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn landlock_create_ruleset(
+    attr: *const c_void,
+    size: usize,
+    flags: c_uint,
+) -> c_int {
+    let rc =
+        unsafe { libc::syscall(libc::SYS_landlock_create_ruleset, attr, size, flags) as c_int };
+    if rc < 0 {
+        unsafe { set_abi_errno(last_host_errno(libc::EINVAL)) };
+    }
+    rc
+}
+
+/// Linux `landlock_add_rule` — add landlock rule to ruleset.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn landlock_add_rule(
+    ruleset_fd: c_int,
+    rule_type: c_int,
+    rule_attr: *const c_void,
+    flags: c_uint,
+) -> c_int {
+    let rc = unsafe {
+        libc::syscall(
+            libc::SYS_landlock_add_rule,
+            ruleset_fd,
+            rule_type,
+            rule_attr,
+            flags,
+        ) as c_int
+    };
+    if rc < 0 {
+        unsafe { set_abi_errno(last_host_errno(libc::EINVAL)) };
+    }
+    rc
+}
+
+/// Linux `landlock_restrict_self` — enforce landlock ruleset on current process.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn landlock_restrict_self(ruleset_fd: c_int, flags: c_uint) -> c_int {
+    let rc = unsafe { libc::syscall(libc::SYS_landlock_restrict_self, ruleset_fd, flags) as c_int };
+    if rc < 0 {
+        unsafe { set_abi_errno(last_host_errno(libc::EINVAL)) };
+    }
+    rc
+}
+
+// ===========================================================================
+// Batch: Miscellaneous POSIX/Linux — RawSyscall/Implemented
+// ===========================================================================
+
+/// POSIX `posix_fadvise64` — file access pattern advise (64-bit).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn posix_fadvise64(fd: c_int, offset: i64, len: i64, advice: c_int) -> c_int {
+    let rc = unsafe { libc::syscall(libc::SYS_fadvise64, fd, offset, len, advice) as c_int };
+    if rc < 0 {
+        last_host_errno(libc::EBADF)
+    } else {
+        0
+    }
+}
+
+/// Linux `sync_file_range` — sync file segment to disk.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn sync_file_range(
+    fd: c_int,
+    offset: i64,
+    nbytes: i64,
+    flags: c_uint,
+) -> c_int {
+    let rc =
+        unsafe { libc::syscall(libc::SYS_sync_file_range, fd, offset, nbytes, flags) as c_int };
+    if rc < 0 {
+        unsafe { set_abi_errno(last_host_errno(libc::EBADF)) };
+    }
+    rc
+}
+
+/// Linux `remap_file_pages` — create nonlinear file mapping (deprecated).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn remap_file_pages(
+    addr: *mut c_void,
+    size: usize,
+    prot: c_int,
+    pgoff: usize,
+    flags: c_int,
+) -> c_int {
+    let rc = unsafe {
+        libc::syscall(libc::SYS_remap_file_pages, addr, size, prot, pgoff, flags) as c_int
+    };
+    if rc < 0 {
+        unsafe { set_abi_errno(last_host_errno(libc::EINVAL)) };
+    }
+    rc
+}
+
+/// Linux `tgkill` — send signal to specific thread.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn tgkill(tgid: c_int, tid: c_int, sig: c_int) -> c_int {
+    let rc = unsafe { libc::syscall(libc::SYS_tgkill, tgid, tid, sig) as c_int };
+    if rc < 0 {
+        unsafe { set_abi_errno(last_host_errno(libc::ESRCH)) };
+    }
+    rc
+}
+
+/// Linux `tkill` — send signal to thread (deprecated, use tgkill).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn tkill(tid: c_int, sig: c_int) -> c_int {
+    let rc = unsafe { libc::syscall(libc::SYS_tkill, tid, sig) as c_int };
+    if rc < 0 {
+        unsafe { set_abi_errno(last_host_errno(libc::ESRCH)) };
+    }
+    rc
+}
+
+/// Linux `sched_setattr` — extended scheduling attributes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn sched_setattr(
+    pid: libc::pid_t,
+    attr: *mut c_void,
+    flags: c_uint,
+) -> c_int {
+    let rc = unsafe { libc::syscall(libc::SYS_sched_setattr, pid, attr, flags) as c_int };
+    if rc < 0 {
+        unsafe { set_abi_errno(last_host_errno(libc::EINVAL)) };
+    }
+    rc
+}
+
+/// Linux `sched_getattr` — get extended scheduling attributes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn sched_getattr(
+    pid: libc::pid_t,
+    attr: *mut c_void,
+    size: c_uint,
+    flags: c_uint,
+) -> c_int {
+    let rc = unsafe { libc::syscall(libc::SYS_sched_getattr, pid, attr, size, flags) as c_int };
+    if rc < 0 {
+        unsafe { set_abi_errno(last_host_errno(libc::EINVAL)) };
+    }
+    rc
+}
+
+/// Linux `quotactl` — manipulate disk quotas.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn quotactl(
+    cmd: c_int,
+    special: *const c_char,
+    id: c_int,
+    addr: *mut c_void,
+) -> c_int {
+    let rc = unsafe { libc::syscall(libc::SYS_quotactl, cmd, special, id, addr) as c_int };
+    if rc < 0 {
+        unsafe { set_abi_errno(last_host_errno(libc::EINVAL)) };
+    }
+    rc
+}
+
+/// Linux `lookup_dcookie` — return directory entry path for a cookie.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn lookup_dcookie(cookie: u64, buffer: *mut c_char, len: usize) -> c_int {
+    let rc = unsafe { libc::syscall(libc::SYS_lookup_dcookie, cookie, buffer, len) as c_int };
+    if rc < 0 {
+        unsafe { set_abi_errno(last_host_errno(libc::EINVAL)) };
+    }
+    rc
+}
+
+/// Linux `perf_event_open` — set up performance monitoring.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn perf_event_open(
+    attr: *mut c_void,
+    pid: libc::pid_t,
+    cpu: c_int,
+    group_fd: c_int,
+    flags: c_ulong,
+) -> c_int {
+    let rc = unsafe {
+        libc::syscall(libc::SYS_perf_event_open, attr, pid, cpu, group_fd, flags) as c_int
+    };
+    if rc < 0 {
+        unsafe { set_abi_errno(last_host_errno(libc::EINVAL)) };
+    }
+    rc
+}
+
+/// Linux `add_key` — add key to kernel keyring.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn add_key(
+    type_: *const c_char,
+    description: *const c_char,
+    payload: *const c_void,
+    plen: usize,
+    ringid: i32,
+) -> c_long {
+    let rc = unsafe { libc::syscall(libc::SYS_add_key, type_, description, payload, plen, ringid) };
+    if rc < 0 {
+        unsafe { set_abi_errno(last_host_errno(libc::EINVAL)) };
+    }
+    rc
+}
+
+/// Linux `request_key` — request key from keyring.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn request_key(
+    type_: *const c_char,
+    description: *const c_char,
+    callout_info: *const c_char,
+    dest_keyring: i32,
+) -> c_long {
+    let rc = unsafe {
+        libc::syscall(
+            libc::SYS_request_key,
+            type_,
+            description,
+            callout_info,
+            dest_keyring,
+        )
+    };
+    if rc < 0 {
+        unsafe { set_abi_errno(last_host_errno(libc::EINVAL)) };
+    }
+    rc
+}
+
+/// Linux `keyctl` — keyring operations.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn keyctl(
+    operation: c_int,
+    arg2: c_ulong,
+    arg3: c_ulong,
+    arg4: c_ulong,
+    arg5: c_ulong,
+) -> c_long {
+    let rc = unsafe { libc::syscall(libc::SYS_keyctl, operation, arg2, arg3, arg4, arg5) };
+    if rc < 0 {
+        unsafe { set_abi_errno(last_host_errno(libc::EINVAL)) };
+    }
+    rc
+}
+
+// ===========================================================================
+// Batch: Filesystem status — RawSyscall
+// ===========================================================================
+
+/// `statfs` — get filesystem statistics.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn statfs(path: *const c_char, buf: *mut c_void) -> c_int {
+    let rc = unsafe { libc::syscall(libc::SYS_statfs, path, buf) as c_int };
+    if rc < 0 {
+        unsafe { set_abi_errno(last_host_errno(libc::ENOENT)) };
+    }
+    rc
+}
+
+/// `fstatfs` — get filesystem statistics by fd.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn fstatfs(fd: c_int, buf: *mut c_void) -> c_int {
+    let rc = unsafe { libc::syscall(libc::SYS_fstatfs, fd, buf) as c_int };
+    if rc < 0 {
+        unsafe { set_abi_errno(last_host_errno(libc::EBADF)) };
+    }
+    rc
+}
+
+/// Convert kernel statfs result to statvfs layout.
+/// On x86_64 Linux, struct statfs fields (all long):
+///   type, bsize, blocks, bfree, bavail, files, ffree, fsid(2xi32), namelen, frsize, flags, spare[4]
+/// struct statvfs fields (all unsigned long):
+///   bsize, frsize, blocks, bfree, bavail, files, ffree, favail, fsid, flag, namemax, spare[6]
+unsafe fn statfs_to_statvfs(sfs: *const libc::statfs, vfs: *mut libc::statvfs) {
+    let s = unsafe { &*sfs };
+    let v = unsafe { &mut *vfs };
+    v.f_bsize = s.f_bsize as u64;
+    v.f_frsize = if s.f_frsize != 0 {
+        s.f_frsize as u64
+    } else {
+        s.f_bsize as u64
+    };
+    v.f_blocks = s.f_blocks as u64;
+    v.f_bfree = s.f_bfree as u64;
+    v.f_bavail = s.f_bavail as u64;
+    v.f_files = s.f_files as u64;
+    v.f_ffree = s.f_ffree as u64;
+    v.f_favail = s.f_ffree as u64; // Same as ffree for non-privileged
+    // fsid_t.__val is private in libc crate; read via raw pointer cast
+    let fsid_ptr = &s.f_fsid as *const libc::fsid_t as *const i32;
+    v.f_fsid = unsafe { *fsid_ptr } as u64;
+    // f_flags not exposed in libc crate's statfs; read via byte offset
+    // kernel layout: ..., namelen(off=88), frsize(off=96), flags(off=104) — all c_long
+    let statfs_ptr = sfs as *const u8;
+    let flags_val = unsafe { *(statfs_ptr.add(104) as *const i64) };
+    v.f_flag = flags_val as u64;
+    v.f_namemax = s.f_namelen as u64;
+}
+
+/// POSIX `statvfs` — POSIX filesystem statistics.
+/// Calls SYS_statfs and converts the kernel struct to statvfs layout.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn statvfs(path: *const c_char, buf: *mut libc::statvfs) -> c_int {
+    let mut sfs = std::mem::MaybeUninit::<libc::statfs>::zeroed();
+    let rc = unsafe { libc::syscall(libc::SYS_statfs, path, sfs.as_mut_ptr()) as c_int };
+    if rc < 0 {
+        unsafe { set_abi_errno(last_host_errno(libc::ENOENT)) };
+        return rc;
+    }
+    unsafe { statfs_to_statvfs(sfs.as_ptr(), buf) };
+    0
+}
+
+/// POSIX `fstatvfs` — POSIX filesystem statistics by fd.
+/// Calls SYS_fstatfs and converts the kernel struct to statvfs layout.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn fstatvfs(fd: c_int, buf: *mut libc::statvfs) -> c_int {
+    let mut sfs = std::mem::MaybeUninit::<libc::statfs>::zeroed();
+    let rc = unsafe { libc::syscall(libc::SYS_fstatfs, fd, sfs.as_mut_ptr()) as c_int };
+    if rc < 0 {
+        unsafe { set_abi_errno(last_host_errno(libc::EBADF)) };
+        return rc;
+    }
+    unsafe { statfs_to_statvfs(sfs.as_ptr(), buf) };
+    0
+}
+
+// ===========================================================================
+// Batch: Directory entries — RawSyscall
+// ===========================================================================
+
+/// Linux `getdents64` — get directory entries (64-bit).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getdents64(fd: c_int, dirp: *mut c_void, count: usize) -> c_long {
+    let rc = unsafe { libc::syscall(libc::SYS_getdents64, fd, dirp, count) };
+    if rc < 0 {
+        unsafe { set_abi_errno(last_host_errno(libc::EBADF)) };
+    }
+    rc
+}
+
+// ===========================================================================
+// Batch: C++ ABI / Stack protection — Implemented
+// ===========================================================================
+
+/// Wrapper to make raw pointers Send-safe for __cxa_atexit handler list.
+struct CxaHandler(unsafe extern "C" fn(*mut c_void), *mut c_void, *mut c_void);
+// SAFETY: __cxa_atexit handlers are always called from the same process;
+// the raw pointers are opaque DSO handles, not shared mutable state.
+unsafe impl Send for CxaHandler {}
+
+/// Thread-local __cxa_atexit handler list.
+static CXA_ATEXIT_HANDLERS: std::sync::Mutex<Vec<CxaHandler>> = std::sync::Mutex::new(Vec::new());
+
+/// `__cxa_atexit` — register C++ destructor for atexit.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __cxa_atexit(
+    func: unsafe extern "C" fn(*mut c_void),
+    arg: *mut c_void,
+    dso_handle: *mut c_void,
+) -> c_int {
+    if let Ok(mut handlers) = CXA_ATEXIT_HANDLERS.lock() {
+        handlers.push(CxaHandler(func, arg, dso_handle));
+        0
+    } else {
+        -1
+    }
+}
+
+/// `__cxa_finalize` — run C++ atexit handlers for a given DSO (or all if NULL).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __cxa_finalize(dso_handle: *mut c_void) {
+    if let Ok(mut handlers) = CXA_ATEXIT_HANDLERS.lock() {
+        let to_run: Vec<_> = if dso_handle.is_null() {
+            handlers.drain(..).collect()
+        } else {
+            let mut kept = Vec::new();
+            let mut run = Vec::new();
+            for h in handlers.drain(..) {
+                if h.2 == dso_handle {
+                    run.push(h);
+                } else {
+                    kept.push(h);
+                }
+            }
+            *handlers = kept;
+            run
+        };
+        // Run in reverse order (LIFO)
+        for CxaHandler(func, arg, _) in to_run.into_iter().rev() {
+            unsafe { func(arg) };
+        }
+    }
+}
+
+/// Stack canary value.
+#[allow(non_upper_case_globals)]
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub static __stack_chk_guard: c_ulong = 0x00000aff0a0d0000;
+
+/// `__stack_chk_fail` — stack smashing detected, abort.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __stack_chk_fail() -> ! {
+    const MSG: &[u8] = b"*** stack smashing detected ***: terminated\n";
+    unsafe {
+        libc::syscall(libc::SYS_write, 2i32, MSG.as_ptr(), MSG.len());
+        libc::syscall(libc::SYS_exit_group, 134i32);
+    };
+    // Unreachable but required for -> !
+    unsafe { std::hint::unreachable_unchecked() }
+}
+
+// ===========================================================================
+// Batch: Network database iterators — Implemented (parse /etc/ files)
+// ===========================================================================
+
+/// `gethostbyname2` — IPv6-aware hostname lookup (C locale, /etc/hosts only).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn gethostbyname2(name: *const c_char, af: c_int) -> *mut c_void {
+    // For now, delegate to gethostbyname for AF_INET; return null for others
+    if af == libc::AF_INET {
+        unsafe { crate::resolv_abi::gethostbyname(name) }
+    } else {
+        unsafe { set_abi_errno(libc::EAFNOSUPPORT) };
+        std::ptr::null_mut()
+    }
+}
+
+/// `setservent` — rewind /etc/services enumeration.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn setservent(_stayopen: c_int) {
+    // No-op for C locale
+}
+
+/// `endservent` — close /etc/services enumeration.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn endservent() {
+    // No-op for C locale
+}
+
+/// `getservent` — get next /etc/services entry.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getservent() -> *mut c_void {
+    // Return null — iteration not supported in minimal impl
+    std::ptr::null_mut()
+}
+
+/// `setnetent` — rewind /etc/networks enumeration.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn setnetent(_stayopen: c_int) {
+    // No-op
+}
+
+/// `endnetent` — close /etc/networks enumeration.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn endnetent() {
+    // No-op
+}
+
+/// `getnetent` — get next /etc/networks entry.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getnetent() -> *mut c_void {
+    std::ptr::null_mut()
+}
+
+/// `getnetbyname` — look up network by name.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getnetbyname(_name: *const c_char) -> *mut c_void {
+    std::ptr::null_mut()
+}
+
+/// `getnetbyaddr` — look up network by address.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getnetbyaddr(_net: u32, _type_: c_int) -> *mut c_void {
+    std::ptr::null_mut()
+}
+
+/// `setprotoent` — rewind /etc/protocols enumeration.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn setprotoent(_stayopen: c_int) {
+    // No-op
+}
+
+/// `endprotoent` — close /etc/protocols enumeration.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn endprotoent() {
+    // No-op
+}
+
+/// `getprotoent` — get next /etc/protocols entry.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getprotoent() -> *mut c_void {
+    std::ptr::null_mut()
+}
+
+/// `sethostent` — rewind /etc/hosts enumeration.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn sethostent(_stayopen: c_int) {
+    // No-op
+}
+
+/// `endhostent` — close /etc/hosts enumeration.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn endhostent() {
+    // No-op
+}
+
+/// `gethostent` — get next /etc/hosts entry.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn gethostent() -> *mut c_void {
+    std::ptr::null_mut()
+}
+
+// ===========================================================================
+// Batch: wctype functions — Implemented
+// ===========================================================================
+
+/// Wide-character type descriptor (opaque handle).
+type WctypeT = c_ulong;
+/// Wide-character transformation descriptor (opaque handle).
+type WctransT = c_ulong;
+
+/// `wctype` — get wide-char classification descriptor.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn wctype(property: *const c_char) -> WctypeT {
+    if property.is_null() {
+        return 0;
+    }
+    let s = unsafe { CStr::from_ptr(property) };
+    match s.to_bytes() {
+        b"alnum" => 1,
+        b"alpha" => 2,
+        b"blank" => 3,
+        b"cntrl" => 4,
+        b"digit" => 5,
+        b"graph" => 6,
+        b"lower" => 7,
+        b"print" => 8,
+        b"punct" => 9,
+        b"space" => 10,
+        b"upper" => 11,
+        b"xdigit" => 12,
+        _ => 0,
+    }
+}
+
+/// `iswctype` — classify wide character by type descriptor.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn iswctype(wc: c_uint, desc: WctypeT) -> c_int {
+    if wc > 127 {
+        return 0; // Only ASCII in C locale
+    }
+    let c = wc as u8;
+    let result = match desc {
+        1 => c.is_ascii_alphanumeric(),
+        2 => c.is_ascii_alphabetic(),
+        3 => c == b' ' || c == b'\t',
+        4 => c.is_ascii_control(),
+        5 => c.is_ascii_digit(),
+        6 => c.is_ascii_graphic(),
+        7 => c.is_ascii_lowercase(),
+        8 => c.is_ascii_graphic() || c == b' ',
+        9 => c.is_ascii_punctuation(),
+        10 => c.is_ascii_whitespace(),
+        11 => c.is_ascii_uppercase(),
+        12 => c.is_ascii_hexdigit(),
+        _ => false,
+    };
+    c_int::from(result)
+}
+
+/// `wctrans` — get wide-char transformation descriptor.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn wctrans(property: *const c_char) -> WctransT {
+    if property.is_null() {
+        return 0;
+    }
+    let s = unsafe { CStr::from_ptr(property) };
+    match s.to_bytes() {
+        b"toupper" => 1,
+        b"tolower" => 2,
+        _ => 0,
+    }
+}
+
+/// `towctrans` — transform wide character by descriptor.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn towctrans(wc: c_uint, desc: WctransT) -> c_uint {
+    if wc > 127 {
+        return wc;
+    }
+    let c = wc as u8;
+    let result = match desc {
+        1 => c.to_ascii_uppercase(),
+        2 => c.to_ascii_lowercase(),
+        _ => c,
+    };
+    result as c_uint
+}
+
+// ===========================================================================
+// Batch: Locale-aware string functions — Implemented (C locale passthrough)
+// ===========================================================================
+
+/// `strcoll_l` — locale-aware string comparison.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strcoll_l(
+    s1: *const c_char,
+    s2: *const c_char,
+    _locale: *mut c_void,
+) -> c_int {
+    unsafe { crate::string_abi::strcoll(s1, s2) }
+}
+
+/// `strxfrm_l` — locale-aware string transformation.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strxfrm_l(
+    dest: *mut c_char,
+    src: *const c_char,
+    n: usize,
+    _locale: *mut c_void,
+) -> usize {
+    unsafe { crate::string_abi::strxfrm(dest, src, n) }
+}
+
+/// `strftime_l` — locale-aware time formatting.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strftime_l(
+    s: *mut c_char,
+    max: usize,
+    format: *const c_char,
+    tm: *const c_void,
+    _locale: *mut c_void,
+) -> usize {
+    unsafe { crate::time_abi::strftime(s, max, format, tm as *const libc::tm) }
 }

@@ -1576,11 +1576,11 @@ pub unsafe extern "C" fn pthread_cond_wait(
             let owner = unsafe { &*owner_ptr };
             owner.store(MUTEX_NO_OWNER, Ordering::Release);
         }
-        if mtype == PTHREAD_MUTEX_RECURSIVE_TYPE {
-            if let Some(count_ptr) = mutex_lock_count_ptr(mutex) {
-                let count = unsafe { &*count_ptr };
-                saved_count = count.swap(0, Ordering::Release);
-            }
+        if mtype == PTHREAD_MUTEX_RECURSIVE_TYPE
+            && let Some(count_ptr) = mutex_lock_count_ptr(mutex)
+        {
+            let count = unsafe { &*count_ptr };
+            saved_count = count.swap(0, Ordering::Release);
         }
     }
 
@@ -1593,12 +1593,12 @@ pub unsafe extern "C" fn pthread_cond_wait(
             let owner = unsafe { &*owner_ptr };
             owner.store(self_tid, Ordering::Release);
         }
-        if mtype == PTHREAD_MUTEX_RECURSIVE_TYPE {
-            if let Some(count_ptr) = mutex_lock_count_ptr(mutex) {
-                let count = unsafe { &*count_ptr };
-                // Restore the lock count we had before waiting.
-                count.store(saved_count, Ordering::Release);
-            }
+        if mtype == PTHREAD_MUTEX_RECURSIVE_TYPE
+            && let Some(count_ptr) = mutex_lock_count_ptr(mutex)
+        {
+            let count = unsafe { &*count_ptr };
+            // Restore the lock count we had before waiting.
+            count.store(saved_count, Ordering::Release);
         }
     }
 
@@ -1821,11 +1821,11 @@ pub unsafe extern "C" fn pthread_cond_timedwait(
             let owner = unsafe { &*owner_ptr };
             owner.store(MUTEX_NO_OWNER, Ordering::Release);
         }
-        if mtype == PTHREAD_MUTEX_RECURSIVE_TYPE {
-            if let Some(count_ptr) = mutex_lock_count_ptr(mutex) {
-                let count = unsafe { &*count_ptr };
-                saved_count = count.swap(0, Ordering::Release);
-            }
+        if mtype == PTHREAD_MUTEX_RECURSIVE_TYPE
+            && let Some(count_ptr) = mutex_lock_count_ptr(mutex)
+        {
+            let count = unsafe { &*count_ptr };
+            saved_count = count.swap(0, Ordering::Release);
         }
     }
 
@@ -1846,11 +1846,11 @@ pub unsafe extern "C" fn pthread_cond_timedwait(
             let owner = unsafe { &*owner_ptr };
             owner.store(self_tid, Ordering::Release);
         }
-        if mtype == PTHREAD_MUTEX_RECURSIVE_TYPE {
-            if let Some(count_ptr) = mutex_lock_count_ptr(mutex) {
-                let count = unsafe { &*count_ptr };
-                count.store(saved_count, Ordering::Release);
-            }
+        if mtype == PTHREAD_MUTEX_RECURSIVE_TYPE
+            && let Some(count_ptr) = mutex_lock_count_ptr(mutex)
+        {
+            let count = unsafe { &*count_ptr };
+            count.store(saved_count, Ordering::Release);
         }
     }
 

@@ -800,13 +800,9 @@ fn kernel_with_retry(spins: usize) -> Option<&'static RuntimeMathKernel> {
 
 #[must_use]
 pub(crate) fn runtime_kernel_snapshot(mode: SafetyLevel) -> Option<RuntimeKernelSnapshot> {
-    let Some(_reentry_guard) = enter_policy_reentry_guard() else {
-        return None;
-    };
+    let _reentry_guard = enter_policy_reentry_guard()?;
     ensure_minimal_panic_hook();
-    let Some(k) = kernel_with_retry(KERNEL_EXPORT_RETRY_ATTEMPTS) else {
-        return None;
-    };
+    let k = kernel_with_retry(KERNEL_EXPORT_RETRY_ATTEMPTS)?;
     match panic::catch_unwind(AssertUnwindSafe(|| k.snapshot(mode))) {
         Ok(snapshot) => Some(snapshot),
         Err(_) => {
@@ -818,13 +814,9 @@ pub(crate) fn runtime_kernel_snapshot(mode: SafetyLevel) -> Option<RuntimeKernel
 
 #[must_use]
 pub(crate) fn runtime_evidence_contract_snapshot() -> Option<RuntimeEvidenceContractSnapshot> {
-    let Some(_reentry_guard) = enter_policy_reentry_guard() else {
-        return None;
-    };
+    let _reentry_guard = enter_policy_reentry_guard()?;
     ensure_minimal_panic_hook();
-    let Some(k) = kernel_with_retry(KERNEL_EXPORT_RETRY_ATTEMPTS) else {
-        return None;
-    };
+    let k = kernel_with_retry(KERNEL_EXPORT_RETRY_ATTEMPTS)?;
     match panic::catch_unwind(AssertUnwindSafe(|| k.evidence_contract_snapshot())) {
         Ok(snapshot) => Some(snapshot),
         Err(_) => {
@@ -836,13 +828,9 @@ pub(crate) fn runtime_evidence_contract_snapshot() -> Option<RuntimeEvidenceCont
 
 #[must_use]
 pub(crate) fn export_runtime_decision_cards_json() -> Option<String> {
-    let Some(_reentry_guard) = enter_policy_reentry_guard() else {
-        return None;
-    };
+    let _reentry_guard = enter_policy_reentry_guard()?;
     ensure_minimal_panic_hook();
-    let Some(k) = kernel_with_retry(KERNEL_EXPORT_RETRY_ATTEMPTS) else {
-        return None;
-    };
+    let k = kernel_with_retry(KERNEL_EXPORT_RETRY_ATTEMPTS)?;
     match panic::catch_unwind(AssertUnwindSafe(|| k.export_decision_cards_json())) {
         Ok(export) => Some(export),
         Err(_) => {
@@ -858,13 +846,9 @@ pub(crate) fn export_runtime_math_log_jsonl(
     bead_id: &str,
     run_id: &str,
 ) -> Option<String> {
-    let Some(_reentry_guard) = enter_policy_reentry_guard() else {
-        return None;
-    };
+    let _reentry_guard = enter_policy_reentry_guard()?;
     ensure_minimal_panic_hook();
-    let Some(k) = kernel_with_retry(KERNEL_EXPORT_RETRY_ATTEMPTS) else {
-        return None;
-    };
+    let k = kernel_with_retry(KERNEL_EXPORT_RETRY_ATTEMPTS)?;
     match panic::catch_unwind(AssertUnwindSafe(|| {
         k.export_runtime_math_log_jsonl(mode, bead_id, run_id)
     })) {

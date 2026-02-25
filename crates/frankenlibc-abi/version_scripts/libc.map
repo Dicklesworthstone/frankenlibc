@@ -8,6 +8,12 @@ GLIBC_2.2.5 {
         __frankenlibc_startup_phase0;
         __frankenlibc_startup_snapshot;
 
+        /* C++ ABI / stack protection */
+        __cxa_atexit;
+        __cxa_finalize;
+        __stack_chk_fail;
+        __stack_chk_guard;
+
         /* string/memory operations */
         memcpy;
         memmove;
@@ -56,6 +62,11 @@ GLIBC_2.2.5 {
         rindex;
         strverscmp;
         rawmemchr;
+
+        /* GNU string extensions */
+        strerror_l;
+        memfrob;
+        strfry;
 
         /* BSD/GNU memory operations */
         bcmp;
@@ -158,12 +169,18 @@ GLIBC_2.2.5 {
         iswprint;
         towupper;
         towlower;
+        iswctype;
+        wctype;
+        towctrans;
+        wctrans;
 
         /* path utilities (libgen.h) */
         basename;
         dirname;
         realpath;
         mkstemp;
+        __xpg_basename;
+        canonicalize_file_name;
 
         /* memory allocation */
         malloc;
@@ -270,7 +287,24 @@ GLIBC_2.2.5 {
         tolower;
         toupper;
 
+        /* ctype locale-aware */
+        isalpha_l;
+        isdigit_l;
+        isalnum_l;
+        isspace_l;
+        isupper_l;
+        islower_l;
+        isprint_l;
+        ispunct_l;
+        isxdigit_l;
+        isblank_l;
+        iscntrl_l;
+        isgraph_l;
+        toupper_l;
+        tolower_l;
+
         /* stdio extras */
+        tempnam;
         setlinebuf;
         flockfile;
         ftrylockfile;
@@ -527,6 +561,11 @@ GLIBC_2.2.5 {
         freelocale;
         duplocale;
 
+        /* locale-aware string/time */
+        strcoll_l;
+        strxfrm_l;
+        strftime_l;
+
         /* pthread */
         pthread_self;
         pthread_equal;
@@ -587,6 +626,8 @@ GLIBC_2.2.5 {
         pthread_barrier_wait;
         pthread_setname_np;
         pthread_getname_np;
+        pthread_setschedparam;
+        pthread_getschedparam;
 
         /* passwd database */
         getpwnam;
@@ -731,10 +772,12 @@ GLIBC_2.2.5 {
 
         /* system configuration */
         sysconf;
+        sysinfo;
         get_nprocs;
         get_nprocs_conf;
         get_phys_pages;
         get_avphys_pages;
+        getdtablesize;
 
         /* command-line parsing */
         getopt;
@@ -758,6 +801,7 @@ GLIBC_2.2.5 {
         vfork;
         execve;
         execvp;
+        execveat;
         wait;
         waitpid;
         wait3;
@@ -765,6 +809,10 @@ GLIBC_2.2.5 {
         waitid;
         _exit;
         execvpe;
+        getpgrp;
+        setpgrp;
+        getpriority;
+        setpriority;
 
         /* signal */
         signal;
@@ -772,6 +820,8 @@ GLIBC_2.2.5 {
         kill;
         killpg;
         raise;
+        tgkill;
+        tkill;
         sigprocmask;
         pthread_sigmask;
         sigemptyset;
@@ -828,6 +878,7 @@ GLIBC_2.2.5 {
         epoll_ctl;
         epoll_wait;
         epoll_pwait;
+        epoll_pwait2;
 
         /* eventfd / timerfd */
         eventfd;
@@ -846,6 +897,12 @@ GLIBC_2.2.5 {
         sched_setparam;
         sched_get_priority_min;
         sched_get_priority_max;
+        sched_setattr;
+        sched_getattr;
+
+        /* brk/sbrk (legacy) */
+        brk;
+        sbrk;
 
         /* mmap */
         mmap;
@@ -872,6 +929,34 @@ GLIBC_2.2.5 {
         scandir;
         scandir64;
         alphasort;
+        versionsort;
+
+        /* C11 threads */
+        thrd_create;
+        thrd_join;
+        thrd_detach;
+        thrd_exit;
+        thrd_current;
+        thrd_equal;
+        thrd_sleep;
+        thrd_yield;
+        mtx_init;
+        mtx_lock;
+        mtx_trylock;
+        mtx_timedlock;
+        mtx_unlock;
+        mtx_destroy;
+        cnd_init;
+        cnd_signal;
+        cnd_broadcast;
+        cnd_wait;
+        cnd_timedwait;
+        cnd_destroy;
+        tss_create;
+        tss_get;
+        tss_set;
+        tss_delete;
+        call_once;
 
         /* time */
         time;
@@ -896,6 +981,8 @@ GLIBC_2.2.5 {
         ctime;
         strptime;
         tzset;
+        timespec_get;
+        timespec_getres;
 
         /* termios */
         tcgetattr;
@@ -908,6 +995,9 @@ GLIBC_2.2.5 {
         cfgetospeed;
         cfsetispeed;
         cfsetospeed;
+        tcgetpgrp;
+        tcsetpgrp;
+        tcgetsid;
 
         /* resource */
         getrlimit;
@@ -931,6 +1021,7 @@ GLIBC_2.2.5 {
         syslog;
         closelog;
         vsyslog;
+        setlogmask;
 
         /* err.h — BSD/GNU error reporting */
         err;
@@ -974,6 +1065,7 @@ GLIBC_2.2.5 {
         ttyname_r;
         ctermid;
         getpass;
+        cuserid;
         sethostname;
         setdomainname;
 
@@ -987,6 +1079,17 @@ GLIBC_2.2.5 {
         gethostid;
         getdomainname;
         mkdtemp;
+        get_current_dir_name;
+        sockatmark;
+
+        /* filesystem status */
+        statfs;
+        fstatfs;
+        statvfs;
+        fstatvfs;
+
+        /* directory entries */
+        getdents64;
 
         /* getrandom / statx / fallocate */
         getrandom;
@@ -1006,6 +1109,8 @@ GLIBC_2.2.5 {
         posix_spawn_file_actions_addclose;
         posix_spawn_file_actions_adddup2;
         posix_spawn_file_actions_addopen;
+        posix_spawn_file_actions_addchdir_np;
+        posix_spawn_file_actions_addfchdir_np;
 
         /* file tree walk */
         ftw;
@@ -1015,6 +1120,9 @@ GLIBC_2.2.5 {
         gettext;
         dgettext;
         ngettext;
+        dcgettext;
+        dcngettext;
+        dngettext;
         textdomain;
         bindtextdomain;
 
@@ -1062,6 +1170,18 @@ GLIBC_2.2.5 {
         close_range;
         pidfd_open;
         pidfd_send_signal;
+        pidfd_getfd;
+        seccomp;
+        userfaultfd;
+        kcmp;
+        perf_event_open;
+        ptrace;
+        capget;
+        capset;
+        futex;
+        membarrier;
+        ioprio_set;
+        ioprio_get;
 
         /* extended attributes */
         getxattr;
@@ -1080,9 +1200,14 @@ GLIBC_2.2.5 {
         /* misc Linux */
         mincore;
         posix_fadvise;
+        posix_fadvise64;
         readahead;
         syncfs;
         sync;
+        sync_file_range;
+        remap_file_pages;
+        quotactl;
+        lookup_dcookie;
 
         /* PTY */
         openpty;
@@ -1091,7 +1216,9 @@ GLIBC_2.2.5 {
         grantpt;
         unlockpt;
         ptsname;
+        ptsname_r;
         posix_openpt;
+        getpt;
 
         /* crypt */
         crypt;
@@ -1164,6 +1291,23 @@ GLIBC_2.2.5 {
         res_query;
         res_search;
 
+        /* network database iterators */
+        gethostbyname2;
+        gethostent;
+        sethostent;
+        endhostent;
+        getnetent;
+        setnetent;
+        endnetent;
+        getnetbyname;
+        getnetbyaddr;
+        getservent;
+        setservent;
+        endservent;
+        getprotoent;
+        setprotoent;
+        endprotoent;
+
         /* passwd/group extras */
         getpwent_r;
         getgrent_r;
@@ -1209,6 +1353,33 @@ GLIBC_2.2.5 {
         mlock2;
         name_to_handle_at;
         open_by_handle_at;
+
+        /* memory protection keys */
+        pkey_alloc;
+        pkey_free;
+        pkey_mprotect;
+
+        /* io_uring */
+        io_uring_setup;
+        io_uring_enter;
+        io_uring_register;
+
+        /* native Linux AIO */
+        io_setup;
+        io_destroy;
+        io_submit;
+        io_cancel;
+        io_getevents;
+
+        /* landlock */
+        landlock_create_ruleset;
+        landlock_add_rule;
+        landlock_restrict_self;
+
+        /* kernel keyring */
+        add_key;
+        request_key;
+        keyctl;
 
         /* 64-bit LFS variants */
         open64;

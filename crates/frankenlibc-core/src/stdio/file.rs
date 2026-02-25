@@ -393,6 +393,23 @@ impl StdioStream {
         }
     }
 
+    /// Create a dynamic memory-backed stream with custom open flags.
+    /// Used by fopencookie where the mode determines read/write permissions.
+    pub fn new_mem_dynamic_with_flags(open_flags: OpenFlags) -> Self {
+        Self {
+            fd: -2,
+            buffer: StreamBuffer::new(BufMode::None, 0),
+            open_flags,
+            flags: StreamFlags::default(),
+            offset: 0,
+            ungetc_byte: None,
+            mem_backing: Some(MemBacking::Dynamic {
+                data: Vec::new(),
+                pos: 0,
+            }),
+        }
+    }
+
     // -----------------------------------------------------------------------
     // Accessors
     // -----------------------------------------------------------------------

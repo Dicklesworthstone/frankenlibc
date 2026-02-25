@@ -448,6 +448,32 @@ pub unsafe extern "C" fn alphasort(
 }
 
 // ---------------------------------------------------------------------------
+// versionsort — Implemented
+// ---------------------------------------------------------------------------
+
+/// GNU extension `versionsort` — version-aware directory entry comparator.
+///
+/// Like `alphasort` but uses `strverscmp` for version-aware ordering.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn versionsort(
+    a: *mut *const libc::dirent,
+    b: *mut *const libc::dirent,
+) -> c_int {
+    if a.is_null() || b.is_null() {
+        return 0;
+    }
+    let da = unsafe { *a };
+    let db = unsafe { *b };
+    if da.is_null() || db.is_null() {
+        return 0;
+    }
+    // Compare d_name fields using strverscmp semantics.
+    let na = unsafe { (*da).d_name.as_ptr() };
+    let nb = unsafe { (*db).d_name.as_ptr() };
+    unsafe { crate::string_abi::strverscmp(na, nb) }
+}
+
+// ---------------------------------------------------------------------------
 // scandir — native implementation using our opendir/readdir
 // ---------------------------------------------------------------------------
 

@@ -177,7 +177,7 @@ mod tests {
         srand48(1);
         for _ in 0..100 {
             let v = lrand48();
-            assert!(v >= 0 && v < (1i64 << 31), "lrand48 out of range: {v}");
+            assert!((0..(1i64 << 31)).contains(&v), "lrand48 out of range: {v}");
         }
     }
 
@@ -187,7 +187,7 @@ mod tests {
         for _ in 0..100 {
             let v = mrand48();
             assert!(
-                v >= -(1i64 << 31) && v < (1i64 << 31),
+                (-(1i64 << 31)..(1i64 << 31)).contains(&v),
                 "mrand48 out of range: {v}"
             );
         }
@@ -207,7 +207,7 @@ mod tests {
         let mut state = [0u16, 0, 1];
         for _ in 0..100 {
             let v = nrand48(&mut state);
-            assert!(v >= 0 && v < (1i64 << 31));
+            assert!((0..(1i64 << 31)).contains(&v));
         }
     }
 

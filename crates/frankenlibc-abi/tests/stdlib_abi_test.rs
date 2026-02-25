@@ -4,10 +4,10 @@
 
 use frankenlibc_abi::errno_abi::__errno_location;
 use frankenlibc_abi::stdlib_abi::{
-    a64l, abort as abi_abort, at_quick_exit, atoll, clearenv, drand48, ecvt, erand48, fcvt, gcvt,
-    getenv, getsubopt, initstate, jrand48, l64a, lcong48, lrand48, mkostemp, mkostemps, mkstemps,
-    mrand48, nrand48, on_exit, qsort_r, quick_exit, random, reallocarray, seed48, setenv, setstate,
-    srand48, srandom, strtold, strtoll, strtoull,
+    a64l, at_quick_exit, atoll, clearenv, drand48, ecvt, erand48, fcvt, gcvt, getenv, getsubopt,
+    initstate, jrand48, l64a, lcong48, lrand48, mkostemp, mkostemps, mkstemps, mrand48, nrand48,
+    on_exit, qsort_r, random, reallocarray, seed48, setenv, setstate, srand48, srandom, strtold,
+    strtoll, strtoull,
 };
 use frankenlibc_abi::unistd_abi::{
     __h_errno_location, confstr, creat64, ctermid, ether_aton, ether_aton_r, ether_ntoa,
@@ -2191,7 +2191,7 @@ fn drand48_returns_in_range() {
         srand48(1);
         for _ in 0..50 {
             let v = drand48();
-            assert!(v >= 0.0 && v < 1.0, "drand48 out of range: {v}");
+            assert!((0.0..1.0).contains(&v), "drand48 out of range: {v}");
         }
     }
 }

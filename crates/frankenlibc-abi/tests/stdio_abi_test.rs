@@ -2,7 +2,7 @@
 
 //! Integration tests for `<stdio.h>` ABI entrypoints.
 
-use std::ffi::{CStr, CString};
+use std::ffi::{CStr, CString, c_char, c_int, c_void};
 use std::fs;
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
@@ -11,10 +11,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use frankenlibc_abi::stdio_abi::{
     asprintf, dprintf, fclose, fdopen, fflush, fgetc, fgetc_unlocked, fgetpos, fgetpos64, fgets,
-    fileno, flockfile, fopen, fopen64, fprintf, fputc, fputc_unlocked, fputs, fread, freopen,
-    fseek, fseeko64, fsetpos, fsetpos64, ftello64, ftrylockfile, funlockfile, fwrite, getc,
-    getc_unlocked, getdelim, getline, printf, putc, putc_unlocked, remove as stdio_remove, setbuf,
-    setlinebuf, setvbuf, snprintf, sprintf, tmpfile, tmpnam, ungetc,
+    fileno, flockfile, fopen, fopen64, fopencookie, fprintf, fputc, fputc_unlocked, fputs, fread,
+    freopen, fseek, fseeko64, fsetpos, fsetpos64, ftello64, ftrylockfile, funlockfile, fwrite,
+    getc, getc_unlocked, getdelim, getline, printf, putc, putc_unlocked, remove as stdio_remove,
+    setbuf, setlinebuf, setvbuf, snprintf, sprintf, tmpfile, tmpnam, ungetc,
 };
 
 const IOFBF: i32 = 0;
@@ -37,6 +37,86 @@ fn temp_path(tag: &str) -> PathBuf {
 
 fn path_cstring(path: &Path) -> CString {
     CString::new(path.as_os_str().as_bytes()).expect("temp path must not contain interior NUL")
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct CookieIoFuncs {
+    read: Option<unsafe extern "C" fn(*mut c_void, *mut c_char, usize) -> isize>,
+    write: Option<unsafe extern "C" fn(*mut c_void, *const c_char, usize) -> isize>,
+    seek: Option<unsafe extern "C" fn(*mut c_void, *mut i64, c_int) -> c_int>,
+    close: Option<unsafe extern "C" fn(*mut c_void) -> c_int>,
+}
+
+#[derive(Default)]
+struct CookieState {
+    data: Vec<u8>,
+    pos: usize,
+    closed: bool,
+}
+
+unsafe extern "C" fn cookie_read(cookie: *mut c_void, buf: *mut c_char, count: usize) -> isize {
+    if cookie.is_null() || buf.is_null() {
+        return -1;
+    }
+    // SAFETY: test controls cookie pointer lifetime and type.
+    let state = unsafe { &mut *(cookie as *mut CookieState) };
+    if state.pos >= state.data.len() {
+        return 0;
+    }
+    let n = count.min(state.data.len() - state.pos);
+    // SAFETY: caller provides writable buffer for `count` bytes.
+    unsafe { std::ptr::copy_nonoverlapping(state.data[state.pos..].as_ptr(), buf.cast::<u8>(), n) };
+    state.pos += n;
+    n as isize
+}
+
+unsafe extern "C" fn cookie_write(cookie: *mut c_void, buf: *const c_char, count: usize) -> isize {
+    if cookie.is_null() || buf.is_null() {
+        return -1;
+    }
+    // SAFETY: test controls cookie pointer lifetime and type.
+    let state = unsafe { &mut *(cookie as *mut CookieState) };
+    let src = unsafe { std::slice::from_raw_parts(buf.cast::<u8>(), count) };
+    let end = state.pos.saturating_add(count);
+    if state.data.len() < end {
+        state.data.resize(end, 0);
+    }
+    state.data[state.pos..end].copy_from_slice(src);
+    state.pos = end;
+    count as isize
+}
+
+unsafe extern "C" fn cookie_seek(cookie: *mut c_void, offset: *mut i64, whence: c_int) -> c_int {
+    if cookie.is_null() || offset.is_null() {
+        return -1;
+    }
+    // SAFETY: test controls cookie pointer lifetime and type.
+    let state = unsafe { &mut *(cookie as *mut CookieState) };
+    let req = unsafe { *offset };
+    let base = match whence {
+        libc::SEEK_SET => 0i64,
+        libc::SEEK_CUR => state.pos as i64,
+        libc::SEEK_END => state.data.len() as i64,
+        _ => return -1,
+    };
+    let new_pos = match base.checked_add(req) {
+        Some(v) if v >= 0 => v as usize,
+        _ => return -1,
+    };
+    state.pos = new_pos;
+    unsafe { *offset = new_pos as i64 };
+    0
+}
+
+unsafe extern "C" fn cookie_close(cookie: *mut c_void) -> c_int {
+    if cookie.is_null() {
+        return -1;
+    }
+    // SAFETY: test controls cookie pointer lifetime and type.
+    let state = unsafe { &mut *(cookie as *mut CookieState) };
+    state.closed = true;
+    0
 }
 
 #[test]
@@ -123,6 +203,50 @@ fn fwrite_then_fread_round_trip_matches_bytes() {
     // SAFETY: `stream` is valid and open.
     assert_eq!(unsafe { fclose(stream) }, 0);
     let _ = fs::remove_file(path);
+}
+
+#[test]
+fn fopencookie_routes_io_callbacks_for_read_write_seek_close() {
+    let cookie = Box::into_raw(Box::new(CookieState::default()));
+    let funcs = CookieIoFuncs {
+        read: Some(cookie_read),
+        write: Some(cookie_write),
+        seek: Some(cookie_seek),
+        close: Some(cookie_close),
+    };
+
+    let mode = CString::new("w+").expect("valid mode");
+    // SAFETY: callback table and mode pointers are valid for call duration.
+    let stream = unsafe {
+        fopencookie(
+            cookie.cast::<c_void>(),
+            mode.as_ptr(),
+            (&funcs as *const CookieIoFuncs).cast::<c_void>(),
+        )
+    };
+    assert!(!stream.is_null());
+
+    let payload = b"cookie-io";
+    // SAFETY: pointers and stream are valid.
+    let wrote = unsafe { fwrite(payload.as_ptr().cast::<c_void>(), 1, payload.len(), stream) };
+    assert_eq!(wrote, payload.len());
+
+    // SAFETY: stream is valid.
+    assert_eq!(unsafe { fseek(stream, 0, libc::SEEK_SET) }, 0);
+
+    let mut out = [0u8; 9];
+    // SAFETY: destination pointer and stream are valid.
+    let read = unsafe { fread(out.as_mut_ptr().cast::<c_void>(), 1, out.len(), stream) };
+    assert_eq!(read, out.len());
+    assert_eq!(&out, payload);
+
+    // SAFETY: stream is valid and open.
+    assert_eq!(unsafe { fclose(stream) }, 0);
+
+    // SAFETY: cookie ownership remains with this test.
+    let state = unsafe { Box::from_raw(cookie) };
+    assert!(state.closed);
+    assert_eq!(state.data, payload);
 }
 
 #[test]

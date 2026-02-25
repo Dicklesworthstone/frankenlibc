@@ -55,14 +55,18 @@ fn test_strverscmp_leading_zeros() {
     let b = b"file08\0";
     let rc = unsafe { strverscmp(a.as_ptr() as *const c_char, b.as_ptr() as *const c_char) };
     // With leading zeros, comparison is fractional: 007 < 08
-    assert!(rc < 0, "file007 should come before file08 (leading zero), got {}", rc);
+    assert!(
+        rc < 0,
+        "file007 should come before file08 (leading zero), got {}",
+        rc
+    );
 }
 
 #[test]
 fn test_strverscmp_null() {
     assert_eq!(unsafe { strverscmp(std::ptr::null(), std::ptr::null()) }, 0);
-    assert!(unsafe { strverscmp(std::ptr::null(), b"a\0".as_ptr() as *const c_char) } < 0);
-    assert!(unsafe { strverscmp(b"a\0".as_ptr() as *const c_char, std::ptr::null()) } > 0);
+    assert!(unsafe { strverscmp(std::ptr::null(), c"a".as_ptr().cast()) } < 0);
+    assert!(unsafe { strverscmp(c"a".as_ptr().cast(), std::ptr::null()) } > 0);
 }
 
 // ---------------------------------------------------------------------------

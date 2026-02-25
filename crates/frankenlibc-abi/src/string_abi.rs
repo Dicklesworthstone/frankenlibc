@@ -53,106 +53,83 @@ fn enter_string_membrane_guard() -> Option<StringMembraneGuard> {
 
 #[inline(never)]
 unsafe fn raw_memcpy_bytes(dst: *mut u8, src: *const u8, n: usize) {
-    use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
-    static PTR: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
-    static RESOLVING: AtomicBool = AtomicBool::new(false);
+    // SAFETY: all operations require raw pointer arithmetic and FFI calls.
+    unsafe {
+        use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
+        static PTR: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
+        static RESOLVING: AtomicBool = AtomicBool::new(false);
 
-    let mut ptr = PTR.load(Ordering::Relaxed);
-    if ptr.is_null() {
-        if !RESOLVING.swap(true, Ordering::SeqCst) {
-            ptr = crate::dlfcn_abi::dlvsym_next(
-                b"memcpy\0".as_ptr().cast(),
-                b"GLIBC_2.14\0".as_ptr().cast(),
-            );
+        let mut ptr = PTR.load(Ordering::Relaxed);
+        if ptr.is_null() && !RESOLVING.swap(true, Ordering::SeqCst) {
+            ptr = crate::dlfcn_abi::dlvsym_next(c"memcpy".as_ptr(), c"GLIBC_2.14".as_ptr());
             if ptr.is_null() {
-                ptr = crate::dlfcn_abi::dlvsym_next(
-                    b"memcpy\0".as_ptr().cast(),
-                    b"GLIBC_2.2.5\0".as_ptr().cast(),
-                );
+                ptr = crate::dlfcn_abi::dlvsym_next(c"memcpy".as_ptr(), c"GLIBC_2.2.5".as_ptr());
             }
             if ptr.is_null() {
-                ptr = crate::dlfcn_abi::dlvsym_next(
-                    b"memcpy\0".as_ptr().cast(),
-                    b"GLIBC_2.17\0".as_ptr().cast(),
-                );
+                ptr = crate::dlfcn_abi::dlvsym_next(c"memcpy".as_ptr(), c"GLIBC_2.17".as_ptr());
             }
             if !ptr.is_null() {
                 PTR.store(ptr, Ordering::Relaxed);
             }
             RESOLVING.store(false, Ordering::SeqCst);
         }
-    }
 
-    if !ptr.is_null() {
-        let f: unsafe extern "C" fn(*mut c_void, *const c_void, usize) -> *mut c_void =
-            std::mem::transmute(ptr);
-        f(dst as *mut c_void, src as *const c_void, n);
-        return;
-    }
+        if !ptr.is_null() {
+            let f: unsafe extern "C" fn(*mut c_void, *const c_void, usize) -> *mut c_void =
+                std::mem::transmute(ptr);
+            f(dst as *mut c_void, src as *const c_void, n);
+            return;
+        }
 
-    let mut i = 0usize;
-    while i < n {
-        // SAFETY: caller guarantees valid non-overlapping regions for `n` bytes.
-        unsafe {
+        let mut i = 0usize;
+        while i < n {
             let byte = std::ptr::read_volatile(src.add(i));
             std::ptr::write_volatile(dst.add(i), byte);
+            i += 1;
         }
-        i += 1;
     }
 }
 
 #[inline(never)]
 unsafe fn raw_memmove_bytes(dst: *mut u8, src: *const u8, n: usize) {
-    use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
-    static PTR: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
-    static RESOLVING: AtomicBool = AtomicBool::new(false);
+    // SAFETY: all operations require raw pointer arithmetic and FFI calls.
+    unsafe {
+        use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
+        static PTR: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
+        static RESOLVING: AtomicBool = AtomicBool::new(false);
 
-    let mut ptr = PTR.load(Ordering::Relaxed);
-    if ptr.is_null() {
-        if !RESOLVING.swap(true, Ordering::SeqCst) {
-            ptr = crate::dlfcn_abi::dlvsym_next(
-                b"memmove\0".as_ptr().cast(),
-                b"GLIBC_2.2.5\0".as_ptr().cast(),
-            );
+        let mut ptr = PTR.load(Ordering::Relaxed);
+        if ptr.is_null() && !RESOLVING.swap(true, Ordering::SeqCst) {
+            ptr = crate::dlfcn_abi::dlvsym_next(c"memmove".as_ptr(), c"GLIBC_2.2.5".as_ptr());
             if ptr.is_null() {
-                ptr = crate::dlfcn_abi::dlvsym_next(
-                    b"memmove\0".as_ptr().cast(),
-                    b"GLIBC_2.14\0".as_ptr().cast(),
-                );
+                ptr = crate::dlfcn_abi::dlvsym_next(c"memmove".as_ptr(), c"GLIBC_2.14".as_ptr());
             }
             if ptr.is_null() {
-                ptr = crate::dlfcn_abi::dlvsym_next(
-                    b"memmove\0".as_ptr().cast(),
-                    b"GLIBC_2.17\0".as_ptr().cast(),
-                );
+                ptr = crate::dlfcn_abi::dlvsym_next(c"memmove".as_ptr(), c"GLIBC_2.17".as_ptr());
             }
             if !ptr.is_null() {
                 PTR.store(ptr, Ordering::Relaxed);
             }
             RESOLVING.store(false, Ordering::SeqCst);
         }
-    }
 
-    if !ptr.is_null() {
-        let f: unsafe extern "C" fn(*mut c_void, *const c_void, usize) -> *mut c_void =
-            std::mem::transmute(ptr);
-        f(dst as *mut c_void, src as *const c_void, n);
-        return;
-    }
+        if !ptr.is_null() {
+            let f: unsafe extern "C" fn(*mut c_void, *const c_void, usize) -> *mut c_void =
+                std::mem::transmute(ptr);
+            f(dst as *mut c_void, src as *const c_void, n);
+            return;
+        }
 
-    let dst_addr = dst as usize;
-    let src_addr = src as usize;
-    if dst_addr <= src_addr || dst_addr >= src_addr.saturating_add(n) {
-        // SAFETY: forward copy is correct for non-overlap or forward-safe overlap.
-        unsafe { raw_memcpy_bytes(dst, src, n) };
-        return;
-    }
+        let dst_addr = dst as usize;
+        let src_addr = src as usize;
+        if dst_addr <= src_addr || dst_addr >= src_addr.saturating_add(n) {
+            raw_memcpy_bytes(dst, src, n);
+            return;
+        }
 
-    let mut i = n;
-    while i > 0 {
-        i -= 1;
-        // SAFETY: caller guarantees valid regions for `n` bytes; backward copy handles overlap.
-        unsafe {
+        let mut i = n;
+        while i > 0 {
+            i -= 1;
             let byte = std::ptr::read_volatile(src.add(i));
             std::ptr::write_volatile(dst.add(i), byte);
         }
@@ -161,44 +138,36 @@ unsafe fn raw_memmove_bytes(dst: *mut u8, src: *const u8, n: usize) {
 
 #[inline(never)]
 unsafe fn raw_memset_bytes(dst: *mut u8, value: u8, n: usize) {
-    use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
-    static PTR: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
-    static RESOLVING: AtomicBool = AtomicBool::new(false);
+    // SAFETY: all operations require raw pointer arithmetic and FFI calls.
+    unsafe {
+        use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
+        static PTR: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
+        static RESOLVING: AtomicBool = AtomicBool::new(false);
 
-    let mut ptr = PTR.load(Ordering::Relaxed);
-    if ptr.is_null() {
-        if !RESOLVING.swap(true, Ordering::SeqCst) {
-            ptr = crate::dlfcn_abi::dlvsym_next(
-                b"memset\0".as_ptr().cast(),
-                b"GLIBC_2.2.5\0".as_ptr().cast(),
-            );
+        let mut ptr = PTR.load(Ordering::Relaxed);
+        if ptr.is_null() && !RESOLVING.swap(true, Ordering::SeqCst) {
+            ptr = crate::dlfcn_abi::dlvsym_next(c"memset".as_ptr(), c"GLIBC_2.2.5".as_ptr());
             if ptr.is_null() {
-                ptr = crate::dlfcn_abi::dlvsym_next(
-                    b"memset\0".as_ptr().cast(),
-                    b"GLIBC_2.17\0".as_ptr().cast(),
-                );
+                ptr = crate::dlfcn_abi::dlvsym_next(c"memset".as_ptr(), c"GLIBC_2.17".as_ptr());
             }
             if !ptr.is_null() {
                 PTR.store(ptr, Ordering::Relaxed);
             }
             RESOLVING.store(false, Ordering::SeqCst);
         }
-    }
 
-    if !ptr.is_null() {
-        let f: unsafe extern "C" fn(*mut c_void, c_int, usize) -> *mut c_void =
-            std::mem::transmute(ptr);
-        f(dst as *mut c_void, value as c_int, n);
-        return;
-    }
-
-    let mut i = 0usize;
-    while i < n {
-        // SAFETY: caller guarantees `dst` valid for `n` bytes.
-        unsafe {
-            std::ptr::write_volatile(dst.add(i), value);
+        if !ptr.is_null() {
+            let f: unsafe extern "C" fn(*mut c_void, c_int, usize) -> *mut c_void =
+                std::mem::transmute(ptr);
+            f(dst as *mut c_void, value as c_int, n);
+            return;
         }
-        i += 1;
+
+        let mut i = 0usize;
+        while i < n {
+            std::ptr::write_volatile(dst.add(i), value);
+            i += 1;
+        }
     }
 }
 
@@ -4369,7 +4338,6 @@ const FRANKEN_REGEX_MAGIC: u64 = 0x4652_4B4E_5245_4758; // "FRKNREGX"
 
 /// Layout of our regex_t: [magic: u64, ptr: *mut CompiledRegex, last_err: i32, pad...]
 /// Total must be <= 64 bytes (sizeof(regex_t) on glibc x86_64).
-
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn regcomp(
     preg: *mut c_void,
@@ -4727,7 +4695,7 @@ unsafe fn fnmatch_impl(
                     return false;
                 }
                 let eq = if casefold {
-                    escaped.to_ascii_lowercase() == sc.to_ascii_lowercase()
+                    escaped.eq_ignore_ascii_case(&sc)
                 } else {
                     escaped == sc
                 };
@@ -4742,7 +4710,7 @@ unsafe fn fnmatch_impl(
                     return false;
                 }
                 let eq = if casefold {
-                    pc.to_ascii_lowercase() == sc.to_ascii_lowercase()
+                    pc.eq_ignore_ascii_case(&sc)
                 } else {
                     pc == sc
                 };
@@ -4781,7 +4749,7 @@ pub unsafe extern "C" fn glob(
     let append = flags & glob_core::GLOB_APPEND != 0;
 
     // Read current state for GLOB_APPEND.
-    let (mut existing_paths, existing_count) = if append {
+    let (existing_paths, existing_count) = if append {
         let pathc = unsafe { *(pglob as *const usize) };
         let pathv = unsafe { *((pglob as *const u8).add(8) as *const *mut *mut c_char) };
         let mut paths: Vec<*mut c_char> = Vec::new();

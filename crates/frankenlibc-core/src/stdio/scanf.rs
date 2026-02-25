@@ -39,7 +39,7 @@ pub enum ScanDirective {
     /// Whitespace directive: skip zero or more whitespace chars.
     Whitespace,
     /// A conversion specifier.
-    Spec(ScanSpec),
+    Spec(Box<ScanSpec>),
 }
 
 /// A parsed scanf conversion specifier.
@@ -200,7 +200,7 @@ pub fn parse_scanf_format(fmt: &[u8]) -> Vec<ScanDirective> {
                 i += 1;
             }
 
-            directives.push(ScanDirective::Spec(spec));
+            directives.push(ScanDirective::Spec(Box::new(spec)));
         } else if fmt[i].is_ascii_whitespace() {
             directives.push(ScanDirective::Whitespace);
             i += 1;
@@ -282,11 +282,11 @@ pub fn scan_input(input: &[u8], directives: &[ScanDirective]) -> ScanResult {
                     Some((val, new_pos)) => {
                         input_failure = false;
                         pos = new_pos;
-                        if !spec.suppress {
-                            if let Some(v) = val {
-                                values.push(v);
-                                count += 1;
-                            }
+                        if !spec.suppress
+                            && let Some(v) = val
+                        {
+                            values.push(v);
+                            count += 1;
                         }
                     }
                 }
@@ -527,7 +527,6 @@ fn scan_float(input: &[u8], pos: usize, spec: &ScanSpec) -> Option<(Option<ScanV
                 && remaining[..8].eq_ignore_ascii_case(b"infinity")
             {
                 i += 5;
-                chars_read += 5;
             }
             let val: f64 = if buf.starts_with(b"-") {
                 f64::NEG_INFINITY
@@ -850,7 +849,7 @@ mod tests {
         let result = scan_input(b"A", &dirs);
         assert_eq!(result.count, 1);
         if let ScanValue::Char(ref c) = result.values[0] {
-            assert_eq!(c, &[b'A']);
+            assert_eq!(c, b"A");
         } else {
             panic!("expected Char");
         }
@@ -862,7 +861,7 @@ mod tests {
         let result = scan_input(b"ABC", &dirs);
         assert_eq!(result.count, 1);
         if let ScanValue::Char(ref c) = result.values[0] {
-            assert_eq!(c, &[b'A', b'B', b'C']);
+            assert_eq!(c, b"ABC");
         } else {
             panic!("expected Char");
         }
@@ -871,10 +870,10 @@ mod tests {
     #[test]
     fn test_scan_float() {
         let dirs = parse_scanf_format(b"%f");
-        let result = scan_input(b"3.14", &dirs);
+        let result = scan_input(b"3.25", &dirs);
         assert_eq!(result.count, 1);
         if let ScanValue::Float(v) = result.values[0] {
-            assert!((v - 3.14).abs() < 1e-10);
+            assert!((v - 3.25).abs() < 1e-10);
         } else {
             panic!("expected Float");
         }
@@ -998,14 +997,14 @@ mod tests {
     #[test]
     fn test_scan_mixed_types() {
         let dirs = parse_scanf_format(b"%s %d %f");
-        let result = scan_input(b"test 42 3.14", &dirs);
+        let result = scan_input(b"test 42 3.25", &dirs);
         assert_eq!(result.count, 3);
         if let ScanValue::String(ref s) = result.values[0] {
             assert_eq!(s, b"test");
         }
         assert!(matches!(result.values[1], ScanValue::SignedInt(42)));
         if let ScanValue::Float(v) = result.values[2] {
-            assert!((v - 3.14).abs() < 1e-10);
+            assert!((v - 3.25).abs() < 1e-10);
         }
     }
 

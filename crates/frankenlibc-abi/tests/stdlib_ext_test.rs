@@ -3,7 +3,7 @@
 //! Integration tests for stdlib extensions: gnu_get_libc_version, confstr.
 
 use frankenlibc_abi::stdlib_abi::{confstr, gnu_get_libc_version};
-use std::ffi::{c_char, CStr};
+use std::ffi::{CStr, c_char};
 
 // ---------------------------------------------------------------------------
 // gnu_get_libc_version
@@ -36,7 +36,10 @@ fn test_gnu_get_libc_version_value() {
 fn test_confstr_cs_path() {
     // _CS_PATH = 0
     let needed = unsafe { confstr(0, std::ptr::null_mut(), 0) };
-    assert!(needed > 0, "confstr(_CS_PATH) should return positive length");
+    assert!(
+        needed > 0,
+        "confstr(_CS_PATH) should return positive length"
+    );
 
     let mut buf = vec![0u8; needed];
     let written = unsafe { confstr(0, buf.as_mut_ptr() as *mut c_char, needed) };
