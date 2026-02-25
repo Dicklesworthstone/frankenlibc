@@ -95,6 +95,41 @@ class TestValidateObligation(unittest.TestCase):
         self.assertEqual(status.evidence_found, 1)
         self.assertEqual(status.gates_found, 1)
 
+    def test_planned_obligation_requires_owner_schema_and_command(self) -> None:
+        ob = {
+            "id": "PO-PLAN-MISSING",
+            "statement": "Planned theorem",
+            "status": "planned",
+            "category": "core_safety",
+            "evidence_artifacts": ["tests/conformance/proof_obligations_binder.v1.json"],
+            "gates": ["scripts/gentoo/proof_binder_validator.py"],
+            "join_keys": ["gate=test"],
+            "scope": {"modes": ["strict"]},
+        }
+        status = validate_obligation(ob, REPO_ROOT, check_hashes=False)
+        self.assertFalse(status.valid)
+        codes = {v.violation_code for v in status.violations}
+        self.assertIn("MISSING_OWNER", codes)
+        self.assertIn("MISSING_ARTIFACT_SCHEMA", codes)
+        self.assertIn("MISSING_VERIFICATION_COMMAND", codes)
+
+    def test_planned_obligation_with_required_metadata_passes(self) -> None:
+        ob = {
+            "id": "PO-PLAN-OK",
+            "statement": "Planned theorem",
+            "status": "planned",
+            "owner": "bd-w2c3.6.1",
+            "artifact_schema": "proof_obligation_record.v1",
+            "verification_command": "bash scripts/check_proof_binder.sh",
+            "category": "core_safety",
+            "evidence_artifacts": ["tests/conformance/proof_obligations_binder.v1.json"],
+            "gates": ["scripts/gentoo/proof_binder_validator.py"],
+            "join_keys": ["gate=test"],
+            "scope": {"modes": ["strict"]},
+        }
+        status = validate_obligation(ob, REPO_ROOT, check_hashes=False)
+        self.assertTrue(status.valid)
+
     def test_missing_evidence(self) -> None:
         ob = {
             "id": "PO-X",

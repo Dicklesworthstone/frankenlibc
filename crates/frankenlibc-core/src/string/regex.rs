@@ -326,11 +326,10 @@ impl<'a> Parser<'a> {
                 if self.peek() == Some(b'}') {
                     max = None; // unbounded
                 } else {
-                    max = Some(self.parse_decimal()?);
-                    if let Some(m) = max {
-                        if m < min {
-                            return Err(REG_BADBR);
-                        }
+                    let m = self.parse_decimal()?;
+                    max = Some(m);
+                    if m < min {
+                        return Err(REG_BADBR);
                     }
                 }
             }
@@ -365,11 +364,10 @@ impl<'a> Parser<'a> {
                 {
                     max = None;
                 } else {
-                    max = Some(self.parse_decimal()?);
-                    if let Some(m) = max {
-                        if m < min {
-                            return Err(REG_BADBR);
-                        }
+                    let m = self.parse_decimal()?;
+                    max = Some(m);
+                    if m < min {
+                        return Err(REG_BADBR);
                     }
                 }
             }

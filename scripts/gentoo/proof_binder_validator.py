@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-"""Proof obligations binder validator (bd-5fw.4).
+"""Proof obligations binder validator (bd-5fw.4, bd-w2c3.6).
 
 Validates the proof obligations binder: checks that every obligation has
 valid evidence artifacts and enforcing gates, reports missing/invalid entries.
+For obligations in `planned` status, enforces owner/artifact-schema/
+verification-command completeness.
 
 Usage:
     python3 scripts/gentoo/proof_binder_validator.py --dry-run
@@ -55,6 +57,13 @@ def parse_source_ref(ref: str) -> Optional[Tuple[str, int]]:
     return path_part, line_number
 
 
+def clean_string(value: Any) -> str:
+    """Return a trimmed string, or empty string when not a string."""
+    if isinstance(value, str):
+        return value.strip()
+    return ""
+
+
 @dataclass
 class ObligationViolation:
     """A validation violation for a proof obligation."""
@@ -80,6 +89,10 @@ class ObligationStatus:
     obligation_id: str
     statement: str
     category: str
+    status: str = "planned"
+    owner: str = ""
+    artifact_schema: str = ""
+    verification_command: str = ""
     valid: bool = True
     evidence_found: int = 0
     evidence_missing: int = 0
@@ -97,6 +110,10 @@ class ObligationStatus:
             "obligation_id": self.obligation_id,
             "statement": self.statement,
             "category": self.category,
+            "status": self.status,
+            "owner": self.owner,
+            "artifact_schema": self.artifact_schema,
+            "verification_command": self.verification_command,
             "valid": self.valid,
             "evidence_found": self.evidence_found,
             "evidence_missing": self.evidence_missing,
@@ -191,11 +208,56 @@ def validate_obligation(
 ) -> ObligationStatus:
     """Validate a single proof obligation."""
     oid = obligation.get("id", "unknown")
+    obligation_status = clean_string(obligation.get("status"))
+    reported_status = obligation_status or "unspecified"
+    owner = clean_string(obligation.get("owner"))
+    artifact_schema = clean_string(obligation.get("artifact_schema"))
+    verification_command = clean_string(obligation.get("verification_command"))
+
     status = ObligationStatus(
         obligation_id=oid,
         statement=obligation.get("statement", ""),
         category=obligation.get("category", "unknown"),
+        status=reported_status,
+        owner=owner,
+        artifact_schema=artifact_schema,
+        verification_command=verification_command,
     )
+
+    if obligation_status.lower() == "planned":
+        required_fields = [
+            (
+                "owner",
+                owner,
+                "MISSING_OWNER",
+                "Set owner to a responsible track/bead (for example `bd-w2c3.6.1`).",
+            ),
+            (
+                "artifact_schema",
+                artifact_schema,
+                "MISSING_ARTIFACT_SCHEMA",
+                "Set artifact_schema to the record schema id (for example `proof_obligation_record.v1`).",
+            ),
+            (
+                "verification_command",
+                verification_command,
+                "MISSING_VERIFICATION_COMMAND",
+                "Set verification_command to the deterministic gate command (for example `bash scripts/check_proof_binder.sh`).",
+            ),
+        ]
+        for field_name, value, code, remediation_hint in required_fields:
+            if not value:
+                status.valid = False
+                status.violations.append(
+                    ObligationViolation(
+                        obligation_id=oid,
+                        violation_code=code,
+                        message=(
+                            f"Planned obligation missing required field: {field_name}"
+                        ),
+                        remediation_hint=remediation_hint,
+                    )
+                )
 
     # Check evidence artifacts exist
     for artifact_path in obligation.get("evidence_artifacts", []):

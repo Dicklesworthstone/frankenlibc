@@ -213,6 +213,30 @@ GLIBC_2.2.5 {
         mkstemps;
         mkostemps;
         clearenv;
+        drand48;
+        erand48;
+        lrand48;
+        nrand48;
+        mrand48;
+        jrand48;
+        srand48;
+        seed48;
+        lcong48;
+        random;
+        srandom;
+        initstate;
+        setstate;
+        qsort_r;
+        a64l;
+        l64a;
+        ecvt;
+        fcvt;
+        gcvt;
+        abort;
+        on_exit;
+        at_quick_exit;
+        quick_exit;
+        getsubopt;
 
         /* ctype */
         isalnum;

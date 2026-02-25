@@ -414,6 +414,24 @@ mod tests {
         }
 
         #[test]
+        fn prop_init_from_reinit_states_transitions_to_unlocked(
+            kind in prop_oneof![
+                Just(PTHREAD_MUTEX_NORMAL),
+                Just(PTHREAD_MUTEX_RECURSIVE),
+                Just(PTHREAD_MUTEX_ERRORCHECK),
+            ],
+            state in prop_oneof![
+                Just(MutexContractState::Uninitialized),
+                Just(MutexContractState::Destroyed),
+            ],
+        ) {
+            let outcome = mutex_contract_transition(kind, state, MutexContractOp::Init);
+            prop_assert_eq!(outcome.next, MutexContractState::Unlocked);
+            prop_assert_eq!(outcome.errno, 0);
+            prop_assert!(!outcome.blocks);
+        }
+
+        #[test]
         fn prop_invalid_kind_transitions_fail_with_einval(
             kind in any::<i32>(),
             state in prop_oneof![

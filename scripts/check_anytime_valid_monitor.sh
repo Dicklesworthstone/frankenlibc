@@ -8,6 +8,7 @@
 #   4. Alert budget contracts are complete and well-formed.
 #   5. Companion monitors match math_governance.json production_monitor list.
 #   6. Summary statistics are consistent.
+#   7. Statistical kernel implementation/wiring coverage remains complete.
 #
 # Exit codes:
 #   0 — all checks pass
@@ -367,6 +368,74 @@ else
     echo "PASS: Summary statistics consistent"
 fi
 echo "${sum_check}" | grep -E '^EP' || true
+echo ""
+
+# ---------------------------------------------------------------------------
+# Check 7: Statistical kernel coverage (bd-5vr.3)
+# ---------------------------------------------------------------------------
+echo "--- Check 7: Statistical kernel coverage ---"
+
+stat_check=$(python3 -c "
+import pathlib
+
+root = pathlib.Path('${ROOT}')
+errors = []
+
+required_files = {
+    'risk': 'crates/frankenlibc-membrane/src/runtime_math/risk.rs',
+    'eprocess': 'crates/frankenlibc-membrane/src/runtime_math/eprocess.rs',
+    'cvar': 'crates/frankenlibc-membrane/src/runtime_math/cvar.rs',
+    'alpha_investing': 'crates/frankenlibc-membrane/src/runtime_math/alpha_investing.rs',
+    'changepoint': 'crates/frankenlibc-membrane/src/runtime_math/changepoint.rs',
+    'large_deviations': 'crates/frankenlibc-membrane/src/large_deviations.rs',
+    'spectral_monitor': 'crates/frankenlibc-membrane/src/spectral_monitor.rs',
+}
+
+for module, rel in required_files.items():
+    path = root / rel
+    if not path.is_file():
+        errors.append(f'{module}: missing source file {rel}')
+        continue
+    text = path.read_text(encoding='utf-8', errors='replace')
+    if '#[cfg(test)]' not in text:
+        errors.append(f'{module}: missing #[cfg(test)] coverage block')
+    if 'pub struct' not in text and 'pub enum' not in text:
+        errors.append(f'{module}: missing public struct/enum API surface')
+
+mod_path = root / 'crates/frankenlibc-membrane/src/runtime_math/mod.rs'
+if not mod_path.is_file():
+    errors.append('runtime_math/mod.rs missing')
+else:
+    mod_text = mod_path.read_text(encoding='utf-8', errors='replace')
+    wiring_patterns = {
+        'risk': 'use self::risk::ConformalRiskEngine;',
+        'eprocess': 'use self::eprocess::{AnytimeEProcessMonitor, SequentialState};',
+        'cvar': 'use self::cvar::{DroCvarController, TailState};',
+        'alpha_investing': 'use self::alpha_investing::{AlphaInvestingController, AlphaInvestingState};',
+        'changepoint': 'use self::changepoint::{ChangepointController, ChangepointState};',
+        'large_deviations': 'use crate::large_deviations::{LargeDeviationsMonitor, RateState};',
+        'spectral_monitor': 'use crate::spectral_monitor::{PhaseState, SpectralMonitor};',
+    }
+    for module, pattern in wiring_patterns.items():
+        if pattern not in mod_text:
+            errors.append(f'{module}: runtime_math/mod.rs missing wiring pattern: {pattern}')
+
+print(f'STAT_ERRORS={len(errors)}')
+print(f'KERNELS={len(required_files)}')
+for e in errors:
+    print(f'  {e}')
+")
+
+stat_errs=$(echo "${stat_check}" | grep '^STAT_ERRORS=' | cut -d= -f2)
+
+if [[ "${stat_errs}" -gt 0 ]]; then
+    echo "FAIL: ${stat_errs} statistical-kernel coverage error(s):"
+    echo "${stat_check}" | grep '  '
+    failures=$((failures + 1))
+else
+    echo "PASS: Statistical-kernel implementation/wiring coverage validated"
+fi
+echo "${stat_check}" | grep -E '^KERNELS=' || true
 echo ""
 
 # ---------------------------------------------------------------------------

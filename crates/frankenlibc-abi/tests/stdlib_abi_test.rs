@@ -4,8 +4,10 @@
 
 use frankenlibc_abi::errno_abi::__errno_location;
 use frankenlibc_abi::stdlib_abi::{
-    atoll, clearenv, getenv, mkostemp, mkostemps, mkstemps, reallocarray, setenv, strtold, strtoll,
-    strtoull,
+    a64l, abort as abi_abort, at_quick_exit, atoll, clearenv, drand48, ecvt, erand48, fcvt, gcvt,
+    getenv, getsubopt, initstate, jrand48, l64a, lcong48, lrand48, mkostemp, mkostemps, mkstemps,
+    mrand48, nrand48, on_exit, qsort_r, quick_exit, random, reallocarray, seed48, setenv, setstate,
+    srand48, srandom, strtold, strtoll, strtoull,
 };
 use frankenlibc_abi::unistd_abi::{
     __h_errno_location, confstr, creat64, ctermid, ether_aton, ether_aton_r, ether_ntoa,
@@ -2166,4 +2168,332 @@ fn mq_open_null_name_reports_expected_errno() {
 
     assert_eq!(observed, -1);
     assert_eq!(observed_errno, libc::EFAULT);
+}
+
+// ===========================================================================
+// drand48 family tests
+// ===========================================================================
+
+#[test]
+fn drand48_seeded_deterministic() {
+    unsafe {
+        srand48(42);
+        let a = drand48();
+        srand48(42);
+        let b = drand48();
+        assert_eq!(a, b);
+    }
+}
+
+#[test]
+fn drand48_returns_in_range() {
+    unsafe {
+        srand48(1);
+        for _ in 0..50 {
+            let v = drand48();
+            assert!(v >= 0.0 && v < 1.0, "drand48 out of range: {v}");
+        }
+    }
+}
+
+#[test]
+fn lrand48_returns_non_negative() {
+    unsafe {
+        srand48(1);
+        for _ in 0..50 {
+            let v = lrand48();
+            assert!(v >= 0, "lrand48 negative: {v}");
+        }
+    }
+}
+
+#[test]
+fn mrand48_returns_signed_long() {
+    unsafe {
+        srand48(1);
+        let a = mrand48();
+        let b = mrand48();
+        assert_ne!(a, b);
+    }
+}
+
+#[test]
+fn erand48_uses_caller_state() {
+    let mut state1 = [0x1234u16, 0x5678, 0x9ABC];
+    let mut state2 = [0x1234u16, 0x5678, 0x9ABC];
+    let a = unsafe { erand48(state1.as_mut_ptr()) };
+    let b = unsafe { erand48(state2.as_mut_ptr()) };
+    assert_eq!(a, b);
+    assert_eq!(state1, state2);
+}
+
+#[test]
+fn nrand48_uses_caller_state() {
+    let mut state = [0u16, 0, 1];
+    let v = unsafe { nrand48(state.as_mut_ptr()) };
+    assert!(v >= 0, "nrand48 negative: {v}");
+}
+
+#[test]
+fn jrand48_uses_caller_state() {
+    let mut state = [0xFFFFu16, 0xFFFF, 0xFFFF];
+    let _ = unsafe { jrand48(state.as_mut_ptr()) };
+}
+
+#[test]
+fn seed48_returns_old_state() {
+    unsafe {
+        srand48(100);
+        let _ = drand48();
+        let mut new_seed = [0x1111u16, 0x2222, 0x3333];
+        let old_ptr = seed48(new_seed.as_mut_ptr());
+        assert!(!old_ptr.is_null());
+    }
+}
+
+#[test]
+fn lcong48_sets_custom_params() {
+    unsafe {
+        let mut params = [0u16, 0, 0, 1, 0, 0, 1];
+        lcong48(params.as_mut_ptr());
+        let v = drand48();
+        let expected = 1.0 / ((1u64 << 48) as f64);
+        assert!((v - expected).abs() < 1e-20, "lcong48 custom: {v}");
+    }
+}
+
+// ===========================================================================
+// random family tests
+// ===========================================================================
+
+#[test]
+fn random_seeded_deterministic() {
+    unsafe {
+        srandom(42);
+        let a = random();
+        srandom(42);
+        let b = random();
+        assert_eq!(a, b);
+    }
+}
+
+#[test]
+fn random_returns_non_negative() {
+    unsafe {
+        srandom(1);
+        for _ in 0..50 {
+            let v = random();
+            assert!(v >= 0, "random negative: {v}");
+        }
+    }
+}
+
+#[test]
+fn initstate_setstate_roundtrip() {
+    unsafe {
+        srandom(99);
+        let mut buf = vec![0u8; 256];
+        let _ = initstate(99, buf.as_mut_ptr() as *mut libc::c_char, buf.len());
+        let seq1: Vec<libc::c_long> = (0..5).map(|_| random()).collect();
+        let _ = setstate(buf.as_mut_ptr() as *mut libc::c_char);
+        let seq2: Vec<libc::c_long> = (0..5).map(|_| random()).collect();
+        assert_eq!(seq1, seq2);
+    }
+}
+
+// ===========================================================================
+// qsort_r test
+// ===========================================================================
+
+unsafe extern "C" fn cmp_int_with_ctx(
+    a: *const libc::c_void,
+    b: *const libc::c_void,
+    _ctx: *mut libc::c_void,
+) -> libc::c_int {
+    let va = unsafe { *(a as *const i32) };
+    let vb = unsafe { *(b as *const i32) };
+    va.cmp(&vb) as libc::c_int
+}
+
+#[test]
+fn qsort_r_sorts_integers() {
+    let mut arr = [5i32, 3, 8, 1, 4, 2, 7, 6];
+    unsafe {
+        qsort_r(
+            arr.as_mut_ptr() as *mut libc::c_void,
+            arr.len(),
+            std::mem::size_of::<i32>(),
+            Some(cmp_int_with_ctx),
+            ptr::null_mut(),
+        );
+    }
+    assert_eq!(arr, [1, 2, 3, 4, 5, 6, 7, 8]);
+}
+
+// ===========================================================================
+// a64l / l64a tests
+// ===========================================================================
+
+#[test]
+fn a64l_basic_values() {
+    let dot = CString::new(".").unwrap();
+    let slash = CString::new("/").unwrap();
+    let zero = CString::new("0").unwrap();
+    let cap_a = CString::new("A").unwrap();
+    unsafe {
+        assert_eq!(a64l(dot.as_ptr()), 0);
+        assert_eq!(a64l(slash.as_ptr()), 1);
+        assert_eq!(a64l(zero.as_ptr()), 2);
+        assert_eq!(a64l(cap_a.as_ptr()), 12);
+    }
+}
+
+#[test]
+fn l64a_a64l_roundtrip() {
+    for val in [1i64, 42, 100, 1000, 123456, 2_000_000_000] {
+        unsafe {
+            let encoded = l64a(val as libc::c_long);
+            assert!(!encoded.is_null());
+            let decoded = a64l(encoded);
+            assert_eq!(decoded as i64, val, "roundtrip failed for {val}");
+        }
+    }
+}
+
+// ===========================================================================
+// ecvt / fcvt / gcvt tests
+// ===========================================================================
+
+#[test]
+fn ecvt_basic_conversion() {
+    let mut decpt: libc::c_int = 0;
+    let mut sign: libc::c_int = 0;
+    let result = unsafe { ecvt(123.456, 6, &mut decpt, &mut sign) };
+    assert!(!result.is_null());
+    assert_eq!(sign, 0);
+    assert_eq!(decpt, 3);
+    let s = unsafe { std::ffi::CStr::from_ptr(result) };
+    assert_eq!(s.to_str().unwrap(), "123456");
+}
+
+#[test]
+fn ecvt_negative_value() {
+    let mut decpt: libc::c_int = 0;
+    let mut sign: libc::c_int = 0;
+    let _ = unsafe { ecvt(-42.0, 4, &mut decpt, &mut sign) };
+    assert_eq!(sign, 1);
+}
+
+#[test]
+fn fcvt_basic_conversion() {
+    let mut decpt: libc::c_int = 0;
+    let mut sign: libc::c_int = 0;
+    let result = unsafe { fcvt(123.456, 3, &mut decpt, &mut sign) };
+    assert!(!result.is_null());
+    assert_eq!(sign, 0);
+    assert_eq!(decpt, 3);
+}
+
+#[test]
+fn gcvt_basic_conversion() {
+    let mut buf = [0u8; 64];
+    let result = unsafe { gcvt(3.25, 4, buf.as_mut_ptr() as *mut libc::c_char) };
+    assert!(!result.is_null());
+    let s = unsafe { std::ffi::CStr::from_ptr(result) };
+    assert!(s.to_str().unwrap().contains("3.25"));
+}
+
+// ===========================================================================
+// on_exit / at_quick_exit tests
+// ===========================================================================
+
+static ON_EXIT_CALLED: AtomicU64 = AtomicU64::new(0);
+
+unsafe extern "C" fn on_exit_handler(_status: libc::c_int, _arg: *mut libc::c_void) {
+    ON_EXIT_CALLED.store(1, Ordering::SeqCst);
+}
+
+#[test]
+fn on_exit_registration_succeeds() {
+    unsafe {
+        let result = on_exit(Some(on_exit_handler), ptr::null_mut());
+        assert_eq!(result, 0);
+    }
+}
+
+#[test]
+fn on_exit_null_function_returns_error() {
+    unsafe {
+        let result = on_exit(None, ptr::null_mut());
+        assert_eq!(result, -1);
+    }
+}
+
+unsafe extern "C" fn quick_exit_handler_noop() {}
+
+#[test]
+fn at_quick_exit_registration_succeeds() {
+    unsafe {
+        let result = at_quick_exit(Some(quick_exit_handler_noop));
+        assert_eq!(result, 0);
+    }
+}
+
+#[test]
+fn at_quick_exit_null_function_returns_error() {
+    unsafe {
+        let result = at_quick_exit(None);
+        assert_eq!(result, -1);
+    }
+}
+
+// ===========================================================================
+// getsubopt test
+// ===========================================================================
+
+#[test]
+fn getsubopt_parses_suboptions() {
+    let tok_ro = CString::new("ro").unwrap();
+    let tok_rw = CString::new("rw").unwrap();
+    let tok_size = CString::new("size").unwrap();
+
+    let tokens_raw: [*mut libc::c_char; 4] = [
+        tok_ro.as_ptr() as *mut libc::c_char,
+        tok_rw.as_ptr() as *mut libc::c_char,
+        tok_size.as_ptr() as *mut libc::c_char,
+        ptr::null_mut(),
+    ];
+
+    let input = CString::new("rw,size=1024").unwrap();
+    let mut buf: Vec<u8> = input.into_bytes_with_nul();
+    let mut opt_ptr = buf.as_mut_ptr() as *mut libc::c_char;
+    let mut valuep: *mut libc::c_char = ptr::null_mut();
+
+    unsafe {
+        let idx = getsubopt(&mut opt_ptr, tokens_raw.as_ptr(), &mut valuep);
+        assert_eq!(idx, 1, "expected 'rw' at index 1");
+        assert!(valuep.is_null(), "'rw' should have no value");
+
+        let idx = getsubopt(&mut opt_ptr, tokens_raw.as_ptr(), &mut valuep);
+        assert_eq!(idx, 2, "expected 'size' at index 2");
+        assert!(!valuep.is_null());
+        let val = std::ffi::CStr::from_ptr(valuep);
+        assert_eq!(val.to_str().unwrap(), "1024");
+    }
+}
+
+#[test]
+fn getsubopt_unknown_token_returns_minus_one() {
+    let tok_foo = CString::new("foo").unwrap();
+    let tokens_raw: [*mut libc::c_char; 2] =
+        [tok_foo.as_ptr() as *mut libc::c_char, ptr::null_mut()];
+    let input = CString::new("bar").unwrap();
+    let mut buf: Vec<u8> = input.into_bytes_with_nul();
+    let mut opt_ptr = buf.as_mut_ptr() as *mut libc::c_char;
+    let mut valuep: *mut libc::c_char = ptr::null_mut();
+
+    unsafe {
+        let idx = getsubopt(&mut opt_ptr, tokens_raw.as_ptr(), &mut valuep);
+        assert_eq!(idx, -1);
+    }
 }

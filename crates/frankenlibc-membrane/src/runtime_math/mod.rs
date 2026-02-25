@@ -115,6 +115,7 @@ use crate::large_deviations::{LargeDeviationsMonitor, RateState};
 use crate::mean_field_game::{MeanFieldGameController, MfgState};
 use crate::padic_valuation::{PadicState, PadicValuationMonitor};
 use crate::persistence::{PersistenceDetector, TopologicalState};
+use crate::pressure_sensor::{PressureSensor, PressureSignals, SystemRegime};
 use crate::quarantine_controller::{QuarantineController, current_depth, publish_depth};
 use crate::risk_engine::{CallFamily, RiskDecision, RiskEngine};
 use crate::rough_path::{RoughPathMonitor, SignatureState};
@@ -206,6 +207,13 @@ const FULL_PATH_BUDGET_NS: u64 = 200;
 const REVERSE_ROUND_DIVERSITY_WARN_THRESHOLD_PPM: u64 = 350_000;
 const REVERSE_ROUND_DIVERSITY_ERROR_THRESHOLD_PPM: u64 = 400_000;
 const REVERSE_ROUND_COVERAGE_MILESTONE_TARGET: usize = 3;
+const PRESSURE_REGIME_NOMINAL: u8 = 0;
+const PRESSURE_REGIME_PRESSURED: u8 = 1;
+const PRESSURE_REGIME_OVERLOADED: u8 = 2;
+const PRESSURE_REGIME_RECOVERY: u8 = 3;
+const OVERLOAD_POLICY_NONE: u8 = 0;
+const OVERLOAD_POLICY_PRESSURED_FAST_ALLOW: u8 = 1;
+const OVERLOAD_POLICY_OVERLOADED_SAFE_FALLBACK: u8 = 2;
 
 /// Number of base severity signals fed from hot-path cached atomics.
 const BASE_SEVERITY_LEN: usize = 25;
@@ -442,6 +450,20 @@ pub struct RuntimeKernelSnapshot {
     pub pareto_exhausted_families: u32,
     /// Current published allocator quarantine depth (temporal-safety budget).
     pub quarantine_depth: usize,
+    /// Cached pressure-regime code (0=Nominal,1=Pressured,2=Overloaded,3=Recovery).
+    pub pressure_regime_code: u8,
+    /// Cached EWMA pressure score scaled by 1e3.
+    pub pressure_score_milli: u32,
+    /// Cached raw pressure score scaled by 1e3.
+    pub pressure_raw_score_milli: u32,
+    /// Pressure sensor epoch counter.
+    pub pressure_epoch: u64,
+    /// Pressure-regime transition counter.
+    pub pressure_transition_count: u64,
+    /// Total number of overload-policy applications.
+    pub overload_policy_count: u64,
+    /// Last applied overload-policy tag (0=none,1=pressured-fast,2=overloaded-fallback).
+    pub overload_policy_tag: u8,
     /// Tropical worst-case latency for the full pipeline path (ns).
     pub tropical_full_wcl_ns: u64,
     /// Spectral edge ratio (max_eigenvalue / median_eigenvalue).
@@ -797,6 +819,7 @@ pub struct RuntimeMathKernel {
     sampled_risk: Mutex<RiskEngine>,
     sampled_oracle: Mutex<CheckOracle>,
     quarantine: Mutex<QuarantineController>,
+    pressure_sensor: Mutex<PressureSensor>,
     tropical: Mutex<TropicalLatencyCompositor>,
     spectral: Mutex<SpectralMonitor>,
     rough_path: Mutex<RoughPathMonitor>,
@@ -876,6 +899,13 @@ pub struct RuntimeMathKernel {
     cached_policy_hash: AtomicU64,
     cached_policy_load_state: AtomicU8,
     cached_policy_action_dist: [AtomicU64; 4], // Allow, FullValidate, Repair, Deny
+    cached_pressure_regime: AtomicU8,
+    cached_pressure_score_milli: AtomicU64,
+    cached_pressure_raw_score_milli: AtomicU64,
+    cached_pressure_epoch: AtomicU64,
+    cached_pressure_transitions: AtomicU64,
+    cached_overload_policy_count: AtomicU64,
+    cached_overload_policy_tag: AtomicU8,
     cached_risk_bonus_ppm: AtomicU64,
     cached_oracle_bias: [AtomicU8; ApiFamily::COUNT],
     cached_spectral_phase: AtomicU8,
@@ -1000,6 +1030,7 @@ impl RuntimeMathKernel {
             sampled_risk: Mutex::new(RiskEngine::new()),
             sampled_oracle: Mutex::new(CheckOracle::new()),
             quarantine: Mutex::new(QuarantineController::new()),
+            pressure_sensor: Mutex::new(PressureSensor::new()),
             tropical: Mutex::new(TropicalLatencyCompositor::new()),
             spectral: Mutex::new(SpectralMonitor::new()),
             rough_path: Mutex::new(RoughPathMonitor::new()),
@@ -1079,6 +1110,13 @@ impl RuntimeMathKernel {
             cached_policy_hash: AtomicU64::new(0),
             cached_policy_load_state: AtomicU8::new(POLICY_LOAD_STATE_NONE),
             cached_policy_action_dist: std::array::from_fn(|_| AtomicU64::new(0)),
+            cached_pressure_regime: AtomicU8::new(PRESSURE_REGIME_NOMINAL),
+            cached_pressure_score_milli: AtomicU64::new(0),
+            cached_pressure_raw_score_milli: AtomicU64::new(0),
+            cached_pressure_epoch: AtomicU64::new(0),
+            cached_pressure_transitions: AtomicU64::new(0),
+            cached_overload_policy_count: AtomicU64::new(0),
+            cached_overload_policy_tag: AtomicU8::new(OVERLOAD_POLICY_NONE),
             cached_risk_bonus_ppm: AtomicU64::new(0),
             cached_oracle_bias: std::array::from_fn(|_| AtomicU8::new(1)),
             cached_spectral_phase: AtomicU8::new(0),
@@ -1722,6 +1760,34 @@ impl RuntimeMathKernel {
         let risk_upper_bound_ppm =
             (u64::from(pre_design_risk_ppm) + u64::from(design_bonus)).min(1_000_000) as u32;
 
+        let pressure_signals = pressure_signals_from_runtime(
+            ctx,
+            risk_upper_bound_ppm,
+            fast_wcl,
+            full_wcl,
+            consistency_faults,
+        );
+        let pressure_snapshot = {
+            let mut sensor = self.pressure_sensor.lock();
+            let _ = sensor.observe(&pressure_signals);
+            sensor.snapshot()
+        };
+        let pressure_regime = pressure_snapshot.regime;
+        self.cached_pressure_regime
+            .store(pressure_regime_code(pressure_regime), Ordering::Relaxed);
+        self.cached_pressure_score_milli.store(
+            score_to_milli(pressure_snapshot.pressure_score),
+            Ordering::Relaxed,
+        );
+        self.cached_pressure_raw_score_milli.store(
+            score_to_milli(pressure_snapshot.raw_score),
+            Ordering::Relaxed,
+        );
+        self.cached_pressure_epoch
+            .store(pressure_snapshot.epoch, Ordering::Relaxed);
+        self.cached_pressure_transitions
+            .store(pressure_snapshot.transition_count, Ordering::Relaxed);
+
         // D-optimal probe scheduling:
         // choose heavy monitors under budget to maximize online identifiability.
         //
@@ -1964,6 +2030,35 @@ impl RuntimeMathKernel {
         } else {
             MembraneAction::Allow
         };
+
+        let mut overload_policy_tag = OVERLOAD_POLICY_NONE;
+        if pressure_regime == SystemRegime::Pressured
+            && matches!(action, MembraneAction::FullValidate)
+            && risk_upper_bound_ppm < limits.repair_trigger_ppm
+            && ctx.contention_hint >= 64
+            && sos_barrier_state < SosBarrierState::Warning as u8
+        {
+            profile = ValidationProfile::Fast;
+            action = MembraneAction::Allow;
+            overload_policy_tag = OVERLOAD_POLICY_PRESSURED_FAST_ALLOW;
+        } else if pressure_regime == SystemRegime::Overloaded
+            && admissible
+            && !matches!(action, MembraneAction::Deny | MembraneAction::Repair(_))
+            && sos_barrier_state < SosBarrierState::Warning as u8
+        {
+            profile = ValidationProfile::Fast;
+            action = match mode {
+                SafetyLevel::Hardened => MembraneAction::Repair(HealingAction::ReturnSafeDefault),
+                SafetyLevel::Strict | SafetyLevel::Off => MembraneAction::Deny,
+            };
+            overload_policy_tag = OVERLOAD_POLICY_OVERLOADED_SAFE_FALLBACK;
+        }
+        self.cached_overload_policy_tag
+            .store(overload_policy_tag, Ordering::Relaxed);
+        if overload_policy_tag != OVERLOAD_POLICY_NONE {
+            self.cached_overload_policy_count
+                .fetch_add(1, Ordering::Relaxed);
+        }
 
         // SOS barrier memory-pressure certificate: a violated certificate is a
         // hard safety signal. Escalate the final action even if profile/risk
@@ -3935,6 +4030,12 @@ impl RuntimeMathKernel {
         self.cohomology.set_section_hash(shard, hash);
     }
 
+    /// Point-in-time pressure sensor snapshot used by overload controllers.
+    #[must_use]
+    pub fn pressure_snapshot(&self) -> crate::pressure_sensor::PressureSnapshot {
+        self.pressure_sensor.lock().snapshot()
+    }
+
     /// Point-in-time kernel snapshot.
     #[must_use]
     pub fn snapshot(&self, mode: SafetyLevel) -> RuntimeKernelSnapshot {
@@ -4031,6 +4132,14 @@ impl RuntimeMathKernel {
             pareto_cap_enforcements: self.pareto.cap_enforcement_count(),
             pareto_exhausted_families: self.pareto.exhausted_family_count(mode),
             quarantine_depth: current_depth(),
+            pressure_regime_code: self.cached_pressure_regime.load(Ordering::Relaxed),
+            pressure_score_milli: self.cached_pressure_score_milli.load(Ordering::Relaxed) as u32,
+            pressure_raw_score_milli: self.cached_pressure_raw_score_milli.load(Ordering::Relaxed)
+                as u32,
+            pressure_epoch: self.cached_pressure_epoch.load(Ordering::Relaxed),
+            pressure_transition_count: self.cached_pressure_transitions.load(Ordering::Relaxed),
+            overload_policy_count: self.cached_overload_policy_count.load(Ordering::Relaxed),
+            overload_policy_tag: self.cached_overload_policy_tag.load(Ordering::Relaxed),
             tropical_full_wcl_ns,
             spectral_edge_ratio: spectral_sig.edge_ratio,
             spectral_phase_transition: spectral_sig.phase != PhaseState::Stationary,
@@ -4288,6 +4397,16 @@ impl RuntimeMathKernel {
         let run = sanitize_trace_component(run_id);
         let timestamp = now_utc_iso_like();
         let mode_label = mode_name(mode);
+        let pressure_regime_code = self.cached_pressure_regime.load(Ordering::Relaxed);
+        let pressure_regime_label = pressure_regime_name(pressure_regime_code);
+        let pressure_score_milli = self.cached_pressure_score_milli.load(Ordering::Relaxed);
+        let pressure_raw_score_milli = self.cached_pressure_raw_score_milli.load(Ordering::Relaxed);
+        let pressure_epoch = self.cached_pressure_epoch.load(Ordering::Relaxed);
+        let pressure_transition_count = self.cached_pressure_transitions.load(Ordering::Relaxed);
+        let overload_policy_tag = self.cached_overload_policy_tag.load(Ordering::Relaxed);
+        let overload_policy_label = overload_policy_name(overload_policy_tag);
+        let overload_policy_count = self.cached_overload_policy_count.load(Ordering::Relaxed);
+        let degradation_active = pressure_regime_code == PRESSURE_REGIME_OVERLOADED;
         let mut out = String::with_capacity(cards.len().saturating_mul(512).saturating_add(2048));
 
         for card in cards {
@@ -4308,7 +4427,7 @@ impl RuntimeMathKernel {
             );
             let _ = writeln!(
                 &mut out,
-                "{{\"timestamp\":\"{timestamp}\",\"trace_id\":\"{bead}::{run}::{:06}\",\"bead_id\":\"{bead}\",\"scenario_id\":\"{run}\",\"level\":\"{level}\",\"event\":\"runtime_decision\",\"controller_id\":\"runtime_math_kernel.v1\",\"decision\":\"{decision_name}\",\"decision_action\":\"{action_name}\",\"decision_path\":\"{decision_path}\",\"healing_action\":{healing_action},\"decision_id\":{},\"mode\":\"{}\",\"api_family\":\"{family_name}\",\"symbol\":\"runtime_math::{family_name}\",\"errno\":0,\"latency_ns\":{},\"policy_id\":{},\"risk_upper_bound_ppm\":{},\"evidence_seqno\":{},\"risk_inputs\":{{\"requested_bytes\":{},\"bloom_negative\":{},\"is_write\":{},\"contention_hint\":{},\"addr_hint\":{}}},\"artifact_refs\":[\"crates/frankenlibc-membrane/src/runtime_math/mod.rs\"]}}",
+                "{{\"timestamp\":\"{timestamp}\",\"trace_id\":\"{bead}::{run}::{:06}\",\"bead_id\":\"{bead}\",\"scenario_id\":\"{run}\",\"level\":\"{level}\",\"event\":\"runtime_decision\",\"controller_id\":\"runtime_math_kernel.v1\",\"decision\":\"{decision_name}\",\"decision_action\":\"{action_name}\",\"decision_path\":\"{decision_path}\",\"healing_action\":{healing_action},\"decision_id\":{},\"mode\":\"{}\",\"api_family\":\"{family_name}\",\"symbol\":\"runtime_math::{family_name}\",\"errno\":0,\"latency_ns\":{},\"policy_id\":{},\"risk_upper_bound_ppm\":{},\"evidence_seqno\":{},\"overload_state\":\"{pressure_regime_label}\",\"degradation_active\":{degradation_active},\"overload_policy\":\"{overload_policy_label}\",\"overload_policy_count\":{overload_policy_count},\"pressure_score_milli\":{pressure_score_milli},\"pressure_raw_score_milli\":{pressure_raw_score_milli},\"risk_inputs\":{{\"requested_bytes\":{},\"bloom_negative\":{},\"is_write\":{},\"contention_hint\":{},\"addr_hint\":{},\"pressure_epoch\":{pressure_epoch},\"pressure_transition_count\":{pressure_transition_count}}},\"artifact_refs\":[\"crates/frankenlibc-membrane/src/runtime_math/mod.rs\"]}}",
                 card.decision_id,
                 card.decision_id,
                 mode_label,
@@ -4332,6 +4451,17 @@ impl RuntimeMathKernel {
                     card.decision.evidence_seqno,
                 );
             }
+        }
+
+        let _ = writeln!(
+            &mut out,
+            "{{\"timestamp\":\"{timestamp}\",\"trace_id\":\"{bead}::{run}::pressure\",\"bead_id\":\"{bead}\",\"scenario_id\":\"{run}\",\"decision_id\":0,\"level\":\"info\",\"event\":\"runtime_pressure_sensor\",\"controller_id\":\"runtime_math_kernel.v1\",\"mode\":\"{mode_label}\",\"api_family\":\"runtime_math\",\"symbol\":\"runtime_math::pressure_sensor\",\"decision_path\":\"pressure_sensor::observe\",\"healing_action\":null,\"errno\":0,\"latency_ns\":0,\"overload_state\":\"{pressure_regime_label}\",\"degradation_active\":{degradation_active},\"pressure_score_milli\":{pressure_score_milli},\"pressure_raw_score_milli\":{pressure_raw_score_milli},\"pressure_epoch\":{pressure_epoch},\"pressure_transition_count\":{pressure_transition_count},\"overload_policy\":\"{overload_policy_label}\",\"overload_policy_count\":{overload_policy_count},\"artifact_refs\":[\"crates/frankenlibc-membrane/src/runtime_math/mod.rs\"]}}"
+        );
+        if overload_policy_tag != OVERLOAD_POLICY_NONE {
+            let _ = writeln!(
+                &mut out,
+                "{{\"timestamp\":\"{timestamp}\",\"trace_id\":\"{bead}::{run}::overload-policy\",\"bead_id\":\"{bead}\",\"scenario_id\":\"{run}\",\"decision_id\":0,\"level\":\"warn\",\"event\":\"runtime_overload_policy_applied\",\"controller_id\":\"runtime_math_kernel.v1\",\"mode\":\"{mode_label}\",\"api_family\":\"runtime_math\",\"symbol\":\"runtime_math::degradation_policy\",\"decision_path\":\"pressure_sensor::degradation_policy\",\"healing_action\":null,\"errno\":0,\"latency_ns\":0,\"overload_state\":\"{pressure_regime_label}\",\"degradation_active\":{degradation_active},\"overload_policy\":\"{overload_policy_label}\",\"overload_policy_count\":{overload_policy_count},\"artifact_refs\":[\"crates/frankenlibc-membrane/src/runtime_math/mod.rs\"]}}"
+            );
         }
 
         let dominant_family_name = family_name(diversity.dominant_family);
@@ -4662,6 +4792,83 @@ fn mode_name(mode: SafetyLevel) -> &'static str {
         SafetyLevel::Strict => "strict",
         SafetyLevel::Hardened => "hardened",
         SafetyLevel::Off => "off",
+    }
+}
+
+fn pressure_regime_code(regime: SystemRegime) -> u8 {
+    match regime {
+        SystemRegime::Nominal => PRESSURE_REGIME_NOMINAL,
+        SystemRegime::Pressured => PRESSURE_REGIME_PRESSURED,
+        SystemRegime::Overloaded => PRESSURE_REGIME_OVERLOADED,
+        SystemRegime::Recovery => PRESSURE_REGIME_RECOVERY,
+    }
+}
+
+fn pressure_regime_name(code: u8) -> &'static str {
+    match code {
+        PRESSURE_REGIME_NOMINAL => "Nominal",
+        PRESSURE_REGIME_PRESSURED => "Pressured",
+        PRESSURE_REGIME_OVERLOADED => "Overloaded",
+        PRESSURE_REGIME_RECOVERY => "Recovery",
+        _ => "Nominal",
+    }
+}
+
+fn overload_policy_name(tag: u8) -> &'static str {
+    match tag {
+        OVERLOAD_POLICY_PRESSURED_FAST_ALLOW => "pressured_fast_allow",
+        OVERLOAD_POLICY_OVERLOADED_SAFE_FALLBACK => "overloaded_safe_fallback",
+        _ => "none",
+    }
+}
+
+fn score_to_milli(score: f64) -> u64 {
+    if !score.is_finite() || score <= 0.0 {
+        return 0;
+    }
+    (score * 1000.0).round().clamp(0.0, u64::MAX as f64) as u64
+}
+
+fn pressure_signals_from_runtime(
+    ctx: RuntimeContext,
+    risk_upper_bound_ppm: u32,
+    fast_wcl_ns: u64,
+    full_wcl_ns: u64,
+    consistency_faults: u64,
+) -> PressureSignals {
+    let scheduler_delay_ns = full_wcl_ns
+        .max(fast_wcl_ns)
+        .saturating_add(u64::from(ctx.contention_hint).saturating_mul(150_000))
+        .min(50_000_000);
+    let queue_depth = u32::from(ctx.contention_hint)
+        .saturating_mul(8)
+        .saturating_add(u32::try_from((ctx.requested_bytes / 256).min(10_000)).unwrap_or(u32::MAX))
+        .min(1000);
+    let risk_error_bonus = match risk_upper_bound_ppm {
+        700_000..=u32::MAX => 10,
+        400_000..=699_999 => 4,
+        _ => 0,
+    };
+    let error_burst_count = u32::try_from(consistency_faults.min(40))
+        .unwrap_or(u32::MAX)
+        .saturating_add(risk_error_bonus)
+        .saturating_add(u32::from(ctx.bloom_negative))
+        .min(50);
+    let latency_envelope_ns = full_wcl_ns
+        .max(fast_wcl_ns)
+        .saturating_add((ctx.requested_bytes as u64).saturating_mul(16))
+        .saturating_add(u64::from(ctx.contention_hint).saturating_mul(250_000))
+        .min(50_000_000);
+    let resource_pressure_pct = ((f64::from(risk_upper_bound_ppm) / 10_000.0)
+        + f64::from(ctx.contention_hint).min(100.0) * 0.5
+        + if ctx.is_write { 8.0 } else { 0.0 })
+    .clamp(0.0, 100.0);
+    PressureSignals {
+        scheduler_delay_ns,
+        queue_depth,
+        error_burst_count,
+        latency_envelope_ns,
+        resource_pressure_pct,
     }
 }
 

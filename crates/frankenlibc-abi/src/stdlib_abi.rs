@@ -5,7 +5,7 @@
 //! process control (`exit`, `atexit`), and sorting/searching (`qsort`, `bsearch`)
 //! with membrane validation.
 
-use std::ffi::{c_char, c_int, c_long, c_longlong, c_uint, c_ulong, c_ulonglong, c_void};
+use std::ffi::{c_char, c_double, c_int, c_long, c_longlong, c_uint, c_ulong, c_ulonglong, c_void};
 use std::ptr;
 
 use crate::malloc_abi::known_remaining;
@@ -1520,4 +1520,632 @@ pub unsafe extern "C" fn clearenv() -> c_int {
         had_error,
     );
     if had_error { -1 } else { 0 }
+}
+
+// ===========================================================================
+// drand48 family (9 functions)
+// ===========================================================================
+
+/// `drand48` — return a double in [0.0, 1.0) using global 48-bit state.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn drand48() -> c_double {
+    let (_, decision) = runtime_policy::decide(ApiFamily::Stdlib, 0, 0, true, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 4, true);
+        return 0.0;
+    }
+    let result = frankenlibc_core::stdlib::drand48();
+    runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 4, false);
+    result
+}
+
+/// `erand48` — return a double in [0.0, 1.0) using caller-supplied state.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn erand48(xsubi: *mut u16) -> c_double {
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Stdlib,
+        xsubi as usize,
+        0,
+        true,
+        xsubi.is_null(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) || xsubi.is_null() {
+        runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 4, true);
+        return 0.0;
+    }
+    let state = unsafe { &mut *(xsubi as *mut [u16; 3]) };
+    let result = frankenlibc_core::stdlib::erand48(state);
+    runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 4, false);
+    result
+}
+
+/// `lrand48` — return non-negative long in [0, 2^31) using global state.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn lrand48() -> c_long {
+    let (_, decision) = runtime_policy::decide(ApiFamily::Stdlib, 0, 0, true, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 4, true);
+        return 0;
+    }
+    let result = frankenlibc_core::stdlib::lrand48();
+    runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 4, false);
+    result as c_long
+}
+
+/// `nrand48` — return non-negative long using caller-supplied state.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn nrand48(xsubi: *mut u16) -> c_long {
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Stdlib,
+        xsubi as usize,
+        0,
+        true,
+        xsubi.is_null(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) || xsubi.is_null() {
+        runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 4, true);
+        return 0;
+    }
+    let state = unsafe { &mut *(xsubi as *mut [u16; 3]) };
+    let result = frankenlibc_core::stdlib::nrand48(state);
+    runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 4, false);
+    result as c_long
+}
+
+/// `mrand48` — return signed long in [-2^31, 2^31) using global state.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn mrand48() -> c_long {
+    let (_, decision) = runtime_policy::decide(ApiFamily::Stdlib, 0, 0, true, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 4, true);
+        return 0;
+    }
+    let result = frankenlibc_core::stdlib::mrand48();
+    runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 4, false);
+    result as c_long
+}
+
+/// `jrand48` — return signed long using caller-supplied state.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn jrand48(xsubi: *mut u16) -> c_long {
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Stdlib,
+        xsubi as usize,
+        0,
+        true,
+        xsubi.is_null(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) || xsubi.is_null() {
+        runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 4, true);
+        return 0;
+    }
+    let state = unsafe { &mut *(xsubi as *mut [u16; 3]) };
+    let result = frankenlibc_core::stdlib::jrand48(state);
+    runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 4, false);
+    result as c_long
+}
+
+/// `srand48` — seed the global 48-bit state from a single long.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn srand48(seedval: c_long) {
+    let (_, decision) = runtime_policy::decide(ApiFamily::Stdlib, 0, 0, true, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 4, true);
+        return;
+    }
+    frankenlibc_core::stdlib::srand48(seedval as i64);
+    runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 4, false);
+}
+
+/// `seed48` — seed global state with three u16 values; return old seed.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn seed48(seed16v: *mut u16) -> *mut u16 {
+    // Static buffer for returning old seed (matching glibc's static buffer approach).
+    static mut OLD_SEED: [u16; 3] = [0; 3];
+
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Stdlib,
+        seed16v as usize,
+        0,
+        true,
+        seed16v.is_null(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) || seed16v.is_null() {
+        runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 4, true);
+        return std::ptr::addr_of_mut!(OLD_SEED) as *mut u16;
+    }
+    let input = unsafe { &*(seed16v as *const [u16; 3]) };
+    let old = frankenlibc_core::stdlib::seed48(input);
+    unsafe {
+        let p = std::ptr::addr_of_mut!(OLD_SEED);
+        (*p) = old;
+        runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 4, false);
+        p as *mut u16
+    }
+}
+
+/// `lcong48` — set all 48-bit LCG parameters.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn lcong48(param: *mut u16) {
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Stdlib,
+        param as usize,
+        0,
+        true,
+        param.is_null(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) || param.is_null() {
+        runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 4, true);
+        return;
+    }
+    let p = unsafe { &*(param as *const [u16; 7]) };
+    frankenlibc_core::stdlib::lcong48(p);
+    runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 4, false);
+}
+
+// ===========================================================================
+// System V random family (4 functions)
+// ===========================================================================
+
+/// `random` — return a pseudo-random number in [0, 2^31-1].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn random() -> c_long {
+    let (_, decision) = runtime_policy::decide(ApiFamily::Stdlib, 0, 0, true, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 4, true);
+        return 0;
+    }
+    let result = frankenlibc_core::stdlib::sv_random();
+    runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 4, false);
+    result as c_long
+}
+
+/// `srandom` — seed the random number generator.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn srandom(seed: c_uint) {
+    let (_, decision) = runtime_policy::decide(ApiFamily::Stdlib, 0, 0, true, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 4, true);
+        return;
+    }
+    frankenlibc_core::stdlib::srandom(seed);
+    runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 4, false);
+}
+
+/// `initstate` — initialize and return state buffer for random().
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn initstate(seed: c_uint, state: *mut c_char, size: usize) -> *mut c_char {
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Stdlib,
+        state as usize,
+        size,
+        true,
+        state.is_null(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) || state.is_null() {
+        runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 6, true);
+        return ptr::null_mut();
+    }
+    let buf = unsafe { std::slice::from_raw_parts_mut(state as *mut u8, size) };
+    let _ = frankenlibc_core::stdlib::initstate(seed, buf);
+    runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 6, false);
+    state
+}
+
+/// `setstate` — restore random state from a previously saved buffer.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn setstate(state: *mut c_char) -> *mut c_char {
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Stdlib,
+        state as usize,
+        0,
+        true,
+        state.is_null(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) || state.is_null() {
+        runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 6, true);
+        return ptr::null_mut();
+    }
+    // glibc setstate expects a buffer of at least 8 bytes; use a safe upper bound.
+    let buf = unsafe { std::slice::from_raw_parts(state as *const u8, 128) };
+    let _ = frankenlibc_core::stdlib::setstate(buf);
+    runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 6, false);
+    state
+}
+
+// ===========================================================================
+// qsort_r (1 function)
+// ===========================================================================
+
+/// `qsort_r` — sort array with reentrant comparator (GNU extension).
+///
+/// The comparator receives the context pointer as its third argument.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn qsort_r(
+    base: *mut c_void,
+    nmemb: usize,
+    size: usize,
+    compar: Option<unsafe extern "C" fn(*const c_void, *const c_void, *mut c_void) -> c_int>,
+    arg: *mut c_void,
+) {
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Stdlib,
+        base as usize,
+        nmemb.saturating_mul(size),
+        true,
+        base.is_null() || compar.is_none(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 12, true);
+        return;
+    }
+
+    if base.is_null() || nmemb == 0 || size == 0 || compar.is_none() {
+        runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 4, false);
+        return;
+    }
+
+    let cmp_fn = compar.unwrap();
+    let total = nmemb.saturating_mul(size);
+    let slice = unsafe { std::slice::from_raw_parts_mut(base as *mut u8, total) };
+
+    frankenlibc_core::stdlib::qsort(slice, size, |a, b| {
+        let r = unsafe {
+            cmp_fn(
+                a.as_ptr() as *const c_void,
+                b.as_ptr() as *const c_void,
+                arg,
+            )
+        };
+        r
+    });
+
+    runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 12, false);
+}
+
+// ===========================================================================
+// a64l / l64a (2 functions)
+// ===========================================================================
+
+/// `a64l` — convert base-64 encoded string to long.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn a64l(s: *const c_char) -> c_long {
+    let (_, decision) =
+        runtime_policy::decide(ApiFamily::Stdlib, s as usize, 0, true, s.is_null(), 0);
+    if matches!(decision.action, MembraneAction::Deny) || s.is_null() {
+        runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 4, true);
+        return 0;
+    }
+    let (len, _) = unsafe { scan_c_string(s, Some(6)) };
+    let slice = unsafe { std::slice::from_raw_parts(s as *const u8, len) };
+    let result = frankenlibc_core::stdlib::a64l(slice);
+    runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 4, false);
+    result as c_long
+}
+
+/// `l64a` — convert long to base-64 encoded string.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn l64a(value: c_long) -> *mut c_char {
+    // Static buffer for returned string (matching glibc's static buffer).
+    static mut BUF: [u8; 8] = [0; 8];
+
+    let (_, decision) = runtime_policy::decide(ApiFamily::Stdlib, 0, 0, true, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 4, true);
+        unsafe {
+            let p = std::ptr::addr_of_mut!(BUF);
+            (*p)[0] = 0;
+            return p as *mut u8 as *mut c_char;
+        }
+    }
+    let encoded = frankenlibc_core::stdlib::l64a(value as i64);
+    unsafe {
+        let p = std::ptr::addr_of_mut!(BUF);
+        let buf = &mut *p;
+        let len = encoded.len().min(7);
+        buf[..len].copy_from_slice(&encoded[..len]);
+        buf[len] = 0;
+        runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 4, false);
+        p as *mut u8 as *mut c_char
+    }
+}
+
+// ===========================================================================
+// ecvt / fcvt / gcvt (3 functions)
+// ===========================================================================
+
+/// `ecvt` — convert double to string (scientific notation digits).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ecvt(
+    value: c_double,
+    ndigit: c_int,
+    decpt: *mut c_int,
+    sign: *mut c_int,
+) -> *mut c_char {
+    // Static buffer (matching glibc's thread-unsafe static buffer).
+    static mut BUF: [u8; 384] = [0; 384];
+
+    let (_, decision) = runtime_policy::decide(ApiFamily::Stdlib, 0, 0, true, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 8, true);
+        unsafe {
+            let p = std::ptr::addr_of_mut!(BUF);
+            (*p)[0] = 0;
+            return p as *mut u8 as *mut c_char;
+        }
+    }
+
+    let (digits, dp, neg) = frankenlibc_core::stdlib::ecvt(value, ndigit);
+    unsafe {
+        let p = std::ptr::addr_of_mut!(BUF);
+        let buf = &mut *p;
+        let len = digits.len().min(383);
+        buf[..len].copy_from_slice(&digits[..len]);
+        buf[len] = 0;
+        if !decpt.is_null() {
+            *decpt = dp;
+        }
+        if !sign.is_null() {
+            *sign = if neg { 1 } else { 0 };
+        }
+        runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 8, false);
+        p as *mut u8 as *mut c_char
+    }
+}
+
+/// `fcvt` — convert double to string (fixed-point digits).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn fcvt(
+    value: c_double,
+    ndigit: c_int,
+    decpt: *mut c_int,
+    sign: *mut c_int,
+) -> *mut c_char {
+    static mut BUF: [u8; 384] = [0; 384];
+
+    let (_, decision) = runtime_policy::decide(ApiFamily::Stdlib, 0, 0, true, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 8, true);
+        unsafe {
+            let p = std::ptr::addr_of_mut!(BUF);
+            (*p)[0] = 0;
+            return p as *mut u8 as *mut c_char;
+        }
+    }
+
+    let (digits, dp, neg) = frankenlibc_core::stdlib::fcvt(value, ndigit);
+    unsafe {
+        let p = std::ptr::addr_of_mut!(BUF);
+        let buf = &mut *p;
+        let len = digits.len().min(383);
+        buf[..len].copy_from_slice(&digits[..len]);
+        buf[len] = 0;
+        if !decpt.is_null() {
+            *decpt = dp;
+        }
+        if !sign.is_null() {
+            *sign = if neg { 1 } else { 0 };
+        }
+        runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 8, false);
+        p as *mut u8 as *mut c_char
+    }
+}
+
+/// `gcvt` — convert double to string using general format.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn gcvt(value: c_double, ndigit: c_int, buf: *mut c_char) -> *mut c_char {
+    let (_, decision) =
+        runtime_policy::decide(ApiFamily::Stdlib, buf as usize, 0, true, buf.is_null(), 0);
+    if matches!(decision.action, MembraneAction::Deny) || buf.is_null() {
+        runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 8, true);
+        return buf;
+    }
+
+    // Assume caller's buffer is at least ndigit + 16 bytes (glibc doesn't bounds-check).
+    let buf_size = (ndigit as usize).saturating_add(32).min(512);
+    let slice = unsafe { std::slice::from_raw_parts_mut(buf as *mut u8, buf_size) };
+    frankenlibc_core::stdlib::gcvt(value, ndigit, slice);
+    runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 8, false);
+    buf
+}
+
+// ===========================================================================
+// Process control (3 functions)
+// ===========================================================================
+
+/// `abort` — abnormal process termination.
+///
+/// Raises SIGABRT. If caught, re-raises after resetting the handler.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn abort() -> ! {
+    // Flush stdout/stderr before aborting.
+    let _ = unsafe { libc::fflush(ptr::null_mut()) };
+    // Raise SIGABRT. If the signal handler returns, re-raise with default.
+    unsafe {
+        libc::raise(libc::SIGABRT);
+        // If we get here, reset handler and raise again.
+        libc::signal(libc::SIGABRT, libc::SIG_DFL);
+        libc::raise(libc::SIGABRT);
+    }
+    // Should never reach here, but the compiler needs a diverging path.
+    unsafe { libc::_exit(134) }
+}
+
+/// Exit handler entry for `on_exit` — stores function pointer + arg.
+struct OnExitEntry {
+    func: unsafe extern "C" fn(c_int, *mut c_void),
+    arg: *mut c_void,
+}
+
+// SAFETY: on_exit entries are only accessed from the exit handler chain,
+// which runs in a single-threaded context (process exit).
+unsafe impl Send for OnExitEntry {}
+unsafe impl Sync for OnExitEntry {}
+
+static ON_EXIT_HANDLERS: std::sync::Mutex<Vec<OnExitEntry>> = std::sync::Mutex::new(Vec::new());
+
+/// `on_exit` — register a function to be called at exit (with status and arg).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn on_exit(
+    func: Option<unsafe extern "C" fn(c_int, *mut c_void)>,
+    arg: *mut c_void,
+) -> c_int {
+    let (_, decision) = runtime_policy::decide(ApiFamily::Stdlib, 0, 0, true, func.is_none(), 0);
+    if matches!(decision.action, MembraneAction::Deny) || func.is_none() {
+        runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 4, true);
+        return -1;
+    }
+    let f = func.unwrap();
+    if let Ok(mut handlers) = ON_EXIT_HANDLERS.lock() {
+        handlers.push(OnExitEntry { func: f, arg });
+        runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 4, false);
+        0
+    } else {
+        runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 4, true);
+        -1
+    }
+}
+
+/// Exit handler entries for `at_quick_exit`.
+static QUICK_EXIT_HANDLERS: std::sync::Mutex<Vec<unsafe extern "C" fn()>> =
+    std::sync::Mutex::new(Vec::new());
+
+/// `at_quick_exit` — register a function to be called at quick_exit.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn at_quick_exit(func: Option<unsafe extern "C" fn()>) -> c_int {
+    let (_, decision) = runtime_policy::decide(ApiFamily::Stdlib, 0, 0, true, func.is_none(), 0);
+    if matches!(decision.action, MembraneAction::Deny) || func.is_none() {
+        runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 4, true);
+        return -1;
+    }
+    let f = func.unwrap();
+    if let Ok(mut handlers) = QUICK_EXIT_HANDLERS.lock() {
+        handlers.push(f);
+        runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 4, false);
+        0
+    } else {
+        runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 4, true);
+        -1
+    }
+}
+
+/// `quick_exit` — rapid process termination, calling at_quick_exit handlers.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn quick_exit(status: c_int) -> ! {
+    // Call registered quick_exit handlers in reverse order.
+    if let Ok(handlers) = QUICK_EXIT_HANDLERS.lock() {
+        for func in handlers.iter().rev() {
+            unsafe { func() };
+        }
+    }
+    unsafe { libc::_exit(status) }
+}
+
+// ===========================================================================
+// getsubopt (1 function)
+// ===========================================================================
+
+/// `getsubopt` — parse suboption from comma-separated string.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getsubopt(
+    optionp: *mut *mut c_char,
+    tokens: *const *mut c_char,
+    valuep: *mut *mut c_char,
+) -> c_int {
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Stdlib,
+        optionp as usize,
+        0,
+        true,
+        optionp.is_null() || tokens.is_null() || valuep.is_null(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny)
+        || optionp.is_null()
+        || tokens.is_null()
+        || valuep.is_null()
+    {
+        runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 8, true);
+        return -1;
+    }
+
+    let opt_ptr = unsafe { *optionp };
+    if opt_ptr.is_null() || unsafe { *opt_ptr } == 0 {
+        unsafe { *valuep = ptr::null_mut() };
+        runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 4, false);
+        return -1;
+    }
+
+    // Find end of this suboption (comma or NUL).
+    let mut end = opt_ptr;
+    unsafe {
+        while *end != 0 && *end != b',' as c_char {
+            end = end.add(1);
+        }
+    }
+
+    // Find '=' for value separation.
+    let mut eq = opt_ptr;
+    let mut has_eq = false;
+    unsafe {
+        while eq < end {
+            if *eq == b'=' as c_char {
+                has_eq = true;
+                break;
+            }
+            eq = eq.add(1);
+        }
+    }
+
+    let name_end = if has_eq { eq } else { end };
+
+    // Set valuep.
+    unsafe {
+        if has_eq {
+            *valuep = eq.add(1);
+        } else {
+            *valuep = ptr::null_mut();
+        }
+    }
+
+    // NUL-terminate the name portion temporarily if needed, then match.
+    let saved = unsafe { *name_end };
+    unsafe { *name_end = 0 };
+
+    // Advance optionp past this suboption.
+    unsafe {
+        if *end == b',' as c_char {
+            *optionp = end.add(1);
+        } else {
+            *optionp = end;
+        }
+    }
+
+    // Match against token list.
+    let mut idx = 0i32;
+    let mut tok_ptr = tokens;
+    unsafe {
+        while !(*tok_ptr).is_null() {
+            if libc::strcmp(opt_ptr, *tok_ptr) == 0 {
+                *name_end = saved;
+                runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 8, false);
+                return idx;
+            }
+            tok_ptr = tok_ptr.add(1);
+            idx += 1;
+        }
+    }
+
+    // Restore original char.
+    unsafe { *name_end = saved };
+    runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 8, false);
+    -1
 }

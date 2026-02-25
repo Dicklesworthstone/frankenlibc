@@ -2,7 +2,7 @@
   "version": 2,
   "generated_at_utc": "2026-02-18T04:49:26Z",
   "library": "/data/tmp/cargo-target/release/libfrankenlibc_abi.so",
-  "total_exported": 974,
+  "total_exported": 1017,
   "taxonomy": {
     "Implemented": "Native Rust code owns the entire operation. No host libc dependency. Full test coverage required.",
     "RawSyscall": "ABI entrypoint marshals arguments directly to Linux syscall instruction. No glibc call-through.",
@@ -1934,12 +1934,13 @@
     },
     {
       "symbol": "fscanf",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "coldpath",
-      "strict_semantics": "Delegates to glibc vfscanf after membrane validation.",
-      "hardened_semantics": "Same delegation; format string validated by glibc.",
-      "default_stub": "Returns EOF"
+      "strict_semantics": "Native Rust scanf engine; format string parsed and input scanned in pure Rust.",
+      "hardened_semantics": "Same native engine; no glibc dependency.",
+      "default_stub": "Returns EOF",
+      "semantics": "Native Rust scanf engine (parse_scanf_format + scan_input); va_list manually walked on x86_64"
     },
     {
       "symbol": "fseek",
@@ -5693,12 +5694,13 @@
     },
     {
       "symbol": "scanf",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "coldpath",
-      "strict_semantics": "Delegates to glibc vscanf after membrane validation.",
-      "hardened_semantics": "Same delegation; format string validated by glibc.",
-      "default_stub": "Returns EOF"
+      "strict_semantics": "Native Rust scanf engine; format string parsed and input scanned in pure Rust.",
+      "hardened_semantics": "Same native engine; no glibc dependency.",
+      "default_stub": "Returns EOF",
+      "semantics": "Native Rust scanf engine (parse_scanf_format + scan_input); va_list manually walked on x86_64"
     },
     {
       "symbol": "sched_get_priority_max",
@@ -6540,12 +6542,13 @@
     },
     {
       "symbol": "sscanf",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "coldpath",
-      "strict_semantics": "Delegates to glibc vsscanf after membrane validation.",
-      "hardened_semantics": "Same delegation; format string validated by glibc.",
-      "default_stub": "Returns EOF"
+      "strict_semantics": "Native Rust scanf engine; format string parsed and input scanned in pure Rust.",
+      "hardened_semantics": "Same native engine; no glibc dependency.",
+      "default_stub": "Returns EOF",
+      "semantics": "Native Rust scanf engine (parse_scanf_format + scan_input); va_list manually walked on x86_64"
     },
     {
       "symbol": "stat",
@@ -7535,12 +7538,13 @@
     },
     {
       "symbol": "vfscanf",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "coldpath",
-      "strict_semantics": "Delegates to glibc vfscanf with va_list passthrough.",
-      "hardened_semantics": "Same delegation.",
-      "default_stub": "Returns EOF"
+      "strict_semantics": "Native Rust scanf engine; va_list manually walked on x86_64.",
+      "hardened_semantics": "Same native engine; no glibc dependency.",
+      "default_stub": "Returns EOF",
+      "semantics": "Native Rust scanf engine (parse_scanf_format + scan_input); va_list manually walked on x86_64"
     },
     {
       "symbol": "vfwprintf",
@@ -7573,12 +7577,13 @@
     },
     {
       "symbol": "vscanf",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "coldpath",
-      "strict_semantics": "Delegates to glibc vscanf with va_list passthrough.",
-      "hardened_semantics": "Same delegation.",
-      "default_stub": "Returns EOF"
+      "strict_semantics": "Native Rust scanf engine; va_list manually walked on x86_64.",
+      "hardened_semantics": "Same native engine; no glibc dependency.",
+      "default_stub": "Returns EOF",
+      "semantics": "Native Rust scanf engine (parse_scanf_format + scan_input); va_list manually walked on x86_64"
     },
     {
       "symbol": "vsnprintf",
@@ -7598,12 +7603,13 @@
     },
     {
       "symbol": "vsscanf",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "coldpath",
-      "strict_semantics": "Delegates to glibc vsscanf with va_list passthrough.",
-      "hardened_semantics": "Same delegation.",
-      "default_stub": "Returns EOF"
+      "strict_semantics": "Native Rust scanf engine; va_list manually walked on x86_64.",
+      "hardened_semantics": "Same native engine; no glibc dependency.",
+      "default_stub": "Returns EOF",
+      "semantics": "Native Rust scanf engine (parse_scanf_format + scan_input); va_list manually walked on x86_64"
     },
     {
       "symbol": "vswprintf",
@@ -8505,6 +8511,222 @@
       "strict_semantics": "passthrough to core",
       "hardened_semantics": "clamped scan",
       "default_stub": false
+    },
+    {
+      "symbol": "drand48",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "48-bit LCG returning double in [0.0, 1.0) via global state",
+      "hardened_semantics": "Deny returns 0.0",
+      "default_stub": false
+    },
+    {
+      "symbol": "erand48",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "48-bit LCG returning double in [0.0, 1.0) via caller state",
+      "hardened_semantics": "Null state returns 0.0",
+      "default_stub": false
+    },
+    {
+      "symbol": "lrand48",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "48-bit LCG returning non-negative long in [0, 2^31) via global state",
+      "hardened_semantics": "Deny returns 0",
+      "default_stub": false
+    },
+    {
+      "symbol": "nrand48",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "48-bit LCG returning non-negative long in [0, 2^31) via caller state",
+      "hardened_semantics": "Null state returns 0",
+      "default_stub": false
+    },
+    {
+      "symbol": "mrand48",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "48-bit LCG returning signed long in [-2^31, 2^31) via global state",
+      "hardened_semantics": "Deny returns 0",
+      "default_stub": false
+    },
+    {
+      "symbol": "jrand48",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "48-bit LCG returning signed long in [-2^31, 2^31) via caller state",
+      "hardened_semantics": "Null state returns 0",
+      "default_stub": false
+    },
+    {
+      "symbol": "srand48",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Seed global 48-bit state from long; resets multiplier and increment",
+      "hardened_semantics": "Deny is no-op",
+      "default_stub": false
+    },
+    {
+      "symbol": "seed48",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Seed global 48-bit state from u16[3]; returns old seed via static buffer",
+      "hardened_semantics": "Null input returns pointer to static zero buffer",
+      "default_stub": false
+    },
+    {
+      "symbol": "lcong48",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Set all 48-bit LCG parameters (state, multiplier, increment)",
+      "hardened_semantics": "Null input is no-op",
+      "default_stub": false
+    },
+    {
+      "symbol": "random",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "System V additive feedback PRNG returning long in [0, 2^31-1]",
+      "hardened_semantics": "Deny returns 0",
+      "default_stub": false
+    },
+    {
+      "symbol": "srandom",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Seed System V random() generator",
+      "hardened_semantics": "Deny is no-op",
+      "default_stub": false
+    },
+    {
+      "symbol": "initstate",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Initialize random() state buffer with seed; return old state pointer",
+      "hardened_semantics": "Null buffer returns NULL",
+      "default_stub": false
+    },
+    {
+      "symbol": "setstate",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Restore random() state from previously saved buffer",
+      "hardened_semantics": "Null buffer returns NULL",
+      "default_stub": false
+    },
+    {
+      "symbol": "qsort_r",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "GNU qsort with reentrant comparator receiving context pointer",
+      "hardened_semantics": "Null base or comparator is no-op",
+      "default_stub": false
+    },
+    {
+      "symbol": "a64l",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Convert System V base-64 encoded string to long (up to 6 chars)",
+      "hardened_semantics": "Null input returns 0",
+      "default_stub": false
+    },
+    {
+      "symbol": "l64a",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Convert long to System V base-64 encoded string via static buffer",
+      "hardened_semantics": "Deny returns empty string",
+      "default_stub": false
+    },
+    {
+      "symbol": "ecvt",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Convert double to digit string (scientific notation form) via static buffer",
+      "hardened_semantics": "Deny returns empty static buffer",
+      "default_stub": false
+    },
+    {
+      "symbol": "fcvt",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Convert double to digit string (fixed-point form) via static buffer",
+      "hardened_semantics": "Deny returns empty static buffer",
+      "default_stub": false
+    },
+    {
+      "symbol": "gcvt",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Convert double to string using general format into caller buffer",
+      "hardened_semantics": "Null buffer returns buffer pointer unchanged",
+      "default_stub": false
+    },
+    {
+      "symbol": "abort",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Abnormal process termination via SIGABRT; flushes stdio first",
+      "hardened_semantics": "No mode difference; always terminates",
+      "default_stub": false
+    },
+    {
+      "symbol": "on_exit",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Register exit handler with status and user arg (SunOS/glibc extension)",
+      "hardened_semantics": "Null function returns -1",
+      "default_stub": false
+    },
+    {
+      "symbol": "at_quick_exit",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Register handler for quick_exit (C11/POSIX 2008)",
+      "hardened_semantics": "Null function returns -1",
+      "default_stub": false
+    },
+    {
+      "symbol": "quick_exit",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Rapid process termination calling at_quick_exit handlers then _exit",
+      "hardened_semantics": "No mode difference; always terminates",
+      "default_stub": false
+    },
+    {
+      "symbol": "getsubopt",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Parse suboption from comma-separated string against token list",
+      "hardened_semantics": "Null pointers return -1",
+      "default_stub": false
     }
   ],
   "summary": {
@@ -8514,9 +8736,9 @@
     "glibc_call_through": 103,
     "stub": 0
   },
-  "implemented": 574,
+  "implemented": 629,
   "raw_syscall": 297,
-  "glibc_call_through": 103,
+  "glibc_call_through": 91,
   "stub": 0,
   "counts": {
     "total_exported": 993,

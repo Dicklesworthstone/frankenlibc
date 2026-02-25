@@ -2,6 +2,7 @@
 //!
 //! Implements `<string.h>` functions as safe Rust operating on slices.
 
+pub mod glob;
 pub mod mem;
 pub mod regex;
 pub mod str;

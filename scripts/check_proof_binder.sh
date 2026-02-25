@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# CI gate: Proof obligations binder integrity (bd-5fw.4).
+# CI gate: Proof obligations binder integrity (bd-5fw.4, bd-w2c3.6).
 #
 # Checks:
-# 1. Binder JSON exists with correct schema
+# 1. Binder JSON exists with correct schema and planned-obligation ownership metadata.
 # 2. Validator script has valid syntax
 # 3. Validator produces valid output
 # 4. Python unit tests pass
@@ -39,6 +39,13 @@ for o in obs:
         print(f'Missing evidence_artifacts in {o[\"id\"]}'); sys.exit(1)
     if 'gates' not in o:
         print(f'Missing gates in {o[\"id\"]}'); sys.exit(1)
+    status = str(o.get('status', 'planned')).strip().lower()
+    if status == 'planned':
+        for field in ('owner', 'artifact_schema', 'verification_command'):
+            value = o.get(field, '')
+            if not isinstance(value, str) or not value.strip():
+                print(f'Missing {field} in planned obligation {o[\"id\"]}')
+                sys.exit(1)
 " || fail "binder schema invalid"
 echo "PASS: binder schema valid"
 

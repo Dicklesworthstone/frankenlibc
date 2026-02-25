@@ -4362,18 +4362,7 @@ pub unsafe extern "C" fn rindex(s: *const c_char, c: c_int) -> *mut c_char {
 // regex — Implemented (native POSIX regex.h via frankenlibc-core)
 // ---------------------------------------------------------------------------
 
-// glob/globfree remain GlibcCallThrough
-unsafe extern "C" {
-    #[link_name = "glob"]
-    fn libc_glob(
-        pattern: *const c_char,
-        flags: c_int,
-        errfunc: Option<unsafe extern "C" fn(*const c_char, c_int) -> c_int>,
-        pglob: *mut c_void,
-    ) -> c_int;
-    #[link_name = "globfree"]
-    fn libc_globfree(pglob: *mut c_void);
-}
+// glob/globfree — Implemented (native POSIX glob via frankenlibc-core)
 
 /// Magic value to identify our regex_t vs a glibc-compiled one.
 const FRANKEN_REGEX_MAGIC: u64 = 0x4652_4B4E_5245_4758; // "FRKNREGX"
@@ -4767,19 +4756,159 @@ unsafe fn fnmatch_impl(
     }
 }
 
+/// POSIX `glob` — expand pathname pattern.
+///
+/// Native implementation using frankenlibc-core's glob engine.
+/// glob_t layout on x86_64:
+///   offset 0: gl_pathc (size_t) — count of matched paths
+///   offset 8: gl_pathv (char**) — null-terminated array of path strings
+///   offset 16: gl_offs (size_t) — slots to reserve at start of gl_pathv
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn glob(
     pattern: *const c_char,
     flags: c_int,
-    errfunc: Option<unsafe extern "C" fn(*const c_char, c_int) -> c_int>,
+    _errfunc: Option<unsafe extern "C" fn(*const c_char, c_int) -> c_int>,
     pglob: *mut c_void,
 ) -> c_int {
-    unsafe { libc_glob(pattern, flags, errfunc, pglob) }
+    use frankenlibc_core::string::glob as glob_core;
+
+    if pattern.is_null() || pglob.is_null() {
+        return glob_core::GLOB_NOMATCH;
+    }
+
+    let pat_bytes = unsafe { std::ffi::CStr::from_ptr(pattern) }.to_bytes_with_nul();
+
+    let append = flags & glob_core::GLOB_APPEND != 0;
+
+    // Read current state for GLOB_APPEND.
+    let (mut existing_paths, existing_count) = if append {
+        let pathc = unsafe { *(pglob as *const usize) };
+        let pathv = unsafe { *((pglob as *const u8).add(8) as *const *mut *mut c_char) };
+        let mut paths: Vec<*mut c_char> = Vec::new();
+        if !pathv.is_null() && pathc > 0 {
+            for i in 0..pathc {
+                let p = unsafe { *pathv.add(i) };
+                if !p.is_null() {
+                    paths.push(p);
+                }
+            }
+        }
+        (paths, pathc)
+    } else {
+        (Vec::new(), 0)
+    };
+
+    // Run the glob engine.
+    let result = glob_core::glob_expand(pat_bytes, flags);
+
+    match result {
+        Ok(res) => {
+            let dooffs = flags & glob_core::GLOB_DOOFFS != 0;
+            let offs = if dooffs {
+                unsafe { *((pglob as *const u8).add(16) as *const usize) }
+            } else {
+                0
+            };
+
+            let new_count = res.paths.len();
+            let total = existing_count + new_count;
+
+            // Allocate pathv: offs + total + 1 (null terminator)
+            let alloc_count = offs + total + 1;
+            let pathv = unsafe { libc::malloc(alloc_count * std::mem::size_of::<*mut c_char>()) }
+                as *mut *mut c_char;
+            if pathv.is_null() {
+                return glob_core::GLOB_NOSPACE;
+            }
+
+            // Fill offset slots with null.
+            for i in 0..offs {
+                unsafe { *pathv.add(i) = std::ptr::null_mut() };
+            }
+
+            // Copy existing paths (for GLOB_APPEND).
+            for (i, &p) in existing_paths.iter().enumerate() {
+                unsafe { *pathv.add(offs + i) = p };
+            }
+
+            // Copy new paths as strdup'd C strings.
+            for (i, path) in res.paths.iter().enumerate() {
+                let len = path.len();
+                let s = unsafe { libc::malloc(len + 1) } as *mut c_char;
+                if s.is_null() {
+                    // Free everything allocated so far.
+                    for j in 0..i {
+                        unsafe { libc::free(*pathv.add(offs + existing_count + j) as *mut c_void) };
+                    }
+                    unsafe { libc::free(pathv as *mut c_void) };
+                    return glob_core::GLOB_NOSPACE;
+                }
+                unsafe {
+                    std::ptr::copy_nonoverlapping(path.as_ptr() as *const c_char, s, len);
+                    *s.add(len) = 0; // null terminate
+                    *pathv.add(offs + existing_count + i) = s;
+                }
+            }
+
+            // Null-terminate.
+            unsafe { *pathv.add(offs + total) = std::ptr::null_mut() };
+
+            // Free old pathv array (not the strings — those were moved).
+            if append {
+                let old_pathv = unsafe { *((pglob as *const u8).add(8) as *const *mut c_void) };
+                if !old_pathv.is_null() {
+                    unsafe { libc::free(old_pathv) };
+                }
+            }
+
+            // Write glob_t fields.
+            unsafe {
+                *(pglob as *mut usize) = total; // gl_pathc
+                *((pglob as *mut u8).add(8) as *mut *mut *mut c_char) = pathv; // gl_pathv
+            }
+
+            0
+        }
+        Err(code) => code,
+    }
 }
 
+/// POSIX `globfree` — free glob result.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn globfree(pglob: *mut c_void) {
-    unsafe { libc_globfree(pglob) }
+    use frankenlibc_core::string::glob as glob_core;
+    let _ = glob_core::GLOB_NOSPACE; // suppress unused import
+
+    if pglob.is_null() {
+        return;
+    }
+
+    let pathc = unsafe { *(pglob as *const usize) };
+    let pathv = unsafe { *((pglob as *const u8).add(8) as *const *mut *mut c_char) };
+
+    if pathv.is_null() {
+        return;
+    }
+
+    // gl_offs: number of reserved null slots at start
+    let offs = unsafe { *((pglob as *const u8).add(16) as *const usize) };
+
+    // Free each path string (skip null offset slots).
+    for i in offs..offs + pathc {
+        let p = unsafe { *pathv.add(i) };
+        if !p.is_null() {
+            unsafe { libc::free(p as *mut c_void) };
+        }
+    }
+
+    // Free the pathv array.
+    unsafe { libc::free(pathv as *mut c_void) };
+
+    // Zero out the glob_t.
+    unsafe {
+        *(pglob as *mut usize) = 0;
+        *((pglob as *mut u8).add(8) as *mut *mut *mut c_char) = std::ptr::null_mut();
+    }
 }
 
 // ---------------------------------------------------------------------------

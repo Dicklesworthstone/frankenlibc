@@ -21,3 +21,4 @@ pub use printf::{
     format_float, format_pointer, format_signed, format_str, format_unsigned, parse_format_spec,
     parse_format_string,
 };
+pub use scanf::{ScanResult, ScanValue, parse_scanf_format, scan_input};

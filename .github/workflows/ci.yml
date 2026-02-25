@@ -47,6 +47,13 @@ jobs:
           mkdir -p artifacts/ci
           scripts/ci.sh 2>&1 | tee artifacts/ci/core-gates.log
 
+      - name: Run proptest gate (10k cases/property)
+        run: |
+          mkdir -p artifacts/ci
+          PROPTEST_CASES=10000 \
+            cargo test -p frankenlibc-core prop_ -- --nocapture \
+            2>&1 | tee artifacts/ci/proptest-10k.log
+
       - name: Upload core CI artifacts
         if: always()
         uses: actions/upload-artifact@v4

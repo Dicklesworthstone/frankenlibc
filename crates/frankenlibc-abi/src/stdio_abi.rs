@@ -2000,19 +2000,166 @@ pub unsafe extern "C" fn vasprintf(
 }
 
 // ===========================================================================
-// scanf family — GlibcCallThrough
+// scanf family — Implemented (native format parser + va_list extraction)
 //
-// Like v*printf, scanf functions need va_list handling that Rust cannot do
-// natively. We link directly to glibc's v*scanf and forward the va_list.
+// The core scanf engine (frankenlibc-core/src/stdio/scanf.rs) parses format
+// strings and scans typed values from byte input. The ABI layer extracts
+// destination pointers from the C caller's va_list and writes scanned values.
 // ===========================================================================
 
-unsafe extern "C" {
-    #[link_name = "vsscanf"]
-    fn libc_vsscanf(s: *const c_char, fmt: *const c_char, ap: *mut c_void) -> c_int;
-    #[link_name = "vfscanf"]
-    fn libc_vfscanf(stream: *mut c_void, fmt: *const c_char, ap: *mut c_void) -> c_int;
-    #[link_name = "vscanf"]
-    fn libc_vscanf(fmt: *const c_char, ap: *mut c_void) -> c_int;
+use frankenlibc_core::stdio::scanf::{
+    ScanDirective, ScanResult, ScanSpec, ScanValue, parse_scanf_format, scan_input,
+};
+
+/// Write scanned values through va_list pointers.
+/// Uses a macro to avoid naming the unstable `VaListImpl` type directly.
+/// `$args` is the variadic `args` from `mut args: ...`.
+macro_rules! scanf_write_values {
+    ($values:expr, $directives:expr, $args:expr) => {{
+        let mut _val_idx = 0usize;
+        for _dir in $directives {
+            if let ScanDirective::Spec(_spec) = _dir {
+                if _spec.suppress {
+                    continue;
+                }
+                if _val_idx >= $values.len() {
+                    break;
+                }
+                unsafe {
+                    scanf_write_one!(&$values[_val_idx], _spec, $args);
+                }
+                _val_idx += 1;
+            }
+        }
+    }};
+}
+
+/// Write a single scanned value to the next pointer from va_list.
+macro_rules! scanf_write_one {
+    ($val:expr, $spec:expr, $args:expr) => {
+        match $val {
+            ScanValue::SignedInt(v) => match $spec.length {
+                LengthMod::Hh => {
+                    let ptr = $args.arg::<*mut i8>();
+                    *ptr = *v as i8;
+                }
+                LengthMod::H => {
+                    let ptr = $args.arg::<*mut i16>();
+                    *ptr = *v as i16;
+                }
+                LengthMod::L | LengthMod::Ll | LengthMod::J => {
+                    let ptr = $args.arg::<*mut i64>();
+                    *ptr = *v;
+                }
+                LengthMod::Z | LengthMod::T => {
+                    let ptr = $args.arg::<*mut isize>();
+                    *ptr = *v as isize;
+                }
+                _ => {
+                    let ptr = $args.arg::<*mut c_int>();
+                    *ptr = *v as c_int;
+                }
+            },
+            ScanValue::UnsignedInt(v) => match $spec.length {
+                LengthMod::Hh => {
+                    let ptr = $args.arg::<*mut u8>();
+                    *ptr = *v as u8;
+                }
+                LengthMod::H => {
+                    let ptr = $args.arg::<*mut u16>();
+                    *ptr = *v as u16;
+                }
+                LengthMod::L | LengthMod::Ll | LengthMod::J => {
+                    let ptr = $args.arg::<*mut u64>();
+                    *ptr = *v;
+                }
+                LengthMod::Z | LengthMod::T => {
+                    let ptr = $args.arg::<*mut usize>();
+                    *ptr = *v as usize;
+                }
+                _ => {
+                    let ptr = $args.arg::<*mut u32>();
+                    *ptr = *v as u32;
+                }
+            },
+            ScanValue::Float(v) => match $spec.length {
+                LengthMod::L | LengthMod::BigL => {
+                    let ptr = $args.arg::<*mut f64>();
+                    *ptr = *v;
+                }
+                _ => {
+                    let ptr = $args.arg::<*mut f32>();
+                    *ptr = *v as f32;
+                }
+            },
+            ScanValue::Char(bytes) => {
+                let ptr = $args.arg::<*mut u8>();
+                std::ptr::copy_nonoverlapping(bytes.as_ptr(), ptr, bytes.len());
+            }
+            ScanValue::String(bytes) => {
+                let ptr = $args.arg::<*mut c_char>();
+                std::ptr::copy_nonoverlapping(bytes.as_ptr(), ptr.cast::<u8>(), bytes.len());
+                *ptr.add(bytes.len()) = 0; // NUL-terminate
+            }
+            ScanValue::CharsConsumed(n) => match $spec.length {
+                LengthMod::Hh => {
+                    let ptr = $args.arg::<*mut i8>();
+                    *ptr = *n as i8;
+                }
+                LengthMod::H => {
+                    let ptr = $args.arg::<*mut i16>();
+                    *ptr = *n as i16;
+                }
+                LengthMod::L | LengthMod::Ll | LengthMod::J => {
+                    let ptr = $args.arg::<*mut i64>();
+                    *ptr = *n as i64;
+                }
+                _ => {
+                    let ptr = $args.arg::<*mut c_int>();
+                    *ptr = *n as c_int;
+                }
+            },
+            ScanValue::Pointer(v) => {
+                let ptr = $args.arg::<*mut *mut c_void>();
+                *ptr = *v as *mut c_void;
+            }
+        }
+    };
+}
+
+/// Core scanf logic: parse format, scan input, return result and directives.
+fn scanf_core(input: &[u8], format: *const c_char) -> (ScanResult, Vec<ScanDirective>) {
+    let fmt_bytes = unsafe { CStr::from_ptr(format) }.to_bytes();
+    let directives = parse_scanf_format(fmt_bytes);
+    let result = scan_input(input, &directives);
+    (result, directives)
+}
+
+/// Read stream content into a byte buffer for scanf parsing.
+fn read_stream_for_scanf(id: usize, limit: usize) -> Vec<u8> {
+    let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
+    let Some(s) = reg.streams.get_mut(&id) else {
+        return Vec::new();
+    };
+
+    // Memory-backed streams: read directly.
+    if s.is_mem_backed() {
+        return s.mem_read(limit);
+    }
+
+    // FD-backed streams: read from fd.
+    let fd = s.fd();
+    let mut buf = vec![0u8; limit.min(8192)];
+    let rc = unsafe { sys_read_fd(fd, buf.as_mut_ptr().cast(), buf.len()) };
+    if rc > 0 {
+        buf.truncate(rc as usize);
+        buf
+    } else {
+        if rc == 0 {
+            s.set_eof();
+        }
+        Vec::new()
+    }
 }
 
 /// POSIX `sscanf` — scan formatted input from string.
@@ -2026,9 +2173,20 @@ pub unsafe extern "C" fn sscanf(s: *const c_char, format: *const c_char, mut arg
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
         return -1;
     }
-    let rc = unsafe { libc_vsscanf(s, format, (&mut args) as *mut _ as *mut c_void) };
+
+    let input = unsafe { CStr::from_ptr(s) }.to_bytes();
+    let (result, directives) = scanf_core(input, format);
+
+    if result.input_failure && result.count == 0 {
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+        return libc::EOF;
+    }
+
+    unsafe {
+        scanf_write_values!(&result.values, &directives, args);
+    }
     runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, false);
-    rc
+    result.count
 }
 
 /// POSIX `fscanf` — scan formatted input from stream.
@@ -2041,15 +2199,31 @@ pub unsafe extern "C" fn fscanf(
     if format.is_null() {
         return -1;
     }
-    let (_, decision) =
-        runtime_policy::decide(ApiFamily::Stdio, stream as usize, 0, false, false, 0);
+    let id = stream as usize;
+    let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, id, 0, false, false, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
         return -1;
     }
-    let rc = unsafe { libc_vfscanf(stream, format, (&mut args) as *mut _ as *mut c_void) };
+
+    let input_buf = read_stream_for_scanf(id, 8192);
+    if input_buf.is_empty() {
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+        return libc::EOF;
+    }
+
+    let (result, directives) = scanf_core(&input_buf, format);
+
+    if result.input_failure && result.count == 0 {
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+        return libc::EOF;
+    }
+
+    unsafe {
+        scanf_write_values!(&result.values, &directives, args);
+    }
     runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, false);
-    rc
+    result.count
 }
 
 /// POSIX `scanf` — scan formatted input from stdin.
@@ -2065,19 +2239,40 @@ pub unsafe extern "C" fn scanf(format: *const c_char, mut args: ...) -> c_int {
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
         return -1;
     }
-    let rc = unsafe { libc_vscanf(format, (&mut args) as *mut _ as *mut c_void) };
+
+    let input_buf = read_stream_for_scanf(STDIN_SENTINEL, 8192);
+    if input_buf.is_empty() {
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+        return libc::EOF;
+    }
+
+    let (result, directives) = scanf_core(&input_buf, format);
+
+    if result.input_failure && result.count == 0 {
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+        return libc::EOF;
+    }
+
+    unsafe {
+        scanf_write_values!(&result.values, &directives, args);
+    }
     runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, false);
-    rc
+    result.count
 }
 
 /// POSIX `vsscanf` — scan formatted input from string with va_list.
+///
+/// For the v* variants, we receive a raw `*mut c_void` pointing to the C
+/// caller's va_list. On x86_64, C's `va_list` (`__va_list_tag[1]`) has the
+/// same memory layout as Rust's internal `VaListImpl`. We cast the raw
+/// pointer and call `arg()` to extract destination pointers.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn vsscanf(
     s: *const c_char,
     format: *const c_char,
     ap: *mut c_void,
 ) -> c_int {
-    if s.is_null() || format.is_null() {
+    if s.is_null() || format.is_null() || ap.is_null() {
         return -1;
     }
     let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, s as usize, 0, false, false, 0);
@@ -2085,9 +2280,24 @@ pub unsafe extern "C" fn vsscanf(
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
         return -1;
     }
-    let rc = unsafe { libc_vsscanf(s, format, ap) };
+
+    let input = unsafe { CStr::from_ptr(s) }.to_bytes();
+    let (result, directives) = scanf_core(input, format);
+
+    if result.input_failure && result.count == 0 {
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+        return libc::EOF;
+    }
+
+    // Write scanned values via raw va_list pointer.
+    // SAFETY: On x86_64 Linux, the raw va_list pointer has the same layout
+    // as Rust's VaListImpl. We transmute to access arg().
+    unsafe {
+        vscanf_write_values(&result.values, &directives, ap);
+    }
+
     runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, false);
-    rc
+    result.count
 }
 
 /// POSIX `vfscanf` — scan formatted input from stream with va_list.
@@ -2097,36 +2307,151 @@ pub unsafe extern "C" fn vfscanf(
     format: *const c_char,
     ap: *mut c_void,
 ) -> c_int {
-    if format.is_null() {
+    if format.is_null() || ap.is_null() {
         return -1;
     }
-    let (_, decision) =
-        runtime_policy::decide(ApiFamily::Stdio, stream as usize, 0, false, false, 0);
+    let id = stream as usize;
+    let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, id, 0, false, false, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
         return -1;
     }
-    let rc = unsafe { libc_vfscanf(stream, format, ap) };
+
+    let input_buf = read_stream_for_scanf(id, 8192);
+    if input_buf.is_empty() {
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+        return libc::EOF;
+    }
+
+    let (result, directives) = scanf_core(&input_buf, format);
+
+    if result.input_failure && result.count == 0 {
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+        return libc::EOF;
+    }
+
+    unsafe {
+        vscanf_write_values(&result.values, &directives, ap);
+    }
+
     runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, false);
-    rc
+    result.count
 }
 
 /// POSIX `vscanf` — scan formatted input from stdin with va_list.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn vscanf(format: *const c_char, ap: *mut c_void) -> c_int {
-    if format.is_null() {
-        return -1;
+    unsafe { vfscanf(STDIN_SENTINEL as *mut c_void, format, ap) }
+}
+
+/// Write scanned values via raw va_list pointer (v* functions).
+///
+/// On x86_64 Linux, C's va_list is `__va_list_tag` which has the layout:
+/// ```c
+/// struct __va_list_tag {
+///     unsigned int gp_offset;    // offset 0, 4 bytes
+///     unsigned int fp_offset;    // offset 4, 4 bytes
+///     void *overflow_arg_area;   // offset 8, 8 bytes
+///     void *reg_save_area;       // offset 16, 8 bytes
+/// };                             // total: 24 bytes
+/// ```
+///
+/// We manually read pointer arguments from the overflow area, which is used
+/// when all register save slots are exhausted (common in scanf where all
+/// args are pointers passed after the format string).
+unsafe fn vscanf_write_values(values: &[ScanValue], directives: &[ScanDirective], ap: *mut c_void) {
+    // On x86_64, the va_list structure fields:
+    // gp_offset (u32) at +0: offset into reg_save_area for next GP register arg
+    // fp_offset (u32) at +4: offset into reg_save_area for next FP register arg
+    // overflow_arg_area (*mut u8) at +8: pointer to next stack argument
+    // reg_save_area (*mut u8) at +16: saved register area
+    //
+    // For pointer arguments (all scanf destinations), gp_offset < 48 means
+    // the arg is in a register save slot; otherwise it's in overflow_arg_area.
+    let gp_offset_ptr = ap as *mut u32;
+    let overflow_ptr = unsafe { (ap as *mut u8).add(8) as *mut *mut u8 };
+    let reg_save_ptr = unsafe { (ap as *mut u8).add(16) as *mut *mut u8 };
+
+    let mut val_idx = 0usize;
+    for dir in directives {
+        if let ScanDirective::Spec(spec) = dir {
+            if spec.suppress {
+                continue;
+            }
+            if val_idx >= values.len() {
+                break;
+            }
+
+            // Extract the next pointer argument from va_list.
+            let dest_ptr: *mut c_void = unsafe {
+                let gp_off = *gp_offset_ptr;
+                if gp_off < 48 {
+                    // Read from register save area.
+                    let p = (*reg_save_ptr).add(gp_off as usize) as *mut *mut c_void;
+                    *gp_offset_ptr = gp_off + 8;
+                    *p
+                } else {
+                    // Read from overflow area.
+                    let p = *overflow_ptr as *mut *mut c_void;
+                    *overflow_ptr = (*overflow_ptr).add(8);
+                    *p
+                }
+            };
+
+            // Write the value through the pointer.
+            unsafe {
+                vscanf_write_one(&values[val_idx], spec, dest_ptr);
+            }
+            val_idx += 1;
+        }
     }
-    let stdin_ptr = STDIN_SENTINEL as *mut c_void;
-    let (_, decision) =
-        runtime_policy::decide(ApiFamily::Stdio, stdin_ptr as usize, 0, false, false, 0);
-    if matches!(decision.action, MembraneAction::Deny) {
-        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
-        return -1;
+}
+
+/// Write a single scanned value to a destination pointer.
+unsafe fn vscanf_write_one(
+    val: &ScanValue,
+    spec: &frankenlibc_core::stdio::scanf::ScanSpec,
+    dest: *mut c_void,
+) {
+    match val {
+        ScanValue::SignedInt(v) => match spec.length {
+            LengthMod::Hh => unsafe { *(dest as *mut i8) = *v as i8 },
+            LengthMod::H => unsafe { *(dest as *mut i16) = *v as i16 },
+            LengthMod::L | LengthMod::Ll | LengthMod::J => unsafe { *(dest as *mut i64) = *v },
+            LengthMod::Z | LengthMod::T => unsafe { *(dest as *mut isize) = *v as isize },
+            _ => unsafe { *(dest as *mut c_int) = *v as c_int },
+        },
+        ScanValue::UnsignedInt(v) => match spec.length {
+            LengthMod::Hh => unsafe { *(dest as *mut u8) = *v as u8 },
+            LengthMod::H => unsafe { *(dest as *mut u16) = *v as u16 },
+            LengthMod::L | LengthMod::Ll | LengthMod::J => unsafe { *(dest as *mut u64) = *v },
+            LengthMod::Z | LengthMod::T => unsafe { *(dest as *mut usize) = *v as usize },
+            _ => unsafe { *(dest as *mut u32) = *v as u32 },
+        },
+        ScanValue::Float(v) => match spec.length {
+            LengthMod::L | LengthMod::BigL => unsafe { *(dest as *mut f64) = *v },
+            _ => unsafe { *(dest as *mut f32) = *v as f32 },
+        },
+        ScanValue::Char(bytes) => unsafe {
+            std::ptr::copy_nonoverlapping(bytes.as_ptr(), dest as *mut u8, bytes.len());
+        },
+        ScanValue::String(bytes) => unsafe {
+            let p = dest as *mut u8;
+            std::ptr::copy_nonoverlapping(bytes.as_ptr(), p, bytes.len());
+            *p.add(bytes.len()) = 0; // NUL-terminate
+        },
+        ScanValue::CharsConsumed(n) => match spec.length {
+            LengthMod::Hh => unsafe { *(dest as *mut i8) = *n as i8 },
+            LengthMod::H => unsafe { *(dest as *mut i16) = *n as i16 },
+            LengthMod::L | LengthMod::Ll | LengthMod::J => unsafe {
+                *(dest as *mut i64) = *n as i64;
+            },
+            _ => unsafe { *(dest as *mut c_int) = *n as c_int },
+        },
+        ScanValue::Pointer(v) => unsafe {
+            *(dest as *mut *mut c_void) = *v as *mut c_void;
+        },
     }
-    let rc = unsafe { libc_vscanf(format, ap) };
-    runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, false);
-    rc
 }
 
 /// glibc fortified `__printf_chk`.
