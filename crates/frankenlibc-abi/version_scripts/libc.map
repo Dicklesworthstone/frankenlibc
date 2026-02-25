@@ -65,8 +65,15 @@ GLIBC_2.2.5 {
 
         /* GNU string extensions */
         strerror_l;
+        strerrordesc_np;
+        strerrorname_np;
         memfrob;
         strfry;
+
+        /* C23 float-to-string */
+        strfromd;
+        strfromf;
+        strfroml;
 
         /* BSD/GNU memory operations */
         bcmp;
@@ -305,6 +312,7 @@ GLIBC_2.2.5 {
 
         /* stdio extras */
         tempnam;
+        mktemp;
         setlinebuf;
         flockfile;
         ftrylockfile;
@@ -313,6 +321,10 @@ GLIBC_2.2.5 {
         putc_unlocked;
         fgetc_unlocked;
         fputc_unlocked;
+        feof_unlocked;
+        ferror_unlocked;
+        fflush_unlocked;
+        fcloseall;
         fmemopen;
         open_memstream;
         fopencookie;
@@ -628,6 +640,11 @@ GLIBC_2.2.5 {
         pthread_getname_np;
         pthread_setschedparam;
         pthread_getschedparam;
+        pthread_atfork;
+        pthread_attr_getguardsize;
+        pthread_attr_setguardsize;
+        pthread_attr_getaffinity_np;
+        pthread_attr_setaffinity_np;
 
         /* passwd database */
         getpwnam;
@@ -782,6 +799,98 @@ GLIBC_2.2.5 {
         /* command-line parsing */
         getopt;
         getopt_long;
+        getopt_long_only;
+
+        /* GNU hash table */
+        hcreate;
+        hdestroy;
+        hsearch;
+        hcreate_r;
+        hdestroy_r;
+        hsearch_r;
+
+        /* POSIX search tree */
+        tsearch;
+        tfind;
+        tdelete;
+        twalk;
+        tdestroy;
+        lfind;
+        lsearch;
+
+        /* getauxval */
+        getauxval;
+
+        /* shell database */
+        getusershell;
+        setusershell;
+        endusershell;
+
+        /* legacy */
+        gets;
+        tmpnam_r;
+
+        /* terminal */
+        cfmakeraw;
+        cfsetspeed;
+
+        /* argz/envz (GNU) */
+        argz_create;
+        argz_create_sep;
+        argz_count;
+        argz_next;
+        argz_add;
+        argz_add_sep;
+        argz_append;
+        argz_delete;
+        argz_extract;
+        argz_insert;
+        argz_replace;
+        argz_stringify;
+        envz_entry;
+        envz_get;
+        envz_add;
+        envz_merge;
+        envz_remove;
+        envz_strip;
+
+        /* GNU/BSD error printing */
+        error;
+        error_at_line;
+        err;
+        errx;
+        warn;
+        warnx;
+        verr;
+        verrx;
+        vwarn;
+        vwarnx;
+
+        /* system info */
+        getloadavg;
+        get_nprocs;
+        get_nprocs_conf;
+        get_phys_pages;
+        get_avphys_pages;
+
+        /* backtrace */
+        backtrace;
+        backtrace_symbols;
+        backtrace_symbols_fd;
+
+        /* gettext */
+        bind_textdomain_codeset;
+
+        /* network interface enumeration */
+        if_nameindex;
+        if_freenameindex;
+
+        /* FTS file hierarchy traversal */
+        fts_open;
+        fts_read;
+        fts_children;
+        fts_set;
+        fts_close;
 
         /* *at() family — directory-fd-relative operations */
         openat;
@@ -1160,6 +1269,9 @@ GLIBC_2.2.5 {
         mq_receive;
         mq_getattr;
         mq_setattr;
+        mq_timedreceive;
+        mq_timedsend;
+        mq_notify;
 
         /* wordexp */
         wordexp;
@@ -1276,8 +1388,10 @@ GLIBC_2.2.5 {
         /* mount table */
         setmntent;
         getmntent;
+        getmntent_r;
         endmntent;
         hasmntopt;
+        addmntent;
 
         /* multi-message socket */
         sendmmsg;
@@ -1316,6 +1430,14 @@ GLIBC_2.2.5 {
         getgrouplist;
         initgroups;
 
+        /* shadow password */
+        getspnam;
+        getspnam_r;
+        getspent;
+        getspent_r;
+        setspent;
+        endspent;
+
         /* utmp */
         getutent;
         setutent;
@@ -1348,6 +1470,11 @@ GLIBC_2.2.5 {
         /* process_vm */
         process_vm_readv;
         process_vm_writev;
+        process_madvise;
+        process_mrelease;
+
+        /* personality */
+        personality;
 
         /* mlock2, handle */
         mlock2;
@@ -1402,6 +1529,18 @@ GLIBC_2.2.5 {
         globfree64;
         nftw64;
         alphasort64;
+        getrlimit64;
+        setrlimit64;
+        statfs64;
+        fstatfs64;
+        statvfs64;
+        fstatvfs64;
+        lockf64;
+        fallocate64;
+        fcntl64;
+        preadv64;
+        pwritev64;
+        readdir64_r;
 
     local:
         *;

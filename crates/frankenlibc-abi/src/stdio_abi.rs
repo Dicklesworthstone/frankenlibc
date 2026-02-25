@@ -2222,6 +2222,20 @@ unsafe fn vprintf_read_fp(
     }
 }
 
+/// Convenience: parse a format string, extract args from va_list, and render to a String.
+/// Used by `error()`, `err()`, `warn()`, and related functions.
+pub(crate) unsafe fn vprintf_extract_and_render(fmt: &str, ap: *mut c_void) -> String {
+    let segments = parse_format_string(fmt.as_bytes());
+    let needed = count_printf_args(&segments);
+    let extract = std::cmp::min(needed, MAX_VA_ARGS);
+    let mut arg_buf = [0u64; MAX_VA_ARGS];
+    if extract > 0 && !ap.is_null() {
+        unsafe { vprintf_extract_args(&segments, ap, &mut arg_buf, extract) };
+    }
+    let rendered = unsafe { render_printf(fmt.as_bytes(), arg_buf.as_ptr(), extract) };
+    String::from_utf8_lossy(&rendered).into_owned()
+}
+
 /// POSIX `vsnprintf` — format at most `size` bytes from va_list.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn vsnprintf(
@@ -4304,4 +4318,97 @@ pub unsafe extern "C" fn fopencookie(
     drop(cookie_guard);
 
     id as *mut c_void
+}
+
+// ===========================================================================
+// Batch: Unlocked stdio variants — Implemented
+// ===========================================================================
+//
+// These are GNU extensions that skip internal locking for performance.
+// Since our FILE implementation is already thread-local, they behave
+// identically to the locked versions.
+
+/// GNU `feof_unlocked` — test end-of-file indicator without locking.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn feof_unlocked(stream: *mut c_void) -> c_int {
+    unsafe { feof(stream) }
+}
+
+/// GNU `ferror_unlocked` — test error indicator without locking.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ferror_unlocked(stream: *mut c_void) -> c_int {
+    unsafe { ferror(stream) }
+}
+
+/// GNU `fflush_unlocked` — flush stream without locking.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn fflush_unlocked(stream: *mut c_void) -> c_int {
+    unsafe { fflush(stream) }
+}
+
+/// GNU `fcloseall` — close all open streams.
+///
+/// Returns 0 on success. This is a GNU extension.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub extern "C" fn fcloseall() -> c_int {
+    // Flush all open streams by passing NULL to fflush (POSIX semantics).
+    unsafe { fflush(std::ptr::null_mut()) };
+    0
+}
+
+// ===========================================================================
+// Batch: mktemp — Implemented
+// ===========================================================================
+
+/// `mktemp` — generate a unique temporary filename (DEPRECATED, use mkstemp).
+///
+/// Replaces trailing 'X' characters in template with unique characters.
+/// Returns the modified template, or an empty string on error.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn mktemp(template: *mut c_char) -> *mut c_char {
+    if template.is_null() {
+        return template;
+    }
+
+    let len = unsafe { libc::strlen(template) };
+    if len < 6 {
+        unsafe { *template = 0 };
+        return template;
+    }
+
+    // Count trailing X characters
+    let tmpl = unsafe { std::slice::from_raw_parts_mut(template as *mut u8, len) };
+    let mut x_count = 0;
+    for b in tmpl.iter().rev() {
+        if *b == b'X' {
+            x_count += 1;
+        } else {
+            break;
+        }
+    }
+    if x_count < 6 {
+        unsafe { *template = 0 };
+        return template;
+    }
+
+    // Generate random suffix using /dev/urandom
+    let chars = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    let mut rand_buf = vec![0u8; x_count];
+    if std::fs::File::open("/dev/urandom")
+        .and_then(|mut f| {
+            use std::io::Read;
+            f.read_exact(&mut rand_buf)
+        })
+        .is_err()
+    {
+        unsafe { *template = 0 };
+        return template;
+    }
+
+    let start = len - x_count;
+    for (i, &rb) in rand_buf.iter().enumerate() {
+        tmpl[start + i] = chars[(rb as usize) % chars.len()];
+    }
+
+    template
 }

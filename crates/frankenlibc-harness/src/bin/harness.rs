@@ -8,6 +8,7 @@ use std::process::Stdio;
 use std::time::{Duration, Instant};
 
 use frankenlibc_harness::conformance_matrix::{CaseExecution, ConformanceMatrixReport};
+use frankenlibc_harness::healing_oracle::HealingOracleReport;
 use frankenlibc_harness::structured_log::{LogEmitter, LogEntry, LogLevel, Outcome, StreamKind};
 
 use clap::{Parser, Subcommand};
@@ -19,6 +20,7 @@ use std::os::unix::process::ExitStatusExt;
 const CONFORMANCE_LOG_BEAD_ID: &str = "bd-2hh.7";
 const CONFORMANCE_LOG_GATE: &str = "conformance_matrix";
 const CONFORMANCE_WARN_BUDGET_PERCENT: u64 = 80;
+const HEALING_LOG_GATE: &str = "healing_oracle";
 
 /// Conformance tooling for frankenlibc.
 #[derive(Debug, Parser)]
@@ -72,9 +74,24 @@ enum Command {
     },
     /// Run membrane-specific verification tests.
     VerifyMembrane {
-        /// Runtime mode to test (strict or hardened).
-        #[arg(long, default_value = "strict")]
+        /// Runtime mode to test (`strict`, `hardened`, or `both`).
+        #[arg(long, default_value = "both")]
         mode: String,
+        /// Output report path.
+        #[arg(
+            long,
+            default_value = "target/conformance/healing_oracle.current.v1.json"
+        )]
+        output: PathBuf,
+        /// Structured JSONL output path for healing-oracle case events.
+        #[arg(long, default_value = "target/conformance/healing_oracle.log.jsonl")]
+        log: PathBuf,
+        /// Logical campaign identifier used in trace ids.
+        #[arg(long, default_value = "healing_oracle")]
+        campaign: String,
+        /// Return non-zero when any oracle case fails.
+        #[arg(long)]
+        fail_on_mismatch: bool,
     },
     /// Validate a structured-log + artifact-index evidence bundle.
     EvidenceCompliance {
@@ -439,33 +456,44 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 print!("{body}");
             }
         }
-        Command::VerifyMembrane { mode } => {
-            eprintln!("Running membrane verification in {mode} mode");
-            if mode != "strict" && mode != "hardened" {
-                return Err(format!("Unsupported mode '{mode}', expected strict|hardened").into());
-            }
-            let mut suite = frankenlibc_harness::healing_oracle::HealingOracleSuite::new();
-            suite.add(frankenlibc_harness::healing_oracle::HealingOracleCase {
-                id: String::from("double-free"),
-                condition: frankenlibc_harness::healing_oracle::UnsafeCondition::DoubleFree,
-                expected_healing: String::from("IgnoreDoubleFree"),
-                strict_expected: String::from("No repair"),
-            });
-            suite.add(frankenlibc_harness::healing_oracle::HealingOracleCase {
-                id: String::from("foreign-free"),
-                condition: frankenlibc_harness::healing_oracle::UnsafeCondition::ForeignFree,
-                expected_healing: String::from("IgnoreForeignFree"),
-                strict_expected: String::from("No repair"),
-            });
+        Command::VerifyMembrane {
+            mode,
+            output,
+            log,
+            campaign,
+            fail_on_mismatch,
+        } => {
+            let mode =
+                frankenlibc_harness::healing_oracle::HealingOracleMode::from_str_loose(&mode)
+                    .ok_or_else(|| {
+                        format!("Unsupported mode '{mode}', expected strict|hardened|both")
+                    })?;
 
-            for case in suite.cases() {
-                if mode == "hardened" {
-                    eprintln!("[{}] expect {}", case.id, case.expected_healing);
-                } else {
-                    eprintln!("[{}] expect {}", case.id, case.strict_expected);
-                }
+            let suite = frankenlibc_harness::healing_oracle::HealingOracleSuite::canonical();
+            let report = frankenlibc_harness::healing_oracle::build_healing_oracle_report(
+                &suite, mode, &campaign,
+            );
+            let body = serde_json::to_string_pretty(&report)?;
+            if let Some(parent) = output.parent() {
+                std::fs::create_dir_all(parent)?;
             }
-            eprintln!("Membrane verification spec checks completed");
+            std::fs::write(&output, body)?;
+            emit_healing_oracle_logs(&log, &output, &report)?;
+
+            eprintln!(
+                "Healing oracle complete: total={}, passed={}, failed={} -> {} (log: {})",
+                report.summary.total_cases,
+                report.summary.passed,
+                report.summary.failed,
+                output.display(),
+                log.display()
+            );
+
+            if fail_on_mismatch && !report.all_passed() {
+                return Err(
+                    format!("Healing oracle mismatch: failed={}", report.summary.failed).into(),
+                );
+            }
         }
         Command::EvidenceCompliance {
             workspace_root,
@@ -1514,6 +1542,98 @@ fn emit_conformance_matrix_logs(
             )?;
         }
     }
+
+    emitter.flush()?;
+    Ok(())
+}
+
+fn emit_healing_oracle_logs(
+    log_path: &Path,
+    report_output_path: &Path,
+    report: &HealingOracleReport,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if let Some(parent) = log_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    let run_id = format!(
+        "{}_{}",
+        sanitize_trace_component(&report.campaign),
+        sanitize_trace_component(&report.mode)
+    );
+    let mut emitter = LogEmitter::to_file(log_path, &report.bead, &run_id)?;
+    let report_artifact = report_output_path.display().to_string();
+    let log_artifact = log_path.display().to_string();
+    let artifact_refs = vec![report_artifact, log_artifact];
+
+    for row in &report.cases {
+        let outcome = if row.status == "pass" {
+            Outcome::Pass
+        } else {
+            Outcome::Fail
+        };
+        let level = if row.status == "pass" {
+            LogLevel::Info
+        } else {
+            LogLevel::Error
+        };
+
+        emitter.emit_entry(
+            LogEntry::new(row.trace_id.clone(), level, "healing_oracle.case_result")
+                .with_stream(StreamKind::Conformance)
+                .with_gate(HEALING_LOG_GATE)
+                .with_mode(row.mode.clone())
+                .with_api(row.api_family.clone(), row.symbol.clone())
+                .with_outcome(outcome)
+                .with_errno(0)
+                .with_latency_ns(0)
+                .with_healing_action(row.observed_action.clone())
+                .with_artifacts(artifact_refs.clone())
+                .with_details(serde_json::json!({
+                    "case_id": row.case_id,
+                    "condition": row.condition,
+                    "expected_action": row.expected_action,
+                    "observed_action": row.observed_action,
+                    "detected": row.detected,
+                    "repaired": row.repaired,
+                    "posix_valid": row.posix_valid,
+                    "evidence_logged": row.evidence_logged,
+                    "decision_path": "healing_oracle->case_result"
+                })),
+        )?;
+    }
+
+    let summary_trace = format!(
+        "{}::healing_oracle::summary",
+        sanitize_trace_component(&report.campaign)
+    );
+    emitter.emit_entry(
+        LogEntry::new(summary_trace, LogLevel::Info, "healing_oracle.summary")
+            .with_stream(StreamKind::Conformance)
+            .with_gate(HEALING_LOG_GATE)
+            .with_mode(report.mode.clone())
+            .with_api("membrane", "healing_oracle")
+            .with_outcome(if report.all_passed() {
+                Outcome::Pass
+            } else {
+                Outcome::Fail
+            })
+            .with_errno(0)
+            .with_latency_ns(0)
+            .with_healing_action("none")
+            .with_artifacts(artifact_refs)
+            .with_details(serde_json::json!({
+                "total_cases": report.summary.total_cases,
+                "passed": report.summary.passed,
+                "failed": report.summary.failed,
+                "detected": report.summary.detected,
+                "repaired": report.summary.repaired,
+                "posix_valid": report.summary.posix_valid,
+                "evidence_logged": report.summary.evidence_logged,
+                "pass_rate_percent": report.summary.pass_rate_percent,
+                "decision_path": "healing_oracle->summary"
+            })),
+    )?;
 
     emitter.flush()?;
     Ok(())

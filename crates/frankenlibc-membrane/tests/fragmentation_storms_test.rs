@@ -7,6 +7,8 @@ use std::time::Instant;
 
 const TARGET_OPS_RELEASE: usize = 1_000_000;
 const TARGET_OPS_DEBUG: usize = 200_000;
+const ALLOC_STRIDE_RELEASE: usize = 128;
+const ALLOC_STRIDE_DEBUG: usize = 32;
 
 #[derive(Clone, Copy, Debug)]
 struct XorShift64 {
@@ -101,6 +103,8 @@ struct StormRunner {
     baseline_rss_kb: u64,
     peak_rss_kb: u64,
     next_cursor: usize,
+    alloc_stride: usize,
+    min_live_slots: usize,
 }
 
 impl StormRunner {
@@ -125,6 +129,12 @@ impl StormRunner {
             baseline_rss_kb,
             peak_rss_kb: baseline_rss_kb,
             next_cursor: 0,
+            alloc_stride: if cfg!(debug_assertions) {
+                ALLOC_STRIDE_DEBUG
+            } else {
+                ALLOC_STRIDE_RELEASE
+            },
+            min_live_slots: slot_capacity.saturating_mul(3) / 4,
         }
     }
 
@@ -173,6 +183,16 @@ impl StormRunner {
 
     fn allocate_at(&mut self, idx: usize, requested_size: usize, align: usize) -> bool {
         if self.slots[idx].is_some() {
+            self.ops_count += 1;
+            self.sample_metrics();
+            return false;
+        }
+
+        // Once occupancy is established, throttle fresh allocations to avoid
+        // synthetic RSS blowups from churn overshadowing fragmentation signals.
+        if self.live_slots >= self.min_live_slots
+            && !self.ops_count.is_multiple_of(self.alloc_stride)
+        {
             self.ops_count += 1;
             self.sample_metrics();
             return false;

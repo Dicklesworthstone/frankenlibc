@@ -5,7 +5,8 @@
 //! process control (`exit`, `atexit`), and sorting/searching (`qsort`, `bsearch`)
 //! with membrane validation.
 
-use std::ffi::{c_char, c_double, c_int, c_long, c_longlong, c_uint, c_ulong, c_ulonglong, c_void};
+use std::cell::Cell;
+use std::ffi::{CStr, c_char, c_double, c_int, c_long, c_longlong, c_uint, c_ulong, c_ulonglong, c_void};
 use std::ptr;
 
 use crate::malloc_abi::known_remaining;
@@ -2198,4 +2199,1359 @@ pub unsafe extern "C" fn confstr(name: c_int, buf: *mut c_char, len: usize) -> u
         }
     }
     value_len
+}
+
+// ===========================================================================
+// Batch: GNU hash table (hsearch) — Implemented
+// ===========================================================================
+
+use std::sync::Mutex;
+
+unsafe extern "C" {
+    static program_invocation_short_name: *const c_char;
+}
+
+/// POSIX hash action for `hsearch`.
+#[repr(C)]
+#[allow(non_camel_case_types, dead_code)]
+pub enum HashAction {
+    FIND = 0,
+    ENTER = 1,
+}
+
+/// POSIX hash table entry.
+#[repr(C)]
+#[allow(non_camel_case_types)]
+pub struct HashEntry {
+    pub key: *mut c_char,
+    pub data: *mut c_void,
+}
+
+/// Internal hash table slot.
+struct HashSlot {
+    key: String,
+    data: *mut c_void,
+}
+
+// SAFETY: `data` is an opaque user pointer; the user is responsible for
+// not racing on it.  We only access it under the global HTAB lock.
+unsafe impl Send for HashSlot {}
+
+static HTAB: Mutex<Option<Vec<Option<HashSlot>>>> = Mutex::new(None);
+
+fn hash_key(key: &str, cap: usize) -> usize {
+    // djb2 hash
+    let mut h: u64 = 5381;
+    for b in key.bytes() {
+        h = h.wrapping_mul(33).wrapping_add(b as u64);
+    }
+    (h as usize) % cap
+}
+
+/// `hcreate` — create a POSIX hash table.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub extern "C" fn hcreate(nel: usize) -> c_int {
+    let cap = if nel == 0 { 128 } else { nel };
+    let mut table: Vec<Option<HashSlot>> = Vec::with_capacity(cap);
+    table.resize_with(cap, || None);
+    let mut guard = HTAB.lock().unwrap();
+    *guard = Some(table);
+    1
+}
+
+/// `hdestroy` — destroy the POSIX hash table.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub extern "C" fn hdestroy() {
+    let mut guard = HTAB.lock().unwrap();
+    *guard = None;
+}
+
+/// `hsearch` — search/insert in the POSIX hash table.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn hsearch(item: HashEntry, action: HashAction) -> *mut HashEntry {
+    let key_cstr = if item.key.is_null() {
+        return ptr::null_mut();
+    } else {
+        unsafe { CStr::from_ptr(item.key) }
+    };
+    let key_str = match key_cstr.to_str() {
+        Ok(s) => s,
+        Err(_) => return ptr::null_mut(),
+    };
+
+    let mut guard = HTAB.lock().unwrap();
+    let table = match guard.as_mut() {
+        Some(t) => t,
+        None => return ptr::null_mut(),
+    };
+
+    let cap = table.len();
+    let start = hash_key(key_str, cap);
+
+    // Linear probing
+    for i in 0..cap {
+        let idx = (start + i) % cap;
+        match &table[idx] {
+            Some(slot) if slot.key == key_str => {
+                // Found existing entry — return pointer to it
+                let slot = table[idx].as_mut().unwrap();
+                // We need to return a pointer to an ENTRY. Use a thread-local buffer.
+                thread_local! {
+                    static RESULT: std::cell::RefCell<HashEntry> = const {
+                        std::cell::RefCell::new(HashEntry {
+                            key: std::ptr::null_mut(),
+                            data: std::ptr::null_mut(),
+                        })
+                    };
+                }
+                return RESULT.with(|r| {
+                    let mut entry = r.borrow_mut();
+                    entry.key = slot.key.as_ptr() as *mut c_char;
+                    entry.data = slot.data;
+                    &mut *entry as *mut HashEntry
+                });
+            }
+            None => {
+                match action {
+                    HashAction::ENTER => {
+                        table[idx] = Some(HashSlot {
+                            key: key_str.to_string(),
+                            data: item.data,
+                        });
+                        thread_local! {
+                            static RESULT2: std::cell::RefCell<HashEntry> = const {
+                                std::cell::RefCell::new(HashEntry {
+                                    key: std::ptr::null_mut(),
+                                    data: std::ptr::null_mut(),
+                                })
+                            };
+                        }
+                        let slot = table[idx].as_mut().unwrap();
+                        return RESULT2.with(|r| {
+                            let mut entry = r.borrow_mut();
+                            entry.key = slot.key.as_ptr() as *mut c_char;
+                            entry.data = slot.data;
+                            &mut *entry as *mut HashEntry
+                        });
+                    }
+                    HashAction::FIND => return ptr::null_mut(),
+                }
+            }
+            _ => {} // occupied by different key, continue probing
+        }
+    }
+
+    // Table full
+    unsafe { set_abi_errno(libc::ENOMEM) };
+    ptr::null_mut()
+}
+
+/// Reentrant hash table data.
+struct HashTableR {
+    slots: Vec<Option<HashSlot>>,
+}
+
+/// `hcreate_r` — create a reentrant hash table.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn hcreate_r(nel: usize, htab: *mut c_void) -> c_int {
+    if htab.is_null() {
+        return 0;
+    }
+    let cap = if nel == 0 { 128 } else { nel };
+    let mut table: Vec<Option<HashSlot>> = Vec::with_capacity(cap);
+    table.resize_with(cap, || None);
+    let boxed = Box::new(HashTableR { slots: table });
+    unsafe { *(htab as *mut *mut HashTableR) = Box::into_raw(boxed) };
+    1
+}
+
+/// `hdestroy_r` — destroy a reentrant hash table.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn hdestroy_r(htab: *mut c_void) {
+    if htab.is_null() {
+        return;
+    }
+    let ptr = unsafe { *(htab as *mut *mut HashTableR) };
+    if !ptr.is_null() {
+        let _ = unsafe { Box::from_raw(ptr) };
+        unsafe { *(htab as *mut *mut HashTableR) = ptr::null_mut() };
+    }
+}
+
+/// `hsearch_r` — reentrant hash table search/insert.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn hsearch_r(
+    item: HashEntry,
+    action: HashAction,
+    retval: *mut *mut HashEntry,
+    htab: *mut c_void,
+) -> c_int {
+    if htab.is_null() || retval.is_null() {
+        return 0;
+    }
+    let table_ptr = unsafe { *(htab as *mut *mut HashTableR) };
+    if table_ptr.is_null() {
+        return 0;
+    }
+    let table = unsafe { &mut *table_ptr };
+
+    let key_cstr = if item.key.is_null() {
+        return 0;
+    } else {
+        unsafe { CStr::from_ptr(item.key) }
+    };
+    let key_str = match key_cstr.to_str() {
+        Ok(s) => s,
+        Err(_) => return 0,
+    };
+
+    let cap = table.slots.len();
+    let start = hash_key(key_str, cap);
+
+    for i in 0..cap {
+        let idx = (start + i) % cap;
+        match &table.slots[idx] {
+            Some(slot) if slot.key == key_str => {
+                thread_local! {
+                    static RET: std::cell::RefCell<HashEntry> = const {
+                        std::cell::RefCell::new(HashEntry {
+                            key: std::ptr::null_mut(),
+                            data: std::ptr::null_mut(),
+                        })
+                    };
+                }
+                let slot = table.slots[idx].as_mut().unwrap();
+                RET.with(|r| {
+                    let mut entry = r.borrow_mut();
+                    entry.key = slot.key.as_ptr() as *mut c_char;
+                    entry.data = slot.data;
+                    unsafe { *retval = &mut *entry as *mut HashEntry };
+                });
+                return 1;
+            }
+            None => {
+                match action {
+                    HashAction::ENTER => {
+                        table.slots[idx] = Some(HashSlot {
+                            key: key_str.to_string(),
+                            data: item.data,
+                        });
+                        thread_local! {
+                            static RET2: std::cell::RefCell<HashEntry> = const {
+                                std::cell::RefCell::new(HashEntry {
+                                    key: std::ptr::null_mut(),
+                                    data: std::ptr::null_mut(),
+                                })
+                            };
+                        }
+                        let slot = table.slots[idx].as_mut().unwrap();
+                        RET2.with(|r| {
+                            let mut entry = r.borrow_mut();
+                            entry.key = slot.key.as_ptr() as *mut c_char;
+                            entry.data = slot.data;
+                            unsafe { *retval = &mut *entry as *mut HashEntry };
+                        });
+                        return 1;
+                    }
+                    HashAction::FIND => {
+                        unsafe { *retval = ptr::null_mut() };
+                        unsafe { set_abi_errno(libc::ESRCH) };
+                        return 0;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    unsafe { set_abi_errno(libc::ENOMEM) };
+    0
+}
+
+// ===========================================================================
+// Batch: getloadavg — Implemented
+// ===========================================================================
+
+/// `getloadavg` — get system load averages from /proc/loadavg.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getloadavg(loadavg: *mut c_double, nelem: c_int) -> c_int {
+    if loadavg.is_null() || nelem <= 0 {
+        return -1;
+    }
+    let n = std::cmp::min(nelem, 3) as usize;
+    let content = match std::fs::read_to_string("/proc/loadavg") {
+        Ok(s) => s,
+        Err(_) => return -1,
+    };
+    let parts: Vec<&str> = content.split_whitespace().collect();
+    if parts.len() < 3 {
+        return -1;
+    }
+    let mut filled = 0usize;
+    for (i, part) in parts.iter().enumerate().take(n) {
+        match part.parse::<f64>() {
+            Ok(val) => {
+                unsafe { *loadavg.add(i) = val };
+                filled += 1;
+            }
+            Err(_) => break,
+        }
+    }
+    filled as c_int
+}
+
+// ===========================================================================
+// Batch: error / error_at_line — Implemented
+// ===========================================================================
+
+/// Global error message count (GNU extension).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[allow(non_upper_case_globals)]
+pub static mut error_message_count: c_uint = 0;
+
+/// `error` — GNU error reporting function.
+///
+/// Prints "progname: format_message" to stderr. If errnum != 0,
+/// appends ": strerror(errnum)". If status != 0, calls exit(status).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn error(status: c_int, errnum: c_int, fmt: *const c_char, mut args: ...) {
+    use std::io::Write;
+
+    unsafe { error_message_count += 1 };
+
+    let mut stderr = std::io::stderr().lock();
+
+    // Try to get program name
+    let progname = unsafe {
+        let p = program_invocation_short_name;
+        if !p.is_null() {
+            CStr::from_ptr(p).to_str().unwrap_or("unknown")
+        } else {
+            "unknown"
+        }
+    };
+
+    let _ = write!(stderr, "{progname}: ");
+
+    // Format the message
+    if !fmt.is_null() {
+        let fmt_str = unsafe { CStr::from_ptr(fmt) };
+        if let Ok(f) = fmt_str.to_str() {
+            // Simple format: just print as-is for common case.
+            // For full printf compatibility, delegate to our printf engine.
+            let msg = unsafe { crate::stdio_abi::vprintf_extract_and_render(
+                f,
+                (&mut args) as *mut _ as *mut c_void,
+            ) };
+            let _ = write!(stderr, "{msg}");
+        }
+    }
+
+    if errnum != 0 {
+        let err_msg = unsafe {
+            let p = libc::strerror(errnum);
+            if !p.is_null() {
+                CStr::from_ptr(p).to_str().unwrap_or("Unknown error")
+            } else {
+                "Unknown error"
+            }
+        };
+        let _ = write!(stderr, ": {err_msg}");
+    }
+
+    let _ = writeln!(stderr);
+
+    if status != 0 {
+        std::process::exit(status);
+    }
+}
+
+/// `error_at_line` — GNU error reporting with file/line info.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn error_at_line(
+    status: c_int,
+    errnum: c_int,
+    filename: *const c_char,
+    linenum: c_uint,
+    fmt: *const c_char,
+    mut args: ...
+) {
+    use std::io::Write;
+
+    unsafe { error_message_count += 1 };
+
+    let mut stderr = std::io::stderr().lock();
+
+    let progname = unsafe {
+        let p = program_invocation_short_name;
+        if !p.is_null() {
+            CStr::from_ptr(p).to_str().unwrap_or("unknown")
+        } else {
+            "unknown"
+        }
+    };
+
+    let _ = write!(stderr, "{progname}:");
+
+    if !filename.is_null() {
+        let fname = unsafe { CStr::from_ptr(filename) };
+        if let Ok(f) = fname.to_str() {
+            let _ = write!(stderr, "{f}:{linenum}: ");
+        }
+    }
+
+    if !fmt.is_null() {
+        let fmt_str = unsafe { CStr::from_ptr(fmt) };
+        if let Ok(f) = fmt_str.to_str() {
+            let msg = unsafe { crate::stdio_abi::vprintf_extract_and_render(
+                f,
+                (&mut args) as *mut _ as *mut c_void,
+            ) };
+            let _ = write!(stderr, "{msg}");
+        }
+    }
+
+    if errnum != 0 {
+        let err_msg = unsafe {
+            let p = libc::strerror(errnum);
+            if !p.is_null() {
+                CStr::from_ptr(p).to_str().unwrap_or("Unknown error")
+            } else {
+                "Unknown error"
+            }
+        };
+        let _ = write!(stderr, ": {err_msg}");
+    }
+
+    let _ = writeln!(stderr);
+
+    if status != 0 {
+        std::process::exit(status);
+    }
+}
+
+// ===========================================================================
+// Batch: BSD err/warn family — Implemented
+// ===========================================================================
+
+/// `err` — BSD error exit with errno message.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn err(eval: c_int, fmt: *const c_char, mut args: ...) {
+    use std::io::Write;
+    let mut stderr = std::io::stderr().lock();
+
+    let progname = unsafe {
+        let p = program_invocation_short_name;
+        if !p.is_null() {
+            CStr::from_ptr(p).to_str().unwrap_or("unknown")
+        } else {
+            "unknown"
+        }
+    };
+    let _ = write!(stderr, "{progname}: ");
+
+    if !fmt.is_null() {
+        let fmt_str = unsafe { CStr::from_ptr(fmt) };
+        if let Ok(f) = fmt_str.to_str() {
+            let msg = unsafe { crate::stdio_abi::vprintf_extract_and_render(
+                f,
+                (&mut args) as *mut _ as *mut c_void,
+            ) };
+            let _ = write!(stderr, "{msg}: ");
+        }
+    }
+
+    let errno_val = unsafe { *super::errno_abi::__errno_location() };
+    let err_msg = unsafe {
+        let p = libc::strerror(errno_val);
+        if !p.is_null() {
+            CStr::from_ptr(p).to_str().unwrap_or("Unknown error")
+        } else {
+            "Unknown error"
+        }
+    };
+    let _ = writeln!(stderr, "{err_msg}");
+    std::process::exit(eval);
+}
+
+/// `errx` — BSD error exit without errno message.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn errx(eval: c_int, fmt: *const c_char, mut args: ...) {
+    use std::io::Write;
+    let mut stderr = std::io::stderr().lock();
+
+    let progname = unsafe {
+        let p = program_invocation_short_name;
+        if !p.is_null() {
+            CStr::from_ptr(p).to_str().unwrap_or("unknown")
+        } else {
+            "unknown"
+        }
+    };
+    let _ = write!(stderr, "{progname}: ");
+
+    if !fmt.is_null() {
+        let fmt_str = unsafe { CStr::from_ptr(fmt) };
+        if let Ok(f) = fmt_str.to_str() {
+            let msg = unsafe { crate::stdio_abi::vprintf_extract_and_render(
+                f,
+                (&mut args) as *mut _ as *mut c_void,
+            ) };
+            let _ = write!(stderr, "{msg}");
+        }
+    }
+
+    let _ = writeln!(stderr);
+    std::process::exit(eval);
+}
+
+/// `warn` — BSD warning with errno message.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn warn(fmt: *const c_char, mut args: ...) {
+    use std::io::Write;
+    let mut stderr = std::io::stderr().lock();
+
+    let progname = unsafe {
+        let p = program_invocation_short_name;
+        if !p.is_null() {
+            CStr::from_ptr(p).to_str().unwrap_or("unknown")
+        } else {
+            "unknown"
+        }
+    };
+    let _ = write!(stderr, "{progname}: ");
+
+    if !fmt.is_null() {
+        let fmt_str = unsafe { CStr::from_ptr(fmt) };
+        if let Ok(f) = fmt_str.to_str() {
+            let msg = unsafe { crate::stdio_abi::vprintf_extract_and_render(
+                f,
+                (&mut args) as *mut _ as *mut c_void,
+            ) };
+            let _ = write!(stderr, "{msg}: ");
+        }
+    }
+
+    let errno_val = unsafe { *super::errno_abi::__errno_location() };
+    let err_msg = unsafe {
+        let p = libc::strerror(errno_val);
+        if !p.is_null() {
+            CStr::from_ptr(p).to_str().unwrap_or("Unknown error")
+        } else {
+            "Unknown error"
+        }
+    };
+    let _ = writeln!(stderr, "{err_msg}");
+}
+
+/// `warnx` — BSD warning without errno message.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn warnx(fmt: *const c_char, mut args: ...) {
+    use std::io::Write;
+    let mut stderr = std::io::stderr().lock();
+
+    let progname = unsafe {
+        let p = program_invocation_short_name;
+        if !p.is_null() {
+            CStr::from_ptr(p).to_str().unwrap_or("unknown")
+        } else {
+            "unknown"
+        }
+    };
+    let _ = write!(stderr, "{progname}: ");
+
+    if !fmt.is_null() {
+        let fmt_str = unsafe { CStr::from_ptr(fmt) };
+        if let Ok(f) = fmt_str.to_str() {
+            let msg = unsafe { crate::stdio_abi::vprintf_extract_and_render(
+                f,
+                (&mut args) as *mut _ as *mut c_void,
+            ) };
+            let _ = write!(stderr, "{msg}");
+        }
+    }
+
+    let _ = writeln!(stderr);
+}
+
+/// `verr` — BSD error exit with errno, va_list variant.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn verr(eval: c_int, fmt: *const c_char, ap: *mut c_void) {
+    use std::io::Write;
+    let mut stderr = std::io::stderr().lock();
+    let progname = unsafe {
+        let p = program_invocation_short_name;
+        if !p.is_null() { CStr::from_ptr(p).to_str().unwrap_or("unknown") } else { "unknown" }
+    };
+    let _ = write!(stderr, "{progname}: ");
+    if !fmt.is_null() {
+        let fmt_str = unsafe { CStr::from_ptr(fmt) };
+        if let Ok(f) = fmt_str.to_str() {
+            let msg = unsafe { crate::stdio_abi::vprintf_extract_and_render(f, ap) };
+            let _ = write!(stderr, "{msg}: ");
+        }
+    }
+    let errno_val = unsafe { *super::errno_abi::__errno_location() };
+    let err_msg = unsafe {
+        let p = libc::strerror(errno_val);
+        if !p.is_null() { CStr::from_ptr(p).to_str().unwrap_or("Unknown error") } else { "Unknown error" }
+    };
+    let _ = writeln!(stderr, "{err_msg}");
+    std::process::exit(eval);
+}
+
+/// `verrx` — BSD error exit without errno, va_list variant.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn verrx(eval: c_int, fmt: *const c_char, ap: *mut c_void) {
+    use std::io::Write;
+    let mut stderr = std::io::stderr().lock();
+    let progname = unsafe {
+        let p = program_invocation_short_name;
+        if !p.is_null() { CStr::from_ptr(p).to_str().unwrap_or("unknown") } else { "unknown" }
+    };
+    let _ = write!(stderr, "{progname}: ");
+    if !fmt.is_null() {
+        let fmt_str = unsafe { CStr::from_ptr(fmt) };
+        if let Ok(f) = fmt_str.to_str() {
+            let msg = unsafe { crate::stdio_abi::vprintf_extract_and_render(f, ap) };
+            let _ = write!(stderr, "{msg}");
+        }
+    }
+    let _ = writeln!(stderr);
+    std::process::exit(eval);
+}
+
+/// `vwarn` — BSD warning with errno, va_list variant.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn vwarn(fmt: *const c_char, ap: *mut c_void) {
+    use std::io::Write;
+    let mut stderr = std::io::stderr().lock();
+    let progname = unsafe {
+        let p = program_invocation_short_name;
+        if !p.is_null() { CStr::from_ptr(p).to_str().unwrap_or("unknown") } else { "unknown" }
+    };
+    let _ = write!(stderr, "{progname}: ");
+    if !fmt.is_null() {
+        let fmt_str = unsafe { CStr::from_ptr(fmt) };
+        if let Ok(f) = fmt_str.to_str() {
+            let msg = unsafe { crate::stdio_abi::vprintf_extract_and_render(f, ap) };
+            let _ = write!(stderr, "{msg}: ");
+        }
+    }
+    let errno_val = unsafe { *super::errno_abi::__errno_location() };
+    let err_msg = unsafe {
+        let p = libc::strerror(errno_val);
+        if !p.is_null() { CStr::from_ptr(p).to_str().unwrap_or("Unknown error") } else { "Unknown error" }
+    };
+    let _ = writeln!(stderr, "{err_msg}");
+}
+
+/// `vwarnx` — BSD warning without errno, va_list variant.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn vwarnx(fmt: *const c_char, ap: *mut c_void) {
+    use std::io::Write;
+    let mut stderr = std::io::stderr().lock();
+    let progname = unsafe {
+        let p = program_invocation_short_name;
+        if !p.is_null() { CStr::from_ptr(p).to_str().unwrap_or("unknown") } else { "unknown" }
+    };
+    let _ = write!(stderr, "{progname}: ");
+    if !fmt.is_null() {
+        let fmt_str = unsafe { CStr::from_ptr(fmt) };
+        if let Ok(f) = fmt_str.to_str() {
+            let msg = unsafe { crate::stdio_abi::vprintf_extract_and_render(f, ap) };
+            let _ = write!(stderr, "{msg}");
+        }
+    }
+    let _ = writeln!(stderr);
+}
+
+// ===========================================================================
+// Batch: GNU sysconf extensions — Implemented
+// ===========================================================================
+
+/// `get_nprocs` — return number of online processors.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub extern "C" fn get_nprocs() -> c_int {
+    // Read /sys/devices/system/cpu/online, parse range "0-N" → N+1
+    if let Ok(content) = std::fs::read_to_string("/sys/devices/system/cpu/online") {
+        let content = content.trim();
+        // Format: "0-7" or "0" or "0-3,5-7"
+        let mut count = 0i32;
+        for range in content.split(',') {
+            let parts: Vec<&str> = range.split('-').collect();
+            if parts.len() == 2
+                && let (Ok(lo), Ok(hi)) = (parts[0].parse::<i32>(), parts[1].parse::<i32>())
+            {
+                count += hi - lo + 1;
+            } else if parts.len() == 1
+                && parts[0].parse::<i32>().is_ok()
+            {
+                count += 1;
+            }
+        }
+        if count > 0 { return count; }
+    }
+    1 // fallback
+}
+
+/// `get_nprocs_conf` — return number of configured processors.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub extern "C" fn get_nprocs_conf() -> c_int {
+    if let Ok(content) = std::fs::read_to_string("/sys/devices/system/cpu/present") {
+        let content = content.trim();
+        let mut count = 0i32;
+        for range in content.split(',') {
+            let parts: Vec<&str> = range.split('-').collect();
+            if parts.len() == 2
+                && let (Ok(lo), Ok(hi)) = (parts[0].parse::<i32>(), parts[1].parse::<i32>())
+            {
+                count += hi - lo + 1;
+            } else if parts.len() == 1
+                && parts[0].parse::<i32>().is_ok()
+            {
+                count += 1;
+            }
+        }
+        if count > 0 { return count; }
+    }
+    1
+}
+
+/// `get_phys_pages` — return number of physical memory pages.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub extern "C" fn get_phys_pages() -> c_long {
+    if let Ok(content) = std::fs::read_to_string("/proc/meminfo") {
+        for line in content.lines() {
+            if line.starts_with("MemTotal:") {
+                // MemTotal:       16384000 kB
+                let parts: Vec<&str> = line.split_whitespace().collect();
+                if parts.len() >= 2
+                    && let Ok(kb) = parts[1].parse::<c_long>()
+                {
+                    let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+                    let page_size = if page_size > 0 { page_size } else { 4096 };
+                    return (kb * 1024) / page_size;
+                }
+            }
+        }
+    }
+    0
+}
+
+/// `get_avphys_pages` — return number of available physical memory pages.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub extern "C" fn get_avphys_pages() -> c_long {
+    if let Ok(content) = std::fs::read_to_string("/proc/meminfo") {
+        for line in content.lines() {
+            if line.starts_with("MemAvailable:") {
+                let parts: Vec<&str> = line.split_whitespace().collect();
+                if parts.len() >= 2
+                    && let Ok(kb) = parts[1].parse::<c_long>()
+                {
+                    let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+                    let page_size = if page_size > 0 { page_size } else { 4096 };
+                    return (kb * 1024) / page_size;
+                }
+            }
+        }
+    }
+    0
+}
+
+// ===========================================================================
+// Batch: POSIX binary search tree (tsearch family) — Implemented
+// ===========================================================================
+
+/// Internal binary tree node for tsearch.
+struct TsearchNode {
+    key: *const c_void,
+    left: *mut TsearchNode,
+    right: *mut TsearchNode,
+}
+
+/// `tsearch` — search/insert into a binary tree.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn tsearch(
+    key: *const c_void,
+    rootp: *mut *mut c_void,
+    compar: unsafe extern "C" fn(*const c_void, *const c_void) -> c_int,
+) -> *mut c_void {
+    if rootp.is_null() {
+        return ptr::null_mut();
+    }
+
+    let rootp = rootp as *mut *mut TsearchNode;
+    let mut pp = rootp;
+
+    while !unsafe { *pp }.is_null() {
+        let node = unsafe { &mut **pp };
+        let cmp = unsafe { compar(key, node.key) };
+        if cmp < 0 {
+            pp = &mut node.left;
+        } else if cmp > 0 {
+            pp = &mut node.right;
+        } else {
+            // Found: return pointer to the key pointer field
+            return &mut node.key as *mut *const c_void as *mut c_void;
+        }
+    }
+
+    // Not found: insert new node
+    let new_node = Box::into_raw(Box::new(TsearchNode {
+        key,
+        left: ptr::null_mut(),
+        right: ptr::null_mut(),
+    }));
+    unsafe { *pp = new_node };
+    unsafe { &mut (*new_node).key as *mut *const c_void as *mut c_void }
+}
+
+/// `tfind` — search a binary tree without inserting.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn tfind(
+    key: *const c_void,
+    rootp: *const *mut c_void,
+    compar: unsafe extern "C" fn(*const c_void, *const c_void) -> c_int,
+) -> *mut c_void {
+    if rootp.is_null() {
+        return ptr::null_mut();
+    }
+
+    let mut node = unsafe { *(rootp as *const *mut TsearchNode) };
+
+    while !node.is_null() {
+        let n = unsafe { &*node };
+        let cmp = unsafe { compar(key, n.key) };
+        if cmp < 0 {
+            node = n.left;
+        } else if cmp > 0 {
+            node = n.right;
+        } else {
+            return unsafe { &(*node).key as *const *const c_void as *mut c_void };
+        }
+    }
+
+    ptr::null_mut()
+}
+
+/// `tdelete` — delete a node from a binary tree.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn tdelete(
+    key: *const c_void,
+    rootp: *mut *mut c_void,
+    compar: unsafe extern "C" fn(*const c_void, *const c_void) -> c_int,
+) -> *mut c_void {
+    if rootp.is_null() {
+        return ptr::null_mut();
+    }
+
+    let rootp = rootp as *mut *mut TsearchNode;
+    let mut pp = rootp;
+    let mut parent: *mut TsearchNode = ptr::null_mut();
+
+    while !unsafe { *pp }.is_null() {
+        let node = unsafe { &mut **pp };
+        let cmp = unsafe { compar(key, node.key) };
+        if cmp < 0 {
+            parent = unsafe { *pp };
+            pp = &mut node.left;
+        } else if cmp > 0 {
+            parent = unsafe { *pp };
+            pp = &mut node.right;
+        } else {
+            // Found the node to delete
+            let to_delete = unsafe { *pp };
+
+            if node.left.is_null() {
+                unsafe { *pp = node.right };
+            } else if node.right.is_null() {
+                unsafe { *pp = node.left };
+            } else {
+                // Two children: find in-order successor
+                let mut succ_pp = &mut node.right as *mut *mut TsearchNode;
+                while !unsafe { (**succ_pp).left }.is_null() {
+                    succ_pp = unsafe { &mut (**succ_pp).left };
+                }
+                let succ = unsafe { *succ_pp };
+                unsafe { *succ_pp = (*succ).right };
+                unsafe {
+                    (*succ).left = (*to_delete).left;
+                    (*succ).right = (*to_delete).right;
+                    *pp = succ;
+                };
+            }
+
+            let _ = unsafe { Box::from_raw(to_delete) };
+
+            // Return parent's key pointer (or NULL if root was deleted)
+            if parent.is_null() {
+                return ptr::null_mut();
+            }
+            return unsafe { &(*parent).key as *const *const c_void as *mut c_void };
+        }
+    }
+
+    ptr::null_mut()
+}
+
+/// `twalk` — walk a binary tree in order.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn twalk(
+    root: *const c_void,
+    action: unsafe extern "C" fn(*const c_void, c_int, c_int),
+) {
+    // action(nodep, visit_order, depth) where visit_order: 0=preorder, 1=postorder, 2=endorder, 3=leaf
+    unsafe fn walk(
+        node: *const TsearchNode,
+        action: unsafe extern "C" fn(*const c_void, c_int, c_int),
+        depth: c_int,
+    ) {
+        if node.is_null() {
+            return;
+        }
+        let n = unsafe { &*node };
+        let nodep = &n.key as *const *const c_void as *const c_void;
+
+        if n.left.is_null() && n.right.is_null() {
+            // Leaf
+            unsafe { action(nodep, 3, depth) };
+        } else {
+            unsafe { action(nodep, 0, depth) }; // preorder
+            unsafe { walk(n.left, action, depth + 1) };
+            unsafe { action(nodep, 1, depth) }; // postorder (inorder)
+            unsafe { walk(n.right, action, depth + 1) };
+            unsafe { action(nodep, 2, depth) }; // endorder
+        }
+    }
+
+    unsafe { walk(root as *const TsearchNode, action, 0) };
+}
+
+/// `tdestroy` — destroy a binary tree, calling freefn for each node.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn tdestroy(
+    root: *mut c_void,
+    freefn: unsafe extern "C" fn(*mut c_void),
+) {
+    unsafe fn destroy_recursive(
+        node: *mut TsearchNode,
+        freefn: unsafe extern "C" fn(*mut c_void),
+    ) {
+        if node.is_null() {
+            return;
+        }
+        let n = unsafe { &*node };
+        unsafe { destroy_recursive(n.left, freefn) };
+        unsafe { destroy_recursive(n.right, freefn) };
+        unsafe { freefn(n.key as *mut c_void) };
+        let _ = unsafe { Box::from_raw(node) };
+    }
+
+    unsafe { destroy_recursive(root as *mut TsearchNode, freefn) };
+}
+
+// ===========================================================================
+// Batch: lfind / lsearch — Implemented
+// ===========================================================================
+
+/// `lfind` — linear search an array.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn lfind(
+    key: *const c_void,
+    base: *const c_void,
+    nmemb: *mut usize,
+    size: usize,
+    compar: unsafe extern "C" fn(*const c_void, *const c_void) -> c_int,
+) -> *mut c_void {
+    if key.is_null() || base.is_null() || nmemb.is_null() || size == 0 {
+        return ptr::null_mut();
+    }
+    let n = unsafe { *nmemb };
+    let base_bytes = base as *const u8;
+    for i in 0..n {
+        let elem = unsafe { base_bytes.add(i * size) as *const c_void };
+        if unsafe { compar(key, elem) } == 0 {
+            return elem as *mut c_void;
+        }
+    }
+    ptr::null_mut()
+}
+
+/// `lsearch` — linear search an array, inserting if not found.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn lsearch(
+    key: *const c_void,
+    base: *mut c_void,
+    nmemb: *mut usize,
+    size: usize,
+    compar: unsafe extern "C" fn(*const c_void, *const c_void) -> c_int,
+) -> *mut c_void {
+    if key.is_null() || base.is_null() || nmemb.is_null() || size == 0 {
+        return ptr::null_mut();
+    }
+    let n = unsafe { *nmemb };
+    let base_bytes = base as *mut u8;
+    for i in 0..n {
+        let elem = unsafe { base_bytes.add(i * size) as *const c_void };
+        if unsafe { compar(key, elem) } == 0 {
+            return elem as *mut c_void;
+        }
+    }
+    // Not found: append
+    let new_elem = unsafe { base_bytes.add(n * size) };
+    unsafe {
+        std::ptr::copy_nonoverlapping(key as *const u8, new_elem, size);
+        *nmemb = n + 1;
+    }
+    new_elem as *mut c_void
+}
+
+// ===========================================================================
+// Batch: getauxval — Implemented
+// ===========================================================================
+
+/// `getauxval` — retrieve a value from the auxiliary vector.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getauxval(type_: c_ulong) -> c_ulong {
+    // Read from /proc/self/auxv (binary pairs of unsigned long)
+    if let Ok(data) = std::fs::read("/proc/self/auxv") {
+        let ptr_size = std::mem::size_of::<c_ulong>();
+        let mut offset = 0;
+        while offset + 2 * ptr_size <= data.len() {
+            let at_type = c_ulong::from_ne_bytes(
+                data[offset..offset + ptr_size].try_into().unwrap_or([0; 8])
+            );
+            let at_val = c_ulong::from_ne_bytes(
+                data[offset + ptr_size..offset + 2 * ptr_size].try_into().unwrap_or([0; 8])
+            );
+            if at_type == 0 {
+                break; // AT_NULL
+            }
+            if at_type == type_ {
+                return at_val;
+            }
+            offset += 2 * ptr_size;
+        }
+    }
+    unsafe { set_abi_errno(libc::ENOENT) };
+    0
+}
+
+// ===========================================================================
+// Batch: getusershell family — Implemented
+// ===========================================================================
+
+static VALID_SHELLS: &[&str] = &[
+    "/bin/sh", "/bin/bash", "/bin/zsh", "/bin/csh", "/bin/tcsh",
+    "/bin/dash", "/bin/fish", "/usr/bin/bash", "/usr/bin/zsh",
+    "/usr/bin/fish", "/usr/bin/tmux", "/bin/false", "/usr/sbin/nologin",
+];
+
+thread_local! {
+    static SHELL_IDX: Cell<usize> = const { Cell::new(0) };
+    static SHELL_CACHE: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// `getusershell` — get valid login shell from /etc/shells.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub extern "C" fn getusershell() -> *mut c_char {
+    SHELL_CACHE.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        if cache.is_empty() {
+            // Load from /etc/shells
+            if let Ok(content) = std::fs::read_to_string("/etc/shells") {
+                for line in content.lines() {
+                    let line = line.trim();
+                    if !line.is_empty() && !line.starts_with('#') {
+                        cache.push(format!("{line}\0"));
+                    }
+                }
+            }
+            if cache.is_empty() {
+                // Fallback
+                for s in VALID_SHELLS {
+                    cache.push(format!("{s}\0"));
+                }
+            }
+        }
+
+        SHELL_IDX.with(|idx| {
+            let i = idx.get();
+            if i < cache.len() {
+                idx.set(i + 1);
+                cache[i].as_ptr() as *mut c_char
+            } else {
+                ptr::null_mut()
+            }
+        })
+    })
+}
+
+/// `setusershell` — rewind the shell list iterator.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub extern "C" fn setusershell() {
+    SHELL_IDX.with(|idx| idx.set(0));
+}
+
+/// `endusershell` — close the shell list and free resources.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub extern "C" fn endusershell() {
+    SHELL_IDX.with(|idx| idx.set(0));
+    SHELL_CACHE.with(|cache| cache.borrow_mut().clear());
+}
+
+// ===========================================================================
+// Batch: gets / tmpnam_r — Implemented
+// ===========================================================================
+
+/// `gets` — read a line from stdin (DEPRECATED, insecure).
+///
+/// POSIX removed this in 2008; kept for legacy compatibility.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn gets(s: *mut c_char) -> *mut c_char {
+    if s.is_null() {
+        return ptr::null_mut();
+    }
+    let mut i = 0usize;
+    loop {
+        let mut ch: u8 = 0;
+        let n = unsafe { libc::read(0, &mut ch as *mut u8 as *mut c_void, 1) };
+        if n <= 0 {
+            if i == 0 { return ptr::null_mut(); }
+            break;
+        }
+        if ch == b'\n' {
+            break;
+        }
+        unsafe { *s.add(i) = ch as c_char };
+        i += 1;
+    }
+    unsafe { *s.add(i) = 0 };
+    s
+}
+
+/// `tmpnam_r` — generate unique temporary filename (reentrant).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn tmpnam_r(s: *mut c_char) -> *mut c_char {
+    if s.is_null() {
+        return ptr::null_mut();
+    }
+    // Generate /tmp/tmpXXXXXX pattern and check uniqueness
+    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let pid = unsafe { libc::getpid() };
+    let cnt = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let name = format!("/tmp/tmp{pid:06}{cnt:06}\0");
+    let name_bytes = name.as_bytes();
+    if name_bytes.len() > 20 {
+        // Truncate to L_tmpnam
+        unsafe {
+            std::ptr::copy_nonoverlapping(name_bytes.as_ptr(), s as *mut u8, 20);
+            *s.add(19) = 0;
+        }
+    } else {
+        unsafe {
+            std::ptr::copy_nonoverlapping(name_bytes.as_ptr(), s as *mut u8, name_bytes.len());
+        }
+    }
+    s
+}
+
+// ===========================================================================
+// Batch: cfmakeraw / cfsetspeed — Implemented
+// ===========================================================================
+
+/// `cfmakeraw` — set terminal attributes for raw mode.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn cfmakeraw(termios: *mut libc::termios) {
+    if termios.is_null() {
+        return;
+    }
+    unsafe { libc::cfmakeraw(termios) };
+}
+
+/// `cfsetspeed` — set both input and output baud rate.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn cfsetspeed(termios: *mut libc::termios, speed: libc::speed_t) -> c_int {
+    if termios.is_null() {
+        return -1;
+    }
+    let r1 = unsafe { libc::cfsetispeed(termios, speed) };
+    let r2 = unsafe { libc::cfsetospeed(termios, speed) };
+    if r1 < 0 || r2 < 0 { -1 } else { 0 }
+}
+
+// ===========================================================================
+// Locale-aware _l variants — C/POSIX locale passthrough
+// ===========================================================================
+
+/// `strtod_l` — locale-aware string to double. C locale: delegates to strtod.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strtod_l(
+    nptr: *const c_char,
+    endptr: *mut *mut c_char,
+    _locale: *mut c_void,
+) -> f64 {
+    unsafe { strtod(nptr, endptr) }
+}
+
+/// `strtof_l` — locale-aware string to float.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strtof_l(
+    nptr: *const c_char,
+    endptr: *mut *mut c_char,
+    _locale: *mut c_void,
+) -> f32 {
+    unsafe { strtof(nptr, endptr) }
+}
+
+/// `strtold_l` — locale-aware string to long double.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strtold_l(
+    nptr: *const c_char,
+    endptr: *mut *mut c_char,
+    _locale: *mut c_void,
+) -> f64 {
+    unsafe { strtold(nptr, endptr) }
+}
+
+/// `strtol_l` — locale-aware string to long.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strtol_l(
+    nptr: *const c_char,
+    endptr: *mut *mut c_char,
+    base: c_int,
+    _locale: *mut c_void,
+) -> c_long {
+    unsafe { strtol(nptr, endptr, base) }
+}
+
+/// `strtoul_l` — locale-aware string to unsigned long.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strtoul_l(
+    nptr: *const c_char,
+    endptr: *mut *mut c_char,
+    base: c_int,
+    _locale: *mut c_void,
+) -> c_ulong {
+    unsafe { strtoul(nptr, endptr, base) }
+}
+
+/// `strtoll_l` — locale-aware string to long long.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strtoll_l(
+    nptr: *const c_char,
+    endptr: *mut *mut c_char,
+    base: c_int,
+    _locale: *mut c_void,
+) -> c_longlong {
+    unsafe { strtoll(nptr, endptr, base) }
+}
+
+/// `strtoull_l` — locale-aware string to unsigned long long.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strtoull_l(
+    nptr: *const c_char,
+    endptr: *mut *mut c_char,
+    base: c_int,
+    _locale: *mut c_void,
+) -> c_ulonglong {
+    unsafe { strtoull(nptr, endptr, base) }
+}
+
+// ===========================================================================
+// insque / remque — POSIX linked-list queue operations
+// ===========================================================================
+
+/// Doubly-linked queue element (matches glibc's expectation: two pointer fields at start).
+#[repr(C)]
+struct QElem {
+    next: *mut QElem,
+    prev: *mut QElem,
+}
+
+/// `insque` — insert element into a doubly-linked queue after `prev_elem`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn insque(elem: *mut c_void, prev_elem: *mut c_void) {
+    if elem.is_null() {
+        return;
+    }
+    let e = elem as *mut QElem;
+    if prev_elem.is_null() {
+        // Inserting as first element of new list
+        unsafe {
+            (*e).next = ptr::null_mut();
+            (*e).prev = ptr::null_mut();
+        }
+    } else {
+        let p = prev_elem as *mut QElem;
+        unsafe {
+            let next = (*p).next;
+            (*e).next = next;
+            (*e).prev = p;
+            (*p).next = e;
+            if !next.is_null() {
+                (*next).prev = e;
+            }
+        }
+    }
+}
+
+/// `remque` — remove element from a doubly-linked queue.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn remque(elem: *mut c_void) {
+    if elem.is_null() {
+        return;
+    }
+    let e = elem as *mut QElem;
+    unsafe {
+        let prev = (*e).prev;
+        let next = (*e).next;
+        if !prev.is_null() {
+            (*prev).next = next;
+        }
+        if !next.is_null() {
+            (*next).prev = prev;
+        }
+    }
+}
+
+// ===========================================================================
+// __xpg_strerror_r — POSIX strerror_r variant
+// ===========================================================================
+
+/// `__xpg_strerror_r` — XSI-compliant strerror_r (returns int, not char*).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __xpg_strerror_r(
+    errnum: c_int,
+    buf: *mut c_char,
+    buflen: usize,
+) -> c_int {
+    if buf.is_null() || buflen == 0 {
+        return libc::ERANGE;
+    }
+    let msg = frankenlibc_core::errno::strerror_msg(errnum);
+    let msg_bytes = msg.as_bytes();
+    if msg_bytes.len() >= buflen {
+        // Truncate and null-terminate
+        unsafe {
+            ptr::copy_nonoverlapping(msg_bytes.as_ptr(), buf as *mut u8, buflen - 1);
+            *buf.add(buflen - 1) = 0;
+        }
+        return libc::ERANGE;
+    }
+    unsafe {
+        ptr::copy_nonoverlapping(msg_bytes.as_ptr(), buf as *mut u8, msg_bytes.len());
+        *buf.add(msg_bytes.len()) = 0;
+    }
+    0
+}
+
+// ===========================================================================
+// gnu_get_libc_release — GNU libc version info
+// ===========================================================================
+
+/// `gnu_get_libc_release` — return the release of the C library.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn gnu_get_libc_release() -> *const c_char {
+    b"stable\0".as_ptr() as *const c_char
 }

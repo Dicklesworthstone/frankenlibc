@@ -10,14 +10,34 @@ mkdir -p "${RUN_DIR}"
 
 TEST_FILE="fragmentation_storms_test"
 TEST_FILTER="fragmentation_storms_suite_emits_metrics"
+TARGET_BASE="${CARGO_TARGET_DIR_BASE:-/data/tmp/cargo-target-fragmentation-storms-${RUN_ID}}"
+
+run_fragmentation_test() {
+  local mode="$1"
+  local log_path="$2"
+  local mode_target_dir="${TARGET_BASE}-${mode}"
+  mkdir -p "${mode_target_dir}"
+
+  if command -v rch >/dev/null 2>&1; then
+    rch exec -- \
+      env \
+      FRANKENLIBC_MODE="${mode}" \
+      CARGO_TARGET_DIR="${mode_target_dir}" \
+      cargo test -p frankenlibc-membrane --release --test "${TEST_FILE}" "${TEST_FILTER}" -- --nocapture \
+      >"${log_path}" 2>&1
+  else
+    FRANKENLIBC_MODE="${mode}" \
+      CARGO_TARGET_DIR="${mode_target_dir}" \
+      cargo test -p frankenlibc-membrane --release --test "${TEST_FILE}" "${TEST_FILTER}" -- --nocapture \
+      >"${log_path}" 2>&1
+  fi
+}
 
 for mode in strict hardened; do
   LOG_PATH="${RUN_DIR}/${mode}.log"
   echo "=== mode=${mode} ==="
   set +e
-  FRANKENLIBC_MODE="${mode}" \
-    cargo test -p frankenlibc-membrane --release --test "${TEST_FILE}" "${TEST_FILTER}" -- --nocapture \
-    >"${LOG_PATH}" 2>&1
+  run_fragmentation_test "${mode}" "${LOG_PATH}"
   rc=$?
   set -e
   if [[ ${rc} -ne 0 ]]; then

@@ -2,7 +2,7 @@
   "version": 2,
   "generated_at_utc": "2026-02-18T04:49:26Z",
   "library": "/data/tmp/cargo-target/release/libfrankenlibc_abi.so",
-  "total_exported": 1184,
+  "total_exported": 1277,
   "taxonomy": {
     "Implemented": "Native Rust code owns the entire operation. No host libc dependency. Full test coverage required.",
     "RawSyscall": "ABI entrypoint marshals arguments directly to Linux syscall instruction. No glibc call-through.",
@@ -10321,24 +10321,860 @@
       "strict_semantics": "GNU extension: adds fchdir action to posix_spawn file actions list",
       "hardened_semantics": "Same as strict",
       "default_stub": false
+    },
+    {
+      "symbol": "getspnam",
+      "status": "Implemented",
+      "module": "pwd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Native /etc/shadow lookup by username; returns spwd* or NULL",
+      "hardened_semantics": "Native /etc/shadow lookup with buffer validation",
+      "default_stub": false
+    },
+    {
+      "symbol": "getspnam_r",
+      "status": "Implemented",
+      "module": "pwd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Reentrant /etc/shadow lookup; writes to caller buffer",
+      "hardened_semantics": "Reentrant /etc/shadow lookup with buffer bounds validation",
+      "default_stub": false
+    },
+    {
+      "symbol": "getspent",
+      "status": "Implemented",
+      "module": "pwd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Iterate /etc/shadow entries; returns next spwd* or NULL",
+      "hardened_semantics": "Shadow iteration with thread-local cache",
+      "default_stub": false
+    },
+    {
+      "symbol": "getspent_r",
+      "status": "Implemented",
+      "module": "pwd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Reentrant shadow iteration; writes to caller buffer",
+      "hardened_semantics": "Reentrant shadow iteration with buffer validation",
+      "default_stub": false
+    },
+    {
+      "symbol": "setspent",
+      "status": "Implemented",
+      "module": "pwd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Reset shadow file iteration to beginning",
+      "hardened_semantics": "Reset shadow iteration cursor",
+      "default_stub": false
+    },
+    {
+      "symbol": "endspent",
+      "status": "Implemented",
+      "module": "pwd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Close shadow file and free iteration resources",
+      "hardened_semantics": "Close shadow iteration and clear cached data",
+      "default_stub": false
+    },
+    {
+      "symbol": "strerrordesc_np",
+      "status": "Implemented",
+      "module": "string_abi",
+      "perf_class": "strict_hotpath",
+      "strict_semantics": "GNU extension returning static error description for errno value",
+      "hardened_semantics": "Error description lookup with bounds-checked errno",
+      "default_stub": false
+    },
+    {
+      "symbol": "strerrorname_np",
+      "status": "Implemented",
+      "module": "string_abi",
+      "perf_class": "strict_hotpath",
+      "strict_semantics": "GNU extension returning symbolic errno name (e.g. EPERM)",
+      "hardened_semantics": "Symbolic errno name lookup with bounds checking",
+      "default_stub": false
+    },
+    {
+      "symbol": "strfromd",
+      "status": "Implemented",
+      "module": "string_abi",
+      "perf_class": "strict_hotpath",
+      "strict_semantics": "C23 double-to-string conversion with format specifier",
+      "hardened_semantics": "Double-to-string with buffer overflow protection",
+      "default_stub": false
+    },
+    {
+      "symbol": "strfromf",
+      "status": "Implemented",
+      "module": "string_abi",
+      "perf_class": "strict_hotpath",
+      "strict_semantics": "C23 float-to-string conversion with format specifier",
+      "hardened_semantics": "Float-to-string with buffer overflow protection",
+      "default_stub": false
+    },
+    {
+      "symbol": "strfroml",
+      "status": "Implemented",
+      "module": "string_abi",
+      "perf_class": "strict_hotpath",
+      "strict_semantics": "C23 long-double-to-string conversion with format specifier",
+      "hardened_semantics": "Long-double-to-string with buffer overflow protection",
+      "default_stub": false
+    },
+    {
+      "symbol": "getmntent_r",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Reentrant mount entry reader; parses /etc/mtab or /proc/mounts",
+      "hardened_semantics": "Reentrant mount parsing with buffer bounds validation",
+      "default_stub": false
+    },
+    {
+      "symbol": "addmntent",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Write mount table entry to file stream",
+      "hardened_semantics": "Mount entry write with null pointer validation",
+      "default_stub": false
+    },
+    {
+      "symbol": "mq_timedreceive",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Timed receive from POSIX message queue via SYS_mq_timedreceive",
+      "hardened_semantics": "Timed mq receive with pointer validation",
+      "default_stub": false
+    },
+    {
+      "symbol": "mq_timedsend",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Timed send to POSIX message queue via SYS_mq_timedsend",
+      "hardened_semantics": "Timed mq send with pointer validation",
+      "default_stub": false
+    },
+    {
+      "symbol": "mq_notify",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Register notification on message queue via SYS_mq_notify",
+      "hardened_semantics": "MQ notification with sigevent pointer validation",
+      "default_stub": false
+    },
+    {
+      "symbol": "getopt_long_only",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "GNU getopt_long_only; delegates to getopt_long with dash-handling",
+      "hardened_semantics": "Option parsing with argument pointer validation",
+      "default_stub": false
+    },
+    {
+      "symbol": "personality",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Set process execution domain via SYS_personality",
+      "hardened_semantics": "Personality syscall wrapper",
+      "default_stub": false
+    },
+    {
+      "symbol": "process_madvise",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Advise kernel about memory usage patterns for another process via SYS_process_madvise",
+      "hardened_semantics": "Process memory advice with pidfd validation",
+      "default_stub": false
+    },
+    {
+      "symbol": "process_mrelease",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Release memory of dying process via SYS_process_mrelease",
+      "hardened_semantics": "Process memory release with pidfd validation",
+      "default_stub": false
+    },
+    {
+      "symbol": "pthread_atfork",
+      "status": "GlibcCallThrough",
+      "module": "pthread_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Register fork handlers (prepare/parent/child) via host glibc",
+      "hardened_semantics": "Fork handler registration with callback validation",
+      "default_stub": false
+    },
+    {
+      "symbol": "pthread_attr_getguardsize",
+      "status": "GlibcCallThrough",
+      "module": "pthread_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Get guard page size from thread attributes via host glibc",
+      "hardened_semantics": "Guard size query with pointer validation",
+      "default_stub": false
+    },
+    {
+      "symbol": "pthread_attr_setguardsize",
+      "status": "GlibcCallThrough",
+      "module": "pthread_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Set guard page size in thread attributes via host glibc",
+      "hardened_semantics": "Guard size set with pointer validation",
+      "default_stub": false
+    },
+    {
+      "symbol": "pthread_attr_getaffinity_np",
+      "status": "GlibcCallThrough",
+      "module": "pthread_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Get CPU affinity mask from thread attributes via host glibc",
+      "hardened_semantics": "CPU affinity query with buffer validation",
+      "default_stub": false
+    },
+    {
+      "symbol": "pthread_attr_setaffinity_np",
+      "status": "GlibcCallThrough",
+      "module": "pthread_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Set CPU affinity mask in thread attributes via host glibc",
+      "hardened_semantics": "CPU affinity set with cpuset validation",
+      "default_stub": false
+    },
+    {
+      "symbol": "feof_unlocked",
+      "status": "Implemented",
+      "module": "stdio_abi",
+      "perf_class": "strict_hotpath",
+      "strict_semantics": "GNU unlocked feof; delegates to feof without locking",
+      "hardened_semantics": "Unlocked EOF check with stream validation",
+      "default_stub": false
+    },
+    {
+      "symbol": "ferror_unlocked",
+      "status": "Implemented",
+      "module": "stdio_abi",
+      "perf_class": "strict_hotpath",
+      "strict_semantics": "GNU unlocked ferror; delegates to ferror without locking",
+      "hardened_semantics": "Unlocked error check with stream validation",
+      "default_stub": false
+    },
+    {
+      "symbol": "fflush_unlocked",
+      "status": "Implemented",
+      "module": "stdio_abi",
+      "perf_class": "strict_hotpath",
+      "strict_semantics": "GNU unlocked fflush; delegates to fflush without locking",
+      "hardened_semantics": "Unlocked flush with stream validation",
+      "default_stub": false
+    },
+    {
+      "symbol": "fcloseall",
+      "status": "Implemented",
+      "module": "stdio_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "GNU fcloseall; flushes all streams via fflush(NULL)",
+      "hardened_semantics": "Close all streams with flush verification",
+      "default_stub": false
+    },
+    {
+      "symbol": "mktemp",
+      "status": "Implemented",
+      "module": "stdio_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Generate unique temp filename; replaces trailing X chars (deprecated)",
+      "hardened_semantics": "Temp filename generation with template validation",
+      "default_stub": false
+    },
+    {
+      "symbol": "hcreate",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "POSIX hash table creation with djb2 hashing and linear probing",
+      "hardened_semantics": "Hash table creation with capacity validation",
+      "default_stub": false
+    },
+    {
+      "symbol": "hdestroy",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "POSIX hash table destruction; frees all slots",
+      "hardened_semantics": "Hash table teardown with memory cleanup",
+      "default_stub": false
+    },
+    {
+      "symbol": "hsearch",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "perf_class": "strict_hotpath",
+      "strict_semantics": "POSIX hash table search/insert with FIND/ENTER actions",
+      "hardened_semantics": "Hash search with key pointer validation",
+      "default_stub": false
+    },
+    {
+      "symbol": "hcreate_r",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Reentrant hash table creation; uses caller-provided htab struct",
+      "hardened_semantics": "Reentrant hash create with htab pointer validation",
+      "default_stub": false
+    },
+    {
+      "symbol": "hdestroy_r",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Reentrant hash table destruction",
+      "hardened_semantics": "Reentrant hash destroy with null check",
+      "default_stub": false
+    },
+    {
+      "symbol": "hsearch_r",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "perf_class": "strict_hotpath",
+      "strict_semantics": "Reentrant hash table search/insert",
+      "hardened_semantics": "Reentrant hash search with pointer validation",
+      "default_stub": false
+    },
+    {
+      "symbol": "getloadavg",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Read system load averages from /proc/loadavg",
+      "hardened_semantics": "Load average read with buffer validation",
+      "default_stub": false
+    },
+    {
+      "symbol": "error",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "GNU error reporting: progname + formatted message + optional errno string",
+      "hardened_semantics": "Error output with format string validation",
+      "default_stub": false
+    },
+    {
+      "symbol": "error_at_line",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "GNU error reporting with file:line location",
+      "hardened_semantics": "Error-at-line with pointer validation",
+      "default_stub": false
+    },
+    {
+      "symbol": "getrlimit64",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "LFS alias for getrlimit (identical on 64-bit)",
+      "hardened_semantics": "LFS getrlimit64 delegate",
+      "default_stub": false
+    },
+    {
+      "symbol": "setrlimit64",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "LFS alias for setrlimit",
+      "hardened_semantics": "LFS setrlimit64 delegate",
+      "default_stub": false
+    },
+    {
+      "symbol": "statfs64",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "LFS alias for statfs",
+      "hardened_semantics": "LFS statfs64 delegate",
+      "default_stub": false
+    },
+    {
+      "symbol": "fstatfs64",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "LFS alias for fstatfs",
+      "hardened_semantics": "LFS fstatfs64 delegate",
+      "default_stub": false
+    },
+    {
+      "symbol": "statvfs64",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "LFS alias for statvfs",
+      "hardened_semantics": "LFS statvfs64 delegate",
+      "default_stub": false
+    },
+    {
+      "symbol": "fstatvfs64",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "LFS alias for fstatvfs",
+      "hardened_semantics": "LFS fstatvfs64 delegate",
+      "default_stub": false
+    },
+    {
+      "symbol": "lockf64",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "LFS alias for lockf",
+      "hardened_semantics": "LFS lockf64 delegate",
+      "default_stub": false
+    },
+    {
+      "symbol": "fallocate64",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "LFS alias for fallocate",
+      "hardened_semantics": "LFS fallocate64 delegate",
+      "default_stub": false
+    },
+    {
+      "symbol": "fcntl64",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "LFS alias for fcntl (identical ABI on 64-bit)",
+      "hardened_semantics": "LFS fcntl64 delegate",
+      "default_stub": false
+    },
+    {
+      "symbol": "preadv64",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "LFS alias for preadv",
+      "hardened_semantics": "LFS preadv64 delegate",
+      "default_stub": false
+    },
+    {
+      "symbol": "pwritev64",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "LFS alias for pwritev",
+      "hardened_semantics": "LFS pwritev64 delegate",
+      "default_stub": false
+    },
+    {
+      "symbol": "readdir64_r",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Reentrant readdir with dirent64 via host glibc",
+      "hardened_semantics": "LFS readdir64_r with pointer validation",
+      "default_stub": false
+    },
+    {
+      "symbol": "backtrace",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Capture stack backtrace via host glibc",
+      "hardened_semantics": "Stack capture with buffer validation",
+      "default_stub": false
+    },
+    {
+      "symbol": "backtrace_symbols",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Convert backtrace addresses to symbol strings via host glibc",
+      "hardened_semantics": "Symbol resolution with pointer validation",
+      "default_stub": false
+    },
+    {
+      "symbol": "backtrace_symbols_fd",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Write backtrace symbols to fd via host glibc",
+      "hardened_semantics": "Symbol output with fd validation",
+      "default_stub": false
+    },
+    {
+      "symbol": "bind_textdomain_codeset",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Set/query encoding for gettext domain; always returns UTF-8",
+      "hardened_semantics": "Codeset query returning UTF-8",
+      "default_stub": false
+    },
+    {
+      "symbol": "fts_open",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Open file hierarchy for traversal; native BFS using std::fs",
+      "hardened_semantics": "FTS open with path validation",
+      "default_stub": false
+    },
+    {
+      "symbol": "fts_read",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Return next entry in file hierarchy traversal",
+      "hardened_semantics": "FTS read with stream validation",
+      "default_stub": false
+    },
+    {
+      "symbol": "fts_children",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Return linked list of directory children (simplified)",
+      "hardened_semantics": "FTS children placeholder",
+      "default_stub": false
+    },
+    {
+      "symbol": "fts_set",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Set instruction for next fts_read return",
+      "hardened_semantics": "FTS set instruction",
+      "default_stub": false
+    },
+    {
+      "symbol": "fts_close",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Close FTS stream and free resources",
+      "hardened_semantics": "FTS close with resource cleanup",
+      "default_stub": false
+    },
+    {
+      "symbol": "tsearch",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "perf_class": "strict_hotpath",
+      "strict_semantics": "Binary tree search/insert with custom comparator",
+      "hardened_semantics": "Tree search with pointer validation",
+      "default_stub": false
+    },
+    {
+      "symbol": "tfind",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "perf_class": "strict_hotpath",
+      "strict_semantics": "Binary tree search without insert",
+      "hardened_semantics": "Tree find with pointer validation",
+      "default_stub": false
+    },
+    {
+      "symbol": "tdelete",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Delete node from binary tree with rebalancing",
+      "hardened_semantics": "Tree delete with pointer validation",
+      "default_stub": false
+    },
+    {
+      "symbol": "twalk",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Walk binary tree in preorder/inorder/postorder/leaf order",
+      "hardened_semantics": "Tree walk with callback validation",
+      "default_stub": false
+    },
+    {
+      "symbol": "tdestroy",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Destroy binary tree, calling free function for each key",
+      "hardened_semantics": "Tree destroy with recursive cleanup",
+      "default_stub": false
+    },
+    {
+      "symbol": "lfind",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "perf_class": "strict_hotpath",
+      "strict_semantics": "Linear search of unsorted array",
+      "hardened_semantics": "Linear search with bounds checking",
+      "default_stub": false
+    },
+    {
+      "symbol": "lsearch",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "perf_class": "strict_hotpath",
+      "strict_semantics": "Linear search with insert if not found",
+      "hardened_semantics": "Linear search/insert with bounds checking",
+      "default_stub": false
+    },
+    {
+      "symbol": "getauxval",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Read auxiliary vector value from /proc/self/auxv",
+      "hardened_semantics": "Auxval read with type validation",
+      "default_stub": false
+    },
+    {
+      "symbol": "getusershell",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Get next valid login shell from /etc/shells",
+      "hardened_semantics": "Shell iteration with file parsing",
+      "default_stub": false
+    },
+    {
+      "symbol": "setusershell",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Rewind shell list iterator",
+      "hardened_semantics": "Shell iterator reset",
+      "default_stub": false
+    },
+    {
+      "symbol": "endusershell",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Close shell list and free cache",
+      "hardened_semantics": "Shell cache cleanup",
+      "default_stub": false
+    },
+    {
+      "symbol": "gets",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Read line from stdin (DEPRECATED, buffer overflow risk)",
+      "hardened_semantics": "Legacy gets with stdin read",
+      "default_stub": false
+    },
+    {
+      "symbol": "tmpnam_r",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Generate unique temp filename (reentrant)",
+      "hardened_semantics": "Temp name with counter-based uniqueness",
+      "default_stub": false
+    },
+    {
+      "symbol": "cfmakeraw",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Set terminal attributes for raw mode via host glibc",
+      "hardened_semantics": "Raw mode with termios validation",
+      "default_stub": false
+    },
+    {
+      "symbol": "cfsetspeed",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Set both input and output baud rate",
+      "hardened_semantics": "Baud rate set with termios validation",
+      "default_stub": false
+    },
+    {
+      "symbol": "argz_create",
+      "status": "Implemented",
+      "module": "string_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Create argz vector from argv array",
+      "hardened_semantics": "Argz create with allocation check",
+      "default_stub": false
+    },
+    {
+      "symbol": "argz_create_sep",
+      "status": "Implemented",
+      "module": "string_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Create argz from string split by separator",
+      "hardened_semantics": "Argz create with separator parsing",
+      "default_stub": false
+    },
+    {
+      "symbol": "argz_count",
+      "status": "Implemented",
+      "module": "string_abi",
+      "perf_class": "strict_hotpath",
+      "strict_semantics": "Count NUL-separated entries in argz",
+      "hardened_semantics": "Argz count with bounds check",
+      "default_stub": false
+    },
+    {
+      "symbol": "argz_next",
+      "status": "Implemented",
+      "module": "string_abi",
+      "perf_class": "strict_hotpath",
+      "strict_semantics": "Iterate to next argz entry",
+      "hardened_semantics": "Argz next with bounds check",
+      "default_stub": false
+    },
+    {
+      "symbol": "argz_add",
+      "status": "Implemented",
+      "module": "string_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Append string to argz vector via realloc",
+      "hardened_semantics": "Argz add with allocation check",
+      "default_stub": false
+    },
+    {
+      "symbol": "argz_add_sep",
+      "status": "Implemented",
+      "module": "string_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Split string by separator and append to argz",
+      "hardened_semantics": "Argz add_sep with allocation check",
+      "default_stub": false
+    },
+    {
+      "symbol": "argz_append",
+      "status": "Implemented",
+      "module": "string_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Append raw argz buffer to argz",
+      "hardened_semantics": "Argz append with bounds check",
+      "default_stub": false
+    },
+    {
+      "symbol": "argz_delete",
+      "status": "Implemented",
+      "module": "string_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Remove entry from argz by shifting tail",
+      "hardened_semantics": "Argz delete with bounds validation",
+      "default_stub": false
+    },
+    {
+      "symbol": "argz_extract",
+      "status": "Implemented",
+      "module": "string_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Extract argz entries into argv array",
+      "hardened_semantics": "Argz extract with pointer validation",
+      "default_stub": false
+    },
+    {
+      "symbol": "argz_insert",
+      "status": "Implemented",
+      "module": "string_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Insert string before entry in argz",
+      "hardened_semantics": "Argz insert with realloc check",
+      "default_stub": false
+    },
+    {
+      "symbol": "argz_replace",
+      "status": "Implemented",
+      "module": "string_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Replace all occurrences of string in argz",
+      "hardened_semantics": "Argz replace with rebuild",
+      "default_stub": false
+    },
+    {
+      "symbol": "argz_stringify",
+      "status": "Implemented",
+      "module": "string_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Convert argz to string by replacing NULs with separator",
+      "hardened_semantics": "Argz stringify with bounds check",
+      "default_stub": false
+    },
+    {
+      "symbol": "envz_entry",
+      "status": "Implemented",
+      "module": "string_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Find name=value entry in envz vector",
+      "hardened_semantics": "Envz entry with name matching",
+      "default_stub": false
+    },
+    {
+      "symbol": "envz_get",
+      "status": "Implemented",
+      "module": "string_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Get value for name in envz",
+      "hardened_semantics": "Envz get with null check",
+      "default_stub": false
+    },
+    {
+      "symbol": "envz_add",
+      "status": "Implemented",
+      "module": "string_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Add or replace name=value in envz",
+      "hardened_semantics": "Envz add with allocation check",
+      "default_stub": false
+    },
+    {
+      "symbol": "envz_merge",
+      "status": "Implemented",
+      "module": "string_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Merge envz2 into envz1 with optional override",
+      "hardened_semantics": "Envz merge with allocation check",
+      "default_stub": false
+    },
+    {
+      "symbol": "envz_remove",
+      "status": "Implemented",
+      "module": "string_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Remove name from envz",
+      "hardened_semantics": "Envz remove with entry lookup",
+      "default_stub": false
+    },
+    {
+      "symbol": "envz_strip",
+      "status": "Implemented",
+      "module": "string_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Remove entries without values from envz",
+      "hardened_semantics": "Envz strip with rebuild",
+      "default_stub": false
     }
   ],
   "summary": {
-    "total_exported": 1184,
-    "implemented": 816,
-    "raw_syscall": 352,
-    "glibc_call_through": 16,
-    "stub": 0
+    "Implemented": 898,
+    "RawSyscall": 358,
+    "GlibcCallThrough": 21,
+    "Stub": 0
   },
-  "implemented": 816,
-  "raw_syscall": 297,
-  "glibc_call_through": 58,
+  "implemented": 898,
+  "raw_syscall": 358,
+  "glibc_call_through": 21,
   "stub": 0,
   "counts": {
-    "total_exported": 993,
-    "implemented": 595,
-    "raw_syscall": 297,
-    "glibc_call_through": 101,
+    "total_exported": 1277,
+    "implemented": 898,
+    "raw_syscall": 358,
+    "glibc_call_through": 21,
     "stub": 0
   }
 }

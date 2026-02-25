@@ -7,7 +7,7 @@
 //! where each call overwrites the previous result.
 
 use std::cell::RefCell;
-use std::ffi::{c_char, c_int};
+use std::ffi::{c_char, c_int, c_void};
 use std::path::{Path, PathBuf};
 use std::ptr;
 use std::time::UNIX_EPOCH;
@@ -587,6 +587,322 @@ pub unsafe extern "C" fn getpwent_r(
         let entry = storage.entries[storage.iter_idx].clone();
         storage.iter_idx += 1;
         unsafe { fill_passwd_r(&entry, pwd, buf, buflen, result) }
+    })
+}
+
+// ===========================================================================
+// Shadow password database (<shadow.h>) — Implemented
+// ===========================================================================
+//
+// Parses /etc/shadow for password aging/expiry metadata.
+// Format: name:password:lastchg:min:max:warn:inact:expire:reserved
+
+const SHADOW_PATH: &str = "/etc/shadow";
+
+/// Parsed shadow entry stored in thread-local static storage.
+#[repr(C)]
+struct SpwdEntry {
+    sp_namp: *mut c_char,   // login name
+    sp_pwdp: *mut c_char,   // encrypted password
+    sp_lstchg: i64,         // last password change (days since epoch)
+    sp_min: i64,            // min days between changes
+    sp_max: i64,            // max days between changes
+    sp_warn: i64,           // warning days before expiry
+    sp_inact: i64,          // inactive days after expiry
+    sp_expire: i64,         // account expiration (days since epoch)
+    sp_flag: u64,           // reserved
+}
+
+thread_local! {
+    static SHADOW_BUF: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
+    static SHADOW_ENTRY: RefCell<SpwdEntry> = const { RefCell::new(SpwdEntry {
+        sp_namp: ptr::null_mut(),
+        sp_pwdp: ptr::null_mut(),
+        sp_lstchg: -1,
+        sp_min: -1,
+        sp_max: -1,
+        sp_warn: -1,
+        sp_inact: -1,
+        sp_expire: -1,
+        sp_flag: 0,
+    }) };
+    static SHADOW_ITER_IDX: RefCell<usize> = const { RefCell::new(0) };
+    static SHADOW_CACHE: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+}
+
+fn parse_shadow_field(s: &str) -> i64 {
+    if s.is_empty() {
+        -1
+    } else {
+        s.parse::<i64>().unwrap_or(-1)
+    }
+}
+
+/// Fill SpwdEntry from a shadow line. Returns true on success.
+fn fill_shadow_entry(line: &str, buf: &mut Vec<u8>, entry: &mut SpwdEntry) -> bool {
+    let parts: Vec<&str> = line.split(':').collect();
+    if parts.len() < 8 {
+        return false;
+    }
+
+    buf.clear();
+    // Pack name and password into buf as null-terminated strings
+    let name = parts[0];
+    let pass = parts[1];
+    buf.extend_from_slice(name.as_bytes());
+    buf.push(0);
+    let pass_offset = buf.len();
+    buf.extend_from_slice(pass.as_bytes());
+    buf.push(0);
+
+    entry.sp_namp = buf.as_mut_ptr() as *mut c_char;
+    entry.sp_pwdp = unsafe { buf.as_mut_ptr().add(pass_offset) as *mut c_char };
+    entry.sp_lstchg = parse_shadow_field(parts[2]);
+    entry.sp_min = parse_shadow_field(parts[3]);
+    entry.sp_max = parse_shadow_field(parts[4]);
+    entry.sp_warn = parse_shadow_field(parts[5]);
+    entry.sp_inact = parse_shadow_field(parts[6]);
+    entry.sp_expire = parse_shadow_field(parts[7]);
+    entry.sp_flag = if parts.len() > 8 {
+        parts[8].parse::<u64>().unwrap_or(0)
+    } else {
+        0
+    };
+    true
+}
+
+/// `getspnam` — look up a shadow entry by login name.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getspnam(name: *const c_char) -> *mut c_void {
+    if name.is_null() {
+        return ptr::null_mut();
+    }
+    let name_str = unsafe { std::ffi::CStr::from_ptr(name) };
+    let name_str = match name_str.to_str() {
+        Ok(s) => s,
+        Err(_) => return ptr::null_mut(),
+    };
+
+    let content = match std::fs::read_to_string(SHADOW_PATH) {
+        Ok(c) => c,
+        Err(_) => {
+            unsafe { set_abi_errno(libc::EACCES) };
+            return ptr::null_mut();
+        }
+    };
+
+    for line in content.lines() {
+        if line.starts_with('#') || line.trim().is_empty() {
+            continue;
+        }
+        if let Some(colon) = line.find(':')
+            && &line[..colon] == name_str
+        {
+                return SHADOW_BUF.with(|buf| {
+                    SHADOW_ENTRY.with(|entry| {
+                        let mut buf = buf.borrow_mut();
+                        let mut entry = entry.borrow_mut();
+                        if fill_shadow_entry(line, &mut buf, &mut entry) {
+                            &mut *entry as *mut SpwdEntry as *mut c_void
+                        } else {
+                            ptr::null_mut()
+                        }
+                    })
+                });
+        }
+    }
+    ptr::null_mut()
+}
+
+/// `getspnam_r` — reentrant shadow lookup by name.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getspnam_r(
+    name: *const c_char,
+    spbuf: *mut c_void,
+    buf: *mut c_char,
+    buflen: usize,
+    result: *mut *mut c_void,
+) -> c_int {
+    if name.is_null() || spbuf.is_null() || buf.is_null() || result.is_null() {
+        return libc::EINVAL;
+    }
+    unsafe { *result = ptr::null_mut() };
+
+    let name_str = unsafe { std::ffi::CStr::from_ptr(name) };
+    let name_str = match name_str.to_str() {
+        Ok(s) => s,
+        Err(_) => return libc::EINVAL,
+    };
+
+    let content = match std::fs::read_to_string(SHADOW_PATH) {
+        Ok(c) => c,
+        Err(_) => return libc::EACCES,
+    };
+
+    for line in content.lines() {
+        if line.starts_with('#') || line.trim().is_empty() {
+            continue;
+        }
+        if let Some(colon) = line.find(':')
+            && &line[..colon] == name_str
+        {
+                let parts: Vec<&str> = line.split(':').collect();
+                if parts.len() < 8 {
+                    return libc::ENOENT;
+                }
+
+                // Pack into caller's buffer
+                let name_bytes = parts[0].as_bytes();
+                let pass_bytes = parts[1].as_bytes();
+                let needed = name_bytes.len() + 1 + pass_bytes.len() + 1;
+                if needed > buflen {
+                    return libc::ERANGE;
+                }
+
+                let buf_slice = unsafe { std::slice::from_raw_parts_mut(buf as *mut u8, buflen) };
+                buf_slice[..name_bytes.len()].copy_from_slice(name_bytes);
+                buf_slice[name_bytes.len()] = 0;
+                let pass_off = name_bytes.len() + 1;
+                buf_slice[pass_off..pass_off + pass_bytes.len()].copy_from_slice(pass_bytes);
+                buf_slice[pass_off + pass_bytes.len()] = 0;
+
+                let sp = spbuf as *mut SpwdEntry;
+                unsafe {
+                    (*sp).sp_namp = buf;
+                    (*sp).sp_pwdp = buf.add(pass_off);
+                    (*sp).sp_lstchg = parse_shadow_field(parts[2]);
+                    (*sp).sp_min = parse_shadow_field(parts[3]);
+                    (*sp).sp_max = parse_shadow_field(parts[4]);
+                    (*sp).sp_warn = parse_shadow_field(parts[5]);
+                    (*sp).sp_inact = parse_shadow_field(parts[6]);
+                    (*sp).sp_expire = parse_shadow_field(parts[7]);
+                    (*sp).sp_flag = if parts.len() > 8 {
+                        parts[8].parse::<u64>().unwrap_or(0)
+                    } else {
+                        0
+                    };
+                    *result = spbuf;
+                };
+                return 0;
+        }
+    }
+    libc::ENOENT
+}
+
+/// `setspent` — rewind the shadow database iterator.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub extern "C" fn setspent() {
+    SHADOW_ITER_IDX.with(|idx| *idx.borrow_mut() = 0);
+    SHADOW_CACHE.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        cache.clear();
+        if let Ok(content) = std::fs::read_to_string(SHADOW_PATH) {
+            for line in content.lines() {
+                if !line.starts_with('#') && !line.trim().is_empty() && line.contains(':') {
+                    cache.push(line.to_string());
+                }
+            }
+        }
+    });
+}
+
+/// `endspent` — close the shadow database.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub extern "C" fn endspent() {
+    SHADOW_ITER_IDX.with(|idx| *idx.borrow_mut() = 0);
+    SHADOW_CACHE.with(|cache| cache.borrow_mut().clear());
+}
+
+/// `getspent` — read the next shadow entry.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getspent() -> *mut c_void {
+    SHADOW_CACHE.with(|cache| {
+        let cache = cache.borrow();
+        SHADOW_ITER_IDX.with(|idx| {
+            let mut idx = idx.borrow_mut();
+            if *idx >= cache.len() {
+                return ptr::null_mut();
+            }
+            let line = &cache[*idx];
+            *idx += 1;
+            SHADOW_BUF.with(|buf| {
+                SHADOW_ENTRY.with(|entry| {
+                    let mut buf = buf.borrow_mut();
+                    let mut entry = entry.borrow_mut();
+                    if fill_shadow_entry(line, &mut buf, &mut entry) {
+                        &mut *entry as *mut SpwdEntry as *mut c_void
+                    } else {
+                        ptr::null_mut()
+                    }
+                })
+            })
+        })
+    })
+}
+
+/// `getspent_r` — reentrant version of getspent.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getspent_r(
+    spbuf: *mut c_void,
+    buf: *mut c_char,
+    buflen: usize,
+    result: *mut *mut c_void,
+) -> c_int {
+    if spbuf.is_null() || buf.is_null() || result.is_null() {
+        return libc::EINVAL;
+    }
+    unsafe { *result = ptr::null_mut() };
+
+    SHADOW_CACHE.with(|cache| {
+        let cache = cache.borrow();
+        SHADOW_ITER_IDX.with(|idx| {
+            let mut idx = idx.borrow_mut();
+            if *idx >= cache.len() {
+                return libc::ENOENT;
+            }
+            let line = &cache[*idx];
+            *idx += 1;
+
+            let parts: Vec<&str> = line.split(':').collect();
+            if parts.len() < 8 {
+                return libc::ENOENT;
+            }
+
+            let name_bytes = parts[0].as_bytes();
+            let pass_bytes = parts[1].as_bytes();
+            let needed = name_bytes.len() + 1 + pass_bytes.len() + 1;
+            if needed > buflen {
+                // Rewind so caller can retry with larger buffer
+                *idx -= 1;
+                return libc::ERANGE;
+            }
+
+            let buf_slice = unsafe { std::slice::from_raw_parts_mut(buf as *mut u8, buflen) };
+            buf_slice[..name_bytes.len()].copy_from_slice(name_bytes);
+            buf_slice[name_bytes.len()] = 0;
+            let pass_off = name_bytes.len() + 1;
+            buf_slice[pass_off..pass_off + pass_bytes.len()].copy_from_slice(pass_bytes);
+            buf_slice[pass_off + pass_bytes.len()] = 0;
+
+            let sp = spbuf as *mut SpwdEntry;
+            unsafe {
+                (*sp).sp_namp = buf;
+                (*sp).sp_pwdp = buf.add(pass_off);
+                (*sp).sp_lstchg = parse_shadow_field(parts[2]);
+                (*sp).sp_min = parse_shadow_field(parts[3]);
+                (*sp).sp_max = parse_shadow_field(parts[4]);
+                (*sp).sp_warn = parse_shadow_field(parts[5]);
+                (*sp).sp_inact = parse_shadow_field(parts[6]);
+                (*sp).sp_expire = parse_shadow_field(parts[7]);
+                (*sp).sp_flag = if parts.len() > 8 {
+                    parts[8].parse::<u64>().unwrap_or(0)
+                } else {
+                    0
+                };
+                *result = spbuf;
+            };
+            0
+        })
     })
 }
 

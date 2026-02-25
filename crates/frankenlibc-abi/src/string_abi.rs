@@ -6,7 +6,7 @@
 //! 3. Delegates to `frankenlibc-core` safe implementations or inline unsafe primitives
 
 use std::cell::Cell;
-use std::ffi::{c_char, c_int, c_void};
+use std::ffi::{CStr, c_char, c_int, c_void};
 
 use frankenlibc_membrane::check_oracle::CheckStage;
 use frankenlibc_membrane::config::SafetyLevel;
@@ -5094,5 +5094,798 @@ pub unsafe extern "C" fn rawmemchr(s: *const c_void, c: c_int) -> *mut c_void {
             return ptr as *mut c_void;
         }
         ptr = unsafe { ptr.add(1) };
+    }
+}
+
+// ===========================================================================
+// Batch: GNU error name extensions — Implemented
+// ===========================================================================
+
+/// GNU `strerrordesc_np` — return description for errno value (non-POSIX).
+///
+/// Returns a static string or null if errno is unknown.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub extern "C" fn strerrordesc_np(errnum: c_int) -> *const c_char {
+    let desc: &[u8] = match errnum {
+        libc::EPERM => b"Operation not permitted\0",
+        libc::ENOENT => b"No such file or directory\0",
+        libc::ESRCH => b"No such process\0",
+        libc::EINTR => b"Interrupted system call\0",
+        libc::EIO => b"Input/output error\0",
+        libc::ENXIO => b"No such device or address\0",
+        libc::E2BIG => b"Argument list too long\0",
+        libc::ENOEXEC => b"Exec format error\0",
+        libc::EBADF => b"Bad file descriptor\0",
+        libc::ECHILD => b"No child processes\0",
+        libc::EAGAIN => b"Resource temporarily unavailable\0",
+        libc::ENOMEM => b"Cannot allocate memory\0",
+        libc::EACCES => b"Permission denied\0",
+        libc::EFAULT => b"Bad address\0",
+        libc::EBUSY => b"Device or resource busy\0",
+        libc::EEXIST => b"File exists\0",
+        libc::EXDEV => b"Invalid cross-device link\0",
+        libc::ENODEV => b"No such device\0",
+        libc::ENOTDIR => b"Not a directory\0",
+        libc::EISDIR => b"Is a directory\0",
+        libc::EINVAL => b"Invalid argument\0",
+        libc::ENFILE => b"Too many open files in system\0",
+        libc::EMFILE => b"Too many open files\0",
+        libc::ENOTTY => b"Inappropriate ioctl for device\0",
+        libc::ETXTBSY => b"Text file busy\0",
+        libc::EFBIG => b"File too large\0",
+        libc::ENOSPC => b"No space left on device\0",
+        libc::ESPIPE => b"Illegal seek\0",
+        libc::EROFS => b"Read-only file system\0",
+        libc::EMLINK => b"Too many links\0",
+        libc::EPIPE => b"Broken pipe\0",
+        libc::EDOM => b"Numerical argument out of domain\0",
+        libc::ERANGE => b"Numerical result out of range\0",
+        libc::EDEADLK => b"Resource deadlock avoided\0",
+        libc::ENAMETOOLONG => b"File name too long\0",
+        libc::ENOLCK => b"No locks available\0",
+        libc::ENOSYS => b"Function not implemented\0",
+        libc::ENOTEMPTY => b"Directory not empty\0",
+        libc::ELOOP => b"Too many levels of symbolic links\0",
+        libc::ENODATA => b"No data available\0",
+        libc::ETIME => b"Timer expired\0",
+        libc::EOVERFLOW => b"Value too large for defined data type\0",
+        libc::EILSEQ => b"Invalid or incomplete multibyte or wide character\0",
+        libc::ENOTSOCK => b"Socket operation on non-socket\0",
+        libc::EDESTADDRREQ => b"Destination address required\0",
+        libc::EMSGSIZE => b"Message too long\0",
+        libc::EPROTOTYPE => b"Protocol wrong type for socket\0",
+        libc::ENOPROTOOPT => b"Protocol not available\0",
+        libc::EPROTONOSUPPORT => b"Protocol not supported\0",
+        libc::EAFNOSUPPORT => b"Address family not supported by protocol\0",
+        libc::EADDRINUSE => b"Address already in use\0",
+        libc::EADDRNOTAVAIL => b"Cannot assign requested address\0",
+        libc::ENETDOWN => b"Network is down\0",
+        libc::ENETUNREACH => b"Network is unreachable\0",
+        libc::ECONNABORTED => b"Software caused connection abort\0",
+        libc::ECONNRESET => b"Connection reset by peer\0",
+        libc::ENOBUFS => b"No buffer space available\0",
+        libc::EISCONN => b"Transport endpoint is already connected\0",
+        libc::ENOTCONN => b"Transport endpoint is not connected\0",
+        libc::ETIMEDOUT => b"Connection timed out\0",
+        libc::ECONNREFUSED => b"Connection refused\0",
+        libc::EHOSTUNREACH => b"No route to host\0",
+        libc::EALREADY => b"Operation already in progress\0",
+        libc::EINPROGRESS => b"Operation now in progress\0",
+        _ => return std::ptr::null(),
+    };
+    desc.as_ptr() as *const c_char
+}
+
+/// GNU `strerrorname_np` — return symbolic errno name (non-POSIX).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub extern "C" fn strerrorname_np(errnum: c_int) -> *const c_char {
+    let name: &[u8] = match errnum {
+        libc::EPERM => b"EPERM\0",
+        libc::ENOENT => b"ENOENT\0",
+        libc::ESRCH => b"ESRCH\0",
+        libc::EINTR => b"EINTR\0",
+        libc::EIO => b"EIO\0",
+        libc::ENXIO => b"ENXIO\0",
+        libc::E2BIG => b"E2BIG\0",
+        libc::ENOEXEC => b"ENOEXEC\0",
+        libc::EBADF => b"EBADF\0",
+        libc::ECHILD => b"ECHILD\0",
+        libc::EAGAIN => b"EAGAIN\0",
+        libc::ENOMEM => b"ENOMEM\0",
+        libc::EACCES => b"EACCES\0",
+        libc::EFAULT => b"EFAULT\0",
+        libc::EBUSY => b"EBUSY\0",
+        libc::EEXIST => b"EEXIST\0",
+        libc::EXDEV => b"EXDEV\0",
+        libc::ENODEV => b"ENODEV\0",
+        libc::ENOTDIR => b"ENOTDIR\0",
+        libc::EISDIR => b"EISDIR\0",
+        libc::EINVAL => b"EINVAL\0",
+        libc::ENFILE => b"ENFILE\0",
+        libc::EMFILE => b"EMFILE\0",
+        libc::ENOTTY => b"ENOTTY\0",
+        libc::EFBIG => b"EFBIG\0",
+        libc::ENOSPC => b"ENOSPC\0",
+        libc::ESPIPE => b"ESPIPE\0",
+        libc::EROFS => b"EROFS\0",
+        libc::EMLINK => b"EMLINK\0",
+        libc::EPIPE => b"EPIPE\0",
+        libc::EDOM => b"EDOM\0",
+        libc::ERANGE => b"ERANGE\0",
+        libc::EDEADLK => b"EDEADLK\0",
+        libc::ENAMETOOLONG => b"ENAMETOOLONG\0",
+        libc::ENOLCK => b"ENOLCK\0",
+        libc::ENOSYS => b"ENOSYS\0",
+        libc::ENOTEMPTY => b"ENOTEMPTY\0",
+        libc::ELOOP => b"ELOOP\0",
+        libc::EOVERFLOW => b"EOVERFLOW\0",
+        libc::EILSEQ => b"EILSEQ\0",
+        libc::ENOTSOCK => b"ENOTSOCK\0",
+        libc::ECONNREFUSED => b"ECONNREFUSED\0",
+        libc::ETIMEDOUT => b"ETIMEDOUT\0",
+        libc::ECONNRESET => b"ECONNRESET\0",
+        libc::EINPROGRESS => b"EINPROGRESS\0",
+        _ => return std::ptr::null(),
+    };
+    name.as_ptr() as *const c_char
+}
+
+// ===========================================================================
+// Batch: C23 float-to-string — Implemented
+// ===========================================================================
+
+/// C23 `strfromd` — convert double to string with format.
+///
+/// Writes at most `n` bytes (including null) to `s`.
+/// Returns the number of bytes that would have been written (excluding null).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strfromd(
+    s: *mut c_char,
+    n: usize,
+    format: *const c_char,
+    value: f64,
+) -> c_int {
+    if format.is_null() {
+        return -1;
+    }
+    // Parse format: must be "%[.<precision>]{f,e,g,a}" (C23 subset)
+    let fmt = unsafe { std::ffi::CStr::from_ptr(format) };
+    let fmt_str = match fmt.to_str() {
+        Ok(s) => s,
+        Err(_) => return -1,
+    };
+
+    let rendered = render_strfrom(fmt_str, value);
+    let bytes = rendered.as_bytes();
+    let len = bytes.len();
+
+    if !s.is_null() && n > 0 {
+        let copy_len = std::cmp::min(len, n - 1);
+        unsafe {
+            std::ptr::copy_nonoverlapping(bytes.as_ptr(), s as *mut u8, copy_len);
+            *s.add(copy_len) = 0;
+        }
+    }
+    len as c_int
+}
+
+/// C23 `strfromf` — convert float to string with format.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strfromf(
+    s: *mut c_char,
+    n: usize,
+    format: *const c_char,
+    value: f32,
+) -> c_int {
+    unsafe { strfromd(s, n, format, value as f64) }
+}
+
+/// C23 `strfroml` — convert long double to string with format.
+///
+/// On x86_64 Linux, long double is 80-bit extended but we use f64 approximation.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strfroml(
+    s: *mut c_char,
+    n: usize,
+    format: *const c_char,
+    value: f64, // long double approximated as f64
+) -> c_int {
+    unsafe { strfromd(s, n, format, value) }
+}
+
+fn render_strfrom(fmt: &str, value: f64) -> String {
+    // Parse "%[.<prec>]{f|e|g|a}"
+    if !fmt.starts_with('%') {
+        return format!("{value}");
+    }
+    let rest = &fmt[1..];
+    let (precision, spec) = if rest.starts_with('.') {
+        let num_end = rest[1..]
+            .find(|c: char| !c.is_ascii_digit())
+            .map_or(rest.len(), |i| i + 1);
+        let prec: usize = rest[1..num_end].parse().unwrap_or(6);
+        (prec, &rest[num_end..])
+    } else {
+        (6, rest)
+    };
+
+    match spec {
+        "f" | "F" => format!("{value:.precision$}"),
+        "e" => format!("{value:.precision$e}"),
+        "E" => format!("{value:.precision$E}"),
+        "g" | "G" => {
+            // %g: use shorter of %f or %e
+            let f_str = format!("{value:.precision$}");
+            let e_str = format!("{value:.precision$e}");
+            if f_str.len() <= e_str.len() {
+                f_str
+            } else {
+                e_str
+            }
+        }
+        _ => format!("{value}"),
+    }
+}
+
+// ===========================================================================
+// Batch: argz family (GNU extensions) — Implemented
+// ===========================================================================
+
+/// `argz_create` — create an argz vector from argv.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn argz_create(
+    argv: *const *const c_char,
+    argz: *mut *mut c_char,
+    argz_len: *mut usize,
+) -> c_int {
+    if argz.is_null() || argz_len.is_null() {
+        return libc::EINVAL;
+    }
+    if argv.is_null() {
+        unsafe {
+            *argz = std::ptr::null_mut();
+            *argz_len = 0;
+        }
+        return 0;
+    }
+
+    let mut total_len = 0usize;
+    let mut count = 0;
+    let mut i = 0;
+    loop {
+        let p = unsafe { *argv.add(i) };
+        if p.is_null() { break; }
+        total_len += unsafe { libc::strlen(p) } + 1;
+        count += 1;
+        i += 1;
+    }
+
+    if total_len == 0 {
+        unsafe {
+            *argz = std::ptr::null_mut();
+            *argz_len = 0;
+        }
+        return 0;
+    }
+
+    let buf = unsafe { libc::malloc(total_len) as *mut c_char };
+    if buf.is_null() {
+        return libc::ENOMEM;
+    }
+
+    let mut offset = 0;
+    for j in 0..count {
+        let p = unsafe { *argv.add(j) };
+        let slen = unsafe { libc::strlen(p) };
+        unsafe {
+            std::ptr::copy_nonoverlapping(p as *const u8, buf.add(offset) as *mut u8, slen + 1);
+        }
+        offset += slen + 1;
+    }
+
+    unsafe {
+        *argz = buf;
+        *argz_len = total_len;
+    }
+    0
+}
+
+/// `argz_create_sep` — create argz from string with separator.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn argz_create_sep(
+    string: *const c_char,
+    sep: c_int,
+    argz: *mut *mut c_char,
+    argz_len: *mut usize,
+) -> c_int {
+    if argz.is_null() || argz_len.is_null() {
+        return libc::EINVAL;
+    }
+    if string.is_null() {
+        unsafe {
+            *argz = std::ptr::null_mut();
+            *argz_len = 0;
+        }
+        return 0;
+    }
+
+    let s = unsafe { CStr::from_ptr(string) };
+    let s_bytes = s.to_bytes();
+    let sep_byte = sep as u8;
+
+    // Replace separator with NUL
+    let mut buf: Vec<u8> = s_bytes.to_vec();
+    buf.push(0); // trailing NUL
+    for b in &mut buf[..s_bytes.len()] {
+        if *b == sep_byte {
+            *b = 0;
+        }
+    }
+
+    let len = buf.len();
+    let ptr = unsafe { libc::malloc(len) as *mut c_char };
+    if ptr.is_null() {
+        return libc::ENOMEM;
+    }
+    unsafe {
+        std::ptr::copy_nonoverlapping(buf.as_ptr(), ptr as *mut u8, len);
+        *argz = ptr;
+        *argz_len = len;
+    }
+    0
+}
+
+/// `argz_count` — count entries in an argz vector.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn argz_count(argz: *const c_char, argz_len: usize) -> usize {
+    if argz.is_null() || argz_len == 0 {
+        return 0;
+    }
+    let slice = unsafe { std::slice::from_raw_parts(argz as *const u8, argz_len) };
+    slice.iter().filter(|&&b| b == 0).count()
+}
+
+/// `argz_next` — iterate to next entry in argz.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn argz_next(
+    argz: *const c_char,
+    argz_len: usize,
+    entry: *const c_char,
+) -> *mut c_char {
+    if argz.is_null() || argz_len == 0 {
+        return std::ptr::null_mut();
+    }
+    if entry.is_null() {
+        return argz as *mut c_char;
+    }
+    // Find end of current entry (next NUL) then advance past it
+    let entry_offset = unsafe { entry.offset_from(argz) } as usize;
+    let remaining = &unsafe { std::slice::from_raw_parts(argz as *const u8, argz_len) }[entry_offset..];
+    if let Some(nul_pos) = remaining.iter().position(|&b| b == 0) {
+        let next_offset = entry_offset + nul_pos + 1;
+        if next_offset < argz_len {
+            return unsafe { argz.add(next_offset) as *mut c_char };
+        }
+    }
+    std::ptr::null_mut()
+}
+
+/// `argz_add` — append a string to an argz vector.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn argz_add(
+    argz: *mut *mut c_char,
+    argz_len: *mut usize,
+    str_: *const c_char,
+) -> c_int {
+    if argz.is_null() || argz_len.is_null() || str_.is_null() {
+        return libc::EINVAL;
+    }
+    let slen = unsafe { libc::strlen(str_) };
+    let old_len = unsafe { *argz_len };
+    let new_len = old_len + slen + 1;
+    let new_buf = unsafe { libc::realloc((*argz) as *mut c_void, new_len) as *mut c_char };
+    if new_buf.is_null() {
+        return libc::ENOMEM;
+    }
+    unsafe {
+        std::ptr::copy_nonoverlapping(str_ as *const u8, new_buf.add(old_len) as *mut u8, slen + 1);
+        *argz = new_buf;
+        *argz_len = new_len;
+    }
+    0
+}
+
+/// `argz_add_sep` — split string by separator and append to argz.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn argz_add_sep(
+    argz: *mut *mut c_char,
+    argz_len: *mut usize,
+    string: *const c_char,
+    sep: c_int,
+) -> c_int {
+    if argz.is_null() || argz_len.is_null() || string.is_null() {
+        return libc::EINVAL;
+    }
+    let s = unsafe { CStr::from_ptr(string) };
+    let sep_byte = sep as u8;
+    for part in s.to_bytes().split(|&b| b == sep_byte) {
+        let part_str = std::ffi::CString::new(part).unwrap_or_default();
+        let rc = unsafe { argz_add(argz, argz_len, part_str.as_ptr()) };
+        if rc != 0 {
+            return rc;
+        }
+    }
+    0
+}
+
+/// `argz_append` — append argz2 to argz1.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn argz_append(
+    argz: *mut *mut c_char,
+    argz_len: *mut usize,
+    buf: *const c_char,
+    buf_len: usize,
+) -> c_int {
+    if argz.is_null() || argz_len.is_null() {
+        return libc::EINVAL;
+    }
+    if buf.is_null() || buf_len == 0 {
+        return 0;
+    }
+    let old_len = unsafe { *argz_len };
+    let new_len = old_len + buf_len;
+    let new_buf = unsafe { libc::realloc((*argz) as *mut c_void, new_len) as *mut c_char };
+    if new_buf.is_null() {
+        return libc::ENOMEM;
+    }
+    unsafe {
+        std::ptr::copy_nonoverlapping(buf as *const u8, new_buf.add(old_len) as *mut u8, buf_len);
+        *argz = new_buf;
+        *argz_len = new_len;
+    }
+    0
+}
+
+/// `argz_delete` — remove an entry from argz.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn argz_delete(
+    argz: *mut *mut c_char,
+    argz_len: *mut usize,
+    entry: *mut c_char,
+) {
+    if argz.is_null() || argz_len.is_null() || entry.is_null() {
+        return;
+    }
+    let az = unsafe { *argz };
+    let len = unsafe { *argz_len };
+    let entry_offset = unsafe { entry.offset_from(az) } as usize;
+    if entry_offset >= len {
+        return;
+    }
+    let entry_len = unsafe { libc::strlen(entry) } + 1; // include NUL
+    let remaining = len - entry_offset - entry_len;
+    if remaining > 0 {
+        unsafe {
+            std::ptr::copy(
+                az.add(entry_offset + entry_len) as *const u8,
+                az.add(entry_offset) as *mut u8,
+                remaining,
+            );
+        }
+    }
+    unsafe { *argz_len = len - entry_len };
+}
+
+/// `argz_extract` — extract argz entries into an argv array.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn argz_extract(
+    argz: *const c_char,
+    argz_len: usize,
+    argv: *mut *mut c_char,
+) {
+    if argz.is_null() || argv.is_null() || argz_len == 0 {
+        return;
+    }
+    let mut idx = 0;
+    let mut entry: *const c_char = argz;
+    let end = unsafe { argz.add(argz_len) };
+    while entry < end {
+        unsafe { *argv.add(idx) = entry as *mut c_char };
+        idx += 1;
+        // Skip to next NUL
+        let slen = unsafe { libc::strlen(entry) };
+        entry = unsafe { entry.add(slen + 1) };
+    }
+    unsafe { *argv.add(idx) = std::ptr::null_mut() };
+}
+
+/// `argz_insert` — insert string before entry in argz.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn argz_insert(
+    argz: *mut *mut c_char,
+    argz_len: *mut usize,
+    before: *mut c_char,
+    entry: *const c_char,
+) -> c_int {
+    if argz.is_null() || argz_len.is_null() || entry.is_null() {
+        return libc::EINVAL;
+    }
+    if before.is_null() {
+        // Append at end
+        return unsafe { argz_add(argz, argz_len, entry) };
+    }
+    let slen = unsafe { libc::strlen(entry) } + 1;
+    let old_len = unsafe { *argz_len };
+    let new_len = old_len + slen;
+    let az = unsafe { *argz };
+    let before_offset = unsafe { before.offset_from(az) } as usize;
+
+    let new_buf = unsafe { libc::realloc(az as *mut c_void, new_len) as *mut c_char };
+    if new_buf.is_null() {
+        return libc::ENOMEM;
+    }
+
+    // Shift tail right
+    let tail_len = old_len - before_offset;
+    unsafe {
+        std::ptr::copy(
+            new_buf.add(before_offset) as *const u8,
+            new_buf.add(before_offset + slen) as *mut u8,
+            tail_len,
+        );
+        std::ptr::copy_nonoverlapping(
+            entry as *const u8,
+            new_buf.add(before_offset) as *mut u8,
+            slen,
+        );
+        *argz = new_buf;
+        *argz_len = new_len;
+    }
+    0
+}
+
+/// `argz_replace` — replace all occurrences of str with with in argz.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn argz_replace(
+    argz: *mut *mut c_char,
+    argz_len: *mut usize,
+    str_: *const c_char,
+    with: *const c_char,
+) -> c_int {
+    if argz.is_null() || argz_len.is_null() || str_.is_null() {
+        return libc::EINVAL;
+    }
+    let find_str = unsafe { CStr::from_ptr(str_) };
+    let replace_cstr = if with.is_null() { None } else { Some(unsafe { CStr::from_ptr(with) }) };
+
+    // Rebuild the argz with replacements
+    let az = unsafe { *argz };
+    let len = unsafe { *argz_len };
+    let mut entries: Vec<Vec<u8>> = Vec::new();
+    let mut pos = 0usize;
+    while pos < len {
+        let entry = unsafe { CStr::from_ptr(az.add(pos)) };
+        let entry_bytes = entry.to_bytes();
+        if entry.to_bytes() == find_str.to_bytes() {
+            if let Some(r) = replace_cstr {
+                entries.push(r.to_bytes().to_vec());
+            }
+            // else: delete
+        } else {
+            entries.push(entry_bytes.to_vec());
+        }
+        pos += entry_bytes.len() + 1;
+    }
+
+    // Compute new length
+    let new_len: usize = entries.iter().map(|e| e.len() + 1).sum();
+    if new_len == 0 {
+        unsafe {
+            libc::free((*argz) as *mut c_void);
+            *argz = std::ptr::null_mut();
+            *argz_len = 0;
+        }
+        return 0;
+    }
+
+    let new_buf = unsafe { libc::realloc((*argz) as *mut c_void, new_len) as *mut c_char };
+    if new_buf.is_null() {
+        return libc::ENOMEM;
+    }
+    let mut offset = 0;
+    for e in &entries {
+        unsafe {
+            std::ptr::copy_nonoverlapping(e.as_ptr(), new_buf.add(offset) as *mut u8, e.len());
+            *new_buf.add(offset + e.len()) = 0;
+        }
+        offset += e.len() + 1;
+    }
+    unsafe {
+        *argz = new_buf;
+        *argz_len = new_len;
+    }
+    0
+}
+
+/// `argz_stringify` — convert argz to regular string (replace NULs with sep).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn argz_stringify(argz: *mut c_char, argz_len: usize, sep: c_int) {
+    if argz.is_null() || argz_len < 2 {
+        return;
+    }
+    // Replace all interior NULs with sep, keep last NUL
+    let slice = unsafe { std::slice::from_raw_parts_mut(argz as *mut u8, argz_len) };
+    for b in &mut slice[..argz_len - 1] {
+        if *b == 0 {
+            *b = sep as u8;
+        }
+    }
+}
+
+// ===========================================================================
+// Batch: envz family (GNU extensions) — Implemented
+// ===========================================================================
+
+/// `envz_entry` — find entry with given name in envz.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn envz_entry(
+    envz: *const c_char,
+    envz_len: usize,
+    name: *const c_char,
+) -> *mut c_char {
+    if envz.is_null() || envz_len == 0 || name.is_null() {
+        return std::ptr::null_mut();
+    }
+    let name_cstr = unsafe { CStr::from_ptr(name) };
+    let name_bytes = name_cstr.to_bytes();
+
+    let mut pos = 0usize;
+    while pos < envz_len {
+        let entry = unsafe { CStr::from_ptr(envz.add(pos)) };
+        let entry_bytes = entry.to_bytes();
+        // Check if entry starts with name and is followed by '=' or NUL
+        if entry_bytes.len() >= name_bytes.len() {
+            if entry_bytes.starts_with(name_bytes)
+                && (entry_bytes.len() == name_bytes.len() || entry_bytes[name_bytes.len()] == b'=')
+            {
+                return unsafe { envz.add(pos) as *mut c_char };
+            }
+        }
+        pos += entry_bytes.len() + 1;
+    }
+    std::ptr::null_mut()
+}
+
+/// `envz_get` — get value for name in envz.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn envz_get(
+    envz: *const c_char,
+    envz_len: usize,
+    name: *const c_char,
+) -> *const c_char {
+    let entry = unsafe { envz_entry(envz, envz_len, name) };
+    if entry.is_null() {
+        return std::ptr::null();
+    }
+    let entry_cstr = unsafe { CStr::from_ptr(entry) };
+    let entry_bytes = entry_cstr.to_bytes();
+    if let Some(eq_pos) = entry_bytes.iter().position(|&b| b == b'=') {
+        unsafe { entry.add(eq_pos + 1) as *const c_char }
+    } else {
+        std::ptr::null() // name without value
+    }
+}
+
+/// `envz_add` — add/replace name=value in envz.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn envz_add(
+    envz: *mut *mut c_char,
+    envz_len: *mut usize,
+    name: *const c_char,
+    value: *const c_char,
+) -> c_int {
+    if envz.is_null() || envz_len.is_null() || name.is_null() {
+        return libc::EINVAL;
+    }
+    // Remove existing entry if present
+    unsafe { envz_remove(envz, envz_len, name) };
+
+    // Build "name=value" or just "name"
+    if value.is_null() {
+        unsafe { argz_add(envz, envz_len, name) }
+    } else {
+        let name_s = unsafe { CStr::from_ptr(name) }.to_bytes();
+        let val_s = unsafe { CStr::from_ptr(value) }.to_bytes();
+        let mut entry = Vec::with_capacity(name_s.len() + 1 + val_s.len() + 1);
+        entry.extend_from_slice(name_s);
+        entry.push(b'=');
+        entry.extend_from_slice(val_s);
+        entry.push(0);
+        let entry_cstr = std::ffi::CString::from_vec_with_nul(entry).unwrap_or_default();
+        unsafe { argz_add(envz, envz_len, entry_cstr.as_ptr()) }
+    }
+}
+
+/// `envz_merge` — merge envz2 into envz1.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn envz_merge(
+    envz: *mut *mut c_char,
+    envz_len: *mut usize,
+    envz2: *const c_char,
+    envz2_len: usize,
+    override_: c_int,
+) -> c_int {
+    if envz.is_null() || envz_len.is_null() {
+        return libc::EINVAL;
+    }
+    if envz2.is_null() || envz2_len == 0 {
+        return 0;
+    }
+
+    let mut pos = 0usize;
+    while pos < envz2_len {
+        let entry = unsafe { CStr::from_ptr(envz2.add(pos)) };
+        let entry_bytes = entry.to_bytes();
+
+        // Parse name from entry
+        let eq_pos = entry_bytes.iter().position(|&b| b == b'=');
+        let name_end = eq_pos.unwrap_or(entry_bytes.len());
+        let name_cstr = std::ffi::CString::new(&entry_bytes[..name_end]).unwrap_or_default();
+
+        let existing = unsafe { envz_entry(*envz, *envz_len, name_cstr.as_ptr()) };
+        if existing.is_null() || override_ != 0 {
+            let value = eq_pos.map(|p| unsafe { envz2.add(pos + p + 1) });
+            let rc = unsafe { envz_add(envz, envz_len, name_cstr.as_ptr(), value.unwrap_or(std::ptr::null())) };
+            if rc != 0 {
+                return rc;
+            }
+        }
+
+        pos += entry_bytes.len() + 1;
+    }
+    0
+}
+
+/// `envz_remove` — remove name from envz.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn envz_remove(
+    envz: *mut *mut c_char,
+    envz_len: *mut usize,
+    name: *const c_char,
+) {
+    if envz.is_null() || envz_len.is_null() || name.is_null() {
+        return;
+    }
+    let entry = unsafe { envz_entry(*envz, *envz_len, name) };
+    if !entry.is_null() {
+        unsafe { argz_delete(envz, envz_len, entry) };
+    }
+}
+
+/// `envz_strip` — remove entries without values from envz.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn envz_strip(envz: *mut *mut c_char, envz_len: *mut usize) {
+    if envz.is_null() || envz_len.is_null() {
+        return;
+    }
+    // Rebuild keeping only entries with '='
+    let az = unsafe { *envz };
+    let len = unsafe { *envz_len };
+    let mut entries_to_remove: Vec<usize> = Vec::new();
+
+    let mut pos = 0usize;
+    while pos < len {
+        let entry = unsafe { CStr::from_ptr(az.add(pos)) };
+        let entry_bytes = entry.to_bytes();
+        if !entry_bytes.contains(&b'=') {
+            entries_to_remove.push(pos);
+        }
+        pos += entry_bytes.len() + 1;
+    }
+
+    // Remove from end to start to keep offsets valid
+    for &offset in entries_to_remove.iter().rev() {
+        let entry_ptr = unsafe { az.add(offset) };
+        unsafe { argz_delete(envz, envz_len, entry_ptr) };
     }
 }

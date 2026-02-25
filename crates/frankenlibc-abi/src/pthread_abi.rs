@@ -2774,6 +2774,75 @@ pub unsafe extern "C" fn pthread_getname_np(
     if ret == 0 { 0 } else { libc::EINVAL }
 }
 
+// ===========================================================================
+// Batch: pthread extensions — Implemented (delegate to libc)
+// ===========================================================================
+
+/// `pthread_atfork` — register fork handlers.
+///
+/// Registers functions to be called before and after fork():
+/// - `prepare`: called in parent before fork
+/// - `parent`: called in parent after fork
+/// - `child`: called in child after fork
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_atfork(
+    prepare: Option<unsafe extern "C" fn()>,
+    parent: Option<unsafe extern "C" fn()>,
+    child: Option<unsafe extern "C" fn()>,
+) -> c_int {
+    unsafe { libc::pthread_atfork(prepare, parent, child) }
+}
+
+/// `pthread_attr_getguardsize` — get the guard size of a thread attributes object.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_attr_getguardsize(
+    attr: *const libc::pthread_attr_t,
+    guardsize: *mut usize,
+) -> c_int {
+    if attr.is_null() || guardsize.is_null() {
+        return libc::EINVAL;
+    }
+    unsafe { libc::pthread_attr_getguardsize(attr, guardsize) }
+}
+
+/// `pthread_attr_setguardsize` — set the guard size of a thread attributes object.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_attr_setguardsize(
+    attr: *mut libc::pthread_attr_t,
+    guardsize: usize,
+) -> c_int {
+    if attr.is_null() {
+        return libc::EINVAL;
+    }
+    unsafe { libc::pthread_attr_setguardsize(attr, guardsize) }
+}
+
+/// GNU `pthread_attr_getaffinity_np` — get CPU affinity in thread attributes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_attr_getaffinity_np(
+    attr: *const libc::pthread_attr_t,
+    cpusetsize: usize,
+    cpuset: *mut libc::cpu_set_t,
+) -> c_int {
+    if attr.is_null() || cpuset.is_null() {
+        return libc::EINVAL;
+    }
+    unsafe { libc::pthread_attr_getaffinity_np(attr, cpusetsize, cpuset) }
+}
+
+/// GNU `pthread_attr_setaffinity_np` — set CPU affinity in thread attributes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pthread_attr_setaffinity_np(
+    attr: *mut libc::pthread_attr_t,
+    cpusetsize: usize,
+    cpuset: *const libc::cpu_set_t,
+) -> c_int {
+    if attr.is_null() || cpuset.is_null() {
+        return libc::EINVAL;
+    }
+    unsafe { libc::pthread_attr_setaffinity_np(attr, cpusetsize, cpuset) }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
