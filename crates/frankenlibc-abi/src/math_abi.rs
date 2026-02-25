@@ -2171,4 +2171,147 @@ mod tests {
         assert!((p - e).abs() < 1e-4);
         assert!((p - 100.0f32).abs() < 1e-2);
     }
+
+    // -----------------------------------------------------------------------
+    // lgamma_r / lgammaf_r tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn lgamma_r_positive_sign_and_value() {
+        set_errno_for_test(0);
+        let mut sign: c_int = 0;
+        // SAFETY: `sign` is valid writable int.
+        let val = unsafe { lgamma_r(5.0, &mut sign as *mut c_int) };
+        assert!((val - 24.0_f64.ln()).abs() < 1e-8);
+        assert_eq!(sign, 1);
+    }
+
+    #[test]
+    fn lgamma_r_negative_sign() {
+        set_errno_for_test(0);
+        let mut sign: c_int = 0;
+        // SAFETY: `sign` is valid writable int.
+        let _ = unsafe { lgamma_r(-0.5, &mut sign as *mut c_int) };
+        assert_eq!(sign, -1);
+    }
+
+    #[test]
+    fn lgamma_r_null_signgam_accepted() {
+        set_errno_for_test(0);
+        // SAFETY: null pointer should be tolerated.
+        let val = unsafe { lgamma_r(5.0, std::ptr::null_mut()) };
+        assert!((val - 24.0_f64.ln()).abs() < 1e-8);
+    }
+
+    #[test]
+    fn lgamma_r_pole_sets_errno() {
+        set_errno_for_test(0);
+        // SAFETY: lgamma_r at zero should set ERANGE.
+        let val = unsafe { lgamma_r(0.0, std::ptr::null_mut()) };
+        assert!(val.is_infinite());
+        assert_eq!(abi_errno(), libc::ERANGE);
+    }
+
+    #[test]
+    fn lgammaf_r_positive_sign_and_value() {
+        set_errno_for_test(0);
+        let mut sign: c_int = 0;
+        // SAFETY: `sign` is valid writable int.
+        let val = unsafe { lgammaf_r(5.0f32, &mut sign as *mut c_int) };
+        assert!((val - (24.0_f32).ln()).abs() < 1e-3);
+        assert_eq!(sign, 1);
+    }
+
+    // -----------------------------------------------------------------------
+    // nexttoward / nexttowardf tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn nexttoward_steps_toward_target() {
+        // SAFETY: ABI entrypoints accept plain float inputs.
+        let up = unsafe { nexttoward(1.0, 2.0) };
+        assert!(up > 1.0);
+        assert!(up < 1.0 + 1e-15);
+        let down = unsafe { nexttoward(1.0, 0.0) };
+        assert!(down < 1.0);
+        // Equal: returns x
+        assert_eq!(unsafe { nexttoward(1.0, 1.0) }, 1.0);
+    }
+
+    #[test]
+    fn nexttowardf_steps_and_propagates_nan() {
+        // SAFETY: ABI entrypoints accept plain float inputs.
+        let up = unsafe { nexttowardf(1.0f32, 2.0f64) };
+        assert!(up > 1.0f32);
+        assert!(unsafe { nexttowardf(f32::NAN, 1.0f64) }.is_nan());
+    }
+
+    // -----------------------------------------------------------------------
+    // glibc classification internals tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn fpclassify_classifies_all_categories() {
+        // SAFETY: classification functions accept any float.
+        unsafe {
+            assert_eq!(__fpclassify(1.0), 4);       // FP_NORMAL
+            assert_eq!(__fpclassify(0.0), 2);       // FP_ZERO
+            assert_eq!(__fpclassify(f64::NAN), 0);  // FP_NAN
+            assert_eq!(__fpclassify(f64::INFINITY), 1); // FP_INFINITE
+            assert_eq!(__fpclassify(5e-324), 3);    // FP_SUBNORMAL
+        }
+    }
+
+    #[test]
+    fn fpclassifyf_classifies_all_categories() {
+        // SAFETY: classification functions accept any float.
+        unsafe {
+            assert_eq!(__fpclassifyf(1.0f32), 4);
+            assert_eq!(__fpclassifyf(0.0f32), 2);
+            assert_eq!(__fpclassifyf(f32::NAN), 0);
+            assert_eq!(__fpclassifyf(f32::INFINITY), 1);
+            assert_eq!(__fpclassifyf(1e-45f32), 3);
+        }
+    }
+
+    #[test]
+    fn signbit_detects_sign() {
+        // SAFETY: sign bit check accepts any float.
+        unsafe {
+            assert_eq!(__signbit(1.0), 0);
+            assert_eq!(__signbit(-1.0), 1);
+            assert_eq!(__signbit(-0.0), 1);
+            assert_eq!(__signbitf(1.0f32), 0);
+            assert_eq!(__signbitf(-1.0f32), 1);
+        }
+    }
+
+    #[test]
+    fn isinf_isnan_finite_checks() {
+        // SAFETY: classification functions accept any float.
+        unsafe {
+            assert_eq!(__isinf(f64::INFINITY), 1);
+            assert_eq!(__isinf(f64::NEG_INFINITY), -1);
+            assert_eq!(__isinf(1.0), 0);
+            assert_eq!(__isnan(f64::NAN), 1);
+            assert_eq!(__isnan(1.0), 0);
+            assert_eq!(__finite(1.0), 1);
+            assert_eq!(__finite(f64::INFINITY), 0);
+            assert_eq!(__finite(f64::NAN), 0);
+        }
+    }
+
+    #[test]
+    fn isinff_isnanf_finitef_checks() {
+        // SAFETY: classification functions accept any float.
+        unsafe {
+            assert_eq!(__isinff(f32::INFINITY), 1);
+            assert_eq!(__isinff(f32::NEG_INFINITY), -1);
+            assert_eq!(__isinff(1.0f32), 0);
+            assert_eq!(__isnanf(f32::NAN), 1);
+            assert_eq!(__isnanf(1.0f32), 0);
+            assert_eq!(__finitef(1.0f32), 1);
+            assert_eq!(__finitef(f32::INFINITY), 0);
+        }
+    }
 }
