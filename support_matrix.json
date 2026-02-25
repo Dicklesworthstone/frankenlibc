@@ -1322,67 +1322,100 @@
       "symbol": "feclearexcept",
       "status": "GlibcCallThrough",
       "module": "fenv_abi",
-      "perf_class": "coldpath"
+      "perf_class": "coldpath",
+      "strict_semantics": "Delegates to host glibc `feclearexcept` to clear requested IEEE-754 exception flags",
+      "hardened_semantics": "Same host delegation path; deterministic -1 fallback only when delegate resolution fails",
+      "default_stub": false
     },
     {
       "symbol": "fegetenv",
       "status": "GlibcCallThrough",
       "module": "fenv_abi",
-      "perf_class": "coldpath"
+      "perf_class": "coldpath",
+      "strict_semantics": "Delegates to host glibc `fegetenv`; null environment pointer is rejected with -1 before delegation",
+      "hardened_semantics": "Same delegation with explicit null-pointer guard and deterministic failure contract",
+      "default_stub": false
     },
     {
       "symbol": "fegetexceptflag",
       "status": "GlibcCallThrough",
       "module": "fenv_abi",
-      "perf_class": "coldpath"
+      "perf_class": "coldpath",
+      "strict_semantics": "Delegates to host glibc `fegetexceptflag`; null flag pointer is rejected with -1",
+      "hardened_semantics": "Same delegation with deterministic null-pointer guard behavior",
+      "default_stub": false
     },
     {
       "symbol": "fegetround",
       "status": "GlibcCallThrough",
       "module": "fenv_abi",
-      "perf_class": "coldpath"
+      "perf_class": "coldpath",
+      "strict_semantics": "Delegates to host glibc `fegetround` to read the active floating-point rounding mode",
+      "hardened_semantics": "Same host delegation; returns -1 only when delegate resolution fails",
+      "default_stub": false
     },
     {
       "symbol": "feholdexcept",
       "status": "GlibcCallThrough",
       "module": "fenv_abi",
-      "perf_class": "coldpath"
+      "perf_class": "coldpath",
+      "strict_semantics": "Delegates to host glibc `feholdexcept`; null environment pointer is rejected with -1",
+      "hardened_semantics": "Same delegation with deterministic null-pointer guard behavior",
+      "default_stub": false
     },
     {
       "symbol": "feraiseexcept",
       "status": "GlibcCallThrough",
       "module": "fenv_abi",
-      "perf_class": "coldpath"
+      "perf_class": "coldpath",
+      "strict_semantics": "Delegates to host glibc `feraiseexcept` to raise requested IEEE-754 exception flags",
+      "hardened_semantics": "Same host delegation path; deterministic -1 fallback only when delegate resolution fails",
+      "default_stub": false
     },
     {
       "symbol": "fesetenv",
       "status": "GlibcCallThrough",
       "module": "fenv_abi",
-      "perf_class": "coldpath"
+      "perf_class": "coldpath",
+      "strict_semantics": "Delegates to host glibc `fesetenv` to install the supplied floating-point environment image",
+      "hardened_semantics": "Same host delegation with deterministic -1 fallback when delegate resolution fails",
+      "default_stub": false
     },
     {
       "symbol": "fesetexceptflag",
       "status": "GlibcCallThrough",
       "module": "fenv_abi",
-      "perf_class": "coldpath"
+      "perf_class": "coldpath",
+      "strict_semantics": "Delegates to host glibc `fesetexceptflag`; null flag pointer is rejected with -1",
+      "hardened_semantics": "Same delegation with deterministic null-pointer guard behavior",
+      "default_stub": false
     },
     {
       "symbol": "fesetround",
       "status": "GlibcCallThrough",
       "module": "fenv_abi",
-      "perf_class": "coldpath"
+      "perf_class": "coldpath",
+      "strict_semantics": "Delegates to host glibc `fesetround` to update the active floating-point rounding mode",
+      "hardened_semantics": "Same host delegation; deterministic -1 fallback when delegate resolution fails",
+      "default_stub": false
     },
     {
       "symbol": "fetestexcept",
       "status": "GlibcCallThrough",
       "module": "fenv_abi",
-      "perf_class": "coldpath"
+      "perf_class": "coldpath",
+      "strict_semantics": "Delegates to host glibc `fetestexcept` to read currently raised IEEE-754 exception flags",
+      "hardened_semantics": "Same delegation path; returns 0 only when delegate is unavailable",
+      "default_stub": false
     },
     {
       "symbol": "feupdateenv",
       "status": "GlibcCallThrough",
       "module": "fenv_abi",
-      "perf_class": "coldpath"
+      "perf_class": "coldpath",
+      "strict_semantics": "Delegates to host glibc `feupdateenv` to restore environment and re-raise saved exception flags",
+      "hardened_semantics": "Same host delegation with deterministic -1 fallback when delegate resolution fails",
+      "default_stub": false
     },
     {
       "symbol": "fdim",
@@ -6709,7 +6742,7 @@
     },
     {
       "symbol": "strptime",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "time_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Delegates to glibc strptime for date/time parsing.",
@@ -7382,14 +7415,16 @@
       "header": "stdio.h",
       "family": "stdio",
       "status": "GlibcCallThrough",
-      "notes": "Delegates to libc (va_list forwarding requires C ABI)"
+      "notes": "Delegates to libc (va_list forwarding requires C ABI)",
+      "module": "stdio_abi"
     },
     {
       "symbol": "vdprintf",
       "header": "stdio.h",
       "family": "stdio",
       "status": "GlibcCallThrough",
-      "notes": "Delegates to libc (va_list forwarding requires C ABI)"
+      "notes": "Delegates to libc (va_list forwarding requires C ABI)",
+      "module": "stdio_abi"
     },
     {
       "symbol": "vfork",
@@ -7405,7 +7440,8 @@
       "header": "stdio.h",
       "family": "stdio",
       "status": "GlibcCallThrough",
-      "notes": "Delegates to libc (va_list forwarding requires C ABI)"
+      "notes": "Delegates to libc (va_list forwarding requires C ABI)",
+      "module": "stdio_abi"
     },
     {
       "symbol": "vfscanf",
@@ -7442,7 +7478,8 @@
       "header": "stdio.h",
       "family": "stdio",
       "status": "GlibcCallThrough",
-      "notes": "Delegates to libc (va_list forwarding requires C ABI)"
+      "notes": "Delegates to libc (va_list forwarding requires C ABI)",
+      "module": "stdio_abi"
     },
     {
       "symbol": "vscanf",
@@ -7458,14 +7495,16 @@
       "header": "stdio.h",
       "family": "stdio",
       "status": "GlibcCallThrough",
-      "notes": "Delegates to libc (va_list forwarding requires C ABI)"
+      "notes": "Delegates to libc (va_list forwarding requires C ABI)",
+      "module": "stdio_abi"
     },
     {
       "symbol": "vsprintf",
       "header": "stdio.h",
       "family": "stdio",
       "status": "GlibcCallThrough",
-      "notes": "Delegates to libc (va_list forwarding requires C ABI)"
+      "notes": "Delegates to libc (va_list forwarding requires C ABI)",
+      "module": "stdio_abi"
     },
     {
       "symbol": "vsscanf",
@@ -8057,19 +8096,22 @@
       "symbol": "glob64",
       "header": "<unistd.h>",
       "status": "GlibcCallThrough",
-      "notes": "Tier 10"
+      "notes": "Tier 10",
+      "module": "unistd_abi"
     },
     {
       "symbol": "globfree64",
       "header": "<unistd.h>",
       "status": "GlibcCallThrough",
-      "notes": "Tier 10"
+      "notes": "Tier 10",
+      "module": "unistd_abi"
     },
     {
       "symbol": "nftw64",
       "header": "<unistd.h>",
       "status": "GlibcCallThrough",
-      "notes": "Tier 10"
+      "notes": "Tier 10",
+      "module": "unistd_abi"
     },
     {
       "symbol": "alphasort64",
@@ -8328,6 +8370,51 @@
       "strict_semantics": "Extracts significand (f32) scaled to [1,2) via ilogbf+scalbnf",
       "hardened_semantics": "Same computation with runtime-policy routing",
       "default_stub": false
+    },
+    {
+      "symbol": "wcpcpy",
+      "status": "Implemented",
+      "module": "wchar_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "passthrough to core",
+      "hardened_semantics": "bounded copy + NUL guarantee",
+      "default_stub": false
+    },
+    {
+      "symbol": "wcpncpy",
+      "status": "Implemented",
+      "module": "wchar_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "passthrough to core",
+      "hardened_semantics": "bounded copy + NUL guarantee",
+      "default_stub": false
+    },
+    {
+      "symbol": "wcscasecmp",
+      "status": "Implemented",
+      "module": "wchar_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "passthrough to core",
+      "hardened_semantics": "bounded compare",
+      "default_stub": false
+    },
+    {
+      "symbol": "wcsncasecmp",
+      "status": "Implemented",
+      "module": "wchar_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "passthrough to core",
+      "hardened_semantics": "bounded compare",
+      "default_stub": false
+    },
+    {
+      "symbol": "wmemrchr",
+      "status": "Implemented",
+      "module": "wchar_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "passthrough to core",
+      "hardened_semantics": "clamped scan",
+      "default_stub": false
     }
   ],
   "summary": {
@@ -8340,5 +8427,12 @@
   "implemented": 574,
   "raw_syscall": 297,
   "glibc_call_through": 103,
-  "stub": 0
+  "stub": 0,
+  "counts": {
+    "total_exported": 993,
+    "implemented": 594,
+    "raw_syscall": 297,
+    "glibc_call_through": 102,
+    "stub": 0
+  }
 }
