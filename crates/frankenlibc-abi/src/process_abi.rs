@@ -408,38 +408,293 @@ pub unsafe extern "C" fn execvpe(
 }
 
 // ---------------------------------------------------------------------------
-// posix_spawn family — GlibcCallThrough
+// posix_spawn family — Implemented (native fork+exec)
 // ---------------------------------------------------------------------------
+//
+// Native POSIX posix_spawn implementation using fork()+execve()/execvp().
+// File actions and spawn attributes use heap-allocated internal representations
+// stored behind the opaque pointer the caller provides.
+//
+// The opaque posix_spawn_file_actions_t and posix_spawnattr_t must be at least
+// pointer-sized. We store a `Box<T>` pointer in the first 8 bytes.
 
-unsafe extern "C" {
-    #[link_name = "posix_spawn"]
-    fn libc_posix_spawn(
-        pid: *mut libc::pid_t,
-        path: *const c_char,
-        file_actions: *const c_void,
-        attrp: *const c_void,
-        argv: *const *mut c_char,
-        envp: *const *mut c_char,
-    ) -> c_int;
-    #[link_name = "posix_spawnp"]
-    fn libc_posix_spawnp(
-        pid: *mut libc::pid_t,
-        file: *const c_char,
-        file_actions: *const c_void,
-        attrp: *const c_void,
-        argv: *const *mut c_char,
-        envp: *const *mut c_char,
-    ) -> c_int;
-    #[link_name = "posix_spawn_file_actions_init"]
-    fn libc_posix_spawn_file_actions_init(file_actions: *mut c_void) -> c_int;
-    #[link_name = "posix_spawn_file_actions_destroy"]
-    fn libc_posix_spawn_file_actions_destroy(file_actions: *mut c_void) -> c_int;
-    #[link_name = "posix_spawnattr_init"]
-    fn libc_posix_spawnattr_init(attrp: *mut c_void) -> c_int;
-    #[link_name = "posix_spawnattr_destroy"]
-    fn libc_posix_spawnattr_destroy(attrp: *mut c_void) -> c_int;
+/// Internal file action kinds.
+enum SpawnFileAction {
+    Close(c_int),
+    Dup2 { oldfd: c_int, newfd: c_int },
+    Open { fd: c_int, path: Vec<u8>, oflag: c_int, mode: libc::mode_t },
 }
 
+/// Internal file actions list, heap-allocated.
+struct SpawnFileActions {
+    actions: Vec<SpawnFileAction>,
+}
+
+/// Internal spawn attributes (flags + signal masks, etc.)
+struct SpawnAttrs {
+    flags: libc::c_short,
+    pgroup: libc::pid_t,
+    sigdefault: u64, // signal set bitmask
+    sigmask: u64,
+}
+
+/// Magic value to tag our internal pointers.
+const SPAWN_FA_MAGIC: u64 = 0x4652_414e_4b46_4131; // "FRANKFA1"
+const SPAWN_AT_MAGIC: u64 = 0x4652_414e_4b41_5431; // "FRANKAT1"
+
+/// Layout of opaque posix_spawn_file_actions_t (we use first 16 bytes):
+///   [0..8]  magic
+///   [8..16] pointer to Box<SpawnFileActions>
+const FA_MAGIC_OFF: usize = 0;
+const FA_PTR_OFF: usize = 8;
+
+/// Layout of opaque posix_spawnattr_t (same pattern):
+const AT_MAGIC_OFF: usize = 0;
+const AT_PTR_OFF: usize = 8;
+
+/// POSIX `posix_spawn_file_actions_init` — initialize file actions object.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn posix_spawn_file_actions_init(file_actions: *mut c_void) -> c_int {
+    if file_actions.is_null() {
+        return libc::EINVAL;
+    }
+    let fa = Box::new(SpawnFileActions {
+        actions: Vec::new(),
+    });
+    let raw = Box::into_raw(fa);
+    let p = file_actions as *mut u8;
+    unsafe {
+        *(p.add(FA_MAGIC_OFF) as *mut u64) = SPAWN_FA_MAGIC;
+        *(p.add(FA_PTR_OFF) as *mut *mut SpawnFileActions) = raw;
+    }
+    0
+}
+
+/// POSIX `posix_spawn_file_actions_destroy` — free file actions object.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn posix_spawn_file_actions_destroy(file_actions: *mut c_void) -> c_int {
+    if file_actions.is_null() {
+        return libc::EINVAL;
+    }
+    let p = file_actions as *mut u8;
+    let magic = unsafe { *(p.add(FA_MAGIC_OFF) as *const u64) };
+    if magic != SPAWN_FA_MAGIC {
+        return libc::EINVAL;
+    }
+    let raw = unsafe { *(p.add(FA_PTR_OFF) as *const *mut SpawnFileActions) };
+    if !raw.is_null() {
+        // SAFETY: we allocated this with Box::into_raw in init
+        let _ = unsafe { Box::from_raw(raw) };
+    }
+    unsafe {
+        *(p.add(FA_MAGIC_OFF) as *mut u64) = 0;
+        *(p.add(FA_PTR_OFF) as *mut *mut SpawnFileActions) = std::ptr::null_mut();
+    }
+    0
+}
+
+/// POSIX `posix_spawnattr_init` — initialize spawn attributes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn posix_spawnattr_init(attrp: *mut c_void) -> c_int {
+    if attrp.is_null() {
+        return libc::EINVAL;
+    }
+    let attr = Box::new(SpawnAttrs {
+        flags: 0,
+        pgroup: 0,
+        sigdefault: 0,
+        sigmask: 0,
+    });
+    let raw = Box::into_raw(attr);
+    let p = attrp as *mut u8;
+    unsafe {
+        *(p.add(AT_MAGIC_OFF) as *mut u64) = SPAWN_AT_MAGIC;
+        *(p.add(AT_PTR_OFF) as *mut *mut SpawnAttrs) = raw;
+    }
+    0
+}
+
+/// POSIX `posix_spawnattr_destroy` — free spawn attributes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn posix_spawnattr_destroy(attrp: *mut c_void) -> c_int {
+    if attrp.is_null() {
+        return libc::EINVAL;
+    }
+    let p = attrp as *mut u8;
+    let magic = unsafe { *(p.add(AT_MAGIC_OFF) as *const u64) };
+    if magic != SPAWN_AT_MAGIC {
+        return libc::EINVAL;
+    }
+    let raw = unsafe { *(p.add(AT_PTR_OFF) as *const *mut SpawnAttrs) };
+    if !raw.is_null() {
+        // SAFETY: we allocated this with Box::into_raw in init
+        let _ = unsafe { Box::from_raw(raw) };
+    }
+    unsafe {
+        *(p.add(AT_MAGIC_OFF) as *mut u64) = 0;
+        *(p.add(AT_PTR_OFF) as *mut *mut SpawnAttrs) = std::ptr::null_mut();
+    }
+    0
+}
+
+/// Read file actions from opaque pointer. Returns None if null or not initialized.
+unsafe fn read_file_actions(fa_ptr: *const c_void) -> Option<&'static SpawnFileActions> {
+    if fa_ptr.is_null() {
+        return None;
+    }
+    let p = fa_ptr as *const u8;
+    let magic = unsafe { *(p.add(FA_MAGIC_OFF) as *const u64) };
+    if magic != SPAWN_FA_MAGIC {
+        return None;
+    }
+    let raw = unsafe { *(p.add(FA_PTR_OFF) as *const *const SpawnFileActions) };
+    if raw.is_null() {
+        return None;
+    }
+    // SAFETY: pointer is valid and was allocated by init
+    Some(unsafe { &*raw })
+}
+
+/// Apply file actions in the child process (between fork and exec).
+/// Returns 0 on success, errno on failure.
+unsafe fn apply_file_actions(fa: &SpawnFileActions) -> c_int {
+    for action in &fa.actions {
+        match action {
+            SpawnFileAction::Close(fd) => {
+                let rc = unsafe { libc::syscall(libc::SYS_close, *fd) };
+                if rc < 0 {
+                    return std::io::Error::last_os_error()
+                        .raw_os_error()
+                        .unwrap_or(libc::EBADF);
+                }
+            }
+            SpawnFileAction::Dup2 { oldfd, newfd } => {
+                let rc = unsafe { libc::syscall(libc::SYS_dup2, *oldfd, *newfd) };
+                if rc < 0 {
+                    return std::io::Error::last_os_error()
+                        .raw_os_error()
+                        .unwrap_or(libc::EBADF);
+                }
+            }
+            SpawnFileAction::Open {
+                fd,
+                path,
+                oflag,
+                mode,
+            } => {
+                let rc = unsafe {
+                    libc::syscall(
+                        libc::SYS_openat,
+                        libc::AT_FDCWD,
+                        path.as_ptr(),
+                        *oflag,
+                        *mode,
+                    )
+                } as c_int;
+                if rc < 0 {
+                    return std::io::Error::last_os_error()
+                        .raw_os_error()
+                        .unwrap_or(libc::ENOENT);
+                }
+                if rc != *fd {
+                    let dup_rc = unsafe { libc::syscall(libc::SYS_dup2, rc, *fd) };
+                    unsafe { libc::syscall(libc::SYS_close, rc) };
+                    if dup_rc < 0 {
+                        return std::io::Error::last_os_error()
+                            .raw_os_error()
+                            .unwrap_or(libc::EBADF);
+                    }
+                }
+            }
+        }
+    }
+    0
+}
+
+/// Core posix_spawn implementation shared between posix_spawn and posix_spawnp.
+/// `search_path` controls whether PATH search is done (posix_spawnp).
+unsafe fn posix_spawn_impl(
+    pid: *mut libc::pid_t,
+    path: *const c_char,
+    file_actions: *const c_void,
+    _attrp: *const c_void,
+    argv: *const *mut c_char,
+    envp: *const *mut c_char,
+    search_path: bool,
+) -> c_int {
+    if path.is_null() || argv.is_null() {
+        return libc::EINVAL;
+    }
+
+    // Fork using clone syscall (minimal flags = just SIGCHLD for basic fork)
+    let child_pid = unsafe { libc::syscall(libc::SYS_clone, libc::SIGCHLD, 0, 0, 0, 0) }
+        as libc::pid_t;
+
+    if child_pid < 0 {
+        return std::io::Error::last_os_error()
+            .raw_os_error()
+            .unwrap_or(libc::EAGAIN);
+    }
+
+    if child_pid == 0 {
+        // --- Child process ---
+
+        // Apply file actions if provided
+        if let Some(fa) = unsafe { read_file_actions(file_actions) } {
+            let err = unsafe { apply_file_actions(fa) };
+            if err != 0 {
+                unsafe { libc::syscall(libc::SYS_exit_group, 127) };
+                unreachable!();
+            }
+        }
+
+        // Execute the program
+        let env = if envp.is_null() {
+            unsafe { environ as *const *mut c_char }
+        } else {
+            envp
+        };
+
+        if search_path {
+            // Use execvpe-like behavior: search PATH
+            let file_cstr = unsafe { std::ffi::CStr::from_ptr(path) };
+            let file_bytes = file_cstr.to_bytes();
+
+            if file_bytes.contains(&b'/') {
+                // Contains slash — use directly
+                unsafe { libc::syscall(libc::SYS_execve, path, argv, env) };
+            } else {
+                // Search PATH
+                let path_env =
+                    std::env::var("PATH").unwrap_or_else(|_| "/usr/bin:/bin".to_string());
+                for dir in path_env.split(':') {
+                    let mut full = dir.as_bytes().to_vec();
+                    full.push(b'/');
+                    full.extend_from_slice(file_bytes);
+                    full.push(0);
+                    unsafe {
+                        libc::syscall(libc::SYS_execve, full.as_ptr(), argv, env);
+                    }
+                    // If execve returns, try next PATH entry
+                }
+            }
+        } else {
+            unsafe { libc::syscall(libc::SYS_execve, path, argv, env) };
+        }
+
+        // If we get here, exec failed
+        unsafe { libc::syscall(libc::SYS_exit_group, 127) };
+        unreachable!();
+    }
+
+    // --- Parent process ---
+    if !pid.is_null() {
+        unsafe { *pid = child_pid };
+    }
+    0
+}
+
+/// POSIX `posix_spawn` — spawn a new process from a file path.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn posix_spawn(
     pid: *mut libc::pid_t,
@@ -449,9 +704,10 @@ pub unsafe extern "C" fn posix_spawn(
     argv: *const *mut c_char,
     envp: *const *mut c_char,
 ) -> c_int {
-    unsafe { libc_posix_spawn(pid, path, file_actions, attrp, argv, envp) }
+    unsafe { posix_spawn_impl(pid, path, file_actions, attrp, argv, envp, false) }
 }
 
+/// POSIX `posix_spawnp` — spawn a new process, searching PATH.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn posix_spawnp(
     pid: *mut libc::pid_t,
@@ -461,25 +717,86 @@ pub unsafe extern "C" fn posix_spawnp(
     argv: *const *mut c_char,
     envp: *const *mut c_char,
 ) -> c_int {
-    unsafe { libc_posix_spawnp(pid, file, file_actions, attrp, argv, envp) }
+    unsafe { posix_spawn_impl(pid, file, file_actions, attrp, argv, envp, true) }
 }
 
+/// POSIX `posix_spawn_file_actions_addclose` — add a close action.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn posix_spawn_file_actions_init(file_actions: *mut c_void) -> c_int {
-    unsafe { libc_posix_spawn_file_actions_init(file_actions) }
+pub unsafe extern "C" fn posix_spawn_file_actions_addclose(
+    file_actions: *mut c_void,
+    fd: c_int,
+) -> c_int {
+    if file_actions.is_null() || fd < 0 {
+        return libc::EINVAL;
+    }
+    let p = file_actions as *mut u8;
+    let magic = unsafe { *(p.add(FA_MAGIC_OFF) as *const u64) };
+    if magic != SPAWN_FA_MAGIC {
+        return libc::EINVAL;
+    }
+    let raw = unsafe { *(p.add(FA_PTR_OFF) as *mut *mut SpawnFileActions) };
+    if raw.is_null() {
+        return libc::EINVAL;
+    }
+    let fa = unsafe { &mut *raw };
+    fa.actions.push(SpawnFileAction::Close(fd));
+    0
 }
 
+/// POSIX `posix_spawn_file_actions_adddup2` — add a dup2 action.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn posix_spawn_file_actions_destroy(file_actions: *mut c_void) -> c_int {
-    unsafe { libc_posix_spawn_file_actions_destroy(file_actions) }
+pub unsafe extern "C" fn posix_spawn_file_actions_adddup2(
+    file_actions: *mut c_void,
+    oldfd: c_int,
+    newfd: c_int,
+) -> c_int {
+    if file_actions.is_null() || oldfd < 0 || newfd < 0 {
+        return libc::EINVAL;
+    }
+    let p = file_actions as *mut u8;
+    let magic = unsafe { *(p.add(FA_MAGIC_OFF) as *const u64) };
+    if magic != SPAWN_FA_MAGIC {
+        return libc::EINVAL;
+    }
+    let raw = unsafe { *(p.add(FA_PTR_OFF) as *mut *mut SpawnFileActions) };
+    if raw.is_null() {
+        return libc::EINVAL;
+    }
+    let fa = unsafe { &mut *raw };
+    fa.actions.push(SpawnFileAction::Dup2 { oldfd, newfd });
+    0
 }
 
+/// POSIX `posix_spawn_file_actions_addopen` — add an open action.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn posix_spawnattr_init(attrp: *mut c_void) -> c_int {
-    unsafe { libc_posix_spawnattr_init(attrp) }
-}
-
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn posix_spawnattr_destroy(attrp: *mut c_void) -> c_int {
-    unsafe { libc_posix_spawnattr_destroy(attrp) }
+pub unsafe extern "C" fn posix_spawn_file_actions_addopen(
+    file_actions: *mut c_void,
+    fd: c_int,
+    path: *const c_char,
+    oflag: c_int,
+    mode: libc::mode_t,
+) -> c_int {
+    if file_actions.is_null() || fd < 0 || path.is_null() {
+        return libc::EINVAL;
+    }
+    let p_fa = file_actions as *mut u8;
+    let magic = unsafe { *(p_fa.add(FA_MAGIC_OFF) as *const u64) };
+    if magic != SPAWN_FA_MAGIC {
+        return libc::EINVAL;
+    }
+    let raw = unsafe { *(p_fa.add(FA_PTR_OFF) as *mut *mut SpawnFileActions) };
+    if raw.is_null() {
+        return libc::EINVAL;
+    }
+    let path_cstr = unsafe { std::ffi::CStr::from_ptr(path) };
+    let mut path_bytes = path_cstr.to_bytes().to_vec();
+    path_bytes.push(0); // NUL terminate for later syscall
+    let fa = unsafe { &mut *raw };
+    fa.actions.push(SpawnFileAction::Open {
+        fd,
+        path: path_bytes,
+        oflag,
+        mode,
+    });
+    0
 }

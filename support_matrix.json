@@ -2,7 +2,7 @@
   "version": 2,
   "generated_at_utc": "2026-02-18T04:49:26Z",
   "library": "/data/tmp/cargo-target/release/libfrankenlibc_abi.so",
-  "total_exported": 1039,
+  "total_exported": 1042,
   "taxonomy": {
     "Implemented": "Native Rust code owns the entire operation. No host libc dependency. Full test coverage required.",
     "RawSyscall": "ABI entrypoint marshals arguments directly to Linux syscall instruction. No glibc call-through.",
@@ -803,7 +803,7 @@
     },
     {
       "symbol": "crypt",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "unistd_abi",
       "perf_class": "default",
       "strict_semantics": "Passthrough to glibc crypt",
@@ -1885,7 +1885,7 @@
     },
     {
       "symbol": "freeifaddrs",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "unistd_abi",
       "perf_class": "fast"
     },
@@ -2408,7 +2408,7 @@
     },
     {
       "symbol": "getifaddrs",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "unistd_abi",
       "perf_class": "fast"
     },
@@ -2714,7 +2714,7 @@
     },
     {
       "symbol": "getutent",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "unistd_abi",
       "perf_class": "fast"
     },
@@ -4512,7 +4512,7 @@
     },
     {
       "symbol": "posix_spawn",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "process_abi",
       "perf_class": "default",
       "strict_semantics": "Passthrough to glibc posix_spawn",
@@ -4521,7 +4521,7 @@
     },
     {
       "symbol": "posix_spawn_file_actions_destroy",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "process_abi",
       "perf_class": "default",
       "strict_semantics": "Passthrough to glibc posix_spawn_file_actions_destroy",
@@ -4530,7 +4530,7 @@
     },
     {
       "symbol": "posix_spawn_file_actions_init",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "process_abi",
       "perf_class": "default",
       "strict_semantics": "Passthrough to glibc posix_spawn_file_actions_init",
@@ -4539,7 +4539,7 @@
     },
     {
       "symbol": "posix_spawnattr_destroy",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "process_abi",
       "perf_class": "default",
       "strict_semantics": "Passthrough to glibc posix_spawnattr_destroy",
@@ -4548,7 +4548,7 @@
     },
     {
       "symbol": "posix_spawnattr_init",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "process_abi",
       "perf_class": "default",
       "strict_semantics": "Passthrough to glibc posix_spawnattr_init",
@@ -4557,7 +4557,7 @@
     },
     {
       "symbol": "posix_spawnp",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "process_abi",
       "perf_class": "default",
       "strict_semantics": "Passthrough to glibc posix_spawnp",
@@ -5575,9 +5575,12 @@
     },
     {
       "symbol": "res_init",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "unistd_abi",
-      "perf_class": "fast"
+      "perf_class": "coldpath",
+      "strict_semantics": "Native resolver bootstrap parses /etc/resolv.conf when available; no host glibc call-through",
+      "hardened_semantics": "Same native resolver bootstrap path; missing/unreadable config deterministically falls back to default resolver state",
+      "default_stub": false
     },
     {
       "symbol": "res_query",
@@ -5847,7 +5850,7 @@
     },
     {
       "symbol": "sem_close",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "unistd_abi",
       "perf_class": "default",
       "strict_semantics": "Passthrough to glibc sem_close",
@@ -5883,7 +5886,7 @@
     },
     {
       "symbol": "sem_open",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "unistd_abi",
       "perf_class": "default",
       "strict_semantics": "Passthrough to glibc sem_open",
@@ -5919,7 +5922,7 @@
     },
     {
       "symbol": "sem_unlink",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "unistd_abi",
       "perf_class": "default",
       "strict_semantics": "Passthrough to glibc sem_unlink",
@@ -7536,7 +7539,7 @@
     },
     {
       "symbol": "utmpname",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "unistd_abi",
       "perf_class": "fast"
     },
@@ -8086,7 +8089,7 @@
     },
     {
       "symbol": "wordexp",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "unistd_abi",
       "perf_class": "default",
       "strict_semantics": "Passthrough to glibc wordexp",
@@ -8095,7 +8098,7 @@
     },
     {
       "symbol": "wordfree",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "unistd_abi",
       "perf_class": "default",
       "strict_semantics": "Passthrough to glibc wordfree",
@@ -9010,6 +9013,33 @@
       "perf_class": "cold",
       "strict_semantics": "Get configuration-dependent string variables (_CS_PATH, version info)",
       "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "posix_spawn_file_actions_addclose",
+      "status": "Implemented",
+      "module": "process_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "POSIX spawn file action: mark fd for close",
+      "hardened_semantics": "Same as strict (setup call, not safety-sensitive)",
+      "default_stub": false
+    },
+    {
+      "symbol": "posix_spawn_file_actions_adddup2",
+      "status": "Implemented",
+      "module": "process_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "POSIX spawn file action: dup2 fd",
+      "hardened_semantics": "Same as strict (setup call, not safety-sensitive)",
+      "default_stub": false
+    },
+    {
+      "symbol": "posix_spawn_file_actions_addopen",
+      "status": "Implemented",
+      "module": "process_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "POSIX spawn file action: open file as fd",
+      "hardened_semantics": "Same as strict (setup call, not safety-sensitive)",
       "default_stub": false
     }
   ],

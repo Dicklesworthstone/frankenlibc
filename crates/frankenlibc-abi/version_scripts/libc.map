@@ -1003,6 +1003,9 @@ GLIBC_2.2.5 {
         posix_spawn_file_actions_destroy;
         posix_spawnattr_init;
         posix_spawnattr_destroy;
+        posix_spawn_file_actions_addclose;
+        posix_spawn_file_actions_adddup2;
+        posix_spawn_file_actions_addopen;
 
         /* file tree walk */
         ftw;
