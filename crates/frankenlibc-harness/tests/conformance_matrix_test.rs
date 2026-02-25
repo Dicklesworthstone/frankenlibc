@@ -8,6 +8,7 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::{fs, io::Write};
 
 fn workspace_root() -> PathBuf {
     let manifest = env!("CARGO_MANIFEST_DIR");
@@ -62,7 +63,12 @@ fn summary_counts_match_case_rows() {
         .count() as u64;
     let failed = rows
         .iter()
-        .filter(|row| row["status"].as_str() == Some("fail"))
+        .filter(|row| {
+            matches!(
+                row["status"].as_str(),
+                Some("fail") | Some("timeout") | Some("crash")
+            )
+        })
         .count() as u64;
     let errors = rows
         .iter()
@@ -191,4 +197,68 @@ fn gate_script_passes_and_emits_artifacts() {
     ] {
         assert!(event.get(key).is_some(), "structured log row missing {key}");
     }
+}
+
+#[test]
+fn isolated_case_runner_surfaces_timeout_and_crash_rows() {
+    let root = workspace_root();
+    let out_dir = root.join("target/conformance");
+    fs::create_dir_all(&out_dir).expect("create target/conformance");
+
+    let fixture_path = out_dir.join("conformance_matrix_isolated_fixture.v1.json");
+    let mut fixture_file = fs::File::create(&fixture_path).expect("create fixture");
+    fixture_file
+        .write_all(
+            br#"{
+  "version":"v1",
+  "family":"isolation/harness",
+  "captured_at":"2026-02-25T00:00:00Z",
+  "cases":[
+    {"name":"ok_strlen","function":"strlen","spec_section":"POSIX strlen","inputs":{"s":[97,0]},"expected_output":"1","expected_errno":0,"mode":"strict"},
+    {"name":"timeout_case","function":"__harness_test_timeout","spec_section":"N/A","inputs":{},"expected_output":"n/a","expected_errno":0,"mode":"strict"},
+    {"name":"crash_case","function":"__harness_test_crash","spec_section":"N/A","inputs":{},"expected_output":"n/a","expected_errno":0,"mode":"strict"}
+  ]
+}"#,
+        )
+        .expect("write fixture");
+
+    let output_path = out_dir.join("conformance_matrix.isolated_test.v1.json");
+    let harness_bin = std::env::var("CARGO_BIN_EXE_harness").expect("CARGO_BIN_EXE_harness");
+    let output = Command::new(harness_bin)
+        .current_dir(&root)
+        .arg("conformance-matrix")
+        .arg("--fixture")
+        .arg(fixture_path.parent().expect("fixture parent"))
+        .arg("--output")
+        .arg(&output_path)
+        .arg("--mode")
+        .arg("strict")
+        .arg("--campaign")
+        .arg("isolation-test")
+        .arg("--isolate")
+        .arg("--case-timeout-ms")
+        .arg("100")
+        .output()
+        .expect("run isolated conformance matrix");
+    assert!(
+        output.status.success(),
+        "isolated matrix run failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let matrix = load_json(&output_path);
+    let rows = matrix["cases"].as_array().expect("cases array");
+
+    let timeout = rows
+        .iter()
+        .find(|row| row["symbol"].as_str() == Some("__harness_test_timeout"))
+        .expect("timeout row");
+    assert_eq!(timeout["status"].as_str(), Some("timeout"));
+
+    let crash = rows
+        .iter()
+        .find(|row| row["symbol"].as_str() == Some("__harness_test_crash"))
+        .expect("crash row");
+    assert_eq!(crash["status"].as_str(), Some("crash"));
 }

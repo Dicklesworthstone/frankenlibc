@@ -105,17 +105,29 @@ fn summary_counts_consistent() {
         }
     }
 
-    // We expect deterministic strict/hardened measurements for the mutex symbols
-    // ingested from tests/conformance/symbol_latency_samples.v1.log.
+    // We expect deterministic strict/hardened measurements from mutex + thread
+    // hot-path samples ingested from tests/conformance/symbol_latency_samples.v1.log.
     let strict_p50 = measured["strict"]["p50"].as_u64().unwrap();
     let hardened_p50 = measured["hardened"]["p50"].as_u64().unwrap();
     assert!(
-        strict_p50 >= 3,
-        "expected at least 3 strict p50 measurements from ingestion, got {strict_p50}"
+        strict_p50 >= 12,
+        "expected at least 12 strict p50 measurements from ingestion, got {strict_p50}"
     );
     assert!(
-        hardened_p50 >= 3,
-        "expected at least 3 hardened p50 measurements from ingestion, got {hardened_p50}"
+        hardened_p50 >= 12,
+        "expected at least 12 hardened p50 measurements from ingestion, got {hardened_p50}"
+    );
+
+    let ingestion = doc["ingestion"].as_object().unwrap();
+    let updated_symbols = ingestion["updated_symbols"].as_u64().unwrap();
+    let updated_modes = ingestion["updated_modes"].as_u64().unwrap();
+    assert!(
+        updated_symbols >= 12,
+        "expected at least 12 symbols updated by ingestion, got {updated_symbols}"
+    );
+    assert!(
+        updated_modes >= 24,
+        "expected at least 24 mode rows updated by ingestion, got {updated_modes}"
     );
 }
 

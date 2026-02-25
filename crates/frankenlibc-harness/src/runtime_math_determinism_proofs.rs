@@ -154,6 +154,7 @@ fn run_mode(
     .to_string();
 
     let mut failures = Vec::new();
+    let mut boundary_warn_emitted = false;
 
     let k1 = RuntimeMathKernel::new_for_mode(mode);
     let k2 = RuntimeMathKernel::new_for_mode(mode);
@@ -163,6 +164,22 @@ fn run_mode(
     let initial_snapshot_equal = snap1_before == snap2_before;
     if !initial_snapshot_equal {
         failures.push("initial snapshot mismatch between two fresh kernels".to_string());
+        emitter.emit_entry(
+            LogEntry::new(
+                "",
+                LogLevel::Error,
+                "runtime_math.determinism.initial_snapshot_mismatch",
+            )
+            .with_stream(StreamKind::Unit)
+            .with_gate(GATE)
+            .with_mode(mode_str.clone())
+            .with_outcome(Outcome::Fail)
+            .with_controller_id("initial_snapshot")
+            .with_details(serde_json::json!({
+                "decision_path": "proof->determinism->initial_snapshot",
+                "failure": "two fresh kernels produced different initial snapshots",
+            })),
+        )?;
     }
 
     emitter.emit_entry(
@@ -200,6 +217,46 @@ fn run_mode(
             contention_hint: ((r >> 32) as u16) & 0x03ff,
             bloom_negative: (r & 0x10) != 0,
         };
+
+        emitter.emit_entry(
+            LogEntry::new("", LogLevel::Trace, "runtime_math.determinism.proof_step")
+                .with_stream(StreamKind::Unit)
+                .with_gate(GATE)
+                .with_mode(mode_str.clone())
+                .with_outcome(Outcome::Pass)
+                .with_controller_id("decision_step")
+                .with_details(serde_json::json!({
+                    "step": i,
+                    "ctx": {
+                        "family": format!("{family:?}"),
+                        "addr_hint": ctx.addr_hint,
+                        "requested_bytes": ctx.requested_bytes,
+                        "is_write": ctx.is_write,
+                        "contention_hint": ctx.contention_hint,
+                        "bloom_negative": ctx.bloom_negative,
+                    },
+                    "decision_path": "proof->determinism->step",
+                })),
+        )?;
+
+        if !boundary_warn_emitted && (ctx.requested_bytes >= 0x3f00 || ctx.contention_hint >= 980) {
+            emitter.emit_entry(
+                LogEntry::new("", LogLevel::Warn, "runtime_math.determinism.boundary_assumption")
+                    .with_stream(StreamKind::Unit)
+                    .with_gate(GATE)
+                    .with_mode(mode_str.clone())
+                    .with_outcome(Outcome::Pass)
+                    .with_controller_id("decision_context")
+                    .with_details(serde_json::json!({
+                        "step": i,
+                        "assumption": "near-limit requested_bytes/contention still preserves deterministic behavior",
+                        "requested_bytes": ctx.requested_bytes,
+                        "contention_hint": ctx.contention_hint,
+                        "decision_path": "proof->determinism->boundary_assumption",
+                    })),
+            )?;
+            boundary_warn_emitted = true;
+        }
 
         let d1 = k1.decide(mode, ctx);
         let d2 = k2.decide(mode, ctx);
@@ -244,6 +301,26 @@ fn run_mode(
             failures.push(format!(
                 "check ordering mismatch at step {i}: {o1:?} != {o2:?}"
             ));
+            emitter.emit_entry(
+                LogEntry::new(
+                    "",
+                    LogLevel::Error,
+                    "runtime_math.determinism.ordering_mismatch",
+                )
+                .with_stream(StreamKind::Unit)
+                .with_gate(GATE)
+                .with_mode(mode_str.clone())
+                .with_outcome(Outcome::Fail)
+                .with_controller_id("check_ordering")
+                .with_details(serde_json::json!({
+                    "step": i,
+                    "family": format!("{family:?}"),
+                    "left": format!("{o1:?}"),
+                    "right": format!("{o2:?}"),
+                    "decision_path": "proof->determinism->ordering",
+                })),
+            )?;
+            break;
         }
         let exit_stage = if i % 13 == 0 {
             Some((i as usize) % 4)
@@ -273,12 +350,126 @@ fn run_mode(
     let final_snapshot_equal = snap1_after == snap2_after;
     if !final_snapshot_equal {
         failures.push("final snapshot mismatch between identically-driven kernels".to_string());
+        emitter.emit_entry(
+            LogEntry::new(
+                "",
+                LogLevel::Error,
+                "runtime_math.determinism.final_snapshot_mismatch",
+            )
+            .with_stream(StreamKind::Unit)
+            .with_gate(GATE)
+            .with_mode(mode_str.clone())
+            .with_outcome(Outcome::Fail)
+            .with_controller_id("final_snapshot")
+            .with_details(serde_json::json!({
+                "decision_path": "proof->determinism->final_snapshot",
+                "failure": "identically-driven kernels diverged",
+            })),
+        )?;
+    }
+
+    let gram_condition_ratio = {
+        let denom = snap1_after
+            .spectral_gap_mean_eigenvalue
+            .abs()
+            .max(f64::EPSILON);
+        snap1_after.spectral_gap_max_eigenvalue.abs() / denom
+    };
+    let gram_bound_ok =
+        snap1_after.matrix_conc_spectral_deviation <= snap1_after.matrix_conc_bernstein_bound;
+    emitter.emit_entry(
+        LogEntry::new(
+            "",
+            LogLevel::Debug,
+            "runtime_math.determinism.gram_eigenvalue_check",
+        )
+        .with_stream(StreamKind::Unit)
+        .with_gate(GATE)
+        .with_mode(mode_str.clone())
+        .with_outcome(if gram_bound_ok {
+            Outcome::Pass
+        } else {
+            Outcome::Fail
+        })
+        .with_controller_id("matrix_concentration")
+        .with_details(serde_json::json!({
+            "spectral_gap_max_eigenvalue": snap1_after.spectral_gap_max_eigenvalue,
+            "spectral_gap_mean_eigenvalue": snap1_after.spectral_gap_mean_eigenvalue,
+            "matrix_conc_spectral_deviation": snap1_after.matrix_conc_spectral_deviation,
+            "matrix_conc_bernstein_bound": snap1_after.matrix_conc_bernstein_bound,
+            "gram_condition_ratio": gram_condition_ratio,
+            "bound_satisfied": gram_bound_ok,
+            "decision_path": "proof->determinism->gram_eigenvalue_check",
+        })),
+    )?;
+    if !gram_bound_ok {
+        failures
+            .push("matrix_concentration spectral deviation exceeds Bernstein bound".to_string());
+        emitter.emit_entry(
+            LogEntry::new(
+                "",
+                LogLevel::Error,
+                "runtime_math.determinism.gram_eigenvalue_violation",
+            )
+            .with_stream(StreamKind::Unit)
+            .with_gate(GATE)
+            .with_mode(mode_str.clone())
+            .with_outcome(Outcome::Fail)
+            .with_controller_id("matrix_concentration")
+            .with_details(serde_json::json!({
+                "matrix_conc_spectral_deviation": snap1_after.matrix_conc_spectral_deviation,
+                "matrix_conc_bernstein_bound": snap1_after.matrix_conc_bernstein_bound,
+                "decision_path": "proof->determinism->gram_eigenvalue_violation",
+            })),
+        )?;
+    } else if !boundary_warn_emitted
+        && snap1_after.matrix_conc_bernstein_bound.is_finite()
+        && snap1_after.matrix_conc_bernstein_bound > 0.0
+        && snap1_after.matrix_conc_spectral_deviation
+            >= 0.9 * snap1_after.matrix_conc_bernstein_bound
+    {
+        emitter.emit_entry(
+            LogEntry::new(
+                "",
+                LogLevel::Warn,
+                "runtime_math.determinism.boundary_assumption",
+            )
+            .with_stream(StreamKind::Unit)
+            .with_gate(GATE)
+            .with_mode(mode_str.clone())
+            .with_outcome(Outcome::Pass)
+            .with_controller_id("matrix_concentration")
+            .with_details(serde_json::json!({
+                "assumption": "matrix concentration bound remains stable near saturation",
+                "matrix_conc_spectral_deviation": snap1_after.matrix_conc_spectral_deviation,
+                "matrix_conc_bernstein_bound": snap1_after.matrix_conc_bernstein_bound,
+                "decision_path": "proof->determinism->boundary_assumption",
+            })),
+        )?;
+        boundary_warn_emitted = true;
     }
 
     let mut invariant_checks = Vec::new();
     invariant_checks.extend(check_snapshot_invariants(&snap1_before, &snap1_after));
 
     for check in &invariant_checks {
+        emitter.emit_entry(
+            LogEntry::new("", LogLevel::Trace, "runtime_math.determinism.proof_step")
+                .with_stream(StreamKind::Unit)
+                .with_gate(GATE)
+                .with_mode(mode_str.clone())
+                .with_outcome(if check.ok {
+                    Outcome::Pass
+                } else {
+                    Outcome::Fail
+                })
+                .with_controller_id(check.invariant_id.clone())
+                .with_details(serde_json::json!({
+                    "step": "invariant",
+                    "invariant_id": check.invariant_id.clone(),
+                    "decision_path": "proof->determinism->invariant",
+                })),
+        )?;
         emitter.emit_entry(
             LogEntry::new("", LogLevel::Info, "runtime_math.invariant_check")
                 .with_stream(StreamKind::Unit)
@@ -299,7 +490,45 @@ fn run_mode(
         )?;
         if !check.ok {
             failures.push(format!("invariant failed: {}", check.invariant_id));
+            emitter.emit_entry(
+                LogEntry::new(
+                    "",
+                    LogLevel::Error,
+                    "runtime_math.determinism.invariant_failure",
+                )
+                .with_stream(StreamKind::Unit)
+                .with_gate(GATE)
+                .with_mode(mode_str.clone())
+                .with_outcome(Outcome::Fail)
+                .with_controller_id(check.invariant_id.clone())
+                .with_details(serde_json::json!({
+                    "invariant_id": check.invariant_id.clone(),
+                    "failures": check.failures.clone(),
+                    "decision_path": "proof->determinism->invariant_failure",
+                })),
+            )?;
         }
+    }
+
+    if !boundary_warn_emitted {
+        emitter.emit_entry(
+            LogEntry::new(
+                "",
+                LogLevel::Warn,
+                "runtime_math.determinism.boundary_assumption",
+            )
+            .with_stream(StreamKind::Unit)
+            .with_gate(GATE)
+            .with_mode(mode_str.clone())
+            .with_outcome(Outcome::Pass)
+            .with_controller_id("proof_horizon")
+            .with_details(serde_json::json!({
+                "assumption": "finite deterministic horizon is representative of long-run behavior",
+                "seed": seed,
+                "steps": steps,
+                "decision_path": "proof->determinism->boundary_assumption",
+            })),
+        )?;
     }
 
     emitter.emit_entry(

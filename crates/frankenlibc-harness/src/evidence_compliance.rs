@@ -12,7 +12,14 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::structured_log::{ArtifactIndex, Outcome, validate_log_line};
+use crate::structured_log::{
+    ArtifactIndex, LogEmitter, LogEntry, LogLevel, Outcome, StreamKind, validate_log_line,
+};
+
+const PROOF_BEAD_ID: &str = "bd-34s.7";
+const PROOF_GATE: &str = "evidence_compliance";
+const PROOF_RUN_ID: &str = "evidence-compliance";
+const PROOF_LOG_FILENAME: &str = "evidence_compliance.proof.log.jsonl";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct EvidenceViolation {
@@ -76,22 +83,39 @@ fn sha256_hex(path: &Path) -> Result<String, String> {
     Ok(hex_lower(&sha2::Sha256::digest(&data)))
 }
 
-fn resolve_artifact_path(workspace_root: &Path, run_root: &Path, path: &str) -> Option<PathBuf> {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ArtifactResolutionSource {
+    Absolute,
+    RunRoot,
+    WorkspaceRoot,
+}
+
+fn emit_proof_log(emitter: &mut Option<LogEmitter>, entry: LogEntry) {
+    if let Some(emitter) = emitter.as_mut() {
+        let _ = emitter.emit_entry(entry);
+    }
+}
+
+fn resolve_artifact_path(
+    workspace_root: &Path,
+    run_root: &Path,
+    path: &str,
+) -> Option<(PathBuf, ArtifactResolutionSource)> {
     let candidate = Path::new(path);
     if candidate.is_absolute() {
-        return Some(candidate.to_path_buf());
+        return Some((candidate.to_path_buf(), ArtifactResolutionSource::Absolute));
     }
 
     // Preferred: relative to the run directory (self-contained bundles).
     let in_run = run_root.join(candidate);
     if in_run.exists() {
-        return Some(in_run);
+        return Some((in_run, ArtifactResolutionSource::RunRoot));
     }
 
     // Fallback: relative to workspace root (legacy scripts).
     let in_ws = workspace_root.join(candidate);
     if in_ws.exists() {
-        return Some(in_ws);
+        return Some((in_ws, ArtifactResolutionSource::WorkspaceRoot));
     }
 
     None
@@ -101,8 +125,27 @@ fn validate_artifact_index(
     report: &mut EvidenceComplianceReport,
     workspace_root: &Path,
     index_path: &Path,
+    emitter: &mut Option<LogEmitter>,
 ) -> Option<ArtifactIndex> {
     let run_root = index_path.parent().unwrap_or(workspace_root);
+    emit_proof_log(
+        emitter,
+        LogEntry::new(
+            "",
+            LogLevel::Info,
+            "evidence_compliance.artifact_index_load",
+        )
+        .with_stream(StreamKind::Release)
+        .with_gate(PROOF_GATE)
+        .with_outcome(Outcome::Pass)
+        .with_controller_id("artifact_index")
+        .with_artifacts(vec![index_path.display().to_string()])
+        .with_details(serde_json::json!({
+            "path": index_path.display().to_string(),
+            "decision_path": "proof->artifact_integrity->load_index",
+        })),
+    );
+
     let content = match std::fs::read_to_string(index_path) {
         Ok(s) => s,
         Err(err) => {
@@ -117,6 +160,23 @@ fn validate_artifact_index(
                 path: Some(index_path.display().to_string()),
                 remediation_hint: Some("regenerate artifact index for the run".to_string()),
             });
+            emit_proof_log(
+                emitter,
+                LogEntry::new(
+                    "",
+                    LogLevel::Error,
+                    "evidence_compliance.artifact_index_missing",
+                )
+                .with_stream(StreamKind::Release)
+                .with_gate(PROOF_GATE)
+                .with_outcome(Outcome::Fail)
+                .with_controller_id("artifact_index")
+                .with_artifacts(vec![index_path.display().to_string()])
+                .with_details(serde_json::json!({
+                    "error": err.to_string(),
+                    "decision_path": "proof->artifact_integrity->load_index",
+                })),
+            );
             return None;
         }
     };
@@ -137,9 +197,45 @@ fn validate_artifact_index(
                     "write valid JSON matching the artifact_index schema".to_string(),
                 ),
             });
+            emit_proof_log(
+                emitter,
+                LogEntry::new(
+                    "",
+                    LogLevel::Error,
+                    "evidence_compliance.artifact_index_invalid_json",
+                )
+                .with_stream(StreamKind::Release)
+                .with_gate(PROOF_GATE)
+                .with_outcome(Outcome::Fail)
+                .with_controller_id("artifact_index")
+                .with_artifacts(vec![index_path.display().to_string()])
+                .with_details(serde_json::json!({
+                    "error": err.to_string(),
+                    "decision_path": "proof->artifact_integrity->parse_index",
+                })),
+            );
             return None;
         }
     };
+
+    emit_proof_log(
+        emitter,
+        LogEntry::new(
+            "",
+            LogLevel::Info,
+            "evidence_compliance.artifact_index_loaded",
+        )
+        .with_stream(StreamKind::Release)
+        .with_gate(PROOF_GATE)
+        .with_outcome(Outcome::Pass)
+        .with_controller_id("artifact_index")
+        .with_artifacts(vec![index_path.display().to_string()])
+        .with_details(serde_json::json!({
+            "index_version": idx.index_version,
+            "artifact_count": idx.artifacts.len(),
+            "decision_path": "proof->artifact_integrity->parse_index",
+        })),
+    );
 
     if idx.index_version != 1 {
         report.push(EvidenceViolation {
@@ -153,11 +249,28 @@ fn validate_artifact_index(
             path: Some(index_path.display().to_string()),
             remediation_hint: Some("regenerate artifact index using the v1 schema".to_string()),
         });
+        emit_proof_log(
+            emitter,
+            LogEntry::new(
+                "",
+                LogLevel::Error,
+                "evidence_compliance.artifact_index_bad_version",
+            )
+            .with_stream(StreamKind::Release)
+            .with_gate(PROOF_GATE)
+            .with_outcome(Outcome::Fail)
+            .with_controller_id("artifact_index")
+            .with_artifacts(vec![index_path.display().to_string()])
+            .with_details(serde_json::json!({
+                "index_version": idx.index_version,
+                "decision_path": "proof->artifact_integrity->version_check",
+            })),
+        );
     }
 
     for art in &idx.artifacts {
         let resolved = resolve_artifact_path(workspace_root, run_root, &art.path);
-        let Some(resolved_path) = resolved else {
+        let Some((resolved_path, resolution_source)) = resolved else {
             report.push(EvidenceViolation {
                 code: "artifact_index.artifact_missing".to_string(),
                 message: format!(
@@ -174,8 +287,61 @@ fn validate_artifact_index(
                         .to_string(),
                 ),
             });
+            emit_proof_log(
+                emitter,
+                LogEntry::new("", LogLevel::Error, "evidence_compliance.artifact_missing")
+                    .with_stream(StreamKind::Release)
+                    .with_gate(PROOF_GATE)
+                    .with_outcome(Outcome::Fail)
+                    .with_controller_id("artifact_integrity")
+                    .with_artifacts(vec![art.path.clone()])
+                    .with_details(serde_json::json!({
+                        "path": art.path,
+                        "searched_run_root": run_root.display().to_string(),
+                        "searched_workspace_root": workspace_root.display().to_string(),
+                        "decision_path": "proof->artifact_integrity->resolve_path",
+                    })),
+            );
             continue;
         };
+
+        if resolution_source == ArtifactResolutionSource::WorkspaceRoot {
+            emit_proof_log(
+                emitter,
+                LogEntry::new("", LogLevel::Warn, "evidence_compliance.artifact_path_fallback")
+                    .with_stream(StreamKind::Release)
+                    .with_gate(PROOF_GATE)
+                    .with_outcome(Outcome::Pass)
+                    .with_controller_id("artifact_integrity")
+                    .with_artifacts(vec![art.path.clone()])
+                    .with_details(serde_json::json!({
+                        "path": art.path,
+                        "resolved_path": resolved_path.display().to_string(),
+                        "assumption": "workspace-root fallback remains equivalent to run-root artifact resolution",
+                        "decision_path": "proof->artifact_integrity->resolve_path_fallback",
+                    })),
+            );
+        }
+
+        emit_proof_log(
+            emitter,
+            LogEntry::new(
+                "",
+                LogLevel::Debug,
+                "evidence_compliance.artifact_hash_compute",
+            )
+            .with_stream(StreamKind::Release)
+            .with_gate(PROOF_GATE)
+            .with_outcome(Outcome::Pass)
+            .with_controller_id("artifact_integrity")
+            .with_artifacts(vec![art.path.clone()])
+            .with_details(serde_json::json!({
+                "path": art.path,
+                "resolved_path": resolved_path.display().to_string(),
+                "expected_sha256": art.sha256,
+                "decision_path": "proof->artifact_integrity->hash_compute",
+            })),
+        );
 
         match sha256_hex(&resolved_path) {
             Ok(actual) => {
@@ -194,16 +360,74 @@ fn validate_artifact_index(
                                 .to_string(),
                         ),
                     });
+                    emit_proof_log(
+                        emitter,
+                        LogEntry::new(
+                            "",
+                            LogLevel::Error,
+                            "evidence_compliance.artifact_hash_mismatch",
+                        )
+                        .with_stream(StreamKind::Release)
+                        .with_gate(PROOF_GATE)
+                        .with_outcome(Outcome::Fail)
+                        .with_controller_id("artifact_integrity")
+                        .with_artifacts(vec![art.path.clone()])
+                        .with_details(serde_json::json!({
+                            "path": art.path,
+                            "expected_sha256": art.sha256,
+                            "actual_sha256": actual,
+                            "decision_path": "proof->artifact_integrity->hash_verify",
+                        })),
+                    );
+                } else {
+                    emit_proof_log(
+                        emitter,
+                        LogEntry::new(
+                            "",
+                            LogLevel::Debug,
+                            "evidence_compliance.artifact_hash_verified",
+                        )
+                        .with_stream(StreamKind::Release)
+                        .with_gate(PROOF_GATE)
+                        .with_outcome(Outcome::Pass)
+                        .with_controller_id("artifact_integrity")
+                        .with_artifacts(vec![art.path.clone()])
+                        .with_details(serde_json::json!({
+                            "path": art.path,
+                            "actual_sha256": actual,
+                            "decision_path": "proof->artifact_integrity->hash_verify",
+                        })),
+                    );
                 }
             }
-            Err(err) => report.push(EvidenceViolation {
-                code: "artifact_index.sha_error".to_string(),
-                message: err,
-                trace_id: None,
-                line_number: None,
-                path: Some(art.path.clone()),
-                remediation_hint: Some("ensure artifact file is readable".to_string()),
-            }),
+            Err(err) => {
+                report.push(EvidenceViolation {
+                    code: "artifact_index.sha_error".to_string(),
+                    message: err.clone(),
+                    trace_id: None,
+                    line_number: None,
+                    path: Some(art.path.clone()),
+                    remediation_hint: Some("ensure artifact file is readable".to_string()),
+                });
+                emit_proof_log(
+                    emitter,
+                    LogEntry::new(
+                        "",
+                        LogLevel::Error,
+                        "evidence_compliance.artifact_hash_error",
+                    )
+                    .with_stream(StreamKind::Release)
+                    .with_gate(PROOF_GATE)
+                    .with_outcome(Outcome::Error)
+                    .with_controller_id("artifact_integrity")
+                    .with_artifacts(vec![art.path.clone()])
+                    .with_details(serde_json::json!({
+                        "path": art.path,
+                        "error": err,
+                        "decision_path": "proof->artifact_integrity->hash_compute",
+                    })),
+                );
+            }
         }
     }
 
@@ -215,11 +439,29 @@ fn validate_failure_artifact_refs(
     workspace_root: &Path,
     run_root: &Path,
     idx: &ArtifactIndex,
+    emitter: &mut Option<LogEmitter>,
     trace_id: Option<String>,
     refs: &[String],
 ) {
     for r in refs {
         let resolved = resolve_artifact_path(workspace_root, run_root, r);
+        if let Some((resolved_path, ArtifactResolutionSource::WorkspaceRoot)) = &resolved {
+            emit_proof_log(
+                emitter,
+                LogEntry::new("", LogLevel::Warn, "evidence_compliance.artifact_path_fallback")
+                    .with_stream(StreamKind::Release)
+                    .with_gate(PROOF_GATE)
+                    .with_outcome(Outcome::Pass)
+                    .with_controller_id("failure_artifacts")
+                    .with_artifacts(vec![r.clone()])
+                    .with_details(serde_json::json!({
+                        "path": r,
+                        "resolved_path": resolved_path.display().to_string(),
+                        "assumption": "workspace-root fallback remains equivalent for failure artifact refs",
+                        "decision_path": "proof->failure_artifacts->resolve_path_fallback",
+                    })),
+            );
+        }
         if resolved.is_none() {
             report.push(EvidenceViolation {
                 code: "failure_artifact_ref.missing".to_string(),
@@ -233,6 +475,26 @@ fn validate_failure_artifact_refs(
                 path: Some(r.clone()),
                 remediation_hint: Some("write the referenced diagnostic artifact".to_string()),
             });
+            emit_proof_log(
+                emitter,
+                LogEntry::new(
+                    "",
+                    LogLevel::Error,
+                    "evidence_compliance.failure_artifact_missing",
+                )
+                .with_stream(StreamKind::Release)
+                .with_gate(PROOF_GATE)
+                .with_outcome(Outcome::Fail)
+                .with_controller_id("failure_artifacts")
+                .with_artifacts(vec![r.clone()])
+                .with_details(serde_json::json!({
+                    "trace_id": trace_id.clone(),
+                    "path": r,
+                    "searched_run_root": run_root.display().to_string(),
+                    "searched_workspace_root": workspace_root.display().to_string(),
+                    "decision_path": "proof->failure_artifacts->resolve_path",
+                })),
+            );
         }
 
         if !idx.artifacts.iter().any(|a| a.path == *r) {
@@ -246,6 +508,24 @@ fn validate_failure_artifact_refs(
                     "add the artifact to artifact_index.json (path/kind/sha256)".to_string(),
                 ),
             });
+            emit_proof_log(
+                emitter,
+                LogEntry::new(
+                    "",
+                    LogLevel::Error,
+                    "evidence_compliance.failure_artifact_not_indexed",
+                )
+                .with_stream(StreamKind::Release)
+                .with_gate(PROOF_GATE)
+                .with_outcome(Outcome::Fail)
+                .with_controller_id("failure_artifacts")
+                .with_artifacts(vec![r.clone()])
+                .with_details(serde_json::json!({
+                    "trace_id": trace_id.clone(),
+                    "path": r,
+                    "decision_path": "proof->failure_artifacts->index_membership",
+                })),
+            );
         }
     }
 }
@@ -261,16 +541,70 @@ pub fn validate_evidence_bundle(
     index_path: &Path,
 ) -> EvidenceComplianceReport {
     let mut report = EvidenceComplianceReport::ok();
+    let run_root = index_path.parent().unwrap_or(workspace_root);
+    let proof_log_path = run_root.join(PROOF_LOG_FILENAME);
 
-    let idx = match validate_artifact_index(&mut report, workspace_root, index_path) {
+    let mut emitter = match LogEmitter::to_file(&proof_log_path, PROOF_BEAD_ID, PROOF_RUN_ID) {
+        Ok(emitter) => Some(emitter),
+        Err(err) => {
+            report.push(EvidenceViolation {
+                code: "proof_log.unwritable".to_string(),
+                message: format!(
+                    "proof log not writable: {}: {err}",
+                    proof_log_path.display()
+                ),
+                trace_id: None,
+                line_number: None,
+                path: Some(proof_log_path.display().to_string()),
+                remediation_hint: Some(
+                    "ensure parent directory exists and is writable for proof logs".to_string(),
+                ),
+            });
+            None
+        }
+    };
+
+    emit_proof_log(
+        &mut emitter,
+        LogEntry::new("", LogLevel::Info, "evidence_compliance.proof_start")
+            .with_stream(StreamKind::Release)
+            .with_gate(PROOF_GATE)
+            .with_outcome(Outcome::Pass)
+            .with_controller_id("evidence_compliance")
+            .with_artifacts(vec![
+                log_path.display().to_string(),
+                index_path.display().to_string(),
+            ])
+            .with_details(serde_json::json!({
+                "workspace_root": workspace_root.display().to_string(),
+                "decision_path": "proof->evidence_compliance->start",
+            })),
+    );
+
+    let idx = match validate_artifact_index(&mut report, workspace_root, index_path, &mut emitter) {
         Some(v) => v,
         None => {
             report.sort_deterministically();
+            emit_proof_log(
+                &mut emitter,
+                LogEntry::new("", LogLevel::Error, "evidence_compliance.proof_failure")
+                    .with_stream(StreamKind::Release)
+                    .with_gate(PROOF_GATE)
+                    .with_outcome(Outcome::Fail)
+                    .with_controller_id("evidence_compliance")
+                    .with_artifacts(vec![proof_log_path.display().to_string()])
+                    .with_details(serde_json::json!({
+                        "violation_count": report.violations.len(),
+                        "decision_path": "proof->evidence_compliance->artifact_index",
+                    })),
+            );
+            if let Some(emitter) = emitter.as_mut() {
+                let _ = emitter.flush();
+            }
             return report;
         }
     };
 
-    let run_root = index_path.parent().unwrap_or(workspace_root);
     let content = match std::fs::read_to_string(log_path) {
         Ok(s) => s,
         Err(err) => {
@@ -282,7 +616,23 @@ pub fn validate_evidence_bundle(
                 path: Some(log_path.display().to_string()),
                 remediation_hint: Some("ensure the run writes a JSONL log file".to_string()),
             });
+            emit_proof_log(
+                &mut emitter,
+                LogEntry::new("", LogLevel::Error, "evidence_compliance.log_missing")
+                    .with_stream(StreamKind::Release)
+                    .with_gate(PROOF_GATE)
+                    .with_outcome(Outcome::Fail)
+                    .with_controller_id("structured_log")
+                    .with_artifacts(vec![log_path.display().to_string()])
+                    .with_details(serde_json::json!({
+                        "error": err.to_string(),
+                        "decision_path": "proof->evidence_compliance->load_log",
+                    })),
+            );
             report.sort_deterministically();
+            if let Some(emitter) = emitter.as_mut() {
+                let _ = emitter.flush();
+            }
             return report;
         }
     };
@@ -298,9 +648,10 @@ pub fn validate_evidence_bundle(
             Ok(e) => e,
             Err(errs) => {
                 for e in errs {
+                    let message = e.message.clone();
                     report.push(EvidenceViolation {
                         code: "log.schema_violation".to_string(),
-                        message: e.message,
+                        message: message.clone(),
                         trace_id: None,
                         line_number: Some(e.line_number),
                         path: Some(log_path.display().to_string()),
@@ -309,10 +660,43 @@ pub fn validate_evidence_bundle(
                             e.field
                         )),
                     });
+                    emit_proof_log(
+                        &mut emitter,
+                        LogEntry::new(
+                            "",
+                            LogLevel::Error,
+                            "evidence_compliance.log_schema_violation",
+                        )
+                        .with_stream(StreamKind::Release)
+                        .with_gate(PROOF_GATE)
+                        .with_outcome(Outcome::Fail)
+                        .with_controller_id("structured_log")
+                        .with_artifacts(vec![log_path.display().to_string()])
+                        .with_details(serde_json::json!({
+                            "line_number": e.line_number,
+                            "message": message,
+                            "decision_path": "proof->evidence_compliance->schema_validation",
+                        })),
+                    );
                 }
                 continue;
             }
         };
+
+        emit_proof_log(
+            &mut emitter,
+            LogEntry::new("", LogLevel::Trace, "evidence_compliance.proof_step")
+                .with_stream(StreamKind::Release)
+                .with_gate(PROOF_GATE)
+                .with_outcome(Outcome::Pass)
+                .with_controller_id("structured_log")
+                .with_details(serde_json::json!({
+                    "line_number": line_no,
+                    "trace_id": entry.trace_id.clone(),
+                    "event": entry.event.clone(),
+                    "decision_path": "proof->evidence_compliance->proof_step",
+                })),
+        );
 
         let is_failure = matches!(
             entry.outcome,
@@ -335,6 +719,24 @@ pub fn validate_evidence_bundle(
                         .to_string(),
                 ),
             });
+            emit_proof_log(
+                &mut emitter,
+                LogEntry::new(
+                    "",
+                    LogLevel::Error,
+                    "evidence_compliance.failure_event_missing_artifact_refs",
+                )
+                .with_stream(StreamKind::Release)
+                .with_gate(PROOF_GATE)
+                .with_outcome(Outcome::Fail)
+                .with_controller_id("failure_artifacts")
+                .with_artifacts(vec![log_path.display().to_string()])
+                .with_details(serde_json::json!({
+                    "line_number": line_no,
+                    "trace_id": entry.trace_id.clone(),
+                    "decision_path": "proof->failure_artifacts->required_refs",
+                })),
+            );
             continue;
         }
 
@@ -343,11 +745,48 @@ pub fn validate_evidence_bundle(
             workspace_root,
             run_root,
             &idx,
+            &mut emitter,
             Some(entry.trace_id.clone()),
             &refs,
         );
     }
 
     report.sort_deterministically();
+    emit_proof_log(
+        &mut emitter,
+        LogEntry::new("", LogLevel::Info, "evidence_compliance.proof_summary")
+            .with_stream(StreamKind::Release)
+            .with_gate(PROOF_GATE)
+            .with_outcome(if report.ok {
+                Outcome::Pass
+            } else {
+                Outcome::Fail
+            })
+            .with_controller_id("evidence_compliance")
+            .with_artifacts(vec![proof_log_path.display().to_string()])
+            .with_details(serde_json::json!({
+                "ok": report.ok,
+                "violation_count": report.violations.len(),
+                "decision_path": "proof->evidence_compliance->summary",
+            })),
+    );
+    if !report.ok {
+        emit_proof_log(
+            &mut emitter,
+            LogEntry::new("", LogLevel::Error, "evidence_compliance.proof_failure")
+                .with_stream(StreamKind::Release)
+                .with_gate(PROOF_GATE)
+                .with_outcome(Outcome::Fail)
+                .with_controller_id("evidence_compliance")
+                .with_artifacts(vec![proof_log_path.display().to_string()])
+                .with_details(serde_json::json!({
+                    "violation_count": report.violations.len(),
+                    "decision_path": "proof->evidence_compliance->summary",
+                })),
+        );
+    }
+    if let Some(emitter) = emitter.as_mut() {
+        let _ = emitter.flush();
+    }
     report
 }

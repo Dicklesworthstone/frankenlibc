@@ -1,9 +1,24 @@
 //! CLI entrypoint for frankenlibc conformance harness.
 
-use std::path::PathBuf;
+use std::collections::BTreeMap;
+use std::io::{Read, Write};
+use std::path::{Path, PathBuf};
 use std::process::Command as ProcCommand;
+use std::process::Stdio;
+use std::time::{Duration, Instant};
+
+use frankenlibc_harness::conformance_matrix::{CaseExecution, ConformanceMatrixReport};
+use frankenlibc_harness::structured_log::{LogEmitter, LogEntry, LogLevel, Outcome, StreamKind};
 
 use clap::{Parser, Subcommand};
+use serde::{Deserialize, Serialize};
+
+#[cfg(unix)]
+use std::os::unix::process::ExitStatusExt;
+
+const CONFORMANCE_LOG_BEAD_ID: &str = "bd-2hh.7";
+const CONFORMANCE_LOG_GATE: &str = "conformance_matrix";
+const CONFORMANCE_WARN_BUDGET_PERCENT: u64 = 80;
 
 /// Conformance tooling for frankenlibc.
 #[derive(Debug, Parser)]
@@ -254,15 +269,40 @@ enum Command {
             default_value = "target/conformance/conformance_matrix.current.v1.json"
         )]
         output: PathBuf,
+        /// Structured JSONL output path for conformance logging events.
+        #[arg(
+            long,
+            default_value = "target/conformance/conformance_matrix.log.jsonl"
+        )]
+        log: PathBuf,
         /// Mode to evaluate (`strict`, `hardened`, or `both`).
         #[arg(long, default_value = "both")]
         mode: String,
         /// Logical campaign identifier used in trace ids.
         #[arg(long, default_value = "franken_shadow")]
         campaign: String,
+        /// Run each fixture case in a child process to isolate crashes/timeouts.
+        #[arg(long)]
+        isolate: bool,
+        /// Per-case timeout used when `--isolate` is enabled.
+        #[arg(long, default_value_t = 5_000)]
+        case_timeout_ms: u64,
+        /// Performance budget in milliseconds used for WARN near-violation checks (>80%).
+        #[arg(long, default_value_t = 5_000)]
+        perf_budget_ms: u64,
         /// Return non-zero when any case fails or errors.
         #[arg(long)]
         fail_on_mismatch: bool,
+    },
+    /// Internal subprocess entrypoint for isolated conformance-matrix case execution.
+    #[command(hide = true)]
+    ConformanceMatrixCase {
+        /// Fixture function name to execute.
+        #[arg(long)]
+        function: String,
+        /// Runtime mode for the case (`strict` or `hardened`).
+        #[arg(long)]
+        mode: String,
     },
 }
 
@@ -745,39 +785,75 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Command::ConformanceMatrix {
             fixture,
             output,
+            log,
             mode,
             campaign,
+            isolate,
+            case_timeout_ms,
+            perf_budget_ms,
             fail_on_mismatch,
         } => {
             let fixture_sets = load_fixture_sets(&fixture)?;
             if fixture_sets.is_empty() {
                 return Err(format!("No fixture JSON files found in {}", fixture.display()).into());
             }
+            let previous_matrix = load_previous_matrix_if_present(&output);
 
             let mode = frankenlibc_harness::conformance_matrix::MatrixMode::from_str_loose(&mode)
                 .ok_or_else(|| {
                 format!("Unsupported mode '{mode}', expected strict|hardened|both")
             })?;
 
-            let matrix = frankenlibc_harness::conformance_matrix::build_conformance_matrix(
-                &fixture_sets,
-                mode,
-                &campaign,
-            );
+            let matrix = if isolate {
+                let exe = std::env::current_exe()?;
+                let timeout = Duration::from_millis(case_timeout_ms.max(1));
+                frankenlibc_harness::conformance_matrix::build_conformance_matrix_with_executor(
+                    &fixture_sets,
+                    mode,
+                    &campaign,
+                    |function, inputs, active_mode| match run_conformance_case_subprocess(
+                        &exe,
+                        function,
+                        inputs,
+                        active_mode,
+                        timeout,
+                    ) {
+                        Ok(run) => CaseExecution::Completed(run),
+                        Err(MatrixCaseSubprocessError::Timeout(err)) => CaseExecution::Timeout(err),
+                        Err(MatrixCaseSubprocessError::Crash(err)) => CaseExecution::Crash(err),
+                        Err(MatrixCaseSubprocessError::Error(err)) => CaseExecution::Error(err),
+                    },
+                )
+            } else {
+                frankenlibc_harness::conformance_matrix::build_conformance_matrix(
+                    &fixture_sets,
+                    mode,
+                    &campaign,
+                )
+            };
             let body = serde_json::to_string_pretty(&matrix)?;
 
             if let Some(parent) = output.parent() {
                 std::fs::create_dir_all(parent)?;
             }
             std::fs::write(&output, body)?;
+            emit_conformance_matrix_logs(
+                &log,
+                &output,
+                &campaign,
+                &matrix,
+                previous_matrix.as_ref(),
+                perf_budget_ms.max(1),
+            )?;
 
             eprintln!(
-                "Conformance matrix complete: total={}, passed={}, failed={}, errors={} -> {}",
+                "Conformance matrix complete: total={}, passed={}, failed={}, errors={} -> {} (log: {})",
                 matrix.summary.total_cases,
                 matrix.summary.passed,
                 matrix.summary.failed,
                 matrix.summary.errors,
-                output.display()
+                output.display(),
+                log.display()
             );
 
             if fail_on_mismatch && !matrix.all_passed() {
@@ -787,6 +863,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 )
                 .into());
             }
+        }
+        Command::ConformanceMatrixCase { function, mode } => {
+            let mut stdin_buf = String::new();
+            std::io::stdin().read_to_string(&mut stdin_buf)?;
+            let inputs: serde_json::Value = serde_json::from_str(&stdin_buf)
+                .map_err(|err| format!("invalid case inputs json: {err}"))?;
+
+            if function == "__harness_test_timeout" {
+                std::thread::sleep(Duration::from_secs(30));
+            }
+            if function == "__harness_test_crash" {
+                std::process::abort();
+            }
+
+            let envelope =
+                match frankenlibc_fixture_exec::execute_fixture_case(&function, &inputs, &mode) {
+                    Ok(run) => MatrixCaseEnvelope::ok(run),
+                    Err(err) => MatrixCaseEnvelope::error(err),
+                };
+            let payload = serde_json::to_vec(&envelope)?;
+            std::io::stdout().write_all(&payload)?;
         }
     }
 
@@ -801,6 +898,141 @@ struct KernelRegressionCliConfig {
     samples: usize,
     iters: u64,
     trend_stride: u32,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct MatrixCaseEnvelope {
+    kind: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    run: Option<frankenlibc_fixture_exec::DifferentialExecution>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+}
+
+impl MatrixCaseEnvelope {
+    fn ok(run: frankenlibc_fixture_exec::DifferentialExecution) -> Self {
+        Self {
+            kind: "ok".to_string(),
+            run: Some(run),
+            error: None,
+        }
+    }
+
+    fn error(error: String) -> Self {
+        Self {
+            kind: "error".to_string(),
+            run: None,
+            error: Some(error),
+        }
+    }
+}
+
+#[derive(Debug)]
+enum MatrixCaseSubprocessError {
+    Timeout(String),
+    Crash(String),
+    Error(String),
+}
+
+fn run_conformance_case_subprocess(
+    exe: &std::path::Path,
+    function: &str,
+    inputs: &serde_json::Value,
+    mode: &str,
+    timeout: Duration,
+) -> Result<frankenlibc_fixture_exec::DifferentialExecution, MatrixCaseSubprocessError> {
+    let mut child = ProcCommand::new(exe)
+        .arg("conformance-matrix-case")
+        .arg("--function")
+        .arg(function)
+        .arg("--mode")
+        .arg(mode)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|err| MatrixCaseSubprocessError::Error(format!("spawn failed: {err}")))?;
+
+    let payload = serde_json::to_vec(inputs).map_err(|err| {
+        MatrixCaseSubprocessError::Error(format!("serialize inputs failed: {err}"))
+    })?;
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin.write_all(&payload).map_err(|err| {
+            MatrixCaseSubprocessError::Error(format!("stdin write failed: {err}"))
+        })?;
+    }
+
+    let start = Instant::now();
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) => {
+                if start.elapsed() >= timeout {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(MatrixCaseSubprocessError::Timeout(format!(
+                        "case exceeded {}ms",
+                        timeout.as_millis()
+                    )));
+                }
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            Err(err) => {
+                return Err(MatrixCaseSubprocessError::Error(format!(
+                    "try_wait failed: {err}"
+                )));
+            }
+        }
+    };
+
+    let mut stdout = Vec::new();
+    if let Some(mut out) = child.stdout.take() {
+        out.read_to_end(&mut stdout).map_err(|err| {
+            MatrixCaseSubprocessError::Error(format!("stdout read failed: {err}"))
+        })?;
+    }
+    let mut stderr = Vec::new();
+    if let Some(mut err) = child.stderr.take() {
+        err.read_to_end(&mut stderr)
+            .map_err(|e| MatrixCaseSubprocessError::Error(format!("stderr read failed: {e}")))?;
+    }
+    let stderr_text = String::from_utf8_lossy(&stderr).trim().to_string();
+
+    if !status.success() {
+        #[cfg(unix)]
+        if let Some(signal) = status.signal() {
+            return Err(MatrixCaseSubprocessError::Crash(format!(
+                "signal={signal} stderr={stderr_text}"
+            )));
+        }
+        return Err(MatrixCaseSubprocessError::Crash(format!(
+            "exit_code={} stderr={}",
+            status
+                .code()
+                .map_or_else(|| "unknown".to_string(), |code| code.to_string()),
+            stderr_text
+        )));
+    }
+
+    let envelope: MatrixCaseEnvelope = serde_json::from_slice(&stdout).map_err(|err| {
+        MatrixCaseSubprocessError::Error(format!(
+            "invalid subprocess payload: {err}; stdout={}",
+            String::from_utf8_lossy(&stdout)
+        ))
+    })?;
+    match envelope.kind.as_str() {
+        "ok" => envelope
+            .run
+            .ok_or_else(|| MatrixCaseSubprocessError::Error("missing run payload".to_string())),
+        "error" => Err(MatrixCaseSubprocessError::Error(
+            envelope
+                .error
+                .unwrap_or_else(|| "missing error payload".to_string()),
+        )),
+        other => Err(MatrixCaseSubprocessError::Error(format!(
+            "unknown envelope kind: {other}"
+        ))),
+    }
 }
 
 fn run_kernel_mode_subprocess(
@@ -921,6 +1153,372 @@ fn evidence_report_to_triage_json(
     })
 }
 
+fn load_previous_matrix_if_present(path: &Path) -> Option<ConformanceMatrixReport> {
+    if !path.exists() {
+        return None;
+    }
+
+    let previous_body = match std::fs::read_to_string(path) {
+        Ok(body) => body,
+        Err(err) => {
+            eprintln!(
+                "WARN: unable to read previous conformance matrix '{}' for regression checks: {err}",
+                path.display()
+            );
+            return None;
+        }
+    };
+
+    match serde_json::from_str::<ConformanceMatrixReport>(&previous_body) {
+        Ok(report) => Some(report),
+        Err(err) => {
+            eprintln!(
+                "WARN: unable to parse previous conformance matrix '{}' for regression checks: {err}",
+                path.display()
+            );
+            None
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct DurationStats {
+    samples: usize,
+    p50_ms: u64,
+    p95_ms: u64,
+    p99_ms: u64,
+    mean_ms: f64,
+    max_ms: u64,
+}
+
+fn duration_stats(samples: &[u64]) -> Option<DurationStats> {
+    if samples.is_empty() {
+        return None;
+    }
+    let mut sorted = samples.to_vec();
+    sorted.sort_unstable();
+    let sum: u128 = sorted.iter().map(|value| u128::from(*value)).sum();
+    let mean_ms = (sum as f64) / (sorted.len() as f64);
+    Some(DurationStats {
+        samples: sorted.len(),
+        p50_ms: percentile_sorted_ms(&sorted, 50, 100),
+        p95_ms: percentile_sorted_ms(&sorted, 95, 100),
+        p99_ms: percentile_sorted_ms(&sorted, 99, 100),
+        mean_ms,
+        max_ms: *sorted.last().unwrap_or(&0),
+    })
+}
+
+fn percentile_sorted_ms(sorted: &[u64], numerator: u64, denominator: u64) -> u64 {
+    debug_assert!(!sorted.is_empty());
+    debug_assert!(denominator > 0);
+    let span = u128::try_from(sorted.len().saturating_sub(1)).unwrap_or(u128::MAX);
+    let idx = span
+        .saturating_mul(u128::from(numerator))
+        .saturating_add(u128::from(denominator / 2))
+        .saturating_div(u128::from(denominator));
+    let idx = usize::try_from(idx)
+        .unwrap_or(usize::MAX)
+        .min(sorted.len().saturating_sub(1));
+    sorted[idx]
+}
+
+fn previous_pass_map(previous: Option<&ConformanceMatrixReport>) -> BTreeMap<String, bool> {
+    let mut prior = BTreeMap::new();
+    if let Some(report) = previous {
+        for case in &report.cases {
+            prior.insert(case.trace_id.clone(), case.passed);
+        }
+    }
+    prior
+}
+
+fn case_outcome(case: &frankenlibc_harness::conformance_matrix::ConformanceCaseRow) -> Outcome {
+    match case.status.as_str() {
+        "pass" => Outcome::Pass,
+        "error" => Outcome::Error,
+        "timeout" => Outcome::Timeout,
+        "crash" => Outcome::Error,
+        _ => {
+            if case.passed {
+                Outcome::Pass
+            } else {
+                Outcome::Fail
+            }
+        }
+    }
+}
+
+fn sanitize_trace_component(raw: &str) -> String {
+    let sanitized: String = raw
+        .chars()
+        .map(|ch| match ch {
+            'a'..='z' | 'A'..='Z' | '0'..='9' | '-' | '_' | '.' => ch,
+            _ => '_',
+        })
+        .collect();
+    if sanitized.is_empty() {
+        "unknown".to_string()
+    } else {
+        sanitized
+    }
+}
+
+fn emit_conformance_matrix_logs(
+    log_path: &Path,
+    matrix_output_path: &Path,
+    campaign: &str,
+    matrix: &ConformanceMatrixReport,
+    previous: Option<&ConformanceMatrixReport>,
+    perf_budget_ms: u64,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if let Some(parent) = log_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    let run_id = format!("{}_matrix", sanitize_trace_component(campaign));
+    let mut emitter = LogEmitter::to_file(log_path, CONFORMANCE_LOG_BEAD_ID, &run_id)?;
+    let prior = previous_pass_map(previous);
+
+    let matrix_artifact = matrix_output_path.display().to_string();
+    let log_artifact = log_path.display().to_string();
+    let artifact_refs = vec![matrix_artifact.clone(), log_artifact.clone()];
+
+    let mut duration_by_symbol: BTreeMap<(String, String), Vec<u64>> = BTreeMap::new();
+
+    for case in &matrix.cases {
+        let duration_ms = case.duration_ms.unwrap_or(0);
+        let latency_ns = duration_ms.saturating_mul(1_000_000);
+        if let Some(sample) = case.duration_ms {
+            duration_by_symbol
+                .entry((case.symbol.clone(), case.mode.clone()))
+                .or_default()
+                .push(sample);
+        }
+
+        emitter.emit_entry(
+            LogEntry::new(
+                case.trace_id.clone(),
+                LogLevel::Trace,
+                "conformance.fixture_execution",
+            )
+            .with_stream(StreamKind::Conformance)
+            .with_gate(CONFORMANCE_LOG_GATE)
+            .with_mode(case.mode.clone())
+            .with_api(case.family.clone(), case.symbol.clone())
+            .with_outcome(case_outcome(case))
+            .with_errno(0)
+            .with_latency_ns(latency_ns)
+            .with_duration_ms(duration_ms)
+            .with_healing_action("none")
+            .with_artifacts(artifact_refs.clone())
+            .with_details(serde_json::json!({
+                "case_name": case.case_name,
+                "spec_section": case.spec_section,
+                "status": case.status,
+                "diff_offset": case.diff_offset,
+                "decision_path": "conformance->fixture_execution"
+            })),
+        )?;
+
+        emitter.emit_entry(
+            LogEntry::new(
+                case.trace_id.clone(),
+                LogLevel::Debug,
+                "conformance.shadow_run_divergence",
+            )
+            .with_stream(StreamKind::Conformance)
+            .with_gate(CONFORMANCE_LOG_GATE)
+            .with_mode(case.mode.clone())
+            .with_api(case.family.clone(), case.symbol.clone())
+            .with_outcome(case_outcome(case))
+            .with_errno(0)
+            .with_latency_ns(latency_ns)
+            .with_healing_action("none")
+            .with_artifacts(artifact_refs.clone())
+            .with_details(serde_json::json!({
+                "host_output": case.host_output,
+                "actual_output": case.actual_output,
+                "expected_output": case.expected_output,
+                "host_parity": case.host_parity,
+                "note": case.note,
+                "decision_path": "conformance->shadow_compare"
+            })),
+        )?;
+
+        if duration_ms.saturating_mul(100)
+            >= perf_budget_ms.saturating_mul(CONFORMANCE_WARN_BUDGET_PERCENT)
+        {
+            emitter.emit_entry(
+                LogEntry::new(
+                    case.trace_id.clone(),
+                    LogLevel::Warn,
+                    "conformance.performance_budget_near_violation",
+                )
+                .with_stream(StreamKind::Conformance)
+                .with_gate(CONFORMANCE_LOG_GATE)
+                .with_mode(case.mode.clone())
+                .with_api(case.family.clone(), case.symbol.clone())
+                .with_outcome(case_outcome(case))
+                .with_errno(0)
+                .with_latency_ns(latency_ns)
+                .with_duration_ms(duration_ms)
+                .with_healing_action("none")
+                .with_artifacts(artifact_refs.clone())
+                .with_details(serde_json::json!({
+                    "duration_ms": duration_ms,
+                    "budget_ms": perf_budget_ms,
+                    "budget_percent": if perf_budget_ms == 0 { 0.0 } else { (duration_ms as f64 * 100.0) / perf_budget_ms as f64 },
+                    "warn_threshold_percent": CONFORMANCE_WARN_BUDGET_PERCENT,
+                    "decision_path": "conformance->perf_budget_guard"
+                })),
+            )?;
+        }
+
+        if prior.get(&case.trace_id).copied().unwrap_or(false) && !case.passed {
+            emitter.emit_entry(
+                LogEntry::new(
+                    case.trace_id.clone(),
+                    LogLevel::Error,
+                    "conformance.regression_detected",
+                )
+                .with_stream(StreamKind::Conformance)
+                .with_gate(CONFORMANCE_LOG_GATE)
+                .with_mode(case.mode.clone())
+                .with_api(case.family.clone(), case.symbol.clone())
+                .with_outcome(Outcome::Fail)
+                .with_errno(0)
+                .with_latency_ns(latency_ns)
+                .with_healing_action("none")
+                .with_artifacts(artifact_refs.clone())
+                .with_details(serde_json::json!({
+                    "previous_status": "pass",
+                    "current_status": case.status,
+                    "current_passed": case.passed,
+                    "diff_offset": case.diff_offset,
+                    "decision_path": "conformance->regression_detector"
+                })),
+            )?;
+        }
+    }
+
+    let summary_trace_id = format!(
+        "{}::conformance::summary",
+        sanitize_trace_component(campaign)
+    );
+    emitter.emit_entry(
+        LogEntry::new(
+            summary_trace_id,
+            LogLevel::Info,
+            "conformance.fixture_summary",
+        )
+        .with_stream(StreamKind::Conformance)
+        .with_gate(CONFORMANCE_LOG_GATE)
+        .with_mode(matrix.mode.clone())
+        .with_api("conformance", "fixture_summary")
+        .with_outcome(if matrix.all_passed() {
+            Outcome::Pass
+        } else {
+            Outcome::Fail
+        })
+        .with_errno(0)
+        .with_healing_action("none")
+        .with_artifacts(artifact_refs.clone())
+        .with_details(serde_json::json!({
+            "campaign": matrix.campaign,
+            "total_cases": matrix.summary.total_cases,
+            "passed": matrix.summary.passed,
+            "failed": matrix.summary.failed,
+            "errors": matrix.summary.errors,
+            "pass_rate_percent": matrix.summary.pass_rate_percent,
+            "decision_path": "conformance->summary"
+        })),
+    )?;
+
+    for row in &matrix.symbol_matrix {
+        let key = (row.symbol.clone(), row.mode.clone());
+        let stats = duration_by_symbol
+            .get(&key)
+            .and_then(|samples| duration_stats(samples));
+        let duration_details = stats.unwrap_or_default();
+
+        let benchmark_trace_id = format!(
+            "{}::benchmark::{}::{}",
+            sanitize_trace_component(campaign),
+            sanitize_trace_component(&row.symbol),
+            sanitize_trace_component(&row.mode),
+        );
+        emitter.emit_entry(
+            LogEntry::new(
+                benchmark_trace_id.clone(),
+                LogLevel::Info,
+                "conformance.benchmark_result",
+            )
+            .with_stream(StreamKind::Conformance)
+            .with_gate(CONFORMANCE_LOG_GATE)
+            .with_mode(row.mode.clone())
+            .with_api("conformance", row.symbol.clone())
+            .with_outcome(if row.failed == 0 && row.errors == 0 {
+                Outcome::Pass
+            } else {
+                Outcome::Fail
+            })
+            .with_errno(0)
+            .with_healing_action("none")
+            .with_artifacts(artifact_refs.clone())
+            .with_details(serde_json::json!({
+                "samples": duration_details.samples,
+                "p50_ms": duration_details.p50_ms,
+                "p95_ms": duration_details.p95_ms,
+                "p99_ms": duration_details.p99_ms,
+                "mean_ms": duration_details.mean_ms,
+                "max_ms": duration_details.max_ms,
+                "budget_ms": perf_budget_ms,
+                "total": row.total,
+                "passed": row.passed,
+                "failed": row.failed,
+                "errors": row.errors,
+                "pass_rate_percent": row.pass_rate_percent,
+                "decision_path": "conformance->benchmark_summary"
+            })),
+        )?;
+
+        if duration_details.samples > 0
+            && duration_details.p95_ms.saturating_mul(100)
+                >= perf_budget_ms.saturating_mul(CONFORMANCE_WARN_BUDGET_PERCENT)
+        {
+            emitter.emit_entry(
+                LogEntry::new(
+                    benchmark_trace_id,
+                    LogLevel::Warn,
+                    "conformance.performance_budget_near_violation",
+                )
+                .with_stream(StreamKind::Conformance)
+                .with_gate(CONFORMANCE_LOG_GATE)
+                .with_mode(row.mode.clone())
+                .with_api("conformance", row.symbol.clone())
+                .with_outcome(if row.failed == 0 && row.errors == 0 {
+                    Outcome::Pass
+                } else {
+                    Outcome::Fail
+                })
+                .with_errno(0)
+                .with_healing_action("none")
+                .with_artifacts(artifact_refs.clone())
+                .with_details(serde_json::json!({
+                    "p95_ms": duration_details.p95_ms,
+                    "budget_ms": perf_budget_ms,
+                    "warn_threshold_percent": CONFORMANCE_WARN_BUDGET_PERCENT,
+                    "decision_path": "conformance->benchmark_budget_guard"
+                })),
+            )?;
+        }
+    }
+
+    emitter.flush()?;
+    Ok(())
+}
+
 fn parse_seed(raw: &str) -> Result<u64, Box<dyn std::error::Error>> {
     let s = raw.trim();
     let seed = if let Some(hex) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
@@ -951,4 +1549,157 @@ fn load_fixture_sets(
     }
 
     Ok(fixture_sets)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use frankenlibc_harness::conformance_matrix::{
+        ConformanceCaseRow, ConformanceMatrixSummary, SymbolMatrixRow,
+    };
+
+    fn sample_case(
+        trace_id: &str,
+        status: &str,
+        passed: bool,
+        duration_ms: u64,
+    ) -> ConformanceCaseRow {
+        ConformanceCaseRow {
+            trace_id: trace_id.to_string(),
+            family: "string".to_string(),
+            symbol: "strlen".to_string(),
+            mode: "strict".to_string(),
+            case_name: "case-1".to_string(),
+            spec_section: "POSIX".to_string(),
+            input_hex: "00".to_string(),
+            expected_output: "1".to_string(),
+            actual_output: if passed { "1" } else { "2" }.to_string(),
+            host_output: Some("1".to_string()),
+            host_parity: Some(passed),
+            note: None,
+            status: status.to_string(),
+            passed,
+            error: None,
+            diff_offset: if passed { None } else { Some(0) },
+            duration_ms: Some(duration_ms),
+        }
+    }
+
+    fn sample_report(cases: Vec<ConformanceCaseRow>) -> ConformanceMatrixReport {
+        ConformanceMatrixReport {
+            schema_version: "v1".to_string(),
+            bead: "bd-l93x.2".to_string(),
+            generated_at_utc: "deterministic:test".to_string(),
+            campaign: "test_campaign".to_string(),
+            mode: "strict".to_string(),
+            total_fixture_sets: 1,
+            summary: ConformanceMatrixSummary {
+                total_cases: u64::try_from(cases.len()).unwrap_or(u64::MAX),
+                passed: u64::try_from(cases.iter().filter(|case| case.passed).count())
+                    .unwrap_or(u64::MAX),
+                failed: u64::try_from(cases.iter().filter(|case| !case.passed).count())
+                    .unwrap_or(u64::MAX),
+                errors: 0,
+                pass_rate_percent: 50.0,
+            },
+            symbol_matrix: vec![SymbolMatrixRow {
+                symbol: "strlen".to_string(),
+                mode: "strict".to_string(),
+                total: 1,
+                passed: 0,
+                failed: 1,
+                errors: 0,
+                pass_rate_percent: 0.0,
+            }],
+            cases,
+        }
+    }
+
+    #[test]
+    fn duration_stats_computes_quantiles() {
+        let stats = duration_stats(&[10, 30, 20, 40, 50]).expect("stats");
+        assert_eq!(stats.samples, 5);
+        assert_eq!(stats.p50_ms, 30);
+        assert_eq!(stats.p95_ms, 50);
+        assert_eq!(stats.p99_ms, 50);
+        assert_eq!(stats.max_ms, 50);
+        assert!((stats.mean_ms - 30.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn previous_pass_map_retains_trace_status() {
+        let report = sample_report(vec![
+            sample_case("trace::1", "pass", true, 10),
+            sample_case("trace::2", "fail", false, 10),
+        ]);
+        let prior = previous_pass_map(Some(&report));
+        assert_eq!(prior.get("trace::1"), Some(&true));
+        assert_eq!(prior.get("trace::2"), Some(&false));
+    }
+
+    #[test]
+    fn emits_required_conformance_log_levels_and_regression_events() {
+        let tmp = std::env::temp_dir();
+        let suffix = format!(
+            "{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        );
+        let matrix_path = tmp.join(format!("frankenlibc-conformance-matrix-{suffix}.json"));
+        let log_path = tmp.join(format!("frankenlibc-conformance-log-{suffix}.jsonl"));
+
+        std::fs::write(&matrix_path, "{}").expect("matrix artifact");
+
+        let previous = sample_report(vec![sample_case(
+            "test_campaign::string::strlen::strict::case-1",
+            "pass",
+            true,
+            60,
+        )]);
+        let current = sample_report(vec![sample_case(
+            "test_campaign::string::strlen::strict::case-1",
+            "fail",
+            false,
+            90,
+        )]);
+
+        emit_conformance_matrix_logs(
+            &log_path,
+            &matrix_path,
+            "test_campaign",
+            &current,
+            Some(&previous),
+            100,
+        )
+        .expect("emit log");
+
+        let body = std::fs::read_to_string(&log_path).expect("read log");
+        assert!(
+            body.contains("\"event\":\"conformance.fixture_execution\"")
+                && body.contains("\"level\":\"trace\"")
+        );
+        assert!(
+            body.contains("\"event\":\"conformance.shadow_run_divergence\"")
+                && body.contains("\"level\":\"debug\"")
+        );
+        assert!(
+            body.contains("\"event\":\"conformance.fixture_summary\"")
+                && body.contains("\"level\":\"info\"")
+        );
+        assert!(
+            body.contains("\"event\":\"conformance.benchmark_result\"")
+                && body.contains("\"level\":\"info\"")
+        );
+        assert!(
+            body.contains("\"event\":\"conformance.performance_budget_near_violation\"")
+                && body.contains("\"level\":\"warn\"")
+        );
+        assert!(
+            body.contains("\"event\":\"conformance.regression_detected\"")
+                && body.contains("\"level\":\"error\"")
+        );
+    }
 }

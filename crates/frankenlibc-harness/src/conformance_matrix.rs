@@ -4,11 +4,12 @@
 //! emits a machine-readable matrix with symbol-level aggregation.
 
 use std::collections::BTreeMap;
+use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
 
 use crate::{FixtureCase, FixtureSet};
-use frankenlibc_fixture_exec::execute_fixture_case;
+use frankenlibc_fixture_exec::{DifferentialExecution, execute_fixture_case};
 
 /// Runtime mode selection for matrix generation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -68,6 +69,8 @@ pub struct ConformanceCaseRow {
     pub passed: bool,
     pub error: Option<String>,
     pub diff_offset: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<u64>,
 }
 
 /// Symbol-level aggregate row.
@@ -106,6 +109,15 @@ pub struct ConformanceMatrixReport {
     pub cases: Vec<ConformanceCaseRow>,
 }
 
+/// Execution outcome used by matrix builders.
+#[derive(Debug, Clone)]
+pub enum CaseExecution {
+    Completed(DifferentialExecution),
+    Error(String),
+    Timeout(String),
+    Crash(String),
+}
+
 impl ConformanceMatrixReport {
     /// Returns true when no failures/errors are present.
     #[must_use]
@@ -121,6 +133,28 @@ pub fn build_conformance_matrix(
     mode: MatrixMode,
     campaign: &str,
 ) -> ConformanceMatrixReport {
+    build_conformance_matrix_with_executor(
+        fixture_sets,
+        mode,
+        campaign,
+        |function, inputs, active_mode| match execute_fixture_case(function, inputs, active_mode) {
+            Ok(run) => CaseExecution::Completed(run),
+            Err(err) => CaseExecution::Error(err),
+        },
+    )
+}
+
+/// Build a deterministic differential conformance matrix with a custom case executor.
+#[must_use]
+pub fn build_conformance_matrix_with_executor<F>(
+    fixture_sets: &[FixtureSet],
+    mode: MatrixMode,
+    campaign: &str,
+    mut execute_case: F,
+) -> ConformanceMatrixReport
+where
+    F: FnMut(&str, &serde_json::Value, &str) -> CaseExecution,
+{
     let mut rows = Vec::new();
 
     for fixture_set in fixture_sets {
@@ -130,7 +164,17 @@ pub fn build_conformance_matrix(
                 .iter()
                 .filter(|case| mode_matches(active_mode, &case.mode))
             {
-                rows.push(run_case(fixture_set, case, active_mode, campaign));
+                let started = Instant::now();
+                let execution = execute_case(&case.function, &case.inputs, active_mode);
+                let duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+                rows.push(run_case_from_execution(
+                    fixture_set,
+                    case,
+                    active_mode,
+                    campaign,
+                    execution,
+                    duration_ms,
+                ));
             }
         }
     }
@@ -202,11 +246,13 @@ pub fn build_conformance_matrix(
     }
 }
 
-fn run_case(
+fn run_case_from_execution(
     fixture_set: &FixtureSet,
     case: &FixtureCase,
     active_mode: &str,
     campaign: &str,
+    execution: CaseExecution,
+    duration_ms: u64,
 ) -> ConformanceCaseRow {
     let case_name = if case.mode.eq_ignore_ascii_case("both") {
         format!("{} [{}]", case.name, active_mode)
@@ -227,8 +273,8 @@ fn run_case(
         .map(|buf| hex_encode(&buf))
         .unwrap_or_else(|_| String::new());
 
-    match execute_fixture_case(&case.function, &case.inputs, active_mode) {
-        Ok(run) => {
+    match execution {
+        CaseExecution::Completed(run) => {
             let tolerance_match = tolerant_numeric_match(&case.expected_output, &run.impl_output);
             let passed = run.impl_output == case.expected_output || tolerance_match;
             let diff_offset = if passed {
@@ -258,29 +304,83 @@ fn run_case(
                 passed,
                 error: None,
                 diff_offset,
+                duration_ms: Some(duration_ms),
             }
         }
-        Err(err) => {
-            let actual_output = format!("unsupported:{err}");
-            ConformanceCaseRow {
-                trace_id,
-                family: fixture_set.family.clone(),
-                symbol: case.function.clone(),
-                mode: active_mode.to_string(),
-                case_name,
-                spec_section: case.spec_section.clone(),
-                input_hex,
-                expected_output: case.expected_output.clone(),
-                actual_output: actual_output.clone(),
-                host_output: None,
-                host_parity: None,
-                note: None,
-                status: "error".to_string(),
-                passed: false,
-                error: Some(err),
-                diff_offset: first_diff_offset(&case.expected_output, &actual_output),
-            }
-        }
+        CaseExecution::Error(err) => build_error_row(
+            fixture_set,
+            case,
+            active_mode,
+            trace_id,
+            case_name,
+            input_hex,
+            format!("unsupported:{err}"),
+            "error",
+            Some(err),
+            None,
+            duration_ms,
+        ),
+        CaseExecution::Timeout(err) => build_error_row(
+            fixture_set,
+            case,
+            active_mode,
+            trace_id,
+            case_name,
+            input_hex,
+            format!("timeout:{err}"),
+            "timeout",
+            Some(err),
+            Some("isolated_timeout".to_string()),
+            duration_ms,
+        ),
+        CaseExecution::Crash(err) => build_error_row(
+            fixture_set,
+            case,
+            active_mode,
+            trace_id,
+            case_name,
+            input_hex,
+            format!("crash:{err}"),
+            "crash",
+            Some(err),
+            Some("isolated_crash".to_string()),
+            duration_ms,
+        ),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_error_row(
+    fixture_set: &FixtureSet,
+    case: &FixtureCase,
+    active_mode: &str,
+    trace_id: String,
+    case_name: String,
+    input_hex: String,
+    actual_output: String,
+    status: &str,
+    error: Option<String>,
+    note: Option<String>,
+    duration_ms: u64,
+) -> ConformanceCaseRow {
+    ConformanceCaseRow {
+        trace_id,
+        family: fixture_set.family.clone(),
+        symbol: case.function.clone(),
+        mode: active_mode.to_string(),
+        case_name,
+        spec_section: case.spec_section.clone(),
+        input_hex,
+        expected_output: case.expected_output.clone(),
+        actual_output: actual_output.clone(),
+        host_output: None,
+        host_parity: None,
+        note,
+        status: status.to_string(),
+        passed: false,
+        error,
+        diff_offset: first_diff_offset(&case.expected_output, &actual_output),
+        duration_ms: Some(duration_ms),
     }
 }
 
@@ -402,6 +502,7 @@ mod tests {
         assert_eq!(report.summary.total_cases, 1);
         assert_eq!(report.cases.len(), 1);
         assert_eq!(report.cases[0].symbol, "strlen");
+        assert!(report.cases[0].duration_ms.is_some());
     }
 
     #[test]
@@ -412,5 +513,39 @@ mod tests {
         ));
         assert!(tolerant_numeric_match("1.3", "1.2999999999999998"));
         assert!(!tolerant_numeric_match("1.3", "1.31"));
+    }
+
+    #[test]
+    fn matrix_supports_timeout_and_crash_outcomes() {
+        let fixture = FixtureSet::from_json(
+            r#"{
+                "version":"v1",
+                "family":"string/strlen",
+                "captured_at":"2026-02-13T00:00:00Z",
+                "cases":[
+                    {"name":"timeout_case","function":"__timeout_case","spec_section":"N/A","inputs":{"s":[97,0]},"expected_output":"1","expected_errno":0,"mode":"strict"},
+                    {"name":"crash_case","function":"__crash_case","spec_section":"N/A","inputs":{"s":[97,0]},"expected_output":"1","expected_errno":0,"mode":"strict"}
+                ]
+            }"#,
+        )
+        .expect("fixture should parse");
+
+        let report = build_conformance_matrix_with_executor(
+            &[fixture],
+            MatrixMode::Strict,
+            "unit",
+            |f, _, _| match f {
+                "__timeout_case" => CaseExecution::Timeout("timed out".to_string()),
+                "__crash_case" => CaseExecution::Crash("signal=6".to_string()),
+                _ => CaseExecution::Error("unexpected".to_string()),
+            },
+        );
+
+        assert_eq!(report.summary.total_cases, 2);
+        assert_eq!(report.summary.passed, 0);
+        assert_eq!(report.summary.failed, 2);
+        assert_eq!(report.summary.errors, 0);
+        assert!(report.cases.iter().any(|row| row.status == "timeout"));
+        assert!(report.cases.iter().any(|row| row.status == "crash"));
     }
 }

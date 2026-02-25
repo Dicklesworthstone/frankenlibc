@@ -131,6 +131,21 @@ pub fn run_and_write(
     )?;
 
     let mut emitter = LogEmitter::to_file(log_path, BEAD_ID, RUN_ID)?;
+    emitter.emit_entry(
+        LogEntry::new(
+            "",
+            LogLevel::Warn,
+            "runtime_math.linkage_proof.boundary_assumption",
+        )
+        .with_stream(StreamKind::Release)
+        .with_gate(GATE)
+        .with_outcome(Outcome::Pass)
+        .with_controller_id("source_parser")
+        .with_details(serde_json::json!({
+            "assumption": "source slicing markers in runtime_math/mod.rs remain stable across refactors",
+            "decision_path": "proof->linkage->boundary_assumption",
+        })),
+    )?;
 
     let mut results = Vec::with_capacity(production_modules.len());
     let mut passed = 0usize;
@@ -145,6 +160,20 @@ pub fn run_and_write(
             .unwrap_or("UNKNOWN")
             .to_string();
         let decision_target = meta["decision_target"].as_str().unwrap_or("").to_string();
+
+        emitter.emit_entry(
+            LogEntry::new("", LogLevel::Trace, "runtime_math.linkage_proof.step")
+                .with_stream(StreamKind::Release)
+                .with_gate(GATE)
+                .with_outcome(Outcome::Pass)
+                .with_controller_id(module.clone())
+                .with_details(serde_json::json!({
+                    "module": module,
+                    "linkage_status": linkage_status.clone(),
+                    "decision_target": decision_target.clone(),
+                    "decision_path": "proof->linkage->module_step"
+                })),
+        )?;
 
         let mut failures = Vec::new();
         if linkage_status != "Production" {
@@ -203,6 +232,23 @@ pub fn run_and_write(
             || !cached_outputs_used_in_decide.is_empty()
             || !cached_outputs_used_in_fusion_inputs.is_empty();
 
+        emitter.emit_entry(
+            LogEntry::new("", LogLevel::Debug, "runtime_math.linkage_proof.mapping")
+                .with_stream(StreamKind::Release)
+                .with_gate(GATE)
+                .with_outcome(Outcome::Pass)
+                .with_controller_id(module.clone())
+                .with_details(serde_json::json!({
+                    "module": module,
+                    "field_name": field_name.clone(),
+                    "decide_field_hit": decide_field_hit,
+                    "observe_field_hit": observe_field_hit,
+                    "snapshot_field_hit": snapshot_field_hit,
+                    "cached_outputs_count": cached_outputs.len(),
+                    "decision_path": "proof->linkage->mapping",
+                })),
+        )?;
+
         if field_name.is_empty() {
             failures.push("module has no resolved field_name (cannot prove wiring)".to_string());
         }
@@ -220,6 +266,48 @@ pub fn run_and_write(
             failed += 1;
             "fail"
         };
+
+        if failures.is_empty()
+            && !decide_field_hit
+            && cached_outputs_used_in_decide.is_empty()
+            && cached_outputs_used_in_fusion_inputs.len() <= 1
+        {
+            emitter.emit_entry(
+                LogEntry::new(
+                    "",
+                    LogLevel::Warn,
+                    "runtime_math.linkage_proof.boundary_assumption",
+                )
+                .with_stream(StreamKind::Release)
+                .with_gate(GATE)
+                .with_outcome(Outcome::Pass)
+                .with_controller_id(module.clone())
+                .with_details(serde_json::json!({
+                    "module": module,
+                    "field_name": field_name.clone(),
+                    "decide_field_hit": decide_field_hit,
+                    "cached_outputs_used_in_decide": cached_outputs_used_in_decide.clone(),
+                    "cached_outputs_used_in_fusion_inputs": cached_outputs_used_in_fusion_inputs.clone(),
+                    "decision_path": "proof->linkage->boundary_assumption"
+                })),
+            )?;
+        }
+        if !failures.is_empty() {
+            emitter.emit_entry(
+                LogEntry::new("", LogLevel::Error, "runtime_math.linkage_proof.failure")
+                    .with_stream(StreamKind::Release)
+                    .with_gate(GATE)
+                    .with_outcome(Outcome::Fail)
+                    .with_controller_id(module.clone())
+                    .with_details(serde_json::json!({
+                        "module": module,
+                        "field_name": field_name.clone(),
+                        "influence_ok": influence_ok,
+                        "failures": failures.clone(),
+                        "decision_path": "proof->linkage->failure"
+                    })),
+            )?;
+        }
 
         let res = RuntimeMathModuleLinkageResult {
             module: module.clone(),

@@ -42,6 +42,14 @@ fn write_valid_index(run_dir: &Path, artifact_rel: &str, run_id: &str, bead_id: 
     index_path
 }
 
+fn read_jsonl(path: &Path) -> Vec<serde_json::Value> {
+    let body = std::fs::read_to_string(path).expect("jsonl file should be readable");
+    body.lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| serde_json::from_str(line).expect("jsonl line should parse"))
+        .collect()
+}
+
 #[test]
 fn valid_bundle_passes() {
     let run_dir = unique_tmp_dir("evidence-compliance-valid");
@@ -127,6 +135,74 @@ fn malformed_log_line_reports_schema_violation() {
             .iter()
             .any(|v| v.message.contains("required field missing")),
         "schema violation should include missing required field diagnostics"
+    );
+
+    let _ = std::fs::remove_dir_all(run_dir);
+}
+
+#[test]
+fn hash_mismatch_emits_debug_and_error_proof_logs() {
+    let run_dir = unique_tmp_dir("evidence-compliance-hash-mismatch");
+    let log_path = run_dir.join("log.jsonl");
+    let artifact_rel = "diag.txt";
+    let artifact_path = run_dir.join(artifact_rel);
+    std::fs::write(&artifact_path, "artifact-content").expect("write artifact");
+
+    let mut index = ArtifactIndex::new("run-hash-mismatch", "bd-34s.7");
+    index.add(
+        artifact_rel,
+        "diagnostic",
+        "0000000000000000000000000000000000000000000000000000000000000000",
+    );
+    let index_path = run_dir.join("artifact_index.json");
+    std::fs::write(&index_path, index.to_json().expect("serialize index")).expect("write index");
+
+    let line = LogEntry::new(
+        "bd-34s.7::run-hash-mismatch::001",
+        LogLevel::Info,
+        "proof_input",
+    )
+    .with_stream(StreamKind::Release)
+    .with_gate("evidence_compliance")
+    .with_outcome(Outcome::Pass)
+    .with_artifacts(vec![artifact_rel.to_string()])
+    .to_jsonl()
+    .expect("serialize log entry");
+    std::fs::write(&log_path, format!("{line}\n")).expect("write log");
+
+    let report = validate_evidence_bundle(&run_dir, &log_path, &index_path);
+    assert!(!report.ok, "hash mismatch should fail compliance");
+    assert!(
+        report
+            .violations
+            .iter()
+            .any(|v| v.code == "artifact_index.sha_mismatch"),
+        "expected artifact_index.sha_mismatch violation"
+    );
+
+    let proof_log_path = run_dir.join("evidence_compliance.proof.log.jsonl");
+    assert!(
+        proof_log_path.exists(),
+        "proof log sidecar should be emitted for evidence compliance runs"
+    );
+    let events = read_jsonl(&proof_log_path);
+    assert!(
+        events.iter().any(|entry| entry["event"].as_str()
+            == Some("evidence_compliance.artifact_hash_compute")
+            && entry["level"].as_str() == Some("debug")),
+        "proof log should include DEBUG hash-compute events"
+    );
+    assert!(
+        events.iter().any(|entry| entry["event"].as_str()
+            == Some("evidence_compliance.artifact_hash_mismatch")
+            && entry["level"].as_str() == Some("error")),
+        "proof log should include ERROR hash-mismatch events"
+    );
+    assert!(
+        events
+            .iter()
+            .any(|entry| entry["event"].as_str() == Some("evidence_compliance.proof_summary")),
+        "proof log should include summary event"
     );
 
     let _ = std::fs::remove_dir_all(run_dir);

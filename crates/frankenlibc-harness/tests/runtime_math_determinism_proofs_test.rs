@@ -74,6 +74,36 @@ fn gate_script_emits_logs_and_report() {
         line_count >= 6,
         "expected multiple log lines (got {line_count})"
     );
+    let log_body = std::fs::read_to_string(&log_path).expect("determinism log should be readable");
+    let log_events: Vec<serde_json::Value> = log_body
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| serde_json::from_str(line).expect("log line should parse"))
+        .collect();
+    assert!(
+        log_events
+            .iter()
+            .any(|entry| entry["event"].as_str() == Some("runtime_math.determinism.proof_step")),
+        "determinism log should include TRACE proof_step events"
+    );
+    assert!(
+        log_events.iter().any(|entry| entry["event"].as_str()
+            == Some("runtime_math.determinism.gram_eigenvalue_check")),
+        "determinism log should include DEBUG gram_eigenvalue_check events"
+    );
+    assert!(
+        log_events
+            .iter()
+            .any(|entry| entry["event"].as_str()
+                == Some("runtime_math.determinism.boundary_assumption")),
+        "determinism log should include WARN boundary_assumption events"
+    );
+    assert!(
+        log_events
+            .iter()
+            .any(|entry| entry["event"].as_str() == Some("runtime_math.determinism.mode_finish")),
+        "determinism log should include mode_finish summaries"
+    );
 
     let report = load_json(&report_path);
     assert_eq!(

@@ -1,4 +1,5 @@
-//! Integration test: stub regression prevention guard + waiver policy (bd-1p5v).
+//! Integration test: stub regression prevention guard + waiver policy
+//! (bd-1p5v uplifted by bd-1x3.3).
 //!
 //! Validates:
 //! 1) waiver policy artifact has required shape.
@@ -64,6 +65,22 @@ fn waiver_policy_has_required_shape() {
             );
         }
     }
+
+    let policy_obj = policy["policy"].as_object().unwrap();
+    assert!(
+        policy_obj
+            .get("burn_down_thresholds")
+            .and_then(|v| v.as_object())
+            .is_some(),
+        "policy.burn_down_thresholds must be object"
+    );
+    assert!(
+        policy_obj
+            .get("downgrade_evidence_requirements")
+            .and_then(|v| v.as_array())
+            .is_some(),
+        "policy.downgrade_evidence_requirements must be array"
+    );
 }
 
 #[test]
@@ -101,13 +118,17 @@ fn guard_script_passes_with_current_policy() {
 
     let report = load_json(&report_path);
     assert_eq!(report["schema_version"].as_str(), Some("v1"));
-    assert_eq!(report["bead"].as_str(), Some("bd-1p5v"));
+    assert_eq!(report["bead"].as_str(), Some("bd-1x3.3"));
+    assert_eq!(report["uplift_bead"].as_str(), Some("bd-1p5v"));
     for check in [
         "artifact_current",
         "waiver_schema_valid",
         "symbol_coverage_valid",
         "matrix_stub_policy_valid",
         "stale_waivers_absent",
+        "waiver_evidence_valid",
+        "burn_down_thresholds_valid",
+        "downgrade_evidence_valid",
     ] {
         assert_eq!(
             report["checks"][check].as_str(),
@@ -177,5 +198,61 @@ fn guard_script_fails_when_required_waiver_missing() {
         report["checks"]["symbol_coverage_valid"].as_str(),
         Some("fail"),
         "symbol_coverage_valid should fail for missing waiver fixture"
+    );
+}
+
+#[test]
+fn guard_script_fails_when_burn_down_threshold_is_too_strict() {
+    let _guard = script_lock().lock().unwrap();
+    let root = workspace_root();
+    let script = root.join("scripts/check_stub_regression_guard.sh");
+    let policy_path = root.join("tests/conformance/stub_regression_waiver_policy.v1.json");
+    let mut policy = load_json(&policy_path);
+
+    policy["policy"]["burn_down_thresholds"]["max_symbols_unscheduled"] =
+        serde_json::Value::from(10_u64);
+
+    let tmp_name = format!(
+        "stub_regression_policy_threshold_fail_{}_{}.json",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    );
+    let tmp_path = std::env::temp_dir().join(tmp_name);
+    std::fs::write(
+        &tmp_path,
+        serde_json::to_string_pretty(&policy).unwrap() + "\n",
+    )
+    .unwrap();
+
+    let output = Command::new(&script)
+        .env("FRANKENLIBC_STUB_WAIVER_POLICY_PATH", &tmp_path)
+        .current_dir(&root)
+        .output()
+        .expect("failed to run stub regression guard");
+
+    let _ = std::fs::remove_file(&tmp_path);
+
+    assert!(
+        !output.status.success(),
+        "guard should fail when burn-down threshold is exceeded"
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let combined = format!("{stdout}\n{stderr}");
+    assert!(
+        combined.contains("max_symbols_unscheduled exceeded"),
+        "expected threshold failure diagnostics; output:\n{}",
+        combined
+    );
+
+    let report_path = root.join("target/conformance/stub_regression_guard.report.json");
+    let report = load_json(&report_path);
+    assert_eq!(
+        report["checks"]["burn_down_thresholds_valid"].as_str(),
+        Some("fail"),
+        "burn_down_thresholds_valid should fail for strict threshold fixture"
     );
 }

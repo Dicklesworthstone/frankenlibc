@@ -104,8 +104,41 @@ fn gate_script_emits_logs_and_report() {
         expected,
         "report must include one row per production module"
     );
+    let log_body = std::fs::read_to_string(&log_path).expect("log file should be readable");
+    let log_events: Vec<serde_json::Value> = log_body
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| serde_json::from_str(line).expect("log line should parse"))
+        .collect();
+    let step_count = log_events
+        .iter()
+        .filter(|entry| entry["event"].as_str() == Some("runtime_math.linkage_proof.step"))
+        .count();
+    let summary_count = log_events
+        .iter()
+        .filter(|entry| entry["event"].as_str() == Some("runtime_math.linkage_proof"))
+        .count();
     assert_eq!(
-        line_count, expected,
-        "log line count must equal production module count"
+        step_count, expected,
+        "log must include one TRACE step per production module"
+    );
+    assert_eq!(
+        summary_count, expected,
+        "log must include one INFO summary per production module"
+    );
+    assert!(
+        log_events.iter().any(|entry| {
+            entry["event"].as_str() == Some("runtime_math.linkage_proof.boundary_assumption")
+        }),
+        "log should include boundary-assumption WARN events"
+    );
+    assert_eq!(
+        line_count,
+        log_events.len(),
+        "validated line count should match parsed log lines"
+    );
+    assert!(
+        line_count >= expected * 2,
+        "log should include at least TRACE+INFO events per module"
     );
 }
