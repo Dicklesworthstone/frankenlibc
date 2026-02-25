@@ -2217,36 +2217,252 @@ pub unsafe extern "C" fn getopt_long(
 }
 
 // ---------------------------------------------------------------------------
-// syslog — GlibcCallThrough
+// syslog — Implemented (native /dev/log + stderr fallback)
 // ---------------------------------------------------------------------------
 
-unsafe extern "C" {
-    #[link_name = "openlog"]
-    fn libc_openlog(ident: *const c_char, option: c_int, facility: c_int);
-    #[link_name = "closelog"]
-    fn libc_closelog();
-    #[link_name = "vsyslog"]
-    fn libc_vsyslog(priority: c_int, format: *const c_char, ap: *mut c_void);
+const LOG_PID: c_int = 0x01;
+const LOG_CONS: c_int = 0x02;
+const LOG_NDELAY: c_int = 0x08;
+const LOG_PERROR: c_int = 0x20;
+const LOG_USER: c_int = 1 << 3;
+
+struct SyslogState {
+    ident_ptr: *const c_char,
+    option: c_int,
+    facility: c_int,
+    sock_fd: c_int,
+}
+
+unsafe impl Send for SyslogState {}
+
+static SYSLOG_STATE: std::sync::Mutex<SyslogState> = std::sync::Mutex::new(SyslogState {
+    ident_ptr: std::ptr::null(),
+    option: 0,
+    facility: LOG_USER,
+    sock_fd: -1,
+});
+
+fn syslog_connect() -> c_int {
+    let fd = unsafe { libc::socket(1, 2, 0) };
+    if fd < 0 {
+        return -1;
+    }
+    let mut addr = [0u8; 110];
+    addr[0] = 1; // AF_UNIX
+    let path = b"/dev/log";
+    addr[2..2 + path.len()].copy_from_slice(path);
+    let rc = unsafe {
+        libc::connect(
+            fd,
+            addr.as_ptr() as *const libc::sockaddr,
+            (2 + path.len() + 1) as u32,
+        )
+    };
+    if rc < 0 {
+        unsafe { libc::close(fd) };
+        return -1;
+    }
+    fd
+}
+
+fn syslog_send(priority: c_int, message: &[u8]) {
+    let mut state = SYSLOG_STATE.lock().unwrap_or_else(|e| e.into_inner());
+
+    let level = priority & 0x07;
+    let facility = if priority & !0x07 != 0 {
+        priority & !0x07
+    } else {
+        state.facility
+    };
+    let pri = facility | level;
+
+    let ident = if !state.ident_ptr.is_null() {
+        unsafe { CStr::from_ptr(state.ident_ptr) }
+            .to_str()
+            .unwrap_or("unknown")
+    } else {
+        "unknown"
+    };
+
+    let mut tv = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    unsafe { libc::clock_gettime(libc::CLOCK_REALTIME, &mut tv) };
+    let epoch = tv.tv_sec;
+    let secs_in_day = epoch % 86400;
+    let hour = secs_in_day / 3600;
+    let min = (secs_in_day % 3600) / 60;
+    let sec = secs_in_day % 60;
+    let days = epoch / 86400;
+    let (_, month, day) = syslog_days_to_ymd(days as i64);
+    let months = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ];
+    let mon_str = if (1..=12).contains(&month) {
+        months[(month - 1) as usize]
+    } else {
+        "Jan"
+    };
+
+    let pid_part = if state.option & LOG_PID != 0 {
+        format!("[{}]", unsafe { libc::getpid() })
+    } else {
+        String::new()
+    };
+
+    let msg_str = String::from_utf8_lossy(message);
+    let packet = format!(
+        "<{}>{} {:2} {:02}:{:02}:{:02} {}{}: {}",
+        pri, mon_str, day, hour, min, sec, ident, pid_part, msg_str
+    );
+    let packet_bytes = packet.as_bytes();
+
+    if state.sock_fd < 0 {
+        state.sock_fd = syslog_connect();
+    }
+
+    let mut sent = false;
+    if state.sock_fd >= 0 {
+        let rc = unsafe {
+            libc::send(
+                state.sock_fd,
+                packet_bytes.as_ptr() as *const c_void,
+                packet_bytes.len(),
+                libc::MSG_NOSIGNAL,
+            )
+        };
+        sent = rc >= 0;
+        if !sent {
+            unsafe { libc::close(state.sock_fd) };
+            state.sock_fd = syslog_connect();
+            if state.sock_fd >= 0 {
+                let rc2 = unsafe {
+                    libc::send(
+                        state.sock_fd,
+                        packet_bytes.as_ptr() as *const c_void,
+                        packet_bytes.len(),
+                        libc::MSG_NOSIGNAL,
+                    )
+                };
+                sent = rc2 >= 0;
+            }
+        }
+    }
+
+    if !sent && (state.option & LOG_CONS != 0) {
+        let _ = super::stdio_abi::write_all_fd(libc::STDERR_FILENO, packet_bytes);
+    }
+
+    if state.option & LOG_PERROR != 0 {
+        let stderr_msg = format!("{}{}: {}\n", ident, pid_part, msg_str);
+        let _ = super::stdio_abi::write_all_fd(libc::STDERR_FILENO, stderr_msg.as_bytes());
+    }
+}
+
+fn syslog_days_to_ymd(days: i64) -> (i64, i32, i32) {
+    let z = days + 719468;
+    let era = if z >= 0 { z } else { z - 146096 } / 146097;
+    let doe = (z - era * 146097) as u32;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    (y, m as i32, d as i32)
+}
+
+/// Extract variadic args for syslog — same as printf's extract_va_args.
+macro_rules! extract_syslog_args {
+    ($segments:expr, $args:expr, $buf:expr, $extract_count:expr) => {{
+        use frankenlibc_core::stdio::printf::{FormatSegment, Precision, Width};
+        let mut _idx = 0usize;
+        for seg in $segments {
+            if let FormatSegment::Spec(spec) = seg {
+                if matches!(spec.width, Width::FromArg) && _idx < $extract_count {
+                    $buf[_idx] = unsafe { $args.arg::<u64>() };
+                    _idx += 1;
+                }
+                if matches!(spec.precision, Precision::FromArg) && _idx < $extract_count {
+                    $buf[_idx] = unsafe { $args.arg::<u64>() };
+                    _idx += 1;
+                }
+                match spec.conversion {
+                    b'%' => {}
+                    b'f' | b'F' | b'e' | b'E' | b'g' | b'G' | b'a' | b'A' => {
+                        if _idx < $extract_count {
+                            $buf[_idx] = unsafe { $args.arg::<f64>() }.to_bits();
+                            _idx += 1;
+                        }
+                    }
+                    _ => {
+                        if _idx < $extract_count {
+                            $buf[_idx] = unsafe { $args.arg::<u64>() };
+                            _idx += 1;
+                        }
+                    }
+                }
+            }
+        }
+        _idx
+    }};
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn openlog(ident: *const c_char, option: c_int, facility: c_int) {
-    unsafe { libc_openlog(ident, option, facility) }
+    let mut state = SYSLOG_STATE.lock().unwrap_or_else(|e| e.into_inner());
+    state.ident_ptr = ident; // POSIX: caller-owned, not copied
+    state.option = option;
+    state.facility = if facility == 0 { LOG_USER } else { facility };
+    if option & LOG_NDELAY != 0 && state.sock_fd < 0 {
+        state.sock_fd = syslog_connect();
+    }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn syslog(priority: c_int, format: *const c_char, mut args: ...) {
-    unsafe { libc_vsyslog(priority, format, (&mut args) as *mut _ as *mut c_void) }
+    if format.is_null() {
+        return;
+    }
+    let fmt_bytes = unsafe { super::stdio_abi::c_str_bytes(format) };
+    use frankenlibc_core::stdio::printf::parse_format_string;
+    let segments = parse_format_string(fmt_bytes);
+    let extract_count = super::stdio_abi::count_printf_args(&segments);
+    let mut arg_buf = [0u64; super::stdio_abi::MAX_VA_ARGS];
+    extract_syslog_args!(&segments, &mut args, &mut arg_buf, extract_count);
+    let rendered =
+        unsafe { super::stdio_abi::render_printf(fmt_bytes, arg_buf.as_ptr(), extract_count) };
+    syslog_send(priority, &rendered);
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn closelog() {
-    unsafe { libc_closelog() }
+    let mut state = SYSLOG_STATE.lock().unwrap_or_else(|e| e.into_inner());
+    if state.sock_fd >= 0 {
+        unsafe { libc::close(state.sock_fd) };
+        state.sock_fd = -1;
+    }
+    state.ident_ptr = std::ptr::null();
+    state.option = 0;
+    state.facility = LOG_USER;
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn vsyslog(priority: c_int, format: *const c_char, ap: *mut c_void) {
-    unsafe { libc_vsyslog(priority, format, ap) }
+    if format.is_null() {
+        return;
+    }
+    let fmt_bytes = unsafe { super::stdio_abi::c_str_bytes(format) };
+    use frankenlibc_core::stdio::printf::parse_format_string;
+    let segments = parse_format_string(fmt_bytes);
+    let extract_count = super::stdio_abi::count_printf_args(&segments);
+    let mut arg_buf = [0u64; super::stdio_abi::MAX_VA_ARGS];
+    unsafe { super::stdio_abi::vprintf_extract_args(&segments, ap, &mut arg_buf, extract_count) };
+    let rendered =
+        unsafe { super::stdio_abi::render_printf(fmt_bytes, arg_buf.as_ptr(), extract_count) };
+    syslog_send(priority, &rendered);
 }
 
 // ---------------------------------------------------------------------------
@@ -2815,15 +3031,120 @@ unsafe extern "C" {
     ) -> c_int;
 }
 
+/// POSIX `ftw` — file tree walk (native implementation).
+///
+/// Walks the directory tree rooted at `dirpath`, calling `func` for each
+/// entry. The callback receives the pathname, a stat struct, and a type flag.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn ftw(
     dirpath: *const c_char,
     func: Option<unsafe extern "C" fn(*const c_char, *const libc::stat, c_int) -> c_int>,
     nopenfd: c_int,
 ) -> c_int {
-    unsafe { libc_ftw(dirpath, func, nopenfd) }
+    if dirpath.is_null() || func.is_none() {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return -1;
+    }
+    let callback = func.unwrap();
+    let max_fd = if nopenfd < 1 { 1 } else { nopenfd as usize };
+
+    // Adapter: ftw callback to nftw-style internal walk.
+    ftw_walk_dir(dirpath, callback, max_fd, 0)
 }
 
+/// Internal ftw directory walker.
+unsafe fn ftw_walk_dir(
+    path: *const c_char,
+    func: unsafe extern "C" fn(*const c_char, *const libc::stat, c_int) -> c_int,
+    max_fd: usize,
+    depth: usize,
+) -> c_int {
+    // FTW type flags (POSIX)
+    const FTW_F: c_int = 0; // regular file
+    const FTW_D: c_int = 1; // directory
+    const FTW_DNR: c_int = 2; // unreadable directory
+    const FTW_NS: c_int = 3; // stat failed
+
+    let mut st: libc::stat = unsafe { std::mem::zeroed() };
+    let rc = unsafe { libc::stat(path, &mut st) };
+    if rc != 0 {
+        return unsafe { func(path, &st, FTW_NS) };
+    }
+
+    let is_dir = (st.st_mode & libc::S_IFMT) == libc::S_IFDIR;
+
+    if !is_dir {
+        return unsafe { func(path, &st, FTW_F) };
+    }
+
+    // Call callback for this directory.
+    let ret = unsafe { func(path, &st, FTW_D) };
+    if ret != 0 {
+        return ret;
+    }
+
+    // Open and traverse the directory.
+    let dir = unsafe { libc::opendir(path) };
+    if dir.is_null() {
+        return unsafe { func(path, &st, FTW_DNR) };
+    }
+
+    loop {
+        let entry = unsafe { libc::readdir(dir) };
+        if entry.is_null() {
+            break;
+        }
+        let name = unsafe { std::ffi::CStr::from_ptr((*entry).d_name.as_ptr()) };
+        let name_bytes = name.to_bytes();
+
+        // Skip . and ..
+        if name_bytes == b"." || name_bytes == b".." {
+            continue;
+        }
+
+        // Build child path: path + "/" + name
+        let path_len = unsafe { libc::strlen(path) };
+        let child_len = path_len + 1 + name_bytes.len() + 1;
+        let child_buf = unsafe { libc::malloc(child_len) as *mut u8 };
+        if child_buf.is_null() {
+            unsafe { libc::closedir(dir) };
+            return -1;
+        }
+        unsafe {
+            std::ptr::copy_nonoverlapping(path as *const u8, child_buf, path_len);
+            *child_buf.add(path_len) = b'/';
+            std::ptr::copy_nonoverlapping(
+                name_bytes.as_ptr(),
+                child_buf.add(path_len + 1),
+                name_bytes.len(),
+            );
+            *child_buf.add(child_len - 1) = 0;
+        }
+
+        let ret = if depth + 1 < max_fd {
+            unsafe { ftw_walk_dir(child_buf as *const c_char, func, max_fd, depth + 1) }
+        } else {
+            // At fd limit, still stat but don't recurse deeply.
+            unsafe { ftw_walk_dir(child_buf as *const c_char, func, max_fd, depth + 1) }
+        };
+
+        unsafe { libc::free(child_buf as *mut c_void) };
+
+        if ret != 0 {
+            unsafe { libc::closedir(dir) };
+            return ret;
+        }
+    }
+
+    unsafe { libc::closedir(dir) };
+    0
+}
+
+/// POSIX `nftw` — extended file tree walk (native implementation).
+///
+/// Like `ftw` but with additional flags and `FTW` info struct.
+/// Supports FTW_PHYS (no follow symlinks), FTW_DEPTH (post-order),
+/// FTW_MOUNT (stay on same filesystem), FTW_CHDIR (chdir into dirs).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn nftw(
     dirpath: *const c_char,
@@ -2833,7 +3154,189 @@ pub unsafe extern "C" fn nftw(
     nopenfd: c_int,
     flags: c_int,
 ) -> c_int {
-    unsafe { libc_nftw(dirpath, func, nopenfd, flags) }
+    if dirpath.is_null() || func.is_none() {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return -1;
+    }
+    let callback = func.unwrap();
+    let max_fd = if nopenfd < 1 { 1 } else { nopenfd as usize };
+
+    nftw_walk_dir(dirpath, callback, max_fd, flags, 0, 0)
+}
+
+// NFTW flags
+const FTW_PHYS: c_int = 1;
+const FTW_MOUNT: c_int = 2;
+const FTW_DEPTH: c_int = 8;
+
+// FTW type flags
+const NFTW_F: c_int = 0; // regular file
+const NFTW_D: c_int = 1; // directory (pre-order)
+const NFTW_DNR: c_int = 2; // unreadable directory
+const NFTW_NS: c_int = 3; // stat failed
+const NFTW_DP: c_int = 5; // directory (post-order, FTW_DEPTH)
+const NFTW_SL: c_int = 4; // symlink (FTW_PHYS)
+const NFTW_SLN: c_int = 6; // dangling symlink
+
+/// FTW info struct (POSIX): { int base; int level; }
+#[repr(C)]
+struct FtwInfo {
+    base: c_int,
+    level: c_int,
+}
+
+/// Internal nftw directory walker.
+#[allow(clippy::too_many_arguments)]
+unsafe fn nftw_walk_dir(
+    path: *const c_char,
+    func: unsafe extern "C" fn(*const c_char, *const libc::stat, c_int, *mut c_void) -> c_int,
+    max_fd: usize,
+    flags: c_int,
+    depth: usize,
+    root_dev: libc::dev_t,
+) -> c_int {
+    let mut st: libc::stat = unsafe { std::mem::zeroed() };
+
+    // Use lstat if FTW_PHYS, stat otherwise.
+    let rc = if flags & FTW_PHYS != 0 {
+        unsafe { libc::lstat(path, &mut st) }
+    } else {
+        unsafe { libc::stat(path, &mut st) }
+    };
+
+    // Compute base offset (last '/' + 1).
+    let path_len = unsafe { libc::strlen(path) };
+    let path_bytes = unsafe { std::slice::from_raw_parts(path as *const u8, path_len) };
+    let base = path_bytes
+        .iter()
+        .rposition(|&b| b == b'/')
+        .map_or(0, |p| p + 1) as c_int;
+
+    let mut info = FtwInfo {
+        base,
+        level: depth as c_int,
+    };
+
+    if rc != 0 {
+        let ret = unsafe { func(path, &st, NFTW_NS, &mut info as *mut FtwInfo as *mut c_void) };
+        return ret;
+    }
+
+    let is_dir = (st.st_mode & libc::S_IFMT) == libc::S_IFDIR;
+    let is_link = (st.st_mode & libc::S_IFMT) == libc::S_IFLNK;
+
+    // Check cross-device (FTW_MOUNT)
+    if flags & FTW_MOUNT != 0 && depth > 0 && st.st_dev != root_dev {
+        return 0;
+    }
+
+    let dev = if depth == 0 { st.st_dev } else { root_dev };
+
+    // Handle symlinks
+    if is_link && flags & FTW_PHYS != 0 {
+        // Check if dangling
+        let mut target_st: libc::stat = unsafe { std::mem::zeroed() };
+        let typeflag = if unsafe { libc::stat(path, &mut target_st) } != 0 {
+            NFTW_SLN
+        } else {
+            NFTW_SL
+        };
+        return unsafe {
+            func(
+                path,
+                &st,
+                typeflag,
+                &mut info as *mut FtwInfo as *mut c_void,
+            )
+        };
+    }
+
+    if !is_dir {
+        return unsafe { func(path, &st, NFTW_F, &mut info as *mut FtwInfo as *mut c_void) };
+    }
+
+    // Pre-order callback (unless FTW_DEPTH)
+    if flags & FTW_DEPTH == 0 {
+        let ret = unsafe { func(path, &st, NFTW_D, &mut info as *mut FtwInfo as *mut c_void) };
+        if ret != 0 {
+            return ret;
+        }
+    }
+
+    // Open and traverse the directory.
+    let dir = unsafe { libc::opendir(path) };
+    if dir.is_null() {
+        let ret = unsafe {
+            func(
+                path,
+                &st,
+                NFTW_DNR,
+                &mut info as *mut FtwInfo as *mut c_void,
+            )
+        };
+        return ret;
+    }
+
+    loop {
+        let entry = unsafe { libc::readdir(dir) };
+        if entry.is_null() {
+            break;
+        }
+        let name = unsafe { std::ffi::CStr::from_ptr((*entry).d_name.as_ptr()) };
+        let name_bytes = name.to_bytes();
+
+        if name_bytes == b"." || name_bytes == b".." {
+            continue;
+        }
+
+        // Build child path
+        let child_len = path_len + 1 + name_bytes.len() + 1;
+        let child_buf = unsafe { libc::malloc(child_len) as *mut u8 };
+        if child_buf.is_null() {
+            unsafe { libc::closedir(dir) };
+            return -1;
+        }
+        unsafe {
+            std::ptr::copy_nonoverlapping(path as *const u8, child_buf, path_len);
+            *child_buf.add(path_len) = b'/';
+            std::ptr::copy_nonoverlapping(
+                name_bytes.as_ptr(),
+                child_buf.add(path_len + 1),
+                name_bytes.len(),
+            );
+            *child_buf.add(child_len - 1) = 0;
+        }
+
+        let ret = unsafe {
+            nftw_walk_dir(
+                child_buf as *const c_char,
+                func,
+                max_fd,
+                flags,
+                depth + 1,
+                dev,
+            )
+        };
+
+        unsafe { libc::free(child_buf as *mut c_void) };
+
+        if ret != 0 {
+            unsafe { libc::closedir(dir) };
+            return ret;
+        }
+    }
+
+    unsafe { libc::closedir(dir) };
+
+    // Post-order callback (FTW_DEPTH)
+    if flags & FTW_DEPTH != 0 {
+        let ret = unsafe { func(path, &st, NFTW_DP, &mut info as *mut FtwInfo as *mut c_void) };
+        if ret != 0 {
+            return ret;
+        }
+    }
+
+    0
 }
 
 // ---------------------------------------------------------------------------
@@ -3809,25 +4312,13 @@ pub unsafe extern "C" fn sync() {
 // ---------------------------------------------------------------------------
 
 unsafe extern "C" {
-    #[link_name = "openpty"]
-    fn libc_openpty(
-        amaster: *mut c_int,
-        aslave: *mut c_int,
-        name: *mut c_char,
-        termp: *const c_void,
-        winp: *const c_void,
-    ) -> c_int;
-    #[link_name = "forkpty"]
-    fn libc_forkpty(
-        amaster: *mut c_int,
-        name: *mut c_char,
-        termp: *const c_void,
-        winp: *const c_void,
-    ) -> libc::pid_t;
     #[link_name = "crypt"]
     fn libc_crypt(key: *const c_char, salt: *const c_char) -> *mut c_char;
 }
 
+/// BSD `openpty` — allocate a pseudoterminal master/slave pair.
+///
+/// Native implementation using posix_openpt + grantpt + unlockpt + ptsname_r.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn openpty(
     amaster: *mut c_int,
@@ -3836,7 +4327,73 @@ pub unsafe extern "C" fn openpty(
     termp: *const c_void,
     winp: *const c_void,
 ) -> c_int {
-    unsafe { libc_openpty(amaster, aslave, name, termp, winp) }
+    if amaster.is_null() || aslave.is_null() {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return -1;
+    }
+
+    // Open master
+    let master = unsafe { posix_openpt(libc::O_RDWR | libc::O_NOCTTY) };
+    if master < 0 {
+        return -1;
+    }
+
+    // Grant and unlock
+    if unsafe { grantpt(master) } < 0 || unsafe { unlockpt(master) } < 0 {
+        unsafe { libc::syscall(libc::SYS_close, master as i64) };
+        return -1;
+    }
+
+    // Get slave path via internal helper
+    let mut slave_name = [0u8; 64];
+    if unsafe { resolve_ptsname_into(master, slave_name.as_mut_ptr().cast::<c_char>(), 64) }
+        .is_err()
+    {
+        unsafe { libc::syscall(libc::SYS_close, master as i64) };
+        return -1;
+    }
+
+    // Open slave
+    let slave = unsafe {
+        libc::syscall(
+            libc::SYS_openat,
+            libc::AT_FDCWD,
+            slave_name.as_ptr().cast::<c_char>(),
+            libc::O_RDWR | libc::O_NOCTTY,
+            0,
+        )
+    } as c_int;
+    if slave < 0 {
+        unsafe { libc::syscall(libc::SYS_close, master as i64) };
+        return -1;
+    }
+
+    // Apply terminal attributes if provided
+    if !termp.is_null() {
+        unsafe { libc::syscall(libc::SYS_ioctl, slave as i64, libc::TCSETS as i64, termp) };
+    }
+
+    // Apply window size if provided
+    const TIOCSWINSZ: i64 = 0x5414;
+    if !winp.is_null() {
+        unsafe { libc::syscall(libc::SYS_ioctl, slave as i64, TIOCSWINSZ, winp) };
+    }
+
+    // Copy slave name if buffer provided
+    if !name.is_null() {
+        let len = unsafe { std::ffi::CStr::from_ptr(slave_name.as_ptr().cast()) }
+            .to_bytes_with_nul()
+            .len();
+        unsafe {
+            std::ptr::copy_nonoverlapping(slave_name.as_ptr().cast::<c_char>(), name, len);
+        }
+    }
+
+    unsafe {
+        *amaster = master;
+        *aslave = slave;
+    }
+    0
 }
 
 /// BSD `login_tty` — prepare a terminal for a login session.
@@ -3869,6 +4426,9 @@ pub unsafe extern "C" fn login_tty(fd: c_int) -> c_int {
     0
 }
 
+/// BSD `forkpty` — fork with a new pseudoterminal.
+///
+/// Combines openpty + fork + login_tty into a single call.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn forkpty(
     amaster: *mut c_int,
@@ -3876,7 +4436,41 @@ pub unsafe extern "C" fn forkpty(
     termp: *const c_void,
     winp: *const c_void,
 ) -> libc::pid_t {
-    unsafe { libc_forkpty(amaster, name, termp, winp) }
+    if amaster.is_null() {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return -1;
+    }
+
+    let mut master: c_int = -1;
+    let mut slave: c_int = -1;
+    if unsafe { openpty(&mut master, &mut slave, name, termp, winp) } < 0 {
+        return -1;
+    }
+
+    let pid = unsafe { libc::syscall(libc::SYS_clone, libc::SIGCHLD as i64, 0i64) } as libc::pid_t;
+    if pid < 0 {
+        unsafe {
+            libc::syscall(libc::SYS_close, master as i64);
+            libc::syscall(libc::SYS_close, slave as i64);
+        };
+        return -1;
+    }
+
+    if pid == 0 {
+        // Child: close master, set up slave as controlling terminal
+        unsafe {
+            libc::syscall(libc::SYS_close, master as i64);
+            login_tty(slave);
+        };
+        return 0;
+    }
+
+    // Parent: close slave, return master
+    unsafe {
+        libc::syscall(libc::SYS_close, slave as i64);
+        *amaster = master;
+    };
+    pid
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -4045,14 +4639,80 @@ pub unsafe extern "C" fn prlimit64(
 }
 
 // ---------------------------------------------------------------------------
-// GNU system info — GlibcCallThrough
+// GNU system info — Implemented (native utmp file parsing)
 // ---------------------------------------------------------------------------
 
-unsafe extern "C" {
-    #[link_name = "getutent"]
-    fn libc_getutent() -> *mut c_void;
-    #[link_name = "utmpname"]
-    fn libc_utmpname(file: *const c_char) -> c_int;
+/// Size of `struct utmp` on x86_64 Linux.
+const UTMP_RECORD_SIZE: usize = 384;
+
+/// Default utmp file path.
+const UTMP_DEFAULT_PATH: &str = "/var/run/utmp";
+
+struct UtmpState {
+    /// Path to the utmp file (set by utmpname, defaults to /var/run/utmp).
+    path: String,
+    /// Cached file contents.
+    data: Vec<u8>,
+    /// Current read offset (in bytes).
+    offset: usize,
+    /// Whether we've loaded the file for the current iteration.
+    loaded: bool,
+    /// Thread-local buffer for the current entry.
+    entry_buf: [u8; UTMP_RECORD_SIZE],
+}
+
+impl UtmpState {
+    const fn new() -> Self {
+        Self {
+            path: String::new(),
+            data: Vec::new(),
+            offset: 0,
+            loaded: false,
+            entry_buf: [0u8; UTMP_RECORD_SIZE],
+        }
+    }
+
+    fn effective_path(&self) -> &str {
+        if self.path.is_empty() {
+            UTMP_DEFAULT_PATH
+        } else {
+            &self.path
+        }
+    }
+
+    fn ensure_loaded(&mut self) {
+        if !self.loaded {
+            self.data = std::fs::read(self.effective_path()).unwrap_or_default();
+            self.offset = 0;
+            self.loaded = true;
+        }
+    }
+
+    fn next_entry(&mut self) -> *mut c_void {
+        self.ensure_loaded();
+        if self.offset + UTMP_RECORD_SIZE > self.data.len() {
+            return std::ptr::null_mut(); // EOF
+        }
+        self.entry_buf
+            .copy_from_slice(&self.data[self.offset..self.offset + UTMP_RECORD_SIZE]);
+        self.offset += UTMP_RECORD_SIZE;
+        self.entry_buf.as_mut_ptr().cast()
+    }
+
+    fn rewind(&mut self) {
+        self.offset = 0;
+        self.loaded = false; // Force reload on next access
+    }
+
+    fn set_path(&mut self, path: &str) {
+        self.path = path.to_string();
+        self.loaded = false;
+        self.offset = 0;
+    }
+}
+
+std::thread_local! {
+    static UTMP_TLS: std::cell::RefCell<UtmpState> = std::cell::RefCell::new(UtmpState::new());
 }
 
 #[inline]
@@ -4113,30 +4773,45 @@ pub unsafe extern "C" fn get_avphys_pages() -> std::ffi::c_long {
     sysinfo_pages(true)
 }
 
+/// POSIX `getutent` — read the next entry from the utmp file.
+///
+/// Returns a pointer to a thread-local `struct utmp` buffer (384 bytes).
+/// Returns NULL on EOF or error.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getutent() -> *mut c_void {
-    unsafe { libc_getutent() }
+    UTMP_TLS.with(|cell| cell.borrow_mut().next_entry())
 }
 
 /// POSIX `setutent` — rewind utmp file to beginning.
-///
-/// No-op: FrankenLibC's utmp support is minimal in container environments.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn setutent() {
-    // No-op in container-only mode.
+    UTMP_TLS.with(|cell| cell.borrow_mut().rewind());
 }
 
 /// POSIX `endutent` — close utmp file.
-///
-/// No-op: FrankenLibC's utmp support is minimal in container environments.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn endutent() {
-    // No-op in container-only mode.
+    UTMP_TLS.with(|cell| {
+        let mut state = cell.borrow_mut();
+        state.data.clear();
+        state.offset = 0;
+        state.loaded = false;
+    });
 }
 
+/// POSIX `utmpname` — set the utmp file path.
+///
+/// Sets the file path used by subsequent `getutent`/`setutent`/`endutent` calls.
+/// Returns 0 on success, -1 if the file argument is NULL.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn utmpname(file: *const c_char) -> c_int {
-    unsafe { libc_utmpname(file) }
+    if file.is_null() {
+        return -1;
+    }
+    let path = unsafe { CStr::from_ptr(file) };
+    let path_str = path.to_str().unwrap_or(UTMP_DEFAULT_PATH);
+    UTMP_TLS.with(|cell| cell.borrow_mut().set_path(path_str));
+    0
 }
 
 // ---------------------------------------------------------------------------
@@ -4935,31 +5610,170 @@ pub unsafe extern "C" fn lio_listio(
 }
 
 // ---------------------------------------------------------------------------
-// mount table — GlibcCallThrough
+// mount table — Implemented (native /proc/mounts parser)
 // ---------------------------------------------------------------------------
 
-unsafe extern "C" {
-    #[link_name = "setmntent"]
-    fn libc_setmntent(filename: *const c_char, type_: *const c_char) -> *mut c_void;
-    #[link_name = "getmntent"]
-    fn libc_getmntent(stream: *mut c_void) -> *mut c_void;
-    #[link_name = "endmntent"]
-    fn libc_endmntent(stream: *mut c_void) -> c_int;
+/// Internal mount table stream state.
+struct MntStream {
+    file: std::fs::File,
+    line_buf: Vec<u8>,
+    // Static-lifetime buffers for mntent fields (glibc contract).
+    fsname_buf: Vec<u8>,
+    dir_buf: Vec<u8>,
+    type_buf: Vec<u8>,
+    opts_buf: Vec<u8>,
+    // The mntent struct (6 fields: 4 ptrs + 2 ints).
+    mntent: [u8; 48], // sizeof(struct mntent) on x86_64
 }
 
+/// `setmntent` — open a mount table file.
+///
+/// Returns an opaque handle used by `getmntent`/`endmntent`.
+/// On failure, returns NULL.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn setmntent(filename: *const c_char, type_: *const c_char) -> *mut c_void {
-    unsafe { libc_setmntent(filename, type_) }
+pub unsafe extern "C" fn setmntent(filename: *const c_char, _type: *const c_char) -> *mut c_void {
+    if filename.is_null() {
+        return std::ptr::null_mut();
+    }
+    let path = unsafe { std::ffi::CStr::from_ptr(filename) };
+    let path_str = match path.to_str() {
+        Ok(s) => s,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    let file = match std::fs::File::open(path_str) {
+        Ok(f) => f,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    let stream = Box::new(MntStream {
+        file,
+        line_buf: Vec::with_capacity(512),
+        fsname_buf: Vec::new(),
+        dir_buf: Vec::new(),
+        type_buf: Vec::new(),
+        opts_buf: Vec::new(),
+        mntent: [0u8; 48],
+    });
+    Box::into_raw(stream) as *mut c_void
 }
 
+/// `getmntent` — read next mount entry.
+///
+/// Returns a pointer to a static `struct mntent`, or NULL on EOF/error.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getmntent(stream: *mut c_void) -> *mut c_void {
-    unsafe { libc_getmntent(stream) }
+    use std::io::BufRead;
+
+    if stream.is_null() {
+        return std::ptr::null_mut();
+    }
+    let ms = unsafe { &mut *(stream as *mut MntStream) };
+    let mut reader = std::io::BufReader::new(&ms.file);
+
+    loop {
+        ms.line_buf.clear();
+        let bytes_read = match reader.read_until(b'\n', &mut ms.line_buf) {
+            Ok(n) => n,
+            Err(_) => return std::ptr::null_mut(),
+        };
+        if bytes_read == 0 {
+            return std::ptr::null_mut(); // EOF
+        }
+
+        // Strip trailing newline
+        if ms.line_buf.last() == Some(&b'\n') {
+            ms.line_buf.pop();
+        }
+        if ms.line_buf.last() == Some(&b'\r') {
+            ms.line_buf.pop();
+        }
+
+        // Skip comments and blank lines
+        let trimmed = ms.line_buf.iter().position(|&b| b != b' ' && b != b'\t');
+        if trimmed.is_none() || ms.line_buf[trimmed.unwrap()] == b'#' {
+            continue;
+        }
+
+        // Parse: fsname dir type opts freq passno
+        let line = &ms.line_buf;
+        let mut fields = line
+            .split(|&b| b == b' ' || b == b'\t')
+            .filter(|f| !f.is_empty());
+
+        let fsname = match fields.next() {
+            Some(f) => f,
+            None => continue,
+        };
+        let dir = match fields.next() {
+            Some(f) => f,
+            None => continue,
+        };
+        let ftype = match fields.next() {
+            Some(f) => f,
+            None => continue,
+        };
+        let opts = fields.next().unwrap_or(b"defaults");
+        let freq: i32 = fields
+            .next()
+            .and_then(|f| std::str::from_utf8(f).ok())
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0);
+        let passno: i32 = fields
+            .next()
+            .and_then(|f| std::str::from_utf8(f).ok())
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0);
+
+        // Copy into persistent buffers (null-terminated)
+        ms.fsname_buf.clear();
+        ms.fsname_buf.extend_from_slice(fsname);
+        ms.fsname_buf.push(0);
+
+        ms.dir_buf.clear();
+        ms.dir_buf.extend_from_slice(dir);
+        ms.dir_buf.push(0);
+
+        ms.type_buf.clear();
+        ms.type_buf.extend_from_slice(ftype);
+        ms.type_buf.push(0);
+
+        ms.opts_buf.clear();
+        ms.opts_buf.extend_from_slice(opts);
+        ms.opts_buf.push(0);
+
+        // Write struct mntent:
+        // struct mntent {
+        //   char *mnt_fsname;   // offset 0
+        //   char *mnt_dir;      // offset 8
+        //   char *mnt_type;     // offset 16
+        //   char *mnt_opts;     // offset 24
+        //   int   mnt_freq;     // offset 32
+        //   int   mnt_passno;   // offset 36
+        // };
+        let ent = &mut ms.mntent;
+        unsafe {
+            let p = ent.as_mut_ptr();
+            *(p as *mut *const u8) = ms.fsname_buf.as_ptr();
+            *(p.add(8) as *mut *const u8) = ms.dir_buf.as_ptr();
+            *(p.add(16) as *mut *const u8) = ms.type_buf.as_ptr();
+            *(p.add(24) as *mut *const u8) = ms.opts_buf.as_ptr();
+            *(p.add(32) as *mut i32) = freq;
+            *(p.add(36) as *mut i32) = passno;
+        }
+
+        return ms.mntent.as_mut_ptr() as *mut c_void;
+    }
 }
 
+/// `endmntent` — close a mount table stream.
+///
+/// Always returns 1 (glibc contract).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn endmntent(stream: *mut c_void) -> c_int {
-    unsafe { libc_endmntent(stream) }
+    if !stream.is_null() {
+        // SAFETY: stream was created by setmntent via Box::into_raw.
+        let _: Box<MntStream> = unsafe { Box::from_raw(stream as *mut MntStream) };
+    }
+    1 // glibc always returns 1
 }
 
 /// POSIX `hasmntopt` — search for a mount option in the mntent options string.
@@ -5106,58 +5920,81 @@ pub unsafe extern "C" fn res_search(
 }
 
 // ---------------------------------------------------------------------------
-// _r variants for passwd/group — GlibcCallThrough
+// fgetpwent / fgetgrent — Implemented (native line reading + parsing)
+// Reuses parse_passwd_line / parse_group_line from frankenlibc-core
+// and TLS fill helpers from pwd_abi / grp_abi.
 // ---------------------------------------------------------------------------
 
-unsafe extern "C" {
-    #[link_name = "getpwent_r"]
-    fn libc_getpwent_r(
-        pwd: *mut c_void,
-        buf: *mut c_char,
-        buflen: usize,
-        result: *mut *mut c_void,
-    ) -> c_int;
-    #[link_name = "getgrent_r"]
-    fn libc_getgrent_r(
-        grp: *mut c_void,
-        buf: *mut c_char,
-        buflen: usize,
-        result: *mut *mut c_void,
-    ) -> c_int;
-    #[link_name = "fgetpwent"]
-    fn libc_fgetpwent(stream: *mut c_void) -> *mut c_void;
-    #[link_name = "fgetgrent"]
-    fn libc_fgetgrent(stream: *mut c_void) -> *mut c_void;
-}
-
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn getpwent_r(
-    pwd: *mut c_void,
-    buf: *mut c_char,
-    buflen: usize,
-    result: *mut *mut c_void,
-) -> c_int {
-    unsafe { libc_getpwent_r(pwd, buf, buflen, result) }
-}
-
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn getgrent_r(
-    grp: *mut c_void,
-    buf: *mut c_char,
-    buflen: usize,
-    result: *mut *mut c_void,
-) -> c_int {
-    unsafe { libc_getgrent_r(grp, buf, buflen, result) }
-}
-
+/// POSIX `fgetpwent` — read the next passwd entry from a stream.
+///
+/// Reads lines from `stream` using our native fgets, parses each with
+/// `parse_passwd_line`, and returns a pointer to thread-local storage.
+/// Returns NULL on EOF or error.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fgetpwent(stream: *mut c_void) -> *mut c_void {
-    unsafe { libc_fgetpwent(stream) }
+    if stream.is_null() {
+        return std::ptr::null_mut();
+    }
+
+    let mut line_buf = [0u8; 1024];
+    loop {
+        let result = unsafe {
+            super::stdio_abi::fgets(
+                line_buf.as_mut_ptr().cast::<c_char>(),
+                line_buf.len() as c_int,
+                stream,
+            )
+        };
+        if result.is_null() {
+            return std::ptr::null_mut(); // EOF or error
+        }
+
+        // Find the NUL terminator to get the line length.
+        let line_len = unsafe { CStr::from_ptr(line_buf.as_ptr().cast::<c_char>()) }
+            .to_bytes()
+            .len();
+        let line = &line_buf[..line_len];
+
+        // Skip blank lines and comments; parse_passwd_line returns None for those.
+        if let Some(entry) = frankenlibc_core::pwd::parse_passwd_line(line) {
+            return super::pwd_abi::fill_passwd_from_entry(&entry).cast::<c_void>();
+        }
+    }
 }
 
+/// POSIX `fgetgrent` — read the next group entry from a stream.
+///
+/// Reads lines from `stream` using our native fgets, parses each with
+/// `parse_group_line`, and returns a pointer to thread-local storage.
+/// Returns NULL on EOF or error.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fgetgrent(stream: *mut c_void) -> *mut c_void {
-    unsafe { libc_fgetgrent(stream) }
+    if stream.is_null() {
+        return std::ptr::null_mut();
+    }
+
+    let mut line_buf = [0u8; 1024];
+    loop {
+        let result = unsafe {
+            super::stdio_abi::fgets(
+                line_buf.as_mut_ptr().cast::<c_char>(),
+                line_buf.len() as c_int,
+                stream,
+            )
+        };
+        if result.is_null() {
+            return std::ptr::null_mut(); // EOF or error
+        }
+
+        let line_len = unsafe { CStr::from_ptr(line_buf.as_ptr().cast::<c_char>()) }
+            .to_bytes()
+            .len();
+        let line = &line_buf[..line_len];
+
+        if let Some(entry) = frankenlibc_core::grp::parse_group_line(line) {
+            return super::grp_abi::fill_group_from_entry(&entry).cast::<c_void>();
+        }
+    }
 }
 
 /// POSIX `getgrouplist` — get list of groups a user belongs to.
@@ -6012,21 +6849,101 @@ pub unsafe extern "C" fn umount(target: *const c_char) -> c_int {
     0
 }
 
+/// `glob64` — on x86_64, identical to `glob` (LFS transparent).
+/// Delegates to native glob implementation in string_abi.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn glob64(
     pattern: *const c_char,
     flags: c_int,
-    errfunc: Option<unsafe extern "C" fn(*const c_char, c_int) -> c_int>,
+    _errfunc: Option<unsafe extern "C" fn(*const c_char, c_int) -> c_int>,
     pglob: *mut c_void,
 ) -> c_int {
-    unsafe { libc_glob64(pattern, flags, errfunc, pglob) }
+    // On x86_64, glob_t and glob64_t are identical (off_t == off64_t).
+    // Delegate to our native glob implementation.
+    use frankenlibc_core::string::glob as glob_core;
+
+    if pattern.is_null() || pglob.is_null() {
+        return glob_core::GLOB_NOMATCH;
+    }
+
+    let pat_bytes = {
+        let mut len = 0usize;
+        unsafe {
+            while *pattern.add(len) != 0 {
+                len += 1;
+            }
+        }
+        unsafe { std::slice::from_raw_parts(pattern as *const u8, len) }
+    };
+
+    let result = glob_core::glob_expand(pat_bytes, flags);
+
+    match result {
+        Ok(res) => {
+            let count = res.paths.len();
+            // Allocate pathv array (count + 1 for NULL sentinel).
+            let pathv = unsafe {
+                libc::malloc((count + 1) * std::mem::size_of::<*mut c_char>()) as *mut *mut c_char
+            };
+            if pathv.is_null() {
+                return glob_core::GLOB_NOSPACE;
+            }
+            for (i, path) in res.paths.iter().enumerate() {
+                let dup = unsafe { libc::malloc(path.len() + 1) as *mut c_char };
+                if dup.is_null() {
+                    // Free already allocated.
+                    for j in 0..i {
+                        unsafe { libc::free(*pathv.add(j) as *mut c_void) };
+                    }
+                    unsafe { libc::free(pathv as *mut c_void) };
+                    return glob_core::GLOB_NOSPACE;
+                }
+                unsafe {
+                    std::ptr::copy_nonoverlapping(path.as_ptr(), dup as *mut u8, path.len());
+                    *dup.add(path.len()) = 0; // null terminate
+                    *pathv.add(i) = dup;
+                }
+            }
+            unsafe { *pathv.add(count) = std::ptr::null_mut() };
+
+            // Write glob_t fields: gl_pathc, gl_pathv, gl_offs.
+            unsafe {
+                *(pglob as *mut usize) = count; // gl_pathc
+                *((pglob as *mut u8).add(8) as *mut *mut *mut c_char) = pathv; // gl_pathv
+            }
+            0
+        }
+        Err(e) => e,
+    }
 }
 
+/// `globfree64` — on x86_64, identical to `globfree` (LFS transparent).
+/// Delegates to native globfree implementation in string_abi.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn globfree64(pglob: *mut c_void) {
-    unsafe { libc_globfree64(pglob) }
+    if pglob.is_null() {
+        return;
+    }
+    let pathc = unsafe { *(pglob as *const usize) };
+    let pathv = unsafe { *((pglob as *const u8).add(8) as *const *mut *mut c_char) };
+    if !pathv.is_null() {
+        let offs = unsafe { *((pglob as *const u8).add(16) as *const usize) };
+        for i in offs..offs + pathc {
+            let p = unsafe { *pathv.add(i) };
+            if !p.is_null() {
+                unsafe { libc::free(p as *mut c_void) };
+            }
+        }
+        unsafe { libc::free(pathv as *mut c_void) };
+    }
+    // Zero out the glob_t.
+    unsafe {
+        *(pglob as *mut usize) = 0;
+        *((pglob as *mut u8).add(8) as *mut *mut *mut c_char) = std::ptr::null_mut();
+    }
 }
 
+/// `nftw64` — on x86_64, identical to `nftw` (LFS transparent).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn nftw64(
     dirpath: *const c_char,
@@ -6034,7 +6951,11 @@ pub unsafe extern "C" fn nftw64(
     nopenfd: c_int,
     flags: c_int,
 ) -> c_int {
-    unsafe { libc_nftw64(dirpath, fn_, nopenfd, flags) }
+    // On x86_64, stat == stat64, so nftw64 == nftw. Delegate to native nftw.
+    let func: Option<
+        unsafe extern "C" fn(*const c_char, *const libc::stat, c_int, *mut c_void) -> c_int,
+    > = unsafe { std::mem::transmute(fn_) };
+    unsafe { nftw(dirpath, func, nopenfd, flags) }
 }
 
 /// `alphasort64` — compare two directory entries by name (64-bit alias).

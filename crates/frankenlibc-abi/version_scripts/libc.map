@@ -54,6 +54,8 @@ GLIBC_2.2.5 {
         swab;
         index;
         rindex;
+        strverscmp;
+        rawmemchr;
 
         /* BSD/GNU memory operations */
         bcmp;
@@ -171,6 +173,16 @@ GLIBC_2.2.5 {
         aligned_alloc;
         memalign;
         posix_memalign;
+        valloc;
+        pvalloc;
+        cfree;
+        mallopt;
+        malloc_usable_size;
+        malloc_trim;
+        mallinfo;
+        mallinfo2;
+        malloc_stats;
+        malloc_info;
 
         /* stdlib */
         system;
@@ -237,6 +249,8 @@ GLIBC_2.2.5 {
         at_quick_exit;
         quick_exit;
         getsubopt;
+        gnu_get_libc_version;
+        confstr;
 
         /* ctype */
         isalnum;
@@ -917,6 +931,32 @@ GLIBC_2.2.5 {
         syslog;
         closelog;
         vsyslog;
+
+        /* err.h — BSD/GNU error reporting */
+        err;
+        errx;
+        warn;
+        warnx;
+        verr;
+        verrx;
+        vwarn;
+        vwarnx;
+
+        /* search.h — hash table, binary tree, linear search */
+        hcreate;
+        hsearch;
+        hdestroy;
+        hcreate_r;
+        hsearch_r;
+        hdestroy_r;
+        tsearch;
+        tfind;
+        tdelete;
+        twalk;
+        lfind;
+        lsearch;
+        insque;
+        remque;
 
         /* regex / pattern matching */
         regcomp;

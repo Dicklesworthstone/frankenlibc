@@ -1760,33 +1760,56 @@ impl RuntimeMathKernel {
         let risk_upper_bound_ppm =
             (u64::from(pre_design_risk_ppm) + u64::from(design_bonus)).min(1_000_000) as u32;
 
-        let pressure_signals = pressure_signals_from_runtime(
-            ctx,
-            risk_upper_bound_ppm,
-            fast_wcl,
-            full_wcl,
-            consistency_faults,
-        );
-        let pressure_snapshot = {
-            let mut sensor = self.pressure_sensor.lock();
-            let _ = sensor.observe(&pressure_signals);
-            sensor.snapshot()
+        // Pressure sensing is cadence-gated to preserve strict fast-path latency.
+        // Under elevated pressure or risky contexts, we still observe every call.
+        let cached_pressure_code = self.cached_pressure_regime.load(Ordering::Relaxed);
+        let cached_pressure_epoch = self.cached_pressure_epoch.load(Ordering::Relaxed);
+        let pressure_cadence = match cached_pressure_code {
+            PRESSURE_REGIME_NOMINAL => 16_u64,
+            PRESSURE_REGIME_PRESSURED => 4_u64,
+            PRESSURE_REGIME_RECOVERY => 2_u64,
+            PRESSURE_REGIME_OVERLOADED => 1_u64,
+            _ => 1_u64,
         };
-        let pressure_regime = pressure_snapshot.regime;
-        self.cached_pressure_regime
-            .store(pressure_regime_code(pressure_regime), Ordering::Relaxed);
-        self.cached_pressure_score_milli.store(
-            score_to_milli(pressure_snapshot.pressure_score),
-            Ordering::Relaxed,
-        );
-        self.cached_pressure_raw_score_milli.store(
-            score_to_milli(pressure_snapshot.raw_score),
-            Ordering::Relaxed,
-        );
-        self.cached_pressure_epoch
-            .store(pressure_snapshot.epoch, Ordering::Relaxed);
-        self.cached_pressure_transitions
-            .store(pressure_snapshot.transition_count, Ordering::Relaxed);
+        let should_observe_pressure = cached_pressure_epoch == 0
+            || sequence <= 4
+            || sequence.is_multiple_of(pressure_cadence)
+            || ctx.contention_hint >= 64
+            || ctx.bloom_negative
+            || risk_upper_bound_ppm >= 250_000;
+        let pressure_regime = if should_observe_pressure {
+            let pressure_signals = pressure_signals_from_runtime(
+                ctx,
+                risk_upper_bound_ppm,
+                fast_wcl,
+                full_wcl,
+                consistency_faults,
+            );
+            let pressure_snapshot = {
+                let mut sensor = self.pressure_sensor.lock();
+                let _ = sensor.observe(&pressure_signals);
+                sensor.snapshot()
+            };
+            self.cached_pressure_regime.store(
+                pressure_regime_code(pressure_snapshot.regime),
+                Ordering::Relaxed,
+            );
+            self.cached_pressure_score_milli.store(
+                score_to_milli(pressure_snapshot.pressure_score),
+                Ordering::Relaxed,
+            );
+            self.cached_pressure_raw_score_milli.store(
+                score_to_milli(pressure_snapshot.raw_score),
+                Ordering::Relaxed,
+            );
+            self.cached_pressure_epoch
+                .store(pressure_snapshot.epoch, Ordering::Relaxed);
+            self.cached_pressure_transitions
+                .store(pressure_snapshot.transition_count, Ordering::Relaxed);
+            pressure_snapshot.regime
+        } else {
+            pressure_regime_from_code(cached_pressure_code)
+        };
 
         // D-optimal probe scheduling:
         // choose heavy monitors under budget to maximize online identifiability.
@@ -2021,12 +2044,12 @@ impl RuntimeMathKernel {
             }
         } else if let Some(escalated) = policy_escalation {
             escalated
-        } else if mode.heals_enabled() && risk_upper_bound_ppm >= limits.repair_trigger_ppm {
-            MembraneAction::Repair(HealingAction::UpgradeToSafeVariant)
         } else if profile.requires_full()
             || risk_upper_bound_ppm >= limits.full_validation_trigger_ppm
         {
             MembraneAction::FullValidate
+        } else if mode.heals_enabled() && risk_upper_bound_ppm >= limits.repair_trigger_ppm {
+            MembraneAction::Repair(HealingAction::UpgradeToSafeVariant)
         } else {
             MembraneAction::Allow
         };
@@ -4804,6 +4827,15 @@ fn pressure_regime_code(regime: SystemRegime) -> u8 {
     }
 }
 
+fn pressure_regime_from_code(code: u8) -> SystemRegime {
+    match code {
+        PRESSURE_REGIME_PRESSURED => SystemRegime::Pressured,
+        PRESSURE_REGIME_OVERLOADED => SystemRegime::Overloaded,
+        PRESSURE_REGIME_RECOVERY => SystemRegime::Recovery,
+        _ => SystemRegime::Nominal,
+    }
+}
+
 fn pressure_regime_name(code: u8) -> &'static str {
     match code {
         PRESSURE_REGIME_NOMINAL => "Nominal",
@@ -4880,7 +4912,7 @@ fn profile_name(profile: ValidationProfile) -> &'static str {
 }
 
 fn snapshot_validation_field_count() -> usize {
-    9
+    13
 }
 
 fn snapshot_range_violations(
@@ -4919,6 +4951,40 @@ fn snapshot_range_violations(
             f64::from(snapshot.loss_posterior_adverse_ppm),
             0.0,
             ppm_limit,
+        ));
+    }
+    let pressure_score_limit_milli = 100_000.0;
+    if f64::from(snapshot.pressure_regime_code) > f64::from(PRESSURE_REGIME_RECOVERY) {
+        violations.push((
+            "pressure_regime_code",
+            f64::from(snapshot.pressure_regime_code),
+            0.0,
+            f64::from(PRESSURE_REGIME_RECOVERY),
+        ));
+    }
+    if f64::from(snapshot.pressure_score_milli) > pressure_score_limit_milli {
+        violations.push((
+            "pressure_score_milli",
+            f64::from(snapshot.pressure_score_milli),
+            0.0,
+            pressure_score_limit_milli,
+        ));
+    }
+    if f64::from(snapshot.pressure_raw_score_milli) > pressure_score_limit_milli {
+        violations.push((
+            "pressure_raw_score_milli",
+            f64::from(snapshot.pressure_raw_score_milli),
+            0.0,
+            pressure_score_limit_milli,
+        ));
+    }
+    if f64::from(snapshot.overload_policy_tag) > f64::from(OVERLOAD_POLICY_OVERLOADED_SAFE_FALLBACK)
+    {
+        violations.push((
+            "overload_policy_tag",
+            f64::from(snapshot.overload_policy_tag),
+            0.0,
+            f64::from(OVERLOAD_POLICY_OVERLOADED_SAFE_FALLBACK),
         ));
     }
 
@@ -5169,6 +5235,26 @@ mod tests {
             *counts.entry(name.to_string()).or_insert(0) += 1;
         }
         counts
+    }
+
+    fn extreme_pressure_signals() -> PressureSignals {
+        PressureSignals {
+            scheduler_delay_ns: 50_000_000,
+            queue_depth: 1000,
+            error_burst_count: 50,
+            latency_envelope_ns: 50_000_000,
+            resource_pressure_pct: 100.0,
+        }
+    }
+
+    fn drive_pressure_sensor_to(kernel: &RuntimeMathKernel, target: SystemRegime) {
+        let mut sensor = kernel.pressure_sensor.lock();
+        for _ in 0..32 {
+            if sensor.observe(&extreme_pressure_signals()) == target {
+                return;
+            }
+        }
+        panic!("failed to drive pressure sensor into {target:?}");
     }
 
     #[test]
@@ -5666,6 +5752,176 @@ mod tests {
     }
 
     #[test]
+    fn pressured_regime_can_apply_fast_allow_overload_policy() {
+        let kernel = RuntimeMathKernel::new();
+        drive_pressure_sensor_to(&kernel, SystemRegime::Pressured);
+        // Force the pre-policy action path through FullValidate so the pressured
+        // policy branch can deterministically downshift to fast/allow.
+        kernel.cached_localization_arm.store(2, Ordering::Relaxed);
+        let count_before = kernel.cached_overload_policy_count.load(Ordering::Relaxed);
+
+        let decision = kernel.decide(
+            SafetyLevel::Strict,
+            RuntimeContext {
+                family: ApiFamily::PointerValidation,
+                addr_hint: 0x1000,
+                requested_bytes: 128,
+                is_write: false,
+                contention_hint: 80,
+                bloom_negative: false,
+            },
+        );
+
+        assert_eq!(decision.profile, ValidationProfile::Fast);
+        assert_eq!(decision.action, MembraneAction::Allow);
+        assert_eq!(
+            kernel.cached_overload_policy_tag.load(Ordering::Relaxed),
+            OVERLOAD_POLICY_PRESSURED_FAST_ALLOW
+        );
+        assert_eq!(
+            kernel.cached_overload_policy_count.load(Ordering::Relaxed),
+            count_before + 1
+        );
+    }
+
+    #[test]
+    fn overloaded_regime_applies_mode_specific_safe_fallback() {
+        let strict_kernel = RuntimeMathKernel::new();
+        drive_pressure_sensor_to(&strict_kernel, SystemRegime::Overloaded);
+        strict_kernel
+            .cached_localization_arm
+            .store(2, Ordering::Relaxed);
+        let strict_decision = strict_kernel.decide(
+            SafetyLevel::Strict,
+            RuntimeContext {
+                family: ApiFamily::Allocator,
+                addr_hint: 0x2200,
+                requested_bytes: 256,
+                is_write: false,
+                contention_hint: 80,
+                bloom_negative: false,
+            },
+        );
+        assert_eq!(strict_decision.profile, ValidationProfile::Fast);
+        assert_eq!(strict_decision.action, MembraneAction::Deny);
+        assert_eq!(
+            strict_kernel
+                .cached_overload_policy_tag
+                .load(Ordering::Relaxed),
+            OVERLOAD_POLICY_OVERLOADED_SAFE_FALLBACK
+        );
+
+        let hardened_kernel = RuntimeMathKernel::new();
+        drive_pressure_sensor_to(&hardened_kernel, SystemRegime::Overloaded);
+        hardened_kernel
+            .cached_localization_arm
+            .store(2, Ordering::Relaxed);
+        let hardened_decision = hardened_kernel.decide(
+            SafetyLevel::Hardened,
+            RuntimeContext {
+                family: ApiFamily::Allocator,
+                addr_hint: 0x3300,
+                requested_bytes: 256,
+                is_write: false,
+                contention_hint: 80,
+                bloom_negative: false,
+            },
+        );
+        assert_eq!(hardened_decision.profile, ValidationProfile::Fast);
+        assert_eq!(
+            hardened_decision.action,
+            MembraneAction::Repair(HealingAction::ReturnSafeDefault)
+        );
+        assert_eq!(
+            hardened_kernel
+                .cached_overload_policy_tag
+                .load(Ordering::Relaxed),
+            OVERLOAD_POLICY_OVERLOADED_SAFE_FALLBACK
+        );
+    }
+
+    #[test]
+    fn runtime_math_log_jsonl_exports_pressure_and_overload_policy_events() {
+        let kernel = RuntimeMathKernel::new();
+        drive_pressure_sensor_to(&kernel, SystemRegime::Overloaded);
+        kernel.cached_localization_arm.store(2, Ordering::Relaxed);
+        let decision = kernel.decide(
+            SafetyLevel::Hardened,
+            RuntimeContext {
+                family: ApiFamily::Allocator,
+                addr_hint: 0x4400,
+                requested_bytes: 256,
+                is_write: false,
+                contention_hint: 80,
+                bloom_negative: false,
+            },
+        );
+        assert_eq!(
+            decision.action,
+            MembraneAction::Repair(HealingAction::ReturnSafeDefault)
+        );
+
+        let jsonl = kernel.export_runtime_math_log_jsonl(
+            SafetyLevel::Hardened,
+            "bd-w2c3.7",
+            "pressure-overload",
+        );
+        let mut saw_pressure_sensor = false;
+        let mut saw_overload_policy = false;
+        for line in jsonl.lines().filter(|line| !line.trim().is_empty()) {
+            let parsed: Value =
+                serde_json::from_str(line).expect("each runtime log line must be valid JSON");
+            match parsed.get("event").and_then(Value::as_str) {
+                Some("runtime_pressure_sensor") => {
+                    saw_pressure_sensor = true;
+                    for required in [
+                        "overload_state",
+                        "degradation_active",
+                        "pressure_score_milli",
+                        "pressure_raw_score_milli",
+                        "pressure_epoch",
+                        "pressure_transition_count",
+                        "overload_policy",
+                        "overload_policy_count",
+                    ] {
+                        assert!(
+                            parsed.get(required).is_some(),
+                            "runtime_pressure_sensor missing `{required}`"
+                        );
+                    }
+                    assert_eq!(
+                        parsed.get("overload_policy").and_then(Value::as_str),
+                        Some("overloaded_safe_fallback")
+                    );
+                }
+                Some("runtime_overload_policy_applied") => {
+                    saw_overload_policy = true;
+                    assert_eq!(
+                        parsed.get("overload_policy").and_then(Value::as_str),
+                        Some("overloaded_safe_fallback")
+                    );
+                    assert!(
+                        parsed
+                            .get("overload_policy_count")
+                            .and_then(Value::as_u64)
+                            .is_some_and(|count| count > 0),
+                        "overload policy application count must be positive"
+                    );
+                }
+                _ => {}
+            }
+        }
+        assert!(
+            saw_pressure_sensor,
+            "runtime log export must include runtime_pressure_sensor"
+        );
+        assert!(
+            saw_overload_policy,
+            "runtime log export must include runtime_overload_policy_applied when policy is active"
+        );
+    }
+
+    #[test]
     fn runtime_math_log_jsonl_export_reports_certificate_load_outcomes() {
         let mut success_kernel = RuntimeMathKernel::new();
         let valid_artifact = policy_table::build_test_pcpt(&[]);
@@ -5719,6 +5975,35 @@ mod tests {
         assert!(
             fields.contains(&"spectral_edge_ratio"),
             "must flag negative spectral edge ratio"
+        );
+    }
+
+    #[test]
+    fn snapshot_range_violations_identify_pressure_and_policy_contract_drift() {
+        let kernel = RuntimeMathKernel::new();
+        let mut snapshot = kernel.snapshot(SafetyLevel::Strict);
+        snapshot.pressure_regime_code = 99;
+        snapshot.pressure_score_milli = 200_000;
+        snapshot.pressure_raw_score_milli = 200_000;
+        snapshot.overload_policy_tag = 99;
+
+        let violations = snapshot_range_violations(&snapshot);
+        let fields: Vec<&str> = violations.iter().map(|(field, ..)| *field).collect();
+        assert!(
+            fields.contains(&"pressure_regime_code"),
+            "must flag out-of-range pressure_regime_code"
+        );
+        assert!(
+            fields.contains(&"pressure_score_milli"),
+            "must flag out-of-range pressure_score_milli"
+        );
+        assert!(
+            fields.contains(&"pressure_raw_score_milli"),
+            "must flag out-of-range pressure_raw_score_milli"
+        );
+        assert!(
+            fields.contains(&"overload_policy_tag"),
+            "must flag out-of-range overload_policy_tag"
         );
     }
 
@@ -5855,6 +6140,11 @@ mod tests {
         assert!(snap.full_validation_trigger_ppm <= 1_000_000);
         assert!(snap.repair_trigger_ppm <= 1_000_000);
         assert!(snap.sampled_risk_bonus_ppm <= 1_000_000);
+        assert!(snap.pressure_regime_code <= PRESSURE_REGIME_RECOVERY);
+        assert!(snap.pressure_score_milli <= 100_000);
+        assert!(snap.pressure_raw_score_milli <= 100_000);
+        assert!(snap.overload_policy_tag <= OVERLOAD_POLICY_OVERLOADED_SAFE_FALLBACK);
+        assert!(snap.overload_policy_count <= snap.decisions);
         assert!(snap.design_identifiability_ppm <= 1_000_000);
         assert!(snap.fusion_bonus_ppm <= 1_000_000);
         assert!(snap.fusion_drift_ppm <= 1_000_000);

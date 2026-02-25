@@ -2,7 +2,7 @@
   "version": 2,
   "generated_at_utc": "2026-02-18T04:49:26Z",
   "library": "/data/tmp/cargo-target/release/libfrankenlibc_abi.so",
-  "total_exported": 1017,
+  "total_exported": 1039,
   "taxonomy": {
     "Implemented": "Native Rust code owns the entire operation. No host libc dependency. Full test coverage required.",
     "RawSyscall": "ABI entrypoint marshals arguments directly to Linux syscall instruction. No glibc call-through.",
@@ -694,12 +694,13 @@
     },
     {
       "symbol": "closelog",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "unistd_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc closelog",
-      "hardened_semantics": "Passthrough to glibc closelog",
-      "default_stub": false
+      "perf_class": "coldpath",
+      "strict_semantics": "Native syslog: /dev/log Unix socket with BSD format, LOG_PID/LOG_CONS/LOG_PERROR.",
+      "hardened_semantics": "Same native engine; no glibc dependency.",
+      "default_stub": false,
+      "semantics": "Native /dev/log socket + printf engine for format rendering; stderr fallback on connection failure"
     },
     {
       "symbol": "confstr",
@@ -908,11 +909,11 @@
     },
     {
       "symbol": "dlerror",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "dlfcn_abi",
       "perf_class": "coldpath",
-      "strict_semantics": "dlfcn boundary policy: host glibc call-through for dlopen/dlsym/dlclose with thread-local dlerror contract",
-      "hardened_semantics": "dlfcn boundary policy: invalid dlopen flags heal to RTLD_NOW; null/denied loader inputs return deterministic dlerror",
+      "strict_semantics": "Native thread-local dlerror: returns last dl* error message and clears error state per POSIX",
+      "hardened_semantics": "Native thread-local dlerror with deterministic error-message return and state clearing",
       "default_stub": false
     },
     {
@@ -984,9 +985,11 @@
     },
     {
       "symbol": "endmntent",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "unistd_abi",
-      "perf_class": "fast"
+      "perf_class": "fast",
+      "strict_semantics": "Native Rust /proc/mounts parser",
+      "hardened_semantics": "Native Rust /proc/mounts parser with validation"
     },
     {
       "symbol": "endpwent",
@@ -1546,9 +1549,12 @@
     },
     {
       "symbol": "fgetgrent",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "unistd_abi",
-      "perf_class": "fast"
+      "perf_class": "fast",
+      "strict_semantics": "Native fgetgrent: reads line from stream via fgets, parses with parse_group_line, returns thread-local group struct",
+      "hardened_semantics": "Same native line-parsing path with NULL-stream guard",
+      "default_stub": false
     },
     {
       "symbol": "fgetpos",
@@ -1570,9 +1576,12 @@
     },
     {
       "symbol": "fgetpwent",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "unistd_abi",
-      "perf_class": "fast"
+      "perf_class": "fast",
+      "strict_semantics": "Native fgetpwent: reads line from stream via fgets, parses with parse_passwd_line, returns thread-local passwd struct",
+      "hardened_semantics": "Same native line-parsing path with NULL-stream guard",
+      "default_stub": false
     },
     {
       "symbol": "fgets",
@@ -1782,11 +1791,11 @@
     },
     {
       "symbol": "forkpty",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "unistd_abi",
       "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc forkpty",
-      "hardened_semantics": "Passthrough to glibc forkpty",
+      "strict_semantics": "Native forkpty via openpty + fork (SYS_clone) + login_tty; no glibc dependency",
+      "hardened_semantics": "Native forkpty; child sets up controlling terminal via login_tty",
       "default_stub": false
     },
     {
@@ -2090,11 +2099,11 @@
     },
     {
       "symbol": "ftw",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "unistd_abi",
       "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc ftw",
-      "hardened_semantics": "Passthrough to glibc ftw",
+      "strict_semantics": "Native Rust file tree walk via opendir/readdir/stat",
+      "hardened_semantics": "Native Rust file tree walk with membrane validation",
       "default_stub": false
     },
     {
@@ -2105,9 +2114,12 @@
     },
     {
       "symbol": "fwprintf",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "wchar_abi",
-      "perf_class": "fast"
+      "perf_class": "coldpath",
+      "strict_semantics": "Native Rust printf engine with wide-to-narrow format conversion.",
+      "hardened_semantics": "Same native engine; no glibc dependency.",
+      "semantics": "Wide format -> narrow -> parse_format_string + render_printf; output narrowed or widened per target"
     },
     {
       "symbol": "fwrite",
@@ -2120,9 +2132,12 @@
     },
     {
       "symbol": "fwscanf",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "wchar_abi",
-      "perf_class": "fast"
+      "perf_class": "coldpath",
+      "strict_semantics": "Native Rust scanf engine with wide-to-narrow conversion.",
+      "hardened_semantics": "Same native engine; no glibc dependency.",
+      "semantics": "Wide format/input -> narrow -> parse_scanf_format + scan_input; results written through va_list"
     },
     {
       "symbol": "gai_strerror",
@@ -2285,9 +2300,11 @@
     },
     {
       "symbol": "getgrent_r",
-      "status": "GlibcCallThrough",
-      "module": "unistd_abi",
-      "perf_class": "fast"
+      "status": "Implemented",
+      "module": "grp_abi",
+      "perf_class": "fast",
+      "strict_semantics": "Native /etc/group iteration via cached file parser (reentrant, caller-provided buffer)",
+      "hardened_semantics": "Native /etc/group iteration; no glibc dependency"
     },
     {
       "symbol": "getgrgid",
@@ -2431,9 +2448,11 @@
     },
     {
       "symbol": "getmntent",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "unistd_abi",
-      "perf_class": "fast"
+      "perf_class": "fast",
+      "strict_semantics": "Native Rust /proc/mounts parser",
+      "hardened_semantics": "Native Rust /proc/mounts parser with validation"
     },
     {
       "symbol": "getnameinfo",
@@ -2542,9 +2561,11 @@
     },
     {
       "symbol": "getpwent_r",
-      "status": "GlibcCallThrough",
-      "module": "unistd_abi",
-      "perf_class": "fast"
+      "status": "Implemented",
+      "module": "pwd_abi",
+      "perf_class": "fast",
+      "strict_semantics": "Native /etc/passwd iteration via cached file parser (reentrant, caller-provided buffer)",
+      "hardened_semantics": "Native /etc/passwd iteration; no glibc dependency"
     },
     {
       "symbol": "getpwnam",
@@ -2716,20 +2737,20 @@
     },
     {
       "symbol": "glob",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "string_abi",
       "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc glob",
-      "hardened_semantics": "Passthrough to glibc glob",
+      "strict_semantics": "Native POSIX glob via std::fs directory traversal and fnmatch-style pattern matching",
+      "hardened_semantics": "Native POSIX glob; no glibc dependency",
       "default_stub": false
     },
     {
       "symbol": "globfree",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "string_abi",
       "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc globfree",
-      "hardened_semantics": "Passthrough to glibc globfree",
+      "strict_semantics": "Frees glob_t pathv entries allocated by native glob",
+      "hardened_semantics": "Frees glob_t pathv entries; zeros struct after free",
       "default_stub": false
     },
     {
@@ -2849,9 +2870,12 @@
     },
     {
       "symbol": "if_freenameindex",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "inet_abi",
-      "perf_class": "fast"
+      "perf_class": "fast",
+      "strict_semantics": "Native if_freenameindex: walks NULL-terminated array freeing each name string then the array itself",
+      "hardened_semantics": "Same native free with NULL-pointer guard",
+      "default_stub": false
     },
     {
       "symbol": "if_indextoname",
@@ -2864,9 +2888,12 @@
     },
     {
       "symbol": "if_nameindex",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "inet_abi",
-      "perf_class": "fast"
+      "perf_class": "fast",
+      "strict_semantics": "Native if_nameindex: enumerates /sys/class/net/ entries with ifindex, returns heap-allocated NULL-terminated array",
+      "hardened_semantics": "Same native /sys/class/net enumeration with ENOMEM/ENOBUFS error handling",
+      "default_stub": false
     },
     {
       "symbol": "if_nametoindex",
@@ -4247,11 +4274,11 @@
     },
     {
       "symbol": "nftw",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "unistd_abi",
       "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc nftw",
-      "hardened_semantics": "Passthrough to glibc nftw",
+      "strict_semantics": "Native Rust file tree walk via opendir/readdir/stat",
+      "hardened_semantics": "Native Rust file tree walk with membrane validation",
       "default_stub": false
     },
     {
@@ -4337,20 +4364,21 @@
     },
     {
       "symbol": "openlog",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "unistd_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc openlog",
-      "hardened_semantics": "Passthrough to glibc openlog",
-      "default_stub": false
+      "perf_class": "coldpath",
+      "strict_semantics": "Native syslog: /dev/log Unix socket with BSD format, LOG_PID/LOG_CONS/LOG_PERROR.",
+      "hardened_semantics": "Same native engine; no glibc dependency.",
+      "default_stub": false,
+      "semantics": "Native /dev/log socket + printf engine for format rendering; stderr fallback on connection failure"
     },
     {
       "symbol": "openpty",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "unistd_abi",
       "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc openpty",
-      "hardened_semantics": "Passthrough to glibc openpty",
+      "strict_semantics": "Native openpty via posix_openpt + grantpt + unlockpt + resolve_ptsname_into; raw syscalls for slave open and ioctl",
+      "hardened_semantics": "Native openpty; no glibc dependency",
       "default_stub": false
     },
     {
@@ -6097,9 +6125,11 @@
     },
     {
       "symbol": "setmntent",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "unistd_abi",
-      "perf_class": "fast"
+      "perf_class": "fast",
+      "strict_semantics": "Native Rust /proc/mounts parser",
+      "hardened_semantics": "Native Rust /proc/mounts parser with validation"
     },
     {
       "symbol": "setpgid",
@@ -7000,15 +7030,21 @@
     },
     {
       "symbol": "swprintf",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "wchar_abi",
-      "perf_class": "fast"
+      "perf_class": "coldpath",
+      "strict_semantics": "Native Rust printf engine with wide-to-narrow format conversion.",
+      "hardened_semantics": "Same native engine; no glibc dependency.",
+      "semantics": "Wide format -> narrow -> parse_format_string + render_printf; output narrowed or widened per target"
     },
     {
       "symbol": "swscanf",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "wchar_abi",
-      "perf_class": "fast"
+      "perf_class": "coldpath",
+      "strict_semantics": "Native Rust scanf engine with wide-to-narrow conversion.",
+      "hardened_semantics": "Same native engine; no glibc dependency.",
+      "semantics": "Wide format/input -> narrow -> parse_scanf_format + scan_input; results written through va_list"
     },
     {
       "symbol": "symlink",
@@ -7053,12 +7089,13 @@
     },
     {
       "symbol": "syslog",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "unistd_abi",
-      "perf_class": "default",
-      "strict_semantics": "Variadic forwarded via vsyslog to glibc",
-      "hardened_semantics": "Variadic forwarded via vsyslog to glibc",
-      "default_stub": false
+      "perf_class": "coldpath",
+      "strict_semantics": "Native syslog: /dev/log Unix socket with BSD format, LOG_PID/LOG_CONS/LOG_PERROR.",
+      "hardened_semantics": "Same native engine; no glibc dependency.",
+      "default_stub": false,
+      "semantics": "Native /dev/log socket + printf engine for format rendering; stderr fallback on connection failure"
     },
     {
       "symbol": "system",
@@ -7507,17 +7544,23 @@
       "symbol": "vasprintf",
       "header": "stdio.h",
       "family": "stdio",
-      "status": "GlibcCallThrough",
-      "notes": "Delegates to libc (va_list forwarding requires C ABI)",
-      "module": "stdio_abi"
+      "status": "Implemented",
+      "module": "stdio_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Native Rust printf engine; va_list manually walked on x86_64.",
+      "hardened_semantics": "Same native engine; no glibc dependency.",
+      "semantics": "Native Rust printf engine (parse_format_string + render_printf); va_list manually walked on x86_64"
     },
     {
       "symbol": "vdprintf",
       "header": "stdio.h",
       "family": "stdio",
-      "status": "GlibcCallThrough",
-      "notes": "Delegates to libc (va_list forwarding requires C ABI)",
-      "module": "stdio_abi"
+      "status": "Implemented",
+      "module": "stdio_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Native Rust printf engine; va_list manually walked on x86_64.",
+      "hardened_semantics": "Same native engine; no glibc dependency.",
+      "semantics": "Native Rust printf engine (parse_format_string + render_printf); va_list manually walked on x86_64"
     },
     {
       "symbol": "vfork",
@@ -7532,9 +7575,12 @@
       "symbol": "vfprintf",
       "header": "stdio.h",
       "family": "stdio",
-      "status": "GlibcCallThrough",
-      "notes": "Delegates to libc (va_list forwarding requires C ABI)",
-      "module": "stdio_abi"
+      "status": "Implemented",
+      "module": "stdio_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Native Rust printf engine; renders through stream registry buffer.",
+      "hardened_semantics": "Same native engine; no glibc dependency.",
+      "semantics": "Native Rust printf engine (parse_format_string + render_printf); va_list manually walked on x86_64"
     },
     {
       "symbol": "vfscanf",
@@ -7548,15 +7594,21 @@
     },
     {
       "symbol": "vfwprintf",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "wchar_abi",
-      "perf_class": "fast"
+      "perf_class": "coldpath",
+      "strict_semantics": "Native Rust printf engine with wide-to-narrow format conversion.",
+      "hardened_semantics": "Same native engine; no glibc dependency.",
+      "semantics": "Wide format -> narrow -> parse_format_string + render_printf; output narrowed or widened per target"
     },
     {
       "symbol": "vfwscanf",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "wchar_abi",
-      "perf_class": "fast"
+      "perf_class": "coldpath",
+      "strict_semantics": "Native Rust scanf engine with wide-to-narrow conversion.",
+      "hardened_semantics": "Same native engine; no glibc dependency.",
+      "semantics": "Wide format/input -> narrow -> parse_scanf_format + scan_input; results written through va_list"
     },
     {
       "symbol": "vmsplice",
@@ -7571,9 +7623,12 @@
       "symbol": "vprintf",
       "header": "stdio.h",
       "family": "stdio",
-      "status": "GlibcCallThrough",
-      "notes": "Delegates to libc (va_list forwarding requires C ABI)",
-      "module": "stdio_abi"
+      "status": "Implemented",
+      "module": "stdio_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Native Rust printf engine; writes to stdout fd.",
+      "hardened_semantics": "Same native engine; no glibc dependency.",
+      "semantics": "Native Rust printf engine (parse_format_string + render_printf); va_list manually walked on x86_64"
     },
     {
       "symbol": "vscanf",
@@ -7589,17 +7644,23 @@
       "symbol": "vsnprintf",
       "header": "stdio.h",
       "family": "stdio",
-      "status": "GlibcCallThrough",
-      "notes": "Delegates to libc (va_list forwarding requires C ABI)",
-      "module": "stdio_abi"
+      "status": "Implemented",
+      "module": "stdio_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Native Rust printf engine; bounded output to buffer.",
+      "hardened_semantics": "Same native engine; no glibc dependency.",
+      "semantics": "Native Rust printf engine (parse_format_string + render_printf); va_list manually walked on x86_64"
     },
     {
       "symbol": "vsprintf",
       "header": "stdio.h",
       "family": "stdio",
-      "status": "GlibcCallThrough",
-      "notes": "Delegates to libc (va_list forwarding requires C ABI)",
-      "module": "stdio_abi"
+      "status": "Implemented",
+      "module": "stdio_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Native Rust printf engine; healing mode can truncate to prevent overflow.",
+      "hardened_semantics": "Same native engine; no glibc dependency.",
+      "semantics": "Native Rust printf engine (parse_format_string + render_printf); va_list manually walked on x86_64"
     },
     {
       "symbol": "vsscanf",
@@ -7613,36 +7674,49 @@
     },
     {
       "symbol": "vswprintf",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "wchar_abi",
-      "perf_class": "fast"
+      "perf_class": "coldpath",
+      "strict_semantics": "Native Rust printf engine with wide-to-narrow format conversion.",
+      "hardened_semantics": "Same native engine; no glibc dependency.",
+      "semantics": "Wide format -> narrow -> parse_format_string + render_printf; output narrowed or widened per target"
     },
     {
       "symbol": "vswscanf",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "wchar_abi",
-      "perf_class": "fast"
+      "perf_class": "coldpath",
+      "strict_semantics": "Native Rust scanf engine with wide-to-narrow conversion.",
+      "hardened_semantics": "Same native engine; no glibc dependency.",
+      "semantics": "Wide format/input -> narrow -> parse_scanf_format + scan_input; results written through va_list"
     },
     {
       "symbol": "vsyslog",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "unistd_abi",
-      "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc vsyslog",
-      "hardened_semantics": "Passthrough to glibc vsyslog",
-      "default_stub": false
+      "perf_class": "coldpath",
+      "strict_semantics": "Native syslog: /dev/log Unix socket with BSD format, LOG_PID/LOG_CONS/LOG_PERROR.",
+      "hardened_semantics": "Same native engine; no glibc dependency.",
+      "default_stub": false,
+      "semantics": "Native /dev/log socket + printf engine for format rendering; stderr fallback on connection failure"
     },
     {
       "symbol": "vwprintf",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "wchar_abi",
-      "perf_class": "fast"
+      "perf_class": "coldpath",
+      "strict_semantics": "Native Rust printf engine with wide-to-narrow format conversion.",
+      "hardened_semantics": "Same native engine; no glibc dependency.",
+      "semantics": "Wide format -> narrow -> parse_format_string + render_printf; output narrowed or widened per target"
     },
     {
       "symbol": "vwscanf",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "wchar_abi",
-      "perf_class": "fast"
+      "perf_class": "coldpath",
+      "strict_semantics": "Native Rust scanf engine with wide-to-narrow conversion.",
+      "hardened_semantics": "Same native engine; no glibc dependency.",
+      "semantics": "Wide format/input -> narrow -> parse_scanf_format + scan_input; results written through va_list"
     },
     {
       "symbol": "wait",
@@ -8030,9 +8104,12 @@
     },
     {
       "symbol": "wprintf",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "wchar_abi",
-      "perf_class": "fast"
+      "perf_class": "coldpath",
+      "strict_semantics": "Native Rust printf engine with wide-to-narrow format conversion.",
+      "hardened_semantics": "Same native engine; no glibc dependency.",
+      "semantics": "Wide format -> narrow -> parse_format_string + render_printf; output narrowed or widened per target"
     },
     {
       "symbol": "write",
@@ -8052,9 +8129,12 @@
     },
     {
       "symbol": "wscanf",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "wchar_abi",
-      "perf_class": "fast"
+      "perf_class": "coldpath",
+      "strict_semantics": "Native Rust scanf engine with wide-to-narrow conversion.",
+      "hardened_semantics": "Same native engine; no glibc dependency.",
+      "semantics": "Wide format/input -> narrow -> parse_scanf_format + scan_input; results written through va_list"
     },
     {
       "symbol": "setns",
@@ -8191,23 +8271,29 @@
     {
       "symbol": "glob64",
       "header": "<unistd.h>",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "notes": "Tier 10",
-      "module": "unistd_abi"
+      "module": "unistd_abi",
+      "strict_semantics": "Native Rust glob expansion via frankenlibc-core; x86_64 LFS transparent alias",
+      "hardened_semantics": "Native Rust glob expansion with membrane validation"
     },
     {
       "symbol": "globfree64",
       "header": "<unistd.h>",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "notes": "Tier 10",
-      "module": "unistd_abi"
+      "module": "unistd_abi",
+      "strict_semantics": "Native Rust glob expansion via frankenlibc-core; x86_64 LFS transparent alias",
+      "hardened_semantics": "Native Rust glob expansion with membrane validation"
     },
     {
       "symbol": "nftw64",
       "header": "<unistd.h>",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "notes": "Tier 10",
-      "module": "unistd_abi"
+      "module": "unistd_abi",
+      "strict_semantics": "Native Rust file tree walk via opendir/readdir/stat",
+      "hardened_semantics": "Native Rust file tree walk with membrane validation"
     },
     {
       "symbol": "alphasort64",
@@ -8727,18 +8813,216 @@
       "strict_semantics": "Parse suboption from comma-separated string against token list",
       "hardened_semantics": "Null pointers return -1",
       "default_stub": false
+    },
+    {
+      "symbol": "valloc",
+      "status": "Implemented",
+      "module": "malloc_abi",
+      "perf_class": "strict_hotpath",
+      "strict_semantics": "Page-aligned allocation via memalign delegation",
+      "hardened_semantics": "Same as strict; membrane-governed page-aligned allocation",
+      "default_stub": false
+    },
+    {
+      "symbol": "pvalloc",
+      "status": "Implemented",
+      "module": "malloc_abi",
+      "perf_class": "strict_hotpath",
+      "strict_semantics": "Page-aligned allocation with size rounded up to page boundary",
+      "hardened_semantics": "Same as strict; membrane-governed page-aligned allocation",
+      "default_stub": false
+    },
+    {
+      "symbol": "cfree",
+      "status": "Implemented",
+      "module": "malloc_abi",
+      "perf_class": "strict_hotpath",
+      "strict_semantics": "BSD legacy free alias; delegates to free()",
+      "hardened_semantics": "Same as free() hardened semantics",
+      "default_stub": false
+    },
+    {
+      "symbol": "mallopt",
+      "status": "Implemented",
+      "module": "malloc_abi",
+      "perf_class": "cold",
+      "strict_semantics": "Compatibility stub; accepts any parameter, returns success",
+      "hardened_semantics": "Same as strict; no tuning knobs apply to membrane allocator",
+      "default_stub": false
+    },
+    {
+      "symbol": "malloc_usable_size",
+      "status": "Implemented",
+      "module": "malloc_abi",
+      "perf_class": "strict_hotpath",
+      "strict_semantics": "Returns usable allocation size from arena lookup",
+      "hardened_semantics": "Same as strict; arena lookup for allocation metadata",
+      "default_stub": false
+    },
+    {
+      "symbol": "malloc_trim",
+      "status": "Implemented",
+      "module": "malloc_abi",
+      "perf_class": "cold",
+      "strict_semantics": "Compatibility stub; arena manages its own memory, returns 1",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "mallinfo",
+      "status": "Implemented",
+      "module": "malloc_abi",
+      "perf_class": "cold",
+      "strict_semantics": "Returns allocation statistics from membrane metrics (int fields)",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "mallinfo2",
+      "status": "Implemented",
+      "module": "malloc_abi",
+      "perf_class": "cold",
+      "strict_semantics": "Returns allocation statistics from membrane metrics (size_t fields)",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "malloc_stats",
+      "status": "Implemented",
+      "module": "malloc_abi",
+      "perf_class": "cold",
+      "strict_semantics": "Prints allocation statistics to stderr",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "malloc_info",
+      "status": "Implemented",
+      "module": "malloc_abi",
+      "perf_class": "cold",
+      "strict_semantics": "Prints allocation statistics as XML to a FILE stream",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "err",
+      "status": "Implemented",
+      "module": "err_abi",
+      "perf_class": "cold",
+      "strict_semantics": "Print error message with program name and errno to stderr, then exit",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "errx",
+      "status": "Implemented",
+      "module": "err_abi",
+      "perf_class": "cold",
+      "strict_semantics": "Print error message with program name to stderr, then exit",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "warn",
+      "status": "Implemented",
+      "module": "err_abi",
+      "perf_class": "cold",
+      "strict_semantics": "Print warning message with program name and errno to stderr",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "warnx",
+      "status": "Implemented",
+      "module": "err_abi",
+      "perf_class": "cold",
+      "strict_semantics": "Print warning message with program name to stderr",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "verr",
+      "status": "Implemented",
+      "module": "err_abi",
+      "perf_class": "cold",
+      "strict_semantics": "va_list version of err()",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "verrx",
+      "status": "Implemented",
+      "module": "err_abi",
+      "perf_class": "cold",
+      "strict_semantics": "va_list version of errx()",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "vwarn",
+      "status": "Implemented",
+      "module": "err_abi",
+      "perf_class": "cold",
+      "strict_semantics": "va_list version of warn()",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "vwarnx",
+      "status": "Implemented",
+      "module": "err_abi",
+      "perf_class": "cold",
+      "strict_semantics": "va_list version of warnx()",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "strverscmp",
+      "status": "Implemented",
+      "module": "string_abi",
+      "perf_class": "hot",
+      "strict_semantics": "Version-aware string comparison treating digit sequences as numbers",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "rawmemchr",
+      "status": "Implemented",
+      "module": "string_abi",
+      "perf_class": "hot",
+      "strict_semantics": "Scan memory for a byte without length limit (undefined if not found)",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "gnu_get_libc_version",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "perf_class": "cold",
+      "strict_semantics": "Return glibc-compatible version string for runtime feature detection",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "confstr",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "perf_class": "cold",
+      "strict_semantics": "Get configuration-dependent string variables (_CS_PATH, version info)",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
     }
   ],
   "summary": {
-    "total_exported": 974,
-    "implemented": 574,
+    "total": 1039,
+    "implemented": 684,
     "raw_syscall": 297,
-    "glibc_call_through": 103,
+    "glibc_call_through": 58,
     "stub": 0
   },
-  "implemented": 629,
+  "implemented": 684,
   "raw_syscall": 297,
-  "glibc_call_through": 91,
+  "glibc_call_through": 58,
   "stub": 0,
   "counts": {
     "total_exported": 993,

@@ -6,6 +6,7 @@
 use std::ffi::c_int;
 use std::os::unix::ffi::OsStrExt;
 
+use frankenlibc_core::stdio::printf::{FormatSegment, Precision, Width, parse_format_string};
 use frankenlibc_membrane::heal::{HealingAction, global_healing_policy};
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
@@ -2568,48 +2569,308 @@ pub unsafe extern "C" fn wcstod(
 
 const WEOF_VALUE: u32 = u32::MAX;
 
-unsafe extern "C" {
-    #[link_name = "fwprintf"]
-    fn libc_fwprintf(stream: *mut std::ffi::c_void, format: *const libc::wchar_t, ...) -> c_int;
-    #[link_name = "wprintf"]
-    fn libc_wprintf(format: *const libc::wchar_t, ...) -> c_int;
-    #[link_name = "swprintf"]
-    fn libc_swprintf(s: *mut libc::wchar_t, n: usize, format: *const libc::wchar_t, ...) -> c_int;
-    #[link_name = "vfwprintf"]
-    fn libc_vfwprintf(
-        stream: *mut std::ffi::c_void,
-        format: *const libc::wchar_t,
-        ap: *mut std::ffi::c_void,
-    ) -> c_int;
-    #[link_name = "vwprintf"]
-    fn libc_vwprintf(format: *const libc::wchar_t, ap: *mut std::ffi::c_void) -> c_int;
-    #[link_name = "vswprintf"]
-    fn libc_vswprintf(
-        s: *mut libc::wchar_t,
-        n: usize,
-        format: *const libc::wchar_t,
-        ap: *mut std::ffi::c_void,
-    ) -> c_int;
-    #[link_name = "fwscanf"]
-    fn libc_fwscanf(stream: *mut std::ffi::c_void, format: *const libc::wchar_t, ...) -> c_int;
-    #[link_name = "wscanf"]
-    fn libc_wscanf(format: *const libc::wchar_t, ...) -> c_int;
-    #[link_name = "swscanf"]
-    fn libc_swscanf(s: *const libc::wchar_t, format: *const libc::wchar_t, ...) -> c_int;
-    #[link_name = "vfwscanf"]
-    fn libc_vfwscanf(
-        stream: *mut std::ffi::c_void,
-        format: *const libc::wchar_t,
-        ap: *mut std::ffi::c_void,
-    ) -> c_int;
-    #[link_name = "vwscanf"]
-    fn libc_vwscanf(format: *const libc::wchar_t, ap: *mut std::ffi::c_void) -> c_int;
-    #[link_name = "vswscanf"]
-    fn libc_vswscanf(
-        s: *const libc::wchar_t,
-        format: *const libc::wchar_t,
-        ap: *mut std::ffi::c_void,
-    ) -> c_int;
+// ===========================================================================
+// Wide I/O imports and macros
+// ===========================================================================
+
+use frankenlibc_core::stdio::printf::LengthMod;
+use frankenlibc_core::stdio::scanf::{ScanDirective, ScanValue};
+use std::ffi::{c_char, c_void};
+
+/// Extract variadic args for wide printf — mirrors extract_va_args from stdio_abi.
+macro_rules! extract_wprintf_args {
+    ($segments:expr, $args:expr, $buf:expr, $extract_count:expr) => {{
+        let mut _idx = 0usize;
+        for seg in $segments {
+            if let FormatSegment::Spec(spec) = seg {
+                if matches!(spec.width, Width::FromArg) && _idx < $extract_count {
+                    $buf[_idx] = unsafe { $args.arg::<u64>() };
+                    _idx += 1;
+                }
+                if matches!(spec.precision, Precision::FromArg) && _idx < $extract_count {
+                    $buf[_idx] = unsafe { $args.arg::<u64>() };
+                    _idx += 1;
+                }
+                match spec.conversion {
+                    b'%' => {}
+                    b'f' | b'F' | b'e' | b'E' | b'g' | b'G' | b'a' | b'A' => {
+                        if _idx < $extract_count {
+                            $buf[_idx] = unsafe { $args.arg::<f64>() }.to_bits();
+                            _idx += 1;
+                        }
+                    }
+                    _ => {
+                        if _idx < $extract_count {
+                            $buf[_idx] = unsafe { $args.arg::<u64>() };
+                            _idx += 1;
+                        }
+                    }
+                }
+            }
+        }
+        _idx
+    }};
+}
+
+/// Write scanned values through va_list pointers (variadic scanf).
+macro_rules! scanf_write_values {
+    ($values:expr, $directives:expr, $args:expr) => {{
+        let mut _val_idx = 0usize;
+        for _dir in $directives {
+            if let ScanDirective::Spec(_spec) = _dir {
+                if _spec.suppress {
+                    continue;
+                }
+                if _val_idx >= $values.len() {
+                    break;
+                }
+                unsafe {
+                    wscanf_write_one!(&$values[_val_idx], _spec, $args);
+                }
+                _val_idx += 1;
+            }
+        }
+    }};
+}
+
+/// Write a single scanned value to the next pointer from va_list.
+macro_rules! wscanf_write_one {
+    ($val:expr, $spec:expr, $args:expr) => {
+        match $val {
+            ScanValue::SignedInt(v) => match $spec.length {
+                LengthMod::Hh => {
+                    let ptr = $args.arg::<*mut i8>();
+                    *ptr = *v as i8;
+                }
+                LengthMod::H => {
+                    let ptr = $args.arg::<*mut i16>();
+                    *ptr = *v as i16;
+                }
+                LengthMod::L | LengthMod::Ll | LengthMod::J => {
+                    let ptr = $args.arg::<*mut i64>();
+                    *ptr = *v;
+                }
+                LengthMod::Z | LengthMod::T => {
+                    let ptr = $args.arg::<*mut isize>();
+                    *ptr = *v as isize;
+                }
+                _ => {
+                    let ptr = $args.arg::<*mut c_int>();
+                    *ptr = *v as c_int;
+                }
+            },
+            ScanValue::UnsignedInt(v) => match $spec.length {
+                LengthMod::Hh => {
+                    let ptr = $args.arg::<*mut u8>();
+                    *ptr = *v as u8;
+                }
+                LengthMod::H => {
+                    let ptr = $args.arg::<*mut u16>();
+                    *ptr = *v as u16;
+                }
+                LengthMod::L | LengthMod::Ll | LengthMod::J => {
+                    let ptr = $args.arg::<*mut u64>();
+                    *ptr = *v;
+                }
+                LengthMod::Z | LengthMod::T => {
+                    let ptr = $args.arg::<*mut usize>();
+                    *ptr = *v as usize;
+                }
+                _ => {
+                    let ptr = $args.arg::<*mut u32>();
+                    *ptr = *v as u32;
+                }
+            },
+            ScanValue::Float(v) => match $spec.length {
+                LengthMod::L | LengthMod::BigL => {
+                    let ptr = $args.arg::<*mut f64>();
+                    *ptr = *v;
+                }
+                _ => {
+                    let ptr = $args.arg::<*mut f32>();
+                    *ptr = *v as f32;
+                }
+            },
+            ScanValue::Char(bytes) => {
+                let ptr = $args.arg::<*mut u8>();
+                std::ptr::copy_nonoverlapping(bytes.as_ptr(), ptr, bytes.len());
+            }
+            ScanValue::String(bytes) => {
+                let ptr = $args.arg::<*mut c_char>();
+                std::ptr::copy_nonoverlapping(bytes.as_ptr(), ptr.cast::<u8>(), bytes.len());
+                *ptr.add(bytes.len()) = 0;
+            }
+            ScanValue::CharsConsumed(n) => match $spec.length {
+                LengthMod::Hh => {
+                    let ptr = $args.arg::<*mut i8>();
+                    *ptr = *n as i8;
+                }
+                LengthMod::H => {
+                    let ptr = $args.arg::<*mut i16>();
+                    *ptr = *n as i16;
+                }
+                LengthMod::L | LengthMod::Ll | LengthMod::J => {
+                    let ptr = $args.arg::<*mut i64>();
+                    *ptr = *n as i64;
+                }
+                _ => {
+                    let ptr = $args.arg::<*mut c_int>();
+                    *ptr = *n as c_int;
+                }
+            },
+            ScanValue::Pointer(v) => {
+                let ptr = $args.arg::<*mut *mut c_void>();
+                *ptr = *v as *mut c_void;
+            }
+        }
+    };
+}
+
+// ===========================================================================
+// Native wide I/O helpers
+// ===========================================================================
+
+/// Read a NUL-terminated wide string into a Vec of bytes (UTF-8 encoding).
+/// Format specifiers are all ASCII, so this is safe for format string conversion.
+unsafe fn wide_to_narrow(wcs: *const libc::wchar_t) -> Vec<u8> {
+    if wcs.is_null() {
+        return Vec::new();
+    }
+    let mut buf = Vec::new();
+    let mut p = wcs;
+    loop {
+        let wc = unsafe { *p } as u32;
+        if wc == 0 {
+            break;
+        }
+        // Encode the wide char as UTF-8 bytes.
+        if wc < 0x80 {
+            buf.push(wc as u8);
+        } else if wc < 0x800 {
+            buf.push(0xC0 | (wc >> 6) as u8);
+            buf.push(0x80 | (wc & 0x3F) as u8);
+        } else if wc < 0x10000 {
+            buf.push(0xE0 | (wc >> 12) as u8);
+            buf.push(0x80 | ((wc >> 6) & 0x3F) as u8);
+            buf.push(0x80 | (wc & 0x3F) as u8);
+        } else if wc < 0x110000 {
+            buf.push(0xF0 | (wc >> 18) as u8);
+            buf.push(0x80 | ((wc >> 12) & 0x3F) as u8);
+            buf.push(0x80 | ((wc >> 6) & 0x3F) as u8);
+            buf.push(0x80 | (wc & 0x3F) as u8);
+        } else {
+            // Invalid Unicode — substitute U+FFFD.
+            buf.extend_from_slice(&[0xEF, 0xBF, 0xBD]);
+        }
+        p = unsafe { p.add(1) };
+    }
+    buf
+}
+
+/// Convert narrow (UTF-8) bytes to wide chars, writing into a wchar_t buffer.
+/// Returns the number of wide chars written (not counting NUL).
+/// If n > 0, always NUL-terminates the output.
+fn narrow_to_wide_buf(narrow: &[u8], dst: *mut libc::wchar_t, n: usize) -> usize {
+    if dst.is_null() || n == 0 {
+        // Just count the wide chars that would be produced.
+        return narrow_to_wide_count(narrow);
+    }
+    let max_chars = n.saturating_sub(1); // Reserve space for NUL.
+    let mut written = 0usize;
+    let mut i = 0usize;
+    let bytes = narrow;
+    while i < bytes.len() && written < max_chars {
+        let (cp, advance) = decode_utf8(&bytes[i..]);
+        unsafe { *dst.add(written) = cp as libc::wchar_t };
+        written += 1;
+        i += advance;
+    }
+    unsafe { *dst.add(written) = 0 };
+    written
+}
+
+/// Count how many wide chars a narrow byte slice would produce.
+fn narrow_to_wide_count(narrow: &[u8]) -> usize {
+    let mut count = 0usize;
+    let mut i = 0usize;
+    while i < narrow.len() {
+        let (_, advance) = decode_utf8(&narrow[i..]);
+        count += 1;
+        i += advance;
+    }
+    count
+}
+
+/// Decode one UTF-8 code point, returning (code_point, bytes_consumed).
+fn decode_utf8(bytes: &[u8]) -> (u32, usize) {
+    if bytes.is_empty() {
+        return (0xFFFD, 1);
+    }
+    let b0 = bytes[0];
+    if b0 < 0x80 {
+        (b0 as u32, 1)
+    } else if b0 < 0xC0 {
+        (0xFFFD, 1) // Continuation byte without lead.
+    } else if b0 < 0xE0 {
+        if bytes.len() < 2 {
+            return (0xFFFD, 1);
+        }
+        let cp = ((b0 as u32 & 0x1F) << 6) | (bytes[1] as u32 & 0x3F);
+        (cp, 2)
+    } else if b0 < 0xF0 {
+        if bytes.len() < 3 {
+            return (0xFFFD, 1);
+        }
+        let cp =
+            ((b0 as u32 & 0x0F) << 12) | ((bytes[1] as u32 & 0x3F) << 6) | (bytes[2] as u32 & 0x3F);
+        (cp, 3)
+    } else {
+        if bytes.len() < 4 {
+            return (0xFFFD, 1);
+        }
+        let cp = ((b0 as u32 & 0x07) << 18)
+            | ((bytes[1] as u32 & 0x3F) << 12)
+            | ((bytes[2] as u32 & 0x3F) << 6)
+            | (bytes[3] as u32 & 0x3F);
+        (cp, 4)
+    }
+}
+
+/// Read a NUL-terminated wide string into a Vec of bytes (each wchar treated as byte value).
+/// Used for swscanf input: converts wide input to narrow for the scanf engine.
+unsafe fn wide_input_to_narrow(wcs: *const libc::wchar_t) -> Vec<u8> {
+    if wcs.is_null() {
+        return Vec::new();
+    }
+    let mut buf = Vec::new();
+    let mut p = wcs;
+    loop {
+        let wc = unsafe { *p } as u32;
+        if wc == 0 {
+            break;
+        }
+        // For scanf input, encode as UTF-8 so the narrow scanf engine
+        // can process it correctly.
+        if wc < 0x80 {
+            buf.push(wc as u8);
+        } else if wc < 0x800 {
+            buf.push(0xC0 | (wc >> 6) as u8);
+            buf.push(0x80 | (wc & 0x3F) as u8);
+        } else if wc < 0x10000 {
+            buf.push(0xE0 | (wc >> 12) as u8);
+            buf.push(0x80 | ((wc >> 6) & 0x3F) as u8);
+            buf.push(0x80 | (wc & 0x3F) as u8);
+        } else if wc < 0x110000 {
+            buf.push(0xF0 | (wc >> 18) as u8);
+            buf.push(0x80 | ((wc >> 12) & 0x3F) as u8);
+            buf.push(0x80 | ((wc >> 6) & 0x3F) as u8);
+            buf.push(0x80 | (wc & 0x3F) as u8);
+        } else {
+            buf.extend_from_slice(&[0xEF, 0xBF, 0xBD]);
+        }
+        p = unsafe { p.add(1) };
+    }
+    buf
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -2781,47 +3042,97 @@ pub unsafe extern "C" fn putwchar(wc: u32) -> u32 {
     unsafe { fputwc(wc, super::stdio_abi::stdout as *mut std::ffi::c_void) }
 }
 
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fwprintf(
-    stream: *mut std::ffi::c_void,
-    format: *const libc::wchar_t,
-    args: ...
-) -> c_int {
-    unsafe { libc_fwprintf(stream, format, args) }
-}
+// ===========================================================================
+// wprintf family — Implemented (native printf engine + wide conversion)
+// ===========================================================================
 
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn wprintf(format: *const libc::wchar_t, args: ...) -> c_int {
-    unsafe { libc_wprintf(format, args) }
-}
-
+/// Native `swprintf`: format into wide buffer with size limit.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn swprintf(
     s: *mut libc::wchar_t,
     n: usize,
     format: *const libc::wchar_t,
-    args: ...
+    mut args: ...
 ) -> c_int {
-    unsafe { libc_swprintf(s, n, format, args) }
+    if format.is_null() {
+        return -1;
+    }
+    let fmt_narrow = unsafe { wide_to_narrow(format) };
+    let segments = parse_format_string(&fmt_narrow);
+    let extract_count = super::stdio_abi::count_printf_args(&segments);
+    let mut arg_buf = [0u64; super::stdio_abi::MAX_VA_ARGS];
+    extract_wprintf_args!(&segments, &mut args, &mut arg_buf, extract_count);
+
+    let rendered =
+        unsafe { super::stdio_abi::render_printf(&fmt_narrow, arg_buf.as_ptr(), extract_count) };
+
+    // swprintf: if the output (including NUL) would exceed n, return -1.
+    let wide_count = narrow_to_wide_count(&rendered);
+    if wide_count >= n {
+        // POSIX: output would exceed buffer — error.
+        if !s.is_null() && n > 0 {
+            unsafe { *s = 0 };
+        }
+        return -1;
+    }
+
+    narrow_to_wide_buf(&rendered, s, n);
+    wide_count as c_int
 }
 
+/// Native `wprintf`: format to stdout.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn vfwprintf(
+pub unsafe extern "C" fn wprintf(format: *const libc::wchar_t, mut args: ...) -> c_int {
+    if format.is_null() {
+        return -1;
+    }
+    let fmt_narrow = unsafe { wide_to_narrow(format) };
+    let segments = parse_format_string(&fmt_narrow);
+    let extract_count = super::stdio_abi::count_printf_args(&segments);
+    let mut arg_buf = [0u64; super::stdio_abi::MAX_VA_ARGS];
+    extract_wprintf_args!(&segments, &mut args, &mut arg_buf, extract_count);
+
+    let rendered =
+        unsafe { super::stdio_abi::render_printf(&fmt_narrow, arg_buf.as_ptr(), extract_count) };
+    let total_len = rendered.len();
+
+    if super::stdio_abi::write_all_fd(libc::STDOUT_FILENO, &rendered) {
+        total_len as c_int
+    } else {
+        -1
+    }
+}
+
+/// Native `fwprintf`: format to stream.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn fwprintf(
     stream: *mut std::ffi::c_void,
     format: *const libc::wchar_t,
-    ap: *mut std::ffi::c_void,
+    mut args: ...
 ) -> c_int {
-    unsafe { libc_vfwprintf(stream, format, ap) }
+    if format.is_null() || stream.is_null() {
+        return -1;
+    }
+    let fmt_narrow = unsafe { wide_to_narrow(format) };
+    let segments = parse_format_string(&fmt_narrow);
+    let extract_count = super::stdio_abi::count_printf_args(&segments);
+    let mut arg_buf = [0u64; super::stdio_abi::MAX_VA_ARGS];
+    extract_wprintf_args!(&segments, &mut args, &mut arg_buf, extract_count);
+
+    let rendered =
+        unsafe { super::stdio_abi::render_printf(&fmt_narrow, arg_buf.as_ptr(), extract_count) };
+    let total_len = rendered.len();
+
+    // Write each byte through the stdio layer to use stream buffering.
+    for &byte in &rendered {
+        if unsafe { super::stdio_abi::fputc(byte as c_int, stream) } == libc::EOF {
+            return -1;
+        }
+    }
+    total_len as c_int
 }
 
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn vwprintf(
-    format: *const libc::wchar_t,
-    ap: *mut std::ffi::c_void,
-) -> c_int {
-    unsafe { libc_vwprintf(format, ap) }
-}
-
+/// Native `vswprintf`: format into wide buffer from va_list.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn vswprintf(
     s: *mut libc::wchar_t,
@@ -2829,53 +3140,212 @@ pub unsafe extern "C" fn vswprintf(
     format: *const libc::wchar_t,
     ap: *mut std::ffi::c_void,
 ) -> c_int {
-    unsafe { libc_vswprintf(s, n, format, ap) }
+    if format.is_null() {
+        return -1;
+    }
+    let fmt_narrow = unsafe { wide_to_narrow(format) };
+    let segments = parse_format_string(&fmt_narrow);
+    let extract_count = super::stdio_abi::count_printf_args(&segments);
+    let mut arg_buf = [0u64; super::stdio_abi::MAX_VA_ARGS];
+    unsafe { super::stdio_abi::vprintf_extract_args(&segments, ap, &mut arg_buf, extract_count) };
+
+    let rendered =
+        unsafe { super::stdio_abi::render_printf(&fmt_narrow, arg_buf.as_ptr(), extract_count) };
+
+    let wide_count = narrow_to_wide_count(&rendered);
+    if wide_count >= n {
+        if !s.is_null() && n > 0 {
+            unsafe { *s = 0 };
+        }
+        return -1;
+    }
+
+    narrow_to_wide_buf(&rendered, s, n);
+    wide_count as c_int
 }
 
+/// Native `vwprintf`: format to stdout from va_list.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fwscanf(
-    stream: *mut std::ffi::c_void,
+pub unsafe extern "C" fn vwprintf(
     format: *const libc::wchar_t,
-    args: ...
+    ap: *mut std::ffi::c_void,
 ) -> c_int {
-    unsafe { libc_fwscanf(stream, format, args) }
+    if format.is_null() {
+        return -1;
+    }
+    let fmt_narrow = unsafe { wide_to_narrow(format) };
+    let segments = parse_format_string(&fmt_narrow);
+    let extract_count = super::stdio_abi::count_printf_args(&segments);
+    let mut arg_buf = [0u64; super::stdio_abi::MAX_VA_ARGS];
+    unsafe { super::stdio_abi::vprintf_extract_args(&segments, ap, &mut arg_buf, extract_count) };
+
+    let rendered =
+        unsafe { super::stdio_abi::render_printf(&fmt_narrow, arg_buf.as_ptr(), extract_count) };
+    let total_len = rendered.len();
+
+    if super::stdio_abi::write_all_fd(libc::STDOUT_FILENO, &rendered) {
+        total_len as c_int
+    } else {
+        -1
+    }
 }
 
+/// Native `vfwprintf`: format to stream from va_list.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn wscanf(format: *const libc::wchar_t, args: ...) -> c_int {
-    unsafe { libc_wscanf(format, args) }
-}
-
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn swscanf(
-    s: *const libc::wchar_t,
-    format: *const libc::wchar_t,
-    args: ...
-) -> c_int {
-    unsafe { libc_swscanf(s, format, args) }
-}
-
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn vfwscanf(
+pub unsafe extern "C" fn vfwprintf(
     stream: *mut std::ffi::c_void,
     format: *const libc::wchar_t,
     ap: *mut std::ffi::c_void,
 ) -> c_int {
-    unsafe { libc_vfwscanf(stream, format, ap) }
+    if format.is_null() || stream.is_null() {
+        return -1;
+    }
+    let fmt_narrow = unsafe { wide_to_narrow(format) };
+    let segments = parse_format_string(&fmt_narrow);
+    let extract_count = super::stdio_abi::count_printf_args(&segments);
+    let mut arg_buf = [0u64; super::stdio_abi::MAX_VA_ARGS];
+    unsafe { super::stdio_abi::vprintf_extract_args(&segments, ap, &mut arg_buf, extract_count) };
+
+    let rendered =
+        unsafe { super::stdio_abi::render_printf(&fmt_narrow, arg_buf.as_ptr(), extract_count) };
+    let total_len = rendered.len();
+
+    for &byte in &rendered {
+        if unsafe { super::stdio_abi::fputc(byte as c_int, stream) } == libc::EOF {
+            return -1;
+        }
+    }
+    total_len as c_int
 }
 
+// ===========================================================================
+// wscanf family — Implemented (native scanf engine + wide conversion)
+// ===========================================================================
+
+/// Native `swscanf`: scan from wide string.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn vwscanf(format: *const libc::wchar_t, ap: *mut std::ffi::c_void) -> c_int {
-    unsafe { libc_vwscanf(format, ap) }
+pub unsafe extern "C" fn swscanf(
+    s: *const libc::wchar_t,
+    format: *const libc::wchar_t,
+    mut args: ...
+) -> c_int {
+    if s.is_null() || format.is_null() {
+        return libc::EOF;
+    }
+    let input = unsafe { wide_input_to_narrow(s) };
+    let fmt_narrow = unsafe { wide_to_narrow(format) };
+    let fmt_cstr = std::ffi::CString::new(fmt_narrow).unwrap_or_default();
+    let (result, directives) = super::stdio_abi::scanf_core(&input, fmt_cstr.as_ptr());
+
+    if result.input_failure && result.count == 0 {
+        return libc::EOF;
+    }
+    scanf_write_values!(result.values, directives, args);
+    result.count
 }
 
+/// Native `wscanf`: scan from stdin.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn wscanf(format: *const libc::wchar_t, mut args: ...) -> c_int {
+    if format.is_null() {
+        return libc::EOF;
+    }
+    let input = super::stdio_abi::read_stream_for_scanf(super::stdio_abi::stdin, 4096);
+    let fmt_narrow = unsafe { wide_to_narrow(format) };
+    let fmt_cstr = std::ffi::CString::new(fmt_narrow).unwrap_or_default();
+    let (result, directives) = super::stdio_abi::scanf_core(&input, fmt_cstr.as_ptr());
+
+    if result.input_failure && result.count == 0 {
+        return libc::EOF;
+    }
+    scanf_write_values!(result.values, directives, args);
+    result.count
+}
+
+/// Native `fwscanf`: scan from stream.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn fwscanf(
+    stream: *mut std::ffi::c_void,
+    format: *const libc::wchar_t,
+    mut args: ...
+) -> c_int {
+    if format.is_null() {
+        return libc::EOF;
+    }
+    let id = stream as usize;
+    let input = super::stdio_abi::read_stream_for_scanf(id, 4096);
+    let fmt_narrow = unsafe { wide_to_narrow(format) };
+    let fmt_cstr = std::ffi::CString::new(fmt_narrow).unwrap_or_default();
+    let (result, directives) = super::stdio_abi::scanf_core(&input, fmt_cstr.as_ptr());
+
+    if result.input_failure && result.count == 0 {
+        return libc::EOF;
+    }
+    scanf_write_values!(result.values, directives, args);
+    result.count
+}
+
+/// Native `vswscanf`: scan from wide string with va_list.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn vswscanf(
     s: *const libc::wchar_t,
     format: *const libc::wchar_t,
     ap: *mut std::ffi::c_void,
 ) -> c_int {
-    unsafe { libc_vswscanf(s, format, ap) }
+    if s.is_null() || format.is_null() {
+        return libc::EOF;
+    }
+    let input = unsafe { wide_input_to_narrow(s) };
+    let fmt_narrow = unsafe { wide_to_narrow(format) };
+    let fmt_cstr = std::ffi::CString::new(fmt_narrow).unwrap_or_default();
+    let (result, directives) = super::stdio_abi::scanf_core(&input, fmt_cstr.as_ptr());
+
+    if result.input_failure && result.count == 0 {
+        return libc::EOF;
+    }
+    unsafe { super::stdio_abi::vscanf_write_values(&result.values, &directives, ap) };
+    result.count
+}
+
+/// Native `vwscanf`: scan from stdin with va_list.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn vwscanf(format: *const libc::wchar_t, ap: *mut std::ffi::c_void) -> c_int {
+    if format.is_null() {
+        return libc::EOF;
+    }
+    let input = super::stdio_abi::read_stream_for_scanf(super::stdio_abi::stdin, 4096);
+    let fmt_narrow = unsafe { wide_to_narrow(format) };
+    let fmt_cstr = std::ffi::CString::new(fmt_narrow).unwrap_or_default();
+    let (result, directives) = super::stdio_abi::scanf_core(&input, fmt_cstr.as_ptr());
+
+    if result.input_failure && result.count == 0 {
+        return libc::EOF;
+    }
+    unsafe { super::stdio_abi::vscanf_write_values(&result.values, &directives, ap) };
+    result.count
+}
+
+/// Native `vfwscanf`: scan from stream with va_list.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn vfwscanf(
+    stream: *mut std::ffi::c_void,
+    format: *const libc::wchar_t,
+    ap: *mut std::ffi::c_void,
+) -> c_int {
+    if format.is_null() {
+        return libc::EOF;
+    }
+    let id = stream as usize;
+    let input = super::stdio_abi::read_stream_for_scanf(id, 4096);
+    let fmt_narrow = unsafe { wide_to_narrow(format) };
+    let fmt_cstr = std::ffi::CString::new(fmt_narrow).unwrap_or_default();
+    let (result, directives) = super::stdio_abi::scanf_core(&input, fmt_cstr.as_ptr());
+
+    if result.input_failure && result.count == 0 {
+        return libc::EOF;
+    }
+    unsafe { super::stdio_abi::vscanf_write_values(&result.values, &directives, ap) };
+    result.count
 }
 
 // ---------------------------------------------------------------------------

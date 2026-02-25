@@ -55,7 +55,7 @@ unsafe fn scan_c_str_len(ptr: *const c_char, bound: Option<usize>) -> (usize, bo
 }
 
 #[inline]
-unsafe fn c_str_bytes<'a>(ptr: *const c_char) -> &'a [u8] {
+pub(crate) unsafe fn c_str_bytes<'a>(ptr: *const c_char) -> &'a [u8] {
     let (len, _) = unsafe { scan_c_str_len(ptr, None) };
     // SAFETY: `scan_c_str_len` scanned until the first NUL byte, so this range is readable.
     unsafe { std::slice::from_raw_parts(ptr.cast::<u8>(), len) }
@@ -1267,10 +1267,10 @@ use frankenlibc_core::stdio::{
 };
 
 /// Maximum variadic arguments we extract per printf call.
-const MAX_VA_ARGS: usize = 32;
+pub(crate) const MAX_VA_ARGS: usize = 32;
 
 /// Count how many variadic arguments a parsed format string needs.
-fn count_printf_args(segments: &[FormatSegment<'_>]) -> usize {
+pub(crate) fn count_printf_args(segments: &[FormatSegment<'_>]) -> usize {
     let mut needed = 0usize;
     for seg in segments {
         if let FormatSegment::Spec(spec) = seg {
@@ -1332,7 +1332,7 @@ macro_rules! extract_va_args {
 /// We interpret each value according to the format spec's conversion and length modifier.
 ///
 /// Returns the formatted byte vector.
-unsafe fn render_printf(fmt: &[u8], args: *const u64, max_args: usize) -> Vec<u8> {
+pub(crate) unsafe fn render_printf(fmt: &[u8], args: *const u64, max_args: usize) -> Vec<u8> {
     let segments = parse_format_string(fmt);
     let mut buf = Vec::with_capacity(256);
     let mut arg_idx = 0usize;
@@ -1475,7 +1475,7 @@ unsafe fn render_printf(fmt: &[u8], args: *const u64, max_args: usize) -> Vec<u8
     buf
 }
 
-fn write_all_fd(fd: c_int, data: &[u8]) -> bool {
+pub(crate) fn write_all_fd(fd: c_int, data: &[u8]) -> bool {
     let mut written = 0usize;
     while written < data.len() {
         let rc = unsafe { sys_write_fd(fd, data[written..].as_ptr().cast(), data.len() - written) };
@@ -1812,22 +1812,109 @@ pub unsafe extern "C" fn asprintf(
 }
 
 // ===========================================================================
-// v*printf family — va_list variants (GlibcCallThrough)
+// v*printf family — Implemented (native format engine + va_list extraction)
 //
-// These delegate to glibc because Rust cannot safely extract arguments from
-// a foreign va_list without naming the unstable VaListImpl type.
-// The libc crate doesn't expose v*printf, so we link directly.
+// On x86_64 Linux, va_list is a pointer to `__va_list_tag`:
+//   struct __va_list_tag {
+//       unsigned int gp_offset;    // +0: offset into reg_save_area for next GP arg
+//       unsigned int fp_offset;    // +4: offset into reg_save_area for next FP arg
+//       void *overflow_arg_area;   // +8: pointer to next stack argument
+//       void *reg_save_area;       // +16: saved register area
+//   };
+// GP registers (rdi,rsi,rdx,rcx,r8,r9) hold integer/pointer args: gp_offset 0..48
+// FP registers (xmm0..xmm7) hold float/double args: fp_offset 48..176
 // ===========================================================================
 
-unsafe extern "C" {
-    #[link_name = "vsnprintf"]
-    fn libc_vsnprintf(s: *mut c_char, n: usize, fmt: *const c_char, ap: *mut c_void) -> c_int;
-    #[link_name = "vsprintf"]
-    fn libc_vsprintf(s: *mut c_char, fmt: *const c_char, ap: *mut c_void) -> c_int;
-    #[link_name = "vdprintf"]
-    fn libc_vdprintf(fd: c_int, fmt: *const c_char, ap: *mut c_void) -> c_int;
-    #[link_name = "vasprintf"]
-    fn libc_vasprintf(strp: *mut *mut c_char, fmt: *const c_char, ap: *mut c_void) -> c_int;
+/// Extract printf arguments from a raw va_list pointer into a u64 buffer.
+///
+/// Reads each argument according to the format specifiers: integer/pointer/string
+/// args come from GP registers or overflow area, float args from FP registers or
+/// overflow area.
+pub(crate) unsafe fn vprintf_extract_args(
+    segments: &[FormatSegment<'_>],
+    ap: *mut c_void,
+    buf: &mut [u64; MAX_VA_ARGS],
+    extract_count: usize,
+) -> usize {
+    let gp_offset_ptr = ap as *mut u32;
+    let fp_offset_ptr = unsafe { (ap as *mut u8).add(4) as *mut u32 };
+    let overflow_ptr = unsafe { (ap as *mut u8).add(8) as *mut *mut u8 };
+    let reg_save_ptr = unsafe { (ap as *mut u8).add(16) as *mut *mut u8 };
+
+    let mut idx = 0usize;
+    for seg in segments {
+        if let FormatSegment::Spec(spec) = seg {
+            // Width from arg
+            if matches!(spec.width, Width::FromArg) && idx < extract_count {
+                buf[idx] = unsafe { vprintf_read_gp(gp_offset_ptr, overflow_ptr, reg_save_ptr) };
+                idx += 1;
+            }
+            // Precision from arg
+            if matches!(spec.precision, Precision::FromArg) && idx < extract_count {
+                buf[idx] = unsafe { vprintf_read_gp(gp_offset_ptr, overflow_ptr, reg_save_ptr) };
+                idx += 1;
+            }
+            match spec.conversion {
+                b'%' => {}
+                b'f' | b'F' | b'e' | b'E' | b'g' | b'G' | b'a' | b'A' => {
+                    if idx < extract_count {
+                        buf[idx] =
+                            unsafe { vprintf_read_fp(fp_offset_ptr, overflow_ptr, reg_save_ptr) };
+                        idx += 1;
+                    }
+                }
+                _ => {
+                    if idx < extract_count {
+                        buf[idx] =
+                            unsafe { vprintf_read_gp(gp_offset_ptr, overflow_ptr, reg_save_ptr) };
+                        idx += 1;
+                    }
+                }
+            }
+        }
+    }
+    idx
+}
+
+/// Read the next GP (integer/pointer) argument from va_list.
+#[inline]
+unsafe fn vprintf_read_gp(
+    gp_offset_ptr: *mut u32,
+    overflow_ptr: *mut *mut u8,
+    reg_save_ptr: *mut *mut u8,
+) -> u64 {
+    let gp_off = unsafe { *gp_offset_ptr };
+    if gp_off < 48 {
+        let p = unsafe { (*reg_save_ptr).add(gp_off as usize) as *const u64 };
+        unsafe { *gp_offset_ptr = gp_off + 8 };
+        unsafe { *p }
+    } else {
+        let p = unsafe { *overflow_ptr as *const u64 };
+        unsafe { *overflow_ptr = (*overflow_ptr).add(8) };
+        unsafe { *p }
+    }
+}
+
+/// Read the next FP (float/double) argument from va_list.
+#[inline]
+unsafe fn vprintf_read_fp(
+    fp_offset_ptr: *mut u32,
+    overflow_ptr: *mut *mut u8,
+    reg_save_ptr: *mut *mut u8,
+) -> u64 {
+    let fp_off = unsafe { *fp_offset_ptr };
+    if fp_off < 176 {
+        // FP register save slots are 16 bytes each (SSE register width),
+        // but we only read the low 8 bytes (double).
+        let p = unsafe { (*reg_save_ptr).add(fp_off as usize) as *const u64 };
+        unsafe { *fp_offset_ptr = fp_off + 16 };
+        unsafe { *p }
+    } else {
+        // On the stack, doubles occupy 8 bytes.
+        let p = unsafe { *overflow_ptr as *const u64 };
+        unsafe { *overflow_ptr = (*overflow_ptr).add(8) };
+        unsafe { *p }
+    }
 }
 
 /// POSIX `vsnprintf` — format at most `size` bytes from va_list.
@@ -1847,9 +1934,31 @@ pub unsafe extern "C" fn vsnprintf(
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
         return -1;
     }
-    let rc = unsafe { libc_vsnprintf(str_buf, size, format, ap) };
-    runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, false);
-    rc
+
+    let fmt_bytes = unsafe { c_str_bytes(format) };
+    let segments = parse_format_string(fmt_bytes);
+    let extract_count = count_printf_args(&segments);
+    let mut arg_buf = [0u64; MAX_VA_ARGS];
+    unsafe { vprintf_extract_args(&segments, ap, &mut arg_buf, extract_count) };
+
+    let rendered = unsafe { render_printf(fmt_bytes, arg_buf.as_ptr(), extract_count) };
+    let total_len = rendered.len();
+
+    if !str_buf.is_null() && size > 0 {
+        let copy_len = total_len.min(size - 1);
+        unsafe {
+            std::ptr::copy_nonoverlapping(rendered.as_ptr(), str_buf as *mut u8, copy_len);
+            *str_buf.add(copy_len) = 0;
+        }
+    }
+
+    runtime_policy::observe(
+        ApiFamily::Stdio,
+        decision.profile,
+        runtime_policy::scaled_cost(15, total_len),
+        false,
+    );
+    total_len as c_int
 }
 
 /// POSIX `vsprintf` — format into buffer from va_list (no size limit).
@@ -1859,6 +1968,9 @@ pub unsafe extern "C" fn vsprintf(
     format: *const c_char,
     ap: *mut c_void,
 ) -> c_int {
+    if format.is_null() || str_buf.is_null() {
+        return -1;
+    }
     let (mode, decision) =
         runtime_policy::decide(ApiFamily::Stdio, str_buf as usize, 0, true, false, 0);
     if matches!(decision.action, MembraneAction::Deny) {
@@ -1866,25 +1978,44 @@ pub unsafe extern "C" fn vsprintf(
         return -1;
     }
 
+    let fmt_bytes = unsafe { c_str_bytes(format) };
+    let segments = parse_format_string(fmt_bytes);
+    let extract_count = count_printf_args(&segments);
+    let mut arg_buf = [0u64; MAX_VA_ARGS];
+    unsafe { vprintf_extract_args(&segments, ap, &mut arg_buf, extract_count) };
+
+    let rendered = unsafe { render_printf(fmt_bytes, arg_buf.as_ptr(), extract_count) };
+    let total_len = rendered.len();
+
+    let mut copy_len = total_len;
+    let mut adverse = false;
+
     if repair_enabled(mode.heals_enabled(), decision.action) {
         if let Some(bound) = known_remaining(str_buf as usize) {
-            // Dynamically upgrade vsprintf to vsnprintf to prevent overflow.
-            let rc = unsafe { libc_vsnprintf(str_buf, bound, format, ap) };
-            let adverse = rc >= bound as c_int; // vsnprintf truncated the output
-            if adverse {
+            let max_payload = bound.saturating_sub(1);
+            if copy_len > max_payload {
+                copy_len = max_payload;
+                adverse = true;
                 global_healing_policy().record(&HealingAction::TruncateWithNull {
-                    requested: (rc as usize).saturating_add(1),
-                    truncated: bound.saturating_sub(1),
+                    requested: total_len.saturating_add(1),
+                    truncated: copy_len,
                 });
             }
-            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, adverse);
-            return rc;
         }
     }
 
-    let rc = unsafe { libc_vsprintf(str_buf, format, ap) };
-    runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, false);
-    rc
+    unsafe {
+        std::ptr::copy_nonoverlapping(rendered.as_ptr(), str_buf as *mut u8, copy_len);
+        *str_buf.add(copy_len) = 0;
+    }
+
+    runtime_policy::observe(
+        ApiFamily::Stdio,
+        decision.profile,
+        runtime_policy::scaled_cost(15, total_len),
+        adverse,
+    );
+    total_len as c_int
 }
 
 /// POSIX `vfprintf` — format to stream from va_list.
@@ -1897,36 +2028,50 @@ pub unsafe extern "C" fn vfprintf(
     if format.is_null() {
         return -1;
     }
-    let (_, decision) =
-        runtime_policy::decide(ApiFamily::Stdio, stream as usize, 0, false, false, 0);
+    let id = stream as usize;
+    let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, id, 0, false, false, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
         return -1;
     }
 
-    // `stream` is a FrankenLibC stream handle, not a host glibc `FILE*`.
-    // Resolve to file descriptor through the registry and emit via vdprintf.
-    let id = stream as usize;
-    let fd = {
-        let reg = registry().lock().unwrap_or_else(|e| e.into_inner());
-        match reg.streams.get(&id) {
-            Some(s) => s.fd(),
-            None => {
-                runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+    let fmt_bytes = unsafe { c_str_bytes(format) };
+    let segments = parse_format_string(fmt_bytes);
+    let extract_count = count_printf_args(&segments);
+    let mut arg_buf = [0u64; MAX_VA_ARGS];
+    unsafe { vprintf_extract_args(&segments, ap, &mut arg_buf, extract_count) };
+
+    let rendered = unsafe { render_printf(fmt_bytes, arg_buf.as_ptr(), extract_count) };
+    let total_len = rendered.len();
+
+    let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(s) = reg.streams.get_mut(&id) {
+        let flush_data = s.buffer_write(&rendered);
+        if !flush_data.is_empty() {
+            let fd = s.fd();
+            if !write_all_fd(fd, &flush_data) {
+                s.set_error();
+                runtime_policy::observe(
+                    ApiFamily::Stdio,
+                    decision.profile,
+                    runtime_policy::scaled_cost(15, total_len),
+                    true,
+                );
                 return -1;
             }
         }
-    };
+    } else {
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+        return -1;
+    }
 
-    let rc = unsafe { libc_vdprintf(fd, format, ap) };
-    let adverse = rc < 0;
     runtime_policy::observe(
         ApiFamily::Stdio,
         decision.profile,
-        runtime_policy::scaled_cost(15, rc.max(0) as usize),
-        adverse,
+        runtime_policy::scaled_cost(15, total_len),
+        false,
     );
-    rc
+    total_len as c_int
 }
 
 /// POSIX `vprintf` — format to stdout from va_list.
@@ -1935,31 +2080,33 @@ pub unsafe extern "C" fn vprintf(format: *const c_char, ap: *mut c_void) -> c_in
     if format.is_null() {
         return -1;
     }
+
     let stdout_ptr = STDOUT_SENTINEL as *mut c_void;
-    let (_, decision) =
-        runtime_policy::decide(ApiFamily::Stdio, stdout_ptr as usize, 0, false, false, 0);
+    let id = stdout_ptr as usize;
+    let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, id, 0, false, false, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
         return -1;
     }
 
-    // Mirror vfprintf behavior: resolve stdout sentinel to an fd and emit via vdprintf.
-    let fd = {
-        let reg = registry().lock().unwrap_or_else(|e| e.into_inner());
-        reg.streams
-            .get(&(stdout_ptr as usize))
-            .map_or(libc::STDOUT_FILENO, |s| s.fd())
-    };
+    let fmt_bytes = unsafe { c_str_bytes(format) };
+    let segments = parse_format_string(fmt_bytes);
+    let extract_count = count_printf_args(&segments);
+    let mut arg_buf = [0u64; MAX_VA_ARGS];
+    unsafe { vprintf_extract_args(&segments, ap, &mut arg_buf, extract_count) };
 
-    let rc = unsafe { libc_vdprintf(fd, format, ap) };
-    let adverse = rc < 0;
+    let rendered = unsafe { render_printf(fmt_bytes, arg_buf.as_ptr(), extract_count) };
+    let total_len = rendered.len();
+
+    let wrote_all = write_all_fd(libc::STDOUT_FILENO, &rendered);
+
     runtime_policy::observe(
         ApiFamily::Stdio,
         decision.profile,
-        runtime_policy::scaled_cost(15, rc.max(0) as usize),
-        adverse,
+        runtime_policy::scaled_cost(15, total_len),
+        !wrote_all,
     );
-    rc
+    if wrote_all { total_len as c_int } else { -1 }
 }
 
 /// POSIX `vdprintf` — format to file descriptor from va_list.
@@ -1973,9 +2120,41 @@ pub unsafe extern "C" fn vdprintf(fd: c_int, format: *const c_char, ap: *mut c_v
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
         return -1;
     }
-    let rc = unsafe { libc_vdprintf(fd, format, ap) };
-    runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, false);
-    rc
+
+    let fmt_bytes = unsafe { c_str_bytes(format) };
+    let segments = parse_format_string(fmt_bytes);
+    let extract_count = count_printf_args(&segments);
+    let mut arg_buf = [0u64; MAX_VA_ARGS];
+    unsafe { vprintf_extract_args(&segments, ap, &mut arg_buf, extract_count) };
+
+    let rendered = unsafe { render_printf(fmt_bytes, arg_buf.as_ptr(), extract_count) };
+    let total_len = rendered.len();
+
+    let mut written = 0usize;
+    let mut adverse = false;
+    while written < total_len {
+        let rc =
+            unsafe { sys_write_fd(fd, rendered[written..].as_ptr().cast(), total_len - written) };
+        if rc < 0 {
+            let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+            if e == errno::EINTR {
+                continue;
+            }
+            adverse = true;
+            break;
+        } else if rc == 0 {
+            adverse = true;
+            break;
+        }
+        written += rc as usize;
+    }
+    runtime_policy::observe(
+        ApiFamily::Stdio,
+        decision.profile,
+        runtime_policy::scaled_cost(15, total_len),
+        adverse,
+    );
+    if adverse { -1 } else { total_len as c_int }
 }
 
 /// GNU `vasprintf` — allocate and format from va_list.
@@ -1989,14 +2168,44 @@ pub unsafe extern "C" fn vasprintf(
         unsafe { set_abi_errno(errno::EINVAL) };
         return -1;
     }
+    unsafe { *strp = std::ptr::null_mut() };
+
     let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, strp as usize, 0, false, false, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
         return -1;
     }
-    let rc = unsafe { libc_vasprintf(strp, format, ap) };
-    runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, false);
-    rc
+
+    let fmt_bytes = unsafe { c_str_bytes(format) };
+    let segments = parse_format_string(fmt_bytes);
+    let extract_count = count_printf_args(&segments);
+    let mut arg_buf = [0u64; MAX_VA_ARGS];
+    unsafe { vprintf_extract_args(&segments, ap, &mut arg_buf, extract_count) };
+
+    let rendered = unsafe { render_printf(fmt_bytes, arg_buf.as_ptr(), extract_count) };
+    let total_len = rendered.len();
+    let alloc_size = total_len.saturating_add(1);
+
+    let out = unsafe { malloc(alloc_size).cast::<c_char>() };
+    if out.is_null() {
+        unsafe { set_abi_errno(errno::ENOMEM) };
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+        return -1;
+    }
+
+    unsafe {
+        std::ptr::copy_nonoverlapping(rendered.as_ptr(), out.cast::<u8>(), total_len);
+        *out.add(total_len) = 0;
+        *strp = out;
+    }
+
+    runtime_policy::observe(
+        ApiFamily::Stdio,
+        decision.profile,
+        runtime_policy::scaled_cost(15, total_len),
+        false,
+    );
+    total_len as c_int
 }
 
 // ===========================================================================
@@ -2128,7 +2337,7 @@ macro_rules! scanf_write_one {
 }
 
 /// Core scanf logic: parse format, scan input, return result and directives.
-fn scanf_core(input: &[u8], format: *const c_char) -> (ScanResult, Vec<ScanDirective>) {
+pub(crate) fn scanf_core(input: &[u8], format: *const c_char) -> (ScanResult, Vec<ScanDirective>) {
     let fmt_bytes = unsafe { CStr::from_ptr(format) }.to_bytes();
     let directives = parse_scanf_format(fmt_bytes);
     let result = scan_input(input, &directives);
@@ -2136,7 +2345,7 @@ fn scanf_core(input: &[u8], format: *const c_char) -> (ScanResult, Vec<ScanDirec
 }
 
 /// Read stream content into a byte buffer for scanf parsing.
-fn read_stream_for_scanf(id: usize, limit: usize) -> Vec<u8> {
+pub(crate) fn read_stream_for_scanf(id: usize, limit: usize) -> Vec<u8> {
     let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
     let Some(s) = reg.streams.get_mut(&id) else {
         return Vec::new();
@@ -2359,7 +2568,11 @@ pub unsafe extern "C" fn vscanf(format: *const c_char, ap: *mut c_void) -> c_int
 /// We manually read pointer arguments from the overflow area, which is used
 /// when all register save slots are exhausted (common in scanf where all
 /// args are pointers passed after the format string).
-unsafe fn vscanf_write_values(values: &[ScanValue], directives: &[ScanDirective], ap: *mut c_void) {
+pub(crate) unsafe fn vscanf_write_values(
+    values: &[ScanValue],
+    directives: &[ScanDirective],
+    ap: *mut c_void,
+) {
     // On x86_64, the va_list structure fields:
     // gp_offset (u32) at +0: offset into reg_save_area for next GP register arg
     // fp_offset (u32) at +4: offset into reg_save_area for next FP register arg
@@ -2408,7 +2621,7 @@ unsafe fn vscanf_write_values(values: &[ScanValue], directives: &[ScanDirective]
 }
 
 /// Write a single scanned value to a destination pointer.
-unsafe fn vscanf_write_one(
+pub(crate) unsafe fn vscanf_write_one(
     val: &ScanValue,
     spec: &frankenlibc_core::stdio::scanf::ScanSpec,
     dest: *mut c_void,

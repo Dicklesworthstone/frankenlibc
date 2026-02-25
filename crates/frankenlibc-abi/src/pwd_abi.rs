@@ -242,6 +242,12 @@ thread_local! {
     static PWD_TLS: RefCell<PwdStorage> = RefCell::new(PwdStorage::new());
 }
 
+/// Fill thread-local passwd struct from a parsed entry.
+/// Used by `fgetpwent` in `unistd_abi` to avoid duplicating TLS storage.
+pub(crate) fn fill_passwd_from_entry(entry: &frankenlibc_core::pwd::Passwd) -> *mut libc::passwd {
+    PWD_TLS.with(|cell| cell.borrow_mut().fill_from(entry))
+}
+
 fn lookup_passwd_by_name(name: &[u8]) -> Option<frankenlibc_core::pwd::Passwd> {
     PWD_TLS.with(|cell| {
         let mut storage = cell.borrow_mut();
@@ -545,6 +551,43 @@ unsafe fn fill_passwd_r(
     }
 
     0
+}
+
+/// GNU `getpwent_r` — reentrant version of `getpwent`.
+///
+/// Iterates through `/etc/passwd` entries, filling a caller-provided buffer.
+/// Returns 0 on success, `ENOENT` at end of file, `ERANGE` if buffer too small.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getpwent_r(
+    pwd: *mut libc::passwd,
+    buf: *mut c_char,
+    buflen: libc::size_t,
+    result: *mut *mut libc::passwd,
+) -> c_int {
+    if pwd.is_null() || buf.is_null() || result.is_null() {
+        return libc::EINVAL;
+    }
+
+    unsafe { *result = ptr::null_mut() };
+
+    PWD_TLS.with(|cell| {
+        let mut storage = cell.borrow_mut();
+        storage.refresh_cache();
+
+        if (storage.entries.is_empty() && storage.iter_idx == 0)
+            || storage.entries_generation != storage.cache_generation
+        {
+            storage.rebuild_entries();
+        }
+
+        if storage.iter_idx >= storage.entries.len() {
+            return libc::ENOENT;
+        }
+
+        let entry = storage.entries[storage.iter_idx].clone();
+        storage.iter_idx += 1;
+        unsafe { fill_passwd_r(&entry, pwd, buf, buflen, result) }
+    })
 }
 
 #[cfg(test)]

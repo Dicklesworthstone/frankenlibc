@@ -4999,3 +4999,132 @@ pub unsafe extern "C" fn psignal(sig: c_int, s: *const c_char) {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// GNU extensions: strverscmp, rawmemchr
+// ---------------------------------------------------------------------------
+
+/// GNU `strverscmp` — version-aware string comparison.
+///
+/// Compares two strings treating embedded digit sequences as numbers.
+/// For example, "file10" > "file9" (unlike strcmp which gives "file10" < "file9").
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strverscmp(s1: *const c_char, s2: *const c_char) -> c_int {
+    if s1.is_null() && s2.is_null() {
+        return 0;
+    }
+    if s1.is_null() {
+        return -1;
+    }
+    if s2.is_null() {
+        return 1;
+    }
+
+    let mut i = 0usize;
+    loop {
+        let c1 = unsafe { *s1.add(i) } as u8;
+        let c2 = unsafe { *s2.add(i) } as u8;
+
+        // Both hit NUL: equal.
+        if c1 == 0 && c2 == 0 {
+            return 0;
+        }
+
+        // If both are digits, compare numerically.
+        if c1.is_ascii_digit() && c2.is_ascii_digit() {
+            // Check for leading zeros — strings with leading zeros compare
+            // as if left-aligned (fractional comparison).
+            let leading_zero = c1 == b'0' || c2 == b'0';
+            if leading_zero {
+                // Left-aligned comparison (treat as fraction after decimal point).
+                loop {
+                    let d1 = unsafe { *s1.add(i) } as u8;
+                    let d2 = unsafe { *s2.add(i) } as u8;
+                    let is_d1 = d1.is_ascii_digit();
+                    let is_d2 = d2.is_ascii_digit();
+                    if !is_d1 && !is_d2 {
+                        break;
+                    }
+                    if !is_d1 {
+                        return -1;
+                    }
+                    if !is_d2 {
+                        return 1;
+                    }
+                    if d1 != d2 {
+                        return (d1 as c_int) - (d2 as c_int);
+                    }
+                    i += 1;
+                }
+            } else {
+                // Numeric comparison: longer digit sequence = larger number.
+                let start = i;
+                let mut len1 = 0usize;
+                let mut len2 = 0usize;
+                let mut diff = 0i32;
+
+                // Walk both digit sequences simultaneously.
+                loop {
+                    let d1 = unsafe { *s1.add(start + len1) } as u8;
+                    let d2 = unsafe { *s2.add(start + len2) } as u8;
+                    let is_d1 = d1.is_ascii_digit();
+                    let is_d2 = d2.is_ascii_digit();
+
+                    if is_d1 {
+                        len1 += 1;
+                    }
+                    if is_d2 {
+                        len2 += 1;
+                    }
+                    if !is_d1 && !is_d2 {
+                        break;
+                    }
+                    // Record first digit difference for equal-length sequences.
+                    if is_d1 && is_d2 && diff == 0 {
+                        diff = (d1 as i32) - (d2 as i32);
+                    }
+                    if !is_d1 || !is_d2 {
+                        break;
+                    }
+                }
+
+                // Longer digit sequence wins.
+                if len1 != len2 {
+                    return if len1 > len2 { 1 } else { -1 };
+                }
+                // Same length: first different digit wins.
+                if diff != 0 {
+                    return diff;
+                }
+                i = start + len1;
+            }
+            continue;
+        }
+
+        // Otherwise compare as bytes.
+        if c1 != c2 {
+            return (c1 as c_int) - (c2 as c_int);
+        }
+        i += 1;
+    }
+}
+
+/// GNU `rawmemchr` — scan memory for a byte without a length limit.
+///
+/// Like `memchr` but assumes the byte WILL be found. If the byte is not
+/// present, behavior is undefined (same as glibc). This implementation
+/// scans until found.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn rawmemchr(s: *const c_void, c: c_int) -> *mut c_void {
+    if s.is_null() {
+        return std::ptr::null_mut();
+    }
+    let needle = c as u8;
+    let mut ptr = s as *const u8;
+    loop {
+        if unsafe { *ptr } == needle {
+            return ptr as *mut c_void;
+        }
+        ptr = unsafe { ptr.add(1) };
+    }
+}

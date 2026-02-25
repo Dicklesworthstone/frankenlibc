@@ -248,6 +248,12 @@ thread_local! {
     static GRP_TLS: RefCell<GrpStorage> = RefCell::new(GrpStorage::new());
 }
 
+/// Fill thread-local group struct from a parsed entry.
+/// Used by `fgetgrent` in `unistd_abi` to avoid duplicating TLS storage.
+pub(crate) fn fill_group_from_entry(entry: &frankenlibc_core::grp::Group) -> *mut libc::group {
+    GRP_TLS.with(|cell| cell.borrow_mut().fill_from(entry))
+}
+
 fn lookup_group_by_name(name: &[u8]) -> Option<frankenlibc_core::grp::Group> {
     GRP_TLS.with(|cell| {
         let mut storage = cell.borrow_mut();
@@ -530,6 +536,43 @@ unsafe fn fill_group_r(
     }
 
     0
+}
+
+/// GNU `getgrent_r` — reentrant version of `getgrent`.
+///
+/// Iterates through `/etc/group` entries, filling a caller-provided buffer.
+/// Returns 0 on success, `ENOENT` at end of file, `ERANGE` if buffer too small.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getgrent_r(
+    grp: *mut libc::group,
+    buf: *mut c_char,
+    buflen: libc::size_t,
+    result: *mut *mut libc::group,
+) -> c_int {
+    if grp.is_null() || buf.is_null() || result.is_null() {
+        return libc::EINVAL;
+    }
+
+    unsafe { *result = ptr::null_mut() };
+
+    GRP_TLS.with(|cell| {
+        let mut storage = cell.borrow_mut();
+        storage.refresh_cache();
+
+        if (storage.entries.is_empty() && storage.iter_idx == 0)
+            || storage.entries_generation != storage.cache_generation
+        {
+            storage.rebuild_entries();
+        }
+
+        if storage.iter_idx >= storage.entries.len() {
+            return libc::ENOENT;
+        }
+
+        let entry = storage.entries[storage.iter_idx].clone();
+        storage.iter_idx += 1;
+        unsafe { fill_group_r(&entry, grp, buf, buflen, result) }
+    })
 }
 
 #[cfg(test)]

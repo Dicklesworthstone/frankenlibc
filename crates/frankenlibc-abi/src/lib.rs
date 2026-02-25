@@ -52,6 +52,8 @@ pub mod startup_helpers;
 #[cfg(not(test))]
 pub mod dirent_abi;
 #[cfg(not(test))]
+pub mod err_abi;
+#[cfg(not(test))]
 pub mod dlfcn_abi;
 #[cfg(not(test))]
 pub mod fenv_abi;
@@ -75,6 +77,8 @@ pub mod pthread_abi;
 pub mod pwd_abi;
 #[cfg(not(test))]
 pub mod resolv_abi;
+#[cfg(not(test))]
+pub mod search_abi;
 #[cfg(not(test))]
 pub mod resource_abi;
 pub mod setjmp_abi;

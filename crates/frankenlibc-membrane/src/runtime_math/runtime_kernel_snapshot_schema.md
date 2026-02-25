@@ -24,6 +24,13 @@ This document defines the stable schema for `RuntimeKernelSnapshot` as emitted b
 | `pareto_cap_enforcements` | `u64` | count | >=0 | Number of times hard regret caps were enforced by Pareto routing. |
 | `pareto_exhausted_families` | `u32` | families (count) | >=0 | Number of API families whose Pareto regret budget is exhausted for the current mode. |
 | `quarantine_depth` | `usize` | elements (count) | >=0 | Current published allocator quarantine depth (temporal-safety budget). |
+| `pressure_regime_code` | `u8` | enum code | 0..=3 | Cached pressure regime (0=Nominal,1=Pressured,2=Overloaded,3=Recovery). |
+| `pressure_score_milli` | `u32` | milli-units (1e-3) | 0..=100_000 | Cached EWMA pressure score scaled by 1e3 (0.000..100.000). |
+| `pressure_raw_score_milli` | `u32` | milli-units (1e-3) | 0..=100_000 | Cached raw pressure score scaled by 1e3 (0.000..100.000). |
+| `pressure_epoch` | `u64` | count | >=0 | Pressure sensor epoch counter. |
+| `pressure_transition_count` | `u64` | count | >=0 | Pressure regime transition counter. |
+| `overload_policy_count` | `u64` | count | >=0 | Total number of overload-policy applications. |
+| `overload_policy_tag` | `u8` | enum code | 0..=2 | Last overload policy applied (0=none,1=pressured-fast-allow,2=overloaded-safe-fallback). |
 | `tropical_full_wcl_ns` | `u64` | ns | >=0 | Tropical worst-case latency for the full pipeline path (ns). |
 | `spectral_edge_ratio` | `f64` | dimensionless | finite f64 (no NaN/Inf) | Spectral edge ratio (max_eigenvalue / median_eigenvalue). |
 | `spectral_phase_transition` | `bool` | bool | {false,true} | Whether a spectral phase transition is active. |

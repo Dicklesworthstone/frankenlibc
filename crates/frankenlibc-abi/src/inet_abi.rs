@@ -346,24 +346,115 @@ pub unsafe extern "C" fn if_indextoname(ifindex: libc::c_uint, ifname: *mut c_ch
 }
 
 // ---------------------------------------------------------------------------
-// if_nameindex / if_freenameindex — GlibcCallThrough (complex enumeration)
+// if_nameindex / if_freenameindex — Implemented (native /sys/class/net enumeration)
 // ---------------------------------------------------------------------------
 
-unsafe extern "C" {
-    #[link_name = "if_nameindex"]
-    fn libc_if_nameindex() -> *mut c_void;
-    #[link_name = "if_freenameindex"]
-    fn libc_if_freenameindex(ptr: *mut c_void);
-}
+/// `struct if_nameindex` layout: { if_index: c_uint, [pad], if_name: *mut c_char }
+/// On x86_64: 4 bytes index + 4 bytes padding + 8 bytes pointer = 16 bytes per entry.
+const IF_NAMEINDEX_ENTRY_SIZE: usize = 16;
 
+/// POSIX `if_nameindex` — enumerate all network interfaces.
+///
+/// Returns a heap-allocated NULL-terminated array of `struct if_nameindex`.
+/// Each entry contains an interface index and a heap-allocated name string.
+/// Caller must free with `if_freenameindex`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn if_nameindex() -> *mut c_void {
-    unsafe { libc_if_nameindex() }
+    // Enumerate interfaces from /sys/class/net/
+    let entries = match std::fs::read_dir("/sys/class/net") {
+        Ok(iter) => iter,
+        Err(_) => {
+            unsafe { set_abi_errno(errno::ENOBUFS) };
+            return std::ptr::null_mut();
+        }
+    };
+
+    // Collect (index, name) pairs.
+    let mut ifaces: Vec<(u32, Vec<u8>)> = Vec::new();
+    for entry in entries {
+        let Ok(entry) = entry else { continue };
+        let name = entry.file_name();
+        let name_bytes = name.as_encoded_bytes();
+        if name_bytes.is_empty() || name_bytes[0] == b'.' {
+            continue;
+        }
+
+        // Read the interface index from /sys/class/net/<name>/ifindex
+        let idx_path = entry.path().join("ifindex");
+        let idx = match std::fs::read_to_string(&idx_path) {
+            Ok(s) => s.trim().parse::<u32>().unwrap_or(0),
+            Err(_) => continue,
+        };
+        if idx == 0 {
+            continue;
+        }
+        ifaces.push((idx, name_bytes.to_vec()));
+    }
+
+    // Allocate the result: (ifaces.len() + 1) entries, last is zero sentinel.
+    let count = ifaces.len();
+    let array_bytes = (count + 1) * IF_NAMEINDEX_ENTRY_SIZE;
+    let array = unsafe { libc::malloc(array_bytes) } as *mut u8;
+    if array.is_null() {
+        unsafe { set_abi_errno(errno::ENOMEM) };
+        return std::ptr::null_mut();
+    }
+    unsafe { std::ptr::write_bytes(array, 0, array_bytes) };
+
+    for (i, (idx, name)) in ifaces.iter().enumerate() {
+        let entry_ptr = unsafe { array.add(i * IF_NAMEINDEX_ENTRY_SIZE) };
+
+        // Allocate and copy the name string (NUL-terminated).
+        let name_buf = unsafe { libc::malloc(name.len() + 1) } as *mut u8;
+        if name_buf.is_null() {
+            // Free everything allocated so far.
+            for j in 0..i {
+                let prev = unsafe { array.add(j * IF_NAMEINDEX_ENTRY_SIZE) };
+                let prev_name = unsafe { *(prev.add(8) as *const *mut u8) };
+                if !prev_name.is_null() {
+                    unsafe { libc::free(prev_name.cast()) };
+                }
+            }
+            unsafe { libc::free(array.cast()) };
+            unsafe { set_abi_errno(errno::ENOMEM) };
+            return std::ptr::null_mut();
+        }
+        unsafe {
+            std::ptr::copy_nonoverlapping(name.as_ptr(), name_buf, name.len());
+            *name_buf.add(name.len()) = 0;
+        }
+
+        // Write if_index (u32 at offset 0).
+        unsafe { *(entry_ptr as *mut u32) = *idx };
+        // Write if_name (*mut c_char at offset 8 on x86_64).
+        unsafe { *(entry_ptr.add(8) as *mut *mut u8) = name_buf };
+    }
+
+    // Sentinel entry is already zeroed from write_bytes above.
+    array.cast()
 }
 
+/// POSIX `if_freenameindex` — free an array returned by `if_nameindex`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn if_freenameindex(ptr: *mut c_void) {
-    unsafe { libc_if_freenameindex(ptr) }
+    if ptr.is_null() {
+        return;
+    }
+    let array = ptr as *mut u8;
+    let mut i = 0;
+    loop {
+        let entry_ptr = unsafe { array.add(i * IF_NAMEINDEX_ENTRY_SIZE) };
+        let idx = unsafe { *(entry_ptr as *const u32) };
+        let name = unsafe { *(entry_ptr.add(8) as *const *mut c_void) };
+        if idx == 0 && name.is_null() {
+            break; // Sentinel reached.
+        }
+        if !name.is_null() {
+            unsafe { libc::free(name) };
+        }
+        i += 1;
+    }
+    unsafe { libc::free(ptr) };
 }
 
 // ---------------------------------------------------------------------------

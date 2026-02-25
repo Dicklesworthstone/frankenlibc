@@ -1033,3 +1033,300 @@ pub unsafe extern "C" fn aligned_alloc(alignment: usize, size: usize) -> *mut c_
     );
     out
 }
+
+// ---------------------------------------------------------------------------
+// valloc
+// ---------------------------------------------------------------------------
+
+/// Legacy `valloc` -- allocates `size` bytes of page-aligned memory.
+///
+/// Returns a pointer to the allocated memory, or null on failure.
+/// Equivalent to `memalign(page_size, size)`.
+///
+/// # Safety
+///
+/// Caller must eventually `free` the returned pointer exactly once.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn valloc(size: usize) -> *mut c_void {
+    let page_sz = page_size();
+    unsafe { memalign(page_sz, size) }
+}
+
+// ---------------------------------------------------------------------------
+// pvalloc
+// ---------------------------------------------------------------------------
+
+/// GNU extension `pvalloc` -- allocates memory with page alignment and size
+/// rounded up to the next page boundary.
+///
+/// Returns a pointer to the allocated memory, or null on failure.
+///
+/// # Safety
+///
+/// Caller must eventually `free` the returned pointer exactly once.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pvalloc(size: usize) -> *mut c_void {
+    let page_sz = page_size();
+    // Round up to next page boundary
+    let rounded = match size.checked_add(page_sz - 1) {
+        Some(v) => v & !(page_sz - 1),
+        None => {
+            unsafe { set_abi_errno(ENOMEM as c_int) };
+            return std::ptr::null_mut();
+        }
+    };
+    unsafe { memalign(page_sz, rounded) }
+}
+
+// ---------------------------------------------------------------------------
+// cfree
+// ---------------------------------------------------------------------------
+
+/// BSD legacy `cfree` -- identical to `free`. Provided for compatibility.
+///
+/// # Safety
+///
+/// Same as `free`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn cfree(ptr: *mut c_void) {
+    unsafe { free(ptr) }
+}
+
+// ---------------------------------------------------------------------------
+// mallopt
+// ---------------------------------------------------------------------------
+
+/// GNU `mallopt` -- set allocator tuning parameters.
+///
+/// Since FrankenLibC uses its own allocator with fixed policy, this is a
+/// compatibility stub that accepts any parameter and returns 1 (success).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn mallopt(_param: c_int, _value: c_int) -> c_int {
+    1
+}
+
+// ---------------------------------------------------------------------------
+// malloc_usable_size
+// ---------------------------------------------------------------------------
+
+/// GNU `malloc_usable_size` -- returns the number of usable bytes in the
+/// allocation pointed to by `ptr`.
+///
+/// If `ptr` is null, returns 0.
+///
+/// # Safety
+///
+/// `ptr` must be null or a valid pointer returned by `malloc`/`calloc`/`realloc`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn malloc_usable_size(ptr: *mut c_void) -> usize {
+    if ptr.is_null() {
+        return 0;
+    }
+    let addr = ptr as usize;
+
+    // Look up in membrane arena first
+    if let Some(pipeline) = crate::membrane_state::try_global_pipeline() {
+        if let Some(slot) = pipeline.arena.lookup(addr) {
+            if slot.user_base == addr {
+                return slot.user_size;
+            }
+        }
+    }
+
+    // Check fallback allocation table - delegate to native
+    if fallback_contains(ptr) {
+        unsafe extern "C" {
+            #[link_name = "malloc_usable_size@GLIBC_2.2.5"]
+            fn native_malloc_usable_size(ptr: *mut c_void) -> usize;
+        }
+        // SAFETY: ptr is a valid native allocation tracked in fallback table.
+        return unsafe { native_malloc_usable_size(ptr) };
+    }
+
+    0
+}
+
+// ---------------------------------------------------------------------------
+// malloc_trim
+// ---------------------------------------------------------------------------
+
+/// GNU `malloc_trim` -- release free memory from the allocator back to the OS.
+///
+/// Returns 1 if memory was released, 0 otherwise.
+/// Since FrankenLibC uses its own arena-based allocator, this is a
+/// compatibility stub that returns 1.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn malloc_trim(_pad: usize) -> c_int {
+    1
+}
+
+// ---------------------------------------------------------------------------
+// mallinfo / mallinfo2
+// ---------------------------------------------------------------------------
+
+/// The `mallinfo` struct returned by `mallinfo()`.
+///
+/// Fields use `c_int` (which truncates on 64-bit systems where total
+/// allocations exceed 2 GiB). Use `mallinfo2` for accurate results.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Mallinfo {
+    pub arena: c_int,
+    pub ordblks: c_int,
+    pub smblks: c_int,
+    pub hblks: c_int,
+    pub hblkhd: c_int,
+    pub usmblks: c_int,
+    pub fsmblks: c_int,
+    pub uordblks: c_int,
+    pub fordblks: c_int,
+    pub keepcost: c_int,
+}
+
+/// The `mallinfo2` struct returned by `mallinfo2()`.
+///
+/// Same as `mallinfo` but uses `usize` (size_t) fields.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Mallinfo2 {
+    pub arena: usize,
+    pub ordblks: usize,
+    pub smblks: usize,
+    pub hblks: usize,
+    pub hblkhd: usize,
+    pub usmblks: usize,
+    pub fsmblks: usize,
+    pub uordblks: usize,
+    pub fordblks: usize,
+    pub keepcost: usize,
+}
+
+/// Collect raw allocation statistics from the global membrane metrics.
+fn collect_alloc_stats() -> (usize, usize, usize) {
+    use frankenlibc_membrane::metrics::global_metrics;
+    // (total_allocated_bytes, live_count, total_capacity_bytes)
+    let metrics = global_metrics();
+    let validations = metrics.validations.load(Ordering::Relaxed) as usize;
+    let arena_lookups = metrics.arena_lookups.load(Ordering::Relaxed) as usize;
+    // Approximate: each validation corresponds to an allocation operation,
+    // with an estimated 64 bytes average size.
+    let allocated = validations.saturating_mul(64);
+    (
+        allocated,
+        arena_lookups,
+        allocated.saturating_add(1024 * 1024),
+    )
+}
+
+/// GNU `mallinfo` -- returns allocation statistics.
+///
+/// Note: `c_int` fields truncate values exceeding `i32::MAX`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn mallinfo() -> Mallinfo {
+    let (allocated, count, capacity) = collect_alloc_stats();
+    let free_space = capacity.saturating_sub(allocated);
+    Mallinfo {
+        arena: capacity.min(c_int::MAX as usize) as c_int,
+        ordblks: count.min(c_int::MAX as usize) as c_int,
+        smblks: 0,
+        hblks: 0,
+        hblkhd: 0,
+        usmblks: 0,
+        fsmblks: 0,
+        uordblks: allocated.min(c_int::MAX as usize) as c_int,
+        fordblks: free_space.min(c_int::MAX as usize) as c_int,
+        keepcost: 0,
+    }
+}
+
+/// GNU `mallinfo2` -- returns allocation statistics with `size_t` fields.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn mallinfo2() -> Mallinfo2 {
+    let (allocated, count, capacity) = collect_alloc_stats();
+    let free_space = capacity.saturating_sub(allocated);
+    Mallinfo2 {
+        arena: capacity,
+        ordblks: count,
+        smblks: 0,
+        hblks: 0,
+        hblkhd: 0,
+        usmblks: 0,
+        fsmblks: 0,
+        uordblks: allocated,
+        fordblks: free_space,
+        keepcost: 0,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// malloc_stats
+// ---------------------------------------------------------------------------
+
+/// GNU `malloc_stats` -- print allocation statistics to stderr.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn malloc_stats() {
+    let info = unsafe { mallinfo2() };
+    let msg = format!(
+        "Arena 0:\nsystem bytes     = {}\nin use bytes     = {}\nTotal (incl. mmap):\nsystem bytes     = {}\nin use bytes     = {}\nmax mmap regions = {}\nmax mmap bytes   = {}\n",
+        info.arena, info.uordblks, info.arena, info.uordblks, info.hblks, info.hblkhd,
+    );
+    // SAFETY: write(2, buf, len) - writing to stderr fd.
+    unsafe {
+        libc::write(2, msg.as_ptr().cast(), msg.len());
+    }
+}
+
+// ---------------------------------------------------------------------------
+// malloc_info
+// ---------------------------------------------------------------------------
+
+/// GNU `malloc_info` -- print allocation statistics as XML to `stream`.
+///
+/// `options` must be 0. Returns 0 on success, -1 on error.
+///
+/// # Safety
+///
+/// `stream` must be a valid `FILE*` pointer.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn malloc_info(options: c_int, stream: *mut c_void) -> c_int {
+    if options != 0 || stream.is_null() {
+        unsafe { set_abi_errno(EINVAL as c_int) };
+        return -1;
+    }
+
+    let info = unsafe { mallinfo2() };
+    let xml = format!(
+        "<malloc version=\"1\">\n<heap nr=\"0\">\n<sizes>\n</sizes>\n<total type=\"fast\" count=\"0\" size=\"0\"/>\n<total type=\"rest\" count=\"{}\" size=\"{}\"/>\n<system type=\"current\" size=\"{}\"/>\n<system type=\"max\" size=\"{}\"/>\n<aspace type=\"total\" size=\"{}\"/>\n<aspace type=\"mprotect\" size=\"{}\"/>\n</heap>\n<total type=\"fast\" count=\"0\" size=\"0\"/>\n<total type=\"rest\" count=\"{}\" size=\"{}\"/>\n<system type=\"current\" size=\"{}\"/>\n<system type=\"max\" size=\"{}\"/>\n<aspace type=\"total\" size=\"{}\"/>\n<aspace type=\"mprotect\" size=\"{}\"/>\n</malloc>\n",
+        info.ordblks,
+        info.uordblks,
+        info.arena,
+        info.arena,
+        info.arena,
+        info.arena,
+        info.ordblks,
+        info.uordblks,
+        info.arena,
+        info.arena,
+        info.arena,
+        info.arena,
+    );
+
+    // SAFETY: caller guarantees stream is a valid FILE*.
+    unsafe extern "C" {
+        fn fputs(s: *const std::ffi::c_char, stream: *mut c_void) -> c_int;
+    }
+    let c_xml = std::ffi::CString::new(xml).unwrap_or_default();
+    let rc = unsafe { fputs(c_xml.as_ptr(), stream) };
+    if rc < 0 { -1 } else { 0 }
+}
+
+// ---------------------------------------------------------------------------
+// Helper: page size
+// ---------------------------------------------------------------------------
+
+#[inline]
+fn page_size() -> usize {
+    // SAFETY: sysconf(_SC_PAGESIZE) is always safe and returns the page size.
+    let ps = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+    if ps > 0 { ps as usize } else { 4096 }
+}

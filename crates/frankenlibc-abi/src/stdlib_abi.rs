@@ -2149,3 +2149,55 @@ pub unsafe extern "C" fn getsubopt(
     runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 8, false);
     -1
 }
+
+// ---------------------------------------------------------------------------
+// gnu_get_libc_version / gnu_get_libc_release
+// ---------------------------------------------------------------------------
+
+/// FrankenLibC version string reported via `gnu_get_libc_version()`.
+///
+/// We report glibc 2.38 compatibility to satisfy programs that check the
+/// version string for minimum feature requirements.
+static GNU_LIBC_VERSION: &[u8] = b"2.38\0";
+
+/// GNU `gnu_get_libc_version` — return glibc-compatible version string.
+///
+/// Returns a static string like "2.38". Programs use this to detect glibc
+/// features at runtime.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn gnu_get_libc_version() -> *const c_char {
+    GNU_LIBC_VERSION.as_ptr() as *const c_char
+}
+
+/// POSIX `confstr` — get configuration-dependent string variable.
+///
+/// Returns the length of the string value for the given `name`, or 0 on error.
+/// If `buf` is non-null and `len` > 0, copies the value into `buf`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn confstr(name: c_int, buf: *mut c_char, len: usize) -> usize {
+    // _CS_GNU_LIBC_VERSION = 2 on Linux/glibc
+    // _CS_GNU_LIBPTHREAD_VERSION = 3
+    // _CS_PATH = 0
+    let value: &[u8] = match name {
+        0 => b"/usr/bin\0",                            // _CS_PATH
+        2 => b"glibc 2.38\0",                          // _CS_GNU_LIBC_VERSION
+        3 => b"NPTL 2.38\0",                           // _CS_GNU_LIBPTHREAD_VERSION
+        _ => {
+            unsafe { set_abi_errno(libc::EINVAL) };
+            return 0;
+        }
+    };
+
+    let value_len = value.len(); // includes NUL
+    if !buf.is_null() && len > 0 {
+        let copy_len = std::cmp::min(len, value_len);
+        unsafe {
+            std::ptr::copy_nonoverlapping(value.as_ptr(), buf as *mut u8, copy_len);
+        }
+        // Ensure NUL termination if we truncated.
+        if copy_len < value_len && len > 0 {
+            unsafe { *buf.add(len - 1) = 0 };
+        }
+    }
+    value_len
+}
