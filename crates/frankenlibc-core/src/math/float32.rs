@@ -262,6 +262,27 @@ pub fn nextafterf(x: f32, y: f32) -> f32 {
     libm::nextafterf(x, y)
 }
 
+/// Return the next representable `f32` after `x` toward `y` (long double direction).
+///
+/// `y` is `f64` (representing the `long double` direction parameter in C ABI).
+/// The direction is determined by `x < y` / `x > y` / `x == y`.
+#[inline]
+pub fn nexttowardf(x: f32, y: f64) -> f32 {
+    if x.is_nan() || y.is_nan() {
+        return f32::NAN;
+    }
+    let xd = x as f64;
+    if xd == y {
+        return x;
+    }
+    // Step toward y using f32 nextafter
+    if xd < y {
+        libm::nextafterf(x, f32::INFINITY)
+    } else {
+        libm::nextafterf(x, f32::NEG_INFINITY)
+    }
+}
+
 #[inline]
 pub fn ilogbf(x: f32) -> i32 {
     libm::ilogbf(x)
@@ -301,6 +322,96 @@ pub fn lgammaf(x: f32) -> f32 {
 #[inline]
 pub fn tgammaf(x: f32) -> f32 {
     libm::tgammaf(x)
+}
+
+// --- New batch: remquo, sincos, nan, Bessel, compat ---
+
+/// IEEE remainder with quotient (f32 variant).
+#[inline]
+pub fn remquof(x: f32, y: f32) -> (f32, i32) {
+    libm::remquof(x, y)
+}
+
+/// Compute sine and cosine simultaneously (f32 variant).
+#[inline]
+pub fn sincosf(x: f32) -> (f32, f32) {
+    libm::sincosf(x)
+}
+
+/// Generate a quiet NaN (f32 variant).
+#[inline]
+pub fn nanf(_tag: &[u8]) -> f32 {
+    f32::NAN
+}
+
+/// GNU extension: base-10 exponential (f32 variant).
+#[inline]
+pub fn exp10f(x: f32) -> f32 {
+    libm::expf(x * core::f32::consts::LN_10)
+}
+
+/// Bessel function of the first kind, order 0 (f32 variant).
+#[inline]
+pub fn j0f(x: f32) -> f32 {
+    libm::j0f(x)
+}
+
+/// Bessel function of the first kind, order 1 (f32 variant).
+#[inline]
+pub fn j1f(x: f32) -> f32 {
+    libm::j1f(x)
+}
+
+/// Bessel function of the first kind, order `n` (f32 variant).
+#[inline]
+pub fn jnf(n: i32, x: f32) -> f32 {
+    libm::jnf(n, x)
+}
+
+/// Bessel function of the second kind, order 0 (f32 variant).
+#[inline]
+pub fn y0f(x: f32) -> f32 {
+    libm::y0f(x)
+}
+
+/// Bessel function of the second kind, order 1 (f32 variant).
+#[inline]
+pub fn y1f(x: f32) -> f32 {
+    libm::y1f(x)
+}
+
+/// Bessel function of the second kind, order `n` (f32 variant).
+#[inline]
+pub fn ynf(n: i32, x: f32) -> f32 {
+    libm::ynf(n, x)
+}
+
+/// BSD/SUSv2 `finitef()`: returns non-zero if `x` is neither infinite nor NaN.
+#[inline]
+pub fn finitef(x: f32) -> i32 {
+    if x.is_finite() { 1 } else { 0 }
+}
+
+/// BSD `dremf()` — alias for `remainderf()`.
+#[inline]
+pub fn dremf(x: f32, y: f32) -> f32 {
+    remainderf(x, y)
+}
+
+/// BSD `gammaf()` — alias for `lgammaf()`.
+#[inline]
+pub fn gammaf(x: f32) -> f32 {
+    libm::lgammaf(x)
+}
+
+/// Extract the significand (mantissa) of `x` scaled to `[1, 2)` (f32 variant).
+#[inline]
+pub fn significandf(x: f32) -> f32 {
+    if x == 0.0 || x.is_nan() || x.is_infinite() {
+        return x;
+    }
+    let e = libm::ilogbf(x);
+    libm::scalbnf(x, -e)
 }
 
 #[cfg(test)]
@@ -406,10 +517,90 @@ mod tests {
     }
 
     #[test]
+    fn nexttowardf_sanity() {
+        // Step up: f32(1.0) toward f64(2.0)
+        let up = nexttowardf(1.0_f32, 2.0_f64);
+        assert!(up > 1.0_f32);
+        // Step down: f32(1.0) toward f64(0.0)
+        let down = nexttowardf(1.0_f32, 0.0_f64);
+        assert!(down < 1.0_f32);
+        // Equal: return x unchanged
+        assert_eq!(nexttowardf(1.0_f32, 1.0_f64), 1.0_f32);
+        // NaN propagation
+        assert!(nexttowardf(f32::NAN, 1.0_f64).is_nan());
+        assert!(nexttowardf(1.0_f32, f64::NAN).is_nan());
+    }
+
+    #[test]
     fn special_f32_sanity() {
         assert!(erff(0.0).abs() < 1e-6);
         assert!((erfcf(0.0) - 1.0).abs() < 1e-6);
         assert!((tgammaf(5.0) - 24.0).abs() < 1e-3);
         assert!((lgammaf(5.0) - (24.0_f32).ln()).abs() < 1e-3);
+    }
+
+    #[test]
+    fn remquof_sanity() {
+        let (rem, quo) = remquof(10.0, 3.0);
+        assert!((rem - 1.0).abs() < 1e-5);
+        assert_eq!(quo & 0x7, 3 & 0x7);
+    }
+
+    #[test]
+    fn sincosf_sanity() {
+        let (s, c) = sincosf(0.0);
+        assert!((s - 0.0).abs() < 1e-6);
+        assert!((c - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn nanf_sanity() {
+        assert!(nanf(b"").is_nan());
+    }
+
+    #[test]
+    fn exp10f_sanity() {
+        assert!((exp10f(0.0) - 1.0).abs() < 1e-5);
+        assert!((exp10f(1.0) - 10.0).abs() < 1e-3);
+        assert!((exp10f(2.0) - 100.0).abs() < 0.1);
+    }
+
+    #[test]
+    fn bessel_f32_sanity() {
+        assert!((j0f(0.0) - 1.0).abs() < 1e-5);
+        assert!(j1f(0.0).abs() < 1e-5);
+        assert!((jnf(0, 2.5) - j0f(2.5)).abs() < 1e-5);
+        assert!((y0f(1.0) - 0.08825696).abs() < 1e-3);
+        assert!((y1f(1.0) - (-0.781_212_8)).abs() < 1e-3);
+    }
+
+    #[test]
+    fn finitef_sanity() {
+        assert_eq!(finitef(1.0), 1);
+        assert_eq!(finitef(f32::INFINITY), 0);
+        assert_eq!(finitef(f32::NEG_INFINITY), 0);
+        assert_eq!(finitef(f32::NAN), 0);
+        assert_eq!(finitef(0.0), 1);
+    }
+
+    #[test]
+    fn dremf_sanity() {
+        let r1 = dremf(5.3, 2.0);
+        let r2 = remainderf(5.3, 2.0);
+        assert_eq!(r1, r2);
+    }
+
+    #[test]
+    fn gammaf_sanity() {
+        assert!((gammaf(5.0) - (24.0_f32).ln()).abs() < 1e-3);
+    }
+
+    #[test]
+    fn significandf_sanity() {
+        let s = significandf(12.0);
+        assert!((s - 1.5).abs() < 1e-5); // 12 = 1.5 * 2^3
+        assert_eq!(significandf(0.0), 0.0);
+        assert!(significandf(f32::NAN).is_nan());
+        assert!(significandf(f32::INFINITY).is_infinite());
     }
 }

@@ -111,6 +111,13 @@ GLIBC_2.2.5 {
         wcscoll;
         wcsxfrm;
 
+        /* GNU wide string extensions */
+        wcpcpy;
+        wcpncpy;
+        wcscasecmp;
+        wcsncasecmp;
+        wmemrchr;
+
         /* wide I/O */
         fgetwc;
         fputwc;
@@ -346,6 +353,7 @@ GLIBC_2.2.5 {
         scalbn;
         scalbln;
         nextafter;
+        nexttoward;
         lrint;
         llrint;
         lround;
@@ -354,6 +362,20 @@ GLIBC_2.2.5 {
         erfc;
         tgamma;
         lgamma;
+        remquo;
+        sincos;
+        nan;
+        j0;
+        j1;
+        jn;
+        y0;
+        y1;
+        yn;
+        finite;
+        drem;
+        gamma;
+        significand;
+        exp10;
 
         /* math operations — single precision */
         sinf;
@@ -406,10 +428,40 @@ GLIBC_2.2.5 {
         scalbnf;
         scalblnf;
         nextafterf;
+        nexttowardf;
         erff;
         erfcf;
         tgammaf;
         lgammaf;
+        remquof;
+        sincosf;
+        nanf;
+        exp10f;
+        j0f;
+        j1f;
+        jnf;
+        y0f;
+        y1f;
+        ynf;
+        finitef;
+        dremf;
+        gammaf;
+        significandf;
+        pow10;
+        pow10f;
+
+        /* fenv — floating-point environment */
+        feclearexcept;
+        fegetenv;
+        fegetexceptflag;
+        fegetround;
+        feholdexcept;
+        feraiseexcept;
+        fesetenv;
+        fesetexceptflag;
+        fesetround;
+        fetestexcept;
+        feupdateenv;
 
         /* iconv */
         iconv_open;

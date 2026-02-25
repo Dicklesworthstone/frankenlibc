@@ -2,7 +2,7 @@
   "version": 2,
   "generated_at_utc": "2026-02-18T04:49:26Z",
   "library": "/data/tmp/cargo-target/release/libfrankenlibc_abi.so",
-  "total_exported": 929,
+  "total_exported": 970,
   "taxonomy": {
     "Implemented": "Native Rust code owns the entire operation. No host libc dependency. Full test coverage required.",
     "RawSyscall": "ABI entrypoint marshals arguments directly to Linux syscall instruction. No glibc call-through.",
@@ -1313,6 +1313,72 @@
       "default_stub": false
     },
     {
+      "symbol": "feclearexcept",
+      "status": "GlibcCallThrough",
+      "module": "fenv_abi",
+      "perf_class": "coldpath"
+    },
+    {
+      "symbol": "fegetenv",
+      "status": "GlibcCallThrough",
+      "module": "fenv_abi",
+      "perf_class": "coldpath"
+    },
+    {
+      "symbol": "fegetexceptflag",
+      "status": "GlibcCallThrough",
+      "module": "fenv_abi",
+      "perf_class": "coldpath"
+    },
+    {
+      "symbol": "fegetround",
+      "status": "GlibcCallThrough",
+      "module": "fenv_abi",
+      "perf_class": "coldpath"
+    },
+    {
+      "symbol": "feholdexcept",
+      "status": "GlibcCallThrough",
+      "module": "fenv_abi",
+      "perf_class": "coldpath"
+    },
+    {
+      "symbol": "feraiseexcept",
+      "status": "GlibcCallThrough",
+      "module": "fenv_abi",
+      "perf_class": "coldpath"
+    },
+    {
+      "symbol": "fesetenv",
+      "status": "GlibcCallThrough",
+      "module": "fenv_abi",
+      "perf_class": "coldpath"
+    },
+    {
+      "symbol": "fesetexceptflag",
+      "status": "GlibcCallThrough",
+      "module": "fenv_abi",
+      "perf_class": "coldpath"
+    },
+    {
+      "symbol": "fesetround",
+      "status": "GlibcCallThrough",
+      "module": "fenv_abi",
+      "perf_class": "coldpath"
+    },
+    {
+      "symbol": "fetestexcept",
+      "status": "GlibcCallThrough",
+      "module": "fenv_abi",
+      "perf_class": "coldpath"
+    },
+    {
+      "symbol": "feupdateenv",
+      "status": "GlibcCallThrough",
+      "module": "fenv_abi",
+      "perf_class": "coldpath"
+    },
+    {
       "symbol": "fdim",
       "status": "Implemented",
       "module": "math_abi",
@@ -1765,8 +1831,8 @@
       "status": "Implemented",
       "module": "math_abi",
       "perf_class": "hotpath",
-      "strict_semantics": "pass-through",
-      "hardened_semantics": "heal-non-finite",
+      "strict_semantics": "Splits x into mantissa/exponent pair; writes exponent when exp pointer is non-null",
+      "hardened_semantics": "Same split path; null exponent pointer is healed as no-op write",
       "default_stub": false
     },
     {
@@ -1774,7 +1840,10 @@
       "header": "math.h",
       "status": "Implemented",
       "module": "math_abi",
-      "notes": ""
+      "perf_class": "hotpath",
+      "strict_semantics": "f32 variant of frexp; writes exponent when exp pointer is non-null",
+      "hardened_semantics": "f32 split path; null exponent pointer is healed as no-op write",
+      "default_stub": false
     },
     {
       "symbol": "fscanf",
@@ -3072,8 +3141,8 @@
       "status": "Implemented",
       "module": "math_abi",
       "perf_class": "hotpath",
-      "strict_semantics": "pass-through",
-      "hardened_semantics": "heal-non-finite",
+      "strict_semantics": "Scales x by 2^exp; finite non-zero overflow or underflow-to-zero sets errno=ERANGE",
+      "hardened_semantics": "Same scaling contract with runtime-policy routing; hardened mode keeps ERANGE signaling",
       "default_stub": false
     },
     {
@@ -3081,7 +3150,10 @@
       "header": "math.h",
       "status": "Implemented",
       "module": "math_abi",
-      "notes": ""
+      "perf_class": "hotpath",
+      "strict_semantics": "f32 scale-by-power-of-two; finite non-zero overflow or underflow-to-zero sets errno=ERANGE",
+      "hardened_semantics": "f32 scaling path with runtime-policy routing; ERANGE behavior preserved",
+      "default_stub": false
     },
     {
       "symbol": "ldiv",
@@ -3716,8 +3788,8 @@
       "status": "Implemented",
       "module": "math_abi",
       "perf_class": "hotpath",
-      "strict_semantics": "pass-through",
-      "hardened_semantics": "heal-non-finite",
+      "strict_semantics": "Splits x into fractional return value and integer out-parameter when iptr is non-null",
+      "hardened_semantics": "Same split path; null integer-output pointer is healed as no-op write",
       "default_stub": false
     },
     {
@@ -3725,7 +3797,10 @@
       "header": "math.h",
       "status": "Implemented",
       "module": "math_abi",
-      "notes": ""
+      "perf_class": "hotpath",
+      "strict_semantics": "f32 split into fractional return value and integer out-parameter when iptr is non-null",
+      "hardened_semantics": "f32 split path; null integer-output pointer is healed as no-op write",
+      "default_stub": false
     },
     {
       "symbol": "mprotect",
@@ -3916,6 +3991,24 @@
       "status": "Implemented",
       "module": "math_abi",
       "notes": ""
+    },
+    {
+      "symbol": "nexttoward",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "hotpath",
+      "strict_semantics": "C99 next representable f64 toward long-double direction; delegates to nextafter since Rust lacks native long double",
+      "hardened_semantics": "Same as strict (pure computation)",
+      "default_stub": false
+    },
+    {
+      "symbol": "nexttowardf",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "hotpath",
+      "strict_semantics": "C99 next representable f32 toward long-double direction; compares via f64 promotion then steps via nextafterf",
+      "hardened_semantics": "Same as strict (pure computation)",
+      "default_stub": false
     },
     {
       "symbol": "nftw",
@@ -4224,6 +4317,24 @@
       "perf_class": "hotpath",
       "strict_semantics": "pass-through",
       "hardened_semantics": "heal-non-finite",
+      "default_stub": false
+    },
+    {
+      "symbol": "pow10",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "GNU alias of exp10; finite overflow to +inf or underflow to 0 sets errno=ERANGE",
+      "hardened_semantics": "Alias of exp10 with runtime-policy routing; preserves ERANGE signaling on finite overflow/underflow",
+      "default_stub": false
+    },
+    {
+      "symbol": "pow10f",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "GNU f32 alias of exp10f; finite overflow to +inf or underflow to 0 sets errno=ERANGE",
+      "hardened_semantics": "f32 alias of exp10f with runtime-policy routing; preserves ERANGE signaling on finite overflow/underflow",
       "default_stub": false
     },
     {
@@ -5289,8 +5400,8 @@
       "status": "Implemented",
       "module": "math_abi",
       "perf_class": "hotpath",
-      "strict_semantics": "pass-through",
-      "hardened_semantics": "heal-non-finite",
+      "strict_semantics": "Scales x by 2^n (long exponent); finite non-zero overflow or underflow-to-zero sets errno=ERANGE",
+      "hardened_semantics": "Same scaling contract with runtime-policy routing; ERANGE behavior preserved",
       "default_stub": false
     },
     {
@@ -5298,15 +5409,18 @@
       "header": "math.h",
       "status": "Implemented",
       "module": "math_abi",
-      "notes": ""
+      "perf_class": "hotpath",
+      "strict_semantics": "f32 scale-by-power-of-two with long exponent; finite non-zero overflow or underflow-to-zero sets errno=ERANGE",
+      "hardened_semantics": "f32 scaling path with runtime-policy routing; ERANGE behavior preserved",
+      "default_stub": false
     },
     {
       "symbol": "scalbn",
       "status": "Implemented",
       "module": "math_abi",
       "perf_class": "hotpath",
-      "strict_semantics": "pass-through",
-      "hardened_semantics": "heal-non-finite",
+      "strict_semantics": "Scales x by 2^n; finite non-zero overflow or underflow-to-zero sets errno=ERANGE",
+      "hardened_semantics": "Same scaling contract with runtime-policy routing; ERANGE behavior preserved",
       "default_stub": false
     },
     {
@@ -5314,7 +5428,10 @@
       "header": "math.h",
       "status": "Implemented",
       "module": "math_abi",
-      "notes": ""
+      "perf_class": "hotpath",
+      "strict_semantics": "f32 scale-by-power-of-two; finite non-zero overflow or underflow-to-zero sets errno=ERANGE",
+      "hardened_semantics": "f32 scaling path with runtime-policy routing; ERANGE behavior preserved",
+      "default_stub": false
     },
     {
       "symbol": "scandir",
@@ -7827,17 +7944,269 @@
       "header": "<unistd.h>",
       "status": "Implemented",
       "notes": "Delegates to native alphasort (64-bit Linux alias)"
+    },
+    {
+      "symbol": "remquo",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "IEEE 754 remainder with quotient; y==0 or inf dividend sets errno=EDOM",
+      "hardened_semantics": "Same EDOM signaling with runtime-policy routing",
+      "default_stub": false
+    },
+    {
+      "symbol": "sincos",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Simultaneous sin+cos via libm; stores results through output pointers",
+      "hardened_semantics": "Same computation with runtime-policy routing",
+      "default_stub": false
+    },
+    {
+      "symbol": "nan",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Returns quiet NaN; tag argument parsed for payload bits",
+      "hardened_semantics": "Same behavior (pure computation)",
+      "default_stub": false
+    },
+    {
+      "symbol": "j0",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Bessel function of first kind order 0 via libm",
+      "hardened_semantics": "Same computation with runtime-policy routing",
+      "default_stub": false
+    },
+    {
+      "symbol": "j1",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Bessel function of first kind order 1 via libm",
+      "hardened_semantics": "Same computation with runtime-policy routing",
+      "default_stub": false
+    },
+    {
+      "symbol": "jn",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Bessel function of first kind order n via libm",
+      "hardened_semantics": "Same computation with runtime-policy routing",
+      "default_stub": false
+    },
+    {
+      "symbol": "y0",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Bessel function of second kind order 0 via libm; x<=0 sets errno=EDOM",
+      "hardened_semantics": "Same EDOM signaling with runtime-policy routing",
+      "default_stub": false
+    },
+    {
+      "symbol": "y1",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Bessel function of second kind order 1 via libm; x<=0 sets errno=EDOM",
+      "hardened_semantics": "Same EDOM signaling with runtime-policy routing",
+      "default_stub": false
+    },
+    {
+      "symbol": "yn",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Bessel function of second kind order n via libm; x<=0 sets errno=EDOM",
+      "hardened_semantics": "Same EDOM signaling with runtime-policy routing",
+      "default_stub": false
+    },
+    {
+      "symbol": "finite",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "BSD finite() check; returns 1 if x is finite, 0 otherwise",
+      "hardened_semantics": "Same behavior (pure computation)",
+      "default_stub": false
+    },
+    {
+      "symbol": "drem",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "BSD drem() alias for remainder()",
+      "hardened_semantics": "Same behavior via remainder() delegation",
+      "default_stub": false
+    },
+    {
+      "symbol": "gamma",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "BSD gamma() alias for lgamma(); poles set errno=ERANGE",
+      "hardened_semantics": "Same ERANGE signaling with runtime-policy routing",
+      "default_stub": false
+    },
+    {
+      "symbol": "significand",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Extracts significand scaled to [1,2) via ilogb+scalbn",
+      "hardened_semantics": "Same computation with runtime-policy routing",
+      "default_stub": false
+    },
+    {
+      "symbol": "exp10",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "GNU extension 10^x via exp(x*ln(10)); overflow/underflow sets errno=ERANGE",
+      "hardened_semantics": "Same ERANGE signaling with runtime-policy routing",
+      "default_stub": false
+    },
+    {
+      "symbol": "remquof",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "IEEE 754 remainder with quotient (f32); y==0 or inf dividend sets errno=EDOM",
+      "hardened_semantics": "Same EDOM signaling with runtime-policy routing",
+      "default_stub": false
+    },
+    {
+      "symbol": "sincosf",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Simultaneous sin+cos (f32) via libm; stores results through output pointers",
+      "hardened_semantics": "Same computation with runtime-policy routing",
+      "default_stub": false
+    },
+    {
+      "symbol": "nanf",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Returns quiet NaN (f32); tag argument parsed for payload bits",
+      "hardened_semantics": "Same behavior (pure computation)",
+      "default_stub": false
+    },
+    {
+      "symbol": "exp10f",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "GNU extension 10^x (f32); overflow/underflow sets errno=ERANGE",
+      "hardened_semantics": "Same ERANGE signaling with runtime-policy routing",
+      "default_stub": false
+    },
+    {
+      "symbol": "j0f",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Bessel function of first kind order 0 (f32) via libm",
+      "hardened_semantics": "Same computation with runtime-policy routing",
+      "default_stub": false
+    },
+    {
+      "symbol": "j1f",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Bessel function of first kind order 1 (f32) via libm",
+      "hardened_semantics": "Same computation with runtime-policy routing",
+      "default_stub": false
+    },
+    {
+      "symbol": "jnf",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Bessel function of first kind order n (f32) via libm",
+      "hardened_semantics": "Same computation with runtime-policy routing",
+      "default_stub": false
+    },
+    {
+      "symbol": "y0f",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Bessel function of second kind order 0 (f32) via libm; x<=0 sets errno=EDOM",
+      "hardened_semantics": "Same EDOM signaling with runtime-policy routing",
+      "default_stub": false
+    },
+    {
+      "symbol": "y1f",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Bessel function of second kind order 1 (f32) via libm; x<=0 sets errno=EDOM",
+      "hardened_semantics": "Same EDOM signaling with runtime-policy routing",
+      "default_stub": false
+    },
+    {
+      "symbol": "ynf",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Bessel function of second kind order n (f32) via libm; x<=0 sets errno=EDOM",
+      "hardened_semantics": "Same EDOM signaling with runtime-policy routing",
+      "default_stub": false
+    },
+    {
+      "symbol": "finitef",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "BSD finitef() check; returns 1 if x is finite, 0 otherwise",
+      "hardened_semantics": "Same behavior (pure computation)",
+      "default_stub": false
+    },
+    {
+      "symbol": "dremf",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "BSD dremf() alias for remainderf()",
+      "hardened_semantics": "Same behavior via remainderf() delegation",
+      "default_stub": false
+    },
+    {
+      "symbol": "gammaf",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "BSD gammaf() alias for lgammaf(); poles set errno=ERANGE",
+      "hardened_semantics": "Same ERANGE signaling with runtime-policy routing",
+      "default_stub": false
+    },
+    {
+      "symbol": "significandf",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Extracts significand (f32) scaled to [1,2) via ilogbf+scalbnf",
+      "hardened_semantics": "Same computation with runtime-policy routing",
+      "default_stub": false
     }
   ],
   "summary": {
-    "total_exported": 929,
-    "implemented": 539,
+    "total_exported": 970,
+    "implemented": 569,
     "raw_syscall": 297,
-    "glibc_call_through": 93,
+    "glibc_call_through": 104,
     "stub": 0
   },
-  "implemented": 507,
-  "raw_syscall": 280,
-  "glibc_call_through": 142,
+  "implemented": 569,
+  "raw_syscall": 297,
+  "glibc_call_through": 104,
   "stub": 0
 }

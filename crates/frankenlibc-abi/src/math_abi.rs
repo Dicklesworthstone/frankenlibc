@@ -51,6 +51,16 @@ fn set_range_errno() {
 }
 
 #[inline]
+fn scaling_range_error_f64(x: f64, out: f64) -> bool {
+    x.is_finite() && x != 0.0 && (out.is_infinite() || out == 0.0)
+}
+
+#[inline]
+fn scaling_range_error_f32(x: f32, out: f32) -> bool {
+    x.is_finite() && x != 0.0 && (out.is_infinite() || out == 0.0)
+}
+
+#[inline]
 fn is_integral_f64(x: f64) -> bool {
     x.is_finite() && x.fract() == 0.0
 }
@@ -461,7 +471,11 @@ pub unsafe extern "C" fn llround(x: f64) -> i64 {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn ldexp(x: f64, exp: c_int) -> f64 {
-    frankenlibc_core::math::ldexp(x, exp)
+    let out = frankenlibc_core::math::ldexp(x, exp);
+    if scaling_range_error_f64(x, out) {
+        set_range_errno();
+    }
+    out
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -545,17 +559,32 @@ pub unsafe extern "C" fn fma(x: f64, y: f64, z: f64) -> f64 {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn scalbn(x: f64, n: c_int) -> f64 {
-    frankenlibc_core::math::scalbn(x, n)
+    let out = frankenlibc_core::math::scalbn(x, n);
+    if scaling_range_error_f64(x, out) {
+        set_range_errno();
+    }
+    out
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn scalbln(x: f64, n: i64) -> f64 {
-    frankenlibc_core::math::scalbln(x, n)
+    let out = frankenlibc_core::math::scalbln(x, n);
+    if scaling_range_error_f64(x, out) {
+        set_range_errno();
+    }
+    out
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn nextafter(x: f64, y: f64) -> f64 {
     frankenlibc_core::math::nextafter(x, y)
+}
+
+/// C99 `nexttoward`: next representable f64 toward a long-double direction.
+/// On x86_64 the `long double` parameter arrives as f64 in our LD_PRELOAD ABI.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn nexttoward(x: f64, y: f64) -> f64 {
+    frankenlibc_core::math::nexttoward(x, y)
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -566,6 +595,179 @@ pub unsafe extern "C" fn ilogb(x: f64) -> c_int {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn logb(x: f64) -> f64 {
     frankenlibc_core::math::logb(x)
+}
+
+// ---------------------------------------------------------------------------
+// remquo — remainder with quotient
+// ---------------------------------------------------------------------------
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn remquo(x: f64, y: f64, quo: *mut c_int) -> f64 {
+    let (rem, q) = frankenlibc_core::math::remquo(x, y);
+    if !quo.is_null() {
+        // SAFETY: caller guarantees `quo` points to valid writable `int`.
+        unsafe { *quo = q };
+    }
+    if y == 0.0 || (x.is_infinite() && y.is_finite()) {
+        set_domain_errno();
+    }
+    rem
+}
+
+// ---------------------------------------------------------------------------
+// sincos — simultaneous sin + cos
+// ---------------------------------------------------------------------------
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn sincos(x: f64, sin_out: *mut f64, cos_out: *mut f64) {
+    let (s, c) = frankenlibc_core::math::sincos(x);
+    if !sin_out.is_null() {
+        // SAFETY: caller guarantees `sin_out` points to valid writable `double`.
+        unsafe { *sin_out = s };
+    }
+    if !cos_out.is_null() {
+        // SAFETY: caller guarantees `cos_out` points to valid writable `double`.
+        unsafe { *cos_out = c };
+    }
+}
+
+// ---------------------------------------------------------------------------
+// nan — generate quiet NaN
+// ---------------------------------------------------------------------------
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn nan(_tagp: *const std::ffi::c_char) -> f64 {
+    f64::NAN
+}
+
+// ---------------------------------------------------------------------------
+// Bessel functions
+// ---------------------------------------------------------------------------
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn j0(x: f64) -> f64 {
+    unary_entry(x, 12, frankenlibc_core::math::j0)
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn j1(x: f64) -> f64 {
+    unary_entry(x, 12, frankenlibc_core::math::j1)
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn jn(n: c_int, x: f64) -> f64 {
+    let mixed = (n as usize).wrapping_mul(0x9e37_79b9_7f4a_7c15usize) ^ x.to_bits() as usize;
+    let (_mode, decision) = runtime_policy::decide(
+        ApiFamily::MathFenv,
+        mixed,
+        std::mem::size_of::<f64>(),
+        false,
+        false,
+        0,
+    );
+    let raw = frankenlibc_core::math::jn(n, x);
+    runtime_policy::observe(
+        ApiFamily::MathFenv,
+        decision.profile,
+        runtime_policy::scaled_cost(15, std::mem::size_of::<f64>()),
+        false,
+    );
+    raw
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn y0(x: f64) -> f64 {
+    let out = unary_entry(x, 12, frankenlibc_core::math::y0);
+    // y0(x) for x <= 0 is domain error
+    if x <= 0.0 && x.is_finite() {
+        set_domain_errno();
+    }
+    out
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn y1(x: f64) -> f64 {
+    let out = unary_entry(x, 12, frankenlibc_core::math::y1);
+    if x <= 0.0 && x.is_finite() {
+        set_domain_errno();
+    }
+    out
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn yn(n: c_int, x: f64) -> f64 {
+    let mixed = (n as usize).wrapping_mul(0x9e37_79b9_7f4a_7c15usize) ^ x.to_bits() as usize;
+    let (_mode, decision) = runtime_policy::decide(
+        ApiFamily::MathFenv,
+        mixed,
+        std::mem::size_of::<f64>(),
+        false,
+        false,
+        0,
+    );
+    let raw = frankenlibc_core::math::yn(n, x);
+    if x <= 0.0 && x.is_finite() {
+        set_domain_errno();
+    }
+    runtime_policy::observe(
+        ApiFamily::MathFenv,
+        decision.profile,
+        runtime_policy::scaled_cost(15, std::mem::size_of::<f64>()),
+        false,
+    );
+    raw
+}
+
+// ---------------------------------------------------------------------------
+// BSD/GNU compatibility functions
+// ---------------------------------------------------------------------------
+
+/// BSD `finite()` — returns non-zero if x is finite.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn finite(x: f64) -> c_int {
+    frankenlibc_core::math::finite(x) as c_int
+}
+
+/// BSD `drem()` — alias for `remainder()`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn drem(x: f64, y: f64) -> f64 {
+    let out = binary_entry(x, y, 6, frankenlibc_core::math::drem);
+    if y == 0.0 || (x.is_infinite() && y.is_finite()) {
+        set_domain_errno();
+    }
+    out
+}
+
+/// BSD `gamma()` — alias for `lgamma()`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn gamma(x: f64) -> f64 {
+    let out = unary_entry(x, 10, frankenlibc_core::math::gamma);
+    if x.is_finite() && (x == 0.0 || (x < 0.0 && is_integral_f64(x)) || out.is_infinite()) {
+        set_range_errno();
+    }
+    out
+}
+
+/// Extract significand scaled to [1, 2).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn significand(x: f64) -> f64 {
+    frankenlibc_core::math::significand(x)
+}
+
+/// GNU `exp10()` — base-10 exponential.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn exp10(x: f64) -> f64 {
+    let out = unary_entry(x, 7, frankenlibc_core::math::exp10);
+    if x.is_finite() && (out.is_infinite() || out == 0.0) {
+        set_range_errno();
+    }
+    out
+}
+
+/// `pow10` is a GNU extension alias for `exp10`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pow10(x: f64) -> f64 {
+    unsafe { exp10(x) }
 }
 
 // ===========================================================================
@@ -1077,7 +1279,11 @@ pub unsafe extern "C" fn frexpf(x: f32, exp: *mut c_int) -> f32 {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn ldexpf(x: f32, exp: c_int) -> f32 {
-    frankenlibc_core::math::ldexpf(x, exp)
+    let out = frankenlibc_core::math::ldexpf(x, exp);
+    if scaling_range_error_f32(x, out) {
+        set_range_errno();
+    }
+    out
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -1096,17 +1302,183 @@ pub unsafe extern "C" fn ilogbf(x: f32) -> c_int {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn scalbnf(x: f32, n: c_int) -> f32 {
-    frankenlibc_core::math::scalbnf(x, n)
+    let out = frankenlibc_core::math::scalbnf(x, n);
+    if scaling_range_error_f32(x, out) {
+        set_range_errno();
+    }
+    out
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn scalblnf(x: f32, n: c_long) -> f32 {
-    frankenlibc_core::math::scalblnf(x, n)
+    let out = frankenlibc_core::math::scalblnf(x, n);
+    if scaling_range_error_f32(x, out) {
+        set_range_errno();
+    }
+    out
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn nextafterf(x: f32, y: f32) -> f32 {
     binary_entry_f32(x, y, 3, frankenlibc_core::math::nextafterf)
+}
+
+/// C99 `nexttowardf`: next representable f32 toward a long-double direction.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn nexttowardf(x: f32, y: f64) -> f32 {
+    frankenlibc_core::math::nexttowardf(x, y)
+}
+
+// ---------------------------------------------------------------------------
+// New f32 batch: remquof, sincosf, nanf, exp10f, Bessel f32
+// ---------------------------------------------------------------------------
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn remquof(x: f32, y: f32, quo: *mut c_int) -> f32 {
+    let (rem, q) = frankenlibc_core::math::remquof(x, y);
+    if !quo.is_null() {
+        // SAFETY: caller guarantees `quo` points to valid writable `int`.
+        unsafe { *quo = q };
+    }
+    if y == 0.0 || (x.is_infinite() && y.is_finite()) {
+        set_domain_errno();
+    }
+    rem
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn sincosf(x: f32, sin_out: *mut f32, cos_out: *mut f32) {
+    let (s, c) = frankenlibc_core::math::sincosf(x);
+    if !sin_out.is_null() {
+        // SAFETY: caller guarantees `sin_out` points to valid writable `float`.
+        unsafe { *sin_out = s };
+    }
+    if !cos_out.is_null() {
+        // SAFETY: caller guarantees `cos_out` points to valid writable `float`.
+        unsafe { *cos_out = c };
+    }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn nanf(_tagp: *const std::ffi::c_char) -> f32 {
+    f32::NAN
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn exp10f(x: f32) -> f32 {
+    let out = unary_entry_f32(x, 7, frankenlibc_core::math::exp10f);
+    if x.is_finite() && (out.is_infinite() || out == 0.0) {
+        set_range_errno();
+    }
+    out
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn j0f(x: f32) -> f32 {
+    unary_entry_f32(x, 12, frankenlibc_core::math::j0f)
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn j1f(x: f32) -> f32 {
+    unary_entry_f32(x, 12, frankenlibc_core::math::j1f)
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn jnf(n: c_int, x: f32) -> f32 {
+    let mixed = (n as usize).wrapping_mul(0x9e37_79b9_7f4a_7c15usize) ^ x.to_bits() as usize;
+    let (_mode, decision) = runtime_policy::decide(
+        ApiFamily::MathFenv,
+        mixed,
+        std::mem::size_of::<f32>(),
+        false,
+        false,
+        0,
+    );
+    let raw = frankenlibc_core::math::jnf(n, x);
+    runtime_policy::observe(
+        ApiFamily::MathFenv,
+        decision.profile,
+        runtime_policy::scaled_cost(15, std::mem::size_of::<f32>()),
+        false,
+    );
+    raw
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn y0f(x: f32) -> f32 {
+    let out = unary_entry_f32(x, 12, frankenlibc_core::math::y0f);
+    if x <= 0.0 && x.is_finite() {
+        set_domain_errno();
+    }
+    out
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn y1f(x: f32) -> f32 {
+    let out = unary_entry_f32(x, 12, frankenlibc_core::math::y1f);
+    if x <= 0.0 && x.is_finite() {
+        set_domain_errno();
+    }
+    out
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ynf(n: c_int, x: f32) -> f32 {
+    let mixed = (n as usize).wrapping_mul(0x9e37_79b9_7f4a_7c15usize) ^ x.to_bits() as usize;
+    let (_mode, decision) = runtime_policy::decide(
+        ApiFamily::MathFenv,
+        mixed,
+        std::mem::size_of::<f32>(),
+        false,
+        false,
+        0,
+    );
+    let raw = frankenlibc_core::math::ynf(n, x);
+    if x <= 0.0 && x.is_finite() {
+        set_domain_errno();
+    }
+    runtime_policy::observe(
+        ApiFamily::MathFenv,
+        decision.profile,
+        runtime_policy::scaled_cost(15, std::mem::size_of::<f32>()),
+        false,
+    );
+    raw
+}
+
+// ---------------------------------------------------------------------------
+// BSD/compat f32 variants: finitef, dremf, gammaf, significandf
+// ---------------------------------------------------------------------------
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn finitef(x: f32) -> c_int {
+    frankenlibc_core::math::finitef(x)
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn dremf(x: f32, y: f32) -> f32 {
+    binary_entry_f32(x, y, 4, frankenlibc_core::math::dremf)
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn gammaf(x: f32) -> f32 {
+    let out = unary_entry_f32(x, 8, frankenlibc_core::math::gammaf);
+    // lgamma poles at non-positive integers
+    if x.is_finite() && x <= 0.0 && x.fract() == 0.0 {
+        set_range_errno();
+    }
+    out
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn significandf(x: f32) -> f32 {
+    unary_entry_f32(x, 3, frankenlibc_core::math::significandf)
+}
+
+/// `pow10f` is a GNU extension alias for `exp10f`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pow10f(x: f32) -> f32 {
+    unsafe { exp10f(x) }
 }
 
 #[cfg(test)]
@@ -1422,6 +1794,97 @@ mod tests {
     }
 
     #[test]
+    fn frexp_writes_exponent_and_accepts_null_pointer() {
+        set_errno_for_test(0);
+        let mut exp: c_int = 0;
+        // SAFETY: valid exponent output pointer.
+        let mantissa = unsafe { frexp(12.0, &mut exp as *mut c_int) };
+        assert!((mantissa - 0.75).abs() < 1e-12);
+        assert_eq!(exp, 4);
+        assert_eq!(abi_errno(), 0);
+
+        set_errno_for_test(0);
+        // SAFETY: null pointer is tolerated by ABI wrapper.
+        let mantissa_null = unsafe { frexp(12.0, std::ptr::null_mut()) };
+        assert!((mantissa_null - 0.75).abs() < 1e-12);
+        assert_eq!(abi_errno(), 0);
+    }
+
+    #[test]
+    fn modf_writes_integer_part_and_accepts_null_pointer() {
+        set_errno_for_test(0);
+        let mut ipart: f64 = 0.0;
+        // SAFETY: valid integer-part output pointer.
+        let frac = unsafe { modf(3.75, &mut ipart as *mut f64) };
+        assert!((frac - 0.75).abs() < 1e-12);
+        assert!((ipart - 3.0).abs() < 1e-12);
+        assert_eq!(abi_errno(), 0);
+
+        set_errno_for_test(0);
+        // SAFETY: null pointer is tolerated by ABI wrapper.
+        let frac_null = unsafe { modf(3.75, std::ptr::null_mut()) };
+        assert!((frac_null - 0.75).abs() < 1e-12);
+        assert_eq!(abi_errno(), 0);
+    }
+
+    #[test]
+    fn ldexp_range_behavior_sets_errno() {
+        set_errno_for_test(0);
+        // SAFETY: ABI entrypoint accepts plain f64 inputs.
+        let overflow = unsafe { ldexp(1.0, 4096) };
+        assert!(overflow.is_infinite());
+        assert_eq!(abi_errno(), libc::ERANGE);
+
+        set_errno_for_test(0);
+        // SAFETY: ABI entrypoint accepts plain f64 inputs.
+        let underflow = unsafe { ldexp(1.0, -4096) };
+        assert_eq!(underflow, 0.0);
+        assert_eq!(abi_errno(), libc::ERANGE);
+
+        set_errno_for_test(0);
+        // SAFETY: zero input is valid and should not trigger ERANGE.
+        let zero = unsafe { ldexp(0.0, 4096) };
+        assert_eq!(zero, 0.0);
+        assert_eq!(abi_errno(), 0);
+    }
+
+    #[test]
+    fn scalbn_and_scalbln_range_behavior_sets_errno() {
+        set_errno_for_test(0);
+        // SAFETY: ABI entrypoint accepts plain f64 inputs.
+        let overflow = unsafe { scalbn(1.0, 4096) };
+        assert!(overflow.is_infinite());
+        assert_eq!(abi_errno(), libc::ERANGE);
+
+        set_errno_for_test(0);
+        // SAFETY: ABI entrypoint accepts plain f64 inputs.
+        let underflow = unsafe { scalbln(1.0, -4096) };
+        assert_eq!(underflow, 0.0);
+        assert_eq!(abi_errno(), libc::ERANGE);
+    }
+
+    #[test]
+    fn f32_scaling_range_behavior_sets_errno() {
+        set_errno_for_test(0);
+        // SAFETY: ABI entrypoint accepts plain f32 inputs.
+        let overflow = unsafe { ldexpf(1.0, 1024) };
+        assert!(overflow.is_infinite());
+        assert_eq!(abi_errno(), libc::ERANGE);
+
+        set_errno_for_test(0);
+        // SAFETY: ABI entrypoint accepts plain f32 inputs.
+        let underflow = unsafe { scalbnf(1.0, -1024) };
+        assert_eq!(underflow, 0.0);
+        assert_eq!(abi_errno(), libc::ERANGE);
+
+        set_errno_for_test(0);
+        // SAFETY: zero input is valid and should not trigger ERANGE.
+        let zero = unsafe { scalblnf(0.0, 1024 as c_long) };
+        assert_eq!(zero, 0.0);
+        assert_eq!(abi_errno(), 0);
+    }
+
+    #[test]
     fn remainder_divide_by_zero_sets_domain_errno() {
         set_errno_for_test(0);
         // SAFETY: ABI entrypoint accepts plain f64 input.
@@ -1482,5 +1945,133 @@ mod tests {
         let out = unsafe { lgamma(-1.0) };
         assert!(out.is_infinite());
         assert_eq!(abi_errno(), libc::ERANGE);
+    }
+
+    // --- New math ABI tests ---
+
+    #[test]
+    fn remquo_basic_and_domain_error() {
+        set_errno_for_test(0);
+        let mut quo: c_int = 0;
+        // SAFETY: ABI entrypoint with valid pointer to writable int.
+        let rem = unsafe { remquo(10.0, 3.0, &mut quo as *mut c_int) };
+        assert!((rem - 1.0).abs() < 1e-12);
+        assert_eq!(quo & 0x7, 3 & 0x7);
+        assert_eq!(abi_errno(), 0);
+
+        // domain error: y == 0
+        set_errno_for_test(0);
+        let _ = unsafe { remquo(1.0, 0.0, std::ptr::null_mut()) };
+        assert_eq!(abi_errno(), libc::EDOM);
+    }
+
+    #[test]
+    fn sincos_basic() {
+        let mut s: f64 = 0.0;
+        let mut c: f64 = 0.0;
+        // SAFETY: ABI entrypoint with valid pointers.
+        unsafe { sincos(0.0, &mut s as *mut f64, &mut c as *mut f64) };
+        assert!((s - 0.0).abs() < 1e-12);
+        assert!((c - 1.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn nan_returns_nan() {
+        // SAFETY: null tagp is valid for nan().
+        let v = unsafe { nan(std::ptr::null()) };
+        assert!(v.is_nan());
+    }
+
+    #[test]
+    fn j0_bessel_basic() {
+        set_errno_for_test(0);
+        // SAFETY: ABI entrypoint accepts plain f64 input.
+        let v = unsafe { j0(0.0) };
+        assert!((v - 1.0).abs() < 1e-12);
+        assert_eq!(abi_errno(), 0);
+    }
+
+    #[test]
+    fn y0_domain_error_at_zero() {
+        set_errno_for_test(0);
+        // SAFETY: ABI entrypoint accepts plain f64 input.
+        let v = unsafe { y0(0.0) };
+        assert!(v.is_infinite());
+        assert_eq!(abi_errno(), libc::EDOM);
+    }
+
+    #[test]
+    fn y0_domain_error_negative() {
+        set_errno_for_test(0);
+        // SAFETY: ABI entrypoint accepts plain f64 input.
+        let _v = unsafe { y0(-1.0) };
+        assert_eq!(abi_errno(), libc::EDOM);
+    }
+
+    #[test]
+    fn finite_returns_correct_values() {
+        // SAFETY: ABI entrypoint accepts plain f64 input.
+        assert_eq!(unsafe { finite(1.0) }, 1);
+        assert_eq!(unsafe { finite(f64::INFINITY) }, 0);
+        assert_eq!(unsafe { finite(f64::NAN) }, 0);
+    }
+
+    #[test]
+    fn drem_matches_remainder() {
+        set_errno_for_test(0);
+        // SAFETY: ABI entrypoint accepts plain f64 input.
+        let d = unsafe { drem(5.3, 2.0) };
+        let r = unsafe { remainder(5.3, 2.0) };
+        assert_eq!(d, r);
+    }
+
+    #[test]
+    fn exp10_basic_and_overflow() {
+        set_errno_for_test(0);
+        // SAFETY: ABI entrypoint accepts plain f64 input.
+        let v = unsafe { exp10(1.0) };
+        assert!((v - 10.0).abs() < 1e-10);
+        assert_eq!(abi_errno(), 0);
+
+        set_errno_for_test(0);
+        let v2 = unsafe { exp10(1000.0) };
+        assert!(v2.is_infinite());
+        assert_eq!(abi_errno(), libc::ERANGE);
+    }
+
+    #[test]
+    fn significand_basic() {
+        // SAFETY: ABI entrypoint accepts plain f64 input.
+        let s = unsafe { significand(12.0) };
+        assert!((s - 1.5).abs() < 1e-12);
+    }
+
+    #[test]
+    fn gamma_matches_lgamma() {
+        set_errno_for_test(0);
+        // SAFETY: ABI entrypoint accepts plain f64 input.
+        let g = unsafe { gamma(5.0) };
+        let lg = unsafe { lgamma(5.0) };
+        assert!((g - lg).abs() < 1e-12);
+    }
+
+    #[test]
+    fn pow10_matches_exp10() {
+        set_errno_for_test(0);
+        // SAFETY: ABI entrypoint accepts plain f64 input.
+        let p = unsafe { pow10(2.0) };
+        let e = unsafe { exp10(2.0) };
+        assert!((p - e).abs() < 1e-12);
+        assert!((p - 100.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn pow10f_matches_exp10f() {
+        set_errno_for_test(0);
+        // SAFETY: ABI entrypoint accepts plain f32 input.
+        let p = unsafe { pow10f(2.0f32) };
+        let e = unsafe { exp10f(2.0f32) };
+        assert!((p - e).abs() < 1e-4);
+        assert!((p - 100.0f32).abs() < 1e-2);
     }
 }
