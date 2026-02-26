@@ -140,13 +140,36 @@ pub static __libc_single_threaded: std::sync::atomic::AtomicU8 =
 // ==========================================================================
 // __ctype_* internal table accessors (4 symbols)
 // ==========================================================================
-// __ctype_b, __ctype_tolower, __ctype_toupper — legacy glibc table pointers
-// These point to the raw table data (not *_loc() which returns **table).
-// They are used by very old binaries.
-dlsym_passthrough!(fn __ctype_b() -> *const u16);
-dlsym_passthrough!(fn __ctype_tolower() -> *const c_int);
-dlsym_passthrough!(fn __ctype_toupper() -> *const c_int);
-dlsym_passthrough!(fn __ctype_get_mb_cur_max() -> SizeT);
+// __ctype_b, __ctype_tolower, __ctype_toupper — legacy glibc table pointers.
+// These return a direct pointer into the classification table at offset 128,
+// matching the C/POSIX locale tables defined in ctype_abi.rs.
+// Native implementation — no dlsym needed.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __ctype_b() -> *const u16 {
+    // Re-use the static tables from ctype_abi via direct reference.
+    // SAFETY: CTYPE_B_TABLE is 'static with 384 entries; offset 128 is valid.
+    unsafe { crate::ctype_abi::ctype_b_table_ptr() }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __ctype_tolower() -> *const c_int {
+    // SAFETY: TOLOWER_TABLE is 'static with 384 entries; offset 128 is valid.
+    unsafe { crate::ctype_abi::tolower_table_ptr() }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __ctype_toupper() -> *const c_int {
+    // SAFETY: TOUPPER_TABLE is 'static with 384 entries; offset 128 is valid.
+    unsafe { crate::ctype_abi::toupper_table_ptr() }
+}
+
+/// `__ctype_get_mb_cur_max` — return maximum bytes per multibyte character.
+/// In C/POSIX locale returns 1; in UTF-8 locale returns 6.
+/// We default to UTF-8 (6) since that matches modern glibc behavior.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __ctype_get_mb_cur_max() -> SizeT {
+    6 // MB_CUR_MAX for UTF-8 locale
+}
 
 // __ctype32_* (3 symbols)
 dlsym_passthrough!(fn __ctype32_b() -> *const c_uint);
