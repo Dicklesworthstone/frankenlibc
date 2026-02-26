@@ -1653,17 +1653,17 @@ pub unsafe extern "C" fn __register_atfork(
     let prepare_fn: Option<unsafe extern "C" fn()> = if prepare.is_null() {
         None
     } else {
-        Some(unsafe { std::mem::transmute(prepare) })
+        Some(unsafe { std::mem::transmute::<*mut c_void, unsafe extern "C" fn()>(prepare) })
     };
     let parent_fn: Option<unsafe extern "C" fn()> = if parent.is_null() {
         None
     } else {
-        Some(unsafe { std::mem::transmute(parent) })
+        Some(unsafe { std::mem::transmute::<*mut c_void, unsafe extern "C" fn()>(parent) })
     };
     let child_fn: Option<unsafe extern "C" fn()> = if child.is_null() {
         None
     } else {
-        Some(unsafe { std::mem::transmute(child) })
+        Some(unsafe { std::mem::transmute::<*mut c_void, unsafe extern "C" fn()>(child) })
     };
     unsafe { super::pthread_abi::pthread_atfork(prepare_fn, parent_fn, child_fn) }
 }
@@ -1809,7 +1809,7 @@ pub unsafe extern "C" fn __sysv_signal(signum: c_int, handler: *mut c_void) -> *
 // __vfork → vfork
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __vfork() -> c_int {
-    super::process_abi::vfork()
+    unsafe { super::process_abi::vfork() }
 }
 // __vfscanf: native — forward to our vfscanf
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -3010,7 +3010,7 @@ pub unsafe extern "C" fn putgrent(grp: *const c_void, fp: *mut c_void) -> c_int 
         }
     }
     // Format: name:passwd:gid:member1,member2,...
-    let member_str: Vec<u8> = members.join(&[b','] as &[u8]);
+    let member_str: Vec<u8> = members.join(b",");
     let line = unsafe {
         format!(
             "{}:{}:{}:{}\n",
