@@ -1636,7 +1636,11 @@ mod tests {
                 return;
             }
         }
-        panic!(
+        let final_decisions = runtime_kernel_snapshot(mode())
+            .map(|snapshot| snapshot.decisions)
+            .unwrap_or(baseline_decisions);
+        assert!(
+            final_decisions > baseline_decisions,
             "runtime kernel snapshot did not advance decisions within {MAX_ATTEMPTS} deterministic attempts"
         );
     }

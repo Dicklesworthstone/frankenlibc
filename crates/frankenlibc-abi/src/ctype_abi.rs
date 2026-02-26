@@ -376,3 +376,72 @@ pub unsafe extern "C" fn toupper_l(c: c_int, _locale: *mut c_void) -> c_int {
 pub unsafe extern "C" fn tolower_l(c: c_int, _locale: *mut c_void) -> c_int {
     convert(c, frankenlibc_core::ctype::to_lower)
 }
+
+// ===========================================================================
+// __is*_l / __to*_l — glibc internal double-underscore locale aliases
+// ===========================================================================
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __isalnum_l(c: c_int, l: *mut c_void) -> c_int {
+    unsafe { isalnum_l(c, l) }
+}
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __isalpha_l(c: c_int, l: *mut c_void) -> c_int {
+    unsafe { isalpha_l(c, l) }
+}
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __isascii_l(c: c_int, _l: *mut c_void) -> c_int {
+    if (c as u32) <= 127 { 1 } else { 0 }
+}
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __isblank_l(c: c_int, l: *mut c_void) -> c_int {
+    unsafe { isblank_l(c, l) }
+}
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __iscntrl_l(c: c_int, l: *mut c_void) -> c_int {
+    unsafe { iscntrl_l(c, l) }
+}
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __isdigit_l(c: c_int, l: *mut c_void) -> c_int {
+    unsafe { isdigit_l(c, l) }
+}
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __isgraph_l(c: c_int, l: *mut c_void) -> c_int {
+    unsafe { isgraph_l(c, l) }
+}
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __islower_l(c: c_int, l: *mut c_void) -> c_int {
+    unsafe { islower_l(c, l) }
+}
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __isprint_l(c: c_int, l: *mut c_void) -> c_int {
+    unsafe { isprint_l(c, l) }
+}
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __ispunct_l(c: c_int, l: *mut c_void) -> c_int {
+    unsafe { ispunct_l(c, l) }
+}
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __isspace_l(c: c_int, l: *mut c_void) -> c_int {
+    unsafe { isspace_l(c, l) }
+}
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __isupper_l(c: c_int, l: *mut c_void) -> c_int {
+    unsafe { isupper_l(c, l) }
+}
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __isxdigit_l(c: c_int, l: *mut c_void) -> c_int {
+    unsafe { isxdigit_l(c, l) }
+}
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __toascii_l(c: c_int, _l: *mut c_void) -> c_int {
+    c & 0x7f
+}
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __tolower_l(c: c_int, l: *mut c_void) -> c_int {
+    unsafe { tolower_l(c, l) }
+}
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __toupper_l(c: c_int, l: *mut c_void) -> c_int {
+    unsafe { toupper_l(c, l) }
+}

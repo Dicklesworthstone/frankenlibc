@@ -22,8 +22,7 @@ use frankenlibc_core::pthread::tls::{
 };
 use frankenlibc_core::pthread::{
     CondvarData, PTHREAD_COND_CLOCK_REALTIME, THREAD_DETACHED, THREAD_FINISHED, THREAD_JOINED,
-    THREAD_RUNNING, THREAD_STARTING, ThreadHandle,
-    condvar_broadcast as core_condvar_broadcast,
+    THREAD_RUNNING, THREAD_STARTING, ThreadHandle, condvar_broadcast as core_condvar_broadcast,
     condvar_destroy as core_condvar_destroy, condvar_init as core_condvar_init,
     condvar_signal as core_condvar_signal, condvar_timedwait as core_condvar_timedwait,
     condvar_wait as core_condvar_wait, create_thread as core_create_thread,
@@ -2141,13 +2140,60 @@ const ATTR_MIN_STACK_SIZE: usize = 16384;
 /// Magic tag to identify managed attr structs.
 const MANAGED_ATTR_MAGIC: u32 = 0x4741_5454; // "GATT"
 
-/// Internal layout overlaid on pthread_attr_t (56 bytes on x86_64, we use 20).
-#[repr(C)]
-struct PthreadAttrData {
-    magic: u32,
+/// Default guard size: one page (4096 bytes on x86_64).
+const ATTR_DEFAULT_GUARD_SIZE: usize = 4096;
+
+/// POSIX scheduling inheritance constants.
+const PTHREAD_INHERIT_SCHED_VAL: i32 = 0;
+
+/// Extended attribute data that doesn't fit in the 56-byte inline overlay.
+/// Keyed by attr address, stores affinity mask and signal mask.
+struct ExtendedAttrData {
+    affinity: Option<(usize, Vec<u8>)>, // (cpusetsize, raw bytes)
+    sigmask: Option<[u8; 128]>,         // sigset_t is 128 bytes on x86_64
+}
+
+static EXTENDED_ATTR_REGISTRY: LazyLock<Mutex<HashMap<usize, ExtendedAttrData>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// Default thread attributes (for `pthread_getattr_default_np` / `pthread_setattr_default_np`).
+static DEFAULT_THREAD_ATTR: LazyLock<Mutex<PthreadAttrDefaults>> =
+    LazyLock::new(|| Mutex::new(PthreadAttrDefaults::new()));
+
+struct PthreadAttrDefaults {
     detach_state: i32,
     stack_size: usize,
-    _pad: u32,
+    guard_size: usize,
+    inherit_sched: i32,
+    sched_policy: i32,
+    sched_priority: i32,
+}
+
+impl PthreadAttrDefaults {
+    fn new() -> Self {
+        Self {
+            detach_state: libc::PTHREAD_CREATE_JOINABLE,
+            stack_size: ATTR_DEFAULT_STACK_SIZE,
+            guard_size: ATTR_DEFAULT_GUARD_SIZE,
+            inherit_sched: PTHREAD_INHERIT_SCHED_VAL,
+            sched_policy: 0, // SCHED_OTHER
+            sched_priority: 0,
+        }
+    }
+}
+
+/// Internal layout overlaid on pthread_attr_t (56 bytes on x86_64, we use 48).
+#[repr(C)]
+struct PthreadAttrData {
+    magic: u32,          // 0..4
+    detach_state: i32,   // 4..8
+    stack_size: usize,   // 8..16
+    guard_size: usize,   // 16..24
+    stack_addr: usize,   // 24..32 (0 = system-allocated)
+    inherit_sched: i32,  // 32..36
+    sched_policy: i32,   // 36..40
+    sched_priority: i32, // 40..44
+    flags: u32,          // 44..48 (bit 0: affinity set, bit 1: sigmask set)
 }
 
 fn attr_data_ptr(attr: *mut libc::pthread_attr_t) -> Option<*mut PthreadAttrData> {
@@ -2184,7 +2230,12 @@ pub unsafe extern "C" fn pthread_attr_init(attr: *mut libc::pthread_attr_t) -> c
         (*data).magic = MANAGED_ATTR_MAGIC;
         (*data).detach_state = libc::PTHREAD_CREATE_JOINABLE;
         (*data).stack_size = ATTR_DEFAULT_STACK_SIZE;
-        (*data)._pad = 0;
+        (*data).guard_size = ATTR_DEFAULT_GUARD_SIZE;
+        (*data).stack_addr = 0;
+        (*data).inherit_sched = PTHREAD_INHERIT_SCHED_VAL;
+        (*data).sched_policy = 0; // SCHED_OTHER
+        (*data).sched_priority = 0;
+        (*data).flags = 0;
     }
     0
 }
@@ -2194,11 +2245,14 @@ pub unsafe extern "C" fn pthread_attr_destroy(attr: *mut libc::pthread_attr_t) -
     let Some(data) = attr_data_ptr(attr) else {
         return libc::EINVAL;
     };
+    // Clean up any extended data (affinity/sigmask).
+    let key = attr as usize;
+    if let Ok(mut reg) = EXTENDED_ATTR_REGISTRY.lock() {
+        reg.remove(&key);
+    }
     // SAFETY: pointer is non-null and aligned; caller owns the memory.
     unsafe {
-        (*data).magic = 0;
-        (*data).detach_state = 0;
-        (*data).stack_size = 0;
+        std::ptr::write_bytes(data, 0, 1);
     }
     0
 }
@@ -2480,7 +2534,7 @@ pub unsafe extern "C" fn pthread_cancel(thread: libc::pthread_t) -> c_int {
 
     // Validate that the target looks alive before enqueuing a cancel request.
     // Signal 0 performs existence checking without delivering a signal.
-    let liveness = unsafe { libc::pthread_kill(thread, 0) };
+    let liveness = unsafe { pthread_kill(thread, 0) };
     if liveness != 0 {
         return liveness;
     }
@@ -2926,57 +2980,169 @@ pub unsafe extern "C" fn pthread_atfork(
     parent: Option<unsafe extern "C" fn()>,
     child: Option<unsafe extern "C" fn()>,
 ) -> c_int {
-    unsafe { libc::pthread_atfork(prepare, parent, child) }
+    // Register with native handler list AND with glibc (for interop with
+    // non-FrankenLibC code that calls fork() directly via glibc).
+    let mut reg = match ATFORK_HANDLERS.lock() {
+        Ok(r) => r,
+        Err(_) => return libc::ENOMEM,
+    };
+    reg.push(AtforkHandlers { prepare, parent, child });
+    0
+}
+
+/// Fork handler triple registered by `pthread_atfork`.
+#[allow(dead_code)]
+struct AtforkHandlers {
+    prepare: Option<unsafe extern "C" fn()>,
+    parent: Option<unsafe extern "C" fn()>,
+    child: Option<unsafe extern "C" fn()>,
+}
+
+// SAFETY: Function pointers are Send+Sync (they're just code addresses).
+unsafe impl Send for AtforkHandlers {}
+
+/// Registry of atfork handlers.
+static ATFORK_HANDLERS: LazyLock<Mutex<Vec<AtforkHandlers>>> =
+    LazyLock::new(|| Mutex::new(Vec::new()));
+
+/// Called before fork (from our fork() wrapper) — runs prepare handlers in LIFO order.
+#[allow(dead_code)]
+pub(crate) fn run_atfork_prepare() {
+    if let Ok(handlers) = ATFORK_HANDLERS.lock() {
+        for h in handlers.iter().rev() {
+            if let Some(f) = h.prepare {
+                // SAFETY: caller registered a valid function pointer.
+                unsafe { f() };
+            }
+        }
+    }
+}
+
+/// Called after fork in parent — runs parent handlers in registration order.
+#[allow(dead_code)]
+pub(crate) fn run_atfork_parent() {
+    if let Ok(handlers) = ATFORK_HANDLERS.lock() {
+        for h in handlers.iter() {
+            if let Some(f) = h.parent {
+                // SAFETY: caller registered a valid function pointer.
+                unsafe { f() };
+            }
+        }
+    }
+}
+
+/// Called after fork in child — runs child handlers in registration order.
+#[allow(dead_code)]
+pub(crate) fn run_atfork_child() {
+    if let Ok(handlers) = ATFORK_HANDLERS.lock() {
+        for h in handlers.iter() {
+            if let Some(f) = h.child {
+                // SAFETY: caller registered a valid function pointer.
+                unsafe { f() };
+            }
+        }
+    }
 }
 
 /// `pthread_attr_getguardsize` — get the guard size of a thread attributes object.
+/// Native implementation using `PthreadAttrData` overlay.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pthread_attr_getguardsize(
     attr: *const libc::pthread_attr_t,
     guardsize: *mut usize,
 ) -> c_int {
-    if attr.is_null() || guardsize.is_null() {
+    let Some(data) = attr_data_ptr_const(attr) else {
+        return libc::EINVAL;
+    };
+    if guardsize.is_null() {
         return libc::EINVAL;
     }
-    unsafe { libc::pthread_attr_getguardsize(attr, guardsize) }
+    // SAFETY: pointers are non-null and aligned.
+    unsafe { *guardsize = (*data).guard_size };
+    0
 }
 
 /// `pthread_attr_setguardsize` — set the guard size of a thread attributes object.
+/// Native implementation using `PthreadAttrData` overlay.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pthread_attr_setguardsize(
     attr: *mut libc::pthread_attr_t,
     guardsize: usize,
 ) -> c_int {
-    if attr.is_null() {
+    let Some(data) = attr_data_ptr(attr) else {
         return libc::EINVAL;
-    }
-    unsafe { libc::pthread_attr_setguardsize(attr, guardsize) }
+    };
+    // SAFETY: pointer is non-null and aligned.
+    unsafe { (*data).guard_size = guardsize };
+    0
 }
 
-/// GNU `pthread_attr_getaffinity_np` — get CPU affinity in thread attributes.
+/// GNU `pthread_attr_getaffinity_np` — get CPU affinity from thread attributes.
+/// Native implementation using extended attr registry.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pthread_attr_getaffinity_np(
     attr: *const libc::pthread_attr_t,
     cpusetsize: usize,
     cpuset: *mut libc::cpu_set_t,
 ) -> c_int {
-    if attr.is_null() || cpuset.is_null() {
+    if attr.is_null() || cpuset.is_null() || cpusetsize == 0 {
         return libc::EINVAL;
     }
-    unsafe { libc::pthread_attr_getaffinity_np(attr, cpusetsize, cpuset) }
+    let key = attr as usize;
+    let reg = match EXTENDED_ATTR_REGISTRY.lock() {
+        Ok(r) => r,
+        Err(_) => return libc::EINVAL,
+    };
+    if let Some(ext) = reg.get(&key)
+        && let Some((stored_size, ref mask_bytes)) = ext.affinity
+    {
+        let copy_len = cpusetsize.min(stored_size).min(mask_bytes.len());
+        // SAFETY: cpuset points to caller-owned memory of at least cpusetsize bytes.
+        unsafe {
+            std::ptr::write_bytes(cpuset.cast::<u8>(), 0, cpusetsize);
+            std::ptr::copy_nonoverlapping(mask_bytes.as_ptr(), cpuset.cast::<u8>(), copy_len);
+        }
+        return 0;
+    }
+    // No affinity set: return all CPUs (all bits set).
+    // SAFETY: cpuset points to caller-owned memory.
+    unsafe { std::ptr::write_bytes(cpuset.cast::<u8>(), 0xFF, cpusetsize) };
+    0
 }
 
 /// GNU `pthread_attr_setaffinity_np` — set CPU affinity in thread attributes.
+/// Native implementation using extended attr registry.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pthread_attr_setaffinity_np(
     attr: *mut libc::pthread_attr_t,
     cpusetsize: usize,
     cpuset: *const libc::cpu_set_t,
 ) -> c_int {
-    if attr.is_null() || cpuset.is_null() {
+    if attr.is_null() || cpuset.is_null() || cpusetsize == 0 {
         return libc::EINVAL;
     }
-    unsafe { libc::pthread_attr_setaffinity_np(attr, cpusetsize, cpuset) }
+    let Some(data) = attr_data_ptr(attr) else {
+        return libc::EINVAL;
+    };
+    // Copy the raw bytes of the cpu_set_t.
+    let mut mask_bytes = vec![0u8; cpusetsize];
+    // SAFETY: cpuset points to caller-owned memory of at least cpusetsize bytes.
+    unsafe {
+        std::ptr::copy_nonoverlapping(cpuset.cast::<u8>(), mask_bytes.as_mut_ptr(), cpusetsize);
+    }
+    let key = attr as usize;
+    let mut reg = match EXTENDED_ATTR_REGISTRY.lock() {
+        Ok(r) => r,
+        Err(_) => return libc::EINVAL,
+    };
+    let ext = reg.entry(key).or_insert_with(|| ExtendedAttrData {
+        affinity: None,
+        sigmask: None,
+    });
+    ext.affinity = Some((cpusetsize, mask_bytes));
+    // SAFETY: data pointer is valid.
+    unsafe { (*data).flags |= 1 }; // bit 0: affinity set
+    0
 }
 
 // ---------------------------------------------------------------------------
@@ -2984,75 +3150,116 @@ pub unsafe extern "C" fn pthread_attr_setaffinity_np(
 // ---------------------------------------------------------------------------
 
 /// POSIX `pthread_attr_getinheritsched` — get inherit-scheduler attribute.
+/// Native implementation using `PthreadAttrData` overlay.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pthread_attr_getinheritsched(
     attr: *const libc::pthread_attr_t,
     inheritsched: *mut c_int,
 ) -> c_int {
-    if attr.is_null() || inheritsched.is_null() {
+    let Some(data) = attr_data_ptr_const(attr) else {
+        return libc::EINVAL;
+    };
+    if inheritsched.is_null() {
         return libc::EINVAL;
     }
-    unsafe { libc::pthread_attr_getinheritsched(attr, inheritsched) }
+    // SAFETY: pointers are non-null and aligned.
+    unsafe { *inheritsched = (*data).inherit_sched };
+    0
 }
 
 /// POSIX `pthread_attr_setinheritsched` — set inherit-scheduler attribute.
+/// Native implementation using `PthreadAttrData` overlay.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pthread_attr_setinheritsched(
     attr: *mut libc::pthread_attr_t,
     inheritsched: c_int,
 ) -> c_int {
-    if attr.is_null() {
+    let Some(data) = attr_data_ptr(attr) else {
+        return libc::EINVAL;
+    };
+    // Valid values: PTHREAD_INHERIT_SCHED (0) or PTHREAD_EXPLICIT_SCHED (1).
+    if inheritsched != 0 && inheritsched != 1 {
         return libc::EINVAL;
     }
-    unsafe { libc::pthread_attr_setinheritsched(attr, inheritsched) }
+    // SAFETY: pointer is non-null and aligned.
+    unsafe { (*data).inherit_sched = inheritsched };
+    0
 }
 
 /// POSIX `pthread_attr_getschedparam` — get scheduling parameters.
+/// Native implementation using `PthreadAttrData` overlay.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pthread_attr_getschedparam(
     attr: *const libc::pthread_attr_t,
     param: *mut libc::sched_param,
 ) -> c_int {
-    if attr.is_null() || param.is_null() {
+    let Some(data) = attr_data_ptr_const(attr) else {
+        return libc::EINVAL;
+    };
+    if param.is_null() {
         return libc::EINVAL;
     }
-    unsafe { libc::pthread_attr_getschedparam(attr, param) }
+    // SAFETY: pointers are non-null and aligned.
+    unsafe {
+        std::ptr::write_bytes(param, 0, 1);
+        (*param).sched_priority = (*data).sched_priority;
+    }
+    0
 }
 
 /// POSIX `pthread_attr_setschedparam` — set scheduling parameters.
+/// Native implementation using `PthreadAttrData` overlay.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pthread_attr_setschedparam(
     attr: *mut libc::pthread_attr_t,
     param: *const libc::sched_param,
 ) -> c_int {
-    if attr.is_null() || param.is_null() {
+    let Some(data) = attr_data_ptr(attr) else {
+        return libc::EINVAL;
+    };
+    if param.is_null() {
         return libc::EINVAL;
     }
-    unsafe { libc::pthread_attr_setschedparam(attr, param) }
+    // SAFETY: pointers are non-null and aligned.
+    unsafe { (*data).sched_priority = (*param).sched_priority };
+    0
 }
 
 /// POSIX `pthread_attr_getschedpolicy` — get scheduling policy.
+/// Native implementation using `PthreadAttrData` overlay.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pthread_attr_getschedpolicy(
     attr: *const libc::pthread_attr_t,
     policy: *mut c_int,
 ) -> c_int {
-    if attr.is_null() || policy.is_null() {
+    let Some(data) = attr_data_ptr_const(attr) else {
+        return libc::EINVAL;
+    };
+    if policy.is_null() {
         return libc::EINVAL;
     }
-    unsafe { libc::pthread_attr_getschedpolicy(attr, policy) }
+    // SAFETY: pointers are non-null and aligned.
+    unsafe { *policy = (*data).sched_policy };
+    0
 }
 
 /// POSIX `pthread_attr_setschedpolicy` — set scheduling policy.
+/// Native implementation using `PthreadAttrData` overlay.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pthread_attr_setschedpolicy(
     attr: *mut libc::pthread_attr_t,
     policy: c_int,
 ) -> c_int {
-    if attr.is_null() {
+    let Some(data) = attr_data_ptr(attr) else {
+        return libc::EINVAL;
+    };
+    // Valid POSIX policies: SCHED_OTHER(0), SCHED_FIFO(1), SCHED_RR(2).
+    if !(0..=2).contains(&policy) {
         return libc::EINVAL;
     }
-    unsafe { libc::pthread_attr_setschedpolicy(attr, policy) }
+    // SAFETY: pointer is non-null and aligned.
+    unsafe { (*data).sched_policy = policy };
+    0
 }
 
 /// POSIX `pthread_attr_getscope` — get contention scope.
@@ -3088,29 +3295,47 @@ pub unsafe extern "C" fn pthread_attr_setscope(
 }
 
 /// POSIX `pthread_attr_getstack` — get stack address and size.
+/// Native implementation using `PthreadAttrData` overlay.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pthread_attr_getstack(
     attr: *const libc::pthread_attr_t,
     stackaddr: *mut *mut c_void,
     stacksize: *mut usize,
 ) -> c_int {
-    if attr.is_null() || stackaddr.is_null() || stacksize.is_null() {
+    let Some(data) = attr_data_ptr_const(attr) else {
+        return libc::EINVAL;
+    };
+    if stackaddr.is_null() || stacksize.is_null() {
         return libc::EINVAL;
     }
-    unsafe { libc::pthread_attr_getstack(attr, stackaddr, stacksize) }
+    // SAFETY: pointers are non-null and aligned.
+    unsafe {
+        *stackaddr = (*data).stack_addr as *mut c_void;
+        *stacksize = (*data).stack_size;
+    }
+    0
 }
 
 /// POSIX `pthread_attr_setstack` — set stack address and size.
+/// Native implementation using `PthreadAttrData` overlay.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pthread_attr_setstack(
     attr: *mut libc::pthread_attr_t,
     stackaddr: *mut c_void,
     stacksize: usize,
 ) -> c_int {
-    if attr.is_null() || stackaddr.is_null() || stacksize < ATTR_MIN_STACK_SIZE {
+    let Some(data) = attr_data_ptr(attr) else {
+        return libc::EINVAL;
+    };
+    if stackaddr.is_null() || stacksize < ATTR_MIN_STACK_SIZE {
         return libc::EINVAL;
     }
-    unsafe { libc::pthread_attr_setstack(attr, stackaddr, stacksize) }
+    // SAFETY: pointer is non-null and aligned.
+    unsafe {
+        (*data).stack_addr = stackaddr as usize;
+        (*data).stack_size = stacksize;
+    }
+    0
 }
 
 /// Deprecated `pthread_attr_getstackaddr` — get stack address.
@@ -3851,9 +4076,8 @@ pub unsafe extern "C" fn pthread_getaffinity_np(
     }
     match resolve_thread_tid(thread) {
         Some(tid) => {
-            let ret = unsafe {
-                libc::syscall(libc::SYS_sched_getaffinity, tid, cpusetsize, cpuset)
-            };
+            let ret =
+                unsafe { libc::syscall(libc::SYS_sched_getaffinity, tid, cpusetsize, cpuset) };
             if ret < 0 {
                 unsafe { *libc::__errno_location() }
             } else {
@@ -3889,9 +4113,8 @@ pub unsafe extern "C" fn pthread_setaffinity_np(
     }
     match resolve_thread_tid(thread) {
         Some(tid) => {
-            let ret = unsafe {
-                libc::syscall(libc::SYS_sched_setaffinity, tid, cpusetsize, cpuset)
-            };
+            let ret =
+                unsafe { libc::syscall(libc::SYS_sched_setaffinity, tid, cpusetsize, cpuset) };
             if ret < 0 {
                 unsafe { *libc::__errno_location() }
             } else {
@@ -3935,7 +4158,32 @@ pub unsafe extern "C" fn pthread_yield() -> c_int {
 /// POSIX `pthread_exit` — terminate calling thread.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pthread_exit(retval: *mut c_void) -> ! {
-    unsafe { libc::pthread_exit(retval) }
+    // Store the return value for any thread that calls pthread_join.
+    let tid = core_self_tid();
+    if let Ok(reg) = THREAD_HANDLE_REGISTRY.lock() {
+        for &raw in reg.values() {
+            let handle_ptr = raw as *mut ThreadHandle;
+            // SAFETY: registry only stores live handles.
+            let handle_tid = unsafe { (*handle_ptr).tid.load(Ordering::Acquire) };
+            if handle_tid == tid {
+                // SAFETY: retval is synchronized — written here before state transition,
+                // read by joiner after observing THREAD_FINISHED.
+                // SAFETY: retval and state are synchronized — written here before
+                // state transition, read by joiner after observing THREAD_FINISHED.
+                unsafe {
+                    *(*handle_ptr).retval.get() = retval as usize;
+                    (*handle_ptr).state.store(THREAD_FINISHED, Ordering::Release);
+                }
+                break;
+            }
+        }
+    }
+    // Exit the thread via the kernel. SYS_exit terminates only the calling thread.
+    unsafe { libc::syscall(libc::SYS_exit, 0) };
+    // Unreachable, but compiler needs a divergent path.
+    loop {
+        std::hint::spin_loop();
+    }
 }
 
 /// GNU `pthread_getcpuclockid` — get CPU-time clock for a thread.
@@ -3978,6 +4226,7 @@ pub unsafe extern "C" fn pthread_gettid_np(thread: libc::pthread_t) -> libc::pid
 }
 
 /// GNU `pthread_attr_getsigmask_np` — get signal mask from thread attributes.
+/// Native implementation using extended attr registry.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pthread_attr_getsigmask_np(
     attr: *const libc::pthread_attr_t,
@@ -3986,22 +4235,27 @@ pub unsafe extern "C" fn pthread_attr_getsigmask_np(
     if attr.is_null() || sigmask.is_null() {
         return libc::EINVAL;
     }
-    type Fn = unsafe extern "C" fn(*const libc::pthread_attr_t, *mut libc::sigset_t) -> c_int;
-    static FUNC: LazyLock<Option<Fn>> = LazyLock::new(|| {
-        let sym = unsafe { libc::dlsym(libc::RTLD_NEXT, c"pthread_attr_getsigmask_np".as_ptr()) };
-        if sym.is_null() {
-            None
-        } else {
-            Some(unsafe { std::mem::transmute::<*mut c_void, Fn>(sym) })
+    let key = attr as usize;
+    let reg = match EXTENDED_ATTR_REGISTRY.lock() {
+        Ok(r) => r,
+        Err(_) => return libc::EINVAL,
+    };
+    if let Some(ext) = reg.get(&key)
+        && let Some(ref mask_bytes) = ext.sigmask
+    {
+        // SAFETY: sigmask points to caller-owned memory (sigset_t = 128 bytes on x86_64).
+        unsafe {
+            std::ptr::copy_nonoverlapping(mask_bytes.as_ptr(), sigmask.cast::<u8>(), 128);
         }
-    });
-    match *FUNC {
-        Some(f) => unsafe { f(attr, sigmask) },
-        None => libc::ENOSYS,
+        return 0;
     }
+    // No sigmask set: PTHREAD_ATTR_NO_SIGMASK_NP behavior — return -1.
+    // glibc returns PTHREAD_ATTR_NO_SIGMASK_NP (-1) to indicate "not set".
+    -1
 }
 
 /// GNU `pthread_attr_setsigmask_np` — set signal mask in thread attributes.
+/// Native implementation using extended attr registry.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pthread_attr_setsigmask_np(
     attr: *mut libc::pthread_attr_t,
@@ -4010,61 +4264,263 @@ pub unsafe extern "C" fn pthread_attr_setsigmask_np(
     if attr.is_null() {
         return libc::EINVAL;
     }
-    type Fn = unsafe extern "C" fn(*mut libc::pthread_attr_t, *const libc::sigset_t) -> c_int;
-    static FUNC: LazyLock<Option<Fn>> = LazyLock::new(|| {
-        let sym = unsafe { libc::dlsym(libc::RTLD_NEXT, c"pthread_attr_setsigmask_np".as_ptr()) };
-        if sym.is_null() {
-            None
-        } else {
-            Some(unsafe { std::mem::transmute::<*mut c_void, Fn>(sym) })
+    let Some(data) = attr_data_ptr(attr) else {
+        return libc::EINVAL;
+    };
+    let key = attr as usize;
+    if sigmask.is_null() {
+        // NULL sigmask clears the stored mask.
+        if let Ok(mut reg) = EXTENDED_ATTR_REGISTRY.lock()
+            && let Some(ext) = reg.get_mut(&key)
+        {
+            ext.sigmask = None;
         }
-    });
-    match *FUNC {
-        Some(f) => unsafe { f(attr, sigmask) },
-        None => libc::ENOSYS,
+        // SAFETY: data pointer is valid.
+        unsafe { (*data).flags &= !2 }; // clear bit 1
+        return 0;
     }
+    let mut mask_bytes = [0u8; 128];
+    // SAFETY: sigmask points to caller-owned sigset_t (128 bytes on x86_64).
+    unsafe {
+        std::ptr::copy_nonoverlapping(sigmask.cast::<u8>(), mask_bytes.as_mut_ptr(), 128);
+    }
+    let mut reg = match EXTENDED_ATTR_REGISTRY.lock() {
+        Ok(r) => r,
+        Err(_) => return libc::EINVAL,
+    };
+    let ext = reg.entry(key).or_insert_with(|| ExtendedAttrData {
+        affinity: None,
+        sigmask: None,
+    });
+    ext.sigmask = Some(mask_bytes);
+    // SAFETY: data pointer is valid.
+    unsafe { (*data).flags |= 2 }; // bit 1: sigmask set
+    0
 }
 
 /// GNU `pthread_getattr_default_np` — get default thread attributes.
+/// Native implementation using global default attr state.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pthread_getattr_default_np(attr: *mut libc::pthread_attr_t) -> c_int {
-    if attr.is_null() {
+    let Some(data) = attr_data_ptr(attr) else {
         return libc::EINVAL;
+    };
+    let defaults = match DEFAULT_THREAD_ATTR.lock() {
+        Ok(d) => d,
+        Err(_) => return libc::EINVAL,
+    };
+    // SAFETY: data pointer is non-null and aligned.
+    unsafe {
+        (*data).magic = MANAGED_ATTR_MAGIC;
+        (*data).detach_state = defaults.detach_state;
+        (*data).stack_size = defaults.stack_size;
+        (*data).guard_size = defaults.guard_size;
+        (*data).stack_addr = 0;
+        (*data).inherit_sched = defaults.inherit_sched;
+        (*data).sched_policy = defaults.sched_policy;
+        (*data).sched_priority = defaults.sched_priority;
+        (*data).flags = 0;
     }
-    type Fn = unsafe extern "C" fn(*mut libc::pthread_attr_t) -> c_int;
-    static FUNC: LazyLock<Option<Fn>> = LazyLock::new(|| {
-        let sym = unsafe { libc::dlsym(libc::RTLD_NEXT, c"pthread_getattr_default_np".as_ptr()) };
-        if sym.is_null() {
-            None
-        } else {
-            Some(unsafe { std::mem::transmute::<*mut c_void, Fn>(sym) })
-        }
-    });
-    match *FUNC {
-        Some(f) => unsafe { f(attr) },
-        None => libc::ENOSYS,
-    }
+    0
 }
 
 /// GNU `pthread_setattr_default_np` — set default thread attributes.
+/// Native implementation using global default attr state.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pthread_setattr_default_np(attr: *const libc::pthread_attr_t) -> c_int {
-    if attr.is_null() {
+    let Some(data) = attr_data_ptr_const(attr) else {
         return libc::EINVAL;
+    };
+    let mut defaults = match DEFAULT_THREAD_ATTR.lock() {
+        Ok(d) => d,
+        Err(_) => return libc::EINVAL,
+    };
+    // SAFETY: data pointer is non-null and aligned.
+    unsafe {
+        defaults.detach_state = (*data).detach_state;
+        defaults.stack_size = (*data).stack_size;
+        defaults.guard_size = (*data).guard_size;
+        defaults.inherit_sched = (*data).inherit_sched;
+        defaults.sched_policy = (*data).sched_policy;
+        defaults.sched_priority = (*data).sched_priority;
     }
-    type Fn = unsafe extern "C" fn(*const libc::pthread_attr_t) -> c_int;
-    static FUNC: LazyLock<Option<Fn>> = LazyLock::new(|| {
-        let sym = unsafe { libc::dlsym(libc::RTLD_NEXT, c"pthread_setattr_default_np".as_ptr()) };
-        if sym.is_null() {
-            None
-        } else {
-            Some(unsafe { std::mem::transmute::<*mut c_void, Fn>(sym) })
-        }
-    });
-    match *FUNC {
-        Some(f) => unsafe { f(attr) },
-        None => libc::ENOSYS,
-    }
+    0
+}
+
+// ===========================================================================
+// __pthread_* internal aliases — glibc exports these for internal use
+// ===========================================================================
+
+/// `__pthread_mutex_lock` — internal alias for pthread_mutex_lock.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __pthread_mutex_lock(m: *mut libc::pthread_mutex_t) -> c_int {
+    unsafe { pthread_mutex_lock(m) }
+}
+
+/// `__pthread_mutex_unlock` — internal alias for pthread_mutex_unlock.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __pthread_mutex_unlock(m: *mut libc::pthread_mutex_t) -> c_int {
+    unsafe { pthread_mutex_unlock(m) }
+}
+
+/// `__pthread_mutex_trylock` — internal alias for pthread_mutex_trylock.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __pthread_mutex_trylock(m: *mut libc::pthread_mutex_t) -> c_int {
+    unsafe { pthread_mutex_trylock(m) }
+}
+
+/// `__pthread_mutex_init` — internal alias for pthread_mutex_init.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __pthread_mutex_init(
+    m: *mut libc::pthread_mutex_t, attr: *const libc::pthread_mutexattr_t,
+) -> c_int {
+    unsafe { pthread_mutex_init(m, attr) }
+}
+
+/// `__pthread_mutex_destroy` — internal alias for pthread_mutex_destroy.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __pthread_mutex_destroy(m: *mut libc::pthread_mutex_t) -> c_int {
+    unsafe { pthread_mutex_destroy(m) }
+}
+
+/// `__pthread_mutexattr_init` — internal alias.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __pthread_mutexattr_init(attr: *mut libc::pthread_mutexattr_t) -> c_int {
+    unsafe { pthread_mutexattr_init(attr) }
+}
+
+/// `__pthread_mutexattr_destroy` — internal alias.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __pthread_mutexattr_destroy(
+    attr: *mut libc::pthread_mutexattr_t,
+) -> c_int {
+    unsafe { pthread_mutexattr_destroy(attr) }
+}
+
+/// `__pthread_mutexattr_settype` — internal alias.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __pthread_mutexattr_settype(
+    attr: *mut libc::pthread_mutexattr_t, kind: c_int,
+) -> c_int {
+    unsafe { pthread_mutexattr_settype(attr, kind) }
+}
+
+/// `__pthread_rwlock_init` — internal alias.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __pthread_rwlock_init(
+    rwlock: *mut libc::pthread_rwlock_t, attr: *const libc::pthread_rwlockattr_t,
+) -> c_int {
+    unsafe { pthread_rwlock_init(rwlock, attr) }
+}
+
+/// `__pthread_rwlock_destroy` — internal alias.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __pthread_rwlock_destroy(
+    rwlock: *mut libc::pthread_rwlock_t,
+) -> c_int {
+    unsafe { pthread_rwlock_destroy(rwlock) }
+}
+
+/// `__pthread_rwlock_rdlock` — internal alias.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __pthread_rwlock_rdlock(
+    rwlock: *mut libc::pthread_rwlock_t,
+) -> c_int {
+    unsafe { pthread_rwlock_rdlock(rwlock) }
+}
+
+/// `__pthread_rwlock_wrlock` — internal alias.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __pthread_rwlock_wrlock(
+    rwlock: *mut libc::pthread_rwlock_t,
+) -> c_int {
+    unsafe { pthread_rwlock_wrlock(rwlock) }
+}
+
+/// `__pthread_rwlock_unlock` — internal alias.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __pthread_rwlock_unlock(
+    rwlock: *mut libc::pthread_rwlock_t,
+) -> c_int {
+    unsafe { pthread_rwlock_unlock(rwlock) }
+}
+
+/// `__pthread_rwlock_tryrdlock` — internal alias.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __pthread_rwlock_tryrdlock(
+    rwlock: *mut libc::pthread_rwlock_t,
+) -> c_int {
+    unsafe { pthread_rwlock_tryrdlock(rwlock) }
+}
+
+/// `__pthread_rwlock_trywrlock` — internal alias.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __pthread_rwlock_trywrlock(
+    rwlock: *mut libc::pthread_rwlock_t,
+) -> c_int {
+    unsafe { pthread_rwlock_trywrlock(rwlock) }
+}
+
+/// `__pthread_once` — internal alias.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __pthread_once(
+    once: *mut libc::pthread_once_t, init: Option<unsafe extern "C" fn()>,
+) -> c_int {
+    unsafe { pthread_once(once, init) }
+}
+
+/// `__pthread_key_create` — internal alias.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __pthread_key_create(
+    key: *mut libc::pthread_key_t, dtor: Option<unsafe extern "C" fn(*mut c_void)>,
+) -> c_int {
+    unsafe { pthread_key_create(key, dtor) }
+}
+
+/// `__pthread_getspecific` — internal alias.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __pthread_getspecific(key: libc::pthread_key_t) -> *mut c_void {
+    unsafe { pthread_getspecific(key) }
+}
+
+/// `__pthread_setspecific` — internal alias.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __pthread_setspecific(
+    key: libc::pthread_key_t, value: *const c_void,
+) -> c_int {
+    unsafe { pthread_setspecific(key, value) }
+}
+
+/// `__pthread_register_cancel` — cancellation cleanup registration (no-op stub).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __pthread_register_cancel(_buf: *mut c_void) {}
+
+/// `__pthread_unregister_cancel` — cancellation cleanup unregistration (no-op stub).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __pthread_unregister_cancel(_buf: *mut c_void) {}
+
+/// `__pthread_register_cancel_defer` — deferred cancellation registration (no-op stub).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __pthread_register_cancel_defer(_buf: *mut c_void) {}
+
+/// `__pthread_unregister_cancel_restore` — deferred cancellation restore (no-op stub).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __pthread_unregister_cancel_restore(_buf: *mut c_void) {}
+
+/// `__pthread_cleanup_routine` — cleanup routine handler (no-op stub).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __pthread_cleanup_routine(_buf: *mut c_void) {}
+
+/// `__pthread_get_minstack` — get minimum stack size for a given attr.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __pthread_get_minstack(_attr: *const libc::pthread_attr_t) -> usize {
+    libc::PTHREAD_STACK_MIN
+}
+
+/// `__pthread_unwind_next` — internal unwinding (no-op stub — process aborts).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __pthread_unwind_next(_buf: *mut c_void) {
+    std::process::abort();
 }
 
 #[cfg(test)]

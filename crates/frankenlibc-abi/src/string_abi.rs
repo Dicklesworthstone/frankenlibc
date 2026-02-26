@@ -6,7 +6,7 @@
 //! 3. Delegates to `frankenlibc-core` safe implementations or inline unsafe primitives
 
 use std::cell::Cell;
-use std::ffi::{CStr, c_char, c_int, c_void};
+use std::ffi::{CStr, c_char, c_int, c_long, c_longlong, c_ulong, c_ulonglong, c_void};
 
 use frankenlibc_membrane::check_oracle::CheckStage;
 use frankenlibc_membrane::config::SafetyLevel;
@@ -5901,4 +5901,608 @@ pub unsafe extern "C" fn envz_strip(envz: *mut *mut c_char, envz_len: *mut usize
         let entry_ptr = unsafe { az.add(offset) };
         unsafe { argz_delete(envz, envz_len, entry_ptr) };
     }
+}
+
+// ── GNU old regex API ───────────────────────────────────────────────────────
+//
+// The old POSIX.2 GNU regex interface (re_compile_pattern, re_search, re_match).
+// Many legacy programs and GNU utilities use this API instead of the newer
+// POSIX regcomp/regexec interface. We implement using our existing regex core.
+
+/// Default syntax bits for GNU regex. `RE_SYNTAX_POSIX_EXTENDED` equivalent.
+static RE_SYNTAX: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// `re_set_syntax` — set default syntax options for regex compilation.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn re_set_syntax(syntax: u64) -> u64 {
+    RE_SYNTAX.swap(syntax, std::sync::atomic::Ordering::Relaxed)
+}
+
+/// `re_compile_pattern` — compile a regex pattern (GNU old API).
+/// Returns NULL on success, or a C string error message on failure.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn re_compile_pattern(
+    pattern: *const c_char,
+    length: usize,
+    buffer: *mut c_void,
+) -> *const c_char {
+    use frankenlibc_core::string::regex;
+
+    if pattern.is_null() || buffer.is_null() {
+        return c"Invalid argument".as_ptr();
+    }
+
+    let pat_slice = unsafe { core::slice::from_raw_parts(pattern as *const u8, length) };
+    let pat_str = match core::str::from_utf8(pat_slice) {
+        Ok(s) => s,
+        Err(_) => return c"Invalid multibyte sequence".as_ptr(),
+    };
+
+    match regex::regex_compile(pat_str.as_bytes(), 0) {
+        Ok(compiled) => {
+            let buf_u8 = buffer as *mut u8;
+            // Store magic + pointer in the regex_t buffer
+            unsafe {
+                core::ptr::write_unaligned(buf_u8 as *mut u64, FRANKEN_REGEX_MAGIC);
+                core::ptr::write_unaligned(
+                    buf_u8.add(8) as *mut *mut regex::CompiledRegex,
+                    Box::into_raw(compiled),
+                );
+            }
+            core::ptr::null()
+        }
+        Err(_) => c"Invalid regular expression".as_ptr(),
+    }
+}
+
+/// `re_compile_fastmap` — compute fastmap for compiled pattern.
+/// Returns 0 on success, -2 on error. We no-op since our engine doesn't use fastmaps.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn re_compile_fastmap(_buffer: *mut c_void) -> c_int {
+    0 // success — our engine doesn't need a fastmap
+}
+
+/// `re_search` — search for pattern in string (GNU old API).
+/// Returns byte offset of match start, or -1 if no match, or -2 on error.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn re_search(
+    buffer: *const c_void,
+    string: *const c_char,
+    length: c_int,
+    start: c_int,
+    range: c_int,
+    regs: *mut c_void,
+) -> c_int {
+    unsafe {
+        re_search_2(
+            buffer,
+            core::ptr::null(),
+            0,
+            string,
+            length,
+            start,
+            range,
+            regs,
+            length,
+        )
+    }
+}
+
+/// `re_search_2` — search for pattern in split string (GNU old API).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn re_search_2(
+    buffer: *const c_void,
+    _string1: *const c_char,
+    _size1: c_int,
+    string2: *const c_char,
+    size2: c_int,
+    startpos: c_int,
+    range: c_int,
+    _regs: *mut c_void,
+    _stop: c_int,
+) -> c_int {
+    use frankenlibc_core::string::regex;
+
+    if buffer.is_null() || string2.is_null() {
+        return -2;
+    }
+
+    let buf_u8 = buffer as *const u8;
+    let magic = unsafe { core::ptr::read_unaligned(buf_u8 as *const u64) };
+    if magic != FRANKEN_REGEX_MAGIC {
+        return -2;
+    }
+
+    let compiled_ptr =
+        unsafe { core::ptr::read_unaligned(buf_u8.add(8) as *const *const regex::CompiledRegex) };
+    if compiled_ptr.is_null() {
+        return -2;
+    }
+    let compiled = unsafe { &*compiled_ptr };
+
+    let haystack = unsafe { core::slice::from_raw_parts(string2 as *const u8, size2 as usize) };
+
+    let search_start = startpos.max(0) as usize;
+    let search_end = if range >= 0 {
+        (search_start + range as usize).min(haystack.len())
+    } else {
+        search_start
+    };
+
+    // Search from startpos forward (or backward if range < 0)
+    for pos in search_start..=search_end {
+        if pos > haystack.len() {
+            break;
+        }
+        let sub = &haystack[pos..];
+        let mut match_slot = [regex::RegMatch::default(); 1];
+        if regex::regex_exec(compiled, sub, &mut match_slot, 0) == 0 {
+            let rel = match_slot[0].rm_so.max(0) as usize;
+            return (pos + rel) as c_int;
+        }
+    }
+    -1
+}
+
+/// `re_match` — match pattern at exact position (GNU old API).
+/// Returns length of match, -1 if no match, -2 on error.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn re_match(
+    buffer: *const c_void,
+    string: *const c_char,
+    length: c_int,
+    start: c_int,
+    regs: *mut c_void,
+) -> c_int {
+    unsafe {
+        re_match_2(
+            buffer,
+            core::ptr::null(),
+            0,
+            string,
+            length,
+            start,
+            regs,
+            length,
+        )
+    }
+}
+
+/// `re_match_2` — match pattern at exact position in split string.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn re_match_2(
+    buffer: *const c_void,
+    _string1: *const c_char,
+    _size1: c_int,
+    string2: *const c_char,
+    size2: c_int,
+    start: c_int,
+    _regs: *mut c_void,
+    _stop: c_int,
+) -> c_int {
+    use frankenlibc_core::string::regex;
+
+    if buffer.is_null() || string2.is_null() {
+        return -2;
+    }
+
+    let buf_u8 = buffer as *const u8;
+    let magic = unsafe { core::ptr::read_unaligned(buf_u8 as *const u64) };
+    if magic != FRANKEN_REGEX_MAGIC {
+        return -2;
+    }
+
+    let compiled_ptr =
+        unsafe { core::ptr::read_unaligned(buf_u8.add(8) as *const *const regex::CompiledRegex) };
+    if compiled_ptr.is_null() {
+        return -2;
+    }
+    let compiled = unsafe { &*compiled_ptr };
+
+    let haystack = unsafe { core::slice::from_raw_parts(string2 as *const u8, size2 as usize) };
+    let start_pos = start.max(0) as usize;
+    if start_pos > haystack.len() {
+        return -1;
+    }
+
+    let sub = &haystack[start_pos..];
+    let mut match_slot = [regex::RegMatch::default(); 1];
+    if regex::regex_exec(compiled, sub, &mut match_slot, 0) != 0 {
+        return -1;
+    }
+    if match_slot[0].rm_so != 0 {
+        return -1;
+    }
+    match_slot[0].rm_eo
+}
+
+/// `re_set_registers` — set register info in pattern buffer. No-op in our implementation.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn re_set_registers(
+    _buffer: *mut c_void,
+    _regs: *mut c_void,
+    _num_regs: u32,
+    _starts: *mut c_int,
+    _ends: *mut c_int,
+) {
+    // No-op: our regex engine manages its own match state
+}
+
+// ===========================================================================
+// glibc __str* / __stp* / __mem* internal aliases
+// ===========================================================================
+
+// ── Simple forwarding aliases ───────────────────────────────────────────────
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __stpcpy(dst: *mut c_char, src: *const c_char) -> *mut c_char {
+    unsafe { stpcpy(dst, src) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __stpncpy(dst: *mut c_char, src: *const c_char, n: usize) -> *mut c_char {
+    unsafe { stpncpy(dst, src, n) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __strcasecmp(s1: *const c_char, s2: *const c_char) -> c_int {
+    unsafe { strcasecmp(s1, s2) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __strcasestr(
+    haystack: *const c_char, needle: *const c_char,
+) -> *mut c_char {
+    unsafe { strcasestr(haystack, needle) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __strdup(s: *const c_char) -> *mut c_char {
+    unsafe { strdup(s) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __strndup(s: *const c_char, n: usize) -> *mut c_char {
+    unsafe { strndup(s, n) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __strtok_r(
+    s: *mut c_char, delim: *const c_char, saveptr: *mut *mut c_char,
+) -> *mut c_char {
+    unsafe { strtok_r(s, delim, saveptr) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __strerror_r(
+    errnum: c_int, buf: *mut c_char, buflen: usize,
+) -> c_int {
+    unsafe { strerror_r(errnum, buf, buflen) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __strverscmp(s1: *const c_char, s2: *const c_char) -> c_int {
+    unsafe { strverscmp(s1, s2) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __rawmemchr(s: *const c_void, c: c_int) -> *mut c_void {
+    unsafe { rawmemchr(s, c) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __mempcpy(
+    dst: *mut c_void, src: *const c_void, n: usize,
+) -> *mut c_void {
+    unsafe { mempcpy(dst, src, n) }
+}
+
+/// `__memcmpeq` — glibc internal: returns 0 if equal, non-zero otherwise.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __memcmpeq(
+    s1: *const c_void, s2: *const c_void, n: usize,
+) -> c_int {
+    unsafe { memcmp(s1, s2, n) }
+}
+
+// ── Locale aliases (ignore locale, forward to base) ─────────────────────────
+
+/// `strcasecmp_l` — locale-aware case-insensitive string compare.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strcasecmp_l(
+    s1: *const c_char, s2: *const c_char, _locale: *mut c_void,
+) -> c_int {
+    unsafe { strcasecmp(s1, s2) }
+}
+
+/// `strncasecmp_l` — locale-aware case-insensitive string compare with length.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strncasecmp_l(
+    s1: *const c_char, s2: *const c_char, n: usize, _locale: *mut c_void,
+) -> c_int {
+    unsafe { strncasecmp(s1, s2, n) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __strcasecmp_l(
+    s1: *const c_char, s2: *const c_char, l: *mut c_void,
+) -> c_int {
+    unsafe { strcasecmp_l(s1, s2, l) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __strncasecmp_l(
+    s1: *const c_char, s2: *const c_char, n: usize, l: *mut c_void,
+) -> c_int {
+    unsafe { strncasecmp_l(s1, s2, n, l) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __strcoll_l(
+    s1: *const c_char, s2: *const c_char, _l: *mut c_void,
+) -> c_int {
+    unsafe { strcmp(s1, s2) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __strxfrm_l(
+    dst: *mut c_char, src: *const c_char, n: usize, _l: *mut c_void,
+) -> usize {
+    unsafe { strxfrm(dst, src, n) }
+}
+
+// ── GCC constant-optimized string function variants ─────────────────────────
+
+/// `__strsep_g` — generic strsep (same as strsep).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __strsep_g(
+    stringp: *mut *mut c_char, delim: *const c_char,
+) -> *mut c_char {
+    unsafe { strsep(stringp, delim) }
+}
+
+/// `__strsep_1c` — strsep optimized for single-char delimiter.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __strsep_1c(
+    stringp: *mut *mut c_char, delim: c_char,
+) -> *mut c_char {
+    let buf: [c_char; 2] = [delim, 0];
+    unsafe { strsep(stringp, buf.as_ptr()) }
+}
+
+/// `__strsep_2c` — strsep optimized for two-char delimiter.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __strsep_2c(
+    stringp: *mut *mut c_char, d1: c_char, d2: c_char,
+) -> *mut c_char {
+    let buf: [c_char; 3] = [d1, d2, 0];
+    unsafe { strsep(stringp, buf.as_ptr()) }
+}
+
+/// `__strsep_3c` — strsep optimized for three-char delimiter.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __strsep_3c(
+    stringp: *mut *mut c_char, d1: c_char, d2: c_char, d3: c_char,
+) -> *mut c_char {
+    let buf: [c_char; 4] = [d1, d2, d3, 0];
+    unsafe { strsep(stringp, buf.as_ptr()) }
+}
+
+/// `__strpbrk_c2` — strpbrk optimized for 2-char accept set.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __strpbrk_c2(
+    s: *const c_char, a1: c_int, a2: c_int,
+) -> *mut c_char {
+    let accept: [c_char; 3] = [a1 as c_char, a2 as c_char, 0];
+    unsafe { strpbrk(s, accept.as_ptr()) }
+}
+
+/// `__strpbrk_c3` — strpbrk optimized for 3-char accept set.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __strpbrk_c3(
+    s: *const c_char, a1: c_int, a2: c_int, a3: c_int,
+) -> *mut c_char {
+    let accept: [c_char; 4] = [a1 as c_char, a2 as c_char, a3 as c_char, 0];
+    unsafe { strpbrk(s, accept.as_ptr()) }
+}
+
+/// `__strcspn_c1` — strcspn optimized for 1-char reject set.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __strcspn_c1(s: *const c_char, r: c_int) -> usize {
+    let reject: [c_char; 2] = [r as c_char, 0];
+    unsafe { strcspn(s, reject.as_ptr()) }
+}
+
+/// `__strcspn_c2` — strcspn optimized for 2-char reject set.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __strcspn_c2(s: *const c_char, r1: c_int, r2: c_int) -> usize {
+    let reject: [c_char; 3] = [r1 as c_char, r2 as c_char, 0];
+    unsafe { strcspn(s, reject.as_ptr()) }
+}
+
+/// `__strcspn_c3` — strcspn optimized for 3-char reject set.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __strcspn_c3(
+    s: *const c_char, r1: c_int, r2: c_int, r3: c_int,
+) -> usize {
+    let reject: [c_char; 4] = [r1 as c_char, r2 as c_char, r3 as c_char, 0];
+    unsafe { strcspn(s, reject.as_ptr()) }
+}
+
+/// `__strspn_c1` — strspn optimized for 1-char accept set.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __strspn_c1(s: *const c_char, a: c_int) -> usize {
+    let accept: [c_char; 2] = [a as c_char, 0];
+    unsafe { strspn(s, accept.as_ptr()) }
+}
+
+/// `__strspn_c2` — strspn optimized for 2-char accept set.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __strspn_c2(s: *const c_char, a1: c_int, a2: c_int) -> usize {
+    let accept: [c_char; 3] = [a1 as c_char, a2 as c_char, 0];
+    unsafe { strspn(s, accept.as_ptr()) }
+}
+
+/// `__strspn_c3` — strspn optimized for 3-char accept set.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __strspn_c3(
+    s: *const c_char, a1: c_int, a2: c_int, a3: c_int,
+) -> usize {
+    let accept: [c_char; 4] = [a1 as c_char, a2 as c_char, a3 as c_char, 0];
+    unsafe { strspn(s, accept.as_ptr()) }
+}
+
+/// `__strtok_r_1c` — strtok_r optimized for single-char delimiter.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __strtok_r_1c(
+    s: *mut c_char, delim: c_char, saveptr: *mut *mut c_char,
+) -> *mut c_char {
+    let buf: [c_char; 2] = [delim, 0];
+    unsafe { strtok_r(s, buf.as_ptr(), saveptr) }
+}
+
+/// `__strcpy_small` — glibc internal memcpy-based strcpy for small strings.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __strcpy_small(
+    dst: *mut c_char, src: *const c_char,
+) -> *mut c_char {
+    unsafe { strcpy(dst, src) }
+}
+
+/// `__stpcpy_small` — glibc internal stpcpy for small strings.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __stpcpy_small(
+    dst: *mut c_char, src: *const c_char,
+) -> *mut c_char {
+    unsafe { stpcpy(dst, src) }
+}
+
+// ── __strto*_internal — glibc internal conversion with group flag ───────────
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __strtol_internal(
+    nptr: *const c_char, endptr: *mut *mut c_char, base: c_int, _group: c_int,
+) -> c_long {
+    unsafe { crate::stdlib_abi::strtol(nptr, endptr, base) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __strtoul_internal(
+    nptr: *const c_char, endptr: *mut *mut c_char, base: c_int, _group: c_int,
+) -> c_ulong {
+    unsafe { crate::stdlib_abi::strtoul(nptr, endptr, base) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __strtoll_internal(
+    nptr: *const c_char, endptr: *mut *mut c_char, base: c_int, _group: c_int,
+) -> c_longlong {
+    unsafe { crate::stdlib_abi::strtoll(nptr, endptr, base) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __strtoull_internal(
+    nptr: *const c_char, endptr: *mut *mut c_char, base: c_int, _group: c_int,
+) -> c_ulonglong {
+    unsafe { crate::stdlib_abi::strtoull(nptr, endptr, base) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __strtod_internal(
+    nptr: *const c_char, endptr: *mut *mut c_char, _group: c_int,
+) -> f64 {
+    unsafe { crate::stdlib_abi::strtod(nptr, endptr) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __strtof_internal(
+    nptr: *const c_char, endptr: *mut *mut c_char, _group: c_int,
+) -> f32 {
+    unsafe { crate::stdlib_abi::strtof(nptr, endptr) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __strtold_internal(
+    nptr: *const c_char, endptr: *mut *mut c_char, _group: c_int,
+) -> f64 {
+    // long double -> f64 on Rust (no f80 support)
+    unsafe { crate::stdlib_abi::strtod(nptr, endptr) }
+}
+
+// ── __strto*_l — locale variants forwarding to existing _l functions ────────
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __strtol_l(
+    nptr: *const c_char, endptr: *mut *mut c_char, base: c_int, l: *mut c_void,
+) -> c_long {
+    unsafe { crate::stdlib_abi::strtol_l(nptr, endptr, base, l) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __strtoul_l(
+    nptr: *const c_char, endptr: *mut *mut c_char, base: c_int, l: *mut c_void,
+) -> c_ulong {
+    unsafe { crate::stdlib_abi::strtoul_l(nptr, endptr, base, l) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __strtoll_l(
+    nptr: *const c_char, endptr: *mut *mut c_char, base: c_int, l: *mut c_void,
+) -> c_longlong {
+    unsafe { crate::stdlib_abi::strtoll_l(nptr, endptr, base, l) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __strtoull_l(
+    nptr: *const c_char, endptr: *mut *mut c_char, base: c_int, l: *mut c_void,
+) -> c_ulonglong {
+    unsafe { crate::stdlib_abi::strtoull_l(nptr, endptr, base, l) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __strtod_l(
+    nptr: *const c_char, endptr: *mut *mut c_char, _l: *mut c_void,
+) -> f64 {
+    unsafe { crate::stdlib_abi::strtod(nptr, endptr) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __strtof_l(
+    nptr: *const c_char, endptr: *mut *mut c_char, _l: *mut c_void,
+) -> f32 {
+    unsafe { crate::stdlib_abi::strtof(nptr, endptr) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __strtold_l(
+    nptr: *const c_char, endptr: *mut *mut c_char, _l: *mut c_void,
+) -> f64 {
+    unsafe { crate::stdlib_abi::strtod(nptr, endptr) }
+}
+
+/// `__strftime_l` — locale-aware strftime forwarding.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __strftime_l(
+    s: *mut c_char, max: usize, format: *const c_char, tm: *const c_void, _l: *mut c_void,
+) -> usize {
+    unsafe { crate::unistd_abi::strftime_l(s, max, format, tm, _l) }
+}
+
+/// `__strfmon_l` — locale-aware strfmon forwarding.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __strfmon_l(
+    s: *mut c_char, maxsize: usize, _l: *mut c_void, format: *const c_char, mut args: ...,
+) -> isize {
+    if s.is_null() || format.is_null() || maxsize == 0 {
+        return -1;
+    }
+    let val: f64 = unsafe { args.arg() };
+    let formatted = format!("{val:.2}");
+    let bytes = formatted.as_bytes();
+    let copy_len = bytes.len().min(maxsize - 1);
+    unsafe {
+        std::ptr::copy_nonoverlapping(bytes.as_ptr(), s as *mut u8, copy_len);
+        *s.add(copy_len) = 0;
+    }
+    copy_len as isize
 }

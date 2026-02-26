@@ -1329,3 +1329,77 @@ fn page_size() -> usize {
     let ps = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
     if ps > 0 { ps as usize } else { 4096 }
 }
+
+// ===========================================================================
+// __libc_* internal aliases — glibc exports these for internal use
+// ===========================================================================
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __libc_malloc(size: usize) -> *mut c_void {
+    unsafe { malloc(size) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __libc_free(ptr: *mut c_void) {
+    unsafe { free(ptr) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __libc_calloc(nmemb: usize, size: usize) -> *mut c_void {
+    unsafe { calloc(nmemb, size) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __libc_realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
+    unsafe { realloc(ptr, size) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __libc_memalign(alignment: usize, size: usize) -> *mut c_void {
+    unsafe { memalign(alignment, size) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __libc_pvalloc(size: usize) -> *mut c_void {
+    unsafe { pvalloc(size) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __libc_valloc(size: usize) -> *mut c_void {
+    unsafe { valloc(size) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __libc_mallopt(param: c_int, value: c_int) -> c_int {
+    unsafe { mallopt(param, value) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __libc_mallinfo() -> Mallinfo {
+    unsafe { mallinfo() }
+}
+
+/// `__libc_freeres` — release all libc internal resources (no-op).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __libc_freeres() {}
+
+/// `__libc_init_first` — early libc initialization (no-op, handled by startup).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __libc_init_first() {}
+
+/// `__libc_sa_len` — sockaddr length by family (used by old RPC code).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __libc_sa_len(af: c_int) -> c_int {
+    match af {
+        libc::AF_INET => core::mem::size_of::<libc::sockaddr_in>() as c_int,
+        libc::AF_INET6 => core::mem::size_of::<libc::sockaddr_in6>() as c_int,
+        libc::AF_UNIX => core::mem::size_of::<libc::sockaddr_un>() as c_int,
+        _ => 0,
+    }
+}
+
+/// `__libc_allocate_rtsig` — allocate a real-time signal (stub).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __libc_allocate_rtsig(_high: c_int) -> c_int {
+    -1 // No RT signals available
+}

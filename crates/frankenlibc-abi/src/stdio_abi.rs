@@ -4585,3 +4585,201 @@ pub unsafe extern "C" fn putw(w: c_int, stream: *mut c_void) -> c_int {
     };
     if n != 1 { libc::EOF } else { 0 }
 }
+
+// ── C23 __isoc23_* scanf aliases ─────────────────────────────────────────────
+//
+// GCC 14+ with -std=c23 emits __isoc23_* variants for scanf family functions.
+// These are ABI-identical to the base versions.
+
+/// `__isoc23_scanf` — C23 alias for scanf.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __isoc23_scanf(format: *const c_char, mut args: ...) -> c_int {
+    let ap = &mut args as *mut _ as *mut c_void;
+    unsafe { vscanf(format, ap) }
+}
+
+/// `__isoc23_fscanf` — C23 alias for fscanf.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __isoc23_fscanf(
+    stream: *mut c_void,
+    format: *const c_char,
+    mut args: ...
+) -> c_int {
+    let ap = &mut args as *mut _ as *mut c_void;
+    unsafe { vfscanf(stream, format, ap) }
+}
+
+/// `__isoc23_sscanf` — C23 alias for sscanf.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __isoc23_sscanf(
+    s: *const c_char,
+    format: *const c_char,
+    mut args: ...
+) -> c_int {
+    let ap = &mut args as *mut _ as *mut c_void;
+    unsafe { vsscanf(s, format, ap) }
+}
+
+/// `__isoc23_vscanf` — C23 alias for vscanf.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __isoc23_vscanf(format: *const c_char, ap: *mut c_void) -> c_int {
+    unsafe { vscanf(format, ap) }
+}
+
+/// `__isoc23_vfscanf` — C23 alias for vfscanf.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __isoc23_vfscanf(
+    stream: *mut c_void,
+    format: *const c_char,
+    ap: *mut c_void,
+) -> c_int {
+    unsafe { vfscanf(stream, format, ap) }
+}
+
+/// `__isoc23_vsscanf` — C23 alias for vsscanf.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __isoc23_vsscanf(
+    s: *const c_char,
+    format: *const c_char,
+    ap: *mut c_void,
+) -> c_int {
+    unsafe { vsscanf(s, format, ap) }
+}
+
+/// `__isoc99_wscanf` — ISO C99 alias for wscanf (narrow shim — delegates to wide).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __isoc99_wscanf(format: *const libc::wchar_t, mut args: ...) -> c_int {
+    let ap = &mut args as *mut _ as *mut c_void;
+    unsafe { crate::wchar_abi::vwscanf(format, ap) }
+}
+
+// ── glibc _IO_* internal libio symbols ──────────────────────────────────────
+//
+// Many programs compiled against glibc link to these internal libio symbols
+// directly (e.g., _IO_putc, _IO_getc). They are thin wrappers over the
+// standard stdio functions.
+#[allow(non_snake_case, non_upper_case_globals)]
+mod _io_internal {
+    use super::*;
+
+    /// `_IO_putc` — glibc internal putc.
+    #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+    pub unsafe extern "C" fn _IO_putc(c: c_int, stream: *mut c_void) -> c_int {
+        unsafe { fputc(c, stream) }
+    }
+
+    /// `_IO_getc` — glibc internal getc.
+    #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+    pub unsafe extern "C" fn _IO_getc(stream: *mut c_void) -> c_int {
+        unsafe { fgetc(stream) }
+    }
+
+    /// `_IO_puts` — glibc internal puts.
+    #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+    pub unsafe extern "C" fn _IO_puts(s: *const c_char) -> c_int {
+        unsafe { puts(s) }
+    }
+
+    /// `_IO_feof` — glibc internal feof.
+    #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+    pub unsafe extern "C" fn _IO_feof(stream: *mut c_void) -> c_int {
+        unsafe { feof(stream) }
+    }
+
+    /// `_IO_ferror` — glibc internal ferror.
+    #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+    pub unsafe extern "C" fn _IO_ferror(stream: *mut c_void) -> c_int {
+        unsafe { ferror(stream) }
+    }
+
+    /// `_IO_flockfile` — glibc internal flockfile.
+    #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+    pub unsafe extern "C" fn _IO_flockfile(stream: *mut c_void) {
+        unsafe { flockfile(stream) }
+    }
+
+    /// `_IO_funlockfile` — glibc internal funlockfile.
+    #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+    pub unsafe extern "C" fn _IO_funlockfile(stream: *mut c_void) {
+        unsafe { funlockfile(stream) }
+    }
+
+    /// `_IO_ftrylockfile` — glibc internal ftrylockfile.
+    #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+    pub unsafe extern "C" fn _IO_ftrylockfile(stream: *mut c_void) -> c_int {
+        unsafe { ftrylockfile(stream) }
+    }
+
+    /// `_IO_peekc_locked` — peek at next char without consuming (under lock).
+    /// Returns EOF if stream is at end or has error.
+    #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+    pub unsafe extern "C" fn _IO_peekc_locked(stream: *mut c_void) -> c_int {
+        // Read one char, then push it back
+        let c = unsafe { fgetc(stream) };
+        if c != libc::EOF {
+            unsafe { ungetc(c, stream) };
+        }
+        c
+    }
+
+    /// `_IO_padn` — write `count` copies of `pad` char to stream. Returns count or EOF.
+    #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+    pub unsafe extern "C" fn _IO_padn(stream: *mut c_void, pad: c_int, count: isize) -> isize {
+        if count <= 0 {
+            return 0;
+        }
+        for _ in 0..count {
+            if unsafe { fputc(pad, stream) } == libc::EOF {
+                return libc::EOF as isize;
+            }
+        }
+        count
+    }
+
+    /// `_IO_sgetn` — read `n` bytes from stream into buffer. Returns bytes read.
+    #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+    pub unsafe extern "C" fn _IO_sgetn(stream: *mut c_void, buf: *mut c_void, n: usize) -> usize {
+        unsafe { fread(buf, 1, n, stream) }
+    }
+
+    /// `_IO_seekoff` — seek to offset in stream (internal interface).
+    #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+    pub unsafe extern "C" fn _IO_seekoff(
+        stream: *mut c_void,
+        offset: i64,
+        dir: c_int,
+        _mode: c_int,
+    ) -> i64 {
+        if unsafe { fseeko(stream, offset, dir) } != 0 {
+            return -1;
+        }
+        unsafe { ftello(stream) }
+    }
+
+    /// `_IO_seekpos` — seek to absolute position (internal interface).
+    #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+    pub unsafe extern "C" fn _IO_seekpos(stream: *mut c_void, pos: i64, _mode: c_int) -> i64 {
+        if unsafe { fseeko(stream, pos, libc::SEEK_SET) } != 0 {
+            return -1;
+        }
+        pos
+    }
+
+    // glibc _IO_2_1_{stdin,stdout,stderr}_ are the actual FILE struct objects.
+    // In interpose mode these resolve to the host glibc's objects via the
+    // existing stdin/stdout/stderr statics. We export aliases that point to
+    // our sentinel addresses so programs that reference _IO_2_1_* link correctly.
+
+    /// `_IO_2_1_stdin_` — glibc internal stdin FILE object alias.
+    #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+    pub static _IO_2_1_stdin_: usize = STDIN_SENTINEL;
+
+    /// `_IO_2_1_stdout_` — glibc internal stdout FILE object alias.
+    #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+    pub static _IO_2_1_stdout_: usize = STDOUT_SENTINEL;
+
+    /// `_IO_2_1_stderr_` — glibc internal stderr FILE object alias.
+    #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+    pub static _IO_2_1_stderr_: usize = STDERR_SENTINEL;
+} // mod _io_internal
+pub use _io_internal::*;

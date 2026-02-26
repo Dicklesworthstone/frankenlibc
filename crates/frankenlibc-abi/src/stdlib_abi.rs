@@ -3503,6 +3503,192 @@ pub unsafe extern "C" fn strtoull_l(
 }
 
 // ===========================================================================
+// C23 __isoc23_* aliases — GCC 14+ with -std=c23 emits these for scanf/strtol
+// ===========================================================================
+
+/// `__isoc23_strtol` — C23 alias for strtol.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __isoc23_strtol(
+    nptr: *const c_char,
+    endptr: *mut *mut c_char,
+    base: c_int,
+) -> c_long {
+    unsafe { strtol(nptr, endptr, base) }
+}
+
+/// `__isoc23_strtoul` — C23 alias for strtoul.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __isoc23_strtoul(
+    nptr: *const c_char,
+    endptr: *mut *mut c_char,
+    base: c_int,
+) -> c_ulong {
+    unsafe { strtoul(nptr, endptr, base) }
+}
+
+/// `__isoc23_strtoll` — C23 alias for strtoll.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __isoc23_strtoll(
+    nptr: *const c_char,
+    endptr: *mut *mut c_char,
+    base: c_int,
+) -> c_longlong {
+    unsafe { strtoll(nptr, endptr, base) }
+}
+
+/// `__isoc23_strtoull` — C23 alias for strtoull.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __isoc23_strtoull(
+    nptr: *const c_char,
+    endptr: *mut *mut c_char,
+    base: c_int,
+) -> c_ulonglong {
+    unsafe { strtoull(nptr, endptr, base) }
+}
+
+/// `__isoc23_strtoimax` — C23 alias for strtoimax.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __isoc23_strtoimax(
+    nptr: *const c_char,
+    endptr: *mut *mut c_char,
+    base: c_int,
+) -> i64 {
+    unsafe { strtoimax(nptr, endptr, base) }
+}
+
+/// `__isoc23_strtoumax` — C23 alias for strtoumax.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __isoc23_strtoumax(
+    nptr: *const c_char,
+    endptr: *mut *mut c_char,
+    base: c_int,
+) -> u64 {
+    unsafe { strtoumax(nptr, endptr, base) }
+}
+
+/// `__isoc23_strtol_l` — C23 locale alias for strtol_l.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __isoc23_strtol_l(
+    nptr: *const c_char,
+    endptr: *mut *mut c_char,
+    base: c_int,
+    locale: *mut c_void,
+) -> c_long {
+    unsafe { strtol_l(nptr, endptr, base, locale) }
+}
+
+/// `__isoc23_strtoul_l` — C23 locale alias for strtoul_l.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __isoc23_strtoul_l(
+    nptr: *const c_char,
+    endptr: *mut *mut c_char,
+    base: c_int,
+    locale: *mut c_void,
+) -> c_ulong {
+    unsafe { strtoul_l(nptr, endptr, base, locale) }
+}
+
+/// `__isoc23_strtoll_l` — C23 locale alias for strtoll_l.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __isoc23_strtoll_l(
+    nptr: *const c_char,
+    endptr: *mut *mut c_char,
+    base: c_int,
+    locale: *mut c_void,
+) -> c_longlong {
+    unsafe { strtoll_l(nptr, endptr, base, locale) }
+}
+
+/// `__isoc23_strtoull_l` — C23 locale alias for strtoull_l.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __isoc23_strtoull_l(
+    nptr: *const c_char,
+    endptr: *mut *mut c_char,
+    base: c_int,
+    locale: *mut c_void,
+) -> c_ulonglong {
+    unsafe { strtoull_l(nptr, endptr, base, locale) }
+}
+
+// ===========================================================================
+// __assert* — assertion failure handlers (assert.h)
+// ===========================================================================
+
+/// `__assert_fail` — called by assert() macro on failure.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __assert_fail(
+    assertion: *const c_char,
+    file: *const c_char,
+    line: c_uint,
+    function: *const c_char,
+) -> ! {
+    let a = if assertion.is_null() {
+        c"??"
+    } else {
+        unsafe { core::ffi::CStr::from_ptr(assertion) }
+    };
+    let f = if file.is_null() {
+        c"??"
+    } else {
+        unsafe { core::ffi::CStr::from_ptr(file) }
+    };
+    let func = if function.is_null() {
+        c"??"
+    } else {
+        unsafe { core::ffi::CStr::from_ptr(function) }
+    };
+    eprintln!(
+        "{}: {}: {}: Assertion `{}' failed.",
+        f.to_str().unwrap_or("??"),
+        line,
+        func.to_str().unwrap_or("??"),
+        a.to_str().unwrap_or("??")
+    );
+    std::process::abort();
+}
+
+/// `__assert_perror_fail` — called by assert_perror() macro on failure.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __assert_perror_fail(
+    errnum: c_int,
+    file: *const c_char,
+    line: c_uint,
+    function: *const c_char,
+) -> ! {
+    let f = if file.is_null() {
+        c"??"
+    } else {
+        unsafe { core::ffi::CStr::from_ptr(file) }
+    };
+    let func = if function.is_null() {
+        c"??"
+    } else {
+        unsafe { core::ffi::CStr::from_ptr(function) }
+    };
+    let msg = std::io::Error::from_raw_os_error(errnum);
+    eprintln!(
+        "{}: {}: {}: Unexpected error: {}.",
+        f.to_str().unwrap_or("??"),
+        line,
+        func.to_str().unwrap_or("??"),
+        msg
+    );
+    std::process::abort();
+}
+
+/// `__assert` — legacy assertion failure handler.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __assert(assertion: *const c_char, file: *const c_char, line: c_int) -> ! {
+    unsafe { __assert_fail(assertion, file, line as c_uint, core::ptr::null()) }
+}
+
+/// `__cxa_at_quick_exit` — C++ runtime alias for at_quick_exit.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __cxa_at_quick_exit(func: Option<unsafe extern "C" fn()>) -> c_int {
+    unsafe { at_quick_exit(func) }
+}
+
+// ===========================================================================
 // insque / remque — POSIX linked-list queue operations
 // ===========================================================================
 
@@ -3594,4 +3780,526 @@ pub unsafe extern "C" fn __xpg_strerror_r(errnum: c_int, buf: *mut c_char, bufle
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn gnu_get_libc_release() -> *const c_char {
     c"stable".as_ptr()
+}
+
+// ===========================================================================
+// Reentrant random48 family (_r variants)
+// ===========================================================================
+//
+// The `_r` variants use a caller-supplied `drand48_data` struct instead of
+// global state. Layout (glibc x86_64):
+//   __x[3]: u16 at offset 0  (current state, 6 bytes)
+//   __old_x[3]: u16 at offset 6
+//   __c: u16 at offset 12
+//   __init: u16 at offset 14
+//   __a: u64 at offset 16
+// Total: 24 bytes.
+
+const DRAND48_A: u64 = 0x5DEECE66D;
+const DRAND48_C: u16 = 0xB;
+
+unsafe fn drand48_step(data: *mut c_void) {
+    let x = data as *mut u16;
+    // Read current state x[0..3]
+    let x0 = unsafe { *x } as u64;
+    let x1 = unsafe { *x.add(1) } as u64;
+    let x2 = unsafe { *x.add(2) } as u64;
+    let xi = x0 | (x1 << 16) | (x2 << 32);
+    let next = xi.wrapping_mul(DRAND48_A).wrapping_add(DRAND48_C as u64) & 0xFFFF_FFFF_FFFF;
+    unsafe {
+        *x = (next & 0xFFFF) as u16;
+        *x.add(1) = ((next >> 16) & 0xFFFF) as u16;
+        *x.add(2) = ((next >> 32) & 0xFFFF) as u16;
+    }
+}
+
+unsafe fn drand48_result_double(data: *const c_void) -> f64 {
+    let x = data as *const u16;
+    let x1 = unsafe { *x.add(1) } as u64;
+    let x2 = unsafe { *x.add(2) } as u64;
+    let combined = (x2 << 16) | x1;
+    combined as f64 / (1u64 << 32) as f64
+}
+
+unsafe fn drand48_result_long(data: *const c_void) -> c_long {
+    let x = data as *const u16;
+    let x1 = unsafe { *x.add(1) } as u32;
+    let x2 = unsafe { *x.add(2) } as u32;
+    ((x2 << 16) | x1) as i32 as c_long
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn drand48_r(data: *mut c_void, result: *mut c_double) -> c_int {
+    if data.is_null() || result.is_null() {
+        return libc::EINVAL;
+    }
+    unsafe { drand48_step(data) };
+    unsafe { *result = drand48_result_double(data) };
+    0
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn erand48_r(
+    xsubi: *mut u16,
+    data: *mut c_void,
+    result: *mut c_double,
+) -> c_int {
+    if xsubi.is_null() || data.is_null() || result.is_null() {
+        return libc::EINVAL;
+    }
+    // Copy xsubi into data state, step, copy back
+    let dp = data as *mut u16;
+    unsafe {
+        *dp = *xsubi;
+        *dp.add(1) = *xsubi.add(1);
+        *dp.add(2) = *xsubi.add(2);
+        drand48_step(data);
+        *xsubi = *dp;
+        *xsubi.add(1) = *dp.add(1);
+        *xsubi.add(2) = *dp.add(2);
+        *result = drand48_result_double(data);
+    }
+    0
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn lrand48_r(data: *mut c_void, result: *mut c_long) -> c_int {
+    if data.is_null() || result.is_null() {
+        return libc::EINVAL;
+    }
+    unsafe { drand48_step(data) };
+    let v = unsafe { drand48_result_long(data) };
+    unsafe { *result = v & 0x7FFFFFFF };
+    0
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn nrand48_r(
+    xsubi: *mut u16,
+    data: *mut c_void,
+    result: *mut c_long,
+) -> c_int {
+    if xsubi.is_null() || data.is_null() || result.is_null() {
+        return libc::EINVAL;
+    }
+    let dp = data as *mut u16;
+    unsafe {
+        *dp = *xsubi;
+        *dp.add(1) = *xsubi.add(1);
+        *dp.add(2) = *xsubi.add(2);
+        drand48_step(data);
+        *xsubi = *dp;
+        *xsubi.add(1) = *dp.add(1);
+        *xsubi.add(2) = *dp.add(2);
+        *result = drand48_result_long(data) & 0x7FFFFFFF;
+    }
+    0
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn mrand48_r(data: *mut c_void, result: *mut c_long) -> c_int {
+    if data.is_null() || result.is_null() {
+        return libc::EINVAL;
+    }
+    unsafe { drand48_step(data) };
+    unsafe { *result = drand48_result_long(data) };
+    0
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn jrand48_r(
+    xsubi: *mut u16,
+    data: *mut c_void,
+    result: *mut c_long,
+) -> c_int {
+    if xsubi.is_null() || data.is_null() || result.is_null() {
+        return libc::EINVAL;
+    }
+    let dp = data as *mut u16;
+    unsafe {
+        *dp = *xsubi;
+        *dp.add(1) = *xsubi.add(1);
+        *dp.add(2) = *xsubi.add(2);
+        drand48_step(data);
+        *xsubi = *dp;
+        *xsubi.add(1) = *dp.add(1);
+        *xsubi.add(2) = *dp.add(2);
+        *result = drand48_result_long(data);
+    }
+    0
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn srand48_r(seedval: c_long, data: *mut c_void) -> c_int {
+    if data.is_null() {
+        return libc::EINVAL;
+    }
+    let dp = data as *mut u16;
+    unsafe {
+        *dp = 0x330E; // default low bits
+        *dp.add(1) = (seedval & 0xFFFF) as u16;
+        *dp.add(2) = ((seedval >> 16) & 0xFFFF) as u16;
+    }
+    0
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn seed48_r(seed16v: *mut u16, data: *mut c_void) -> c_int {
+    if seed16v.is_null() || data.is_null() {
+        return libc::EINVAL;
+    }
+    let dp = data as *mut u16;
+    unsafe {
+        *dp = *seed16v;
+        *dp.add(1) = *seed16v.add(1);
+        *dp.add(2) = *seed16v.add(2);
+    }
+    0
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn lcong48_r(param: *mut u16, data: *mut c_void) -> c_int {
+    if param.is_null() || data.is_null() {
+        return libc::EINVAL;
+    }
+    let dp = data as *mut u16;
+    unsafe {
+        *dp = *param;
+        *dp.add(1) = *param.add(1);
+        *dp.add(2) = *param.add(2);
+        // param[3..5] = a, param[6] = c → stored at offsets 16 (a) and 12 (c)
+        let c_ptr = (data as *mut u8).add(12) as *mut u16;
+        *c_ptr = *param.add(6);
+        let a_ptr = (data as *mut u8).add(16) as *mut u64;
+        *a_ptr =
+            *param.add(3) as u64 | ((*param.add(4) as u64) << 16) | ((*param.add(5) as u64) << 32);
+    }
+    0
+}
+
+// ===========================================================================
+// Reentrant System V random (_r variants)
+// ===========================================================================
+
+/// `random_r` — thread-safe random using caller-supplied state.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn random_r(buf: *mut c_void, result: *mut i32) -> c_int {
+    if buf.is_null() || result.is_null() {
+        return libc::EINVAL;
+    }
+    // Simple LCG using the random_data struct
+    let state = buf as *mut u32;
+    let val = unsafe { *state };
+    let next = val.wrapping_mul(1103515245).wrapping_add(12345);
+    unsafe {
+        *state = next;
+        *result = (next >> 1) as i32;
+    }
+    0
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn srandom_r(seed: c_uint, buf: *mut c_void) -> c_int {
+    if buf.is_null() {
+        return libc::EINVAL;
+    }
+    let state = buf as *mut u32;
+    unsafe { *state = seed };
+    0
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn initstate_r(
+    seed: c_uint,
+    statebuf: *mut c_char,
+    statelen: usize,
+    buf: *mut c_void,
+) -> c_int {
+    if statebuf.is_null() || buf.is_null() || statelen < 8 {
+        return libc::EINVAL;
+    }
+    let state = buf as *mut u32;
+    unsafe { *state = seed };
+    0
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn setstate_r(statebuf: *mut c_char, buf: *mut c_void) -> c_int {
+    if statebuf.is_null() || buf.is_null() {
+        return libc::EINVAL;
+    }
+    0
+}
+
+// ===========================================================================
+// ecvt_r / fcvt_r / qecvt / qfcvt / qgcvt / qecvt_r / qfcvt_r
+// ===========================================================================
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ecvt_r(
+    value: c_double,
+    ndigit: c_int,
+    decpt: *mut c_int,
+    sign: *mut c_int,
+    buf: *mut c_char,
+    buflen: usize,
+) -> c_int {
+    if buf.is_null() || decpt.is_null() || sign.is_null() || buflen == 0 {
+        return libc::EINVAL;
+    }
+    unsafe { *sign = if value < 0.0 { 1 } else { 0 } };
+    let abs_val = value.abs();
+    let s = if ndigit > 0 {
+        format!(
+            "{abs_val:.prec$e}",
+            prec = (ndigit as usize).saturating_sub(1)
+        )
+    } else {
+        format!("{abs_val:e}")
+    };
+    // Parse exponent
+    let (mantissa, exp) = if let Some(idx) = s.find('e') {
+        (&s[..idx], s[idx + 1..].parse::<i32>().unwrap_or(0))
+    } else {
+        (s.as_str(), 0)
+    };
+    unsafe { *decpt = exp + 1 };
+    // Copy digits only (skip '.')
+    let mut i = 0usize;
+    for ch in mantissa.bytes() {
+        if ch == b'.' {
+            continue;
+        }
+        if i + 1 >= buflen {
+            break;
+        }
+        unsafe { *buf.add(i) = ch as c_char };
+        i += 1;
+    }
+    unsafe { *buf.add(i) = 0 };
+    0
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn fcvt_r(
+    value: c_double,
+    ndigit: c_int,
+    decpt: *mut c_int,
+    sign: *mut c_int,
+    buf: *mut c_char,
+    buflen: usize,
+) -> c_int {
+    if buf.is_null() || decpt.is_null() || sign.is_null() || buflen == 0 {
+        return libc::EINVAL;
+    }
+    unsafe { *sign = if value < 0.0 { 1 } else { 0 } };
+    let abs_val = value.abs();
+    let prec = if ndigit > 0 { ndigit as usize } else { 0 };
+    let s = format!("{abs_val:.prec$}");
+    let dot_pos = s.find('.').unwrap_or(s.len());
+    unsafe { *decpt = dot_pos as c_int };
+    let mut i = 0usize;
+    for ch in s.bytes() {
+        if ch == b'.' {
+            continue;
+        }
+        if i + 1 >= buflen {
+            break;
+        }
+        unsafe { *buf.add(i) = ch as c_char };
+        i += 1;
+    }
+    unsafe { *buf.add(i) = 0 };
+    0
+}
+
+// Quad-precision stubs (use f64 on platforms without __float128 support)
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn qecvt(
+    value: c_double,
+    ndigit: c_int,
+    decpt: *mut c_int,
+    sign: *mut c_int,
+) -> *mut c_char {
+    // Reuse ecvt for quad precision (f64 approximation)
+    thread_local! {
+        static BUF: std::cell::RefCell<[u8; 128]> = const { std::cell::RefCell::new([0u8; 128]) };
+    }
+    BUF.with(|b| {
+        let mut buf = b.borrow_mut();
+        unsafe {
+            ecvt_r(
+                value,
+                ndigit,
+                decpt,
+                sign,
+                buf.as_mut_ptr() as *mut c_char,
+                128,
+            );
+        }
+        buf.as_ptr() as *mut c_char
+    })
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn qfcvt(
+    value: c_double,
+    ndigit: c_int,
+    decpt: *mut c_int,
+    sign: *mut c_int,
+) -> *mut c_char {
+    thread_local! {
+        static BUF: std::cell::RefCell<[u8; 128]> = const { std::cell::RefCell::new([0u8; 128]) };
+    }
+    BUF.with(|b| {
+        let mut buf = b.borrow_mut();
+        unsafe {
+            fcvt_r(
+                value,
+                ndigit,
+                decpt,
+                sign,
+                buf.as_mut_ptr() as *mut c_char,
+                128,
+            );
+        }
+        buf.as_ptr() as *mut c_char
+    })
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn qgcvt(value: c_double, ndigit: c_int, buf: *mut c_char) -> *mut c_char {
+    if buf.is_null() {
+        return std::ptr::null_mut();
+    }
+    let s = format!("{value:.prec$}", prec = ndigit as usize);
+    let bytes = s.as_bytes();
+    let copy_len = bytes.len();
+    unsafe {
+        ptr::copy_nonoverlapping(bytes.as_ptr(), buf as *mut u8, copy_len);
+        *buf.add(copy_len) = 0;
+    }
+    buf
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn qecvt_r(
+    value: c_double,
+    ndigit: c_int,
+    decpt: *mut c_int,
+    sign: *mut c_int,
+    buf: *mut c_char,
+    buflen: usize,
+) -> c_int {
+    unsafe { ecvt_r(value, ndigit, decpt, sign, buf, buflen) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn qfcvt_r(
+    value: c_double,
+    ndigit: c_int,
+    decpt: *mut c_int,
+    sign: *mut c_int,
+    buf: *mut c_char,
+    buflen: usize,
+) -> c_int {
+    unsafe { fcvt_r(value, ndigit, decpt, sign, buf, buflen) }
+}
+
+// ===========================================================================
+// Integer math extras
+// ===========================================================================
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub extern "C" fn imaxabs(j: i64) -> i64 {
+    j.wrapping_abs()
+}
+
+/// `imaxdiv` — return quotient and remainder of intmax_t division.
+/// glibc layout: { quot: i64, rem: i64 }
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn imaxdiv(numer: i64, denom: i64, result: *mut i64) {
+    if denom == 0 {
+        return;
+    }
+    if !result.is_null() {
+        unsafe {
+            *result = numer / denom;
+            *result.add(1) = numer % denom;
+        }
+    }
+}
+
+// ===========================================================================
+// Misc string/conversion extras
+// ===========================================================================
+
+/// `strtoq` — BSD alias for strtoll.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strtoq(
+    nptr: *const c_char,
+    endptr: *mut *mut c_char,
+    base: c_int,
+) -> c_long {
+    unsafe { libc::strtoll(nptr, endptr, base) as c_long }
+}
+
+/// `strtouq` — BSD alias for strtoull.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strtouq(
+    nptr: *const c_char,
+    endptr: *mut *mut c_char,
+    base: c_int,
+) -> c_ulong {
+    unsafe { libc::strtoull(nptr, endptr, base) as c_ulong }
+}
+
+/// `glob_pattern_p` — check if string contains glob metacharacters.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn glob_pattern_p(pattern: *const c_char, _quote: c_int) -> c_int {
+    if pattern.is_null() {
+        return 0;
+    }
+    let mut p = pattern;
+    loop {
+        let ch = unsafe { *p };
+        if ch == 0 {
+            return 0;
+        }
+        if ch == b'*' as c_char || ch == b'?' as c_char || ch == b'[' as c_char {
+            return 1;
+        }
+        p = unsafe { p.add(1) };
+    }
+}
+
+/// `twalk_r` — walk a binary tree with user data pointer.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn twalk_r(
+    _root: *const c_void,
+    _action: Option<unsafe extern "C" fn(*const c_void, c_int, c_void)>,
+    _closure: *mut c_void,
+) {
+    // Tree walking with closure — stubbed (requires tsearch internals)
+}
+
+/// `ualarm` — schedule SIGALRM in microseconds.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ualarm(usecs: c_uint, interval: c_uint) -> c_uint {
+    let new_val = libc::itimerval {
+        it_value: libc::timeval {
+            tv_sec: (usecs / 1_000_000) as i64,
+            tv_usec: (usecs % 1_000_000) as i64,
+        },
+        it_interval: libc::timeval {
+            tv_sec: (interval / 1_000_000) as i64,
+            tv_usec: (interval % 1_000_000) as i64,
+        },
+    };
+    let mut old_val: libc::itimerval = unsafe { std::mem::zeroed() };
+    let ret = unsafe { libc::setitimer(libc::ITIMER_REAL, &new_val, &mut old_val) };
+    if ret < 0 {
+        return 0;
+    }
+    (old_val.it_value.tv_sec as c_uint) * 1_000_000 + old_val.it_value.tv_usec as c_uint
 }

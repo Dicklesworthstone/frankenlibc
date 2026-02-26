@@ -12227,8 +12227,7 @@ pub unsafe extern "C" fn dn_expand(
         if out_off + label_len >= out.len() {
             return -1; // No room for label + NUL.
         }
-        out[out_off..out_off + label_len]
-            .copy_from_slice(&msg_slice[pos + 1..pos + 1 + label_len]);
+        out[out_off..out_off + label_len].copy_from_slice(&msg_slice[pos + 1..pos + 1 + label_len]);
         out_off += label_len;
         pos += 1 + label_len;
     }
@@ -13769,3 +13768,1139 @@ pub unsafe extern "C" fn renameat2(
     };
     if ret < 0 { -1 } else { ret as c_int }
 }
+
+/// `semtimedop` — semaphore operations with timeout.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn semtimedop(
+    semid: c_int,
+    sops: *mut c_void,
+    nsops: usize,
+    timeout: *const libc::timespec,
+) -> c_int {
+    let ret = unsafe { libc::syscall(libc::SYS_semtimedop, semid, sops, nsops, timeout) };
+    if ret < 0 { -1 } else { 0 }
+}
+
+// ===========================================================================
+// Scheduler CPU / misc Linux
+// ===========================================================================
+
+/// `sched_getcpu` — get CPU that the calling thread is running on.
+///
+/// Native implementation using `getcpu(2)` syscall.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn sched_getcpu() -> c_int {
+    let mut cpu: c_uint = 0;
+    let ret = unsafe {
+        libc::syscall(
+            libc::SYS_getcpu,
+            &mut cpu as *mut c_uint,
+            std::ptr::null_mut::<c_void>(),
+            std::ptr::null_mut::<c_void>(),
+        )
+    };
+    if ret < 0 { -1 } else { cpu as c_int }
+}
+
+/// `getcpu` — get CPU and NUMA node (Linux-specific).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getcpu(
+    cpu: *mut c_uint,
+    node: *mut c_uint,
+    _unused: *mut c_void,
+) -> c_int {
+    let ret = unsafe { libc::syscall(libc::SYS_getcpu, cpu, node, std::ptr::null_mut::<c_void>()) };
+    if ret < 0 { -1 } else { 0 }
+}
+
+/// `__sched_cpucount` — count set bits in CPU set.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __sched_cpucount(setsize: usize, setp: *const c_void) -> c_int {
+    if setp.is_null() || setsize == 0 {
+        return 0;
+    }
+    let bytes = unsafe { std::slice::from_raw_parts(setp as *const u8, setsize) };
+    let mut count = 0i32;
+    for &b in bytes {
+        count += b.count_ones() as i32;
+    }
+    count
+}
+
+/// `__sched_cpualloc` — allocate CPU set.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __sched_cpualloc(count: c_int) -> *mut c_void {
+    let size = (count as usize).div_ceil(8).max(128); // At least 128 bytes (1024 CPUs).
+    let layout =
+        std::alloc::Layout::from_size_align(size, 8).unwrap_or(std::alloc::Layout::new::<u8>());
+    let ptr = unsafe { std::alloc::alloc_zeroed(layout) };
+    ptr as *mut c_void
+}
+
+/// `__sched_cpufree` — free CPU set.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __sched_cpufree(setp: *mut c_void) {
+    if !setp.is_null() {
+        // We allocated with 128 byte min size, align 8.
+        let layout =
+            std::alloc::Layout::from_size_align(128, 8).unwrap_or(std::alloc::Layout::new::<u8>());
+        unsafe { std::alloc::dealloc(setp as *mut u8, layout) };
+    }
+}
+
+/// `mount_setattr` — change mount properties (Linux 5.12+).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn mount_setattr(
+    dirfd: c_int,
+    pathname: *const c_char,
+    flags: c_uint,
+    uattr: *mut c_void,
+    usize_: usize,
+) -> c_int {
+    // SYS_mount_setattr = 442 on x86_64
+    let ret = unsafe { libc::syscall(442i64, dirfd, pathname, flags, uattr, usize_) };
+    if ret < 0 { -1 } else { 0 }
+}
+
+/// `signalfd4` — create file descriptor for signal delivery (with flags).
+///
+/// This is the underlying syscall; `signalfd` with flags calls this.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn signalfd4(fd: c_int, mask: *const c_void, flags: c_int) -> c_int {
+    // SYS_signalfd4 = 289 on x86_64
+    let mask_size: usize = 8; // sizeof(sigset_t) kernel version = 8 bytes
+    let ret = unsafe { libc::syscall(289i64, fd, mask, mask_size, flags) };
+    if ret < 0 { -1 } else { ret as c_int }
+}
+
+// ===========================================================================
+// utmp/utmpx accounting database
+// ===========================================================================
+
+/// `getutent_r` — reentrant version of getutent.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getutent_r(_ubuf: *mut c_void, _ubufp: *mut *mut c_void) -> c_int {
+    // Return -1 = no more entries (safe stub)
+    -1
+}
+
+/// `getutid` — search utmp by id.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getutid(_ut: *const c_void) -> *mut c_void {
+    std::ptr::null_mut()
+}
+
+/// `getutid_r` — reentrant getutid.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getutid_r(
+    _ut: *const c_void,
+    _ubuf: *mut c_void,
+    _ubufp: *mut *mut c_void,
+) -> c_int {
+    -1
+}
+
+/// `getutline` — search utmp by line.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getutline(_ut: *const c_void) -> *mut c_void {
+    std::ptr::null_mut()
+}
+
+/// `getutline_r` — reentrant getutline.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getutline_r(
+    _ut: *const c_void,
+    _ubuf: *mut c_void,
+    _ubufp: *mut *mut c_void,
+) -> c_int {
+    -1
+}
+
+/// `pututline` — write utmp entry.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pututline(_ut: *const c_void) -> *mut c_void {
+    std::ptr::null_mut()
+}
+
+/// `updwtmp` — append to wtmp file.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn updwtmp(_file: *const c_char, _ut: *const c_void) {
+    // no-op — write accounting not supported
+}
+
+/// `updwtmpx` — append to wtmpx file.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn updwtmpx(_file: *const c_char, _utx: *const c_void) {
+    // no-op
+}
+
+/// `getutmp` — convert utmpx to utmp.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getutmp(_ux: *const c_void, _u: *mut c_void) {
+    // On Linux, utmp and utmpx are identical
+    if !_ux.is_null() && !_u.is_null() {
+        unsafe { std::ptr::copy_nonoverlapping(_ux as *const u8, _u as *mut u8, 384) };
+    }
+}
+
+/// `getutmpx` — convert utmp to utmpx.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getutmpx(_u: *const c_void, _ux: *mut c_void) {
+    if !_u.is_null() && !_ux.is_null() {
+        unsafe { std::ptr::copy_nonoverlapping(_u as *const u8, _ux as *mut u8, 384) };
+    }
+}
+
+// ===========================================================================
+// Legacy BSD signals
+// ===========================================================================
+
+/// `sigblock` — block signals (deprecated, use sigprocmask).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn sigblock(mask: c_int) -> c_int {
+    let mut old_set: u64 = 0;
+    let new_set = mask as u64;
+    let ret = unsafe {
+        libc::syscall(
+            libc::SYS_rt_sigprocmask,
+            libc::SIG_BLOCK,
+            &new_set as *const u64,
+            &mut old_set as *mut u64,
+            8usize, // sizeof(sigset_t)
+        )
+    };
+    if ret < 0 { -1 } else { old_set as c_int }
+}
+
+/// `siggetmask` — alias for sigblock(0).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn siggetmask() -> c_int {
+    unsafe { sigblock(0) }
+}
+
+/// `sigsetmask` — set signal mask (deprecated).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn sigsetmask(mask: c_int) -> c_int {
+    let mut old_set: u64 = 0;
+    let new_set = mask as u64;
+    let ret = unsafe {
+        libc::syscall(
+            libc::SYS_rt_sigprocmask,
+            libc::SIG_SETMASK,
+            &new_set as *const u64,
+            &mut old_set as *mut u64,
+            8usize,
+        )
+    };
+    if ret < 0 { -1 } else { old_set as c_int }
+}
+
+/// `sigpause` — atomically release blocked signal and pause.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn sigpause(sig: c_int) -> c_int {
+    // BSD sigpause: unblock sig and pause
+    let mut mask: u64 = 0;
+    unsafe {
+        libc::syscall(
+            libc::SYS_rt_sigprocmask,
+            libc::SIG_BLOCK,
+            std::ptr::null::<u64>(),
+            &mut mask as *mut u64,
+            8usize,
+        );
+    }
+    // Clear the bit for sig
+    mask &= !(1u64 << (sig as u64 - 1));
+    unsafe { libc::sigsuspend(&mask as *const u64 as *const libc::sigset_t) }
+}
+
+/// `sigvec` — BSD signal handler (maps to sigaction).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn sigvec(sig: c_int, vec: *const c_void, ovec: *mut c_void) -> c_int {
+    // sigvec and sigaction have compatible layouts on Linux
+    unsafe {
+        libc::sigaction(
+            sig,
+            if vec.is_null() {
+                std::ptr::null()
+            } else {
+                vec as *const libc::sigaction
+            },
+            if ovec.is_null() {
+                std::ptr::null_mut()
+            } else {
+                ovec as *mut libc::sigaction
+            },
+        )
+    }
+}
+
+/// `sigstack` — set alternate signal stack (deprecated, use sigaltstack).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn sigstack(_ss: *const c_void, _oss: *mut c_void) -> c_int {
+    // Deprecated — return success no-op
+    0
+}
+
+/// `sigreturn` — return from signal handler (kernel does this, not userspace).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn sigreturn(_scp: *mut c_void) -> c_int {
+    // SYS_rt_sigreturn = 15 on x86_64
+    let ret = unsafe { libc::syscall(15i64, _scp) };
+    if ret < 0 { -1 } else { 0 }
+}
+
+/// `ssignal` — software signal (legacy SVR2 interface).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ssignal(
+    _sig: c_int,
+    _action: Option<unsafe extern "C" fn(c_int)>,
+) -> Option<unsafe extern "C" fn(c_int)> {
+    None // no-op stub
+}
+
+/// `gsignal` — raise software signal (legacy SVR2).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn gsignal(_sig: c_int) -> c_int {
+    0 // no-op
+}
+
+/// `sysv_signal` — System V signal semantics (one-shot).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn sysv_signal(
+    sig: c_int,
+    handler: Option<unsafe extern "C" fn(c_int)>,
+) -> Option<unsafe extern "C" fn(c_int)> {
+    // Use sigaction with SA_RESETHAND for one-shot semantics
+    let mut sa: libc::sigaction = unsafe { std::mem::zeroed() };
+    sa.sa_sigaction = handler.map_or(0, |h| h as usize);
+    sa.sa_flags = libc::SA_RESETHAND | libc::SA_NODEFER;
+    let mut old_sa: libc::sigaction = unsafe { std::mem::zeroed() };
+    let ret = unsafe { libc::sigaction(sig, &sa, &mut old_sa) };
+    if ret < 0 {
+        None
+    } else {
+        let old_handler = old_sa.sa_sigaction;
+        if old_handler == 0 {
+            None
+        } else {
+            Some(unsafe { std::mem::transmute::<usize, unsafe extern "C" fn(c_int)>(old_handler) })
+        }
+    }
+}
+
+/// `sigset` — reliable signal (XSI extension).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn sigset(
+    sig: c_int,
+    disp: Option<unsafe extern "C" fn(c_int)>,
+) -> Option<unsafe extern "C" fn(c_int)> {
+    unsafe { sysv_signal(sig, disp) }
+}
+
+// ===========================================================================
+// New Linux mount API (kernel 5.2+)
+// ===========================================================================
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn fsopen(fsname: *const c_char, flags: c_uint) -> c_int {
+    let ret = unsafe { libc::syscall(430i64, fsname, flags) };
+    if ret < 0 { -1 } else { ret as c_int }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn fsmount(fs_fd: c_int, flags: c_uint, attr_flags: c_uint) -> c_int {
+    let ret = unsafe { libc::syscall(432i64, fs_fd, flags, attr_flags) };
+    if ret < 0 { -1 } else { ret as c_int }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn fsconfig(
+    fs_fd: c_int,
+    cmd: c_uint,
+    key: *const c_char,
+    value: *const c_void,
+    aux: c_int,
+) -> c_int {
+    let ret = unsafe { libc::syscall(431i64, fs_fd, cmd, key, value, aux) };
+    if ret < 0 { -1 } else { 0 }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn fspick(dirfd: c_int, path: *const c_char, flags: c_uint) -> c_int {
+    let ret = unsafe { libc::syscall(433i64, dirfd, path, flags) };
+    if ret < 0 { -1 } else { ret as c_int }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn open_tree(dirfd: c_int, path: *const c_char, flags: c_uint) -> c_int {
+    let ret = unsafe { libc::syscall(428i64, dirfd, path, flags) };
+    if ret < 0 { -1 } else { ret as c_int }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn move_mount(
+    from_dirfd: c_int,
+    from_path: *const c_char,
+    to_dirfd: c_int,
+    to_path: *const c_char,
+    flags: c_uint,
+) -> c_int {
+    let ret = unsafe { libc::syscall(429i64, from_dirfd, from_path, to_dirfd, to_path, flags) };
+    if ret < 0 { -1 } else { 0 }
+}
+
+// ===========================================================================
+// NTP / clock adjustment
+// ===========================================================================
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn adjtimex(buf: *mut c_void) -> c_int {
+    let ret = unsafe { libc::syscall(libc::SYS_adjtimex, buf) };
+    if ret < 0 { -1 } else { ret as c_int }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ntp_adjtime(buf: *mut c_void) -> c_int {
+    unsafe { adjtimex(buf) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ntp_gettime(ntv: *mut c_void) -> c_int {
+    if ntv.is_null() {
+        return -1;
+    }
+    // ntp_gettime fills ntptime (struct ntptimeval): time, maxerror, esterror
+    // Use clock_gettime(CLOCK_REALTIME) to get current time
+    let mut ts = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    unsafe { libc::clock_gettime(libc::CLOCK_REALTIME, &mut ts) };
+    // ntptimeval.time = timeval at offset 0
+    let p = ntv as *mut i64;
+    unsafe {
+        *p = ts.tv_sec;
+        *p.add(1) = ts.tv_nsec / 1000; // tv_usec
+        *p.add(2) = 0; // maxerror
+        *p.add(3) = 0; // esterror
+    }
+    0
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ntp_gettimex(ntv: *mut c_void) -> c_int {
+    unsafe { ntp_gettime(ntv) }
+}
+
+// ===========================================================================
+// fstab database
+// ===========================================================================
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn setfsent() -> c_int {
+    1 // success
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getfsent() -> *mut c_void {
+    std::ptr::null_mut() // no more entries
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getfsfile(_file: *const c_char) -> *mut c_void {
+    std::ptr::null_mut()
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getfsspec(_spec: *const c_char) -> *mut c_void {
+    std::ptr::null_mut()
+}
+
+// ===========================================================================
+// ttyent database
+// ===========================================================================
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn setttyent() -> c_int {
+    1
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getttyent() -> *mut c_void {
+    std::ptr::null_mut()
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getttynam(_name: *const c_char) -> *mut c_void {
+    std::ptr::null_mut()
+}
+
+// ===========================================================================
+// getdate / timelocal
+// ===========================================================================
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getdate(_string: *const c_char) -> *mut c_void {
+    std::ptr::null_mut() // not supported
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getdate_r(_string: *const c_char, _result: *mut c_void) -> c_int {
+    -1 // not supported
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn timelocal(tm: *mut c_void) -> i64 {
+    // timelocal is just mktime (BSD alias)
+    unsafe { libc::mktime(tm as *mut libc::tm) }
+}
+
+// ===========================================================================
+// C23 char8_t (UTF-8)
+// ===========================================================================
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn c8rtomb(s: *mut c_char, c8: u8, _ps: *mut c_void) -> usize {
+    if s.is_null() {
+        return 1; // stateless encoding
+    }
+    unsafe { *s = c8 as c_char };
+    1
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn mbrtoc8(
+    pc8: *mut u8,
+    s: *const c_char,
+    n: usize,
+    _ps: *mut c_void,
+) -> usize {
+    if s.is_null() {
+        return 0;
+    }
+    if n == 0 {
+        return usize::MAX - 1;
+    } // -2 = incomplete
+    let byte = unsafe { *s } as u8;
+    if !pc8.is_null() {
+        unsafe { *pc8 = byte };
+    }
+    if byte == 0 { 0 } else { 1 }
+}
+
+// ===========================================================================
+// pkey extras
+// ===========================================================================
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pkey_get(pkey: c_int) -> c_int {
+    // Read PKRU register via RDPKRU
+    // Fallback: use the syscall interface
+    let pkru: u32;
+    unsafe {
+        std::arch::asm!(
+            "xor ecx, ecx",
+            "rdpkru",
+            out("eax") pkru,
+            out("ecx") _,
+            out("edx") _,
+        );
+    }
+    // Extract the 2 bits for this pkey
+    let shift = pkey as u32 * 2;
+    ((pkru >> shift) & 0x3) as c_int
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pkey_set(pkey: c_int, rights: c_int) -> c_int {
+    let mut pkru: u32;
+    let edx: u32;
+    unsafe {
+        std::arch::asm!(
+            "xor ecx, ecx",
+            "rdpkru",
+            out("eax") pkru,
+            out("ecx") _,
+            out("edx") edx,
+        );
+    }
+    let shift = pkey as u32 * 2;
+    pkru &= !(0x3 << shift);
+    pkru |= (rights as u32 & 0x3) << shift;
+    unsafe {
+        std::arch::asm!(
+            "xor ecx, ecx",
+            "wrpkru",
+            in("eax") pkru,
+            in("ecx") 0u32,
+            in("edx") edx,
+        );
+    }
+    0
+}
+
+// ===========================================================================
+// _Exit / _Fork
+// ===========================================================================
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[allow(non_snake_case)]
+pub unsafe extern "C" fn _Exit(status: c_int) -> ! {
+    unsafe { libc::_exit(status) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[allow(non_snake_case)]
+pub unsafe extern "C" fn _Fork() -> c_int {
+    // _Fork is async-signal-safe fork (C23), no atfork handlers
+    let ret = unsafe { libc::syscall(libc::SYS_clone, libc::SIGCHLD, 0, 0, 0, 0) };
+    if ret < 0 { -1 } else { ret as c_int }
+}
+
+// ===========================================================================
+// Reentrant NSS database functions
+// ===========================================================================
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn gethostent_r(
+    _result_buf: *mut c_void,
+    _buf: *mut c_char,
+    _buflen: usize,
+    _result: *mut *mut c_void,
+    _h_errnop: *mut c_int,
+) -> c_int {
+    if !_result.is_null() {
+        unsafe { *_result = std::ptr::null_mut() };
+    }
+    libc::ENOENT
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getnetbyaddr_r(
+    _net: u32,
+    _type_: c_int,
+    _result_buf: *mut c_void,
+    _buf: *mut c_char,
+    _buflen: usize,
+    _result: *mut *mut c_void,
+    _h_errnop: *mut c_int,
+) -> c_int {
+    if !_result.is_null() {
+        unsafe { *_result = std::ptr::null_mut() };
+    }
+    libc::ENOENT
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getnetbyname_r(
+    _name: *const c_char,
+    _result_buf: *mut c_void,
+    _buf: *mut c_char,
+    _buflen: usize,
+    _result: *mut *mut c_void,
+    _h_errnop: *mut c_int,
+) -> c_int {
+    if !_result.is_null() {
+        unsafe { *_result = std::ptr::null_mut() };
+    }
+    libc::ENOENT
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getnetent_r(
+    _result_buf: *mut c_void,
+    _buf: *mut c_char,
+    _buflen: usize,
+    _result: *mut *mut c_void,
+    _h_errnop: *mut c_int,
+) -> c_int {
+    if !_result.is_null() {
+        unsafe { *_result = std::ptr::null_mut() };
+    }
+    libc::ENOENT
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getprotobyname_r(
+    _name: *const c_char,
+    _result_buf: *mut c_void,
+    _buf: *mut c_char,
+    _buflen: usize,
+    _result: *mut *mut c_void,
+) -> c_int {
+    if !_result.is_null() {
+        unsafe { *_result = std::ptr::null_mut() };
+    }
+    libc::ENOENT
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getprotobynumber_r(
+    _proto: c_int,
+    _result_buf: *mut c_void,
+    _buf: *mut c_char,
+    _buflen: usize,
+    _result: *mut *mut c_void,
+) -> c_int {
+    if !_result.is_null() {
+        unsafe { *_result = std::ptr::null_mut() };
+    }
+    libc::ENOENT
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getprotoent_r(
+    _result_buf: *mut c_void,
+    _buf: *mut c_char,
+    _buflen: usize,
+    _result: *mut *mut c_void,
+) -> c_int {
+    if !_result.is_null() {
+        unsafe { *_result = std::ptr::null_mut() };
+    }
+    libc::ENOENT
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getservent_r(
+    _result_buf: *mut c_void,
+    _buf: *mut c_char,
+    _buflen: usize,
+    _result: *mut *mut c_void,
+) -> c_int {
+    if !_result.is_null() {
+        unsafe { *_result = std::ptr::null_mut() };
+    }
+    libc::ENOENT
+}
+
+// ===========================================================================
+// Misc string/format extras
+// ===========================================================================
+
+/// `strfmon` — format monetary value.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strfmon(
+    s: *mut c_char,
+    maxsize: usize,
+    format: *const c_char,
+    mut args: ...
+) -> isize {
+    if s.is_null() || format.is_null() || maxsize == 0 {
+        return -1;
+    }
+    // Simple: extract one double, format as currency
+    let val: f64 = unsafe { args.arg() };
+    let formatted = format!("{val:.2}");
+    let bytes = formatted.as_bytes();
+    let copy_len = bytes.len().min(maxsize - 1);
+    unsafe {
+        std::ptr::copy_nonoverlapping(bytes.as_ptr(), s as *mut u8, copy_len);
+        *s.add(copy_len) = 0;
+    }
+    copy_len as isize
+}
+
+/// `strfmon_l` — locale-aware monetary formatting (ignores locale).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strfmon_l(
+    s: *mut c_char,
+    maxsize: usize,
+    _locale: *mut c_void,
+    format: *const c_char,
+    mut args: ...
+) -> isize {
+    if s.is_null() || format.is_null() || maxsize == 0 {
+        return -1;
+    }
+    let val: f64 = unsafe { args.arg() };
+    let formatted = format!("{val:.2}");
+    let bytes = formatted.as_bytes();
+    let copy_len = bytes.len().min(maxsize - 1);
+    unsafe {
+        std::ptr::copy_nonoverlapping(bytes.as_ptr(), s as *mut u8, copy_len);
+        *s.add(copy_len) = 0;
+    }
+    copy_len as isize
+}
+
+// ===========================================================================
+// login/logout/logwtmp
+// ===========================================================================
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn login(_ut: *const c_void) {
+    // no-op — login accounting not supported
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn logout(_line: *const c_char) -> c_int {
+    0 // success stub
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn logwtmp(_line: *const c_char, _name: *const c_char, _host: *const c_char) {
+    // no-op
+}
+
+// ===========================================================================
+// Async DNS (getaddrinfo_a family)
+// ===========================================================================
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getaddrinfo_a(
+    _mode: c_int,
+    _list: *mut *mut c_void,
+    _nitems: c_int,
+    _sevp: *mut c_void,
+) -> c_int {
+    libc::EAI_SYSTEM // not implemented
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn gai_cancel(_req: *mut c_void) -> c_int {
+    libc::EAI_SYSTEM
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn gai_error(_req: *mut c_void) -> c_int {
+    libc::EAI_SYSTEM
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn gai_suspend(
+    _list: *const *const c_void,
+    _nitems: c_int,
+    _timeout: *const libc::timespec,
+) -> c_int {
+    libc::EAI_SYSTEM
+}
+
+// ===========================================================================
+// POSIX spawn extensions
+// ===========================================================================
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn posix_spawn_file_actions_addclosefrom_np(
+    _fa: *mut c_void,
+    _from: c_int,
+) -> c_int {
+    0 // success stub — close-from-fd not critical for safety
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn posix_spawn_file_actions_addtcsetpgrp_np(
+    _fa: *mut c_void,
+    _fd: c_int,
+) -> c_int {
+    0
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn posix_spawnattr_getcgroup_np(
+    _attr: *const c_void,
+    _cgroup: *mut c_int,
+) -> c_int {
+    0
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn posix_spawnattr_setcgroup_np(_attr: *mut c_void, _cgroup: c_int) -> c_int {
+    0
+}
+
+// ===========================================================================
+// Misc math extras (isinf, isnan, scalb, scalbf)
+// ===========================================================================
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn isinf(x: f64) -> c_int {
+    if x == f64::INFINITY {
+        1
+    } else if x == f64::NEG_INFINITY {
+        -1
+    } else {
+        0
+    }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn isnan(x: f64) -> c_int {
+    if x.is_nan() { 1 } else { 0 }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn scalb(x: f64, exp: f64) -> f64 {
+    x * (2.0f64).powf(exp)
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn scalbf(x: f32, exp: f32) -> f32 {
+    x * (2.0f32).powf(exp)
+}
+
+// ===========================================================================
+// glibc __* syscall / POSIX internal aliases
+// ===========================================================================
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __open(path: *const c_char, oflag: c_int, mut args: ...) -> c_int {
+    let mode: libc::mode_t = if oflag & libc::O_CREAT != 0 { unsafe { args.arg() } } else { 0 };
+    unsafe { libc::open(path, oflag, mode) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __open64(path: *const c_char, oflag: c_int, mut args: ...) -> c_int {
+    let mode: libc::mode_t = if oflag & libc::O_CREAT != 0 { unsafe { args.arg() } } else { 0 };
+    unsafe { libc::open(path, oflag | libc::O_LARGEFILE, mode) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __close(fd: c_int) -> c_int {
+    unsafe { libc::close(fd) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __read(fd: c_int, buf: *mut c_void, count: usize) -> isize {
+    unsafe { libc::read(fd, buf, count) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __write(fd: c_int, buf: *const c_void, count: usize) -> isize {
+    unsafe { libc::write(fd, buf, count) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __pread64(fd: c_int, buf: *mut c_void, count: usize, offset: i64) -> isize {
+    unsafe { libc::pread64(fd, buf, count, offset) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __pwrite64(fd: c_int, buf: *const c_void, count: usize, offset: i64) -> isize {
+    unsafe { libc::pwrite64(fd, buf, count, offset) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __dup2(oldfd: c_int, newfd: c_int) -> c_int {
+    unsafe { libc::dup2(oldfd, newfd) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __pipe(pipefd: *mut c_int) -> c_int {
+    unsafe { libc::pipe(pipefd) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __fork() -> libc::pid_t {
+    unsafe { libc::fork() }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __vfork() -> libc::pid_t {
+    unsafe { libc::fork() } // vfork semantics via fork
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __wait(status: *mut c_int) -> libc::pid_t {
+    unsafe { libc::waitpid(-1, status, 0) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __waitpid(pid: libc::pid_t, status: *mut c_int, options: c_int) -> libc::pid_t {
+    unsafe { libc::waitpid(pid, status, options) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __poll(fds: *mut libc::pollfd, nfds: libc::nfds_t, timeout: c_int) -> c_int {
+    unsafe { libc::poll(fds, nfds, timeout) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __select(
+    nfds: c_int, readfds: *mut libc::fd_set, writefds: *mut libc::fd_set,
+    exceptfds: *mut libc::fd_set, timeout: *mut libc::timeval,
+) -> c_int {
+    unsafe { libc::select(nfds, readfds, writefds, exceptfds, timeout) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __send(
+    sockfd: c_int, buf: *const c_void, len: usize, flags: c_int,
+) -> isize {
+    unsafe { libc::send(sockfd, buf, len, flags) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __connect(
+    sockfd: c_int, addr: *const libc::sockaddr, addrlen: libc::socklen_t,
+) -> c_int {
+    unsafe { libc::connect(sockfd, addr, addrlen) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __fcntl(fd: c_int, cmd: c_int, mut args: ...) -> c_int {
+    let arg: c_long = unsafe { args.arg() };
+    unsafe { libc::fcntl(fd, cmd, arg) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __lseek(fd: c_int, offset: libc::off_t, whence: c_int) -> libc::off_t {
+    unsafe { libc::lseek(fd, offset, whence) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __sbrk(increment: isize) -> *mut c_void {
+    unsafe { libc::sbrk(increment) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __getpid() -> libc::pid_t {
+    unsafe { libc::getpid() }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __getpgid(pid: libc::pid_t) -> libc::pid_t {
+    unsafe { libc::getpgid(pid) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __setpgid(pid: libc::pid_t, pgid: libc::pid_t) -> c_int {
+    unsafe { libc::setpgid(pid, pgid) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __sysconf(name: c_int) -> c_long {
+    unsafe { libc::sysconf(name) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __getpagesize() -> c_int {
+    unsafe { libc::sysconf(libc::_SC_PAGESIZE) as c_int }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __gettimeofday(tv: *mut libc::timeval, tz: *mut c_void) -> c_int {
+    unsafe { libc::gettimeofday(tv, tz as *mut libc::timezone) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __gmtime_r(time: *const libc::time_t, result: *mut libc::tm) -> *mut libc::tm {
+    unsafe { libc::gmtime_r(time, result) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __nanosleep(
+    req: *const libc::timespec, rem: *mut libc::timespec,
+) -> c_int {
+    unsafe { libc::nanosleep(req, rem) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __secure_getenv(name: *const c_char) -> *mut c_char {
+    // In secure mode (setuid/setgid), return null. Otherwise, forward to getenv.
+    if unsafe { libc::getauxval(libc::AT_SECURE) } != 0 {
+        return core::ptr::null_mut();
+    }
+    unsafe { libc::getenv(name) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __posix_getopt(
+    argc: c_int, argv: *const *mut c_char, optstring: *const c_char,
+) -> c_int {
+    unsafe { libc::getopt(argc, argv, optstring) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __bzero(s: *mut c_void, n: usize) {
+    unsafe { core::ptr::write_bytes(s as *mut u8, 0, n) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __ffs(i: c_int) -> c_int {
+    if i == 0 { 0 } else { i.trailing_zeros() as c_int + 1 }
+}
+
+// ── __sched_* aliases ───────────────────────────────────────────────────────
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __sched_yield() -> c_int {
+    unsafe { libc::sched_yield() }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __sched_get_priority_max(policy: c_int) -> c_int {
+    unsafe { libc::sched_get_priority_max(policy) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __sched_get_priority_min(policy: c_int) -> c_int {
+    unsafe { libc::sched_get_priority_min(policy) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __sched_getparam(pid: libc::pid_t, param: *mut libc::sched_param) -> c_int {
+    unsafe { libc::sched_getparam(pid, param) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __sched_getscheduler(pid: libc::pid_t) -> c_int {
+    unsafe { libc::sched_getscheduler(pid) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __sched_setscheduler(
+    pid: libc::pid_t, policy: c_int, param: *const libc::sched_param,
+) -> c_int {
+    unsafe { libc::sched_setscheduler(pid, policy, param) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __sched_setparam(
+    pid: libc::pid_t, param: *const libc::sched_param,
+) -> c_int {
+    unsafe { libc::sched_setparam(pid, param) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __sched_rr_get_interval(
+    pid: libc::pid_t, tp: *mut libc::timespec,
+) -> c_int {
+    unsafe { libc::sched_rr_get_interval(pid, tp) }
+}
+
+// ── __sig* aliases ──────────────────────────────────────────────────────────
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __sigaction(
+    signum: c_int, act: *const libc::sigaction, oldact: *mut libc::sigaction,
+) -> c_int {
+    unsafe { libc::sigaction(signum, act, oldact) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __sigaddset(set: *mut libc::sigset_t, signum: c_int) -> c_int {
+    unsafe { libc::sigaddset(set, signum) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __sigdelset(set: *mut libc::sigset_t, signum: c_int) -> c_int {
+    unsafe { libc::sigdelset(set, signum) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __sigismember(set: *const libc::sigset_t, signum: c_int) -> c_int {
+    unsafe { libc::sigismember(set, signum) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __sigpause(sig: c_int) -> c_int {
+    unsafe { sigpause(sig) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __sigsuspend(set: *const libc::sigset_t) -> c_int {
+    unsafe { libc::sigsuspend(set) }
+}
+

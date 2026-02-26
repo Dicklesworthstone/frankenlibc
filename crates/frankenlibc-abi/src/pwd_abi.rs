@@ -906,6 +906,119 @@ pub unsafe extern "C" fn getspent_r(
     })
 }
 
+// ===========================================================================
+// gshadow database — /etc/gshadow
+// ===========================================================================
+//
+// The gshadow database stores group passwords and admin lists.
+// Format: groupname:password:admins:members
+// struct sgrp { sg_namp, sg_passwd, *sg_adm, *sg_mem } (glibc)
+//
+// Most systems don't use gshadow heavily, so we provide safe stubs
+// that always return "not found" for lookups and empty iteration.
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn setsgent() {
+    // no-op
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn endsgent() {
+    // no-op
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getsgent() -> *mut c_void {
+    ptr::null_mut()
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getsgent_r(
+    _result_buf: *mut c_void,
+    _buffer: *mut c_char,
+    _buflen: usize,
+    result: *mut *mut c_void,
+) -> c_int {
+    if !result.is_null() {
+        unsafe { *result = ptr::null_mut() };
+    }
+    libc::ENOENT
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getsgnam(_name: *const c_char) -> *mut c_void {
+    ptr::null_mut()
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getsgnam_r(
+    _name: *const c_char,
+    _result_buf: *mut c_void,
+    _buffer: *mut c_char,
+    _buflen: usize,
+    result: *mut *mut c_void,
+) -> c_int {
+    if !result.is_null() {
+        unsafe { *result = ptr::null_mut() };
+    }
+    libc::ENOENT
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn fgetsgent(_stream: *mut c_void) -> *mut c_void {
+    ptr::null_mut()
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn fgetsgent_r(
+    _stream: *mut c_void,
+    _result_buf: *mut c_void,
+    _buffer: *mut c_char,
+    _buflen: usize,
+    result: *mut *mut c_void,
+) -> c_int {
+    if !result.is_null() {
+        unsafe { *result = ptr::null_mut() };
+    }
+    libc::ENOENT
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn sgetsgent(_string: *const c_char) -> *mut c_void {
+    ptr::null_mut()
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn sgetsgent_r(
+    _string: *const c_char,
+    _result_buf: *mut c_void,
+    _buffer: *mut c_char,
+    _buflen: usize,
+    result: *mut *mut c_void,
+) -> c_int {
+    if !result.is_null() {
+        unsafe { *result = ptr::null_mut() };
+    }
+    libc::ENOENT
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn putsgent(_sgrp: *const c_void, _stream: *mut c_void) -> c_int {
+    -1 // not supported
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn lckpwdf() -> c_int {
+    // Lock the password file — no-op in our implementation
+    0
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ulckpwdf() -> c_int {
+    // Unlock the password file — no-op
+    0
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
