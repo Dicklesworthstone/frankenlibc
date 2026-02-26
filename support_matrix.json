@@ -17221,7 +17221,7 @@
     },
     {
       "symbol": "__ivaliduser",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {

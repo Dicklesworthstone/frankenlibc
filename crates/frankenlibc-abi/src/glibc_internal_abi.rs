@@ -1625,7 +1625,17 @@ pub unsafe extern "C" fn __getpid() -> c_int {
 pub unsafe extern "C" fn __gettimeofday(tv: *mut c_void, tz: *mut c_void) -> c_int {
     unsafe { libc::syscall(libc::SYS_gettimeofday, tv, tz) as c_int }
 }
-dlsym_passthrough!(fn __ivaliduser(hostf: *mut c_void, raddr: c_uint, luser: *const c_char, ruser: *const c_char) -> c_int);
+// __ivaliduser: validate remote user against .rhosts — deny-all for security
+// .rhosts-based authentication is deprecated and dangerous.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __ivaliduser(
+    _hostf: *mut c_void,
+    _raddr: c_uint,
+    _luser: *const c_char,
+    _ruser: *const c_char,
+) -> c_int {
+    -1 // Always deny
+}
 // __lseek: native syscall
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __lseek(fd: c_int, offset: i64, whence: c_int) -> i64 {
