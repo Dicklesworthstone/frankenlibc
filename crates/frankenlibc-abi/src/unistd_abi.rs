@@ -4156,10 +4156,7 @@ pub unsafe extern "C" fn mq_timedsend(
 
 /// `mq_notify` — register for notification when a message arrives.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn mq_notify(
-    mqdes: c_int,
-    sevp: *const libc::sigevent,
-) -> c_int {
+pub unsafe extern "C" fn mq_notify(mqdes: c_int, sevp: *const libc::sigevent) -> c_int {
     unsafe {
         syscall_ret_int(
             libc::syscall(libc::SYS_mq_notify, mqdes, sevp),
@@ -7731,10 +7728,22 @@ pub unsafe extern "C" fn getmntent_r(
             .split(|&b| b == b' ' || b == b'\t')
             .filter(|f| !f.is_empty());
 
-        let fsname = match fields.next() { Some(f) => f, None => continue };
-        let dir = match fields.next() { Some(f) => f, None => continue };
-        let mtype = match fields.next() { Some(f) => f, None => continue };
-        let opts = match fields.next() { Some(f) => f, None => continue };
+        let fsname = match fields.next() {
+            Some(f) => f,
+            None => continue,
+        };
+        let dir = match fields.next() {
+            Some(f) => f,
+            None => continue,
+        };
+        let mtype = match fields.next() {
+            Some(f) => f,
+            None => continue,
+        };
+        let opts = match fields.next() {
+            Some(f) => f,
+            None => continue,
+        };
         let freq_s = fields.next().unwrap_or(b"0");
         let passno_s = fields.next().unwrap_or(b"0");
 
@@ -7749,22 +7758,40 @@ pub unsafe extern "C" fn getmntent_r(
         let mut off = 0usize;
 
         let fsname_ptr = unsafe { buf_u8.add(off) } as *mut c_char;
-        unsafe { std::ptr::copy_nonoverlapping(fsname.as_ptr(), buf_u8.add(off), fsname.len()); *buf_u8.add(off + fsname.len()) = 0; }
+        unsafe {
+            std::ptr::copy_nonoverlapping(fsname.as_ptr(), buf_u8.add(off), fsname.len());
+            *buf_u8.add(off + fsname.len()) = 0;
+        }
         off += fsname.len() + 1;
 
         let dir_ptr = unsafe { buf_u8.add(off) } as *mut c_char;
-        unsafe { std::ptr::copy_nonoverlapping(dir.as_ptr(), buf_u8.add(off), dir.len()); *buf_u8.add(off + dir.len()) = 0; }
+        unsafe {
+            std::ptr::copy_nonoverlapping(dir.as_ptr(), buf_u8.add(off), dir.len());
+            *buf_u8.add(off + dir.len()) = 0;
+        }
         off += dir.len() + 1;
 
         let type_ptr = unsafe { buf_u8.add(off) } as *mut c_char;
-        unsafe { std::ptr::copy_nonoverlapping(mtype.as_ptr(), buf_u8.add(off), mtype.len()); *buf_u8.add(off + mtype.len()) = 0; }
+        unsafe {
+            std::ptr::copy_nonoverlapping(mtype.as_ptr(), buf_u8.add(off), mtype.len());
+            *buf_u8.add(off + mtype.len()) = 0;
+        }
         off += mtype.len() + 1;
 
         let opts_ptr = unsafe { buf_u8.add(off) } as *mut c_char;
-        unsafe { std::ptr::copy_nonoverlapping(opts.as_ptr(), buf_u8.add(off), opts.len()); *buf_u8.add(off + opts.len()) = 0; }
+        unsafe {
+            std::ptr::copy_nonoverlapping(opts.as_ptr(), buf_u8.add(off), opts.len());
+            *buf_u8.add(off + opts.len()) = 0;
+        }
 
-        let freq: c_int = std::str::from_utf8(freq_s).ok().and_then(|s| s.parse().ok()).unwrap_or(0);
-        let passno: c_int = std::str::from_utf8(passno_s).ok().and_then(|s| s.parse().ok()).unwrap_or(0);
+        let freq: c_int = std::str::from_utf8(freq_s)
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0);
+        let passno: c_int = std::str::from_utf8(passno_s)
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0);
 
         // Fill mntent struct: { *fsname, *dir, *type, *opts, freq, passno }
         let ent = mntbuf as *mut *mut c_char;
@@ -10726,16 +10753,7 @@ pub unsafe extern "C" fn process_madvise(
     advice: c_int,
     flags: c_uint,
 ) -> isize {
-    let rc = unsafe {
-        libc::syscall(
-            libc::SYS_process_madvise,
-            pidfd,
-            iovec,
-            vlen,
-            advice,
-            flags,
-        )
-    };
+    let rc = unsafe { libc::syscall(libc::SYS_process_madvise, pidfd, iovec, vlen, advice, flags) };
     if rc < 0 {
         unsafe { set_abi_errno(last_host_errno(libc::EINVAL)) };
     }
@@ -10745,8 +10763,7 @@ pub unsafe extern "C" fn process_madvise(
 /// Linux `process_mrelease` — release memory of a dying process.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn process_mrelease(pidfd: c_int, flags: c_uint) -> c_int {
-    let rc =
-        unsafe { libc::syscall(libc::SYS_process_mrelease, pidfd, flags) as c_int };
+    let rc = unsafe { libc::syscall(libc::SYS_process_mrelease, pidfd, flags) as c_int };
     if rc < 0 {
         unsafe { set_abi_errno(last_host_errno(libc::EINVAL)) };
     }
@@ -10875,11 +10892,7 @@ pub unsafe extern "C" fn backtrace_symbols(
 
 /// `backtrace_symbols_fd` — write backtrace symbols to file descriptor.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn backtrace_symbols_fd(
-    buffer: *const *mut c_void,
-    size: c_int,
-    fd: c_int,
-) {
+pub unsafe extern "C" fn backtrace_symbols_fd(buffer: *const *mut c_void, size: c_int, fd: c_int) {
     if buffer.is_null() || size <= 0 {
         return;
     }
@@ -10983,11 +10996,11 @@ pub struct FTSENT {
 }
 
 // FTS_* info constants
-const FTS_D: u16 = 1;    // preorder directory
-const FTS_F: u16 = 8;    // regular file
-const FTS_SL: u16 = 12;  // symlink
-const FTS_DEFAULT: u16 = 3;  // anything else
-const FTS_NS: u16 = 10;  // no stat info
+const FTS_D: u16 = 1; // preorder directory
+const FTS_F: u16 = 8; // regular file
+const FTS_SL: u16 = 12; // symlink
+const FTS_DEFAULT: u16 = 3; // anything else
+const FTS_NS: u16 = 10; // no stat info
 
 // FTS option flags
 const FTS_PHYSICAL: c_int = 0x0010;
@@ -11082,7 +11095,9 @@ pub unsafe extern "C" fn fts_read(ftsp: *mut c_void) -> *mut FTSENT {
         }
     };
 
-    let name = entry.path.file_name()
+    let name = entry
+        .path
+        .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
     let name_cstr = std::ffi::CString::new(name.as_bytes()).unwrap_or_default();
@@ -11103,7 +11118,11 @@ pub unsafe extern "C" fn fts_read(ftsp: *mut c_void) -> *mut FTSENT {
     owned.ftsent.fts_ino = stat_buf.st_ino;
     owned.ftsent.fts_dev = stat_buf.st_dev;
     owned.ftsent.fts_nlink = stat_buf.st_nlink;
-    owned.ftsent.fts_errno = if stat_result < 0 { unsafe { *libc::__errno_location() } } else { 0 };
+    owned.ftsent.fts_errno = if stat_result < 0 {
+        unsafe { *libc::__errno_location() }
+    } else {
+        0
+    };
 
     stream.current = Some(owned);
 
@@ -11124,11 +11143,7 @@ pub unsafe extern "C" fn fts_children(_ftsp: *mut c_void, _options: c_int) -> *m
 
 /// `fts_set` — set instruction for next fts_read return.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fts_set(
-    _ftsp: *mut c_void,
-    _f: *mut FTSENT,
-    _instr: c_int,
-) -> c_int {
+pub unsafe extern "C" fn fts_set(_ftsp: *mut c_void, _f: *mut FTSENT, _instr: c_int) -> c_int {
     0 // success
 }
 

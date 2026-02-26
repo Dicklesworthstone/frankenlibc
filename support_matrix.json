@@ -2,7 +2,7 @@
   "version": 2,
   "generated_at_utc": "2026-02-18T04:49:26Z",
   "library": "/data/tmp/cargo-target/release/libfrankenlibc_abi.so",
-  "total_exported": 1277,
+  "total_exported": 1279,
   "taxonomy": {
     "Implemented": "Native Rust code owns the entire operation. No host libc dependency. Full test coverage required.",
     "RawSyscall": "ABI entrypoint marshals arguments directly to Linux syscall instruction. No glibc call-through.",
@@ -10923,6 +10923,24 @@
       "perf_class": "strict_hotpath",
       "strict_semantics": "Linear search with insert if not found",
       "hardened_semantics": "Linear search/insert with bounds checking",
+      "default_stub": false
+    },
+    {
+      "symbol": "insque",
+      "status": "Implemented",
+      "module": "search_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "POSIX doubly-linked list insertion after predecessor",
+      "hardened_semantics": "List insertion with null pointer validation",
+      "default_stub": false
+    },
+    {
+      "symbol": "remque",
+      "status": "Implemented",
+      "module": "search_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "POSIX doubly-linked list element removal",
+      "hardened_semantics": "List removal with null pointer validation",
       "default_stub": false
     },
     {

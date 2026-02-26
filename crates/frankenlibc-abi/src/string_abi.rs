@@ -5354,7 +5354,9 @@ pub unsafe extern "C" fn argz_create(
     let mut i = 0;
     loop {
         let p = unsafe { *argv.add(i) };
-        if p.is_null() { break; }
+        if p.is_null() {
+            break;
+        }
         total_len += unsafe { libc::strlen(p) } + 1;
         count += 1;
         i += 1;
@@ -5460,7 +5462,8 @@ pub unsafe extern "C" fn argz_next(
     }
     // Find end of current entry (next NUL) then advance past it
     let entry_offset = unsafe { entry.offset_from(argz) } as usize;
-    let remaining = &unsafe { std::slice::from_raw_parts(argz as *const u8, argz_len) }[entry_offset..];
+    let remaining =
+        &unsafe { std::slice::from_raw_parts(argz as *const u8, argz_len) }[entry_offset..];
     if let Some(nul_pos) = remaining.iter().position(|&b| b == 0) {
         let next_offset = entry_offset + nul_pos + 1;
         if next_offset < argz_len {
@@ -5656,7 +5659,11 @@ pub unsafe extern "C" fn argz_replace(
         return libc::EINVAL;
     }
     let find_str = unsafe { CStr::from_ptr(str_) };
-    let replace_cstr = if with.is_null() { None } else { Some(unsafe { CStr::from_ptr(with) }) };
+    let replace_cstr = if with.is_null() {
+        None
+    } else {
+        Some(unsafe { CStr::from_ptr(with) })
+    };
 
     // Rebuild the argz with replacements
     let az = unsafe { *argz };
@@ -5835,7 +5842,14 @@ pub unsafe extern "C" fn envz_merge(
         let existing = unsafe { envz_entry(*envz, *envz_len, name_cstr.as_ptr()) };
         if existing.is_null() || override_ != 0 {
             let value = eq_pos.map(|p| unsafe { envz2.add(pos + p + 1) });
-            let rc = unsafe { envz_add(envz, envz_len, name_cstr.as_ptr(), value.unwrap_or(std::ptr::null())) };
+            let rc = unsafe {
+                envz_add(
+                    envz,
+                    envz_len,
+                    name_cstr.as_ptr(),
+                    value.unwrap_or(std::ptr::null()),
+                )
+            };
             if rc != 0 {
                 return rc;
             }

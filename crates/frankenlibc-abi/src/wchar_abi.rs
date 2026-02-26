@@ -3930,3 +3930,85 @@ pub unsafe extern "C" fn wmemrchr(s: *const u32, c: u32, n: usize) -> *mut u32 {
     );
     result
 }
+
+// ===========================================================================
+// Locale-aware wide character _l variants — C locale passthrough
+// ===========================================================================
+
+/// Wide character type descriptor used by wctype/iswctype.
+/// We encode POSIX character classes as small integers.
+type WctypeT = usize;
+
+/// `wctype_l` — get wide character class by name (locale variant).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn wctype_l(name: *const u8, _locale: *mut std::ffi::c_void) -> WctypeT {
+    unsafe { wctype(name) }
+}
+
+/// `wctype` — get wide character class by name.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn wctype(name: *const u8) -> WctypeT {
+    if name.is_null() {
+        return 0;
+    }
+    // SAFETY: name is a NUL-terminated C string from the caller.
+    let cstr = unsafe { std::ffi::CStr::from_ptr(name as *const i8) };
+    match cstr.to_bytes() {
+        b"alnum" => 1,
+        b"alpha" => 2,
+        b"blank" => 3,
+        b"cntrl" => 4,
+        b"digit" => 5,
+        b"graph" => 6,
+        b"lower" => 7,
+        b"print" => 8,
+        b"punct" => 9,
+        b"space" => 10,
+        b"upper" => 11,
+        b"xdigit" => 12,
+        _ => 0,
+    }
+}
+
+/// `iswctype_l` — test wide character classification (locale variant).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn iswctype_l(wc: u32, desc: WctypeT, _locale: *mut std::ffi::c_void) -> i32 {
+    unsafe { iswctype(wc, desc) }
+}
+
+/// `iswctype` — test wide character classification.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn iswctype(wc: u32, desc: WctypeT) -> i32 {
+    let ascii = u8::try_from(wc).ok().filter(|b| b.is_ascii());
+    let result = match desc {
+        1 => ascii.is_some_and(|c| c.is_ascii_alphanumeric()),
+        2 => ascii.is_some_and(|c| c.is_ascii_alphabetic()),
+        3 => matches!(ascii, Some(b' ') | Some(b'\t')), // space or tab
+        4 => ascii.is_some_and(|c| c.is_ascii_control()),
+        5 => ascii.is_some_and(|c| c.is_ascii_digit()),
+        6 => ascii.is_some_and(|c| c.is_ascii_graphic()),
+        7 => ascii.is_some_and(|c| c.is_ascii_lowercase()),
+        8 => {
+            // print: 0x20..=0x7E
+            ascii.is_some_and(|c| (0x20..=0x7E).contains(&c))
+        }
+        9 => ascii.is_some_and(|c| c.is_ascii_punctuation()),
+        10 => ascii.is_some_and(|c| c.is_ascii_whitespace()),
+        11 => ascii.is_some_and(|c| c.is_ascii_uppercase()),
+        12 => ascii.is_some_and(|c| c.is_ascii_hexdigit()),
+        _ => false,
+    };
+    if result { 1 } else { 0 }
+}
+
+/// `towupper_l` — convert wide character to uppercase (locale variant).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn towupper_l(wc: u32, _locale: *mut std::ffi::c_void) -> u32 {
+    unsafe { towupper(wc) }
+}
+
+/// `towlower_l` — convert wide character to lowercase (locale variant).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn towlower_l(wc: u32, _locale: *mut std::ffi::c_void) -> u32 {
+    unsafe { towlower(wc) }
+}

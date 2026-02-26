@@ -6,7 +6,9 @@
 //! with membrane validation.
 
 use std::cell::Cell;
-use std::ffi::{CStr, c_char, c_double, c_int, c_long, c_longlong, c_uint, c_ulong, c_ulonglong, c_void};
+use std::ffi::{
+    CStr, c_char, c_double, c_int, c_long, c_longlong, c_uint, c_ulong, c_ulonglong, c_void,
+};
 use std::ptr;
 
 use crate::malloc_abi::known_remaining;
@@ -2311,32 +2313,30 @@ pub unsafe extern "C" fn hsearch(item: HashEntry, action: HashAction) -> *mut Ha
                     &mut *entry as *mut HashEntry
                 });
             }
-            None => {
-                match action {
-                    HashAction::ENTER => {
-                        table[idx] = Some(HashSlot {
-                            key: key_str.to_string(),
-                            data: item.data,
-                        });
-                        thread_local! {
-                            static RESULT2: std::cell::RefCell<HashEntry> = const {
-                                std::cell::RefCell::new(HashEntry {
-                                    key: std::ptr::null_mut(),
-                                    data: std::ptr::null_mut(),
-                                })
-                            };
-                        }
-                        let slot = table[idx].as_mut().unwrap();
-                        return RESULT2.with(|r| {
-                            let mut entry = r.borrow_mut();
-                            entry.key = slot.key.as_ptr() as *mut c_char;
-                            entry.data = slot.data;
-                            &mut *entry as *mut HashEntry
-                        });
+            None => match action {
+                HashAction::ENTER => {
+                    table[idx] = Some(HashSlot {
+                        key: key_str.to_string(),
+                        data: item.data,
+                    });
+                    thread_local! {
+                        static RESULT2: std::cell::RefCell<HashEntry> = const {
+                            std::cell::RefCell::new(HashEntry {
+                                key: std::ptr::null_mut(),
+                                data: std::ptr::null_mut(),
+                            })
+                        };
                     }
-                    HashAction::FIND => return ptr::null_mut(),
+                    let slot = table[idx].as_mut().unwrap();
+                    return RESULT2.with(|r| {
+                        let mut entry = r.borrow_mut();
+                        entry.key = slot.key.as_ptr() as *mut c_char;
+                        entry.data = slot.data;
+                        &mut *entry as *mut HashEntry
+                    });
                 }
-            }
+                HashAction::FIND => return ptr::null_mut(),
+            },
             _ => {} // occupied by different key, continue probing
         }
     }
@@ -2429,37 +2429,35 @@ pub unsafe extern "C" fn hsearch_r(
                 });
                 return 1;
             }
-            None => {
-                match action {
-                    HashAction::ENTER => {
-                        table.slots[idx] = Some(HashSlot {
-                            key: key_str.to_string(),
-                            data: item.data,
-                        });
-                        thread_local! {
-                            static RET2: std::cell::RefCell<HashEntry> = const {
-                                std::cell::RefCell::new(HashEntry {
-                                    key: std::ptr::null_mut(),
-                                    data: std::ptr::null_mut(),
-                                })
-                            };
-                        }
-                        let slot = table.slots[idx].as_mut().unwrap();
-                        RET2.with(|r| {
-                            let mut entry = r.borrow_mut();
-                            entry.key = slot.key.as_ptr() as *mut c_char;
-                            entry.data = slot.data;
-                            unsafe { *retval = &mut *entry as *mut HashEntry };
-                        });
-                        return 1;
+            None => match action {
+                HashAction::ENTER => {
+                    table.slots[idx] = Some(HashSlot {
+                        key: key_str.to_string(),
+                        data: item.data,
+                    });
+                    thread_local! {
+                        static RET2: std::cell::RefCell<HashEntry> = const {
+                            std::cell::RefCell::new(HashEntry {
+                                key: std::ptr::null_mut(),
+                                data: std::ptr::null_mut(),
+                            })
+                        };
                     }
-                    HashAction::FIND => {
-                        unsafe { *retval = ptr::null_mut() };
-                        unsafe { set_abi_errno(libc::ESRCH) };
-                        return 0;
-                    }
+                    let slot = table.slots[idx].as_mut().unwrap();
+                    RET2.with(|r| {
+                        let mut entry = r.borrow_mut();
+                        entry.key = slot.key.as_ptr() as *mut c_char;
+                        entry.data = slot.data;
+                        unsafe { *retval = &mut *entry as *mut HashEntry };
+                    });
+                    return 1;
                 }
-            }
+                HashAction::FIND => {
+                    unsafe { *retval = ptr::null_mut() };
+                    unsafe { set_abi_errno(libc::ESRCH) };
+                    return 0;
+                }
+            },
             _ => {}
         }
     }
@@ -2538,10 +2536,12 @@ pub unsafe extern "C" fn error(status: c_int, errnum: c_int, fmt: *const c_char,
         if let Ok(f) = fmt_str.to_str() {
             // Simple format: just print as-is for common case.
             // For full printf compatibility, delegate to our printf engine.
-            let msg = unsafe { crate::stdio_abi::vprintf_extract_and_render(
-                f,
-                (&mut args) as *mut _ as *mut c_void,
-            ) };
+            let msg = unsafe {
+                crate::stdio_abi::vprintf_extract_and_render(
+                    f,
+                    (&mut args) as *mut _ as *mut c_void,
+                )
+            };
             let _ = write!(stderr, "{msg}");
         }
     }
@@ -2602,10 +2602,12 @@ pub unsafe extern "C" fn error_at_line(
     if !fmt.is_null() {
         let fmt_str = unsafe { CStr::from_ptr(fmt) };
         if let Ok(f) = fmt_str.to_str() {
-            let msg = unsafe { crate::stdio_abi::vprintf_extract_and_render(
-                f,
-                (&mut args) as *mut _ as *mut c_void,
-            ) };
+            let msg = unsafe {
+                crate::stdio_abi::vprintf_extract_and_render(
+                    f,
+                    (&mut args) as *mut _ as *mut c_void,
+                )
+            };
             let _ = write!(stderr, "{msg}");
         }
     }
@@ -2652,10 +2654,12 @@ pub unsafe extern "C" fn err(eval: c_int, fmt: *const c_char, mut args: ...) {
     if !fmt.is_null() {
         let fmt_str = unsafe { CStr::from_ptr(fmt) };
         if let Ok(f) = fmt_str.to_str() {
-            let msg = unsafe { crate::stdio_abi::vprintf_extract_and_render(
-                f,
-                (&mut args) as *mut _ as *mut c_void,
-            ) };
+            let msg = unsafe {
+                crate::stdio_abi::vprintf_extract_and_render(
+                    f,
+                    (&mut args) as *mut _ as *mut c_void,
+                )
+            };
             let _ = write!(stderr, "{msg}: ");
         }
     }
@@ -2692,10 +2696,12 @@ pub unsafe extern "C" fn errx(eval: c_int, fmt: *const c_char, mut args: ...) {
     if !fmt.is_null() {
         let fmt_str = unsafe { CStr::from_ptr(fmt) };
         if let Ok(f) = fmt_str.to_str() {
-            let msg = unsafe { crate::stdio_abi::vprintf_extract_and_render(
-                f,
-                (&mut args) as *mut _ as *mut c_void,
-            ) };
+            let msg = unsafe {
+                crate::stdio_abi::vprintf_extract_and_render(
+                    f,
+                    (&mut args) as *mut _ as *mut c_void,
+                )
+            };
             let _ = write!(stderr, "{msg}");
         }
     }
@@ -2723,10 +2729,12 @@ pub unsafe extern "C" fn warn(fmt: *const c_char, mut args: ...) {
     if !fmt.is_null() {
         let fmt_str = unsafe { CStr::from_ptr(fmt) };
         if let Ok(f) = fmt_str.to_str() {
-            let msg = unsafe { crate::stdio_abi::vprintf_extract_and_render(
-                f,
-                (&mut args) as *mut _ as *mut c_void,
-            ) };
+            let msg = unsafe {
+                crate::stdio_abi::vprintf_extract_and_render(
+                    f,
+                    (&mut args) as *mut _ as *mut c_void,
+                )
+            };
             let _ = write!(stderr, "{msg}: ");
         }
     }
@@ -2762,10 +2770,12 @@ pub unsafe extern "C" fn warnx(fmt: *const c_char, mut args: ...) {
     if !fmt.is_null() {
         let fmt_str = unsafe { CStr::from_ptr(fmt) };
         if let Ok(f) = fmt_str.to_str() {
-            let msg = unsafe { crate::stdio_abi::vprintf_extract_and_render(
-                f,
-                (&mut args) as *mut _ as *mut c_void,
-            ) };
+            let msg = unsafe {
+                crate::stdio_abi::vprintf_extract_and_render(
+                    f,
+                    (&mut args) as *mut _ as *mut c_void,
+                )
+            };
             let _ = write!(stderr, "{msg}");
         }
     }
@@ -2780,7 +2790,11 @@ pub unsafe extern "C" fn verr(eval: c_int, fmt: *const c_char, ap: *mut c_void) 
     let mut stderr = std::io::stderr().lock();
     let progname = unsafe {
         let p = program_invocation_short_name;
-        if !p.is_null() { CStr::from_ptr(p).to_str().unwrap_or("unknown") } else { "unknown" }
+        if !p.is_null() {
+            CStr::from_ptr(p).to_str().unwrap_or("unknown")
+        } else {
+            "unknown"
+        }
     };
     let _ = write!(stderr, "{progname}: ");
     if !fmt.is_null() {
@@ -2793,7 +2807,11 @@ pub unsafe extern "C" fn verr(eval: c_int, fmt: *const c_char, ap: *mut c_void) 
     let errno_val = unsafe { *super::errno_abi::__errno_location() };
     let err_msg = unsafe {
         let p = libc::strerror(errno_val);
-        if !p.is_null() { CStr::from_ptr(p).to_str().unwrap_or("Unknown error") } else { "Unknown error" }
+        if !p.is_null() {
+            CStr::from_ptr(p).to_str().unwrap_or("Unknown error")
+        } else {
+            "Unknown error"
+        }
     };
     let _ = writeln!(stderr, "{err_msg}");
     std::process::exit(eval);
@@ -2806,7 +2824,11 @@ pub unsafe extern "C" fn verrx(eval: c_int, fmt: *const c_char, ap: *mut c_void)
     let mut stderr = std::io::stderr().lock();
     let progname = unsafe {
         let p = program_invocation_short_name;
-        if !p.is_null() { CStr::from_ptr(p).to_str().unwrap_or("unknown") } else { "unknown" }
+        if !p.is_null() {
+            CStr::from_ptr(p).to_str().unwrap_or("unknown")
+        } else {
+            "unknown"
+        }
     };
     let _ = write!(stderr, "{progname}: ");
     if !fmt.is_null() {
@@ -2827,7 +2849,11 @@ pub unsafe extern "C" fn vwarn(fmt: *const c_char, ap: *mut c_void) {
     let mut stderr = std::io::stderr().lock();
     let progname = unsafe {
         let p = program_invocation_short_name;
-        if !p.is_null() { CStr::from_ptr(p).to_str().unwrap_or("unknown") } else { "unknown" }
+        if !p.is_null() {
+            CStr::from_ptr(p).to_str().unwrap_or("unknown")
+        } else {
+            "unknown"
+        }
     };
     let _ = write!(stderr, "{progname}: ");
     if !fmt.is_null() {
@@ -2840,7 +2866,11 @@ pub unsafe extern "C" fn vwarn(fmt: *const c_char, ap: *mut c_void) {
     let errno_val = unsafe { *super::errno_abi::__errno_location() };
     let err_msg = unsafe {
         let p = libc::strerror(errno_val);
-        if !p.is_null() { CStr::from_ptr(p).to_str().unwrap_or("Unknown error") } else { "Unknown error" }
+        if !p.is_null() {
+            CStr::from_ptr(p).to_str().unwrap_or("Unknown error")
+        } else {
+            "Unknown error"
+        }
     };
     let _ = writeln!(stderr, "{err_msg}");
 }
@@ -2852,7 +2882,11 @@ pub unsafe extern "C" fn vwarnx(fmt: *const c_char, ap: *mut c_void) {
     let mut stderr = std::io::stderr().lock();
     let progname = unsafe {
         let p = program_invocation_short_name;
-        if !p.is_null() { CStr::from_ptr(p).to_str().unwrap_or("unknown") } else { "unknown" }
+        if !p.is_null() {
+            CStr::from_ptr(p).to_str().unwrap_or("unknown")
+        } else {
+            "unknown"
+        }
     };
     let _ = write!(stderr, "{progname}: ");
     if !fmt.is_null() {
@@ -2883,13 +2917,13 @@ pub extern "C" fn get_nprocs() -> c_int {
                 && let (Ok(lo), Ok(hi)) = (parts[0].parse::<i32>(), parts[1].parse::<i32>())
             {
                 count += hi - lo + 1;
-            } else if parts.len() == 1
-                && parts[0].parse::<i32>().is_ok()
-            {
+            } else if parts.len() == 1 && parts[0].parse::<i32>().is_ok() {
                 count += 1;
             }
         }
-        if count > 0 { return count; }
+        if count > 0 {
+            return count;
+        }
     }
     1 // fallback
 }
@@ -2906,13 +2940,13 @@ pub extern "C" fn get_nprocs_conf() -> c_int {
                 && let (Ok(lo), Ok(hi)) = (parts[0].parse::<i32>(), parts[1].parse::<i32>())
             {
                 count += hi - lo + 1;
-            } else if parts.len() == 1
-                && parts[0].parse::<i32>().is_ok()
-            {
+            } else if parts.len() == 1 && parts[0].parse::<i32>().is_ok() {
                 count += 1;
             }
         }
-        if count > 0 { return count; }
+        if count > 0 {
+            return count;
+        }
     }
     1
 }
@@ -3129,14 +3163,8 @@ pub unsafe extern "C" fn twalk(
 
 /// `tdestroy` — destroy a binary tree, calling freefn for each node.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn tdestroy(
-    root: *mut c_void,
-    freefn: unsafe extern "C" fn(*mut c_void),
-) {
-    unsafe fn destroy_recursive(
-        node: *mut TsearchNode,
-        freefn: unsafe extern "C" fn(*mut c_void),
-    ) {
+pub unsafe extern "C" fn tdestroy(root: *mut c_void, freefn: unsafe extern "C" fn(*mut c_void)) {
+    unsafe fn destroy_recursive(node: *mut TsearchNode, freefn: unsafe extern "C" fn(*mut c_void)) {
         if node.is_null() {
             return;
         }
@@ -3219,10 +3247,12 @@ pub unsafe extern "C" fn getauxval(type_: c_ulong) -> c_ulong {
         let mut offset = 0;
         while offset + 2 * ptr_size <= data.len() {
             let at_type = c_ulong::from_ne_bytes(
-                data[offset..offset + ptr_size].try_into().unwrap_or([0; 8])
+                data[offset..offset + ptr_size].try_into().unwrap_or([0; 8]),
             );
             let at_val = c_ulong::from_ne_bytes(
-                data[offset + ptr_size..offset + 2 * ptr_size].try_into().unwrap_or([0; 8])
+                data[offset + ptr_size..offset + 2 * ptr_size]
+                    .try_into()
+                    .unwrap_or([0; 8]),
             );
             if at_type == 0 {
                 break; // AT_NULL
@@ -3242,9 +3272,19 @@ pub unsafe extern "C" fn getauxval(type_: c_ulong) -> c_ulong {
 // ===========================================================================
 
 static VALID_SHELLS: &[&str] = &[
-    "/bin/sh", "/bin/bash", "/bin/zsh", "/bin/csh", "/bin/tcsh",
-    "/bin/dash", "/bin/fish", "/usr/bin/bash", "/usr/bin/zsh",
-    "/usr/bin/fish", "/usr/bin/tmux", "/bin/false", "/usr/sbin/nologin",
+    "/bin/sh",
+    "/bin/bash",
+    "/bin/zsh",
+    "/bin/csh",
+    "/bin/tcsh",
+    "/bin/dash",
+    "/bin/fish",
+    "/usr/bin/bash",
+    "/usr/bin/zsh",
+    "/usr/bin/fish",
+    "/usr/bin/tmux",
+    "/bin/false",
+    "/usr/sbin/nologin",
 ];
 
 thread_local! {
@@ -3317,7 +3357,9 @@ pub unsafe extern "C" fn gets(s: *mut c_char) -> *mut c_char {
         let mut ch: u8 = 0;
         let n = unsafe { libc::read(0, &mut ch as *mut u8 as *mut c_void, 1) };
         if n <= 0 {
-            if i == 0 { return ptr::null_mut(); }
+            if i == 0 {
+                return ptr::null_mut();
+            }
             break;
         }
         if ch == b'\n' {
@@ -3521,15 +3563,11 @@ pub unsafe extern "C" fn remque(elem: *mut c_void) {
 
 /// `__xpg_strerror_r` — XSI-compliant strerror_r (returns int, not char*).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __xpg_strerror_r(
-    errnum: c_int,
-    buf: *mut c_char,
-    buflen: usize,
-) -> c_int {
+pub unsafe extern "C" fn __xpg_strerror_r(errnum: c_int, buf: *mut c_char, buflen: usize) -> c_int {
     if buf.is_null() || buflen == 0 {
         return libc::ERANGE;
     }
-    let msg = frankenlibc_core::errno::strerror_msg(errnum);
+    let msg = frankenlibc_core::errno::strerror_message(errnum);
     let msg_bytes = msg.as_bytes();
     if msg_bytes.len() >= buflen {
         // Truncate and null-terminate

@@ -10,6 +10,184 @@ use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
 use crate::runtime_policy;
 
+// ---------------------------------------------------------------------------
+// __ctype_*_loc — glibc-compatible ctype table accessors
+// ---------------------------------------------------------------------------
+//
+// glibc's <ctype.h> macros expand to `(*__ctype_b_loc())[c]`, so every
+// compiled C program that uses isalpha/isdigit/etc. needs these tables.
+//
+// The table is 384 entries (indices -128..255) and the returned pointer
+// points to &table[128] so that `table[EOF]` (where EOF = -1) is valid.
+//
+// Bitmask layout matches glibc's <ctype.h> definitions.
+
+const _ISupper: u16 = 1 << 0;
+const _ISlower: u16 = 1 << 1;
+const _ISalpha: u16 = 1 << 2;
+const _ISdigit: u16 = 1 << 3;
+const _ISxdigit: u16 = 1 << 4;
+const _ISspace: u16 = 1 << 5;
+const _ISprint: u16 = 1 << 6;
+const _ISgraph: u16 = 1 << 7;
+const _ISblank: u16 = 1 << 8;
+const _IScntrl: u16 = 1 << 9;
+const _ISpunct: u16 = 1 << 10;
+const _ISalnum: u16 = 1 << 11;
+
+/// Build the 384-entry classification table for the C/POSIX locale.
+/// Indices 0..128 are the "negative" range (-128..-1), index 128 is char 0,
+/// index 128+c is char c.
+const fn build_ctype_b_table() -> [u16; 384] {
+    let mut t = [0u16; 384];
+    // Only chars 0..=127 have defined POSIX behaviour; 128-255 are zero.
+    let mut c: usize = 0;
+    while c <= 255 {
+        let idx = c + 128; // table[128 + c] = classification for char c
+        let mut bits: u16 = 0;
+        // control characters: 0-31 and 127
+        if c <= 31 || c == 127 {
+            bits |= _IScntrl;
+        }
+        // blank: space and tab
+        if c == b' ' as usize || c == b'\t' as usize {
+            bits |= _ISblank;
+        }
+        // space characters: space, tab, newline, vertical tab, form feed, carriage return
+        if c == b' ' as usize
+            || c == b'\t' as usize
+            || c == b'\n' as usize
+            || c == 0x0B // vertical tab
+            || c == 0x0C // form feed
+            || c == b'\r' as usize
+        {
+            bits |= _ISspace;
+        }
+        // uppercase
+        if c >= b'A' as usize && c <= b'Z' as usize {
+            bits |= _ISupper | _ISalpha | _ISalnum | _ISprint | _ISgraph;
+        }
+        // lowercase
+        if c >= b'a' as usize && c <= b'z' as usize {
+            bits |= _ISlower | _ISalpha | _ISalnum | _ISprint | _ISgraph;
+        }
+        // digit
+        if c >= b'0' as usize && c <= b'9' as usize {
+            bits |= _ISdigit | _ISalnum | _ISxdigit | _ISprint | _ISgraph;
+        }
+        // xdigit (A-F, a-f) — digits already handled above
+        if (c >= b'A' as usize && c <= b'F' as usize) || (c >= b'a' as usize && c <= b'f' as usize)
+        {
+            bits |= _ISxdigit;
+        }
+        // printable: 32-126
+        if c >= 0x20 && c <= 0x7E {
+            bits |= _ISprint;
+        }
+        // graph: printable minus space
+        if c > 0x20 && c <= 0x7E {
+            bits |= _ISgraph;
+        }
+        // punct: printable, not alnum, not space
+        if c > 0x20 && c <= 0x7E && (bits & (_ISalpha | _ISdigit)) == 0 {
+            bits |= _ISpunct;
+        }
+        t[idx] = bits;
+        c += 1;
+    }
+    t
+}
+
+const fn build_toupper_table() -> [i32; 384] {
+    let mut t = [0i32; 384];
+    let mut i: usize = 0;
+    while i < 384 {
+        let c = i as i32 - 128;
+        t[i] = if c >= b'a' as i32 && c <= b'z' as i32 {
+            c - 32 // a→A
+        } else {
+            c
+        };
+        i += 1;
+    }
+    t
+}
+
+const fn build_tolower_table() -> [i32; 384] {
+    let mut t = [0i32; 384];
+    let mut i: usize = 0;
+    while i < 384 {
+        let c = i as i32 - 128;
+        t[i] = if c >= b'A' as i32 && c <= b'Z' as i32 {
+            c + 32 // A→a
+        } else {
+            c
+        };
+        i += 1;
+    }
+    t
+}
+
+static CTYPE_B_TABLE: [u16; 384] = build_ctype_b_table();
+static TOUPPER_TABLE: [i32; 384] = build_toupper_table();
+static TOLOWER_TABLE: [i32; 384] = build_tolower_table();
+
+// Thread-local pointers (glibc returns **const, pointing into the table at offset 128)
+std::thread_local! {
+    static CTYPE_B_PTR: std::cell::Cell<*const u16> = const {
+        std::cell::Cell::new(std::ptr::null())
+    };
+    static TOUPPER_PTR: std::cell::Cell<*const i32> = const {
+        std::cell::Cell::new(std::ptr::null())
+    };
+    static TOLOWER_PTR: std::cell::Cell<*const i32> = const {
+        std::cell::Cell::new(std::ptr::null())
+    };
+}
+
+/// Returns a pointer to a pointer to the ctype classification table.
+/// The returned `*const u16` points to `table[128]`, so indexing with
+/// values in -128..255 (including EOF = -1) is valid.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __ctype_b_loc() -> *const *const u16 {
+    // SAFETY: CTYPE_B_TABLE is 'static and we return a pointer to TLS
+    // that points into it at offset 128.
+    CTYPE_B_PTR.with(|cell| {
+        let ptr = cell.get();
+        if ptr.is_null() {
+            let p = unsafe { CTYPE_B_TABLE.as_ptr().add(128) };
+            cell.set(p);
+        }
+        cell.as_ptr() as *const *const u16
+    })
+}
+
+/// Returns a pointer to a pointer to the toupper conversion table.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __ctype_toupper_loc() -> *const *const i32 {
+    TOUPPER_PTR.with(|cell| {
+        let ptr = cell.get();
+        if ptr.is_null() {
+            let p = unsafe { TOUPPER_TABLE.as_ptr().add(128) };
+            cell.set(p);
+        }
+        cell.as_ptr() as *const *const i32
+    })
+}
+
+/// Returns a pointer to a pointer to the tolower conversion table.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __ctype_tolower_loc() -> *const *const i32 {
+    TOLOWER_PTR.with(|cell| {
+        let ptr = cell.get();
+        if ptr.is_null() {
+            let p = unsafe { TOLOWER_TABLE.as_ptr().add(128) };
+            cell.set(p);
+        }
+        cell.as_ptr() as *const *const i32
+    })
+}
+
 #[inline]
 fn classify(c: c_int, f: fn(u8) -> bool) -> c_int {
     if !(0..=255).contains(&c) {

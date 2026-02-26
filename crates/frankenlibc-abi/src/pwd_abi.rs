@@ -602,15 +602,15 @@ const SHADOW_PATH: &str = "/etc/shadow";
 /// Parsed shadow entry stored in thread-local static storage.
 #[repr(C)]
 struct SpwdEntry {
-    sp_namp: *mut c_char,   // login name
-    sp_pwdp: *mut c_char,   // encrypted password
-    sp_lstchg: i64,         // last password change (days since epoch)
-    sp_min: i64,            // min days between changes
-    sp_max: i64,            // max days between changes
-    sp_warn: i64,           // warning days before expiry
-    sp_inact: i64,          // inactive days after expiry
-    sp_expire: i64,         // account expiration (days since epoch)
-    sp_flag: u64,           // reserved
+    sp_namp: *mut c_char, // login name
+    sp_pwdp: *mut c_char, // encrypted password
+    sp_lstchg: i64,       // last password change (days since epoch)
+    sp_min: i64,          // min days between changes
+    sp_max: i64,          // max days between changes
+    sp_warn: i64,         // warning days before expiry
+    sp_inact: i64,        // inactive days after expiry
+    sp_expire: i64,       // account expiration (days since epoch)
+    sp_flag: u64,         // reserved
 }
 
 thread_local! {
@@ -698,17 +698,17 @@ pub unsafe extern "C" fn getspnam(name: *const c_char) -> *mut c_void {
         if let Some(colon) = line.find(':')
             && &line[..colon] == name_str
         {
-                return SHADOW_BUF.with(|buf| {
-                    SHADOW_ENTRY.with(|entry| {
-                        let mut buf = buf.borrow_mut();
-                        let mut entry = entry.borrow_mut();
-                        if fill_shadow_entry(line, &mut buf, &mut entry) {
-                            &mut *entry as *mut SpwdEntry as *mut c_void
-                        } else {
-                            ptr::null_mut()
-                        }
-                    })
-                });
+            return SHADOW_BUF.with(|buf| {
+                SHADOW_ENTRY.with(|entry| {
+                    let mut buf = buf.borrow_mut();
+                    let mut entry = entry.borrow_mut();
+                    if fill_shadow_entry(line, &mut buf, &mut entry) {
+                        &mut *entry as *mut SpwdEntry as *mut c_void
+                    } else {
+                        ptr::null_mut()
+                    }
+                })
+            });
         }
     }
     ptr::null_mut()
@@ -746,44 +746,44 @@ pub unsafe extern "C" fn getspnam_r(
         if let Some(colon) = line.find(':')
             && &line[..colon] == name_str
         {
-                let parts: Vec<&str> = line.split(':').collect();
-                if parts.len() < 8 {
-                    return libc::ENOENT;
-                }
+            let parts: Vec<&str> = line.split(':').collect();
+            if parts.len() < 8 {
+                return libc::ENOENT;
+            }
 
-                // Pack into caller's buffer
-                let name_bytes = parts[0].as_bytes();
-                let pass_bytes = parts[1].as_bytes();
-                let needed = name_bytes.len() + 1 + pass_bytes.len() + 1;
-                if needed > buflen {
-                    return libc::ERANGE;
-                }
+            // Pack into caller's buffer
+            let name_bytes = parts[0].as_bytes();
+            let pass_bytes = parts[1].as_bytes();
+            let needed = name_bytes.len() + 1 + pass_bytes.len() + 1;
+            if needed > buflen {
+                return libc::ERANGE;
+            }
 
-                let buf_slice = unsafe { std::slice::from_raw_parts_mut(buf as *mut u8, buflen) };
-                buf_slice[..name_bytes.len()].copy_from_slice(name_bytes);
-                buf_slice[name_bytes.len()] = 0;
-                let pass_off = name_bytes.len() + 1;
-                buf_slice[pass_off..pass_off + pass_bytes.len()].copy_from_slice(pass_bytes);
-                buf_slice[pass_off + pass_bytes.len()] = 0;
+            let buf_slice = unsafe { std::slice::from_raw_parts_mut(buf as *mut u8, buflen) };
+            buf_slice[..name_bytes.len()].copy_from_slice(name_bytes);
+            buf_slice[name_bytes.len()] = 0;
+            let pass_off = name_bytes.len() + 1;
+            buf_slice[pass_off..pass_off + pass_bytes.len()].copy_from_slice(pass_bytes);
+            buf_slice[pass_off + pass_bytes.len()] = 0;
 
-                let sp = spbuf as *mut SpwdEntry;
-                unsafe {
-                    (*sp).sp_namp = buf;
-                    (*sp).sp_pwdp = buf.add(pass_off);
-                    (*sp).sp_lstchg = parse_shadow_field(parts[2]);
-                    (*sp).sp_min = parse_shadow_field(parts[3]);
-                    (*sp).sp_max = parse_shadow_field(parts[4]);
-                    (*sp).sp_warn = parse_shadow_field(parts[5]);
-                    (*sp).sp_inact = parse_shadow_field(parts[6]);
-                    (*sp).sp_expire = parse_shadow_field(parts[7]);
-                    (*sp).sp_flag = if parts.len() > 8 {
-                        parts[8].parse::<u64>().unwrap_or(0)
-                    } else {
-                        0
-                    };
-                    *result = spbuf;
+            let sp = spbuf as *mut SpwdEntry;
+            unsafe {
+                (*sp).sp_namp = buf;
+                (*sp).sp_pwdp = buf.add(pass_off);
+                (*sp).sp_lstchg = parse_shadow_field(parts[2]);
+                (*sp).sp_min = parse_shadow_field(parts[3]);
+                (*sp).sp_max = parse_shadow_field(parts[4]);
+                (*sp).sp_warn = parse_shadow_field(parts[5]);
+                (*sp).sp_inact = parse_shadow_field(parts[6]);
+                (*sp).sp_expire = parse_shadow_field(parts[7]);
+                (*sp).sp_flag = if parts.len() > 8 {
+                    parts[8].parse::<u64>().unwrap_or(0)
+                } else {
+                    0
                 };
-                return 0;
+                *result = spbuf;
+            };
+            return 0;
         }
     }
     libc::ENOENT

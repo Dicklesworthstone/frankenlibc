@@ -26,7 +26,19 @@ RUN_CMD=(cargo run -p frankenlibc-harness --bin harness -- verify-membrane
 )
 
 if command -v rch >/dev/null 2>&1; then
-  rch exec -- "${RUN_CMD[@]}" --output "${CURRENT}" --log "${LOG}" >/dev/null
+  cat <<'EOS' | rch exec -- bash -s > "${CURRENT}"
+set -euo pipefail
+tmp_current="$(mktemp)"
+tmp_log="$(mktemp)"
+cargo run -p frankenlibc-harness --bin harness -- verify-membrane \
+  --mode both \
+  --campaign healing_oracle \
+  --fail-on-mismatch \
+  --output "${tmp_current}" \
+  --log "${tmp_log}" >/dev/null
+cat "${tmp_current}"
+EOS
+  printf '%s\n' '{"event":"healing_oracle.remote_log_not_copied"}' > "${LOG}"
 else
   echo "WARN: rch not found; running local cargo fallback" >&2
   "${RUN_CMD[@]}" --output "${CURRENT}" --log "${LOG}" >/dev/null
