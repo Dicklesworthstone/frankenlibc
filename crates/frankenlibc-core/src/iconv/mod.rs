@@ -9,6 +9,60 @@ pub const ICONV_EILSEQ: i32 = 84;
 /// Core iconv error code: incomplete multibyte sequence at end of input.
 pub const ICONV_EINVAL: i32 = 22;
 
+/// Dispatch classification for codec lookup in the phase-1 runtime table.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CodecDispatchPath {
+    IncludedCanonical,
+    IncludedAlias,
+    ExcludedFamily,
+    UnsupportedCodec,
+}
+
+impl CodecDispatchPath {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            CodecDispatchPath::IncludedCanonical => "included-canonical",
+            CodecDispatchPath::IncludedAlias => "included-alias",
+            CodecDispatchPath::ExcludedFamily => "excluded-family",
+            CodecDispatchPath::UnsupportedCodec => "unsupported-codec",
+        }
+    }
+}
+
+/// Deterministic fallback policy returned when `iconv_open` cannot route a codec pair.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IconvFallbackPolicy {
+    ExcludedCodecFamily,
+    UnsupportedCodec,
+}
+
+impl IconvFallbackPolicy {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            IconvFallbackPolicy::ExcludedCodecFamily => "excluded-family-einval",
+            IconvFallbackPolicy::UnsupportedCodec => "unsupported-codec-einval",
+        }
+    }
+}
+
+/// Runtime lookup metadata for deterministic iconv dispatch telemetry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IconvDispatchMetadata {
+    pub to_codec: &'static str,
+    pub from_codec: &'static str,
+    pub to_dispatch_path: CodecDispatchPath,
+    pub from_dispatch_path: CodecDispatchPath,
+}
+
+/// Detailed failure contract for `iconv_open`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IconvOpenError {
+    pub policy: IconvFallbackPolicy,
+    pub dispatch: IconvDispatchMetadata,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Encoding {
     Utf8,
@@ -16,6 +70,72 @@ enum Encoding {
     Utf16Le,
     Utf32,
 }
+
+struct CodecSpec {
+    encoding: Encoding,
+    canonical: &'static str,
+    normalized: &'static str,
+    aliases: &'static [&'static str],
+}
+
+struct ExcludedCodecSpec {
+    canonical: &'static str,
+    normalized: &'static str,
+}
+
+const PHASE1_CODEC_TABLE: [CodecSpec; 4] = [
+    CodecSpec {
+        encoding: Encoding::Utf8,
+        canonical: "UTF-8",
+        normalized: "UTF8",
+        aliases: &["UTF8"],
+    },
+    CodecSpec {
+        encoding: Encoding::Latin1,
+        canonical: "ISO-8859-1",
+        normalized: "ISO88591",
+        aliases: &["ISO88591", "LATIN1"],
+    },
+    CodecSpec {
+        encoding: Encoding::Utf16Le,
+        canonical: "UTF-16LE",
+        normalized: "UTF16LE",
+        aliases: &["UTF16LE"],
+    },
+    CodecSpec {
+        encoding: Encoding::Utf32,
+        canonical: "UTF-32",
+        normalized: "UTF32",
+        aliases: &["UTF32"],
+    },
+];
+
+const PHASE1_EXCLUDED_CODEC_TABLE: [ExcludedCodecSpec; 6] = [
+    ExcludedCodecSpec {
+        canonical: "ISO-2022-CN-EXT",
+        normalized: "ISO2022CNEXT",
+    },
+    ExcludedCodecSpec {
+        canonical: "ISO-2022-JP",
+        normalized: "ISO2022JP",
+    },
+    ExcludedCodecSpec {
+        canonical: "EUC-JP",
+        normalized: "EUCJP",
+    },
+    ExcludedCodecSpec {
+        canonical: "SHIFT_JIS",
+        normalized: "SHIFTJIS",
+    },
+    ExcludedCodecSpec {
+        canonical: "GB18030",
+        normalized: "GB18030",
+    },
+    ExcludedCodecSpec {
+        canonical: "BIG5-HKSCS",
+        normalized: "BIG5HKSCS",
+    },
+];
 
 /// Canonical phase-1 codecs intentionally supported by the in-tree iconv engine.
 pub const ICONV_PHASE1_INCLUDED_CODECS: [&str; 4] = ["UTF-8", "ISO-8859-1", "UTF-16LE", "UTF-32"];
@@ -84,16 +204,57 @@ fn normalize_encoding_label(raw: &[u8]) -> Vec<u8> {
     canonical
 }
 
-fn parse_encoding(raw: &[u8]) -> Option<Encoding> {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct EncodingLookup {
+    encoding: Option<Encoding>,
+    canonical: &'static str,
+    dispatch_path: CodecDispatchPath,
+}
+
+fn classify_encoding(raw: &[u8]) -> EncodingLookup {
     let canonical = normalize_encoding_label(raw);
 
-    match canonical.as_slice() {
-        b"UTF8" => Some(Encoding::Utf8),
-        b"ISO88591" | b"LATIN1" => Some(Encoding::Latin1),
-        b"UTF16LE" => Some(Encoding::Utf16Le),
-        b"UTF32" => Some(Encoding::Utf32),
-        _ => None,
+    for spec in PHASE1_CODEC_TABLE {
+        if canonical.as_slice() == spec.normalized.as_bytes() {
+            return EncodingLookup {
+                encoding: Some(spec.encoding),
+                canonical: spec.canonical,
+                dispatch_path: CodecDispatchPath::IncludedCanonical,
+            };
+        }
+        if spec
+            .aliases
+            .iter()
+            .any(|alias| canonical.as_slice() == alias.as_bytes())
+        {
+            return EncodingLookup {
+                encoding: Some(spec.encoding),
+                canonical: spec.canonical,
+                dispatch_path: CodecDispatchPath::IncludedAlias,
+            };
+        }
     }
+
+    for spec in PHASE1_EXCLUDED_CODEC_TABLE {
+        if canonical.as_slice() == spec.normalized.as_bytes() {
+            return EncodingLookup {
+                encoding: None,
+                canonical: spec.canonical,
+                dispatch_path: CodecDispatchPath::ExcludedFamily,
+            };
+        }
+    }
+
+    EncodingLookup {
+        encoding: None,
+        canonical: "UNSUPPORTED",
+        dispatch_path: CodecDispatchPath::UnsupportedCodec,
+    }
+}
+
+#[allow(dead_code)]
+fn parse_encoding(raw: &[u8]) -> Option<Encoding> {
+    classify_encoding(raw).encoding
 }
 
 fn decode_utf8(input: &[u8]) -> Result<(char, usize), DecodeError> {
@@ -271,18 +432,58 @@ fn encode_char(enc: Encoding, ch: char, out: &mut [u8]) -> Result<usize, EncodeE
     }
 }
 
+/// Opens a character set conversion descriptor with deterministic dispatch metadata.
+///
+/// Equivalent to C `iconv_open`. Converts from `fromcode` encoding to `tocode` encoding.
+/// Returns explicit fallback policy metadata when the conversion is unsupported.
+pub fn iconv_open_detailed(
+    tocode: &[u8],
+    fromcode: &[u8],
+) -> Result<(IconvDescriptor, IconvDispatchMetadata), IconvOpenError> {
+    let to_lookup = classify_encoding(tocode);
+    let from_lookup = classify_encoding(fromcode);
+
+    let dispatch = IconvDispatchMetadata {
+        to_codec: to_lookup.canonical,
+        from_codec: from_lookup.canonical,
+        to_dispatch_path: to_lookup.dispatch_path,
+        from_dispatch_path: from_lookup.dispatch_path,
+    };
+
+    let Some(to) = to_lookup.encoding else {
+        let policy = if matches!(to_lookup.dispatch_path, CodecDispatchPath::ExcludedFamily) {
+            IconvFallbackPolicy::ExcludedCodecFamily
+        } else {
+            IconvFallbackPolicy::UnsupportedCodec
+        };
+        return Err(IconvOpenError { policy, dispatch });
+    };
+
+    let Some(from) = from_lookup.encoding else {
+        let policy = if matches!(from_lookup.dispatch_path, CodecDispatchPath::ExcludedFamily) {
+            IconvFallbackPolicy::ExcludedCodecFamily
+        } else {
+            IconvFallbackPolicy::UnsupportedCodec
+        };
+        return Err(IconvOpenError { policy, dispatch });
+    };
+
+    Ok((
+        IconvDescriptor {
+            from,
+            to,
+            emit_bom: matches!(to, Encoding::Utf32),
+        },
+        dispatch,
+    ))
+}
+
 /// Opens a character set conversion descriptor.
 ///
 /// Equivalent to C `iconv_open`. Converts from `fromcode` encoding to
 /// `tocode` encoding. Returns `None` if the conversion is not supported.
 pub fn iconv_open(tocode: &[u8], fromcode: &[u8]) -> Option<IconvDescriptor> {
-    let to = parse_encoding(tocode)?;
-    let from = parse_encoding(fromcode)?;
-    Some(IconvDescriptor {
-        from,
-        to,
-        emit_bom: matches!(to, Encoding::Utf32),
-    })
+    iconv_open_detailed(tocode, fromcode).ok().map(|(desc, _)| desc)
 }
 
 /// Performs character set conversion.
@@ -396,6 +597,37 @@ mod tests {
                 "phase-1 should reject unsupported source codec {codec}"
             );
         }
+    }
+
+    #[test]
+    fn iconv_open_detailed_reports_alias_dispatch() {
+        let (_, meta) = iconv_open_detailed(b"utf-8", b"latin1").expect("alias path should open");
+        assert_eq!(meta.to_codec, "UTF-8");
+        assert_eq!(meta.from_codec, "ISO-8859-1");
+        assert_eq!(meta.to_dispatch_path, CodecDispatchPath::IncludedCanonical);
+        assert_eq!(meta.from_dispatch_path, CodecDispatchPath::IncludedAlias);
+    }
+
+    #[test]
+    fn iconv_open_detailed_reports_excluded_family_policy() {
+        let err =
+            iconv_open_detailed(b"UTF-8", b"SHIFT_JIS").expect_err("excluded codec must fail");
+        assert_eq!(err.policy, IconvFallbackPolicy::ExcludedCodecFamily);
+        assert_eq!(err.dispatch.from_codec, "SHIFT_JIS");
+        assert_eq!(
+            err.dispatch.from_dispatch_path,
+            CodecDispatchPath::ExcludedFamily
+        );
+    }
+
+    #[test]
+    fn iconv_open_detailed_reports_unsupported_policy() {
+        let err = iconv_open_detailed(b"UTF-8", b"UTF-7").expect_err("unknown codec must fail");
+        assert_eq!(err.policy, IconvFallbackPolicy::UnsupportedCodec);
+        assert_eq!(
+            err.dispatch.from_dispatch_path,
+            CodecDispatchPath::UnsupportedCodec
+        );
     }
 
     #[test]
