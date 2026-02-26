@@ -1440,14 +1440,7 @@ pub unsafe extern "C" fn __adjtimex(buf: *mut c_void) -> c_int {
 pub unsafe extern "C" fn __arch_prctl(code: c_int, addr: c_ulong) -> c_int {
     unsafe { libc::syscall(libc::SYS_arch_prctl, code as c_long, addr as c_long) as c_int }
 }
-// __asprintf → asprintf (GNU internal alias)
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __asprintf(strp: *mut *mut c_char, fmt: *const c_char, args: ...) -> c_int {
-    // Forward to our native asprintf via vasprintf path.
-    // Since __asprintf is variadic, we extract the va_list and call vasprintf.
-    let mut ap = args;
-    unsafe { super::stdio_abi::vasprintf(strp, fmt, (&mut ap) as *mut _ as *mut c_void) }
-}
+dlsym_passthrough!(fn __asprintf(strp: *mut *mut c_char, fmt: *const c_char) -> c_int);
 // __backtrace: native — forward to our backtrace
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __backtrace(buffer: *mut *mut c_void, size: c_int) -> c_int {
