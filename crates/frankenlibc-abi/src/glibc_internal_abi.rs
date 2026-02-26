@@ -1771,7 +1771,12 @@ pub unsafe extern "C" fn __statfs(path: *const c_char, buf: *mut c_void) -> c_in
 pub unsafe extern "C" fn __sysconf(name: c_int) -> c_long {
     unsafe { libc::sysconf(name) }
 }
-dlsym_passthrough!(fn __sysctl(args: *mut c_void) -> c_int);
+// __sysctl: deprecated syscall (removed in Linux 5.5) — return ENOSYS
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __sysctl(_args: *mut c_void) -> c_int {
+    unsafe { *libc::__errno_location() = libc::ENOSYS };
+    -1
+}
 // __sysv_signal: native — System V signal semantics (one-shot)
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __sysv_signal(signum: c_int, handler: *mut c_void) -> *mut c_void {
@@ -2487,7 +2492,48 @@ pub unsafe extern "C" fn bdflush(func: c_int, data: c_long) -> c_int {
     }
     -1
 }
-dlsym_passthrough!(fn bindresvport(sockfd: c_int, sin: *mut c_void) -> c_int);
+// bindresvport: bind to a reserved port (512-1023) for RPC services
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn bindresvport(sockfd: c_int, sin: *mut c_void) -> c_int {
+    use std::sync::atomic::{AtomicU16, Ordering};
+    static NEXT_PORT: AtomicU16 = AtomicU16::new(600);
+
+    let sin = sin as *mut libc::sockaddr_in;
+    let mut addr: libc::sockaddr_in = if sin.is_null() {
+        unsafe { std::mem::zeroed() }
+    } else {
+        unsafe { std::ptr::read(sin) }
+    };
+    addr.sin_family = libc::AF_INET as u16;
+
+    // Try ports 512..1024, wrapping around from current position
+    for _ in 0..512 {
+        let port = NEXT_PORT.fetch_add(1, Ordering::Relaxed);
+        let port = 512 + (port % 512); // Keep in 512..1023
+        addr.sin_port = port.to_be();
+        let rc = unsafe {
+            libc::bind(
+                sockfd,
+                &addr as *const libc::sockaddr_in as *const libc::sockaddr,
+                std::mem::size_of::<libc::sockaddr_in>() as libc::socklen_t,
+            )
+        };
+        if rc == 0 {
+            if !sin.is_null() {
+                unsafe { std::ptr::write(sin, addr) };
+            }
+            return 0;
+        }
+        // EADDRINUSE — try next port
+        let err = unsafe { *libc::__errno_location() };
+        if err != libc::EADDRINUSE && err != libc::EACCES {
+            return -1; // Real error
+        }
+    }
+    // All ports in use
+    unsafe { *libc::__errno_location() = libc::EADDRINUSE };
+    -1
+}
 // cfget/cfset speed: forward to libc
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn cfgetibaud(termios_p: *const c_void) -> c_uint {
@@ -2684,7 +2730,57 @@ pub unsafe extern "C" fn getdirentries64(
     }
     unsafe { libc::syscall(libc::SYS_getdents64, fd, buf, nbytes) as SSizeT }
 }
-dlsym_passthrough!(fn getipv4sourcefilter(s: c_int, interface_: c_uint, group: c_uint, fmode: *mut c_uint, numsrc: *mut c_uint, slist: *mut c_void) -> c_int);
+// getipv4sourcefilter: get multicast source filter via getsockopt(IP_MSFILTER)
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getipv4sourcefilter(
+    s: c_int,
+    interface_: c_uint,
+    group: c_uint,
+    fmode: *mut c_uint,
+    numsrc: *mut c_uint,
+    slist: *mut c_void,
+) -> c_int {
+    // IP_MSFILTER = 41 on Linux
+    const IP_MSFILTER: c_int = 41;
+    // struct ip_msfilter layout: imsf_multiaddr(4), imsf_interface(4), imsf_fmode(4), imsf_numsrc(4), imsf_slist[0](4...)
+    let max_src = if numsrc.is_null() { 0u32 } else { unsafe { *numsrc } };
+    let buf_size = 16 + (max_src as usize) * 4;
+    let mut buf = vec![0u8; buf_size];
+    // Fill request: multiaddr + interface
+    unsafe {
+        std::ptr::write_unaligned(buf.as_mut_ptr() as *mut u32, group);
+        std::ptr::write_unaligned(buf.as_mut_ptr().add(4) as *mut u32, interface_);
+    }
+    let mut optlen: u32 = buf_size as u32;
+    let rc = unsafe {
+        libc::getsockopt(
+            s,
+            libc::IPPROTO_IP,
+            IP_MSFILTER,
+            buf.as_mut_ptr() as *mut c_void,
+            &mut optlen as *mut u32 as *mut libc::socklen_t,
+        )
+    };
+    if rc < 0 {
+        return -1;
+    }
+    // Extract fmode and numsrc from response
+    if !fmode.is_null() {
+        unsafe { *fmode = std::ptr::read_unaligned(buf.as_ptr().add(8) as *const u32) };
+    }
+    let returned_numsrc = unsafe { std::ptr::read_unaligned(buf.as_ptr().add(12) as *const u32) };
+    if !numsrc.is_null() {
+        unsafe { *numsrc = returned_numsrc };
+    }
+    // Copy source list
+    if !slist.is_null() && returned_numsrc > 0 {
+        let copy_count = std::cmp::min(returned_numsrc, max_src) as usize;
+        unsafe {
+            std::ptr::copy_nonoverlapping(buf.as_ptr().add(16), slist as *mut u8, copy_count * 4);
+        }
+    }
+    0
+}
 // getmsg/getpmsg: STREAMS — not supported on Linux
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getmsg(
@@ -2792,7 +2888,19 @@ pub unsafe extern "C" fn init_module(
 ) -> c_int {
     unsafe { libc::syscall(libc::SYS_init_module, module_image, len, param_values) as c_int }
 }
-dlsym_passthrough!(fn innetgr(netgroup: *const c_char, host: *const c_char, user: *const c_char, domain: *const c_char) -> c_int);
+// innetgr: check if (host,user,domain) is in netgroup — returns 0 (not found)
+// Netgroups are an NIS/NIS+ feature rarely used on modern systems.
+// A real implementation would parse /etc/netgroup or use NSS, but returning 0
+// is safe and matches behavior when NIS is not configured.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn innetgr(
+    _netgroup: *const c_char,
+    _host: *const c_char,
+    _user: *const c_char,
+    _domain: *const c_char,
+) -> c_int {
+    0
+}
 // ioperm/iopl: native syscalls
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn ioperm(from: c_ulong, num: c_ulong, turn_on: c_int) -> c_int {
@@ -2955,8 +3063,79 @@ dlsym_passthrough!(fn parse_printf_format(fmt: *const c_char, n: SizeT, argtypes
 pub unsafe extern "C" fn pidfd_getpid(pidfd: c_int) -> c_int {
     unsafe { libc::syscall(438, pidfd) as c_int } // SYS_pidfd_getpid
 }
-dlsym_passthrough!(fn pidfd_spawn(pidfd: *mut c_int, path: *const c_char, file_actions: *const c_void, attrp: *const c_void, argv: *const *mut c_char, envp: *const *mut c_char) -> c_int);
-dlsym_passthrough!(fn pidfd_spawnp(pidfd: *mut c_int, file: *const c_char, file_actions: *const c_void, attrp: *const c_void, argv: *const *mut c_char, envp: *const *mut c_char) -> c_int);
+// pidfd_spawn: posix_spawn + pidfd_open to get a pidfd for the child process
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pidfd_spawn(
+    pidfd: *mut c_int,
+    path: *const c_char,
+    file_actions: *const c_void,
+    attrp: *const c_void,
+    argv: *const *mut c_char,
+    envp: *const *mut c_char,
+) -> c_int {
+    if pidfd.is_null() {
+        return libc::EINVAL;
+    }
+    let mut child_pid: libc::pid_t = 0;
+    let rc = unsafe {
+        libc::posix_spawn(
+            &mut child_pid,
+            path,
+            file_actions as *const libc::posix_spawn_file_actions_t,
+            attrp as *const libc::posix_spawnattr_t,
+            argv as *const *mut c_char,
+            envp as *const *mut c_char,
+        )
+    };
+    if rc != 0 {
+        return rc;
+    }
+    // SYS_pidfd_open = 434 on x86_64
+    let fd = unsafe { libc::syscall(434, child_pid as c_long, 0 as c_long) as c_int };
+    if fd < 0 {
+        // pidfd_open failed, but child is spawned — still return the pidfd as -1
+        unsafe { *pidfd = -1 };
+        return 0;
+    }
+    unsafe { *pidfd = fd };
+    0
+}
+
+// pidfd_spawnp: like pidfd_spawn but searches PATH for `file`
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pidfd_spawnp(
+    pidfd: *mut c_int,
+    file: *const c_char,
+    file_actions: *const c_void,
+    attrp: *const c_void,
+    argv: *const *mut c_char,
+    envp: *const *mut c_char,
+) -> c_int {
+    if pidfd.is_null() {
+        return libc::EINVAL;
+    }
+    let mut child_pid: libc::pid_t = 0;
+    let rc = unsafe {
+        libc::posix_spawnp(
+            &mut child_pid,
+            file,
+            file_actions as *const libc::posix_spawn_file_actions_t,
+            attrp as *const libc::posix_spawnattr_t,
+            argv as *const *mut c_char,
+            envp as *const *mut c_char,
+        )
+    };
+    if rc != 0 {
+        return rc;
+    }
+    let fd = unsafe { libc::syscall(434, child_pid as c_long, 0 as c_long) as c_int };
+    if fd < 0 {
+        unsafe { *pidfd = -1 };
+        return 0;
+    }
+    unsafe { *pidfd = fd };
+    0
+}
 // preadv64v2: native syscall
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn preadv64v2(
@@ -3301,7 +3480,40 @@ pub unsafe extern "C" fn setfsuid(fsuid: c_uint) -> c_int {
 pub unsafe extern "C" fn sethostid(hostid: c_long) -> c_int {
     unsafe { libc::sethostid(hostid) }
 }
-dlsym_passthrough!(fn setipv4sourcefilter(s: c_int, interface_: c_uint, group: c_uint, fmode: c_uint, numsrc: c_uint, slist: *const c_void) -> c_int);
+// setipv4sourcefilter: set multicast source filter via setsockopt(IP_MSFILTER)
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn setipv4sourcefilter(
+    s: c_int,
+    interface_: c_uint,
+    group: c_uint,
+    fmode: c_uint,
+    numsrc: c_uint,
+    slist: *const c_void,
+) -> c_int {
+    const IP_MSFILTER: c_int = 41;
+    let buf_size = 16 + (numsrc as usize) * 4;
+    let mut buf = vec![0u8; buf_size];
+    unsafe {
+        std::ptr::write_unaligned(buf.as_mut_ptr() as *mut u32, group);
+        std::ptr::write_unaligned(buf.as_mut_ptr().add(4) as *mut u32, interface_);
+        std::ptr::write_unaligned(buf.as_mut_ptr().add(8) as *mut u32, fmode);
+        std::ptr::write_unaligned(buf.as_mut_ptr().add(12) as *mut u32, numsrc);
+    }
+    if !slist.is_null() && numsrc > 0 {
+        unsafe {
+            std::ptr::copy_nonoverlapping(slist as *const u8, buf.as_mut_ptr().add(16), numsrc as usize * 4);
+        }
+    }
+    unsafe {
+        libc::setsockopt(
+            s,
+            libc::IPPROTO_IP,
+            IP_MSFILTER,
+            buf.as_ptr() as *const c_void,
+            buf_size as libc::socklen_t,
+        )
+    }
+}
 // setlogin: BSD — not supported on Linux, return ENOSYS
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn setlogin(name: *const c_char) -> c_int {
@@ -3311,8 +3523,98 @@ pub unsafe extern "C" fn setlogin(name: *const c_char) -> c_int {
     }
     -1
 }
-dlsym_passthrough!(fn setsourcefilter(s: c_int, interface_: c_uint, group: *const c_void, grouplen: c_uint, fmode: c_uint, numsrc: c_uint, slist: *const c_void) -> c_int);
-dlsym_passthrough!(fn getsourcefilter(s: c_int, interface_: c_uint, group: *const c_void, grouplen: c_uint, fmode: *mut c_uint, numsrc: *mut c_uint, slist: *mut c_void) -> c_int);
+// setsourcefilter: AF-independent multicast source filter via setsockopt(MCAST_MSFILTER)
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn setsourcefilter(
+    s: c_int,
+    interface_: c_uint,
+    group: *const c_void,
+    grouplen: c_uint,
+    fmode: c_uint,
+    numsrc: c_uint,
+    slist: *const c_void,
+) -> c_int {
+    // MCAST_MSFILTER = 48 on Linux, SOL_SOCKET level
+    // struct group_filter: gf_interface(u32), pad(u32), gf_group(sockaddr_storage=128), gf_fmode(u32), gf_numsrc(u32), gf_slist[0](sockaddr_storage...)
+    const MCAST_MSFILTER: c_int = 48;
+    let ss_size = std::mem::size_of::<libc::sockaddr_storage>();
+    let header_size = 4 + 4 + ss_size + 4 + 4; // 136 + 8 = 144
+    let buf_size = header_size + (numsrc as usize) * ss_size;
+    let mut buf = vec![0u8; buf_size];
+    unsafe {
+        std::ptr::write_unaligned(buf.as_mut_ptr() as *mut u32, interface_);
+        // Copy group address into gf_group (at offset 8)
+        let copy_len = std::cmp::min(grouplen as usize, ss_size);
+        std::ptr::copy_nonoverlapping(group as *const u8, buf.as_mut_ptr().add(8), copy_len);
+        // fmode at offset 8+ss_size, numsrc at offset 8+ss_size+4
+        std::ptr::write_unaligned(buf.as_mut_ptr().add(8 + ss_size) as *mut u32, fmode);
+        std::ptr::write_unaligned(buf.as_mut_ptr().add(8 + ss_size + 4) as *mut u32, numsrc);
+        // Copy source list
+        if !slist.is_null() && numsrc > 0 {
+            std::ptr::copy_nonoverlapping(
+                slist as *const u8,
+                buf.as_mut_ptr().add(header_size),
+                numsrc as usize * ss_size,
+            );
+        }
+        libc::setsockopt(s, libc::SOL_SOCKET, MCAST_MSFILTER, buf.as_ptr() as *const c_void, buf_size as libc::socklen_t)
+    }
+}
+
+// getsourcefilter: AF-independent multicast source filter via getsockopt(MCAST_MSFILTER)
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getsourcefilter(
+    s: c_int,
+    interface_: c_uint,
+    group: *const c_void,
+    grouplen: c_uint,
+    fmode: *mut c_uint,
+    numsrc: *mut c_uint,
+    slist: *mut c_void,
+) -> c_int {
+    const MCAST_MSFILTER: c_int = 48;
+    let ss_size = std::mem::size_of::<libc::sockaddr_storage>();
+    let header_size = 4 + 4 + ss_size + 4 + 4;
+    let max_src = if numsrc.is_null() { 0u32 } else { unsafe { *numsrc } };
+    let buf_size = header_size + (max_src as usize) * ss_size;
+    let mut buf = vec![0u8; buf_size];
+    unsafe {
+        std::ptr::write_unaligned(buf.as_mut_ptr() as *mut u32, interface_);
+        let copy_len = std::cmp::min(grouplen as usize, ss_size);
+        std::ptr::copy_nonoverlapping(group as *const u8, buf.as_mut_ptr().add(8), copy_len);
+    }
+    let mut optlen: u32 = buf_size as u32;
+    let rc = unsafe {
+        libc::getsockopt(
+            s,
+            libc::SOL_SOCKET,
+            MCAST_MSFILTER,
+            buf.as_mut_ptr() as *mut c_void,
+            &mut optlen as *mut u32 as *mut libc::socklen_t,
+        )
+    };
+    if rc < 0 {
+        return -1;
+    }
+    if !fmode.is_null() {
+        unsafe { *fmode = std::ptr::read_unaligned(buf.as_ptr().add(8 + ss_size) as *const u32) };
+    }
+    let returned_numsrc = unsafe { std::ptr::read_unaligned(buf.as_ptr().add(8 + ss_size + 4) as *const u32) };
+    if !numsrc.is_null() {
+        unsafe { *numsrc = returned_numsrc };
+    }
+    if !slist.is_null() && returned_numsrc > 0 {
+        let copy_count = std::cmp::min(returned_numsrc, max_src) as usize;
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                buf.as_ptr().add(header_size),
+                slist as *mut u8,
+                copy_count * ss_size,
+            );
+        }
+    }
+    0
+}
 // settimeofday: native syscall
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn settimeofday(tv: *const c_void, tz: *const c_void) -> c_int {

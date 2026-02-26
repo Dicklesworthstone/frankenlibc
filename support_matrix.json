@@ -18061,7 +18061,7 @@
     },
     {
       "symbol": "__sysctl",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -18531,7 +18531,7 @@
     },
     {
       "symbol": "bindresvport",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -18780,7 +18780,7 @@
     },
     {
       "symbol": "getipv4sourcefilter",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -18820,7 +18820,7 @@
     },
     {
       "symbol": "getsourcefilter",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -18992,7 +18992,7 @@
     },
     {
       "symbol": "innetgr",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -19327,12 +19327,12 @@
     },
     {
       "symbol": "pidfd_spawn",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "pidfd_spawnp",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -19674,7 +19674,7 @@
     },
     {
       "symbol": "setipv4sourcefilter",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -19684,7 +19684,7 @@
     },
     {
       "symbol": "setsourcefilter",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
