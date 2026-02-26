@@ -1440,7 +1440,14 @@ pub unsafe extern "C" fn __adjtimex(buf: *mut c_void) -> c_int {
 pub unsafe extern "C" fn __arch_prctl(code: c_int, addr: c_ulong) -> c_int {
     unsafe { libc::syscall(libc::SYS_arch_prctl, code as c_long, addr as c_long) as c_int }
 }
-dlsym_passthrough!(fn __asprintf(strp: *mut *mut c_char, fmt: *const c_char) -> c_int);
+// __asprintf → asprintf (GNU internal alias)
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __asprintf(strp: *mut *mut c_char, fmt: *const c_char, args: ...) -> c_int {
+    // Forward to our native asprintf via vasprintf path.
+    // Since __asprintf is variadic, we extract the va_list and call vasprintf.
+    let mut ap = args;
+    unsafe { super::stdio_abi::vasprintf(strp, fmt, (&mut ap) as *mut _ as *mut c_void) }
+}
 // __backtrace: native — forward to our backtrace
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __backtrace(buffer: *mut *mut c_void, size: c_int) -> c_int {
@@ -3070,8 +3077,19 @@ pub unsafe extern "C" fn ioperm(from: c_ulong, num: c_ulong, turn_on: c_int) -> 
 pub unsafe extern "C" fn iopl(level: c_int) -> c_int {
     unsafe { libc::syscall(libc::SYS_iopl, level as c_long) as c_int }
 }
-dlsym_passthrough!(fn iruserok(raddr: c_uint, superuser: c_int, ruser: *const c_char, luser: *const c_char) -> c_int);
-dlsym_passthrough!(fn iruserok_af(raddr: *const c_void, superuser: c_int, ruser: *const c_char, luser: *const c_char, af: c_int) -> c_int);
+// iruserok/iruserok_af: .rhosts-based remote user auth — deny-all for security
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn iruserok(
+    _raddr: c_uint, _superuser: c_int, _ruser: *const c_char, _luser: *const c_char,
+) -> c_int {
+    -1
+}
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn iruserok_af(
+    _raddr: *const c_void, _superuser: c_int, _ruser: *const c_char, _luser: *const c_char, _af: c_int,
+) -> c_int {
+    -1
+}
 // isastream: STREAMS not supported on Linux — always return 0
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn isastream(fd: c_int) -> c_int {
@@ -3210,7 +3228,122 @@ pub unsafe extern "C" fn modfl(x: f64, iptr: *mut f64) -> f64 {
 pub unsafe extern "C" fn modify_ldt(func: c_int, ptr: *mut c_void, bytecount: c_ulong) -> c_int {
     unsafe { libc::syscall(libc::SYS_modify_ldt, func, ptr, bytecount) as c_int }
 }
-dlsym_passthrough!(fn parse_printf_format(fmt: *const c_char, n: SizeT, argtypes: *mut c_int) -> SizeT);
+// parse_printf_format: introspect printf format string to get argument types
+// glibc PA_* type constants
+const PA_INT: c_int = 1;
+const PA_CHAR: c_int = 2;
+const PA_STRING: c_int = 4;
+const PA_POINTER: c_int = 6;
+const PA_DOUBLE: c_int = 8;
+const PA_FLAG_LONG: c_int = 0x100;
+const PA_FLAG_LONG_LONG: c_int = 0x200;
+const PA_FLAG_SHORT: c_int = 0x400;
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn parse_printf_format(
+    fmt: *const c_char, n: SizeT, argtypes: *mut c_int,
+) -> SizeT {
+    if fmt.is_null() {
+        return 0;
+    }
+    let mut p = fmt as *const u8;
+    let mut count: usize = 0;
+    loop {
+        let c = unsafe { *p };
+        if c == 0 {
+            break;
+        }
+        if c != b'%' {
+            p = unsafe { p.add(1) };
+            continue;
+        }
+        p = unsafe { p.add(1) }; // skip '%'
+        if unsafe { *p } == b'%' {
+            p = unsafe { p.add(1) };
+            continue;
+        }
+        // Skip flags: -+0 #'
+        while {
+            let f = unsafe { *p };
+            f == b'-' || f == b'+' || f == b'0' || f == b' ' || f == b'#' || f == b'\''
+        } {
+            p = unsafe { p.add(1) };
+        }
+        // Skip width (may be * which consumes an int arg)
+        if unsafe { *p } == b'*' {
+            if count < n as usize && !argtypes.is_null() {
+                unsafe { *argtypes.add(count) = PA_INT };
+            }
+            count += 1;
+            p = unsafe { p.add(1) };
+        } else {
+            while unsafe { (*p).is_ascii_digit() } {
+                p = unsafe { p.add(1) };
+            }
+        }
+        // Skip precision
+        if unsafe { *p } == b'.' {
+            p = unsafe { p.add(1) };
+            if unsafe { *p } == b'*' {
+                if count < n as usize && !argtypes.is_null() {
+                    unsafe { *argtypes.add(count) = PA_INT };
+                }
+                count += 1;
+                p = unsafe { p.add(1) };
+            } else {
+                while unsafe { (*p).is_ascii_digit() } {
+                    p = unsafe { p.add(1) };
+                }
+            }
+        }
+        // Length modifiers
+        let mut length_flag: c_int = 0;
+        match unsafe { *p } {
+            b'h' => {
+                p = unsafe { p.add(1) };
+                if unsafe { *p } == b'h' {
+                    p = unsafe { p.add(1) };
+                }
+                length_flag = PA_FLAG_SHORT;
+            }
+            b'l' => {
+                p = unsafe { p.add(1) };
+                if unsafe { *p } == b'l' {
+                    p = unsafe { p.add(1) };
+                    length_flag = PA_FLAG_LONG_LONG;
+                } else {
+                    length_flag = PA_FLAG_LONG;
+                }
+            }
+            b'L' | b'q' => {
+                p = unsafe { p.add(1) };
+                length_flag = PA_FLAG_LONG_LONG;
+            }
+            b'z' | b'j' | b't' => {
+                p = unsafe { p.add(1) };
+                length_flag = PA_FLAG_LONG;
+            }
+            _ => {}
+        }
+        // Conversion specifier
+        let argtype = match unsafe { *p } {
+            b'd' | b'i' | b'o' | b'u' | b'x' | b'X' => PA_INT | length_flag,
+            b'e' | b'E' | b'f' | b'F' | b'g' | b'G' | b'a' | b'A' => PA_DOUBLE | length_flag,
+            b'c' => PA_CHAR | length_flag,
+            b's' => PA_STRING | length_flag,
+            b'p' => PA_POINTER,
+            b'n' => PA_POINTER,
+            _ => PA_INT,
+        };
+        if unsafe { *p } != 0 {
+            p = unsafe { p.add(1) };
+        }
+        if count < n as usize && !argtypes.is_null() {
+            unsafe { *argtypes.add(count) = argtype };
+        }
+        count += 1;
+    }
+    count as SizeT
+}
 // pidfd_getpid: native syscall (Linux 6.9+, nr 438)
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pidfd_getpid(pidfd: c_int) -> c_int {
@@ -3434,8 +3567,23 @@ pub unsafe extern "C" fn query_module(
     }
     -1
 }
-dlsym_passthrough!(fn rcmd(ahost: *mut *mut c_char, rport: c_int, locuser: *const c_char, remuser: *const c_char, cmd: *const c_char, fd2p: *mut c_int) -> c_int);
-dlsym_passthrough!(fn rcmd_af(ahost: *mut *mut c_char, rport: c_int, locuser: *const c_char, remuser: *const c_char, cmd: *const c_char, fd2p: *mut c_int, af: c_int) -> c_int);
+// rcmd/rcmd_af: rsh remote command — disabled for security (rsh protocol is insecure)
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn rcmd(
+    _ahost: *mut *mut c_char, _rport: c_int, _locuser: *const c_char,
+    _remuser: *const c_char, _cmd: *const c_char, _fd2p: *mut c_int,
+) -> c_int {
+    unsafe { *libc::__errno_location() = libc::ENOSYS };
+    -1
+}
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn rcmd_af(
+    _ahost: *mut *mut c_char, _rport: c_int, _locuser: *const c_char,
+    _remuser: *const c_char, _cmd: *const c_char, _fd2p: *mut c_int, _af: c_int,
+) -> c_int {
+    unsafe { *libc::__errno_location() = libc::ENOSYS };
+    -1
+}
 dlsym_passthrough!(fn register_printf_function(spec: c_int, render: *mut c_void, arginfo: *mut c_void) -> c_int);
 dlsym_passthrough!(fn register_printf_modifier(str: *const WcharT) -> c_int);
 dlsym_passthrough!(fn register_printf_specifier(spec: c_int, render: *mut c_void, arginfo: *mut c_void) -> c_int);
@@ -3449,8 +3597,23 @@ pub unsafe extern "C" fn revoke(file: *const c_char) -> c_int {
     }
     -1
 }
-dlsym_passthrough!(fn rexec(ahost: *mut *mut c_char, rport: c_int, user: *const c_char, passwd: *const c_char, cmd: *const c_char, fd2p: *mut c_int) -> c_int);
-dlsym_passthrough!(fn rexec_af(ahost: *mut *mut c_char, rport: c_int, user: *const c_char, passwd: *const c_char, cmd: *const c_char, fd2p: *mut c_int, af: c_int) -> c_int);
+// rexec/rexec_af: remote exec with cleartext auth — disabled for security
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn rexec(
+    _ahost: *mut *mut c_char, _rport: c_int, _user: *const c_char,
+    _passwd: *const c_char, _cmd: *const c_char, _fd2p: *mut c_int,
+) -> c_int {
+    unsafe { *libc::__errno_location() = libc::ENOSYS };
+    -1
+}
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn rexec_af(
+    _ahost: *mut *mut c_char, _rport: c_int, _user: *const c_char,
+    _passwd: *const c_char, _cmd: *const c_char, _fd2p: *mut c_int, _af: c_int,
+) -> c_int {
+    unsafe { *libc::__errno_location() = libc::ENOSYS };
+    -1
+}
 // rpmatch: native — match yes/no response (C locale)
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn rpmatch(response: *const c_char) -> c_int {
@@ -3529,9 +3692,32 @@ pub unsafe extern "C" fn rresvport_af(port: *mut c_int, af: c_int) -> c_int {
     unsafe { *libc::__errno_location() = libc::EAGAIN };
     -1
 }
-dlsym_passthrough!(fn ruserok(rhost: *const c_char, superuser: c_int, ruser: *const c_char, luser: *const c_char) -> c_int);
-dlsym_passthrough!(fn ruserok_af(rhost: *const c_char, superuser: c_int, ruser: *const c_char, luser: *const c_char, af: c_int) -> c_int);
-dlsym_passthrough!(fn ruserpass(host: *const c_char, aname: *mut *const c_char, apass: *mut *const c_char) -> c_int);
+// ruserok/ruserok_af: .rhosts hostname-based auth — deny-all for security
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ruserok(
+    _rhost: *const c_char, _superuser: c_int, _ruser: *const c_char, _luser: *const c_char,
+) -> c_int {
+    -1
+}
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ruserok_af(
+    _rhost: *const c_char, _superuser: c_int, _ruser: *const c_char, _luser: *const c_char, _af: c_int,
+) -> c_int {
+    -1
+}
+// ruserpass: .netrc credential parser — return -1 (no .netrc support for security)
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ruserpass(
+    _host: *const c_char, aname: *mut *const c_char, apass: *mut *const c_char,
+) -> c_int {
+    if !aname.is_null() {
+        unsafe { *aname = std::ptr::null() };
+    }
+    if !apass.is_null() {
+        unsafe { *apass = std::ptr::null() };
+    }
+    -1
+}
 // scalbnl: native — x * 2^n (same as ldexp)
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn scalbnl(x: f64, n: c_int) -> f64 {
