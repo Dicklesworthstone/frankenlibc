@@ -1758,7 +1758,7 @@ pub unsafe extern "C" fn __rcmd_errstr() -> *mut *mut c_char {
     thread_local! {
         static ERRSTR: std::cell::Cell<*mut c_char> = const { std::cell::Cell::new(std::ptr::null_mut()) };
     }
-    ERRSTR.with(|c| c.as_ptr() as *mut *mut c_char)
+    ERRSTR.with(|c| c.as_ptr())
 }
 // __read/__write: native syscall
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -3236,8 +3236,8 @@ pub unsafe extern "C" fn pidfd_spawn(
             path,
             file_actions as *const libc::posix_spawn_file_actions_t,
             attrp as *const libc::posix_spawnattr_t,
-            argv as *const *mut c_char,
-            envp as *const *mut c_char,
+            argv,
+            envp,
         )
     };
     if rc != 0 {
@@ -3274,8 +3274,8 @@ pub unsafe extern "C" fn pidfd_spawnp(
             file,
             file_actions as *const libc::posix_spawn_file_actions_t,
             attrp as *const libc::posix_spawnattr_t,
-            argv as *const *mut c_char,
-            envp as *const *mut c_char,
+            argv,
+            envp,
         )
     };
     if rc != 0 {
@@ -3660,7 +3660,7 @@ pub unsafe extern "C" fn sem_clockwait(sem: *mut c_void, clockid: c_int, abstime
             libc::syscall(
                 libc::SYS_futex,
                 sem_val as *mut c_void,
-                libc::FUTEX_WAIT_BITSET | libc::FUTEX_CLOCK_REALTIME * (if clockid == libc::CLOCK_REALTIME { 1 } else { 0 }),
+                libc::FUTEX_WAIT_BITSET | (libc::FUTEX_CLOCK_REALTIME * (if clockid == libc::CLOCK_REALTIME { 1 } else { 0 })),
                 val,
                 ts,
                 std::ptr::null::<c_void>(),
