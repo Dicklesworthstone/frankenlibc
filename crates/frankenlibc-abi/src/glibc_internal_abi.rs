@@ -288,12 +288,24 @@ dlsym_passthrough!(fn __iswpunct_l(wc: WcharT, loc: *mut c_void) -> c_int);
 dlsym_passthrough!(fn __iswspace_l(wc: WcharT, loc: *mut c_void) -> c_int);
 dlsym_passthrough!(fn __iswupper_l(wc: WcharT, loc: *mut c_void) -> c_int);
 dlsym_passthrough!(fn __iswxdigit_l(wc: WcharT, loc: *mut c_void) -> c_int);
-dlsym_passthrough!(fn __towctrans(wc: WcharT, desc: c_ulong) -> WcharT);
+// __towctrans: native — forward to our towctrans
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __towctrans(wc: WcharT, desc: c_ulong) -> WcharT {
+    unsafe { super::unistd_abi::towctrans(wc as c_uint, desc) as WcharT }
+}
 dlsym_passthrough!(fn __towctrans_l(wc: WcharT, desc: c_ulong, loc: *mut c_void) -> WcharT);
 dlsym_passthrough!(fn __towlower_l(wc: WcharT, loc: *mut c_void) -> WcharT);
 dlsym_passthrough!(fn __towupper_l(wc: WcharT, loc: *mut c_void) -> WcharT);
-dlsym_passthrough!(fn __wctrans_l(name: *const c_char, loc: *mut c_void) -> c_ulong);
-dlsym_passthrough!(fn __wctype_l(name: *const c_char, loc: *mut c_void) -> c_ulong);
+// __wctrans_l: native — forward to our wctrans_l
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __wctrans_l(name: *const c_char, loc: *mut c_void) -> c_ulong {
+    unsafe { super::wchar_abi::wctrans_l(name.cast(), loc) }
+}
+// __wctype_l: native — forward to our wctype_l
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __wctype_l(name: *const c_char, loc: *mut c_void) -> c_ulong {
+    unsafe { super::wchar_abi::wctype_l(name.cast(), loc) as c_ulong }
+}
 
 // Public wchar locale variants (missing from matrix)
 dlsym_passthrough!(fn iswalnum_l(wc: WcharT, loc: *mut c_void) -> c_int);
@@ -656,7 +668,11 @@ dlsym_passthrough!(fn strptime_l(s: *const c_char, fmt: *const c_char, tm: *mut 
 // ==========================================================================
 dlsym_passthrough!(fn __res_dnok(dn: *const c_char) -> c_int);
 dlsym_passthrough!(fn __res_hnok(dn: *const c_char) -> c_int);
-dlsym_passthrough!(fn __res_init() -> c_int);
+// __res_init: native — forward to our res_init
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __res_init() -> c_int {
+    unsafe { super::unistd_abi::res_init() }
+}
 dlsym_passthrough!(fn __res_mailok(dn: *const c_char) -> c_int);
 dlsym_passthrough!(fn __res_mkquery(op: c_int, dname: *const c_char, class: c_int, typ: c_int, data: *const c_void, datalen: c_int, newrr: *const c_void, buf: *mut c_void, buflen: c_int) -> c_int);
 dlsym_passthrough!(fn __res_nclose(statp: *mut c_void));
@@ -667,10 +683,30 @@ dlsym_passthrough!(fn __res_nquerydomain(statp: *mut c_void, name: *const c_char
 dlsym_passthrough!(fn __res_nsearch(statp: *mut c_void, dname: *const c_char, class: c_int, typ: c_int, answer: *mut c_void, anslen: c_int) -> c_int);
 dlsym_passthrough!(fn __res_nsend(statp: *mut c_void, msg: *const c_void, msglen: c_int, answer: *mut c_void, anslen: c_int) -> c_int);
 dlsym_passthrough!(fn __res_ownok(dn: *const c_char) -> c_int);
-dlsym_passthrough!(fn __res_query(dname: *const c_char, class: c_int, typ: c_int, answer: *mut c_void, anslen: c_int) -> c_int);
+// __res_query: native — forward to our res_query
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __res_query(
+    dname: *const c_char,
+    class: c_int,
+    typ: c_int,
+    answer: *mut c_void,
+    anslen: c_int,
+) -> c_int {
+    unsafe { super::unistd_abi::res_query(dname, class, typ, answer.cast(), anslen) }
+}
 dlsym_passthrough!(fn __res_querydomain(name: *const c_char, domain: *const c_char, class: c_int, typ: c_int, answer: *mut c_void, anslen: c_int) -> c_int);
 dlsym_passthrough!(fn __res_randomid() -> c_int);
-dlsym_passthrough!(fn __res_search(dname: *const c_char, class: c_int, typ: c_int, answer: *mut c_void, anslen: c_int) -> c_int);
+// __res_search: native — forward to our res_search
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __res_search(
+    dname: *const c_char,
+    class: c_int,
+    typ: c_int,
+    answer: *mut c_void,
+    anslen: c_int,
+) -> c_int {
+    unsafe { super::unistd_abi::res_search(dname, class, typ, answer.cast(), anslen) }
+}
 dlsym_passthrough!(fn __res_send(msg: *const c_void, msglen: c_int, answer: *mut c_void, anslen: c_int) -> c_int);
 dlsym_passthrough!(fn __res_state() -> *mut c_void);
 
@@ -757,10 +793,41 @@ dlsym_passthrough!(fn ns_name_skip(ptrptr: *mut *const c_void, eom: *const c_voi
 dlsym_passthrough!(fn ns_name_uncompress(msg: *const c_void, eom: *const c_void, src: *const c_void, dst: *mut c_char, dstsiz: SizeT) -> c_int);
 dlsym_passthrough!(fn ns_name_unpack(msg: *const c_void, eom: *const c_void, src: *const c_void, dst: *mut c_void, dstsiz: SizeT) -> c_int);
 
-// __dn_* DNS name aliases
-dlsym_passthrough!(fn __dn_comp(exp_dn: *const c_char, comp_dn: *mut c_void, length: c_int, dnptrs: *mut *mut c_void, lastdnptr: *mut *mut c_void) -> c_int);
-dlsym_passthrough!(fn __dn_expand(msg: *const c_void, eomorig: *const c_void, comp_dn: *const c_void, exp_dn: *mut c_char, length: c_int) -> c_int);
-dlsym_passthrough!(fn __dn_skipname(comp_dn: *const c_void, eom: *const c_void) -> c_int);
+// __dn_* DNS name aliases — forward to our native implementations
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __dn_comp(
+    exp_dn: *const c_char,
+    comp_dn: *mut c_void,
+    length: c_int,
+    dnptrs: *mut *mut c_void,
+    lastdnptr: *mut *mut c_void,
+) -> c_int {
+    unsafe {
+        super::unistd_abi::dn_comp(
+            exp_dn,
+            comp_dn.cast(),
+            length,
+            dnptrs.cast(),
+            lastdnptr.cast(),
+        )
+    }
+}
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __dn_expand(
+    msg: *const c_void,
+    eomorig: *const c_void,
+    comp_dn: *const c_void,
+    exp_dn: *mut c_char,
+    length: c_int,
+) -> c_int {
+    unsafe {
+        super::unistd_abi::dn_expand(msg.cast(), eomorig.cast(), comp_dn.cast(), exp_dn, length)
+    }
+}
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __dn_skipname(comp_dn: *const c_void, eom: *const c_void) -> c_int {
+    unsafe { super::unistd_abi::dn_skipname(comp_dn.cast(), eom.cast()) }
+}
 
 // ==========================================================================
 // obstack (10 symbols)
@@ -906,9 +973,28 @@ dlsym_passthrough!(fn __asprintf(strp: *mut *mut c_char, fmt: *const c_char) -> 
 dlsym_passthrough!(fn __assert(assertion: *const c_char, file: *const c_char, line: c_int));
 dlsym_passthrough!(fn __assert_fail(assertion: *const c_char, file: *const c_char, line: c_uint, function: *const c_char));
 dlsym_passthrough!(fn __assert_perror_fail(errnum: c_int, file: *const c_char, line: c_uint, function: *const c_char));
-dlsym_passthrough!(fn __backtrace(buffer: *mut *mut c_void, size: c_int) -> c_int);
-dlsym_passthrough!(fn __backtrace_symbols(buffer: *const *mut c_void, size: c_int) -> *mut *mut c_char);
-dlsym_passthrough!(fn __backtrace_symbols_fd(buffer: *const *mut c_void, size: c_int, fd: c_int));
+// __backtrace: native — forward to our backtrace
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __backtrace(buffer: *mut *mut c_void, size: c_int) -> c_int {
+    unsafe { super::unistd_abi::backtrace(buffer, size) }
+}
+// __backtrace_symbols: native — forward to our backtrace_symbols
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __backtrace_symbols(
+    buffer: *const *mut c_void,
+    size: c_int,
+) -> *mut *mut c_char {
+    unsafe { super::unistd_abi::backtrace_symbols(buffer, size) }
+}
+// __backtrace_symbols_fd: native — forward to our backtrace_symbols_fd
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __backtrace_symbols_fd(
+    buffer: *const *mut c_void,
+    size: c_int,
+    fd: c_int,
+) {
+    unsafe { super::unistd_abi::backtrace_symbols_fd(buffer, size, fd) }
+}
 // __bsd_getpgrp: native — getpgid alias
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __bsd_getpgrp(pid: c_int) -> c_int {
@@ -1021,9 +1107,26 @@ pub unsafe extern "C" fn __fwriting(fp: *mut c_void) -> c_int {
 pub unsafe extern "C" fn __getauxval(typ: c_ulong) -> c_ulong {
     unsafe { libc::getauxval(typ) }
 }
-// __getdelim: native — forward to libc getdelim
-dlsym_passthrough!(fn __getdelim(lineptr: *mut *mut c_char, n: *mut SizeT, delim: c_int, stream: *mut c_void) -> SSizeT);
-dlsym_passthrough!(fn __getmntent_r(fp: *mut c_void, mntbuf: *mut c_void, buf: *mut c_char, buflen: c_int) -> *mut c_void);
+// __getdelim: native — forward to our getdelim
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __getdelim(
+    lineptr: *mut *mut c_char,
+    n: *mut SizeT,
+    delim: c_int,
+    stream: *mut c_void,
+) -> SSizeT {
+    unsafe { super::stdio_abi::getdelim(lineptr, n, delim, stream) }
+}
+// __getmntent_r: native — forward to our getmntent_r
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __getmntent_r(
+    fp: *mut c_void,
+    mntbuf: *mut c_void,
+    buf: *mut c_char,
+    buflen: c_int,
+) -> *mut c_void {
+    unsafe { super::unistd_abi::getmntent_r(fp, mntbuf, buf, buflen) }
+}
 // __getpagesize: native syscall
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __getpagesize() -> c_int {
@@ -1220,7 +1323,11 @@ pub unsafe extern "C" fn __send(
         ) as SSizeT
     }
 }
-dlsym_passthrough!(fn __setmntent(filename: *const c_char, typ: *const c_char) -> *mut c_void);
+// __setmntent: native — forward to our setmntent
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __setmntent(filename: *const c_char, typ: *const c_char) -> *mut c_void {
+    unsafe { super::unistd_abi::setmntent(filename, typ) }
+}
 // __setpgid: native syscall
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __setpgid(pid: c_int, pgid: c_int) -> c_int {
@@ -1271,7 +1378,11 @@ pub unsafe extern "C" fn __sigismember(set: *const c_void, signum: c_int) -> c_i
     }
 }
 dlsym_passthrough!(fn __sigpause(sig_or_mask: c_int) -> c_int);
-dlsym_passthrough!(fn __sigsetjmp(env: *mut c_void, savesigs: c_int) -> c_int);
+// __sigsetjmp: native — forward to our sigsetjmp
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __sigsetjmp(env: *mut c_void, savesigs: c_int) -> c_int {
+    unsafe { super::setjmp_abi::sigsetjmp(env, savesigs) }
+}
 // __sigsuspend: native — forward to libc
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __sigsuspend(set: *const c_void) -> c_int {
@@ -1294,9 +1405,34 @@ pub unsafe extern "C" fn __sysv_signal(signum: c_int, handler: *mut c_void) -> *
     unsafe { libc::signal(signum, handler as libc::sighandler_t) as *mut c_void }
 }
 dlsym_passthrough!(fn __vfork() -> c_int);
-dlsym_passthrough!(fn __vfscanf(stream: *mut c_void, fmt: *const c_char, ap: *mut c_void) -> c_int);
-dlsym_passthrough!(fn __vsnprintf(str: *mut c_char, size: SizeT, fmt: *const c_char, ap: *mut c_void) -> c_int);
-dlsym_passthrough!(fn __vsscanf(str: *const c_char, fmt: *const c_char, ap: *mut c_void) -> c_int);
+// __vfscanf: native — forward to our vfscanf
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __vfscanf(
+    stream: *mut c_void,
+    fmt: *const c_char,
+    ap: *mut c_void,
+) -> c_int {
+    unsafe { super::stdio_abi::vfscanf(stream, fmt, ap) }
+}
+// __vsnprintf: native — forward to our vsnprintf
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __vsnprintf(
+    buf: *mut c_char,
+    size: SizeT,
+    fmt: *const c_char,
+    ap: *mut c_void,
+) -> c_int {
+    unsafe { super::stdio_abi::vsnprintf(buf, size, fmt, ap) }
+}
+// __vsscanf: native — forward to our vsscanf
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __vsscanf(
+    s: *const c_char,
+    fmt: *const c_char,
+    ap: *mut c_void,
+) -> c_int {
+    unsafe { super::stdio_abi::vsscanf(s, fmt, ap) }
+}
 // __wait: native — wait4 with pid=-1, options=0
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __wait(status: *mut c_int) -> c_int {
