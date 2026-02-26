@@ -902,14 +902,26 @@ pub unsafe extern "C" fn strptime_l(
 // ==========================================================================
 // __res_* resolver internals (33 symbols)
 // ==========================================================================
-dlsym_passthrough!(fn __res_dnok(dn: *const c_char) -> c_int);
-dlsym_passthrough!(fn __res_hnok(dn: *const c_char) -> c_int);
+// __res_dnok: check if domain name is valid (RFC 1035 + underscores)
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __res_dnok(dn: *const c_char) -> c_int {
+    res_dnok(dn)
+}
+// __res_hnok: check if hostname is valid (RFC 952 - letters, digits, hyphens)
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __res_hnok(dn: *const c_char) -> c_int {
+    res_hnok(dn)
+}
 // __res_init: native — forward to our res_init
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __res_init() -> c_int {
     unsafe { super::unistd_abi::res_init() }
 }
-dlsym_passthrough!(fn __res_mailok(dn: *const c_char) -> c_int);
+// __res_mailok: check if mail domain name is valid
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __res_mailok(dn: *const c_char) -> c_int {
+    res_mailok(dn)
+}
 dlsym_passthrough!(fn __res_mkquery(op: c_int, dname: *const c_char, class: c_int, typ: c_int, data: *const c_void, datalen: c_int, newrr: *const c_void, buf: *mut c_void, buflen: c_int) -> c_int);
 dlsym_passthrough!(fn __res_nclose(statp: *mut c_void));
 dlsym_passthrough!(fn __res_ninit(statp: *mut c_void) -> c_int);
@@ -918,7 +930,11 @@ dlsym_passthrough!(fn __res_nquery(statp: *mut c_void, dname: *const c_char, cla
 dlsym_passthrough!(fn __res_nquerydomain(statp: *mut c_void, name: *const c_char, domain: *const c_char, class: c_int, typ: c_int, answer: *mut c_void, anslen: c_int) -> c_int);
 dlsym_passthrough!(fn __res_nsearch(statp: *mut c_void, dname: *const c_char, class: c_int, typ: c_int, answer: *mut c_void, anslen: c_int) -> c_int);
 dlsym_passthrough!(fn __res_nsend(statp: *mut c_void, msg: *const c_void, msglen: c_int, answer: *mut c_void, anslen: c_int) -> c_int);
-dlsym_passthrough!(fn __res_ownok(dn: *const c_char) -> c_int);
+// __res_ownok: check if owner name is valid (like dnok)
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __res_ownok(dn: *const c_char) -> c_int {
+    res_ownok(dn)
+}
 // __res_query: native — forward to our res_query
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __res_query(
@@ -931,7 +947,24 @@ pub unsafe extern "C" fn __res_query(
     unsafe { super::unistd_abi::res_query(dname, class, typ, answer.cast(), anslen) }
 }
 dlsym_passthrough!(fn __res_querydomain(name: *const c_char, domain: *const c_char, class: c_int, typ: c_int, answer: *mut c_void, anslen: c_int) -> c_int);
-dlsym_passthrough!(fn __res_randomid() -> c_int);
+// __res_randomid: generate a random 16-bit DNS query ID
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __res_randomid() -> c_int {
+    res_randomid()
+}
+// res_randomid: native random ID helper for DNS queries
+fn res_randomid() -> c_int {
+    use std::sync::atomic::{AtomicU32, Ordering};
+    // Simple LCG seeded from thread ID + time
+    static COUNTER: AtomicU32 = AtomicU32::new(0);
+    let mut val = COUNTER.fetch_add(1, Ordering::Relaxed);
+    // Mix with a time-based value for randomness
+    let mut ts: libc::timespec = unsafe { std::mem::zeroed() };
+    unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut ts) };
+    val = val.wrapping_add(ts.tv_nsec as u32);
+    val = val.wrapping_mul(1103515245).wrapping_add(12345);
+    ((val >> 16) & 0xFFFF) as c_int
+}
 // __res_search: native — forward to our res_search
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __res_search(
@@ -946,17 +979,127 @@ pub unsafe extern "C" fn __res_search(
 dlsym_passthrough!(fn __res_send(msg: *const c_void, msglen: c_int, answer: *mut c_void, anslen: c_int) -> c_int);
 dlsym_passthrough!(fn __res_state() -> *mut c_void);
 
-// Public res_* aliases
-dlsym_passthrough!(fn res_dnok(dn: *const c_char) -> c_int);
-dlsym_passthrough!(fn res_hnok(dn: *const c_char) -> c_int);
-dlsym_passthrough!(fn res_mailok(dn: *const c_char) -> c_int);
+// ==========================================================================
+// res_*ok: DNS name validation (RFC 1035/952 character checks)
+// ==========================================================================
+
+// res_hnok: hostname — letters, digits, hyphens only (RFC 952)
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn res_hnok(dn: *const c_char) -> c_int {
+    if dn.is_null() {
+        return 0;
+    }
+    let mut p = dn as *const u8;
+    let mut len: usize = 0;
+    loop {
+        let c = unsafe { *p };
+        if c == 0 {
+            break;
+        }
+        if c == b'.' {
+            if len == 0 {
+                return 0; // Empty label
+            }
+            len = 0;
+        } else if c.is_ascii_alphanumeric() || c == b'-' {
+            len += 1;
+            if len > 63 {
+                return 0; // Label too long
+            }
+        } else {
+            return 0; // Invalid character for hostname
+        }
+        p = unsafe { p.add(1) };
+    }
+    1
+}
+
+// res_dnok: domain name — like hostname but allows underscores
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn res_dnok(dn: *const c_char) -> c_int {
+    if dn.is_null() {
+        return 0;
+    }
+    let mut p = dn as *const u8;
+    let mut len: usize = 0;
+    loop {
+        let c = unsafe { *p };
+        if c == 0 {
+            break;
+        }
+        if c == b'.' {
+            if len == 0 {
+                return 0;
+            }
+            len = 0;
+        } else if c.is_ascii_alphanumeric() || c == b'-' || c == b'_' {
+            len += 1;
+            if len > 63 {
+                return 0;
+            }
+        } else {
+            return 0;
+        }
+        p = unsafe { p.add(1) };
+    }
+    1
+}
+
+// res_mailok: mail domain — allows first label to have more chars (mailbox)
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn res_mailok(dn: *const c_char) -> c_int {
+    // For mail, the first label (mailbox) is more permissive,
+    // remaining labels follow hostname rules
+    if dn.is_null() {
+        return 0;
+    }
+    let mut p = dn as *const u8;
+    let mut len: usize = 0;
+    let mut first_label = true;
+    loop {
+        let c = unsafe { *p };
+        if c == 0 {
+            break;
+        }
+        if c == b'.' {
+            if len == 0 {
+                return 0;
+            }
+            len = 0;
+            first_label = false;
+        } else if first_label {
+            // Mailbox label: printable ASCII except @ and whitespace
+            if c > 0x20 && c < 0x7F && c != b'@' {
+                len += 1;
+                if len > 63 {
+                    return 0;
+                }
+            } else {
+                return 0;
+            }
+        } else if c.is_ascii_alphanumeric() || c == b'-' {
+            len += 1;
+            if len > 63 {
+                return 0;
+            }
+        } else {
+            return 0;
+        }
+        p = unsafe { p.add(1) };
+    }
+    1
+}
 dlsym_passthrough!(fn res_mkquery(op: c_int, dname: *const c_char, class: c_int, typ: c_int, data: *const c_void, datalen: c_int, newrr: *const c_void, buf: *mut c_void, buflen: c_int) -> c_int);
 dlsym_passthrough!(fn res_nmkquery(statp: *mut c_void, op: c_int, dname: *const c_char, class: c_int, typ: c_int, data: *const c_void, datalen: c_int, newrr: *const c_void, buf: *mut c_void, buflen: c_int) -> c_int);
 dlsym_passthrough!(fn res_nquery(statp: *mut c_void, dname: *const c_char, class: c_int, typ: c_int, answer: *mut c_void, anslen: c_int) -> c_int);
 dlsym_passthrough!(fn res_nquerydomain(statp: *mut c_void, name: *const c_char, domain: *const c_char, class: c_int, typ: c_int, answer: *mut c_void, anslen: c_int) -> c_int);
 dlsym_passthrough!(fn res_nsearch(statp: *mut c_void, dname: *const c_char, class: c_int, typ: c_int, answer: *mut c_void, anslen: c_int) -> c_int);
 dlsym_passthrough!(fn res_nsend(statp: *mut c_void, msg: *const c_void, msglen: c_int, answer: *mut c_void, anslen: c_int) -> c_int);
-dlsym_passthrough!(fn res_ownok(dn: *const c_char) -> c_int);
+// res_ownok: owner name — same rules as dnok (allows underscores)
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn res_ownok(dn: *const c_char) -> c_int {
+    res_dnok(dn)
+}
 dlsym_passthrough!(fn res_querydomain(name: *const c_char, domain: *const c_char, class: c_int, typ: c_int, answer: *mut c_void, anslen: c_int) -> c_int);
 dlsym_passthrough!(fn res_send(msg: *const c_void, msglen: c_int, answer: *mut c_void, anslen: c_int) -> c_int);
 
@@ -1606,7 +1749,14 @@ pub unsafe extern "C" fn __pwrite64(
 ) -> SSizeT {
     unsafe { libc::syscall(libc::SYS_pwrite64, fd, buf, count, offset) as SSizeT }
 }
-dlsym_passthrough!(fn __rcmd_errstr() -> *mut *mut c_char);
+// __rcmd_errstr: pointer to rcmd error string (thread-local for reentrancy)
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __rcmd_errstr() -> *mut *mut c_char {
+    thread_local! {
+        static ERRSTR: std::cell::Cell<*mut c_char> = const { std::cell::Cell::new(std::ptr::null_mut()) };
+    }
+    ERRSTR.with(|c| c.as_ptr() as *mut *mut c_char)
+}
 // __read/__write: native syscall
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __read(fd: c_int, buf: *mut c_void, count: SizeT) -> SSizeT {
@@ -3311,8 +3461,71 @@ pub unsafe extern "C" fn rpmatch(response: *const c_char) -> c_int {
         _ => -1,
     }
 }
-dlsym_passthrough!(fn rresvport(port: *mut c_int) -> c_int);
-dlsym_passthrough!(fn rresvport_af(port: *mut c_int, af: c_int) -> c_int);
+// rresvport: reserve a privileged port for RPC (like bindresvport but returns socket)
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn rresvport(port: *mut c_int) -> c_int {
+    rresvport_af(port, libc::AF_INET)
+}
+
+// rresvport_af: reserve a privileged port for the given address family
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn rresvport_af(port: *mut c_int, af: c_int) -> c_int {
+    let sock_type = libc::SOCK_STREAM;
+    let fd = unsafe { libc::socket(af, sock_type, 0) };
+    if fd < 0 {
+        return -1;
+    }
+    // Start from the provided port, or 1023 if null/0
+    let start_port = if port.is_null() {
+        1023u16
+    } else {
+        let p = unsafe { *port } as u16;
+        if p == 0 || p > 1023 { 1023u16 } else { p }
+    };
+    // Try ports from start_port down to 512
+    for p in (512..=start_port).rev() {
+        let rc = match af {
+            libc::AF_INET => {
+                let mut addr: libc::sockaddr_in = unsafe { std::mem::zeroed() };
+                addr.sin_family = libc::AF_INET as u16;
+                addr.sin_port = p.to_be();
+                unsafe {
+                    libc::bind(
+                        fd,
+                        &addr as *const _ as *const libc::sockaddr,
+                        std::mem::size_of::<libc::sockaddr_in>() as libc::socklen_t,
+                    )
+                }
+            }
+            libc::AF_INET6 => {
+                let mut addr: libc::sockaddr_in6 = unsafe { std::mem::zeroed() };
+                addr.sin6_family = libc::AF_INET6 as u16;
+                addr.sin6_port = p.to_be();
+                unsafe {
+                    libc::bind(
+                        fd,
+                        &addr as *const _ as *const libc::sockaddr,
+                        std::mem::size_of::<libc::sockaddr_in6>() as libc::socklen_t,
+                    )
+                }
+            }
+            _ => {
+                unsafe { libc::close(fd) };
+                unsafe { *libc::__errno_location() = libc::EAFNOSUPPORT };
+                return -1;
+            }
+        };
+        if rc == 0 {
+            if !port.is_null() {
+                unsafe { *port = p as c_int };
+            }
+            return fd;
+        }
+    }
+    unsafe { libc::close(fd) };
+    unsafe { *libc::__errno_location() = libc::EAGAIN };
+    -1
+}
 dlsym_passthrough!(fn ruserok(rhost: *const c_char, superuser: c_int, ruser: *const c_char, luser: *const c_char) -> c_int);
 dlsym_passthrough!(fn ruserok_af(rhost: *const c_char, superuser: c_int, ruser: *const c_char, luser: *const c_char, af: c_int) -> c_int);
 dlsym_passthrough!(fn ruserpass(host: *const c_char, aname: *mut *const c_char, apass: *mut *const c_char) -> c_int);

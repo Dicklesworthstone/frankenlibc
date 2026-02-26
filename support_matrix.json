@@ -17226,17 +17226,17 @@
     },
     {
       "symbol": "__key_decryptsession_pk_LOCAL",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "__key_encryptsession_pk_LOCAL",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "__key_gendes_LOCAL",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -17606,7 +17606,7 @@
     },
     {
       "symbol": "__rcmd_errstr",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -17624,12 +17624,12 @@
     },
     {
       "symbol": "__res_dnok",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "__res_hnok",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -17639,7 +17639,7 @@
     },
     {
       "symbol": "__res_mailok",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -17684,7 +17684,7 @@
     },
     {
       "symbol": "__res_ownok",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -17699,7 +17699,7 @@
     },
     {
       "symbol": "__res_randomid",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -19520,17 +19520,17 @@
     },
     {
       "symbol": "res_dnok",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "res_hnok",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "res_mailok",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -19565,7 +19565,7 @@
     },
     {
       "symbol": "res_ownok",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -19604,12 +19604,12 @@
     },
     {
       "symbol": "rresvport",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "rresvport_af",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
