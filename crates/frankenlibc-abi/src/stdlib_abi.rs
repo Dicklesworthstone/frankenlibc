@@ -2117,13 +2117,16 @@ pub unsafe extern "C" fn getsubopt(
         }
     }
 
+    // Capture whether end is a comma BEFORE NUL-terminating (name_end may alias end).
+    let at_comma = unsafe { *end == b',' as c_char };
+
     // NUL-terminate the name portion temporarily if needed, then match.
     let saved = unsafe { *name_end };
     unsafe { *name_end = 0 };
 
     // Advance optionp past this suboption.
     unsafe {
-        if *end == b',' as c_char {
+        if at_comma {
             *optionp = end.add(1);
         } else {
             *optionp = end;
