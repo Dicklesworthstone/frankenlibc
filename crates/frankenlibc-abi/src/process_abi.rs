@@ -908,6 +908,44 @@ unsafe fn posix_spawn_impl(
         return libc::EINVAL;
     }
 
+    // Prepare candidate paths in the parent process to avoid allocations in the
+    // child process after fork, which is not async-signal safe and can deadlock
+    // if another thread held an allocator lock during clone().
+    let mut candidate_paths: Vec<std::ffi::CString> = Vec::new();
+
+    if search_path {
+        let file_cstr = unsafe { std::ffi::CStr::from_ptr(path) };
+        let file_bytes = file_cstr.to_bytes();
+
+        if file_bytes.contains(&b'/') {
+            candidate_paths.push(std::ffi::CString::from(file_cstr));
+        } else {
+            let path_env = std::env::var("PATH").unwrap_or_else(|_| "/usr/bin:/bin".to_string());
+            for dir in path_env.split(':') {
+                let mut full = dir.as_bytes().to_vec();
+                if !full.ends_with(b"/") && !full.is_empty() {
+                    full.push(b'/');
+                }
+                full.extend_from_slice(file_bytes);
+                if let Ok(c) = std::ffi::CString::new(full) {
+                    candidate_paths.push(c);
+                }
+            }
+            if candidate_paths.is_empty() {
+                if let Ok(c) = std::ffi::CString::new(file_bytes) {
+                    candidate_paths.push(c);
+                }
+            }
+        }
+    }
+
+    // Create an array of raw pointers that the child process can iterate over safely.
+    let candidate_ptrs: Vec<*const c_char> = if search_path {
+        candidate_paths.iter().map(|c| c.as_ptr()).collect()
+    } else {
+        vec![path]
+    };
+
     // Fork using clone syscall (minimal flags = just SIGCHLD for basic fork)
     let child_pid =
         unsafe { libc::syscall(libc::SYS_clone, libc::SIGCHLD, 0, 0, 0, 0) } as libc::pid_t;
@@ -937,34 +975,13 @@ unsafe fn posix_spawn_impl(
             envp
         };
 
-        if search_path {
-            // Use execvpe-like behavior: search PATH
-            let file_cstr = unsafe { std::ffi::CStr::from_ptr(path) };
-            let file_bytes = file_cstr.to_bytes();
-
-            if file_bytes.contains(&b'/') {
-                // Contains slash — use directly
-                unsafe { libc::syscall(libc::SYS_execve, path, argv, env) };
-            } else {
-                // Search PATH
-                let path_env =
-                    std::env::var("PATH").unwrap_or_else(|_| "/usr/bin:/bin".to_string());
-                for dir in path_env.split(':') {
-                    let mut full = dir.as_bytes().to_vec();
-                    full.push(b'/');
-                    full.extend_from_slice(file_bytes);
-                    full.push(0);
-                    unsafe {
-                        libc::syscall(libc::SYS_execve, full.as_ptr(), argv, env);
-                    }
-                    // If execve returns, try next PATH entry
-                }
-            }
-        } else {
-            unsafe { libc::syscall(libc::SYS_execve, path, argv, env) };
+        // Try execve for each candidate path. Iterating a Vec is just reading
+        // memory (slice) and does not allocate, so it is async-signal safe.
+        for &cand_path in candidate_ptrs.iter() {
+            unsafe { libc::syscall(libc::SYS_execve, cand_path, argv, env) };
         }
 
-        // If we get here, exec failed
+        // If we get here, all execve attempts failed.
         unsafe { libc::syscall(libc::SYS_exit_group, 127) };
         unreachable!();
     }

@@ -3657,10 +3657,8 @@ pub static mut argp_program_version: *const c_char = std::ptr::null();
 pub static mut argp_program_version_hook: *mut c_void = std::ptr::null_mut();
 
 // ==========================================================================
-// error/getopt globals (7 symbols)
+// error/getopt globals (6 symbols)
 // ==========================================================================
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub static mut error_message_count: c_uint = 0;
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub static mut error_one_per_line: c_int = 0;
@@ -3969,48 +3967,6 @@ pub unsafe extern "C" fn bdflush(func: c_int, data: c_long) -> c_int {
     unsafe {
         *libc::__errno_location() = libc::ENOSYS;
     }
-    -1
-}
-// bindresvport: bind to a reserved port (512-1023) for RPC services
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn bindresvport(sockfd: c_int, sin: *mut c_void) -> c_int {
-    use std::sync::atomic::{AtomicU16, Ordering};
-    static NEXT_PORT: AtomicU16 = AtomicU16::new(600);
-
-    let sin = sin as *mut libc::sockaddr_in;
-    let mut addr: libc::sockaddr_in = if sin.is_null() {
-        unsafe { std::mem::zeroed() }
-    } else {
-        unsafe { std::ptr::read(sin) }
-    };
-    addr.sin_family = libc::AF_INET as u16;
-
-    // Try ports 512..1024, wrapping around from current position
-    for _ in 0..512 {
-        let port = NEXT_PORT.fetch_add(1, Ordering::Relaxed);
-        let port = 512 + (port % 512); // Keep in 512..1023
-        addr.sin_port = port.to_be();
-        let rc = unsafe {
-            libc::bind(
-                sockfd,
-                &addr as *const libc::sockaddr_in as *const libc::sockaddr,
-                std::mem::size_of::<libc::sockaddr_in>() as libc::socklen_t,
-            )
-        };
-        if rc == 0 {
-            if !sin.is_null() {
-                unsafe { std::ptr::write(sin, addr) };
-            }
-            return 0;
-        }
-        // EADDRINUSE — try next port
-        let err = unsafe { *libc::__errno_location() };
-        if err != libc::EADDRINUSE && err != libc::EACCES {
-            return -1; // Real error
-        }
-    }
-    // All ports in use
-    unsafe { *libc::__errno_location() = libc::EADDRINUSE };
     -1
 }
 // cfget/cfset speed: forward to libc
