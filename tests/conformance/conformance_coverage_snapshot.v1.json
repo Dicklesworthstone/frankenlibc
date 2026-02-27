@@ -1,11 +1,11 @@
 {
   "schema_version": "v1",
   "bead": "bd-15n.3",
-  "generated_at": "2026-02-26T00:34:50Z",
+  "generated_at": "2026-02-27T05:21:08Z",
   "summary": {
-    "total_symbols": 1279,
-    "symbols_with_fixtures": 197,
-    "coverage_pct": 15,
+    "total_symbols": 2773,
+    "symbols_with_fixtures": 198,
+    "coverage_pct": 7,
     "total_fixture_files": 50,
     "total_fixture_cases": 514,
     "total_families": 41
@@ -17,14 +17,14 @@
       "pct": 0
     },
     "ctype_abi": {
-      "total": 30,
+      "total": 37,
       "covered": 11,
-      "pct": 37
+      "pct": 30
     },
     "dirent_abi": {
-      "total": 12,
+      "total": 14,
       "covered": 3,
-      "pct": 25
+      "pct": 21
     },
     "dlfcn_abi": {
       "total": 6,
@@ -46,6 +46,16 @@
       "covered": 0,
       "pct": 0
     },
+    "fortify_abi": {
+      "total": 78,
+      "covered": 0,
+      "pct": 0
+    },
+    "glibc_internal_abi": {
+      "total": 520,
+      "covered": 1,
+      "pct": 0
+    },
     "grp_abi": {
       "total": 8,
       "covered": 3,
@@ -62,14 +72,19 @@
       "pct": 41
     },
     "io_abi": {
-      "total": 21,
+      "total": 28,
       "covered": 1,
-      "pct": 5
+      "pct": 4
+    },
+    "io_internal_abi": {
+      "total": 114,
+      "covered": 0,
+      "pct": 0
     },
     "locale_abi": {
-      "total": 12,
+      "total": 16,
       "covered": 3,
-      "pct": 25
+      "pct": 19
     },
     "malloc_abi": {
       "total": 17,
@@ -92,24 +107,24 @@
       "pct": 13
     },
     "process_abi": {
-      "total": 22,
+      "total": 30,
       "covered": 4,
-      "pct": 18
+      "pct": 13
     },
     "pthread_abi": {
-      "total": 64,
+      "total": 115,
       "covered": 20,
-      "pct": 31
+      "pct": 17
     },
     "pwd_abi": {
-      "total": 14,
+      "total": 27,
       "covered": 3,
-      "pct": 21
+      "pct": 11
     },
     "resolv_abi": {
-      "total": 10,
+      "total": 11,
       "covered": 2,
-      "pct": 20
+      "pct": 18
     },
     "resource_abi": {
       "total": 2,
@@ -127,9 +142,9 @@
       "pct": 50
     },
     "signal_abi": {
-      "total": 17,
+      "total": 28,
       "covered": 3,
-      "pct": 18
+      "pct": 11
     },
     "socket_abi": {
       "total": 18,
@@ -137,24 +152,29 @@
       "pct": 28
     },
     "startup_abi": {
-      "total": 3,
+      "total": 4,
       "covered": 3,
-      "pct": 100
+      "pct": 75
+    },
+    "stdbit_abi": {
+      "total": 70,
+      "covered": 0,
+      "pct": 0
     },
     "stdio_abi": {
-      "total": 82,
+      "total": 117,
       "covered": 9,
-      "pct": 11
-    },
-    "stdlib_abi": {
-      "total": 89,
-      "covered": 7,
       "pct": 8
     },
+    "stdlib_abi": {
+      "total": 125,
+      "covered": 7,
+      "pct": 6
+    },
     "string_abi": {
-      "total": 81,
+      "total": 91,
       "covered": 21,
-      "pct": 26
+      "pct": 23
     },
     "termios_abi": {
       "total": 10,
@@ -162,24 +182,24 @@
       "pct": 50
     },
     "time_abi": {
-      "total": 23,
+      "total": 24,
       "covered": 4,
       "pct": 17
     },
     "unistd_abi": {
-      "total": 378,
+      "total": 633,
       "covered": 27,
-      "pct": 7
+      "pct": 4
     },
     "unknown": {
-      "total": 41,
+      "total": 305,
       "covered": 0,
       "pct": 0
     },
     "wchar_abi": {
-      "total": 69,
+      "total": 78,
       "covered": 14,
-      "pct": 20
+      "pct": 18
     }
   },
   "family_coverage": {
