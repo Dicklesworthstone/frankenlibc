@@ -17644,42 +17644,42 @@
     },
     {
       "symbol": "__res_mkquery",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "__res_nclose",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "__res_ninit",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "__res_nmkquery",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "__res_nquery",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "__res_nquerydomain",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "__res_nsearch",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "__res_nsend",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -17694,7 +17694,7 @@
     },
     {
       "symbol": "__res_querydomain",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -17709,33 +17709,33 @@
     },
     {
       "symbol": "__res_send",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "__res_state",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "__rpc_thread_createerr",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "__rpc_thread_svc_fdset",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "__rpc_thread_svc_max_pollfd",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "__rpc_thread_svc_pollfd",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "__sbrk",
@@ -17972,7 +17972,7 @@
     },
     {
       "symbol": "__strtof128_internal",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -18205,7 +18205,7 @@
     },
     {
       "symbol": "__wcstof128_internal",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -18317,7 +18317,7 @@
     {
       "symbol": "_authenticate",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "_dl_find_object",
@@ -18434,12 +18434,12 @@
     {
       "symbol": "_rpc_dtablesize",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "_seterr_reply",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "_sys_errlist",
@@ -18497,32 +18497,32 @@
     {
       "symbol": "authdes_create",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "authdes_getucred",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "authdes_pk_create",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "authnone_create",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "authunix_create",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "authunix_create_default",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "bdflush",
@@ -18531,18 +18531,18 @@
     },
     {
       "symbol": "bindresvport",
-      "status": "Implemented",
-      "module": "glibc_internal_abi"
+      "status": "GlibcCallThrough",
+      "module": "rpc_abi"
     },
     {
       "symbol": "callrpc",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "cbc_crypt",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "cfgetibaud",
@@ -18577,67 +18577,67 @@
     {
       "symbol": "clnt_broadcast",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "clnt_create",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "clnt_pcreateerror",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "clnt_perrno",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "clnt_perror",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "clnt_spcreateerror",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "clnt_sperrno",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "clnt_sperror",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "clntraw_create",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "clnttcp_create",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "clntudp_bufcreate",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "clntudp_create",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "clntunix_create",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "copysignl",
@@ -18661,7 +18661,7 @@
     {
       "symbol": "des_setparity",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "dladdr1",
@@ -18691,7 +18691,7 @@
     {
       "symbol": "ecb_crypt",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "environ",
@@ -18762,7 +18762,7 @@
     {
       "symbol": "get_myaddress",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "getdate_err",
@@ -18791,7 +18791,7 @@
     {
       "symbol": "getnetname",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "getpmsg",
@@ -18801,7 +18801,7 @@
     {
       "symbol": "getpublickey",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "getpw",
@@ -18811,12 +18811,12 @@
     {
       "symbol": "getrpcport",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "getsecretkey",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "getsourcefilter",
@@ -18850,7 +18850,7 @@
     {
       "symbol": "host2netname",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "in6addr_any",
@@ -18862,97 +18862,97 @@
     },
     {
       "symbol": "inet6_opt_append",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "inet6_opt_find",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "inet6_opt_finish",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "inet6_opt_get_val",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "inet6_opt_init",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "inet6_opt_next",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "inet6_opt_set_val",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "inet6_option_alloc",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "inet6_option_append",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "inet6_option_find",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "inet6_option_init",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "inet6_option_next",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "inet6_option_space",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "inet6_rth_add",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "inet6_rth_getaddr",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "inet6_rth_init",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "inet6_rth_reverse",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "inet6_rth_segments",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "inet6_rth_space",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -19007,12 +19007,12 @@
     },
     {
       "symbol": "iruserok",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "iruserok_af",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -19113,47 +19113,47 @@
     {
       "symbol": "key_decryptsession",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "key_decryptsession_pk",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "key_encryptsession",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "key_encryptsession_pk",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "key_gendes",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "key_get_conv",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "key_secretkey_is_set",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "key_setnet",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "key_setsecret",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "klogctl",
@@ -19244,46 +19244,46 @@
     {
       "symbol": "netname2host",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "netname2user",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "ns_name_compress",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "ns_name_ntop",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "ns_name_pack",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "ns_name_pton",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "ns_name_skip",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "ns_name_uncompress",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "ns_name_unpack",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -19312,13 +19312,13 @@
     },
     {
       "symbol": "parse_printf_format",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "passwd2des",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "pidfd_getpid",
@@ -19338,27 +19338,27 @@
     {
       "symbol": "pmap_getmaps",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "pmap_getport",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "pmap_rmtcall",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "pmap_set",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "pmap_unset",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "preadv64v2",
@@ -19467,12 +19467,12 @@
     },
     {
       "symbol": "rcmd",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "rcmd_af",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -19516,7 +19516,7 @@
     {
       "symbol": "registerrpc",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "res_dnok",
@@ -19585,12 +19585,12 @@
     },
     {
       "symbol": "rexec",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "rexec_af",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -19615,21 +19615,21 @@
     {
       "symbol": "rtime",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "ruserok",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "ruserok_af",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "ruserpass",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -19820,122 +19820,122 @@
     {
       "symbol": "svc_exit",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "svc_getreq",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "svc_getreq_common",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "svc_getreq_poll",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "svc_getreqset",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "svc_register",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "svc_run",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "svc_sendreply",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "svc_unregister",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "svcerr_auth",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "svcerr_decode",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "svcerr_noproc",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "svcerr_noprog",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "svcerr_progvers",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "svcerr_systemerr",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "svcerr_weakauth",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "svcfd_create",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "svcraw_create",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "svctcp_create",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "svcudp_bufcreate",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "svcudp_create",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "svcudp_enablecache",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "svcunix_create",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "svcunixfd_create",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "sys_errlist",
@@ -20020,7 +20020,7 @@
     {
       "symbol": "user2netname",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "ustat",
@@ -20140,357 +20140,357 @@
     {
       "symbol": "xdecrypt",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "xdr_accepted_reply",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "xdr_array",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "xdr_authdes_cred",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "xdr_authdes_verf",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "xdr_authunix_parms",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "xdr_bool",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "xdr_bytes",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "xdr_callhdr",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "xdr_callmsg",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "xdr_char",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "xdr_cryptkeyarg",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "xdr_cryptkeyarg2",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "xdr_cryptkeyres",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "xdr_des_block",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "xdr_double",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "xdr_enum",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "xdr_float",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "xdr_free",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "xdr_getcredres",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "xdr_hyper",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "xdr_int",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "xdr_int16_t",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "xdr_int32_t",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "xdr_int64_t",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "xdr_int8_t",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "xdr_key_netstarg",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "xdr_key_netstres",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "xdr_keybuf",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "xdr_keystatus",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "xdr_long",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "xdr_longlong_t",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "xdr_netnamestr",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "xdr_netobj",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "xdr_opaque",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "xdr_opaque_auth",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "xdr_pmap",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "xdr_pmaplist",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "xdr_pointer",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "xdr_quad_t",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "xdr_reference",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "xdr_rejected_reply",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "xdr_replymsg",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "xdr_rmtcall_args",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "xdr_rmtcallres",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "xdr_short",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "xdr_sizeof",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "xdr_string",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "xdr_u_char",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "xdr_u_hyper",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "xdr_u_int",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "xdr_u_long",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "xdr_u_longlong_t",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "xdr_u_quad_t",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "xdr_u_short",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "xdr_uint16_t",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "xdr_uint32_t",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "xdr_uint64_t",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "xdr_uint8_t",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "xdr_union",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "xdr_unixcred",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "xdr_vector",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "xdr_void",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "xdr_wrapstring",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "xdrmem_create",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "xdrrec_create",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "xdrrec_endofrecord",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "xdrrec_eof",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "xdrrec_skiprecord",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "xdrstdio_create",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "xencrypt",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "rpc_abi"
     },
     {
       "symbol": "__pthread_get_minstack",
@@ -20578,14 +20578,14 @@
   ],
   "summary": {
     "total_exported": 1539,
-    "implemented": 1125,
-    "raw_syscall": 367,
-    "glibc_call_through": 47,
+    "implemented": 2104,
+    "raw_syscall": 384,
+    "glibc_call_through": 288,
     "stub": 0
   },
-  "implemented": 2042,
+  "implemented": 2104,
   "raw_syscall": 384,
-  "glibc_call_through": 350,
+  "glibc_call_through": 288,
   "stub": 0,
   "counts": {
     "total_exported": 1277,

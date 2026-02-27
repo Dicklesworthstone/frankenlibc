@@ -11,7 +11,9 @@
     "fixture_linked": 198,
     "fixture_unlinked": 2578,
     "fixture_coverage_pct": 7.1,
-    "total_warnings": 471
+    "total_warnings": 471,
+    "glibc_call_through": 323,
+    "implemented": 2066
   },
   "coverage_dashboard": {
     "total_symbols": 2776,
@@ -61,14 +63,8 @@
     }
   },
   "status_distribution": {
-    "GlibcCallThrough": {
-      "count": 336,
-      "fixture_linked": 5
-    },
-    "Implemented": {
-      "count": 2056,
-      "fixture_linked": 140
-    },
+    "GlibcCallThrough": 323,
+    "Implemented": 2066,
     "RawSyscall": {
       "count": 384,
       "fixture_linked": 53
@@ -707,21 +703,21 @@
     "__res_hnok": "Implemented",
     "__res_init": "Implemented",
     "__res_mailok": "Implemented",
-    "__res_mkquery": "GlibcCallThrough",
-    "__res_nclose": "GlibcCallThrough",
-    "__res_ninit": "GlibcCallThrough",
-    "__res_nmkquery": "GlibcCallThrough",
-    "__res_nquery": "GlibcCallThrough",
-    "__res_nquerydomain": "GlibcCallThrough",
-    "__res_nsearch": "GlibcCallThrough",
-    "__res_nsend": "GlibcCallThrough",
+    "__res_mkquery": "Implemented",
+    "__res_nclose": "Implemented",
+    "__res_ninit": "Implemented",
+    "__res_nmkquery": "Implemented",
+    "__res_nquery": "Implemented",
+    "__res_nquerydomain": "Implemented",
+    "__res_nsearch": "Implemented",
+    "__res_nsend": "Implemented",
     "__res_ownok": "Implemented",
     "__res_query": "Implemented",
-    "__res_querydomain": "GlibcCallThrough",
+    "__res_querydomain": "Implemented",
     "__res_randomid": "Implemented",
     "__res_search": "Implemented",
-    "__res_send": "GlibcCallThrough",
-    "__res_state": "GlibcCallThrough",
+    "__res_send": "Implemented",
+    "__res_state": "Implemented",
     "__rpc_thread_createerr": "GlibcCallThrough",
     "__rpc_thread_svc_fdset": "GlibcCallThrough",
     "__rpc_thread_svc_max_pollfd": "GlibcCallThrough",
@@ -794,7 +790,7 @@
     "__strspn_c3": "Implemented",
     "__strtod_internal": "Implemented",
     "__strtod_l": "Implemented",
-    "__strtof128_internal": "GlibcCallThrough",
+    "__strtof128_internal": "Implemented",
     "__strtof_internal": "Implemented",
     "__strtof_l": "Implemented",
     "__strtok_r": "Implemented",
@@ -862,7 +858,7 @@
     "__wcsrtombs_chk": "Implemented",
     "__wcstod_internal": "Implemented",
     "__wcstod_l": "Implemented",
-    "__wcstof128_internal": "GlibcCallThrough",
+    "__wcstof128_internal": "Implemented",
     "__wcstof_internal": "Implemented",
     "__wcstof_l": "Implemented",
     "__wcstol_internal": "Implemented",
