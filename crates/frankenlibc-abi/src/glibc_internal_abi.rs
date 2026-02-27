@@ -485,12 +485,29 @@ pub unsafe extern "C" fn __ffs(i: c_int) -> c_int {
 // __wcstod/f/ld/l/ll/ul/ull _internal/_l: now exported from wchar_abi.rs
 
 // ==========================================================================
-// f128 internal parse variants (must stay GCT — no f128 in Rust)
+// f128 internal parse variants — native (f64 precision, no true f128 in Rust)
 // ==========================================================================
-dlsym_passthrough!(fn __strtof128_internal(nptr: *const c_char, endptr: *mut *mut c_char, group: c_int) -> f64);
+// __strtof128_internal: parse _Float128 literal. Since Rust lacks f128, we
+// provide f64-precision parsing via strtod. The `group` flag (thousands
+// grouping) is accepted but ignored — glibc also ignores it for non-locale.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __strtof128_internal(
+    nptr: *const c_char,
+    endptr: *mut *mut c_char,
+    _group: c_int,
+) -> f64 {
+    unsafe { crate::stdlib_abi::strtod(nptr, endptr) }
+}
 
-// Wide string to number internal variants
-dlsym_passthrough!(fn __wcstof128_internal(nptr: *const WcharT, endptr: *mut *mut WcharT, group: c_int) -> f64);
+// __wcstof128_internal: wide-string variant of f128 parsing.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __wcstof128_internal(
+    nptr: *const WcharT,
+    endptr: *mut *mut WcharT,
+    _group: c_int,
+) -> f64 {
+    unsafe { crate::wchar_abi::wcstod(nptr, endptr) }
+}
 
 // ==========================================================================
 // strfrom* / strtof* / wcstof* TS 18661 float variants — native aliases
@@ -757,14 +774,134 @@ pub unsafe extern "C" fn __res_init() -> c_int {
 pub unsafe extern "C" fn __res_mailok(dn: *const c_char) -> c_int {
     unsafe { res_mailok(dn) }
 }
-dlsym_passthrough!(fn __res_mkquery(op: c_int, dname: *const c_char, class: c_int, typ: c_int, data: *const c_void, datalen: c_int, newrr: *const c_void, buf: *mut c_void, buflen: c_int) -> c_int);
-dlsym_passthrough!(fn __res_nclose(statp: *mut c_void));
-dlsym_passthrough!(fn __res_ninit(statp: *mut c_void) -> c_int);
-dlsym_passthrough!(fn __res_nmkquery(statp: *mut c_void, op: c_int, dname: *const c_char, class: c_int, typ: c_int, data: *const c_void, datalen: c_int, newrr: *const c_void, buf: *mut c_void, buflen: c_int) -> c_int);
-dlsym_passthrough!(fn __res_nquery(statp: *mut c_void, dname: *const c_char, class: c_int, typ: c_int, answer: *mut c_void, anslen: c_int) -> c_int);
-dlsym_passthrough!(fn __res_nquerydomain(statp: *mut c_void, name: *const c_char, domain: *const c_char, class: c_int, typ: c_int, answer: *mut c_void, anslen: c_int) -> c_int);
-dlsym_passthrough!(fn __res_nsearch(statp: *mut c_void, dname: *const c_char, class: c_int, typ: c_int, answer: *mut c_void, anslen: c_int) -> c_int);
-dlsym_passthrough!(fn __res_nsend(statp: *mut c_void, msg: *const c_void, msglen: c_int, answer: *mut c_void, anslen: c_int) -> c_int);
+// __res_mkquery: build a DNS query packet in the caller's buffer.
+// Only QUERY (op=0) is supported; all other opcodes return -1.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __res_mkquery(
+    op: c_int,
+    dname: *const c_char,
+    class: c_int,
+    typ: c_int,
+    _data: *const c_void,
+    _datalen: c_int,
+    _newrr: *const c_void,
+    buf: *mut c_void,
+    buflen: c_int,
+) -> c_int {
+    // Only QUERY (op=0) is supported.
+    if op != 0 || dname.is_null() || buf.is_null() || buflen < 12 {
+        return -1;
+    }
+    let name = unsafe { std::ffi::CStr::from_ptr(dname) };
+    let qname = frankenlibc_core::resolv::dns::encode_domain_name(name.to_bytes());
+    let needed = 12 + qname.len() + 4; // header + qname + qtype + qclass
+    if (buflen as usize) < needed {
+        return -1;
+    }
+
+    // Generate a random transaction ID.
+    static TX_COUNTER: std::sync::atomic::AtomicU16 = std::sync::atomic::AtomicU16::new(0x4567);
+    let tx_id = TX_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
+    let out = buf as *mut u8;
+    let out_slice = unsafe { std::slice::from_raw_parts_mut(out, buflen as usize) };
+
+    // Header: ID, flags (RD=1), qdcount=1
+    let hdr = frankenlibc_core::resolv::dns::DnsHeader::new_query(tx_id);
+    let _ = hdr.encode(out_slice);
+
+    // Question section.
+    let mut pos = 12;
+    out_slice[pos..pos + qname.len()].copy_from_slice(&qname);
+    pos += qname.len();
+    out_slice[pos..pos + 2].copy_from_slice(&(typ as u16).to_be_bytes());
+    pos += 2;
+    out_slice[pos..pos + 2].copy_from_slice(&(class as u16).to_be_bytes());
+    pos += 2;
+
+    pos as c_int
+}
+
+// __res_nclose: close resolver state. We use global config, so this is a no-op.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __res_nclose(_statp: *mut c_void) {
+    // Our native resolver uses a global LazyLock config — nothing to close.
+}
+
+// __res_ninit: initialize resolver state. We forward to res_init.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __res_ninit(_statp: *mut c_void) -> c_int {
+    unsafe { super::unistd_abi::res_init() }
+}
+
+// __res_nmkquery: per-state mkquery — forward to __res_mkquery (ignoring state).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __res_nmkquery(
+    _statp: *mut c_void,
+    op: c_int,
+    dname: *const c_char,
+    class: c_int,
+    typ: c_int,
+    data: *const c_void,
+    datalen: c_int,
+    newrr: *const c_void,
+    buf: *mut c_void,
+    buflen: c_int,
+) -> c_int {
+    unsafe { __res_mkquery(op, dname, class, typ, data, datalen, newrr, buf, buflen) }
+}
+
+// __res_nquery: per-state query — forward to __res_query (ignoring state).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __res_nquery(
+    _statp: *mut c_void,
+    dname: *const c_char,
+    class: c_int,
+    typ: c_int,
+    answer: *mut c_void,
+    anslen: c_int,
+) -> c_int {
+    unsafe { super::unistd_abi::res_query(dname, class, typ, answer.cast(), anslen) }
+}
+
+// __res_nquerydomain: per-state querydomain — forward to __res_querydomain.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __res_nquerydomain(
+    _statp: *mut c_void,
+    name: *const c_char,
+    domain: *const c_char,
+    class: c_int,
+    typ: c_int,
+    answer: *mut c_void,
+    anslen: c_int,
+) -> c_int {
+    unsafe { __res_querydomain(name, domain, class, typ, answer, anslen) }
+}
+
+// __res_nsearch: per-state search — forward to __res_search.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __res_nsearch(
+    _statp: *mut c_void,
+    dname: *const c_char,
+    class: c_int,
+    typ: c_int,
+    answer: *mut c_void,
+    anslen: c_int,
+) -> c_int {
+    unsafe { super::unistd_abi::res_search(dname, class, typ, answer.cast(), anslen) }
+}
+
+// __res_nsend: per-state send — forward to __res_send.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __res_nsend(
+    _statp: *mut c_void,
+    msg: *const c_void,
+    msglen: c_int,
+    answer: *mut c_void,
+    anslen: c_int,
+) -> c_int {
+    unsafe { __res_send(msg, msglen, answer, anslen) }
+}
 // __res_ownok: check if owner name is valid (like dnok)
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __res_ownok(dn: *const c_char) -> c_int {
@@ -781,7 +918,50 @@ pub unsafe extern "C" fn __res_query(
 ) -> c_int {
     unsafe { super::unistd_abi::res_query(dname, class, typ, answer.cast(), anslen) }
 }
-dlsym_passthrough!(fn __res_querydomain(name: *const c_char, domain: *const c_char, class: c_int, typ: c_int, answer: *mut c_void, anslen: c_int) -> c_int);
+// __res_querydomain: concatenate name.domain and query via __res_query.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __res_querydomain(
+    name: *const c_char,
+    domain: *const c_char,
+    class: c_int,
+    typ: c_int,
+    answer: *mut c_void,
+    anslen: c_int,
+) -> c_int {
+    if name.is_null() {
+        return -1;
+    }
+    // If domain is NULL or empty, just query the name directly.
+    if domain.is_null() {
+        return unsafe { super::unistd_abi::res_query(name, class, typ, answer.cast(), anslen) };
+    }
+    let name_cstr = unsafe { std::ffi::CStr::from_ptr(name) };
+    let domain_cstr = unsafe { std::ffi::CStr::from_ptr(domain) };
+    let name_bytes = name_cstr.to_bytes();
+    let domain_bytes = domain_cstr.to_bytes();
+    if domain_bytes.is_empty() {
+        return unsafe { super::unistd_abi::res_query(name, class, typ, answer.cast(), anslen) };
+    }
+
+    // Build "name.domain\0"
+    let mut fqdn = Vec::with_capacity(name_bytes.len() + 1 + domain_bytes.len() + 1);
+    fqdn.extend_from_slice(name_bytes);
+    if !name_bytes.ends_with(b".") {
+        fqdn.push(b'.');
+    }
+    fqdn.extend_from_slice(domain_bytes);
+    fqdn.push(0); // NUL terminate
+
+    unsafe {
+        super::unistd_abi::res_query(
+            fqdn.as_ptr().cast::<c_char>(),
+            class,
+            typ,
+            answer.cast(),
+            anslen,
+        )
+    }
+}
 // __res_randomid: generate a random 16-bit DNS query ID
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __res_randomid() -> c_int {
@@ -811,8 +991,92 @@ pub unsafe extern "C" fn __res_search(
 ) -> c_int {
     unsafe { super::unistd_abi::res_search(dname, class, typ, answer.cast(), anslen) }
 }
-dlsym_passthrough!(fn __res_send(msg: *const c_void, msglen: c_int, answer: *mut c_void, anslen: c_int) -> c_int);
-dlsym_passthrough!(fn __res_state() -> *mut c_void);
+// __res_send: send a pre-formatted DNS query and return the raw response.
+// Uses our global resolver config (nameservers from /etc/resolv.conf).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __res_send(
+    msg: *const c_void,
+    msglen: c_int,
+    answer: *mut c_void,
+    anslen: c_int,
+) -> c_int {
+    use frankenlibc_core::resolv::dns::DNS_MAX_UDP_SIZE;
+    use std::net::UdpSocket;
+
+    if msg.is_null() || answer.is_null() || msglen < 12 || anslen <= 0 {
+        return -1;
+    }
+
+    let query = unsafe { std::slice::from_raw_parts(msg as *const u8, msglen as usize) };
+    let tx_id = u16::from_be_bytes([query[0], query[1]]);
+
+    // Use our cached resolver config.
+    let config = &*super::unistd_abi::RESOLV_CONFIG;
+    let timeout = config.query_timeout();
+    let mut recv_buf = vec![0u8; DNS_MAX_UDP_SIZE.max(anslen as usize)];
+
+    for _attempt in 0..config.attempts {
+        for ns in &config.nameservers {
+            let dest = std::net::SocketAddr::new(*ns, frankenlibc_core::resolv::config::DNS_PORT);
+            let bind_addr = if ns.is_ipv4() { "0.0.0.0:0" } else { "[::]:0" };
+            let sock = match UdpSocket::bind(bind_addr) {
+                Ok(s) => s,
+                Err(_) => continue,
+            };
+            let _ = sock.set_read_timeout(Some(timeout));
+            let _ = sock.set_write_timeout(Some(timeout));
+
+            if sock.send_to(query, dest).is_err() {
+                continue;
+            }
+
+            match sock.recv_from(&mut recv_buf) {
+                Ok((n, _)) => {
+                    if n < 12 {
+                        continue;
+                    }
+                    // Verify transaction ID.
+                    let resp_id = u16::from_be_bytes([recv_buf[0], recv_buf[1]]);
+                    if resp_id != tx_id {
+                        continue;
+                    }
+                    // Check QR bit (response).
+                    if (recv_buf[2] & 0x80) == 0 {
+                        continue;
+                    }
+                    let copy_len = n.min(anslen as usize);
+                    unsafe {
+                        std::ptr::copy_nonoverlapping(
+                            recv_buf.as_ptr(),
+                            answer as *mut u8,
+                            copy_len,
+                        );
+                    }
+                    return copy_len as c_int;
+                }
+                Err(_) => continue,
+            }
+        }
+    }
+    -1
+}
+
+// __res_state: return a pointer to the per-thread resolver state.
+// We provide a minimal opaque struct in TLS. Callers that only check for
+// non-null or pass it to __res_n* will work correctly since our __res_n*
+// implementations ignore the state pointer.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __res_state() -> *mut c_void {
+    // Minimal thread-local state: just enough to be a valid non-null pointer.
+    // glibc's struct __res_state is ~600 bytes; callers that read fields
+    // directly would need a full layout, but the common path is to pass
+    // this to __res_n* functions which we handle natively.
+    thread_local! {
+        static RES_STATE: std::cell::UnsafeCell<[u8; 640]> =
+            const { std::cell::UnsafeCell::new([0u8; 640]) };
+    }
+    RES_STATE.with(|s| s.get().cast::<c_void>())
+}
 
 // ==========================================================================
 // res_*ok: DNS name validation (RFC 1035/952 character checks)

@@ -2400,10 +2400,18 @@ fn l64a_a64l_roundtrip() {
 
 // ===========================================================================
 // ecvt / fcvt / gcvt tests
+// ecvt and fcvt share a process-wide static buffer, so tests must be
+// serialized to avoid data races when cargo test runs them in parallel.
 // ===========================================================================
+
+fn ecvt_fcvt_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::OnceLock<Mutex<()>> = std::sync::OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(())).lock().unwrap()
+}
 
 #[test]
 fn ecvt_basic_conversion() {
+    let _guard = ecvt_fcvt_lock();
     let mut decpt: libc::c_int = 0;
     let mut sign: libc::c_int = 0;
     let result = unsafe { ecvt(123.456, 6, &mut decpt, &mut sign) };
@@ -2416,6 +2424,7 @@ fn ecvt_basic_conversion() {
 
 #[test]
 fn ecvt_negative_value() {
+    let _guard = ecvt_fcvt_lock();
     let mut decpt: libc::c_int = 0;
     let mut sign: libc::c_int = 0;
     let _ = unsafe { ecvt(-42.0, 4, &mut decpt, &mut sign) };
@@ -2424,6 +2433,7 @@ fn ecvt_negative_value() {
 
 #[test]
 fn fcvt_basic_conversion() {
+    let _guard = ecvt_fcvt_lock();
     let mut decpt: libc::c_int = 0;
     let mut sign: libc::c_int = 0;
     let result = unsafe { fcvt(123.456, 3, &mut decpt, &mut sign) };

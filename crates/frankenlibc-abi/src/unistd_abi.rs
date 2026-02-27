@@ -7803,14 +7803,15 @@ pub unsafe extern "C" fn sched_rr_get_interval(pid: libc::pid_t, tp: *mut libc::
 // ---------------------------------------------------------------------------
 
 /// Cached resolver config (parsed from /etc/resolv.conf on first use).
-static RESOLV_CONFIG: std::sync::LazyLock<frankenlibc_core::resolv::config::ResolverConfig> =
-    std::sync::LazyLock::new(|| {
-        if let Ok(content) = std::fs::read("/etc/resolv.conf") {
-            frankenlibc_core::resolv::config::ResolverConfig::parse(&content)
-        } else {
-            frankenlibc_core::resolv::config::ResolverConfig::default()
-        }
-    });
+pub(crate) static RESOLV_CONFIG: std::sync::LazyLock<
+    frankenlibc_core::resolv::config::ResolverConfig,
+> = std::sync::LazyLock::new(|| {
+    if let Ok(content) = std::fs::read("/etc/resolv.conf") {
+        frankenlibc_core::resolv::config::ResolverConfig::parse(&content)
+    } else {
+        frankenlibc_core::resolv::config::ResolverConfig::default()
+    }
+});
 
 /// Send a DNS query to the configured nameservers and return the raw response.
 ///

@@ -13,8 +13,14 @@ use frankenlibc_abi::glibc_internal_abi::{
     __nss_passwd_lookup,
     __overflow,
     __printf_fp,
+    // Session 13 additions:
+    __res_mkquery,
+    __res_send,
+    __res_state,
+    __strtof128_internal,
     __uflow,
     __underflow,
+    __wcstof128_internal,
     __woverflow,
     __wuflow,
     __wunderflow,
@@ -55,7 +61,6 @@ use frankenlibc_abi::glibc_internal_abi::{
     printf_size_info,
     rcmd,
     rcmd_af,
-    // Session 13 additions:
     register_printf_function,
     register_printf_modifier,
     register_printf_specifier,
@@ -1283,7 +1288,7 @@ fn wide_overflow_family_returns_wide_eof() {
 }
 
 // ===========================================================================
-// res_* public forwarders (delegate to __res_* GCT)
+// res_* public forwarders (delegate to native __res_* implementations)
 // ===========================================================================
 
 #[test]
@@ -1368,6 +1373,122 @@ fn res_querydomain_null_returns_error() {
 fn res_send_null_returns_error() {
     let r = unsafe { res_send(ptr::null(), 0, ptr::null_mut(), 0) };
     assert!(r <= 0);
+}
+
+// ===========================================================================
+// Session 14: nativized DNS + f128 tests
+// ===========================================================================
+
+#[test]
+fn res_mkquery_builds_valid_query() {
+    let name = CString::new("example.com").unwrap();
+    let mut buf = [0u8; 512];
+    let len = unsafe {
+        __res_mkquery(
+            0, // QUERY
+            name.as_ptr(),
+            1, // C_IN
+            1, // T_A
+            ptr::null(),
+            0,
+            ptr::null(),
+            buf.as_mut_ptr().cast(),
+            512,
+        )
+    };
+    // Minimum: 12 (header) + 13 (example.com encoded) + 4 (qtype+qclass) = 29
+    assert!(len >= 29, "expected >= 29 bytes, got {len}");
+    // QR bit should be 0 (query), RD bit should be 1
+    assert_eq!(buf[2] & 0x80, 0, "QR should be 0 (query)");
+    assert_eq!(buf[2] & 0x01, 1, "RD should be 1");
+    // QDCOUNT should be 1
+    assert_eq!(u16::from_be_bytes([buf[4], buf[5]]), 1);
+}
+
+#[test]
+fn res_mkquery_unsupported_op_returns_error() {
+    let name = CString::new("test.com").unwrap();
+    let mut buf = [0u8; 512];
+    let len = unsafe {
+        __res_mkquery(
+            1, // IQUERY — unsupported
+            name.as_ptr(),
+            1,
+            1,
+            ptr::null(),
+            0,
+            ptr::null(),
+            buf.as_mut_ptr().cast(),
+            512,
+        )
+    };
+    assert_eq!(len, -1);
+}
+
+#[test]
+fn res_mkquery_buffer_too_small_returns_error() {
+    let name = CString::new("example.com").unwrap();
+    let mut buf = [0u8; 10]; // too small
+    let len = unsafe {
+        __res_mkquery(
+            0,
+            name.as_ptr(),
+            1,
+            1,
+            ptr::null(),
+            0,
+            ptr::null(),
+            buf.as_mut_ptr().cast(),
+            10,
+        )
+    };
+    assert_eq!(len, -1);
+}
+
+#[test]
+fn res_send_null_msg_returns_error() {
+    let r = unsafe { __res_send(ptr::null(), 0, ptr::null_mut(), 0) };
+    assert_eq!(r, -1);
+}
+
+#[test]
+fn res_state_returns_non_null() {
+    let state = unsafe { __res_state() };
+    assert!(
+        !state.is_null(),
+        "__res_state should return non-null TLS pointer"
+    );
+    // Calling twice in the same thread should return the same pointer.
+    let state2 = unsafe { __res_state() };
+    assert_eq!(
+        state, state2,
+        "__res_state should be stable within a thread"
+    );
+}
+
+#[test]
+fn strtof128_internal_parses_number() {
+    let input = CString::new("3.25").unwrap();
+    let mut endptr: *mut libc::c_char = ptr::null_mut();
+    let val = unsafe { __strtof128_internal(input.as_ptr(), &mut endptr, 0) };
+    assert!((val - 3.25).abs() < 1e-10);
+    assert!(!endptr.is_null());
+}
+
+#[test]
+fn strtof128_internal_null_returns_zero() {
+    let input = CString::new("").unwrap();
+    let mut endptr: *mut libc::c_char = ptr::null_mut();
+    let val = unsafe { __strtof128_internal(input.as_ptr(), &mut endptr, 0) };
+    assert_eq!(val, 0.0);
+}
+
+#[test]
+fn wcstof128_internal_parses_number() {
+    let input: Vec<i32> = "1.625\0".chars().map(|c| c as i32).collect();
+    let mut endptr: *mut i32 = ptr::null_mut();
+    let val = unsafe { __wcstof128_internal(input.as_ptr(), &mut endptr, 0) };
+    assert!((val - 1.625).abs() < 1e-10);
 }
 
 #[test]

@@ -3032,13 +3032,13 @@ pub unsafe extern "C" fn fputws(ws: *const libc::wchar_t, stream: *mut std::ffi:
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getwchar() -> u32 {
     // SAFETY: stdio_abi exports `stdin` as a FILE-handle sentinel value.
-    unsafe { fgetwc(super::stdio_abi::stdin as *mut std::ffi::c_void) }
+    unsafe { fgetwc(super::stdio_abi::stdin) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn putwchar(wc: u32) -> u32 {
     // SAFETY: stdio_abi exports `stdout` as a FILE-handle sentinel value.
-    unsafe { fputwc(wc, super::stdio_abi::stdout as *mut std::ffi::c_void) }
+    unsafe { fputwc(wc, super::stdio_abi::stdout) }
 }
 
 // ===========================================================================
@@ -3249,7 +3249,8 @@ pub unsafe extern "C" fn wscanf(format: *const libc::wchar_t, mut args: ...) -> 
     if format.is_null() {
         return libc::EOF;
     }
-    let input = super::stdio_abi::read_stream_for_scanf(super::stdio_abi::stdin, 4096);
+    let input =
+        super::stdio_abi::read_stream_for_scanf(unsafe { super::stdio_abi::stdin as usize }, 4096);
     let fmt_narrow = unsafe { wide_to_narrow(format) };
     let fmt_cstr = std::ffi::CString::new(fmt_narrow).unwrap_or_default();
     let (result, directives) = super::stdio_abi::scanf_core(&input, fmt_cstr.as_ptr());
@@ -3312,7 +3313,8 @@ pub unsafe extern "C" fn vwscanf(format: *const libc::wchar_t, ap: *mut std::ffi
     if format.is_null() {
         return libc::EOF;
     }
-    let input = super::stdio_abi::read_stream_for_scanf(super::stdio_abi::stdin, 4096);
+    let input =
+        super::stdio_abi::read_stream_for_scanf(unsafe { super::stdio_abi::stdin as usize }, 4096);
     let fmt_narrow = unsafe { wide_to_narrow(format) };
     let fmt_cstr = std::ffi::CString::new(fmt_narrow).unwrap_or_default();
     let (result, directives) = super::stdio_abi::scanf_core(&input, fmt_cstr.as_ptr());

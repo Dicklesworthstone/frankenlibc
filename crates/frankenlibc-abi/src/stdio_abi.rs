@@ -201,17 +201,17 @@ unsafe fn refill_stream(stream: &mut StdioStream) -> isize {
 /// Global `stdin` pointer.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 #[allow(non_upper_case_globals)]
-pub static stdin: usize = STDIN_SENTINEL;
+pub static mut stdin: *mut c_void = STDIN_SENTINEL as *mut c_void;
 
 /// Global `stdout` pointer.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 #[allow(non_upper_case_globals)]
-pub static stdout: usize = STDOUT_SENTINEL;
+pub static mut stdout: *mut c_void = STDOUT_SENTINEL as *mut c_void;
 
 /// Global `stderr` pointer.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 #[allow(non_upper_case_globals)]
-pub static stderr: usize = STDERR_SENTINEL;
+pub static mut stderr: *mut c_void = STDERR_SENTINEL as *mut c_void;
 
 // ---------------------------------------------------------------------------
 // fopen / fclose
@@ -4512,17 +4512,19 @@ mod _io_internal {
     // In interpose mode these resolve to the host glibc's objects via the
     // existing stdin/stdout/stderr statics. We export aliases that point to
     // our sentinel addresses so programs that reference _IO_2_1_* link correctly.
+    // They must be large enough to hold glibc's `_IO_FILE_plus` (224 bytes on 64-bit)
+    // and must be mutable so `_IO_stdfiles_init` doesn't segfault writing to them.
 
     /// `_IO_2_1_stdin_` — glibc internal stdin FILE object alias.
     #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-    pub static _IO_2_1_stdin_: usize = STDIN_SENTINEL;
+    pub static mut _IO_2_1_stdin_: [u8; 256] = [0; 256];
 
     /// `_IO_2_1_stdout_` — glibc internal stdout FILE object alias.
     #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-    pub static _IO_2_1_stdout_: usize = STDOUT_SENTINEL;
+    pub static mut _IO_2_1_stdout_: [u8; 256] = [0; 256];
 
     /// `_IO_2_1_stderr_` — glibc internal stderr FILE object alias.
     #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-    pub static _IO_2_1_stderr_: usize = STDERR_SENTINEL;
+    pub static mut _IO_2_1_stderr_: [u8; 256] = [0; 256];
 } // mod _io_internal
 pub use _io_internal::*;
