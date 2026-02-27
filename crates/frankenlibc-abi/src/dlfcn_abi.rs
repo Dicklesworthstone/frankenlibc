@@ -93,15 +93,6 @@ host_delegate!(host_dlsym, "dlsym", DlsymFn);
 type DlcloseFn = unsafe extern "C" fn(*mut c_void) -> c_int;
 host_delegate!(host_dlclose, "dlclose", DlcloseFn);
 
-type DlIteratePhdrFn = unsafe extern "C" fn(
-    Option<unsafe extern "C" fn(*mut c_void, usize, *mut c_void) -> c_int>,
-    *mut c_void,
-) -> c_int;
-host_delegate!(host_dl_iterate_phdr, "dl_iterate_phdr", DlIteratePhdrFn);
-
-type DladdrFn = unsafe extern "C" fn(*const c_void, *mut c_void) -> c_int;
-host_delegate!(host_dladdr, "dladdr", DladdrFn);
-
 // ---------------------------------------------------------------------------
 // dlopen
 // ---------------------------------------------------------------------------
@@ -259,7 +250,7 @@ pub unsafe extern "C" fn dlerror() -> *const c_char {
 }
 
 // ---------------------------------------------------------------------------
-// dl_iterate_phdr / dladdr — GlibcCallThrough
+// dl_iterate_phdr / dladdr — native fallback (no host call-through)
 // ---------------------------------------------------------------------------
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -267,10 +258,42 @@ pub unsafe extern "C" fn dl_iterate_phdr(
     callback: Option<unsafe extern "C" fn(*mut c_void, usize, *mut c_void) -> c_int>,
     data: *mut c_void,
 ) -> c_int {
-    unsafe { host_dl_iterate_phdr().map_or(-1, |f| f(callback, data)) }
+    let callback_addr = callback.map_or(0usize, |cb| cb as usize);
+    let (_, decision) =
+        runtime_policy::decide(ApiFamily::Loader, callback_addr, data as usize, false, true, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        set_dlerror(dlfcn_core::ERR_OPERATION_UNAVAILABLE);
+        runtime_policy::observe(ApiFamily::Loader, decision.profile, 5, true);
+        return -1;
+    }
+
+    // Phase-1 native replacement-safe fallback: report no entries instead of
+    // calling into host loader internals.
+    let _ = callback;
+    let _ = data;
+    clear_dlerror();
+    runtime_policy::observe(ApiFamily::Loader, decision.profile, 6, false);
+    0
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn dladdr(addr: *const c_void, info: *mut c_void) -> c_int {
-    unsafe { host_dladdr().map_or(0, |f| f(addr, info)) }
+    let (_, decision) =
+        runtime_policy::decide(ApiFamily::Loader, addr as usize, info as usize, false, true, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        set_dlerror(dlfcn_core::ERR_OPERATION_UNAVAILABLE);
+        runtime_policy::observe(ApiFamily::Loader, decision.profile, 5, true);
+        return 0;
+    }
+
+    if addr.is_null() || info.is_null() {
+        set_dlerror(dlfcn_core::ERR_INVALID_HANDLE);
+        runtime_policy::observe(ApiFamily::Loader, decision.profile, 5, true);
+        return 0;
+    }
+
+    // Native fallback currently does not expose loader metadata.
+    set_dlerror(dlfcn_core::ERR_OPERATION_UNAVAILABLE);
+    runtime_policy::observe(ApiFamily::Loader, decision.profile, 6, true);
+    0
 }

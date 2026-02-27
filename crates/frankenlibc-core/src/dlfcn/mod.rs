@@ -42,6 +42,7 @@ pub const ERR_INVALID_FLAGS: &[u8] = b"invalid mode for dlopen\0";
 pub const ERR_NOT_FOUND: &[u8] = b"shared object not found\0";
 pub const ERR_SYMBOL_NOT_FOUND: &[u8] = b"undefined symbol\0";
 pub const ERR_INVALID_HANDLE: &[u8] = b"invalid handle\0";
+pub const ERR_OPERATION_UNAVAILABLE: &[u8] = b"operation unavailable in native dlfcn path\0";
 
 #[cfg(test)]
 mod tests {
