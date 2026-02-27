@@ -19535,32 +19535,32 @@
     },
     {
       "symbol": "res_mkquery",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "res_nmkquery",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "res_nquery",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "res_nquerydomain",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "res_nsearch",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "res_nsend",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
@@ -19570,12 +19570,12 @@
     },
     {
       "symbol": "res_querydomain",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "res_send",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {

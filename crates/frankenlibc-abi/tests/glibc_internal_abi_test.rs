@@ -63,7 +63,15 @@ use frankenlibc_abi::glibc_internal_abi::{
     res_dnok,
     res_hnok,
     res_mailok,
+    res_mkquery,
+    res_nmkquery,
+    res_nquery,
+    res_nquerydomain,
+    res_nsearch,
+    res_nsend,
     res_ownok,
+    res_querydomain,
+    res_send,
     rexec,
     rexec_af,
     ruserok,
@@ -1272,6 +1280,86 @@ fn wide_overflow_family_returns_wide_eof() {
     let r = unsafe { __wunderflow(ptr::null_mut()) };
     assert_eq!(r, -1);
     assert_eq!(unsafe { *libc::__errno_location() }, libc::ENOSYS);
+}
+
+// ===========================================================================
+// res_* public forwarders (delegate to __res_* GCT)
+// ===========================================================================
+
+#[test]
+fn res_mkquery_null_returns_error() {
+    // res_mkquery with null dname should return -1 (via __res_mkquery GCT)
+    let r = unsafe {
+        res_mkquery(
+            0,
+            ptr::null(),
+            1, // C_IN
+            1, // T_A
+            ptr::null(),
+            0,
+            ptr::null(),
+            ptr::null_mut(),
+            0,
+        )
+    };
+    assert!(r <= 0);
+}
+
+#[test]
+fn res_nmkquery_null_statp_returns_error() {
+    let r = unsafe {
+        res_nmkquery(
+            ptr::null_mut(),
+            0,
+            ptr::null(),
+            1,
+            1,
+            ptr::null(),
+            0,
+            ptr::null(),
+            ptr::null_mut(),
+            0,
+        )
+    };
+    assert!(r <= 0);
+}
+
+#[test]
+fn res_nquery_null_statp_returns_error() {
+    let r = unsafe { res_nquery(ptr::null_mut(), ptr::null(), 1, 1, ptr::null_mut(), 0) };
+    assert!(r <= 0);
+}
+
+#[test]
+fn res_nquerydomain_null_returns_error() {
+    let r = unsafe {
+        res_nquerydomain(ptr::null_mut(), ptr::null(), ptr::null(), 1, 1, ptr::null_mut(), 0)
+    };
+    assert!(r <= 0);
+}
+
+#[test]
+fn res_nsearch_null_returns_error() {
+    let r = unsafe { res_nsearch(ptr::null_mut(), ptr::null(), 1, 1, ptr::null_mut(), 0) };
+    assert!(r <= 0);
+}
+
+#[test]
+fn res_nsend_null_returns_error() {
+    let r = unsafe { res_nsend(ptr::null_mut(), ptr::null(), 0, ptr::null_mut(), 0) };
+    assert!(r <= 0);
+}
+
+#[test]
+fn res_querydomain_null_returns_error() {
+    let r = unsafe { res_querydomain(ptr::null(), ptr::null(), 1, 1, ptr::null_mut(), 0) };
+    assert!(r <= 0);
+}
+
+#[test]
+fn res_send_null_returns_error() {
+    let r = unsafe { res_send(ptr::null(), 0, ptr::null_mut(), 0) };
+    assert!(r <= 0);
 }
 
 #[test]

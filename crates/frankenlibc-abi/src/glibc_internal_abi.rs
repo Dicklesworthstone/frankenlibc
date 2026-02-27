@@ -1211,19 +1211,112 @@ pub unsafe extern "C" fn res_mailok(dn: *const c_char) -> c_int {
     }
     1
 }
-dlsym_passthrough!(fn res_mkquery(op: c_int, dname: *const c_char, class: c_int, typ: c_int, data: *const c_void, datalen: c_int, newrr: *const c_void, buf: *mut c_void, buflen: c_int) -> c_int);
-dlsym_passthrough!(fn res_nmkquery(statp: *mut c_void, op: c_int, dname: *const c_char, class: c_int, typ: c_int, data: *const c_void, datalen: c_int, newrr: *const c_void, buf: *mut c_void, buflen: c_int) -> c_int);
-dlsym_passthrough!(fn res_nquery(statp: *mut c_void, dname: *const c_char, class: c_int, typ: c_int, answer: *mut c_void, anslen: c_int) -> c_int);
-dlsym_passthrough!(fn res_nquerydomain(statp: *mut c_void, name: *const c_char, domain: *const c_char, class: c_int, typ: c_int, answer: *mut c_void, anslen: c_int) -> c_int);
-dlsym_passthrough!(fn res_nsearch(statp: *mut c_void, dname: *const c_char, class: c_int, typ: c_int, answer: *mut c_void, anslen: c_int) -> c_int);
-dlsym_passthrough!(fn res_nsend(statp: *mut c_void, msg: *const c_void, msglen: c_int, answer: *mut c_void, anslen: c_int) -> c_int);
+// res_mkquery: public alias for __res_mkquery (RFC 1035 query construction)
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn res_mkquery(
+    op: c_int,
+    dname: *const c_char,
+    class: c_int,
+    typ: c_int,
+    data: *const c_void,
+    datalen: c_int,
+    newrr: *const c_void,
+    buf: *mut c_void,
+    buflen: c_int,
+) -> c_int {
+    unsafe { __res_mkquery(op, dname, class, typ, data, datalen, newrr, buf, buflen) }
+}
+// res_nmkquery: stateful alias for __res_nmkquery
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn res_nmkquery(
+    statp: *mut c_void,
+    op: c_int,
+    dname: *const c_char,
+    class: c_int,
+    typ: c_int,
+    data: *const c_void,
+    datalen: c_int,
+    newrr: *const c_void,
+    buf: *mut c_void,
+    buflen: c_int,
+) -> c_int {
+    unsafe { __res_nmkquery(statp, op, dname, class, typ, data, datalen, newrr, buf, buflen) }
+}
+// res_nquery: stateful alias for __res_nquery
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn res_nquery(
+    statp: *mut c_void,
+    dname: *const c_char,
+    class: c_int,
+    typ: c_int,
+    answer: *mut c_void,
+    anslen: c_int,
+) -> c_int {
+    unsafe { __res_nquery(statp, dname, class, typ, answer, anslen) }
+}
+// res_nquerydomain: stateful alias for __res_nquerydomain
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn res_nquerydomain(
+    statp: *mut c_void,
+    name: *const c_char,
+    domain: *const c_char,
+    class: c_int,
+    typ: c_int,
+    answer: *mut c_void,
+    anslen: c_int,
+) -> c_int {
+    unsafe { __res_nquerydomain(statp, name, domain, class, typ, answer, anslen) }
+}
+// res_nsearch: stateful alias for __res_nsearch
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn res_nsearch(
+    statp: *mut c_void,
+    dname: *const c_char,
+    class: c_int,
+    typ: c_int,
+    answer: *mut c_void,
+    anslen: c_int,
+) -> c_int {
+    unsafe { __res_nsearch(statp, dname, class, typ, answer, anslen) }
+}
+// res_nsend: stateful alias for __res_nsend
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn res_nsend(
+    statp: *mut c_void,
+    msg: *const c_void,
+    msglen: c_int,
+    answer: *mut c_void,
+    anslen: c_int,
+) -> c_int {
+    unsafe { __res_nsend(statp, msg, msglen, answer, anslen) }
+}
 // res_ownok: owner name — same rules as dnok (allows underscores)
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn res_ownok(dn: *const c_char) -> c_int {
     unsafe { res_dnok(dn) }
 }
-dlsym_passthrough!(fn res_querydomain(name: *const c_char, domain: *const c_char, class: c_int, typ: c_int, answer: *mut c_void, anslen: c_int) -> c_int);
-dlsym_passthrough!(fn res_send(msg: *const c_void, msglen: c_int, answer: *mut c_void, anslen: c_int) -> c_int);
+// res_querydomain: public alias for __res_querydomain
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn res_querydomain(
+    name: *const c_char,
+    domain: *const c_char,
+    class: c_int,
+    typ: c_int,
+    answer: *mut c_void,
+    anslen: c_int,
+) -> c_int {
+    unsafe { __res_querydomain(name, domain, class, typ, answer, anslen) }
+}
+// res_send: public alias for __res_send
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn res_send(
+    msg: *const c_void,
+    msglen: c_int,
+    answer: *mut c_void,
+    anslen: c_int,
+) -> c_int {
+    unsafe { __res_send(msg, msglen, answer, anslen) }
+}
 
 // ==========================================================================
 // __nss_* public symbols (7)
