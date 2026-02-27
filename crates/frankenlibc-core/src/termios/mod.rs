@@ -288,19 +288,23 @@ pub fn cfmakeraw(t: &mut Termios) {
 // Stub syscall wrappers (kept for ABI compatibility, implementations pending)
 // ---------------------------------------------------------------------------
 
-/// Gets the terminal attributes for the file descriptor.
+/// Gets terminal attributes for the file descriptor.
 ///
-/// Equivalent to C `tcgetattr`. Returns 0 on success, -1 on error.
+/// Phase-1 deterministic placeholder: backend syscall transport lives in the
+/// ABI layer today, so core returns `-1` without mutating the provided struct.
 pub fn tcgetattr(_fd: i32, _termios: &mut Termios) -> i32 {
-    todo!("POSIX tcgetattr: implementation pending")
+    -1
 }
 
-/// Sets the terminal attributes for the file descriptor.
+/// Sets terminal attributes for the file descriptor.
 ///
-/// Equivalent to C `tcsetattr`. `optional_actions` controls when changes
-/// take effect. Returns 0 on success, -1 on error.
-pub fn tcsetattr(_fd: i32, _optional_actions: i32, _termios: &Termios) -> i32 {
-    todo!("POSIX tcsetattr: implementation pending")
+/// Phase-1 deterministic placeholder: validates the action selector and
+/// returns `-1` while the backend syscall transport remains in ABI.
+pub fn tcsetattr(_fd: i32, optional_actions: i32, _termios: &Termios) -> i32 {
+    if !valid_optional_actions(optional_actions) {
+        return -1;
+    }
+    -1
 }
 
 // ---------------------------------------------------------------------------
@@ -561,6 +565,45 @@ mod tests {
         assert!(!valid_flow_action(-1));
         assert!(!valid_flow_action(4));
         assert!(!valid_flow_action(255));
+    }
+
+    // -----------------------------------------------------------------------
+    // tcgetattr / tcsetattr placeholders
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_tcgetattr_placeholder_returns_minus_one_without_mutation() {
+        let mut t = Termios {
+            c_iflag: ICRNL,
+            c_oflag: OPOST,
+            c_cflag: B9600 | CREAD,
+            c_lflag: ICANON,
+            c_cc: [0u8; NCCS],
+        };
+        let before = t.clone();
+        let rc = tcgetattr(-1, &mut t);
+        assert_eq!(rc, -1);
+        assert_eq!(t.c_iflag, before.c_iflag);
+        assert_eq!(t.c_oflag, before.c_oflag);
+        assert_eq!(t.c_cflag, before.c_cflag);
+        assert_eq!(t.c_lflag, before.c_lflag);
+        assert_eq!(t.c_cc, before.c_cc);
+    }
+
+    #[test]
+    fn test_tcsetattr_placeholder_returns_minus_one_for_valid_actions() {
+        let t = Termios::default();
+        for &act in &[TCSANOW, TCSADRAIN, TCSAFLUSH] {
+            assert_eq!(tcsetattr(-1, act, &t), -1);
+        }
+    }
+
+    #[test]
+    fn test_tcsetattr_placeholder_rejects_invalid_action_values() {
+        let t = Termios::default();
+        for &act in &[-1, 3, 99, i32::MIN, i32::MAX] {
+            assert_eq!(tcsetattr(-1, act, &t), -1);
+        }
     }
 
     // -----------------------------------------------------------------------

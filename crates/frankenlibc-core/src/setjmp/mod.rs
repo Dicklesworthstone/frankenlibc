@@ -192,24 +192,32 @@ pub fn phase1_longjmp_restore(
     })
 }
 
-/// Saves the current execution context into `env`.
+/// Saves phase-1 jump context metadata into `env`.
 ///
-/// Equivalent to C `setjmp`. Returns 0 when called directly.
-/// When restored via [`longjmp`], returns the value passed to `longjmp`.
-///
-/// NOTE: This will need unsafe implementation for actual stack manipulation.
-pub fn setjmp(_env: &mut JmpBuf) -> i32 {
-    todo!("POSIX setjmp: implementation pending (requires unsafe for real impl)")
+/// Equivalent to direct C `setjmp` return path: this call returns `0`.
+/// Real stack register capture is still deferred to the backend.
+pub fn setjmp(env: &mut JmpBuf) -> i32 {
+    let _capture = phase1_setjmp_capture(env, Phase1Mode::Strict);
+    0
 }
 
-/// Restores the execution context saved in `env`.
+/// Validates phase-1 jump metadata and then terminates with an explicit
+/// deferred-transfer panic payload.
 ///
-/// Equivalent to C `longjmp`. `val` is the value that `setjmp` will appear
-/// to return (if `val` is 0, `setjmp` returns 1 instead).
-///
-/// NOTE: This will need unsafe implementation for actual stack manipulation.
-pub fn longjmp(_env: &JmpBuf, _val: i32) -> ! {
-    todo!("POSIX longjmp: implementation pending (requires unsafe for real impl)")
+/// Equivalent to C `longjmp` value normalization (`0 -> 1`), but true stack
+/// transfer remains deferred to the backend implementation stage.
+pub fn longjmp(env: &JmpBuf, val: i32) -> ! {
+    match phase1_longjmp_restore(env, val, Phase1Mode::Strict) {
+        Ok(restore) => {
+            panic!(
+                "POSIX longjmp: deferred backend transfer (context_id={}, generation={}, owner_thread={}, return_value={})",
+                restore.context_id, restore.generation, restore.owner_thread, restore.return_value
+            );
+        }
+        Err(err) => {
+            panic!("POSIX longjmp: invalid jump context ({err:?})");
+        }
+    }
 }
 
 #[cfg(test)]
@@ -232,7 +240,7 @@ mod tests {
         "<non-string panic payload>".to_string()
     }
 
-    fn assert_placeholder_contract_panic(
+    fn assert_contract_panic_contains(
         subsystem: &str,
         clause: &str,
         evidence_path: &str,
@@ -320,46 +328,58 @@ mod tests {
     }
 
     #[test]
-    fn setjmp_placeholder_panics_with_explicit_contract_message() {
+    fn setjmp_returns_zero_and_captures_context_metadata() {
         let mut env = JmpBuf::default();
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let _ = setjmp(&mut env);
-        }));
-        assert_placeholder_contract_panic(
+        let ret = setjmp(&mut env);
+        assert_eq!(ret, 0);
+        let restore = phase1_longjmp_restore(&env, SETJMP_TEST_SEED, Phase1Mode::Strict)
+            .expect("setjmp must capture a valid strict-mode context");
+        assert_eq!(restore.return_value, SETJMP_TEST_SEED);
+    }
+
+    #[test]
+    fn longjmp_panics_with_deferred_backend_transfer_message() {
+        let mut env = JmpBuf::default();
+        let _ = setjmp(&mut env);
+        let result = std::panic::catch_unwind(|| {
+            longjmp(&env, SETJMP_TEST_SEED);
+        });
+        assert_contract_panic_contains(
             "setjmp",
-            "placeholder-must-explicitly-advertise-unsafe-boundary",
+            "longjmp-must-explicitly-signal-deferred-transfer",
             "crates/frankenlibc-core/src/setjmp/mod.rs",
-            "POSIX setjmp: implementation pending",
+            "POSIX longjmp: deferred backend transfer",
             result,
         );
     }
 
     #[test]
-    fn longjmp_placeholder_panics_with_explicit_contract_message() {
+    fn longjmp_panics_with_normalized_zero_value() {
+        let mut env = JmpBuf::default();
+        let _ = setjmp(&mut env);
+        let result = std::panic::catch_unwind(|| {
+            longjmp(&env, 0);
+        });
+        assert_contract_panic_contains(
+            "setjmp",
+            "longjmp-zero-normalizes-to-one-before-deferred-transfer",
+            "crates/frankenlibc-core/src/setjmp/mod.rs",
+            "return_value=1",
+            result,
+        );
+    }
+
+    #[test]
+    fn longjmp_panics_with_invalid_context_error_for_uninitialized_env() {
         let env = JmpBuf::default();
         let result = std::panic::catch_unwind(|| {
             longjmp(&env, SETJMP_TEST_SEED);
         });
-        assert_placeholder_contract_panic(
+        assert_contract_panic_contains(
             "setjmp",
-            "placeholder-must-explicitly-advertise-unsafe-boundary",
+            "longjmp-must-explicitly-report-invalid-context",
             "crates/frankenlibc-core/src/setjmp/mod.rs",
-            "POSIX longjmp: implementation pending",
-            result,
-        );
-    }
-
-    #[test]
-    fn longjmp_placeholder_panics_when_val_zero() {
-        let env = JmpBuf::default();
-        let result = std::panic::catch_unwind(|| {
-            longjmp(&env, 0);
-        });
-        assert_placeholder_contract_panic(
-            "setjmp",
-            "longjmp-zero-remains-unimplemented-contract-placeholder",
-            "crates/frankenlibc-core/src/setjmp/mod.rs",
-            "POSIX longjmp: implementation pending",
+            "POSIX longjmp: invalid jump context",
             result,
         );
     }
