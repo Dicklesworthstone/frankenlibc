@@ -1485,10 +1485,8 @@ fn ctermid_writes_into_caller_buffer() {
 
 #[test]
 fn get_nprocs_helpers_match_sysconf_values() {
-    // SAFETY: no pointer preconditions.
-    let online = unsafe { get_nprocs() };
-    // SAFETY: no pointer preconditions.
-    let conf = unsafe { get_nprocs_conf() };
+    let online = get_nprocs();
+    let conf = get_nprocs_conf();
 
     assert!(online > 0);
     assert!(conf > 0);
@@ -1528,13 +1526,12 @@ fn get_phys_and_avphys_pages_match_sysinfo_projection() {
     let expected_avphys = ((info.freeram as u128).saturating_mul(mem_unit) / page_size_u128)
         .min(libc::c_long::MAX as u128) as libc::c_long;
 
-    // SAFETY: no pointer preconditions.
-    assert_eq!(unsafe { get_phys_pages() }, expected_phys);
-    
+    assert_eq!(get_phys_pages(), expected_phys);
+
     // Available pages fluctuate and `/proc/meminfo`'s `MemAvailable` (which includes
     // reclaimable page cache) is generally much higher than `sysinfo`'s `freeram`
     // (which does not). We just verify it's a sane positive number and >= freeram.
-    let actual_avphys = unsafe { get_avphys_pages() };
+    let actual_avphys = get_avphys_pages();
     assert!(actual_avphys > 0, "get_avphys_pages() should be > 0");
     assert!(
         actual_avphys >= expected_avphys,
