@@ -2172,10 +2172,21 @@ fn mq_open_null_name_reports_expected_errno() {
 
 // ===========================================================================
 // drand48 family tests
+//
+// `drand48()`/`srand48()` use global PRNG state. Tests that depend on
+// deterministic seed→output mapping must be serialized to avoid interleaving.
 // ===========================================================================
+
+fn drand48_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::OnceLock<Mutex<()>> = std::sync::OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+        .lock()
+        .expect("drand48 lock should not be poisoned")
+}
 
 #[test]
 fn drand48_seeded_deterministic() {
+    let _lock = drand48_lock();
     unsafe {
         srand48(42);
         let a = drand48();
@@ -2187,6 +2198,7 @@ fn drand48_seeded_deterministic() {
 
 #[test]
 fn drand48_returns_in_range() {
+    let _lock = drand48_lock();
     unsafe {
         srand48(1);
         for _ in 0..50 {
@@ -2198,6 +2210,7 @@ fn drand48_returns_in_range() {
 
 #[test]
 fn lrand48_returns_non_negative() {
+    let _lock = drand48_lock();
     unsafe {
         srand48(1);
         for _ in 0..50 {
@@ -2209,6 +2222,7 @@ fn lrand48_returns_non_negative() {
 
 #[test]
 fn mrand48_returns_signed_long() {
+    let _lock = drand48_lock();
     unsafe {
         srand48(1);
         let a = mrand48();
@@ -2219,6 +2233,7 @@ fn mrand48_returns_signed_long() {
 
 #[test]
 fn erand48_uses_caller_state() {
+    // erand48 uses caller-supplied state, not global — no lock needed.
     let mut state1 = [0x1234u16, 0x5678, 0x9ABC];
     let mut state2 = [0x1234u16, 0x5678, 0x9ABC];
     let a = unsafe { erand48(state1.as_mut_ptr()) };
@@ -2229,6 +2244,7 @@ fn erand48_uses_caller_state() {
 
 #[test]
 fn nrand48_uses_caller_state() {
+    // nrand48 uses caller-supplied state, not global — no lock needed.
     let mut state = [0u16, 0, 1];
     let v = unsafe { nrand48(state.as_mut_ptr()) };
     assert!(v >= 0, "nrand48 negative: {v}");
@@ -2236,12 +2252,14 @@ fn nrand48_uses_caller_state() {
 
 #[test]
 fn jrand48_uses_caller_state() {
+    // jrand48 uses caller-supplied state, not global — no lock needed.
     let mut state = [0xFFFFu16, 0xFFFF, 0xFFFF];
     let _ = unsafe { jrand48(state.as_mut_ptr()) };
 }
 
 #[test]
 fn seed48_returns_old_state() {
+    let _lock = drand48_lock();
     unsafe {
         srand48(100);
         let _ = drand48();
@@ -2253,6 +2271,7 @@ fn seed48_returns_old_state() {
 
 #[test]
 fn lcong48_sets_custom_params() {
+    let _lock = drand48_lock();
     unsafe {
         let mut params = [0u16, 0, 0, 1, 0, 0, 1];
         lcong48(params.as_mut_ptr());
@@ -2264,10 +2283,21 @@ fn lcong48_sets_custom_params() {
 
 // ===========================================================================
 // random family tests
+//
+// `random()`/`srandom()` use global PRNG state. Tests that depend on
+// deterministic seed→output mapping must be serialized to avoid interleaving.
 // ===========================================================================
+
+fn random_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::OnceLock<Mutex<()>> = std::sync::OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+        .lock()
+        .expect("random lock should not be poisoned")
+}
 
 #[test]
 fn random_seeded_deterministic() {
+    let _lock = random_lock();
     unsafe {
         srandom(42);
         let a = random();
@@ -2279,6 +2309,7 @@ fn random_seeded_deterministic() {
 
 #[test]
 fn random_returns_non_negative() {
+    let _lock = random_lock();
     unsafe {
         srandom(1);
         for _ in 0..50 {
@@ -2290,6 +2321,7 @@ fn random_returns_non_negative() {
 
 #[test]
 fn initstate_setstate_roundtrip() {
+    let _lock = random_lock();
     unsafe {
         srandom(99);
         let mut buf = vec![0u8; 256];

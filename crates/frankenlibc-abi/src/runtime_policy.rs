@@ -539,35 +539,13 @@ fn ensure_minimal_panic_hook() {
     // In test mode the standard test harness owns the panic hook. Installing our
     // custom hook would poison the kernel on normal assertion failures, cascading
     // into false failures in subsequent kernel-dependent tests.
-    #[cfg(test)]
-    return;
-
-    if PANIC_HOOK_STATE
-        .compare_exchange(
-            PANIC_HOOK_UNSET,
-            PANIC_HOOK_INSTALLED,
-            AtomicOrdering::SeqCst,
-            AtomicOrdering::Relaxed,
-        )
-        .is_err()
+    #[cfg(not(test))]
     {
-        return;
-    }
-
-    panic::set_hook(Box::new(|info| {
-        const MSG: &[u8] = b"frankenlibc: runtime kernel panic (fallback)\n";
-        mark_kernel_broken();
-
-        let seen = PANIC_HOOK_LOG_COUNT.fetch_add(1, AtomicOrdering::Relaxed);
-        if seen >= PANIC_HOOK_LOG_LIMIT {
-            return;
-        }
-
-        if PANIC_HOOK_WRITE_STATE
+        if PANIC_HOOK_STATE
             .compare_exchange(
-                PANIC_HOOK_WRITE_IDLE,
-                PANIC_HOOK_WRITE_ACTIVE,
-                AtomicOrdering::AcqRel,
+                PANIC_HOOK_UNSET,
+                PANIC_HOOK_INSTALLED,
+                AtomicOrdering::SeqCst,
                 AtomicOrdering::Relaxed,
             )
             .is_err()
@@ -575,29 +553,50 @@ fn ensure_minimal_panic_hook() {
             return;
         }
 
-        // SAFETY: direct raw syscall write avoids libc indirection and is
-        // async-signal-safe enough for panic reporting.
-        let _ = unsafe { syscall::sys_write(libc::STDERR_FILENO, MSG.as_ptr(), MSG.len()) };
-        if seen == 0 {
-            const PREFIX: &[u8] = b"frankenlibc: panic location: ";
-            let _ =
-                unsafe { syscall::sys_write(libc::STDERR_FILENO, PREFIX.as_ptr(), PREFIX.len()) };
-            if let Some(location) = info.location() {
-                let _ = unsafe {
-                    syscall::sys_write(
-                        libc::STDERR_FILENO,
-                        location.file().as_bytes().as_ptr(),
-                        location.file().len(),
-                    )
-                };
-                let _ = unsafe { syscall::sys_write(libc::STDERR_FILENO, b":".as_ptr(), 1) };
-                write_u32_stderr(location.line());
-            } else {
-                let _ = unsafe { syscall::sys_write(libc::STDERR_FILENO, b"unknown".as_ptr(), 7) };
-            }
-            let _ = unsafe { syscall::sys_write(libc::STDERR_FILENO, b"\n".as_ptr(), 1) };
+        panic::set_hook(Box::new(|info| {
+            const MSG: &[u8] = b"frankenlibc: runtime kernel panic (fallback)\n";
+            mark_kernel_broken();
 
-            const PAYLOAD_PREFIX: &[u8] = b"frankenlibc: panic payload: ";
+            let seen = PANIC_HOOK_LOG_COUNT.fetch_add(1, AtomicOrdering::Relaxed);
+            if seen >= PANIC_HOOK_LOG_LIMIT {
+                return;
+            }
+
+            if PANIC_HOOK_WRITE_STATE
+                .compare_exchange(
+                    PANIC_HOOK_WRITE_IDLE,
+                    PANIC_HOOK_WRITE_ACTIVE,
+                    AtomicOrdering::AcqRel,
+                    AtomicOrdering::Relaxed,
+                )
+                .is_err()
+            {
+                return;
+            }
+
+            // SAFETY: direct raw syscall write avoids libc indirection and is
+            // async-signal-safe enough for panic reporting.
+            let _ = unsafe { syscall::sys_write(libc::STDERR_FILENO, MSG.as_ptr(), MSG.len()) };
+            if seen == 0 {
+                const PREFIX: &[u8] = b"frankenlibc: panic location: ";
+                let _ =
+                    unsafe { syscall::sys_write(libc::STDERR_FILENO, PREFIX.as_ptr(), PREFIX.len()) };
+                if let Some(location) = info.location() {
+                    let _ = unsafe {
+                        syscall::sys_write(
+                            libc::STDERR_FILENO,
+                            location.file().as_bytes().as_ptr(),
+                            location.file().len(),
+                        )
+                    };
+                    let _ = unsafe { syscall::sys_write(libc::STDERR_FILENO, b":".as_ptr(), 1) };
+                    write_u32_stderr(location.line());
+                } else {
+                    let _ = unsafe { syscall::sys_write(libc::STDERR_FILENO, b"unknown".as_ptr(), 7) };
+                }
+                let _ = unsafe { syscall::sys_write(libc::STDERR_FILENO, b"\n".as_ptr(), 1) };
+
+                const PAYLOAD_PREFIX: &[u8] = b"frankenlibc: panic payload: ";
             let _ = unsafe {
                 syscall::sys_write(
                     libc::STDERR_FILENO,
@@ -626,6 +625,7 @@ fn ensure_minimal_panic_hook() {
         }
         PANIC_HOOK_WRITE_STATE.store(PANIC_HOOK_WRITE_IDLE, AtomicOrdering::Release);
     }));
+    }
 }
 
 fn write_u32_stderr(mut value: u32) {
