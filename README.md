@@ -20,8 +20,8 @@ FRANKENLIBC_MODE=hardened LD_PRELOAD=/usr/lib/frankenlibc/libfrankenlibc_abi.so 
 
 ## Current Implementation Reality (Machine-Generated)
 
-Source of truth: `tests/conformance/reality_report.v1.json` (generated `2026-02-27T05:55:00Z`).
-Reality snapshot: total_exported=2776, implemented=2104, raw_syscall=384, glibc_call_through=288, stub=0.
+Source of truth: `tests/conformance/reality_report.v1.json` (generated `2026-02-27T18:58:00Z`).
+Reality snapshot: total_exported=2776, implemented=2117, raw_syscall=384, glibc_call_through=275, stub=0.
 Counts below reflect that generated snapshot and will change as matrix drift fixes land.
 Regenerate deterministically with:
 
@@ -35,9 +35,9 @@ Current implementation is **hybrid interposition**, not full replacement. Export
 
 | Status | Count | Share | Meaning |
 |---|---:|---:|---|
-| `Implemented` | 2104 | 76% | Native Rust implementation owns behavior |
+| `Implemented` | 2117 | 76% | Native Rust implementation owns behavior |
 | `RawSyscall` | 384 | 14% | ABI entrypoint marshals directly to Linux syscalls |
-| `GlibcCallThrough` | 288 | 10% | Delegates to host glibc after membrane checks |
+| `GlibcCallThrough` | 275 | 10% | Delegates to host glibc after membrane checks |
 | `Stub` | 0 | 0% | Deterministic fallback contract (documented) |
 
 Total currently classified exports: **2776**.

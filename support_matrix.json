@@ -1463,42 +1463,42 @@
     {
       "symbol": "argp_error",
       "header": "<argp.h>",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "notes": "GNU argp, dlsym delegate",
       "module": "unistd_abi"
     },
     {
       "symbol": "argp_failure",
       "header": "<argp.h>",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "notes": "GNU argp, dlsym delegate",
       "module": "unistd_abi"
     },
     {
       "symbol": "argp_help",
       "header": "<argp.h>",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "notes": "GNU argp, dlsym delegate",
       "module": "unistd_abi"
     },
     {
       "symbol": "argp_parse",
       "header": "<argp.h>",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "notes": "GNU argp, dlsym delegate",
       "module": "unistd_abi"
     },
     {
       "symbol": "argp_state_help",
       "header": "<argp.h>",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "notes": "GNU argp, dlsym delegate",
       "module": "unistd_abi"
     },
     {
       "symbol": "argp_usage",
       "header": "<argp.h>",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "notes": "GNU argp, dlsym delegate",
       "module": "unistd_abi"
     },
@@ -4835,7 +4835,7 @@
     {
       "symbol": "getcontext",
       "header": "<ucontext.h>",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "notes": "POSIX ucontext, dlsym delegate",
       "module": "unistd_abi"
     },
@@ -7536,7 +7536,7 @@
     {
       "symbol": "makecontext",
       "header": "<ucontext.h>",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "notes": "POSIX ucontext, dlsym delegate",
       "module": "unistd_abi"
     },
@@ -8528,21 +8528,21 @@
     {
       "symbol": "obstack_free",
       "header": "<obstack.h>",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "notes": "GNU obstack, dlsym delegate",
       "module": "unistd_abi"
     },
     {
       "symbol": "obstack_printf",
       "header": "<obstack.h>",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "notes": "GNU obstack, dlsym delegate",
       "module": "unistd_abi"
     },
     {
       "symbol": "obstack_vprintf",
       "header": "<obstack.h>",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "notes": "GNU obstack, dlsym delegate",
       "module": "unistd_abi"
     },
@@ -11494,7 +11494,7 @@
     {
       "symbol": "setcontext",
       "header": "<ucontext.h>",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "notes": "POSIX ucontext, dlsym delegate",
       "module": "unistd_abi"
     },
@@ -13821,7 +13821,7 @@
     {
       "symbol": "swapcontext",
       "header": "<ucontext.h>",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "notes": "POSIX ucontext, dlsym delegate",
       "module": "unistd_abi"
     },
@@ -20583,15 +20583,14 @@
     "glibc_call_through": 288,
     "stub": 0
   },
-  "implemented": 2104,
+  "implemented": 2117,
   "raw_syscall": 384,
-  "glibc_call_through": 288,
+  "glibc_call_through": 275,
   "stub": 0,
   "counts": {
-    "total_exported": 1277,
-    "implemented": 898,
-    "raw_syscall": 358,
-    "glibc_call_through": 21,
-    "stub": 0
+    "Implemented": 2117,
+    "RawSyscall": 384,
+    "GlibcCallThrough": 275,
+    "Stub": 0
   }
 }

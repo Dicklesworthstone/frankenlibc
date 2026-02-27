@@ -259,8 +259,14 @@ pub unsafe extern "C" fn dl_iterate_phdr(
     data: *mut c_void,
 ) -> c_int {
     let callback_addr = callback.map_or(0usize, |cb| cb as usize);
-    let (_, decision) =
-        runtime_policy::decide(ApiFamily::Loader, callback_addr, data as usize, false, true, 0);
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Loader,
+        callback_addr,
+        data as usize,
+        false,
+        true,
+        0,
+    );
     if matches!(decision.action, MembraneAction::Deny) {
         set_dlerror(dlfcn_core::ERR_OPERATION_UNAVAILABLE);
         runtime_policy::observe(ApiFamily::Loader, decision.profile, 5, true);
@@ -278,8 +284,14 @@ pub unsafe extern "C" fn dl_iterate_phdr(
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn dladdr(addr: *const c_void, info: *mut c_void) -> c_int {
-    let (_, decision) =
-        runtime_policy::decide(ApiFamily::Loader, addr as usize, info as usize, false, true, 0);
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Loader,
+        addr as usize,
+        info as usize,
+        false,
+        true,
+        0,
+    );
     if matches!(decision.action, MembraneAction::Deny) {
         set_dlerror(dlfcn_core::ERR_OPERATION_UNAVAILABLE);
         runtime_policy::observe(ApiFamily::Loader, decision.profile, 5, true);

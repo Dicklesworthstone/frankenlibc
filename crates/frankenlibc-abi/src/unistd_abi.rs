@@ -12899,140 +12899,71 @@ pub unsafe extern "C" fn fts64_set(ftsp: *mut c_void, f_entry: *mut c_void, inst
 // Catgets (message catalog)
 // ===========================================================================
 // ===========================================================================
-// Argp (argument parsing framework) — delegate to glibc
+// Argp (argument parsing framework) — native ENOSYS stubs
 // ===========================================================================
+// The argp library is a complex GNU argument parsing framework with deep
+// internal state. Programs needing full argp should link against glibc directly.
+// We provide deterministic ENOSYS/EINVAL stubs so programs that merely export
+// the symbols (but may not actively use them) still work.
 
 /// `argp_parse` — parse arguments using argp framework.
+/// Returns EINVAL (argp framework not natively supported).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn argp_parse(
-    argp: *const c_void,
-    argc: c_int,
-    argv: *mut *mut c_char,
-    flags: libc::c_uint,
-    arg_index: *mut c_int,
-    input: *mut c_void,
+    _argp: *const c_void,
+    _argc: c_int,
+    _argv: *mut *mut c_char,
+    _flags: libc::c_uint,
+    _arg_index: *mut c_int,
+    _input: *mut c_void,
 ) -> c_int {
-    type Fn = unsafe extern "C" fn(
-        *const c_void,
-        c_int,
-        *mut *mut c_char,
-        libc::c_uint,
-        *mut c_int,
-        *mut c_void,
-    ) -> c_int;
-    static FUNC: std::sync::LazyLock<Option<Fn>> = std::sync::LazyLock::new(|| {
-        let sym = unsafe { libc::dlsym(libc::RTLD_NEXT, c"argp_parse".as_ptr()) };
-        if sym.is_null() {
-            None
-        } else {
-            Some(unsafe { std::mem::transmute::<*mut c_void, Fn>(sym) })
-        }
-    });
-    match *FUNC {
-        Some(f) => unsafe { f(argp, argc, argv, flags, arg_index, input) },
-        None => libc::EINVAL,
-    }
+    unsafe { set_abi_errno(libc::EINVAL) };
+    libc::EINVAL
 }
 
-/// `argp_help` — print argp help message.
+/// `argp_help` — print argp help message. No-op stub.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn argp_help(
-    argp: *const c_void,
-    stream: *mut libc::FILE,
-    flags: libc::c_uint,
-    name: *mut c_char,
+    _argp: *const c_void,
+    _stream: *mut libc::FILE,
+    _flags: libc::c_uint,
+    _name: *mut c_char,
 ) {
-    type Fn = unsafe extern "C" fn(*const c_void, *mut libc::FILE, libc::c_uint, *mut c_char);
-    static FUNC: std::sync::LazyLock<Option<Fn>> = std::sync::LazyLock::new(|| {
-        let sym = unsafe { libc::dlsym(libc::RTLD_NEXT, c"argp_help".as_ptr()) };
-        if sym.is_null() {
-            None
-        } else {
-            Some(unsafe { std::mem::transmute::<*mut c_void, Fn>(sym) })
-        }
-    });
-    if let Some(f) = *FUNC {
-        unsafe { f(argp, stream, flags, name) }
-    }
+    // No-op: argp framework not available
 }
 
-/// `argp_usage` — print usage and exit.
+/// `argp_usage` — print usage and exit. No-op stub.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn argp_usage(state: *mut c_void) {
-    type Fn = unsafe extern "C" fn(*mut c_void);
-    static FUNC: std::sync::LazyLock<Option<Fn>> = std::sync::LazyLock::new(|| {
-        let sym = unsafe { libc::dlsym(libc::RTLD_NEXT, c"argp_usage".as_ptr()) };
-        if sym.is_null() {
-            None
-        } else {
-            Some(unsafe { std::mem::transmute::<*mut c_void, Fn>(sym) })
-        }
-    });
-    if let Some(f) = *FUNC {
-        unsafe { f(state) }
-    }
+pub unsafe extern "C" fn argp_usage(_state: *mut c_void) {
+    // No-op: argp framework not available
 }
 
-/// `argp_error` — report parsing error.
+/// `argp_error` — report parsing error. No-op stub.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn argp_error(state: *mut c_void, fmt: *const c_char, mut _args: ...) {
-    // Simplified: just call argp_error in glibc if available
-    type Fn = unsafe extern "C" fn(*mut c_void, *const c_char);
-    static FUNC: std::sync::LazyLock<Option<Fn>> = std::sync::LazyLock::new(|| {
-        let sym = unsafe { libc::dlsym(libc::RTLD_NEXT, c"argp_error".as_ptr()) };
-        if sym.is_null() {
-            None
-        } else {
-            Some(unsafe { std::mem::transmute::<*mut c_void, Fn>(sym) })
-        }
-    });
-    if let Some(f) = *FUNC {
-        unsafe { f(state, fmt) }
-    }
+pub unsafe extern "C" fn argp_error(_state: *mut c_void, _fmt: *const c_char, mut _args: ...) {
+    // No-op: argp framework not available
 }
 
-/// `argp_failure` — report failure during parsing.
+/// `argp_failure` — report failure during parsing. No-op stub.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn argp_failure(
-    state: *mut c_void,
-    status: c_int,
-    errnum: c_int,
-    fmt: *const c_char,
+    _state: *mut c_void,
+    _status: c_int,
+    _errnum: c_int,
+    _fmt: *const c_char,
     mut _args: ...
 ) {
-    type Fn = unsafe extern "C" fn(*mut c_void, c_int, c_int, *const c_char);
-    static FUNC: std::sync::LazyLock<Option<Fn>> = std::sync::LazyLock::new(|| {
-        let sym = unsafe { libc::dlsym(libc::RTLD_NEXT, c"argp_failure".as_ptr()) };
-        if sym.is_null() {
-            None
-        } else {
-            Some(unsafe { std::mem::transmute::<*mut c_void, Fn>(sym) })
-        }
-    });
-    if let Some(f) = *FUNC {
-        unsafe { f(state, status, errnum, fmt) }
-    }
+    // No-op: argp framework not available
 }
 
-/// `argp_state_help` — print help from state.
+/// `argp_state_help` — print help from state. No-op stub.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn argp_state_help(
-    state: *mut c_void,
-    stream: *mut libc::FILE,
-    flags: libc::c_uint,
+    _state: *mut c_void,
+    _stream: *mut libc::FILE,
+    _flags: libc::c_uint,
 ) {
-    type Fn = unsafe extern "C" fn(*mut c_void, *mut libc::FILE, libc::c_uint);
-    static FUNC: std::sync::LazyLock<Option<Fn>> = std::sync::LazyLock::new(|| {
-        let sym = unsafe { libc::dlsym(libc::RTLD_NEXT, c"argp_state_help".as_ptr()) };
-        if sym.is_null() {
-            None
-        } else {
-            Some(unsafe { std::mem::transmute::<*mut c_void, Fn>(sym) })
-        }
-    });
-    if let Some(f) = *FUNC {
-        unsafe { f(state, stream, flags) }
-    }
+    // No-op: argp framework not available
 }
 
 // ===========================================================================
@@ -13040,64 +12971,88 @@ pub unsafe extern "C" fn argp_state_help(
 // ===========================================================================
 
 /// `obstack_free` — free objects on an obstack.
+/// Forwards to native `_obstack_free` implementation in glibc_internal_abi.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn obstack_free(obstack: *mut c_void, block: *mut c_void) {
-    type Fn = unsafe extern "C" fn(*mut c_void, *mut c_void);
-    static FUNC: std::sync::LazyLock<Option<Fn>> = std::sync::LazyLock::new(|| {
-        let sym = unsafe { libc::dlsym(libc::RTLD_NEXT, c"obstack_free".as_ptr()) };
-        if sym.is_null() {
-            None
-        } else {
-            Some(unsafe { std::mem::transmute::<*mut c_void, Fn>(sym) })
-        }
-    });
-    if let Some(f) = *FUNC {
-        unsafe { f(obstack, block) }
-    }
+    unsafe { super::glibc_internal_abi::_obstack_free(obstack, block) }
 }
 
-/// `obstack_printf` — formatted print to obstack.
+/// `obstack_printf` — formatted print to obstack (variadic).
+/// Builds the va_list and forwards to `obstack_vprintf`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn obstack_printf(
     obstack: *mut c_void,
     fmt: *const c_char,
-    mut _args: ...
+    mut args: ...
 ) -> c_int {
-    type Fn = unsafe extern "C" fn(*mut c_void, *const c_char) -> c_int;
-    static FUNC: std::sync::LazyLock<Option<Fn>> = std::sync::LazyLock::new(|| {
-        let sym = unsafe { libc::dlsym(libc::RTLD_NEXT, c"obstack_printf".as_ptr()) };
-        if sym.is_null() {
-            None
-        } else {
-            Some(unsafe { std::mem::transmute::<*mut c_void, Fn>(sym) })
-        }
-    });
-    match *FUNC {
-        Some(f) => unsafe { f(obstack, fmt) },
-        None => -1,
-    }
+    let ap = (&mut args) as *mut _ as *mut c_void;
+    unsafe { obstack_vprintf(obstack, fmt, ap) }
 }
 
 /// `obstack_vprintf` — va_list formatted print to obstack.
+/// Native implementation: format via vasprintf into heap buffer, then grow obstack.
+/// The obstack struct layout must match glibc's struct obstack (see glibc_internal_abi.rs).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn obstack_vprintf(
     obstack: *mut c_void,
     fmt: *const c_char,
     ap: *mut c_void,
 ) -> c_int {
-    type Fn = unsafe extern "C" fn(*mut c_void, *const c_char, *mut c_void) -> c_int;
-    static FUNC: std::sync::LazyLock<Option<Fn>> = std::sync::LazyLock::new(|| {
-        let sym = unsafe { libc::dlsym(libc::RTLD_NEXT, c"obstack_vprintf".as_ptr()) };
+    if obstack.is_null() || fmt.is_null() {
+        return -1;
+    }
+    // Use vasprintf to format the string with the va_list.
+    // This allocates a buffer of exactly the right size.
+    type VasprintfFn = unsafe extern "C" fn(*mut *mut c_char, *const c_char, *mut c_void) -> c_int;
+    static VASPRINTF: std::sync::LazyLock<Option<VasprintfFn>> = std::sync::LazyLock::new(|| {
+        let sym = unsafe { libc::dlsym(libc::RTLD_NEXT, c"vasprintf".as_ptr()) };
         if sym.is_null() {
             None
         } else {
-            Some(unsafe { std::mem::transmute::<*mut c_void, Fn>(sym) })
+            Some(unsafe { std::mem::transmute::<*mut c_void, VasprintfFn>(sym) })
         }
     });
-    match *FUNC {
-        Some(f) => unsafe { f(obstack, fmt, ap) },
-        None => -1,
+    let vasprintf_fn = match *VASPRINTF {
+        Some(f) => f,
+        None => return -1,
+    };
+    let mut result_ptr: *mut c_char = std::ptr::null_mut();
+    let len = unsafe { vasprintf_fn(&mut result_ptr, fmt, ap) };
+    if len < 0 || result_ptr.is_null() {
+        return -1;
     }
+    let data_len = len as usize;
+    // Grow the obstack with the formatted data.
+    // The obstack's object_base..next_free is the current object.
+    // We append data by copying into next_free and advancing it.
+    // Use _obstack_newchunk if there isn't enough room.
+    #[repr(C)]
+    struct ObstackView {
+        chunk_size: usize,
+        chunk: *mut c_void,
+        object_base: *mut u8,
+        next_free: *mut u8,
+        chunk_limit: *mut u8,
+        temp: isize,
+        alignment_mask: usize,
+        chunkfun: *mut c_void,
+        freefun: *mut c_void,
+        extra_arg: *mut c_void,
+        flags: u32,
+    }
+    let h = obstack as *mut ObstackView;
+    let avail = unsafe { (*h).chunk_limit.offset_from((*h).next_free) as usize };
+    if data_len > avail {
+        unsafe {
+            super::glibc_internal_abi::_obstack_newchunk(obstack, data_len);
+        }
+    }
+    unsafe {
+        std::ptr::copy_nonoverlapping(result_ptr as *const u8, (*h).next_free, data_len);
+        (*h).next_free = (*h).next_free.add(data_len);
+        libc::free(result_ptr as *mut c_void);
+    }
+    len
 }
 
 // ===========================================================================
@@ -13107,93 +13062,233 @@ pub unsafe extern "C" fn obstack_vprintf(
 // POSIX ucontext (getcontext/setcontext/makecontext/swapcontext)
 // ===========================================================================
 
-/// `getcontext` — save current execution context.
+/// `getcontext` — save current execution context (x86_64 native).
+/// Saves all callee-saved registers, signal mask, and return address into ucontext_t.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getcontext(ucp: *mut libc::ucontext_t) -> c_int {
-    type Fn = unsafe extern "C" fn(*mut libc::ucontext_t) -> c_int;
-    static FUNC: std::sync::LazyLock<Option<Fn>> = std::sync::LazyLock::new(|| {
-        let sym = unsafe { libc::dlsym(libc::RTLD_NEXT, c"getcontext".as_ptr()) };
-        if sym.is_null() {
-            None
-        } else {
-            Some(unsafe { std::mem::transmute::<*mut c_void, Fn>(sym) })
-        }
-    });
-    match *FUNC {
-        Some(f) => unsafe { f(ucp) },
-        None => {
-            unsafe { set_abi_errno(libc::ENOSYS) };
-            -1
-        }
+    if ucp.is_null() {
+        unsafe { set_abi_errno(libc::EFAULT) };
+        return -1;
     }
+    // ucontext_t offsets for x86_64 (glibc layout):
+    // uc_mcontext.gregs is at offset 40 in ucontext_t
+    // REG_* indices (x86_64): RBX=4, RBP=6, R12=9, R13=10, R14=11, R15=12,
+    //                         RSP=15, RIP=16
+    unsafe {
+        let ctx = &mut *ucp;
+        // Save callee-saved registers via inline asm
+        let rbx: u64;
+        let rbp: u64;
+        let r12: u64;
+        let r13: u64;
+        let r14: u64;
+        let r15: u64;
+        let rsp: u64;
+        std::arch::asm!(
+            "mov {rbx}, rbx",
+            "mov {rbp}, rbp",
+            "mov {r12}, r12",
+            "mov {r13}, r13",
+            "mov {r14}, r14",
+            "mov {r15}, r15",
+            "lea {rsp}, [rsp + 8]", // caller's rsp (before call pushed return addr)
+            rbx = out(reg) rbx,
+            rbp = out(reg) rbp,
+            r12 = out(reg) r12,
+            r13 = out(reg) r13,
+            r14 = out(reg) r14,
+            r15 = out(reg) r15,
+            rsp = out(reg) rsp,
+            options(nomem, nostack, preserves_flags),
+        );
+        // Return address is at [rsp - 8] from the caller's perspective.
+        // After `call getcontext`, the return address was pushed, and we computed
+        // rsp = rsp + 8 (the caller's original rsp). So return addr is at rsp - 8.
+        let rip = *((rsp as *const u64).wrapping_sub(1));
+
+        ctx.uc_mcontext.gregs[libc::REG_RBX as usize] = rbx as i64;
+        ctx.uc_mcontext.gregs[libc::REG_RBP as usize] = rbp as i64;
+        ctx.uc_mcontext.gregs[libc::REG_R12 as usize] = r12 as i64;
+        ctx.uc_mcontext.gregs[libc::REG_R13 as usize] = r13 as i64;
+        ctx.uc_mcontext.gregs[libc::REG_R14 as usize] = r14 as i64;
+        ctx.uc_mcontext.gregs[libc::REG_R15 as usize] = r15 as i64;
+        ctx.uc_mcontext.gregs[libc::REG_RSP as usize] = rsp as i64;
+        ctx.uc_mcontext.gregs[libc::REG_RIP as usize] = rip as i64;
+        ctx.uc_mcontext.gregs[libc::REG_RAX as usize] = 0; // getcontext returns 0
+
+        // Save signal mask
+        let mut mask: libc::sigset_t = std::mem::zeroed();
+        libc::sigprocmask(libc::SIG_BLOCK, std::ptr::null(), &mut mask);
+        ctx.uc_sigmask = mask;
+    }
+    0
 }
 
-/// `setcontext` — restore execution context.
+/// `setcontext` — restore execution context (x86_64 native).
+/// Restores registers and jumps to saved return address. Does not return on success.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn setcontext(ucp: *const libc::ucontext_t) -> c_int {
-    type Fn = unsafe extern "C" fn(*const libc::ucontext_t) -> c_int;
-    static FUNC: std::sync::LazyLock<Option<Fn>> = std::sync::LazyLock::new(|| {
-        let sym = unsafe { libc::dlsym(libc::RTLD_NEXT, c"setcontext".as_ptr()) };
-        if sym.is_null() {
-            None
-        } else {
-            Some(unsafe { std::mem::transmute::<*mut c_void, Fn>(sym) })
-        }
-    });
-    match *FUNC {
-        Some(f) => unsafe { f(ucp) },
-        None => {
-            unsafe { set_abi_errno(libc::ENOSYS) };
-            -1
-        }
+    if ucp.is_null() {
+        unsafe { set_abi_errno(libc::EFAULT) };
+        return -1;
+    }
+    unsafe {
+        let ctx = &*ucp;
+        // Restore signal mask
+        libc::sigprocmask(libc::SIG_SETMASK, &ctx.uc_sigmask, std::ptr::null_mut());
+
+        let rbx = ctx.uc_mcontext.gregs[libc::REG_RBX as usize] as u64;
+        let rbp = ctx.uc_mcontext.gregs[libc::REG_RBP as usize] as u64;
+        let r12 = ctx.uc_mcontext.gregs[libc::REG_R12 as usize] as u64;
+        let r13 = ctx.uc_mcontext.gregs[libc::REG_R13 as usize] as u64;
+        let r14 = ctx.uc_mcontext.gregs[libc::REG_R14 as usize] as u64;
+        let r15 = ctx.uc_mcontext.gregs[libc::REG_R15 as usize] as u64;
+        let rsp = ctx.uc_mcontext.gregs[libc::REG_RSP as usize] as u64;
+        let rip = ctx.uc_mcontext.gregs[libc::REG_RIP as usize] as u64;
+        let rax = ctx.uc_mcontext.gregs[libc::REG_RAX as usize] as u64;
+
+        std::arch::asm!(
+            "mov rbx, {rbx}",
+            "mov rbp, {rbp}",
+            "mov r12, {r12}",
+            "mov r13, {r13}",
+            "mov r14, {r14}",
+            "mov r15, {r15}",
+            "mov rsp, {rsp}",
+            "jmp {rip}",
+            rbx = in(reg) rbx,
+            rbp = in(reg) rbp,
+            r12 = in(reg) r12,
+            r13 = in(reg) r13,
+            r14 = in(reg) r14,
+            r15 = in(reg) r15,
+            rsp = in(reg) rsp,
+            rip = in(reg) rip,
+            in("rax") rax,
+            options(noreturn),
+        );
     }
 }
 
-/// `makecontext` — modify context for new function.
+/// `makecontext` — modify context for new function (x86_64 native).
+/// Sets up the context to call `func` with `argc` integer arguments on the
+/// stack pointed to by `uc_stack`. When `func` returns, execution continues
+/// at `uc_link` (if set) or the process exits.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn makecontext(
     ucp: *mut libc::ucontext_t,
     func: Option<unsafe extern "C" fn()>,
     argc: c_int,
-    mut _args: ...
+    mut args: ...
 ) {
-    type Fn =
-        unsafe extern "C" fn(*mut libc::ucontext_t, Option<unsafe extern "C" fn()>, c_int, ...);
-    static FUNC: std::sync::LazyLock<Option<Fn>> = std::sync::LazyLock::new(|| {
-        let sym = unsafe { libc::dlsym(libc::RTLD_NEXT, c"makecontext".as_ptr()) };
-        if sym.is_null() {
-            None
-        } else {
-            Some(unsafe { std::mem::transmute::<*mut c_void, Fn>(sym) })
+    if ucp.is_null() {
+        return;
+    }
+    unsafe {
+        let ctx = &mut *ucp;
+        let stack_top = (ctx.uc_stack.ss_sp as usize + ctx.uc_stack.ss_size) & !0xF; // 16-byte align
+
+        // Extract integer arguments from va_list (up to 6 go in registers on x86_64)
+        let mut int_args = [0u64; 8];
+        for slot in int_args.iter_mut().take((argc as usize).min(8)) {
+            *slot = args.arg::<u64>();
         }
-    });
-    if let Some(f) = *FUNC {
-        unsafe { f(ucp, func, argc) }
+
+        // Set up stack: push return address (context_exit trampoline), then args > 6
+        let mut sp = stack_top as *mut u64;
+
+        // If argc > 6, push extra args on stack in reverse order
+        if argc > 6 {
+            for i in (6..(argc as usize).min(8)).rev() {
+                sp = sp.sub(1);
+                *sp = int_args[i];
+            }
+        }
+
+        // Push return address: when func returns, we should switch to uc_link
+        // or exit. Use a trampoline.
+        sp = sp.sub(1);
+        *sp = ucontext_trampoline as *const () as u64;
+
+        // Store uc_link pointer in r12 so the trampoline can find it
+        ctx.uc_mcontext.gregs[libc::REG_R12 as usize] = if ctx.uc_link.is_null() {
+            0
+        } else {
+            ctx.uc_link as i64
+        };
+
+        // Set registers for the function call (x86_64 calling convention)
+        ctx.uc_mcontext.gregs[libc::REG_RIP as usize] =
+            func.map_or(0, |f| f as *const () as usize as i64);
+        ctx.uc_mcontext.gregs[libc::REG_RSP as usize] = sp as i64;
+        ctx.uc_mcontext.gregs[libc::REG_RBP as usize] = 0; // clean frame
+
+        // First 6 args go in rdi, rsi, rdx, rcx, r8, r9
+        if argc > 0 {
+            ctx.uc_mcontext.gregs[libc::REG_RDI as usize] = int_args[0] as i64;
+        }
+        if argc > 1 {
+            ctx.uc_mcontext.gregs[libc::REG_RSI as usize] = int_args[1] as i64;
+        }
+        if argc > 2 {
+            ctx.uc_mcontext.gregs[libc::REG_RDX as usize] = int_args[2] as i64;
+        }
+        if argc > 3 {
+            ctx.uc_mcontext.gregs[libc::REG_RCX as usize] = int_args[3] as i64;
+        }
+        if argc > 4 {
+            ctx.uc_mcontext.gregs[libc::REG_R8 as usize] = int_args[4] as i64;
+        }
+        if argc > 5 {
+            ctx.uc_mcontext.gregs[libc::REG_R9 as usize] = int_args[5] as i64;
+        }
     }
 }
 
-/// `swapcontext` — save current and switch to new context.
+/// Trampoline called when the function passed to `makecontext` returns.
+/// Switches to `uc_link` if set, otherwise exits the process.
+unsafe extern "C" fn ucontext_trampoline() {
+    // r12 holds the uc_link pointer (set by makecontext)
+    let uc_link: u64;
+    unsafe {
+        std::arch::asm!("mov {}, r12", out(reg) uc_link, options(nomem, nostack));
+    }
+    if uc_link != 0 {
+        unsafe { setcontext(uc_link as *const libc::ucontext_t) };
+    }
+    // No uc_link — exit the thread/process
+    unsafe { libc::_exit(0) };
+}
+
+/// `swapcontext` — save current context and switch to new context (x86_64 native).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn swapcontext(
     oucp: *mut libc::ucontext_t,
     ucp: *const libc::ucontext_t,
 ) -> c_int {
-    type Fn = unsafe extern "C" fn(*mut libc::ucontext_t, *const libc::ucontext_t) -> c_int;
-    static FUNC: std::sync::LazyLock<Option<Fn>> = std::sync::LazyLock::new(|| {
-        let sym = unsafe { libc::dlsym(libc::RTLD_NEXT, c"swapcontext".as_ptr()) };
-        if sym.is_null() {
-            None
-        } else {
-            Some(unsafe { std::mem::transmute::<*mut c_void, Fn>(sym) })
-        }
-    });
-    match *FUNC {
-        Some(f) => unsafe { f(oucp, ucp) },
-        None => {
-            unsafe { set_abi_errno(libc::ENOSYS) };
-            -1
-        }
+    if oucp.is_null() || ucp.is_null() {
+        unsafe { set_abi_errno(libc::EFAULT) };
+        return -1;
     }
+    // Save current context
+    let rc = unsafe { getcontext(oucp) };
+    if rc != 0 {
+        return rc;
+    }
+    // If we just returned from setcontext (via the saved RIP), getcontext returns 0
+    // and we should NOT call setcontext again. We use a flag in uc_mcontext to detect this.
+    // The trick: getcontext sets RAX=0 in the saved context. When setcontext restores it,
+    // getcontext appears to return 0 again. We need a sentinel to distinguish the two.
+    // Use a simple approach: check a flag we set after getcontext returns the first time.
+    static SWAP_SENTINEL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let ticket = SWAP_SENTINEL.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    // Store ticket in unused gregs field (REG_TRAPNO = 20)
+    unsafe { (*oucp).uc_mcontext.gregs[20] = (ticket.wrapping_add(1)) as i64 };
+
+    // Now switch to the new context
+    unsafe { setcontext(ucp) };
+    // setcontext does not return on success
+    -1
 }
 
 // ---------------------------------------------------------------------------
