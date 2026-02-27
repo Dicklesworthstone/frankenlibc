@@ -3,8 +3,12 @@
 //! Integration tests for glibc_internal_abi entrypoints.
 
 use frankenlibc_abi::glibc_internal_abi::{
-    iruserok, iruserok_af, parse_printf_format, rcmd, rcmd_af, rexec, rexec_af, res_dnok,
-    res_hnok, res_mailok, res_ownok, ruserok, ruserok_af, ruserpass,
+    inet6_opt_append, inet6_opt_find, inet6_opt_finish, inet6_opt_get_val, inet6_opt_init,
+    inet6_opt_next, inet6_opt_set_val, inet6_rth_add, inet6_rth_getaddr, inet6_rth_init,
+    inet6_rth_reverse, inet6_rth_segments, inet6_rth_space, iruserok, iruserok_af,
+    ns_name_compress, ns_name_ntop, ns_name_pack, ns_name_pton, ns_name_skip,
+    ns_name_uncompress, ns_name_unpack, parse_printf_format, rcmd, rcmd_af, rexec, rexec_af,
+    res_dnok, res_hnok, res_mailok, res_ownok, ruserok, ruserok_af, ruserpass,
 };
 use std::ffi::CString;
 use std::ptr;
@@ -242,5 +246,604 @@ fn ruserpass_returns_error_with_null_credentials() {
     assert_eq!(result, -1);
     assert!(name_ptr.is_null(), "ruserpass should not set name");
     assert!(pass_ptr.is_null(), "ruserpass should not set pass");
+}
+
+// ===========================================================================
+// ns_name_* DNS wire format (7 symbols)
+// ===========================================================================
+
+// Helper: build wire-format labels from dotted name (for test setup).
+fn make_wire_name(dotted: &str) -> Vec<u8> {
+    let mut out = Vec::new();
+    let parts: Vec<&str> = if dotted.is_empty() {
+        vec![]
+    } else {
+        dotted.split('.').collect()
+    };
+    for label in &parts {
+        if label.is_empty() {
+            continue;
+        }
+        out.push(label.len() as u8);
+        out.extend_from_slice(label.as_bytes());
+    }
+    out.push(0); // root terminator
+    out
+}
+
+#[test]
+fn ns_name_pton_encodes_domain_to_wire() {
+    let name = CString::new("example.com").unwrap();
+    let mut buf = [0u8; 64];
+    let ret = unsafe { ns_name_pton(name.as_ptr(), buf.as_mut_ptr() as *mut _, buf.len()) };
+    assert!(ret > 0, "ns_name_pton returned {ret}");
+    // Expected wire: \x07example\x03com\x00
+    assert_eq!(buf[0], 7); // "example" length
+    assert_eq!(&buf[1..8], b"example");
+    assert_eq!(buf[8], 3); // "com" length
+    assert_eq!(&buf[9..12], b"com");
+    assert_eq!(buf[12], 0); // root terminator
+    assert_eq!(ret, 13);
+}
+
+#[test]
+fn ns_name_pton_handles_root_domain() {
+    let name = CString::new(".").unwrap();
+    let mut buf = [0u8; 4];
+    let ret = unsafe { ns_name_pton(name.as_ptr(), buf.as_mut_ptr() as *mut _, buf.len()) };
+    assert_eq!(ret, 1);
+    assert_eq!(buf[0], 0); // Just root terminator.
+}
+
+#[test]
+fn ns_name_pton_null_returns_error() {
+    let ret = unsafe { ns_name_pton(ptr::null(), ptr::null_mut(), 0) };
+    assert_eq!(ret, -1);
+}
+
+#[test]
+fn ns_name_ntop_decodes_wire_to_text() {
+    let wire = make_wire_name("example.com");
+    let mut buf = [0u8; 256];
+    let ret = unsafe {
+        ns_name_ntop(
+            wire.as_ptr() as *const _,
+            buf.as_mut_ptr() as *mut libc::c_char,
+            buf.len(),
+        )
+    };
+    assert!(ret > 0, "ns_name_ntop returned {ret}");
+    let text = unsafe { std::ffi::CStr::from_ptr(buf.as_ptr() as *const _) };
+    assert_eq!(text.to_str().unwrap(), "example.com");
+}
+
+#[test]
+fn ns_name_ntop_root_outputs_dot() {
+    let wire: [u8; 1] = [0]; // Root label only.
+    let mut buf = [0u8; 4];
+    let ret = unsafe {
+        ns_name_ntop(
+            wire.as_ptr() as *const _,
+            buf.as_mut_ptr() as *mut libc::c_char,
+            buf.len(),
+        )
+    };
+    assert!(ret > 0);
+    assert_eq!(buf[0], b'.');
+    assert_eq!(buf[1], 0);
+}
+
+#[test]
+fn ns_name_ntop_null_returns_error() {
+    let ret = unsafe { ns_name_ntop(ptr::null(), ptr::null_mut(), 0) };
+    assert_eq!(ret, -1);
+}
+
+#[test]
+fn ns_name_pton_ntop_roundtrip() {
+    let name = CString::new("sub.example.org").unwrap();
+    let mut wire = [0u8; 64];
+    let wire_len = unsafe { ns_name_pton(name.as_ptr(), wire.as_mut_ptr() as *mut _, wire.len()) };
+    assert!(wire_len > 0);
+
+    let mut text = [0u8; 256];
+    let text_len = unsafe {
+        ns_name_ntop(
+            wire.as_ptr() as *const _,
+            text.as_mut_ptr() as *mut libc::c_char,
+            text.len(),
+        )
+    };
+    assert!(text_len > 0);
+    let result = unsafe { std::ffi::CStr::from_ptr(text.as_ptr() as *const _) };
+    assert_eq!(result.to_str().unwrap(), "sub.example.org");
+}
+
+#[test]
+fn ns_name_skip_advances_past_name() {
+    let wire = make_wire_name("foo.bar");
+    let start = wire.as_ptr() as *const std::ffi::c_void;
+    let eom = unsafe { wire.as_ptr().add(wire.len()) as *const std::ffi::c_void };
+    let mut cur = start;
+    let ret = unsafe { ns_name_skip(&mut cur, eom) };
+    assert_eq!(ret, 0, "ns_name_skip should return 0 on success");
+    assert_eq!(
+        cur as usize - start as usize,
+        wire.len(),
+        "should advance past entire name"
+    );
+}
+
+#[test]
+fn ns_name_skip_handles_compression_pointer() {
+    // Build a message with a compression pointer: \xC0\x00 (points to offset 0).
+    // Place a normal name at offset 0, then a pointer at offset N.
+    let mut msg = make_wire_name("test.com"); // 10 bytes: \x04test\x03com\x00
+    let ptr_offset = msg.len();
+    msg.push(0xC0); // Compression pointer high byte.
+    msg.push(0x00); // Points to offset 0.
+
+    let start = unsafe { msg.as_ptr().add(ptr_offset) as *const std::ffi::c_void };
+    let eom = unsafe { msg.as_ptr().add(msg.len()) as *const std::ffi::c_void };
+    let mut cur = start;
+    let ret = unsafe { ns_name_skip(&mut cur, eom) };
+    assert_eq!(ret, 0);
+    assert_eq!(cur as usize - start as usize, 2, "pointer consumes 2 bytes");
+}
+
+#[test]
+fn ns_name_skip_null_returns_error() {
+    let ret = unsafe { ns_name_skip(ptr::null_mut(), ptr::null()) };
+    assert_eq!(ret, -1);
+}
+
+#[test]
+fn ns_name_unpack_decompresses_wire_name() {
+    // Build a DNS message: header (12 bytes) + "example.com" wire name + pointer back to name.
+    let mut msg = vec![0u8; 12]; // Fake DNS header.
+    let name_offset = msg.len();
+    msg.extend_from_slice(&make_wire_name("example.com"));
+    let ptr_offset = msg.len();
+    msg.push(0xC0);
+    msg.push(name_offset as u8); // Points back to the name.
+
+    let mut dst = [0u8; 256];
+    let consumed = unsafe {
+        ns_name_unpack(
+            msg.as_ptr() as *const _,
+            msg.as_ptr().add(msg.len()) as *const _,
+            msg.as_ptr().add(ptr_offset) as *const _,
+            dst.as_mut_ptr() as *mut _,
+            dst.len(),
+        )
+    };
+    assert_eq!(consumed, 2, "pointer consumes 2 bytes from source");
+    // dst should contain uncompressed wire: \x07example\x03com\x00
+    assert_eq!(dst[0], 7);
+    assert_eq!(&dst[1..8], b"example");
+    assert_eq!(dst[8], 3);
+    assert_eq!(&dst[9..12], b"com");
+    assert_eq!(dst[12], 0);
+}
+
+#[test]
+fn ns_name_unpack_copies_uncompressed_name() {
+    let wire = make_wire_name("test.org");
+    let mut dst = [0u8; 64];
+    let consumed = unsafe {
+        ns_name_unpack(
+            wire.as_ptr() as *const _,
+            wire.as_ptr().add(wire.len()) as *const _,
+            wire.as_ptr() as *const _,
+            dst.as_mut_ptr() as *mut _,
+            dst.len(),
+        )
+    };
+    assert_eq!(consumed as usize, wire.len());
+    assert_eq!(&dst[..wire.len()], &wire[..]);
+}
+
+#[test]
+fn ns_name_pack_copies_labels() {
+    let wire = make_wire_name("hello.world");
+    let mut dst = [0u8; 64];
+    let written = unsafe {
+        ns_name_pack(
+            wire.as_ptr() as *const _,
+            dst.as_mut_ptr() as *mut _,
+            dst.len() as i32,
+            ptr::null_mut(),
+            ptr::null_mut(),
+        )
+    };
+    assert_eq!(written as usize, wire.len());
+    assert_eq!(&dst[..wire.len()], &wire[..]);
+}
+
+#[test]
+fn ns_name_compress_text_to_wire() {
+    let name = CString::new("dns.example.net").unwrap();
+    let mut dst = [0u8; 64];
+    let written = unsafe {
+        ns_name_compress(
+            name.as_ptr(),
+            dst.as_mut_ptr() as *mut _,
+            dst.len(),
+            ptr::null_mut(),
+            ptr::null_mut(),
+        )
+    };
+    assert!(written > 0, "ns_name_compress returned {written}");
+    // Verify wire format.
+    assert_eq!(dst[0], 3); // "dns"
+    assert_eq!(&dst[1..4], b"dns");
+    assert_eq!(dst[4], 7); // "example"
+    assert_eq!(&dst[5..12], b"example");
+    assert_eq!(dst[12], 3); // "net"
+    assert_eq!(&dst[13..16], b"net");
+    assert_eq!(dst[16], 0); // root
+    assert_eq!(written, 17);
+}
+
+#[test]
+fn ns_name_uncompress_wire_to_text() {
+    // Reuse the unpack message with a compression pointer.
+    let mut msg = vec![0u8; 12]; // Fake DNS header.
+    let name_offset = msg.len();
+    msg.extend_from_slice(&make_wire_name("resolv.conf"));
+    let ptr_offset = msg.len();
+    msg.push(0xC0);
+    msg.push(name_offset as u8);
+
+    let mut text = [0u8; 256];
+    let consumed = unsafe {
+        ns_name_uncompress(
+            msg.as_ptr() as *const _,
+            msg.as_ptr().add(msg.len()) as *const _,
+            msg.as_ptr().add(ptr_offset) as *const _,
+            text.as_mut_ptr() as *mut libc::c_char,
+            text.len(),
+        )
+    };
+    assert_eq!(consumed, 2);
+    let result = unsafe { std::ffi::CStr::from_ptr(text.as_ptr() as *const _) };
+    assert_eq!(result.to_str().unwrap(), "resolv.conf");
+}
+
+#[test]
+fn ns_name_compress_uncompress_roundtrip() {
+    let name = CString::new("a.b.c.d.example.com").unwrap();
+    let mut wire = [0u8; 128];
+    let wire_len = unsafe {
+        ns_name_compress(
+            name.as_ptr(),
+            wire.as_mut_ptr() as *mut _,
+            wire.len(),
+            ptr::null_mut(),
+            ptr::null_mut(),
+        )
+    };
+    assert!(wire_len > 0);
+
+    // Build a fake message with just the wire name.
+    let msg = &wire[..wire_len as usize];
+    let mut text = [0u8; 256];
+    let consumed = unsafe {
+        ns_name_uncompress(
+            msg.as_ptr() as *const _,
+            msg.as_ptr().add(msg.len()) as *const _,
+            msg.as_ptr() as *const _,
+            text.as_mut_ptr() as *mut libc::c_char,
+            text.len(),
+        )
+    };
+    assert!(consumed > 0);
+    let result = unsafe { std::ffi::CStr::from_ptr(text.as_ptr() as *const _) };
+    assert_eq!(result.to_str().unwrap(), "a.b.c.d.example.com");
+}
+
+// ===========================================================================
+// inet6_opt_* — IPv6 extension header option helpers (RFC 3542)
+// ===========================================================================
+
+#[test]
+fn inet6_opt_init_returns_header_size() {
+    // NULL buffer → returns minimum header size (2).
+    let ret = unsafe { inet6_opt_init(ptr::null_mut(), 0) };
+    assert_eq!(ret, 2);
+}
+
+#[test]
+fn inet6_opt_init_initializes_buffer() {
+    let mut buf = [0xFFu8; 16];
+    let ret = unsafe { inet6_opt_init(buf.as_mut_ptr() as *mut _, buf.len() as i32) };
+    assert_eq!(ret, 2);
+    assert_eq!(buf[0], 0); // Next Header.
+    assert_eq!(buf[1], 0); // Header Ext Length.
+}
+
+#[test]
+fn inet6_opt_append_set_val_finish_roundtrip() {
+    let mut buf = [0u8; 64];
+    // Init the header.
+    let off = unsafe { inet6_opt_init(buf.as_mut_ptr() as *mut _, buf.len() as i32) };
+    assert_eq!(off, 2);
+
+    // Append an option: type 42, length 4, alignment 4.
+    let mut databuf: *mut std::ffi::c_void = ptr::null_mut();
+    let off2 = unsafe {
+        inet6_opt_append(
+            buf.as_mut_ptr() as *mut _,
+            buf.len() as i32,
+            off,
+            42,
+            4,
+            4,
+            &mut databuf,
+        )
+    };
+    assert!(off2 > off, "append should advance offset");
+    assert!(!databuf.is_null(), "databuf should be set");
+
+    // Set a value in the option data area.
+    let val: u32 = 0xDEADBEEF;
+    let set_ret = unsafe {
+        inet6_opt_set_val(
+            databuf,
+            0,
+            &val as *const u32 as *const _,
+            std::mem::size_of::<u32>() as i32,
+        )
+    };
+    assert_eq!(set_ret, 4);
+
+    // Finish the header.
+    let total = unsafe { inet6_opt_finish(buf.as_mut_ptr() as *mut _, buf.len() as i32, off2) };
+    assert!(total > 0);
+    assert_eq!(total % 8, 0, "total must be 8-byte aligned");
+}
+
+#[test]
+fn inet6_opt_next_iterates_options() {
+    let mut buf = [0u8; 64];
+    let off = unsafe { inet6_opt_init(buf.as_mut_ptr() as *mut _, buf.len() as i32) };
+
+    // Append two options with different types.
+    let off2 = unsafe {
+        inet6_opt_append(
+            buf.as_mut_ptr() as *mut _,
+            buf.len() as i32,
+            off,
+            10,
+            2,
+            1,
+            ptr::null_mut(),
+        )
+    };
+    assert!(off2 > 0);
+
+    let off3 = unsafe {
+        inet6_opt_append(
+            buf.as_mut_ptr() as *mut _,
+            buf.len() as i32,
+            off2,
+            20,
+            3,
+            1,
+            ptr::null_mut(),
+        )
+    };
+    assert!(off3 > 0);
+
+    let total = unsafe { inet6_opt_finish(buf.as_mut_ptr() as *mut _, buf.len() as i32, off3) };
+    assert!(total > 0);
+
+    // Iterate: should find type 10 first, then type 20.
+    let mut typ: u8 = 0;
+    let mut len: usize = 0;
+    let next1 = unsafe {
+        inet6_opt_next(
+            buf.as_mut_ptr() as *mut _,
+            total,
+            off,
+            &mut typ,
+            &mut len,
+            ptr::null_mut(),
+        )
+    };
+    assert!(next1 > 0);
+    assert_eq!(typ, 10);
+
+    let next2 = unsafe {
+        inet6_opt_next(
+            buf.as_mut_ptr() as *mut _,
+            total,
+            next1,
+            &mut typ,
+            &mut len,
+            ptr::null_mut(),
+        )
+    };
+    assert!(next2 > 0);
+    assert_eq!(typ, 20);
+}
+
+#[test]
+fn inet6_opt_find_locates_option_by_type() {
+    let mut buf = [0u8; 64];
+    let off = unsafe { inet6_opt_init(buf.as_mut_ptr() as *mut _, buf.len() as i32) };
+
+    let off2 = unsafe {
+        inet6_opt_append(
+            buf.as_mut_ptr() as *mut _,
+            buf.len() as i32,
+            off,
+            10,
+            2,
+            1,
+            ptr::null_mut(),
+        )
+    };
+    let off3 = unsafe {
+        inet6_opt_append(
+            buf.as_mut_ptr() as *mut _,
+            buf.len() as i32,
+            off2,
+            20,
+            3,
+            1,
+            ptr::null_mut(),
+        )
+    };
+    let total = unsafe { inet6_opt_finish(buf.as_mut_ptr() as *mut _, buf.len() as i32, off3) };
+
+    // Find type 20, skipping type 10.
+    let mut len: usize = 0;
+    let found = unsafe {
+        inet6_opt_find(
+            buf.as_mut_ptr() as *mut _,
+            total,
+            off,
+            20,
+            &mut len,
+            ptr::null_mut(),
+        )
+    };
+    assert!(found > 0, "should find type 20");
+    assert_eq!(len, 3);
+
+    // Find type 99 (doesn't exist).
+    let not_found = unsafe {
+        inet6_opt_find(
+            buf.as_mut_ptr() as *mut _,
+            total,
+            off,
+            99,
+            ptr::null_mut(),
+            ptr::null_mut(),
+        )
+    };
+    assert_eq!(not_found, -1);
+}
+
+#[test]
+fn inet6_opt_get_val_reads_back_data() {
+    let mut buf = [0u8; 64];
+    let off = unsafe { inet6_opt_init(buf.as_mut_ptr() as *mut _, buf.len() as i32) };
+    let mut databuf: *mut std::ffi::c_void = ptr::null_mut();
+    let off2 = unsafe {
+        inet6_opt_append(
+            buf.as_mut_ptr() as *mut _,
+            buf.len() as i32,
+            off,
+            42,
+            4,
+            4,
+            &mut databuf,
+        )
+    };
+    assert!(off2 > 0);
+
+    // Write value.
+    let val: u32 = 0x12345678;
+    unsafe { inet6_opt_set_val(databuf, 0, &val as *const _ as *const _, 4) };
+
+    // Read it back.
+    let mut readback: u32 = 0;
+    let ret = unsafe {
+        inet6_opt_get_val(databuf, 0, &mut readback as *mut _ as *mut _, 4)
+    };
+    assert_eq!(ret, 4);
+    assert_eq!(readback, 0x12345678);
+}
+
+// ===========================================================================
+// inet6_rth_* — IPv6 routing header (RFC 3542)
+// ===========================================================================
+
+#[test]
+fn inet6_rth_space_computes_size() {
+    let space = unsafe { inet6_rth_space(0, 3) };
+    // Type 0: 8 header + 3 * 16 addresses = 56.
+    assert_eq!(space, 56);
+
+    // Invalid type.
+    assert_eq!(unsafe { inet6_rth_space(99, 1) }, 0);
+
+    // Negative segments.
+    assert_eq!(unsafe { inet6_rth_space(0, -1) }, 0);
+}
+
+#[test]
+fn inet6_rth_init_and_add_roundtrip() {
+    let mut buf = [0u8; 64];
+    let bp = unsafe { inet6_rth_init(buf.as_mut_ptr() as *mut _, 64, 0, 2) };
+    assert!(!bp.is_null());
+
+    // Header should be initialized.
+    assert_eq!(buf[2], 0); // Routing type 0.
+
+    // Add two addresses.
+    let addr1 = [1u8; 16]; // Fake in6_addr.
+    let addr2 = [2u8; 16];
+    assert_eq!(unsafe { inet6_rth_add(bp, addr1.as_ptr() as *const _) }, 0);
+    assert_eq!(unsafe { inet6_rth_add(bp, addr2.as_ptr() as *const _) }, 0);
+
+    // Third add should fail (only 2 segments allocated).
+    let addr3 = [3u8; 16];
+    assert_eq!(unsafe { inet6_rth_add(bp, addr3.as_ptr() as *const _) }, -1);
+
+    // Check segments.
+    assert_eq!(unsafe { inet6_rth_segments(bp as *const _) }, 2);
+
+    // Get addresses back.
+    let a1 = unsafe { inet6_rth_getaddr(bp as *const _, 0) };
+    assert!(!a1.is_null());
+    let a1_bytes = unsafe { std::slice::from_raw_parts(a1 as *const u8, 16) };
+    assert_eq!(a1_bytes, &addr1);
+
+    let a2 = unsafe { inet6_rth_getaddr(bp as *const _, 1) };
+    let a2_bytes = unsafe { std::slice::from_raw_parts(a2 as *const u8, 16) };
+    assert_eq!(a2_bytes, &addr2);
+
+    // Out of range.
+    assert!(unsafe { inet6_rth_getaddr(bp as *const _, 2) }.is_null());
+}
+
+#[test]
+fn inet6_rth_reverse_swaps_addresses() {
+    let mut buf = [0u8; 64];
+    let bp = unsafe { inet6_rth_init(buf.as_mut_ptr() as *mut _, 64, 0, 3) };
+    assert!(!bp.is_null());
+
+    let addr_a = [0xAAu8; 16];
+    let addr_b = [0xBBu8; 16];
+    let addr_c = [0xCCu8; 16];
+    unsafe {
+        inet6_rth_add(bp, addr_a.as_ptr() as *const _);
+        inet6_rth_add(bp, addr_b.as_ptr() as *const _);
+        inet6_rth_add(bp, addr_c.as_ptr() as *const _);
+    }
+
+    let mut out = [0u8; 64];
+    let ret = unsafe { inet6_rth_reverse(bp as *const _, out.as_mut_ptr() as *mut _) };
+    assert_eq!(ret, 0);
+
+    // First address in reversed header should be addr_c.
+    let r0 = unsafe { inet6_rth_getaddr(out.as_ptr() as *const _, 0) };
+    let r0_bytes = unsafe { std::slice::from_raw_parts(r0 as *const u8, 16) };
+    assert_eq!(r0_bytes, &addr_c);
+
+    // Last address should be addr_a.
+    let r2 = unsafe { inet6_rth_getaddr(out.as_ptr() as *const _, 2) };
+    let r2_bytes = unsafe { std::slice::from_raw_parts(r2 as *const u8, 16) };
+    assert_eq!(r2_bytes, &addr_a);
+}
+
+#[test]
+fn inet6_rth_init_too_small_returns_null() {
+    let mut buf = [0u8; 4]; // Too small for any routing header.
+    let bp = unsafe { inet6_rth_init(buf.as_mut_ptr() as *mut _, 4, 0, 1) };
+    assert!(bp.is_null());
 }
 

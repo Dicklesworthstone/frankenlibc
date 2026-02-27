@@ -1157,13 +1157,481 @@ pub unsafe extern "C" fn __dgettext(
 // ==========================================================================
 // ns_name_* DNS name manipulation (7 symbols)
 // ==========================================================================
-dlsym_passthrough!(fn ns_name_compress(src: *const c_char, dst: *mut c_void, dstlen: SizeT, dnptrs: *mut *const c_void, lastdnptr: *mut *const c_void) -> c_int);
-dlsym_passthrough!(fn ns_name_ntop(src: *const c_void, dst: *mut c_char, dstsiz: SizeT) -> c_int);
-dlsym_passthrough!(fn ns_name_pack(src: *const c_void, dst: *mut c_void, dstlen: c_int, dnptrs: *mut *const c_void, lastdnptr: *mut *const c_void) -> c_int);
-dlsym_passthrough!(fn ns_name_pton(src: *const c_char, dst: *mut c_void, dstsiz: SizeT) -> c_int);
-dlsym_passthrough!(fn ns_name_skip(ptrptr: *mut *const c_void, eom: *const c_void) -> c_int);
-dlsym_passthrough!(fn ns_name_uncompress(msg: *const c_void, eom: *const c_void, src: *const c_void, dst: *mut c_char, dstsiz: SizeT) -> c_int);
-dlsym_passthrough!(fn ns_name_unpack(msg: *const c_void, eom: *const c_void, src: *const c_void, dst: *mut c_void, dstsiz: SizeT) -> c_int);
+/// `ns_name_skip` — advance pointer past a compressed domain name (RFC 1035).
+///
+/// Unlike `dn_skipname` which returns bytes consumed, this advances `*ptrptr`
+/// in-place and returns 0 on success, -1 on error.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ns_name_skip(
+    ptrptr: *mut *const c_void,
+    eom: *const c_void,
+) -> c_int {
+    if ptrptr.is_null() || eom.is_null() {
+        return -1;
+    }
+    let ptr = unsafe { *ptrptr } as *const u8;
+    let eom = eom as *const u8;
+    if ptr.is_null() || ptr >= eom {
+        return -1;
+    }
+    let buf = unsafe { std::slice::from_raw_parts(ptr, eom.offset_from(ptr) as usize) };
+    let mut i = 0usize;
+    loop {
+        if i >= buf.len() {
+            return -1;
+        }
+        let b = buf[i];
+        if b == 0 {
+            // Root label — skip past it.
+            unsafe { *ptrptr = ptr.add(i + 1) as *const c_void };
+            return 0;
+        }
+        if b & 0xC0 == 0xC0 {
+            // Compression pointer (2 bytes).
+            if i + 1 >= buf.len() {
+                return -1;
+            }
+            unsafe { *ptrptr = ptr.add(i + 2) as *const c_void };
+            return 0;
+        }
+        if b & 0xC0 != 0 {
+            return -1; // Reserved label type.
+        }
+        i += 1 + b as usize;
+    }
+}
+
+/// `ns_name_ntop` — convert uncompressed wire-format labels to dotted text (RFC 1035).
+///
+/// Walks length-prefixed labels, emits "label1.label2." with escaping for
+/// special characters. Returns number of chars written (excluding NUL), or -1.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ns_name_ntop(
+    src: *const c_void,
+    dst: *mut c_char,
+    dstsiz: SizeT,
+) -> c_int {
+    if src.is_null() || dst.is_null() || dstsiz == 0 {
+        return -1;
+    }
+    let src = src as *const u8;
+    let out = unsafe { std::slice::from_raw_parts_mut(dst as *mut u8, dstsiz) };
+    // Read wire labels until root. Source has no compression pointers (uncompressed).
+    // We don't know the source buffer size, so read carefully with max wire name length 255.
+    let mut si = 0usize;
+    let mut oi = 0usize;
+    let mut first = true;
+    const NS_MAXDNAME: usize = 1025;
+
+    loop {
+        let b = unsafe { *src.add(si) };
+        if b == 0 {
+            // Root label. If name was empty (root zone), output is just ".".
+            if first {
+                if oi + 1 >= out.len() {
+                    unsafe { *libc::__errno_location() = libc::EMSGSIZE };
+                    return -1;
+                }
+                out[oi] = b'.';
+                oi += 1;
+            }
+            break;
+        }
+        if b & 0xC0 != 0 {
+            return -1; // Compression pointer or reserved — invalid in uncompressed name.
+        }
+        let label_len = b as usize;
+        if label_len > 63 || si + 1 + label_len > NS_MAXDNAME {
+            return -1;
+        }
+        // Dot separator before non-first labels.
+        if !first {
+            if oi >= out.len() - 1 {
+                unsafe { *libc::__errno_location() = libc::EMSGSIZE };
+                return -1;
+            }
+            out[oi] = b'.';
+            oi += 1;
+        }
+        first = false;
+        si += 1;
+        // Copy label bytes with escaping.
+        for j in 0..label_len {
+            let ch = unsafe { *src.add(si + j) };
+            if ch == b'.' || ch == b'\\' {
+                // Escape with backslash.
+                if oi + 2 >= out.len() {
+                    unsafe { *libc::__errno_location() = libc::EMSGSIZE };
+                    return -1;
+                }
+                out[oi] = b'\\';
+                oi += 1;
+                out[oi] = ch;
+                oi += 1;
+            } else if ch < 0x20 || ch >= 0x7F {
+                // Escape non-printable as \DDD.
+                if oi + 4 >= out.len() {
+                    unsafe { *libc::__errno_location() = libc::EMSGSIZE };
+                    return -1;
+                }
+                out[oi] = b'\\';
+                out[oi + 1] = b'0' + ch / 100;
+                out[oi + 2] = b'0' + (ch / 10) % 10;
+                out[oi + 3] = b'0' + ch % 10;
+                oi += 4;
+            } else {
+                if oi >= out.len() - 1 {
+                    unsafe { *libc::__errno_location() = libc::EMSGSIZE };
+                    return -1;
+                }
+                out[oi] = ch;
+                oi += 1;
+            }
+        }
+        si += label_len;
+    }
+
+    // NUL-terminate.
+    if oi >= out.len() {
+        unsafe { *libc::__errno_location() = libc::EMSGSIZE };
+        return -1;
+    }
+    out[oi] = 0;
+    oi as c_int
+}
+
+/// `ns_name_pton` — convert dotted text to uncompressed wire-format labels (RFC 1035).
+///
+/// Handles backslash escapes (\. and \DDD). Returns -1 on error, number of
+/// bytes written to dst on success.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ns_name_pton(
+    src: *const c_char,
+    dst: *mut c_void,
+    dstsiz: SizeT,
+) -> c_int {
+    if src.is_null() || dst.is_null() || dstsiz == 0 {
+        return -1;
+    }
+    let name = unsafe { std::ffi::CStr::from_ptr(src) };
+    let name_bytes = name.to_bytes();
+    let out = unsafe { std::slice::from_raw_parts_mut(dst as *mut u8, dstsiz) };
+
+    // Empty string or just "." → root.
+    if name_bytes.is_empty() || (name_bytes.len() == 1 && name_bytes[0] == b'.') {
+        if out.is_empty() {
+            unsafe { *libc::__errno_location() = libc::EMSGSIZE };
+            return -1;
+        }
+        out[0] = 0;
+        return 1;
+    }
+
+    let mut si = 0usize; // source index
+    let mut oi = 0usize; // output index
+    let mut label_start = 0usize; // where current label length byte is
+
+    // Reserve space for first label length byte.
+    if oi >= out.len() {
+        unsafe { *libc::__errno_location() = libc::EMSGSIZE };
+        return -1;
+    }
+    label_start = oi;
+    oi += 1;
+    let mut label_len: u8 = 0;
+
+    while si < name_bytes.len() {
+        let ch = name_bytes[si];
+        if ch == b'.' {
+            // End of label.
+            if label_len == 0 && si + 1 < name_bytes.len() {
+                return -1; // Empty label in middle.
+            }
+            if label_len > 63 {
+                return -1;
+            }
+            out[label_start] = label_len;
+            si += 1;
+            // If this was the trailing dot and we're at end, don't start a new label.
+            if si >= name_bytes.len() {
+                break;
+            }
+            // Start next label.
+            if oi >= out.len() {
+                unsafe { *libc::__errno_location() = libc::EMSGSIZE };
+                return -1;
+            }
+            label_start = oi;
+            oi += 1;
+            label_len = 0;
+            continue;
+        }
+        let byte = if ch == b'\\' && si + 1 < name_bytes.len() {
+            si += 1;
+            if name_bytes[si].is_ascii_digit()
+                && si + 2 < name_bytes.len()
+                && name_bytes[si + 1].is_ascii_digit()
+                && name_bytes[si + 2].is_ascii_digit()
+            {
+                // \DDD decimal escape.
+                let val = (name_bytes[si] - b'0') as u16 * 100
+                    + (name_bytes[si + 1] - b'0') as u16 * 10
+                    + (name_bytes[si + 2] - b'0') as u16;
+                si += 2; // si will be incremented again below.
+                if val > 255 {
+                    return -1;
+                }
+                val as u8
+            } else {
+                name_bytes[si]
+            }
+        } else {
+            ch
+        };
+
+        if oi >= out.len() {
+            unsafe { *libc::__errno_location() = libc::EMSGSIZE };
+            return -1;
+        }
+        out[oi] = byte;
+        oi += 1;
+        label_len += 1;
+        si += 1;
+    }
+
+    // Finalize last label if name didn't end with dot.
+    if label_len > 0 {
+        if label_len > 63 {
+            return -1;
+        }
+        out[label_start] = label_len;
+    }
+
+    // Root terminator.
+    if oi >= out.len() {
+        unsafe { *libc::__errno_location() = libc::EMSGSIZE };
+        return -1;
+    }
+    out[oi] = 0;
+    oi += 1;
+    oi as c_int
+}
+
+/// `ns_name_unpack` — decompress a compressed wire-format name to uncompressed labels.
+///
+/// Follows compression pointers within `[msg, eom)` starting at `src`, writing
+/// uncompressed labels to `dst[..dstsiz]`. Returns bytes consumed from `src`, or -1.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ns_name_unpack(
+    msg: *const c_void,
+    eom: *const c_void,
+    src: *const c_void,
+    dst: *mut c_void,
+    dstsiz: SizeT,
+) -> c_int {
+    let msg = msg as *const u8;
+    let eom = eom as *const u8;
+    let src = src as *const u8;
+    let dst = dst as *mut u8;
+    if msg.is_null() || eom.is_null() || src.is_null() || dst.is_null() || dstsiz == 0 {
+        return -1;
+    }
+    if src < msg || src >= eom {
+        return -1;
+    }
+    let msg_len = unsafe { eom.offset_from(msg) } as usize;
+    let msg_slice = unsafe { std::slice::from_raw_parts(msg, msg_len) };
+    let out = unsafe { std::slice::from_raw_parts_mut(dst, dstsiz) };
+
+    let mut pos = unsafe { src.offset_from(msg) } as usize;
+    let mut oi = 0usize;
+    let mut wire_len: Option<usize> = None;
+    let mut jumps = 0u32;
+    const MAX_JUMPS: u32 = 128;
+
+    loop {
+        if pos >= msg_len {
+            return -1;
+        }
+        let b = msg_slice[pos];
+        if b == 0 {
+            // Root label.
+            if wire_len.is_none() {
+                wire_len = Some(pos + 1 - unsafe { src.offset_from(msg) } as usize);
+            }
+            // Write root terminator.
+            if oi >= out.len() {
+                return -1;
+            }
+            out[oi] = 0;
+            break;
+        }
+        if b & 0xC0 == 0xC0 {
+            // Compression pointer.
+            if pos + 1 >= msg_len {
+                return -1;
+            }
+            if wire_len.is_none() {
+                wire_len = Some(pos + 2 - unsafe { src.offset_from(msg) } as usize);
+            }
+            let target = ((b as usize & 0x3F) << 8) | msg_slice[pos + 1] as usize;
+            if target >= msg_len {
+                return -1;
+            }
+            jumps += 1;
+            if jumps > MAX_JUMPS {
+                return -1;
+            }
+            pos = target;
+            continue;
+        }
+        if b & 0xC0 != 0 {
+            return -1; // Reserved label type.
+        }
+        let label_len = b as usize;
+        if pos + 1 + label_len > msg_len || label_len > 63 {
+            return -1;
+        }
+        // Write label length + label data.
+        if oi + 1 + label_len >= out.len() {
+            return -1;
+        }
+        out[oi] = b;
+        oi += 1;
+        out[oi..oi + label_len].copy_from_slice(&msg_slice[pos + 1..pos + 1 + label_len]);
+        oi += label_len;
+        pos += 1 + label_len;
+    }
+
+    wire_len.unwrap_or(0) as c_int
+}
+
+/// `ns_name_pack` — compress uncompressed wire labels into a DNS message.
+///
+/// Takes uncompressed labels from `src`, writes compressed format to `dst[..dstlen]`.
+/// Uses `dnptrs`/`lastdnptr` for compression pointer matching.
+/// Returns bytes written to dst, or -1.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ns_name_pack(
+    src: *const c_void,
+    dst: *mut c_void,
+    dstlen: c_int,
+    _dnptrs: *mut *const c_void,
+    _lastdnptr: *mut *const c_void,
+) -> c_int {
+    let src = src as *const u8;
+    let dst = dst as *mut u8;
+    if src.is_null() || dst.is_null() || dstlen < 1 {
+        return -1;
+    }
+    let out = unsafe { std::slice::from_raw_parts_mut(dst, dstlen as usize) };
+
+    // Copy uncompressed labels verbatim (no compression pointer generation — simple impl).
+    // Walk the source labels and copy them to output.
+    let mut si = 0usize;
+    let mut oi = 0usize;
+
+    loop {
+        let b = unsafe { *src.add(si) };
+        if b == 0 {
+            // Root terminator.
+            if oi >= out.len() {
+                return -1;
+            }
+            out[oi] = 0;
+            oi += 1;
+            break;
+        }
+        if b & 0xC0 != 0 {
+            return -1; // Invalid in uncompressed input.
+        }
+        let label_len = b as usize;
+        if label_len > 63 {
+            return -1;
+        }
+        // Copy length byte + label data.
+        if oi + 1 + label_len > out.len() {
+            return -1;
+        }
+        out[oi] = b;
+        oi += 1;
+        // Read label data from src.
+        for j in 0..label_len {
+            out[oi + j] = unsafe { *src.add(si + 1 + j) };
+        }
+        oi += label_len;
+        si += 1 + label_len;
+    }
+
+    oi as c_int
+}
+
+/// `ns_name_compress` — convert dotted text to compressed wire format (RFC 1035).
+///
+/// Equivalent to `ns_name_pton` + `ns_name_pack`. Returns bytes written, or -1.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ns_name_compress(
+    src: *const c_char,
+    dst: *mut c_void,
+    dstlen: SizeT,
+    dnptrs: *mut *const c_void,
+    lastdnptr: *mut *const c_void,
+) -> c_int {
+    // Stage 1: text → uncompressed wire labels (stack buffer).
+    let mut wire_buf = [0u8; 256]; // NS_MAXCDNAME
+    let ret = unsafe {
+        ns_name_pton(src, wire_buf.as_mut_ptr() as *mut c_void, wire_buf.len())
+    };
+    if ret < 0 {
+        return -1;
+    }
+    // Stage 2: pack (with potential compression).
+    unsafe {
+        ns_name_pack(
+            wire_buf.as_ptr() as *const c_void,
+            dst,
+            dstlen as c_int,
+            dnptrs,
+            lastdnptr,
+        )
+    }
+}
+
+/// `ns_name_uncompress` — decompress wire-format name to dotted text (RFC 1035).
+///
+/// Equivalent to `ns_name_unpack` + `ns_name_ntop`. Returns bytes consumed from
+/// `src` in the wire message, or -1.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ns_name_uncompress(
+    msg: *const c_void,
+    eom: *const c_void,
+    src: *const c_void,
+    dst: *mut c_char,
+    dstsiz: SizeT,
+) -> c_int {
+    // Stage 1: decompress → uncompressed wire labels.
+    let mut wire_buf = [0u8; 256]; // NS_MAXCDNAME
+    let consumed = unsafe {
+        ns_name_unpack(
+            msg,
+            eom,
+            src,
+            wire_buf.as_mut_ptr() as *mut c_void,
+            wire_buf.len(),
+        )
+    };
+    if consumed < 0 {
+        return -1;
+    }
+    // Stage 2: wire labels → dotted text.
+    let text_ret = unsafe {
+        ns_name_ntop(wire_buf.as_ptr() as *const c_void, dst, dstsiz)
+    };
+    if text_ret < 0 {
+        return -1;
+    }
+    consumed
+}
 
 // __dn_* DNS name aliases — forward to our native implementations
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -1223,25 +1691,501 @@ pub static mut obstack_exit_failure: c_int = 1;
 // ==========================================================================
 // inet6_opt_* / inet6_option_* / inet6_rth_* (19 symbols)
 // ==========================================================================
-dlsym_passthrough!(fn inet6_opt_append(extbuf: *mut c_void, extlen: c_int, offset: c_int, typ: u8, len: SizeT, align: u8, databufp: *mut *mut c_void) -> c_int);
-dlsym_passthrough!(fn inet6_opt_find(extbuf: *mut c_void, extlen: c_int, offset: c_int, typ: u8, lenp: *mut SizeT, databufp: *mut *mut c_void) -> c_int);
-dlsym_passthrough!(fn inet6_opt_finish(extbuf: *mut c_void, extlen: c_int, offset: c_int) -> c_int);
-dlsym_passthrough!(fn inet6_opt_get_val(databuf: *mut c_void, offset: c_int, val: *mut c_void, vallen: c_int) -> c_int);
-dlsym_passthrough!(fn inet6_opt_init(extbuf: *mut c_void, extlen: c_int) -> c_int);
-dlsym_passthrough!(fn inet6_opt_next(extbuf: *mut c_void, extlen: c_int, offset: c_int, typep: *mut u8, lenp: *mut SizeT, databufp: *mut *mut c_void) -> c_int);
-dlsym_passthrough!(fn inet6_opt_set_val(databuf: *mut c_void, offset: c_int, val: *const c_void, vallen: c_int) -> c_int);
-dlsym_passthrough!(fn inet6_option_alloc(cmsg: *mut c_void, datalen: c_int, multx: c_int, plusy: c_int) -> *mut u8);
-dlsym_passthrough!(fn inet6_option_append(cmsg: *mut c_void, typep: *const u8, multx: c_int, plusy: c_int) -> c_int);
-dlsym_passthrough!(fn inet6_option_find(cmsg: *const c_void, tptrp: *mut *mut u8, typ: c_int) -> c_int);
-dlsym_passthrough!(fn inet6_option_init(cmsg: *mut c_void, cmsglenp: *mut c_int, typ: c_int) -> c_int);
-dlsym_passthrough!(fn inet6_option_next(cmsg: *const c_void, tptrp: *mut *mut u8) -> c_int);
-dlsym_passthrough!(fn inet6_option_space(datalen: c_int) -> c_int);
-dlsym_passthrough!(fn inet6_rth_add(bp: *mut c_void, addr: *const c_void) -> c_int);
-dlsym_passthrough!(fn inet6_rth_getaddr(bp: *const c_void, index: c_int) -> *const c_void);
-dlsym_passthrough!(fn inet6_rth_init(bp: *mut c_void, bp_len: c_int, typ: c_int, segments: c_int) -> *mut c_void);
-dlsym_passthrough!(fn inet6_rth_reverse(inp: *const c_void, outp: *mut c_void) -> c_int);
-dlsym_passthrough!(fn inet6_rth_segments(bp: *const c_void) -> c_int);
-dlsym_passthrough!(fn inet6_rth_space(typ: c_int, segments: c_int) -> c_int);
+// ---------------------------------------------------------------------------
+// inet6_opt_* — IPv6 hop-by-hop/destination option extension header helpers
+// (RFC 3542 section 10). Pure buffer manipulation, no syscalls.
+// ---------------------------------------------------------------------------
+
+// IPv6 extension header: [next_hdr: u8, hdr_ext_len: u8, options...]
+// Options are TLV: [type: u8, len: u8, value: [u8; len]]
+// Pad1 (type 0): single 0x00 byte (no length/value)
+// PadN (type 1): [0x01, N-2, 0x00 * (N-2)]
+
+/// Compute padding needed to reach alignment `align` at offset `off`.
+fn inet6_opt_pad(off: usize, align: usize) -> usize {
+    if align <= 1 {
+        return 0;
+    }
+    let rem = off % align;
+    if rem == 0 { 0 } else { align - rem }
+}
+
+/// Write padding bytes into buffer at `off`. Pad1 for 1 byte, PadN for 2+.
+fn inet6_opt_write_pad(buf: &mut [u8], off: usize, padlen: usize) {
+    if padlen == 0 {
+        return;
+    }
+    if padlen == 1 {
+        buf[off] = 0; // Pad1
+    } else {
+        buf[off] = 1; // PadN type
+        buf[off + 1] = (padlen - 2) as u8;
+        for i in 2..padlen {
+            buf[off + i] = 0;
+        }
+    }
+}
+
+/// `inet6_opt_init` — initialize a hop-by-hop/destination options extension header.
+///
+/// If extbuf is NULL, returns the initial header size (2).
+/// Otherwise initializes the 2-byte header and returns 2.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn inet6_opt_init(extbuf: *mut c_void, extlen: c_int) -> c_int {
+    if extbuf.is_null() {
+        return 2; // Header is 2 bytes.
+    }
+    if extlen < 2 {
+        return -1;
+    }
+    let buf = extbuf as *mut u8;
+    unsafe {
+        *buf = 0; // Next Header (filled by kernel).
+        *buf.add(1) = 0; // Header Ext Length (0 = 8 bytes total, but we're building).
+    }
+    2
+}
+
+/// `inet6_opt_append` — append an option to the extension header buffer.
+///
+/// Adds padding for alignment, then the option type+length header.
+/// Returns new offset, or -1 on error. Sets `*databufp` to where the caller
+/// should write option data.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn inet6_opt_append(
+    extbuf: *mut c_void,
+    extlen: c_int,
+    offset: c_int,
+    typ: u8,
+    len: SizeT,
+    align: u8,
+    databufp: *mut *mut c_void,
+) -> c_int {
+    if offset < 2 || len > 255 || align == 0 || (align & (align - 1)) != 0 || align > 8 {
+        return -1;
+    }
+    // Types 0 and 1 are reserved for padding.
+    if typ == 0 || typ == 1 {
+        return -1;
+    }
+    let off = offset as usize;
+    let al = align as usize;
+    let padlen = inet6_opt_pad(off, al);
+    let needed = padlen + 2 + len; // 2 for type+length bytes
+    let new_off = off + needed;
+
+    if extbuf.is_null() {
+        return new_off as c_int;
+    }
+    if new_off > extlen as usize {
+        return -1;
+    }
+    let buf = unsafe { std::slice::from_raw_parts_mut(extbuf as *mut u8, extlen as usize) };
+    inet6_opt_write_pad(buf, off, padlen);
+    let opt_start = off + padlen;
+    buf[opt_start] = typ;
+    buf[opt_start + 1] = len as u8;
+    if !databufp.is_null() {
+        unsafe { *databufp = buf.as_mut_ptr().add(opt_start + 2) as *mut c_void };
+    }
+    new_off as c_int
+}
+
+/// `inet6_opt_finish` — finalize extension header with trailing padding.
+///
+/// Pads to 8-byte boundary and updates the Header Ext Length field.
+/// Returns total header length, or -1 on error.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn inet6_opt_finish(
+    extbuf: *mut c_void,
+    extlen: c_int,
+    offset: c_int,
+) -> c_int {
+    if offset < 2 {
+        return -1;
+    }
+    let off = offset as usize;
+    let padlen = inet6_opt_pad(off, 8);
+    let total = off + padlen;
+
+    if extbuf.is_null() {
+        return total as c_int;
+    }
+    if total > extlen as usize {
+        return -1;
+    }
+    let buf = unsafe { std::slice::from_raw_parts_mut(extbuf as *mut u8, extlen as usize) };
+    inet6_opt_write_pad(buf, off, padlen);
+    // Update Header Ext Length: (total - 8) / 8, in 8-octet units not counting first 8.
+    if total >= 8 {
+        buf[1] = ((total - 8) / 8) as u8;
+    } else {
+        buf[1] = 0;
+    }
+    total as c_int
+}
+
+/// `inet6_opt_set_val` — copy value into option data area.
+///
+/// Returns offset + vallen.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn inet6_opt_set_val(
+    databuf: *mut c_void,
+    offset: c_int,
+    val: *const c_void,
+    vallen: c_int,
+) -> c_int {
+    if databuf.is_null() || val.is_null() || offset < 0 || vallen < 0 {
+        return -1;
+    }
+    unsafe {
+        std::ptr::copy_nonoverlapping(
+            val as *const u8,
+            (databuf as *mut u8).add(offset as usize),
+            vallen as usize,
+        );
+    }
+    offset + vallen
+}
+
+/// `inet6_opt_get_val` — copy value from option data area.
+///
+/// Returns offset + vallen.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn inet6_opt_get_val(
+    databuf: *mut c_void,
+    offset: c_int,
+    val: *mut c_void,
+    vallen: c_int,
+) -> c_int {
+    if databuf.is_null() || val.is_null() || offset < 0 || vallen < 0 {
+        return -1;
+    }
+    unsafe {
+        std::ptr::copy_nonoverlapping(
+            (databuf as *const u8).add(offset as usize),
+            val as *mut u8,
+            vallen as usize,
+        );
+    }
+    offset + vallen
+}
+
+/// `inet6_opt_next` — iterate to the next option in the extension header.
+///
+/// Skips padding options (Pad1/PadN). Returns new offset, or -1 if no more.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn inet6_opt_next(
+    extbuf: *mut c_void,
+    extlen: c_int,
+    offset: c_int,
+    typep: *mut u8,
+    lenp: *mut SizeT,
+    databufp: *mut *mut c_void,
+) -> c_int {
+    if extbuf.is_null() || offset < 2 || extlen < 2 {
+        return -1;
+    }
+    let buf = unsafe { std::slice::from_raw_parts(extbuf as *const u8, extlen as usize) };
+    let mut pos = offset as usize;
+
+    loop {
+        if pos >= buf.len() {
+            return -1;
+        }
+        let t = buf[pos];
+        if t == 0 {
+            // Pad1.
+            pos += 1;
+            continue;
+        }
+        if pos + 1 >= buf.len() {
+            return -1;
+        }
+        let l = buf[pos + 1] as usize;
+        if pos + 2 + l > buf.len() {
+            return -1;
+        }
+        if t == 1 {
+            // PadN — skip.
+            pos += 2 + l;
+            continue;
+        }
+        // Real option found.
+        if !typep.is_null() {
+            unsafe { *typep = t };
+        }
+        if !lenp.is_null() {
+            unsafe { *lenp = l };
+        }
+        if !databufp.is_null() {
+            unsafe { *databufp = (extbuf as *mut u8).add(pos + 2) as *mut c_void };
+        }
+        return (pos + 2 + l) as c_int;
+    }
+}
+
+/// `inet6_opt_find` — find the next option of a specific type.
+///
+/// Calls inet6_opt_next repeatedly until the requested type is found.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn inet6_opt_find(
+    extbuf: *mut c_void,
+    extlen: c_int,
+    offset: c_int,
+    typ: u8,
+    lenp: *mut SizeT,
+    databufp: *mut *mut c_void,
+) -> c_int {
+    let mut cur_off = offset;
+    let mut found_type: u8 = 0;
+    loop {
+        let next = unsafe {
+            inet6_opt_next(extbuf, extlen, cur_off, &mut found_type, lenp, databufp)
+        };
+        if next < 0 {
+            return -1;
+        }
+        if found_type == typ {
+            return next;
+        }
+        cur_off = next;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// inet6_option_* — deprecated RFC 2292 option helpers (superseded by inet6_opt_*)
+// These operate on cmsghdr-based ancillary data. Return -1 / NULL to deny usage
+// of deprecated API without breaking linkage.
+// ---------------------------------------------------------------------------
+
+/// `inet6_option_space` — compute CMSG space for option data (deprecated RFC 2292).
+///
+/// Returns CMSG_SPACE for the given data length, rounded to 8-byte boundary.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn inet6_option_space(datalen: c_int) -> c_int {
+    if datalen < 0 {
+        return 0;
+    }
+    // CMSG_SPACE analog: header(2) + data, padded to 8 bytes.
+    let total = 2 + datalen as usize;
+    let padded = (total + 7) & !7;
+    padded as c_int
+}
+
+/// `inet6_option_init` — initialize cmsg for IPv6 options (deprecated RFC 2292).
+///
+/// Returns -1 (deprecated API not supported).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn inet6_option_init(
+    _cmsg: *mut c_void,
+    _cmsglenp: *mut c_int,
+    _typ: c_int,
+) -> c_int {
+    -1
+}
+
+/// `inet6_option_append` — append option to cmsg (deprecated RFC 2292).
+///
+/// Returns -1 (deprecated API not supported).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn inet6_option_append(
+    _cmsg: *mut c_void,
+    _typep: *const u8,
+    _multx: c_int,
+    _plusy: c_int,
+) -> c_int {
+    -1
+}
+
+/// `inet6_option_alloc` — allocate space in cmsg (deprecated RFC 2292).
+///
+/// Returns NULL (deprecated API not supported).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn inet6_option_alloc(
+    _cmsg: *mut c_void,
+    _datalen: c_int,
+    _multx: c_int,
+    _plusy: c_int,
+) -> *mut u8 {
+    std::ptr::null_mut()
+}
+
+/// `inet6_option_next` — iterate options in cmsg (deprecated RFC 2292).
+///
+/// Returns -1 (deprecated API not supported).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn inet6_option_next(
+    _cmsg: *const c_void,
+    _tptrp: *mut *mut u8,
+) -> c_int {
+    -1
+}
+
+/// `inet6_option_find` — find option in cmsg by type (deprecated RFC 2292).
+///
+/// Returns -1 (deprecated API not supported).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn inet6_option_find(
+    _cmsg: *const c_void,
+    _tptrp: *mut *mut u8,
+    _typ: c_int,
+) -> c_int {
+    -1
+}
+
+// ---------------------------------------------------------------------------
+// inet6_rth_* — IPv6 routing header manipulation (RFC 3542 section 7).
+// Type 0 routing header layout:
+//   [next_hdr: u8][hdr_ext_len: u8][type: u8][segleft: u8][reserved: u32]
+//   followed by segments × in6_addr (16 bytes each)
+// ---------------------------------------------------------------------------
+
+const IN6_ADDR_SIZE: usize = 16;
+const RTH0_HDR_SIZE: usize = 8;
+// Type 2 (Mobile IPv6) is also standardized.
+const IPV6_RTHDR_TYPE_0: c_int = 0;
+
+/// `inet6_rth_space` — return bytes needed for a routing header.
+///
+/// Type 0: 8 + segments * 16. Returns 0 if type is unsupported or segments < 0.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn inet6_rth_space(typ: c_int, segments: c_int) -> c_int {
+    if typ != IPV6_RTHDR_TYPE_0 || segments < 0 || segments > 127 {
+        return 0;
+    }
+    (RTH0_HDR_SIZE + segments as usize * IN6_ADDR_SIZE) as c_int
+}
+
+/// `inet6_rth_init` — initialize a routing header buffer.
+///
+/// Returns bp on success, NULL if bp_len is too small or type is unsupported.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn inet6_rth_init(
+    bp: *mut c_void,
+    bp_len: c_int,
+    typ: c_int,
+    segments: c_int,
+) -> *mut c_void {
+    if bp.is_null() || typ != IPV6_RTHDR_TYPE_0 || segments < 0 || segments > 127 {
+        return std::ptr::null_mut();
+    }
+    let needed = RTH0_HDR_SIZE + segments as usize * IN6_ADDR_SIZE;
+    if (bp_len as usize) < needed {
+        return std::ptr::null_mut();
+    }
+    let hdr = bp as *mut u8;
+    unsafe {
+        *hdr = 0; // Next Header (filled by kernel).
+        *hdr.add(1) = (segments * 2) as u8; // Hdr Ext Len in 8-octet units.
+        *hdr.add(2) = typ as u8; // Routing type.
+        *hdr.add(3) = 0; // Segments left (filled as addresses are added).
+        // Reserved field (4 bytes) = 0.
+        std::ptr::write_bytes(hdr.add(4), 0, 4);
+    }
+    bp
+}
+
+/// `inet6_rth_add` — add an address to the routing header.
+///
+/// Increments segments_left and copies the in6_addr. Returns 0 on success, -1 on error.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn inet6_rth_add(bp: *mut c_void, addr: *const c_void) -> c_int {
+    if bp.is_null() || addr.is_null() {
+        return -1;
+    }
+    let hdr = bp as *mut u8;
+    let hdr_ext_len = unsafe { *hdr.add(1) } as usize;
+    let max_segments = hdr_ext_len / 2;
+    let seg_left = unsafe { *hdr.add(3) } as usize;
+    if seg_left >= max_segments {
+        return -1; // No room.
+    }
+    // Copy address to slot[seg_left].
+    let dest = unsafe { hdr.add(RTH0_HDR_SIZE + seg_left * IN6_ADDR_SIZE) };
+    unsafe {
+        std::ptr::copy_nonoverlapping(addr as *const u8, dest, IN6_ADDR_SIZE);
+        *hdr.add(3) = (seg_left + 1) as u8; // Increment segments left.
+    }
+    0
+}
+
+/// `inet6_rth_segments` — return the number of segments in the routing header.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn inet6_rth_segments(bp: *const c_void) -> c_int {
+    if bp.is_null() {
+        return -1;
+    }
+    let hdr = bp as *const u8;
+    let hdr_ext_len = unsafe { *hdr.add(1) } as c_int;
+    hdr_ext_len / 2
+}
+
+/// `inet6_rth_getaddr` — return pointer to address at given index.
+///
+/// Returns NULL if index is out of range.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn inet6_rth_getaddr(bp: *const c_void, index: c_int) -> *const c_void {
+    if bp.is_null() || index < 0 {
+        return std::ptr::null();
+    }
+    let hdr = bp as *const u8;
+    let hdr_ext_len = unsafe { *hdr.add(1) } as usize;
+    let max_segments = hdr_ext_len / 2;
+    if index as usize >= max_segments {
+        return std::ptr::null();
+    }
+    unsafe { hdr.add(RTH0_HDR_SIZE + index as usize * IN6_ADDR_SIZE) as *const c_void }
+}
+
+/// `inet6_rth_reverse` — reverse the routing header.
+///
+/// Copies addresses in reverse order. inp and outp may be the same buffer.
+/// Returns 0 on success, -1 on error.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn inet6_rth_reverse(
+    inp: *const c_void,
+    outp: *mut c_void,
+) -> c_int {
+    if inp.is_null() || outp.is_null() {
+        return -1;
+    }
+    let in_hdr = inp as *const u8;
+    let hdr_ext_len = unsafe { *in_hdr.add(1) } as usize;
+    let nseg = hdr_ext_len / 2;
+    let total_size = RTH0_HDR_SIZE + nseg * IN6_ADDR_SIZE;
+
+    // If inp != outp, copy the header first.
+    if inp as *const u8 != outp as *const u8 {
+        unsafe { std::ptr::copy_nonoverlapping(in_hdr, outp as *mut u8, RTH0_HDR_SIZE) };
+    }
+
+    // Reverse addresses using a temp buffer.
+    let mut addrs = vec![[0u8; IN6_ADDR_SIZE]; nseg];
+    for i in 0..nseg {
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                in_hdr.add(RTH0_HDR_SIZE + i * IN6_ADDR_SIZE),
+                addrs[i].as_mut_ptr(),
+                IN6_ADDR_SIZE,
+            );
+        }
+    }
+    let out_hdr = outp as *mut u8;
+    for i in 0..nseg {
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                addrs[nseg - 1 - i].as_ptr(),
+                out_hdr.add(RTH0_HDR_SIZE + i * IN6_ADDR_SIZE),
+                IN6_ADDR_SIZE,
+            );
+        }
+    }
+    // Update segments_left to nseg.
+    unsafe { *out_hdr.add(3) = nseg as u8 };
+    let _ = total_size;
+    0
+}
 
 // inet legacy (8 symbols)
 // inet_lnaof: native — extract local (host) part of IPv4 address
