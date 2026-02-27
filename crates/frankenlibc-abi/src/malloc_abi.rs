@@ -1334,51 +1334,6 @@ fn page_size() -> usize {
 // __libc_* internal aliases — glibc exports these for internal use
 // ===========================================================================
 
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __libc_malloc(size: usize) -> *mut c_void {
-    unsafe { malloc(size) }
-}
-
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __libc_free(ptr: *mut c_void) {
-    unsafe { free(ptr) }
-}
-
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __libc_calloc(nmemb: usize, size: usize) -> *mut c_void {
-    unsafe { calloc(nmemb, size) }
-}
-
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __libc_realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
-    unsafe { realloc(ptr, size) }
-}
-
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __libc_memalign(alignment: usize, size: usize) -> *mut c_void {
-    unsafe { memalign(alignment, size) }
-}
-
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __libc_pvalloc(size: usize) -> *mut c_void {
-    unsafe { pvalloc(size) }
-}
-
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __libc_valloc(size: usize) -> *mut c_void {
-    unsafe { valloc(size) }
-}
-
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __libc_mallopt(param: c_int, value: c_int) -> c_int {
-    unsafe { mallopt(param, value) }
-}
-
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __libc_mallinfo() -> Mallinfo {
-    unsafe { mallinfo() }
-}
-
 /// `__libc_freeres` — release all libc internal resources (no-op).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __libc_freeres() {}
