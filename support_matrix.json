@@ -18451,17 +18451,17 @@
     },
     {
       "symbol": "authdes_create",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "authdes_getucred",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "authdes_pk_create",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
@@ -18531,7 +18531,7 @@
     },
     {
       "symbol": "clnt_broadcast",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
@@ -18541,7 +18541,7 @@
     },
     {
       "symbol": "clnt_pcreateerror",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
@@ -18556,7 +18556,7 @@
     },
     {
       "symbol": "clnt_spcreateerror",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
@@ -19292,27 +19292,27 @@
     },
     {
       "symbol": "pmap_getmaps",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "pmap_getport",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "pmap_rmtcall",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "pmap_set",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "pmap_unset",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
@@ -20099,307 +20099,307 @@
     },
     {
       "symbol": "xdr_accepted_reply",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "xdr_array",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "xdr_authdes_cred",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "xdr_authdes_verf",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "xdr_authunix_parms",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "xdr_bool",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "xdr_bytes",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "xdr_callhdr",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "xdr_callmsg",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "xdr_char",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "xdr_cryptkeyarg",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "xdr_cryptkeyarg2",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "xdr_cryptkeyres",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "xdr_des_block",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "xdr_double",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "xdr_enum",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "xdr_float",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "xdr_free",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "xdr_getcredres",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "xdr_hyper",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "xdr_int",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "xdr_int16_t",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "xdr_int32_t",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "xdr_int64_t",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "xdr_int8_t",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "xdr_key_netstarg",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "xdr_key_netstres",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "xdr_keybuf",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "xdr_keystatus",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "xdr_long",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "xdr_longlong_t",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "xdr_netnamestr",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "xdr_netobj",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "xdr_opaque",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "xdr_opaque_auth",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "xdr_pmap",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "xdr_pmaplist",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "xdr_pointer",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "xdr_quad_t",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "xdr_reference",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "xdr_rejected_reply",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "xdr_replymsg",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "xdr_rmtcall_args",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "xdr_rmtcallres",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "xdr_short",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "xdr_sizeof",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "xdr_string",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "xdr_u_char",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "xdr_u_hyper",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "xdr_u_int",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "xdr_u_long",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "xdr_u_longlong_t",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "xdr_u_quad_t",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "xdr_u_short",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "xdr_uint16_t",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "xdr_uint32_t",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "xdr_uint64_t",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "xdr_uint8_t",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "xdr_union",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "xdr_unixcred",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "xdr_vector",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
@@ -20409,37 +20409,37 @@
     },
     {
       "symbol": "xdr_wrapstring",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "xdrmem_create",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "xdrrec_create",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "xdrrec_endofrecord",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "xdrrec_eof",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "xdrrec_skiprecord",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "xdrstdio_create",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
