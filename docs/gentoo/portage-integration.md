@@ -155,3 +155,7 @@ For each package:
 4. Start with test-phase-only preload (`src_test pkg_test`) before expanding to compile phases.
 5. Maintain package blocklist for problematic atoms.
 6. Keep per-package artifacts for reproducibility.
+
+## Related Documents
+
+- `docs/gentoo/binary-cache.md` — build-once/test-many cache policy and commands.
