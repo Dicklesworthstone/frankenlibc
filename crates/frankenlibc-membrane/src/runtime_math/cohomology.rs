@@ -62,6 +62,16 @@ impl Default for CohomologyMonitor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
+    use std::thread;
+
+    #[test]
+    fn zero_initialized_sections_accept_zero_witness() {
+        let monitor = CohomologyMonitor::new();
+        assert!(monitor.note_overlap(0, 0, 0));
+        assert!(monitor.note_overlap(7, 42, 0));
+        assert_eq!(monitor.fault_count(), 0);
+    }
 
     #[test]
     fn detects_inconsistent_overlap() {
@@ -90,5 +100,44 @@ mod tests {
         assert!(!monitor.note_overlap(1, 2, 0x00));
         assert!(!monitor.note_overlap(1, 2, 0x01));
         assert_eq!(monitor.fault_count(), 2);
+    }
+
+    #[test]
+    fn repeated_consistent_overlaps_never_increment_fault_counter() {
+        let monitor = CohomologyMonitor::new();
+        monitor.set_section_hash(5, 0x1234);
+        monitor.set_section_hash(7, 0x00FF);
+        let witness = 0x1234 ^ 0x00FF;
+
+        for _ in 0..256 {
+            assert!(monitor.note_overlap(5, 7, witness));
+        }
+        assert_eq!(monitor.fault_count(), 0);
+    }
+
+    #[test]
+    fn concurrent_mismatches_are_counted_exactly_once_per_event() {
+        let monitor = Arc::new(CohomologyMonitor::new());
+        for i in 0..16usize {
+            monitor.set_section_hash(i, (i as u64).saturating_add(0x10));
+            monitor.set_section_hash(i + 16, (i as u64).saturating_add(0x40));
+        }
+
+        let mut handles = Vec::new();
+        for i in 0..16usize {
+            let monitor = Arc::clone(&monitor);
+            handles.push(thread::spawn(move || {
+                let left = i;
+                let right = i + 16;
+                let witness = (i as u64).saturating_add(0x10) ^ (i as u64).saturating_add(0x40);
+                assert!(monitor.note_overlap(left, right, witness));
+                assert!(!monitor.note_overlap(left, right, witness ^ 1));
+            }));
+        }
+
+        for handle in handles {
+            handle.join().expect("worker thread must not panic");
+        }
+        assert_eq!(monitor.fault_count(), 16);
     }
 }

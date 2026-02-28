@@ -237,4 +237,66 @@ mod tests {
         let low = f.bonus_ppm();
         assert!(low < high);
     }
+
+    #[test]
+    fn mode_scaling_orders_bonus_for_same_signal_profile() {
+        let sev = [4; SIGNALS];
+        let mut off = KernelFusionController::new();
+        let mut strict = KernelFusionController::new();
+        let mut hardened = KernelFusionController::new();
+
+        let off_bonus = off.observe(sev, true, SafetyLevel::Off).bonus_ppm;
+        let strict_bonus = strict.observe(sev, true, SafetyLevel::Strict).bonus_ppm;
+        let hardened_bonus = hardened.observe(sev, true, SafetyLevel::Hardened).bonus_ppm;
+
+        assert!(hardened_bonus >= strict_bonus);
+        assert!(strict_bonus >= off_bonus);
+    }
+
+    #[test]
+    fn severity_values_above_four_are_clamped() {
+        let mut baseline = KernelFusionController::new();
+        let mut overflow = KernelFusionController::new();
+        let mut baseline_sev = [0; SIGNALS];
+        let mut overflow_sev = [0; SIGNALS];
+        baseline_sev[11] = 4;
+        overflow_sev[11] = u8::MAX;
+
+        let expected = baseline.observe(baseline_sev, true, SafetyLevel::Strict);
+        let observed = overflow.observe(overflow_sev, true, SafetyLevel::Strict);
+
+        assert_eq!(observed.bonus_ppm, expected.bonus_ppm);
+        assert_eq!(observed.dominant_signal, expected.dominant_signal);
+        assert_eq!(observed.drift_ppm, expected.drift_ppm);
+    }
+
+    #[test]
+    fn dominant_signal_tracks_regime_shift() {
+        let mut f = KernelFusionController::new();
+        let mut first = [0; SIGNALS];
+        let mut second = [0; SIGNALS];
+        first[7] = 4;
+        second[29] = 4;
+
+        for _ in 0..180 {
+            let _ = f.observe(first, true, SafetyLevel::Hardened);
+        }
+        assert_eq!(f.summary().dominant_signal, 7);
+
+        for _ in 0..260 {
+            let _ = f.observe(second, true, SafetyLevel::Hardened);
+        }
+        assert_eq!(f.summary().dominant_signal, 29);
+    }
+
+    #[test]
+    fn uniform_mix_keeps_entropy_positive_under_extreme_concentration() {
+        let mut f = KernelFusionController::new();
+        let mut sev = [0; SIGNALS];
+        sev[3] = 4;
+        for _ in 0..512 {
+            let _ = f.observe(sev, true, SafetyLevel::Hardened);
+        }
+        assert!(f.summary().entropy_milli > 0);
+    }
 }

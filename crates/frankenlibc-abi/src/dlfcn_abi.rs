@@ -157,12 +157,29 @@ pub unsafe extern "C" fn dlopen(filename: *const c_char, flags: c_int) -> *mut c
 // dlsym
 // ---------------------------------------------------------------------------
 
+thread_local! {
+    static DLSYM_REENTRY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
 /// Find a symbol in a shared object.
 ///
 /// `handle` may be a real handle from `dlopen`, or one of the pseudo-handles
 /// `RTLD_DEFAULT` / `RTLD_NEXT`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *mut c_void {
+    if DLSYM_REENTRY.try_with(|r| r.get()).unwrap_or(true) {
+        return unsafe { host_dlsym().map_or(std::ptr::null_mut(), |f| f(handle, symbol)) };
+    }
+    
+    struct DlsymGuard;
+    impl Drop for DlsymGuard {
+        fn drop(&mut self) {
+            let _ = DLSYM_REENTRY.try_with(|r| r.set(false));
+        }
+    }
+    let _guard = DlsymGuard;
+    let _ = DLSYM_REENTRY.try_with(|r| r.set(true));
+
     let (_, decision) =
         runtime_policy::decide(ApiFamily::Loader, handle as usize, 0, false, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {

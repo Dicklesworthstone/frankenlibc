@@ -174,6 +174,17 @@ impl OptimalDesignController {
             add_probe(&mut mask, &mut expected_cost_ns, Probe::Bridge);
             add_probe(&mut mask, &mut expected_cost_ns, Probe::MeanField);
         }
+        if risk >= 0.50 || adverse_hint {
+            // Elevated-risk regimes keep at least one topology-sensitive monitor online
+            // so geometric/shape anomalies are still observable under budget pressure.
+            let rough_path_cost = probe_cost_ns(Probe::RoughPath);
+            let persistence_cost = probe_cost_ns(Probe::Persistence);
+            if expected_cost_ns.saturating_add(rough_path_cost) <= budget_ns {
+                add_probe(&mut mask, &mut expected_cost_ns, Probe::RoughPath);
+            } else if expected_cost_ns.saturating_add(persistence_cost) <= budget_ns {
+                add_probe(&mut mask, &mut expected_cost_ns, Probe::Persistence);
+            }
+        }
 
         let base_logdet = logdet_spd(&self.fisher);
         let mut candidates: Vec<(Probe, f64, u64)> = Vec::with_capacity(Probe::COUNT);
@@ -382,5 +393,48 @@ mod tests {
         }
         let after = ctrl.identifiability_ppm();
         assert!(after >= before);
+    }
+
+    #[test]
+    fn fast_path_over_budget_shrinks_budget_and_defers_expensive_topology_probes() {
+        let mut ctrl = OptimalDesignController::new();
+        let normal = ctrl.choose_plan(SafetyLevel::Strict, 120_000, false, false);
+        let constrained = ctrl.choose_plan(SafetyLevel::Strict, 120_000, false, true);
+
+        assert_eq!(normal.budget_ns, 90);
+        assert_eq!(constrained.budget_ns, 67);
+        assert!(constrained.expected_cost_ns <= constrained.budget_ns);
+        assert!(
+            !constrained.includes(Probe::RoughPath),
+            "tight fast-path budget should defer RoughPath probe at moderate risk"
+        );
+        assert!(
+            !constrained.includes(Probe::Persistence),
+            "tight fast-path budget should defer Persistence probe at moderate risk"
+        );
+    }
+
+    #[test]
+    fn high_risk_keeps_topology_probes_eligible_even_when_over_budget() {
+        let mut ctrl = OptimalDesignController::new();
+        let plan = ctrl.choose_plan(SafetyLevel::Hardened, 650_000, true, true);
+        assert!(
+            plan.includes(Probe::Hji) && plan.includes(Probe::Cvar),
+            "high-risk guard probes must always be retained"
+        );
+        assert!(
+            plan.includes(Probe::RoughPath) || plan.includes(Probe::Persistence),
+            "at least one topological probe should remain eligible under high risk"
+        );
+    }
+
+    #[test]
+    fn summary_tracks_last_selected_plan() {
+        let mut ctrl = OptimalDesignController::new();
+        let plan = ctrl.choose_plan(SafetyLevel::Off, 40_000, false, false);
+        let summary = ctrl.summary();
+        assert_eq!(summary.selected_count, plan.selected_count());
+        assert_eq!(summary.budget_ns, plan.budget_ns);
+        assert_eq!(summary.expected_cost_ns, plan.expected_cost_ns);
     }
 }
