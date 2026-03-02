@@ -12,7 +12,10 @@ use std::os::unix::ffi::OsStrExt;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use frankenlibc_abi::errno_abi::__errno_location;
-use frankenlibc_abi::unistd_abi::{eaccess, euidaccess};
+use frankenlibc_abi::unistd_abi::{
+    eaccess, euidaccess, msgrcv, msgsnd, process_madvise, process_vm_readv, process_vm_writev,
+    semctl, semop, shmdt,
+};
 
 // ---------------------------------------------------------------------------
 // glob64 / globfree64 tests
@@ -662,5 +665,122 @@ fn argp_parse_empty_args_succeeds() {
     assert_eq!(
         rc, 0,
         "argp_parse with empty argp and no args should succeed"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// SysV IPC surface tests
+// ---------------------------------------------------------------------------
+
+fn is_expected_sysvipc_errno(err: i32) -> bool {
+    matches!(err, libc::EFAULT | libc::EINVAL | libc::EPERM)
+}
+
+fn is_expected_process_vm_errno(err: i32) -> bool {
+    matches!(
+        err,
+        libc::EFAULT | libc::EINVAL | libc::EPERM | libc::ENOSYS | libc::ESRCH | libc::EBADF
+    )
+}
+
+#[test]
+fn shmdt_null_pointer_fails_with_expected_errno_family() {
+    let rc = unsafe { shmdt(std::ptr::null()) };
+    assert_eq!(rc, -1);
+    assert!(
+        is_expected_sysvipc_errno(errno_value()),
+        "unexpected errno for shmdt(null): {}",
+        errno_value()
+    );
+}
+
+#[test]
+fn semctl_ipc_rmid_without_variadic_arg_fails_for_invalid_semaphore_id() {
+    let rc = unsafe { semctl(-1, 0, libc::IPC_RMID) };
+    assert_eq!(rc, -1);
+    assert!(
+        is_expected_sysvipc_errno(errno_value()),
+        "unexpected errno for semctl IPC_RMID invalid semid: {}",
+        errno_value()
+    );
+}
+
+#[test]
+fn semop_null_payload_nonzero_ops_fails_cleanly() {
+    let rc = unsafe { semop(-1, std::ptr::null_mut(), 1) };
+    assert_eq!(rc, -1);
+    assert!(
+        is_expected_sysvipc_errno(errno_value()),
+        "unexpected errno for semop null payload: {}",
+        errno_value()
+    );
+}
+
+#[test]
+fn msgsnd_null_payload_nonzero_size_fails_cleanly() {
+    let rc = unsafe { msgsnd(-1, std::ptr::null(), 8, 0) };
+    assert_eq!(rc, -1);
+    assert!(
+        is_expected_sysvipc_errno(errno_value()),
+        "unexpected errno for msgsnd null payload: {}",
+        errno_value()
+    );
+}
+
+#[test]
+fn msgrcv_null_payload_nonzero_size_fails_cleanly() {
+    let rc = unsafe { msgrcv(-1, std::ptr::null_mut(), 8, 0, 0) };
+    assert_eq!(rc, -1);
+    assert!(
+        is_expected_sysvipc_errno(errno_value()),
+        "unexpected errno for msgrcv null payload: {}",
+        errno_value()
+    );
+}
+
+#[test]
+fn process_vm_readv_null_iov_nonzero_counts_fails_cleanly() {
+    let pid = std::process::id() as libc::pid_t;
+    let mut remote_byte = 0_u8;
+    let remote_iov = libc::iovec {
+        iov_base: (&mut remote_byte as *mut u8).cast(),
+        iov_len: 1,
+    };
+
+    let rc = unsafe { process_vm_readv(pid, std::ptr::null(), 1, &remote_iov, 1, 0) };
+    assert_eq!(rc, -1);
+    assert!(
+        is_expected_process_vm_errno(errno_value()),
+        "unexpected errno for process_vm_readv null iov: {}",
+        errno_value()
+    );
+}
+
+#[test]
+fn process_vm_writev_null_iov_nonzero_counts_fails_cleanly() {
+    let pid = std::process::id() as libc::pid_t;
+    let mut local_byte = 7_u8;
+    let local_iov = libc::iovec {
+        iov_base: (&mut local_byte as *mut u8).cast(),
+        iov_len: 1,
+    };
+
+    let rc = unsafe { process_vm_writev(pid, &local_iov, 1, std::ptr::null(), 1, 0) };
+    assert_eq!(rc, -1);
+    assert!(
+        is_expected_process_vm_errno(errno_value()),
+        "unexpected errno for process_vm_writev null iov: {}",
+        errno_value()
+    );
+}
+
+#[test]
+fn process_madvise_null_iov_nonzero_len_fails_cleanly() {
+    let rc = unsafe { process_madvise(-1, std::ptr::null(), 1, libc::MADV_NORMAL, 0) };
+    assert_eq!(rc, -1);
+    assert!(
+        is_expected_process_vm_errno(errno_value()),
+        "unexpected errno for process_madvise null iov: {}",
+        errno_value()
     );
 }

@@ -668,7 +668,7 @@ fn xdr_double_roundtrip() {
     let mut xdr = XdrHandle::new();
 
     xdr_encode(&mut xdr, &mut buf);
-    let mut val: f64 = 2.718281828459045;
+    let mut val: f64 = std::f64::consts::E;
     assert_eq!(
         unsafe { xdr_double(xdr.as_mut_ptr(), &mut val) },
         1
@@ -680,7 +680,7 @@ fn xdr_double_roundtrip() {
         unsafe { xdr_double(xdr.as_mut_ptr(), &mut out) },
         1
     );
-    assert_eq!(out, 2.718281828459045_f64);
+    assert_eq!(out, std::f64::consts::E);
 }
 
 #[test]
@@ -1216,7 +1216,7 @@ fn xdr_pointer_null_roundtrip() {
 
     // Decode: should get null back
     xdr_decode(&mut xdr, &mut buf);
-    let mut out_ptr: *mut c_char = 1 as *mut c_char; // non-null sentinel
+    let mut out_ptr: *mut c_char = std::ptr::dangling_mut::<c_char>(); // non-null sentinel
     assert_eq!(
         unsafe {
             xdr_pointer(

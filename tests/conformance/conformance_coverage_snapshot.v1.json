@@ -1,9 +1,9 @@
 {
   "schema_version": "v1",
   "bead": "bd-15n.3",
-  "generated_at": "2026-02-27T05:21:08Z",
+  "generated_at": "2026-03-02T19:54:55Z",
   "summary": {
-    "total_symbols": 2773,
+    "total_symbols": 2764,
     "symbols_with_fixtures": 198,
     "coverage_pct": 7,
     "total_fixture_files": 50,
@@ -52,7 +52,7 @@
       "pct": 0
     },
     "glibc_internal_abi": {
-      "total": 520,
+      "total": 368,
       "covered": 1,
       "pct": 0
     },
@@ -131,6 +131,11 @@
       "covered": 1,
       "pct": 50
     },
+    "rpc_abi": {
+      "total": 152,
+      "covered": 0,
+      "pct": 0
+    },
     "search_abi": {
       "total": 2,
       "covered": 0,
@@ -192,7 +197,7 @@
       "pct": 4
     },
     "unknown": {
-      "total": 305,
+      "total": 296,
       "covered": 0,
       "pct": 0
     },

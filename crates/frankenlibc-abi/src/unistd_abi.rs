@@ -5948,49 +5948,149 @@ fn semctl_cmd_uses_arg(cmd: c_int) -> bool {
     )
 }
 
+#[inline]
+fn policy_repair_enabled(heals_enabled: bool, action: MembraneAction) -> bool {
+    heals_enabled || matches!(action, MembraneAction::Repair(_))
+}
+
+#[inline]
+fn sysvipc_missing_payload(ptr: *const c_void, size: usize) -> bool {
+    ptr.is_null() && size > 0
+}
+
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn shmget(key: c_int, size: usize, shmflg: c_int) -> c_int {
-    unsafe {
+    let (_, decision) =
+        runtime_policy::decide(ApiFamily::Process, key as usize, size, true, size == 0, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
+        runtime_policy::observe(
+            ApiFamily::Process,
+            decision.profile,
+            runtime_policy::scaled_cost(10, size),
+            true,
+        );
+        return -1;
+    }
+
+    let rc = unsafe {
         syscall_ret_int(
             libc::syscall(libc::SYS_shmget, key, size, shmflg),
             errno::EINVAL,
         )
-    }
+    };
+    runtime_policy::observe(
+        ApiFamily::Process,
+        decision.profile,
+        runtime_policy::scaled_cost(10, size),
+        rc != 0,
+    );
+    rc
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn shmctl(shmid: c_int, cmd: c_int, buf: *mut c_void) -> c_int {
-    unsafe {
+    let (_, decision) =
+        runtime_policy::decide(ApiFamily::Process, buf as usize, 0, true, buf.is_null(), 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
+        runtime_policy::observe(ApiFamily::Process, decision.profile, 10, true);
+        return -1;
+    }
+
+    let rc = unsafe {
         syscall_ret_int(
             libc::syscall(libc::SYS_shmctl, shmid, cmd, buf),
             errno::EINVAL,
         )
-    }
+    };
+    runtime_policy::observe(ApiFamily::Process, decision.profile, 10, rc != 0);
+    rc
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn shmat(shmid: c_int, shmaddr: *const c_void, shmflg: c_int) -> *mut c_void {
+    let remap_without_addr = shmaddr.is_null() && (shmflg & libc::SHM_REMAP) != 0;
+    let (mode, decision) = runtime_policy::decide(
+        ApiFamily::VirtualMemory,
+        shmaddr as usize,
+        0,
+        false,
+        remap_without_addr,
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
+        runtime_policy::observe(ApiFamily::VirtualMemory, decision.profile, 10, true);
+        return (-1_isize) as *mut c_void;
+    }
+    if remap_without_addr && policy_repair_enabled(mode.heals_enabled(), decision.action) {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        runtime_policy::observe(ApiFamily::VirtualMemory, decision.profile, 10, true);
+        return (-1_isize) as *mut c_void;
+    }
+
     let rc = unsafe { libc::syscall(libc::SYS_shmat, shmid, shmaddr, shmflg) };
     if rc == -1 {
         unsafe { set_abi_errno(last_host_errno(errno::EINVAL)) };
+        runtime_policy::observe(ApiFamily::VirtualMemory, decision.profile, 10, true);
         return (-1_isize) as *mut c_void;
     }
+    runtime_policy::observe(ApiFamily::VirtualMemory, decision.profile, 10, false);
     rc as *mut c_void
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn shmdt(shmaddr: *const c_void) -> c_int {
-    unsafe { syscall_ret_int(libc::syscall(libc::SYS_shmdt, shmaddr), errno::EINVAL) }
+    let missing_payload = sysvipc_missing_payload(shmaddr, 1);
+    let (mode, decision) = runtime_policy::decide(
+        ApiFamily::VirtualMemory,
+        shmaddr as usize,
+        1,
+        true,
+        missing_payload,
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
+        runtime_policy::observe(ApiFamily::VirtualMemory, decision.profile, 8, true);
+        return -1;
+    }
+    if missing_payload && policy_repair_enabled(mode.heals_enabled(), decision.action) {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        runtime_policy::observe(ApiFamily::VirtualMemory, decision.profile, 8, true);
+        return -1;
+    }
+
+    let rc = unsafe { syscall_ret_int(libc::syscall(libc::SYS_shmdt, shmaddr), errno::EINVAL) };
+    runtime_policy::observe(ApiFamily::VirtualMemory, decision.profile, 8, rc != 0);
+    rc
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn semget(key: c_int, nsems: c_int, semflg: c_int) -> c_int {
-    unsafe {
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Process,
+        key as usize,
+        nsems.max(0) as usize,
+        true,
+        nsems <= 0,
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
+        runtime_policy::observe(ApiFamily::Process, decision.profile, 8, true);
+        return -1;
+    }
+
+    let rc = unsafe {
         syscall_ret_int(
             libc::syscall(libc::SYS_semget, key, nsems, semflg),
             errno::EINVAL,
         )
-    }
+    };
+    runtime_policy::observe(ApiFamily::Process, decision.profile, 8, rc != 0);
+    rc
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -6001,37 +6101,110 @@ pub unsafe extern "C" fn semctl(semid: c_int, semnum: c_int, cmd: c_int, mut arg
         0
     };
 
-    unsafe {
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Process,
+        semid as usize,
+        usize::from(semctl_cmd_uses_arg(cmd)),
+        true,
+        false,
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
+        runtime_policy::observe(ApiFamily::Process, decision.profile, 8, true);
+        return -1;
+    }
+
+    let rc = unsafe {
         syscall_ret_int(
             libc::syscall(libc::SYS_semctl, semid, semnum, cmd, arg),
             errno::EINVAL,
         )
-    }
+    };
+    runtime_policy::observe(ApiFamily::Process, decision.profile, 8, rc != 0);
+    rc
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn semop(semid: c_int, sops: *mut c_void, nsops: usize) -> c_int {
-    unsafe {
+    let missing_payload = sysvipc_missing_payload(sops, nsops);
+    let (mode, decision) = runtime_policy::decide(
+        ApiFamily::Process,
+        sops as usize,
+        nsops,
+        true,
+        missing_payload,
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
+        runtime_policy::observe(
+            ApiFamily::Process,
+            decision.profile,
+            runtime_policy::scaled_cost(8, nsops),
+            true,
+        );
+        return -1;
+    }
+    if missing_payload && policy_repair_enabled(mode.heals_enabled(), decision.action) {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        runtime_policy::observe(
+            ApiFamily::Process,
+            decision.profile,
+            runtime_policy::scaled_cost(8, nsops),
+            true,
+        );
+        return -1;
+    }
+
+    let rc = unsafe {
         syscall_ret_int(
             libc::syscall(libc::SYS_semop, semid, sops, nsops),
             errno::EINVAL,
         )
-    }
+    };
+    runtime_policy::observe(
+        ApiFamily::Process,
+        decision.profile,
+        runtime_policy::scaled_cost(8, nsops),
+        rc != 0,
+    );
+    rc
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn msgget(key: c_int, msgflg: c_int) -> c_int {
-    unsafe { syscall_ret_int(libc::syscall(libc::SYS_msgget, key, msgflg), errno::EINVAL) }
+    let (_, decision) = runtime_policy::decide(ApiFamily::Process, key as usize, 0, true, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
+        runtime_policy::observe(ApiFamily::Process, decision.profile, 8, true);
+        return -1;
+    }
+
+    let rc =
+        unsafe { syscall_ret_int(libc::syscall(libc::SYS_msgget, key, msgflg), errno::EINVAL) };
+    runtime_policy::observe(ApiFamily::Process, decision.profile, 8, rc != 0);
+    rc
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn msgctl(msqid: c_int, cmd: c_int, buf: *mut c_void) -> c_int {
-    unsafe {
+    let (_, decision) =
+        runtime_policy::decide(ApiFamily::Process, buf as usize, 0, true, buf.is_null(), 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
+        runtime_policy::observe(ApiFamily::Process, decision.profile, 8, true);
+        return -1;
+    }
+
+    let rc = unsafe {
         syscall_ret_int(
             libc::syscall(libc::SYS_msgctl, msqid, cmd, buf),
             errno::EINVAL,
         )
-    }
+    };
+    runtime_policy::observe(ApiFamily::Process, decision.profile, 8, rc != 0);
+    rc
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -6041,12 +6214,49 @@ pub unsafe extern "C" fn msgsnd(
     msgsz: usize,
     msgflg: c_int,
 ) -> c_int {
-    unsafe {
+    let missing_payload = sysvipc_missing_payload(msgp, msgsz);
+    let (mode, decision) = runtime_policy::decide(
+        ApiFamily::Process,
+        msgp as usize,
+        msgsz,
+        false,
+        missing_payload,
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
+        runtime_policy::observe(
+            ApiFamily::Process,
+            decision.profile,
+            runtime_policy::scaled_cost(8, msgsz),
+            true,
+        );
+        return -1;
+    }
+    if missing_payload && policy_repair_enabled(mode.heals_enabled(), decision.action) {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        runtime_policy::observe(
+            ApiFamily::Process,
+            decision.profile,
+            runtime_policy::scaled_cost(8, msgsz),
+            true,
+        );
+        return -1;
+    }
+
+    let rc = unsafe {
         syscall_ret_int(
             libc::syscall(libc::SYS_msgsnd, msqid, msgp, msgsz, msgflg),
             errno::EINVAL,
         )
-    }
+    };
+    runtime_policy::observe(
+        ApiFamily::Process,
+        decision.profile,
+        runtime_policy::scaled_cost(8, msgsz),
+        rc != 0,
+    );
+    rc
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -6057,12 +6267,49 @@ pub unsafe extern "C" fn msgrcv(
     msgtyp: std::ffi::c_long,
     msgflg: c_int,
 ) -> libc::ssize_t {
-    unsafe {
+    let missing_payload = sysvipc_missing_payload(msgp, msgsz);
+    let (mode, decision) = runtime_policy::decide(
+        ApiFamily::Process,
+        msgp as usize,
+        msgsz,
+        true,
+        missing_payload,
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
+        runtime_policy::observe(
+            ApiFamily::Process,
+            decision.profile,
+            runtime_policy::scaled_cost(8, msgsz),
+            true,
+        );
+        return -1;
+    }
+    if missing_payload && policy_repair_enabled(mode.heals_enabled(), decision.action) {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        runtime_policy::observe(
+            ApiFamily::Process,
+            decision.profile,
+            runtime_policy::scaled_cost(8, msgsz),
+            true,
+        );
+        return -1;
+    }
+
+    let rc = unsafe {
         syscall_ret_isize(
             libc::syscall(libc::SYS_msgrcv, msqid, msgp, msgsz, msgtyp, msgflg),
             errno::EINVAL,
         ) as libc::ssize_t
-    }
+    };
+    runtime_policy::observe(
+        ApiFamily::Process,
+        decision.profile,
+        runtime_policy::scaled_cost(8, msgsz),
+        rc < 0,
+    );
+    rc
 }
 
 // ---------------------------------------------------------------------------
@@ -8859,6 +9106,16 @@ pub unsafe extern "C" fn fanotify_mark(
 // process_vm — RawSyscall
 // ---------------------------------------------------------------------------
 
+#[inline]
+fn process_vm_missing_iov_payload(
+    local_iov: *const libc::iovec,
+    liovcnt: c_ulong,
+    remote_iov: *const libc::iovec,
+    riovcnt: c_ulong,
+) -> bool {
+    (local_iov.is_null() && liovcnt > 0) || (remote_iov.is_null() && riovcnt > 0)
+}
+
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn process_vm_readv(
     pid: libc::pid_t,
@@ -8868,6 +9125,37 @@ pub unsafe extern "C" fn process_vm_readv(
     riovcnt: std::ffi::c_ulong,
     flags: std::ffi::c_ulong,
 ) -> isize {
+    let io_units = liovcnt.saturating_add(riovcnt) as usize;
+    let missing_payload = process_vm_missing_iov_payload(local_iov, liovcnt, remote_iov, riovcnt);
+    let (mode, decision) = runtime_policy::decide(
+        ApiFamily::VirtualMemory,
+        local_iov as usize,
+        io_units,
+        true,
+        missing_payload,
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
+        runtime_policy::observe(
+            ApiFamily::VirtualMemory,
+            decision.profile,
+            runtime_policy::scaled_cost(12, io_units),
+            true,
+        );
+        return -1;
+    }
+    if missing_payload && policy_repair_enabled(mode.heals_enabled(), decision.action) {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        runtime_policy::observe(
+            ApiFamily::VirtualMemory,
+            decision.profile,
+            runtime_policy::scaled_cost(12, io_units),
+            true,
+        );
+        return -1;
+    }
+
     let rc = unsafe {
         libc::syscall(
             libc::SYS_process_vm_readv,
@@ -8885,6 +9173,12 @@ pub unsafe extern "C" fn process_vm_readv(
             .unwrap_or(libc::ENOTSUP);
         unsafe { set_abi_errno(e) };
     }
+    runtime_policy::observe(
+        ApiFamily::VirtualMemory,
+        decision.profile,
+        runtime_policy::scaled_cost(12, io_units),
+        rc < 0,
+    );
     rc as isize
 }
 
@@ -8897,6 +9191,37 @@ pub unsafe extern "C" fn process_vm_writev(
     riovcnt: std::ffi::c_ulong,
     flags: std::ffi::c_ulong,
 ) -> isize {
+    let io_units = liovcnt.saturating_add(riovcnt) as usize;
+    let missing_payload = process_vm_missing_iov_payload(local_iov, liovcnt, remote_iov, riovcnt);
+    let (mode, decision) = runtime_policy::decide(
+        ApiFamily::VirtualMemory,
+        local_iov as usize,
+        io_units,
+        true,
+        missing_payload,
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
+        runtime_policy::observe(
+            ApiFamily::VirtualMemory,
+            decision.profile,
+            runtime_policy::scaled_cost(12, io_units),
+            true,
+        );
+        return -1;
+    }
+    if missing_payload && policy_repair_enabled(mode.heals_enabled(), decision.action) {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        runtime_policy::observe(
+            ApiFamily::VirtualMemory,
+            decision.profile,
+            runtime_policy::scaled_cost(12, io_units),
+            true,
+        );
+        return -1;
+    }
+
     let rc = unsafe {
         libc::syscall(
             libc::SYS_process_vm_writev,
@@ -8914,6 +9239,12 @@ pub unsafe extern "C" fn process_vm_writev(
             .unwrap_or(libc::ENOTSUP);
         unsafe { set_abi_errno(e) };
     }
+    runtime_policy::observe(
+        ApiFamily::VirtualMemory,
+        decision.profile,
+        runtime_policy::scaled_cost(12, io_units),
+        rc < 0,
+    );
     rc as isize
 }
 
@@ -10579,10 +10910,46 @@ pub unsafe extern "C" fn process_madvise(
     advice: c_int,
     flags: c_uint,
 ) -> isize {
+    let missing_payload = iovec.is_null() && vlen > 0;
+    let (mode, decision) = runtime_policy::decide(
+        ApiFamily::VirtualMemory,
+        iovec as usize,
+        vlen,
+        true,
+        missing_payload,
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
+        runtime_policy::observe(
+            ApiFamily::VirtualMemory,
+            decision.profile,
+            runtime_policy::scaled_cost(10, vlen),
+            true,
+        );
+        return -1;
+    }
+    if missing_payload && policy_repair_enabled(mode.heals_enabled(), decision.action) {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        runtime_policy::observe(
+            ApiFamily::VirtualMemory,
+            decision.profile,
+            runtime_policy::scaled_cost(10, vlen),
+            true,
+        );
+        return -1;
+    }
+
     let rc = unsafe { libc::syscall(libc::SYS_process_madvise, pidfd, iovec, vlen, advice, flags) };
     if rc < 0 {
         unsafe { set_abi_errno(last_host_errno(libc::EINVAL)) };
     }
+    runtime_policy::observe(
+        ApiFamily::VirtualMemory,
+        decision.profile,
+        runtime_policy::scaled_cost(10, vlen),
+        rc < 0,
+    );
     rc as isize
 }
 
