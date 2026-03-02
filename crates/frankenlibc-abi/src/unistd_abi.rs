@@ -10894,10 +10894,19 @@ pub unsafe extern "C" fn strftime_l(
 /// Linux `personality` — set process execution domain.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn personality(persona: c_ulong) -> c_int {
+    let (_, decision) =
+        runtime_policy::decide(ApiFamily::Process, persona as usize, 0, true, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
+        runtime_policy::observe(ApiFamily::Process, decision.profile, 6, true);
+        return -1;
+    }
+
     let rc = unsafe { libc::syscall(libc::SYS_personality, persona) as c_int };
     if rc < 0 {
         unsafe { set_abi_errno(last_host_errno(libc::EINVAL)) };
     }
+    runtime_policy::observe(ApiFamily::Process, decision.profile, 6, rc < 0);
     rc
 }
 
@@ -10956,10 +10965,25 @@ pub unsafe extern "C" fn process_madvise(
 /// Linux `process_mrelease` — release memory of a dying process.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn process_mrelease(pidfd: c_int, flags: c_uint) -> c_int {
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::VirtualMemory,
+        pidfd as usize,
+        0,
+        true,
+        pidfd < 0,
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
+        runtime_policy::observe(ApiFamily::VirtualMemory, decision.profile, 8, true);
+        return -1;
+    }
+
     let rc = unsafe { libc::syscall(libc::SYS_process_mrelease, pidfd, flags) as c_int };
     if rc < 0 {
         unsafe { set_abi_errno(last_host_errno(libc::EINVAL)) };
     }
+    runtime_policy::observe(ApiFamily::VirtualMemory, decision.profile, 8, rc < 0);
     rc
 }
 

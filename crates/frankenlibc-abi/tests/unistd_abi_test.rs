@@ -13,8 +13,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use frankenlibc_abi::errno_abi::__errno_location;
 use frankenlibc_abi::unistd_abi::{
-    eaccess, euidaccess, msgrcv, msgsnd, process_madvise, process_vm_readv, process_vm_writev,
-    semctl, semop, shmdt,
+    eaccess, euidaccess, msgrcv, msgsnd, process_madvise, process_mrelease, process_vm_readv,
+    process_vm_writev, semctl, semop, shmdt,
 };
 
 // ---------------------------------------------------------------------------
@@ -781,6 +781,17 @@ fn process_madvise_null_iov_nonzero_len_fails_cleanly() {
     assert!(
         is_expected_process_vm_errno(errno_value()),
         "unexpected errno for process_madvise null iov: {}",
+        errno_value()
+    );
+}
+
+#[test]
+fn process_mrelease_invalid_pidfd_fails_cleanly() {
+    let rc = unsafe { process_mrelease(-1, 0) };
+    assert_eq!(rc, -1);
+    assert!(
+        is_expected_process_vm_errno(errno_value()),
+        "unexpected errno for process_mrelease invalid pidfd: {}",
         errno_value()
     );
 }
