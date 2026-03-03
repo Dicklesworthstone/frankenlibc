@@ -512,6 +512,215 @@ impl<T> RcuDomain<T> {
 }
 
 // ---------------------------------------------------------------------------
+// RcuMigration<T> — shadow-mode migration helper
+// ---------------------------------------------------------------------------
+
+/// Active rollout phase for an [`RcuMigration`] wrapper.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MigrationPhase {
+    /// Read from both legacy mutex and RCU paths, compare results, and return
+    /// the RCU value as primary output.
+    Shadow = 0,
+    /// Read from the RCU path only.
+    RcuPrimary = 1,
+    /// Read from the legacy mutex path only.
+    MutexPrimary = 2,
+}
+
+impl MigrationPhase {
+    fn from_u8(raw: u8) -> Self {
+        match raw {
+            1 => Self::RcuPrimary,
+            2 => Self::MutexPrimary,
+            _ => Self::Shadow,
+        }
+    }
+}
+
+/// Result from a migration wrapper read.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MigrationRead<T> {
+    /// Primary value returned by the active phase.
+    pub value: T,
+    /// Shadow-path value, when dual-read comparison is enabled.
+    pub shadow_value: Option<T>,
+    /// Whether primary and shadow values matched (when shadow was computed).
+    pub matched: bool,
+}
+
+/// Generic wrapper for lock-to-RCU migrations.
+///
+/// The wrapper keeps a legacy mutex-protected copy and an RCU-published copy of
+/// the same payload. In `Shadow` phase it compares both read paths and tracks
+/// mismatches; this supports deterministic rollout before removing the mutex
+/// path entirely.
+///
+/// Memory-management policy:
+/// - `update()` publishes a freshly boxed clone to RCU.
+/// - previous RCU versions are reclaimed after `synchronize_rcu()`.
+pub struct RcuMigration<T: Clone + PartialEq + Send + Sync + 'static> {
+    legacy: std::sync::Mutex<T>,
+    rcu: RcuDomain<T>,
+    phase: core::sync::atomic::AtomicU8,
+    mismatch_count: AtomicU64,
+}
+
+impl<T: Clone + PartialEq + Send + Sync + 'static> RcuMigration<T> {
+    /// Create a new migration wrapper with synchronized legacy/RCU state.
+    pub fn new(initial: T) -> Self {
+        let rcu = RcuDomain::new();
+        let ptr = Box::into_raw(Box::new(initial.clone()));
+        // SAFETY: `ptr` comes from Box and remains valid until explicitly reclaimed.
+        unsafe {
+            let _ = rcu.update(ptr);
+        }
+        Self {
+            legacy: std::sync::Mutex::new(initial),
+            rcu,
+            phase: core::sync::atomic::AtomicU8::new(MigrationPhase::Shadow as u8),
+            mismatch_count: AtomicU64::new(0),
+        }
+    }
+
+    /// Return the current rollout phase.
+    pub fn phase(&self) -> MigrationPhase {
+        MigrationPhase::from_u8(self.phase.load(Ordering::Acquire))
+    }
+
+    /// Set the active rollout phase.
+    pub fn set_phase(&self, phase: MigrationPhase) {
+        self.phase.store(phase as u8, Ordering::Release);
+    }
+
+    /// Number of observed shadow mismatches.
+    pub fn mismatch_count(&self) -> u64 {
+        self.mismatch_count.load(Ordering::Acquire)
+    }
+
+    /// Read according to the active phase.
+    ///
+    /// `tid` should be the current thread id when available. It is used to
+    /// register the reader with QSBR and to mark a quiescent state after the
+    /// read-side critical section.
+    pub fn read(&self, tid: u32) -> MigrationRead<T> {
+        match self.phase() {
+            MigrationPhase::Shadow => self.read_shadow(tid),
+            MigrationPhase::RcuPrimary => {
+                let rcu_value = self.read_rcu(tid);
+                MigrationRead {
+                    value: rcu_value,
+                    shadow_value: None,
+                    matched: true,
+                }
+            }
+            MigrationPhase::MutexPrimary => {
+                let legacy_value = self.read_legacy();
+                MigrationRead {
+                    value: legacy_value,
+                    shadow_value: None,
+                    matched: true,
+                }
+            }
+        }
+    }
+
+    /// Publish an updated value to both legacy and RCU paths.
+    pub fn update<F>(&self, mutate: F)
+    where
+        F: FnOnce(&mut T),
+    {
+        self.update_with_result(|value| {
+            mutate(value);
+        });
+    }
+
+    /// Publish an updated value to both legacy and RCU paths while returning
+    /// an application-defined result from the mutation closure.
+    pub fn update_with_result<F, R>(&self, mutate: F) -> R
+    where
+        F: FnOnce(&mut T) -> R,
+    {
+        let next_value = {
+            let mut guard = match self.legacy.lock() {
+                Ok(g) => g,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            let result = mutate(&mut guard);
+            let next = guard.clone();
+            (next, result)
+        };
+        let (next_value, result) = next_value;
+
+        let next_ptr = Box::into_raw(Box::new(next_value));
+        // SAFETY: `next_ptr` comes from Box and the old pointer is reclaimed only
+        // after a grace period below.
+        let old_ptr = unsafe { self.rcu.update(next_ptr) };
+        if !old_ptr.is_null() {
+            synchronize_rcu();
+            // SAFETY: grace period has elapsed, so old readers cannot hold `old_ptr`.
+            unsafe {
+                let _ = Box::from_raw(old_ptr);
+            }
+        }
+        result
+    }
+
+    /// Read both paths and compare.
+    pub fn read_shadow(&self, tid: u32) -> MigrationRead<T> {
+        let rcu_value = self.read_rcu(tid);
+        let legacy_value = self.read_legacy();
+        let matched = rcu_value == legacy_value;
+        if !matched {
+            self.mismatch_count.fetch_add(1, Ordering::AcqRel);
+        }
+        MigrationRead {
+            value: rcu_value,
+            shadow_value: Some(legacy_value),
+            matched,
+        }
+    }
+
+    fn read_legacy(&self) -> T {
+        match self.legacy.lock() {
+            Ok(guard) => guard.clone(),
+            Err(poisoned) => poisoned.into_inner().clone(),
+        }
+    }
+
+    fn read_rcu(&self, tid: u32) -> T {
+        if tid != 0 {
+            let _ = rcu_register_thread(tid);
+        }
+        rcu_read_lock();
+        // SAFETY: protected by read-side section above.
+        let value = unsafe {
+            self.rcu
+                .read()
+                .expect("RcuMigration RCU domain must always contain a value")
+                .clone()
+        };
+        rcu_read_unlock();
+        if tid != 0 {
+            rcu_quiescent_state(tid);
+        }
+        value
+    }
+}
+
+impl<T: Clone + PartialEq + Send + Sync + 'static> Drop for RcuMigration<T> {
+    fn drop(&mut self) {
+        let raw = self.rcu.ptr.swap(0, Ordering::AcqRel);
+        if raw != 0 {
+            // SAFETY: `drop` requires exclusive access to `self`; callers must ensure
+            // no concurrent readers outlive this wrapper.
+            unsafe {
+                let _ = Box::from_raw(raw as *mut T);
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // SeqLock<T> — lock-free readers for small configuration payloads
 // ---------------------------------------------------------------------------
 
@@ -1267,5 +1476,92 @@ mod tests {
         for handle in readers {
             handle.join().expect("reader thread panicked");
         }
+    }
+
+    // --- RcuMigration<T> tests ---
+
+    #[test]
+    fn test_rcu_migration_shadow_reads_match_initial_value() {
+        let _g = lock_and_reset();
+        let migration = RcuMigration::new(7u64);
+        let read = migration.read_shadow(1500);
+        assert_eq!(read.value, 7);
+        assert_eq!(read.shadow_value, Some(7));
+        assert!(read.matched);
+        assert_eq!(migration.mismatch_count(), 0);
+    }
+
+    #[test]
+    fn test_rcu_migration_update_keeps_paths_in_sync() {
+        let _g = lock_and_reset();
+        let migration = RcuMigration::new(11u64);
+        migration.update(|value| *value = value.saturating_add(9));
+
+        let shadow = migration.read_shadow(1501);
+        assert_eq!(shadow.value, 20);
+        assert_eq!(shadow.shadow_value, Some(20));
+        assert!(shadow.matched);
+
+        migration.set_phase(MigrationPhase::MutexPrimary);
+        let mutex_read = migration.read(1501);
+        assert_eq!(mutex_read.value, 20);
+        assert!(mutex_read.shadow_value.is_none());
+        assert!(mutex_read.matched);
+
+        migration.set_phase(MigrationPhase::RcuPrimary);
+        let rcu_read = migration.read(1501);
+        assert_eq!(rcu_read.value, 20);
+        assert!(rcu_read.shadow_value.is_none());
+        assert!(rcu_read.matched);
+    }
+
+    #[test]
+    fn test_rcu_migration_detects_shadow_mismatch() {
+        let _g = lock_and_reset();
+        let migration = RcuMigration::new(1u64);
+        {
+            let mut legacy = migration.legacy.lock().unwrap_or_else(|e| e.into_inner());
+            *legacy = 2;
+        }
+
+        let read = migration.read_shadow(1502);
+        assert_eq!(read.value, 1);
+        assert_eq!(read.shadow_value, Some(2));
+        assert!(!read.matched);
+        assert_eq!(migration.mismatch_count(), 1);
+    }
+
+    #[test]
+    fn test_rcu_migration_update_with_result_reports_mutation_outcome() {
+        let _g = lock_and_reset();
+        let migration = RcuMigration::new(10u64);
+        let new_value = migration.update_with_result(|value| {
+            *value += 5;
+            *value
+        });
+        assert_eq!(new_value, 15);
+
+        let read = migration.read_shadow(1503);
+        assert_eq!(read.value, 15);
+        assert_eq!(read.shadow_value, Some(15));
+        assert!(read.matched);
+    }
+
+    #[test]
+    fn test_rcu_migration_shadow_million_reads_without_mismatch() {
+        let _g = lock_and_reset();
+        let migration = RcuMigration::new(123u64);
+
+        for i in 0..1_000_000u64 {
+            if i % 200_000 == 0 && i != 0 {
+                migration.update(|value| *value = value.saturating_add(1));
+            }
+            // Use tid=0 for this stress test to avoid registering a reader slot.
+            // The goal here is shadow-path equivalence, not QSBR registration behavior.
+            let read = migration.read_shadow(0);
+            assert!(read.matched, "shadow mismatch at iteration {i}");
+        }
+
+        assert_eq!(migration.mismatch_count(), 0);
     }
 }
