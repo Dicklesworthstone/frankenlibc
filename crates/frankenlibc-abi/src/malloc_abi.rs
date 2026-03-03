@@ -10,7 +10,8 @@
 
 use std::cell::Cell;
 use std::ffi::{c_int, c_void};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 
 use frankenlibc_core::errno::{EINVAL, ENOMEM};
 use frankenlibc_membrane::arena::{AllocationArena, FreeResult};
@@ -101,6 +102,271 @@ unsafe fn native_libc_aligned_alloc(alignment: usize, size: usize) -> *mut c_voi
 
 thread_local! {
     static ALLOCATOR_REENTRY_DEPTH: Cell<u32> = const { Cell::new(0) };
+}
+
+const MALLOC_STATS_BIN_COUNT: usize = frankenlibc_core::malloc::size_class::NUM_SIZE_CLASSES + 1;
+const FLAT_COMBINER_SLOT_COUNT: usize = 128;
+const FC_OP_NONE: usize = 0;
+const FC_OP_ALLOC: usize = 1;
+const FC_OP_FREE: usize = 2;
+const FC_OP_SNAPSHOT: usize = 3;
+
+#[derive(Debug, Clone, Copy, Default)]
+struct MallocStatsSnapshot {
+    total_allocated: usize,
+    total_freed: usize,
+    active_allocations: usize,
+    live_bytes: usize,
+    peak_usage: usize,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct MallocStatsState {
+    total_allocated: usize,
+    total_freed: usize,
+    active_allocations: usize,
+    live_bytes: usize,
+    peak_usage: usize,
+    per_size_class: [usize; MALLOC_STATS_BIN_COUNT],
+}
+
+impl MallocStatsState {
+    const fn new() -> Self {
+        Self {
+            total_allocated: 0,
+            total_freed: 0,
+            active_allocations: 0,
+            live_bytes: 0,
+            peak_usage: 0,
+            per_size_class: [0; MALLOC_STATS_BIN_COUNT],
+        }
+    }
+
+    const fn snapshot(self) -> MallocStatsSnapshot {
+        MallocStatsSnapshot {
+            total_allocated: self.total_allocated,
+            total_freed: self.total_freed,
+            active_allocations: self.active_allocations,
+            live_bytes: self.live_bytes,
+            peak_usage: self.peak_usage,
+        }
+    }
+}
+
+#[repr(align(128))]
+struct PublicationSlot {
+    op: AtomicUsize,
+    request_id: AtomicU64,
+    completed_id: AtomicU64,
+    size: AtomicUsize,
+    bin: AtomicUsize,
+    active: AtomicBool,
+    age: AtomicU32,
+    result_total_allocated: AtomicUsize,
+    result_total_freed: AtomicUsize,
+    result_active_allocations: AtomicUsize,
+    result_live_bytes: AtomicUsize,
+    result_peak_usage: AtomicUsize,
+}
+
+impl PublicationSlot {
+    const fn new() -> Self {
+        Self {
+            op: AtomicUsize::new(FC_OP_NONE),
+            request_id: AtomicU64::new(0),
+            completed_id: AtomicU64::new(0),
+            size: AtomicUsize::new(0),
+            bin: AtomicUsize::new(0),
+            active: AtomicBool::new(false),
+            age: AtomicU32::new(0),
+            result_total_allocated: AtomicUsize::new(0),
+            result_total_freed: AtomicUsize::new(0),
+            result_active_allocations: AtomicUsize::new(0),
+            result_live_bytes: AtomicUsize::new(0),
+            result_peak_usage: AtomicUsize::new(0),
+        }
+    }
+}
+
+struct FlatCombiningStats {
+    combiner_lock: AtomicBool,
+    next_slot: AtomicUsize,
+    slots: [PublicationSlot; FLAT_COMBINER_SLOT_COUNT],
+    state: std::sync::Mutex<MallocStatsState>,
+}
+
+impl FlatCombiningStats {
+    fn new() -> Self {
+        Self {
+            combiner_lock: AtomicBool::new(false),
+            next_slot: AtomicUsize::new(0),
+            slots: [const { PublicationSlot::new() }; FLAT_COMBINER_SLOT_COUNT],
+            state: std::sync::Mutex::new(MallocStatsState::new()),
+        }
+    }
+
+    fn slot_index(&self) -> usize {
+        ALLOC_STATS_SLOT_INDEX.with(|slot| match slot.get() {
+            Some(idx) => idx,
+            None => {
+                let idx = self
+                    .next_slot
+                    .fetch_add(1, Ordering::Relaxed)
+                    .wrapping_rem(FLAT_COMBINER_SLOT_COUNT);
+                slot.set(Some(idx));
+                idx
+            }
+        })
+    }
+
+    fn apply_op(&self, op: usize, size: usize, bin: usize) -> MallocStatsSnapshot {
+        let idx = self.slot_index();
+        let slot = &self.slots[idx];
+
+        let request_id = slot.request_id.fetch_add(1, Ordering::AcqRel) + 1;
+        slot.size.store(size, Ordering::Relaxed);
+        slot.bin
+            .store(bin.min(MALLOC_STATS_BIN_COUNT - 1), Ordering::Relaxed);
+        slot.age.fetch_add(1, Ordering::Relaxed);
+        slot.active.store(true, Ordering::Release);
+        slot.op.store(op, Ordering::Release);
+
+        self.try_combine_round();
+
+        let mut spins = 0_u32;
+        while slot.completed_id.load(Ordering::Acquire) < request_id {
+            self.try_combine_round();
+            if spins < 256 {
+                spins += 1;
+                std::hint::spin_loop();
+            } else {
+                spins = 0;
+                std::thread::yield_now();
+            }
+        }
+
+        MallocStatsSnapshot {
+            total_allocated: slot.result_total_allocated.load(Ordering::Acquire),
+            total_freed: slot.result_total_freed.load(Ordering::Acquire),
+            active_allocations: slot.result_active_allocations.load(Ordering::Acquire),
+            live_bytes: slot.result_live_bytes.load(Ordering::Acquire),
+            peak_usage: slot.result_peak_usage.load(Ordering::Acquire),
+        }
+    }
+
+    fn try_combine_round(&self) {
+        if self
+            .combiner_lock
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            return;
+        }
+
+        let mut guard = match self.state.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+
+        for slot in &self.slots {
+            let op = slot.op.swap(FC_OP_NONE, Ordering::AcqRel);
+            if op == FC_OP_NONE {
+                continue;
+            }
+
+            let size = slot.size.load(Ordering::Relaxed);
+            let bin = slot
+                .bin
+                .load(Ordering::Relaxed)
+                .min(MALLOC_STATS_BIN_COUNT - 1);
+            Self::apply_locked(&mut guard, op, size, bin);
+            let snapshot = guard.snapshot();
+
+            slot.result_total_allocated
+                .store(snapshot.total_allocated, Ordering::Release);
+            slot.result_total_freed
+                .store(snapshot.total_freed, Ordering::Release);
+            slot.result_active_allocations
+                .store(snapshot.active_allocations, Ordering::Release);
+            slot.result_live_bytes
+                .store(snapshot.live_bytes, Ordering::Release);
+            slot.result_peak_usage
+                .store(snapshot.peak_usage, Ordering::Release);
+
+            let current_req = slot.request_id.load(Ordering::Acquire);
+            slot.completed_id.store(current_req, Ordering::Release);
+        }
+
+        self.combiner_lock.store(false, Ordering::Release);
+    }
+
+    fn apply_locked(state: &mut MallocStatsState, op: usize, size: usize, bin: usize) {
+        match op {
+            FC_OP_ALLOC => {
+                state.total_allocated = state.total_allocated.saturating_add(size);
+                state.active_allocations = state.active_allocations.saturating_add(1);
+                state.live_bytes = state.live_bytes.saturating_add(size);
+                state.peak_usage = state.peak_usage.max(state.live_bytes);
+                state.per_size_class[bin] = state.per_size_class[bin].saturating_add(1);
+            }
+            FC_OP_FREE => {
+                state.total_freed = state.total_freed.saturating_add(size);
+                state.active_allocations = state.active_allocations.saturating_sub(1);
+                state.live_bytes = state.live_bytes.saturating_sub(size);
+                state.per_size_class[bin] = state.per_size_class[bin].saturating_sub(1);
+            }
+            FC_OP_SNAPSHOT => {}
+            _ => {}
+        }
+    }
+
+    fn record_alloc(&self, size: usize, bin: usize) {
+        let _ = self.apply_op(FC_OP_ALLOC, size, bin);
+    }
+
+    fn record_free(&self, size: usize, bin: usize) {
+        let _ = self.apply_op(FC_OP_FREE, size, bin);
+    }
+
+    fn snapshot(&self) -> MallocStatsSnapshot {
+        self.apply_op(FC_OP_SNAPSHOT, 0, 0)
+    }
+}
+
+static GLOBAL_ALLOC_STATS: OnceLock<FlatCombiningStats> = OnceLock::new();
+
+thread_local! {
+    static ALLOC_STATS_SLOT_INDEX: Cell<Option<usize>> = const { Cell::new(None) };
+}
+
+fn global_alloc_stats() -> &'static FlatCombiningStats {
+    GLOBAL_ALLOC_STATS.get_or_init(FlatCombiningStats::new)
+}
+
+#[inline]
+fn stats_bin_for_size(size: usize) -> usize {
+    frankenlibc_core::malloc::size_class::bin_index(size.max(1)).min(MALLOC_STATS_BIN_COUNT - 1)
+}
+
+#[inline]
+fn record_alloc_stats(size: usize) {
+    if size == 0 {
+        return;
+    }
+    global_alloc_stats().record_alloc(size, stats_bin_for_size(size));
+}
+
+#[inline]
+fn record_free_stats(size: usize) {
+    if size == 0 {
+        return;
+    }
+    global_alloc_stats().record_free(size, stats_bin_for_size(size));
+}
+
+#[inline]
+fn snapshot_alloc_stats() -> MallocStatsSnapshot {
+    global_alloc_stats().snapshot()
 }
 
 // Native-fallback allocation tracking.
@@ -371,6 +637,9 @@ pub unsafe extern "C" fn malloc(size: usize) -> *mut c_void {
             out
         }
     };
+    if !out.is_null() {
+        record_alloc_stats(req);
+    }
     runtime_policy::observe(
         ApiFamily::Allocator,
         decision.profile,
@@ -446,16 +715,28 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
         return;
     };
 
+    let known_size = pipeline
+        .arena
+        .lookup(ptr as usize)
+        .and_then(|slot| (slot.user_base == ptr as usize).then_some(slot.user_size));
+
     let mut adverse = false;
     let result = pipeline.free(ptr.cast());
 
     match result {
-        FreeResult::Freed => {}
+        FreeResult::Freed => {
+            if let Some(size) = known_size {
+                record_free_stats(size);
+            }
+        }
         FreeResult::FreedWithCanaryCorruption => {
             // Buffer overflow was detected -- the canary after the allocation was
             // corrupted. In strict mode we still free (damage is done). Metrics
             // are recorded by the arena.
             adverse = true;
+            if let Some(size) = known_size {
+                record_free_stats(size);
+            }
         }
         FreeResult::DoubleFree => {
             adverse = true;
@@ -571,6 +852,9 @@ pub unsafe extern "C" fn calloc(nmemb: usize, size: usize) -> *mut c_void {
             out
         }
     };
+    if !out.is_null() {
+        record_alloc_stats(total);
+    }
     runtime_policy::observe(
         ApiFamily::Allocator,
         decision.profile,
@@ -773,8 +1057,17 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
         std::ptr::copy_nonoverlapping(ptr.cast::<u8>(), new_ptr, copy_size);
     }
 
-    // Free old block
-    let _ = pipeline.free(ptr.cast());
+    // Account new live allocation first so failed old-block release does not undercount.
+    record_alloc_stats(size);
+
+    // Free old block and account deallocation only if arena confirms it was released.
+    let old_free = pipeline.free(ptr.cast());
+    if matches!(
+        old_free,
+        FreeResult::Freed | FreeResult::FreedWithCanaryCorruption
+    ) {
+        record_free_stats(old_size);
+    }
     runtime_policy::observe(
         ApiFamily::Allocator,
         decision.profile,
@@ -850,6 +1143,9 @@ pub unsafe extern "C" fn posix_memalign(
             ptr
         }
     };
+    if !out.is_null() {
+        record_alloc_stats(req);
+    }
 
     runtime_policy::observe(
         ApiFamily::Allocator,
@@ -931,6 +1227,9 @@ pub unsafe extern "C" fn memalign(alignment: usize, size: usize) -> *mut c_void 
             out
         }
     };
+    if !out.is_null() {
+        record_alloc_stats(req);
+    }
 
     runtime_policy::observe(
         ApiFamily::Allocator,
@@ -1014,6 +1313,9 @@ pub unsafe extern "C" fn aligned_alloc(alignment: usize, size: usize) -> *mut c_
             out
         }
     };
+    if !out.is_null() {
+        record_alloc_stats(req);
+    }
 
     runtime_policy::observe(
         ApiFamily::Allocator,
@@ -1200,20 +1502,13 @@ pub struct Mallinfo2 {
     pub keepcost: usize,
 }
 
-/// Collect raw allocation statistics from the global membrane metrics.
+/// Collect raw allocation statistics from the flat-combining allocator stats state.
 fn collect_alloc_stats() -> (usize, usize, usize) {
-    use frankenlibc_membrane::metrics::global_metrics;
-    // (total_allocated_bytes, live_count, total_capacity_bytes)
-    let metrics = global_metrics();
-    let validations = metrics.validations.load(Ordering::Relaxed) as usize;
-    let arena_lookups = metrics.arena_lookups.load(Ordering::Relaxed) as usize;
-    // Approximate: each validation corresponds to an allocation operation,
-    // with an estimated 64 bytes average size.
-    let allocated = validations.saturating_mul(64);
+    let snapshot = snapshot_alloc_stats();
     (
-        allocated,
-        arena_lookups,
-        allocated.saturating_add(1024 * 1024),
+        snapshot.live_bytes,
+        snapshot.active_allocations,
+        snapshot.peak_usage.max(snapshot.live_bytes),
     )
 }
 

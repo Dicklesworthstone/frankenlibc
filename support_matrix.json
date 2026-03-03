@@ -2,7 +2,7 @@
   "version": 2,
   "generated_at_utc": "2026-02-18T04:49:26Z",
   "library": "/data/tmp/cargo-target/release/libfrankenlibc_abi.so",
-  "total_exported": 2776,
+  "total_exported": 2910,
   "taxonomy": {
     "Implemented": "Native Rust code owns the entire operation. No host libc dependency. Full test coverage required.",
     "RawSyscall": "ABI entrypoint marshals arguments directly to Linux syscall instruction. No glibc call-through.",
@@ -20529,23 +20529,1307 @@
       "strict_semantics": true,
       "hardened_semantics": true,
       "default_stub": false
+    },
+    {
+      "symbol": "__close_nocancel",
+      "status": "RawSyscall",
+      "module": "glibc_internal_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "__close_nocancel_nostatus",
+      "status": "RawSyscall",
+      "module": "glibc_internal_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "__open_nocancel",
+      "status": "RawSyscall",
+      "module": "glibc_internal_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "__open64_nocancel",
+      "status": "RawSyscall",
+      "module": "glibc_internal_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "__read_nocancel",
+      "status": "RawSyscall",
+      "module": "glibc_internal_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "__write_nocancel",
+      "status": "RawSyscall",
+      "module": "glibc_internal_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "__pread64_nocancel",
+      "status": "RawSyscall",
+      "module": "glibc_internal_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "__mmap",
+      "status": "RawSyscall",
+      "module": "glibc_internal_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "__mprotect",
+      "status": "RawSyscall",
+      "module": "glibc_internal_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "__munmap",
+      "status": "RawSyscall",
+      "module": "glibc_internal_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "__madvise",
+      "status": "RawSyscall",
+      "module": "glibc_internal_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "__socket",
+      "status": "RawSyscall",
+      "module": "glibc_internal_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "__recv",
+      "status": "RawSyscall",
+      "module": "glibc_internal_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "__sendmmsg",
+      "status": "RawSyscall",
+      "module": "glibc_internal_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "__fstat64",
+      "status": "RawSyscall",
+      "module": "glibc_internal_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "__fseeko64",
+      "status": "GlibcCallThrough",
+      "module": "glibc_internal_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "__ftello64",
+      "status": "GlibcCallThrough",
+      "module": "glibc_internal_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "__getrlimit",
+      "status": "RawSyscall",
+      "module": "glibc_internal_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "__clock_gettime",
+      "status": "RawSyscall",
+      "module": "glibc_internal_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "__mktemp",
+      "status": "GlibcCallThrough",
+      "module": "glibc_internal_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "__sigtimedwait",
+      "status": "RawSyscall",
+      "module": "glibc_internal_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "__inet_aton_exact",
+      "status": "Implemented",
+      "module": "glibc_internal_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "__inet_pton_length",
+      "status": "Implemented",
+      "module": "glibc_internal_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "__inet6_scopeid_pton",
+      "status": "Implemented",
+      "module": "glibc_internal_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "__tsearch",
+      "status": "Implemented",
+      "module": "glibc_internal_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "__tfind",
+      "status": "Implemented",
+      "module": "glibc_internal_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "__tdelete",
+      "status": "Implemented",
+      "module": "glibc_internal_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "__twalk",
+      "status": "Implemented",
+      "module": "glibc_internal_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "__twalk_r",
+      "status": "GlibcCallThrough",
+      "module": "glibc_internal_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "__strtod_nan",
+      "status": "Implemented",
+      "module": "glibc_internal_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "__strtof_nan",
+      "status": "Implemented",
+      "module": "glibc_internal_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "__strtold_nan",
+      "status": "Implemented",
+      "module": "glibc_internal_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "__strtof128_nan",
+      "status": "Implemented",
+      "module": "glibc_internal_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "__nptl_version",
+      "status": "Implemented",
+      "module": "glibc_internal_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "__nptl_nthreads",
+      "status": "Implemented",
+      "module": "glibc_internal_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "__nptl_last_event",
+      "status": "Implemented",
+      "module": "glibc_internal_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "__nptl_threads_events",
+      "status": "Implemented",
+      "module": "glibc_internal_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "__nptl_rtld_global",
+      "status": "Implemented",
+      "module": "glibc_internal_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "__nptl_create_event",
+      "status": "Implemented",
+      "module": "glibc_internal_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "__nptl_death_event",
+      "status": "Implemented",
+      "module": "glibc_internal_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "__pthread_keys",
+      "status": "Implemented",
+      "module": "glibc_internal_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "__lll_lock_wait_private",
+      "status": "RawSyscall",
+      "module": "glibc_internal_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "__lll_lock_wake_private",
+      "status": "RawSyscall",
+      "module": "glibc_internal_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "__gconv_open",
+      "status": "GlibcCallThrough",
+      "module": "glibc_internal_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "__gconv_create_spec",
+      "status": "GlibcCallThrough",
+      "module": "glibc_internal_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "__gconv_destroy_spec",
+      "status": "GlibcCallThrough",
+      "module": "glibc_internal_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "__gconv_close",
+      "status": "GlibcCallThrough",
+      "module": "glibc_internal_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "__gconv",
+      "status": "GlibcCallThrough",
+      "module": "glibc_internal_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "__gconv_transliterate",
+      "status": "GlibcCallThrough",
+      "module": "glibc_internal_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "__gconv_get_alias_db",
+      "status": "GlibcCallThrough",
+      "module": "glibc_internal_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "__resolv_context_get",
+      "status": "GlibcCallThrough",
+      "module": "glibc_internal_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "__resolv_context_get_preinit",
+      "status": "GlibcCallThrough",
+      "module": "glibc_internal_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "__resolv_context_put",
+      "status": "GlibcCallThrough",
+      "module": "glibc_internal_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "__resolv_context_freeres",
+      "status": "GlibcCallThrough",
+      "module": "glibc_internal_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "__resp",
+      "status": "Implemented",
+      "module": "glibc_internal_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "__idna_to_dns_encoding",
+      "status": "GlibcCallThrough",
+      "module": "glibc_internal_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "__idna_from_dns_encoding",
+      "status": "GlibcCallThrough",
+      "module": "glibc_internal_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "__ns_name_ntop",
+      "status": "GlibcCallThrough",
+      "module": "glibc_internal_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "__ns_name_pton",
+      "status": "GlibcCallThrough",
+      "module": "glibc_internal_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "__ns_name_uncompressed_p",
+      "status": "GlibcCallThrough",
+      "module": "glibc_internal_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "__ns_name_pack",
+      "status": "GlibcCallThrough",
+      "module": "glibc_internal_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "__ns_name_compress",
+      "status": "GlibcCallThrough",
+      "module": "glibc_internal_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "__ns_name_skip",
+      "status": "GlibcCallThrough",
+      "module": "glibc_internal_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "__ns_samename",
+      "status": "GlibcCallThrough",
+      "module": "glibc_internal_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "__file_change_detection_for_path",
+      "status": "GlibcCallThrough",
+      "module": "glibc_internal_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "__file_change_detection_for_stat",
+      "status": "GlibcCallThrough",
+      "module": "glibc_internal_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "__file_change_detection_for_fp",
+      "status": "GlibcCallThrough",
+      "module": "glibc_internal_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "__file_is_unchanged",
+      "status": "GlibcCallThrough",
+      "module": "glibc_internal_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "__ctype_init",
+      "status": "Implemented",
+      "module": "glibc_internal_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "__call_tls_dtors",
+      "status": "GlibcCallThrough",
+      "module": "glibc_internal_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "__abort_msg",
+      "status": "Implemented",
+      "module": "glibc_internal_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "__copy_grp",
+      "status": "GlibcCallThrough",
+      "module": "glibc_internal_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "__merge_grp",
+      "status": "GlibcCallThrough",
+      "module": "glibc_internal_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "__shm_get_name",
+      "status": "GlibcCallThrough",
+      "module": "glibc_internal_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "__netlink_assert_response",
+      "status": "Implemented",
+      "module": "glibc_internal_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "_IO_enable_locks",
+      "status": "Implemented",
+      "module": "glibc_internal_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "errno",
+      "status": "Implemented",
+      "module": "glibc_internal_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "cabs",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "cabsf",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "cabsl",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "cacos",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "cacosf",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "cacosl",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "cacosh",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "cacoshf",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "cacoshl",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "casin",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "casinf",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "casinl",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "casinh",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "casinhf",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "casinhl",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "catan",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "catanf",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "catanl",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "catanh",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "catanhf",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "catanhl",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "ccos",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "ccosf",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "ccosl",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "ccosh",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "ccoshf",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "ccoshl",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "cexp",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "cexpf",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "cexpl",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "cimag",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "cimagf",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "cimagl",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "clog",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "clogf",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "clogl",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "conj",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "conjf",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "conjl",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "cpow",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "cpowf",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "cpowl",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "cproj",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "cprojf",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "cprojl",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "creal",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "crealf",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "creall",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "csin",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "csinf",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "csinl",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "csinh",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "csinhf",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "csinhl",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "csqrt",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "csqrtf",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "csqrtl",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "ctan",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "ctanf",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "ctanl",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "ctanh",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "ctanhf",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "ctanhl",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "carg",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "cargf",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "cargl",
+      "status": "Implemented",
+      "module": "math_abi",
+      "perf_class": "O1",
+      "strict_semantics": true,
+      "hardened_semantics": true,
+      "default_stub": false
     }
   ],
   "summary": {
-    "total_exported": 2767,
-    "implemented": 2108,
-    "raw_syscall": 384,
-    "glibc_call_through": 275,
-    "stub": 0
+    "RawSyscall": 404,
+    "Implemented": 2313,
+    "GlibcCallThrough": 193
   },
-  "implemented": 2117,
-  "raw_syscall": 384,
-  "glibc_call_through": 275,
+  "implemented": 2313,
+  "raw_syscall": 404,
+  "glibc_call_through": 193,
   "stub": 0,
   "counts": {
-    "Implemented": 2117,
-    "RawSyscall": 384,
-    "GlibcCallThrough": 275,
-    "Stub": 0
+    "RawSyscall": 404,
+    "Implemented": 2313,
+    "GlibcCallThrough": 193
   }
 }

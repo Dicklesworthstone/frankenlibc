@@ -603,6 +603,74 @@ GLIBC_2.2.5 {
         pow10;
         pow10f;
 
+        /* complex math — <complex.h> C99 */
+        cabs;
+        cabsf;
+        cabsl;
+        cacos;
+        cacosf;
+        cacosl;
+        cacosh;
+        cacoshf;
+        cacoshl;
+        casin;
+        casinf;
+        casinl;
+        casinh;
+        casinhf;
+        casinhl;
+        catan;
+        catanf;
+        catanl;
+        catanh;
+        catanhf;
+        catanhl;
+        ccos;
+        ccosf;
+        ccosl;
+        ccosh;
+        ccoshf;
+        ccoshl;
+        cexp;
+        cexpf;
+        cexpl;
+        cimag;
+        cimagf;
+        cimagl;
+        clog;
+        clogf;
+        clogl;
+        conj;
+        conjf;
+        conjl;
+        cpow;
+        cpowf;
+        cpowl;
+        cproj;
+        cprojf;
+        cprojl;
+        creal;
+        crealf;
+        creall;
+        csin;
+        csinf;
+        csinl;
+        csinh;
+        csinhf;
+        csinhl;
+        csqrt;
+        csqrtf;
+        csqrtl;
+        ctan;
+        ctanf;
+        ctanl;
+        ctanh;
+        ctanhf;
+        ctanhl;
+        carg;
+        cargf;
+        cargl;
+
         /* fenv — floating-point environment */
         feclearexcept;
         fegetenv;
@@ -3206,6 +3274,113 @@ GLIBC_2.2.5 {
         svcauthdes_stats;
         xprt_register;
         xprt_unregister;
+
+        /* Session 17: nocancel syscall wrappers */
+        __close_nocancel;
+        __close_nocancel_nostatus;
+        __open_nocancel;
+        __open64_nocancel;
+        __read_nocancel;
+        __write_nocancel;
+        __pread64_nocancel;
+
+        /* Session 17: internal VM/memory aliases */
+        __mmap;
+        __mprotect;
+        __munmap;
+        __madvise;
+
+        /* Session 17: internal socket/network aliases */
+        __socket;
+        __recv;
+        __sendmmsg;
+
+        /* Session 17: internal file/resource aliases */
+        __fstat64;
+        __fseeko64;
+        __ftello64;
+        __getrlimit;
+        __clock_gettime;
+        __mktemp;
+        __sigtimedwait;
+
+        /* Session 17: internal inet aliases */
+        __inet_aton_exact;
+        __inet_pton_length;
+        __inet6_scopeid_pton;
+
+        /* Session 17: internal tree-search aliases */
+        __tsearch;
+        __tfind;
+        __tdelete;
+        __twalk;
+        __twalk_r;
+
+        /* Session 17: NaN parsing internals */
+        __strtod_nan;
+        __strtof_nan;
+        __strtold_nan;
+        __strtof128_nan;
+
+        /* Session 17: NPTL internals */
+        __nptl_version;
+        __nptl_nthreads;
+        __nptl_last_event;
+        __nptl_threads_events;
+        __nptl_rtld_global;
+        __nptl_create_event;
+        __nptl_death_event;
+        __pthread_keys;
+
+        /* Session 17: low-level locking */
+        __lll_lock_wait_private;
+        __lll_lock_wake_private;
+
+        /* Session 17: gconv (iconv internals) */
+        __gconv_open;
+        __gconv_create_spec;
+        __gconv_destroy_spec;
+        __gconv_get_alias_db;
+        __gconv_get_cache;
+        __gconv_get_modules_db;
+        __gconv_transliterate;
+
+        /* Session 17: resolver context internals */
+        __resolv_context_get;
+        __resolv_context_get_override;
+        __resolv_context_get_preinit;
+        __resolv_context_put;
+        __resp;
+
+        /* Session 17: IDNA internals */
+        __idna_to_dns_encoding;
+        __idna_from_dns_encoding;
+
+        /* Session 17: ns_name DNS handling */
+        __ns_name_ntop;
+        __ns_name_pton;
+        __ns_name_unpack;
+        __ns_name_pack;
+        __ns_name_uncompress;
+        __ns_name_compress;
+        __ns_name_skip;
+
+        /* Session 17: file change detection */
+        __file_change_detection_for_path;
+        __file_change_detection_for_fp;
+        __file_change_detection_for_stat;
+        __file_is_unchanged;
+
+        /* Session 17: misc internals */
+        __ctype_init;
+        __call_tls_dtors;
+        __abort_msg;
+        __copy_grp;
+        __merge_grp;
+        __shm_get_name;
+        __netlink_assert_response;
+        _IO_enable_locks;
+        errno;
 
     local:
         *;

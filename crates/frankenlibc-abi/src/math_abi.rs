@@ -1574,6 +1574,551 @@ pub unsafe extern "C" fn __finitef(x: f32) -> c_int {
     frankenlibc_core::math::finitef(x)
 }
 
+// =========================================================================
+// C99 <complex.h> functions
+// =========================================================================
+//
+// The C ABI represents `double complex` as `{ double, double }` and
+// `float complex` as `{ float, float }`.  On x86-64, complex return values
+// are passed in SSE registers (xmm0 for real, xmm1 for imaginary).
+//
+// We use `#[repr(C)]` structs that match the glibc ABI exactly.
+
+/// ABI-compatible `double complex`.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct CDoubleComplex {
+    pub re: f64,
+    pub im: f64,
+}
+
+/// ABI-compatible `float complex`.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct CFloatComplex {
+    pub re: f32,
+    pub im: f32,
+}
+
+/// ABI-compatible `long double complex` (approximated as f64 on x86-64 with
+/// Rust, since Rust lacks native f128/f80 support).
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct CLongDoubleComplex {
+    pub re: f64,
+    pub im: f64,
+}
+
+// --- Internal complex arithmetic helpers ---
+
+#[inline]
+fn c_mul(a: (f64, f64), b: (f64, f64)) -> (f64, f64) {
+    (a.0 * b.0 - a.1 * b.1, a.0 * b.1 + a.1 * b.0)
+}
+
+#[inline]
+fn c_div(a: (f64, f64), b: (f64, f64)) -> (f64, f64) {
+    let denom = b.0 * b.0 + b.1 * b.1;
+    if denom == 0.0 {
+        (f64::NAN, f64::NAN)
+    } else {
+        ((a.0 * b.0 + a.1 * b.1) / denom, (a.1 * b.0 - a.0 * b.1) / denom)
+    }
+}
+
+#[inline]
+fn c_exp(re: f64, im: f64) -> (f64, f64) {
+    use frankenlibc_core::math;
+    let r = math::exp(re);
+    (r * math::cos(im), r * math::sin(im))
+}
+
+#[inline]
+fn c_log(re: f64, im: f64) -> (f64, f64) {
+    use frankenlibc_core::math;
+    (math::log(math::hypot(re, im)), math::atan2(im, re))
+}
+
+#[inline]
+fn c_sqrt(re: f64, im: f64) -> (f64, f64) {
+    use frankenlibc_core::math;
+    if re == 0.0 && im == 0.0 {
+        return (0.0, 0.0);
+    }
+    let r = math::hypot(re, im);
+    let t = math::sqrt((r + math::fabs(re)) / 2.0);
+    if re >= 0.0 {
+        (t, im / (2.0 * t))
+    } else if im >= 0.0 {
+        (math::fabs(im) / (2.0 * t), t)
+    } else {
+        (math::fabs(im) / (2.0 * t), -t)
+    }
+}
+
+// --- creal / cimag / conj / carg / cabs ---
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn creal(z: CDoubleComplex) -> f64 {
+    z.re
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn crealf(z: CFloatComplex) -> f32 {
+    z.re
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn creall(z: CLongDoubleComplex) -> f64 {
+    z.re
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn cimag(z: CDoubleComplex) -> f64 {
+    z.im
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn cimagf(z: CFloatComplex) -> f32 {
+    z.im
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn cimagl(z: CLongDoubleComplex) -> f64 {
+    z.im
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn conj(z: CDoubleComplex) -> CDoubleComplex {
+    CDoubleComplex { re: z.re, im: -z.im }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn conjf(z: CFloatComplex) -> CFloatComplex {
+    CFloatComplex { re: z.re, im: -z.im }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn conjl(z: CLongDoubleComplex) -> CLongDoubleComplex {
+    CLongDoubleComplex { re: z.re, im: -z.im }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn carg(z: CDoubleComplex) -> f64 {
+    frankenlibc_core::math::atan2(z.im, z.re)
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn cargf(z: CFloatComplex) -> f32 {
+    frankenlibc_core::math::atan2f(z.im, z.re)
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn cargl(z: CLongDoubleComplex) -> f64 {
+    frankenlibc_core::math::atan2(z.im, z.re)
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn cabs(z: CDoubleComplex) -> f64 {
+    frankenlibc_core::math::hypot(z.re, z.im)
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn cabsf(z: CFloatComplex) -> f32 {
+    frankenlibc_core::math::hypotf(z.re, z.im)
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn cabsl(z: CLongDoubleComplex) -> f64 {
+    frankenlibc_core::math::hypot(z.re, z.im)
+}
+
+// --- cproj (projection onto Riemann sphere) ---
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn cproj(z: CDoubleComplex) -> CDoubleComplex {
+    if z.re.is_infinite() || z.im.is_infinite() {
+        CDoubleComplex { re: f64::INFINITY, im: f64::copysign(0.0, z.im) }
+    } else {
+        z
+    }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn cprojf(z: CFloatComplex) -> CFloatComplex {
+    if z.re.is_infinite() || z.im.is_infinite() {
+        CFloatComplex { re: f32::INFINITY, im: f32::copysign(0.0, z.im) }
+    } else {
+        z
+    }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn cprojl(z: CLongDoubleComplex) -> CLongDoubleComplex {
+    if z.re.is_infinite() || z.im.is_infinite() {
+        CLongDoubleComplex { re: f64::INFINITY, im: f64::copysign(0.0, z.im) }
+    } else {
+        z
+    }
+}
+
+// --- cexp / clog / csqrt ---
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn cexp(z: CDoubleComplex) -> CDoubleComplex {
+    let (re, im) = c_exp(z.re, z.im);
+    CDoubleComplex { re, im }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn cexpf(z: CFloatComplex) -> CFloatComplex {
+    let (re, im) = c_exp(z.re as f64, z.im as f64);
+    CFloatComplex { re: re as f32, im: im as f32 }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn cexpl(z: CLongDoubleComplex) -> CLongDoubleComplex {
+    let (re, im) = c_exp(z.re, z.im);
+    CLongDoubleComplex { re, im }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn clog(z: CDoubleComplex) -> CDoubleComplex {
+    let (re, im) = c_log(z.re, z.im);
+    CDoubleComplex { re, im }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn clogf(z: CFloatComplex) -> CFloatComplex {
+    let (re, im) = c_log(z.re as f64, z.im as f64);
+    CFloatComplex { re: re as f32, im: im as f32 }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn clogl(z: CLongDoubleComplex) -> CLongDoubleComplex {
+    let (re, im) = c_log(z.re, z.im);
+    CLongDoubleComplex { re, im }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn csqrt(z: CDoubleComplex) -> CDoubleComplex {
+    let (re, im) = c_sqrt(z.re, z.im);
+    CDoubleComplex { re, im }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn csqrtf(z: CFloatComplex) -> CFloatComplex {
+    let (re, im) = c_sqrt(z.re as f64, z.im as f64);
+    CFloatComplex { re: re as f32, im: im as f32 }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn csqrtl(z: CLongDoubleComplex) -> CLongDoubleComplex {
+    let (re, im) = c_sqrt(z.re, z.im);
+    CLongDoubleComplex { re, im }
+}
+
+// --- cpow ---
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn cpow(base: CDoubleComplex, exp: CDoubleComplex) -> CDoubleComplex {
+    // z^w = exp(w * log(z))
+    let lz = c_log(base.re, base.im);
+    let wl = c_mul((exp.re, exp.im), lz);
+    let (re, im) = c_exp(wl.0, wl.1);
+    CDoubleComplex { re, im }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn cpowf(base: CFloatComplex, exp: CFloatComplex) -> CFloatComplex {
+    let lz = c_log(base.re as f64, base.im as f64);
+    let wl = c_mul((exp.re as f64, exp.im as f64), lz);
+    let (re, im) = c_exp(wl.0, wl.1);
+    CFloatComplex { re: re as f32, im: im as f32 }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn cpowl(base: CLongDoubleComplex, exp: CLongDoubleComplex) -> CLongDoubleComplex {
+    let lz = c_log(base.re, base.im);
+    let wl = c_mul((exp.re, exp.im), lz);
+    let (re, im) = c_exp(wl.0, wl.1);
+    CLongDoubleComplex { re, im }
+}
+
+// --- Trigonometric: csin, ccos, ctan ---
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn csin(z: CDoubleComplex) -> CDoubleComplex {
+    // sin(a+bi) = sin(a)cosh(b) + i*cos(a)sinh(b)
+    CDoubleComplex {
+        re: frankenlibc_core::math::sin(z.re) * frankenlibc_core::math::cosh(z.im),
+        im: frankenlibc_core::math::cos(z.re) * frankenlibc_core::math::sinh(z.im),
+    }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn csinf(z: CFloatComplex) -> CFloatComplex {
+    let r = unsafe { csin(CDoubleComplex { re: z.re as f64, im: z.im as f64 }) };
+    CFloatComplex { re: r.re as f32, im: r.im as f32 }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn csinl(z: CLongDoubleComplex) -> CLongDoubleComplex {
+    let r = unsafe { csin(CDoubleComplex { re: z.re, im: z.im }) };
+    CLongDoubleComplex { re: r.re, im: r.im }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ccos(z: CDoubleComplex) -> CDoubleComplex {
+    // cos(a+bi) = cos(a)cosh(b) - i*sin(a)sinh(b)
+    CDoubleComplex {
+        re: frankenlibc_core::math::cos(z.re) * frankenlibc_core::math::cosh(z.im),
+        im: -frankenlibc_core::math::sin(z.re) * frankenlibc_core::math::sinh(z.im),
+    }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ccosf(z: CFloatComplex) -> CFloatComplex {
+    let r = unsafe { ccos(CDoubleComplex { re: z.re as f64, im: z.im as f64 }) };
+    CFloatComplex { re: r.re as f32, im: r.im as f32 }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ccosl(z: CLongDoubleComplex) -> CLongDoubleComplex {
+    let r = unsafe { ccos(CDoubleComplex { re: z.re, im: z.im }) };
+    CLongDoubleComplex { re: r.re, im: r.im }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ctan(z: CDoubleComplex) -> CDoubleComplex {
+    // tan(z) = sin(z) / cos(z)
+    let s = unsafe { csin(z) };
+    let c = unsafe { ccos(z) };
+    let (re, im) = c_div((s.re, s.im), (c.re, c.im));
+    CDoubleComplex { re, im }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ctanf(z: CFloatComplex) -> CFloatComplex {
+    let r = unsafe { ctan(CDoubleComplex { re: z.re as f64, im: z.im as f64 }) };
+    CFloatComplex { re: r.re as f32, im: r.im as f32 }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ctanl(z: CLongDoubleComplex) -> CLongDoubleComplex {
+    let r = unsafe { ctan(CDoubleComplex { re: z.re, im: z.im }) };
+    CLongDoubleComplex { re: r.re, im: r.im }
+}
+
+// --- Hyperbolic: csinh, ccosh, ctanh ---
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn csinh(z: CDoubleComplex) -> CDoubleComplex {
+    // sinh(a+bi) = sinh(a)cos(b) + i*cosh(a)sin(b)
+    CDoubleComplex {
+        re: frankenlibc_core::math::sinh(z.re) * frankenlibc_core::math::cos(z.im),
+        im: frankenlibc_core::math::cosh(z.re) * frankenlibc_core::math::sin(z.im),
+    }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn csinhf(z: CFloatComplex) -> CFloatComplex {
+    let r = unsafe { csinh(CDoubleComplex { re: z.re as f64, im: z.im as f64 }) };
+    CFloatComplex { re: r.re as f32, im: r.im as f32 }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn csinhl(z: CLongDoubleComplex) -> CLongDoubleComplex {
+    let r = unsafe { csinh(CDoubleComplex { re: z.re, im: z.im }) };
+    CLongDoubleComplex { re: r.re, im: r.im }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ccosh(z: CDoubleComplex) -> CDoubleComplex {
+    // cosh(a+bi) = cosh(a)cos(b) + i*sinh(a)sin(b)
+    CDoubleComplex {
+        re: frankenlibc_core::math::cosh(z.re) * frankenlibc_core::math::cos(z.im),
+        im: frankenlibc_core::math::sinh(z.re) * frankenlibc_core::math::sin(z.im),
+    }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ccoshf(z: CFloatComplex) -> CFloatComplex {
+    let r = unsafe { ccosh(CDoubleComplex { re: z.re as f64, im: z.im as f64 }) };
+    CFloatComplex { re: r.re as f32, im: r.im as f32 }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ccoshl(z: CLongDoubleComplex) -> CLongDoubleComplex {
+    let r = unsafe { ccosh(CDoubleComplex { re: z.re, im: z.im }) };
+    CLongDoubleComplex { re: r.re, im: r.im }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ctanh(z: CDoubleComplex) -> CDoubleComplex {
+    // tanh(z) = sinh(z) / cosh(z)
+    let s = unsafe { csinh(z) };
+    let c = unsafe { ccosh(z) };
+    let (re, im) = c_div((s.re, s.im), (c.re, c.im));
+    CDoubleComplex { re, im }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ctanhf(z: CFloatComplex) -> CFloatComplex {
+    let r = unsafe { ctanh(CDoubleComplex { re: z.re as f64, im: z.im as f64 }) };
+    CFloatComplex { re: r.re as f32, im: r.im as f32 }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ctanhl(z: CLongDoubleComplex) -> CLongDoubleComplex {
+    let r = unsafe { ctanh(CDoubleComplex { re: z.re, im: z.im }) };
+    CLongDoubleComplex { re: r.re, im: r.im }
+}
+
+// --- Inverse trig: casin, cacos, catan ---
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn casin(z: CDoubleComplex) -> CDoubleComplex {
+    // asin(z) = -i * log(iz + sqrt(1 - z^2))
+    let z2 = c_mul((z.re, z.im), (z.re, z.im));
+    let one_minus_z2 = (1.0 - z2.0, -z2.1);
+    let sq = c_sqrt(one_minus_z2.0, one_minus_z2.1);
+    let iz = (-z.im, z.re); // i*z
+    let arg = (iz.0 + sq.0, iz.1 + sq.1);
+    let lg = c_log(arg.0, arg.1);
+    // -i * lg = (lg.1, -lg.0)
+    CDoubleComplex { re: lg.1, im: -lg.0 }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn casinf(z: CFloatComplex) -> CFloatComplex {
+    let r = unsafe { casin(CDoubleComplex { re: z.re as f64, im: z.im as f64 }) };
+    CFloatComplex { re: r.re as f32, im: r.im as f32 }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn casinl(z: CLongDoubleComplex) -> CLongDoubleComplex {
+    let r = unsafe { casin(CDoubleComplex { re: z.re, im: z.im }) };
+    CLongDoubleComplex { re: r.re, im: r.im }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn cacos(z: CDoubleComplex) -> CDoubleComplex {
+    // acos(z) = pi/2 - asin(z)
+    let as_ = unsafe { casin(z) };
+    CDoubleComplex {
+        re: std::f64::consts::FRAC_PI_2 - as_.re,
+        im: -as_.im,
+    }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn cacosf(z: CFloatComplex) -> CFloatComplex {
+    let r = unsafe { cacos(CDoubleComplex { re: z.re as f64, im: z.im as f64 }) };
+    CFloatComplex { re: r.re as f32, im: r.im as f32 }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn cacosl(z: CLongDoubleComplex) -> CLongDoubleComplex {
+    let r = unsafe { cacos(CDoubleComplex { re: z.re, im: z.im }) };
+    CLongDoubleComplex { re: r.re, im: r.im }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn catan(z: CDoubleComplex) -> CDoubleComplex {
+    // atan(z) = (i/2) * log((1-iz)/(1+iz))
+    // where iz = (-im, re)
+    let iz = (-z.im, z.re);
+    let num = (1.0 - iz.0, -iz.1);       // 1 - iz
+    let den = (1.0 + iz.0, iz.1);         // 1 + iz
+    let ratio = c_div(num, den);
+    let lg = c_log(ratio.0, ratio.1);
+    // (i/2) * lg = (-lg.1/2, lg.0/2)
+    CDoubleComplex { re: -lg.1 / 2.0, im: lg.0 / 2.0 }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn catanf(z: CFloatComplex) -> CFloatComplex {
+    let r = unsafe { catan(CDoubleComplex { re: z.re as f64, im: z.im as f64 }) };
+    CFloatComplex { re: r.re as f32, im: r.im as f32 }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn catanl(z: CLongDoubleComplex) -> CLongDoubleComplex {
+    let r = unsafe { catan(CDoubleComplex { re: z.re, im: z.im }) };
+    CLongDoubleComplex { re: r.re, im: r.im }
+}
+
+// --- Inverse hyperbolic: casinh, cacosh, catanh ---
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn casinh(z: CDoubleComplex) -> CDoubleComplex {
+    // asinh(z) = log(z + sqrt(z^2 + 1))
+    let z2 = c_mul((z.re, z.im), (z.re, z.im));
+    let z2p1 = (z2.0 + 1.0, z2.1);
+    let sq = c_sqrt(z2p1.0, z2p1.1);
+    let arg = (z.re + sq.0, z.im + sq.1);
+    let (re, im) = c_log(arg.0, arg.1);
+    CDoubleComplex { re, im }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn casinhf(z: CFloatComplex) -> CFloatComplex {
+    let r = unsafe { casinh(CDoubleComplex { re: z.re as f64, im: z.im as f64 }) };
+    CFloatComplex { re: r.re as f32, im: r.im as f32 }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn casinhl(z: CLongDoubleComplex) -> CLongDoubleComplex {
+    let r = unsafe { casinh(CDoubleComplex { re: z.re, im: z.im }) };
+    CLongDoubleComplex { re: r.re, im: r.im }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn cacosh(z: CDoubleComplex) -> CDoubleComplex {
+    // acosh(z) = log(z + sqrt(z^2 - 1))
+    let z2 = c_mul((z.re, z.im), (z.re, z.im));
+    let z2m1 = (z2.0 - 1.0, z2.1);
+    let sq = c_sqrt(z2m1.0, z2m1.1);
+    let arg = (z.re + sq.0, z.im + sq.1);
+    let (re, im) = c_log(arg.0, arg.1);
+    CDoubleComplex { re, im }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn cacoshf(z: CFloatComplex) -> CFloatComplex {
+    let r = unsafe { cacosh(CDoubleComplex { re: z.re as f64, im: z.im as f64 }) };
+    CFloatComplex { re: r.re as f32, im: r.im as f32 }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn cacoshl(z: CLongDoubleComplex) -> CLongDoubleComplex {
+    let r = unsafe { cacosh(CDoubleComplex { re: z.re, im: z.im }) };
+    CLongDoubleComplex { re: r.re, im: r.im }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn catanh(z: CDoubleComplex) -> CDoubleComplex {
+    // atanh(z) = (1/2) * log((1+z)/(1-z))
+    let num = (1.0 + z.re, z.im);
+    let den = (1.0 - z.re, -z.im);
+    let ratio = c_div(num, den);
+    let lg = c_log(ratio.0, ratio.1);
+    CDoubleComplex { re: lg.0 / 2.0, im: lg.1 / 2.0 }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn catanhf(z: CFloatComplex) -> CFloatComplex {
+    let r = unsafe { catanh(CDoubleComplex { re: z.re as f64, im: z.im as f64 }) };
+    CFloatComplex { re: r.re as f32, im: r.im as f32 }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn catanhl(z: CLongDoubleComplex) -> CLongDoubleComplex {
+    let r = unsafe { catanh(CDoubleComplex { re: z.re, im: z.im }) };
+    CLongDoubleComplex { re: r.re, im: r.im }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2462,6 +3007,177 @@ mod tests {
             assert_eq!(__isnanf(1.0f32), 0);
             assert_eq!(__finitef(1.0f32), 1);
             assert_eq!(__finitef(f32::INFINITY), 0);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // C99 complex math tests
+    // -----------------------------------------------------------------------
+
+    fn approx(a: f64, b: f64, tol: f64) -> bool {
+        (a - b).abs() < tol || (a.is_nan() && b.is_nan())
+    }
+
+    #[test]
+    fn creal_cimag_conj_basics() {
+        unsafe {
+            let z = CDoubleComplex { re: 3.0, im: 4.0 };
+            assert_eq!(creal(z), 3.0);
+            assert_eq!(cimag(z), 4.0);
+            let c = conj(z);
+            assert_eq!(c.re, 3.0);
+            assert_eq!(c.im, -4.0);
+        }
+    }
+
+    #[test]
+    fn cabs_pythagorean() {
+        unsafe {
+            let z = CDoubleComplex { re: 3.0, im: 4.0 };
+            assert!(approx(cabs(z), 5.0, 1e-10));
+        }
+    }
+
+    #[test]
+    fn carg_quadrants() {
+        unsafe {
+            let z1 = CDoubleComplex { re: 1.0, im: 0.0 };
+            assert!(approx(carg(z1), 0.0, 1e-10));
+            let z2 = CDoubleComplex { re: 0.0, im: 1.0 };
+            assert!(approx(carg(z2), std::f64::consts::FRAC_PI_2, 1e-10));
+        }
+    }
+
+    #[test]
+    fn cexp_euler() {
+        // e^(i*pi) = -1 + 0i
+        unsafe {
+            let z = CDoubleComplex { re: 0.0, im: std::f64::consts::PI };
+            let r = cexp(z);
+            assert!(approx(r.re, -1.0, 1e-10));
+            assert!(approx(r.im, 0.0, 1e-10));
+        }
+    }
+
+    #[test]
+    fn clog_inverse_of_exp() {
+        unsafe {
+            let z = CDoubleComplex { re: 1.0, im: 2.0 };
+            let e = cexp(z);
+            let l = clog(e);
+            assert!(approx(l.re, z.re, 1e-10));
+            assert!(approx(l.im, z.im, 1e-10));
+        }
+    }
+
+    #[test]
+    fn csqrt_squares_back() {
+        unsafe {
+            let z = CDoubleComplex { re: -4.0, im: 0.0 };
+            let s = csqrt(z);
+            // sqrt(-4) = 2i
+            assert!(approx(s.re, 0.0, 1e-10));
+            assert!(approx(s.im, 2.0, 1e-10));
+        }
+    }
+
+    #[test]
+    fn cpow_integer_power() {
+        unsafe {
+            // (1+i)^2 = 2i
+            let base = CDoubleComplex { re: 1.0, im: 1.0 };
+            let exp = CDoubleComplex { re: 2.0, im: 0.0 };
+            let r = cpow(base, exp);
+            assert!(approx(r.re, 0.0, 1e-8));
+            assert!(approx(r.im, 2.0, 1e-8));
+        }
+    }
+
+    #[test]
+    fn csin_ccos_pythagorean_identity() {
+        // sin^2(z) + cos^2(z) = 1
+        unsafe {
+            let z = CDoubleComplex { re: 1.5, im: 0.75 };
+            let s = csin(z);
+            let c = ccos(z);
+            let s2 = c_mul((s.re, s.im), (s.re, s.im));
+            let c2 = c_mul((c.re, c.im), (c.re, c.im));
+            assert!(approx(s2.0 + c2.0, 1.0, 1e-10));
+            assert!(approx(s2.1 + c2.1, 0.0, 1e-10));
+        }
+    }
+
+    #[test]
+    fn ctan_equals_sin_over_cos() {
+        unsafe {
+            let z = CDoubleComplex { re: 0.5, im: 0.3 };
+            let t = ctan(z);
+            let s = csin(z);
+            let c = ccos(z);
+            let ratio = c_div((s.re, s.im), (c.re, c.im));
+            assert!(approx(t.re, ratio.0, 1e-10));
+            assert!(approx(t.im, ratio.1, 1e-10));
+        }
+    }
+
+    #[test]
+    fn csinh_ccosh_identity() {
+        // cosh^2(z) - sinh^2(z) = 1
+        unsafe {
+            let z = CDoubleComplex { re: 1.0, im: 0.5 };
+            let sh = csinh(z);
+            let ch = ccosh(z);
+            let sh2 = c_mul((sh.re, sh.im), (sh.re, sh.im));
+            let ch2 = c_mul((ch.re, ch.im), (ch.re, ch.im));
+            assert!(approx(ch2.0 - sh2.0, 1.0, 1e-10));
+            assert!(approx(ch2.1 - sh2.1, 0.0, 1e-10));
+        }
+    }
+
+    #[test]
+    fn casin_cacos_sum_is_pi_over_2() {
+        // asin(z) + acos(z) = pi/2
+        unsafe {
+            let z = CDoubleComplex { re: 0.5, im: 0.3 };
+            let as_ = casin(z);
+            let ac = cacos(z);
+            assert!(approx(as_.re + ac.re, std::f64::consts::FRAC_PI_2, 1e-10));
+            assert!(approx(as_.im + ac.im, 0.0, 1e-10));
+        }
+    }
+
+    #[test]
+    fn cproj_maps_infinity() {
+        unsafe {
+            let z = CDoubleComplex { re: f64::INFINITY, im: -3.0 };
+            let p = cproj(z);
+            assert_eq!(p.re, f64::INFINITY);
+            assert!(p.im == 0.0 && p.im.is_sign_negative()); // -0.0
+        }
+    }
+
+    #[test]
+    fn complex_float_variants_consistent() {
+        unsafe {
+            let zd = CDoubleComplex { re: 1.0, im: 2.0 };
+            let zf = CFloatComplex { re: 1.0f32, im: 2.0f32 };
+            assert!(approx(cabsf(zf) as f64, cabs(zd), 1e-4));
+            let sd = csin(zd);
+            let sf = csinf(zf);
+            assert!(approx(sf.re as f64, sd.re, 1e-4));
+            assert!(approx(sf.im as f64, sd.im, 1e-4));
+        }
+    }
+
+    #[test]
+    fn casinh_cacosh_catanh_roundtrip() {
+        unsafe {
+            // asinh(sinh(z)) ~ z  for small z
+            let z = CDoubleComplex { re: 0.5, im: 0.3 };
+            let sh = csinh(z);
+            let ash = casinh(sh);
+            assert!(approx(ash.re, z.re, 1e-10));
+            assert!(approx(ash.im, z.im, 1e-10));
         }
     }
 }

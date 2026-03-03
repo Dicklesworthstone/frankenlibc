@@ -6116,6 +6116,889 @@ pub unsafe extern "C" fn nfsservctl(cmd: c_int, argp: *mut c_void, resp: *mut c_
     -1
 }
 
+// ===========================================================================
+// Session 17 (RusticWolf): Missing glibc internal aliases — nocancel
+// wrappers, VM/socket/file/tree-search/NaN/resolver/NPTL/gconv/IDNA stubs
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// Nocancel syscall wrappers: bypass pthread cancellation points.
+// In FrankenLibC our syscalls have no cancellation semantics, so these
+// are simple forwarding aliases.
+// ---------------------------------------------------------------------------
+
+/// `__close_nocancel` — close(2) without cancellation point.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __close_nocancel(fd: c_int) -> c_int {
+    unsafe { libc::syscall(libc::SYS_close, fd) as c_int }
+}
+
+/// `__close_nocancel_nostatus` — close without cancellation, ignore return.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __close_nocancel_nostatus(fd: c_int) {
+    unsafe {
+        libc::syscall(libc::SYS_close, fd);
+    }
+}
+
+/// `__open_nocancel` — open(2) without cancellation point.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __open_nocancel(
+    pathname: *const c_char,
+    flags: c_int,
+    mode: c_uint,
+) -> c_int {
+    unsafe { libc::syscall(libc::SYS_openat, libc::AT_FDCWD, pathname, flags, mode) as c_int }
+}
+
+/// `__open64_nocancel` — open64 without cancellation point (same as __open_nocancel on 64-bit).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __open64_nocancel(
+    pathname: *const c_char,
+    flags: c_int,
+    mode: c_uint,
+) -> c_int {
+    unsafe { libc::syscall(libc::SYS_openat, libc::AT_FDCWD, pathname, flags, mode) as c_int }
+}
+
+/// `__read_nocancel` — read(2) without cancellation point.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __read_nocancel(fd: c_int, buf: *mut c_void, count: SizeT) -> SSizeT {
+    unsafe { libc::syscall(libc::SYS_read, fd, buf, count) as SSizeT }
+}
+
+/// `__write_nocancel` — write(2) without cancellation point.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __write_nocancel(fd: c_int, buf: *const c_void, count: SizeT) -> SSizeT {
+    unsafe { libc::syscall(libc::SYS_write, fd, buf, count) as SSizeT }
+}
+
+/// `__pread64_nocancel` — pread64 without cancellation point.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __pread64_nocancel(
+    fd: c_int,
+    buf: *mut c_void,
+    count: SizeT,
+    offset: i64,
+) -> SSizeT {
+    unsafe { libc::syscall(libc::SYS_pread64, fd, buf, count, offset) as SSizeT }
+}
+
+// ---------------------------------------------------------------------------
+// Internal VM aliases (__mmap, __mprotect, __munmap, __madvise)
+// ---------------------------------------------------------------------------
+
+/// `__mmap` — internal mmap alias.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __mmap(
+    addr: *mut c_void,
+    length: SizeT,
+    prot: c_int,
+    flags: c_int,
+    fd: c_int,
+    offset: i64,
+) -> *mut c_void {
+    unsafe {
+        libc::syscall(libc::SYS_mmap, addr, length, prot, flags, fd, offset) as *mut c_void
+    }
+}
+
+/// `__mprotect` — internal mprotect alias.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __mprotect(addr: *mut c_void, length: SizeT, prot: c_int) -> c_int {
+    unsafe { libc::syscall(libc::SYS_mprotect, addr, length, prot) as c_int }
+}
+
+/// `__munmap` — internal munmap alias.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __munmap(addr: *mut c_void, length: SizeT) -> c_int {
+    unsafe { libc::syscall(libc::SYS_munmap, addr, length) as c_int }
+}
+
+/// `__madvise` — internal madvise alias.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __madvise(addr: *mut c_void, length: SizeT, advice: c_int) -> c_int {
+    unsafe { libc::syscall(libc::SYS_madvise, addr, length, advice) as c_int }
+}
+
+// ---------------------------------------------------------------------------
+// Internal socket/network aliases
+// ---------------------------------------------------------------------------
+
+/// `__socket` — internal socket alias.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __socket(domain: c_int, sock_type: c_int, protocol: c_int) -> c_int {
+    unsafe { libc::syscall(libc::SYS_socket, domain, sock_type, protocol) as c_int }
+}
+
+/// `__recv` — internal recv alias.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __recv(
+    sockfd: c_int,
+    buf: *mut c_void,
+    len: SizeT,
+    flags: c_int,
+) -> SSizeT {
+    unsafe { libc::syscall(libc::SYS_recvfrom, sockfd, buf, len, flags, 0usize, 0usize) as SSizeT }
+}
+
+/// `__sendmmsg` — internal sendmmsg alias.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __sendmmsg(
+    sockfd: c_int,
+    msgvec: *mut c_void,
+    vlen: c_uint,
+    flags: c_int,
+) -> c_int {
+    unsafe { libc::syscall(libc::SYS_sendmmsg, sockfd, msgvec, vlen, flags) as c_int }
+}
+
+// ---------------------------------------------------------------------------
+// Internal file/resource aliases
+// ---------------------------------------------------------------------------
+
+/// `__fstat64` — internal fstat64 alias.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __fstat64(fd: c_int, buf: *mut c_void) -> c_int {
+    unsafe { libc::syscall(libc::SYS_fstat, fd, buf) as c_int }
+}
+
+/// `__fseeko64` — internal fseeko64 (delegates to host).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __fseeko64(
+    stream: *mut c_void,
+    offset: i64,
+    whence: c_int,
+) -> c_int {
+    type F = unsafe extern "C" fn(*mut c_void, i64, c_int) -> c_int;
+    let sym = unsafe { libc::dlsym(libc::RTLD_NEXT, c"fseeko64".as_ptr()) };
+    if sym.is_null() {
+        return -1;
+    }
+    let f: F = unsafe { std::mem::transmute(sym) };
+    unsafe { f(stream, offset, whence) }
+}
+
+/// `__ftello64` — internal ftello64 (delegates to host).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __ftello64(stream: *mut c_void) -> i64 {
+    type F = unsafe extern "C" fn(*mut c_void) -> i64;
+    let sym = unsafe { libc::dlsym(libc::RTLD_NEXT, c"ftello64".as_ptr()) };
+    if sym.is_null() {
+        return -1;
+    }
+    let f: F = unsafe { std::mem::transmute(sym) };
+    unsafe { f(stream) }
+}
+
+/// `__getrlimit` — internal getrlimit alias.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __getrlimit(resource: c_int, rlim: *mut c_void) -> c_int {
+    unsafe { libc::syscall(libc::SYS_prlimit64, 0, resource, std::ptr::null::<c_void>(), rlim) as c_int }
+}
+
+/// `__clock_gettime` — internal clock_gettime alias.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __clock_gettime(clock_id: c_int, tp: *mut c_void) -> c_int {
+    unsafe { libc::syscall(libc::SYS_clock_gettime, clock_id, tp) as c_int }
+}
+
+/// `__mktemp` — internal mktemp alias (delegates to host).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __mktemp(template: *mut c_char) -> *mut c_char {
+    type F = unsafe extern "C" fn(*mut c_char) -> *mut c_char;
+    let sym = unsafe { libc::dlsym(libc::RTLD_NEXT, c"mktemp".as_ptr()) };
+    if sym.is_null() {
+        return template;
+    }
+    let f: F = unsafe { std::mem::transmute(sym) };
+    unsafe { f(template) }
+}
+
+/// `__sigtimedwait` — internal sigtimedwait alias.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __sigtimedwait(
+    set: *const c_void,
+    info: *mut c_void,
+    timeout: *const c_void,
+) -> c_int {
+    unsafe { libc::syscall(libc::SYS_rt_sigtimedwait, set, info, timeout, 8usize) as c_int }
+}
+
+// ---------------------------------------------------------------------------
+// Internal inet aliases
+// ---------------------------------------------------------------------------
+
+/// `__inet_aton_exact` — strict inet_aton (no trailing garbage).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __inet_aton_exact(cp: *const c_char, inp: *mut u32) -> c_int {
+    // Delegate to host inet_aton — the "exact" variant rejects trailing chars.
+    // For ABI compatibility, forward to libc.
+    type F = unsafe extern "C" fn(*const c_char, *mut u32) -> c_int;
+    let sym = unsafe { libc::dlsym(libc::RTLD_NEXT, c"__inet_aton_exact".as_ptr()) };
+    if sym.is_null() {
+        // Fallback: use regular inet_aton
+        let sym2 = unsafe { libc::dlsym(libc::RTLD_NEXT, c"inet_aton".as_ptr()) };
+        if sym2.is_null() {
+            return 0;
+        }
+        let f: F = unsafe { std::mem::transmute(sym2) };
+        return unsafe { f(cp, inp) };
+    }
+    let f: F = unsafe { std::mem::transmute(sym) };
+    unsafe { f(cp, inp) }
+}
+
+/// `__inet_pton_length` — inet_pton with explicit source length.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __inet_pton_length(
+    af: c_int,
+    src: *const c_char,
+    srclen: SizeT,
+    dst: *mut c_void,
+) -> c_int {
+    type F = unsafe extern "C" fn(c_int, *const c_char, SizeT, *mut c_void) -> c_int;
+    let sym = unsafe { libc::dlsym(libc::RTLD_NEXT, c"__inet_pton_length".as_ptr()) };
+    if sym.is_null() {
+        // Fallback: use regular inet_pton (ignore length, rely on null term)
+        let _ = srclen;
+        return unsafe { crate::inet_abi::inet_pton(af, src, dst) };
+    }
+    let f: F = unsafe { std::mem::transmute(sym) };
+    unsafe { f(af, src, srclen, dst) }
+}
+
+/// `__inet6_scopeid_pton` — parse IPv6 scope ID.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __inet6_scopeid_pton(
+    _addr: *const c_void,
+    _scope: *const c_char,
+    _scopelen: SizeT,
+) -> c_int {
+    // GLIBC_PRIVATE — delegate to host or return failure
+    type F = unsafe extern "C" fn(*const c_void, *const c_char, SizeT) -> c_int;
+    let sym = unsafe { libc::dlsym(libc::RTLD_NEXT, c"__inet6_scopeid_pton".as_ptr()) };
+    if sym.is_null() {
+        return libc::ENOENT;
+    }
+    let f: F = unsafe { std::mem::transmute(sym) };
+    unsafe { f(_addr, _scope, _scopelen) }
+}
+
+// ---------------------------------------------------------------------------
+// Internal tree-search aliases (__tsearch, __tfind, __tdelete, __twalk, __twalk_r)
+// ---------------------------------------------------------------------------
+type TreeCompareFn = unsafe extern "C" fn(*const c_void, *const c_void) -> c_int;
+
+/// `__tsearch` — internal tsearch alias.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __tsearch(
+    key: *const c_void,
+    rootp: *mut *mut c_void,
+    compar: TreeCompareFn,
+) -> *mut c_void {
+    unsafe { crate::search_abi::tsearch(key, rootp, compar) }
+}
+
+/// `__tfind` — internal tfind alias.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __tfind(
+    key: *const c_void,
+    rootp: *const *mut c_void,
+    compar: TreeCompareFn,
+) -> *mut c_void {
+    unsafe { crate::search_abi::tfind(key, rootp, compar) }
+}
+
+/// `__tdelete` — internal tdelete alias.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __tdelete(
+    key: *const c_void,
+    rootp: *mut *mut c_void,
+    compar: TreeCompareFn,
+) -> *mut c_void {
+    unsafe { crate::search_abi::tdelete(key, rootp, compar) }
+}
+
+/// `__twalk` — internal twalk alias.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __twalk(
+    root: *const c_void,
+    action: unsafe extern "C" fn(*const c_void, crate::search_abi::Visit, c_int),
+) {
+    unsafe { crate::search_abi::twalk(root, action) }
+}
+
+/// `__twalk_r` — reentrant tree walk with closure data.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __twalk_r(
+    root: *const c_void,
+    action: unsafe extern "C" fn(*const c_void, c_int, c_int, *mut c_void),
+    closure: *mut c_void,
+) {
+    // twalk_r is a GNU extension; walk the tree passing closure data.
+    // Delegate to host glibc since our search_abi doesn't have twalk_r yet.
+    type F = unsafe extern "C" fn(
+        *const c_void,
+        unsafe extern "C" fn(*const c_void, c_int, c_int, *mut c_void),
+        *mut c_void,
+    );
+    let sym = unsafe { libc::dlsym(libc::RTLD_NEXT, c"twalk_r".as_ptr()) };
+    if !sym.is_null() {
+        let f: F = unsafe { std::mem::transmute(sym) };
+        unsafe { f(root, action, closure) };
+    }
+}
+
+// ---------------------------------------------------------------------------
+// NaN parsing internals (__strtod_nan, __strtof_nan, __strtold_nan, __strtof128_nan)
+// ---------------------------------------------------------------------------
+
+/// `__strtod_nan` — parse NaN payload for double.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __strtod_nan(
+    _tagb: *const c_char,
+    _endptr: *mut *mut c_char,
+    _tag_len: SizeT,
+) -> f64 {
+    f64::NAN
+}
+
+/// `__strtof_nan` — parse NaN payload for float.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __strtof_nan(
+    _tagb: *const c_char,
+    _endptr: *mut *mut c_char,
+    _tag_len: SizeT,
+) -> f32 {
+    f32::NAN
+}
+
+/// `__strtold_nan` — parse NaN payload for long double.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __strtold_nan(
+    _tagb: *const c_char,
+    _endptr: *mut *mut c_char,
+    _tag_len: SizeT,
+) -> f64 {
+    // On x86_64, long double is 80-bit but ABI passes as f64 in some contexts.
+    f64::NAN
+}
+
+/// `__strtof128_nan` — parse NaN payload for __float128.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __strtof128_nan(
+    _tagb: *const c_char,
+    _endptr: *mut *mut c_char,
+    _tag_len: SizeT,
+) -> f64 {
+    // __float128 NaN — return regular NaN for ABI compat.
+    f64::NAN
+}
+
+// ---------------------------------------------------------------------------
+// NPTL internals (thread debugging interface)
+// ---------------------------------------------------------------------------
+
+/// `__nptl_version` — NPTL version string.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub static __nptl_version: [u8; 6] = *b"2.39\0\0";
+
+/// `__nptl_nthreads` — number of active threads.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub static mut __nptl_nthreads: c_int = 1;
+
+/// `__nptl_last_event` — pointer to last thread event.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub static mut __nptl_last_event: *mut c_void = std::ptr::null_mut();
+
+/// `__nptl_threads_events` — thread event mask.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub static mut __nptl_threads_events: c_ulong = 0;
+
+/// `__nptl_rtld_global` — pointer to rtld_global (for thread debugging).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub static mut __nptl_rtld_global: *mut c_void = std::ptr::null_mut();
+
+/// `__nptl_create_event` — thread creation event hook (GDB sets breakpoint here).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __nptl_create_event() {}
+
+/// `__nptl_death_event` — thread death event hook (GDB sets breakpoint here).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __nptl_death_event() {}
+
+/// `__pthread_keys` — internal pthread key table (data symbol, not function).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub static mut __pthread_keys: [u8; 1024] = [0u8; 1024];
+
+// ---------------------------------------------------------------------------
+// Low-level locking primitives (futex-based)
+// ---------------------------------------------------------------------------
+
+/// `__lll_lock_wait_private` — futex wait for private lock.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __lll_lock_wait_private(futex: *mut c_int, private: c_int) {
+    let _ = private;
+    // FUTEX_WAIT_PRIVATE: wait while *futex == 2 (contended)
+    loop {
+        unsafe {
+            libc::syscall(
+                libc::SYS_futex,
+                futex,
+                libc::FUTEX_WAIT | libc::FUTEX_PRIVATE_FLAG,
+                2,
+                std::ptr::null::<c_void>(),
+            );
+        }
+        // Try to acquire: if we can swap 0->2, we got the lock
+        let ptr = futex as *mut std::sync::atomic::AtomicI32;
+        if unsafe { (*ptr).compare_exchange(0, 2, std::sync::atomic::Ordering::Acquire, std::sync::atomic::Ordering::Relaxed).is_ok() } {
+            return;
+        }
+    }
+}
+
+/// `__lll_lock_wake_private` — futex wake for private lock.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __lll_lock_wake_private(futex: *mut c_int, private: c_int) {
+    let _ = private;
+    unsafe {
+        libc::syscall(
+            libc::SYS_futex,
+            futex,
+            libc::FUTEX_WAKE | libc::FUTEX_PRIVATE_FLAG,
+            1,
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// gconv (iconv internals) — GLIBC_PRIVATE, delegate to host
+// ---------------------------------------------------------------------------
+
+/// `__gconv_open` — open a gconv conversion descriptor.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __gconv_open(
+    toset: *const c_char,
+    fromset: *const c_char,
+    handle: *mut *mut c_void,
+    _flags: c_int,
+) -> c_int {
+    type F = unsafe extern "C" fn(*const c_char, *const c_char, *mut *mut c_void, c_int) -> c_int;
+    let sym = unsafe { libc::dlsym(libc::RTLD_NEXT, c"__gconv_open".as_ptr()) };
+    if sym.is_null() {
+        return -1; // GCONV_NOCONV
+    }
+    let f: F = unsafe { std::mem::transmute(sym) };
+    unsafe { f(toset, fromset, handle, _flags) }
+}
+
+/// `__gconv_create_spec` — create conversion spec. GLIBC_PRIVATE.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __gconv_create_spec(spec: *mut c_void) -> c_int {
+    type F = unsafe extern "C" fn(*mut c_void) -> c_int;
+    let sym = unsafe { libc::dlsym(libc::RTLD_NEXT, c"__gconv_create_spec".as_ptr()) };
+    if sym.is_null() { return -1; }
+    let f: F = unsafe { std::mem::transmute(sym) };
+    unsafe { f(spec) }
+}
+
+/// `__gconv_destroy_spec` — destroy conversion spec. GLIBC_PRIVATE.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __gconv_destroy_spec(spec: *mut c_void) {
+    type F = unsafe extern "C" fn(*mut c_void);
+    let sym = unsafe { libc::dlsym(libc::RTLD_NEXT, c"__gconv_destroy_spec".as_ptr()) };
+    if !sym.is_null() {
+        let f: F = unsafe { std::mem::transmute(sym) };
+        unsafe { f(spec) };
+    }
+}
+
+/// `__gconv_get_alias_db` — get alias database. GLIBC_PRIVATE.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __gconv_get_alias_db() -> *mut c_void {
+    type F = unsafe extern "C" fn() -> *mut c_void;
+    let sym = unsafe { libc::dlsym(libc::RTLD_NEXT, c"__gconv_get_alias_db".as_ptr()) };
+    if sym.is_null() { return std::ptr::null_mut(); }
+    let f: F = unsafe { std::mem::transmute(sym) };
+    unsafe { f() }
+}
+
+/// `__gconv_get_cache` — get gconv cache. GLIBC_PRIVATE.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __gconv_get_cache() -> *mut c_void {
+    type F = unsafe extern "C" fn() -> *mut c_void;
+    let sym = unsafe { libc::dlsym(libc::RTLD_NEXT, c"__gconv_get_cache".as_ptr()) };
+    if sym.is_null() { return std::ptr::null_mut(); }
+    let f: F = unsafe { std::mem::transmute(sym) };
+    unsafe { f() }
+}
+
+/// `__gconv_get_modules_db` — get modules database. GLIBC_PRIVATE.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __gconv_get_modules_db() -> *mut c_void {
+    type F = unsafe extern "C" fn() -> *mut c_void;
+    let sym = unsafe { libc::dlsym(libc::RTLD_NEXT, c"__gconv_get_modules_db".as_ptr()) };
+    if sym.is_null() { return std::ptr::null_mut(); }
+    let f: F = unsafe { std::mem::transmute(sym) };
+    unsafe { f() }
+}
+
+/// `__gconv_transliterate` — transliterate a character. GLIBC_PRIVATE.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __gconv_transliterate(
+    step: *mut c_void,
+    step_data: *mut c_void,
+    input: *const c_void,
+    inend: *const c_void,
+    output: *mut *mut c_void,
+    outend: *const c_void,
+) -> c_int {
+    type F = unsafe extern "C" fn(*mut c_void, *mut c_void, *const c_void, *const c_void, *mut *mut c_void, *const c_void) -> c_int;
+    let sym = unsafe { libc::dlsym(libc::RTLD_NEXT, c"__gconv_transliterate".as_ptr()) };
+    if sym.is_null() { return -1; }
+    let f: F = unsafe { std::mem::transmute(sym) };
+    unsafe { f(step, step_data, input, inend, output, outend) }
+}
+
+// ---------------------------------------------------------------------------
+// Resolver context internals — GLIBC_PRIVATE
+// ---------------------------------------------------------------------------
+
+/// `__resolv_context_get` — get resolver context.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __resolv_context_get() -> *mut c_void {
+    type F = unsafe extern "C" fn() -> *mut c_void;
+    let sym = unsafe { libc::dlsym(libc::RTLD_NEXT, c"__resolv_context_get".as_ptr()) };
+    if sym.is_null() { return std::ptr::null_mut(); }
+    let f: F = unsafe { std::mem::transmute(sym) };
+    unsafe { f() }
+}
+
+/// `__resolv_context_get_override` — get resolver context with override.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __resolv_context_get_override(statp: *mut c_void) -> *mut c_void {
+    type F = unsafe extern "C" fn(*mut c_void) -> *mut c_void;
+    let sym = unsafe { libc::dlsym(libc::RTLD_NEXT, c"__resolv_context_get_override".as_ptr()) };
+    if sym.is_null() { return std::ptr::null_mut(); }
+    let f: F = unsafe { std::mem::transmute(sym) };
+    unsafe { f(statp) }
+}
+
+/// `__resolv_context_get_preinit` — get resolver pre-init context.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __resolv_context_get_preinit() -> *mut c_void {
+    type F = unsafe extern "C" fn() -> *mut c_void;
+    let sym = unsafe { libc::dlsym(libc::RTLD_NEXT, c"__resolv_context_get_preinit".as_ptr()) };
+    if sym.is_null() { return std::ptr::null_mut(); }
+    let f: F = unsafe { std::mem::transmute(sym) };
+    unsafe { f() }
+}
+
+/// `__resolv_context_put` — release resolver context.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __resolv_context_put(ctx: *mut c_void) {
+    type F = unsafe extern "C" fn(*mut c_void);
+    let sym = unsafe { libc::dlsym(libc::RTLD_NEXT, c"__resolv_context_put".as_ptr()) };
+    if !sym.is_null() {
+        let f: F = unsafe { std::mem::transmute(sym) };
+        unsafe { f(ctx) };
+    }
+}
+
+/// `__resp` — pointer to per-thread resolver state.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub static mut __resp: *mut c_void = std::ptr::null_mut();
+
+// ---------------------------------------------------------------------------
+// IDNA internals — GLIBC_PRIVATE
+// ---------------------------------------------------------------------------
+
+/// `__idna_to_dns_encoding` — encode hostname to DNS wire format.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __idna_to_dns_encoding(
+    name: *const c_char,
+    result: *mut *mut c_char,
+) -> c_int {
+    type F = unsafe extern "C" fn(*const c_char, *mut *mut c_char) -> c_int;
+    let sym = unsafe { libc::dlsym(libc::RTLD_NEXT, c"__idna_to_dns_encoding".as_ptr()) };
+    if sym.is_null() { return libc::EAI_FAIL; }
+    let f: F = unsafe { std::mem::transmute(sym) };
+    unsafe { f(name, result) }
+}
+
+/// `__idna_from_dns_encoding` — decode hostname from DNS wire format.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __idna_from_dns_encoding(
+    name: *const c_char,
+    result: *mut *mut c_char,
+) -> c_int {
+    type F = unsafe extern "C" fn(*const c_char, *mut *mut c_char) -> c_int;
+    let sym = unsafe { libc::dlsym(libc::RTLD_NEXT, c"__idna_from_dns_encoding".as_ptr()) };
+    if sym.is_null() { return libc::EAI_FAIL; }
+    let f: F = unsafe { std::mem::transmute(sym) };
+    unsafe { f(name, result) }
+}
+
+// ---------------------------------------------------------------------------
+// ns_name DNS name handling — delegate to host libresolv
+// ---------------------------------------------------------------------------
+
+/// `__ns_name_ntop` — convert network DNS name to presentation.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __ns_name_ntop(
+    src: *const u8,
+    dst: *mut c_char,
+    dstsiz: SizeT,
+) -> c_int {
+    type F = unsafe extern "C" fn(*const u8, *mut c_char, SizeT) -> c_int;
+    let sym = unsafe { libc::dlsym(libc::RTLD_NEXT, c"ns_name_ntop".as_ptr()) };
+    if sym.is_null() { return -1; }
+    let f: F = unsafe { std::mem::transmute(sym) };
+    unsafe { f(src, dst, dstsiz) }
+}
+
+/// `__ns_name_pton` — convert presentation DNS name to network.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __ns_name_pton(
+    src: *const c_char,
+    dst: *mut u8,
+    dstsiz: SizeT,
+) -> c_int {
+    type F = unsafe extern "C" fn(*const c_char, *mut u8, SizeT) -> c_int;
+    let sym = unsafe { libc::dlsym(libc::RTLD_NEXT, c"ns_name_pton".as_ptr()) };
+    if sym.is_null() { return -1; }
+    let f: F = unsafe { std::mem::transmute(sym) };
+    unsafe { f(src, dst, dstsiz) }
+}
+
+/// `__ns_name_unpack` — unpack compressed DNS name.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __ns_name_unpack(
+    msg: *const u8,
+    eom: *const u8,
+    src: *const u8,
+    dst: *mut u8,
+    dstsiz: SizeT,
+) -> c_int {
+    type F = unsafe extern "C" fn(*const u8, *const u8, *const u8, *mut u8, SizeT) -> c_int;
+    let sym = unsafe { libc::dlsym(libc::RTLD_NEXT, c"ns_name_unpack".as_ptr()) };
+    if sym.is_null() { return -1; }
+    let f: F = unsafe { std::mem::transmute(sym) };
+    unsafe { f(msg, eom, src, dst, dstsiz) }
+}
+
+/// `__ns_name_pack` — pack DNS name with compression.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __ns_name_pack(
+    src: *const u8,
+    dst: *mut u8,
+    dstsiz: c_int,
+    dnptrs: *mut *const u8,
+    lastdnptr: *const *const u8,
+) -> c_int {
+    type F = unsafe extern "C" fn(*const u8, *mut u8, c_int, *mut *const u8, *const *const u8) -> c_int;
+    let sym = unsafe { libc::dlsym(libc::RTLD_NEXT, c"ns_name_pack".as_ptr()) };
+    if sym.is_null() { return -1; }
+    let f: F = unsafe { std::mem::transmute(sym) };
+    unsafe { f(src, dst, dstsiz, dnptrs, lastdnptr) }
+}
+
+/// `__ns_name_uncompress` — uncompress DNS name (wrapper around unpack+ntop).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __ns_name_uncompress(
+    msg: *const u8,
+    eom: *const u8,
+    src: *const u8,
+    dst: *mut c_char,
+    dstsiz: SizeT,
+) -> c_int {
+    type F = unsafe extern "C" fn(*const u8, *const u8, *const u8, *mut c_char, SizeT) -> c_int;
+    let sym = unsafe { libc::dlsym(libc::RTLD_NEXT, c"ns_name_uncompress".as_ptr()) };
+    if sym.is_null() { return -1; }
+    let f: F = unsafe { std::mem::transmute(sym) };
+    unsafe { f(msg, eom, src, dst, dstsiz) }
+}
+
+/// `__ns_name_compress` — compress DNS name.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __ns_name_compress(
+    src: *const c_char,
+    dst: *mut u8,
+    dstsiz: SizeT,
+    dnptrs: *mut *const u8,
+    lastdnptr: *const *const u8,
+) -> c_int {
+    type F = unsafe extern "C" fn(*const c_char, *mut u8, SizeT, *mut *const u8, *const *const u8) -> c_int;
+    let sym = unsafe { libc::dlsym(libc::RTLD_NEXT, c"ns_name_compress".as_ptr()) };
+    if sym.is_null() { return -1; }
+    let f: F = unsafe { std::mem::transmute(sym) };
+    unsafe { f(src, dst, dstsiz, dnptrs, lastdnptr) }
+}
+
+/// `__ns_name_skip` — skip over a compressed DNS name.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __ns_name_skip(
+    ptrptr: *mut *const u8,
+    eom: *const u8,
+) -> c_int {
+    type F = unsafe extern "C" fn(*mut *const u8, *const u8) -> c_int;
+    let sym = unsafe { libc::dlsym(libc::RTLD_NEXT, c"ns_name_skip".as_ptr()) };
+    if sym.is_null() { return -1; }
+    let f: F = unsafe { std::mem::transmute(sym) };
+    unsafe { f(ptrptr, eom) }
+}
+
+// ---------------------------------------------------------------------------
+// File change detection — GLIBC_PRIVATE
+// ---------------------------------------------------------------------------
+
+/// `__file_change_detection_for_path` — detect file changes by path.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __file_change_detection_for_path(
+    result: *mut c_void,
+    path: *const c_char,
+) -> c_int {
+    type F = unsafe extern "C" fn(*mut c_void, *const c_char) -> c_int;
+    let sym = unsafe { libc::dlsym(libc::RTLD_NEXT, c"__file_change_detection_for_path".as_ptr()) };
+    if sym.is_null() { return 0; }
+    let f: F = unsafe { std::mem::transmute(sym) };
+    unsafe { f(result, path) }
+}
+
+/// `__file_change_detection_for_fp` — detect file changes for FILE*.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __file_change_detection_for_fp(
+    result: *mut c_void,
+    fp: *mut c_void,
+) -> c_int {
+    type F = unsafe extern "C" fn(*mut c_void, *mut c_void) -> c_int;
+    let sym = unsafe { libc::dlsym(libc::RTLD_NEXT, c"__file_change_detection_for_fp".as_ptr()) };
+    if sym.is_null() { return 0; }
+    let f: F = unsafe { std::mem::transmute(sym) };
+    unsafe { f(result, fp) }
+}
+
+/// `__file_change_detection_for_stat` — detect file changes from stat.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __file_change_detection_for_stat(
+    result: *mut c_void,
+    st: *const c_void,
+) -> c_int {
+    type F = unsafe extern "C" fn(*mut c_void, *const c_void) -> c_int;
+    let sym = unsafe { libc::dlsym(libc::RTLD_NEXT, c"__file_change_detection_for_stat".as_ptr()) };
+    if sym.is_null() { return 0; }
+    let f: F = unsafe { std::mem::transmute(sym) };
+    unsafe { f(result, st) }
+}
+
+/// `__file_is_unchanged` — check if file changed since last detection.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __file_is_unchanged(
+    prev: *const c_void,
+    curr: *const c_void,
+) -> c_int {
+    type F = unsafe extern "C" fn(*const c_void, *const c_void) -> c_int;
+    let sym = unsafe { libc::dlsym(libc::RTLD_NEXT, c"__file_is_unchanged".as_ptr()) };
+    if sym.is_null() { return 1; /* assume unchanged */ }
+    let f: F = unsafe { std::mem::transmute(sym) };
+    unsafe { f(prev, curr) }
+}
+
+// ---------------------------------------------------------------------------
+// Misc internals
+// ---------------------------------------------------------------------------
+
+/// `__ctype_init` — initialize ctype tables for current locale.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __ctype_init() {
+    // No-op: our ctype tables are statically initialized.
+}
+
+/// `__call_tls_dtors` — call TLS destructors.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __call_tls_dtors() {
+    // Delegate to host glibc's TLS destructor mechanism.
+    type F = unsafe extern "C" fn();
+    let sym = unsafe { libc::dlsym(libc::RTLD_NEXT, c"__call_tls_dtors".as_ptr()) };
+    if !sym.is_null() {
+        let f: F = unsafe { std::mem::transmute(sym) };
+        unsafe { f() };
+    }
+}
+
+/// `__abort_msg` — pointer to abort message (data symbol).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub static mut __abort_msg: *mut c_char = std::ptr::null_mut();
+
+/// `__copy_grp` — copy group entry. GLIBC_PRIVATE.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __copy_grp(
+    dest: *mut c_void,
+    src: *const c_void,
+    buf: *mut c_char,
+    buflen: SizeT,
+    result: *mut *mut c_void,
+) -> c_int {
+    type F = unsafe extern "C" fn(*mut c_void, *const c_void, *mut c_char, SizeT, *mut *mut c_void) -> c_int;
+    let sym = unsafe { libc::dlsym(libc::RTLD_NEXT, c"__copy_grp".as_ptr()) };
+    if sym.is_null() { return libc::ENOSYS; }
+    let f: F = unsafe { std::mem::transmute(sym) };
+    unsafe { f(dest, src, buf, buflen, result) }
+}
+
+/// `__merge_grp` — merge group entries. GLIBC_PRIVATE.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __merge_grp(
+    dest: *mut c_void,
+    src: *const c_void,
+    buf: *mut c_char,
+    buflen: SizeT,
+    result: *mut *mut c_void,
+) -> c_int {
+    type F = unsafe extern "C" fn(*mut c_void, *const c_void, *mut c_char, SizeT, *mut *mut c_void) -> c_int;
+    let sym = unsafe { libc::dlsym(libc::RTLD_NEXT, c"__merge_grp".as_ptr()) };
+    if sym.is_null() { return libc::ENOSYS; }
+    let f: F = unsafe { std::mem::transmute(sym) };
+    unsafe { f(dest, src, buf, buflen, result) }
+}
+
+/// `__shm_get_name` — construct POSIX shared memory path.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __shm_get_name(
+    buf: *mut c_void,
+    buflen: SizeT,
+    name: *const c_char,
+) -> c_int {
+    type F = unsafe extern "C" fn(*mut c_void, SizeT, *const c_char) -> c_int;
+    let sym = unsafe { libc::dlsym(libc::RTLD_NEXT, c"__shm_get_name".as_ptr()) };
+    if sym.is_null() { return libc::ENOSYS; }
+    let f: F = unsafe { std::mem::transmute(sym) };
+    unsafe { f(buf, buflen, name) }
+}
+
+/// `__netlink_assert_response` — assert valid netlink response. GLIBC_PRIVATE.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __netlink_assert_response(fd: c_int, ssize: SSizeT) {
+    let _ = (fd, ssize);
+    // No-op: netlink response assertion used internally by glibc's NSS.
+}
+
+/// `_IO_enable_locks` — enable FILE stream locking. Exported by glibc for compat.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn _IO_enable_locks() {
+    // No-op: our FILE operations are always thread-safe.
+}
+
+/// `errno` — thread-local errno location (symbol, not function).
+/// Programs may reference `errno` as a global symbol. We point to the
+/// glibc thread-local errno via __errno_location().
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn errno() -> *mut c_int {
+    unsafe { libc::__errno_location() }
+}
+
 // xprt_register: SVC transport registration — no-op (RPC transport handled by rpc_abi)
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn xprt_register(_xprt: *mut c_void) {}
