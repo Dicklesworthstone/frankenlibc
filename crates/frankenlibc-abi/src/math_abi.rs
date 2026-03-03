@@ -2744,9 +2744,9 @@ pub unsafe extern "C" fn logp1f64x(x: f64) -> f64 { unsafe { logp1(x) } }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn logp1f128(x: f64) -> f64 { unsafe { logp1(x) } }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn log2p1(x: f64) -> f64 { frankenlibc_core::math::log2(1.0 + x) }
+pub unsafe extern "C" fn log2p1(x: f64) -> f64 { let r = unsafe { log1p(x) }; r / std::f64::consts::LN_2 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn log2p1f(x: f32) -> f32 { frankenlibc_core::math::log2f(1.0f32 + x) }
+pub unsafe extern "C" fn log2p1f(x: f32) -> f32 { let r = unsafe { log1pf(x) }; r / std::f32::consts::LN_2 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn log2p1l(x: f64) -> f64 { unsafe { log2p1(x) } }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -2760,9 +2760,9 @@ pub unsafe extern "C" fn log2p1f64x(x: f64) -> f64 { unsafe { log2p1(x) } }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn log2p1f128(x: f64) -> f64 { unsafe { log2p1(x) } }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn log10p1(x: f64) -> f64 { frankenlibc_core::math::log10(1.0 + x) }
+pub unsafe extern "C" fn log10p1(x: f64) -> f64 { let r = unsafe { log1p(x) }; r / std::f64::consts::LN_10 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn log10p1f(x: f32) -> f32 { frankenlibc_core::math::log10f(1.0f32 + x) }
+pub unsafe extern "C" fn log10p1f(x: f32) -> f32 { let r = unsafe { log1pf(x) }; r / std::f32::consts::LN_10 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn log10p1l(x: f64) -> f64 { unsafe { log10p1(x) } }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -2778,9 +2778,9 @@ pub unsafe extern "C" fn log10p1f128(x: f64) -> f64 { unsafe { log10p1(x) } }
 
 // --- exp2m1, exp10m1 (C23) ---
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn exp2m1(x: f64) -> f64 { frankenlibc_core::math::exp2(x) - 1.0 }
+pub unsafe extern "C" fn exp2m1(x: f64) -> f64 { unsafe { expm1(x * std::f64::consts::LN_2) } }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn exp2m1f(x: f32) -> f32 { frankenlibc_core::math::exp2f(x) - 1.0f32 }
+pub unsafe extern "C" fn exp2m1f(x: f32) -> f32 { unsafe { expm1f(x * std::f32::consts::LN_2) } }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn exp2m1l(x: f64) -> f64 { unsafe { exp2m1(x) } }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -2794,9 +2794,9 @@ pub unsafe extern "C" fn exp2m1f64x(x: f64) -> f64 { unsafe { exp2m1(x) } }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn exp2m1f128(x: f64) -> f64 { unsafe { exp2m1(x) } }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn exp10m1(x: f64) -> f64 { let r = unsafe { exp10(x) }; r - 1.0 }
+pub unsafe extern "C" fn exp10m1(x: f64) -> f64 { unsafe { expm1(x * std::f64::consts::LN_10) } }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn exp10m1f(x: f32) -> f32 { let r = unsafe { exp10f(x) }; r - 1.0f32 }
+pub unsafe extern "C" fn exp10m1f(x: f32) -> f32 { unsafe { expm1f(x * std::f32::consts::LN_10) } }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn exp10m1l(x: f64) -> f64 { unsafe { exp10m1(x) } }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -2866,9 +2866,9 @@ pub unsafe extern "C" fn powrf128(x: f64, y: f64) -> f64 { unsafe { powr(x, y) }
 
 // --- rootn (nth root) ---
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn rootn(x: f64, n: i64) -> f64 { frankenlibc_core::math::pow(x, 1.0 / n as f64) }
+pub unsafe extern "C" fn rootn(x: f64, n: i64) -> f64 { if n == 0 { return f64::NAN; } frankenlibc_core::math::pow(x, 1.0 / n as f64) }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn rootnf(x: f32, n: i64) -> f32 { frankenlibc_core::math::powf(x, 1.0f32 / n as f32) }
+pub unsafe extern "C" fn rootnf(x: f32, n: i64) -> f32 { if n == 0 { return f32::NAN; } frankenlibc_core::math::powf(x, 1.0f32 / n as f32) }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn rootnl(x: f64, n: i64) -> f64 { unsafe { rootn(x, n) } }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -2944,8 +2944,11 @@ fn totalorder_impl(x: *const f64, y: *const f64) -> c_int {
     let b = unsafe { *y };
     let ai = a.to_bits() as i64;
     let bi = b.to_bits() as i64;
-    let a_tc = if ai < 0 { !ai } else { ai ^ (1i64 << 63) };
-    let b_tc = if bi < 0 { !bi } else { bi ^ (1i64 << 63) };
+    // Convert sign-magnitude to monotonic ordering:
+    // negative floats: flip magnitude bits (preserves sign, reverses magnitude order)
+    // positive floats: leave as-is (already monotonically ordered)
+    let a_tc = if ai < 0 { ai ^ i64::MAX } else { ai };
+    let b_tc = if bi < 0 { bi ^ i64::MAX } else { bi };
     if a_tc <= b_tc { 1 } else { 0 }
 }
 fn totalorderf_impl(x: *const f32, y: *const f32) -> c_int {
@@ -2953,8 +2956,8 @@ fn totalorderf_impl(x: *const f32, y: *const f32) -> c_int {
     let b = unsafe { *y };
     let ai = a.to_bits() as i32;
     let bi = b.to_bits() as i32;
-    let a_tc = if ai < 0 { !ai } else { ai ^ (1i32 << 31) };
-    let b_tc = if bi < 0 { !bi } else { bi ^ (1i32 << 31) };
+    let a_tc = if ai < 0 { ai ^ i32::MAX } else { ai };
+    let b_tc = if bi < 0 { bi ^ i32::MAX } else { bi };
     if a_tc <= b_tc { 1 } else { 0 }
 }
 fn totalordermag_impl(x: *const f64, y: *const f64) -> c_int {
