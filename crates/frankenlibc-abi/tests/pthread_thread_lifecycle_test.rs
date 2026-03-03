@@ -1,11 +1,12 @@
 #![cfg(target_os = "linux")]
 
-use std::ffi::c_void;
+use std::ffi::{CStr, CString, c_void};
 use std::sync::Mutex;
+use std::time::Duration;
 
 use frankenlibc_abi::pthread_abi::{
-    pthread_create, pthread_detach, pthread_equal, pthread_join, pthread_self,
-    pthread_threading_force_native_for_tests,
+    pthread_create, pthread_detach, pthread_equal, pthread_getname_np, pthread_join, pthread_self,
+    pthread_setname_np, pthread_threading_force_native_for_tests,
 };
 
 static TEST_GUARD: Mutex<()> = Mutex::new(());
@@ -31,6 +32,11 @@ unsafe extern "C" fn start_self_join_errno(_arg: *mut c_void) -> *mut c_void {
     // SAFETY: self_tid is a valid pthread_t for this thread; null retval is allowed.
     let rc = unsafe { pthread_join(self_tid, std::ptr::null_mut()) };
     rc as usize as *mut c_void
+}
+
+unsafe extern "C" fn start_name_test_window(_arg: *mut c_void) -> *mut c_void {
+    std::thread::sleep(Duration::from_millis(250));
+    std::ptr::null_mut()
 }
 
 fn env_usize(var: &str, default: usize, max: usize) -> usize {
@@ -303,4 +309,97 @@ fn pthread_detach_join_esrch_stress() {
 fn pthread_detach_join_esrch_long_stress_profile() {
     let _guard = lock_and_force_native();
     run_detach_join_esrch_iters(128);
+}
+
+#[test]
+fn pthread_setname_getname_self_roundtrip() {
+    let _guard = lock_and_force_native();
+
+    let self_id = unsafe { pthread_self() };
+    let mut original = [0 as libc::c_char; 16];
+    let original_rc = unsafe { pthread_getname_np(self_id, original.as_mut_ptr(), original.len()) };
+    assert_eq!(
+        original_rc, 0,
+        "initial pthread_getname_np failed rc={original_rc}"
+    );
+
+    let desired = CString::new("flc-self").expect("valid name");
+    let set_rc = unsafe { pthread_setname_np(self_id, desired.as_ptr()) };
+    assert_eq!(set_rc, 0, "pthread_setname_np(self) failed rc={set_rc}");
+
+    let mut got = [0 as libc::c_char; 16];
+    let get_rc = unsafe { pthread_getname_np(self_id, got.as_mut_ptr(), got.len()) };
+    assert_eq!(get_rc, 0, "pthread_getname_np(self) failed rc={get_rc}");
+    let got_name = unsafe { CStr::from_ptr(got.as_ptr()) }
+        .to_str()
+        .expect("thread name should be UTF-8");
+    assert_eq!(got_name, "flc-self");
+
+    let restore_rc = unsafe { pthread_setname_np(self_id, original.as_ptr()) };
+    assert_eq!(
+        restore_rc, 0,
+        "restoring original thread name failed rc={restore_rc}"
+    );
+}
+
+#[test]
+fn pthread_setname_getname_other_thread_roundtrip() {
+    let _guard = lock_and_force_native();
+
+    let mut tid: libc::pthread_t = 0;
+    let create_rc = unsafe {
+        pthread_create(
+            &mut tid as *mut libc::pthread_t,
+            std::ptr::null(),
+            Some(start_name_test_window),
+            std::ptr::null_mut(),
+        )
+    };
+    assert_eq!(
+        create_rc, 0,
+        "pthread_create for setname/getname test failed rc={create_rc}"
+    );
+
+    // Give the child a brief window to enter its sleep period.
+    std::thread::sleep(Duration::from_millis(10));
+
+    let desired = CString::new("flc-child").expect("valid child name");
+    let set_rc = unsafe { pthread_setname_np(tid, desired.as_ptr()) };
+    assert_eq!(set_rc, 0, "pthread_setname_np(other) failed rc={set_rc}");
+
+    let mut got = [0 as libc::c_char; 16];
+    let get_rc = unsafe { pthread_getname_np(tid, got.as_mut_ptr(), got.len()) };
+    assert_eq!(get_rc, 0, "pthread_getname_np(other) failed rc={get_rc}");
+    let got_name = unsafe { CStr::from_ptr(got.as_ptr()) }
+        .to_str()
+        .expect("thread name should be UTF-8");
+    assert_eq!(got_name, "flc-child");
+
+    let join_rc = unsafe { pthread_join(tid, std::ptr::null_mut()) };
+    assert_eq!(
+        join_rc, 0,
+        "pthread_join(name-test thread) failed rc={join_rc}"
+    );
+}
+
+#[test]
+fn pthread_setname_getname_unknown_thread_return_esrch() {
+    let _guard = lock_and_force_native();
+    let unknown = 0x7fff_ffff as libc::pthread_t;
+
+    let desired = CString::new("flc-ghost").expect("valid name");
+    let set_rc = unsafe { pthread_setname_np(unknown, desired.as_ptr()) };
+    assert_eq!(
+        set_rc,
+        libc::ESRCH,
+        "unknown-thread pthread_setname_np should be ESRCH"
+    );
+
+    let mut got = [0 as libc::c_char; 16];
+    let get_rc = unsafe { pthread_getname_np(unknown, got.as_mut_ptr(), got.len()) };
+    assert_eq!(
+        get_rc,
+        libc::ESRCH,
+        "unknown-thread pthread_getname_np should be ESRCH"
+    );
 }

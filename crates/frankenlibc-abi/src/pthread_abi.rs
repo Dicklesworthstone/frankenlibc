@@ -8,6 +8,8 @@
 use std::cell::Cell;
 use std::collections::HashMap;
 use std::ffi::{CStr, c_int, c_void};
+use std::fs::OpenOptions;
+use std::io::{Read, Write};
 use std::sync::atomic::{AtomicI32, AtomicU32, AtomicU64, Ordering};
 use std::sync::{LazyLock, Mutex};
 
@@ -2921,15 +2923,75 @@ const PR_SET_NAME: c_int = 15;
 /// PR_GET_NAME = 16 (from linux/prctl.h)
 const PR_GET_NAME: c_int = 16;
 
+fn thread_name_error_from_io(err: &std::io::Error) -> c_int {
+    match err.raw_os_error() {
+        Some(code) if code == libc::ENOENT => libc::ESRCH,
+        Some(code) => code,
+        None => match err.kind() {
+            std::io::ErrorKind::NotFound => libc::ESRCH,
+            std::io::ErrorKind::PermissionDenied => libc::EPERM,
+            _ => libc::EIO,
+        },
+    }
+}
+
+fn thread_comm_path(tid: i32) -> String {
+    format!("/proc/self/task/{tid}/comm")
+}
+
+fn set_other_thread_name_via_procfs(tid: i32, name: &CStr) -> c_int {
+    if tid <= 0 {
+        return libc::ESRCH;
+    }
+    let path = thread_comm_path(tid);
+    let mut file = match OpenOptions::new().write(true).open(&path) {
+        Ok(file) => file,
+        Err(err) => return thread_name_error_from_io(&err),
+    };
+    if let Err(err) = file.write_all(name.to_bytes()) {
+        return thread_name_error_from_io(&err);
+    }
+    0
+}
+
+fn get_other_thread_name_via_procfs(tid: i32, name: *mut std::ffi::c_char, len: usize) -> c_int {
+    if tid <= 0 {
+        return libc::ESRCH;
+    }
+    let path = thread_comm_path(tid);
+    let mut file = match OpenOptions::new().read(true).open(&path) {
+        Ok(file) => file,
+        Err(err) => return thread_name_error_from_io(&err),
+    };
+    let mut raw = [0_u8; 64];
+    let n = match file.read(&mut raw) {
+        Ok(n) => n,
+        Err(err) => return thread_name_error_from_io(&err),
+    };
+    if n == 0 {
+        return libc::ESRCH;
+    }
+    // `/proc/.../comm` returns "<name>\n". Strip trailing newline/NULs.
+    let mut end = n;
+    while end > 0 && (raw[end - 1] == b'\n' || raw[end - 1] == 0) {
+        end -= 1;
+    }
+    if end + 1 > len {
+        return libc::ERANGE;
+    }
+    // SAFETY: caller validated `name` and `len`; destination has room for payload + NUL.
+    unsafe {
+        std::ptr::copy_nonoverlapping(raw.as_ptr().cast::<std::ffi::c_char>(), name, end);
+        *name.add(end) = 0;
+    }
+    0
+}
+
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pthread_setname_np(
     _thread: libc::pthread_t,
     name: *const std::ffi::c_char,
 ) -> c_int {
-    if _thread != native_pthread_self() {
-        // We currently only support setting the calling thread's name via prctl.
-        return libc::ENOSYS;
-    }
     if name.is_null() {
         return libc::EINVAL;
     }
@@ -2938,9 +3000,21 @@ pub unsafe extern "C" fn pthread_setname_np(
     if name_cstr.to_bytes().len() > 15 {
         return libc::ERANGE;
     }
+    if _thread != native_pthread_self() {
+        let Some(tid) = resolve_thread_tid(_thread) else {
+            return libc::ESRCH;
+        };
+        return set_other_thread_name_via_procfs(tid, name_cstr);
+    }
     // SAFETY: prctl(PR_SET_NAME) sets the calling thread's name.
     let ret = unsafe { libc::syscall(libc::SYS_prctl, PR_SET_NAME, name) };
-    if ret == 0 { 0 } else { libc::EINVAL }
+    if ret == 0 {
+        0
+    } else {
+        std::io::Error::last_os_error()
+            .raw_os_error()
+            .unwrap_or(libc::EINVAL)
+    }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -2949,19 +3023,27 @@ pub unsafe extern "C" fn pthread_getname_np(
     name: *mut std::ffi::c_char,
     len: usize,
 ) -> c_int {
-    if _thread != native_pthread_self() {
-        // We currently only support getting the calling thread's name via prctl.
-        return libc::ENOSYS;
-    }
     if name.is_null() || len == 0 {
         return libc::EINVAL;
     }
     if len < 16 {
         return libc::ERANGE;
     }
+    if _thread != native_pthread_self() {
+        let Some(tid) = resolve_thread_tid(_thread) else {
+            return libc::ESRCH;
+        };
+        return get_other_thread_name_via_procfs(tid, name, len);
+    }
     // SAFETY: prctl(PR_GET_NAME) reads the calling thread's name into a buffer.
     let ret = unsafe { libc::syscall(libc::SYS_prctl, PR_GET_NAME, name) };
-    if ret == 0 { 0 } else { libc::EINVAL }
+    if ret == 0 {
+        0
+    } else {
+        std::io::Error::last_os_error()
+            .raw_os_error()
+            .unwrap_or(libc::EINVAL)
+    }
 }
 
 // ===========================================================================
