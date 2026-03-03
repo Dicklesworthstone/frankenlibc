@@ -527,6 +527,26 @@ This map is mandatory for architecture reviews: surface first, defect class seco
 Developer-facing rule:
 - every artifact above must compile to simple deterministic runtime logic (tables/guards/kernels), with alien math hidden in offline synthesis/proof pipelines.
 
+### 3.6 Partial Overlay Progression Contract (L1 -> L3)
+
+Lessons from LLVM libc overlay mode are codified as constraints for FrankenLibC progression:
+
+1. Packaging modes are explicit:
+- `L1` interpose path and `L2/L3` replacement path are distinct contract surfaces, with per-symbol applicability captured in machine-readable support matrix metadata.
+
+2. ABI-sensitive symbols are classified before promotion:
+- symbols dependent on implementation-private layouts (`FILE`, thread/runtime internals, loader-private state) require explicit replacement-closure evidence before L2/L3 promotion.
+
+3. Global-state semantics are mode-gated and audited:
+- errno, TLS finalization, and process-exit semantics must be declared and tested per mode (`strict`/`hardened`) and per packaging level (`L1` vs `L2/L3`).
+
+4. Header/layout discipline is enforced:
+- replacement-only type/layout assumptions are isolated behind explicit compile-time policy gates so interpose compatibility does not accidentally inherit replacement-specific ABI assumptions.
+
+5. Validation scope matches mode:
+- interpose validation runs are allowed to be subset-oriented but must publish coverage boundaries.
+- replacement validation requires full-family closure proofs for promoted surfaces.
+
 ## 4. Unsafe Policy
 
 Unsafe is allowed only for:

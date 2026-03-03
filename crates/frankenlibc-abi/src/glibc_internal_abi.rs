@@ -7041,47 +7041,42 @@ pub static mut h_errlist: [*mut c_char; 5] = [
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __libc_malloc(size: usize) -> *mut c_void {
-    crate::malloc_abi::malloc(size)
+    unsafe { crate::malloc_abi::malloc(size) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __libc_calloc(nmemb: usize, size: usize) -> *mut c_void {
-    crate::malloc_abi::calloc(nmemb, size)
+    unsafe { crate::malloc_abi::calloc(nmemb, size) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __libc_realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
-    crate::malloc_abi::realloc(ptr, size)
+    unsafe { crate::malloc_abi::realloc(ptr, size) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __libc_free(ptr: *mut c_void) {
-    crate::malloc_abi::free(ptr)
+    unsafe { crate::malloc_abi::free(ptr) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __libc_memalign(alignment: usize, size: usize) -> *mut c_void {
-    crate::malloc_abi::memalign(alignment, size)
+    unsafe { crate::malloc_abi::memalign(alignment, size) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __libc_valloc(size: usize) -> *mut c_void {
-    crate::malloc_abi::valloc(size)
+    unsafe { crate::malloc_abi::valloc(size) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __libc_pvalloc(size: usize) -> *mut c_void {
-    crate::malloc_abi::pvalloc(size)
+    unsafe { crate::malloc_abi::pvalloc(size) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __libc_reallocarray(ptr: *mut c_void, nmemb: usize, size: usize) -> *mut c_void {
-    crate::malloc_abi::reallocarray(ptr, nmemb, size)
-}
-
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __libc_mallinfo() -> crate::malloc_abi::MallinfoCompat {
-    unsafe { crate::malloc_abi::mallinfo() }
+    unsafe { crate::stdlib_abi::reallocarray(ptr, nmemb, size) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -7101,28 +7096,22 @@ pub unsafe extern "C" fn __libc_system(command: *const c_char) -> c_int {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __libc_pread(fd: c_int, buf: *mut c_void, count: usize, offset: i64) -> isize {
-    unsafe { crate::unistd_abi::pread(fd, buf, count, offset) }
+    unsafe { crate::unistd_abi::pread64(fd, buf, count, offset) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __libc_pwrite(fd: c_int, buf: *const c_void, count: usize, offset: i64) -> isize {
-    unsafe { crate::unistd_abi::pwrite(fd, buf, count, offset) }
+    unsafe { crate::unistd_abi::pwrite64(fd, buf, count, offset) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __libc_sigaction(signum: c_int, act: *const c_void, oldact: *mut c_void) -> c_int {
-    unsafe { crate::signal_abi::sigaction(signum, act, oldact) }
+    unsafe { crate::signal_abi::sigaction(signum, act.cast(), oldact.cast()) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __libc_secure_getenv(name: *const c_char) -> *mut c_char {
     unsafe { crate::stdlib_abi::secure_getenv(name) }
-}
-
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __libc_fcntl64(fd: c_int, cmd: c_int, arg: c_long) -> c_int {
-    // fcntl64 = fcntl on 64-bit systems
-    unsafe { crate::unistd_abi::fcntl(fd, cmd, arg) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -7139,36 +7128,25 @@ pub unsafe extern "C" fn __libc_msgsnd(
     unsafe { libc::syscall(libc::SYS_msgsnd, msqid as c_long, msgp as c_long, msgsz as c_long, msgflg as c_long) as c_int }
 }
 
-// RPC/resolver __libc_* aliases - delegate to host
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __libc_clntudp_bufcreate(
-    a: *mut c_void, b: c_ulong, c: c_ulong, d: c_void, e: c_uint, f: c_uint,
-) -> *mut c_void {
-    type F = unsafe extern "C" fn(*mut c_void, c_ulong, c_ulong, c_void, c_uint, c_uint) -> *mut c_void;
-    let sym = unsafe { libc::dlsym(libc::RTLD_NEXT, c"clntudp_bufcreate".as_ptr()) };
-    if sym.is_null() { return std::ptr::null_mut(); }
-    let f: F = unsafe { std::mem::transmute(sym) };
-    unsafe { f(a, b, c, d, e, f_val) }
-}
-
+// Resolver __libc_* aliases - forward to same-module functions
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __libc_dn_expand(
     msg: *const u8, eom: *const u8, comp_dn: *const u8, exp_dn: *mut c_char, length: c_int,
 ) -> c_int {
-    unsafe { crate::resolv_abi::dn_expand(msg, eom, comp_dn, exp_dn, length) }
+    unsafe { crate::unistd_abi::dn_expand(msg, eom, comp_dn, exp_dn, length) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __libc_dn_skipname(comp_dn: *const u8, eom: *const u8) -> c_int {
-    unsafe { crate::resolv_abi::dn_skipname(comp_dn, eom) }
+    unsafe { crate::unistd_abi::dn_skipname(comp_dn, eom) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __libc_res_dnok(dn: *const c_char) -> c_int {
-    unsafe { crate::resolv_abi::res_dnok(dn) }
+    unsafe { res_dnok(dn) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __libc_res_hnok(dn: *const c_char) -> c_int {
-    unsafe { crate::resolv_abi::res_hnok(dn) }
+    unsafe { res_hnok(dn) }
 }

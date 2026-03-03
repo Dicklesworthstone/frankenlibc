@@ -48,14 +48,36 @@
     {
       "id": "PO-03",
       "statement": "Deterministic Replay Theorem: same (mode, inputs, env snapshot) produces identical decisions and evidence.",
-      "status": "planned",
-      "owner": "bd-w2c3.6.1",
+      "status": "in_progress",
+      "owner": "bd-249m.3",
       "artifact_schema": "proof_obligation_record.v1",
       "verification_command": "bash scripts/check_e2e_suite.sh",
       "scope": {"modes": ["strict", "hardened"], "families": ["all"]},
-      "evidence_artifacts": ["tests/conformance/golden/fixture_verify_strict_hardened.v1.suite.json"],
-      "gates": ["scripts/check_e2e_suite.sh"],
-      "join_keys": ["gate=e2e_suite", "determinism=required"],
+      "evidence_artifacts": [
+        "tests/conformance/golden/fixture_verify_strict_hardened.v1.suite.json",
+        "docs/proofs/deterministic_replay.md",
+        "tests/conformance/proof_traceability_check.json"
+      ],
+      "gates": ["scripts/check_e2e_suite.sh", "scripts/check_proof_binder.sh"],
+      "join_keys": [
+        "mode=strict",
+        "mode=hardened",
+        "gate=e2e_suite",
+        "gate=proof_binder",
+        "determinism=required",
+        "bead=bd-249m.3"
+      ],
+      "source_refs": [
+        "crates/frankenlibc-membrane/src/config.rs:99",
+        "crates/frankenlibc-abi/src/runtime_policy.rs:266",
+        "crates/frankenlibc-abi/src/runtime_policy.rs:1234",
+        "crates/frankenlibc-membrane/src/runtime_math/mod.rs:6286",
+        "crates/frankenlibc-membrane/tests/runtime_math_dual_mode_e2e_test.rs:72",
+        "scripts/e2e_suite.sh:400",
+        "scripts/e2e_suite.sh:612",
+        "scripts/check_e2e_suite.sh:102",
+        "scripts/check_e2e_suite.sh:154"
+      ],
       "category": "determinism"
     },
     {
