@@ -4,6 +4,9 @@ MUTEX_BENCH mode=strict bench=lock_unlock samples=98 p50_ns_op=4.244 p95_ns_op=5
 MUTEX_BENCH mode=strict bench=try_lock samples=98 p50_ns_op=4.328 p95_ns_op=7.054 p99_ns_op=161.000 mean_ns_op=10.610 throughput_ops_s=229963471.045
 MUTEX_BENCH mode=hardened bench=lock_unlock samples=98 p50_ns_op=4.193 p95_ns_op=5.031 p99_ns_op=25.000 mean_ns_op=5.206 throughput_ops_s=238203869.875
 MUTEX_BENCH mode=hardened bench=try_lock samples=98 p50_ns_op=4.153 p95_ns_op=5.000 p99_ns_op=15.000 mean_ns_op=5.873 throughput_ops_s=238909310.773
+# Source: rch bench capture (2026-03-04) env FRANKENLIBC_MODE=<unset> cargo bench -p frankenlibc-bench --bench mutex_bench -- --noplot
+MUTEX_BENCH mode=raw bench=lock_unlock samples=97 p50_ns_op=4.171 p95_ns_op=7.500 p99_ns_op=41.728 mean_ns_op=5.655 throughput_ops_s=238155204.666
+MUTEX_BENCH mode=raw bench=try_lock samples=98 p50_ns_op=4.123 p95_ns_op=5.581 p99_ns_op=15.000 mean_ns_op=4.765 throughput_ops_s=240822539.675
 # Source: tests/conformance/thread_hotpath_optimization.v1.json baseline_captures.modes.*
 THREAD_CASE_BENCH mode=strict case=fanout_fanin_single samples=1 p50_ns_case=208994992 p95_ns_case=208994992 p99_ns_case=208994992 total_ops=2 throughput_ops_s=9.57
 THREAD_CASE_BENCH mode=strict case=create_join_churn samples=1 p50_ns_case=309426904 p95_ns_case=309426904 p99_ns_case=309426904 total_ops=4 throughput_ops_s=12.93
@@ -25,3 +28,10 @@ CONDVAR_BENCH mode=hardened bench=broadcast_no_waiters samples=77 p50_ns_op=5.34
 CONDVAR_BENCH mode=hardened bench=timedwait_past_deadline samples=66 p50_ns_op=9601.132 p95_ns_op=10696.000 p99_ns_op=11325.040 mean_ns_op=9751.153 throughput_ops_s=104053.818
 CONDVAR_BENCH mode=hardened bench=wait_signal_roundtrip samples=20 p50_ns_op=366.408 p95_ns_op=457.384 p99_ns_op=1054.338 mean_ns_op=402.261 throughput_ops_s=2485948.178
 CONDVAR_BENCH mode=hardened bench=broadcast_4_waiters samples=20 p50_ns_op=50265.000 p95_ns_op=153589.000 p99_ns_op=1801777.000 mean_ns_op=145327.100 throughput_ops_s=6881.029
+# Source: rch bench capture (2026-03-04) env FRANKENLIBC_MODE=<unset> cargo bench -p frankenlibc-bench --bench condvar_bench -- --noplot
+CONDVAR_BENCH mode=raw bench=init_destroy samples=78 p50_ns_op=2.879 p95_ns_op=4.508 p99_ns_op=20.000 mean_ns_op=4.149 throughput_ops_s=347933957.505
+CONDVAR_BENCH mode=raw bench=signal_no_waiters samples=78 p50_ns_op=1.931 p95_ns_op=5.000 p99_ns_op=15.000 mean_ns_op=4.882 throughput_ops_s=517302570.402
+CONDVAR_BENCH mode=raw bench=broadcast_no_waiters samples=78 p50_ns_op=1.920 p95_ns_op=3.125 p99_ns_op=15.000 mean_ns_op=2.976 throughput_ops_s=520406175.268
+CONDVAR_BENCH mode=raw bench=timedwait_past_deadline samples=67 p50_ns_op=7249.747 p95_ns_op=8903.721 p99_ns_op=9481.853 mean_ns_op=7490.303 throughput_ops_s=135906.824
+CONDVAR_BENCH mode=raw bench=wait_signal_roundtrip samples=20 p50_ns_op=1465.044 p95_ns_op=2265.500 p99_ns_op=2265.884 mean_ns_op=1533.890 throughput_ops_s=651937.231
+CONDVAR_BENCH mode=raw bench=broadcast_4_waiters samples=20 p50_ns_op=91912.000 p95_ns_op=124143.000 p99_ns_op=194394.000 mean_ns_op=90592.650 throughput_ops_s=11038.423
