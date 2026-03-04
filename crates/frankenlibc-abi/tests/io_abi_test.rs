@@ -1,10 +1,13 @@
 #![cfg(target_os = "linux")]
 
-//! Integration tests for POSIX I/O ABI entrypoints (dup, dup2, dup3, pipe, fcntl).
+//! Integration tests for POSIX I/O ABI entrypoints.
 
-use std::ffi::c_int;
+use std::ffi::{c_int, c_uint};
 
-use frankenlibc_abi::io_abi::{dup, dup2};
+use frankenlibc_abi::io_abi::{
+    copy_file_range, dup, dup2, dup3, fcntl, memfd_create, pipe, pipe2, pread, pwrite, readv,
+    sendfile, splice, writev,
+};
 use frankenlibc_abi::unistd_abi::close;
 
 // ---------------------------------------------------------------------------
@@ -14,10 +17,29 @@ use frankenlibc_abi::unistd_abi::close;
 fn temp_fd() -> c_int {
     // Create a pipe and return the read end (close write end)
     let mut fds = [0 as c_int; 2];
-    let rc = unsafe { frankenlibc_abi::io_abi::pipe(&mut fds as *mut c_int) };
+    let rc = unsafe { pipe(&mut fds as *mut c_int) };
     assert_eq!(rc, 0, "pipe() should succeed");
     unsafe { close(fds[1]) };
     fds[0]
+}
+
+/// Create a pipe pair and return (read_fd, write_fd).
+fn temp_pipe() -> (c_int, c_int) {
+    let mut fds = [0 as c_int; 2];
+    let rc = unsafe { pipe(&mut fds as *mut c_int) };
+    assert_eq!(rc, 0, "pipe() should succeed");
+    (fds[0], fds[1])
+}
+
+/// Create a memfd with some content, seek back to start, return fd.
+fn temp_memfd(content: &[u8]) -> c_int {
+    let name = b"test\0";
+    let fd = unsafe { memfd_create(name.as_ptr().cast(), 0 as c_uint) };
+    assert!(fd >= 0, "memfd_create should succeed");
+    let written = unsafe { libc::write(fd, content.as_ptr().cast(), content.len()) };
+    assert_eq!(written, content.len() as isize);
+    unsafe { libc::lseek(fd, 0, libc::SEEK_SET) };
+    fd
 }
 
 // ---------------------------------------------------------------------------
@@ -69,7 +91,6 @@ fn dup2_same_fd_is_noop() {
 
 #[test]
 fn dup3_with_cloexec() {
-    use frankenlibc_abi::io_abi::dup3;
     let fd = temp_fd();
     let target = 201;
     let rc = unsafe { dup3(fd, target, libc::O_CLOEXEC) };
@@ -84,7 +105,6 @@ fn dup3_with_cloexec() {
 
 #[test]
 fn pipe_creates_pair() {
-    use frankenlibc_abi::io_abi::pipe;
     let mut fds = [0 as c_int; 2];
     let rc = unsafe { pipe(&mut fds as *mut c_int) };
     assert_eq!(rc, 0, "pipe() should succeed");
@@ -108,7 +128,6 @@ fn pipe_creates_pair() {
 
 #[test]
 fn pipe2_cloexec() {
-    use frankenlibc_abi::io_abi::pipe2;
     let mut fds = [0 as c_int; 2];
     let rc = unsafe { pipe2(&mut fds as *mut c_int, libc::O_CLOEXEC) };
     assert_eq!(rc, 0, "pipe2 with O_CLOEXEC should succeed");
@@ -120,7 +139,6 @@ fn pipe2_cloexec() {
 
 #[test]
 fn pipe_null_fails() {
-    use frankenlibc_abi::io_abi::pipe;
     let rc = unsafe { pipe(std::ptr::null_mut()) };
     assert_eq!(rc, -1, "pipe(NULL) should fail");
 }
@@ -148,7 +166,6 @@ fn close_invalid_fd() {
 
 #[test]
 fn fcntl_getfd() {
-    use frankenlibc_abi::io_abi::fcntl;
     let fd = temp_fd();
     let flags = unsafe { fcntl(fd, libc::F_GETFD, 0) };
     assert!(flags >= 0, "fcntl F_GETFD should succeed");
@@ -157,7 +174,6 @@ fn fcntl_getfd() {
 
 #[test]
 fn fcntl_setfd_cloexec() {
-    use frankenlibc_abi::io_abi::fcntl;
     let fd = temp_fd();
     let rc = unsafe { fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC as libc::c_long) };
     assert_eq!(rc, 0, "fcntl F_SETFD should succeed");
@@ -169,9 +185,382 @@ fn fcntl_setfd_cloexec() {
 
 #[test]
 fn fcntl_getfl() {
-    use frankenlibc_abi::io_abi::fcntl;
     let fd = temp_fd();
     let flags = unsafe { fcntl(fd, libc::F_GETFL, 0) };
     assert!(flags >= 0, "fcntl F_GETFL should succeed");
+    unsafe { close(fd) };
+}
+
+#[test]
+fn fcntl_setfl_nonblock() {
+    let (rfd, wfd) = temp_pipe();
+    let rc = unsafe { fcntl(wfd, libc::F_SETFL, libc::O_NONBLOCK as libc::c_long) };
+    assert_eq!(rc, 0, "fcntl F_SETFL O_NONBLOCK should succeed");
+    let flags = unsafe { fcntl(wfd, libc::F_GETFL, 0) };
+    assert_ne!(flags & libc::O_NONBLOCK, 0, "O_NONBLOCK should be set");
+    unsafe { close(rfd) };
+    unsafe { close(wfd) };
+}
+
+#[test]
+fn fcntl_dupfd() {
+    let fd = temp_fd();
+    let new_fd = unsafe { fcntl(fd, libc::F_DUPFD, 100) };
+    assert!(new_fd >= 100, "F_DUPFD should return fd >= 100, got {new_fd}");
+    unsafe { close(new_fd) };
+    unsafe { close(fd) };
+}
+
+// ---------------------------------------------------------------------------
+// pread / pwrite
+// ---------------------------------------------------------------------------
+
+#[test]
+fn pwrite_and_pread_roundtrip() {
+    let fd = temp_memfd(b"");
+    let data = b"hello pread/pwrite";
+    let written = unsafe { pwrite(fd, data.as_ptr().cast(), data.len(), 0) };
+    assert_eq!(written, data.len() as isize);
+
+    let mut buf = [0u8; 32];
+    let read_n = unsafe { pread(fd, buf.as_mut_ptr().cast(), buf.len(), 0) };
+    assert_eq!(read_n, data.len() as isize);
+    assert_eq!(&buf[..data.len()], data);
+    unsafe { close(fd) };
+}
+
+#[test]
+fn pread_at_offset() {
+    let content = b"abcdefghij";
+    let fd = temp_memfd(content);
+
+    let mut buf = [0u8; 5];
+    let n = unsafe { pread(fd, buf.as_mut_ptr().cast(), 5, 3) };
+    assert_eq!(n, 5);
+    assert_eq!(&buf, b"defgh");
+    unsafe { close(fd) };
+}
+
+#[test]
+fn pwrite_at_offset() {
+    let fd = temp_memfd(b"0123456789");
+    let data = b"XYZ";
+    let n = unsafe { pwrite(fd, data.as_ptr().cast(), data.len(), 4) };
+    assert_eq!(n, 3);
+
+    let mut buf = [0u8; 10];
+    let n = unsafe { pread(fd, buf.as_mut_ptr().cast(), 10, 0) };
+    assert_eq!(n, 10);
+    assert_eq!(&buf, b"0123XYZ789");
+    unsafe { close(fd) };
+}
+
+#[test]
+fn pread_bad_fd() {
+    let mut buf = [0u8; 16];
+    let n = unsafe { pread(-1, buf.as_mut_ptr().cast(), buf.len(), 0) };
+    assert_eq!(n, -1, "pread on bad fd should return -1");
+}
+
+// ---------------------------------------------------------------------------
+// readv / writev
+// ---------------------------------------------------------------------------
+
+#[test]
+fn writev_and_readv_scatter_gather() {
+    let (rfd, wfd) = temp_pipe();
+
+    let buf1 = b"hello ";
+    let buf2 = b"world";
+    let iovs_w = [
+        libc::iovec {
+            iov_base: buf1.as_ptr() as *mut _,
+            iov_len: buf1.len(),
+        },
+        libc::iovec {
+            iov_base: buf2.as_ptr() as *mut _,
+            iov_len: buf2.len(),
+        },
+    ];
+    let written = unsafe { writev(wfd, iovs_w.as_ptr(), 2) };
+    assert_eq!(written, 11);
+
+    let mut rbuf1 = [0u8; 6];
+    let mut rbuf2 = [0u8; 5];
+    let iovs_r = [
+        libc::iovec {
+            iov_base: rbuf1.as_mut_ptr().cast(),
+            iov_len: rbuf1.len(),
+        },
+        libc::iovec {
+            iov_base: rbuf2.as_mut_ptr().cast(),
+            iov_len: rbuf2.len(),
+        },
+    ];
+    let read_n = unsafe { readv(rfd, iovs_r.as_ptr(), 2) };
+    assert_eq!(read_n, 11);
+    assert_eq!(&rbuf1, b"hello ");
+    assert_eq!(&rbuf2, b"world");
+
+    unsafe { close(rfd) };
+    unsafe { close(wfd) };
+}
+
+#[test]
+fn writev_single_buffer() {
+    let (rfd, wfd) = temp_pipe();
+    let data = b"single";
+    let iov = libc::iovec {
+        iov_base: data.as_ptr() as *mut _,
+        iov_len: data.len(),
+    };
+    let n = unsafe { writev(wfd, &iov, 1) };
+    assert_eq!(n, 6);
+
+    let mut buf = [0u8; 6];
+    unsafe { libc::read(rfd, buf.as_mut_ptr().cast(), 6) };
+    assert_eq!(&buf, b"single");
+
+    unsafe { close(rfd) };
+    unsafe { close(wfd) };
+}
+
+// ---------------------------------------------------------------------------
+// memfd_create
+// ---------------------------------------------------------------------------
+
+#[test]
+fn memfd_create_basic() {
+    let name = b"test_memfd\0";
+    let fd = unsafe { memfd_create(name.as_ptr().cast(), 0 as c_uint) };
+    assert!(fd >= 0, "memfd_create should succeed");
+
+    // Write and read back
+    let data = b"memfd content";
+    let n = unsafe { libc::write(fd, data.as_ptr().cast(), data.len()) };
+    assert_eq!(n, data.len() as isize);
+
+    unsafe { libc::lseek(fd, 0, libc::SEEK_SET) };
+    let mut buf = [0u8; 32];
+    let n = unsafe { libc::read(fd, buf.as_mut_ptr().cast(), buf.len()) };
+    assert_eq!(n, data.len() as isize);
+    assert_eq!(&buf[..data.len()], data);
+
+    unsafe { close(fd) };
+}
+
+#[test]
+fn memfd_create_cloexec() {
+    let name = b"cloexec_test\0";
+    let fd = unsafe { memfd_create(name.as_ptr().cast(), libc::MFD_CLOEXEC as c_uint) };
+    assert!(fd >= 0, "memfd_create with MFD_CLOEXEC should succeed");
+
+    let flags = unsafe { fcntl(fd, libc::F_GETFD, 0) };
+    assert_ne!(flags & libc::FD_CLOEXEC, 0, "MFD_CLOEXEC should set FD_CLOEXEC");
+    unsafe { close(fd) };
+}
+
+#[test]
+fn memfd_create_null_name_fails() {
+    let fd = unsafe { memfd_create(std::ptr::null(), 0 as c_uint) };
+    assert_eq!(fd, -1, "memfd_create with null name should fail");
+}
+
+// ---------------------------------------------------------------------------
+// sendfile
+// ---------------------------------------------------------------------------
+
+#[test]
+fn sendfile_between_fds() {
+    let content = b"sendfile test data here!";
+    let in_fd = temp_memfd(content);
+    let out_fd = temp_memfd(b"");
+
+    let mut offset: i64 = 0;
+    let n = unsafe { sendfile(out_fd, in_fd, &mut offset, content.len()) };
+    assert_eq!(n, content.len() as isize);
+    assert_eq!(offset, content.len() as i64);
+
+    // Verify the data was copied
+    unsafe { libc::lseek(out_fd, 0, libc::SEEK_SET) };
+    let mut buf = [0u8; 32];
+    let read_n = unsafe { libc::read(out_fd, buf.as_mut_ptr().cast(), buf.len()) };
+    assert_eq!(read_n, content.len() as isize);
+    assert_eq!(&buf[..content.len()], content);
+
+    unsafe { close(in_fd) };
+    unsafe { close(out_fd) };
+}
+
+#[test]
+fn sendfile_partial() {
+    let content = b"0123456789abcdef";
+    let in_fd = temp_memfd(content);
+    let out_fd = temp_memfd(b"");
+
+    let mut offset: i64 = 4;
+    let n = unsafe { sendfile(out_fd, in_fd, &mut offset, 8) };
+    assert_eq!(n, 8);
+
+    unsafe { libc::lseek(out_fd, 0, libc::SEEK_SET) };
+    let mut buf = [0u8; 8];
+    unsafe { libc::read(out_fd, buf.as_mut_ptr().cast(), 8) };
+    assert_eq!(&buf, b"4567890a");
+
+    unsafe { close(in_fd) };
+    unsafe { close(out_fd) };
+}
+
+// ---------------------------------------------------------------------------
+// copy_file_range
+// ---------------------------------------------------------------------------
+
+#[test]
+fn copy_file_range_basic() {
+    let content = b"copy_file_range works!";
+    let in_fd = temp_memfd(content);
+    let out_fd = temp_memfd(b"");
+
+    let mut off_in: i64 = 0;
+    let mut off_out: i64 = 0;
+    let n = unsafe {
+        copy_file_range(
+            in_fd,
+            &mut off_in,
+            out_fd,
+            &mut off_out,
+            content.len(),
+            0,
+        )
+    };
+    assert_eq!(n, content.len() as isize);
+
+    unsafe { libc::lseek(out_fd, 0, libc::SEEK_SET) };
+    let mut buf = [0u8; 32];
+    let read_n = unsafe { libc::read(out_fd, buf.as_mut_ptr().cast(), buf.len()) };
+    assert_eq!(read_n, content.len() as isize);
+    assert_eq!(&buf[..content.len()], content);
+
+    unsafe { close(in_fd) };
+    unsafe { close(out_fd) };
+}
+
+// ---------------------------------------------------------------------------
+// splice
+// ---------------------------------------------------------------------------
+
+#[test]
+fn splice_pipe_to_pipe() {
+    let (rfd1, wfd1) = temp_pipe();
+    let (rfd2, wfd2) = temp_pipe();
+
+    // Write to first pipe
+    let data = b"splice me";
+    unsafe { libc::write(wfd1, data.as_ptr().cast(), data.len()) };
+
+    // Splice from pipe1 read end to pipe2 write end
+    let n = unsafe {
+        splice(
+            rfd1,
+            std::ptr::null_mut(),
+            wfd2,
+            std::ptr::null_mut(),
+            data.len(),
+            0,
+        )
+    };
+    assert_eq!(n, data.len() as isize, "splice should transfer all data");
+
+    // Read from second pipe
+    let mut buf = [0u8; 16];
+    let read_n = unsafe { libc::read(rfd2, buf.as_mut_ptr().cast(), buf.len()) };
+    assert_eq!(read_n, data.len() as isize);
+    assert_eq!(&buf[..data.len()], data);
+
+    unsafe { close(rfd1) };
+    unsafe { close(wfd1) };
+    unsafe { close(rfd2) };
+    unsafe { close(wfd2) };
+}
+
+// ---------------------------------------------------------------------------
+// ioctl — FIONREAD on a pipe
+// ---------------------------------------------------------------------------
+
+#[test]
+fn ioctl_fionread() {
+    use frankenlibc_abi::io_abi::ioctl;
+    let (rfd, wfd) = temp_pipe();
+
+    let data = b"ioctl test";
+    unsafe { libc::write(wfd, data.as_ptr().cast(), data.len()) };
+
+    let mut bytes_available: c_int = 0;
+    let rc = unsafe {
+        ioctl(
+            rfd,
+            libc::FIONREAD as libc::c_ulong,
+            &mut bytes_available as *mut c_int as libc::c_ulong,
+        )
+    };
+    assert_eq!(rc, 0, "ioctl FIONREAD should succeed");
+    assert_eq!(
+        bytes_available,
+        data.len() as c_int,
+        "FIONREAD should report correct byte count"
+    );
+
+    unsafe { close(rfd) };
+    unsafe { close(wfd) };
+}
+
+// ---------------------------------------------------------------------------
+// pipe2 with O_NONBLOCK
+// ---------------------------------------------------------------------------
+
+#[test]
+fn pipe2_nonblock() {
+    let mut fds = [0 as c_int; 2];
+    let rc = unsafe { pipe2(&mut fds as *mut c_int, libc::O_NONBLOCK) };
+    assert_eq!(rc, 0);
+
+    let flags = unsafe { fcntl(fds[0], libc::F_GETFL, 0) };
+    assert_ne!(flags & libc::O_NONBLOCK, 0, "read end should be non-blocking");
+
+    // Non-blocking read on empty pipe should return EAGAIN
+    let mut buf = [0u8; 1];
+    let n = unsafe { libc::read(fds[0], buf.as_mut_ptr().cast(), 1) };
+    assert_eq!(n, -1);
+
+    unsafe { close(fds[0]) };
+    unsafe { close(fds[1]) };
+}
+
+// ---------------------------------------------------------------------------
+// dup2 edge cases
+// ---------------------------------------------------------------------------
+
+#[test]
+fn dup2_closes_target_fd() {
+    let fd1 = temp_fd();
+    let fd2 = temp_fd();
+    let rc = unsafe { dup2(fd1, fd2) };
+    assert_eq!(rc, fd2, "dup2 should return target fd");
+    // fd2 should now refer to same as fd1; close both
+    unsafe { close(fd1) };
+    unsafe { close(fd2) };
+}
+
+#[test]
+fn dup2_bad_fd_fails() {
+    let rc = unsafe { dup2(-1, 200) };
+    assert_eq!(rc, -1, "dup2 with invalid source should fail");
+}
+
+#[test]
+fn dup3_same_fd_fails() {
+    let fd = temp_fd();
+    let rc = unsafe { dup3(fd, fd, 0) };
+    assert_eq!(rc, -1, "dup3 with same old and new fd should fail (EINVAL)");
     unsafe { close(fd) };
 }

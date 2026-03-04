@@ -7,7 +7,7 @@
 use std::ffi::c_void;
 use std::ptr;
 
-use frankenlibc_abi::mmap_abi::{madvise, mmap, mprotect, msync, munmap};
+use frankenlibc_abi::mmap_abi::{madvise, mlock2, mlockall, mmap, mprotect, msync, munlockall, munmap};
 
 // ---------------------------------------------------------------------------
 // mmap / munmap basics
@@ -240,6 +240,119 @@ fn mremap_grow_mapping() {
 
     let rc = unsafe { munmap(new_ptr, new_len) };
     assert_eq!(rc, 0);
+}
+
+// ---------------------------------------------------------------------------
+// Multiple mappings
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// mlock2
+// ---------------------------------------------------------------------------
+
+#[test]
+fn mlock2_basic() {
+    let len = 4096;
+    let ptr = unsafe {
+        mmap(
+            ptr::null_mut(),
+            len,
+            libc::PROT_READ | libc::PROT_WRITE,
+            libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
+            -1,
+            0,
+        )
+    };
+    assert_ne!(ptr, libc::MAP_FAILED);
+
+    // mlock2 with flags=0 behaves like mlock
+    let rc = unsafe { mlock2(ptr as *const c_void, len, 0) };
+    // May fail with EPERM if not privileged
+    if rc == 0 {
+        use frankenlibc_abi::mmap_abi::munlock;
+        let rc = unsafe { munlock(ptr as *const c_void, len) };
+        assert_eq!(rc, 0);
+    }
+    let rc = unsafe { munmap(ptr, len) };
+    assert_eq!(rc, 0);
+}
+
+// ---------------------------------------------------------------------------
+// mlockall / munlockall
+// ---------------------------------------------------------------------------
+
+#[test]
+fn mlockall_munlockall() {
+    // MCL_CURRENT = 1
+    let rc = unsafe { mlockall(1) };
+    // May fail with EPERM/ENOMEM on unprivileged systems
+    if rc == 0 {
+        let rc = unsafe { munlockall() };
+        assert_eq!(rc, 0, "munlockall should succeed after mlockall");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// mmap edge cases
+// ---------------------------------------------------------------------------
+
+#[test]
+fn mmap_read_only() {
+    let len = 4096;
+    let ptr = unsafe {
+        mmap(
+            ptr::null_mut(),
+            len,
+            libc::PROT_READ,
+            libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
+            -1,
+            0,
+        )
+    };
+    assert_ne!(ptr, libc::MAP_FAILED);
+    // Should be readable (all zeros)
+    let val = unsafe { *(ptr as *const u8) };
+    assert_eq!(val, 0);
+    assert_eq!(unsafe { munmap(ptr, len) }, 0);
+}
+
+#[test]
+fn munmap_null_fails() {
+    let rc = unsafe { munmap(ptr::null_mut(), 4096) };
+    assert_eq!(rc, -1, "munmap(NULL) should fail");
+}
+
+#[test]
+fn madvise_dontneed() {
+    let len = 4096;
+    let ptr = unsafe {
+        mmap(
+            ptr::null_mut(),
+            len,
+            libc::PROT_READ | libc::PROT_WRITE,
+            libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
+            -1,
+            0,
+        )
+    };
+    assert_ne!(ptr, libc::MAP_FAILED);
+
+    unsafe { *(ptr as *mut u8) = 42 };
+
+    let rc = unsafe { madvise(ptr, len, libc::MADV_DONTNEED) };
+    assert_eq!(rc, 0, "madvise MADV_DONTNEED should succeed");
+
+    // After DONTNEED, anonymous mapping returns to zero
+    let val = unsafe { *(ptr as *const u8) };
+    assert_eq!(val, 0, "MADV_DONTNEED should zero anonymous page");
+
+    assert_eq!(unsafe { munmap(ptr, len) }, 0);
+}
+
+#[test]
+fn mprotect_null_fails() {
+    let rc = unsafe { mprotect(ptr::null_mut(), 4096, libc::PROT_READ) };
+    assert_eq!(rc, -1, "mprotect(NULL) should fail");
 }
 
 // ---------------------------------------------------------------------------

@@ -81,3 +81,76 @@ fn setrlimit_null_fails() {
     let rc = unsafe { setrlimit(libc::RLIMIT_NOFILE as i32, std::ptr::null()) };
     assert_eq!(rc, -1, "setrlimit with null ptr should fail");
 }
+
+// ---------------------------------------------------------------------------
+// getrlimit — additional resource types
+// ---------------------------------------------------------------------------
+
+#[test]
+fn getrlimit_as() {
+    let mut rlim: libc::rlimit = unsafe { std::mem::zeroed() };
+    let rc = unsafe { getrlimit(libc::RLIMIT_AS as i32, &mut rlim) };
+    assert_eq!(rc, 0, "getrlimit(RLIMIT_AS) should succeed");
+    // Address space limit: either a positive value or RLIM_INFINITY
+    assert!(
+        rlim.rlim_max >= rlim.rlim_cur,
+        "hard limit should be >= soft limit for RLIMIT_AS"
+    );
+}
+
+#[test]
+fn getrlimit_fsize() {
+    let mut rlim: libc::rlimit = unsafe { std::mem::zeroed() };
+    let rc = unsafe { getrlimit(libc::RLIMIT_FSIZE as i32, &mut rlim) };
+    assert_eq!(rc, 0, "getrlimit(RLIMIT_FSIZE) should succeed");
+}
+
+#[test]
+fn getrlimit_data() {
+    let mut rlim: libc::rlimit = unsafe { std::mem::zeroed() };
+    let rc = unsafe { getrlimit(libc::RLIMIT_DATA as i32, &mut rlim) };
+    assert_eq!(rc, 0, "getrlimit(RLIMIT_DATA) should succeed");
+}
+
+#[test]
+fn getrlimit_core() {
+    let mut rlim: libc::rlimit = unsafe { std::mem::zeroed() };
+    let rc = unsafe { getrlimit(libc::RLIMIT_CORE as i32, &mut rlim) };
+    assert_eq!(rc, 0, "getrlimit(RLIMIT_CORE) should succeed");
+    assert!(rlim.rlim_max >= rlim.rlim_cur);
+}
+
+#[test]
+fn getrlimit_nproc() {
+    let mut rlim: libc::rlimit = unsafe { std::mem::zeroed() };
+    let rc = unsafe { getrlimit(libc::RLIMIT_NPROC as i32, &mut rlim) };
+    assert_eq!(rc, 0, "getrlimit(RLIMIT_NPROC) should succeed");
+    assert!(rlim.rlim_cur > 0, "NPROC soft limit should be > 0");
+}
+
+// ---------------------------------------------------------------------------
+// setrlimit — restore pattern for different resources
+// ---------------------------------------------------------------------------
+
+#[test]
+fn setrlimit_core_disable_and_restore() {
+    let mut rlim: libc::rlimit = unsafe { std::mem::zeroed() };
+    let rc = unsafe { getrlimit(libc::RLIMIT_CORE as i32, &mut rlim) };
+    assert_eq!(rc, 0);
+    let original = rlim;
+
+    // Disable core dumps
+    rlim.rlim_cur = 0;
+    let rc = unsafe { setrlimit(libc::RLIMIT_CORE as i32, &rlim) };
+    assert_eq!(rc, 0, "disabling core dumps should succeed");
+
+    // Verify
+    let mut check: libc::rlimit = unsafe { std::mem::zeroed() };
+    let rc = unsafe { getrlimit(libc::RLIMIT_CORE as i32, &mut check) };
+    assert_eq!(rc, 0);
+    assert_eq!(check.rlim_cur, 0, "core soft limit should be 0");
+
+    // Restore
+    let rc = unsafe { setrlimit(libc::RLIMIT_CORE as i32, &original) };
+    assert_eq!(rc, 0);
+}
