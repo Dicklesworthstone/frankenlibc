@@ -317,9 +317,10 @@ fn mmap_read_only() {
 }
 
 #[test]
-fn munmap_null_fails() {
+fn munmap_null_is_valid() {
+    // On Linux, munmap(NULL, len) succeeds (unmapping nothing is a no-op)
     let rc = unsafe { munmap(ptr::null_mut(), 4096) };
-    assert_eq!(rc, -1, "munmap(NULL) should fail");
+    assert_eq!(rc, 0, "munmap(NULL, 4096) succeeds on Linux");
 }
 
 #[test]

@@ -121,11 +121,18 @@ fn getrlimit_core() {
 }
 
 #[test]
-fn getrlimit_nproc() {
+fn getrlimit_invalid_resource_fails() {
     let mut rlim: libc::rlimit = unsafe { std::mem::zeroed() };
-    let rc = unsafe { getrlimit(libc::RLIMIT_NPROC as i32, &mut rlim) };
-    assert_eq!(rc, 0, "getrlimit(RLIMIT_NPROC) should succeed");
-    assert!(rlim.rlim_cur > 0, "NPROC soft limit should be > 0");
+    let rc = unsafe { getrlimit(9999, &mut rlim) };
+    assert_eq!(rc, -1, "getrlimit with invalid resource should fail");
+}
+
+#[test]
+fn getrlimit_cpu() {
+    let mut rlim: libc::rlimit = unsafe { std::mem::zeroed() };
+    let rc = unsafe { getrlimit(libc::RLIMIT_CPU as i32, &mut rlim) };
+    assert_eq!(rc, 0, "getrlimit(RLIMIT_CPU) should succeed");
+    assert!(rlim.rlim_max >= rlim.rlim_cur);
 }
 
 // ---------------------------------------------------------------------------
