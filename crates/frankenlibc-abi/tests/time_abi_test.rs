@@ -1,8 +1,355 @@
 #![cfg(target_os = "linux")]
 
-//! Integration tests for `strptime` native implementation.
+//! Integration tests for time_abi native implementations.
+//!
+//! Covers: time, clock_gettime, clock, localtime_r, gmtime_r, mktime, timegm,
+//! difftime, gettimeofday, clock_getres, nanosleep, asctime_r, ctime_r,
+//! strftime, gmtime, localtime, asctime, ctime, strptime, tzset,
+//! timespec_get, timespec_getres.
 
-use frankenlibc_abi::time_abi::strptime;
+use std::ffi::c_char;
+
+use frankenlibc_abi::time_abi;
+
+// ---------------------------------------------------------------------------
+// time
+// ---------------------------------------------------------------------------
+
+#[test]
+fn time_returns_positive_value() {
+    let t = unsafe { time_abi::time(std::ptr::null_mut()) };
+    assert!(t > 0, "time() should return positive epoch, got {t}");
+}
+
+#[test]
+fn time_writes_to_pointer() {
+    let mut t: i64 = 0;
+    let ret = unsafe { time_abi::time(&mut t) };
+    assert!(ret > 0);
+    assert_eq!(ret, t, "time() should write same value as returned");
+}
+
+// ---------------------------------------------------------------------------
+// clock_gettime
+// ---------------------------------------------------------------------------
+
+#[test]
+fn clock_gettime_realtime() {
+    let mut ts: libc::timespec = unsafe { std::mem::zeroed() };
+    let rc = unsafe { time_abi::clock_gettime(libc::CLOCK_REALTIME, &mut ts) };
+    assert_eq!(rc, 0, "clock_gettime(CLOCK_REALTIME) should succeed");
+    assert!(ts.tv_sec > 0);
+    assert!(ts.tv_nsec >= 0 && ts.tv_nsec < 1_000_000_000);
+}
+
+#[test]
+fn clock_gettime_monotonic() {
+    let mut ts: libc::timespec = unsafe { std::mem::zeroed() };
+    let rc = unsafe { time_abi::clock_gettime(libc::CLOCK_MONOTONIC, &mut ts) };
+    assert_eq!(rc, 0, "clock_gettime(CLOCK_MONOTONIC) should succeed");
+    assert!(ts.tv_nsec >= 0 && ts.tv_nsec < 1_000_000_000);
+}
+
+#[test]
+fn clock_gettime_monotonic_is_non_decreasing() {
+    let mut ts1: libc::timespec = unsafe { std::mem::zeroed() };
+    let mut ts2: libc::timespec = unsafe { std::mem::zeroed() };
+    unsafe {
+        time_abi::clock_gettime(libc::CLOCK_MONOTONIC, &mut ts1);
+        time_abi::clock_gettime(libc::CLOCK_MONOTONIC, &mut ts2);
+    }
+    let t1 = ts1.tv_sec as u64 * 1_000_000_000 + ts1.tv_nsec as u64;
+    let t2 = ts2.tv_sec as u64 * 1_000_000_000 + ts2.tv_nsec as u64;
+    assert!(t2 >= t1, "CLOCK_MONOTONIC should be non-decreasing");
+}
+
+// ---------------------------------------------------------------------------
+// clock
+// ---------------------------------------------------------------------------
+
+#[test]
+fn clock_returns_nonnegative() {
+    let c = unsafe { time_abi::clock() };
+    // clock() returns -1 on error, otherwise processor time in CLOCKS_PER_SEC units
+    assert!(c >= 0, "clock() should return non-negative, got {c}");
+}
+
+// ---------------------------------------------------------------------------
+// gmtime_r / localtime_r
+// ---------------------------------------------------------------------------
+
+#[test]
+fn gmtime_r_epoch_zero() {
+    let epoch: i64 = 0;
+    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+    let result = unsafe { time_abi::gmtime_r(&epoch, &mut tm) };
+    assert!(!result.is_null());
+    assert_eq!(tm.tm_year, 70); // 1970 - 1900
+    assert_eq!(tm.tm_mon, 0); // January
+    assert_eq!(tm.tm_mday, 1);
+    assert_eq!(tm.tm_hour, 0);
+    assert_eq!(tm.tm_min, 0);
+    assert_eq!(tm.tm_sec, 0);
+}
+
+#[test]
+fn gmtime_r_known_date() {
+    // 2024-01-15 12:00:00 UTC = 1705320000
+    let epoch: i64 = 1705320000;
+    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+    let result = unsafe { time_abi::gmtime_r(&epoch, &mut tm) };
+    assert!(!result.is_null());
+    assert_eq!(tm.tm_year, 124); // 2024 - 1900
+    assert_eq!(tm.tm_mon, 0); // January
+    assert_eq!(tm.tm_mday, 15);
+    assert_eq!(tm.tm_hour, 12);
+}
+
+#[test]
+fn localtime_r_returns_nonnull() {
+    let now = unsafe { time_abi::time(std::ptr::null_mut()) };
+    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+    let result = unsafe { time_abi::localtime_r(&now, &mut tm) };
+    assert!(!result.is_null());
+    assert!(tm.tm_year >= 124, "year should be >= 2024");
+}
+
+// ---------------------------------------------------------------------------
+// mktime / timegm
+// ---------------------------------------------------------------------------
+
+#[test]
+fn mktime_roundtrips_with_localtime() {
+    let now = unsafe { time_abi::time(std::ptr::null_mut()) };
+    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+    unsafe { time_abi::localtime_r(&now, &mut tm) };
+
+    let reconstructed = unsafe { time_abi::mktime(&mut tm) };
+    // mktime should return a value close to now (within 1 second)
+    assert!(
+        (reconstructed - now).abs() <= 1,
+        "mktime(localtime(t)) should roundtrip: {now} vs {reconstructed}"
+    );
+}
+
+#[test]
+fn timegm_roundtrips_with_gmtime() {
+    let now = unsafe { time_abi::time(std::ptr::null_mut()) };
+    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+    unsafe { time_abi::gmtime_r(&now, &mut tm) };
+
+    let reconstructed = unsafe { time_abi::timegm(&mut tm) };
+    assert_eq!(now, reconstructed, "timegm(gmtime(t)) should roundtrip exactly");
+}
+
+#[test]
+fn timegm_epoch_zero() {
+    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+    tm.tm_year = 70; // 1970
+    tm.tm_mon = 0; // January
+    tm.tm_mday = 1;
+    let result = unsafe { time_abi::timegm(&mut tm) };
+    assert_eq!(result, 0, "timegm(1970-01-01) should be 0");
+}
+
+// ---------------------------------------------------------------------------
+// difftime
+// ---------------------------------------------------------------------------
+
+#[test]
+fn difftime_positive() {
+    let d = unsafe { time_abi::difftime(100, 50) };
+    assert!((d - 50.0).abs() < 0.001);
+}
+
+#[test]
+fn difftime_negative() {
+    let d = unsafe { time_abi::difftime(50, 100) };
+    assert!((d - (-50.0)).abs() < 0.001);
+}
+
+#[test]
+fn difftime_zero() {
+    let d = unsafe { time_abi::difftime(42, 42) };
+    assert!((d - 0.0).abs() < 0.001);
+}
+
+// ---------------------------------------------------------------------------
+// gettimeofday
+// ---------------------------------------------------------------------------
+
+#[test]
+fn gettimeofday_returns_positive() {
+    let mut tv: libc::timeval = unsafe { std::mem::zeroed() };
+    let rc = unsafe { time_abi::gettimeofday(&mut tv, std::ptr::null_mut()) };
+    assert_eq!(rc, 0);
+    assert!(tv.tv_sec > 0);
+    assert!(tv.tv_usec >= 0 && tv.tv_usec < 1_000_000);
+}
+
+#[test]
+fn gettimeofday_agrees_with_time() {
+    let t = unsafe { time_abi::time(std::ptr::null_mut()) };
+    let mut tv: libc::timeval = unsafe { std::mem::zeroed() };
+    unsafe { time_abi::gettimeofday(&mut tv, std::ptr::null_mut()) };
+    // Should agree within 1 second
+    assert!((tv.tv_sec - t).abs() <= 1);
+}
+
+// ---------------------------------------------------------------------------
+// clock_getres
+// ---------------------------------------------------------------------------
+
+#[test]
+fn clock_getres_realtime() {
+    let mut res: libc::timespec = unsafe { std::mem::zeroed() };
+    let rc = unsafe { time_abi::clock_getres(libc::CLOCK_REALTIME, &mut res) };
+    assert_eq!(rc, 0, "clock_getres(CLOCK_REALTIME) should succeed");
+    // Resolution should be positive and <= 1 second
+    assert!(res.tv_sec == 0 || (res.tv_sec == 1 && res.tv_nsec == 0));
+    assert!(res.tv_nsec >= 0);
+}
+
+// ---------------------------------------------------------------------------
+// nanosleep
+// ---------------------------------------------------------------------------
+
+#[test]
+fn nanosleep_short_sleep() {
+    let req = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 1_000_000, // 1ms
+    };
+    let mut rem: libc::timespec = unsafe { std::mem::zeroed() };
+    let rc = unsafe { time_abi::nanosleep(&req, &mut rem) };
+    assert_eq!(rc, 0, "nanosleep(1ms) should succeed");
+}
+
+// ---------------------------------------------------------------------------
+// asctime_r / ctime_r
+// ---------------------------------------------------------------------------
+
+#[test]
+fn asctime_r_formats_epoch() {
+    let epoch: i64 = 0;
+    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+    unsafe { time_abi::gmtime_r(&epoch, &mut tm) };
+
+    let mut buf = [0u8; 26];
+    let result = unsafe { time_abi::asctime_r(&tm, buf.as_mut_ptr() as *mut c_char) };
+    assert!(!result.is_null());
+    let s = unsafe { std::ffi::CStr::from_ptr(result) };
+    let text = s.to_str().unwrap();
+    assert!(text.contains("1970"), "asctime_r should show 1970, got: {text}");
+    assert!(text.contains("Jan"), "asctime_r should show Jan, got: {text}");
+}
+
+#[test]
+fn ctime_r_formats_current_time() {
+    let now = unsafe { time_abi::time(std::ptr::null_mut()) };
+    let mut buf = [0u8; 26];
+    let result = unsafe { time_abi::ctime_r(&now, buf.as_mut_ptr() as *mut c_char) };
+    assert!(!result.is_null());
+    let s = unsafe { std::ffi::CStr::from_ptr(result) };
+    let text = s.to_str().unwrap();
+    assert!(
+        text.contains("202"),
+        "ctime_r should contain 202x year, got: {text}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// strftime
+// ---------------------------------------------------------------------------
+
+#[test]
+fn strftime_iso_date() {
+    let epoch: i64 = 0;
+    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+    unsafe { time_abi::gmtime_r(&epoch, &mut tm) };
+
+    let mut buf = [0u8; 64];
+    let fmt = b"%Y-%m-%d\0";
+    let len = unsafe {
+        time_abi::strftime(
+            buf.as_mut_ptr() as *mut c_char,
+            buf.len(),
+            fmt.as_ptr() as *const c_char,
+            &tm,
+        )
+    };
+    assert!(len > 0);
+    let s = unsafe { std::ffi::CStr::from_ptr(buf.as_ptr() as *const c_char) };
+    assert_eq!(s.to_bytes(), b"1970-01-01");
+}
+
+#[test]
+fn strftime_time() {
+    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+    tm.tm_hour = 14;
+    tm.tm_min = 30;
+    tm.tm_sec = 45;
+
+    let mut buf = [0u8; 64];
+    let fmt = b"%H:%M:%S\0";
+    let len = unsafe {
+        time_abi::strftime(
+            buf.as_mut_ptr() as *mut c_char,
+            buf.len(),
+            fmt.as_ptr() as *const c_char,
+            &tm,
+        )
+    };
+    assert!(len > 0);
+    let s = unsafe { std::ffi::CStr::from_ptr(buf.as_ptr() as *const c_char) };
+    assert_eq!(s.to_bytes(), b"14:30:45");
+}
+
+// ---------------------------------------------------------------------------
+// gmtime / localtime (non-reentrant)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn gmtime_returns_nonnull() {
+    let now = unsafe { time_abi::time(std::ptr::null_mut()) };
+    let result = unsafe { time_abi::gmtime(&now) };
+    assert!(!result.is_null());
+    let tm = unsafe { &*result };
+    assert!(tm.tm_year >= 124); // >= 2024
+}
+
+#[test]
+fn localtime_returns_nonnull() {
+    let now = unsafe { time_abi::time(std::ptr::null_mut()) };
+    let result = unsafe { time_abi::localtime(&now) };
+    assert!(!result.is_null());
+    let tm = unsafe { &*result };
+    assert!(tm.tm_year >= 124);
+}
+
+// ---------------------------------------------------------------------------
+// asctime / ctime (non-reentrant)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn asctime_returns_nonnull() {
+    let epoch: i64 = 0;
+    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+    unsafe { time_abi::gmtime_r(&epoch, &mut tm) };
+    let result = unsafe { time_abi::asctime(&tm) };
+    assert!(!result.is_null());
+}
+
+#[test]
+fn ctime_returns_nonnull() {
+    let now = unsafe { time_abi::time(std::ptr::null_mut()) };
+    let result = unsafe { time_abi::ctime(&now) };
+    assert!(!result.is_null());
+}
+
+// ---------------------------------------------------------------------------
+// strptime tests (original)
+// ---------------------------------------------------------------------------
 
 #[test]
 fn strptime_iso_date() {
@@ -10,9 +357,9 @@ fn strptime_iso_date() {
     let fmt = b"%Y-%m-%d\0";
     let mut tm: libc::tm = unsafe { std::mem::zeroed() };
     let result = unsafe {
-        strptime(
-            input.as_ptr() as *const std::ffi::c_char,
-            fmt.as_ptr() as *const std::ffi::c_char,
+        time_abi::strptime(
+            input.as_ptr() as *const c_char,
+            fmt.as_ptr() as *const c_char,
             &mut tm,
         )
     };
@@ -28,9 +375,9 @@ fn strptime_time_24h() {
     let fmt = b"%H:%M:%S\0";
     let mut tm: libc::tm = unsafe { std::mem::zeroed() };
     let result = unsafe {
-        strptime(
-            input.as_ptr() as *const std::ffi::c_char,
-            fmt.as_ptr() as *const std::ffi::c_char,
+        time_abi::strptime(
+            input.as_ptr() as *const c_char,
+            fmt.as_ptr() as *const c_char,
             &mut tm,
         )
     };
@@ -46,9 +393,9 @@ fn strptime_month_name() {
     let fmt = b"%b %d\0";
     let mut tm: libc::tm = unsafe { std::mem::zeroed() };
     let result = unsafe {
-        strptime(
-            input.as_ptr() as *const std::ffi::c_char,
-            fmt.as_ptr() as *const std::ffi::c_char,
+        time_abi::strptime(
+            input.as_ptr() as *const c_char,
+            fmt.as_ptr() as *const c_char,
             &mut tm,
         )
     };
@@ -63,9 +410,9 @@ fn strptime_composite_t() {
     let fmt = b"%T\0";
     let mut tm: libc::tm = unsafe { std::mem::zeroed() };
     let result = unsafe {
-        strptime(
-            input.as_ptr() as *const std::ffi::c_char,
-            fmt.as_ptr() as *const std::ffi::c_char,
+        time_abi::strptime(
+            input.as_ptr() as *const c_char,
+            fmt.as_ptr() as *const c_char,
             &mut tm,
         )
     };
@@ -81,9 +428,9 @@ fn strptime_am_pm() {
     let fmt = b"%I:%M %p\0";
     let mut tm: libc::tm = unsafe { std::mem::zeroed() };
     let result = unsafe {
-        strptime(
-            input.as_ptr() as *const std::ffi::c_char,
-            fmt.as_ptr() as *const std::ffi::c_char,
+        time_abi::strptime(
+            input.as_ptr() as *const c_char,
+            fmt.as_ptr() as *const c_char,
             &mut tm,
         )
     };
@@ -98,9 +445,9 @@ fn strptime_returns_null_on_mismatch() {
     let fmt = b"%Y-%m-%d\0";
     let mut tm: libc::tm = unsafe { std::mem::zeroed() };
     let result = unsafe {
-        strptime(
-            input.as_ptr() as *const std::ffi::c_char,
-            fmt.as_ptr() as *const std::ffi::c_char,
+        time_abi::strptime(
+            input.as_ptr() as *const c_char,
+            fmt.as_ptr() as *const c_char,
             &mut tm,
         )
     };
@@ -113,15 +460,14 @@ fn strptime_returns_position_after_parsed() {
     let fmt = b"%Y-%m-%d\0";
     let mut tm: libc::tm = unsafe { std::mem::zeroed() };
     let result = unsafe {
-        strptime(
-            input.as_ptr() as *const std::ffi::c_char,
-            fmt.as_ptr() as *const std::ffi::c_char,
+        time_abi::strptime(
+            input.as_ptr() as *const c_char,
+            fmt.as_ptr() as *const c_char,
             &mut tm,
         )
     };
     assert!(!result.is_null());
-    // result should point to " remaining"
-    let offset = unsafe { result.offset_from(input.as_ptr() as *const std::ffi::c_char) } as usize;
+    let offset = unsafe { result.offset_from(input.as_ptr() as *const c_char) } as usize;
     assert_eq!(offset, 10); // "2026-01-01" = 10 chars
 }
 
@@ -131,12 +477,44 @@ fn strptime_weekday_name() {
     let fmt = b"%A\0";
     let mut tm: libc::tm = unsafe { std::mem::zeroed() };
     let result = unsafe {
-        strptime(
-            input.as_ptr() as *const std::ffi::c_char,
-            fmt.as_ptr() as *const std::ffi::c_char,
+        time_abi::strptime(
+            input.as_ptr() as *const c_char,
+            fmt.as_ptr() as *const c_char,
             &mut tm,
         )
     };
     assert!(!result.is_null());
     assert_eq!(tm.tm_wday, 1); // Monday
+}
+
+// ---------------------------------------------------------------------------
+// tzset
+// ---------------------------------------------------------------------------
+
+#[test]
+fn tzset_does_not_crash() {
+    // tzset just sets timezone globals; verify it doesn't crash
+    unsafe { time_abi::tzset() };
+}
+
+// ---------------------------------------------------------------------------
+// timespec_get / timespec_getres (C11)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn timespec_get_time_utc() {
+    let mut ts: libc::timespec = unsafe { std::mem::zeroed() };
+    // TIME_UTC = 1 in C11
+    let rc = unsafe { time_abi::timespec_get(&mut ts, 1) };
+    assert_eq!(rc, 1, "timespec_get with TIME_UTC should return TIME_UTC");
+    assert!(ts.tv_sec > 0);
+    assert!(ts.tv_nsec >= 0 && ts.tv_nsec < 1_000_000_000);
+}
+
+#[test]
+fn timespec_getres_time_utc() {
+    let mut ts: libc::timespec = unsafe { std::mem::zeroed() };
+    let rc = unsafe { time_abi::timespec_getres(&mut ts, 1) };
+    assert_eq!(rc, 1, "timespec_getres with TIME_UTC should return TIME_UTC");
+    assert!(ts.tv_nsec >= 0);
 }
