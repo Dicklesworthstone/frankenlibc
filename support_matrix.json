@@ -2,7 +2,7 @@
   "version": 2,
   "generated_at_utc": "2026-02-18T04:49:26Z",
   "library": "/data/tmp/cargo-target/release/libfrankenlibc_abi.so",
-  "total_exported": 3103,
+  "total_exported": 3978,
   "taxonomy": {
     "Implemented": "Native Rust code owns the entire operation. No host libc dependency. Full test coverage required.",
     "RawSyscall": "ABI entrypoint marshals arguments directly to Linux syscall instruction. No glibc call-through.",
@@ -31432,10 +31432,10 @@
   ],
   "summary": {
     "RawSyscall": 406,
-    "Implemented": 2504,
+    "Implemented": 3379,
     "GlibcCallThrough": 193
   },
-  "implemented": 2504,
+  "implemented": 3379,
   "raw_syscall": 406,
   "glibc_call_through": 193,
   "stub": 0,
