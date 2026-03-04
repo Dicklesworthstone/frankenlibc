@@ -1,0 +1,48 @@
+{
+  "index_version": 1,
+  "run_id": "20260304T024556Z",
+  "bead_id": "bd-qwm",
+  "generated_utc": "20260304T024556Z",
+  "retention_policy": {
+    "tier": "normal",
+    "days": 30
+  },
+  "artifacts": [
+    {
+      "path": "raw/20260304T024556Z/fixture_startup",
+      "kind": "binary",
+      "retention_tier": "normal",
+      "sha256": "07d0c82618885e421d1bcc50952baa867ecc2893f05d1a6ae1aa2bf32c8e932e"
+    },
+    {
+      "path": "raw/20260304T024556Z/strict.stdout.txt",
+      "kind": "log",
+      "retention_tier": "normal",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "raw/20260304T024556Z/strict.stderr.txt",
+      "kind": "log",
+      "retention_tier": "normal",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "raw/20260304T024556Z/hardened.stdout.txt",
+      "kind": "log",
+      "retention_tier": "normal",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "raw/20260304T024556Z/hardened.stderr.txt",
+      "kind": "log",
+      "retention_tier": "normal",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "trace.jsonl",
+      "kind": "trace",
+      "retention_tier": "normal",
+      "sha256": "9e1a89058bae8887c468967127d1febde736b4da2f184c1bf1cd0a0ed2aa65ef"
+    }
+  ]
+}
