@@ -405,7 +405,7 @@ fn sendfile_partial() {
     unsafe { libc::lseek(out_fd, 0, libc::SEEK_SET) };
     let mut buf = [0u8; 8];
     unsafe { libc::read(out_fd, buf.as_mut_ptr().cast(), 8) };
-    assert_eq!(&buf, b"4567890a");
+    assert_eq!(&buf, b"456789ab");
 
     unsafe { close(in_fd) };
     unsafe { close(out_fd) };

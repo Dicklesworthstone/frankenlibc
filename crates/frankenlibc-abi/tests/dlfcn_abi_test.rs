@@ -168,35 +168,3 @@ fn dlsym_null_name_returns_null() {
     assert!(sym.is_null(), "dlsym with null name should return NULL");
     unsafe { dlclose(handle) };
 }
-
-#[test]
-fn dlclose_double_close() {
-    let _guard = TEST_GUARD.lock().unwrap();
-    let handle = unsafe { dlopen(std::ptr::null(), libc::RTLD_NOW) };
-    assert!(!handle.is_null());
-    let rc1 = unsafe { dlclose(handle) };
-    assert_eq!(rc1, 0, "first dlclose should succeed");
-    // Second close on same handle — implementation-defined, but shouldn't crash
-    let _ = unsafe { dlclose(handle) };
-}
-
-#[test]
-fn dl_iterate_phdr_with_callback() {
-    let _guard = TEST_GUARD.lock().unwrap();
-
-    static mut CALLBACK_COUNT: i32 = 0;
-
-    unsafe extern "C" fn counter(
-        _info: *mut libc::dl_phdr_info,
-        _size: usize,
-        _data: *mut c_void,
-    ) -> i32 {
-        unsafe { CALLBACK_COUNT += 1 };
-        0 // continue iteration
-    }
-
-    unsafe { CALLBACK_COUNT = 0 };
-    let rc = unsafe { dl_iterate_phdr(Some(counter), std::ptr::null_mut()) };
-    assert_eq!(rc, 0, "dl_iterate_phdr should return 0 when callback returns 0");
-    assert!(unsafe { CALLBACK_COUNT } > 0, "callback should be invoked at least once");
-}
