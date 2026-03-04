@@ -7,9 +7,10 @@ use std::ffi::c_void;
 use std::sync::atomic::{AtomicI32, Ordering};
 
 use frankenlibc_abi::c11threads_abi::{
-    call_once, cnd_broadcast, cnd_destroy, cnd_init, cnd_signal, cnd_wait, mtx_destroy, mtx_init,
-    mtx_lock, mtx_trylock, mtx_unlock, thrd_create, thrd_current, thrd_equal, thrd_join,
-    thrd_sleep, thrd_yield, tss_create, tss_delete, tss_get, tss_set,
+    call_once, cnd_broadcast, cnd_destroy, cnd_init, cnd_signal, cnd_timedwait, cnd_wait,
+    mtx_destroy, mtx_init, mtx_lock, mtx_timedlock, mtx_trylock, mtx_unlock, thrd_create,
+    thrd_current, thrd_detach, thrd_equal, thrd_join, thrd_sleep, thrd_yield, tss_create,
+    tss_delete, tss_get, tss_set,
 };
 use frankenlibc_abi::dirent_abi::versionsort;
 use frankenlibc_abi::time_abi::{timespec_get, timespec_getres};
@@ -76,6 +77,26 @@ fn test_thrd_sleep_short() {
 }
 
 // ===========================================================================
+// thrd_detach test
+// ===========================================================================
+
+#[test]
+fn test_thrd_detach() {
+    unsafe extern "C" fn detach_func(_arg: *mut c_void) -> c_int {
+        0
+    }
+    unsafe {
+        let mut thr: libc::pthread_t = 0;
+        let rc = thrd_create(&mut thr, Some(detach_func), std::ptr::null_mut());
+        assert_eq!(rc, THRD_SUCCESS, "thrd_create failed");
+        let rc = thrd_detach(thr);
+        assert_eq!(rc, THRD_SUCCESS, "thrd_detach should succeed");
+        // Give detached thread time to finish
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+}
+
+// ===========================================================================
 // mtx_* tests
 // ===========================================================================
 
@@ -110,6 +131,28 @@ fn test_mtx_recursive() {
         assert_eq!(mtx_lock(&mut mtx), THRD_SUCCESS);
         assert_eq!(mtx_lock(&mut mtx), THRD_SUCCESS); // second lock OK for recursive
         assert_eq!(mtx_unlock(&mut mtx), THRD_SUCCESS);
+        assert_eq!(mtx_unlock(&mut mtx), THRD_SUCCESS);
+        mtx_destroy(&mut mtx);
+    }
+}
+
+// ===========================================================================
+// mtx_timedlock test
+// ===========================================================================
+
+#[test]
+fn test_mtx_timedlock_succeeds_when_available() {
+    unsafe {
+        let mut mtx: libc::pthread_mutex_t = std::mem::zeroed();
+        assert_eq!(mtx_init(&mut mtx, 0), THRD_SUCCESS);
+
+        // Get a future timestamp
+        let mut ts: libc::timespec = std::mem::zeroed();
+        libc::clock_gettime(libc::CLOCK_REALTIME, &mut ts);
+        ts.tv_sec += 1; // 1 second from now
+
+        let rc = mtx_timedlock(&mut mtx, &ts);
+        assert_eq!(rc, THRD_SUCCESS, "mtx_timedlock should succeed on available mutex");
         assert_eq!(mtx_unlock(&mut mtx), THRD_SUCCESS);
         mtx_destroy(&mut mtx);
     }
@@ -186,6 +229,34 @@ fn test_cnd_wait_signal() {
 }
 
 // ===========================================================================
+// cnd_timedwait test
+// ===========================================================================
+
+#[test]
+fn test_cnd_timedwait_timeout() {
+    unsafe {
+        let mut cond: libc::pthread_cond_t = std::mem::zeroed();
+        let mut mtx: libc::pthread_mutex_t = std::mem::zeroed();
+        assert_eq!(cnd_init(&mut cond), THRD_SUCCESS);
+        assert_eq!(mtx_init(&mut mtx, 0), THRD_SUCCESS);
+
+        // Set timeout slightly in the past to trigger immediate timeout
+        let mut ts: libc::timespec = std::mem::zeroed();
+        libc::clock_gettime(libc::CLOCK_REALTIME, &mut ts);
+        // Don't subtract to avoid underflow; just use current time (will timeout immediately)
+
+        assert_eq!(mtx_lock(&mut mtx), THRD_SUCCESS);
+        let rc = cnd_timedwait(&mut cond, &mut mtx, &ts);
+        // Should return thrd_timedout (2) or thrd_error
+        assert_ne!(rc, THRD_SUCCESS, "cnd_timedwait with past deadline should not succeed");
+        assert_eq!(mtx_unlock(&mut mtx), THRD_SUCCESS);
+
+        cnd_destroy(&mut cond);
+        mtx_destroy(&mut mtx);
+    }
+}
+
+// ===========================================================================
 // tss_* tests
 // ===========================================================================
 
@@ -202,6 +273,64 @@ fn test_tss_create_get_set_delete() {
         assert_eq!(got, val);
 
         tss_delete(key);
+    }
+}
+
+#[test]
+fn test_tss_default_null() {
+    unsafe {
+        let mut key: libc::pthread_key_t = 0;
+        assert_eq!(tss_create(&mut key, None), THRD_SUCCESS);
+        // Before setting, should be null
+        let val = tss_get(key);
+        assert!(val.is_null(), "tss_get before set should return null");
+        tss_delete(key);
+    }
+}
+
+#[test]
+fn test_tss_create_null_key_returns_error() {
+    unsafe {
+        let rc = tss_create(std::ptr::null_mut(), None);
+        assert_ne!(rc, THRD_SUCCESS, "tss_create with null key should fail");
+    }
+}
+
+// ===========================================================================
+// Multi-threaded mtx contention
+// ===========================================================================
+
+static MTX_COUNTER: AtomicI32 = AtomicI32::new(0);
+
+#[test]
+fn test_mtx_multi_threaded_contention() {
+    unsafe extern "C" fn increment_func(arg: *mut c_void) -> c_int {
+        unsafe {
+            let mtx = arg as *mut libc::pthread_mutex_t;
+            for _ in 0..100 {
+                mtx_lock(mtx);
+                MTX_COUNTER.fetch_add(1, Ordering::SeqCst);
+                mtx_unlock(mtx);
+            }
+        }
+        0
+    }
+
+    unsafe {
+        let mut mtx: libc::pthread_mutex_t = std::mem::zeroed();
+        assert_eq!(mtx_init(&mut mtx, 0), THRD_SUCCESS);
+        MTX_COUNTER.store(0, Ordering::SeqCst);
+
+        let mut threads = [0 as libc::pthread_t; 4];
+        for thr in threads.iter_mut() {
+            thrd_create(thr, Some(increment_func), &mut mtx as *mut _ as *mut c_void);
+        }
+        for &thr in threads.iter() {
+            thrd_join(thr, std::ptr::null_mut());
+        }
+
+        assert_eq!(MTX_COUNTER.load(Ordering::SeqCst), 400);
+        mtx_destroy(&mut mtx);
     }
 }
 

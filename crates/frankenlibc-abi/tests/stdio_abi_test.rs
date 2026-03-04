@@ -8,6 +8,9 @@ use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::mpsc;
+use std::thread;
+use std::time::Duration;
 
 use frankenlibc_abi::stdio_abi::{
     asprintf, clearerr, clearerr_unlocked, dprintf, fclose, fdopen, feof, feof_unlocked, ferror,
@@ -56,6 +59,12 @@ struct CookieState {
     data: Vec<u8>,
     pos: usize,
     closed: bool,
+    inject_read_eintr_once: bool,
+    inject_write_eintr_once: bool,
+    read_eintr_emitted: bool,
+    write_eintr_emitted: bool,
+    max_write_chunk: usize,
+    write_calls: usize,
 }
 
 unsafe extern "C" fn cookie_read(cookie: *mut c_void, buf: *mut c_char, count: usize) -> isize {
@@ -64,6 +73,14 @@ unsafe extern "C" fn cookie_read(cookie: *mut c_void, buf: *mut c_char, count: u
     }
     // SAFETY: test controls cookie pointer lifetime and type.
     let state = unsafe { &mut *(cookie as *mut CookieState) };
+    if state.inject_read_eintr_once && !state.read_eintr_emitted {
+        state.read_eintr_emitted = true;
+        // SAFETY: libc exposes thread-local errno pointer on Linux.
+        unsafe {
+            *libc::__errno_location() = libc::EINTR;
+        }
+        return -1;
+    }
     if state.pos >= state.data.len() {
         return 0;
     }
@@ -80,14 +97,28 @@ unsafe extern "C" fn cookie_write(cookie: *mut c_void, buf: *const c_char, count
     }
     // SAFETY: test controls cookie pointer lifetime and type.
     let state = unsafe { &mut *(cookie as *mut CookieState) };
-    let src = unsafe { std::slice::from_raw_parts(buf.cast::<u8>(), count) };
-    let end = state.pos.saturating_add(count);
+    if state.inject_write_eintr_once && !state.write_eintr_emitted {
+        state.write_eintr_emitted = true;
+        // SAFETY: libc exposes thread-local errno pointer on Linux.
+        unsafe {
+            *libc::__errno_location() = libc::EINTR;
+        }
+        return -1;
+    }
+    state.write_calls = state.write_calls.saturating_add(1);
+    let to_write = if state.max_write_chunk == 0 {
+        count
+    } else {
+        count.min(state.max_write_chunk)
+    };
+    let src = unsafe { std::slice::from_raw_parts(buf.cast::<u8>(), to_write) };
+    let end = state.pos.saturating_add(to_write);
     if state.data.len() < end {
         state.data.resize(end, 0);
     }
     state.data[state.pos..end].copy_from_slice(src);
     state.pos = end;
-    count as isize
+    to_write as isize
 }
 
 unsafe extern "C" fn cookie_seek(cookie: *mut c_void, offset: *mut i64, whence: c_int) -> c_int {
@@ -250,6 +281,202 @@ fn fopencookie_routes_io_callbacks_for_read_write_seek_close() {
     let state = unsafe { Box::from_raw(cookie) };
     assert!(state.closed);
     assert_eq!(state.data, payload);
+}
+
+#[test]
+fn fopencookie_fread_retries_once_on_eintr() {
+    let cookie = Box::into_raw(Box::new(CookieState {
+        data: b"retry-read".to_vec(),
+        pos: 0,
+        closed: false,
+        inject_read_eintr_once: true,
+        inject_write_eintr_once: false,
+        read_eintr_emitted: false,
+        write_eintr_emitted: false,
+        max_write_chunk: 0,
+        write_calls: 0,
+    }));
+    let funcs = CookieIoFuncs {
+        read: Some(cookie_read),
+        write: Some(cookie_write),
+        seek: Some(cookie_seek),
+        close: Some(cookie_close),
+    };
+    let mode = CString::new("r+").expect("valid mode");
+    // SAFETY: callback table and mode pointers are valid for call duration.
+    let stream = unsafe {
+        fopencookie(
+            cookie.cast::<c_void>(),
+            mode.as_ptr(),
+            (&funcs as *const CookieIoFuncs).cast::<c_void>(),
+        )
+    };
+    assert!(!stream.is_null());
+
+    let mut out = [0u8; 10];
+    // SAFETY: destination pointer and stream are valid.
+    let read = unsafe { fread(out.as_mut_ptr().cast::<c_void>(), 1, out.len(), stream) };
+    assert_eq!(read, 10);
+    assert_eq!(&out, b"retry-read");
+
+    // SAFETY: stream is valid and open.
+    assert_eq!(unsafe { fclose(stream) }, 0);
+    // SAFETY: cookie ownership remains with this test.
+    let state = unsafe { Box::from_raw(cookie) };
+    assert!(state.read_eintr_emitted);
+}
+
+#[test]
+fn fopencookie_fwrite_retries_once_on_eintr() {
+    let cookie = Box::into_raw(Box::new(CookieState {
+        data: Vec::new(),
+        pos: 0,
+        closed: false,
+        inject_read_eintr_once: false,
+        inject_write_eintr_once: true,
+        read_eintr_emitted: false,
+        write_eintr_emitted: false,
+        max_write_chunk: 0,
+        write_calls: 0,
+    }));
+    let funcs = CookieIoFuncs {
+        read: Some(cookie_read),
+        write: Some(cookie_write),
+        seek: Some(cookie_seek),
+        close: Some(cookie_close),
+    };
+    let mode = CString::new("w+").expect("valid mode");
+    // SAFETY: callback table and mode pointers are valid for call duration.
+    let stream = unsafe {
+        fopencookie(
+            cookie.cast::<c_void>(),
+            mode.as_ptr(),
+            (&funcs as *const CookieIoFuncs).cast::<c_void>(),
+        )
+    };
+    assert!(!stream.is_null());
+
+    let payload = b"retry-write";
+    // SAFETY: pointers and stream are valid.
+    let wrote = unsafe { fwrite(payload.as_ptr().cast::<c_void>(), 1, payload.len(), stream) };
+    assert_eq!(wrote, payload.len());
+
+    // SAFETY: stream is valid and open.
+    assert_eq!(unsafe { fclose(stream) }, 0);
+    // SAFETY: cookie ownership remains with this test.
+    let state = unsafe { Box::from_raw(cookie) };
+    assert!(state.write_eintr_emitted);
+    assert_eq!(state.data, payload);
+}
+
+#[test]
+fn fopencookie_fwrite_handles_partial_writes_without_data_loss() {
+    let cookie = Box::into_raw(Box::new(CookieState {
+        data: Vec::new(),
+        pos: 0,
+        closed: false,
+        inject_read_eintr_once: false,
+        inject_write_eintr_once: false,
+        read_eintr_emitted: false,
+        write_eintr_emitted: false,
+        max_write_chunk: 3,
+        write_calls: 0,
+    }));
+    let funcs = CookieIoFuncs {
+        read: Some(cookie_read),
+        write: Some(cookie_write),
+        seek: Some(cookie_seek),
+        close: Some(cookie_close),
+    };
+    let mode = CString::new("w+").expect("valid mode");
+    // SAFETY: callback table and mode pointers are valid for call duration.
+    let stream = unsafe {
+        fopencookie(
+            cookie.cast::<c_void>(),
+            mode.as_ptr(),
+            (&funcs as *const CookieIoFuncs).cast::<c_void>(),
+        )
+    };
+    assert!(!stream.is_null());
+
+    let payload = b"partial-write-payload";
+    // SAFETY: pointers and stream are valid.
+    let wrote = unsafe { fwrite(payload.as_ptr().cast::<c_void>(), 1, payload.len(), stream) };
+    assert_eq!(wrote, payload.len());
+
+    // SAFETY: stream is valid and open.
+    assert_eq!(unsafe { fclose(stream) }, 0);
+    // SAFETY: cookie ownership remains with this test.
+    let state = unsafe { Box::from_raw(cookie) };
+    assert_eq!(state.data, payload);
+    assert!(state.write_calls > 1, "short-write path should require retries");
+}
+
+#[test]
+fn mixed_buffered_and_unbuffered_same_fd_completes_without_deadlock() {
+    let path = temp_path("mixed_buffer_modes");
+    let _ = fs::remove_file(&path);
+    let path_c = path_cstring(&path);
+
+    // SAFETY: pointers are valid C strings for this call.
+    let stream = unsafe { fopen(path_c.as_ptr(), c"w+".as_ptr()) };
+    assert!(!stream.is_null());
+    // SAFETY: stream is valid and setvbuf pre-I/O configuration is valid.
+    assert_eq!(unsafe { setvbuf(stream, std::ptr::null_mut(), IOFBF, 4096) }, 0);
+
+    // SAFETY: stream is valid.
+    let fd = unsafe { fileno(stream) };
+    assert!(fd >= 0);
+
+    let iterations = 256usize;
+    let stream_addr = stream as usize;
+    let (done_tx, done_rx) = mpsc::channel::<&'static str>();
+    let tx_a = done_tx.clone();
+    let tx_b = done_tx.clone();
+    drop(done_tx);
+
+    let writer_stream = thread::spawn(move || {
+        let stream = stream_addr as *mut c_void;
+        for _ in 0..iterations {
+            let byte = [b'A'];
+            // SAFETY: stream and pointer are valid for 1-byte write.
+            let wrote = unsafe { fwrite(byte.as_ptr().cast::<c_void>(), 1, 1, stream) };
+            if wrote != 1 {
+                break;
+            }
+        }
+        let _ = tx_a.send("stream");
+    });
+
+    let writer_fd = thread::spawn(move || {
+        for _ in 0..iterations {
+            let byte = [b'B'];
+            // SAFETY: fd is valid while stream remains open.
+            let rc = unsafe { libc::write(fd, byte.as_ptr().cast::<c_void>(), 1) };
+            if rc != 1 {
+                break;
+            }
+        }
+        let _ = tx_b.send("fd");
+    });
+
+    let first = done_rx.recv_timeout(Duration::from_secs(2));
+    let second = done_rx.recv_timeout(Duration::from_secs(2));
+    assert!(first.is_ok(), "first writer did not finish in time");
+    assert!(second.is_ok(), "second writer did not finish in time");
+
+    writer_stream.join().expect("stream writer thread should join");
+    writer_fd.join().expect("fd writer thread should join");
+
+    // SAFETY: stream is valid and open.
+    assert_eq!(unsafe { fflush(stream) }, 0);
+    // SAFETY: stream is valid and open.
+    assert_eq!(unsafe { fclose(stream) }, 0);
+
+    let bytes = fs::read(&path).expect("mixed mode output should be readable");
+    assert!(!bytes.is_empty(), "mixed-mode writes should persist data");
+
+    let _ = fs::remove_file(path);
 }
 
 #[test]

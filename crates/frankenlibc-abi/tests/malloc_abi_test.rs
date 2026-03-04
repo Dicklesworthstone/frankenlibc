@@ -3,8 +3,9 @@
 //! Integration tests for malloc introspection ABI entrypoints.
 
 use frankenlibc_abi::malloc_abi::{
-    cfree, free, mallinfo, mallinfo2, malloc, malloc_info, malloc_stats, malloc_trim,
-    malloc_usable_size, mallopt, pvalloc, valloc,
+    aligned_alloc, calloc, cfree, free, mallinfo, mallinfo2, malloc, malloc_info, malloc_stats,
+    malloc_trim, malloc_usable_size, mallopt, memalign, posix_memalign, pvalloc, realloc, valloc,
+    __libc_freeres,
 };
 use std::ffi::c_void;
 use std::ptr;
@@ -13,6 +14,206 @@ use std::sync::{Mutex, OnceLock};
 fn test_lock() -> &'static Mutex<()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
     LOCK.get_or_init(|| Mutex::new(()))
+}
+
+// ---------------------------------------------------------------------------
+// malloc — basic allocation
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_malloc_basic_alloc_and_free() {
+    let _guard = test_lock().lock().expect("test lock poisoned");
+    let p = unsafe { malloc(256) };
+    assert!(!p.is_null(), "malloc(256) should succeed");
+    // Write pattern and read back
+    unsafe {
+        let slice = std::slice::from_raw_parts_mut(p as *mut u8, 256);
+        for (i, byte) in slice.iter_mut().enumerate() {
+            *byte = (i & 0xFF) as u8;
+        }
+        for (i, byte) in slice.iter().enumerate() {
+            assert_eq!(*byte, (i & 0xFF) as u8);
+        }
+    }
+    unsafe { free(p) };
+}
+
+#[test]
+fn test_malloc_zero_size() {
+    let _guard = test_lock().lock().expect("test lock poisoned");
+    let p = unsafe { malloc(0) };
+    // malloc(0) may return null or a unique freeable pointer
+    if !p.is_null() {
+        unsafe { free(p) };
+    }
+}
+
+#[test]
+fn test_free_null_is_noop() {
+    let _guard = test_lock().lock().expect("test lock poisoned");
+    // free(NULL) must be a no-op per POSIX
+    unsafe { free(ptr::null_mut()) };
+}
+
+// ---------------------------------------------------------------------------
+// calloc — zero-initialized allocation
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_calloc_zero_initialized() {
+    let _guard = test_lock().lock().expect("test lock poisoned");
+    let p = unsafe { calloc(10, 16) };
+    assert!(!p.is_null(), "calloc(10, 16) should succeed");
+    // All bytes must be zero
+    let slice = unsafe { std::slice::from_raw_parts(p as *const u8, 160) };
+    for &byte in slice {
+        assert_eq!(byte, 0, "calloc memory must be zero-initialized");
+    }
+    unsafe { free(p) };
+}
+
+#[test]
+fn test_calloc_zero_count() {
+    let _guard = test_lock().lock().expect("test lock poisoned");
+    let p = unsafe { calloc(0, 64) };
+    if !p.is_null() {
+        unsafe { free(p) };
+    }
+}
+
+#[test]
+fn test_calloc_zero_size() {
+    let _guard = test_lock().lock().expect("test lock poisoned");
+    let p = unsafe { calloc(10, 0) };
+    if !p.is_null() {
+        unsafe { free(p) };
+    }
+}
+
+// ---------------------------------------------------------------------------
+// realloc — resize allocation
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_realloc_grow() {
+    let _guard = test_lock().lock().expect("test lock poisoned");
+    let p = unsafe { malloc(64) };
+    assert!(!p.is_null());
+    // Write a pattern to the first 64 bytes
+    unsafe {
+        let slice = std::slice::from_raw_parts_mut(p as *mut u8, 64);
+        for (i, byte) in slice.iter_mut().enumerate() {
+            *byte = (i as u8).wrapping_add(0xA0);
+        }
+    }
+    let p2 = unsafe { realloc(p, 256) };
+    assert!(!p2.is_null(), "realloc should succeed growing to 256");
+    // Original data should be preserved
+    let slice = unsafe { std::slice::from_raw_parts(p2 as *const u8, 64) };
+    for (i, &byte) in slice.iter().enumerate() {
+        assert_eq!(byte, (i as u8).wrapping_add(0xA0), "data should be preserved after realloc");
+    }
+    unsafe { free(p2) };
+}
+
+#[test]
+fn test_realloc_shrink() {
+    let _guard = test_lock().lock().expect("test lock poisoned");
+    let p = unsafe { malloc(256) };
+    assert!(!p.is_null());
+    unsafe { *(p as *mut u8) = 0x42 };
+    let p2 = unsafe { realloc(p, 32) };
+    assert!(!p2.is_null(), "realloc should succeed shrinking to 32");
+    assert_eq!(unsafe { *(p2 as *const u8) }, 0x42, "first byte preserved");
+    unsafe { free(p2) };
+}
+
+#[test]
+fn test_realloc_null_ptr_acts_as_malloc() {
+    let _guard = test_lock().lock().expect("test lock poisoned");
+    let p = unsafe { realloc(ptr::null_mut(), 128) };
+    assert!(!p.is_null(), "realloc(NULL, 128) should act as malloc(128)");
+    unsafe { free(p) };
+}
+
+// ---------------------------------------------------------------------------
+// posix_memalign — POSIX aligned allocation
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_posix_memalign_basic() {
+    let _guard = test_lock().lock().expect("test lock poisoned");
+    let mut p: *mut c_void = ptr::null_mut();
+    let rc = unsafe { posix_memalign(&mut p, 64, 256) };
+    assert_eq!(rc, 0, "posix_memalign should succeed");
+    assert!(!p.is_null());
+    assert_eq!((p as usize) % 64, 0, "must be 64-byte aligned");
+    unsafe { free(p) };
+}
+
+#[test]
+fn test_posix_memalign_page_aligned() {
+    let _guard = test_lock().lock().expect("test lock poisoned");
+    let page_sz = unsafe { libc::sysconf(libc::_SC_PAGESIZE) } as usize;
+    let mut p: *mut c_void = ptr::null_mut();
+    let rc = unsafe { posix_memalign(&mut p, page_sz, 1024) };
+    assert_eq!(rc, 0);
+    assert!(!p.is_null());
+    assert_eq!((p as usize) % page_sz, 0, "must be page-aligned");
+    unsafe { free(p) };
+}
+
+#[test]
+fn test_posix_memalign_bad_alignment() {
+    let _guard = test_lock().lock().expect("test lock poisoned");
+    let mut p: *mut c_void = ptr::null_mut();
+    // Alignment must be power of 2 and multiple of sizeof(void*)
+    let rc = unsafe { posix_memalign(&mut p, 3, 64) }; // 3 is not power of 2
+    assert_eq!(rc, libc::EINVAL, "non-power-of-2 alignment should return EINVAL");
+}
+
+#[test]
+fn test_posix_memalign_null_memptr() {
+    let _guard = test_lock().lock().expect("test lock poisoned");
+    let rc = unsafe { posix_memalign(ptr::null_mut(), 16, 64) };
+    assert_eq!(rc, libc::EINVAL, "null memptr should return EINVAL");
+}
+
+// ---------------------------------------------------------------------------
+// memalign — legacy aligned allocation
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_memalign_basic() {
+    let _guard = test_lock().lock().expect("test lock poisoned");
+    let p = unsafe { memalign(128, 512) };
+    assert!(!p.is_null(), "memalign(128, 512) should succeed");
+    assert_eq!((p as usize) % 128, 0, "must be 128-byte aligned");
+    unsafe { free(p) };
+}
+
+// ---------------------------------------------------------------------------
+// aligned_alloc — C11 aligned allocation
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_aligned_alloc_basic() {
+    let _guard = test_lock().lock().expect("test lock poisoned");
+    let p = unsafe { aligned_alloc(32, 256) };
+    assert!(!p.is_null(), "aligned_alloc(32, 256) should succeed");
+    assert_eq!((p as usize) % 32, 0, "must be 32-byte aligned");
+    unsafe { free(p) };
+}
+
+// ---------------------------------------------------------------------------
+// __libc_freeres — resource release stub
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_libc_freeres_is_noop() {
+    let _guard = test_lock().lock().expect("test lock poisoned");
+    // __libc_freeres is a no-op stub; just verify it doesn't crash
+    unsafe { __libc_freeres() };
 }
 
 // ---------------------------------------------------------------------------

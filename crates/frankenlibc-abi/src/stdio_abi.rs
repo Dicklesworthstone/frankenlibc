@@ -13,7 +13,8 @@
 use std::collections::HashMap;
 use std::ffi::{CStr, c_char, c_int, c_void};
 use std::os::raw::c_long;
-use std::sync::{Mutex, OnceLock};
+use std::sync::Mutex;
+use std::sync::OnceLock;
 
 use frankenlibc_core::errno;
 use frankenlibc_core::stdio::{BufMode, OpenFlags, StdioStream, flags_to_oflags, parse_mode};
@@ -65,6 +66,131 @@ pub(crate) unsafe fn c_str_bytes<'a>(ptr: *const c_char) -> &'a [u8] {
 unsafe fn set_abi_errno(val: c_int) {
     let p = unsafe { super::errno_abi::__errno_location() };
     unsafe { *p = val };
+}
+
+/// Runtime-dispatch state for stream/syscall policy lookups.
+/// Seek/Close rows are reserved for upcoming policy-routing of those operations.
+#[allow(dead_code)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum StreamPolicyState {
+    Read = 0,
+    Write = 1,
+    Seek = 2,
+    Close = 3,
+}
+
+const STREAM_POLICY_STATE_COUNT: usize = 4;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum StreamPolicyReturnClass {
+    Positive = 0,
+    Zero = 1,
+    Negative = 2,
+}
+
+const STREAM_POLICY_RETURN_COUNT: usize = 3;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum StreamPolicyErrnoClass {
+    None = 0,
+    Eintr = 1,
+    Again = 2,
+    Other = 3,
+}
+
+const STREAM_POLICY_ERRNO_COUNT: usize = 4;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum StreamPolicyAction {
+    Retry,
+    Buffer,
+    Flush,
+    Escalate,
+    Yield,
+}
+
+const STREAM_POLICY_TABLE: [[[StreamPolicyAction; STREAM_POLICY_ERRNO_COUNT];
+    STREAM_POLICY_RETURN_COUNT]; STREAM_POLICY_STATE_COUNT] = [
+    // Read
+    [
+        [StreamPolicyAction::Buffer; STREAM_POLICY_ERRNO_COUNT],
+        [StreamPolicyAction::Yield; STREAM_POLICY_ERRNO_COUNT],
+        [
+            StreamPolicyAction::Escalate,
+            StreamPolicyAction::Retry,
+            StreamPolicyAction::Yield,
+            StreamPolicyAction::Escalate,
+        ],
+    ],
+    // Write
+    [
+        [StreamPolicyAction::Flush; STREAM_POLICY_ERRNO_COUNT],
+        [StreamPolicyAction::Escalate; STREAM_POLICY_ERRNO_COUNT],
+        [
+            StreamPolicyAction::Escalate,
+            StreamPolicyAction::Retry,
+            StreamPolicyAction::Yield,
+            StreamPolicyAction::Escalate,
+        ],
+    ],
+    // Seek
+    [
+        [StreamPolicyAction::Flush; STREAM_POLICY_ERRNO_COUNT],
+        [StreamPolicyAction::Flush; STREAM_POLICY_ERRNO_COUNT],
+        [
+            StreamPolicyAction::Escalate,
+            StreamPolicyAction::Retry,
+            StreamPolicyAction::Escalate,
+            StreamPolicyAction::Escalate,
+        ],
+    ],
+    // Close
+    [
+        [StreamPolicyAction::Flush; STREAM_POLICY_ERRNO_COUNT],
+        [StreamPolicyAction::Flush; STREAM_POLICY_ERRNO_COUNT],
+        [
+            StreamPolicyAction::Escalate,
+            StreamPolicyAction::Retry,
+            StreamPolicyAction::Yield,
+            StreamPolicyAction::Escalate,
+        ],
+    ],
+];
+
+#[inline]
+fn classify_stream_return(rc: isize) -> StreamPolicyReturnClass {
+    if rc > 0 {
+        StreamPolicyReturnClass::Positive
+    } else if rc == 0 {
+        StreamPolicyReturnClass::Zero
+    } else {
+        StreamPolicyReturnClass::Negative
+    }
+}
+
+#[inline]
+fn classify_stream_errno(errno_val: c_int) -> StreamPolicyErrnoClass {
+    if errno_val == 0 {
+        StreamPolicyErrnoClass::None
+    } else if errno_val == errno::EINTR {
+        StreamPolicyErrnoClass::Eintr
+    } else if errno_val == errno::EAGAIN || errno_val == libc::EWOULDBLOCK {
+        StreamPolicyErrnoClass::Again
+    } else {
+        StreamPolicyErrnoClass::Other
+    }
+}
+
+#[inline]
+fn stream_policy_action(
+    state: StreamPolicyState,
+    rc: isize,
+    errno_val: c_int,
+) -> StreamPolicyAction {
+    let state_ix = state as usize;
+    let return_ix = classify_stream_return(rc) as usize;
+    let errno_ix = classify_stream_errno(errno_val) as usize;
+    STREAM_POLICY_TABLE[state_ix][return_ix][errno_ix]
 }
 
 // ---------------------------------------------------------------------------
@@ -153,14 +279,20 @@ unsafe fn flush_stream(stream: &mut StdioStream) -> bool {
         let ptr = pending[written..].as_ptr();
         let chunk_len = pending.len() - written;
         let rc = unsafe { sys_write_fd(fd, ptr.cast(), chunk_len) };
-        if rc < 0 {
-            let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
-            if e == errno::EINTR {
-                continue;
+        let errno_val = if rc < 0 {
+            std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
+        } else {
+            0
+        };
+        match stream_policy_action(StreamPolicyState::Write, rc, errno_val) {
+            StreamPolicyAction::Retry => continue,
+            StreamPolicyAction::Yield | StreamPolicyAction::Escalate => {
+                stream.set_error();
+                return false;
             }
-            stream.set_error();
-            return false;
-        } else if rc == 0 {
+            StreamPolicyAction::Flush | StreamPolicyAction::Buffer => {}
+        }
+        if rc == 0 {
             stream.set_error();
             return false;
         }
@@ -178,19 +310,37 @@ unsafe fn refill_stream(stream: &mut StdioStream) -> isize {
     }
     let mut tmp = vec![0u8; capacity.min(8192)];
     let fd = stream.fd();
-    let rc = unsafe { sys_read_fd(fd, tmp.as_mut_ptr().cast(), tmp.len()) };
-    if rc > 0 {
-        stream.fill_read_buffer(&tmp[..rc as usize]);
-        rc
-    } else if rc == 0 {
-        stream.set_eof();
-        0
-    } else {
-        let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
-        if e != errno::EINTR {
-            stream.set_error();
+    loop {
+        let rc = unsafe { sys_read_fd(fd, tmp.as_mut_ptr().cast(), tmp.len()) };
+        let errno_val = if rc < 0 {
+            std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
+        } else {
+            0
+        };
+        match stream_policy_action(StreamPolicyState::Read, rc, errno_val) {
+            StreamPolicyAction::Retry => continue,
+            StreamPolicyAction::Buffer => {
+                stream.fill_read_buffer(&tmp[..rc as usize]);
+                return rc;
+            }
+            StreamPolicyAction::Yield => {
+                if rc == 0 {
+                    stream.set_eof();
+                }
+                return 0;
+            }
+            StreamPolicyAction::Escalate => {
+                stream.set_error();
+                return -1;
+            }
+            StreamPolicyAction::Flush => {
+                if rc > 0 {
+                    stream.fill_read_buffer(&tmp[..rc as usize]);
+                    return rc;
+                }
+                return 0;
+            }
         }
-        -1
     }
 }
 
@@ -958,6 +1108,23 @@ pub unsafe extern "C" fn fread(
                     total.saturating_sub(read_total),
                 )
             };
+            let errno_val = if rc < 0 {
+                std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
+            } else {
+                0
+            };
+            match stream_policy_action(StreamPolicyState::Read, rc, errno_val) {
+                StreamPolicyAction::Retry => continue,
+                StreamPolicyAction::Escalate => {
+                    had_error = true;
+                    break;
+                }
+                StreamPolicyAction::Yield => {
+                    reached_eof = rc == 0;
+                    break;
+                }
+                StreamPolicyAction::Buffer | StreamPolicyAction::Flush => {}
+            }
             if rc > 0 {
                 let advanced = (rc as usize).min(total - read_total);
                 if advanced == 0 {
@@ -966,11 +1133,6 @@ pub unsafe extern "C" fn fread(
                 }
                 read_total += advanced;
                 continue;
-            }
-            if rc == 0 {
-                reached_eof = true;
-            } else {
-                had_error = true;
             }
             break;
         }
@@ -1011,21 +1173,29 @@ pub unsafe extern "C" fn fread(
         let fd = s.fd();
         let to_read = total - read_total;
         let rc = unsafe { sys_read_fd(fd, dst[read_total..].as_mut_ptr().cast(), to_read) };
-        if rc > 0 {
-            let bytes_read = rc as usize;
-            read_total += bytes_read;
-            s.set_offset(s.offset().saturating_add(bytes_read as i64));
-            continue;
-        } else if rc == 0 {
-            s.set_eof();
-            break;
+        let errno_val = if rc < 0 {
+            std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
         } else {
-            let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
-            if e == errno::EINTR {
+            0
+        };
+        match stream_policy_action(StreamPolicyState::Read, rc, errno_val) {
+            StreamPolicyAction::Retry => continue,
+            StreamPolicyAction::Buffer | StreamPolicyAction::Flush => {
+                let bytes_read = rc as usize;
+                read_total += bytes_read;
+                s.set_offset(s.offset().saturating_add(bytes_read as i64));
                 continue;
             }
-            s.set_error();
-            break;
+            StreamPolicyAction::Yield => {
+                if rc == 0 {
+                    s.set_eof();
+                }
+                break;
+            }
+            StreamPolicyAction::Escalate => {
+                s.set_error();
+                break;
+            }
         }
     }
 
@@ -1072,6 +1242,16 @@ pub unsafe extern "C" fn fwrite(
                     total.saturating_sub(written_total),
                 )
             };
+            let errno_val = if rc < 0 {
+                std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
+            } else {
+                0
+            };
+            match stream_policy_action(StreamPolicyState::Write, rc, errno_val) {
+                StreamPolicyAction::Retry => continue,
+                StreamPolicyAction::Yield | StreamPolicyAction::Escalate => break,
+                StreamPolicyAction::Flush | StreamPolicyAction::Buffer => {}
+            }
             if rc <= 0 {
                 break;
             }
@@ -1133,14 +1313,20 @@ pub unsafe extern "C" fn fwrite(
                     flush_data.len() - written,
                 )
             };
-            if rc < 0 {
-                let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
-                if e == errno::EINTR {
-                    continue;
+            let errno_val = if rc < 0 {
+                std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
+            } else {
+                0
+            };
+            match stream_policy_action(StreamPolicyState::Write, rc, errno_val) {
+                StreamPolicyAction::Retry => continue,
+                StreamPolicyAction::Yield | StreamPolicyAction::Escalate => {
+                    success = false;
+                    break;
                 }
-                success = false;
-                break;
-            } else if rc == 0 {
+                StreamPolicyAction::Flush | StreamPolicyAction::Buffer => {}
+            }
+            if rc == 0 {
                 success = false;
                 break;
             }

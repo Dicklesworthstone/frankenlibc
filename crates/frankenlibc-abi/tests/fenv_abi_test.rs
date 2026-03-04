@@ -154,3 +154,56 @@ fn feholdexcept_and_feupdateenv_round_trip_saved_exceptions() {
         assert_eq!(feclearexcept(FE_ALL_EXCEPT), 0);
     }
 }
+
+// ---------------------------------------------------------------------------
+// Multiple exception flags
+// ---------------------------------------------------------------------------
+
+#[test]
+fn raise_multiple_exceptions_and_test_individually() {
+    unsafe {
+        assert_eq!(feclearexcept(FE_ALL_EXCEPT), 0);
+
+        // Raise both invalid and divbyzero
+        assert_eq!(feraiseexcept(FE_INVALID | FE_DIVBYZERO), 0);
+
+        // Both should be set
+        let flags = fetestexcept(FE_INVALID | FE_DIVBYZERO);
+        assert_ne!(flags & FE_INVALID, 0, "FE_INVALID should be raised");
+        assert_ne!(flags & FE_DIVBYZERO, 0, "FE_DIVBYZERO should be raised");
+
+        // Clear only one
+        assert_eq!(feclearexcept(FE_INVALID), 0);
+        assert_eq!(fetestexcept(FE_INVALID), 0, "FE_INVALID should be cleared");
+        assert_ne!(
+            fetestexcept(FE_DIVBYZERO) & FE_DIVBYZERO,
+            0,
+            "FE_DIVBYZERO should remain"
+        );
+
+        assert_eq!(feclearexcept(FE_ALL_EXCEPT), 0);
+    }
+}
+
+#[test]
+fn feclearexcept_zero_is_noop() {
+    unsafe {
+        assert_eq!(feclearexcept(0), 0);
+    }
+}
+
+#[test]
+fn feraiseexcept_zero_is_noop() {
+    unsafe {
+        assert_eq!(feraiseexcept(0), 0);
+    }
+}
+
+#[test]
+fn fegetround_returns_valid_mode() {
+    let mode = unsafe { fegetround() };
+    assert!(
+        mode == FE_TONEAREST || mode == FE_DOWNWARD || mode == FE_UPWARD || mode == FE_TOWARDZERO,
+        "fegetround should return a known rounding mode, got {mode}"
+    );
+}
