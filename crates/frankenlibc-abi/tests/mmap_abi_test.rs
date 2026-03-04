@@ -1,0 +1,285 @@
+#![cfg(target_os = "linux")]
+
+//! Integration tests for virtual memory management ABI entrypoints.
+//!
+//! Covers: mmap, munmap, mprotect, msync, madvise, mlock/munlock, mremap.
+
+use std::ffi::c_void;
+use std::ptr;
+
+use frankenlibc_abi::mmap_abi::{madvise, mmap, mprotect, msync, munmap};
+
+// ---------------------------------------------------------------------------
+// mmap / munmap basics
+// ---------------------------------------------------------------------------
+
+#[test]
+fn mmap_anonymous_and_munmap() {
+    let len = 4096;
+    let ptr = unsafe {
+        mmap(
+            ptr::null_mut(),
+            len,
+            libc::PROT_READ | libc::PROT_WRITE,
+            libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
+            -1,
+            0,
+        )
+    };
+    assert_ne!(ptr, libc::MAP_FAILED, "mmap should succeed");
+    assert!(!ptr.is_null());
+
+    // Write to the mapped memory
+    let slice = unsafe { std::slice::from_raw_parts_mut(ptr as *mut u8, len) };
+    slice[0] = 42;
+    slice[len - 1] = 99;
+    assert_eq!(slice[0], 42);
+    assert_eq!(slice[len - 1], 99);
+
+    let rc = unsafe { munmap(ptr, len) };
+    assert_eq!(rc, 0, "munmap should succeed");
+}
+
+#[test]
+fn mmap_zero_length_fails() {
+    let ptr = unsafe {
+        mmap(
+            ptr::null_mut(),
+            0,
+            libc::PROT_READ,
+            libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
+            -1,
+            0,
+        )
+    };
+    assert_eq!(ptr, libc::MAP_FAILED, "mmap with length=0 should fail");
+}
+
+#[test]
+fn mmap_large_anonymous() {
+    let len = 1024 * 1024; // 1MB
+    let ptr = unsafe {
+        mmap(
+            ptr::null_mut(),
+            len,
+            libc::PROT_READ | libc::PROT_WRITE,
+            libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
+            -1,
+            0,
+        )
+    };
+    assert_ne!(ptr, libc::MAP_FAILED);
+
+    // Verify the memory is zero-initialized (MAP_ANONYMOUS guarantee)
+    let slice = unsafe { std::slice::from_raw_parts(ptr as *const u8, len) };
+    assert!(slice.iter().all(|&b| b == 0), "anonymous mmap should be zero-filled");
+
+    let rc = unsafe { munmap(ptr, len) };
+    assert_eq!(rc, 0);
+}
+
+// ---------------------------------------------------------------------------
+// mprotect
+// ---------------------------------------------------------------------------
+
+#[test]
+fn mprotect_changes_protection() {
+    let len = 4096;
+    let ptr = unsafe {
+        mmap(
+            ptr::null_mut(),
+            len,
+            libc::PROT_READ | libc::PROT_WRITE,
+            libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
+            -1,
+            0,
+        )
+    };
+    assert_ne!(ptr, libc::MAP_FAILED);
+
+    // Write data first
+    unsafe { *(ptr as *mut u8) = 123 };
+
+    // Change to read-only
+    let rc = unsafe { mprotect(ptr, len, libc::PROT_READ) };
+    assert_eq!(rc, 0, "mprotect to PROT_READ should succeed");
+
+    // Verify we can still read
+    let val = unsafe { *(ptr as *const u8) };
+    assert_eq!(val, 123);
+
+    // Restore write permission and clean up
+    let rc = unsafe { mprotect(ptr, len, libc::PROT_READ | libc::PROT_WRITE) };
+    assert_eq!(rc, 0);
+    let rc = unsafe { munmap(ptr, len) };
+    assert_eq!(rc, 0);
+}
+
+// ---------------------------------------------------------------------------
+// msync
+// ---------------------------------------------------------------------------
+
+#[test]
+fn msync_on_anonymous_mapping() {
+    let len = 4096;
+    let ptr = unsafe {
+        mmap(
+            ptr::null_mut(),
+            len,
+            libc::PROT_READ | libc::PROT_WRITE,
+            libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
+            -1,
+            0,
+        )
+    };
+    assert_ne!(ptr, libc::MAP_FAILED);
+
+    // msync on anonymous mapping should succeed (or return ENOMEM on some kernels)
+    let rc = unsafe { msync(ptr, len, libc::MS_SYNC) };
+    // MS_SYNC on anonymous private mapping may return -1/ENOMEM on some
+    // kernels, but should not crash. We just verify it doesn't panic.
+    let _ = rc;
+
+    let rc = unsafe { munmap(ptr, len) };
+    assert_eq!(rc, 0);
+}
+
+// ---------------------------------------------------------------------------
+// madvise
+// ---------------------------------------------------------------------------
+
+#[test]
+fn madvise_normal_succeeds() {
+    let len = 4096;
+    let ptr = unsafe {
+        mmap(
+            ptr::null_mut(),
+            len,
+            libc::PROT_READ | libc::PROT_WRITE,
+            libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
+            -1,
+            0,
+        )
+    };
+    assert_ne!(ptr, libc::MAP_FAILED);
+
+    let rc = unsafe { madvise(ptr, len, libc::MADV_NORMAL) };
+    assert_eq!(rc, 0, "madvise MADV_NORMAL should succeed");
+
+    let rc = unsafe { madvise(ptr, len, libc::MADV_SEQUENTIAL) };
+    assert_eq!(rc, 0, "madvise MADV_SEQUENTIAL should succeed");
+
+    let rc = unsafe { madvise(ptr, len, libc::MADV_RANDOM) };
+    assert_eq!(rc, 0, "madvise MADV_RANDOM should succeed");
+
+    let rc = unsafe { munmap(ptr, len) };
+    assert_eq!(rc, 0);
+}
+
+// ---------------------------------------------------------------------------
+// mlock / munlock
+// ---------------------------------------------------------------------------
+
+#[test]
+fn mlock_munlock_basic() {
+    use frankenlibc_abi::mmap_abi::{mlock, munlock};
+    let len = 4096;
+    let ptr = unsafe {
+        mmap(
+            ptr::null_mut(),
+            len,
+            libc::PROT_READ | libc::PROT_WRITE,
+            libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
+            -1,
+            0,
+        )
+    };
+    assert_ne!(ptr, libc::MAP_FAILED);
+
+    let rc = unsafe { mlock(ptr as *const c_void, len) };
+    // mlock may fail with EPERM if not privileged, which is OK
+    if rc == 0 {
+        let rc = unsafe { munlock(ptr as *const c_void, len) };
+        assert_eq!(rc, 0, "munlock should succeed after mlock");
+    }
+
+    let rc = unsafe { munmap(ptr, len) };
+    assert_eq!(rc, 0);
+}
+
+// ---------------------------------------------------------------------------
+// mremap
+// ---------------------------------------------------------------------------
+
+#[test]
+fn mremap_grow_mapping() {
+    use frankenlibc_abi::mmap_abi::mremap;
+    let old_len = 4096;
+    let new_len = 8192;
+    let ptr = unsafe {
+        mmap(
+            ptr::null_mut(),
+            old_len,
+            libc::PROT_READ | libc::PROT_WRITE,
+            libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
+            -1,
+            0,
+        )
+    };
+    assert_ne!(ptr, libc::MAP_FAILED);
+
+    // Write a marker
+    unsafe { *(ptr as *mut u8) = 77 };
+
+    let new_ptr = unsafe { mremap(ptr, old_len, new_len, libc::MREMAP_MAYMOVE, ptr::null_mut()) };
+    assert_ne!(new_ptr, libc::MAP_FAILED, "mremap should succeed");
+
+    // Marker should be preserved
+    let val = unsafe { *(new_ptr as *const u8) };
+    assert_eq!(val, 77, "data should be preserved after mremap");
+
+    let rc = unsafe { munmap(new_ptr, new_len) };
+    assert_eq!(rc, 0);
+}
+
+// ---------------------------------------------------------------------------
+// Multiple mappings
+// ---------------------------------------------------------------------------
+
+#[test]
+fn multiple_mappings_independent() {
+    let len = 4096;
+    let ptr1 = unsafe {
+        mmap(
+            ptr::null_mut(),
+            len,
+            libc::PROT_READ | libc::PROT_WRITE,
+            libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
+            -1,
+            0,
+        )
+    };
+    let ptr2 = unsafe {
+        mmap(
+            ptr::null_mut(),
+            len,
+            libc::PROT_READ | libc::PROT_WRITE,
+            libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
+            -1,
+            0,
+        )
+    };
+    assert_ne!(ptr1, libc::MAP_FAILED);
+    assert_ne!(ptr2, libc::MAP_FAILED);
+    assert_ne!(ptr1, ptr2, "two anonymous mappings should be at different addresses");
+
+    unsafe {
+        *(ptr1 as *mut u8) = 1;
+        *(ptr2 as *mut u8) = 2;
+    }
+    assert_eq!(unsafe { *(ptr1 as *const u8) }, 1);
+    assert_eq!(unsafe { *(ptr2 as *const u8) }, 2);
+
+    assert_eq!(unsafe { munmap(ptr1, len) }, 0);
+    assert_eq!(unsafe { munmap(ptr2, len) }, 0);
+}
