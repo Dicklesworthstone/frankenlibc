@@ -452,3 +452,359 @@ fn remque_null_safety() {
     unsafe { remque(std::ptr::null_mut()) };
     // Should not crash
 }
+
+// ===========================================================================
+// Additional hash table tests
+// ===========================================================================
+
+#[test]
+fn hash_global_overwrite() {
+    // Inserting an existing key should return existing entry, not create duplicate
+    unsafe { hcreate(16) };
+
+    let key = CString::new("overwrite_key").unwrap();
+    let item1 = Entry {
+        key: key.as_ptr() as *mut _,
+        data: 100usize as *mut c_void,
+    };
+    let r1 = unsafe { hsearch(item1, Action::ENTER) };
+    assert!(!r1.is_null());
+
+    // Insert same key again with different data
+    let item2 = Entry {
+        key: key.as_ptr() as *mut _,
+        data: 200usize as *mut c_void,
+    };
+    let r2 = unsafe { hsearch(item2, Action::ENTER) };
+    assert!(!r2.is_null());
+    // POSIX: ENTER with existing key returns existing entry (data unchanged)
+    assert_eq!(unsafe { (*r2).data } as usize, 100);
+
+    unsafe { hdestroy() };
+}
+
+#[test]
+fn hash_reentrant_multiple_tables() {
+    // Two independent reentrant tables
+    let mut htab1: HsearchData = unsafe { std::mem::zeroed() };
+    let mut htab2: HsearchData = unsafe { std::mem::zeroed() };
+
+    assert_eq!(unsafe { hcreate_r(16, &mut htab1) }, 1);
+    assert_eq!(unsafe { hcreate_r(16, &mut htab2) }, 1);
+
+    let key1 = CString::new("t1_key").unwrap();
+    let item1 = Entry {
+        key: key1.as_ptr() as *mut _,
+        data: 11usize as *mut c_void,
+    };
+    let mut result: *mut Entry = std::ptr::null_mut();
+    assert_eq!(
+        unsafe { hsearch_r(item1, Action::ENTER, &mut result, &mut htab1) },
+        1
+    );
+
+    let key2 = CString::new("t2_key").unwrap();
+    let item2 = Entry {
+        key: key2.as_ptr() as *mut _,
+        data: 22usize as *mut c_void,
+    };
+    let mut result2: *mut Entry = std::ptr::null_mut();
+    assert_eq!(
+        unsafe { hsearch_r(item2, Action::ENTER, &mut result2, &mut htab2) },
+        1
+    );
+
+    // Key from table1 should not be found in table2
+    let mut found: *mut Entry = std::ptr::null_mut();
+    let rc = unsafe { hsearch_r(item1, Action::FIND, &mut found, &mut htab2) };
+    assert_eq!(rc, 0, "table1's key should not be in table2");
+
+    unsafe {
+        hdestroy_r(&mut htab1);
+        hdestroy_r(&mut htab2);
+    }
+}
+
+#[test]
+fn hash_reentrant_find_nonexistent() {
+    let mut htab: HsearchData = unsafe { std::mem::zeroed() };
+    unsafe { hcreate_r(16, &mut htab) };
+
+    let key = CString::new("nope").unwrap();
+    let item = Entry {
+        key: key.as_ptr() as *mut _,
+        data: std::ptr::null_mut(),
+    };
+    let mut found: *mut Entry = std::ptr::null_mut();
+    let rc = unsafe { hsearch_r(item, Action::FIND, &mut found, &mut htab) };
+    assert_eq!(rc, 0, "FIND on empty table should fail");
+
+    unsafe { hdestroy_r(&mut htab) };
+}
+
+// ===========================================================================
+// Additional binary tree tests
+// ===========================================================================
+
+#[test]
+fn tree_duplicate_insert() {
+    let mut root: *mut c_void = std::ptr::null_mut();
+
+    let r1 = unsafe { tsearch(42usize as *const c_void, &mut root, int_compare) };
+    assert!(!r1.is_null());
+
+    // Inserting same value again should return existing node
+    let r2 = unsafe { tsearch(42usize as *const c_void, &mut root, int_compare) };
+    assert!(!r2.is_null());
+    assert_eq!(r1, r2, "duplicate insert should return same node");
+
+    unsafe { tdelete(42usize as *const c_void, &mut root, int_compare) };
+}
+
+#[test]
+fn tree_delete_nonexistent() {
+    let mut root: *mut c_void = std::ptr::null_mut();
+    unsafe { tsearch(10usize as *const c_void, &mut root, int_compare) };
+
+    let result = unsafe { tdelete(99usize as *const c_void, &mut root, int_compare) };
+    assert!(result.is_null(), "tdelete on nonexistent key should return null");
+
+    unsafe { tdelete(10usize as *const c_void, &mut root, int_compare) };
+}
+
+#[test]
+fn tree_single_element_delete() {
+    let mut root: *mut c_void = std::ptr::null_mut();
+    unsafe { tsearch(77usize as *const c_void, &mut root, int_compare) };
+
+    let result = unsafe { tdelete(77usize as *const c_void, &mut root, int_compare) };
+    assert!(!result.is_null(), "deleting only element should succeed");
+
+    // Tree should now be empty
+    let found = unsafe { tfind(77usize as *const c_void, &root as *const _, int_compare) };
+    assert!(found.is_null(), "tree should be empty after deleting only element");
+}
+
+#[test]
+fn tree_many_elements() {
+    let mut root: *mut c_void = std::ptr::null_mut();
+
+    // Insert 20 elements
+    for i in 0..20usize {
+        let r = unsafe { tsearch(i as *const c_void, &mut root, int_compare) };
+        assert!(!r.is_null(), "tsearch({i}) should succeed");
+    }
+
+    // Find all of them
+    for i in 0..20usize {
+        let found = unsafe { tfind(i as *const c_void, &root as *const _, int_compare) };
+        assert!(!found.is_null(), "tfind({i}) should succeed");
+    }
+
+    // Delete all
+    for i in 0..20usize {
+        unsafe { tdelete(i as *const c_void, &mut root, int_compare) };
+    }
+}
+
+#[test]
+fn tfind_empty_tree() {
+    let root: *mut c_void = std::ptr::null_mut();
+    let found = unsafe { tfind(55usize as *const c_void, &root as *const _, int_compare) };
+    assert!(found.is_null(), "tfind on empty tree should return null");
+}
+
+#[test]
+fn tdelete_from_empty_tree() {
+    let mut root: *mut c_void = std::ptr::null_mut();
+    let result = unsafe { tdelete(55usize as *const c_void, &mut root, int_compare) };
+    assert!(result.is_null(), "tdelete from empty tree should return null");
+}
+
+// ===========================================================================
+// twalk_r (reentrant walk)
+// ===========================================================================
+
+static WALK_R_COUNT: AtomicU32 = AtomicU32::new(0);
+
+unsafe extern "C" fn walk_r_counter(
+    _node: *const c_void,
+    _visit: c_int,
+    _level: c_int,
+    _closure: *mut c_void,
+) {
+    WALK_R_COUNT.fetch_add(1, Ordering::Relaxed);
+}
+
+#[test]
+fn tree_walk_r() {
+    let mut root: *mut c_void = std::ptr::null_mut();
+
+    unsafe {
+        tsearch(10usize as *const c_void, &mut root, int_compare);
+        tsearch(5usize as *const c_void, &mut root, int_compare);
+        tsearch(15usize as *const c_void, &mut root, int_compare);
+    }
+
+    WALK_R_COUNT.store(0, Ordering::Relaxed);
+    unsafe { twalk_r(root, walk_r_counter, std::ptr::null_mut()) };
+
+    let count = WALK_R_COUNT.load(Ordering::Relaxed);
+    assert_eq!(count, 5, "walk_r should visit root 3 times + 2 leaves");
+
+    unsafe {
+        tdelete(5usize as *const c_void, &mut root, int_compare);
+        tdelete(15usize as *const c_void, &mut root, int_compare);
+        tdelete(10usize as *const c_void, &mut root, int_compare);
+    }
+}
+
+#[test]
+fn twalk_null_root() {
+    // Walking a null root should not crash
+    WALK_COUNT.store(0, Ordering::Relaxed);
+    unsafe { twalk(std::ptr::null_mut(), walk_counter) };
+    assert_eq!(WALK_COUNT.load(Ordering::Relaxed), 0);
+}
+
+// ===========================================================================
+// Additional linear search tests
+// ===========================================================================
+
+#[test]
+fn lsearch_grows_array() {
+    let mut arr: [i32; 16] = [0; 16];
+    arr[0] = 10;
+    arr[1] = 20;
+    let mut nel: usize = 2;
+
+    // Insert 30, 40, 50
+    for val in [30, 40, 50] {
+        let result = unsafe {
+            lsearch(
+                &val as *const i32 as *const c_void,
+                arr.as_mut_ptr() as *mut c_void,
+                &mut nel,
+                std::mem::size_of::<i32>(),
+                int_array_compare,
+            )
+        };
+        assert!(!result.is_null());
+    }
+    assert_eq!(nel, 5, "should have 5 elements");
+    assert_eq!(arr[2], 30);
+    assert_eq!(arr[3], 40);
+    assert_eq!(arr[4], 50);
+}
+
+#[test]
+fn lfind_first_element() {
+    let arr: [i32; 3] = [100, 200, 300];
+    let mut nel: usize = 3;
+    let key: i32 = 100;
+
+    let result = unsafe {
+        lfind(
+            &key as *const i32 as *const c_void,
+            arr.as_ptr() as *const c_void,
+            &mut nel,
+            std::mem::size_of::<i32>(),
+            int_array_compare,
+        )
+    };
+    assert!(!result.is_null());
+    assert_eq!(unsafe { *(result as *const i32) }, 100);
+}
+
+#[test]
+fn lfind_last_element() {
+    let arr: [i32; 3] = [100, 200, 300];
+    let mut nel: usize = 3;
+    let key: i32 = 300;
+
+    let result = unsafe {
+        lfind(
+            &key as *const i32 as *const c_void,
+            arr.as_ptr() as *const c_void,
+            &mut nel,
+            std::mem::size_of::<i32>(),
+            int_array_compare,
+        )
+    };
+    assert!(!result.is_null());
+    assert_eq!(unsafe { *(result as *const i32) }, 300);
+}
+
+// ===========================================================================
+// Linked list: additional insque/remque tests
+// ===========================================================================
+
+#[test]
+fn remque_head() {
+    let mut a = QueueNode::new(1);
+    let mut b = QueueNode::new(2);
+
+    unsafe {
+        insque(&mut a as *mut _ as *mut c_void, std::ptr::null_mut());
+        insque(
+            &mut b as *mut _ as *mut c_void,
+            &mut a as *mut _ as *mut c_void,
+        );
+    }
+
+    // Remove head
+    unsafe { remque(&mut a as *mut _ as *mut c_void) };
+    assert!(b.prev.is_null(), "b should be new head with null prev");
+}
+
+#[test]
+fn remque_tail() {
+    let mut a = QueueNode::new(1);
+    let mut b = QueueNode::new(2);
+
+    unsafe {
+        insque(&mut a as *mut _ as *mut c_void, std::ptr::null_mut());
+        insque(
+            &mut b as *mut _ as *mut c_void,
+            &mut a as *mut _ as *mut c_void,
+        );
+    }
+
+    // Remove tail
+    unsafe { remque(&mut b as *mut _ as *mut c_void) };
+    assert!(a.next.is_null(), "a should now have null next");
+}
+
+#[test]
+fn insque_builds_four_node_chain() {
+    let mut a = QueueNode::new(1);
+    let mut b = QueueNode::new(2);
+    let mut c = QueueNode::new(3);
+    let mut d = QueueNode::new(4);
+
+    unsafe {
+        insque(&mut a as *mut _ as *mut c_void, std::ptr::null_mut());
+        insque(
+            &mut b as *mut _ as *mut c_void,
+            &mut a as *mut _ as *mut c_void,
+        );
+        insque(
+            &mut c as *mut _ as *mut c_void,
+            &mut b as *mut _ as *mut c_void,
+        );
+        insque(
+            &mut d as *mut _ as *mut c_void,
+            &mut c as *mut _ as *mut c_void,
+        );
+    }
+
+    // Verify full chain: a <-> b <-> c <-> d
+    assert!(a.prev.is_null());
+    assert_eq!(a.next, &mut b as *mut _);
+    assert_eq!(b.prev, &mut a as *mut _);
+    assert_eq!(b.next, &mut c as *mut _);
+    assert_eq!(c.prev, &mut b as *mut _);
+    assert_eq!(c.next, &mut d as *mut _);
+    assert_eq!(d.prev, &mut c as *mut _);
+    assert!(d.next.is_null());
+}

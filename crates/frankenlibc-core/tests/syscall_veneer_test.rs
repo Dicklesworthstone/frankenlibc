@@ -268,15 +268,27 @@ mod x86_64_tests {
         assert_eq!(SYS_WRITE, 1);
         assert_eq!(SYS_OPEN, 2);
         assert_eq!(SYS_CLOSE, 3);
+        assert_eq!(SYS_PREAD64, 17);
+        assert_eq!(SYS_PWRITE64, 18);
+        assert_eq!(SYS_MSYNC, 26);
+        assert_eq!(SYS_MADVISE, 28);
+        assert_eq!(SYS_DUP, 32);
+        assert_eq!(SYS_DUP2, 33);
         assert_eq!(SYS_MMAP, 9);
         assert_eq!(SYS_MPROTECT, 10);
         assert_eq!(SYS_MUNMAP, 11);
+        assert_eq!(SYS_GETDENTS64, 217);
+        assert_eq!(SYS_FCNTL, 72);
+        assert_eq!(SYS_FDATASYNC, 75);
+        assert_eq!(SYS_FALLOCATE, 285);
         assert_eq!(SYS_GETPID, 39);
+        assert_eq!(SYS_GETTID, 186);
         assert_eq!(SYS_CLONE, 56);
         assert_eq!(SYS_EXIT_GROUP, 231);
         assert_eq!(SYS_OPENAT, 257);
         assert_eq!(SYS_FUTEX, 202);
         assert_eq!(SYS_PIPE2, 293);
+        assert_eq!(SYS_SET_TID_ADDRESS, 218);
     }
 
     // -----------------------------------------------------------------
@@ -308,6 +320,18 @@ mod x86_64_tests {
         let _: fn(i32) -> Result<(), i32> = sys_fsync;
         let _: unsafe fn(i32, *mut u8, usize) -> Result<usize, i32> = sys_getdents64;
         let _: unsafe fn(i32, i32, usize) -> Result<i32, i32> = sys_fcntl;
+        let _: fn(i32) -> Result<(), i32> = sys_fdatasync;
+        let _: fn(i32, i32, i64, i64) -> Result<(), i32> = sys_fallocate;
+        let _: fn(i32, i32) -> Result<i32, i32> = sys_dup2;
+        let _: unsafe fn(*mut u8, usize, i32) -> Result<(), i32> = sys_msync;
+        let _: unsafe fn(*mut u8, usize, i32) -> Result<(), i32> = sys_madvise;
+        let _: fn() -> i32 = sys_gettid;
+        let _: fn(usize) -> i32 = sys_set_tid_address;
+        let _: fn(i32) -> ! = sys_exit_thread;
+        let _: unsafe fn(usize, usize, *mut i32, *mut i32, usize) -> Result<i32, i32> =
+            sys_clone_thread;
+        let _: unsafe fn(i32, *mut u8, usize, i64) -> Result<usize, i32> = sys_pread64;
+        let _: unsafe fn(i32, *const u8, usize, i64) -> Result<usize, i32> = sys_pwrite64;
     }
 
     // -----------------------------------------------------------------
@@ -347,6 +371,171 @@ mod x86_64_tests {
 #[cfg(target_arch = "aarch64")]
 mod aarch64_tests {
     use frankenlibc_core::syscall::*;
+    use std::path::PathBuf;
+
+    const O_RDWR: i32 = 2;
+    const O_CREAT: i32 = 0o100;
+    const O_EXCL: i32 = 0o200;
+    const O_CLOEXEC: i32 = 0o2000000;
+    const AT_FDCWD: i32 = -100;
+
+    const PROT_READ: i32 = 0x1;
+    const PROT_WRITE: i32 = 0x2;
+    const MAP_PRIVATE: i32 = 0x02;
+    const MAP_ANONYMOUS: i32 = 0x20;
+
+    const SEEK_SET: i32 = 0;
+    const SEEK_END: i32 = 2;
+
+    const EBADF: i32 = 9;
+
+    fn temp_path_bytes(prefix: &str) -> (Vec<u8>, PathBuf) {
+        let pid = sys_getpid();
+        let path = PathBuf::from(format!("/tmp/{prefix}_{pid}"));
+        let mut bytes = path.to_string_lossy().into_owned().into_bytes();
+        bytes.push(0);
+        (bytes, path)
+    }
+
+    #[test]
+    fn getpid_positive_and_stable() {
+        let a = sys_getpid();
+        let b = sys_getpid();
+        assert!(a > 0);
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn pipe_roundtrip_multiple_messages() {
+        let mut fds = [0i32; 2];
+        unsafe { sys_pipe2(fds.as_mut_ptr(), O_CLOEXEC) }.expect("pipe2");
+
+        for msg in &[b"hello" as &[u8], b"world", b"", b"test\x00data"] {
+            let written = unsafe { sys_write(fds[1], msg.as_ptr(), msg.len()) }.expect("write");
+            assert_eq!(written, msg.len());
+
+            if !msg.is_empty() {
+                let mut buf = vec![0u8; msg.len() + 16];
+                let n = unsafe { sys_read(fds[0], buf.as_mut_ptr(), buf.len()) }.expect("read");
+                assert_eq!(n, msg.len());
+                assert_eq!(&buf[..n], *msg);
+            }
+        }
+
+        sys_close(fds[0]).expect("close read end");
+        sys_close(fds[1]).expect("close write end");
+    }
+
+    #[test]
+    fn file_lifecycle_via_tmp() {
+        let (path_buf, path) = temp_path_bytes("frankenlibc_syscall_test_aarch64");
+
+        let fd = unsafe {
+            sys_openat(
+                AT_FDCWD,
+                path_buf.as_ptr(),
+                O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC,
+                0o600,
+            )
+        }
+        .expect("openat should create temp file");
+
+        let data = b"veneer integration test payload";
+        let written =
+            unsafe { sys_write(fd, data.as_ptr(), data.len()) }.expect("write to temp file");
+        assert_eq!(written, data.len());
+
+        let pos = sys_lseek(fd, 0, SEEK_SET).expect("lseek to start");
+        assert_eq!(pos, 0);
+
+        let mut buf = [0u8; 64];
+        let n = unsafe { sys_read(fd, buf.as_mut_ptr(), buf.len()) }.expect("read from temp file");
+        assert_eq!(n, data.len());
+        assert_eq!(&buf[..n], data);
+
+        let size = sys_lseek(fd, 0, SEEK_END).expect("lseek to end");
+        assert_eq!(size, data.len() as i64);
+
+        sys_close(fd).expect("close temp file");
+        std::fs::remove_file(&path).expect("cleanup temp file");
+    }
+
+    #[test]
+    fn mmap_full_lifecycle() {
+        let page_size = 4096usize;
+        let ptr = unsafe {
+            sys_mmap(
+                core::ptr::null_mut(),
+                page_size,
+                PROT_READ | PROT_WRITE,
+                MAP_PRIVATE | MAP_ANONYMOUS,
+                -1,
+                0,
+            )
+        }
+        .expect("mmap anonymous");
+
+        for i in 0..page_size {
+            unsafe { *ptr.add(i) = (i & 0xFF) as u8 };
+        }
+
+        for i in 0..page_size {
+            let val = unsafe { *ptr.add(i) };
+            assert_eq!(val, (i & 0xFF) as u8, "mismatch at offset {i}");
+        }
+
+        unsafe { sys_mprotect(ptr, page_size, PROT_READ) }.expect("mprotect to PROT_READ");
+        let val = unsafe { *ptr };
+        assert_eq!(val, 0);
+
+        unsafe { sys_munmap(ptr, page_size) }.expect("munmap");
+    }
+
+    #[test]
+    fn error_ebadf_on_bad_fd() {
+        assert_eq!(sys_close(99999), Err(EBADF));
+        assert_eq!(sys_close(-1), Err(EBADF));
+        assert_eq!(sys_fsync(-1), Err(EBADF));
+        assert_eq!(sys_lseek(-1, 0, SEEK_SET), Err(EBADF));
+        assert_eq!(sys_dup(-1), Err(EBADF));
+    }
+
+    #[test]
+    fn dup_produces_valid_fd() {
+        let mut fds = [0i32; 2];
+        unsafe { sys_pipe2(fds.as_mut_ptr(), O_CLOEXEC) }.expect("pipe2");
+
+        let dup_fd = sys_dup(fds[1]).expect("dup write end");
+        assert!(dup_fd >= 0);
+        assert_ne!(dup_fd, fds[1], "dup should return a different fd");
+
+        let msg = b"via dup";
+        let written = unsafe { sys_write(dup_fd, msg.as_ptr(), msg.len()) }.expect("write via dup");
+        assert_eq!(written, msg.len());
+
+        let mut buf = [0u8; 16];
+        let n = unsafe { sys_read(fds[0], buf.as_mut_ptr(), buf.len()) }.expect("read from pipe");
+        assert_eq!(n, msg.len());
+        assert_eq!(&buf[..n], msg);
+
+        sys_close(dup_fd).expect("close dup");
+        sys_close(fds[0]).expect("close read");
+        sys_close(fds[1]).expect("close write");
+    }
+
+    #[test]
+    fn raw_syscall_primitives_accessible() {
+        let pid = unsafe { syscall0(SYS_GETPID) };
+        assert_eq!(pid as i32, sys_getpid());
+    }
+
+    #[test]
+    fn futex_wake_no_waiters() {
+        let futex_word: u32 = 0;
+        const FUTEX_WAKE: i32 = 1;
+        let result = unsafe { sys_futex(&futex_word as *const u32, FUTEX_WAKE, 1, 0, 0, 0) };
+        assert_eq!(result, Ok(0), "futex wake with no waiters should return 0");
+    }
 
     #[test]
     fn syscall_number_constants() {
@@ -354,14 +543,26 @@ mod aarch64_tests {
         assert_eq!(SYS_WRITE, 64);
         assert_eq!(SYS_OPENAT, 56);
         assert_eq!(SYS_CLOSE, 57);
+        assert_eq!(SYS_PREAD64, 67);
+        assert_eq!(SYS_PWRITE64, 68);
         assert_eq!(SYS_MMAP, 222);
         assert_eq!(SYS_MPROTECT, 226);
         assert_eq!(SYS_MUNMAP, 215);
+        assert_eq!(SYS_MSYNC, 227);
+        assert_eq!(SYS_MADVISE, 233);
+        assert_eq!(SYS_DUP, 23);
+        assert_eq!(SYS_DUP2, 24);
+        assert_eq!(SYS_GETDENTS64, 61);
+        assert_eq!(SYS_FCNTL, 25);
+        assert_eq!(SYS_FDATASYNC, 83);
+        assert_eq!(SYS_FALLOCATE, 47);
         assert_eq!(SYS_GETPID, 172);
+        assert_eq!(SYS_GETTID, 178);
         assert_eq!(SYS_CLONE, 220);
         assert_eq!(SYS_EXIT_GROUP, 94);
         assert_eq!(SYS_FUTEX, 98);
         assert_eq!(SYS_PIPE2, 59);
+        assert_eq!(SYS_SET_TID_ADDRESS, 96);
     }
 
     #[test]
@@ -385,5 +586,17 @@ mod aarch64_tests {
         let _: fn(i32) -> Result<(), i32> = sys_fsync;
         let _: unsafe fn(i32, *mut u8, usize) -> Result<usize, i32> = sys_getdents64;
         let _: unsafe fn(i32, i32, usize) -> Result<i32, i32> = sys_fcntl;
+        let _: fn(i32) -> Result<(), i32> = sys_fdatasync;
+        let _: fn(i32, i32, i64, i64) -> Result<(), i32> = sys_fallocate;
+        let _: fn(i32, i32) -> Result<i32, i32> = sys_dup2;
+        let _: unsafe fn(*mut u8, usize, i32) -> Result<(), i32> = sys_msync;
+        let _: unsafe fn(*mut u8, usize, i32) -> Result<(), i32> = sys_madvise;
+        let _: fn() -> i32 = sys_gettid;
+        let _: fn(usize) -> i32 = sys_set_tid_address;
+        let _: fn(i32) -> ! = sys_exit_thread;
+        let _: unsafe fn(usize, usize, *mut i32, *mut i32, usize) -> Result<i32, i32> =
+            sys_clone_thread;
+        let _: unsafe fn(i32, *mut u8, usize, i64) -> Result<usize, i32> = sys_pread64;
+        let _: unsafe fn(i32, *const u8, usize, i64) -> Result<usize, i32> = sys_pwrite64;
     }
 }

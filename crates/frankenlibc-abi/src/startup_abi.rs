@@ -815,6 +815,21 @@ pub unsafe extern "C" fn __cxa_thread_atexit_impl(
     0
 }
 
+/// Drain and invoke all registered thread-local destructors in LIFO order.
+///
+/// Called by `__call_tls_dtors` in `glibc_internal_abi`. Each destructor is
+/// invoked exactly once with its registered object pointer, then removed.
+pub(crate) fn invoke_tls_dtors() {
+    TLS_ATEXIT_LIST.with(|list| {
+        // Drain in reverse (LIFO) order, matching glibc behavior.
+        let mut entries = list.borrow_mut();
+        while let Some(entry) = entries.pop() {
+            // SAFETY: caller registered a valid function pointer and object.
+            unsafe { (entry.dtor)(entry.obj) };
+        }
+    });
+}
+
 // ===========================================================================
 // __stack_chk_fail — stack protection
 // ===========================================================================

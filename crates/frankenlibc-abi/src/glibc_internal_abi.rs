@@ -6862,37 +6862,315 @@ pub unsafe extern "C" fn __resolv_context_freeres() {
 pub static mut __resp: *mut c_void = std::ptr::null_mut();
 
 // ---------------------------------------------------------------------------
-// IDNA internals — GLIBC_PRIVATE
+// IDNA internals — GLIBC_PRIVATE (native Punycode/IDNA implementation)
 // ---------------------------------------------------------------------------
 
-/// `__idna_to_dns_encoding` — encode hostname to DNS wire format.
+// RFC 3492 Punycode constants.
+const PUNYCODE_BASE: u32 = 36;
+const PUNYCODE_TMIN: u32 = 1;
+const PUNYCODE_TMAX: u32 = 26;
+const PUNYCODE_SKEW: u32 = 38;
+const PUNYCODE_DAMP: u32 = 700;
+const PUNYCODE_INITIAL_BIAS: u32 = 72;
+const PUNYCODE_INITIAL_N: u32 = 128;
+
+/// Punycode bias adaptation (RFC 3492 section 6.1).
+fn punycode_adapt(mut delta: u32, numpoints: u32, firsttime: bool) -> u32 {
+    delta = if firsttime {
+        delta / PUNYCODE_DAMP
+    } else {
+        delta / 2
+    };
+    delta += delta / numpoints;
+    let mut k = 0u32;
+    while delta > ((PUNYCODE_BASE - PUNYCODE_TMIN) * PUNYCODE_TMAX) / 2 {
+        delta /= PUNYCODE_BASE - PUNYCODE_TMIN;
+        k += PUNYCODE_BASE;
+    }
+    k + ((PUNYCODE_BASE - PUNYCODE_TMIN + 1) * delta) / (delta + PUNYCODE_SKEW)
+}
+
+/// Encode a single digit to Punycode character.
+fn punycode_encode_digit(d: u32) -> u8 {
+    if d < 26 {
+        b'a' + d as u8
+    } else {
+        b'0' + (d as u8 - 26)
+    }
+}
+
+/// Decode a Punycode character to its digit value.
+fn punycode_decode_digit(c: u8) -> Option<u32> {
+    match c {
+        b'a'..=b'z' => Some(u32::from(c - b'a')),
+        b'A'..=b'Z' => Some(u32::from(c - b'A')),
+        b'0'..=b'9' => Some(u32::from(c - b'0') + 26),
+        _ => None,
+    }
+}
+
+/// Encode a Unicode label to Punycode (returns None on failure).
+fn punycode_encode(input: &[u32]) -> Option<Vec<u8>> {
+    let mut output = Vec::new();
+
+    // Copy basic code points first.
+    let mut basic_count: u32 = 0;
+    for &cp in input {
+        if cp < PUNYCODE_INITIAL_N {
+            output.push(cp as u8);
+            basic_count += 1;
+        }
+    }
+
+    // If there were basic code points and non-basic ones exist, add delimiter.
+    let has_nonbasic = basic_count < input.len() as u32;
+    if basic_count > 0 && has_nonbasic {
+        output.push(b'-');
+    }
+
+    if !has_nonbasic {
+        return Some(output);
+    }
+
+    let mut n = PUNYCODE_INITIAL_N;
+    let mut delta: u32 = 0;
+    let mut bias = PUNYCODE_INITIAL_BIAS;
+    let mut h = basic_count;
+    let input_len = input.len() as u32;
+
+    while h < input_len {
+        // Find the minimum code point >= n.
+        let m = input.iter().filter(|&&cp| cp >= n).copied().min()?;
+
+        delta = delta.checked_add((m - n).checked_mul(h + 1)?)?;
+        n = m;
+
+        for &cp in input {
+            if cp < n {
+                delta = delta.checked_add(1)?;
+            } else if cp == n {
+                let mut q = delta;
+                let mut k = PUNYCODE_BASE;
+                loop {
+                    let t = if k <= bias {
+                        PUNYCODE_TMIN
+                    } else if k >= bias + PUNYCODE_TMAX {
+                        PUNYCODE_TMAX
+                    } else {
+                        k - bias
+                    };
+                    if q < t {
+                        break;
+                    }
+                    output.push(punycode_encode_digit(t + ((q - t) % (PUNYCODE_BASE - t))));
+                    q = (q - t) / (PUNYCODE_BASE - t);
+                    k += PUNYCODE_BASE;
+                }
+                output.push(punycode_encode_digit(q));
+                bias = punycode_adapt(delta, h + 1, h == basic_count);
+                delta = 0;
+                h += 1;
+            }
+        }
+        delta += 1;
+        n += 1;
+    }
+
+    Some(output)
+}
+
+/// Decode Punycode to Unicode code points (returns None on failure).
+fn punycode_decode(input: &[u8]) -> Option<Vec<u32>> {
+    let mut output: Vec<u32> = Vec::new();
+
+    // Find the last delimiter — everything before it is basic code points.
+    let basic_end = input.iter().rposition(|&b| b == b'-').unwrap_or(0);
+
+    for &byte in input.iter().take(basic_end) {
+        if byte >= 0x80 {
+            return None;
+        }
+        output.push(u32::from(byte));
+    }
+
+    let mut n = PUNYCODE_INITIAL_N;
+    let mut i: u32 = 0;
+    let mut bias = PUNYCODE_INITIAL_BIAS;
+    let mut pos = if basic_end > 0 { basic_end + 1 } else { 0 };
+
+    while pos < input.len() {
+        let oldi = i;
+        let mut w: u32 = 1;
+        let mut k = PUNYCODE_BASE;
+        loop {
+            if pos >= input.len() {
+                return None;
+            }
+            let digit = punycode_decode_digit(input[pos])?;
+            pos += 1;
+            i = i.checked_add(digit.checked_mul(w)?)?;
+            let t = if k <= bias {
+                PUNYCODE_TMIN
+            } else if k >= bias + PUNYCODE_TMAX {
+                PUNYCODE_TMAX
+            } else {
+                k - bias
+            };
+            if digit < t {
+                break;
+            }
+            w = w.checked_mul(PUNYCODE_BASE - t)?;
+            k += PUNYCODE_BASE;
+        }
+        let out_len = (output.len() as u32) + 1;
+        bias = punycode_adapt(i - oldi, out_len, oldi == 0);
+        n = n.checked_add(i / out_len)?;
+        i %= out_len;
+        output.insert(i as usize, n);
+        i += 1;
+    }
+
+    Some(output)
+}
+
+/// `__idna_to_dns_encoding` — encode hostname to DNS-safe ASCII (native).
+///
+/// Converts an internationalized hostname to its ACE (ASCII-Compatible
+/// Encoding) form using Punycode (RFC 3492). Each non-ASCII label is
+/// encoded with an `xn--` prefix. The result is malloc'd and must be
+/// freed by the caller.
+///
+/// Returns 0 on success, EAI_FAIL on error.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __idna_to_dns_encoding(
     name: *const c_char,
     result: *mut *mut c_char,
 ) -> c_int {
-    type F = unsafe extern "C" fn(*const c_char, *mut *mut c_char) -> c_int;
-    let sym = unsafe { libc::dlsym(libc::RTLD_NEXT, c"__idna_to_dns_encoding".as_ptr()) };
-    if sym.is_null() {
+    if name.is_null() || result.is_null() {
         return libc::EAI_FAIL;
     }
-    let f: F = unsafe { std::mem::transmute(sym) };
-    unsafe { f(name, result) }
+
+    let name_str = match unsafe { std::ffi::CStr::from_ptr(name) }.to_str() {
+        Ok(s) => s,
+        Err(_) => return libc::EAI_FAIL,
+    };
+
+    if name_str.is_empty() {
+        return libc::EAI_FAIL;
+    }
+
+    let mut encoded_parts: Vec<Vec<u8>> = Vec::new();
+    for label in name_str.split('.') {
+        if label.is_empty() {
+            encoded_parts.push(Vec::new());
+            continue;
+        }
+
+        // Check if label is all ASCII.
+        if label.is_ascii() {
+            encoded_parts.push(label.as_bytes().to_vec());
+        } else {
+            // Convert to Unicode code points and Punycode-encode.
+            let codepoints: Vec<u32> = label.chars().map(|c| c as u32).collect();
+            match punycode_encode(&codepoints) {
+                Some(encoded) => {
+                    let mut ace = b"xn--".to_vec();
+                    ace.extend_from_slice(&encoded);
+                    encoded_parts.push(ace);
+                }
+                None => return libc::EAI_FAIL,
+            }
+        }
+    }
+
+    // Join with dots.
+    let mut output = Vec::new();
+    for (i, part) in encoded_parts.iter().enumerate() {
+        if i > 0 {
+            output.push(b'.');
+        }
+        output.extend_from_slice(part);
+    }
+    output.push(0); // NUL terminator.
+
+    // Allocate with malloc for caller ownership.
+    let buf = unsafe { libc::malloc(output.len()) } as *mut u8;
+    if buf.is_null() {
+        return libc::EAI_FAIL;
+    }
+    unsafe { std::ptr::copy_nonoverlapping(output.as_ptr(), buf, output.len()) };
+    unsafe { *result = buf as *mut c_char };
+    0
 }
 
-/// `__idna_from_dns_encoding` — decode hostname from DNS wire format.
+/// `__idna_from_dns_encoding` — decode hostname from DNS ASCII (native).
+///
+/// Converts an ACE-encoded hostname back to its Unicode representation.
+/// Each `xn--` prefixed label is decoded from Punycode. The result is
+/// malloc'd and must be freed by the caller.
+///
+/// Returns 0 on success, EAI_FAIL on error.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __idna_from_dns_encoding(
     name: *const c_char,
     result: *mut *mut c_char,
 ) -> c_int {
-    type F = unsafe extern "C" fn(*const c_char, *mut *mut c_char) -> c_int;
-    let sym = unsafe { libc::dlsym(libc::RTLD_NEXT, c"__idna_from_dns_encoding".as_ptr()) };
-    if sym.is_null() {
+    if name.is_null() || result.is_null() {
         return libc::EAI_FAIL;
     }
-    let f: F = unsafe { std::mem::transmute(sym) };
-    unsafe { f(name, result) }
+
+    let name_str = match unsafe { std::ffi::CStr::from_ptr(name) }.to_str() {
+        Ok(s) => s,
+        Err(_) => return libc::EAI_FAIL,
+    };
+
+    if name_str.is_empty() {
+        return libc::EAI_FAIL;
+    }
+
+    let mut decoded_parts: Vec<String> = Vec::new();
+    for label in name_str.split('.') {
+        if label.is_empty() {
+            decoded_parts.push(String::new());
+            continue;
+        }
+
+        // Check for ACE prefix (case-insensitive).
+        let lower = label.to_ascii_lowercase();
+        if let Some(puny) = lower.strip_prefix("xn--") {
+            match punycode_decode(puny.as_bytes()) {
+                Some(codepoints) => {
+                    let mut s = String::new();
+                    for cp in codepoints {
+                        match char::from_u32(cp) {
+                            Some(c) => s.push(c),
+                            None => return libc::EAI_FAIL,
+                        }
+                    }
+                    decoded_parts.push(s);
+                }
+                None => return libc::EAI_FAIL,
+            }
+        } else {
+            decoded_parts.push(label.to_string());
+        }
+    }
+
+    // Join with dots and encode as UTF-8.
+    let output = decoded_parts.join(".");
+    let output_bytes = output.as_bytes();
+    let alloc_len = output_bytes.len() + 1; // +1 for NUL.
+
+    let buf = unsafe { libc::malloc(alloc_len) } as *mut u8;
+    if buf.is_null() {
+        return libc::EAI_FAIL;
+    }
+    unsafe {
+        std::ptr::copy_nonoverlapping(output_bytes.as_ptr(), buf, output_bytes.len());
+        *buf.add(output_bytes.len()) = 0; // NUL terminator.
+        *result = buf as *mut c_char;
+    }
+    0
 }
 
 // ---------------------------------------------------------------------------
@@ -7541,16 +7819,14 @@ pub unsafe extern "C" fn __ctype_init() {
     // No-op: our ctype tables are statically initialized.
 }
 
-/// `__call_tls_dtors` — call TLS destructors.
+/// `__call_tls_dtors` — call TLS destructors (native).
+///
+/// Drains the per-thread destructor list populated by `__cxa_thread_atexit_impl`
+/// in LIFO order, matching glibc semantics. No host glibc delegation needed
+/// since we own the registration mechanism.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __call_tls_dtors() {
-    // Delegate to host glibc's TLS destructor mechanism.
-    type F = unsafe extern "C" fn();
-    let sym = unsafe { libc::dlsym(libc::RTLD_NEXT, c"__call_tls_dtors".as_ptr()) };
-    if !sym.is_null() {
-        let f: F = unsafe { std::mem::transmute(sym) };
-        unsafe { f() };
-    }
+    crate::startup_abi::invoke_tls_dtors();
 }
 
 /// `__abort_msg` — pointer to abort message (data symbol).

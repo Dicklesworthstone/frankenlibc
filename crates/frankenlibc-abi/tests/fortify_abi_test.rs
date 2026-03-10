@@ -745,3 +745,354 @@ fn snprintf_chk_zero_maxlen() {
     // Buffer should be untouched
     assert_eq!(buf[0], 0xFF);
 }
+
+// ===========================================================================
+// __fprintf_chk
+// ===========================================================================
+
+#[test]
+fn fprintf_chk_to_devnull() {
+    let path = CString::new("/dev/null").unwrap();
+    let mode = CString::new("w").unwrap();
+    let fp = unsafe { libc::fopen(path.as_ptr(), mode.as_ptr()) };
+    assert!(!fp.is_null());
+
+    let fmt = CString::new("test %d\n").unwrap();
+    let ret = unsafe { __fprintf_chk(fp.cast(), 0, fmt.as_ptr(), 42i32) };
+    assert!(ret > 0, "__fprintf_chk should return positive char count");
+
+    unsafe { libc::fclose(fp) };
+}
+
+// ===========================================================================
+// __printf_chk (writes to stdout, test with redirect)
+// ===========================================================================
+
+#[test]
+fn printf_chk_basic() {
+    // __printf_chk writes to stdout; in tests just verify it doesn't crash
+    let fmt = CString::new("").unwrap(); // empty format = no output
+    let ret = unsafe { __printf_chk(0, fmt.as_ptr()) };
+    assert_eq!(ret, 0);
+}
+
+// ===========================================================================
+// __dprintf_chk (write to fd)
+// ===========================================================================
+
+#[test]
+fn dprintf_chk_to_devnull() {
+    let path = CString::new("/dev/null").unwrap();
+    let fd = unsafe { libc::open(path.as_ptr(), libc::O_WRONLY) };
+    assert!(fd >= 0);
+
+    let fmt = CString::new("hello %d").unwrap();
+    let ret = unsafe { __dprintf_chk(fd, 0, fmt.as_ptr(), 99i32) };
+    assert!(ret > 0);
+
+    unsafe { libc::close(fd) };
+}
+
+// ===========================================================================
+// __asprintf_chk
+// ===========================================================================
+
+#[test]
+fn asprintf_chk_basic() {
+    let mut result: *mut c_char = std::ptr::null_mut();
+    let fmt = CString::new("answer=%d").unwrap();
+    let ret = unsafe { __asprintf_chk(&mut result, 0, fmt.as_ptr(), 42i32) };
+    assert!(ret > 0);
+    assert!(!result.is_null());
+
+    let s = unsafe { std::ffi::CStr::from_ptr(result) };
+    assert_eq!(s.to_str().unwrap(), "answer=42");
+
+    unsafe { libc::free(result.cast()) };
+}
+
+#[test]
+fn asprintf_chk_string_format() {
+    let mut result: *mut c_char = std::ptr::null_mut();
+    let fmt = CString::new("%s+%s").unwrap();
+    let a = CString::new("foo").unwrap();
+    let b = CString::new("bar").unwrap();
+    let ret = unsafe { __asprintf_chk(&mut result, 0, fmt.as_ptr(), a.as_ptr(), b.as_ptr()) };
+    assert_eq!(ret, 7);
+    assert!(!result.is_null());
+
+    let s = unsafe { std::ffi::CStr::from_ptr(result) };
+    assert_eq!(s.to_str().unwrap(), "foo+bar");
+
+    unsafe { libc::free(result.cast()) };
+}
+
+// ===========================================================================
+// __fgets_chk (read from file)
+// ===========================================================================
+
+#[test]
+fn fgets_chk_reads_line() {
+    // Write a temp file, then read via __fgets_chk
+    let path = CString::new("/tmp/fortify_fgets_test").unwrap();
+    let wmode = CString::new("w").unwrap();
+    let fp = unsafe { libc::fopen(path.as_ptr(), wmode.as_ptr()) };
+    assert!(!fp.is_null());
+    let data = CString::new("hello\nworld\n").unwrap();
+    unsafe { libc::fputs(data.as_ptr(), fp) };
+    unsafe { libc::fclose(fp) };
+
+    let rmode = CString::new("r").unwrap();
+    let fp = unsafe { libc::fopen(path.as_ptr(), rmode.as_ptr()) };
+    assert!(!fp.is_null());
+
+    let mut buf = [0u8; 32];
+    let ret = unsafe { __fgets_chk(buf.as_mut_ptr().cast(), 32, 32, fp.cast()) };
+    assert!(!ret.is_null());
+    let s = unsafe { std::ffi::CStr::from_ptr(buf.as_ptr().cast()) };
+    assert_eq!(s.to_str().unwrap(), "hello\n");
+
+    unsafe {
+        libc::fclose(fp);
+        libc::unlink(path.as_ptr());
+    }
+}
+
+// ===========================================================================
+// __fread_chk
+// ===========================================================================
+
+#[test]
+fn fread_chk_reads_data() {
+    let path = CString::new("/tmp/fortify_fread_test").unwrap();
+    let wmode = CString::new("w").unwrap();
+    let fp = unsafe { libc::fopen(path.as_ptr(), wmode.as_ptr()) };
+    assert!(!fp.is_null());
+    let data = b"ABCDEFGHIJ";
+    unsafe { libc::fwrite(data.as_ptr().cast(), 1, 10, fp) };
+    unsafe { libc::fclose(fp) };
+
+    let rmode = CString::new("r").unwrap();
+    let fp = unsafe { libc::fopen(path.as_ptr(), rmode.as_ptr()) };
+    assert!(!fp.is_null());
+
+    let mut buf = [0u8; 16];
+    let n = unsafe { __fread_chk(buf.as_mut_ptr().cast(), 16, 1, 10, fp.cast()) };
+    assert_eq!(n, 10);
+    assert_eq!(&buf[..10], b"ABCDEFGHIJ");
+
+    unsafe {
+        libc::fclose(fp);
+        libc::unlink(path.as_ptr());
+    }
+}
+
+// ===========================================================================
+// __recv_chk (socket recv)
+// ===========================================================================
+
+#[test]
+fn recv_chk_on_socketpair() {
+    let mut fds = [0i32; 2];
+    let rc = unsafe { libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, fds.as_mut_ptr()) };
+    assert_eq!(rc, 0);
+
+    let msg = b"test";
+    unsafe { libc::send(fds[0], msg.as_ptr().cast(), 4, 0) };
+
+    let mut buf = [0u8; 16];
+    let n = unsafe { __recv_chk(fds[1], buf.as_mut_ptr().cast(), 4, 16, 0) };
+    assert_eq!(n, 4);
+    assert_eq!(&buf[..4], b"test");
+
+    unsafe {
+        libc::close(fds[0]);
+        libc::close(fds[1]);
+    }
+}
+
+// ===========================================================================
+// __recvfrom_chk
+// ===========================================================================
+
+#[test]
+fn recvfrom_chk_on_socketpair() {
+    let mut fds = [0i32; 2];
+    let rc = unsafe { libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, fds.as_mut_ptr()) };
+    assert_eq!(rc, 0);
+
+    let msg = b"data";
+    unsafe { libc::send(fds[0], msg.as_ptr().cast(), 4, 0) };
+
+    let mut buf = [0u8; 16];
+    let n = unsafe {
+        __recvfrom_chk(
+            fds[1],
+            buf.as_mut_ptr().cast(),
+            4,
+            16,
+            0,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        )
+    };
+    assert_eq!(n, 4);
+    assert_eq!(&buf[..4], b"data");
+
+    unsafe {
+        libc::close(fds[0]);
+        libc::close(fds[1]);
+    }
+}
+
+// ===========================================================================
+// __ptsname_r_chk
+// ===========================================================================
+
+#[test]
+fn ptsname_r_chk_invalid_fd() {
+    let mut buf = [0u8; 256];
+    // fd=-1 is invalid
+    let ret = unsafe { __ptsname_r_chk(-1, buf.as_mut_ptr().cast(), 256, 256) };
+    assert_ne!(ret, 0, "invalid fd should fail");
+}
+
+#[test]
+fn ptsname_r_chk_on_pty() {
+    let master = unsafe { libc::posix_openpt(libc::O_RDWR | libc::O_NOCTTY) };
+    if master < 0 {
+        return; // PTY not available in this environment
+    }
+    unsafe { libc::grantpt(master) };
+    unsafe { libc::unlockpt(master) };
+
+    let mut buf = [0u8; 256];
+    let ret = unsafe { __ptsname_r_chk(master, buf.as_mut_ptr().cast(), 256, 256) };
+    assert_eq!(ret, 0, "ptsname_r_chk on valid PTY master should succeed");
+    // Should start with /dev/pts/
+    let s = unsafe { std::ffi::CStr::from_ptr(buf.as_ptr().cast()) };
+    assert!(
+        s.to_str().unwrap().starts_with("/dev/pts/"),
+        "PTY slave name should be /dev/pts/N"
+    );
+
+    unsafe { libc::close(master) };
+}
+
+// ===========================================================================
+// __syslog_chk
+// ===========================================================================
+
+#[test]
+fn syslog_chk_does_not_crash() {
+    let fmt = CString::new("frankenlibc test syslog_chk %d").unwrap();
+    // LOG_USER | LOG_DEBUG = 8 | 7 = 15
+    unsafe { __syslog_chk(15, 0, fmt.as_ptr(), 123i32) };
+    // Just verify it doesn't crash
+}
+
+// ===========================================================================
+// __mbsnrtowcs_chk
+// ===========================================================================
+
+#[test]
+fn mbsnrtowcs_chk_basic() {
+    let src_str = CString::new("abc").unwrap();
+    let mut src_ptr: *const c_char = src_str.as_ptr();
+    let mut dest = [0i32; 8];
+    let n = unsafe {
+        __mbsnrtowcs_chk(
+            dest.as_mut_ptr(),
+            &mut src_ptr,
+            3,  // nms (max source bytes)
+            8,  // len (max wchar_t to write)
+            std::ptr::null_mut(),
+            8 * 4, // destlen in bytes
+        )
+    };
+    assert_eq!(n, 3);
+    assert_eq!(dest[0], b'a' as i32);
+    assert_eq!(dest[1], b'b' as i32);
+    assert_eq!(dest[2], b'c' as i32);
+}
+
+// ===========================================================================
+// __wcsnrtombs_chk
+// ===========================================================================
+
+#[test]
+fn wcsnrtombs_chk_basic() {
+    let src_arr: [c_int; 4] = [b'X' as i32, b'Y' as i32, b'Z' as i32, 0];
+    let mut src_ptr: *const c_int = src_arr.as_ptr();
+    let mut dest = [0u8; 16];
+    let n = unsafe {
+        __wcsnrtombs_chk(
+            dest.as_mut_ptr().cast(),
+            &mut src_ptr as *mut *const c_int,
+            3,  // nwc (max wchar_t to consume)
+            16, // len (max bytes to write)
+            std::ptr::null_mut(),
+            16, // destlen
+        )
+    };
+    assert_eq!(n, 3);
+    assert_eq!(&dest[..3], b"XYZ");
+}
+
+// ===========================================================================
+// __swprintf_chk (wide printf to buffer)
+// ===========================================================================
+
+#[test]
+fn swprintf_chk_basic() {
+    let mut dest = [0i32; 32];
+    let fmt: [c_int; 5] = [b'%' as i32, b'd' as i32, b'!' as i32, 0, 0];
+    let ret = unsafe {
+        __swprintf_chk(
+            dest.as_mut_ptr(),
+            32,       // maxlen in wchar_t
+            0,        // flag
+            32 * 4,   // destlen in bytes
+            fmt.as_ptr(),
+            99i32,
+        )
+    };
+    assert!(ret > 0, "__swprintf_chk should return positive count");
+    // Should produce "99!" as wide characters
+    assert_eq!(dest[0], b'9' as i32);
+    assert_eq!(dest[1], b'9' as i32);
+    assert_eq!(dest[2], b'!' as i32);
+    assert_eq!(dest[3], 0);
+}
+
+// ===========================================================================
+// __fgetws_chk (wide fgets)
+// ===========================================================================
+
+#[test]
+fn fgetws_chk_reads_wide_chars() {
+    let path = CString::new("/tmp/fortify_fgetws_test").unwrap();
+    let wmode = CString::new("w").unwrap();
+    let fp = unsafe { libc::fopen(path.as_ptr(), wmode.as_ptr()) };
+    assert!(!fp.is_null());
+    let data = CString::new("hello\n").unwrap();
+    unsafe { libc::fputs(data.as_ptr(), fp) };
+    unsafe { libc::fclose(fp) };
+
+    let rmode = CString::new("r").unwrap();
+    let fp = unsafe { libc::fopen(path.as_ptr(), rmode.as_ptr()) };
+    assert!(!fp.is_null());
+
+    let mut buf = [0i32; 32];
+    let ret = unsafe { __fgetws_chk(buf.as_mut_ptr(), 32 * 4, 32, fp.cast()) };
+    if !ret.is_null() {
+        // Should have read "hello\n" as wide chars
+        assert_eq!(buf[0], b'h' as i32);
+        assert_eq!(buf[1], b'e' as i32);
+    }
+
+    unsafe {
+        libc::fclose(fp);
+        libc::unlink(path.as_ptr());
+    }
+}

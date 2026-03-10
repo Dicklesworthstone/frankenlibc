@@ -376,3 +376,259 @@ fn readdir_null_returns_null() {
     let ent = unsafe { readdir(std::ptr::null_mut()) };
     assert!(ent.is_null());
 }
+
+// ===========================================================================
+// scandir with alphasort comparator
+// ===========================================================================
+
+#[test]
+fn scandir_with_alphasort() {
+    let (path, base) = make_test_dir();
+    let mut namelist: *mut *mut libc::dirent = std::ptr::null_mut();
+
+    let n = unsafe { scandir(path.as_ptr(), &mut namelist, None, Some(alphasort)) };
+    assert!(n >= 5, "scandir with alphasort should find entries (got {n})");
+    assert!(!namelist.is_null());
+
+    // Verify alphabetical order
+    if n >= 2 {
+        let mut prev_name = String::new();
+        for i in 0..n {
+            let ent = unsafe { *namelist.offset(i as isize) };
+            let name = unsafe { CStr::from_ptr((*ent).d_name.as_ptr()) }
+                .to_str()
+                .unwrap()
+                .to_string();
+            if !prev_name.is_empty() {
+                assert!(
+                    prev_name <= name,
+                    "entries should be sorted: {} <= {}",
+                    prev_name,
+                    name
+                );
+            }
+            prev_name = name;
+        }
+    }
+
+    cleanup_test_dir(&base);
+}
+
+// ===========================================================================
+// scandir64
+// ===========================================================================
+
+#[test]
+fn scandir64_basic() {
+    let (path, base) = make_test_dir();
+    let mut namelist: *mut *mut c_void = std::ptr::null_mut();
+
+    // scandir64 takes c_void pointers on the ABI boundary
+    let n = unsafe { scandir64(path.as_ptr(), &mut namelist, None, None) };
+    assert!(n >= 5, "scandir64 should find entries (got {n})");
+    assert!(!namelist.is_null());
+
+    cleanup_test_dir(&base);
+}
+
+// ===========================================================================
+// readdir64 exhaustion
+// ===========================================================================
+
+#[test]
+fn readdir64_exhaustion() {
+    let (path, base) = make_test_dir();
+    let dirp = unsafe { opendir(path.as_ptr()) };
+    assert!(!dirp.is_null());
+
+    let mut count = 0;
+    loop {
+        let ent = unsafe { readdir64(dirp) };
+        if ent.is_null() {
+            break;
+        }
+        count += 1;
+    }
+    assert!(count >= 5, "readdir64 should read at least 5 entries (got {count})");
+
+    unsafe { closedir(dirp) };
+    cleanup_test_dir(&base);
+}
+
+// ===========================================================================
+// Multiple opens and closes
+// ===========================================================================
+
+#[test]
+fn opendir_multiple_dirs() {
+    let (path1, base1) = make_test_dir();
+    let (path2, base2) = make_test_dir();
+
+    let dirp1 = unsafe { opendir(path1.as_ptr()) };
+    let dirp2 = unsafe { opendir(path2.as_ptr()) };
+    assert!(!dirp1.is_null());
+    assert!(!dirp2.is_null());
+
+    // Both should be independently readable
+    let ent1 = unsafe { readdir(dirp1) };
+    assert!(!ent1.is_null());
+    let ent2 = unsafe { readdir(dirp2) };
+    assert!(!ent2.is_null());
+
+    unsafe {
+        closedir(dirp1);
+        closedir(dirp2);
+    }
+    cleanup_test_dir(&base1);
+    cleanup_test_dir(&base2);
+}
+
+// ===========================================================================
+// readdir_r null safety
+// ===========================================================================
+
+#[test]
+fn readdir_r_null_dirp() {
+    let mut entry: libc::dirent = unsafe { std::mem::zeroed() };
+    let mut result: *mut libc::dirent = std::ptr::null_mut();
+    let rc = unsafe { readdir_r(std::ptr::null_mut(), &mut entry, &mut result) };
+    assert!(rc != 0 || result.is_null());
+}
+
+// ===========================================================================
+// telldir returns different positions
+// ===========================================================================
+
+#[test]
+fn telldir_advances() {
+    let (path, base) = make_test_dir();
+    let dirp = unsafe { opendir(path.as_ptr()) };
+    assert!(!dirp.is_null());
+
+    let pos1 = unsafe { telldir(dirp) };
+    unsafe { readdir(dirp) };
+    let pos2 = unsafe { telldir(dirp) };
+    unsafe { readdir(dirp) };
+    let pos3 = unsafe { telldir(dirp) };
+
+    // Positions should generally advance (though not strictly monotonic on all fs)
+    assert!(
+        pos1 != pos3 || pos2 != pos3,
+        "telldir should change as we read entries"
+    );
+
+    unsafe { closedir(dirp) };
+    cleanup_test_dir(&base);
+}
+
+// ===========================================================================
+// rewinddir after partial read
+// ===========================================================================
+
+#[test]
+fn rewinddir_after_partial_read() {
+    let (path, base) = make_test_dir();
+    let dirp = unsafe { opendir(path.as_ptr()) };
+    assert!(!dirp.is_null());
+
+    // Read 2 entries
+    unsafe { readdir(dirp) };
+    unsafe { readdir(dirp) };
+
+    // Rewind
+    unsafe { rewinddir(dirp) };
+
+    // Should be able to read all entries again
+    let names = unsafe { collect_names(dirp) };
+    assert!(names.contains(&"aaa.txt".to_string()));
+    assert!(names.contains(&"bbb.txt".to_string()));
+    assert!(names.contains(&"ccc.txt".to_string()));
+
+    unsafe { closedir(dirp) };
+    cleanup_test_dir(&base);
+}
+
+// ===========================================================================
+// dirfd with fdopendir roundtrip
+// ===========================================================================
+
+#[test]
+fn fdopendir_reads_entries() {
+    let (path, base) = make_test_dir();
+    let fd = unsafe { libc::open(path.as_ptr(), libc::O_RDONLY | libc::O_DIRECTORY) };
+    assert!(fd >= 0);
+
+    let dirp = unsafe { fdopendir(fd) };
+    assert!(!dirp.is_null());
+
+    let names = unsafe { collect_names(dirp.cast()) };
+    assert!(names.contains(&"aaa.txt".to_string()));
+    assert!(names.contains(&"bbb.txt".to_string()));
+    assert!(names.contains(&"ccc.txt".to_string()));
+
+    unsafe { closedir(dirp.cast()) };
+    cleanup_test_dir(&base);
+}
+
+#[test]
+fn fdopendir_bad_fd() {
+    let dirp = unsafe { fdopendir(-1) };
+    assert!(dirp.is_null(), "fdopendir(-1) should fail");
+}
+
+// ===========================================================================
+// Entry d_type field
+// ===========================================================================
+
+#[test]
+fn readdir_has_d_type() {
+    let (path, base) = make_test_dir();
+    let dirp = unsafe { opendir(path.as_ptr()) };
+    assert!(!dirp.is_null());
+
+    loop {
+        let ent = unsafe { readdir(dirp) };
+        if ent.is_null() {
+            break;
+        }
+        let name = unsafe { CStr::from_ptr((*ent).d_name.as_ptr()) }
+            .to_str()
+            .unwrap();
+        if name == "aaa.txt" {
+            // Regular files should have DT_REG on most filesystems
+            let d_type = unsafe { (*ent).d_type };
+            assert!(
+                d_type == libc::DT_REG || d_type == libc::DT_UNKNOWN,
+                "aaa.txt should be DT_REG or DT_UNKNOWN, got {d_type}"
+            );
+        }
+    }
+
+    unsafe { closedir(dirp) };
+    cleanup_test_dir(&base);
+}
+
+// ===========================================================================
+// Empty directory
+// ===========================================================================
+
+#[test]
+fn readdir_empty_dir() {
+    let id = TEST_DIR_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let pid = std::process::id();
+    let base = format!("/tmp/franken_dirent_empty_{}_{}", pid, id);
+    let path = CString::new(base.as_str()).unwrap();
+    unsafe { libc::mkdir(path.as_ptr(), 0o755) };
+
+    let dirp = unsafe { opendir(path.as_ptr()) };
+    assert!(!dirp.is_null());
+
+    let names = unsafe { collect_names(dirp) };
+    // Even empty dirs have "." and ".."
+    assert!(names.contains(&".".to_string()));
+    assert!(names.contains(&"..".to_string()));
+    assert_eq!(names.len(), 2, "empty dir should only have . and ..");
+
+    unsafe { closedir(dirp) };
+    unsafe { libc::rmdir(path.as_ptr()) };
+}

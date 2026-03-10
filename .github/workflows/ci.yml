@@ -313,9 +313,11 @@ jobs:
             export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
             cargo check --workspace --all-targets --target aarch64-unknown-linux-gnu 2>&1 | tee artifacts/ci/multiarch-aarch64-check.log
             cargo build -p frankenlibc-abi --target aarch64-unknown-linux-gnu --release 2>&1 | tee artifacts/ci/multiarch-aarch64-build.log
+            cargo test -p frankenlibc-core --test syscall_veneer_test --target aarch64-unknown-linux-gnu --no-run 2>&1 | tee artifacts/ci/multiarch-aarch64-syscall-veneer-build.log
           else
             echo "SKIP: aarch64-linux-gnu-gcc not available on runner (multi-arch checks are best-effort)." | tee artifacts/ci/multiarch-aarch64-check.log
             echo "SKIP: aarch64 build requires aarch64-linux-gnu-gcc linker." | tee artifacts/ci/multiarch-aarch64-build.log
+            echo "SKIP: aarch64 syscall veneer test build requires aarch64-linux-gnu-gcc linker." | tee artifacts/ci/multiarch-aarch64-syscall-veneer-build.log
           fi
           if command -v qemu-aarch64 >/dev/null 2>&1; then
             if command -v aarch64-linux-gnu-gcc >/dev/null 2>&1; then
@@ -328,11 +330,19 @@ jobs:
               C
               aarch64-linux-gnu-gcc -O2 artifacts/ci/qemu_probe.c -o artifacts/ci/qemu_probe.aarch64
               qemu-aarch64 -L /usr/aarch64-linux-gnu artifacts/ci/qemu_probe.aarch64 2>&1 | tee artifacts/ci/multiarch-qemu.log
+              syscall_veneer_bin="$(find target/aarch64-unknown-linux-gnu/debug/deps -maxdepth 1 -type f -perm -111 -name 'syscall_veneer_test-*' ! -name '*.d' | head -n 1)"
+              if [ -z "${syscall_veneer_bin}" ]; then
+                echo "FAIL: aarch64 syscall_veneer_test binary not found after cargo test --no-run" | tee artifacts/ci/multiarch-aarch64-syscall-veneer-qemu.log
+                exit 1
+              fi
+              qemu-aarch64 -L /usr/aarch64-linux-gnu "${syscall_veneer_bin}" --nocapture 2>&1 | tee artifacts/ci/multiarch-aarch64-syscall-veneer-qemu.log
             else
               echo "SKIP: qemu probe needs aarch64-linux-gnu-gcc" | tee artifacts/ci/multiarch-qemu.log
+              echo "SKIP: aarch64 syscall veneer qemu run needs aarch64-linux-gnu-gcc" | tee artifacts/ci/multiarch-aarch64-syscall-veneer-qemu.log
             fi
           else
             echo "SKIP: qemu-aarch64 not available on runner" | tee artifacts/ci/multiarch-qemu.log
+            echo "SKIP: qemu-aarch64 not available on runner" | tee artifacts/ci/multiarch-aarch64-syscall-veneer-qemu.log
           fi
 
       - name: Upload multi-arch artifacts

@@ -249,3 +249,222 @@ fn getgrent_r_iterates_all() {
 
     unsafe { endgrent() };
 }
+
+// ===========================================================================
+// Additional getgrnam / getgrgid edge cases
+// ===========================================================================
+
+#[test]
+fn getgrnam_empty_string() {
+    let name = CString::new("").unwrap();
+    let grp = unsafe { getgrnam(name.as_ptr()) };
+    assert!(grp.is_null(), "empty group name should return null");
+}
+
+#[test]
+fn getgrgid_root_has_passwd_field() {
+    let grp = unsafe { getgrgid(0) };
+    if !grp.is_null() {
+        let gr = unsafe { &*grp };
+        // gr_passwd should be a valid pointer (may be empty string or "x")
+        assert!(!gr.gr_passwd.is_null(), "gr_passwd should not be null");
+    }
+}
+
+#[test]
+fn getgrgid_root_has_members_field() {
+    let grp = unsafe { getgrgid(0) };
+    if !grp.is_null() {
+        let gr = unsafe { &*grp };
+        // gr_mem should be a valid pointer (possibly pointing to NULL terminator)
+        assert!(!gr.gr_mem.is_null(), "gr_mem should not be null");
+    }
+}
+
+#[test]
+fn getgrnam_r_null_name_returns_not_found() {
+    let mut grp: libc::group = unsafe { std::mem::zeroed() };
+    let mut buf = vec![0u8; 1024];
+    let mut result: *mut libc::group = std::ptr::null_mut();
+
+    let rc = unsafe {
+        getgrnam_r(
+            std::ptr::null(),
+            &mut grp,
+            buf.as_mut_ptr().cast(),
+            buf.len(),
+            &mut result,
+        )
+    };
+    // Should handle null name gracefully
+    assert!(result.is_null() || rc != 0);
+}
+
+#[test]
+fn getgrgid_r_nonexistent() {
+    let mut grp: libc::group = unsafe { std::mem::zeroed() };
+    let mut buf = vec![0u8; 1024];
+    let mut result: *mut libc::group = std::ptr::null_mut();
+
+    let rc = unsafe {
+        getgrgid_r(
+            99999,
+            &mut grp,
+            buf.as_mut_ptr().cast(),
+            buf.len(),
+            &mut result,
+        )
+    };
+    assert_eq!(rc, 0);
+    assert!(result.is_null(), "nonexistent gid should set result=NULL");
+}
+
+#[test]
+fn getgrgid_r_small_buffer() {
+    let mut grp: libc::group = unsafe { std::mem::zeroed() };
+    let mut buf = vec![0u8; 1]; // Intentionally too small
+    let mut result: *mut libc::group = std::ptr::null_mut();
+
+    let rc = unsafe {
+        getgrgid_r(
+            0,
+            &mut grp,
+            buf.as_mut_ptr().cast(),
+            buf.len(),
+            &mut result,
+        )
+    };
+    assert_eq!(rc, libc::ERANGE, "tiny buffer should return ERANGE");
+    assert!(result.is_null());
+}
+
+// ===========================================================================
+// Consistency checks
+// ===========================================================================
+
+#[test]
+fn getgrnam_getgrgid_consistent() {
+    // Look up "root" by name, then by its gid, verify they match
+    let name = CString::new("root").unwrap();
+    let by_name = unsafe { getgrnam(name.as_ptr()) };
+    if by_name.is_null() {
+        return; // Skip if root group not available
+    }
+    let gid = unsafe { (*by_name).gr_gid };
+
+    let by_gid = unsafe { getgrgid(gid) };
+    assert!(!by_gid.is_null());
+
+    let name1 = unsafe { CStr::from_ptr((*by_name).gr_name) }
+        .to_str()
+        .unwrap();
+    let name2 = unsafe { CStr::from_ptr((*by_gid).gr_name) }
+        .to_str()
+        .unwrap();
+    assert_eq!(name1, name2, "name lookup and gid lookup should agree");
+}
+
+#[test]
+fn getgrnam_r_getgrgid_r_consistent() {
+    let name_str = CString::new("root").unwrap();
+
+    let mut grp1: libc::group = unsafe { std::mem::zeroed() };
+    let mut buf1 = vec![0u8; 4096];
+    let mut result1: *mut libc::group = std::ptr::null_mut();
+    let rc1 = unsafe {
+        getgrnam_r(
+            name_str.as_ptr(),
+            &mut grp1,
+            buf1.as_mut_ptr().cast(),
+            buf1.len(),
+            &mut result1,
+        )
+    };
+    if rc1 != 0 || result1.is_null() {
+        return; // Skip
+    }
+
+    let gid = grp1.gr_gid;
+
+    let mut grp2: libc::group = unsafe { std::mem::zeroed() };
+    let mut buf2 = vec![0u8; 4096];
+    let mut result2: *mut libc::group = std::ptr::null_mut();
+    let rc2 = unsafe {
+        getgrgid_r(
+            gid,
+            &mut grp2,
+            buf2.as_mut_ptr().cast(),
+            buf2.len(),
+            &mut result2,
+        )
+    };
+    assert_eq!(rc2, 0);
+    assert!(!result2.is_null());
+    assert_eq!(grp1.gr_gid, grp2.gr_gid);
+}
+
+// ===========================================================================
+// Double setgrent/endgrent
+// ===========================================================================
+
+#[test]
+fn double_setgrent_safe() {
+    unsafe {
+        setgrent();
+        setgrent(); // Double call should not crash
+        endgrent();
+    }
+}
+
+#[test]
+fn double_endgrent_safe() {
+    unsafe {
+        setgrent();
+        endgrent();
+        endgrent(); // Double call should not crash
+    }
+}
+
+#[test]
+fn endgrent_without_setgrent() {
+    // Should not crash
+    unsafe { endgrent() };
+}
+
+// ===========================================================================
+// Iteration count consistency
+// ===========================================================================
+
+#[test]
+fn group_iteration_count_consistent() {
+    // Two iterations should produce the same count
+    unsafe { setgrent() };
+    let mut count1 = 0;
+    loop {
+        let ent = unsafe { getgrent() };
+        if ent.is_null() {
+            break;
+        }
+        count1 += 1;
+        if count1 > 500 {
+            break;
+        }
+    }
+    unsafe { endgrent() };
+
+    unsafe { setgrent() };
+    let mut count2 = 0;
+    loop {
+        let ent = unsafe { getgrent() };
+        if ent.is_null() {
+            break;
+        }
+        count2 += 1;
+        if count2 > 500 {
+            break;
+        }
+    }
+    unsafe { endgrent() };
+
+    assert_eq!(count1, count2, "two iterations should produce the same count");
+}

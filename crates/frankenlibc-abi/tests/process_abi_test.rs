@@ -509,3 +509,496 @@ fn execvp_continues_path_search_after_eacces() {
     let _ = std::fs::remove_dir(&deny_dir);
     let _ = std::fs::remove_dir(&base);
 }
+
+// ===========================================================================
+// fork + waitpid
+// ===========================================================================
+
+#[test]
+fn fork_and_waitpid_child_exits_zero() {
+    let pid = unsafe { fork() };
+    assert!(pid >= 0, "fork should succeed");
+
+    if pid == 0 {
+        // Child: exit immediately with code 0
+        unsafe { libc::_exit(0) };
+    }
+
+    // Parent: wait for child
+    let mut status: c_int = 0;
+    let waited = unsafe { waitpid(pid, &mut status, 0) };
+    assert_eq!(waited, pid, "waitpid should return the child pid");
+    assert!(libc::WIFEXITED(status), "child should have exited normally");
+    assert_eq!(libc::WEXITSTATUS(status), 0, "child exit code should be 0");
+}
+
+#[test]
+fn fork_and_waitpid_child_exits_nonzero() {
+    let pid = unsafe { fork() };
+    assert!(pid >= 0, "fork should succeed");
+
+    if pid == 0 {
+        unsafe { libc::_exit(42) };
+    }
+
+    let mut status: c_int = 0;
+    let waited = unsafe { waitpid(pid, &mut status, 0) };
+    assert_eq!(waited, pid);
+    assert!(libc::WIFEXITED(status));
+    assert_eq!(libc::WEXITSTATUS(status), 42);
+}
+
+#[test]
+fn fork_child_gets_zero_pid() {
+    let pid = unsafe { fork() };
+    assert!(pid >= 0, "fork should succeed");
+
+    if pid == 0 {
+        // In child: fork() returns 0
+        // Verify we're really the child by checking getpid != parent
+        unsafe { libc::_exit(0) };
+    }
+
+    // Parent: pid > 0
+    assert!(pid > 0, "parent should get positive child pid");
+    let mut status: c_int = 0;
+    unsafe { libc::waitpid(pid, &mut status, 0) };
+}
+
+// ===========================================================================
+// wait (simple form)
+// ===========================================================================
+
+#[test]
+fn wait_returns_child_status() {
+    let pid = unsafe { fork() };
+    assert!(pid >= 0);
+
+    if pid == 0 {
+        unsafe { libc::_exit(7) };
+    }
+
+    let mut status: c_int = 0;
+    let waited = unsafe { wait(&mut status) };
+    assert_eq!(waited, pid, "wait should return the child pid");
+    assert!(libc::WIFEXITED(status));
+    assert_eq!(libc::WEXITSTATUS(status), 7);
+}
+
+// ===========================================================================
+// wait4
+// ===========================================================================
+
+#[test]
+fn wait4_captures_rusage() {
+    let pid = unsafe { fork() };
+    assert!(pid >= 0);
+
+    if pid == 0 {
+        unsafe { libc::_exit(3) };
+    }
+
+    let mut status: c_int = 0;
+    let mut rusage: libc::rusage = unsafe { std::mem::zeroed() };
+    let waited = unsafe { wait4(pid, &mut status, 0, &mut rusage) };
+    assert_eq!(waited, pid);
+    assert!(libc::WIFEXITED(status));
+    assert_eq!(libc::WEXITSTATUS(status), 3);
+    // rusage should have been populated (at least user time >= 0)
+    assert!(rusage.ru_utime.tv_sec >= 0);
+    assert!(rusage.ru_stime.tv_sec >= 0);
+}
+
+// ===========================================================================
+// wait3
+// ===========================================================================
+
+#[test]
+fn wait3_captures_rusage() {
+    let pid = unsafe { fork() };
+    assert!(pid >= 0);
+
+    if pid == 0 {
+        unsafe { libc::_exit(5) };
+    }
+
+    let mut status: c_int = 0;
+    let mut rusage: libc::rusage = unsafe { std::mem::zeroed() };
+    let waited = unsafe { wait3(&mut status, 0, &mut rusage) };
+    assert_eq!(waited, pid);
+    assert!(libc::WIFEXITED(status));
+    assert_eq!(libc::WEXITSTATUS(status), 5);
+}
+
+// ===========================================================================
+// waitid
+// ===========================================================================
+
+#[test]
+fn waitid_with_p_pid() {
+    let pid = unsafe { fork() };
+    assert!(pid >= 0);
+
+    if pid == 0 {
+        unsafe { libc::_exit(11) };
+    }
+
+    let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+    let rc = unsafe { waitid(libc::P_PID as c_int, pid as libc::id_t, &mut info, libc::WEXITED) };
+    assert_eq!(rc, 0, "waitid should succeed");
+}
+
+// ===========================================================================
+// waitpid with WNOHANG
+// ===========================================================================
+
+#[test]
+fn waitpid_wnohang_no_child_ready() {
+    let pid = unsafe { fork() };
+    assert!(pid >= 0);
+
+    if pid == 0 {
+        // Child sleeps briefly then exits
+        unsafe { libc::usleep(100_000) }; // 100ms
+        unsafe { libc::_exit(0) };
+    }
+
+    // Immediately try WNOHANG - child likely hasn't exited yet
+    let mut status: c_int = 0;
+    let waited = unsafe { waitpid(pid, &mut status, libc::WNOHANG) };
+    // Either 0 (not ready) or pid (already exited) are valid
+    assert!(waited == 0 || waited == pid);
+
+    // Clean up: wait for child to finish
+    if waited == 0 {
+        unsafe { libc::waitpid(pid, &mut status, 0) };
+    }
+}
+
+// ===========================================================================
+// execve (fork + exec)
+// ===========================================================================
+
+#[test]
+fn execve_runs_true() {
+    let pid = unsafe { fork() };
+    assert!(pid >= 0);
+
+    if pid == 0 {
+        let path = CString::new("/bin/true").unwrap();
+        let argv: [*const c_char; 2] = [path.as_ptr(), std::ptr::null()];
+        let envp: [*const c_char; 1] = [std::ptr::null()];
+        unsafe { execve(path.as_ptr(), argv.as_ptr(), envp.as_ptr()) };
+        // If execve returns, it failed
+        unsafe { libc::_exit(127) };
+    }
+
+    let mut status: c_int = 0;
+    unsafe { libc::waitpid(pid, &mut status, 0) };
+    assert!(libc::WIFEXITED(status));
+    assert_eq!(libc::WEXITSTATUS(status), 0, "/bin/true should exit 0");
+}
+
+#[test]
+fn execve_null_pathname_returns_efault() {
+    let rc = unsafe { execve(std::ptr::null(), std::ptr::null(), std::ptr::null()) };
+    assert_eq!(rc, -1);
+    let err = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert_eq!(err, libc::EFAULT);
+}
+
+#[test]
+fn execve_nonexistent_returns_enoent() {
+    let pid = unsafe { fork() };
+    assert!(pid >= 0);
+
+    if pid == 0 {
+        let path = CString::new("/nonexistent_frankenlibc_test_binary_3f8a9c").unwrap();
+        let argv: [*const c_char; 2] = [path.as_ptr(), std::ptr::null()];
+        let envp: [*const c_char; 1] = [std::ptr::null()];
+        let rc = unsafe { execve(path.as_ptr(), argv.as_ptr(), envp.as_ptr()) };
+        // execve failed - exit with errno as code
+        let err = if rc == -1 {
+            unsafe { *frankenlibc_abi::errno_abi::__errno_location() }
+        } else {
+            0
+        };
+        unsafe { libc::_exit(err) };
+    }
+
+    let mut status: c_int = 0;
+    unsafe { libc::waitpid(pid, &mut status, 0) };
+    assert!(libc::WIFEXITED(status));
+    assert_eq!(libc::WEXITSTATUS(status), libc::ENOENT);
+}
+
+// ===========================================================================
+// execvpe (fork + exec with PATH search + custom env)
+// ===========================================================================
+
+#[test]
+fn execvpe_finds_true_on_path() {
+    let pid = unsafe { fork() };
+    assert!(pid >= 0);
+
+    if pid == 0 {
+        let cmd = CString::new("true").unwrap();
+        let argv: [*const c_char; 2] = [cmd.as_ptr(), std::ptr::null()];
+        let path_env = CString::new("PATH=/bin:/usr/bin").unwrap();
+        let envp: [*const c_char; 2] = [path_env.as_ptr(), std::ptr::null()];
+        unsafe { execvpe(cmd.as_ptr(), argv.as_ptr(), envp.as_ptr()) };
+        unsafe { libc::_exit(127) };
+    }
+
+    let mut status: c_int = 0;
+    unsafe { libc::waitpid(pid, &mut status, 0) };
+    assert!(libc::WIFEXITED(status));
+    assert_eq!(libc::WEXITSTATUS(status), 0);
+}
+
+// ===========================================================================
+// posix_spawn (direct, not spawnp)
+// ===========================================================================
+
+#[test]
+fn posix_spawn_runs_true() {
+    let cmd = CString::new("/bin/true").unwrap();
+    let argv: [*const c_char; 2] = [cmd.as_ptr(), std::ptr::null()];
+    let mut pid: libc::pid_t = 0;
+
+    let rc = unsafe {
+        posix_spawn(
+            &mut pid,
+            cmd.as_ptr(),
+            std::ptr::null(),
+            std::ptr::null(),
+            argv.as_ptr().cast(),
+            std::ptr::null(),
+        )
+    };
+    assert_eq!(rc, 0, "posix_spawn should succeed");
+    assert!(pid > 0);
+
+    let mut status: c_int = 0;
+    unsafe { libc::waitpid(pid, &mut status, 0) };
+    assert!(libc::WIFEXITED(status));
+    assert_eq!(libc::WEXITSTATUS(status), 0);
+}
+
+#[test]
+fn posix_spawn_null_path_returns_einval() {
+    let mut pid: libc::pid_t = -1;
+    let rc = unsafe {
+        posix_spawn(
+            &mut pid,
+            std::ptr::null(),
+            std::ptr::null(),
+            std::ptr::null(),
+            std::ptr::null(),
+            std::ptr::null(),
+        )
+    };
+    // Should fail with EINVAL or EFAULT
+    assert_ne!(rc, 0);
+}
+
+// ===========================================================================
+// posix_spawn with file actions
+// ===========================================================================
+
+#[test]
+fn posix_spawn_with_file_actions() {
+    let mut fa = AlignedBuf::new();
+    unsafe { posix_spawn_file_actions_init(fa.as_mut_ptr().cast()) };
+
+    // Add /dev/null as stdin
+    let devnull = CString::new("/dev/null").unwrap();
+    assert_eq!(
+        unsafe {
+            posix_spawn_file_actions_addopen(
+                fa.as_mut_ptr().cast(),
+                0,
+                devnull.as_ptr(),
+                libc::O_RDONLY,
+                0,
+            )
+        },
+        0
+    );
+
+    let cmd = CString::new("/bin/true").unwrap();
+    let argv: [*const c_char; 2] = [cmd.as_ptr(), std::ptr::null()];
+    let mut pid: libc::pid_t = 0;
+
+    let rc = unsafe {
+        posix_spawn(
+            &mut pid,
+            cmd.as_ptr(),
+            fa.as_ptr().cast(),
+            std::ptr::null(),
+            argv.as_ptr().cast(),
+            std::ptr::null(),
+        )
+    };
+    assert_eq!(rc, 0);
+    assert!(pid > 0);
+
+    let mut status: c_int = 0;
+    unsafe { libc::waitpid(pid, &mut status, 0) };
+    assert!(libc::WIFEXITED(status));
+    assert_eq!(libc::WEXITSTATUS(status), 0);
+
+    unsafe { posix_spawn_file_actions_destroy(fa.as_mut_ptr().cast()) };
+}
+
+// ===========================================================================
+// posix_spawn with spawnattr
+// ===========================================================================
+
+#[test]
+fn posix_spawn_with_attr() {
+    let mut attr = AlignedBuf::new();
+    unsafe { posix_spawnattr_init(attr.as_mut_ptr().cast()) };
+
+    // Set POSIX_SPAWN_SETSIGMASK flag and a sigmask
+    unsafe { posix_spawnattr_setflags(attr.as_mut_ptr().cast(), 0) };
+
+    let cmd = CString::new("/bin/true").unwrap();
+    let argv: [*const c_char; 2] = [cmd.as_ptr(), std::ptr::null()];
+    let mut pid: libc::pid_t = 0;
+
+    let rc = unsafe {
+        posix_spawnp(
+            &mut pid,
+            cmd.as_ptr(),
+            std::ptr::null(),
+            attr.as_ptr().cast(),
+            argv.as_ptr().cast(),
+            std::ptr::null(),
+        )
+    };
+    assert_eq!(rc, 0);
+    assert!(pid > 0);
+
+    let mut status: c_int = 0;
+    unsafe { libc::waitpid(pid, &mut status, 0) };
+    assert!(libc::WIFEXITED(status));
+
+    unsafe { posix_spawnattr_destroy(attr.as_mut_ptr().cast()) };
+}
+
+// ===========================================================================
+// posix_spawnp with false command (empty argv)
+// ===========================================================================
+
+#[test]
+fn posix_spawnp_with_echo() {
+    let cmd = CString::new("/bin/echo").unwrap();
+    let arg1 = CString::new("hello").unwrap();
+    let argv: [*const c_char; 3] = [cmd.as_ptr(), arg1.as_ptr(), std::ptr::null()];
+    let mut pid: libc::pid_t = 0;
+
+    let rc = unsafe {
+        posix_spawnp(
+            &mut pid,
+            cmd.as_ptr(),
+            std::ptr::null(),
+            std::ptr::null(),
+            argv.as_ptr().cast(),
+            std::ptr::null(),
+        )
+    };
+    assert_eq!(rc, 0);
+    assert!(pid > 0);
+
+    let mut status: c_int = 0;
+    unsafe { libc::waitpid(pid, &mut status, 0) };
+    assert!(libc::WIFEXITED(status));
+    assert_eq!(libc::WEXITSTATUS(status), 0);
+}
+
+// ===========================================================================
+// file_actions edge cases
+// ===========================================================================
+
+#[test]
+fn file_actions_addclose_negative_fd() {
+    let mut fa = AlignedBuf::new();
+    unsafe { posix_spawn_file_actions_init(fa.as_mut_ptr().cast()) };
+
+    let rc = unsafe { posix_spawn_file_actions_addclose(fa.as_mut_ptr().cast(), -1) };
+    assert!(rc == libc::EBADF || rc == libc::EINVAL, "negative fd should return EBADF or EINVAL, got {rc}");
+
+    unsafe { posix_spawn_file_actions_destroy(fa.as_mut_ptr().cast()) };
+}
+
+#[test]
+fn file_actions_adddup2_negative_fd() {
+    let mut fa = AlignedBuf::new();
+    unsafe { posix_spawn_file_actions_init(fa.as_mut_ptr().cast()) };
+
+    let rc = unsafe { posix_spawn_file_actions_adddup2(fa.as_mut_ptr().cast(), -1, 0) };
+    assert!(rc == libc::EBADF || rc == libc::EINVAL, "negative oldfd should return EBADF or EINVAL, got {rc}");
+
+    let rc = unsafe { posix_spawn_file_actions_adddup2(fa.as_mut_ptr().cast(), 0, -1) };
+    assert!(rc == libc::EBADF || rc == libc::EINVAL, "negative newfd should return EBADF or EINVAL, got {rc}");
+
+    unsafe { posix_spawn_file_actions_destroy(fa.as_mut_ptr().cast()) };
+}
+
+#[test]
+fn file_actions_addopen_null_path() {
+    let mut fa = AlignedBuf::new();
+    unsafe { posix_spawn_file_actions_init(fa.as_mut_ptr().cast()) };
+
+    let rc = unsafe {
+        posix_spawn_file_actions_addopen(
+            fa.as_mut_ptr().cast(),
+            3,
+            std::ptr::null(),
+            libc::O_RDONLY,
+            0,
+        )
+    };
+    assert_eq!(rc, libc::EINVAL, "null path should return EINVAL");
+
+    unsafe { posix_spawn_file_actions_destroy(fa.as_mut_ptr().cast()) };
+}
+
+#[test]
+fn file_actions_addchdir_np_null_path() {
+    let mut fa = AlignedBuf::new();
+    unsafe { posix_spawn_file_actions_init(fa.as_mut_ptr().cast()) };
+
+    let rc = unsafe { posix_spawn_file_actions_addchdir_np(fa.as_mut_ptr().cast(), std::ptr::null()) };
+    assert_eq!(rc, libc::EINVAL);
+
+    unsafe { posix_spawn_file_actions_destroy(fa.as_mut_ptr().cast()) };
+}
+
+// ===========================================================================
+// spawnattr: double init / double destroy
+// ===========================================================================
+
+#[test]
+fn spawnattr_double_destroy() {
+    let mut attr = AlignedBuf::new();
+    unsafe { posix_spawnattr_init(attr.as_mut_ptr().cast()) };
+    let rc1 = unsafe { posix_spawnattr_destroy(attr.as_mut_ptr().cast()) };
+    assert_eq!(rc1, 0);
+
+    // Second destroy on already-destroyed attr should return EINVAL
+    let rc2 = unsafe { posix_spawnattr_destroy(attr.as_mut_ptr().cast()) };
+    assert_eq!(rc2, libc::EINVAL);
+}
+
+#[test]
+fn file_actions_double_destroy() {
+    let mut fa = AlignedBuf::new();
+    unsafe { posix_spawn_file_actions_init(fa.as_mut_ptr().cast()) };
+    let rc1 = unsafe { posix_spawn_file_actions_destroy(fa.as_mut_ptr().cast()) };
+    assert_eq!(rc1, 0);
+
+    let rc2 = unsafe { posix_spawn_file_actions_destroy(fa.as_mut_ptr().cast()) };
+    assert_eq!(rc2, libc::EINVAL);
+}

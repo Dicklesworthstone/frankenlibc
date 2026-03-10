@@ -422,6 +422,7 @@ pub unsafe fn clone_thread_asm(
             in("x4") tls,
             lateout("x0") ret,
             lateout("x8") _,
+            lateout("x9") _,
             options(nostack),
         );
     }

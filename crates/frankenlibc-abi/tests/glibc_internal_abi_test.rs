@@ -4,7 +4,10 @@
 
 use frankenlibc_abi::glibc_internal_abi::{
     __asprintf,
+    __call_tls_dtors,
     __copy_grp,
+    __idna_from_dns_encoding,
+    __idna_to_dns_encoding,
     __inet6_scopeid_pton,
     __inet_aton_exact,
     __inet_pton_length,
@@ -2342,4 +2345,314 @@ fn test_inet6_scopeid_pton_invalid_name() {
         )
     };
     assert_eq!(rc, libc::ENOENT);
+}
+
+// ===========================================================================
+// IDNA encoding/decoding tests (native Punycode, RFC 3492)
+// ===========================================================================
+
+#[test]
+fn test_idna_to_dns_ascii_passthrough() {
+    // Pure ASCII hostname should pass through unchanged.
+    let name = std::ffi::CString::new("example.com").unwrap();
+    let mut result: *mut std::ffi::c_char = std::ptr::null_mut();
+    let rc = unsafe { __idna_to_dns_encoding(name.as_ptr(), &mut result) };
+    assert_eq!(rc, 0);
+    assert!(!result.is_null());
+    let out = unsafe { std::ffi::CStr::from_ptr(result) }
+        .to_str()
+        .unwrap();
+    assert_eq!(out, "example.com");
+    unsafe { libc::free(result as *mut std::ffi::c_void) };
+}
+
+#[test]
+fn test_idna_to_dns_unicode_label() {
+    // "münchen.de" should encode to "xn--mnchen-3ya.de"
+    let name = std::ffi::CString::new("münchen.de").unwrap();
+    let mut result: *mut std::ffi::c_char = std::ptr::null_mut();
+    let rc = unsafe { __idna_to_dns_encoding(name.as_ptr(), &mut result) };
+    assert_eq!(rc, 0);
+    assert!(!result.is_null());
+    let out = unsafe { std::ffi::CStr::from_ptr(result) }
+        .to_str()
+        .unwrap();
+    assert_eq!(out, "xn--mnchen-3ya.de");
+    unsafe { libc::free(result as *mut std::ffi::c_void) };
+}
+
+#[test]
+fn test_idna_to_dns_chinese() {
+    // Chinese domain label.
+    let name = std::ffi::CString::new("中文.com").unwrap();
+    let mut result: *mut std::ffi::c_char = std::ptr::null_mut();
+    let rc = unsafe { __idna_to_dns_encoding(name.as_ptr(), &mut result) };
+    assert_eq!(rc, 0);
+    assert!(!result.is_null());
+    let out = unsafe { std::ffi::CStr::from_ptr(result) }
+        .to_str()
+        .unwrap();
+    // "中文" in Punycode is "fiq228c".
+    assert_eq!(out, "xn--fiq228c.com");
+    unsafe { libc::free(result as *mut std::ffi::c_void) };
+}
+
+#[test]
+fn test_idna_to_dns_null_input() {
+    let mut result: *mut std::ffi::c_char = std::ptr::null_mut();
+    let rc = unsafe { __idna_to_dns_encoding(std::ptr::null(), &mut result) };
+    assert_eq!(rc, libc::EAI_FAIL);
+}
+
+#[test]
+fn test_idna_to_dns_null_result_ptr() {
+    let name = std::ffi::CString::new("test.com").unwrap();
+    let rc = unsafe { __idna_to_dns_encoding(name.as_ptr(), std::ptr::null_mut()) };
+    assert_eq!(rc, libc::EAI_FAIL);
+}
+
+#[test]
+fn test_idna_from_dns_ascii_passthrough() {
+    // Pure ASCII hostname should pass through unchanged.
+    let name = std::ffi::CString::new("example.com").unwrap();
+    let mut result: *mut std::ffi::c_char = std::ptr::null_mut();
+    let rc = unsafe { __idna_from_dns_encoding(name.as_ptr(), &mut result) };
+    assert_eq!(rc, 0);
+    assert!(!result.is_null());
+    let out = unsafe { std::ffi::CStr::from_ptr(result) }
+        .to_str()
+        .unwrap();
+    assert_eq!(out, "example.com");
+    unsafe { libc::free(result as *mut std::ffi::c_void) };
+}
+
+#[test]
+fn test_idna_from_dns_punycode_label() {
+    // "xn--mnchen-3ya.de" should decode to "münchen.de"
+    let name = std::ffi::CString::new("xn--mnchen-3ya.de").unwrap();
+    let mut result: *mut std::ffi::c_char = std::ptr::null_mut();
+    let rc = unsafe { __idna_from_dns_encoding(name.as_ptr(), &mut result) };
+    assert_eq!(rc, 0);
+    assert!(!result.is_null());
+    let out = unsafe { std::ffi::CStr::from_ptr(result) }
+        .to_str()
+        .unwrap();
+    assert_eq!(out, "münchen.de");
+    unsafe { libc::free(result as *mut std::ffi::c_void) };
+}
+
+#[test]
+fn test_idna_from_dns_chinese_punycode() {
+    // "xn--fiq228c.com" should decode back to "中文.com"
+    let name = std::ffi::CString::new("xn--fiq228c.com").unwrap();
+    let mut result: *mut std::ffi::c_char = std::ptr::null_mut();
+    let rc = unsafe { __idna_from_dns_encoding(name.as_ptr(), &mut result) };
+    assert_eq!(rc, 0);
+    assert!(!result.is_null());
+    let out = unsafe { std::ffi::CStr::from_ptr(result) }
+        .to_str()
+        .unwrap();
+    assert_eq!(out, "中文.com");
+    unsafe { libc::free(result as *mut std::ffi::c_void) };
+}
+
+#[test]
+fn test_idna_roundtrip_unicode() {
+    // Encode then decode should produce original.
+    let original = "münchen.de";
+    let name = std::ffi::CString::new(original).unwrap();
+
+    // Encode.
+    let mut encoded: *mut std::ffi::c_char = std::ptr::null_mut();
+    let rc = unsafe { __idna_to_dns_encoding(name.as_ptr(), &mut encoded) };
+    assert_eq!(rc, 0);
+    assert!(!encoded.is_null());
+
+    // Decode.
+    let mut decoded: *mut std::ffi::c_char = std::ptr::null_mut();
+    let rc2 = unsafe { __idna_from_dns_encoding(encoded, &mut decoded) };
+    assert_eq!(rc2, 0);
+    assert!(!decoded.is_null());
+
+    let result = unsafe { std::ffi::CStr::from_ptr(decoded) }
+        .to_str()
+        .unwrap();
+    assert_eq!(result, original);
+
+    unsafe {
+        libc::free(encoded as *mut std::ffi::c_void);
+        libc::free(decoded as *mut std::ffi::c_void);
+    }
+}
+
+#[test]
+fn test_idna_from_dns_null_input() {
+    let mut result: *mut std::ffi::c_char = std::ptr::null_mut();
+    let rc = unsafe { __idna_from_dns_encoding(std::ptr::null(), &mut result) };
+    assert_eq!(rc, libc::EAI_FAIL);
+}
+
+#[test]
+fn test_idna_from_dns_case_insensitive_prefix() {
+    // xn-- prefix matching should be case-insensitive.
+    let name = std::ffi::CString::new("XN--mnchen-3ya.de").unwrap();
+    let mut result: *mut std::ffi::c_char = std::ptr::null_mut();
+    let rc = unsafe { __idna_from_dns_encoding(name.as_ptr(), &mut result) };
+    assert_eq!(rc, 0);
+    assert!(!result.is_null());
+    let out = unsafe { std::ffi::CStr::from_ptr(result) }
+        .to_str()
+        .unwrap();
+    assert_eq!(out, "münchen.de");
+    unsafe { libc::free(result as *mut std::ffi::c_void) };
+}
+
+#[test]
+fn test_idna_roundtrip_japanese() {
+    // Japanese domain: "日本語.jp"
+    let original = "日本語.jp";
+    let name = std::ffi::CString::new(original).unwrap();
+
+    let mut encoded: *mut std::ffi::c_char = std::ptr::null_mut();
+    let rc = unsafe { __idna_to_dns_encoding(name.as_ptr(), &mut encoded) };
+    assert_eq!(rc, 0);
+    assert!(!encoded.is_null());
+
+    let ace = unsafe { std::ffi::CStr::from_ptr(encoded) }
+        .to_str()
+        .unwrap();
+    assert!(ace.starts_with("xn--"), "expected xn-- prefix, got: {ace}");
+    assert!(ace.ends_with(".jp"), "expected .jp suffix, got: {ace}");
+
+    let mut decoded: *mut std::ffi::c_char = std::ptr::null_mut();
+    let rc2 = unsafe { __idna_from_dns_encoding(encoded, &mut decoded) };
+    assert_eq!(rc2, 0);
+    let result = unsafe { std::ffi::CStr::from_ptr(decoded) }
+        .to_str()
+        .unwrap();
+    assert_eq!(result, original);
+
+    unsafe {
+        libc::free(encoded as *mut std::ffi::c_void);
+        libc::free(decoded as *mut std::ffi::c_void);
+    }
+}
+
+// ===========================================================================
+// __call_tls_dtors tests (native TLS destructor invocation)
+// ===========================================================================
+
+#[test]
+fn test_call_tls_dtors_noop_when_empty() {
+    // Calling __call_tls_dtors with no registered destructors should not crash.
+    unsafe { __call_tls_dtors() };
+}
+
+#[test]
+fn test_call_tls_dtors_invokes_registered() {
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    static DTOR_COUNT: AtomicU32 = AtomicU32::new(0);
+
+    unsafe extern "C" fn test_dtor(_obj: *mut std::ffi::c_void) {
+        DTOR_COUNT.fetch_add(1, Ordering::SeqCst);
+    }
+
+    // Run in a separate thread so we don't pollute the main thread's TLS.
+    let handle = std::thread::spawn(|| {
+        DTOR_COUNT.store(0, Ordering::SeqCst);
+
+        // Register 3 destructors.
+        for _ in 0..3 {
+            let rc = unsafe {
+                frankenlibc_abi::startup_abi::__cxa_thread_atexit_impl(
+                    test_dtor,
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                )
+            };
+            assert_eq!(rc, 0);
+        }
+
+        // Invoke them.
+        unsafe { __call_tls_dtors() };
+
+        DTOR_COUNT.load(Ordering::SeqCst)
+    });
+
+    let count = handle.join().unwrap();
+    assert_eq!(count, 3, "expected 3 destructors to be called");
+}
+
+#[test]
+fn test_call_tls_dtors_lifo_order() {
+    use std::sync::Mutex;
+
+    static ORDER: Mutex<Vec<u64>> = Mutex::new(Vec::new());
+
+    unsafe extern "C" fn order_dtor(obj: *mut std::ffi::c_void) {
+        let val = obj as u64;
+        ORDER.lock().unwrap().push(val);
+    }
+
+    let handle = std::thread::spawn(|| {
+        ORDER.lock().unwrap().clear();
+
+        // Register in order 1, 2, 3.
+        for i in 1u64..=3 {
+            let rc = unsafe {
+                frankenlibc_abi::startup_abi::__cxa_thread_atexit_impl(
+                    order_dtor,
+                    i as *mut std::ffi::c_void,
+                    std::ptr::null_mut(),
+                )
+            };
+            assert_eq!(rc, 0);
+        }
+
+        unsafe { __call_tls_dtors() };
+
+        ORDER.lock().unwrap().clone()
+    });
+
+    let order = handle.join().unwrap();
+    // LIFO: should be called in reverse order 3, 2, 1.
+    assert_eq!(order, vec![3, 2, 1], "expected LIFO order");
+}
+
+#[test]
+fn test_call_tls_dtors_drains_list() {
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    static DTOR2_COUNT: AtomicU32 = AtomicU32::new(0);
+
+    unsafe extern "C" fn dtor2(_obj: *mut std::ffi::c_void) {
+        DTOR2_COUNT.fetch_add(1, Ordering::SeqCst);
+    }
+
+    let handle = std::thread::spawn(|| {
+        DTOR2_COUNT.store(0, Ordering::SeqCst);
+
+        // Register and call.
+        let rc = unsafe {
+            frankenlibc_abi::startup_abi::__cxa_thread_atexit_impl(
+                dtor2,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+            )
+        };
+        assert_eq!(rc, 0);
+        unsafe { __call_tls_dtors() };
+        assert_eq!(DTOR2_COUNT.load(Ordering::SeqCst), 1);
+
+        // Call again — should be a no-op since list was drained.
+        unsafe { __call_tls_dtors() };
+        assert_eq!(
+            DTOR2_COUNT.load(Ordering::SeqCst),
+            1,
+            "second call should not invoke any more dtors"
+        );
+    });
+
+    handle.join().unwrap();
 }

@@ -156,3 +156,204 @@ fn tcsetattr_null_termios_fails() {
         unsafe { frankenlibc_abi::unistd_abi::close(fd) };
     }
 }
+
+// ---------------------------------------------------------------------------
+// cfsetispeed / cfsetospeed: more baud rates
+// ---------------------------------------------------------------------------
+
+#[test]
+fn cfsetispeed_all_standard_rates() {
+    let rates: &[u32] = &[
+        libc::B0,
+        libc::B50,
+        libc::B75,
+        libc::B110,
+        libc::B134,
+        libc::B150,
+        libc::B200,
+        libc::B300,
+        libc::B600,
+        libc::B1200,
+        libc::B1800,
+        libc::B2400,
+        libc::B4800,
+        libc::B9600,
+        libc::B19200,
+        libc::B38400,
+    ];
+
+    for &rate in rates {
+        let mut t: libc::termios = unsafe { std::mem::zeroed() };
+        let rc = unsafe { cfsetispeed(&mut t, rate) };
+        assert_eq!(rc, 0, "cfsetispeed(B{rate}) should succeed");
+        let got = unsafe { cfgetispeed(&t) };
+        assert_eq!(got, rate, "cfgetispeed should return B{rate}");
+    }
+}
+
+#[test]
+fn cfsetospeed_high_rates() {
+    let rates: &[u32] = &[
+        libc::B57600,
+        libc::B115200,
+        libc::B230400,
+        libc::B460800,
+        libc::B500000,
+        libc::B576000,
+        libc::B921600,
+        libc::B1000000,
+    ];
+
+    for &rate in rates {
+        let mut t: libc::termios = unsafe { std::mem::zeroed() };
+        let rc = unsafe { cfsetospeed(&mut t, rate) };
+        assert_eq!(rc, 0, "cfsetospeed(B{rate}) should succeed");
+        let got = unsafe { cfgetospeed(&t) };
+        assert_eq!(got, rate, "cfgetospeed should return B{rate}");
+    }
+}
+
+#[test]
+fn cfset_input_output_independent() {
+    let mut t: libc::termios = unsafe { std::mem::zeroed() };
+    unsafe { cfsetispeed(&mut t, libc::B9600) };
+    unsafe { cfsetospeed(&mut t, libc::B115200) };
+
+    // On Linux, c_cflag stores both and they may overlap,
+    // but setting output should not corrupt prior flags
+    let ospeed = unsafe { cfgetospeed(&t) };
+    assert_eq!(ospeed, libc::B115200, "output speed should be B115200");
+}
+
+// ---------------------------------------------------------------------------
+// tcdrain / tcflush / tcsendbreak / tcflow on PTY
+// ---------------------------------------------------------------------------
+
+#[test]
+fn tcdrain_on_pty() {
+    use frankenlibc_abi::termios_abi::tcdrain;
+    if let Some(fd) = open_pty_master() {
+        let rc = unsafe { tcdrain(fd) };
+        assert_eq!(rc, 0, "tcdrain should succeed on PTY");
+        unsafe { frankenlibc_abi::unistd_abi::close(fd) };
+    }
+}
+
+#[test]
+fn tcdrain_bad_fd() {
+    use frankenlibc_abi::termios_abi::tcdrain;
+    let rc = unsafe { tcdrain(-1) };
+    assert_eq!(rc, -1, "tcdrain on bad fd should fail");
+}
+
+#[test]
+fn tcflush_on_pty() {
+    use frankenlibc_abi::termios_abi::tcflush;
+    if let Some(fd) = open_pty_master() {
+        // TCIFLUSH=0, TCOFLUSH=1, TCIOFLUSH=2
+        let rc = unsafe { tcflush(fd, libc::TCIFLUSH) };
+        assert_eq!(rc, 0, "tcflush(TCIFLUSH) should succeed");
+
+        let rc = unsafe { tcflush(fd, libc::TCOFLUSH) };
+        assert_eq!(rc, 0, "tcflush(TCOFLUSH) should succeed");
+
+        let rc = unsafe { tcflush(fd, libc::TCIOFLUSH) };
+        assert_eq!(rc, 0, "tcflush(TCIOFLUSH) should succeed");
+
+        unsafe { frankenlibc_abi::unistd_abi::close(fd) };
+    }
+}
+
+#[test]
+fn tcflush_bad_fd() {
+    use frankenlibc_abi::termios_abi::tcflush;
+    let rc = unsafe { tcflush(-1, libc::TCIFLUSH) };
+    assert_eq!(rc, -1, "tcflush on bad fd should fail");
+}
+
+#[test]
+fn tcsendbreak_on_pty() {
+    use frankenlibc_abi::termios_abi::tcsendbreak;
+    if let Some(fd) = open_pty_master() {
+        let rc = unsafe { tcsendbreak(fd, 0) };
+        assert_eq!(rc, 0, "tcsendbreak should succeed on PTY");
+        unsafe { frankenlibc_abi::unistd_abi::close(fd) };
+    }
+}
+
+#[test]
+fn tcsendbreak_bad_fd() {
+    use frankenlibc_abi::termios_abi::tcsendbreak;
+    let rc = unsafe { tcsendbreak(-1, 0) };
+    assert_eq!(rc, -1, "tcsendbreak on bad fd should fail");
+}
+
+#[test]
+fn tcflow_on_pty() {
+    use frankenlibc_abi::termios_abi::tcflow;
+    if let Some(fd) = open_pty_master() {
+        // TCOOFF=0, TCOON=1
+        let rc = unsafe { tcflow(fd, libc::TCOOFF) };
+        assert_eq!(rc, 0, "tcflow(TCOOFF) should succeed");
+
+        let rc = unsafe { tcflow(fd, libc::TCOON) };
+        assert_eq!(rc, 0, "tcflow(TCOON) should succeed");
+
+        unsafe { frankenlibc_abi::unistd_abi::close(fd) };
+    }
+}
+
+#[test]
+fn tcflow_bad_fd() {
+    use frankenlibc_abi::termios_abi::tcflow;
+    let rc = unsafe { tcflow(-1, libc::TCOON) };
+    assert_eq!(rc, -1, "tcflow on bad fd should fail");
+}
+
+// ---------------------------------------------------------------------------
+// tcgetattr on bad fd
+// ---------------------------------------------------------------------------
+
+#[test]
+fn tcgetattr_bad_fd() {
+    use frankenlibc_abi::termios_abi::tcgetattr;
+    let mut t: libc::termios = unsafe { std::mem::zeroed() };
+    let rc = unsafe { tcgetattr(-1, &mut t) };
+    assert_eq!(rc, -1, "tcgetattr on bad fd should fail");
+}
+
+#[test]
+fn tcsetattr_bad_fd() {
+    use frankenlibc_abi::termios_abi::tcsetattr;
+    let t: libc::termios = unsafe { std::mem::zeroed() };
+    let rc = unsafe { tcsetattr(-1, 0, &t) };
+    assert_eq!(rc, -1, "tcsetattr on bad fd should fail");
+}
+
+// ---------------------------------------------------------------------------
+// tcsetattr with different optional_actions
+// ---------------------------------------------------------------------------
+
+#[test]
+fn tcsetattr_tcsadrain_on_pty() {
+    use frankenlibc_abi::termios_abi::{tcgetattr, tcsetattr};
+    if let Some(fd) = open_pty_master() {
+        let mut t: libc::termios = unsafe { std::mem::zeroed() };
+        unsafe { tcgetattr(fd, &mut t) };
+        let rc = unsafe { tcsetattr(fd, libc::TCSADRAIN, &t) };
+        assert_eq!(rc, 0, "tcsetattr(TCSADRAIN) should succeed");
+        unsafe { frankenlibc_abi::unistd_abi::close(fd) };
+    }
+}
+
+#[test]
+fn tcsetattr_tcsaflush_on_pty() {
+    use frankenlibc_abi::termios_abi::{tcgetattr, tcsetattr};
+    if let Some(fd) = open_pty_master() {
+        let mut t: libc::termios = unsafe { std::mem::zeroed() };
+        unsafe { tcgetattr(fd, &mut t) };
+        let rc = unsafe { tcsetattr(fd, libc::TCSAFLUSH, &t) };
+        assert_eq!(rc, 0, "tcsetattr(TCSAFLUSH) should succeed");
+        unsafe { frankenlibc_abi::unistd_abi::close(fd) };
+    }
+}
