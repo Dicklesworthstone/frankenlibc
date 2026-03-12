@@ -2,8 +2,9 @@ use frankenlibc_membrane::config::SafetyLevel;
 use frankenlibc_membrane::heal::HealingAction;
 use frankenlibc_membrane::runtime_math::evidence::{LossEvidenceV1, SystematicEvidenceLog};
 use frankenlibc_membrane::runtime_math::{
-    ApiFamily, MembraneAction, RuntimeContext, RuntimeDecision, RuntimeMathKernel,
-    ValidationProfile,
+    ApiFamily, MembraneAction, RuntimeContext, RuntimeDecision, RuntimeKernelFramework,
+    RuntimeMathKernel, RuntimeReverseRoundDiversityState, ValidationProfile,
+    RUNTIME_KERNEL_SNAPSHOT_SCHEMA_VERSION,
 };
 use serde_json::Value;
 
@@ -50,11 +51,16 @@ fn parse_jsonl_rows(jsonl: &str) -> Vec<Value> {
         .collect()
 }
 
-fn strip_timestamps(rows: &mut [Value]) {
+fn strip_nondeterministic_fields(rows: &mut [Value]) {
     for row in rows {
-        row.as_object_mut()
-            .expect("row must be object")
-            .remove("timestamp");
+        let obj = row.as_object_mut().expect("row must be object");
+        obj.remove("timestamp");
+        // The runtime_calibration row embeds measured wall-clock latency that
+        // varies between runs even with identical inputs.
+        if obj.get("event").and_then(Value::as_str) == Some("runtime_calibration") {
+            obj.remove("snapshot_capture_latency_ns");
+            obj.remove("latency_ns");
+        }
     }
 }
 
@@ -115,8 +121,8 @@ fn e2e_deterministic_replay_emits_identical_decisions_and_logs() {
         "bd-oai.5",
         "replay",
     ));
-    strip_timestamps(&mut rows1);
-    strip_timestamps(&mut rows2);
+    strip_nondeterministic_fields(&mut rows1);
+    strip_nondeterministic_fields(&mut rows2);
     assert_eq!(
         rows1, rows2,
         "deterministic replay must emit identical structured log payloads"
@@ -328,5 +334,596 @@ fn e2e_hash_linked_repair_chain_verifies_record_integrity() {
         );
         prev_seqno = record.seqno();
         prev_chain_hash = record.chain_hash();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Branch-diversity enforcement E2E tests
+// ---------------------------------------------------------------------------
+
+/// Build oversized contexts that trigger adverse decisions (Repair in Hardened,
+/// Deny in Strict) across 5 distinct API families. Evidence is only recorded
+/// for adverse decisions, so the diversity snapshot requires these.
+const OVERSIZED: usize = 512 * 1024 * 1024;
+
+fn adverse_diverse_contexts() -> [RuntimeContext; 5] {
+    [
+        RuntimeContext {
+            family: ApiFamily::PointerValidation,
+            addr_hint: 0x1000,
+            requested_bytes: OVERSIZED,
+            is_write: true,
+            contention_hint: 3,
+            bloom_negative: false,
+        },
+        RuntimeContext {
+            family: ApiFamily::StringMemory,
+            addr_hint: 0x2000,
+            requested_bytes: OVERSIZED,
+            is_write: true,
+            contention_hint: 2,
+            bloom_negative: false,
+        },
+        RuntimeContext {
+            family: ApiFamily::IoFd,
+            addr_hint: 0x3000,
+            requested_bytes: OVERSIZED,
+            is_write: true,
+            contention_hint: 1,
+            bloom_negative: false,
+        },
+        RuntimeContext {
+            family: ApiFamily::Stdio,
+            addr_hint: 0x4000,
+            requested_bytes: OVERSIZED,
+            is_write: true,
+            contention_hint: 1,
+            bloom_negative: false,
+        },
+        RuntimeContext {
+            family: ApiFamily::Time,
+            addr_hint: 0x5000,
+            requested_bytes: OVERSIZED,
+            is_write: true,
+            contention_hint: 0,
+            bloom_negative: false,
+        },
+    ]
+}
+
+#[test]
+fn e2e_branch_diversity_healthy_with_balanced_family_mix() {
+    let kernel = RuntimeMathKernel::new();
+    let contexts = adverse_diverse_contexts();
+
+    // Evenly distribute 100 adverse decisions across 5 families (20 each = 20%).
+    // Oversized requests trigger Repair in Hardened mode, which always gets
+    // recorded as a decision card (adverse decisions bypass cadence gating).
+    for step in 0..100 {
+        let ctx = contexts[step % contexts.len()];
+        let decision = kernel.decide(SafetyLevel::Hardened, ctx);
+        assert!(
+            matches!(
+                decision.action,
+                MembraneAction::Repair(_) | MembraneAction::Deny
+            ),
+            "oversized context must produce adverse decision"
+        );
+        kernel.observe_validation_result(
+            SafetyLevel::Hardened,
+            ctx.family,
+            decision.profile,
+            30,
+            true,
+        );
+    }
+
+    let diversity = kernel.reverse_round_diversity_snapshot();
+    assert!(
+        diversity.active_family_count >= 3,
+        "balanced mix must reach coverage milestone (got {} active families)",
+        diversity.active_family_count
+    );
+    assert!(
+        diversity.coverage_milestone_reached,
+        "coverage milestone must be reached"
+    );
+    assert_eq!(
+        diversity.state,
+        RuntimeReverseRoundDiversityState::Healthy,
+        "even distribution must be Healthy (dominant share = {} ppm)",
+        diversity.dominant_family_share_ppm
+    );
+    // Each family gets ~200_000 ppm (20%); dominant must be well under 350_000.
+    assert!(
+        diversity.dominant_family_share_ppm < 350_000,
+        "dominant share {ppm} ppm must be below warn threshold 350_000",
+        ppm = diversity.dominant_family_share_ppm
+    );
+}
+
+#[test]
+fn e2e_branch_diversity_violation_with_single_family_dominance() {
+    let kernel = RuntimeMathKernel::new();
+    // Use oversized allocator context → always adverse → always recorded as card.
+    let ctx = oversized_allocator_ctx();
+
+    // All decisions to a single family → 100% dominance.
+    for _ in 0..64 {
+        let decision = kernel.decide(SafetyLevel::Hardened, ctx);
+        kernel.observe_validation_result(
+            SafetyLevel::Hardened,
+            ctx.family,
+            decision.profile,
+            25,
+            true,
+        );
+    }
+
+    let diversity = kernel.reverse_round_diversity_snapshot();
+    assert_eq!(
+        diversity.active_family_count, 1,
+        "single-family must show 1 active"
+    );
+    assert_eq!(diversity.dominant_family, ApiFamily::Allocator);
+    assert_eq!(diversity.dominant_family_share_ppm, 1_000_000);
+    assert_eq!(
+        diversity.state,
+        RuntimeReverseRoundDiversityState::Violation,
+        "single-family dominance must trigger Violation"
+    );
+    assert!(
+        !diversity.coverage_milestone_reached,
+        "single family cannot reach coverage milestone"
+    );
+}
+
+#[test]
+fn e2e_branch_diversity_near_violation_at_boundary() {
+    let kernel = RuntimeMathKernel::new();
+
+    // All contexts must be oversized (>256MB) to trigger adverse decisions,
+    // which are always recorded as decision cards.
+    // 37 decisions to Allocator, 63 to others (3 families, ~21 each).
+    // Allocator share = 37/100 = 370_000 ppm → NearViolation (350k..400k).
+    let allocator_ctx = oversized_allocator_ctx();
+    let others = [
+        RuntimeContext {
+            family: ApiFamily::StringMemory,
+            addr_hint: 0x2000,
+            requested_bytes: OVERSIZED,
+            is_write: true,
+            contention_hint: 0,
+            bloom_negative: false,
+        },
+        RuntimeContext {
+            family: ApiFamily::IoFd,
+            addr_hint: 0x3000,
+            requested_bytes: OVERSIZED,
+            is_write: true,
+            contention_hint: 0,
+            bloom_negative: false,
+        },
+        RuntimeContext {
+            family: ApiFamily::Stdio,
+            addr_hint: 0x4000,
+            requested_bytes: OVERSIZED,
+            is_write: true,
+            contention_hint: 0,
+            bloom_negative: false,
+        },
+    ];
+
+    for _ in 0..37 {
+        let d = kernel.decide(SafetyLevel::Hardened, allocator_ctx);
+        kernel.observe_validation_result(
+            SafetyLevel::Hardened,
+            allocator_ctx.family,
+            d.profile,
+            20,
+            true,
+        );
+    }
+    for i in 0..63 {
+        let ctx = others[i % others.len()];
+        let d = kernel.decide(SafetyLevel::Hardened, ctx);
+        kernel.observe_validation_result(
+            SafetyLevel::Hardened,
+            ctx.family,
+            d.profile,
+            20,
+            true,
+        );
+    }
+
+    let diversity = kernel.reverse_round_diversity_snapshot();
+    assert!(
+        diversity.active_family_count >= 3,
+        "must have >= 3 active families"
+    );
+    assert_eq!(diversity.dominant_family, ApiFamily::Allocator);
+    // 37% share → NearViolation.
+    assert!(
+        diversity.dominant_family_share_ppm >= 350_000,
+        "dominant share must be at or above warn threshold"
+    );
+    assert!(
+        diversity.dominant_family_share_ppm < 400_000,
+        "dominant share must be below error threshold for NearViolation"
+    );
+    assert_eq!(
+        diversity.state,
+        RuntimeReverseRoundDiversityState::NearViolation,
+        "37% dominance must be NearViolation"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Full RuntimeKernelSnapshot capture E2E tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn e2e_snapshot_captures_schema_version_and_core_fields() {
+    let kernel = RuntimeMathKernel::new();
+    let contexts = adverse_diverse_contexts();
+
+    for step in 0..48 {
+        let ctx = contexts[step % contexts.len()];
+        let decision = kernel.decide(SafetyLevel::Hardened, ctx);
+        let adverse = !matches!(decision.action, MembraneAction::Allow);
+        kernel.observe_validation_result(
+            SafetyLevel::Hardened,
+            ctx.family,
+            decision.profile,
+            30 + (step as u64 % 11),
+            adverse,
+        );
+    }
+
+    let snap = kernel.snapshot(SafetyLevel::Hardened);
+    assert_eq!(
+        snap.schema_version, RUNTIME_KERNEL_SNAPSHOT_SCHEMA_VERSION,
+        "snapshot schema_version must match the published constant"
+    );
+    assert!(
+        snap.decisions >= 48,
+        "decisions counter must account for all evaluate calls"
+    );
+    // Thresholds must be within valid ppm range.
+    assert!(snap.full_validation_trigger_ppm <= 1_000_000);
+    assert!(snap.repair_trigger_ppm <= 1_000_000);
+    // Pressure regime must be a valid code.
+    assert!(snap.pressure_regime_code <= 3);
+}
+
+#[test]
+fn e2e_snapshot_deterministic_replay_produces_identical_snapshots() {
+    let k1 = RuntimeMathKernel::new();
+    let k2 = RuntimeMathKernel::new();
+
+    for step in 0..64 {
+        let ctx = scripted_ctx(step);
+        let d1 = k1.decide(SafetyLevel::Strict, ctx);
+        let adv1 = !matches!(d1.action, MembraneAction::Allow);
+        k1.observe_validation_result(SafetyLevel::Strict, ctx.family, d1.profile, 40, adv1);
+
+        let d2 = k2.decide(SafetyLevel::Strict, ctx);
+        let adv2 = !matches!(d2.action, MembraneAction::Allow);
+        k2.observe_validation_result(SafetyLevel::Strict, ctx.family, d2.profile, 40, adv2);
+    }
+
+    let snap1 = k1.snapshot(SafetyLevel::Strict);
+    let snap2 = k2.snapshot(SafetyLevel::Strict);
+
+    // Core decision counters must be identical under deterministic replay.
+    assert_eq!(snap1.decisions, snap2.decisions);
+    assert_eq!(
+        snap1.full_validation_trigger_ppm,
+        snap2.full_validation_trigger_ppm
+    );
+    assert_eq!(snap1.repair_trigger_ppm, snap2.repair_trigger_ppm);
+    assert_eq!(
+        snap1.pareto_cumulative_regret_milli,
+        snap2.pareto_cumulative_regret_milli
+    );
+    assert_eq!(snap1.consistency_faults, snap2.consistency_faults);
+    assert_eq!(snap1.pressure_regime_code, snap2.pressure_regime_code);
+    assert_eq!(snap1.pressure_score_milli, snap2.pressure_score_milli);
+    assert_eq!(snap1.quarantine_depth, snap2.quarantine_depth);
+}
+
+#[test]
+fn e2e_snapshot_strict_vs_hardened_mode_independence() {
+    let kernel = RuntimeMathKernel::new();
+    let ctx = oversized_allocator_ctx();
+
+    // Drive exclusively with Hardened mode.
+    for _ in 0..32 {
+        let d = kernel.decide(SafetyLevel::Hardened, ctx);
+        kernel.observe_validation_result(
+            SafetyLevel::Hardened,
+            ctx.family,
+            d.profile,
+            50,
+            true,
+        );
+    }
+
+    let hardened_snap = kernel.snapshot(SafetyLevel::Hardened);
+    let strict_snap = kernel.snapshot(SafetyLevel::Strict);
+
+    // Both snapshots report from the same kernel (shared decision counter).
+    assert_eq!(hardened_snap.decisions, strict_snap.decisions);
+    assert_eq!(hardened_snap.schema_version, strict_snap.schema_version);
+    // But mode-dependent thresholds may differ.
+    // (Both are valid; we just confirm the snapshot captures the kernel state for each mode.)
+    assert!(hardened_snap.full_validation_trigger_ppm <= 1_000_000);
+    assert!(strict_snap.full_validation_trigger_ppm <= 1_000_000);
+}
+
+// ---------------------------------------------------------------------------
+// Multi-kernel interaction E2E tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn e2e_independent_kernels_produce_consistent_results_under_concurrent_scenario() {
+    // Simulate two independent kernels processing the same workload.
+    // Each must converge to identical decisions because the input stream is identical.
+    let k_a = RuntimeMathKernel::new();
+    let k_b = RuntimeMathKernel::new();
+    let contexts = adverse_diverse_contexts();
+
+    let mut decisions_a = Vec::with_capacity(128);
+    let mut decisions_b = Vec::with_capacity(128);
+
+    for step in 0..128 {
+        let ctx = contexts[step % contexts.len()];
+
+        let da = k_a.decide(SafetyLevel::Hardened, ctx);
+        let adv_a = !matches!(da.action, MembraneAction::Allow);
+        k_a.observe_validation_result(
+            SafetyLevel::Hardened,
+            ctx.family,
+            da.profile,
+            20 + (step as u64 % 13),
+            adv_a,
+        );
+        decisions_a.push(da);
+
+        let db = k_b.decide(SafetyLevel::Hardened, ctx);
+        let adv_b = !matches!(db.action, MembraneAction::Allow);
+        k_b.observe_validation_result(
+            SafetyLevel::Hardened,
+            ctx.family,
+            db.profile,
+            20 + (step as u64 % 13),
+            adv_b,
+        );
+        decisions_b.push(db);
+    }
+
+    assert_eq!(
+        decisions_a, decisions_b,
+        "independent kernels with identical inputs must produce identical decision streams"
+    );
+
+    // Snapshots must agree on all deterministic fields.
+    let snap_a = k_a.snapshot(SafetyLevel::Hardened);
+    let snap_b = k_b.snapshot(SafetyLevel::Hardened);
+    assert_eq!(snap_a.decisions, snap_b.decisions);
+    assert_eq!(
+        snap_a.pareto_cumulative_regret_milli,
+        snap_b.pareto_cumulative_regret_milli
+    );
+    assert_eq!(snap_a.consistency_faults, snap_b.consistency_faults);
+
+    // Diversity must match.
+    let div_a = k_a.reverse_round_diversity_snapshot();
+    let div_b = k_b.reverse_round_diversity_snapshot();
+    assert_eq!(div_a.active_family_count, div_b.active_family_count);
+    assert_eq!(
+        div_a.dominant_family_share_ppm,
+        div_b.dominant_family_share_ppm
+    );
+    assert_eq!(div_a.state, div_b.state);
+}
+
+#[test]
+fn e2e_kernel_isolation_divergent_inputs_produce_independent_state() {
+    // Two kernels with different workloads must accumulate independent state.
+    let k_safe = RuntimeMathKernel::new();
+    let k_adverse = RuntimeMathKernel::new();
+
+    let safe_ctx = RuntimeContext::pointer_validation(0x1000, false);
+    let adverse_ctx = oversized_allocator_ctx();
+
+    for _ in 0..64 {
+        let ds = k_safe.decide(SafetyLevel::Hardened, safe_ctx);
+        k_safe.observe_validation_result(
+            SafetyLevel::Hardened,
+            safe_ctx.family,
+            ds.profile,
+            15,
+            false,
+        );
+
+        let da = k_adverse.decide(SafetyLevel::Hardened, adverse_ctx);
+        k_adverse.observe_validation_result(
+            SafetyLevel::Hardened,
+            adverse_ctx.family,
+            da.profile,
+            50,
+            true,
+        );
+    }
+
+    let snap_safe = k_safe.snapshot(SafetyLevel::Hardened);
+    let snap_adverse = k_adverse.snapshot(SafetyLevel::Hardened);
+
+    // Both processed 64 decisions.
+    assert_eq!(snap_safe.decisions, 64);
+    assert_eq!(snap_adverse.decisions, 64);
+
+    // The adverse kernel should have accumulated evidence; the safe one should not.
+    let ev_safe = k_safe.evidence_contract_snapshot();
+    let ev_adverse = k_adverse.evidence_contract_snapshot();
+    // Adverse kernel has repair decisions with evidence; safe kernel has allow decisions.
+    assert!(
+        ev_adverse.evidence_seqno >= ev_safe.evidence_seqno,
+        "adverse kernel must have more evidence records"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Regression: golden snapshot field presence
+// ---------------------------------------------------------------------------
+
+#[test]
+fn e2e_snapshot_serialization_contains_all_core_fields() {
+    let kernel = RuntimeMathKernel::new();
+    let ctx = scripted_ctx(0);
+    let _ = kernel.decide(SafetyLevel::Hardened, ctx);
+
+    let snap = kernel.snapshot(SafetyLevel::Hardened);
+    let json = serde_json::to_value(&snap).expect("snapshot must serialize to JSON");
+    let obj = json.as_object().expect("snapshot must be a JSON object");
+
+    // Verify presence of critical fields that golden snapshot diffing depends on.
+    let core_fields = [
+        "schema_version",
+        "decisions",
+        "consistency_faults",
+        "full_validation_trigger_ppm",
+        "repair_trigger_ppm",
+        "sampled_risk_bonus_ppm",
+        "pareto_cumulative_regret_milli",
+        "pareto_cap_enforcements",
+        "pareto_exhausted_families",
+        "quarantine_depth",
+        "pressure_regime_code",
+        "pressure_score_milli",
+        "tropical_full_wcl_ns",
+        "spectral_edge_ratio",
+        "spectral_phase_transition",
+        "signature_anomaly_score",
+    ];
+    for field in core_fields {
+        assert!(
+            obj.contains_key(field),
+            "snapshot JSON must contain field `{field}`"
+        );
+    }
+
+    // schema_version value check.
+    assert_eq!(
+        obj.get("schema_version").and_then(Value::as_u64),
+        Some(u64::from(RUNTIME_KERNEL_SNAPSHOT_SCHEMA_VERSION))
+    );
+}
+
+#[test]
+fn e2e_snapshot_golden_replay_field_stability() {
+    // Two kernels with identical input produce identical snapshot JSON (minus any
+    // timing-dependent fields). This is the golden-snapshot regression gate.
+    let k1 = RuntimeMathKernel::new();
+    let k2 = RuntimeMathKernel::new();
+
+    for step in 0..48 {
+        let ctx = scripted_ctx(step);
+        let d1 = k1.decide(SafetyLevel::Hardened, ctx);
+        let adv = !matches!(d1.action, MembraneAction::Allow);
+        k1.observe_validation_result(SafetyLevel::Hardened, ctx.family, d1.profile, 35, adv);
+
+        let d2 = k2.decide(SafetyLevel::Hardened, ctx);
+        let adv2 = !matches!(d2.action, MembraneAction::Allow);
+        k2.observe_validation_result(SafetyLevel::Hardened, ctx.family, d2.profile, 35, adv2);
+    }
+
+    let snap1 = serde_json::to_value(&k1.snapshot(SafetyLevel::Hardened))
+        .expect("snap1 serializes");
+    let snap2 = serde_json::to_value(&k2.snapshot(SafetyLevel::Hardened))
+        .expect("snap2 serializes");
+
+    assert_eq!(
+        snap1, snap2,
+        "golden-snapshot replay must produce identical JSON under deterministic inputs"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Framework trait E2E tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn e2e_framework_trait_evaluate_calibrate_snapshot_cycle() {
+    let kernel = RuntimeMathKernel::new();
+    // Use oversized context to generate adverse (Repair) decisions that get
+    // recorded as decision cards.
+    let ctx = oversized_allocator_ctx();
+
+    for _ in 0..32 {
+        let d = RuntimeKernelFramework::evaluate(&kernel, SafetyLevel::Hardened, ctx);
+        RuntimeKernelFramework::calibrate(
+            &kernel,
+            SafetyLevel::Hardened,
+            ctx.family,
+            d.profile,
+            25,
+            true,
+        );
+    }
+
+    let snap = RuntimeKernelFramework::snapshot(&kernel, SafetyLevel::Hardened);
+    assert!(snap.decisions >= 32);
+    assert_eq!(snap.schema_version, RUNTIME_KERNEL_SNAPSHOT_SCHEMA_VERSION);
+
+    let ev = RuntimeKernelFramework::evidence_contract_snapshot(&kernel);
+    assert_eq!(ev.evidence_loss_count, 0);
+
+    let div = RuntimeKernelFramework::reverse_round_diversity_snapshot(&kernel);
+    assert_eq!(div.active_family_count, 1);
+    assert_eq!(div.dominant_family, ApiFamily::Allocator);
+}
+
+#[test]
+fn e2e_framework_decision_cards_export_contains_all_decisions() {
+    let kernel = RuntimeMathKernel::new();
+    let contexts = adverse_diverse_contexts();
+
+    // Oversized contexts produce adverse decisions that are always recorded.
+    for step in 0..40 {
+        let ctx = contexts[step % contexts.len()];
+        let d = kernel.decide(SafetyLevel::Hardened, ctx);
+        kernel.observe_validation_result(
+            SafetyLevel::Hardened,
+            ctx.family,
+            d.profile,
+            20,
+            true,
+        );
+    }
+
+    let export = RuntimeKernelFramework::export_decision_cards_json(&kernel);
+    let parsed: Value =
+        serde_json::from_str(&export).expect("decision card export must parse as JSON");
+    assert_eq!(
+        parsed.get("schema").and_then(Value::as_str),
+        Some("decision_cards.v1"),
+        "export schema must be decision_cards.v1"
+    );
+    let cards = parsed
+        .get("cards")
+        .and_then(Value::as_array)
+        .expect("cards array must exist");
+    assert!(
+        !cards.is_empty(),
+        "at least one decision card must be present"
+    );
+    // Each card must have required fields.
+    for card in cards {
+        let obj = card.as_object().expect("card must be object");
+        for key in ["decision_id", "decision_type", "family", "mode"] {
+            assert!(obj.contains_key(key), "card missing field `{key}`");
+        }
     }
 }

@@ -97,6 +97,7 @@ const OBSERVE_FEEDBACK_ENABLED: u8 = 1;
 const OBSERVE_FEEDBACK_DISABLED: u8 = 2;
 // Default disabled for preload-stability while keeping decision/check-ordering live.
 static OBSERVE_FEEDBACK_STATE: AtomicU8 = AtomicU8::new(OBSERVE_FEEDBACK_DISABLED);
+
 const POLICY_LOAD_STATE_NONE: u8 = 0;
 const POLICY_LOAD_STATE_LOADED: u8 = 1;
 const POLICY_LOAD_STATE_VERIFY_FAILED: u8 = 2;
@@ -5389,21 +5390,17 @@ mod tests {
 
     #[test]
     fn hji_snapshot_fields_respond_to_adverse_signal_feedback() {
+        // Feed the HJI monitor directly via lock rather than through
+        // observe_validation_result (which is gated by OBSERVE_FEEDBACK_STATE,
+        // a global static that is disabled by default and unsafe to mutate
+        // in parallel tests).
         let kernel = RuntimeMathKernel::new();
         let mode = SafetyLevel::Hardened;
-        kernel
-            .cached_probe_mask
-            .store(u64::from(Probe::Hji.bit()), Ordering::Relaxed);
 
         let before = kernel.snapshot(mode);
         for _ in 0..128 {
-            kernel.observe_validation_result(
-                mode,
-                ApiFamily::Signal,
-                ValidationProfile::Full,
-                100_000,
-                true,
-            );
+            let mut hji = kernel.hji.lock();
+            hji.observe(900_000, 100_000, true);
         }
 
         let after = kernel.snapshot(mode);
