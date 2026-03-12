@@ -2,7 +2,7 @@
 //!
 //! Covers: socket, bind, listen, connect, send, recv, shutdown,
 //! socketpair, getsockname, setsockopt, getsockopt, getpeername,
-//! sendto, recvfrom, accept4.
+//! sendto, recvfrom, sendmsg, recvmsg, accept, accept4.
 
 #![allow(unsafe_code)]
 
@@ -519,5 +519,603 @@ fn connect_accept_tcp_loopback() {
         close_fd(accepted);
         close_fd(client);
         close_fd(listener);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// socket — additional edge cases
+// ---------------------------------------------------------------------------
+
+#[test]
+fn socket_nonblock_flag() {
+    let fd = unsafe {
+        socket_abi::socket(libc::AF_INET, libc::SOCK_STREAM | libc::SOCK_NONBLOCK, 0)
+    };
+    assert!(fd >= 0, "SOCK_NONBLOCK should not prevent creation");
+    unsafe { close_fd(fd) };
+}
+
+#[test]
+fn socket_invalid_domain_fails() {
+    let fd = unsafe { socket_abi::socket(-1, libc::SOCK_STREAM, 0) };
+    assert_eq!(fd, -1, "invalid domain should fail");
+}
+
+#[test]
+fn socket_unix_dgram() {
+    let fd = unsafe { socket_abi::socket(libc::AF_UNIX, libc::SOCK_DGRAM, 0) };
+    assert!(fd >= 0, "AF_UNIX SOCK_DGRAM should succeed");
+    unsafe { close_fd(fd) };
+}
+
+#[test]
+fn socket_ipv6_tcp() {
+    let fd = unsafe { socket_abi::socket(libc::AF_INET6, libc::SOCK_STREAM, 0) };
+    assert!(fd >= 0, "AF_INET6 SOCK_STREAM should succeed");
+    unsafe { close_fd(fd) };
+}
+
+#[test]
+fn socket_ipv6_udp() {
+    let fd = unsafe { socket_abi::socket(libc::AF_INET6, libc::SOCK_DGRAM, 0) };
+    assert!(fd >= 0, "AF_INET6 SOCK_DGRAM should succeed");
+    unsafe { close_fd(fd) };
+}
+
+// ---------------------------------------------------------------------------
+// bind — additional
+// ---------------------------------------------------------------------------
+
+#[test]
+fn bind_ipv6_loopback() {
+    let fd = unsafe { socket_abi::socket(libc::AF_INET6, libc::SOCK_STREAM, 0) };
+    assert!(fd >= 0);
+
+    let mut addr: libc::sockaddr_in6 = unsafe { std::mem::zeroed() };
+    addr.sin6_family = libc::AF_INET6 as libc::sa_family_t;
+    addr.sin6_port = 0;
+    addr.sin6_addr = libc::in6_addr { s6_addr: [0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,1] };
+
+    let rc = unsafe {
+        socket_abi::bind(
+            fd,
+            &addr as *const _ as *const libc::sockaddr,
+            std::mem::size_of::<libc::sockaddr_in6>() as u32,
+        )
+    };
+    assert_eq!(rc, 0, "bind to IPv6 loopback should succeed");
+    unsafe { close_fd(fd) };
+}
+
+// ---------------------------------------------------------------------------
+// connect — error path
+// ---------------------------------------------------------------------------
+
+#[test]
+fn connect_invalid_fd_fails() {
+    let mut addr: libc::sockaddr_in = unsafe { std::mem::zeroed() };
+    addr.sin_family = libc::AF_INET as libc::sa_family_t;
+    addr.sin_port = u16::to_be(1);
+    addr.sin_addr.s_addr = u32::from_ne_bytes([127, 0, 0, 1]);
+
+    let rc = unsafe {
+        socket_abi::connect(
+            -1,
+            &addr as *const _ as *const libc::sockaddr,
+            std::mem::size_of::<libc::sockaddr_in>() as u32,
+        )
+    };
+    assert_eq!(rc, -1);
+    let err = unsafe { *__errno_location() };
+    assert_eq!(err, errno::EBADF);
+}
+
+// ---------------------------------------------------------------------------
+// accept — error path
+// ---------------------------------------------------------------------------
+
+#[test]
+fn accept_invalid_fd_fails() {
+    let rc = unsafe {
+        socket_abi::accept(-1, std::ptr::null_mut(), std::ptr::null_mut())
+    };
+    assert_eq!(rc, -1);
+    let err = unsafe { *__errno_location() };
+    assert_eq!(err, errno::EBADF);
+}
+
+// ---------------------------------------------------------------------------
+// accept4 — additional
+// ---------------------------------------------------------------------------
+
+#[test]
+fn accept4_cloexec_flag() {
+    let listener = unsafe { socket_abi::socket(libc::AF_INET, libc::SOCK_STREAM, 0) };
+    assert!(listener >= 0);
+
+    let mut addr: libc::sockaddr_in = unsafe { std::mem::zeroed() };
+    addr.sin_family = libc::AF_INET as libc::sa_family_t;
+    addr.sin_port = 0;
+    addr.sin_addr.s_addr = u32::from_ne_bytes([127, 0, 0, 1]);
+
+    unsafe {
+        socket_abi::bind(
+            listener,
+            &addr as *const _ as *const libc::sockaddr,
+            std::mem::size_of::<libc::sockaddr_in>() as u32,
+        );
+        socket_abi::listen(listener, 1);
+    }
+
+    let mut bound: libc::sockaddr_in = unsafe { std::mem::zeroed() };
+    let mut addrlen = std::mem::size_of::<libc::sockaddr_in>() as u32;
+    unsafe {
+        socket_abi::getsockname(
+            listener,
+            &mut bound as *mut _ as *mut libc::sockaddr,
+            &mut addrlen,
+        );
+    }
+
+    let client = unsafe { socket_abi::socket(libc::AF_INET, libc::SOCK_STREAM, 0) };
+    assert!(client >= 0);
+    unsafe {
+        socket_abi::connect(
+            client,
+            &bound as *const _ as *const libc::sockaddr,
+            std::mem::size_of::<libc::sockaddr_in>() as u32,
+        );
+    }
+
+    let accepted = unsafe {
+        socket_abi::accept4(
+            listener,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            libc::SOCK_CLOEXEC,
+        )
+    };
+    assert!(accepted >= 0, "accept4 with SOCK_CLOEXEC should succeed");
+
+    unsafe {
+        close_fd(accepted);
+        close_fd(client);
+        close_fd(listener);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// getpeername — error path
+// ---------------------------------------------------------------------------
+
+#[test]
+fn getpeername_unconnected_fails() {
+    let fd = unsafe { socket_abi::socket(libc::AF_INET, libc::SOCK_STREAM, 0) };
+    assert!(fd >= 0);
+
+    let mut addr: libc::sockaddr_in = unsafe { std::mem::zeroed() };
+    let mut addrlen = std::mem::size_of::<libc::sockaddr_in>() as u32;
+    let rc = unsafe {
+        socket_abi::getpeername(
+            fd,
+            &mut addr as *mut _ as *mut libc::sockaddr,
+            &mut addrlen,
+        )
+    };
+    assert_eq!(rc, -1, "getpeername on unconnected socket should fail");
+
+    unsafe { close_fd(fd) };
+}
+
+// ---------------------------------------------------------------------------
+// shutdown — additional
+// ---------------------------------------------------------------------------
+
+#[test]
+fn shutdown_read_then_write() {
+    let mut sv = [0 as c_int; 2];
+    unsafe { socket_abi::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, sv.as_mut_ptr()) };
+
+    // Shutdown read side of sv[0]
+    let rc = unsafe { socket_abi::shutdown(sv[0], libc::SHUT_RD) };
+    assert_eq!(rc, 0, "SHUT_RD should succeed");
+
+    // Shutdown write side of sv[0]
+    let rc = unsafe { socket_abi::shutdown(sv[0], libc::SHUT_WR) };
+    assert_eq!(rc, 0, "SHUT_WR should succeed");
+
+    unsafe {
+        close_fd(sv[0]);
+        close_fd(sv[1]);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// send / recv — additional
+// ---------------------------------------------------------------------------
+
+#[test]
+fn send_recv_msg_dontwait() {
+    let mut sv = [0 as c_int; 2];
+    unsafe { socket_abi::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, sv.as_mut_ptr()) };
+
+    let msg = b"nowait";
+    let sent = unsafe {
+        socket_abi::send(
+            sv[0],
+            msg.as_ptr() as *const c_void,
+            msg.len(),
+            libc::MSG_DONTWAIT,
+        )
+    };
+    assert_eq!(sent, msg.len() as isize);
+
+    let mut buf = [0u8; 16];
+    let received = unsafe {
+        socket_abi::recv(
+            sv[1],
+            buf.as_mut_ptr() as *mut c_void,
+            buf.len(),
+            libc::MSG_DONTWAIT,
+        )
+    };
+    assert_eq!(received, msg.len() as isize);
+    assert_eq!(&buf[..msg.len()], msg);
+
+    unsafe {
+        close_fd(sv[0]);
+        close_fd(sv[1]);
+    }
+}
+
+#[test]
+fn recv_nonblock_empty_returns_eagain() {
+    let mut sv = [0 as c_int; 2];
+    unsafe {
+        socket_abi::socketpair(
+            libc::AF_UNIX,
+            libc::SOCK_STREAM | libc::SOCK_NONBLOCK,
+            0,
+            sv.as_mut_ptr(),
+        )
+    };
+
+    let mut buf = [0u8; 16];
+    let rc = unsafe {
+        socket_abi::recv(sv[1], buf.as_mut_ptr() as *mut c_void, buf.len(), 0)
+    };
+    assert_eq!(rc, -1, "recv on empty nonblock socket should fail");
+    let err = unsafe { *__errno_location() };
+    assert!(
+        err == libc::EAGAIN || err == libc::EWOULDBLOCK,
+        "expected EAGAIN/EWOULDBLOCK, got {err}"
+    );
+
+    unsafe {
+        close_fd(sv[0]);
+        close_fd(sv[1]);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// sendto / recvfrom — additional
+// ---------------------------------------------------------------------------
+
+#[test]
+fn recvfrom_null_addr() {
+    // recvfrom with null src_addr is valid — just doesn't fill the source address
+    let mut sv = [0 as c_int; 2];
+    unsafe {
+        socket_abi::socketpair(libc::AF_UNIX, libc::SOCK_DGRAM, 0, sv.as_mut_ptr())
+    };
+
+    let msg = b"hi";
+    unsafe {
+        socket_abi::sendto(
+            sv[0],
+            msg.as_ptr() as *const c_void,
+            msg.len(),
+            0,
+            std::ptr::null(),
+            0,
+        )
+    };
+
+    let mut buf = [0u8; 16];
+    let received = unsafe {
+        socket_abi::recvfrom(
+            sv[1],
+            buf.as_mut_ptr() as *mut c_void,
+            buf.len(),
+            0,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        )
+    };
+    assert_eq!(received, msg.len() as isize);
+    assert_eq!(&buf[..msg.len()], msg);
+
+    unsafe {
+        close_fd(sv[0]);
+        close_fd(sv[1]);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// sendmsg / recvmsg
+// ---------------------------------------------------------------------------
+
+#[test]
+fn sendmsg_recvmsg_basic() {
+    let mut sv = [0 as c_int; 2];
+    unsafe { socket_abi::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, sv.as_mut_ptr()) };
+
+    let msg_data = b"msghdr";
+    let mut iov = libc::iovec {
+        iov_base: msg_data.as_ptr() as *mut c_void,
+        iov_len: msg_data.len(),
+    };
+    let mut hdr: libc::msghdr = unsafe { std::mem::zeroed() };
+    hdr.msg_iov = &mut iov;
+    hdr.msg_iovlen = 1;
+
+    let sent = unsafe { socket_abi::sendmsg(sv[0], &hdr, 0) };
+    assert_eq!(sent, msg_data.len() as isize, "sendmsg should send all bytes");
+
+    // Receive
+    let mut recv_buf = [0u8; 32];
+    let mut recv_iov = libc::iovec {
+        iov_base: recv_buf.as_mut_ptr() as *mut c_void,
+        iov_len: recv_buf.len(),
+    };
+    let mut recv_hdr: libc::msghdr = unsafe { std::mem::zeroed() };
+    recv_hdr.msg_iov = &mut recv_iov;
+    recv_hdr.msg_iovlen = 1;
+
+    let received = unsafe { socket_abi::recvmsg(sv[1], &mut recv_hdr, 0) };
+    assert_eq!(received, msg_data.len() as isize, "recvmsg should receive all bytes");
+    assert_eq!(&recv_buf[..msg_data.len()], msg_data);
+
+    unsafe {
+        close_fd(sv[0]);
+        close_fd(sv[1]);
+    }
+}
+
+#[test]
+fn sendmsg_invalid_fd_fails() {
+    let msg_data = b"x";
+    let mut iov = libc::iovec {
+        iov_base: msg_data.as_ptr() as *mut c_void,
+        iov_len: msg_data.len(),
+    };
+    let mut hdr: libc::msghdr = unsafe { std::mem::zeroed() };
+    hdr.msg_iov = &mut iov;
+    hdr.msg_iovlen = 1;
+
+    let rc = unsafe { socket_abi::sendmsg(-1, &hdr, 0) };
+    assert_eq!(rc, -1);
+    let err = unsafe { *__errno_location() };
+    assert_eq!(err, errno::EBADF);
+}
+
+#[test]
+fn recvmsg_invalid_fd_fails() {
+    let mut buf = [0u8; 16];
+    let mut iov = libc::iovec {
+        iov_base: buf.as_mut_ptr() as *mut c_void,
+        iov_len: buf.len(),
+    };
+    let mut hdr: libc::msghdr = unsafe { std::mem::zeroed() };
+    hdr.msg_iov = &mut iov;
+    hdr.msg_iovlen = 1;
+
+    let rc = unsafe { socket_abi::recvmsg(-1, &mut hdr, 0) };
+    assert_eq!(rc, -1);
+    let err = unsafe { *__errno_location() };
+    assert_eq!(err, errno::EBADF);
+}
+
+#[test]
+fn sendmsg_scatter_gather() {
+    let mut sv = [0 as c_int; 2];
+    unsafe { socket_abi::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, sv.as_mut_ptr()) };
+
+    // Scatter: send two separate buffers as one message
+    let part1 = b"hello";
+    let part2 = b" world";
+    let mut iovs = [
+        libc::iovec {
+            iov_base: part1.as_ptr() as *mut c_void,
+            iov_len: part1.len(),
+        },
+        libc::iovec {
+            iov_base: part2.as_ptr() as *mut c_void,
+            iov_len: part2.len(),
+        },
+    ];
+    let mut hdr: libc::msghdr = unsafe { std::mem::zeroed() };
+    hdr.msg_iov = iovs.as_mut_ptr();
+    hdr.msg_iovlen = 2;
+
+    let sent = unsafe { socket_abi::sendmsg(sv[0], &hdr, 0) };
+    assert_eq!(sent, 11, "sendmsg should send all 11 bytes across 2 iovecs");
+
+    // Gather: receive into one buffer
+    let mut recv_buf = [0u8; 32];
+    let mut recv_iov = libc::iovec {
+        iov_base: recv_buf.as_mut_ptr() as *mut c_void,
+        iov_len: recv_buf.len(),
+    };
+    let mut recv_hdr: libc::msghdr = unsafe { std::mem::zeroed() };
+    recv_hdr.msg_iov = &mut recv_iov;
+    recv_hdr.msg_iovlen = 1;
+
+    let received = unsafe { socket_abi::recvmsg(sv[1], &mut recv_hdr, 0) };
+    assert_eq!(received, 11);
+    assert_eq!(&recv_buf[..11], b"hello world");
+
+    unsafe {
+        close_fd(sv[0]);
+        close_fd(sv[1]);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// setsockopt / getsockopt — additional
+// ---------------------------------------------------------------------------
+
+#[test]
+fn setsockopt_keepalive() {
+    let fd = unsafe { socket_abi::socket(libc::AF_INET, libc::SOCK_STREAM, 0) };
+    assert!(fd >= 0);
+
+    let val: c_int = 1;
+    let rc = unsafe {
+        socket_abi::setsockopt(
+            fd,
+            libc::SOL_SOCKET,
+            libc::SO_KEEPALIVE,
+            &val as *const c_int as *const c_void,
+            std::mem::size_of::<c_int>() as u32,
+        )
+    };
+    assert_eq!(rc, 0, "setsockopt(SO_KEEPALIVE) should succeed");
+
+    let mut got_val: c_int = 0;
+    let mut optlen = std::mem::size_of::<c_int>() as u32;
+    let rc = unsafe {
+        socket_abi::getsockopt(
+            fd,
+            libc::SOL_SOCKET,
+            libc::SO_KEEPALIVE,
+            &mut got_val as *mut c_int as *mut c_void,
+            &mut optlen,
+        )
+    };
+    assert_eq!(rc, 0);
+    assert_eq!(got_val, 1, "SO_KEEPALIVE should be enabled");
+
+    unsafe { close_fd(fd) };
+}
+
+#[test]
+fn getsockopt_sndbuf() {
+    let fd = unsafe { socket_abi::socket(libc::AF_INET, libc::SOCK_STREAM, 0) };
+    assert!(fd >= 0);
+
+    let mut buf_size: c_int = 0;
+    let mut optlen = std::mem::size_of::<c_int>() as u32;
+    let rc = unsafe {
+        socket_abi::getsockopt(
+            fd,
+            libc::SOL_SOCKET,
+            libc::SO_SNDBUF,
+            &mut buf_size as *mut c_int as *mut c_void,
+            &mut optlen,
+        )
+    };
+    assert_eq!(rc, 0);
+    assert!(buf_size > 0, "SO_SNDBUF should be positive, got {buf_size}");
+
+    unsafe { close_fd(fd) };
+}
+
+#[test]
+fn setsockopt_invalid_fd_fails() {
+    let val: c_int = 1;
+    let rc = unsafe {
+        socket_abi::setsockopt(
+            -1,
+            libc::SOL_SOCKET,
+            libc::SO_REUSEADDR,
+            &val as *const c_int as *const c_void,
+            std::mem::size_of::<c_int>() as u32,
+        )
+    };
+    assert_eq!(rc, -1);
+    let err = unsafe { *__errno_location() };
+    assert_eq!(err, errno::EBADF);
+}
+
+// ---------------------------------------------------------------------------
+// getsockname — additional
+// ---------------------------------------------------------------------------
+
+#[test]
+fn getsockname_invalid_fd_fails() {
+    let mut addr: libc::sockaddr_in = unsafe { std::mem::zeroed() };
+    let mut addrlen = std::mem::size_of::<libc::sockaddr_in>() as u32;
+    let rc = unsafe {
+        socket_abi::getsockname(
+            -1,
+            &mut addr as *mut _ as *mut libc::sockaddr,
+            &mut addrlen,
+        )
+    };
+    assert_eq!(rc, -1);
+    let err = unsafe { *__errno_location() };
+    assert_eq!(err, errno::EBADF);
+}
+
+// ---------------------------------------------------------------------------
+// listen — error path
+// ---------------------------------------------------------------------------
+
+#[test]
+fn listen_without_bind_fails() {
+    let fd = unsafe { socket_abi::socket(libc::AF_INET, libc::SOCK_DGRAM, 0) };
+    assert!(fd >= 0);
+
+    // listen on a UDP socket should fail (EOPNOTSUPP)
+    let rc = unsafe { socket_abi::listen(fd, 5) };
+    assert_eq!(rc, -1, "listen on UDP socket should fail");
+
+    unsafe { close_fd(fd) };
+}
+
+// ---------------------------------------------------------------------------
+// socketpair — additional
+// ---------------------------------------------------------------------------
+
+#[test]
+fn socketpair_dgram() {
+    let mut sv = [0 as c_int; 2];
+    let rc = unsafe {
+        socket_abi::socketpair(libc::AF_UNIX, libc::SOCK_DGRAM, 0, sv.as_mut_ptr())
+    };
+    assert_eq!(rc, 0, "socketpair(AF_UNIX, SOCK_DGRAM) should succeed");
+    assert!(sv[0] >= 0 && sv[1] >= 0);
+    unsafe {
+        close_fd(sv[0]);
+        close_fd(sv[1]);
+    }
+}
+
+#[test]
+fn socketpair_nonblock() {
+    let mut sv = [0 as c_int; 2];
+    let rc = unsafe {
+        socket_abi::socketpair(
+            libc::AF_UNIX,
+            libc::SOCK_STREAM | libc::SOCK_NONBLOCK,
+            0,
+            sv.as_mut_ptr(),
+        )
+    };
+    assert_eq!(rc, 0, "socketpair with SOCK_NONBLOCK should succeed");
+
+    // Read on empty nonblock socket should fail with EAGAIN
+    let mut buf = [0u8; 1];
+    let rc = unsafe {
+        socket_abi::recv(sv[0], buf.as_mut_ptr() as *mut c_void, 1, 0)
+    };
+    assert_eq!(rc, -1);
+    let err = unsafe { *__errno_location() };
+    assert!(err == libc::EAGAIN || err == libc::EWOULDBLOCK);
+
+    unsafe {
+        close_fd(sv[0]);
+        close_fd(sv[1]);
     }
 }
