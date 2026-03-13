@@ -33,4 +33,19 @@ name = "fuzz_printf"
 path = "fuzz_targets/fuzz_printf.rs"
 doc = false
 
+[[bin]]
+name = "fuzz_resolver"
+path = "fuzz_targets/fuzz_resolver.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_regex"
+path = "fuzz_targets/fuzz_regex.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_scanf"
+path = "fuzz_targets/fuzz_scanf.rs"
+doc = false
+
 [workspace]
