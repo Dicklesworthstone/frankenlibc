@@ -207,3 +207,186 @@ fn fegetround_returns_valid_mode() {
         "fegetround should return a known rounding mode, got {mode}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Exception flag isolation
+// ---------------------------------------------------------------------------
+
+#[test]
+fn clear_one_exception_preserves_others() {
+    unsafe {
+        assert_eq!(feclearexcept(FE_ALL_EXCEPT), 0);
+        // Raise invalid and divbyzero
+        assert_eq!(feraiseexcept(FE_INVALID | FE_DIVBYZERO), 0);
+
+        // Clear only divbyzero
+        assert_eq!(feclearexcept(FE_DIVBYZERO), 0);
+
+        // Invalid should still be set
+        assert_ne!(
+            fetestexcept(FE_INVALID) & FE_INVALID,
+            0,
+            "FE_INVALID should remain after clearing FE_DIVBYZERO"
+        );
+        // Divbyzero should be cleared
+        assert_eq!(
+            fetestexcept(FE_DIVBYZERO) & FE_DIVBYZERO,
+            0,
+            "FE_DIVBYZERO should be cleared"
+        );
+
+        assert_eq!(feclearexcept(FE_ALL_EXCEPT), 0);
+    }
+}
+
+#[test]
+fn fetestexcept_returns_only_requested_flags() {
+    unsafe {
+        assert_eq!(feclearexcept(FE_ALL_EXCEPT), 0);
+        assert_eq!(feraiseexcept(FE_INVALID | FE_DIVBYZERO), 0);
+
+        // Test for only FE_INVALID — should not include FE_DIVBYZERO
+        let result = fetestexcept(FE_INVALID);
+        assert_ne!(result & FE_INVALID, 0);
+        assert_eq!(
+            result & FE_DIVBYZERO,
+            0,
+            "fetestexcept(FE_INVALID) should not report FE_DIVBYZERO"
+        );
+
+        assert_eq!(feclearexcept(FE_ALL_EXCEPT), 0);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Rounding mode edge cases
+// ---------------------------------------------------------------------------
+
+#[test]
+fn fesetround_all_modes_round_trip() {
+    let _guard = RoundingGuard::new();
+    let modes = [FE_TONEAREST, FE_DOWNWARD, FE_UPWARD, FE_TOWARDZERO];
+
+    for &mode in &modes {
+        unsafe {
+            let rc = fesetround(mode);
+            assert_eq!(rc, 0, "fesetround({mode}) should succeed");
+            let current = fegetround();
+            assert_eq!(
+                current, mode,
+                "fegetround after fesetround({mode}) should return {mode}"
+            );
+        }
+    }
+}
+
+#[test]
+fn fesetround_zero_is_tonearest() {
+    let _guard = RoundingGuard::new();
+    unsafe {
+        let rc = fesetround(0);
+        assert_eq!(rc, 0, "fesetround(0) should succeed");
+        let mode = fegetround();
+        assert_eq!(mode, FE_TONEAREST, "mode 0 should be FE_TONEAREST");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Environment save/restore with exceptions
+// ---------------------------------------------------------------------------
+
+#[test]
+fn fegetenv_fesetenv_restores_exception_flags() {
+    unsafe {
+        // Start clean
+        assert_eq!(feclearexcept(FE_ALL_EXCEPT), 0);
+        assert_eq!(feraiseexcept(FE_INVALID), 0);
+
+        // Save environment with FE_INVALID set
+        let mut env = [0_u8; 256];
+        assert_eq!(fegetenv(env.as_mut_ptr().cast::<c_void>()), 0);
+
+        // Clear exceptions
+        assert_eq!(feclearexcept(FE_ALL_EXCEPT), 0);
+        assert_eq!(fetestexcept(FE_INVALID), 0);
+
+        // Restore environment — FE_INVALID should come back
+        assert_eq!(fesetenv(env.as_ptr().cast::<c_void>()), 0);
+        assert_ne!(
+            fetestexcept(FE_INVALID) & FE_INVALID,
+            0,
+            "FE_INVALID should be restored by fesetenv"
+        );
+
+        assert_eq!(feclearexcept(FE_ALL_EXCEPT), 0);
+    }
+}
+
+#[test]
+fn feholdexcept_clears_all_exceptions() {
+    unsafe {
+        // Raise some exceptions
+        assert_eq!(feclearexcept(FE_ALL_EXCEPT), 0);
+        assert_eq!(feraiseexcept(FE_INVALID | FE_DIVBYZERO), 0);
+
+        // feholdexcept should save state and clear
+        let mut env = [0_u8; 256];
+        assert_eq!(feholdexcept(env.as_mut_ptr().cast::<c_void>()), 0);
+
+        // All exceptions should be cleared
+        assert_eq!(
+            fetestexcept(FE_ALL_EXCEPT),
+            0,
+            "feholdexcept should clear all exception flags"
+        );
+
+        // Restore
+        assert_eq!(feupdateenv(env.as_ptr().cast::<c_void>()), 0);
+
+        // Original exceptions should be restored
+        assert_ne!(fetestexcept(FE_INVALID) & FE_INVALID, 0);
+        assert_ne!(fetestexcept(FE_DIVBYZERO) & FE_DIVBYZERO, 0);
+
+        assert_eq!(feclearexcept(FE_ALL_EXCEPT), 0);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Exception flag get/set round-trip
+// ---------------------------------------------------------------------------
+
+#[test]
+fn fegetexceptflag_fesetexceptflag_round_trip_multiple() {
+    unsafe {
+        assert_eq!(feclearexcept(FE_ALL_EXCEPT), 0);
+        assert_eq!(feraiseexcept(FE_DIVBYZERO | FE_INVALID), 0);
+
+        // Save both flags
+        let mut saved: u16 = 0;
+        assert_eq!(fegetexceptflag(&mut saved, FE_DIVBYZERO | FE_INVALID), 0);
+
+        // Clear them
+        assert_eq!(feclearexcept(FE_ALL_EXCEPT), 0);
+
+        // Restore both
+        assert_eq!(fesetexceptflag(&saved, FE_DIVBYZERO | FE_INVALID), 0);
+        assert_ne!(fetestexcept(FE_DIVBYZERO) & FE_DIVBYZERO, 0);
+        assert_ne!(fetestexcept(FE_INVALID) & FE_INVALID, 0);
+
+        assert_eq!(feclearexcept(FE_ALL_EXCEPT), 0);
+    }
+}
+
+#[test]
+fn feclearexcept_all_then_test_returns_zero() {
+    unsafe {
+        // Raise everything then clear everything
+        assert_eq!(feraiseexcept(FE_ALL_EXCEPT), 0);
+        assert_eq!(feclearexcept(FE_ALL_EXCEPT), 0);
+        assert_eq!(
+            fetestexcept(FE_ALL_EXCEPT),
+            0,
+            "all exceptions should be cleared"
+        );
+    }
+}
