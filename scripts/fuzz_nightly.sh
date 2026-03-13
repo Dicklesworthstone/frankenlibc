@@ -39,6 +39,10 @@ TARGETS=(
     fuzz_time
     fuzz_math
     fuzz_inet
+    fuzz_iconv
+    fuzz_dirent
+    fuzz_resolv
+    fuzz_pwd_grp
 )
 
 # Parse CLI arguments

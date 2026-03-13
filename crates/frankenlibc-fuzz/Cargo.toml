@@ -73,4 +73,24 @@ name = "fuzz_inet"
 path = "fuzz_targets/fuzz_inet.rs"
 doc = false
 
+[[bin]]
+name = "fuzz_iconv"
+path = "fuzz_targets/fuzz_iconv.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_dirent"
+path = "fuzz_targets/fuzz_dirent.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_resolv"
+path = "fuzz_targets/fuzz_resolv.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_pwd_grp"
+path = "fuzz_targets/fuzz_pwd_grp.rs"
+doc = false
+
 [workspace]
