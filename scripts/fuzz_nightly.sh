@@ -34,6 +34,8 @@ TARGETS=(
     fuzz_resolver
     fuzz_regex
     fuzz_scanf
+    fuzz_stdlib
+    fuzz_ctype
 )
 
 # Parse CLI arguments

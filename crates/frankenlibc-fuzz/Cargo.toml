@@ -48,4 +48,14 @@ name = "fuzz_scanf"
 path = "fuzz_targets/fuzz_scanf.rs"
 doc = false
 
+[[bin]]
+name = "fuzz_stdlib"
+path = "fuzz_targets/fuzz_stdlib.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_ctype"
+path = "fuzz_targets/fuzz_ctype.rs"
+doc = false
+
 [workspace]
