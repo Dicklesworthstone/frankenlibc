@@ -21,7 +21,7 @@ fuzz_target!(|data: &[u8]| {
         match op {
             0 => {
                 // Allocate
-                if let Some(ptr) = arena.arena.allocate(size.max(1).min(65536)) {
+                if let Some(ptr) = arena.arena.allocate(size.clamp(1, 65536)) {
                     allocations.push(ptr);
                 }
             }
