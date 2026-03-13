@@ -2,8 +2,8 @@
 
 ## Current Reality
 
-Source of truth for implementation parity is `tests/conformance/reality_report.v1.json` (generated `2026-02-27T05:59:26Z`).
-Reality snapshot: total_exported=2776, implemented=2104, raw_syscall=384, glibc_call_through=288, stub=0.
+Source of truth for implementation parity is `tests/conformance/reality_report.v1.json` (generated `2026-02-18T04:49:26Z`).
+Reality snapshot: total_exported=3980, implemented=3429, raw_syscall=406, glibc_call_through=145, stub=0.
 Counts below reflect that generated snapshot and will change as matrix drift fixes land.
 Regenerate deterministically with:
 
@@ -13,10 +13,10 @@ cargo run -p frankenlibc-harness --bin harness -- reality-report \
   --output tests/conformance/reality_report.v1.json
 ```
 
-Current exported ABI surface is **2776 symbols**, classified as:
-- `Implemented`: 2104
-- `RawSyscall`: 384
-- `GlibcCallThrough`: 288
+Current exported ABI surface is **3980 symbols**, classified as:
+- `Implemented`: 3429
+- `RawSyscall`: 406
+- `GlibcCallThrough`: 145
 - `Stub`: 0
 
 This means the current artifact is a **hybrid interposition profile** (mixed Rust-owned behavior, raw syscalls, host-glibc delegation, and deterministic stubs), not a full replacement profile.

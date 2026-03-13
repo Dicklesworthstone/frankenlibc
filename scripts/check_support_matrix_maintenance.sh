@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # check_support_matrix_maintenance.sh — CI gate for bd-3g4p
-# Runs the automated support matrix maintenance validator, checks report
-# structure, and reports status/conformance drift.
+# Runs the automated support matrix maintenance validator, checks the
+# generated report against the checked-in canonical stable sections, and
+# reports status/conformance drift without rewriting the canonical artifact.
 #
 # Default mode: fails for policy violations (new stubs, unsupported
 # reclassification) and malformed reports, while requiring status
@@ -12,8 +13,9 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-REPORT="$REPO_ROOT/tests/conformance/support_matrix_maintenance_report.v1.json"
 LOG_DIR="$REPO_ROOT/target/conformance"
+CANONICAL_REPORT="${FRANKENLIBC_MAINTENANCE_CANONICAL_REPORT:-$REPO_ROOT/tests/conformance/support_matrix_maintenance_report.v1.json}"
+GENERATED_REPORT="$LOG_DIR/support_matrix_maintenance.generated.json"
 LOG_FILE="$LOG_DIR/support_matrix_maintenance.log.jsonl"
 TRACE_ID="bd-ldj.8-$(date -u +%Y%m%dT%H%M%SZ)-$$"
 TRACE_SYMBOL_EVENTS="${FRANKENLIBC_SYMBOL_GATE_TRACE:-0}"
@@ -28,25 +30,46 @@ mkdir -p "$LOG_DIR"
 
 # 1. Run the maintenance validator
 echo "--- Generating maintenance report ---"
-python3 "$SCRIPT_DIR/generate_support_matrix_maintenance.py" -o "$REPORT"
+python3 "$SCRIPT_DIR/generate_support_matrix_maintenance.py" -o "$GENERATED_REPORT"
 
-if [ ! -f "$REPORT" ]; then
+if [ ! -f "$GENERATED_REPORT" ]; then
     echo "FAIL: maintenance report not generated"
     exit 1
 fi
 
-# 2. Validate report structure, emit logging, and check thresholds
-python3 - "$REPORT" "$STRICT" "$TRACE_ID" "$LOG_FILE" "$TRACE_SYMBOL_EVENTS" <<'PY'
+if [ ! -f "$CANONICAL_REPORT" ]; then
+    echo "FAIL: canonical maintenance report missing at $CANONICAL_REPORT"
+    exit 1
+fi
+
+# 2. Validate report structure, compare stable sections against the canonical
+# artifact, emit logging, and check thresholds.
+python3 - "$GENERATED_REPORT" "$CANONICAL_REPORT" "$STRICT" "$TRACE_ID" "$LOG_FILE" "$TRACE_SYMBOL_EVENTS" <<'PY'
 import json, sys
 from datetime import datetime, timezone
 
 report_path = sys.argv[1]
-strict = sys.argv[2].strip().lower() == "true"
-trace_id = sys.argv[3]
-log_path = sys.argv[4]
-trace_symbol_events = sys.argv[5].strip().lower() in ("1", "true", "yes", "on")
+canonical_path = sys.argv[2]
+strict = sys.argv[3].strip().lower() == "true"
+trace_id = sys.argv[4]
+log_path = sys.argv[5]
+trace_symbol_events = sys.argv[6].strip().lower() in ("1", "true", "yes", "on")
 errors = 0
 events = []
+# These are the current-state sections that should match the checked-in
+# canonical artifact. The generator's trend/reclassification fields are
+# baseline-relative and intentionally excluded from strict equality.
+stable_keys = [
+    "schema_version",
+    "bead",
+    "summary",
+    "coverage_dashboard",
+    "status_distribution",
+    "module_coverage",
+    "symbol_status_map",
+    "status_validation_issues",
+    "unlinked_symbols",
+]
 
 def emit(level, event, symbol, outcome, errno_code, details):
     events.append(
@@ -60,13 +83,45 @@ def emit(level, event, symbol, outcome, errno_code, details):
             "symbol": symbol,
             "outcome": outcome,
             "errno": int(errno_code),
-            "artifact_refs": [report_path, log_path],
+            "artifact_refs": [report_path, canonical_path, log_path],
             "details": details,
         }
     )
 
 with open(report_path) as f:
     report = json.load(f)
+with open(canonical_path) as f:
+    canonical = json.load(f)
+
+generated_stable = {key: report.get(key) for key in stable_keys}
+canonical_stable = {key: canonical.get(key) for key in stable_keys}
+stable_diff_keys = [
+    key for key in stable_keys if generated_stable.get(key) != canonical_stable.get(key)
+]
+
+emit(
+    "info" if not stable_diff_keys else "error",
+    "canonical_stable_sections",
+    "all",
+    "pass" if not stable_diff_keys else "fail",
+    0 if not stable_diff_keys else 1,
+    {
+        "stable_keys": stable_keys,
+        "excluded_baseline_relative_keys": [
+            "generated_at",
+            "trend",
+            "reclassified_symbols",
+            "policy_checks",
+        ],
+        "mismatched_keys": stable_diff_keys,
+    },
+)
+
+if stable_diff_keys:
+    print("FAIL: canonical maintenance report drift detected in stable sections")
+    for key in stable_diff_keys[:10]:
+        print(f"  - {key}")
+    errors += 1
 
 # Check required fields
 summary = report.get("summary", {})

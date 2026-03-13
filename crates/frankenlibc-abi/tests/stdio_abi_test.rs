@@ -1,3 +1,4 @@
+#![feature(c_variadic)]
 #![cfg(target_os = "linux")]
 
 //! Integration tests for `<stdio.h>` ABI entrypoints.
@@ -13,9 +14,10 @@ use std::thread;
 use std::time::Duration;
 
 use frankenlibc_abi::io_internal_abi::{
-    _IO_fclose, _IO_fdopen, _IO_fflush, _IO_fgetpos, _IO_fgetpos64, _IO_fgets, _IO_fopen,
-    _IO_fprintf, _IO_fputs, _IO_fread, _IO_fsetpos, _IO_fsetpos64, _IO_ftell, _IO_fwrite,
-    _IO_printf, _IO_sprintf, _IO_sscanf,
+    _IO_fclose, _IO_fdopen, _IO_fflush, _IO_fgetpos, _IO_fgetpos64, _IO_fgets, _IO_flush_all,
+    _IO_fopen, _IO_fprintf, _IO_fputs, _IO_fread, _IO_fsetpos, _IO_fsetpos64, _IO_ftell,
+    _IO_fwrite, _IO_printf, _IO_setbuffer, _IO_setvbuf, _IO_sprintf, _IO_sscanf, _IO_ungetc,
+    _IO_vfprintf, _IO_vsprintf,
 };
 use frankenlibc_abi::stdio_abi::{
     __isoc99_fscanf,
@@ -127,6 +129,28 @@ fn temp_path(tag: &str) -> PathBuf {
         id
     ));
     path
+}
+
+unsafe extern "C" fn call_io_vfprintf(
+    stream: *mut c_void,
+    format: *const c_char,
+    mut args: ...
+) -> c_int {
+    unsafe {
+        _IO_vfprintf(
+            stream,
+            format,
+            std::ptr::addr_of_mut!(args).cast::<c_void>(),
+        )
+    }
+}
+
+unsafe extern "C" fn call_io_vsprintf(
+    buf: *mut c_char,
+    format: *const c_char,
+    mut args: ...
+) -> c_int {
+    unsafe { _IO_vsprintf(buf, format, std::ptr::addr_of_mut!(args).cast::<c_void>()) }
 }
 
 fn path_cstring(path: &Path) -> CString {
@@ -2242,5 +2266,90 @@ fn io_internal_printf_and_sscanf_use_native_stdio_paths() {
     let parsed_word = unsafe { CStr::from_ptr(word.as_ptr()) };
     assert_eq!(parsed_word.to_bytes(), b"parsed");
 
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn io_internal_flush_all_uses_native_fflush_null_semantics() {
+    let path = temp_path("io_internal_flush_all");
+    let _ = fs::remove_file(&path);
+    let path_c = path_cstring(&path);
+
+    let stream = unsafe { _IO_fopen(path_c.as_ptr(), c"w".as_ptr()) };
+    assert!(!stream.is_null());
+
+    assert_eq!(unsafe { _IO_fputs(c"pending-flush".as_ptr(), stream) }, 0);
+    assert_eq!(unsafe { _IO_flush_all() }, 0);
+
+    let bytes = fs::read(&path).expect("flush_all should materialize buffered data on disk");
+    assert_eq!(bytes, b"pending-flush");
+
+    assert_eq!(unsafe { _IO_fclose(stream) }, 0);
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn io_internal_setvbuf_setbuffer_and_ungetc_use_native_stdio_paths() {
+    let path = temp_path("io_internal_setvbuf");
+    let _ = fs::remove_file(&path);
+    let path_c = path_cstring(&path);
+
+    let stream = unsafe { _IO_fopen(path_c.as_ptr(), c"w+".as_ptr()) };
+    assert!(!stream.is_null());
+
+    assert_eq!(
+        unsafe { _IO_setvbuf(stream, std::ptr::null_mut(), IONBF, 0) },
+        0
+    );
+    assert_eq!(unsafe { _IO_fputs(c"AB".as_ptr(), stream) }, 0);
+
+    let mut user_buf = [0 as c_char; 32];
+    unsafe { _IO_setbuffer(stream, user_buf.as_mut_ptr(), user_buf.len()) };
+    assert_eq!(unsafe { _IO_fflush(stream) }, 0);
+    assert_eq!(unsafe { fseek(stream, 0, libc::SEEK_SET) }, 0);
+
+    assert_eq!(unsafe { fgetc(stream) }, b'A' as c_int);
+    assert_eq!(unsafe { _IO_ungetc(b'Z' as c_int, stream) }, b'Z' as c_int);
+    assert_eq!(unsafe { fgetc(stream) }, b'Z' as c_int);
+
+    assert_eq!(unsafe { _IO_fclose(stream) }, 0);
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn io_internal_vfprintf_and_vsprintf_use_native_stdio_paths() {
+    let path = temp_path("io_internal_vfprintf");
+    let _ = fs::remove_file(&path);
+    let path_c = path_cstring(&path);
+
+    let stream = unsafe { _IO_fopen(path_c.as_ptr(), c"w+".as_ptr()) };
+    assert!(!stream.is_null());
+
+    let written =
+        unsafe { call_io_vfprintf(stream, c"%s=%d".as_ptr(), c"native".as_ptr(), 21_i32) };
+    assert_eq!(written, 9);
+    assert_eq!(unsafe { _IO_fflush(stream) }, 0);
+    assert_eq!(unsafe { fseek(stream, 0, libc::SEEK_SET) }, 0);
+
+    let mut file_buf = [0 as c_char; 32];
+    let out = unsafe { _IO_fgets(file_buf.as_mut_ptr(), file_buf.len() as c_int, stream) };
+    assert_eq!(out, file_buf.as_mut_ptr());
+    let file_rendered = unsafe { CStr::from_ptr(file_buf.as_ptr()) };
+    assert_eq!(file_rendered.to_bytes(), b"native=21");
+
+    let mut mem_buf = [0 as c_char; 32];
+    let rendered = unsafe {
+        call_io_vsprintf(
+            mem_buf.as_mut_ptr(),
+            c"%d:%s".as_ptr(),
+            5_i32,
+            c"ok".as_ptr(),
+        )
+    };
+    assert_eq!(rendered, 4);
+    let mem_rendered = unsafe { CStr::from_ptr(mem_buf.as_ptr()) };
+    assert_eq!(mem_rendered.to_bytes(), b"5:ok");
+
+    assert_eq!(unsafe { _IO_fclose(stream) }, 0);
     let _ = fs::remove_file(path);
 }

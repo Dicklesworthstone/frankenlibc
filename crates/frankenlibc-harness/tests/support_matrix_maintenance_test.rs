@@ -6,6 +6,7 @@
 use std::path::Path;
 use std::process::Command;
 use std::sync::{Mutex, OnceLock};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 fn repo_root() -> std::path::PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -36,6 +37,65 @@ fn load_jsonl(path: &Path) -> Vec<serde_json::Value> {
         .collect()
 }
 
+fn canonical_report_path() -> std::path::PathBuf {
+    repo_root().join("tests/conformance/support_matrix_maintenance_report.v1.json")
+}
+
+fn unique_generated_report_path(tag: &str) -> std::path::PathBuf {
+    let root = repo_root();
+    let out_dir = root.join("target/conformance");
+    std::fs::create_dir_all(&out_dir)
+        .unwrap_or_else(|e| panic!("Failed to create {}: {}", out_dir.display(), e));
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system time should be after unix epoch")
+        .as_nanos();
+    out_dir.join(format!("{tag}.{}.{}.json", std::process::id(), nanos))
+}
+
+fn generate_maintenance_report(output_path: &Path) -> std::process::Output {
+    let root = repo_root();
+    Command::new("python3")
+        .args([
+            root.join("scripts/generate_support_matrix_maintenance.py")
+                .to_str()
+                .unwrap(),
+            "-o",
+            output_path.to_str().unwrap(),
+        ])
+        .current_dir(&root)
+        .output()
+        .expect("failed to execute maintenance validator")
+}
+
+fn stable_report_sections(report: &serde_json::Value) -> serde_json::Value {
+    let mut stable = serde_json::Map::new();
+    // These are the current-state sections. We intentionally exclude the
+    // generator's baseline-relative transition fields (`generated_at`, `trend`,
+    // `reclassified_symbols`, and parts of `policy_checks`) because they depend
+    // on which prior report is used as the baseline.
+    for key in [
+        "schema_version",
+        "bead",
+        "summary",
+        "coverage_dashboard",
+        "status_distribution",
+        "module_coverage",
+        "symbol_status_map",
+        "status_validation_issues",
+        "unlinked_symbols",
+    ] {
+        stable.insert(
+            key.to_owned(),
+            report
+                .get(key)
+                .unwrap_or_else(|| panic!("report missing stable section `{key}`"))
+                .clone(),
+        );
+    }
+    serde_json::Value::Object(stable)
+}
+
 fn gate_test_lock() -> std::sync::MutexGuard<'static, ()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
     match LOCK.get_or_init(|| Mutex::new(())).lock() {
@@ -44,7 +104,10 @@ fn gate_test_lock() -> std::sync::MutexGuard<'static, ()> {
     }
 }
 
-fn run_support_matrix_gate(trace_symbol_events: bool) -> std::process::Output {
+fn run_support_matrix_gate_with_canonical(
+    trace_symbol_events: bool,
+    canonical_override: Option<&Path>,
+) -> std::process::Output {
     let root = repo_root();
     let script_path = root.join("scripts/check_support_matrix_maintenance.sh");
     let mut command = Command::new("bash");
@@ -54,15 +117,25 @@ fn run_support_matrix_gate(trace_symbol_events: bool) -> std::process::Output {
     } else {
         command.env_remove("FRANKENLIBC_SYMBOL_GATE_TRACE");
     }
+    if let Some(path) = canonical_override {
+        command.env("FRANKENLIBC_MAINTENANCE_CANONICAL_REPORT", path);
+    } else {
+        command.env_remove("FRANKENLIBC_MAINTENANCE_CANONICAL_REPORT");
+    }
     command
         .output()
         .expect("failed to execute support matrix maintenance gate")
 }
 
-const IO_INTERNAL_WAVE1_NATIVE_SYMBOLS: &[&str] = &[
+fn run_support_matrix_gate(trace_symbol_events: bool) -> std::process::Output {
+    run_support_matrix_gate_with_canonical(trace_symbol_events, None)
+}
+
+const IO_INTERNAL_NATIVE_SYMBOLS: &[&str] = &[
     "_IO_fclose",
     "_IO_fdopen",
     "_IO_fflush",
+    "_IO_flush_all",
     "_IO_fgetpos",
     "_IO_fgetpos64",
     "_IO_fgets",
@@ -75,54 +148,54 @@ const IO_INTERNAL_WAVE1_NATIVE_SYMBOLS: &[&str] = &[
     "_IO_fwrite",
     "_IO_fprintf",
     "_IO_printf",
+    "_IO_setbuffer",
+    "_IO_setvbuf",
     "_IO_sprintf",
     "_IO_sscanf",
+    "_IO_ungetc",
+    "_IO_vfprintf",
+    "_IO_vsprintf",
 ];
 
 #[test]
 fn maintenance_report_generates_successfully() {
-    let root = repo_root();
-    let report_path = root.join("tests/conformance/support_matrix_maintenance_report.v1.json");
-    let output = Command::new("python3")
-        .args([
-            root.join("scripts/generate_support_matrix_maintenance.py")
-                .to_str()
-                .unwrap(),
-            "-o",
-            report_path.to_str().unwrap(),
-        ])
-        .current_dir(&root)
-        .output()
-        .expect("failed to execute maintenance validator");
+    let canonical_path = canonical_report_path();
+    assert!(
+        canonical_path.exists(),
+        "canonical report missing at {}",
+        canonical_path.display()
+    );
+
+    let generated_path = unique_generated_report_path("support_matrix_maintenance_test");
+    let output = generate_maintenance_report(&generated_path);
     assert!(
         output.status.success(),
         "Maintenance validator failed:\n{}",
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(
-        report_path.exists(),
+        generated_path.exists(),
         "Report not generated at {}",
-        report_path.display()
+        generated_path.display()
+    );
+
+    let canonical = load_json(&canonical_path);
+    let generated = load_json(&generated_path);
+    assert_eq!(
+        stable_report_sections(&generated),
+        stable_report_sections(&canonical),
+        "generated maintenance report stable sections drift from canonical artifact"
     );
 }
 
 #[test]
 fn maintenance_report_schema_complete() {
-    let root = repo_root();
-    let report_path = root.join("tests/conformance/support_matrix_maintenance_report.v1.json");
-    if !report_path.exists() {
-        // Generate it if missing
-        let _ = Command::new("python3")
-            .args([
-                root.join("scripts/generate_support_matrix_maintenance.py")
-                    .to_str()
-                    .unwrap(),
-                "-o",
-                report_path.to_str().unwrap(),
-            ])
-            .current_dir(&root)
-            .output();
-    }
+    let report_path = canonical_report_path();
+    assert!(
+        report_path.exists(),
+        "canonical report missing at {}",
+        report_path.display()
+    );
     let data = load_json(&report_path);
 
     // Check top-level fields
@@ -224,7 +297,7 @@ fn maintenance_module_coverage_consistent() {
 }
 
 #[test]
-fn maintenance_report_marks_io_internal_wave1_symbols_implemented() {
+fn maintenance_report_marks_io_internal_native_symbols_implemented() {
     let root = repo_root();
     let report_path = root.join("tests/conformance/support_matrix_maintenance_report.v1.json");
     let data = load_json(&report_path);
@@ -232,7 +305,7 @@ fn maintenance_report_marks_io_internal_wave1_symbols_implemented() {
         .as_object()
         .expect("symbol_status_map should be an object");
 
-    for symbol in IO_INTERNAL_WAVE1_NATIVE_SYMBOLS {
+    for symbol in IO_INTERNAL_NATIVE_SYMBOLS {
         let status = symbol_status_map
             .get(*symbol)
             .and_then(serde_json::Value::as_str);
@@ -355,5 +428,73 @@ fn maintenance_gate_trace_flag_emits_symbol_status_snapshot_events() {
                 && event["event"].as_str() == Some("symbol_status_snapshot")
         }),
         "Expected TRACE symbol_status_snapshot events when FRANKENLIBC_SYMBOL_GATE_TRACE=1"
+    );
+}
+
+#[test]
+fn maintenance_gate_does_not_rewrite_canonical_report() {
+    let _guard = gate_test_lock();
+    let canonical_path = canonical_report_path();
+    let before = std::fs::read_to_string(&canonical_path)
+        .unwrap_or_else(|e| panic!("Failed to read {}: {}", canonical_path.display(), e));
+
+    let output = run_support_matrix_gate(false);
+    assert!(
+        output.status.code().is_some(),
+        "Gate process terminated without an exit code"
+    );
+
+    let after = std::fs::read_to_string(&canonical_path)
+        .unwrap_or_else(|e| panic!("Failed to re-read {}: {}", canonical_path.display(), e));
+    assert_eq!(
+        before, after,
+        "support matrix maintenance gate must not rewrite the canonical maintenance report"
+    );
+}
+
+#[test]
+fn maintenance_gate_fails_on_canonical_stable_section_drift() {
+    let _guard = gate_test_lock();
+    let mutated_canonical_path =
+        unique_generated_report_path("support_matrix_maintenance_bad_canonical");
+    let mut mutated = load_json(&canonical_report_path());
+    let original_total = mutated["summary"]["total_symbols"]
+        .as_u64()
+        .expect("summary.total_symbols should be numeric");
+    mutated["summary"]["total_symbols"] = serde_json::Value::from(original_total + 1);
+    std::fs::write(
+        &mutated_canonical_path,
+        serde_json::to_vec_pretty(&mutated).expect("mutated canonical report should serialize"),
+    )
+    .unwrap_or_else(|e| {
+        panic!(
+            "Failed to write {}: {}",
+            mutated_canonical_path.display(),
+            e
+        )
+    });
+
+    let output = run_support_matrix_gate_with_canonical(false, Some(&mutated_canonical_path));
+    assert!(
+        !output.status.success(),
+        "gate should fail when canonical stable sections drift\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let log_path = repo_root().join("target/conformance/support_matrix_maintenance.log.jsonl");
+    let events = load_jsonl(&log_path);
+    let drift_event = events
+        .iter()
+        .find(|event| event["event"].as_str() == Some("canonical_stable_sections"))
+        .expect("expected canonical_stable_sections event");
+    assert_eq!(drift_event["level"].as_str(), Some("error"));
+    assert_eq!(drift_event["outcome"].as_str(), Some("fail"));
+    assert!(
+        drift_event["details"]["mismatched_keys"]
+            .as_array()
+            .map(|keys| keys.iter().any(|key| key.as_str() == Some("summary")))
+            .unwrap_or(false),
+        "expected summary drift to be reported in mismatched_keys"
     );
 }

@@ -508,11 +508,7 @@ pub unsafe extern "C" fn _IO_file_xsputn(fp: *mut c_void, buf: *const c_void, n:
 /// `_IO_flush_all` — flush all open FILE streams.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn _IO_flush_all() -> c_int {
-    type Fn = unsafe extern "C" fn() -> c_int;
-    match io_resolve!(c"_IO_flush_all", Fn) {
-        Some(f) => unsafe { f() },
-        None => -1,
-    }
+    unsafe { stdio_abi::fflush(std::ptr::null_mut()) }
 }
 
 /// `_IO_flush_all_linebuffered` — flush all line-buffered streams.
@@ -900,10 +896,7 @@ pub unsafe extern "C" fn _IO_setb(
 /// `_IO_setbuffer` — set FILE buffer (like setbuf).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn _IO_setbuffer(fp: *mut c_void, buf: *mut c_char, size: usize) {
-    type Fn = unsafe extern "C" fn(*mut c_void, *mut c_char, usize);
-    if let Some(f) = io_resolve!(c"_IO_setbuffer", Fn) {
-        unsafe { f(fp, buf, size) }
-    }
+    unsafe { stdio_abi::setbuffer(fp, buf, size) }
 }
 
 /// `_IO_setvbuf` — set FILE buffering mode (like setvbuf).
@@ -914,11 +907,7 @@ pub unsafe extern "C" fn _IO_setvbuf(
     mode: c_int,
     size: usize,
 ) -> c_int {
-    type Fn = unsafe extern "C" fn(*mut c_void, *mut c_char, c_int, usize) -> c_int;
-    match io_resolve!(c"_IO_setvbuf", Fn) {
-        Some(f) => unsafe { f(fp, buf, mode, size) },
-        None => -1,
-    }
+    unsafe { stdio_abi::setvbuf(fp, buf, mode, size) }
 }
 
 // ---------------------------------------------------------------------------
@@ -968,11 +957,7 @@ pub unsafe extern "C" fn _IO_sungetwc(fp: *mut c_void) -> u32 {
 /// `_IO_ungetc` — internal ungetc.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn _IO_ungetc(ch: c_int, fp: *mut c_void) -> c_int {
-    type Fn = unsafe extern "C" fn(c_int, *mut c_void) -> c_int;
-    match io_resolve!(c"_IO_ungetc", Fn) {
-        Some(f) => unsafe { f(ch, fp) },
-        None => -1,
-    }
+    unsafe { stdio_abi::ungetc(ch, fp) }
 }
 
 // ---------------------------------------------------------------------------
@@ -1100,11 +1085,7 @@ pub unsafe extern "C" fn _IO_vfprintf(
     fmt: *const c_char,
     ap: *mut c_void,
 ) -> c_int {
-    type Fn = unsafe extern "C" fn(*mut c_void, *const c_char, *mut c_void) -> c_int;
-    match io_resolve!(c"_IO_vfprintf", Fn) {
-        Some(f) => unsafe { f(fp, fmt, ap) },
-        None => -1,
-    }
+    unsafe { stdio_abi::vfprintf(fp, fmt, ap) }
 }
 
 /// `_IO_vfscanf` — internal vfscanf.
@@ -1129,11 +1110,7 @@ pub unsafe extern "C" fn _IO_vsprintf(
     fmt: *const c_char,
     ap: *mut c_void,
 ) -> c_int {
-    type Fn = unsafe extern "C" fn(*mut c_char, *const c_char, *mut c_void) -> c_int;
-    match io_resolve!(c"_IO_vsprintf", Fn) {
-        Some(f) => unsafe { f(buf, fmt, ap) },
-        None => -1,
-    }
+    unsafe { stdio_abi::vsprintf(buf, fmt, ap) }
 }
 
 // ---------------------------------------------------------------------------

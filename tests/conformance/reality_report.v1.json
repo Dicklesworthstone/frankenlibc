@@ -1,15 +1,11 @@
 {
-  "generated_at_utc": "2026-02-27T21:15:00Z",
-  "total_exported": 2767,
+  "generated_at_utc": "2026-02-18T04:49:26Z",
+  "total_exported": 3980,
   "counts": {
-    "implemented": 2143,
-    "raw_syscall": 384,
-    "glibc_call_through": 240,
+    "implemented": 3429,
+    "raw_syscall": 406,
+    "glibc_call_through": 145,
     "stub": 0
   },
-  "stubs": [],
-  "implemented": 2143,
-  "raw_syscall": 384,
-  "glibc_call_through": 240,
-  "stub": 0
+  "stubs": []
 }
