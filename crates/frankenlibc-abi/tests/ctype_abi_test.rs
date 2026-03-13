@@ -433,6 +433,122 @@ fn double_underscore_classification_sweep() {
 }
 
 // ===========================================================================
+// EOF handling: -1 (EOF) should classify as false for all
+// ===========================================================================
+
+#[test]
+fn eof_classifies_as_false() {
+    let eof: c_int = -1;
+    assert_eq!(unsafe { isalpha(eof) }, 0, "isalpha(EOF)");
+    assert_eq!(unsafe { isdigit(eof) }, 0, "isdigit(EOF)");
+    assert_eq!(unsafe { isalnum(eof) }, 0, "isalnum(EOF)");
+    assert_eq!(unsafe { isspace(eof) }, 0, "isspace(EOF)");
+    assert_eq!(unsafe { isupper(eof) }, 0, "isupper(EOF)");
+    assert_eq!(unsafe { islower(eof) }, 0, "islower(EOF)");
+    assert_eq!(unsafe { isprint(eof) }, 0, "isprint(EOF)");
+    assert_eq!(unsafe { isgraph(eof) }, 0, "isgraph(EOF)");
+    assert_eq!(unsafe { ispunct(eof) }, 0, "ispunct(EOF)");
+    assert_eq!(unsafe { isxdigit(eof) }, 0, "isxdigit(EOF)");
+    assert_eq!(unsafe { isblank(eof) }, 0, "isblank(EOF)");
+    assert_eq!(unsafe { iscntrl(eof) }, 0, "iscntrl(EOF)");
+}
+
+// ===========================================================================
+// toupper/tolower full alphabet round-trip
+// ===========================================================================
+
+#[test]
+fn toupper_tolower_round_trip() {
+    for c in b'a'..=b'z' {
+        let upper = unsafe { toupper(c as c_int) };
+        let back = unsafe { tolower(upper) };
+        assert_eq!(back, c as c_int, "round-trip failed for '{}'", c as char);
+    }
+}
+
+#[test]
+fn tolower_toupper_round_trip() {
+    for c in b'A'..=b'Z' {
+        let lower = unsafe { tolower(c as c_int) };
+        let back = unsafe { toupper(lower) };
+        assert_eq!(back, c as c_int, "round-trip failed for '{}'", c as char);
+    }
+}
+
+// ===========================================================================
+// Boundary characters
+// ===========================================================================
+
+#[test]
+fn nul_is_control() {
+    assert_ne!(unsafe { iscntrl(0) }, 0, "NUL should be control");
+    assert_eq!(unsafe { isprint(0) }, 0, "NUL should not be printable");
+}
+
+#[test]
+fn del_is_control() {
+    assert_ne!(unsafe { iscntrl(0x7F) }, 0, "DEL should be control");
+    assert_eq!(unsafe { isprint(0x7F) }, 0, "DEL should not be printable");
+}
+
+#[test]
+fn all_control_chars_classified() {
+    // 0x00-0x1F and 0x7F are control characters
+    for c in 0..=0x1F {
+        assert_ne!(
+            unsafe { iscntrl(c) },
+            0,
+            "0x{c:02X} should be control"
+        );
+    }
+    assert_ne!(unsafe { iscntrl(0x7F) }, 0, "0x7F should be control");
+}
+
+// ===========================================================================
+// Table accessor for digits
+// ===========================================================================
+
+#[test]
+fn ctype_b_loc_digit_bits() {
+    let pp = unsafe { __ctype_b_loc() };
+    let p = unsafe { *pp };
+    for d in b'0'..=b'9' {
+        let flags = unsafe { *p.offset(d as isize) };
+        // Digit bit should be set (bit position varies by glibc version, just check non-zero classification)
+        assert_ne!(flags, 0, "digit '{}' should have classification bits", d as char);
+    }
+}
+
+#[test]
+fn ctype_toupper_loc_non_alpha_passthrough() {
+    let pp = unsafe { __ctype_toupper_loc() };
+    let p = unsafe { *pp };
+    // Digits and punctuation should map to themselves
+    for c in b'0'..=b'9' {
+        assert_eq!(
+            unsafe { *p.offset(c as isize) },
+            c as i32,
+            "toupper table should pass through '{}'",
+            c as char
+        );
+    }
+}
+
+#[test]
+fn ctype_tolower_loc_non_alpha_passthrough() {
+    let pp = unsafe { __ctype_tolower_loc() };
+    let p = unsafe { *pp };
+    for c in b'0'..=b'9' {
+        assert_eq!(
+            unsafe { *p.offset(c as isize) },
+            c as i32,
+            "tolower table should pass through '{}'",
+            c as char
+        );
+    }
+}
+
+// ===========================================================================
 // Comprehensive sweep: all printable ASCII
 // ===========================================================================
 

@@ -203,6 +203,86 @@ fn bindtextdomain_set_dirname() {
 }
 
 // ---------------------------------------------------------------------------
+// setlocale — per-category queries
+// ---------------------------------------------------------------------------
+
+#[test]
+fn setlocale_lc_time_query() {
+    let result = unsafe { setlocale(libc::LC_TIME, ptr::null()) };
+    assert!(!result.is_null());
+}
+
+#[test]
+fn setlocale_lc_collate_query() {
+    let result = unsafe { setlocale(libc::LC_COLLATE, ptr::null()) };
+    assert!(!result.is_null());
+}
+
+#[test]
+fn setlocale_lc_monetary_query() {
+    let result = unsafe { setlocale(libc::LC_MONETARY, ptr::null()) };
+    assert!(!result.is_null());
+}
+
+#[test]
+fn setlocale_lc_messages_query() {
+    let result = unsafe { setlocale(libc::LC_MESSAGES, ptr::null()) };
+    assert!(!result.is_null());
+}
+
+// ---------------------------------------------------------------------------
+// nl_langinfo — day/month names
+// ---------------------------------------------------------------------------
+
+#[test]
+fn nl_langinfo_day_1_returns_non_null() {
+    let result = unsafe { nl_langinfo(libc::DAY_1) };
+    assert!(!result.is_null());
+    // Implementation may return "Sunday" or empty string
+}
+
+#[test]
+fn nl_langinfo_mon_1_returns_non_null() {
+    let result = unsafe { nl_langinfo(libc::MON_1) };
+    assert!(!result.is_null());
+}
+
+#[test]
+fn nl_langinfo_yesexpr_returns_non_null() {
+    let result = unsafe { nl_langinfo(libc::YESEXPR) };
+    assert!(!result.is_null());
+}
+
+// ---------------------------------------------------------------------------
+// ngettext — edge cases
+// ---------------------------------------------------------------------------
+
+#[test]
+fn ngettext_large_count_is_plural() {
+    let singular = CString::new("file").unwrap();
+    let plural = CString::new("files").unwrap();
+    let result = unsafe { ngettext(singular.as_ptr(), plural.as_ptr(), 1_000_000) };
+    assert_eq!(result as *const c_char, plural.as_ptr());
+}
+
+// ---------------------------------------------------------------------------
+// gettext — null safety
+// ---------------------------------------------------------------------------
+
+#[test]
+fn gettext_null_returns_null() {
+    let result = unsafe { gettext(ptr::null()) };
+    assert!(result.is_null(), "gettext(NULL) should return NULL");
+}
+
+#[test]
+fn dgettext_null_msg_returns_null() {
+    let domain = CString::new("test").unwrap();
+    let result = unsafe { dgettext(domain.as_ptr(), ptr::null()) };
+    assert!(result.is_null(), "dgettext(_, NULL) should return NULL");
+}
+
+// ---------------------------------------------------------------------------
 // POSIX 2008 thread-local locale
 // ---------------------------------------------------------------------------
 

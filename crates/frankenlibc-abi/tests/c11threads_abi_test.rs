@@ -420,6 +420,271 @@ fn test_timespec_getres_null_ts() {
 }
 
 // ===========================================================================
+// thrd_sleep — edge cases
+// ===========================================================================
+
+#[test]
+fn test_thrd_sleep_zero_duration() {
+    unsafe {
+        let dur = libc::timespec {
+            tv_sec: 0,
+            tv_nsec: 0,
+        };
+        let rc = thrd_sleep(&dur, std::ptr::null_mut());
+        assert_eq!(rc, 0, "thrd_sleep(0) should return 0");
+    }
+}
+
+#[test]
+fn test_thrd_sleep_with_remaining() {
+    unsafe {
+        let dur = libc::timespec {
+            tv_sec: 0,
+            tv_nsec: 1_000_000,
+        }; // 1ms
+        let mut rem: libc::timespec = std::mem::zeroed();
+        let rc = thrd_sleep(&dur, &mut rem);
+        assert_eq!(rc, 0);
+    }
+}
+
+// ===========================================================================
+// tss_* — additional scenarios
+// ===========================================================================
+
+#[test]
+fn test_tss_overwrite_value() {
+    unsafe {
+        let mut key: libc::pthread_key_t = 0;
+        assert_eq!(tss_create(&mut key, None), THRD_SUCCESS);
+
+        let val1 = 0x1111usize as *mut c_void;
+        let val2 = 0x2222usize as *mut c_void;
+        assert_eq!(tss_set(key, val1), THRD_SUCCESS);
+        assert_eq!(tss_get(key), val1);
+
+        assert_eq!(tss_set(key, val2), THRD_SUCCESS);
+        assert_eq!(tss_get(key), val2);
+
+        tss_delete(key);
+    }
+}
+
+#[test]
+fn test_tss_multiple_keys_independent() {
+    unsafe {
+        let mut key1: libc::pthread_key_t = 0;
+        let mut key2: libc::pthread_key_t = 0;
+        assert_eq!(tss_create(&mut key1, None), THRD_SUCCESS);
+        assert_eq!(tss_create(&mut key2, None), THRD_SUCCESS);
+
+        let v1 = 0xAAAAusize as *mut c_void;
+        let v2 = 0xBBBBusize as *mut c_void;
+        assert_eq!(tss_set(key1, v1), THRD_SUCCESS);
+        assert_eq!(tss_set(key2, v2), THRD_SUCCESS);
+
+        assert_eq!(tss_get(key1), v1);
+        assert_eq!(tss_get(key2), v2);
+
+        tss_delete(key1);
+        tss_delete(key2);
+    }
+}
+
+#[test]
+fn test_tss_set_null_value() {
+    unsafe {
+        let mut key: libc::pthread_key_t = 0;
+        assert_eq!(tss_create(&mut key, None), THRD_SUCCESS);
+
+        let val = 0xDEADusize as *mut c_void;
+        assert_eq!(tss_set(key, val), THRD_SUCCESS);
+        assert_eq!(tss_get(key), val);
+
+        // Set back to null
+        assert_eq!(tss_set(key, std::ptr::null_mut()), THRD_SUCCESS);
+        assert!(tss_get(key).is_null());
+
+        tss_delete(key);
+    }
+}
+
+// ===========================================================================
+// thrd_equal — different threads
+// ===========================================================================
+
+#[test]
+fn test_thrd_equal_different_threads() {
+    unsafe extern "C" fn get_tid(_arg: *mut c_void) -> c_int {
+        // Just return; main thread captures our pthread_t
+        0
+    }
+    unsafe {
+        let main_tid = thrd_current();
+        let mut child: libc::pthread_t = 0;
+        let rc = thrd_create(&mut child, Some(get_tid), std::ptr::null_mut());
+        assert_eq!(rc, THRD_SUCCESS);
+        thrd_join(child, std::ptr::null_mut());
+
+        // main_tid and child should not be equal (child has exited, but the IDs differ)
+        assert_eq!(
+            thrd_equal(main_tid, child),
+            0,
+            "main thread and child thread should not be equal"
+        );
+    }
+}
+
+// ===========================================================================
+// thrd_create — various return codes
+// ===========================================================================
+
+unsafe extern "C" fn returns_zero(_arg: *mut c_void) -> c_int {
+    0
+}
+
+unsafe extern "C" fn returns_negative(_arg: *mut c_void) -> c_int {
+    -1
+}
+
+unsafe extern "C" fn returns_large(_arg: *mut c_void) -> c_int {
+    255
+}
+
+#[test]
+fn test_thrd_join_propagates_zero() {
+    unsafe {
+        let mut thr: libc::pthread_t = 0;
+        thrd_create(&mut thr, Some(returns_zero), std::ptr::null_mut());
+        let mut res: c_int = -999;
+        thrd_join(thr, &mut res);
+        assert_eq!(res, 0);
+    }
+}
+
+#[test]
+fn test_thrd_join_propagates_negative() {
+    unsafe {
+        let mut thr: libc::pthread_t = 0;
+        thrd_create(&mut thr, Some(returns_negative), std::ptr::null_mut());
+        let mut res: c_int = 0;
+        thrd_join(thr, &mut res);
+        assert_eq!(res, -1);
+    }
+}
+
+#[test]
+fn test_thrd_join_propagates_large() {
+    unsafe {
+        let mut thr: libc::pthread_t = 0;
+        thrd_create(&mut thr, Some(returns_large), std::ptr::null_mut());
+        let mut res: c_int = 0;
+        thrd_join(thr, &mut res);
+        assert_eq!(res, 255);
+    }
+}
+
+// ===========================================================================
+// call_once — multi-threaded
+// ===========================================================================
+
+static MULTI_ONCE_COUNTER: AtomicI32 = AtomicI32::new(0);
+
+extern "C" fn multi_once_func() {
+    MULTI_ONCE_COUNTER.fetch_add(1, Ordering::SeqCst);
+}
+
+#[test]
+fn test_call_once_multi_threaded() {
+    static mut MULTI_FLAG: libc::pthread_once_t = libc::PTHREAD_ONCE_INIT;
+    MULTI_ONCE_COUNTER.store(0, Ordering::SeqCst);
+
+    let handles: Vec<_> = (0..4)
+        .map(|_| {
+            std::thread::spawn(|| unsafe {
+                call_once(&raw mut MULTI_FLAG, Some(multi_once_func));
+            })
+        })
+        .collect();
+
+    for h in handles {
+        h.join().unwrap();
+    }
+    assert_eq!(
+        MULTI_ONCE_COUNTER.load(Ordering::SeqCst),
+        1,
+        "call_once should execute exactly once across threads"
+    );
+}
+
+// ===========================================================================
+// cnd_broadcast — wake multiple waiters
+// ===========================================================================
+
+static BROADCAST_COUNTER: AtomicI32 = AtomicI32::new(0);
+
+#[test]
+fn test_cnd_broadcast_wakes_all() {
+    struct Shared {
+        mtx: libc::pthread_mutex_t,
+        cond: libc::pthread_cond_t,
+        ready: bool,
+    }
+
+    unsafe extern "C" fn broadcast_waiter(arg: *mut c_void) -> c_int {
+        unsafe {
+            let shared = &mut *(arg as *mut Shared);
+            mtx_lock(&mut shared.mtx);
+            while !shared.ready {
+                cnd_wait(&mut shared.cond, &mut shared.mtx);
+            }
+            BROADCAST_COUNTER.fetch_add(1, Ordering::SeqCst);
+            mtx_unlock(&mut shared.mtx);
+        }
+        0
+    }
+
+    unsafe {
+        let mut shared = Shared {
+            mtx: std::mem::zeroed(),
+            cond: std::mem::zeroed(),
+            ready: false,
+        };
+        mtx_init(&mut shared.mtx, 0);
+        cnd_init(&mut shared.cond);
+        BROADCAST_COUNTER.store(0, Ordering::SeqCst);
+
+        let mut threads = [0 as libc::pthread_t; 3];
+        for thr in threads.iter_mut() {
+            thrd_create(
+                thr,
+                Some(broadcast_waiter),
+                &mut shared as *mut _ as *mut c_void,
+            );
+        }
+
+        std::thread::sleep(std::time::Duration::from_millis(20));
+
+        mtx_lock(&mut shared.mtx);
+        shared.ready = true;
+        cnd_broadcast(&mut shared.cond);
+        mtx_unlock(&mut shared.mtx);
+
+        for &thr in threads.iter() {
+            thrd_join(thr, std::ptr::null_mut());
+        }
+        assert_eq!(
+            BROADCAST_COUNTER.load(Ordering::SeqCst),
+            3,
+            "broadcast should wake all 3 waiters"
+        );
+
+        cnd_destroy(&mut shared.cond);
+        mtx_destroy(&mut shared.mtx);
+    }
+}
+
+// ===========================================================================
 // versionsort tests
 // ===========================================================================
 
