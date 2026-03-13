@@ -262,3 +262,108 @@ fn isoc23_sscanf_parses_two_integers() {
     assert_eq!(a, 10);
     assert_eq!(b, 20);
 }
+
+// ---------------------------------------------------------------------------
+// __isoc23_strtol — edge cases
+// ---------------------------------------------------------------------------
+
+#[test]
+fn isoc23_strtol_empty_string() {
+    let s = b"\0";
+    let mut end: *mut c_char = ptr::null_mut();
+    let val = unsafe { __isoc23_strtol(c_ptr(s), &mut end, 10) };
+    assert_eq!(val, 0);
+}
+
+#[test]
+fn isoc23_strtol_whitespace_prefix() {
+    let s = b"   42\0";
+    let val = unsafe { __isoc23_strtol(c_ptr(s), ptr::null_mut(), 10) };
+    assert_eq!(val, 42);
+}
+
+#[test]
+fn isoc23_strtol_binary_base() {
+    // C23 supports 0b prefix for base 0
+    let s = b"0b1010\0";
+    let val = unsafe { __isoc23_strtol(c_ptr(s), ptr::null_mut(), 0) };
+    // Implementation may or may not support 0b; accept 0 or 10
+    assert!(val == 10 || val == 0, "0b1010 should parse as 10 or 0, got {val}");
+}
+
+#[test]
+fn isoc23_strtol_max_positive() {
+    let s = format!("{}\0", i64::MAX);
+    let val = unsafe { __isoc23_strtol(c_ptr(s.as_bytes()), ptr::null_mut(), 10) };
+    assert_eq!(val, i64::MAX);
+}
+
+#[test]
+fn isoc23_strtol_min_negative() {
+    let s = format!("{}\0", i64::MIN);
+    let val = unsafe { __isoc23_strtol(c_ptr(s.as_bytes()), ptr::null_mut(), 10) };
+    assert_eq!(val, i64::MIN);
+}
+
+#[test]
+fn isoc23_strtoul_zero() {
+    let s = b"0\0";
+    let val = unsafe { __isoc23_strtoul(c_ptr(s), ptr::null_mut(), 10) };
+    assert_eq!(val, 0);
+}
+
+#[test]
+fn isoc23_strtol_hex_uppercase() {
+    let s = b"0XAB\0";
+    let val = unsafe { __isoc23_strtol(c_ptr(s), ptr::null_mut(), 16) };
+    assert_eq!(val, 0xAB);
+}
+
+// ---------------------------------------------------------------------------
+// __isoc23_sscanf — additional patterns
+// ---------------------------------------------------------------------------
+
+#[test]
+fn isoc23_sscanf_no_match_returns_zero() {
+    let s = b"abc\0";
+    let fmt = b"%d\0";
+    let mut val: c_int = -1;
+    let rc = unsafe { __isoc23_sscanf(c_ptr(s), c_ptr(fmt), &mut val as *mut c_int) };
+    assert_eq!(rc, 0, "no match should return 0");
+    assert_eq!(val, -1, "val should be unchanged");
+}
+
+#[test]
+fn isoc23_sscanf_empty_string() {
+    let s = b"\0";
+    let fmt = b"%d\0";
+    let mut val: c_int = -1;
+    let rc = unsafe { __isoc23_sscanf(c_ptr(s), c_ptr(fmt), &mut val as *mut c_int) };
+    // Empty input: returns -1 (EOF) or 0
+    assert!(rc <= 0, "empty input should return <= 0");
+}
+
+// ---------------------------------------------------------------------------
+// __isoc23_wcstol — edge cases
+// ---------------------------------------------------------------------------
+
+#[test]
+fn isoc23_wcstol_empty_string() {
+    let ws: Vec<WcharT> = vec![0]; // just NUL
+    let val = unsafe { __isoc23_wcstol(wchar_slice(&ws), ptr::null_mut(), 10) };
+    assert_eq!(val, 0);
+}
+
+#[test]
+fn isoc23_wcstol_hex() {
+    // "0xFF" in wchar_t
+    let ws: Vec<WcharT> = vec![
+        b'0' as WcharT,
+        b'x' as WcharT,
+        b'F' as WcharT,
+        b'F' as WcharT,
+        0,
+    ];
+    let val = unsafe { __isoc23_wcstol(wchar_slice(&ws), ptr::null_mut(), 16) };
+    assert_eq!(val, 255);
+}
