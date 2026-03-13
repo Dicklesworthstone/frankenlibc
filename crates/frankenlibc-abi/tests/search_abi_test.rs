@@ -83,6 +83,29 @@ fn hash_global_api() {
     }
 
     unsafe { hdestroy() };
+
+    // --- overwrite: inserting existing key returns existing entry ---
+    unsafe { hcreate(16) };
+
+    let key = CString::new("overwrite_key").unwrap();
+    let item1 = Entry {
+        key: key.as_ptr() as *mut _,
+        data: 100usize as *mut c_void,
+    };
+    let r1 = unsafe { hsearch(item1, Action::ENTER) };
+    assert!(!r1.is_null());
+
+    // Insert same key again with different data
+    let item2 = Entry {
+        key: key.as_ptr() as *mut _,
+        data: 200usize as *mut c_void,
+    };
+    let r2 = unsafe { hsearch(item2, Action::ENTER) };
+    assert!(!r2.is_null());
+    // POSIX: ENTER with existing key returns existing entry (data unchanged)
+    assert_eq!(unsafe { (*r2).data } as usize, 100);
+
+    unsafe { hdestroy() };
 }
 
 // ===========================================================================
@@ -456,32 +479,6 @@ fn remque_null_safety() {
 // ===========================================================================
 // Additional hash table tests
 // ===========================================================================
-
-#[test]
-fn hash_global_overwrite() {
-    // Inserting an existing key should return existing entry, not create duplicate
-    unsafe { hcreate(16) };
-
-    let key = CString::new("overwrite_key").unwrap();
-    let item1 = Entry {
-        key: key.as_ptr() as *mut _,
-        data: 100usize as *mut c_void,
-    };
-    let r1 = unsafe { hsearch(item1, Action::ENTER) };
-    assert!(!r1.is_null());
-
-    // Insert same key again with different data
-    let item2 = Entry {
-        key: key.as_ptr() as *mut _,
-        data: 200usize as *mut c_void,
-    };
-    let r2 = unsafe { hsearch(item2, Action::ENTER) };
-    assert!(!r2.is_null());
-    // POSIX: ENTER with existing key returns existing entry (data unchanged)
-    assert_eq!(unsafe { (*r2).data } as usize, 100);
-
-    unsafe { hdestroy() };
-}
 
 #[test]
 fn hash_reentrant_multiple_tables() {
