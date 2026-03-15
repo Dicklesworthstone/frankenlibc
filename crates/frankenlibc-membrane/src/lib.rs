@@ -41,6 +41,7 @@ pub mod galois;
 pub mod grobner;
 pub mod heal;
 pub mod hji_reachability;
+pub mod ids;
 pub mod large_deviations;
 pub mod lattice;
 pub mod mean_field_game;
@@ -68,6 +69,7 @@ pub use decision_contract::{
     DecisionEvent as DecisionContractEvent, DecisionTransition, TsmState,
 };
 pub use heal::{HealingAction, HealingPolicy};
+pub use ids::{DecisionId, PolicyId, SchemaVersion, TraceId, MEMBRANE_SCHEMA_VERSION};
 pub use lattice::SafetyState;
 pub use metrics::MembraneMetrics;
 pub use pressure_sensor::{PressureSensor, PressureSignals, SystemRegime};

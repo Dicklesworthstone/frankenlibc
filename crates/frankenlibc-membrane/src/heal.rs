@@ -4,6 +4,7 @@
 //! invoking undefined behavior, it applies a deterministic healing action.
 //! Every libc function has defined healing for every class of invalid input.
 
+use crate::ids::{DecisionId, MEMBRANE_SCHEMA_VERSION};
 use parking_lot::Mutex;
 use std::collections::VecDeque;
 use std::sync::LazyLock;
@@ -200,17 +201,21 @@ impl HealingPolicy {
             return;
         }
 
-        let decision_id = self
-            .healing_log_decision_seq
-            .fetch_add(1, Ordering::Relaxed)
-            + 1;
+        let decision_id = DecisionId::from_raw(
+            self.healing_log_decision_seq
+                .fetch_add(1, Ordering::Relaxed)
+                + 1,
+        );
         let level = healing_log_level(action);
         let escalated = healing_action_escalated(action);
+        let trace_id = decision_id.scoped_trace_id("membrane::heal");
         let line = format!(
-            "{{\"trace_id\":\"heal-{decision_id}\",\"decision_id\":{decision_id},\
+            "{{\"trace_id\":\"{trace_id}\",\"decision_id\":{},\"schema_version\":\"{}\",\
 \"bead_id\":\"{HEALING_BEAD_ID}\",\"runtime_mode\":\"{}\",\"level\":\"{level}\",\
 \"api_family\":\"membrane-heal\",\"decision_path\":\"record\",\"outcome\":\"repair\",\
 \"healing_action\":\"{}\",\"escalated\":{escalated},\"details\":{}}}",
+            decision_id.as_u64(),
+            MEMBRANE_SCHEMA_VERSION,
             runtime_mode_label(),
             healing_action_name(action),
             healing_action_details_json(action)
@@ -463,9 +468,10 @@ mod tests {
         assert!(
             row["trace_id"]
                 .as_str()
-                .is_some_and(|id| id.starts_with("heal-"))
+                .is_some_and(|id| id.starts_with("membrane::heal::"))
         );
         assert!(row["decision_id"].as_u64().is_some_and(|id| id > 0));
+        assert_eq!(row["schema_version"].as_str(), Some("1.0"));
     }
 
     #[test]

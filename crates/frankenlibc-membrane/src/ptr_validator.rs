@@ -19,6 +19,7 @@ use crate::check_oracle::CheckStage;
 use crate::config::safety_level;
 use crate::fingerprint::{AllocationFingerprint, CANARY_SIZE, FINGERPRINT_SIZE};
 use crate::galois::PointerAbstraction;
+use crate::ids::{DecisionId, MEMBRANE_SCHEMA_VERSION, PolicyId, TraceId};
 use crate::metrics::{MembraneMetrics, global_metrics};
 use crate::page_oracle::PageOracle;
 use crate::runtime_math::{ApiFamily, RuntimeContext, RuntimeMathKernel, ValidationProfile};
@@ -38,8 +39,8 @@ const MAX_STAGE_LABEL_CARDINALITY: usize = 16;
 
 #[derive(Debug, Clone)]
 struct ValidationTraceContext {
-    decision_id: u64,
-    trace_id: String,
+    decision_id: DecisionId,
+    trace_id: TraceId,
     span_id: String,
     parent_span_id: String,
     security_context: &'static str,
@@ -51,8 +52,8 @@ impl ValidationTraceContext {
     #[must_use]
     fn disabled() -> Self {
         Self {
-            decision_id: 0,
-            trace_id: String::new(),
+            decision_id: DecisionId::from_raw(0),
+            trace_id: TraceId::empty(),
             span_id: String::new(),
             parent_span_id: String::new(),
             security_context: "",
@@ -62,10 +63,16 @@ impl ValidationTraceContext {
     }
 
     #[must_use]
-    fn enabled(decision_id: u64, security_context: ValidationSecurityContext) -> Self {
-        let trace_id = format!("tsm::pointer_validation::{decision_id:016x}");
-        let span_id = format!("tsm::pointer_validation::decision::{decision_id:016x}");
-        let parent_span_id = format!("tsm::pointer_validation::entry::{decision_id:016x}");
+    fn enabled(decision_id: DecisionId, security_context: ValidationSecurityContext) -> Self {
+        let trace_id = decision_id.scoped_trace_id("tsm::pointer_validation");
+        let span_id = format!(
+            "tsm::pointer_validation::decision::{:016x}",
+            decision_id.as_u64()
+        );
+        let parent_span_id = format!(
+            "tsm::pointer_validation::entry::{:016x}",
+            decision_id.as_u64()
+        );
         Self {
             decision_id,
             trace_id,
@@ -83,7 +90,7 @@ impl ValidationTraceContext {
 
     #[must_use]
     const fn is_enabled(&self) -> bool {
-        self.decision_id != 0
+        self.decision_id.is_assigned()
     }
 }
 
@@ -251,10 +258,11 @@ impl ValidationPipeline {
             return ValidationTraceContext::disabled();
         }
 
-        let decision_id = self
-            .validation_log_decision_seq
-            .fetch_add(1, Ordering::Relaxed)
-            .saturating_add(1);
+        let decision_id = DecisionId::from_raw(
+            self.validation_log_decision_seq
+                .fetch_add(1, Ordering::Relaxed)
+                .saturating_add(1),
+        );
         ValidationTraceContext::enabled(decision_id, security_context)
     }
 
@@ -302,17 +310,20 @@ impl ValidationPipeline {
 
         let timestamp = Self::now_utc_iso_like();
         let mode_label = Self::mode_name(mode);
+        let policy_id = PolicyId::from_raw(policy_id);
         let mut line = String::with_capacity(512);
         let _ = write!(
             &mut line,
-            "{{\"timestamp\":\"{timestamp}\",\"trace_id\":\"{}\",\"span_id\":\"{}\",\"parent_span_id\":\"{}\",\"decision_id\":{},\"level\":\"{level}\",\"event\":\"{event}\",\"controller_id\":\"tsm_validation_pipeline.v1\",\"decision_path\":\"{decision_path}\",\"decision_action\":\"{decision_action}\",\"outcome\":\"{outcome}\",\"mode\":\"{mode_label}\",\"api_family\":\"pointer_validation\",\"symbol\":\"membrane::ptr_validator::validate\",\"stage\":\"{stage}\",\"security_context\":\"{}\",\"capability_scope\":\"{}\",\"security_verdict\":\"{}\",\"latency_ns\":{latency_ns},\"policy_id\":{policy_id},\"risk_upper_bound_ppm\":{risk_upper_bound_ppm},\"evidence_seqno\":{evidence_seqno},\"stage_inputs\":{{\"aligned\":{aligned},\"recent_page\":{recent_page},\"bloom_negative\":{bloom_negative},\"cache_hit\":{cache_hit}}},\"artifact_refs\":[\"crates/frankenlibc-membrane/src/ptr_validator.rs\"]}}",
-            trace.trace_id,
+            "{{\"timestamp\":\"{timestamp}\",\"trace_id\":\"{}\",\"span_id\":\"{}\",\"parent_span_id\":\"{}\",\"decision_id\":{},\"schema_version\":\"{}\",\"level\":\"{level}\",\"event\":\"{event}\",\"controller_id\":\"tsm_validation_pipeline.v1\",\"decision_path\":\"{decision_path}\",\"decision_action\":\"{decision_action}\",\"outcome\":\"{outcome}\",\"mode\":\"{mode_label}\",\"api_family\":\"pointer_validation\",\"symbol\":\"membrane::ptr_validator::validate\",\"stage\":\"{stage}\",\"security_context\":\"{}\",\"capability_scope\":\"{}\",\"security_verdict\":\"{}\",\"latency_ns\":{latency_ns},\"policy_id\":{},\"risk_upper_bound_ppm\":{risk_upper_bound_ppm},\"evidence_seqno\":{evidence_seqno},\"stage_inputs\":{{\"aligned\":{aligned},\"recent_page\":{recent_page},\"bloom_negative\":{bloom_negative},\"cache_hit\":{cache_hit}}},\"artifact_refs\":[\"crates/frankenlibc-membrane/src/ptr_validator.rs\"]}}",
+            trace.trace_id.as_str(),
             trace.span_id,
             trace.parent_span_id,
-            trace.decision_id,
+            trace.decision_id.as_u64(),
+            MEMBRANE_SCHEMA_VERSION,
             trace.security_context,
             trace.capability_scope,
             trace.security_verdict,
+            policy_id.as_u32(),
         );
         self.push_validation_log_line(line);
     }
@@ -1981,8 +1992,13 @@ mod tests {
 
         for line in jsonl.lines().filter(|line| !line.trim().is_empty()) {
             let row: Value = serde_json::from_str(line).expect("row must be valid JSON");
-            assert!(row.get("trace_id").and_then(Value::as_str).is_some());
+            let trace_id = row
+                .get("trace_id")
+                .and_then(Value::as_str)
+                .expect("trace_id must be present");
+            assert!(trace_id.contains("::"));
             assert!(row.get("decision_id").and_then(Value::as_u64).is_some());
+            assert_eq!(row.get("schema_version").and_then(Value::as_str), Some("1.0"));
             assert!(row.get("decision_path").and_then(Value::as_str).is_some());
             assert!(row.get("level").and_then(Value::as_str).is_some());
             assert!(row.get("stage").and_then(Value::as_str).is_some());
