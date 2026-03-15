@@ -23,6 +23,7 @@ use parking_lot::Mutex;
 
 use crate::config::SafetyLevel;
 use crate::heal::HealingAction;
+use crate::ids::{DecisionId, MEMBRANE_SCHEMA_VERSION, PolicyId};
 use crate::runtime_math::{
     ApiFamily, MembraneAction, RuntimeContext, RuntimeDecision, ValidationProfile,
 };
@@ -1443,16 +1444,22 @@ impl<const CAP: usize> SystematicEvidenceLog<CAP> {
         let mut out = String::with_capacity(cards.len().saturating_mul(256).saturating_add(128));
         out.push_str("{\"schema\":\"decision_cards.v1\",\"count\":");
         let _ = write!(&mut out, "{}", cards.len());
-        out.push_str(",\"cards\":[");
+        let _ = write!(
+            &mut out,
+            ",\"schema_version\":\"{}\",\"cards\":[",
+            MEMBRANE_SCHEMA_VERSION
+        );
 
         for (idx, card) in cards.iter().enumerate() {
             if idx > 0 {
                 out.push(',');
             }
+            let decision_id = DecisionId::from_raw(card.decision_id);
+            let policy_id = PolicyId::from_raw(card.decision.policy_id);
             let _ = write!(
                 &mut out,
                 "{{\"decision_id\":{},\"decision_type\":{},\"thread_id\":{},\"symbol_id\":{},\"timestamp_mono_ns\":{},\"epoch_id\":{},\"evidence_seqno\":{},\"family\":{},\"mode\":{},\"profile\":{},\"action\":{},\"counterfactual_action\":{},\"policy_id\":{},\"risk_upper_bound_ppm\":{},\"adverse\":{},\"estimated_cost_ns\":{},\"reasoning_flags\":{},\"context\":{{\"addr_hint\":{},\"requested_bytes\":{},\"is_write\":{},\"contention_hint\":{},\"bloom_negative\":{}}}",
-                card.decision_id,
+                decision_id.as_u64(),
                 card.decision_type as u8,
                 card.thread_id,
                 card.symbol_id,
@@ -1464,7 +1471,7 @@ impl<const CAP: usize> SystematicEvidenceLog<CAP> {
                 profile_code(card.decision.profile),
                 action_code(card.decision.action),
                 action_code(card.counterfactual_action),
-                card.decision.policy_id,
+                policy_id.as_u32(),
                 card.decision.risk_upper_bound_ppm,
                 card.adverse,
                 card.estimated_cost_ns,
@@ -2420,9 +2427,14 @@ mod tests {
             Some("decision_cards.v1"),
             "schema field mismatch"
         );
+        assert_eq!(parsed["schema_version"].as_str(), Some("1.0"));
         assert_eq!(parsed["count"].as_u64(), Some(2));
         assert!(parsed["cards"].is_array());
         assert_eq!(parsed["cards"].as_array().unwrap().len(), 2);
+        for card in parsed["cards"].as_array().expect("cards must be array") {
+            assert!(card["decision_id"].as_u64().is_some_and(|id| id > 0));
+            assert!(card["policy_id"].as_u64().is_some_and(|id| id > 0));
+        }
     }
 
     #[test]
