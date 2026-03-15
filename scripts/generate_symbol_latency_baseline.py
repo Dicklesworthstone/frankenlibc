@@ -36,6 +36,12 @@ def _load_json(path: str) -> Any:
         return json.load(handle)
 
 
+def _load_optional_json(path: str, default: Any) -> Any:
+    if not os.path.exists(path):
+        return default
+    return _load_json(path)
+
+
 def _safe_float(value: Any) -> float | None:
     if isinstance(value, (int, float)):
         return float(value)
@@ -109,7 +115,7 @@ def generate_inventory(
     symbol_fixture_coverage_path: str,
 ) -> dict[str, Any]:
     support = _load_json(support_matrix_path)
-    perf_baseline = _load_json(perf_baseline_path)
+    perf_baseline = _load_optional_json(perf_baseline_path, {})
     fixture_cov = _read_fixture_coverage(symbol_fixture_coverage_path)
 
     symbols = support.get("symbols", [])

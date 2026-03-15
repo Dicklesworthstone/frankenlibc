@@ -1,46 +1,145 @@
 //! String function benchmarks.
 
+use std::cell::RefCell;
+use std::time::{Duration, Instant};
+
 use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
+use frankenlibc_core::string::{memcpy, strlen};
+
+#[derive(Default)]
+struct BenchStats {
+    samples_ns_per_op: Vec<f64>,
+    total_iters: u64,
+    total_ns: u128,
+}
+
+impl BenchStats {
+    fn record(&mut self, iters: u64, dur: Duration) {
+        let ns = dur.as_nanos();
+        self.total_iters = self.total_iters.saturating_add(iters);
+        self.total_ns = self.total_ns.saturating_add(ns);
+        self.samples_ns_per_op.push(ns as f64 / iters as f64);
+    }
+
+    fn report(&self, mode_label: &str, bench_label: &str) {
+        let mut samples = self.samples_ns_per_op.clone();
+        if samples.is_empty() {
+            return;
+        }
+        samples.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+
+        let p50 = percentile_sorted(&samples, 0.50);
+        let p95 = percentile_sorted(&samples, 0.95);
+        let p99 = percentile_sorted(&samples, 0.99);
+        let mean = samples.iter().sum::<f64>() / samples.len() as f64;
+        let throughput_ops_s = if self.total_ns == 0 {
+            0.0
+        } else {
+            (self.total_iters as f64) / (self.total_ns as f64 / 1e9)
+        };
+
+        println!(
+            "STRING_BENCH mode={} bench={} samples={} p50_ns_op={:.3} p95_ns_op={:.3} p99_ns_op={:.3} mean_ns_op={:.3} throughput_ops_s={:.3}",
+            mode_label,
+            bench_label,
+            samples.len(),
+            p50,
+            p95,
+            p99,
+            mean,
+            throughput_ops_s
+        );
+    }
+}
+
+fn percentile_sorted(sorted: &[f64], p: f64) -> f64 {
+    debug_assert!((0.0..=1.0).contains(&p));
+    if sorted.is_empty() {
+        return 0.0;
+    }
+    let idx = ((sorted.len() - 1) as f64 * p).round() as usize;
+    sorted[idx.min(sorted.len() - 1)]
+}
+
+fn mode_label() -> &'static str {
+    match std::env::var("FRANKENLIBC_MODE").ok().as_deref() {
+        Some("hardened") => "hardened",
+        Some("strict") => "strict",
+        _ => "raw",
+    }
+}
 
 fn bench_memcpy_sizes(c: &mut Criterion) {
     let sizes: &[usize] = &[16, 64, 256, 1024, 4096, 65536];
+    let mode = mode_label();
     let mut group = c.benchmark_group("memcpy");
 
     for &size in sizes {
         let src = vec![0xABu8; size];
+        let mut dst = vec![0u8; size];
+        let bench_label = format!("memcpy_{size}");
         group.throughput(Throughput::Bytes(size as u64));
 
-        group.bench_with_input(BenchmarkId::new("frankenlibc", size), &size, |b, &sz| {
-            b.iter(|| {
-                let mut dst = vec![0u8; sz];
-                // TODO: call frankenlibc-abi memcpy when wired
-                dst.copy_from_slice(&src[..sz]);
-                black_box(dst);
+        for _ in 0..10_000 {
+            black_box(memcpy(&mut dst, &src, size));
+        }
+
+        let stats = RefCell::new(BenchStats::default());
+        group.bench_with_input(BenchmarkId::new(mode, size), &size, |b, &sz| {
+            b.iter_custom(|iters| {
+                let start = Instant::now();
+                for _ in 0..iters {
+                    black_box(memcpy(&mut dst, &src, sz));
+                    black_box(dst[0]);
+                }
+                let dur = start.elapsed().max(Duration::from_nanos(1));
+                stats.borrow_mut().record(iters, dur);
+                dur
             });
         });
+        stats.borrow().report(mode, &bench_label);
     }
     group.finish();
 }
 
 fn bench_strlen(c: &mut Criterion) {
     let sizes: &[usize] = &[16, 64, 256, 1024, 4096];
+    let mode = mode_label();
     let mut group = c.benchmark_group("strlen");
 
     for &size in sizes {
         let mut s = vec![b'A'; size];
-        s.push(0); // null terminator
+        let bench_label = format!("strlen_{size}");
+        s.push(0);
         group.throughput(Throughput::Bytes(size as u64));
 
-        group.bench_with_input(BenchmarkId::new("safe_rust", size), &size, |b, _| {
-            b.iter(|| {
-                // Find null byte position
-                let len = s.iter().position(|&c| c == 0).unwrap_or(s.len());
-                black_box(len);
+        for _ in 0..10_000 {
+            black_box(strlen(&s));
+        }
+
+        let stats = RefCell::new(BenchStats::default());
+        group.bench_with_input(BenchmarkId::new(mode, size), &size, |b, _| {
+            b.iter_custom(|iters| {
+                let start = Instant::now();
+                for _ in 0..iters {
+                    black_box(strlen(&s));
+                }
+                let dur = start.elapsed().max(Duration::from_nanos(1));
+                stats.borrow_mut().record(iters, dur);
+                dur
             });
         });
+        stats.borrow().report(mode, &bench_label);
     }
     group.finish();
 }
 
-criterion_group!(benches, bench_memcpy_sizes, bench_strlen);
+criterion_group!(
+    name = benches;
+    config = Criterion::default()
+        .warm_up_time(Duration::from_millis(1))
+        .measurement_time(Duration::from_secs(2))
+        .sample_size(100);
+    targets = bench_memcpy_sizes, bench_strlen
+);
 criterion_main!(benches);

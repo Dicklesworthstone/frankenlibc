@@ -111,28 +111,28 @@ fn summary_counts_consistent() {
     let strict_p50 = measured["strict"]["p50"].as_u64().unwrap();
     let hardened_p50 = measured["hardened"]["p50"].as_u64().unwrap();
     assert!(
-        raw_p50 >= 12,
-        "expected at least 12 raw p50 measurements from ingestion, got {raw_p50}"
+        raw_p50 >= 14,
+        "expected at least 14 raw p50 measurements from ingestion after string bench capture, got {raw_p50}"
     );
     assert!(
-        strict_p50 >= 12,
-        "expected at least 12 strict p50 measurements from ingestion, got {strict_p50}"
+        strict_p50 >= 14,
+        "expected at least 14 strict p50 measurements from ingestion after string bench capture, got {strict_p50}"
     );
     assert!(
-        hardened_p50 >= 12,
-        "expected at least 12 hardened p50 measurements from ingestion, got {hardened_p50}"
+        hardened_p50 >= 14,
+        "expected at least 14 hardened p50 measurements from ingestion after string bench capture, got {hardened_p50}"
     );
 
     let ingestion = doc["ingestion"].as_object().unwrap();
     let updated_symbols = ingestion["updated_symbols"].as_u64().unwrap();
     let updated_modes = ingestion["updated_modes"].as_u64().unwrap();
     assert!(
-        updated_symbols >= 12,
-        "expected at least 12 symbols updated by ingestion, got {updated_symbols}"
+        updated_symbols >= 14,
+        "expected at least 14 symbols updated by ingestion after string bench capture, got {updated_symbols}"
     );
     assert!(
-        updated_modes >= 36,
-        "expected at least 36 mode rows updated by ingestion after raw thread ingestion, got {updated_modes}"
+        updated_modes >= 42,
+        "expected at least 42 mode rows updated by ingestion after string bench capture, got {updated_modes}"
     );
 }
 

@@ -35,6 +35,11 @@ fail() {
 [[ -f "${CAPTURE_MAP}" ]] || fail "missing capture map: ${CAPTURE_MAP}"
 [[ -f "${SAMPLE_LOG}" ]] || fail "missing sample log: ${SAMPLE_LOG}"
 
+perf_baseline_arg=()
+if [[ -f "${ROOT}/scripts/perf_baseline.json" ]]; then
+    perf_baseline_arg=(--perf-baseline "scripts/perf_baseline.json")
+fi
+
 tmp_out="$(mktemp)"
 trap 'rm -f "${tmp_out}"' EXIT
 
@@ -42,7 +47,7 @@ trap 'rm -f "${tmp_out}"' EXIT
     cd "${ROOT}"
     python3 "scripts/generate_symbol_latency_baseline.py" \
         --support-matrix "support_matrix.json" \
-        --perf-baseline "scripts/perf_baseline.json" \
+        "${perf_baseline_arg[@]}" \
         --symbol-fixture-coverage "tests/conformance/symbol_fixture_coverage.v1.json" \
         --output "${tmp_out}" \
         --quiet

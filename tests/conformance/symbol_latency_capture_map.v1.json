@@ -163,6 +163,85 @@
           ]
         }
       ]
+    },
+    {
+      "id": "string_hotpath",
+      "line_prefix": "STRING_BENCH",
+      "mode_key": "mode",
+      "bench_key": "bench",
+      "percentile_keys": {
+        "p50": "p50_ns_op",
+        "p95": "p95_ns_op",
+        "p99": "p99_ns_op"
+      },
+      "bench_symbol_map": [
+        {
+          "bench": "memcpy_16",
+          "symbols": [
+            "memcpy"
+          ]
+        },
+        {
+          "bench": "memcpy_64",
+          "symbols": [
+            "memcpy"
+          ]
+        },
+        {
+          "bench": "memcpy_256",
+          "symbols": [
+            "memcpy"
+          ]
+        },
+        {
+          "bench": "memcpy_1024",
+          "symbols": [
+            "memcpy"
+          ]
+        },
+        {
+          "bench": "memcpy_4096",
+          "symbols": [
+            "memcpy"
+          ]
+        },
+        {
+          "bench": "memcpy_65536",
+          "symbols": [
+            "memcpy"
+          ]
+        },
+        {
+          "bench": "strlen_16",
+          "symbols": [
+            "strlen"
+          ]
+        },
+        {
+          "bench": "strlen_64",
+          "symbols": [
+            "strlen"
+          ]
+        },
+        {
+          "bench": "strlen_256",
+          "symbols": [
+            "strlen"
+          ]
+        },
+        {
+          "bench": "strlen_1024",
+          "symbols": [
+            "strlen"
+          ]
+        },
+        {
+          "bench": "strlen_4096",
+          "symbols": [
+            "strlen"
+          ]
+        }
+      ]
     }
   ]
 }
