@@ -71,7 +71,7 @@ pub use heal::{HealingAction, HealingPolicy};
 pub use lattice::SafetyState;
 pub use metrics::MembraneMetrics;
 pub use pressure_sensor::{PressureSensor, PressureSignals, SystemRegime};
-pub use ptr_validator::{ValidationOutcome, ValidationPipeline};
+pub use ptr_validator::{ValidationOutcome, ValidationPipeline, ValidationSecurityContext};
 pub use runtime_math::{
     ApiFamily, MembraneAction, RuntimeContext, RuntimeDecision, RuntimeMathKernel,
     ValidationProfile,

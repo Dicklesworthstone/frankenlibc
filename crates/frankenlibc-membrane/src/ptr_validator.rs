@@ -42,6 +42,9 @@ struct ValidationTraceContext {
     trace_id: String,
     span_id: String,
     parent_span_id: String,
+    security_context: &'static str,
+    capability_scope: &'static str,
+    security_verdict: &'static str,
 }
 
 impl ValidationTraceContext {
@@ -52,11 +55,14 @@ impl ValidationTraceContext {
             trace_id: String::new(),
             span_id: String::new(),
             parent_span_id: String::new(),
+            security_context: "",
+            capability_scope: "",
+            security_verdict: "",
         }
     }
 
     #[must_use]
-    fn enabled(decision_id: u64) -> Self {
+    fn enabled(decision_id: u64, security_context: ValidationSecurityContext) -> Self {
         let trace_id = format!("tsm::pointer_validation::{decision_id:016x}");
         let span_id = format!("tsm::pointer_validation::decision::{decision_id:016x}");
         let parent_span_id = format!("tsm::pointer_validation::entry::{decision_id:016x}");
@@ -65,6 +71,13 @@ impl ValidationTraceContext {
             trace_id,
             span_id,
             parent_span_id,
+            security_context: security_context.label(),
+            capability_scope: "pointer_validation",
+            security_verdict: if security_context.allows_pointer_validation() {
+                "allow"
+            } else {
+                "deny"
+            },
         }
     }
 
@@ -89,6 +102,8 @@ pub enum ValidationOutcome {
     TemporalViolation(PointerAbstraction),
     /// Pointer belongs to our allocation metadata but fails bounds admissibility.
     Invalid(PointerAbstraction),
+    /// Pointer validation denied by security context before pipeline execution.
+    Denied(PointerAbstraction),
     /// Validation skipped (SafetyLevel::Off).
     Bypassed,
 }
@@ -102,7 +117,8 @@ impl ValidationOutcome {
             | Self::Validated(a)
             | Self::Foreign(a)
             | Self::TemporalViolation(a)
-            | Self::Invalid(a) => Some(*a),
+            | Self::Invalid(a)
+            | Self::Denied(a) => Some(*a),
             Self::Null => Some(PointerAbstraction::null()),
             Self::Bypassed => None,
         }
@@ -115,7 +131,7 @@ impl ValidationOutcome {
             Self::CachedValid(a) | Self::Validated(a) => a.state.can_read(),
             Self::Foreign(_) => true, // Allow foreign pointers (Galois property)
             Self::Bypassed => true,
-            Self::Null | Self::TemporalViolation(_) | Self::Invalid(_) => false,
+            Self::Null | Self::TemporalViolation(_) | Self::Invalid(_) | Self::Denied(_) => false,
         }
     }
 
@@ -126,8 +142,45 @@ impl ValidationOutcome {
             Self::CachedValid(a) | Self::Validated(a) => a.state.can_write(),
             Self::Foreign(_) => true,
             Self::Bypassed => true,
-            Self::Null | Self::TemporalViolation(_) | Self::Invalid(_) => false,
+            Self::Null | Self::TemporalViolation(_) | Self::Invalid(_) | Self::Denied(_) => false,
         }
+    }
+}
+
+/// Default-deny security context for membrane validation entrypoints.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ValidationSecurityContext {
+    pointer_validation_allowed: bool,
+    label: &'static str,
+}
+
+impl ValidationSecurityContext {
+    /// Allow pointer validation through the membrane.
+    #[must_use]
+    pub const fn allow_pointer_validation() -> Self {
+        Self {
+            pointer_validation_allowed: true,
+            label: "default_allow",
+        }
+    }
+
+    /// Deny all membrane pointer validation operations.
+    #[must_use]
+    pub const fn deny_all() -> Self {
+        Self {
+            pointer_validation_allowed: false,
+            label: "deny_all",
+        }
+    }
+
+    #[must_use]
+    pub const fn allows_pointer_validation(self) -> bool {
+        self.pointer_validation_allowed
+    }
+
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        self.label
     }
 }
 
@@ -190,7 +243,10 @@ impl ValidationPipeline {
     }
 
     #[must_use]
-    fn begin_validation_trace(&self) -> ValidationTraceContext {
+    fn begin_validation_trace(
+        &self,
+        security_context: ValidationSecurityContext,
+    ) -> ValidationTraceContext {
         if !self.validation_logging_enabled.load(Ordering::Relaxed) {
             return ValidationTraceContext::disabled();
         }
@@ -199,7 +255,7 @@ impl ValidationPipeline {
             .validation_log_decision_seq
             .fetch_add(1, Ordering::Relaxed)
             .saturating_add(1);
-        ValidationTraceContext::enabled(decision_id)
+        ValidationTraceContext::enabled(decision_id, security_context)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -233,6 +289,7 @@ impl ValidationPipeline {
             stage,
             "safety_level"
                 | "stage_ordering"
+                | "security_context"
                 | "null_check"
                 | "tls_cache"
                 | "bloom"
@@ -248,8 +305,14 @@ impl ValidationPipeline {
         let mut line = String::with_capacity(512);
         let _ = write!(
             &mut line,
-            "{{\"timestamp\":\"{timestamp}\",\"trace_id\":\"{}\",\"span_id\":\"{}\",\"parent_span_id\":\"{}\",\"decision_id\":{},\"level\":\"{level}\",\"event\":\"{event}\",\"controller_id\":\"tsm_validation_pipeline.v1\",\"decision_path\":\"{decision_path}\",\"decision_action\":\"{decision_action}\",\"outcome\":\"{outcome}\",\"mode\":\"{mode_label}\",\"api_family\":\"pointer_validation\",\"symbol\":\"membrane::ptr_validator::validate\",\"stage\":\"{stage}\",\"latency_ns\":{latency_ns},\"policy_id\":{policy_id},\"risk_upper_bound_ppm\":{risk_upper_bound_ppm},\"evidence_seqno\":{evidence_seqno},\"stage_inputs\":{{\"aligned\":{aligned},\"recent_page\":{recent_page},\"bloom_negative\":{bloom_negative},\"cache_hit\":{cache_hit}}},\"artifact_refs\":[\"crates/frankenlibc-membrane/src/ptr_validator.rs\"]}}",
-            trace.trace_id, trace.span_id, trace.parent_span_id, trace.decision_id,
+            "{{\"timestamp\":\"{timestamp}\",\"trace_id\":\"{}\",\"span_id\":\"{}\",\"parent_span_id\":\"{}\",\"decision_id\":{},\"level\":\"{level}\",\"event\":\"{event}\",\"controller_id\":\"tsm_validation_pipeline.v1\",\"decision_path\":\"{decision_path}\",\"decision_action\":\"{decision_action}\",\"outcome\":\"{outcome}\",\"mode\":\"{mode_label}\",\"api_family\":\"pointer_validation\",\"symbol\":\"membrane::ptr_validator::validate\",\"stage\":\"{stage}\",\"security_context\":\"{}\",\"capability_scope\":\"{}\",\"security_verdict\":\"{}\",\"latency_ns\":{latency_ns},\"policy_id\":{policy_id},\"risk_upper_bound_ppm\":{risk_upper_bound_ppm},\"evidence_seqno\":{evidence_seqno},\"stage_inputs\":{{\"aligned\":{aligned},\"recent_page\":{recent_page},\"bloom_negative\":{bloom_negative},\"cache_hit\":{cache_hit}}},\"artifact_refs\":[\"crates/frankenlibc-membrane/src/ptr_validator.rs\"]}}",
+            trace.trace_id,
+            trace.span_id,
+            trace.parent_span_id,
+            trace.decision_id,
+            trace.security_context,
+            trace.capability_scope,
+            trace.security_verdict,
         );
         self.push_validation_log_line(line);
     }
@@ -429,10 +492,65 @@ impl ValidationPipeline {
     /// @separation-frame: `F` (caller-owned heap and non-membrane regions remain untouched).
     /// @separation-alias: `validate_pointer`.
     pub fn validate(&self, addr: usize) -> ValidationOutcome {
+        self.validate_with_security_context(addr, ValidationSecurityContext::allow_pointer_validation())
+    }
+
+    /// Run a pointer through the validation pipeline under an explicit security context.
+    pub fn validate_with_security_context(
+        &self,
+        addr: usize,
+        security_context: ValidationSecurityContext,
+    ) -> ValidationOutcome {
         let metrics = global_metrics();
         MembraneMetrics::inc(&metrics.validations);
         let mode = safety_level();
-        let trace = self.begin_validation_trace();
+        let trace = self.begin_validation_trace(security_context);
+
+        self.emit_validation_log(
+            &trace,
+            mode,
+            "trace",
+            "validation_stage",
+            "security_context",
+            "pipeline::stage0::security_context",
+            "Observe",
+            "Continue",
+            0,
+            false,
+            false,
+            false,
+            false,
+            0,
+            0,
+            0,
+        );
+
+        if !security_context.allows_pointer_validation() {
+            self.emit_terminal_transition(
+                &trace,
+                mode,
+                "security_context",
+                "pipeline::stage0::security_context",
+                "Deny",
+                "CapabilityDenied",
+                0,
+                false,
+                false,
+                false,
+                false,
+                0,
+                0,
+                0,
+                true,
+            );
+            return ValidationOutcome::Denied(PointerAbstraction {
+                addr,
+                state: crate::lattice::SafetyState::Invalid,
+                alloc_base: None,
+                remaining: None,
+                generation: None,
+            });
+        }
 
         // Stage 0: Safety level check
         if !mode.validation_enabled() {
@@ -1868,7 +1986,31 @@ mod tests {
             assert!(row.get("decision_path").and_then(Value::as_str).is_some());
             assert!(row.get("level").and_then(Value::as_str).is_some());
             assert!(row.get("stage").and_then(Value::as_str).is_some());
+            assert!(row.get("security_context").and_then(Value::as_str).is_some());
+            assert!(row.get("capability_scope").and_then(Value::as_str).is_some());
+            assert!(row.get("security_verdict").and_then(Value::as_str).is_some());
         }
+    }
+
+    #[test]
+    fn security_context_default_deny_is_fail_closed() {
+        let pipeline = ValidationPipeline::new();
+        pipeline.set_validation_logging_enabled(true);
+        pipeline.clear_validation_logs();
+
+        let ptr = pipeline.allocate(64).expect("alloc");
+        let outcome =
+            pipeline.validate_with_security_context(ptr as usize, ValidationSecurityContext::deny_all());
+        assert!(matches!(outcome, ValidationOutcome::Denied(_)));
+        assert!(!outcome.can_read());
+        assert!(!outcome.can_write());
+
+        let stages = collected_stage_labels(&pipeline.export_validation_log_jsonl());
+        assert!(stages.contains("security_context"));
+        assert!(!stages.contains("null_check"));
+        assert!(!stages.contains("tls_cache"));
+
+        let _ = pipeline.free(ptr);
     }
 
     #[test]
