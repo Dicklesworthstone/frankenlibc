@@ -24,7 +24,7 @@ cat >"${INJECTED}" <<'JSON'
 {
   "runtime_math": {
     "strict": {
-      "decide": 70.000,
+      "decide": 270.000,
       "observe_fast": 1870.910,
       "decide_observe": 919.211
     },
