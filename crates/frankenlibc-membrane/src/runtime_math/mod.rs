@@ -5714,12 +5714,27 @@ mod tests {
             reverse_round_selection_row["api_family"].as_str(),
             Some("runtime_math")
         );
+        assert_eq!(
+            reverse_round_selection_row["symbol"].as_str(),
+            Some("runtime_math::reverse_round")
+        );
+        assert_eq!(
+            reverse_round_selection_row["decision_path"].as_str(),
+            Some("reverse_round::math_family_selection")
+        );
         assert!(
             reverse_round_selection_row["trace_id"]
                 .as_str()
                 .is_some_and(|trace_id| {
                     trace_id.starts_with("runtime_math::reverse_round::selection::")
                 })
+        );
+        assert_eq!(
+            reverse_round_selection_row["artifact_refs"]
+                .as_array()
+                .and_then(|refs| refs.first())
+                .and_then(Value::as_str),
+            Some("crates/frankenlibc-membrane/src/runtime_math/mod.rs")
         );
     }
 
