@@ -1996,7 +1996,10 @@ mod tests {
                 .get("trace_id")
                 .and_then(Value::as_str)
                 .expect("trace_id must be present");
-            assert!(trace_id.contains("::"));
+            assert!(
+                trace_id.starts_with("tsm::pointer_validation::"),
+                "trace_id must use canonical pointer-validation scope"
+            );
             assert!(row.get("decision_id").and_then(Value::as_u64).is_some());
             assert_eq!(row.get("schema_version").and_then(Value::as_str), Some("1.0"));
             assert!(row.get("decision_path").and_then(Value::as_str).is_some());
