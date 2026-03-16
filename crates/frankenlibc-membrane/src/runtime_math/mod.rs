@@ -5558,24 +5558,37 @@ mod tests {
             parsed.get("schema").and_then(Value::as_str),
             Some("decision_cards.v1")
         );
+        assert_eq!(
+            parsed.get("schema_version").and_then(Value::as_str),
+            Some("1.0")
+        );
         let cards = parsed
             .get("cards")
             .and_then(Value::as_array)
             .expect("cards array must be present");
         assert!(!cards.is_empty(), "at least one decision card is expected");
+        assert_eq!(
+            parsed.get("count").and_then(Value::as_u64),
+            Some(cards.len() as u64)
+        );
         let first = cards[0]
             .as_object()
             .expect("decision card entries must be JSON objects");
         for key in [
+            "trace_id",
             "decision_id",
             "decision_type",
             "timestamp_mono_ns",
             "family",
             "mode",
+            "api_family",
+            "symbol",
+            "decision_path",
             "profile",
             "action",
             "policy_id",
             "risk_upper_bound_ppm",
+            "artifact_refs",
             "context",
         ] {
             assert!(
@@ -5583,6 +5596,56 @@ mod tests {
                 "decision card must contain required key `{key}`"
             );
         }
+        assert!(
+            first
+                .get("trace_id")
+                .and_then(Value::as_str)
+                .is_some_and(|trace_id| trace_id.starts_with("runtime_math::decision_card::")),
+            "decision card trace_id must use canonical runtime_math::decision_card scope"
+        );
+        assert!(
+            first
+                .get("api_family")
+                .and_then(Value::as_str)
+                .is_some_and(|value| !value.is_empty()),
+            "decision card api_family must be populated"
+        );
+        assert!(
+            first
+                .get("symbol")
+                .and_then(Value::as_str)
+                .is_some_and(|value| value.starts_with("runtime_math::")),
+            "decision card symbol must use canonical runtime_math namespace"
+        );
+        assert!(
+            first
+                .get("decision_path")
+                .and_then(Value::as_str)
+                .is_some_and(|value| value.starts_with("mode->runtime_math_kernel->")),
+            "decision card decision_path must use canonical runtime path"
+        );
+        assert_eq!(
+            first
+                .get("artifact_refs")
+                .and_then(Value::as_array)
+                .and_then(|refs| refs.first())
+                .and_then(Value::as_str),
+            Some("crates/frankenlibc-membrane/src/runtime_math/evidence.rs")
+        );
+        assert!(
+            first
+                .get("decision_id")
+                .and_then(Value::as_u64)
+                .is_some_and(|value| value > 0),
+            "decision card decision_id must be assigned"
+        );
+        assert!(
+            first
+                .get("policy_id")
+                .and_then(Value::as_u64)
+                .is_some_and(|value| value > 0),
+            "decision card policy_id must be assigned"
+        );
     }
 
     #[test]
