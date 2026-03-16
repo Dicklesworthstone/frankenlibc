@@ -5745,12 +5745,36 @@ mod tests {
 
         let mut saw_selection = false;
         let mut saw_coverage = false;
+        let mut saw_diversity_state = false;
         for line in jsonl.lines().filter(|line| !line.trim().is_empty()) {
             let parsed: Value =
                 serde_json::from_str(line).expect("each runtime log line must be valid JSON");
             match parsed.get("event").and_then(Value::as_str) {
                 Some("runtime_reverse_round_math_selection") => {
                     saw_selection = true;
+                    assert!(
+                        parsed
+                            .get("trace_id")
+                            .and_then(Value::as_str)
+                            .is_some_and(|trace_id| {
+                                trace_id.starts_with("runtime_math::reverse_round::selection::")
+                            })
+                    );
+                    assert_eq!(parsed.get("schema_version").and_then(Value::as_str), Some("1.0"));
+                    assert_eq!(parsed.get("bead_id").and_then(Value::as_str), Some("bd-5vr.6"));
+                    assert_eq!(
+                        parsed.get("scenario_id").and_then(Value::as_str),
+                        Some("diversity-contract")
+                    );
+                    assert_eq!(parsed.get("api_family").and_then(Value::as_str), Some("runtime_math"));
+                    assert_eq!(
+                        parsed.get("symbol").and_then(Value::as_str),
+                        Some("runtime_math::reverse_round")
+                    );
+                    assert_eq!(
+                        parsed.get("decision_path").and_then(Value::as_str),
+                        Some("reverse_round::math_family_selection")
+                    );
                     assert_eq!(
                         parsed.get("active_family_count").and_then(Value::as_u64),
                         Some(u64::try_from(diversity.active_family_count).unwrap_or(u64::MAX))
@@ -5768,6 +5792,29 @@ mod tests {
                 }
                 Some("runtime_reverse_round_coverage_milestone") => {
                     saw_coverage = true;
+                    assert!(
+                        parsed
+                            .get("trace_id")
+                            .and_then(Value::as_str)
+                            .is_some_and(|trace_id| {
+                                trace_id.starts_with("runtime_math::reverse_round::coverage::")
+                            })
+                    );
+                    assert_eq!(parsed.get("schema_version").and_then(Value::as_str), Some("1.0"));
+                    assert_eq!(parsed.get("bead_id").and_then(Value::as_str), Some("bd-5vr.6"));
+                    assert_eq!(
+                        parsed.get("scenario_id").and_then(Value::as_str),
+                        Some("diversity-contract")
+                    );
+                    assert_eq!(parsed.get("api_family").and_then(Value::as_str), Some("runtime_math"));
+                    assert_eq!(
+                        parsed.get("symbol").and_then(Value::as_str),
+                        Some("runtime_math::reverse_round")
+                    );
+                    assert_eq!(
+                        parsed.get("decision_path").and_then(Value::as_str),
+                        Some("reverse_round::coverage_milestone")
+                    );
                     assert_eq!(
                         parsed.get("milestone_target").and_then(Value::as_u64),
                         Some(
@@ -5779,24 +5826,45 @@ mod tests {
                         Some(diversity.coverage_milestone_reached)
                     );
                 }
+                Some(event @ ("runtime_reverse_round_diversity_near_violation"
+                | "runtime_reverse_round_diversity_violation")) => {
+                    saw_diversity_state = true;
+                    assert_eq!(Some(event), diversity.state.event_and_level().map(|(event, _)| event));
+                    assert!(
+                        parsed
+                            .get("trace_id")
+                            .and_then(Value::as_str)
+                            .is_some_and(|trace_id| {
+                                trace_id.starts_with("runtime_math::reverse_round::diversity::")
+                            })
+                    );
+                    assert_eq!(parsed.get("schema_version").and_then(Value::as_str), Some("1.0"));
+                    assert_eq!(parsed.get("bead_id").and_then(Value::as_str), Some("bd-5vr.6"));
+                    assert_eq!(
+                        parsed.get("scenario_id").and_then(Value::as_str),
+                        Some("diversity-contract")
+                    );
+                    assert_eq!(parsed.get("api_family").and_then(Value::as_str), Some("runtime_math"));
+                    assert_eq!(
+                        parsed.get("symbol").and_then(Value::as_str),
+                        Some("runtime_math::reverse_round")
+                    );
+                    assert_eq!(
+                        parsed.get("decision_path").and_then(Value::as_str),
+                        Some("reverse_round::diversity_constraints")
+                    );
+                }
                 _ => {}
             }
         }
 
         assert!(saw_selection, "selection contract row must be present");
         assert!(saw_coverage, "coverage milestone row must be present");
-        if let Some((event, _)) = diversity.state.event_and_level() {
-            assert!(
-                jsonl.contains(&format!("\"event\":\"{event}\"")),
-                "jsonl export must include diversity state event `{event}`"
-            );
-        } else {
-            assert!(
-                !jsonl.contains("\"event\":\"runtime_reverse_round_diversity_near_violation\"")
-                    && !jsonl.contains("\"event\":\"runtime_reverse_round_diversity_violation\""),
-                "healthy diversity state must not emit violation events"
-            );
-        }
+        assert_eq!(
+            saw_diversity_state,
+            diversity.state.event_and_level().is_some(),
+            "jsonl export must emit diversity state rows iff the snapshot state requests them"
+        );
     }
 
     #[test]
@@ -5825,10 +5893,13 @@ mod tests {
             "jsonl export must emit at least one line"
         );
 
+        let parsed_rows: Vec<Value> = lines
+            .iter()
+            .map(|line| serde_json::from_str::<Value>(line).expect("each runtime log line must be valid JSON"))
+            .collect();
+
         let mut saw_runtime_decision = false;
-        for line in lines {
-            let parsed: Value =
-                serde_json::from_str(line).expect("each runtime log line must be valid JSON");
+        for parsed in &parsed_rows {
             for required in [
                 "timestamp",
                 "trace_id",
@@ -5940,29 +6011,136 @@ mod tests {
             saw_runtime_decision,
             "jsonl export must include runtime_decision rows"
         );
-        assert!(
-            jsonl.contains("\"event\":\"runtime_mode_dispatch\""),
-            "jsonl export must include per-decision runtime_mode_dispatch trace rows"
+        let assert_common_row_contract = |row: &Value,
+                                          expected_event: &str,
+                                          expected_api_family: &str,
+                                          expected_symbol: &str,
+                                          expected_decision_path: &str,
+                                          expected_trace_prefix: &str| {
+            assert_eq!(row["event"].as_str(), Some(expected_event));
+            assert!(
+                row["trace_id"]
+                    .as_str()
+                    .is_some_and(|trace_id| trace_id.starts_with(expected_trace_prefix))
+            );
+            assert_eq!(row["schema_version"].as_str(), Some("1.0"));
+            assert_eq!(row["bead_id"].as_str(), Some("bd-5vr.8"));
+            assert_eq!(row["scenario_id"].as_str(), Some("smoke-1"));
+            assert_eq!(row["api_family"].as_str(), Some(expected_api_family));
+            assert_eq!(row["symbol"].as_str(), Some(expected_symbol));
+            assert_eq!(row["decision_path"].as_str(), Some(expected_decision_path));
+            assert_eq!(
+                row["artifact_refs"]
+                    .as_array()
+                    .and_then(|refs| refs.first())
+                    .and_then(Value::as_str),
+                Some("crates/frankenlibc-membrane/src/runtime_math/mod.rs")
+            );
+        };
+        let dispatch_row = parsed_rows
+            .iter()
+            .find(|row| {
+                row.get("event")
+                    .and_then(Value::as_str)
+                    .is_some_and(|event| event == "runtime_mode_dispatch")
+            })
+            .expect("jsonl export must include per-decision runtime_mode_dispatch trace rows");
+        assert_common_row_contract(
+            dispatch_row,
+            "runtime_mode_dispatch",
+            "allocator",
+            "runtime_math::dispatch",
+            "mode->runtime_math_kernel->decision",
+            "runtime_math::dispatch::",
+        );
+
+        let evidence_row = parsed_rows
+            .iter()
+            .find(|row| {
+                row.get("event")
+                    .and_then(Value::as_str)
+                    .is_some_and(|event| event == "runtime_evidence_emitted")
+            })
+            .expect("jsonl export must include runtime_evidence_emitted info rows");
+        assert_common_row_contract(
+            evidence_row,
+            "runtime_evidence_emitted",
+            "allocator",
+            "runtime_math::evidence",
+            "evidence->record_decision",
+            "runtime_math::evidence::",
+        );
+
+        let calibration_row = parsed_rows
+            .iter()
+            .find(|row| {
+                row.get("event")
+                    .and_then(Value::as_str)
+                    .is_some_and(|event| event == "runtime_calibration")
+            })
+            .expect("runtime_calibration row must be present");
+        assert_common_row_contract(
+            calibration_row,
+            "runtime_calibration",
+            "runtime_math",
+            "runtime_math::kernel",
+            "snapshot::calibration",
+            "runtime_math::snapshot::calibration::",
         );
         assert!(
-            jsonl.contains("\"event\":\"runtime_evidence_emitted\""),
-            "jsonl export must include runtime_evidence_emitted info rows"
-        );
-        assert!(
-            jsonl.contains("\"snapshot_capture_latency_ns\""),
+            calibration_row["snapshot_capture_latency_ns"].as_u64().is_some(),
             "runtime_calibration row must include snapshot capture timing"
         );
-        assert!(
-            jsonl.contains("\"event\":\"runtime_reverse_round_math_selection\""),
-            "jsonl export must include reverse-round math selection debug rows"
+
+        let reverse_round_selection_row = parsed_rows
+            .iter()
+            .find(|row| {
+                row.get("event")
+                    .and_then(Value::as_str)
+                    .is_some_and(|event| event == "runtime_reverse_round_math_selection")
+            })
+            .expect("jsonl export must include reverse-round math selection debug rows");
+        assert_common_row_contract(
+            reverse_round_selection_row,
+            "runtime_reverse_round_math_selection",
+            "runtime_math",
+            "runtime_math::reverse_round",
+            "reverse_round::math_family_selection",
+            "runtime_math::reverse_round::selection::",
         );
-        assert!(
-            jsonl.contains("\"event\":\"runtime_reverse_round_coverage_milestone\""),
-            "jsonl export must include reverse-round coverage milestone info rows"
+
+        let reverse_round_coverage_row = parsed_rows
+            .iter()
+            .find(|row| {
+                row.get("event")
+                    .and_then(Value::as_str)
+                    .is_some_and(|event| event == "runtime_reverse_round_coverage_milestone")
+            })
+            .expect("jsonl export must include reverse-round coverage milestone info rows");
+        assert_common_row_contract(
+            reverse_round_coverage_row,
+            "runtime_reverse_round_coverage_milestone",
+            "runtime_math",
+            "runtime_math::reverse_round",
+            "reverse_round::coverage_milestone",
+            "runtime_math::reverse_round::coverage::",
         );
-        assert!(
-            jsonl.contains("\"event\":\"runtime_reverse_round_diversity_violation\""),
-            "single-family exports should trigger reverse-round diversity violation errors"
+
+        let diversity_row = parsed_rows
+            .iter()
+            .find(|row| {
+                row.get("event")
+                    .and_then(Value::as_str)
+                    .is_some_and(|event| event == "runtime_reverse_round_diversity_violation")
+            })
+            .expect("single-family exports should trigger reverse-round diversity violation errors");
+        assert_common_row_contract(
+            diversity_row,
+            "runtime_reverse_round_diversity_violation",
+            "runtime_math",
+            "runtime_math::reverse_round",
+            "reverse_round::diversity_constraints",
+            "runtime_math::reverse_round::diversity::",
         );
     }
 
@@ -6089,6 +6267,47 @@ mod tests {
             match parsed.get("event").and_then(Value::as_str) {
                 Some("runtime_pressure_sensor") => {
                     saw_pressure_sensor = true;
+                    assert!(
+                        parsed
+                            .get("trace_id")
+                            .and_then(Value::as_str)
+                            .is_some_and(|trace_id| {
+                                trace_id.starts_with("runtime_math::pressure::")
+                            }),
+                        "runtime_pressure_sensor trace_id must use canonical pressure scope"
+                    );
+                    assert_eq!(
+                        parsed.get("schema_version").and_then(Value::as_str),
+                        Some("1.0")
+                    );
+                    assert_eq!(
+                        parsed.get("bead_id").and_then(Value::as_str),
+                        Some("bd-w2c3.7")
+                    );
+                    assert_eq!(
+                        parsed.get("scenario_id").and_then(Value::as_str),
+                        Some("pressure-overload")
+                    );
+                    assert_eq!(
+                        parsed.get("api_family").and_then(Value::as_str),
+                        Some("runtime_math")
+                    );
+                    assert_eq!(
+                        parsed.get("symbol").and_then(Value::as_str),
+                        Some("runtime_math::pressure_sensor")
+                    );
+                    assert_eq!(
+                        parsed.get("decision_path").and_then(Value::as_str),
+                        Some("pressure_sensor::observe")
+                    );
+                    assert_eq!(
+                        parsed
+                            .get("artifact_refs")
+                            .and_then(Value::as_array)
+                            .and_then(|refs| refs.first())
+                            .and_then(Value::as_str),
+                        Some("crates/frankenlibc-membrane/src/runtime_math/mod.rs")
+                    );
                     for required in [
                         "overload_state",
                         "degradation_active",
@@ -6111,6 +6330,47 @@ mod tests {
                 }
                 Some("runtime_overload_policy_applied") => {
                     saw_overload_policy = true;
+                    assert!(
+                        parsed
+                            .get("trace_id")
+                            .and_then(Value::as_str)
+                            .is_some_and(|trace_id| {
+                                trace_id.starts_with("runtime_math::overload_policy::")
+                            }),
+                        "runtime_overload_policy_applied trace_id must use canonical overload_policy scope"
+                    );
+                    assert_eq!(
+                        parsed.get("schema_version").and_then(Value::as_str),
+                        Some("1.0")
+                    );
+                    assert_eq!(
+                        parsed.get("bead_id").and_then(Value::as_str),
+                        Some("bd-w2c3.7")
+                    );
+                    assert_eq!(
+                        parsed.get("scenario_id").and_then(Value::as_str),
+                        Some("pressure-overload")
+                    );
+                    assert_eq!(
+                        parsed.get("api_family").and_then(Value::as_str),
+                        Some("runtime_math")
+                    );
+                    assert_eq!(
+                        parsed.get("symbol").and_then(Value::as_str),
+                        Some("runtime_math::degradation_policy")
+                    );
+                    assert_eq!(
+                        parsed.get("decision_path").and_then(Value::as_str),
+                        Some("pressure_sensor::degradation_policy")
+                    );
+                    assert_eq!(
+                        parsed
+                            .get("artifact_refs")
+                            .and_then(Value::as_array)
+                            .and_then(|refs| refs.first())
+                            .and_then(Value::as_str),
+                        Some("crates/frankenlibc-membrane/src/runtime_math/mod.rs")
+                    );
                     assert_eq!(
                         parsed.get("overload_policy").and_then(Value::as_str),
                         Some("overloaded_safe_fallback")
@@ -6145,9 +6405,34 @@ mod tests {
             .expect("valid pcpt must load");
         let success_jsonl =
             success_kernel.export_runtime_math_log_jsonl(SafetyLevel::Strict, "bd-5vr.8", "ok");
+        let success_row = success_jsonl
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(|line| serde_json::from_str::<Value>(line).expect("runtime log line must parse"))
+            .find(|row| {
+                row.get("event")
+                    .and_then(Value::as_str)
+                    .is_some_and(|event| event == "runtime_certificate_loaded")
+            })
+            .expect("successful load must emit runtime_certificate_loaded");
         assert!(
-            success_jsonl.contains("\"event\":\"runtime_certificate_loaded\""),
-            "successful load must emit runtime_certificate_loaded"
+            success_row["trace_id"]
+                .as_str()
+                .is_some_and(|trace_id| trace_id.starts_with("runtime_math::certificate::"))
+        );
+        assert_eq!(success_row["schema_version"].as_str(), Some("1.0"));
+        assert_eq!(success_row["bead_id"].as_str(), Some("bd-5vr.8"));
+        assert_eq!(success_row["scenario_id"].as_str(), Some("ok"));
+        assert_eq!(success_row["api_family"].as_str(), Some("runtime_math"));
+        assert_eq!(success_row["symbol"].as_str(), Some("runtime_math::kernel"));
+        assert_eq!(success_row["decision_path"].as_str(), Some("certificate::verify"));
+        assert_eq!(success_row["verification"].as_str(), Some("pass"));
+        assert_eq!(
+            success_row["artifact_refs"]
+                .as_array()
+                .and_then(|refs| refs.first())
+                .and_then(Value::as_str),
+            Some("crates/frankenlibc-membrane/src/runtime_math/mod.rs")
         );
 
         let mut failure_kernel = RuntimeMathKernel::new();
@@ -6159,13 +6444,35 @@ mod tests {
         );
         let failure_jsonl =
             failure_kernel.export_runtime_math_log_jsonl(SafetyLevel::Strict, "bd-5vr.8", "fail");
+        let failure_row = failure_jsonl
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(|line| serde_json::from_str::<Value>(line).expect("runtime log line must parse"))
+            .find(|row| {
+                row.get("event")
+                    .and_then(Value::as_str)
+                    .is_some_and(|event| event == "runtime_certificate_verification_failed")
+            })
+            .expect("failed load must emit runtime_certificate_verification_failed");
         assert!(
-            failure_jsonl.contains("\"event\":\"runtime_certificate_verification_failed\""),
-            "failed load must emit runtime_certificate_verification_failed"
+            failure_row["trace_id"]
+                .as_str()
+                .is_some_and(|trace_id| trace_id.starts_with("runtime_math::certificate::"))
         );
-        assert!(
-            failure_jsonl.contains("\"level\":\"error\""),
-            "failed certificate verification should be error-level"
+        assert_eq!(failure_row["schema_version"].as_str(), Some("1.0"));
+        assert_eq!(failure_row["bead_id"].as_str(), Some("bd-5vr.8"));
+        assert_eq!(failure_row["scenario_id"].as_str(), Some("fail"));
+        assert_eq!(failure_row["level"].as_str(), Some("error"));
+        assert_eq!(failure_row["api_family"].as_str(), Some("runtime_math"));
+        assert_eq!(failure_row["symbol"].as_str(), Some("runtime_math::kernel"));
+        assert_eq!(failure_row["decision_path"].as_str(), Some("certificate::verify"));
+        assert_eq!(failure_row["verification"].as_str(), Some("fail"));
+        assert_eq!(
+            failure_row["artifact_refs"]
+                .as_array()
+                .and_then(|refs| refs.first())
+                .and_then(Value::as_str),
+            Some("crates/frankenlibc-membrane/src/runtime_math/mod.rs")
         );
     }
 
