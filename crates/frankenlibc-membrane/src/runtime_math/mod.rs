@@ -6532,6 +6532,171 @@ mod tests {
     }
 
     #[test]
+    fn runtime_math_log_jsonl_exports_snapshot_regret_and_drift_alerts() {
+        let kernel = RuntimeMathKernel::new();
+
+        for _ in 0..20_000 {
+            kernel.pareto.observe(
+                SafetyLevel::Hardened,
+                ApiFamily::Allocator,
+                ValidationProfile::Fast,
+                20_000,
+                true,
+                100_000,
+            );
+        }
+        assert!(
+            kernel.pareto.cap_enforcement_count() > 0,
+            "pareto setup must saturate the regret budget"
+        );
+
+        {
+            let mut padic = kernel.padic.lock();
+            for _ in 0..(128 * 4) {
+                padic.observe_f64(1.0);
+            }
+            for _ in 0..128 {
+                padic.observe_f64(f64::INFINITY);
+            }
+            assert!(
+                padic.drift_count() > 0,
+                "padic setup must produce at least one drift event"
+            );
+        }
+
+        let jsonl = kernel.export_runtime_math_log_jsonl(
+            SafetyLevel::Hardened,
+            "bd-epeg",
+            "snapshot-regret-drift",
+        );
+        let rows: Vec<Value> = jsonl
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(|line| serde_json::from_str::<Value>(line).expect("runtime log line must parse"))
+            .collect();
+
+        let snapshot_row = rows
+            .iter()
+            .find(|row| {
+                row.get("event")
+                    .and_then(Value::as_str)
+                    .is_some_and(|event| event == "runtime_snapshot")
+            })
+            .expect("runtime log export must include a runtime_snapshot row");
+        assert_eq!(snapshot_row["bead_id"].as_str(), Some("bd-epeg"));
+        assert_eq!(
+            snapshot_row["scenario_id"].as_str(),
+            Some("snapshot-regret-drift")
+        );
+        assert_eq!(snapshot_row["schema_version"].as_str(), Some("1.0"));
+        assert_eq!(snapshot_row["api_family"].as_str(), Some("runtime_math"));
+        assert_eq!(
+            snapshot_row["symbol"].as_str(),
+            Some("runtime_math::kernel")
+        );
+        assert_eq!(
+            snapshot_row["decision_path"].as_str(),
+            Some("snapshot::state")
+        );
+        assert!(
+            snapshot_row["trace_id"]
+                .as_str()
+                .is_some_and(|trace_id| trace_id.starts_with("runtime_math::snapshot::"))
+        );
+        assert_eq!(
+            snapshot_row["artifact_refs"]
+                .as_array()
+                .and_then(|refs| refs.first())
+                .and_then(Value::as_str),
+            Some("crates/frankenlibc-membrane/src/runtime_math/mod.rs")
+        );
+
+        let regret_row = rows
+            .iter()
+            .find(|row| {
+                row.get("event")
+                    .and_then(Value::as_str)
+                    .is_some_and(|event| event == "runtime_regret_alert")
+            })
+            .expect("runtime log export must include runtime_regret_alert when pareto is saturated");
+        assert_eq!(regret_row["bead_id"].as_str(), Some("bd-epeg"));
+        assert_eq!(
+            regret_row["scenario_id"].as_str(),
+            Some("snapshot-regret-drift")
+        );
+        assert_eq!(regret_row["schema_version"].as_str(), Some("1.0"));
+        assert_eq!(regret_row["api_family"].as_str(), Some("runtime_math"));
+        assert_eq!(regret_row["symbol"].as_str(), Some("runtime_math::kernel"));
+        assert_eq!(
+            regret_row["decision_path"].as_str(),
+            Some("pareto::regret")
+        );
+        assert!(
+            regret_row["trace_id"]
+                .as_str()
+                .is_some_and(|trace_id| trace_id.starts_with("runtime_math::regret::"))
+        );
+        assert_eq!(
+            regret_row["artifact_refs"]
+                .as_array()
+                .and_then(|refs| refs.first())
+                .and_then(Value::as_str),
+            Some("crates/frankenlibc-membrane/src/runtime_math/mod.rs")
+        );
+        assert!(
+            regret_row["pareto_cap_enforcements"]
+                .as_u64()
+                .is_some_and(|count| count > 0),
+            "runtime_regret_alert must report positive cap enforcement count"
+        );
+        assert!(
+            regret_row["pareto_exhausted_families"]
+                .as_u64()
+                .is_some_and(|count| count > 0),
+            "runtime_regret_alert must report at least one exhausted family"
+        );
+
+        let drift_row = rows
+            .iter()
+            .find(|row| {
+                row.get("event")
+                    .and_then(Value::as_str)
+                    .is_some_and(|event| event == "runtime_drift_alert")
+            })
+            .expect("runtime log export must include runtime_drift_alert when padic drift is active");
+        assert_eq!(drift_row["bead_id"].as_str(), Some("bd-epeg"));
+        assert_eq!(
+            drift_row["scenario_id"].as_str(),
+            Some("snapshot-regret-drift")
+        );
+        assert_eq!(drift_row["schema_version"].as_str(), Some("1.0"));
+        assert_eq!(drift_row["api_family"].as_str(), Some("runtime_math"));
+        assert_eq!(drift_row["symbol"].as_str(), Some("runtime_math::kernel"));
+        assert_eq!(
+            drift_row["decision_path"].as_str(),
+            Some("drift::monitor")
+        );
+        assert!(
+            drift_row["trace_id"]
+                .as_str()
+                .is_some_and(|trace_id| trace_id.starts_with("runtime_math::drift::"))
+        );
+        assert_eq!(
+            drift_row["artifact_refs"]
+                .as_array()
+                .and_then(|refs| refs.first())
+                .and_then(Value::as_str),
+            Some("crates/frankenlibc-membrane/src/runtime_math/mod.rs")
+        );
+        assert!(
+            drift_row["padic_drift_count"]
+                .as_u64()
+                .is_some_and(|count| count > 0),
+            "runtime_drift_alert must report positive padic drift count"
+        );
+    }
+
+    #[test]
     fn snapshot_range_violations_identify_out_of_contract_fields() {
         let kernel = RuntimeMathKernel::new();
         let mut snapshot = kernel.snapshot(SafetyLevel::Strict);
