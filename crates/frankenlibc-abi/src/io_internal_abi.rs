@@ -314,21 +314,13 @@ pub unsafe extern "C" fn _IO_file_attach(fp: *mut c_void, fd: c_int) -> *mut c_v
 /// `_IO_file_close` — close underlying fd.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn _IO_file_close(fp: *mut c_void) -> c_int {
-    type Fn = unsafe extern "C" fn(*mut c_void) -> c_int;
-    match io_resolve!(c"_IO_file_close", Fn) {
-        Some(f) => unsafe { f(fp) },
-        None => -1,
-    }
+    unsafe { stdio_abi::fclose(fp) }
 }
 
 /// `_IO_file_close_it` — close file, release buffers.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn _IO_file_close_it(fp: *mut c_void) -> c_int {
-    type Fn = unsafe extern "C" fn(*mut c_void) -> c_int;
-    match io_resolve!(c"_IO_file_close_it", Fn) {
-        Some(f) => unsafe { f(fp) },
-        None => -1,
-    }
+    unsafe { stdio_abi::fclose(fp) }
 }
 
 /// `_IO_file_doallocate` — allocate buffer for file stream.
@@ -405,11 +397,10 @@ pub unsafe extern "C" fn _IO_file_overflow(fp: *mut c_void, ch: c_int) -> c_int 
 /// `_IO_file_read` — read from underlying fd.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn _IO_file_read(fp: *mut c_void, buf: *mut c_void, n: isize) -> isize {
-    type Fn = unsafe extern "C" fn(*mut c_void, *mut c_void, isize) -> isize;
-    match io_resolve!(c"_IO_file_read", Fn) {
-        Some(f) => unsafe { f(fp, buf, n) },
-        None => -1,
+    if n < 0 {
+        return -1;
     }
+    unsafe { stdio_abi::fread(buf, 1, n as usize, fp) as isize }
 }
 
 /// `_IO_file_seek` — seek on underlying fd.
@@ -444,11 +435,11 @@ pub unsafe extern "C" fn _IO_file_setbuf(
     buf: *mut c_char,
     n: isize,
 ) -> *mut c_void {
-    type Fn = unsafe extern "C" fn(*mut c_void, *mut c_char, isize) -> *mut c_void;
-    match io_resolve!(c"_IO_file_setbuf", Fn) {
-        Some(f) => unsafe { f(fp, buf, n) },
-        None => std::ptr::null_mut(),
+    if n < 0 {
+        return std::ptr::null_mut();
     }
+    unsafe { stdio_abi::setbuffer(fp, buf, n as usize) };
+    fp
 }
 
 /// `_IO_file_stat` — stat the underlying fd.
@@ -464,11 +455,7 @@ pub unsafe extern "C" fn _IO_file_stat(fp: *mut c_void, st: *mut c_void) -> c_in
 /// `_IO_file_sync` — synchronize FILE buffer with fd.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn _IO_file_sync(fp: *mut c_void) -> c_int {
-    type Fn = unsafe extern "C" fn(*mut c_void) -> c_int;
-    match io_resolve!(c"_IO_file_sync", Fn) {
-        Some(f) => unsafe { f(fp) },
-        None => -1,
-    }
+    unsafe { stdio_abi::fflush(fp) }
 }
 
 /// `_IO_file_underflow` — handle read buffer underflow.
@@ -484,21 +471,16 @@ pub unsafe extern "C" fn _IO_file_underflow(fp: *mut c_void) -> c_int {
 /// `_IO_file_write` — write to underlying fd.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn _IO_file_write(fp: *mut c_void, buf: *const c_void, n: isize) -> isize {
-    type Fn = unsafe extern "C" fn(*mut c_void, *const c_void, isize) -> isize;
-    match io_resolve!(c"_IO_file_write", Fn) {
-        Some(f) => unsafe { f(fp, buf, n) },
-        None => -1,
+    if n < 0 {
+        return -1;
     }
+    unsafe { stdio_abi::fwrite(buf, 1, n as usize, fp) as isize }
 }
 
 /// `_IO_file_xsputn` — multi-byte write for file stream.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn _IO_file_xsputn(fp: *mut c_void, buf: *const c_void, n: usize) -> usize {
-    type Fn = unsafe extern "C" fn(*mut c_void, *const c_void, usize) -> usize;
-    match io_resolve!(c"_IO_file_xsputn", Fn) {
-        Some(f) => unsafe { f(fp, buf, n) },
-        None => 0,
-    }
+    unsafe { stdio_abi::fwrite(buf, 1, n, fp) }
 }
 
 // ---------------------------------------------------------------------------

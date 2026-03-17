@@ -14,10 +14,11 @@ use std::thread;
 use std::time::Duration;
 
 use frankenlibc_abi::io_internal_abi::{
-    _IO_fclose, _IO_fdopen, _IO_fflush, _IO_fgetpos, _IO_fgetpos64, _IO_fgets, _IO_flush_all,
-    _IO_fopen, _IO_fprintf, _IO_fputs, _IO_fread, _IO_fsetpos, _IO_fsetpos64, _IO_ftell,
-    _IO_fwrite, _IO_printf, _IO_setbuffer, _IO_setvbuf, _IO_sprintf, _IO_sscanf, _IO_ungetc,
-    _IO_vfprintf, _IO_vsprintf,
+    _IO_fclose, _IO_fdopen, _IO_fflush, _IO_fgetpos, _IO_fgetpos64, _IO_fgets, _IO_file_close,
+    _IO_file_close_it, _IO_file_read, _IO_file_setbuf, _IO_file_sync, _IO_file_write,
+    _IO_file_xsputn, _IO_flush_all, _IO_fopen, _IO_fprintf, _IO_fputs, _IO_fread, _IO_fsetpos,
+    _IO_fsetpos64, _IO_ftell, _IO_fwrite, _IO_printf, _IO_setbuffer, _IO_setvbuf, _IO_sprintf,
+    _IO_sscanf, _IO_ungetc, _IO_vfprintf, _IO_vsprintf,
 };
 use frankenlibc_abi::stdio_abi::{
     __isoc99_fscanf,
@@ -2313,6 +2314,55 @@ fn io_internal_setvbuf_setbuffer_and_ungetc_use_native_stdio_paths() {
     assert_eq!(unsafe { fgetc(stream) }, b'Z' as c_int);
 
     assert_eq!(unsafe { _IO_fclose(stream) }, 0);
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn io_internal_file_ops_use_native_stdio_paths() {
+    let path = temp_path("io_internal_file_ops");
+    let _ = fs::remove_file(&path);
+    let path_c = path_cstring(&path);
+
+    let stream = unsafe { _IO_fopen(path_c.as_ptr(), c"w+".as_ptr()) };
+    assert!(!stream.is_null());
+
+    let payload = b"native-file-ops";
+    let wrote = unsafe { _IO_file_write(stream, payload.as_ptr().cast::<c_void>(), 6) };
+    assert_eq!(wrote, 6);
+    let wrote_rest = unsafe { _IO_file_xsputn(stream, payload[6..].as_ptr().cast::<c_void>(), 9) };
+    assert_eq!(wrote_rest, payload.len() - 6);
+
+    let mut user_buf = [0 as c_char; 64];
+    assert_eq!(
+        unsafe { _IO_file_setbuf(stream, user_buf.as_mut_ptr(), user_buf.len() as isize) },
+        stream
+    );
+    assert_eq!(unsafe { _IO_file_sync(stream) }, 0);
+    assert_eq!(unsafe { fseek(stream, 0, libc::SEEK_SET) }, 0);
+
+    let mut out = [0u8; 32];
+    let read =
+        unsafe { _IO_file_read(stream, out.as_mut_ptr().cast::<c_void>(), payload.len() as isize) };
+    assert_eq!(read, payload.len() as isize);
+    assert_eq!(&out[..payload.len()], payload);
+
+    assert_eq!(unsafe { _IO_file_close(stream) }, 0);
+    assert_eq!(fs::read(&path).expect("file should flush to disk"), payload);
+    let _ = fs::remove_file(&path);
+}
+
+#[test]
+fn io_internal_file_close_it_closes_stream_natively() {
+    let path = temp_path("io_internal_file_close_it");
+    let _ = fs::remove_file(&path);
+    let path_c = path_cstring(&path);
+
+    let stream = unsafe { _IO_fopen(path_c.as_ptr(), c"w+".as_ptr()) };
+    assert!(!stream.is_null());
+    assert_eq!(unsafe { _IO_fputs(c"close-it".as_ptr(), stream) }, 0);
+
+    assert_eq!(unsafe { _IO_file_close_it(stream) }, 0);
+    assert_eq!(fs::read(&path).expect("close_it should flush data"), b"close-it");
     let _ = fs::remove_file(path);
 }
 

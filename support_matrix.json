@@ -16256,12 +16256,12 @@
     },
     {
       "symbol": "_IO_file_close",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "io_internal_abi"
     },
     {
       "symbol": "_IO_file_close_it",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "io_internal_abi"
     },
     {
@@ -16301,7 +16301,7 @@
     },
     {
       "symbol": "_IO_file_read",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "io_internal_abi"
     },
     {
@@ -16316,7 +16316,7 @@
     },
     {
       "symbol": "_IO_file_setbuf",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "io_internal_abi"
     },
     {
@@ -16326,7 +16326,7 @@
     },
     {
       "symbol": "_IO_file_sync",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "io_internal_abi"
     },
     {
@@ -16336,12 +16336,12 @@
     },
     {
       "symbol": "_IO_file_write",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "io_internal_abi"
     },
     {
       "symbol": "_IO_file_xsputn",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "io_internal_abi"
     },
     {
