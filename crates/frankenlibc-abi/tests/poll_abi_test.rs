@@ -422,7 +422,11 @@ fn poll_closed_write_end_pollhup() {
     let rc = unsafe { poll(&mut pfd, 1, 0) };
     assert!(rc >= 0);
     // When write end is closed, read end gets POLLHUP
-    assert_ne!(pfd.revents & libc::POLLHUP, 0, "POLLHUP should be set after close(write_end)");
+    assert_ne!(
+        pfd.revents & libc::POLLHUP,
+        0,
+        "POLLHUP should be set after close(write_end)"
+    );
     unsafe { close(r) };
 }
 
@@ -449,7 +453,11 @@ fn poll_high_invalid_fd_pollnval() {
     };
     let rc = unsafe { poll(&mut pfd, 1, 0) };
     assert_eq!(rc, 1, "poll should report 1 fd with event");
-    assert_ne!(pfd.revents & libc::POLLNVAL, 0, "POLLNVAL should be set for invalid fd");
+    assert_ne!(
+        pfd.revents & libc::POLLNVAL,
+        0,
+        "POLLNVAL should be set for invalid fd"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -517,7 +525,10 @@ fn pselect_timeout_zero() {
             ptr::null(),
         )
     };
-    assert_eq!(rc, 0, "pselect with zero timeout and no data should return 0");
+    assert_eq!(
+        rc, 0,
+        "pselect with zero timeout and no data should return 0"
+    );
     unsafe {
         close(r);
         close(w);
@@ -650,7 +661,13 @@ fn select_null_timeout_zero_nfds() {
         tv_usec: 0,
     };
     let rc = unsafe {
-        select(0, ptr::null_mut(), ptr::null_mut(), ptr::null_mut(), &mut tv)
+        select(
+            0,
+            ptr::null_mut(),
+            ptr::null_mut(),
+            ptr::null_mut(),
+            &mut tv,
+        )
     };
     assert_eq!(rc, 0, "select with nfds=0 should return 0");
 }
@@ -673,11 +690,20 @@ fn select_multiple_fds() {
         tv_usec: 0,
     };
     let rc = unsafe {
-        select(nfds, &mut readfds, ptr::null_mut(), ptr::null_mut(), &mut tv)
+        select(
+            nfds,
+            &mut readfds,
+            ptr::null_mut(),
+            ptr::null_mut(),
+            &mut tv,
+        )
     };
     assert_eq!(rc, 1, "only one fd should be readable");
     assert!(unsafe { libc::FD_ISSET(r1, &readfds) }, "r1 should be set");
-    assert!(!unsafe { libc::FD_ISSET(r2, &readfds) }, "r2 should not be set");
+    assert!(
+        !unsafe { libc::FD_ISSET(r2, &readfds) },
+        "r2 should not be set"
+    );
     unsafe {
         close(r1);
         close(w1);
@@ -832,7 +858,10 @@ fn epoll_edge_triggered() {
 
     // Second wait without reading should return 0 (edge-triggered)
     let n = unsafe { epoll_wait(epfd, events.as_mut_ptr(), 1, 0) };
-    assert_eq!(n, 0, "edge-triggered: second wait without read should return 0");
+    assert_eq!(
+        n, 0,
+        "edge-triggered: second wait without read should return 0"
+    );
 
     unsafe {
         close(r);
@@ -993,21 +1022,36 @@ fn timerfd_disarm() {
 
     // Arm
     let new_val = libc::itimerspec {
-        it_interval: libc::timespec { tv_sec: 0, tv_nsec: 0 },
-        it_value: libc::timespec { tv_sec: 10, tv_nsec: 0 },
+        it_interval: libc::timespec {
+            tv_sec: 0,
+            tv_nsec: 0,
+        },
+        it_value: libc::timespec {
+            tv_sec: 10,
+            tv_nsec: 0,
+        },
     };
     let mut old_val: libc::itimerspec = unsafe { std::mem::zeroed() };
     unsafe { timerfd_settime(fd, 0, &new_val, &mut old_val) };
 
     // Disarm (set it_value to zero)
     let disarm = libc::itimerspec {
-        it_interval: libc::timespec { tv_sec: 0, tv_nsec: 0 },
-        it_value: libc::timespec { tv_sec: 0, tv_nsec: 0 },
+        it_interval: libc::timespec {
+            tv_sec: 0,
+            tv_nsec: 0,
+        },
+        it_value: libc::timespec {
+            tv_sec: 0,
+            tv_nsec: 0,
+        },
     };
     let rc = unsafe { timerfd_settime(fd, 0, &disarm, &mut old_val) };
     assert_eq!(rc, 0);
     // old_value should have had remaining time
-    assert!(old_val.it_value.tv_sec > 0, "old timer should have had time remaining");
+    assert!(
+        old_val.it_value.tv_sec > 0,
+        "old timer should have had time remaining"
+    );
 
     // Verify disarmed
     let mut curr: libc::itimerspec = unsafe { std::mem::zeroed() };
@@ -1061,8 +1105,14 @@ fn timerfd_settime_returns_old_value() {
 
     // Set 10s timer
     let first = libc::itimerspec {
-        it_interval: libc::timespec { tv_sec: 0, tv_nsec: 0 },
-        it_value: libc::timespec { tv_sec: 10, tv_nsec: 0 },
+        it_interval: libc::timespec {
+            tv_sec: 0,
+            tv_nsec: 0,
+        },
+        it_value: libc::timespec {
+            tv_sec: 10,
+            tv_nsec: 0,
+        },
     };
     let mut old: libc::itimerspec = unsafe { std::mem::zeroed() };
     unsafe { timerfd_settime(fd, 0, &first, &mut old) };
@@ -1071,11 +1121,20 @@ fn timerfd_settime_returns_old_value() {
 
     // Set 20s timer, old should reflect remaining of first
     let second = libc::itimerspec {
-        it_interval: libc::timespec { tv_sec: 0, tv_nsec: 0 },
-        it_value: libc::timespec { tv_sec: 20, tv_nsec: 0 },
+        it_interval: libc::timespec {
+            tv_sec: 0,
+            tv_nsec: 0,
+        },
+        it_value: libc::timespec {
+            tv_sec: 20,
+            tv_nsec: 0,
+        },
     };
     unsafe { timerfd_settime(fd, 0, &second, &mut old) };
-    assert!(old.it_value.tv_sec > 0, "old value should have remaining time from first timer");
+    assert!(
+        old.it_value.tv_sec > 0,
+        "old value should have remaining time from first timer"
+    );
 
     unsafe { close(fd) };
 }
@@ -1087,8 +1146,14 @@ fn timerfd_settime_null_old_value() {
     assert!(fd >= 0);
 
     let new_val = libc::itimerspec {
-        it_interval: libc::timespec { tv_sec: 0, tv_nsec: 0 },
-        it_value: libc::timespec { tv_sec: 5, tv_nsec: 0 },
+        it_interval: libc::timespec {
+            tv_sec: 0,
+            tv_nsec: 0,
+        },
+        it_value: libc::timespec {
+            tv_sec: 5,
+            tv_nsec: 0,
+        },
     };
     // null old_value is valid — just doesn't return the old setting
     let rc = unsafe { timerfd_settime(fd, 0, &new_val, ptr::null_mut()) };
@@ -1105,7 +1170,15 @@ fn timerfd_settime_null_old_value() {
 fn prctl_get_name() {
     use frankenlibc_abi::poll_abi::prctl;
     let mut name = [0u8; 16];
-    let rc = unsafe { prctl(libc::PR_GET_NAME, name.as_mut_ptr() as libc::c_ulong, 0, 0, 0) };
+    let rc = unsafe {
+        prctl(
+            libc::PR_GET_NAME,
+            name.as_mut_ptr() as libc::c_ulong,
+            0,
+            0,
+            0,
+        )
+    };
     assert_eq!(rc, 0, "PR_GET_NAME should succeed");
     // Name should be a non-empty null-terminated string
     let len = name.iter().position(|&b| b == 0).unwrap_or(16);
@@ -1116,11 +1189,27 @@ fn prctl_get_name() {
 fn prctl_set_and_get_name() {
     use frankenlibc_abi::poll_abi::prctl;
     let new_name = b"test_thread\0";
-    let rc = unsafe { prctl(libc::PR_SET_NAME, new_name.as_ptr() as libc::c_ulong, 0, 0, 0) };
+    let rc = unsafe {
+        prctl(
+            libc::PR_SET_NAME,
+            new_name.as_ptr() as libc::c_ulong,
+            0,
+            0,
+            0,
+        )
+    };
     assert_eq!(rc, 0, "PR_SET_NAME should succeed");
 
     let mut got = [0u8; 16];
-    unsafe { prctl(libc::PR_GET_NAME, got.as_mut_ptr() as libc::c_ulong, 0, 0, 0) };
+    unsafe {
+        prctl(
+            libc::PR_GET_NAME,
+            got.as_mut_ptr() as libc::c_ulong,
+            0,
+            0,
+            0,
+        )
+    };
     let got_str = std::str::from_utf8(&got[..11]).unwrap();
     assert_eq!(got_str, "test_thread");
 }
@@ -1130,7 +1219,10 @@ fn prctl_get_dumpable() {
     use frankenlibc_abi::poll_abi::prctl;
     let rc = unsafe { prctl(libc::PR_GET_DUMPABLE, 0, 0, 0, 0) };
     // Returns 0 (not dumpable) or 1 (dumpable)
-    assert!(rc == 0 || rc == 1, "PR_GET_DUMPABLE should return 0 or 1, got {rc}");
+    assert!(
+        rc == 0 || rc == 1,
+        "PR_GET_DUMPABLE should return 0 or 1, got {rc}"
+    );
 }
 
 #[test]

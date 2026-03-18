@@ -2,9 +2,9 @@ use frankenlibc_membrane::config::SafetyLevel;
 use frankenlibc_membrane::heal::HealingAction;
 use frankenlibc_membrane::runtime_math::evidence::{LossEvidenceV1, SystematicEvidenceLog};
 use frankenlibc_membrane::runtime_math::{
-    ApiFamily, MembraneAction, RuntimeContext, RuntimeDecision, RuntimeKernelFramework,
-    RuntimeMathKernel, RuntimeReverseRoundDiversityState, ValidationProfile,
-    RUNTIME_KERNEL_SNAPSHOT_SCHEMA_VERSION,
+    ApiFamily, MembraneAction, RUNTIME_KERNEL_SNAPSHOT_SCHEMA_VERSION, RuntimeContext,
+    RuntimeDecision, RuntimeKernelFramework, RuntimeMathKernel, RuntimeReverseRoundDiversityState,
+    ValidationProfile,
 };
 use serde_json::Value;
 
@@ -527,13 +527,7 @@ fn e2e_branch_diversity_near_violation_at_boundary() {
     for i in 0..63 {
         let ctx = others[i % others.len()];
         let d = kernel.decide(SafetyLevel::Hardened, ctx);
-        kernel.observe_validation_result(
-            SafetyLevel::Hardened,
-            ctx.family,
-            d.profile,
-            20,
-            true,
-        );
+        kernel.observe_validation_result(SafetyLevel::Hardened, ctx.family, d.profile, 20, true);
     }
 
     let diversity = kernel.reverse_round_diversity_snapshot();
@@ -640,13 +634,7 @@ fn e2e_snapshot_strict_vs_hardened_mode_independence() {
     // Drive exclusively with Hardened mode.
     for _ in 0..32 {
         let d = kernel.decide(SafetyLevel::Hardened, ctx);
-        kernel.observe_validation_result(
-            SafetyLevel::Hardened,
-            ctx.family,
-            d.profile,
-            50,
-            true,
-        );
+        kernel.observe_validation_result(SafetyLevel::Hardened, ctx.family, d.profile, 50, true);
     }
 
     let hardened_snap = kernel.snapshot(SafetyLevel::Hardened);
@@ -839,10 +827,8 @@ fn e2e_snapshot_golden_replay_field_stability() {
         k2.observe_validation_result(SafetyLevel::Hardened, ctx.family, d2.profile, 35, adv2);
     }
 
-    let snap1 = serde_json::to_value(k1.snapshot(SafetyLevel::Hardened))
-        .expect("snap1 serializes");
-    let snap2 = serde_json::to_value(k2.snapshot(SafetyLevel::Hardened))
-        .expect("snap2 serializes");
+    let snap1 = serde_json::to_value(k1.snapshot(SafetyLevel::Hardened)).expect("snap1 serializes");
+    let snap2 = serde_json::to_value(k2.snapshot(SafetyLevel::Hardened)).expect("snap2 serializes");
 
     assert_eq!(
         snap1, snap2,
@@ -894,13 +880,7 @@ fn e2e_framework_decision_cards_export_contains_all_decisions() {
     for step in 0..40 {
         let ctx = contexts[step % contexts.len()];
         let d = kernel.decide(SafetyLevel::Hardened, ctx);
-        kernel.observe_validation_result(
-            SafetyLevel::Hardened,
-            ctx.family,
-            d.profile,
-            20,
-            true,
-        );
+        kernel.observe_validation_result(SafetyLevel::Hardened, ctx.family, d.profile, 20, true);
     }
 
     let export = RuntimeKernelFramework::export_decision_cards_json(&kernel);

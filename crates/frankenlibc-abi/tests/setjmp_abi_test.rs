@@ -180,10 +180,7 @@ fn sigsetjmp_repeated_capture_same_buffer() {
     let env_ptr = env.as_mut_ptr().cast::<c_void>();
     for mask in [0, 1, 0, 1, 0] {
         let rc = unsafe { sigsetjmp(env_ptr, mask) };
-        assert_eq!(
-            rc, 0,
-            "repeated sigsetjmp on same buffer should return 0"
-        );
+        assert_eq!(rc, 0, "repeated sigsetjmp on same buffer should return 0");
     }
 }
 

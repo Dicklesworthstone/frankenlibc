@@ -393,9 +393,7 @@ mod tests {
                                     bloom_negative: bloom,
                                 };
                                 // Must not panic
-                                let _ = oracle.admissible(
-                                    &ctx, mode, profile, risk, limits,
-                                );
+                                let _ = oracle.admissible(&ctx, mode, profile, risk, limits);
                             }
                         }
                     }
@@ -443,20 +441,10 @@ mod tests {
                             contention_hint: 0,
                             bloom_negative: false,
                         };
-                        let fast_ok = oracle.admissible(
-                            &ctx,
-                            mode,
-                            ValidationProfile::Fast,
-                            risk,
-                            limits,
-                        );
-                        let full_ok = oracle.admissible(
-                            &ctx,
-                            mode,
-                            ValidationProfile::Full,
-                            risk,
-                            limits,
-                        );
+                        let fast_ok =
+                            oracle.admissible(&ctx, mode, ValidationProfile::Fast, risk, limits);
+                        let full_ok =
+                            oracle.admissible(&ctx, mode, ValidationProfile::Full, risk, limits);
                         // If fast admits, full must also admit
                         if fast_ok {
                             assert!(

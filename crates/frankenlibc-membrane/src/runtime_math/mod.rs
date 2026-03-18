@@ -4654,7 +4654,8 @@ impl RuntimeMathKernel {
                 "{{\"timestamp\":\"{timestamp}\",\"trace_id\":\"{}\",\"bead_id\":\"{bead}\",\"scenario_id\":\"{run}\",\"decision_id\":0,\"schema_version\":\"{}\",\"level\":\"warn\",\"event\":\"runtime_regret_alert\",\"controller_id\":\"runtime_math_kernel.v1\",\"mode\":\"{mode_label}\",\"api_family\":\"runtime_math\",\"symbol\":\"runtime_math::kernel\",\"decision_path\":\"pareto::regret\",\"healing_action\":null,\"errno\":0,\"latency_ns\":0,\"pareto_cap_enforcements\":{},\"pareto_exhausted_families\":{},\"artifact_refs\":[\"crates/frankenlibc-membrane/src/runtime_math/mod.rs\"]}}",
                 regret_trace_id.as_str(),
                 MEMBRANE_SCHEMA_VERSION,
-                snapshot.pareto_cap_enforcements, snapshot.pareto_exhausted_families,
+                snapshot.pareto_cap_enforcements,
+                snapshot.pareto_exhausted_families,
             );
         }
 
@@ -5683,9 +5684,15 @@ mod tests {
             })
             .expect("framework export must include runtime_decision rows");
         assert_eq!(runtime_decision_row["bead_id"].as_str(), Some("bd-5vr.1"));
-        assert_eq!(runtime_decision_row["scenario_id"].as_str(), Some("framework-log"));
+        assert_eq!(
+            runtime_decision_row["scenario_id"].as_str(),
+            Some("framework-log")
+        );
         assert_eq!(runtime_decision_row["schema_version"].as_str(), Some("1.0"));
-        assert_eq!(runtime_decision_row["api_family"].as_str(), Some("allocator"));
+        assert_eq!(
+            runtime_decision_row["api_family"].as_str(),
+            Some("allocator")
+        );
         assert!(
             runtime_decision_row["trace_id"]
                 .as_str()
@@ -5707,9 +5714,18 @@ mod tests {
                     .is_some_and(|event| event == "runtime_reverse_round_math_selection")
             })
             .expect("framework export must include reverse-round selection rows");
-        assert_eq!(reverse_round_selection_row["bead_id"].as_str(), Some("bd-5vr.1"));
-        assert_eq!(reverse_round_selection_row["scenario_id"].as_str(), Some("framework-log"));
-        assert_eq!(reverse_round_selection_row["schema_version"].as_str(), Some("1.0"));
+        assert_eq!(
+            reverse_round_selection_row["bead_id"].as_str(),
+            Some("bd-5vr.1")
+        );
+        assert_eq!(
+            reverse_round_selection_row["scenario_id"].as_str(),
+            Some("framework-log")
+        );
+        assert_eq!(
+            reverse_round_selection_row["schema_version"].as_str(),
+            Some("1.0")
+        );
         assert_eq!(
             reverse_round_selection_row["api_family"].as_str(),
             Some("runtime_math")
@@ -5807,21 +5823,27 @@ mod tests {
             match parsed.get("event").and_then(Value::as_str) {
                 Some("runtime_reverse_round_math_selection") => {
                     saw_selection = true;
-                    assert!(
-                        parsed
-                            .get("trace_id")
-                            .and_then(Value::as_str)
-                            .is_some_and(|trace_id| {
-                                trace_id.starts_with("runtime_math::reverse_round::selection::")
-                            })
+                    assert!(parsed.get("trace_id").and_then(Value::as_str).is_some_and(
+                        |trace_id| {
+                            trace_id.starts_with("runtime_math::reverse_round::selection::")
+                        }
+                    ));
+                    assert_eq!(
+                        parsed.get("schema_version").and_then(Value::as_str),
+                        Some("1.0")
                     );
-                    assert_eq!(parsed.get("schema_version").and_then(Value::as_str), Some("1.0"));
-                    assert_eq!(parsed.get("bead_id").and_then(Value::as_str), Some("bd-5vr.6"));
+                    assert_eq!(
+                        parsed.get("bead_id").and_then(Value::as_str),
+                        Some("bd-5vr.6")
+                    );
                     assert_eq!(
                         parsed.get("scenario_id").and_then(Value::as_str),
                         Some("diversity-contract")
                     );
-                    assert_eq!(parsed.get("api_family").and_then(Value::as_str), Some("runtime_math"));
+                    assert_eq!(
+                        parsed.get("api_family").and_then(Value::as_str),
+                        Some("runtime_math")
+                    );
                     assert_eq!(
                         parsed.get("symbol").and_then(Value::as_str),
                         Some("runtime_math::reverse_round")
@@ -5847,21 +5869,27 @@ mod tests {
                 }
                 Some("runtime_reverse_round_coverage_milestone") => {
                     saw_coverage = true;
-                    assert!(
-                        parsed
-                            .get("trace_id")
-                            .and_then(Value::as_str)
-                            .is_some_and(|trace_id| {
-                                trace_id.starts_with("runtime_math::reverse_round::coverage::")
-                            })
+                    assert!(parsed.get("trace_id").and_then(Value::as_str).is_some_and(
+                        |trace_id| {
+                            trace_id.starts_with("runtime_math::reverse_round::coverage::")
+                        }
+                    ));
+                    assert_eq!(
+                        parsed.get("schema_version").and_then(Value::as_str),
+                        Some("1.0")
                     );
-                    assert_eq!(parsed.get("schema_version").and_then(Value::as_str), Some("1.0"));
-                    assert_eq!(parsed.get("bead_id").and_then(Value::as_str), Some("bd-5vr.6"));
+                    assert_eq!(
+                        parsed.get("bead_id").and_then(Value::as_str),
+                        Some("bd-5vr.6")
+                    );
                     assert_eq!(
                         parsed.get("scenario_id").and_then(Value::as_str),
                         Some("diversity-contract")
                     );
-                    assert_eq!(parsed.get("api_family").and_then(Value::as_str), Some("runtime_math"));
+                    assert_eq!(
+                        parsed.get("api_family").and_then(Value::as_str),
+                        Some("runtime_math")
+                    );
                     assert_eq!(
                         parsed.get("symbol").and_then(Value::as_str),
                         Some("runtime_math::reverse_round")
@@ -5881,25 +5909,36 @@ mod tests {
                         Some(diversity.coverage_milestone_reached)
                     );
                 }
-                Some(event @ ("runtime_reverse_round_diversity_near_violation"
-                | "runtime_reverse_round_diversity_violation")) => {
+                Some(
+                    event @ ("runtime_reverse_round_diversity_near_violation"
+                    | "runtime_reverse_round_diversity_violation"),
+                ) => {
                     saw_diversity_state = true;
-                    assert_eq!(Some(event), diversity.state.event_and_level().map(|(event, _)| event));
-                    assert!(
-                        parsed
-                            .get("trace_id")
-                            .and_then(Value::as_str)
-                            .is_some_and(|trace_id| {
-                                trace_id.starts_with("runtime_math::reverse_round::diversity::")
-                            })
+                    assert_eq!(
+                        Some(event),
+                        diversity.state.event_and_level().map(|(event, _)| event)
                     );
-                    assert_eq!(parsed.get("schema_version").and_then(Value::as_str), Some("1.0"));
-                    assert_eq!(parsed.get("bead_id").and_then(Value::as_str), Some("bd-5vr.6"));
+                    assert!(parsed.get("trace_id").and_then(Value::as_str).is_some_and(
+                        |trace_id| {
+                            trace_id.starts_with("runtime_math::reverse_round::diversity::")
+                        }
+                    ));
+                    assert_eq!(
+                        parsed.get("schema_version").and_then(Value::as_str),
+                        Some("1.0")
+                    );
+                    assert_eq!(
+                        parsed.get("bead_id").and_then(Value::as_str),
+                        Some("bd-5vr.6")
+                    );
                     assert_eq!(
                         parsed.get("scenario_id").and_then(Value::as_str),
                         Some("diversity-contract")
                     );
-                    assert_eq!(parsed.get("api_family").and_then(Value::as_str), Some("runtime_math"));
+                    assert_eq!(
+                        parsed.get("api_family").and_then(Value::as_str),
+                        Some("runtime_math")
+                    );
                     assert_eq!(
                         parsed.get("symbol").and_then(Value::as_str),
                         Some("runtime_math::reverse_round")
@@ -5951,7 +5990,10 @@ mod tests {
 
         let parsed_rows: Vec<Value> = lines
             .iter()
-            .map(|line| serde_json::from_str::<Value>(line).expect("each runtime log line must be valid JSON"))
+            .map(|line| {
+                serde_json::from_str::<Value>(line)
+                    .expect("each runtime log line must be valid JSON")
+            })
             .collect();
 
         let mut saw_runtime_decision = false;
@@ -6067,32 +6109,33 @@ mod tests {
             saw_runtime_decision,
             "jsonl export must include runtime_decision rows"
         );
-        let assert_common_row_contract = |row: &Value,
-                                          expected_event: &str,
-                                          expected_api_family: &str,
-                                          expected_symbol: &str,
-                                          expected_decision_path: &str,
-                                          expected_trace_prefix: &str| {
-            assert_eq!(row["event"].as_str(), Some(expected_event));
-            assert!(
-                row["trace_id"]
-                    .as_str()
-                    .is_some_and(|trace_id| trace_id.starts_with(expected_trace_prefix))
-            );
-            assert_eq!(row["schema_version"].as_str(), Some("1.0"));
-            assert_eq!(row["bead_id"].as_str(), Some("bd-5vr.8"));
-            assert_eq!(row["scenario_id"].as_str(), Some("smoke-1"));
-            assert_eq!(row["api_family"].as_str(), Some(expected_api_family));
-            assert_eq!(row["symbol"].as_str(), Some(expected_symbol));
-            assert_eq!(row["decision_path"].as_str(), Some(expected_decision_path));
-            assert_eq!(
-                row["artifact_refs"]
-                    .as_array()
-                    .and_then(|refs| refs.first())
-                    .and_then(Value::as_str),
-                Some("crates/frankenlibc-membrane/src/runtime_math/mod.rs")
-            );
-        };
+        let assert_common_row_contract =
+            |row: &Value,
+             expected_event: &str,
+             expected_api_family: &str,
+             expected_symbol: &str,
+             expected_decision_path: &str,
+             expected_trace_prefix: &str| {
+                assert_eq!(row["event"].as_str(), Some(expected_event));
+                assert!(
+                    row["trace_id"]
+                        .as_str()
+                        .is_some_and(|trace_id| trace_id.starts_with(expected_trace_prefix))
+                );
+                assert_eq!(row["schema_version"].as_str(), Some("1.0"));
+                assert_eq!(row["bead_id"].as_str(), Some("bd-5vr.8"));
+                assert_eq!(row["scenario_id"].as_str(), Some("smoke-1"));
+                assert_eq!(row["api_family"].as_str(), Some(expected_api_family));
+                assert_eq!(row["symbol"].as_str(), Some(expected_symbol));
+                assert_eq!(row["decision_path"].as_str(), Some(expected_decision_path));
+                assert_eq!(
+                    row["artifact_refs"]
+                        .as_array()
+                        .and_then(|refs| refs.first())
+                        .and_then(Value::as_str),
+                    Some("crates/frankenlibc-membrane/src/runtime_math/mod.rs")
+                );
+            };
         let dispatch_row = parsed_rows
             .iter()
             .find(|row| {
@@ -6144,7 +6187,9 @@ mod tests {
             "runtime_math::snapshot::calibration::",
         );
         assert!(
-            calibration_row["snapshot_capture_latency_ns"].as_u64().is_some(),
+            calibration_row["snapshot_capture_latency_ns"]
+                .as_u64()
+                .is_some(),
             "runtime_calibration row must include snapshot capture timing"
         );
         assert!(
@@ -6219,7 +6264,9 @@ mod tests {
                     .and_then(Value::as_str)
                     .is_some_and(|event| event == "runtime_reverse_round_diversity_violation")
             })
-            .expect("single-family exports should trigger reverse-round diversity violation errors");
+            .expect(
+                "single-family exports should trigger reverse-round diversity violation errors",
+            );
         assert_common_row_contract(
             diversity_row,
             "runtime_reverse_round_diversity_violation",
@@ -6511,7 +6558,10 @@ mod tests {
         assert_eq!(success_row["scenario_id"].as_str(), Some("ok"));
         assert_eq!(success_row["api_family"].as_str(), Some("runtime_math"));
         assert_eq!(success_row["symbol"].as_str(), Some("runtime_math::kernel"));
-        assert_eq!(success_row["decision_path"].as_str(), Some("certificate::verify"));
+        assert_eq!(
+            success_row["decision_path"].as_str(),
+            Some("certificate::verify")
+        );
         assert_eq!(success_row["verification"].as_str(), Some("pass"));
         assert_eq!(
             success_row["artifact_refs"]
@@ -6551,7 +6601,10 @@ mod tests {
         assert_eq!(failure_row["level"].as_str(), Some("error"));
         assert_eq!(failure_row["api_family"].as_str(), Some("runtime_math"));
         assert_eq!(failure_row["symbol"].as_str(), Some("runtime_math::kernel"));
-        assert_eq!(failure_row["decision_path"].as_str(), Some("certificate::verify"));
+        assert_eq!(
+            failure_row["decision_path"].as_str(),
+            Some("certificate::verify")
+        );
         assert_eq!(failure_row["verification"].as_str(), Some("fail"));
         assert_eq!(
             failure_row["artifact_refs"]
@@ -6649,7 +6702,9 @@ mod tests {
                     .and_then(Value::as_str)
                     .is_some_and(|event| event == "runtime_regret_alert")
             })
-            .expect("runtime log export must include runtime_regret_alert when pareto is saturated");
+            .expect(
+                "runtime log export must include runtime_regret_alert when pareto is saturated",
+            );
         assert_eq!(regret_row["bead_id"].as_str(), Some("bd-epeg"));
         assert_eq!(
             regret_row["scenario_id"].as_str(),
@@ -6658,10 +6713,7 @@ mod tests {
         assert_eq!(regret_row["schema_version"].as_str(), Some("1.0"));
         assert_eq!(regret_row["api_family"].as_str(), Some("runtime_math"));
         assert_eq!(regret_row["symbol"].as_str(), Some("runtime_math::kernel"));
-        assert_eq!(
-            regret_row["decision_path"].as_str(),
-            Some("pareto::regret")
-        );
+        assert_eq!(regret_row["decision_path"].as_str(), Some("pareto::regret"));
         assert!(
             regret_row["trace_id"]
                 .as_str()
@@ -6694,7 +6746,9 @@ mod tests {
                     .and_then(Value::as_str)
                     .is_some_and(|event| event == "runtime_drift_alert")
             })
-            .expect("runtime log export must include runtime_drift_alert when padic drift is active");
+            .expect(
+                "runtime log export must include runtime_drift_alert when padic drift is active",
+            );
         assert_eq!(drift_row["bead_id"].as_str(), Some("bd-epeg"));
         assert_eq!(
             drift_row["scenario_id"].as_str(),
@@ -6703,10 +6757,7 @@ mod tests {
         assert_eq!(drift_row["schema_version"].as_str(), Some("1.0"));
         assert_eq!(drift_row["api_family"].as_str(), Some("runtime_math"));
         assert_eq!(drift_row["symbol"].as_str(), Some("runtime_math::kernel"));
-        assert_eq!(
-            drift_row["decision_path"].as_str(),
-            Some("drift::monitor")
-        );
+        assert_eq!(drift_row["decision_path"].as_str(), Some("drift::monitor"));
         assert!(
             drift_row["trace_id"]
                 .as_str()
@@ -6790,7 +6841,9 @@ mod tests {
         kernel
             .cached_pressure_raw_score_milli
             .store(200_000, Ordering::Relaxed);
-        kernel.cached_overload_policy_tag.store(99, Ordering::Relaxed);
+        kernel
+            .cached_overload_policy_tag
+            .store(99, Ordering::Relaxed);
 
         let jsonl = kernel.export_runtime_math_log_jsonl(
             SafetyLevel::Strict,

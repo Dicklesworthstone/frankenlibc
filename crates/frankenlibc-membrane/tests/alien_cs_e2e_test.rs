@@ -156,7 +156,11 @@ fn fc_contention_scaling_n(n_threads: usize, ops_per_thread: u64) {
 
     let expected = n_threads as u64 * ops_per_thread;
     let actual = fc.execute(0u64, |state, _| *state);
-    assert_eq!(actual, expected, "exact count after {} threads x {} ops", n_threads, ops_per_thread);
+    assert_eq!(
+        actual, expected,
+        "exact count after {} threads x {} ops",
+        n_threads, ops_per_thread
+    );
 }
 
 #[test]
@@ -327,7 +331,11 @@ fn full_pipeline_scaling_n(n_threads: usize, ops_per_thread: u64) {
     // Verify aggregate metrics.
     let total_ops = metrics.with_state_ref(|s| *s);
     let expected = n_threads as u64 * ops_per_thread;
-    assert_eq!(total_ops, expected, "{} threads x {} ops", n_threads, ops_per_thread);
+    assert_eq!(
+        total_ops, expected,
+        "{} threads x {} ops",
+        n_threads, ops_per_thread
+    );
     assert_eq!(collector.diagnostics().active_threads, 0);
 }
 
@@ -481,6 +489,9 @@ fn sustained_mixed_workload() {
     assert!(total_advances > 0, "advance threads must have done work");
 
     let final_count = fc.with_state_ref(|s| *s);
-    assert_eq!(final_count, total_hot_ops, "FC state must match total hot ops");
+    assert_eq!(
+        final_count, total_hot_ops,
+        "FC state must match total hot ops"
+    );
     assert_eq!(collector.diagnostics().active_threads, 0);
 }

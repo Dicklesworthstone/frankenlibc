@@ -135,7 +135,8 @@ fn validate_artifact_join_keys(
             line_number: None,
             path: Some(art_path.to_string()),
             remediation_hint: Some(
-                "either omit join_keys entirely or include at least one correlation key".to_string(),
+                "either omit join_keys entirely or include at least one correlation key"
+                    .to_string(),
             ),
         });
     }
@@ -179,21 +180,25 @@ fn validate_artifact_join_keys(
 
     emit_proof_log(
         emitter,
-        LogEntry::new("", LogLevel::Debug, "evidence_compliance.artifact_join_keys")
-            .with_stream(StreamKind::Release)
-            .with_gate(PROOF_GATE)
-            .with_outcome(Outcome::Pass)
-            .with_controller_id("artifact_index")
-            .with_artifacts(vec![art_path.to_string()])
-            .with_details(serde_json::json!({
-                "path": art_path,
-                "trace_id_count": join_keys.trace_ids.len(),
-                "span_id_count": join_keys.span_ids.len(),
-                "decision_id_count": join_keys.decision_ids.len(),
-                "policy_id_count": join_keys.policy_ids.len(),
-                "evidence_seqno_count": join_keys.evidence_seqnos.len(),
-                "decision_path": "proof->artifact_integrity->join_keys",
-            })),
+        LogEntry::new(
+            "",
+            LogLevel::Debug,
+            "evidence_compliance.artifact_join_keys",
+        )
+        .with_stream(StreamKind::Release)
+        .with_gate(PROOF_GATE)
+        .with_outcome(Outcome::Pass)
+        .with_controller_id("artifact_index")
+        .with_artifacts(vec![art_path.to_string()])
+        .with_details(serde_json::json!({
+            "path": art_path,
+            "trace_id_count": join_keys.trace_ids.len(),
+            "span_id_count": join_keys.span_ids.len(),
+            "decision_id_count": join_keys.decision_ids.len(),
+            "policy_id_count": join_keys.policy_ids.len(),
+            "evidence_seqno_count": join_keys.evidence_seqnos.len(),
+            "decision_path": "proof->artifact_integrity->join_keys",
+        })),
     );
 }
 

@@ -351,14 +351,7 @@ fn getpwent_r_iterates_all_entries() {
 fn getpwent_r_null_args() {
     use frankenlibc_abi::pwd_abi::getpwent_r;
 
-    let rc = unsafe {
-        getpwent_r(
-            ptr::null_mut(),
-            ptr::null_mut(),
-            0,
-            ptr::null_mut(),
-        )
-    };
+    let rc = unsafe { getpwent_r(ptr::null_mut(), ptr::null_mut(), 0, ptr::null_mut()) };
     assert_eq!(rc, libc::EINVAL, "null args should return EINVAL");
 }
 
@@ -526,7 +519,10 @@ fn getsgent_r_returns_enoent_stub() {
             &mut result_ptr as *mut *mut u8 as *mut *mut _,
         )
     };
-    assert!(result_ptr.is_null(), "getsgent_r result should be null (stub)");
+    assert!(
+        result_ptr.is_null(),
+        "getsgent_r result should be null (stub)"
+    );
     assert!(rc == 0 || rc == libc::ENOENT, "unexpected rc: {rc}");
 }
 
@@ -547,7 +543,10 @@ fn getsgnam_r_returns_enoent_stub() {
             &mut result_ptr as *mut *mut u8 as *mut *mut _,
         )
     };
-    assert!(result_ptr.is_null(), "getsgnam_r result should be null (stub)");
+    assert!(
+        result_ptr.is_null(),
+        "getsgnam_r result should be null (stub)"
+    );
     assert!(rc == 0 || rc == libc::ENOENT, "unexpected rc: {rc}");
 }
 

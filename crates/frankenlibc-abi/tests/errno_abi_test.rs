@@ -384,11 +384,7 @@ fn errno_concurrent_writers_isolation() {
                 for _ in 0..iterations {
                     unsafe { *p = my_val };
                     // No other thread should be able to change our errno
-                    assert_eq!(
-                        unsafe { *p },
-                        my_val,
-                        "thread {i} errno corrupted"
-                    );
+                    assert_eq!(unsafe { *p }, my_val, "thread {i} errno corrupted");
                 }
             })
         })

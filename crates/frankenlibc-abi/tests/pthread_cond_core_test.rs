@@ -230,17 +230,14 @@ fn condvar_signal_null_is_einval() {
 fn condvar_broadcast_null_is_einval() {
     pthread_mutex_reset_state_for_tests();
     unsafe {
-        assert_eq!(
-            pthread_cond_broadcast(std::ptr::null_mut()),
-            libc::EINVAL
-        );
+        assert_eq!(pthread_cond_broadcast(std::ptr::null_mut()), libc::EINVAL);
     }
 }
 
 #[test]
 fn condvar_signal_wakes_timedwait_thread() {
-    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
 
     pthread_mutex_reset_state_for_tests();
     let cond = alloc_cond_ptr();
@@ -309,10 +306,7 @@ fn condvar_wait_null_cond_is_einval() {
     unsafe {
         assert_eq!(pthread_mutex_init(mutex, std::ptr::null()), 0);
         assert_eq!(pthread_mutex_lock(mutex), 0);
-        assert_eq!(
-            pthread_cond_wait(std::ptr::null_mut(), mutex),
-            libc::EINVAL
-        );
+        assert_eq!(pthread_cond_wait(std::ptr::null_mut(), mutex), libc::EINVAL);
         assert_eq!(pthread_mutex_unlock(mutex), 0);
         assert_eq!(pthread_mutex_destroy(mutex), 0);
         free_mutex_ptr(mutex);
@@ -398,8 +392,8 @@ fn condvar_timedwait_negative_nsec_is_einval() {
 
 #[test]
 fn condvar_broadcast_wakes_multiple_timedwait_threads() {
-    use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicU32, Ordering};
 
     pthread_mutex_reset_state_for_tests();
     let cond = alloc_cond_ptr();

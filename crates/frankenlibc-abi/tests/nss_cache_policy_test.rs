@@ -459,10 +459,7 @@ fn passwd_empty_file_returns_null_on_getpwent() {
     }
 
     let entry = unsafe { frankenlibc_abi::pwd_abi::getpwent() };
-    assert!(
-        entry.is_null(),
-        "getpwent on empty file should return NULL"
-    );
+    assert!(entry.is_null(), "getpwent on empty file should return NULL");
 
     unsafe {
         frankenlibc_abi::pwd_abi::endpwent();
@@ -484,10 +481,7 @@ fn group_empty_file_returns_null_on_getgrnam() {
 
     let name = CString::new("nonexistent").expect("literal has no interior NUL");
     let entry = unsafe { frankenlibc_abi::grp_abi::getgrnam(name.as_ptr()) };
-    assert!(
-        entry.is_null(),
-        "getgrnam on empty file should return NULL"
-    );
+    assert!(entry.is_null(), "getgrnam on empty file should return NULL");
 
     unsafe {
         frankenlibc_abi::grp_abi::endgrent();
@@ -570,7 +564,10 @@ fn group_getgrgid_finds_correct_group() {
     let _guard = TEST_LOCK.lock().expect("lock should be available");
     let path = temp_path("group-gid-lookup");
 
-    write_file(&path, b"root:x:0:\nadmin:x:800:alice\ndev:x:900:alice,bob\n");
+    write_file(
+        &path,
+        b"root:x:0:\nadmin:x:800:alice\ndev:x:900:alice,bob\n",
+    );
     unsafe { std::env::set_var(GROUP_ENV, &path) };
     unsafe { frankenlibc_abi::grp_abi::endgrent() };
 

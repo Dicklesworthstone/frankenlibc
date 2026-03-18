@@ -493,7 +493,11 @@ fn mprotect_none_then_restore() {
     // Restore
     let rc = unsafe { mprotect(ptr, len, libc::PROT_READ) };
     assert_eq!(rc, 0);
-    assert_eq!(unsafe { *(ptr as *const u8) }, 33, "data should survive PROT_NONE");
+    assert_eq!(
+        unsafe { *(ptr as *const u8) },
+        33,
+        "data should survive PROT_NONE"
+    );
 
     assert_eq!(unsafe { munmap(ptr, len) }, 0);
 }

@@ -69,7 +69,7 @@ pub use decision_contract::{
     DecisionEvent as DecisionContractEvent, DecisionTransition, TsmState,
 };
 pub use heal::{HealingAction, HealingPolicy};
-pub use ids::{DecisionId, PolicyId, SchemaVersion, TraceId, MEMBRANE_SCHEMA_VERSION};
+pub use ids::{DecisionId, MEMBRANE_SCHEMA_VERSION, PolicyId, SchemaVersion, TraceId};
 pub use lattice::SafetyState;
 pub use metrics::MembraneMetrics;
 pub use pressure_sensor::{PressureSensor, PressureSignals, SystemRegime};

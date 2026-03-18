@@ -250,10 +250,7 @@ fn once_completed_with_different_routine_is_noop() {
     assert_eq!(INIT_COUNTER.load(Ordering::Relaxed), 1);
 
     // Second call with a DIFFERENT routine — should still be a no-op.
-    assert_eq!(
-        unsafe { pthread_once(&mut once, Some(late_increment)) },
-        0
-    );
+    assert_eq!(unsafe { pthread_once(&mut once, Some(late_increment)) }, 0);
     assert_eq!(
         LATE_COUNTER.load(Ordering::Relaxed),
         0,

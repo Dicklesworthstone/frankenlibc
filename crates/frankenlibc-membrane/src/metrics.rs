@@ -136,7 +136,10 @@ impl MetricsSnapshot {
     /// Ratio of TLS cache hits to all TLS cache lookups.
     #[must_use]
     pub fn tls_cache_hit_rate(&self) -> f64 {
-        ratio(self.tls_cache_hits, self.tls_cache_hits + self.tls_cache_misses)
+        ratio(
+            self.tls_cache_hits,
+            self.tls_cache_hits + self.tls_cache_misses,
+        )
     }
 
     /// Ratio of bloom hits to all bloom checks.
@@ -341,9 +344,6 @@ mod tests {
         assert_eq!(row["mode"], "hard_mode");
         assert_eq!(row["api_family"], "api_family");
         assert_eq!(row["symbol"], "unknown");
-        assert_eq!(
-            row["trace_id"],
-            "membrane::metrics::unknown::bad_run_id"
-        );
+        assert_eq!(row["trace_id"], "membrane::metrics::unknown::bad_run_id");
     }
 }

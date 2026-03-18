@@ -92,7 +92,9 @@ fn foreign_pointer_is_allowed_with_unknown_state() {
     );
     assert!(outcome.can_read(), "foreign should be readable");
     assert!(outcome.can_write(), "foreign should be writable");
-    let abs = outcome.abstraction().expect("foreign should have abstraction");
+    let abs = outcome
+        .abstraction()
+        .expect("foreign should have abstraction");
     assert_eq!(abs.state, SafetyState::Unknown);
     assert!(abs.remaining.is_none(), "foreign should have no bounds");
 }
@@ -163,15 +165,15 @@ fn double_free_detected() {
     let pipeline = ValidationPipeline::new();
     let ptr = pipeline.allocate(64).expect("allocate");
     let result = pipeline.free(ptr);
-    assert!(matches!(result, frankenlibc_membrane::arena::FreeResult::Freed));
+    assert!(matches!(
+        result,
+        frankenlibc_membrane::arena::FreeResult::Freed
+    ));
 
     // Second free should be detected
     let result2 = pipeline.free(ptr);
     assert!(
-        matches!(
-            result2,
-            frankenlibc_membrane::arena::FreeResult::DoubleFree
-        ),
+        matches!(result2, frankenlibc_membrane::arena::FreeResult::DoubleFree),
         "double free should be detected, got {result2:?}"
     );
 }

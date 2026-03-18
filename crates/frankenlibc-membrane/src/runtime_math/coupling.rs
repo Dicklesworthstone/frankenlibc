@@ -474,14 +474,8 @@ mod tests {
     #[test]
     fn proof_hoeffding_bound_validity() {
         // Property 1: ε(0) = +∞
-        assert!(
-            hoeffding_epsilon(0).is_infinite(),
-            "ε(0) must be infinite"
-        );
-        assert!(
-            hoeffding_epsilon(0) > 0.0,
-            "ε(0) must be positive infinity"
-        );
+        assert!(hoeffding_epsilon(0).is_infinite(), "ε(0) must be infinite");
+        assert!(hoeffding_epsilon(0) > 0.0, "ε(0) must be positive infinity");
 
         // Property 2: ε(n) > 0 for all n > 0
         for n in [1, 2, 10, 48, 100, 1000, 10000, 1_000_000u64] {
@@ -535,7 +529,11 @@ mod tests {
         for &rate in &rates {
             let mut ctrl = CouplingController::new();
             let n = 2000u64;
-            let disagree_every = if rate > 0.0 { (1.0 / rate) as u64 } else { u64::MAX };
+            let disagree_every = if rate > 0.0 {
+                (1.0 / rate) as u64
+            } else {
+                u64::MAX
+            };
 
             for i in 0..n {
                 let disagree = rate > 0.0 && (i % disagree_every == 0);
@@ -672,7 +670,7 @@ mod tests {
         // We use specific disagreement rates and enough observations to
         // achieve precise coupling distances.
         let scenarios: &[(f64, CouplingState)] = &[
-            (0.0, CouplingState::Coupled),       // d_TV = 0.0
+            (0.0, CouplingState::Coupled),               // d_TV = 0.0
             (0.50, CouplingState::CertificationFailure), // d_TV = 0.50
         ];
 

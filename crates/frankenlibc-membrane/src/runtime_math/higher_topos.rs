@@ -600,7 +600,10 @@ mod tests {
             }
         }
         assert!(hit_violation, "Must pass through DescentViolation");
-        assert!(hit_incoherent, "Must reach Incoherent with sustained violations");
+        assert!(
+            hit_incoherent,
+            "Must reach Incoherent with sustained violations"
+        );
     }
 
     // ═══════════════════════════════════════════════════════════════

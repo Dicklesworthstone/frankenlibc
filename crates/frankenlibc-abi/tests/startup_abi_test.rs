@@ -327,7 +327,10 @@ fn phase0_negative_argc_still_runs() {
         )
     };
     // Implementation may accept or reject negative argc
-    assert!(rc == 42 || rc < 0, "phase0 should either run main or reject");
+    assert!(
+        rc == 42 || rc < 0,
+        "phase0 should either run main or reject"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -501,7 +504,10 @@ fn startup_snapshot_argc_matches_fixture() {
     assert_eq!(rc, 0);
     // We passed argc=1 (one argv element), snapshot should reflect that
     // snapshot should have captured some meaningful state
-    assert!(snap.argc > 0 || snap.argv_count > 0, "should have captured some invariants");
+    assert!(
+        snap.argc > 0 || snap.argv_count > 0,
+        "should have captured some invariants"
+    );
 }
 
 #[test]

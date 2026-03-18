@@ -240,7 +240,10 @@ fn key_create_many_keys_are_unique() {
     let mut keys = [0u32; N];
 
     for key in &mut keys {
-        assert_eq!(unsafe { pthread_key_create(key as *mut libc::pthread_key_t, None) }, 0);
+        assert_eq!(
+            unsafe { pthread_key_create(key as *mut libc::pthread_key_t, None) },
+            0
+        );
     }
 
     // All keys must be distinct.
@@ -286,14 +289,14 @@ fn setspecific_null_clears_value() {
     assert_eq!(unsafe { pthread_key_create(&mut key, None) }, 0);
 
     let sentinel: usize = 0xCAFE;
-    assert_eq!(unsafe { pthread_setspecific(key, sentinel as *const c_void) }, 0);
+    assert_eq!(
+        unsafe { pthread_setspecific(key, sentinel as *const c_void) },
+        0
+    );
     assert_eq!(unsafe { pthread_getspecific(key) as usize }, sentinel);
 
     // Set to NULL.
-    assert_eq!(
-        unsafe { pthread_setspecific(key, std::ptr::null()) },
-        0
-    );
+    assert_eq!(unsafe { pthread_setspecific(key, std::ptr::null()) }, 0);
     assert!(
         unsafe { pthread_getspecific(key) }.is_null(),
         "setting null should clear the value"

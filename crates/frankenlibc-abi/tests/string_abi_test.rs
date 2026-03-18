@@ -5,6 +5,7 @@
 use std::ffi::{CStr, c_char, c_int, c_void};
 
 use frankenlibc_abi::string_abi::*;
+use frankenlibc_abi::unistd_abi::strerror_l;
 
 // ===========================================================================
 // memcpy / memmove / memset / memcmp / memchr / memrchr
@@ -776,4 +777,108 @@ fn fnmatch_exact_match() {
 #[test]
 fn fnmatch_empty_pattern_empty_string() {
     assert_eq!(unsafe { fnmatch(c"".as_ptr(), c"".as_ptr(), 0) }, 0);
+}
+
+// ===========================================================================
+// GNU errno-name helpers / locale aliases / C23 strfrom*
+// ===========================================================================
+
+#[test]
+fn strerror_l_returns_message_for_known_errno() {
+    let msg = unsafe { strerror_l(libc::EACCES, std::ptr::null_mut()) };
+    assert!(!msg.is_null());
+    let s = unsafe { CStr::from_ptr(msg) };
+    assert!(!s.to_bytes().is_empty());
+}
+
+#[test]
+fn strerrordesc_np_reports_known_errno_and_null_for_unknown() {
+    let known = strerrordesc_np(libc::ENOENT);
+    assert!(!known.is_null());
+    assert_eq!(
+        unsafe { CStr::from_ptr(known) }.to_bytes(),
+        b"No such file or directory"
+    );
+    assert!(strerrordesc_np(0x7fff).is_null());
+}
+
+#[test]
+fn strerrorname_np_reports_known_errno_and_null_for_unknown() {
+    let known = strerrorname_np(libc::ENOENT);
+    assert!(!known.is_null());
+    assert_eq!(unsafe { CStr::from_ptr(known) }.to_bytes(), b"ENOENT");
+    assert!(strerrorname_np(0x7fff).is_null());
+}
+
+#[test]
+fn strcasecmp_l_ignores_locale_argument() {
+    assert_eq!(
+        unsafe {
+            strcasecmp_l(
+                c"FrAnKeN".as_ptr(),
+                c"franken".as_ptr(),
+                std::ptr::null_mut(),
+            )
+        },
+        0
+    );
+}
+
+#[test]
+fn strncasecmp_l_respects_length_limit() {
+    assert_eq!(
+        unsafe {
+            strncasecmp_l(
+                c"AlphaBeta".as_ptr(),
+                c"alphaZeta".as_ptr(),
+                5,
+                std::ptr::null_mut(),
+            )
+        },
+        0
+    );
+    assert_ne!(
+        unsafe {
+            strncasecmp_l(
+                c"AlphaBeta".as_ptr(),
+                c"alphaZeta".as_ptr(),
+                6,
+                std::ptr::null_mut(),
+            )
+        },
+        0
+    );
+}
+
+#[test]
+fn strfromd_formats_output_and_returns_full_length() {
+    let mut buf = [0_i8; 32];
+    let len = unsafe { strfromd(buf.as_mut_ptr(), buf.len(), c"%.2f".as_ptr(), 12.345) };
+    assert_eq!(len, 5);
+    assert_eq!(unsafe { CStr::from_ptr(buf.as_ptr()) }.to_bytes(), b"12.35");
+}
+
+#[test]
+fn strfromd_truncates_output_but_reports_untruncated_length() {
+    let mut buf = [0_i8; 5];
+    let len = unsafe { strfromd(buf.as_mut_ptr(), buf.len(), c"%.2f".as_ptr(), 12.345) };
+    assert_eq!(len, 5);
+    assert_eq!(unsafe { CStr::from_ptr(buf.as_ptr()) }.to_bytes(), b"12.3");
+}
+
+#[test]
+fn strfromf_and_strfroml_delegate_to_shared_formatter() {
+    let mut f_buf = [0_i8; 32];
+    let mut l_buf = [0_i8; 32];
+
+    let f_len = unsafe { strfromf(f_buf.as_mut_ptr(), f_buf.len(), c"%.1f".as_ptr(), 3.25) };
+    let l_len = unsafe { strfroml(l_buf.as_mut_ptr(), l_buf.len(), c"%.3e".as_ptr(), 3.25) };
+
+    assert_eq!(f_len, 3);
+    assert_eq!(unsafe { CStr::from_ptr(f_buf.as_ptr()) }.to_bytes(), b"3.2");
+    assert_eq!(l_len, 7);
+    assert_eq!(
+        unsafe { CStr::from_ptr(l_buf.as_ptr()) }.to_bytes(),
+        b"3.250e0"
+    );
 }

@@ -27,8 +27,8 @@
 //! - Safety level + feature flags
 
 use parking_lot::{Mutex, MutexGuard};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Sequence-locked configuration store.
 ///
@@ -247,7 +247,6 @@ impl<T: Clone + Send + Sync> SeqLock<T> {
         self.version.fetch_add(1, Ordering::Release);
         self.diag.writes.fetch_add(1, Ordering::Relaxed);
     }
-
 }
 
 impl<'a, T: Clone + Send + Sync> SeqLockWriteGuard<'a, T> {
@@ -324,10 +323,7 @@ impl<'a, T: Clone + Send + Sync> SeqLockReader<'a, T> {
         if current_version == self.cached_version {
             self.lock.diag.cache_hits.fetch_add(1, Ordering::Relaxed);
         } else {
-            self.lock
-                .diag
-                .cache_misses
-                .fetch_add(1, Ordering::Relaxed);
+            self.lock.diag.cache_misses.fetch_add(1, Ordering::Relaxed);
             self.cached_snapshot = self.lock.load();
             self.cached_version = current_version;
         }
@@ -344,10 +340,7 @@ impl<'a, T: Clone + Send + Sync> SeqLockReader<'a, T> {
             self.lock.diag.cache_hits.fetch_add(1, Ordering::Relaxed);
             None
         } else {
-            self.lock
-                .diag
-                .cache_misses
-                .fetch_add(1, Ordering::Relaxed);
+            self.lock.diag.cache_misses.fetch_add(1, Ordering::Relaxed);
             self.cached_snapshot = self.lock.load();
             self.cached_version = current_version;
             Some(&self.cached_snapshot)
@@ -435,7 +428,11 @@ mod tests {
             let _guard = sl.write();
             // No mutate() calls.
         }
-        assert_eq!(sl.version(), 1, "version should not change without mutation");
+        assert_eq!(
+            sl.version(),
+            1,
+            "version should not change without mutation"
+        );
     }
 
     #[test]
@@ -573,7 +570,10 @@ mod tests {
         let _ = reader.read(); // miss (version changed)
 
         let d = sl.diagnostics();
-        assert!(d.cache_misses >= 2, "should have misses for init + version change");
+        assert!(
+            d.cache_misses >= 2,
+            "should have misses for init + version change"
+        );
     }
 
     // ──────────────── Struct data tests ────────────────

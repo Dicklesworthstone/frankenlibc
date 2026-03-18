@@ -288,7 +288,10 @@ fn isoc23_strtol_binary_base() {
     let s = b"0b1010\0";
     let val = unsafe { __isoc23_strtol(c_ptr(s), ptr::null_mut(), 0) };
     // Implementation may or may not support 0b; accept 0 or 10
-    assert!(val == 10 || val == 0, "0b1010 should parse as 10 or 0, got {val}");
+    assert!(
+        val == 10 || val == 0,
+        "0b1010 should parse as 10 or 0, got {val}"
+    );
 }
 
 #[test]

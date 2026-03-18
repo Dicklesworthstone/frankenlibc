@@ -563,10 +563,7 @@ mod tests {
             let terminal = s.is_terminal();
 
             // Live and terminal must be mutually exclusive
-            assert!(
-                !(live && terminal),
-                "State {s:?} is both live and terminal"
-            );
+            assert!(!(live && terminal), "State {s:?} is both live and terminal");
 
             // Every state must be categorized
             // (Quarantined and Freed are neither live nor terminal,

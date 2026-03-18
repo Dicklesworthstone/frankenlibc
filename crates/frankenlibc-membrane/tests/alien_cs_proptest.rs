@@ -8,8 +8,8 @@ use frankenlibc_membrane::flat_combining::FlatCombiner;
 use frankenlibc_membrane::rcu::{RcuCell, RcuReader};
 use frankenlibc_membrane::seqlock::{SeqLock, SeqLockReader};
 use proptest::prelude::*;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 // ──────────────── RCU properties ────────────────
 

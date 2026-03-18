@@ -499,9 +499,5 @@ fn pthread_getname_zero_buflen_is_einval() {
     let mut buf = [0 as libc::c_char; 1];
     // Zero-length buffer should fail with EINVAL.
     let rc = unsafe { pthread_getname_np(self_id, buf.as_mut_ptr(), 0) };
-    assert_eq!(
-        rc,
-        libc::EINVAL,
-        "zero-length buffer should return EINVAL"
-    );
+    assert_eq!(rc, libc::EINVAL, "zero-length buffer should return EINVAL");
 }

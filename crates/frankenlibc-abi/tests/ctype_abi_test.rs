@@ -495,11 +495,7 @@ fn del_is_control() {
 fn all_control_chars_classified() {
     // 0x00-0x1F and 0x7F are control characters
     for c in 0..=0x1F {
-        assert_ne!(
-            unsafe { iscntrl(c) },
-            0,
-            "0x{c:02X} should be control"
-        );
+        assert_ne!(unsafe { iscntrl(c) }, 0, "0x{c:02X} should be control");
     }
     assert_ne!(unsafe { iscntrl(0x7F) }, 0, "0x7F should be control");
 }
@@ -515,7 +511,11 @@ fn ctype_b_loc_digit_bits() {
     for d in b'0'..=b'9' {
         let flags = unsafe { *p.offset(d as isize) };
         // Digit bit should be set (bit position varies by glibc version, just check non-zero classification)
-        assert_ne!(flags, 0, "digit '{}' should have classification bits", d as char);
+        assert_ne!(
+            flags, 0,
+            "digit '{}' should have classification bits",
+            d as char
+        );
     }
 }
 

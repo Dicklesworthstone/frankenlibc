@@ -460,6 +460,10 @@ fn fegetenv_repeated_calls_are_deterministic() {
         assert_eq!(fegetenv(env2.as_mut_ptr().cast::<c_void>()), 0);
 
         // Both snapshots should be identical.
-        assert_eq!(env1[..], env2[..], "repeated fegetenv should produce same state");
+        assert_eq!(
+            env1[..],
+            env2[..],
+            "repeated fegetenv should produce same state"
+        );
     }
 }

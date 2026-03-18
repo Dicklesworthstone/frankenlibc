@@ -540,11 +540,11 @@ mod tests {
         // For any requested > available, ClampSize.clamped <= available
         let test_pairs = [
             (100usize, Some(50usize), Some(80usize)), // min(50,80) = 50
-            (100, Some(200), Some(30)),                // min(200,30) = 30
-            (100, Some(50), None),                     // 50
-            (100, None, Some(30)),                     // 30
-            (usize::MAX, Some(0), Some(0)),            // 0
-            (0, Some(100), Some(100)),                 // no clamp needed
+            (100, Some(200), Some(30)),               // min(200,30) = 30
+            (100, Some(50), None),                    // 50
+            (100, None, Some(30)),                    // 30
+            (usize::MAX, Some(0), Some(0)),           // 0
+            (0, Some(100), Some(100)),                // no clamp needed
         ];
 
         for &(requested, src_rem, dst_rem) in &test_pairs {
@@ -623,8 +623,14 @@ mod tests {
     #[test]
     fn proof_healing_counter_exhaustiveness() {
         let actions = [
-            HealingAction::ClampSize { requested: 10, clamped: 5 },
-            HealingAction::TruncateWithNull { requested: 20, truncated: 15 },
+            HealingAction::ClampSize {
+                requested: 10,
+                clamped: 5,
+            },
+            HealingAction::TruncateWithNull {
+                requested: 20,
+                truncated: 15,
+            },
             HealingAction::IgnoreDoubleFree,
             HealingAction::IgnoreForeignFree,
             HealingAction::ReallocAsMalloc { size: 64 },
@@ -677,10 +683,16 @@ mod tests {
         policy.clear_healing_logs();
 
         let actions = [
-            HealingAction::ClampSize { requested: 10, clamped: 5 },
+            HealingAction::ClampSize {
+                requested: 10,
+                clamped: 5,
+            },
             HealingAction::IgnoreDoubleFree,
             HealingAction::ReturnSafeDefault,
-            HealingAction::TruncateWithNull { requested: 20, truncated: 15 },
+            HealingAction::TruncateWithNull {
+                requested: 20,
+                truncated: 15,
+            },
             HealingAction::ReallocAsMalloc { size: 128 },
         ];
 
@@ -702,7 +714,11 @@ mod tests {
             );
             prev_id = decision_id;
         }
-        assert_eq!(prev_id as usize, actions.len(), "Should have all decision IDs");
+        assert_eq!(
+            prev_id as usize,
+            actions.len(),
+            "Should have all decision IDs"
+        );
     }
 
     #[test]

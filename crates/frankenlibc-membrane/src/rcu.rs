@@ -48,8 +48,8 @@
 //! ```
 
 use parking_lot::Mutex;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Epoch-based RCU cell for lock-free reads of shared state.
 ///

@@ -2342,8 +2342,13 @@ fn io_internal_file_ops_use_native_stdio_paths() {
     assert_eq!(unsafe { fseek(stream, 0, libc::SEEK_SET) }, 0);
 
     let mut out = [0u8; 32];
-    let read =
-        unsafe { _IO_file_read(stream, out.as_mut_ptr().cast::<c_void>(), payload.len() as isize) };
+    let read = unsafe {
+        _IO_file_read(
+            stream,
+            out.as_mut_ptr().cast::<c_void>(),
+            payload.len() as isize,
+        )
+    };
     assert_eq!(read, payload.len() as isize);
     assert_eq!(&out[..payload.len()], payload);
 
@@ -2363,7 +2368,10 @@ fn io_internal_file_close_it_closes_stream_natively() {
     assert_eq!(unsafe { _IO_fputs(c"close-it".as_ptr(), stream) }, 0);
 
     assert_eq!(unsafe { _IO_file_close_it(stream) }, 0);
-    assert_eq!(fs::read(&path).expect("close_it should flush data"), b"close-it");
+    assert_eq!(
+        fs::read(&path).expect("close_it should flush data"),
+        b"close-it"
+    );
     let _ = fs::remove_file(path);
 }
 
@@ -2376,8 +2384,14 @@ fn io_internal_file_seek_stat_and_buffer_edges_use_native_stdio_paths() {
     let stream = unsafe { _IO_fopen(path_c.as_ptr(), c"w+".as_ptr()) };
     assert!(!stream.is_null());
 
-    assert_eq!(unsafe { _IO_file_overflow(stream, b'A' as c_int) }, b'A' as c_int);
-    assert_eq!(unsafe { _IO_file_overflow(stream, b'B' as c_int) }, b'B' as c_int);
+    assert_eq!(
+        unsafe { _IO_file_overflow(stream, b'A' as c_int) },
+        b'A' as c_int
+    );
+    assert_eq!(
+        unsafe { _IO_file_overflow(stream, b'B' as c_int) },
+        b'B' as c_int
+    );
     assert_eq!(unsafe { _IO_file_overflow(stream, libc::EOF) }, 0);
 
     assert_eq!(unsafe { _IO_file_seek(stream, 1, libc::SEEK_SET) }, 1);
@@ -2395,7 +2409,10 @@ fn io_internal_file_seek_stat_and_buffer_edges_use_native_stdio_paths() {
     assert_eq!(stat_buf.st_size, 2);
 
     assert_eq!(unsafe { _IO_file_close(stream) }, 0);
-    assert_eq!(fs::read(&path).expect("overflow writes should flush to disk"), b"AB");
+    assert_eq!(
+        fs::read(&path).expect("overflow writes should flush to disk"),
+        b"AB"
+    );
     let _ = fs::remove_file(path);
 }
 

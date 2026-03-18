@@ -173,7 +173,10 @@ fn test_strverscmp_all_digits() {
     let a = b"100\0";
     let b = b"20\0";
     let rc = unsafe { strverscmp(a.as_ptr() as *const c_char, b.as_ptr() as *const c_char) };
-    assert!(rc > 0, "100 should come after 20 in version order, got {rc}");
+    assert!(
+        rc > 0,
+        "100 should come after 20 in version order, got {rc}"
+    );
 }
 
 #[test]

@@ -1015,13 +1015,7 @@ mod tests {
             for cw in &witness.controller_witnesses {
                 let ctrl_idx = cw.controller.as_index();
                 let dist_idx = cw.disturbance.as_index();
-                let ns = transition(
-                    wr as usize,
-                    wl as usize,
-                    wa as usize,
-                    ctrl_idx,
-                    dist_idx,
-                );
+                let ns = transition(wr as usize, wl as usize, wa as usize, ctrl_idx, dist_idx);
                 let [sr, sl, sa] = cw.successor_state;
                 assert_eq!(
                     ns,

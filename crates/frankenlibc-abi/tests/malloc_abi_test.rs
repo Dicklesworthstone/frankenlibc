@@ -558,6 +558,9 @@ fn test_malloc_usable_size_after_realloc() {
     let p2 = unsafe { realloc(p, 512) };
     assert!(!p2.is_null());
     let usable = unsafe { malloc_usable_size(p2) };
-    assert!(usable >= 512, "usable size after realloc to 512 should be >= 512");
+    assert!(
+        usable >= 512,
+        "usable size after realloc to 512 should be >= 512"
+    );
     unsafe { free(p2) };
 }

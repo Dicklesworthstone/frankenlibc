@@ -581,10 +581,7 @@ mod tests {
         // Property 1: All costs non-negative.
         for (s, row) in COSTS.iter().enumerate() {
             for (a, &c) in row.iter().enumerate() {
-                assert!(
-                    c >= 0.0,
-                    "C(s={s},a={a}) = {c} must be non-negative"
-                );
+                assert!(c >= 0.0, "C(s={s},a={a}) = {c} must be non-negative");
             }
         }
 
@@ -592,7 +589,10 @@ mod tests {
         let expected_optimal: [usize; NUM_HEALTH_STATES] = [0, 1, 2, 3]; // Allow, Validate, Repair, Deny
         for (s, row) in COSTS.iter().enumerate() {
             let min_cost = row.iter().copied().fold(f64::MAX, f64::min);
-            let best_action = row.iter().position(|&c| (c - min_cost).abs() < 1e-10).unwrap();
+            let best_action = row
+                .iter()
+                .position(|&c| (c - min_cost).abs() < 1e-10)
+                .unwrap();
             assert_eq!(
                 best_action, expected_optimal[s],
                 "Optimal action for state {s} should be {}, got {best_action}",
@@ -638,11 +638,11 @@ mod tests {
 
         // Feed diverse observations and check after each one.
         let scenarios: &[(u32, u8, bool)] = &[
-            (1_000, 0, false),   // low risk, Allow, no adverse
-            (100_000, 1, false), // moderate risk, FullValidate
-            (500_000, 2, true),  // high risk, Repair, adverse
-            (900_000, 3, true),  // extreme risk, Deny, adverse
-            (0, 0, false),       // zero risk
+            (1_000, 0, false),    // low risk, Allow, no adverse
+            (100_000, 1, false),  // moderate risk, FullValidate
+            (500_000, 2, true),   // high risk, Repair, adverse
+            (900_000, 3, true),   // extreme risk, Deny, adverse
+            (0, 0, false),        // zero risk
             (1_000_000, 0, true), // max risk but Allow (suboptimal)
         ];
 
@@ -683,7 +683,10 @@ mod tests {
     #[allow(clippy::assertions_on_constants)]
     fn proof_cpomdp_safety_feasibility() {
         // Property 1: Deny is always available (action index 3 exists).
-        assert!(NUM_ACTIONS >= 4, "Must have at least 4 actions including Deny");
+        assert!(
+            NUM_ACTIONS >= 4,
+            "Must have at least 4 actions including Deny"
+        );
 
         // Property 2: Deny is cheapest in Critical state.
         let critical_row = &COSTS[3]; // Critical state
@@ -701,10 +704,7 @@ mod tests {
             ctrl.observe_and_update(i * 2000, (i % 4) as u8, i % 5 == 0);
         }
         let s = ctrl.summary();
-        assert!(
-            s.optimal_value.is_finite(),
-            "Optimal value must be finite"
-        );
+        assert!(s.optimal_value.is_finite(), "Optimal value must be finite");
         assert!(
             s.observed_value.is_finite(),
             "Observed value must be finite"
@@ -737,7 +737,9 @@ mod tests {
         let ctrl = PomdpRepairController::new();
 
         // Test all risk boundary regions and adverse flags.
-        let risk_values = [0u32, 49_999, 50_000, 199_999, 200_000, 499_999, 500_000, 999_999];
+        let risk_values = [
+            0u32, 49_999, 50_000, 199_999, 200_000, 499_999, 500_000, 999_999,
+        ];
 
         for &risk in &risk_values {
             for &adverse in &[false, true] {

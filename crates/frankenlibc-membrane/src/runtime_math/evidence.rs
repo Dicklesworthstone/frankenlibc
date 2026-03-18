@@ -2502,17 +2502,27 @@ mod tests {
         assert!(parsed["cards"].is_array());
         assert_eq!(parsed["cards"].as_array().unwrap().len(), 2);
         for card in parsed["cards"].as_array().expect("cards must be array") {
-            assert!(card["trace_id"]
-                .as_str()
-                .is_some_and(|trace_id| trace_id.starts_with("runtime_math::decision_card::")));
+            assert!(
+                card["trace_id"]
+                    .as_str()
+                    .is_some_and(|trace_id| trace_id.starts_with("runtime_math::decision_card::"))
+            );
             assert!(card["mode"].as_u64().is_some());
-            assert!(card["api_family"].as_str().is_some_and(|value| !value.is_empty()));
-            assert!(card["symbol"]
-                .as_str()
-                .is_some_and(|value| value.starts_with("runtime_math::")));
-            assert!(card["decision_path"]
-                .as_str()
-                .is_some_and(|value| value.starts_with("mode->runtime_math_kernel->")));
+            assert!(
+                card["api_family"]
+                    .as_str()
+                    .is_some_and(|value| !value.is_empty())
+            );
+            assert!(
+                card["symbol"]
+                    .as_str()
+                    .is_some_and(|value| value.starts_with("runtime_math::"))
+            );
+            assert!(
+                card["decision_path"]
+                    .as_str()
+                    .is_some_and(|value| value.starts_with("mode->runtime_math_kernel->"))
+            );
             assert_eq!(
                 card["artifact_refs"][0].as_str(),
                 Some("crates/frankenlibc-membrane/src/runtime_math/evidence.rs")

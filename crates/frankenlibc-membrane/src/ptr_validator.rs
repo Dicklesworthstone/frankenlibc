@@ -503,7 +503,10 @@ impl ValidationPipeline {
     /// @separation-frame: `F` (caller-owned heap and non-membrane regions remain untouched).
     /// @separation-alias: `validate_pointer`.
     pub fn validate(&self, addr: usize) -> ValidationOutcome {
-        self.validate_with_security_context(addr, ValidationSecurityContext::allow_pointer_validation())
+        self.validate_with_security_context(
+            addr,
+            ValidationSecurityContext::allow_pointer_validation(),
+        )
     }
 
     /// Run a pointer through the validation pipeline under an explicit security context.
@@ -732,7 +735,7 @@ impl ValidationPipeline {
                             state,
                             cv.user_base,
                             remaining,
-                            cv.generation,
+                            u64::from(cv.generation),
                         );
                         self.runtime_math.note_check_order_outcome(
                             mode,
@@ -1608,7 +1611,7 @@ impl ValidationPipeline {
                 CachedValidation {
                     user_base: slot.user_base,
                     user_size: slot.user_size,
-                    generation: slot.generation,
+                    generation: slot.generation as u32,
                     state: slot.state,
                 },
                 epoch,
@@ -2001,13 +2004,28 @@ mod tests {
                 "trace_id must use canonical pointer-validation scope"
             );
             assert!(row.get("decision_id").and_then(Value::as_u64).is_some());
-            assert_eq!(row.get("schema_version").and_then(Value::as_str), Some("1.0"));
+            assert_eq!(
+                row.get("schema_version").and_then(Value::as_str),
+                Some("1.0")
+            );
             assert!(row.get("decision_path").and_then(Value::as_str).is_some());
             assert!(row.get("level").and_then(Value::as_str).is_some());
             assert!(row.get("stage").and_then(Value::as_str).is_some());
-            assert!(row.get("security_context").and_then(Value::as_str).is_some());
-            assert!(row.get("capability_scope").and_then(Value::as_str).is_some());
-            assert!(row.get("security_verdict").and_then(Value::as_str).is_some());
+            assert!(
+                row.get("security_context")
+                    .and_then(Value::as_str)
+                    .is_some()
+            );
+            assert!(
+                row.get("capability_scope")
+                    .and_then(Value::as_str)
+                    .is_some()
+            );
+            assert!(
+                row.get("security_verdict")
+                    .and_then(Value::as_str)
+                    .is_some()
+            );
         }
     }
 
@@ -2018,8 +2036,8 @@ mod tests {
         pipeline.clear_validation_logs();
 
         let ptr = pipeline.allocate(64).expect("alloc");
-        let outcome =
-            pipeline.validate_with_security_context(ptr as usize, ValidationSecurityContext::deny_all());
+        let outcome = pipeline
+            .validate_with_security_context(ptr as usize, ValidationSecurityContext::deny_all());
         assert!(matches!(outcome, ValidationOutcome::Denied(_)));
         assert!(!outcome.can_read());
         assert!(!outcome.can_write());

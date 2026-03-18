@@ -2345,10 +2345,7 @@ mod tests {
                     while i3 <= max_val {
                         let basis = [i0, i1, i2, i3];
                         let qf = cert.evaluate_quadratic_form(&basis, 1);
-                        assert!(
-                            qf >= 0,
-                            "PSD violation: basis={basis:?}, qf={qf}"
-                        );
+                        assert!(qf >= 0, "PSD violation: basis={basis:?}, qf={qf}");
                         count += 1;
                         i3 += step;
                     }
@@ -2379,10 +2376,7 @@ mod tests {
                         while i4 <= max_val {
                             let basis = [i0, i1, i2, i3, i4];
                             let qf = cert.evaluate_quadratic_form(&basis, 1);
-                            assert!(
-                                qf >= 0,
-                                "PSD violation: basis={basis:?}, qf={qf}"
-                            );
+                            assert!(qf >= 0, "PSD violation: basis={basis:?}, qf={qf}");
                             count += 1;
                             i4 += step;
                         }
@@ -2413,10 +2407,7 @@ mod tests {
                     while i3 <= max_val {
                         let basis = [i0, i1, i2, i3];
                         let qf = cert.evaluate_quadratic_form(&basis, 1);
-                        assert!(
-                            qf >= 0,
-                            "PSD violation: basis={basis:?}, qf={qf}"
-                        );
+                        assert!(qf >= 0, "PSD violation: basis={basis:?}, qf={qf}");
                         count += 1;
                         i3 += step;
                     }
@@ -2667,8 +2658,7 @@ mod tests {
         for i in 0..FRAGMENTATION_CERT_DIM {
             for j in 0..FRAGMENTATION_CERT_DIM {
                 assert_eq!(
-                    FRAGMENTATION_GRAM_MATRIX[i][j],
-                    FRAGMENTATION_GRAM_MATRIX[j][i],
+                    FRAGMENTATION_GRAM_MATRIX[i][j], FRAGMENTATION_GRAM_MATRIX[j][i],
                     "Fragmentation Gram not symmetric at ({i},{j})"
                 );
             }
@@ -2676,8 +2666,7 @@ mod tests {
         for i in 0..THREAD_SAFETY_CERT_DIM {
             for j in 0..THREAD_SAFETY_CERT_DIM {
                 assert_eq!(
-                    THREAD_SAFETY_GRAM_MATRIX[i][j],
-                    THREAD_SAFETY_GRAM_MATRIX[j][i],
+                    THREAD_SAFETY_GRAM_MATRIX[i][j], THREAD_SAFETY_GRAM_MATRIX[j][i],
                     "Thread-safety Gram not symmetric at ({i},{j})"
                 );
             }
@@ -2685,8 +2674,7 @@ mod tests {
         for i in 0..SIZE_CLASS_CERT_DIM {
             for j in 0..SIZE_CLASS_CERT_DIM {
                 assert_eq!(
-                    SIZE_CLASS_GRAM_MATRIX[i][j],
-                    SIZE_CLASS_GRAM_MATRIX[j][i],
+                    SIZE_CLASS_GRAM_MATRIX[i][j], SIZE_CLASS_GRAM_MATRIX[j][i],
                     "Size-class Gram not symmetric at ({i},{j})"
                 );
             }
@@ -2749,8 +2737,7 @@ mod tests {
             "Origin must be safe: barrier={origin_barrier}"
         );
         assert_eq!(
-            origin_barrier,
-            cert.barrier_budget_milli,
+            origin_barrier, cert.barrier_budget_milli,
             "Origin should have full budget headroom"
         );
 
