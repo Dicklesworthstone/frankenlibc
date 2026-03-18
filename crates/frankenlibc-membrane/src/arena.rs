@@ -71,23 +71,34 @@ impl ArenaShard {
     }
 }
 
+use crate::ebr::QuarantineEbr;
+
 /// Thread-safe generational allocation arena.
 pub struct AllocationArena {
     shards: Box<[Mutex<ArenaShard>]>,
     /// Global generation counter.
     next_generation: std::sync::atomic::AtomicU64,
+    /// Optional EBR collector for safe deferred deallocation.
+    collector: Option<Arc<QuarantineEbr>>,
 }
 
 impl AllocationArena {
     /// Create a new empty arena.
     #[must_use]
     pub fn new() -> Self {
+        Self::new_with_collector(None)
+    }
+
+    /// Create a new empty arena with an EBR collector.
+    #[must_use]
+    pub fn new_with_collector(collector: Option<Arc<QuarantineEbr>>) -> Self {
         let shards: Vec<Mutex<ArenaShard>> = (0..NUM_SHARDS)
             .map(|_| Mutex::new(ArenaShard::new()))
             .collect();
         Self {
             shards: shards.into_boxed_slice(),
             next_generation: std::sync::atomic::AtomicU64::new(1),
+            collector,
         }
     }
 
@@ -379,15 +390,25 @@ impl AllocationArena {
             }
 
             // Actually release memory
+for entry in drained {
+    let layout = std::alloc::Layout::from_size_align(entry.total_size, entry.align)
+        .expect("valid layout");
 
-            let layout = std::alloc::Layout::from_size_align(entry.total_size, entry.align)
-                .expect("valid layout");
-
-            // SAFETY: raw_base was allocated with this layout via std::alloc::alloc.
-
+    if let Some(collector) = &self.collector {
+        // Defer deallocation until grace period completes.
+        collector.retire_quarantined(move || {
+            // SAFETY: raw_base was allocated with this layout.
             unsafe {
                 std::alloc::dealloc(entry.raw_base as *mut u8, layout);
             }
+        });
+    } else {
+        // Fallback: immediate deallocation (risky if validation is concurrent).
+        unsafe {
+            std::alloc::dealloc(entry.raw_base as *mut u8, layout);
+        }
+    }
+}
 
             shard.quarantine_bytes -= entry.total_size;
 
