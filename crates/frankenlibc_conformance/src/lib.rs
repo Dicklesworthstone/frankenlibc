@@ -243,6 +243,12 @@ pub fn execute_fixture_case(
         "atol" => execute_atol_case(inputs, mode),
         "strtol" => execute_strtol_case(inputs, mode),
         "strtoul" => execute_strtoul_case(inputs, mode),
+        "dlopen" => execute_dlopen_case(inputs, mode),
+        "dlsym" => execute_dlsym_case(inputs, mode),
+        "dlclose" => execute_dlclose_case(inputs, mode),
+        "dlerror" => execute_dlerror_case(mode),
+        "dladdr" => execute_dladdr_case(mode),
+        "dlinfo" => execute_dlinfo_case(inputs, mode),
         "iconv" => execute_iconv_case(inputs, mode),
         "setlocale" => execute_setlocale_case(inputs, mode),
         "localeconv" => execute_localeconv_case(mode),
@@ -4844,6 +4850,368 @@ fn execute_strtok_r_case(
 }
 
 // ---------------------------------------------------------------------------
+// dlfcn / loader-edge executors
+// ---------------------------------------------------------------------------
+
+fn parse_dlopen_flags(inputs: &serde_json::Value) -> Result<c_int, String> {
+    let value = inputs
+        .get("flags")
+        .ok_or_else(|| String::from("missing key: flags"))?;
+
+    if let Some(bits) = value.as_i64() {
+        return i32::try_from(bits).map_err(|_| format!("flags out of range: {bits}"));
+    }
+
+    let raw = value
+        .as_str()
+        .ok_or_else(|| String::from("flags must be integer or string"))?;
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Ok(0);
+    }
+
+    trimmed.split('|').try_fold(0_i32, |acc, part| {
+        let bit = match part.trim() {
+            "RTLD_LAZY" => libc::RTLD_LAZY,
+            "RTLD_NOW" => libc::RTLD_NOW,
+            "RTLD_GLOBAL" => libc::RTLD_GLOBAL,
+            "RTLD_LOCAL" => libc::RTLD_LOCAL,
+            "RTLD_NOLOAD" => libc::RTLD_NOLOAD,
+            "RTLD_NODELETE" => libc::RTLD_NODELETE,
+            other => return Err(format!("unsupported dlopen flag: {other}")),
+        };
+        Ok(acc | bit)
+    })
+}
+
+fn parse_dlsym_handle(inputs: &serde_json::Value) -> Result<*mut c_void, String> {
+    let handle = parse_string(inputs, "handle")?;
+    match handle.as_str() {
+        "RTLD_DEFAULT" => Ok(libc::RTLD_DEFAULT),
+        "RTLD_NEXT" => Ok(libc::RTLD_NEXT),
+        other => Err(format!("unsupported dlsym handle alias: {other}")),
+    }
+}
+
+fn run_impl_dlopen(filename: Option<&str>, flags: c_int) -> Result<*mut c_void, String> {
+    let filename_c = filename
+        .map(|value| CString::new(value).map_err(|err| format!("CString: {err}")))
+        .transpose()?;
+    Ok(unsafe {
+        frankenlibc_abi::dlfcn_abi::dlopen(
+            filename_c
+                .as_ref()
+                .map_or(std::ptr::null(), |value| value.as_ptr()),
+            flags,
+        )
+    })
+}
+
+fn run_host_dlopen(filename: Option<&str>, flags: c_int) -> Result<*mut c_void, String> {
+    let filename_c = filename
+        .map(|value| CString::new(value).map_err(|err| format!("CString: {err}")))
+        .transpose()?;
+    Ok(unsafe {
+        libc::dlopen(
+            filename_c
+                .as_ref()
+                .map_or(std::ptr::null(), |value| value.as_ptr()),
+            flags,
+        )
+    })
+}
+
+fn dlopen_output_shape(handle: *mut c_void) -> String {
+    if handle.is_null() {
+        String::from("NULL")
+    } else {
+        String::from("HANDLE_PTR")
+    }
+}
+
+fn dlsym_output_shape(symbol: *mut c_void) -> String {
+    if symbol.is_null() {
+        String::from("NULL")
+    } else {
+        String::from("FUNC_PTR")
+    }
+}
+
+fn clear_impl_dlerror() {
+    unsafe {
+        let _ = frankenlibc_abi::dlfcn_abi::dlerror();
+    }
+}
+
+fn clear_host_dlerror() {
+    unsafe {
+        let _ = libc::dlerror();
+    }
+}
+
+fn execute_dlopen_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let filename = parse_optional_string(inputs, "filename")?;
+    let flags = parse_dlopen_flags(inputs)?;
+
+    clear_impl_dlerror();
+    let impl_handle = run_impl_dlopen(filename.as_deref(), flags)?;
+    let impl_output = dlopen_output_shape(impl_handle);
+
+    clear_host_dlerror();
+    let host_handle = run_host_dlopen(filename.as_deref(), flags)?;
+    let host_output = dlopen_output_shape(host_handle);
+    let host_parity = host_output == impl_output;
+    let note = (!host_parity).then(|| String::from("dlopen pointer-shape mismatch"));
+
+    if !impl_handle.is_null() {
+        unsafe {
+            let _ = frankenlibc_abi::dlfcn_abi::dlclose(impl_handle);
+        }
+    }
+    if !host_handle.is_null() {
+        unsafe {
+            let _ = libc::dlclose(host_handle);
+        }
+    }
+
+    Ok(DifferentialExecution {
+        host_output,
+        impl_output,
+        host_parity,
+        note,
+    })
+}
+
+fn execute_dlsym_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let handle = parse_dlsym_handle(inputs)?;
+    let symbol = parse_string(inputs, "symbol")?;
+    let symbol_c = CString::new(symbol).map_err(|err| format!("CString: {err}"))?;
+
+    clear_impl_dlerror();
+    let impl_sym = unsafe { frankenlibc_abi::dlfcn_abi::dlsym(handle, symbol_c.as_ptr()) };
+    let impl_output = dlsym_output_shape(impl_sym);
+
+    clear_host_dlerror();
+    let host_sym = unsafe { libc::dlsym(handle, symbol_c.as_ptr()) };
+    let host_output = dlsym_output_shape(host_sym);
+    let host_parity = host_output == impl_output;
+    let note = (!host_parity).then(|| String::from("dlsym pointer-shape mismatch"));
+
+    Ok(DifferentialExecution {
+        host_output,
+        impl_output,
+        host_parity,
+        note,
+    })
+}
+
+fn execute_dlclose_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let handle_kind = parse_string(inputs, "handle")?;
+
+    let (impl_output, host_output) = match handle_kind.as_str() {
+        "already_closed_handle" => {
+            clear_impl_dlerror();
+            let impl_handle = run_impl_dlopen(None, libc::RTLD_NOW)?;
+            let impl_rc = if impl_handle.is_null() {
+                -1
+            } else {
+                unsafe {
+                    let _ = frankenlibc_abi::dlfcn_abi::dlclose(impl_handle);
+                    frankenlibc_abi::dlfcn_abi::dlclose(impl_handle)
+                }
+            };
+
+            clear_host_dlerror();
+            let host_handle = run_host_dlopen(None, libc::RTLD_NOW)?;
+            let host_rc = if host_handle.is_null() {
+                -1
+            } else {
+                unsafe {
+                    let _ = libc::dlclose(host_handle);
+                    libc::dlclose(host_handle)
+                }
+            };
+
+            (impl_rc.to_string(), host_rc.to_string())
+        }
+        other => return Err(format!("unsupported dlclose handle alias: {other}")),
+    };
+
+    let host_parity = host_output == impl_output;
+    let note = (!host_parity).then(|| String::from("dlclose return-code mismatch"));
+
+    Ok(DifferentialExecution {
+        host_output,
+        impl_output,
+        host_parity,
+        note,
+    })
+}
+
+fn execute_dlerror_case(mode: &str) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+
+    clear_impl_dlerror();
+    let impl_handle = run_impl_dlopen(None, libc::RTLD_NOW)?;
+    if !impl_handle.is_null() {
+        unsafe {
+            let _ = frankenlibc_abi::dlfcn_abi::dlclose(impl_handle);
+        }
+    }
+    let impl_output = if unsafe { frankenlibc_abi::dlfcn_abi::dlerror() }.is_null() {
+        String::from("NULL")
+    } else {
+        String::from("STRING")
+    };
+
+    clear_host_dlerror();
+    let host_handle = run_host_dlopen(None, libc::RTLD_NOW)?;
+    if !host_handle.is_null() {
+        unsafe {
+            let _ = libc::dlclose(host_handle);
+        }
+    }
+    let host_output = if unsafe { libc::dlerror() }.is_null() {
+        String::from("NULL")
+    } else {
+        String::from("STRING")
+    };
+    let host_parity = host_output == impl_output;
+    let note = (!host_parity).then(|| String::from("dlerror state mismatch"));
+
+    Ok(DifferentialExecution {
+        host_output,
+        impl_output,
+        host_parity,
+        note,
+    })
+}
+
+fn execute_dladdr_case(mode: &str) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+
+    let addr = libc::printf as *const c_void;
+    let mut impl_info = std::mem::MaybeUninit::<libc::Dl_info>::zeroed();
+    let impl_rc = unsafe {
+        frankenlibc_abi::dlfcn_abi::dladdr(addr, impl_info.as_mut_ptr().cast::<c_void>())
+    };
+    let impl_output = if impl_rc != 0 {
+        String::from("nonzero")
+    } else {
+        String::from("0")
+    };
+
+    let mut host_info = std::mem::MaybeUninit::<libc::Dl_info>::zeroed();
+    let host_rc = unsafe { libc::dladdr(addr, host_info.as_mut_ptr()) };
+    let host_output = if host_rc != 0 {
+        String::from("nonzero")
+    } else {
+        String::from("0")
+    };
+    let host_parity = host_output == impl_output;
+    let note = (!host_parity).then(|| String::from("dladdr native fallback differs from host"));
+
+    Ok(DifferentialExecution {
+        host_output,
+        impl_output,
+        host_parity,
+        note,
+    })
+}
+
+fn parse_dlinfo_request(inputs: &serde_json::Value) -> Result<c_int, String> {
+    let request = parse_string(inputs, "request")?;
+    match request.as_str() {
+        "RTLD_DI_LINKMAP" => Ok(libc::RTLD_DI_LINKMAP),
+        other => Err(format!("unsupported dlinfo request: {other}")),
+    }
+}
+
+fn execute_dlinfo_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let handle_kind = parse_string(inputs, "handle")?;
+    let request = parse_dlinfo_request(inputs)?;
+    if handle_kind != "valid_handle" {
+        return Err(format!("unsupported dlinfo handle alias: {handle_kind}"));
+    }
+
+    clear_impl_dlerror();
+    let impl_handle = run_impl_dlopen(None, libc::RTLD_NOW)?;
+    let mut impl_link_map: *mut c_void = std::ptr::null_mut();
+    let impl_rc = if impl_handle.is_null() {
+        -1
+    } else {
+        unsafe {
+            frankenlibc_abi::glibc_internal_abi::dlinfo(
+                impl_handle,
+                request,
+                (&mut impl_link_map as *mut *mut c_void).cast::<c_void>(),
+            )
+        }
+    };
+    let impl_output = if impl_rc == 0 && !impl_link_map.is_null() {
+        String::from("valid_link_map")
+    } else {
+        String::from("NULL")
+    };
+
+    clear_host_dlerror();
+    let host_handle = run_host_dlopen(None, libc::RTLD_NOW)?;
+    let mut host_link_map: *mut c_void = std::ptr::null_mut();
+    let host_rc = if host_handle.is_null() {
+        -1
+    } else {
+        unsafe {
+            libc::dlinfo(
+                host_handle,
+                request,
+                (&mut host_link_map as *mut *mut c_void).cast::<c_void>(),
+            )
+        }
+    };
+    let host_output = if host_rc == 0 && !host_link_map.is_null() {
+        String::from("valid_link_map")
+    } else {
+        String::from("NULL")
+    };
+    let host_parity = host_output == impl_output;
+    let note = (!host_parity).then(|| String::from("dlinfo link-map shape mismatch"));
+
+    if !impl_handle.is_null() {
+        unsafe {
+            let _ = frankenlibc_abi::dlfcn_abi::dlclose(impl_handle);
+        }
+    }
+    if !host_handle.is_null() {
+        unsafe {
+            let _ = libc::dlclose(host_handle);
+        }
+    }
+
+    Ok(DifferentialExecution {
+        host_output,
+        impl_output,
+        host_parity,
+        note,
+    })
+}
+
+// ---------------------------------------------------------------------------
 // iconv_open / iconv_close executors
 // ---------------------------------------------------------------------------
 
@@ -7269,6 +7637,127 @@ mod tests {
             serde_json::json!({}),
             "NON_NULL_PTR",
             Some("SKIP"),
+            true,
+            None,
+        );
+    }
+
+    #[test]
+    fn execute_dlopen_case_strict_self_returns_handle_shape() {
+        assert_differential_contract(
+            "dlfcn",
+            "strict-dlopen-self-pointer-shape",
+            "tests/conformance/fixtures/dlfcn_ops.json#/cases/dlopen_self_strict",
+            "dlopen",
+            "strict",
+            serde_json::json!({
+                "filename": serde_json::Value::Null,
+                "flags": libc::RTLD_LAZY
+            }),
+            "HANDLE_PTR",
+            Some("HANDLE_PTR"),
+            true,
+            None,
+        );
+    }
+
+    #[test]
+    fn execute_dlsym_case_strict_valid_symbol_returns_function_shape() {
+        assert_differential_contract(
+            "dlfcn",
+            "strict-dlsym-valid-function-shape",
+            "tests/conformance/fixtures/dlfcn_ops.json#/cases/dlsym_valid_strict",
+            "dlsym",
+            "strict",
+            serde_json::json!({
+                "handle": "RTLD_DEFAULT",
+                "symbol": "printf"
+            }),
+            "FUNC_PTR",
+            Some("FUNC_PTR"),
+            true,
+            None,
+        );
+    }
+
+    #[test]
+    fn execute_dlclose_case_hardened_double_close_exposes_host_divergence() {
+        let result = execute_fixture_case(
+            "dlclose",
+            &serde_json::json!({
+                "handle": "already_closed_handle"
+            }),
+            "hardened",
+        )
+        .expect("hardened dlclose double-close should execute");
+
+        assert_eq!(result.impl_output, "0");
+        assert!(
+            matches!(result.host_output.as_str(), "0" | "-1"),
+            "host output should stay within implementation-defined dlclose shapes, got {}",
+            result.host_output
+        );
+        assert_eq!(result.host_parity, result.host_output == "0");
+        if result.host_parity {
+            assert!(
+                result.note.is_none(),
+                "matching host output should not emit mismatch note"
+            );
+        } else {
+            let note = result.note.unwrap_or_default();
+            assert!(
+                note.contains("dlclose return-code mismatch"),
+                "expected mismatch note for divergent host behavior, got {note:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn execute_dlerror_case_strict_after_success_is_null() {
+        assert_differential_contract(
+            "dlfcn",
+            "strict-dlerror-after-success-null",
+            "tests/conformance/fixtures/dlfcn_ops.json#/cases/dlerror_after_success_strict",
+            "dlerror",
+            "strict",
+            serde_json::json!({}),
+            "NULL",
+            Some("NULL"),
+            true,
+            None,
+        );
+    }
+
+    #[test]
+    fn execute_dladdr_case_strict_reports_native_fallback_difference() {
+        assert_differential_contract(
+            "loader",
+            "strict-dladdr-native-fallback-diff",
+            "tests/conformance/fixtures/loader_edges.json#/cases/dladdr_valid_address_strict",
+            "dladdr",
+            "strict",
+            serde_json::json!({ "addr": "valid_function_ptr" }),
+            "0",
+            Some("nonzero"),
+            false,
+            Some("native fallback differs from host"),
+        );
+    }
+
+    #[test]
+    fn execute_dlinfo_case_strict_reports_valid_link_map_shape() {
+        assert_differential_contract(
+            "loader",
+            "strict-dlinfo-linkmap-shape",
+            "tests/conformance/fixtures/loader_edges.json#/cases/dlinfo_rtld_di_linkmap_strict",
+            "dlinfo",
+            "strict",
+            serde_json::json!({
+                "handle": "valid_handle",
+                "request": "RTLD_DI_LINKMAP"
+            }),
+            "valid_link_map",
+            Some("valid_link_map"),
             true,
             None,
         );
