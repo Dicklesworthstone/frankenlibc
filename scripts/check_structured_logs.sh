@@ -48,6 +48,9 @@ elif sv < 2:
 for field in ['timestamp', 'trace_id', 'level', 'event']:
     if field not in s.get('required_fields', {}):
         errors.append(f'Missing required field def: {field}')
+for field in ['decision_id', 'policy_id', 'evidence_seqno']:
+    if field not in s.get('optional_fields', {}):
+        errors.append(f'Missing optional field def: {field}')
 if errors:
     for e in errors:
         print(f'ERROR: {e}')
@@ -120,12 +123,18 @@ with open('${logfile}') as f:
                 print(f'  line {i}: missing required field: {field}')
                 errors += 1
         if obj.get('event') == 'runtime_decision':
-            for field in ['decision', 'symbol', 'span_id']:
+            for field in ['decision', 'symbol', 'span_id', 'decision_id']:
                 if field not in obj or not str(obj.get(field, '')).strip():
                     print(f'  line {i}: runtime_decision event missing required field: {field}')
                     errors += 1
             if 'decision' not in obj:
                 continue
+            if 'decision_id' in obj and int(obj['decision_id']) == 0:
+                print(f'  line {i}: runtime_decision decision_id must be non-zero')
+                errors += 1
+            if 'policy_id' in obj and int(obj['policy_id']) == 0:
+                print(f'  line {i}: policy_id must be non-zero when present')
+                errors += 1
             for field in ['controller_id', 'decision_action', 'risk_inputs']:
                 if field not in obj:
                     print(f'  line {i}: runtime_decision event missing explainability field: {field}')

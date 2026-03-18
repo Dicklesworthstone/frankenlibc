@@ -111,6 +111,15 @@ pub struct LogEntry {
     /// Runtime controller identity for decision explainability.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub controller_id: Option<String>,
+    /// Canonical decision identifier for cross-artifact joins.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub decision_id: Option<u64>,
+    /// Canonical policy identifier for cross-artifact joins.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub policy_id: Option<u32>,
+    /// Canonical evidence sequence number for replay/ledger joins.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub evidence_seqno: Option<u64>,
     /// Action selected by the decision controller (`Allow|FullValidate|Repair|Deny`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub decision_action: Option<String>,
@@ -157,6 +166,9 @@ impl LogEntry {
             profile: None,
             healing_action: None,
             controller_id: None,
+            decision_id: None,
+            policy_id: None,
+            evidence_seqno: None,
             decision_action: None,
             risk_inputs: None,
             decision: None,
@@ -232,6 +244,41 @@ impl LogEntry {
     #[must_use]
     pub fn with_controller_id(mut self, controller_id: impl Into<String>) -> Self {
         self.controller_id = Some(controller_id.into());
+        self
+    }
+
+    /// Set canonical join keys for evidence correlation.
+    #[must_use]
+    pub fn with_join_keys(
+        mut self,
+        decision_id: Option<u64>,
+        policy_id: Option<u32>,
+        evidence_seqno: Option<u64>,
+    ) -> Self {
+        self.decision_id = decision_id;
+        self.policy_id = policy_id;
+        self.evidence_seqno = evidence_seqno;
+        self
+    }
+
+    /// Set a decision identifier.
+    #[must_use]
+    pub fn with_decision_id(mut self, decision_id: u64) -> Self {
+        self.decision_id = Some(decision_id);
+        self
+    }
+
+    /// Set a policy identifier.
+    #[must_use]
+    pub fn with_policy_id(mut self, policy_id: u32) -> Self {
+        self.policy_id = Some(policy_id);
+        self
+    }
+
+    /// Set an evidence sequence number.
+    #[must_use]
+    pub fn with_evidence_seqno(mut self, evidence_seqno: u64) -> Self {
+        self.evidence_seqno = Some(evidence_seqno);
         self
     }
 
@@ -339,6 +386,34 @@ pub struct ArtifactEntry {
     pub size_bytes: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub join_keys: Option<ArtifactJoinKeys>,
+}
+
+/// Join metadata that lets one artifact be correlated with logs/evidence rows.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ArtifactJoinKeys {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub trace_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub span_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub decision_ids: Vec<u64>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub policy_ids: Vec<u32>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub evidence_seqnos: Vec<u64>,
+}
+
+impl ArtifactJoinKeys {
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.trace_ids.is_empty()
+            && self.span_ids.is_empty()
+            && self.decision_ids.is_empty()
+            && self.policy_ids.is_empty()
+            && self.evidence_seqnos.is_empty()
+    }
 }
 
 /// Artifact index linking logs to verification artifacts.
@@ -377,6 +452,26 @@ impl ArtifactIndex {
             sha256: sha256.into(),
             size_bytes: None,
             description: None,
+            join_keys: None,
+        });
+        self
+    }
+
+    /// Add an artifact entry with explicit join metadata.
+    pub fn add_with_join_keys(
+        &mut self,
+        path: impl Into<String>,
+        kind: impl Into<String>,
+        sha256: impl Into<String>,
+        join_keys: ArtifactJoinKeys,
+    ) -> &mut Self {
+        self.artifacts.push(ArtifactEntry {
+            path: path.into(),
+            kind: kind.into(),
+            sha256: sha256.into(),
+            size_bytes: None,
+            description: None,
+            join_keys: (!join_keys.is_empty()).then_some(join_keys),
         });
         self
     }
@@ -610,6 +705,21 @@ pub fn validate_log_line(
                 message: "runtime_decision events must include decision".to_string(),
             });
         }
+
+        match obj.get("decision_id").and_then(|v| v.as_u64()) {
+            Some(0) => errors.push(LogValidationError {
+                line_number,
+                field: "decision_id".to_string(),
+                message: "runtime_decision events must include non-zero decision_id".to_string(),
+            }),
+            Some(_) => {}
+            None => errors.push(LogValidationError {
+                line_number,
+                field: "decision_id".to_string(),
+                message: "runtime_decision events must include decision_id for correlation"
+                    .to_string(),
+            }),
+        }
     }
 
     if is_runtime_decision_event && obj.get("decision").is_some() {
@@ -683,6 +793,26 @@ pub fn validate_log_line(
             message: format!(
                 "trace_id should follow <bead_id>::<run_id>::<seq> format, got: '{trace_id}'"
             ),
+        });
+    }
+
+    if let Some(decision_id) = obj.get("decision_id").and_then(|v| v.as_u64())
+        && decision_id == 0
+    {
+        errors.push(LogValidationError {
+            line_number,
+            field: "decision_id".to_string(),
+            message: "decision_id must be non-zero when present".to_string(),
+        });
+    }
+
+    if let Some(policy_id) = obj.get("policy_id").and_then(|v| v.as_u64())
+        && policy_id == 0
+    {
+        errors.push(LogValidationError {
+            line_number,
+            field: "policy_id".to_string(),
+            message: "policy_id must be non-zero when present".to_string(),
         });
     }
 
@@ -784,6 +914,7 @@ mod tests {
             .with_span("span-1", None)
             .with_profile(ValidationProfile::Full)
             .with_healing_action("ClampSize")
+            .with_join_keys(Some(42), Some(7), Some(11))
             .with_decision_explainability(
                 "runtime_math_kernel.v1",
                 "Deny",
@@ -810,6 +941,9 @@ mod tests {
         assert_eq!(parsed["profile"], "Full");
         assert_eq!(parsed["healing_action"], "ClampSize");
         assert_eq!(parsed["controller_id"], "runtime_math_kernel.v1");
+        assert_eq!(parsed["decision_id"], 42);
+        assert_eq!(parsed["policy_id"], 7);
+        assert_eq!(parsed["evidence_seqno"], 11);
         assert_eq!(parsed["decision_action"], "Deny");
         assert!(parsed["risk_inputs"].is_object());
         assert_eq!(parsed["outcome"], "fail");
@@ -874,21 +1008,47 @@ mod tests {
         let result = validate_log_line(json, 1);
         assert!(result.is_err());
         let errors = result.unwrap_err();
+        assert!(errors.iter().any(|e| e.field == "decision_id"));
         assert!(errors.iter().any(|e| e.field == "controller_id"));
         assert!(errors.iter().any(|e| e.field == "decision_action"));
         assert!(errors.iter().any(|e| e.field == "risk_inputs"));
     }
 
     #[test]
+    fn validate_decision_rejects_zero_join_ids() {
+        let json = r#"{"timestamp":"2026-02-12T00:00:00Z","trace_id":"bd-test::run::001","level":"info","event":"runtime_decision","symbol":"malloc","span_id":"abi::malloc::decision::0001","decision":"Deny","decision_id":0,"policy_id":0,"controller_id":"runtime_math_kernel.v1","decision_action":"Deny","risk_inputs":{"requested_bytes":128}}"#;
+        let result = validate_log_line(json, 1);
+        assert!(result.is_err());
+        let errors = result.unwrap_err();
+        assert!(errors.iter().any(|e| e.field == "decision_id"));
+        assert!(errors.iter().any(|e| e.field == "policy_id"));
+    }
+
+    #[test]
     fn artifact_index_serializes() {
         let mut idx = ArtifactIndex::new("run-001", "bd-144");
-        idx.add("path/to/log.jsonl", "log", "abc123");
+        idx.add_with_join_keys(
+            "path/to/log.jsonl",
+            "log",
+            "abc123",
+            ArtifactJoinKeys {
+                trace_ids: vec!["bd-144::run-001::001".to_string()],
+                span_ids: vec!["abi::malloc::decision::0001".to_string()],
+                decision_ids: vec![42],
+                policy_ids: vec![7],
+                evidence_seqnos: vec![11],
+            },
+        );
         let json = idx.to_json().unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed["index_version"], 1);
         assert_eq!(parsed["run_id"], "run-001");
         assert_eq!(parsed["bead_id"], "bd-144");
         assert_eq!(parsed["artifacts"].as_array().unwrap().len(), 1);
+        let join_keys = &parsed["artifacts"][0]["join_keys"];
+        assert_eq!(join_keys["decision_ids"][0], 42);
+        assert_eq!(join_keys["policy_ids"][0], 7);
+        assert_eq!(join_keys["evidence_seqnos"][0], 11);
     }
 
     #[test]

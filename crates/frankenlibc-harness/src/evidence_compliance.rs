@@ -121,6 +121,82 @@ fn resolve_artifact_path(
     None
 }
 
+fn validate_artifact_join_keys(
+    report: &mut EvidenceComplianceReport,
+    art_path: &str,
+    emitter: &mut Option<LogEmitter>,
+    join_keys: &crate::structured_log::ArtifactJoinKeys,
+) {
+    if join_keys.is_empty() {
+        report.push(EvidenceViolation {
+            code: "artifact_index.join_keys.empty".to_string(),
+            message: format!("artifact '{art_path}' has empty join_keys object"),
+            trace_id: None,
+            line_number: None,
+            path: Some(art_path.to_string()),
+            remediation_hint: Some(
+                "either omit join_keys entirely or include at least one correlation key".to_string(),
+            ),
+        });
+    }
+
+    for trace_id in &join_keys.trace_ids {
+        if !trace_id.contains("::") {
+            report.push(EvidenceViolation {
+                code: "artifact_index.join_keys.bad_trace_id".to_string(),
+                message: format!("artifact '{art_path}' has malformed trace_id '{trace_id}'"),
+                trace_id: Some(trace_id.clone()),
+                line_number: None,
+                path: Some(art_path.to_string()),
+                remediation_hint: Some(
+                    "trace_ids must follow the canonical <bead>::<run>::<seq> shape".to_string(),
+                ),
+            });
+        }
+    }
+
+    if join_keys.decision_ids.contains(&0) {
+        report.push(EvidenceViolation {
+            code: "artifact_index.join_keys.bad_decision_id".to_string(),
+            message: format!("artifact '{art_path}' includes decision_id=0"),
+            trace_id: None,
+            line_number: None,
+            path: Some(art_path.to_string()),
+            remediation_hint: Some("decision_ids must be non-zero when present".to_string()),
+        });
+    }
+
+    if join_keys.policy_ids.contains(&0) {
+        report.push(EvidenceViolation {
+            code: "artifact_index.join_keys.bad_policy_id".to_string(),
+            message: format!("artifact '{art_path}' includes policy_id=0"),
+            trace_id: None,
+            line_number: None,
+            path: Some(art_path.to_string()),
+            remediation_hint: Some("policy_ids must be non-zero when present".to_string()),
+        });
+    }
+
+    emit_proof_log(
+        emitter,
+        LogEntry::new("", LogLevel::Debug, "evidence_compliance.artifact_join_keys")
+            .with_stream(StreamKind::Release)
+            .with_gate(PROOF_GATE)
+            .with_outcome(Outcome::Pass)
+            .with_controller_id("artifact_index")
+            .with_artifacts(vec![art_path.to_string()])
+            .with_details(serde_json::json!({
+                "path": art_path,
+                "trace_id_count": join_keys.trace_ids.len(),
+                "span_id_count": join_keys.span_ids.len(),
+                "decision_id_count": join_keys.decision_ids.len(),
+                "policy_id_count": join_keys.policy_ids.len(),
+                "evidence_seqno_count": join_keys.evidence_seqnos.len(),
+                "decision_path": "proof->artifact_integrity->join_keys",
+            })),
+    );
+}
+
 fn validate_artifact_index(
     report: &mut EvidenceComplianceReport,
     workspace_root: &Path,
@@ -269,6 +345,10 @@ fn validate_artifact_index(
     }
 
     for art in &idx.artifacts {
+        if let Some(join_keys) = &art.join_keys {
+            validate_artifact_join_keys(report, &art.path, emitter, join_keys);
+        }
+
         let resolved = resolve_artifact_path(workspace_root, run_root, &art.path);
         let Some((resolved_path, resolution_source)) = resolved else {
             report.push(EvidenceViolation {

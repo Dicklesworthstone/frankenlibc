@@ -78,6 +78,18 @@
       "type": "string",
       "description": "Optional parent span id"
     },
+    "decision_id": {
+      "type": "integer",
+      "description": "Canonical decision identifier for cross-artifact correlation"
+    },
+    "policy_id": {
+      "type": "integer",
+      "description": "Canonical policy identifier for cross-artifact correlation"
+    },
+    "evidence_seqno": {
+      "type": "integer",
+      "description": "Canonical evidence sequence number for ledger/replay correlation"
+    },
     "profile": {
       "type": "string",
       "enum": ["Fast", "Full"],
@@ -165,7 +177,18 @@
             "kind": "log | snapshot | golden | diff | backtrace | report",
             "sha256": "SHA-256 hex digest for integrity verification",
             "size_bytes": "File size",
-            "description": "What this artifact contains"
+            "description": "What this artifact contains",
+            "join_keys": {
+              "type": "object",
+              "description": "Optional correlation keys tying an artifact to log/evidence rows",
+              "properties": {
+                "trace_ids": "Array of canonical trace IDs",
+                "span_ids": "Array of span IDs",
+                "decision_ids": "Array of non-zero decision IDs",
+                "policy_ids": "Array of non-zero policy IDs",
+                "evidence_seqnos": "Array of evidence sequence numbers"
+              }
+            }
           }
         }
       }
@@ -213,6 +236,9 @@
       "mode": "hardened",
       "api_family": "malloc",
       "symbol": "realloc",
+      "decision_id": 42,
+      "policy_id": 7,
+      "evidence_seqno": 11,
       "decision": "Deny",
       "controller_id": "runtime_math_kernel.v1",
       "decision_action": "Deny",
@@ -243,14 +269,24 @@
           "kind": "log",
           "sha256": "abc123...",
           "size_bytes": 4096,
-          "description": "Structured test log"
+          "description": "Structured test log",
+          "join_keys": {
+            "trace_ids": ["bd-144::run-001::003"],
+            "span_ids": ["abi::realloc::decision::000000000000002a"],
+            "decision_ids": [42],
+            "policy_ids": [7],
+            "evidence_seqnos": [11]
+          }
         },
         {
           "path": "tests/conformance/golden/fixture_verify_strict_hardened.v1.json",
           "kind": "golden",
           "sha256": "def456...",
           "size_bytes": 18000,
-          "description": "Golden conformance verification output"
+          "description": "Golden conformance verification output",
+          "join_keys": {
+            "trace_ids": ["bd-144::run-001::003"]
+          }
         }
       ]
     }

@@ -92,27 +92,51 @@ pub unsafe extern "C" fn _IO_wfile_jumps_get() -> *mut c_void {
 // ---------------------------------------------------------------------------
 
 /// `_IO_adjust_column` — adjust column counter after output.
+///
+/// Scans `count` bytes of `line`, resetting the column to 0 on newline and
+/// incrementing by 1 for each tab stop (8-column aligned) or other byte.
+/// This is a pure algorithmic function with no glibc dependency.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn _IO_adjust_column(col: c_int, line: *const c_char, count: c_int) -> c_int {
-    type Fn = unsafe extern "C" fn(c_int, *const c_char, c_int) -> c_int;
-    match io_resolve!(c"_IO_adjust_column", Fn) {
-        Some(f) => unsafe { f(col, line, count) },
-        None => col,
+    if line.is_null() || count <= 0 {
+        return col;
     }
+    let mut c = col as u32;
+    for i in 0..count as usize {
+        let byte = unsafe { *line.add(i) } as u8;
+        match byte {
+            b'\n' | b'\r' => c = 0,
+            b'\t' => c = (c + 8) & !7,
+            _ => c += 1,
+        }
+    }
+    c as c_int
 }
 
 /// `_IO_adjust_wcolumn` — adjust wide column counter after output.
+///
+/// Like `_IO_adjust_column` but over an array of `wchar_t` (i32) values.
+/// Pure algorithmic — no glibc dependency.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn _IO_adjust_wcolumn(
     col: c_int,
     line: *const c_void,
     count: c_int,
 ) -> c_int {
-    type Fn = unsafe extern "C" fn(c_int, *const c_void, c_int) -> c_int;
-    match io_resolve!(c"_IO_adjust_wcolumn", Fn) {
-        Some(f) => unsafe { f(col, line, count) },
-        None => col,
+    if line.is_null() || count <= 0 {
+        return col;
     }
+    let wchars = line as *const i32;
+    let mut c = col as u32;
+    for i in 0..count as usize {
+        let wch = unsafe { *wchars.add(i) } as u32;
+        match wch {
+            0x0A | 0x0D => c = 0,       // '\n' | '\r'
+            0x09 => c = (c + 8) & !7,   // '\t'
+            _ => c += 1,
+        }
+    }
+    c as c_int
 }
 
 // ---------------------------------------------------------------------------
@@ -898,14 +922,10 @@ pub unsafe extern "C" fn _IO_setvbuf(
 // Putback / ungetc
 // ---------------------------------------------------------------------------
 
-/// `_IO_sputbackc` — put back a byte.
+/// `_IO_sputbackc` — put back a byte via native ungetc.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn _IO_sputbackc(fp: *mut c_void, ch: c_int) -> c_int {
-    type Fn = unsafe extern "C" fn(*mut c_void, c_int) -> c_int;
-    match io_resolve!(c"_IO_sputbackc", Fn) {
-        Some(f) => unsafe { f(fp, ch) },
-        None => -1,
-    }
+    unsafe { stdio_abi::ungetc(ch, fp) }
 }
 
 /// `_IO_sputbackwc` — put back a wide character.
