@@ -28,7 +28,7 @@ static TLS_CACHE_EPOCH_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new((
 
 #[inline]
 pub(crate) fn current_epoch() -> u64 {
-    GLOBAL_TLS_CACHE_EPOCH.load(Ordering::Relaxed)
+    GLOBAL_TLS_CACHE_EPOCH.load(Ordering::Acquire)
 }
 
 pub(crate) fn bump_tls_cache_epoch() {
@@ -36,9 +36,10 @@ pub(crate) fn bump_tls_cache_epoch() {
     let _guard = TLS_CACHE_EPOCH_TEST_LOCK
         .lock()
         .expect("TLS cache epoch test lock poisoned");
-    // Relaxed is sufficient: this is an advisory invalidation stamp, not a
-    // synchronization primitive for memory effects.
-    let _ = GLOBAL_TLS_CACHE_EPOCH.fetch_add(1, Ordering::Relaxed);
+    // Use Release ordering to ensure all prior state changes (like marking a slot
+    // as Quarantined) are visible to any thread that performs an Acquire load
+    // of the new epoch.
+    let _ = GLOBAL_TLS_CACHE_EPOCH.fetch_add(1, Ordering::Release);
 }
 
 #[cfg(test)]
