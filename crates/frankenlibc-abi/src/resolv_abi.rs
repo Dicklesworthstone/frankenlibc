@@ -76,6 +76,7 @@ unsafe fn opt_cstr<'a>(ptr: *const c_char) -> Option<&'a CStr> {
 
 enum HostsAddress {
     V4(Ipv4Addr),
+    #[allow(dead_code)]
     V6(Ipv6Addr),
 }
 

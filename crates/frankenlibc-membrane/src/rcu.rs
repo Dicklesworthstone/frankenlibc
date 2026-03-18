@@ -114,6 +114,17 @@ impl<T> RcuCell<T> {
         self.current.lock().clone()
     }
 
+    /// Load snapshot and current epoch together.
+    ///
+    /// Guaranteed to return a consistent pair (epoch matches the data snapshot).
+    #[must_use]
+    pub fn load_versioned(&self) -> (u64, Arc<T>) {
+        let guard = self.current.lock();
+        let data = guard.clone();
+        let epoch = self.epoch.load(Ordering::Acquire);
+        (epoch, data)
+    }
+
     /// Get a raw reference count of the current snapshot.
     ///
     /// Returns the `Arc` strong count minus 1 (the cell's own reference).
@@ -148,8 +159,7 @@ impl<'a, T> RcuReader<'a, T> {
     /// Performs one `load()` to initialize the cached snapshot.
     #[must_use]
     pub fn new(cell: &'a RcuCell<T>) -> Self {
-        let snapshot = cell.load();
-        let epoch = cell.epoch();
+        let (epoch, snapshot) = cell.load_versioned();
         Self {
             cell,
             cached_epoch: epoch,

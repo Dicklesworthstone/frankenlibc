@@ -1611,7 +1611,7 @@ impl ValidationPipeline {
                 CachedValidation {
                     user_base: slot.user_base,
                     user_size: slot.user_size,
-                    generation: slot.generation as u32,
+                    generation: slot.generation,
                     state: slot.state,
                 },
                 epoch,

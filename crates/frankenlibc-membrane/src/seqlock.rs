@@ -150,7 +150,8 @@ impl<T: Clone + Send + Sync> SeqLock<T> {
     /// change detection.
     #[must_use]
     pub fn load_versioned(&self) -> (u64, Arc<T>) {
-        let data = self.data.lock().clone();
+        let guard = self.data.lock();
+        let data = guard.clone();
         let version = self.version.load(Ordering::Acquire);
         (version, data)
     }
@@ -167,7 +168,12 @@ impl<T: Clone + Send + Sync> SeqLock<T> {
         self.pending_writers.fetch_add(1, Ordering::Relaxed);
 
         // Acquire the writer lock first — this serializes all writers.
-        let writer_guard = self.writer_lock.lock();
+        let writer_guard = if let Some(guard) = self.writer_lock.try_lock() {
+            guard
+        } else {
+            self.diag.contention_events.fetch_add(1, Ordering::Relaxed);
+            self.writer_lock.lock()
+        };
 
         // Now safely clone the current data while holding the writer lock.
         let current = (**self.data.lock()).clone();

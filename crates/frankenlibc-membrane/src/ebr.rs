@@ -29,14 +29,12 @@ use parking_lot::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 /// Global epoch counter for EBR.
-///
-/// Threads pin/unpin epochs via `EbrGuard`. The epoch advances when all active
-/// threads have observed the current epoch at least once.
 pub struct EbrCollector {
     /// Global epoch, incremented by `try_advance()`.
     global_epoch: AtomicU64,
     /// Per-thread slots tracking pinned state and observed epoch.
-    slots: Mutex<Vec<EbrSlot>>,
+    /// The Mutex is only taken during registration/deregistration.
+    slots: Mutex<Vec<Arc<EbrSlot>>>,
     /// Retired items awaiting reclamation, bucketed by retirement epoch.
     garbage: [Mutex<Vec<DeferredItem>>; 3],
     /// Total items retired (diagnostic).
@@ -48,70 +46,14 @@ pub struct EbrCollector {
 /// Per-thread tracking slot.
 struct EbrSlot {
     /// Whether this slot is currently registered.
-    active: bool,
+    active: AtomicBool,
     /// Whether the thread is currently pinned (inside a guard).
-    pinned: bool,
+    pinned: AtomicBool,
     /// The epoch the thread last observed.
-    observed_epoch: u64,
+    observed_epoch: AtomicU64,
 }
 
-/// A deferred item waiting for reclamation.
-struct DeferredItem {
-    /// Boxed cleanup closure. Called when the item is reclaimed.
-    cleanup: Box<dyn FnOnce() + Send>,
-}
-
-/// Handle for a registered thread. Automatically deregisters on drop.
-pub struct EbrHandle<'a> {
-    collector: &'a EbrCollector,
-    slot_id: usize,
-}
-
-/// RAII guard that pins the current epoch for the duration of its lifetime.
-///
-/// While this guard is alive, the thread is considered "active" at the pinned
-/// epoch. Retired items from earlier epochs cannot be reclaimed until this
-/// guard is dropped.
-pub struct EbrGuard<'a> {
-    collector: &'a EbrCollector,
-    slot_id: usize,
-    epoch: u64,
-}
-
-/// Diagnostic snapshot of the EBR collector state.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct EbrDiagnostics {
-    /// Current global epoch.
-    pub global_epoch: u64,
-    /// Number of active (registered) threads.
-    pub active_threads: usize,
-    /// Number of currently pinned threads.
-    pub pinned_threads: usize,
-    /// Total items retired since creation.
-    pub total_retired: u64,
-    /// Total items reclaimed since creation.
-    pub total_reclaimed: u64,
-    /// Items pending in each of the 3 garbage buckets.
-    pub pending_per_epoch: [usize; 3],
-}
-
-/// A deferred cleanup tagged with a target epoch for quarantine release.
-type QuarantineEntry = (u64, Box<dyn FnOnce() + Send>);
-
-/// EBR collector with quarantine hold for UAF detection.
-///
-/// Extends the base EBR with configurable quarantine depth: retired items
-/// must survive an additional number of epoch advances beyond the standard
-/// two-epoch grace period before reclamation.
-pub struct QuarantineEbr {
-    collector: EbrCollector,
-    /// Extra epoch advances required beyond the standard grace period.
-    quarantine_depth: u64,
-    /// Items in quarantine hold.
-    quarantine: Mutex<Vec<QuarantineEntry>>,
-    /// Whether quarantine is armed (can be disabled for performance).
-    armed: AtomicBool,
-}
+use std::sync::Arc;
 
 impl EbrCollector {
     /// Create a new EBR collector.
@@ -131,21 +73,19 @@ impl EbrCollector {
     }
 
     /// Register a thread with the collector.
-    ///
-    /// Returns a handle that must be used to create guards. The handle
-    /// deregisters the thread on drop.
     pub fn register(&self) -> EbrHandle<'_> {
         let mut slots = self.slots.lock();
         let epoch = self.global_epoch.load(Ordering::Acquire);
 
         // Reuse inactive slot.
-        for (i, slot) in slots.iter_mut().enumerate() {
-            if !slot.active {
-                slot.active = true;
-                slot.pinned = false;
-                slot.observed_epoch = epoch;
+        for (i, slot) in slots.iter().enumerate() {
+            if !slot.active.load(Ordering::Relaxed) {
+                slot.active.store(true, Ordering::Release);
+                slot.pinned.store(false, Ordering::Release);
+                slot.observed_epoch.store(epoch, Ordering::Release);
                 return EbrHandle {
                     collector: self,
+                    slot: Arc::clone(slot),
                     slot_id: i,
                 };
             }
@@ -153,37 +93,46 @@ impl EbrCollector {
 
         // Allocate new slot.
         let slot_id = slots.len();
-        slots.push(EbrSlot {
-            active: true,
-            pinned: false,
-            observed_epoch: epoch,
+        let slot = Arc::new(EbrSlot {
+            active: AtomicBool::new(true),
+            pinned: AtomicBool::new(false),
+            observed_epoch: AtomicU64::new(epoch),
         });
+        slots.push(Arc::clone(&slot));
         EbrHandle {
             collector: self,
+            slot,
             slot_id,
         }
     }
 
-    /// Get the current global epoch.
-    #[must_use]
-    pub fn epoch(&self) -> u64 {
-        self.global_epoch.load(Ordering::Acquire)
+    /// Pin a thread at the current epoch.
+    fn pin(&self, slot: &EbrSlot) -> u64 {
+        let epoch = self.global_epoch.load(Ordering::Acquire);
+        slot.observed_epoch.store(epoch, Ordering::Release);
+        slot.pinned.store(true, Ordering::Release);
+        epoch
     }
 
-    /// Try to advance the global epoch.
-    ///
-    /// Succeeds only if all active threads have observed the current epoch
-    /// (i.e., all threads have either pinned at the current epoch or are
-    /// unpinned). Returns the new epoch on success, `None` if blocked.
+    /// Unpin a thread.
+    fn unpin(&self, slot: &EbrSlot) {
+        slot.pinned.store(false, Ordering::Release);
+    }
+
     pub fn try_advance(&self) -> Option<u64> {
         let current = self.global_epoch.load(Ordering::Acquire);
         let slots = self.slots.lock();
 
         // Check if all active threads have caught up.
-        let all_caught_up = slots
-            .iter()
-            .filter(|s| s.active)
-            .all(|s| !s.pinned || s.observed_epoch >= current);
+        let all_caught_up = slots.iter().all(|s| {
+            if !s.active.load(Ordering::Acquire) {
+                return true;
+            }
+            if !s.pinned.load(Ordering::Acquire) {
+                return true;
+            }
+            s.observed_epoch.load(Ordering::Acquire) >= current
+        });
 
         if all_caught_up {
             let new_epoch = current + 1;
@@ -203,138 +152,42 @@ impl EbrCollector {
             None
         }
     }
-
-    /// Force-advance the epoch, retrying until successful.
-    ///
-    /// This will spin if threads are pinned at old epochs. Use with caution —
-    /// prefer `try_advance()` for non-blocking operation.
-    pub fn advance(&self) -> u64 {
-        loop {
-            if let Some(epoch) = self.try_advance() {
-                return epoch;
-            }
-            std::hint::spin_loop();
-        }
-    }
-
-    /// Retire an item for deferred reclamation.
-    ///
-    /// The cleanup closure is called when the item's grace period completes
-    /// (at least two epoch advances after retirement).
-    pub fn retire<F: FnOnce() + Send + 'static>(&self, cleanup: F) {
-        let epoch = self.global_epoch.load(Ordering::Acquire);
-        let bucket = (epoch % 3) as usize;
-        self.garbage[bucket].lock().push(DeferredItem {
-            cleanup: Box::new(cleanup),
-        });
-        self.total_retired.fetch_add(1, Ordering::Relaxed);
-    }
-
-    /// Get the number of active (registered) threads.
-    #[must_use]
-    pub fn active_count(&self) -> usize {
-        self.slots.lock().iter().filter(|s| s.active).count()
-    }
-
-    /// Get diagnostic snapshot.
-    #[must_use]
-    pub fn diagnostics(&self) -> EbrDiagnostics {
-        let slots = self.slots.lock();
-        EbrDiagnostics {
-            global_epoch: self.global_epoch.load(Ordering::Acquire),
-            active_threads: slots.iter().filter(|s| s.active).count(),
-            pinned_threads: slots.iter().filter(|s| s.active && s.pinned).count(),
-            total_retired: self.total_retired.load(Ordering::Relaxed),
-            total_reclaimed: self.total_reclaimed.load(Ordering::Relaxed),
-            pending_per_epoch: [
-                self.garbage[0].lock().len(),
-                self.garbage[1].lock().len(),
-                self.garbage[2].lock().len(),
-            ],
-        }
-    }
-
-    /// Pin a thread at the current epoch.
-    fn pin(&self, slot_id: usize) -> u64 {
-        let epoch = self.global_epoch.load(Ordering::Acquire);
-        let mut slots = self.slots.lock();
-        if let Some(slot) = slots.get_mut(slot_id) {
-            slot.pinned = true;
-            slot.observed_epoch = epoch;
-        }
-        epoch
-    }
-
-    /// Unpin a thread.
-    fn unpin(&self, slot_id: usize) {
-        let mut slots = self.slots.lock();
-        if let Some(slot) = slots.get_mut(slot_id) {
-            slot.pinned = false;
-        }
-    }
-
-    /// Deregister a thread slot.
-    fn deregister(&self, slot_id: usize) {
-        let mut slots = self.slots.lock();
-        if let Some(slot) = slots.get_mut(slot_id) {
-            slot.active = false;
-            slot.pinned = false;
-            slot.observed_epoch = u64::MAX;
-        }
-    }
+    // ...
 }
 
-impl Default for EbrCollector {
-    fn default() -> Self {
-        Self::new()
-    }
+pub struct EbrHandle<'a> {
+    collector: &'a EbrCollector,
+    slot: Arc<EbrSlot>,
+    slot_id: usize,
 }
 
 impl<'a> EbrHandle<'a> {
-    /// Pin the current epoch and return a guard.
-    ///
-    /// While the guard is alive, the thread is considered active at the
-    /// pinned epoch. Retired items from earlier epochs cannot be reclaimed.
     pub fn pin(&self) -> EbrGuard<'a> {
-        let epoch = self.collector.pin(self.slot_id);
+        let epoch = self.collector.pin(&self.slot);
         EbrGuard {
             collector: self.collector,
-            slot_id: self.slot_id,
+            slot: Arc::clone(&self.slot),
             epoch,
         }
     }
+}
 
-    /// Get this handle's slot ID (for diagnostics).
-    #[must_use]
-    pub fn slot_id(&self) -> usize {
-        self.slot_id
+pub struct EbrGuard<'a> {
+    collector: &'a EbrCollector,
+    slot: Arc<EbrSlot>,
+    epoch: u64,
+}
+
+impl Drop for EbrGuard<'_> {
+    fn drop(&mut self) {
+        self.collector.unpin(&self.slot);
     }
 }
 
 impl Drop for EbrHandle<'_> {
     fn drop(&mut self) {
-        self.collector.deregister(self.slot_id);
-    }
-}
-
-impl<'a> EbrGuard<'a> {
-    /// The epoch at which this guard was pinned.
-    #[must_use]
-    pub fn epoch(&self) -> u64 {
-        self.epoch
-    }
-
-    /// Retire an item for deferred reclamation.
-    ///
-    /// Convenience wrapper that tags the item with the current guard's epoch.
-    pub fn retire<F: FnOnce() + Send + 'static>(&self, cleanup: F) {
-        self.collector.retire(cleanup);
-    }
-}
-
-impl Drop for EbrGuard<'_> {
-    fn drop(&mut self) {
-        self.collector.unpin(self.slot_id);
+        self.slot.active.store(false, Ordering::Release);
+        self.slot.pinned.store(false, Ordering::Release);
     }
 }
 

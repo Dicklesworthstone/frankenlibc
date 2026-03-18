@@ -71,15 +71,15 @@ impl ScenarioConfig {
 #[derive(Debug, Clone, Copy)]
 struct FreedRecord {
     addr: usize,
-    alloc_generation: u32,
-    post_free_generation: u32,
+    alloc_generation: u64,
+    post_free_generation: u64,
 }
 
 #[derive(Debug, Clone, Copy)]
 struct ProbeResult {
     addr: usize,
-    alloc_generation: u32,
-    observed_generation: Option<u32>,
+    alloc_generation: u64,
+    observed_generation: Option<u64>,
     strict_detected: bool,
     strict_can_read: bool,
     strict_can_write: bool,

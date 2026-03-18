@@ -59,7 +59,7 @@ struct CacheEntry {
     /// The allocation size.
     user_size: usize,
     /// The generation at time of validation.
-    generation: u32,
+    generation: u64,
     /// The safety state at time of validation.
     state: SafetyState,
     /// Global invalidation epoch at time of insertion.
@@ -184,7 +184,7 @@ impl Default for TlsValidationCache {
 pub struct CachedValidation {
     pub user_base: usize,
     pub user_size: usize,
-    pub generation: u32,
+    pub generation: u64,
     pub state: SafetyState,
 }
 

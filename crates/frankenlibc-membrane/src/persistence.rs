@@ -163,19 +163,23 @@ struct Edge {
 
 /// Compute 0-dimensional persistent homology of a point cloud.
 ///
-/// Returns (birth=0, death=merge_distance) pairs for each component merge.
-fn compute_persistence_h0(points: &[[f64; PERSIST_DIM]]) -> Vec<PersistencePair> {
+/// Returns (pairs, diameter) where pairs are (birth=0, death=merge_distance)
+/// for each component merge.
+fn compute_persistence_h0(points: &[[f64; PERSIST_DIM]]) -> (Vec<PersistencePair>, f64) {
     let n = points.len();
     if n < 2 {
-        return vec![];
+        return (vec![], 0.0);
     }
 
     // Compute all pairwise distances.
     let mut edges = Vec::with_capacity(n * (n - 1) / 2);
+    let mut diameter = 0.0f64;
     for i in 0..n {
         for j in (i + 1)..n {
+            let dist = euclidean_dist(&points[i], &points[j]);
+            diameter = diameter.max(dist);
             edges.push(Edge {
-                dist: euclidean_dist(&points[i], &points[j]),
+                dist,
                 i: i as u16,
                 j: j as u16,
             });
@@ -201,7 +205,7 @@ fn compute_persistence_h0(points: &[[f64; PERSIST_DIM]]) -> Vec<PersistencePair>
         }
     }
 
-    pairs
+    (pairs, diameter)
 }
 
 fn euclidean_dist(a: &[f64; PERSIST_DIM], b: &[f64; PERSIST_DIM]) -> f64 {
@@ -354,15 +358,7 @@ impl PersistenceDetector {
         // Extract point cloud (already in order, no need to sort).
         let points: Vec<[f64; PERSIST_DIM]> = (0..self.count).map(|i| self.window[i]).collect();
 
-        // Compute diameter for normalization.
-        let mut diameter = 0.0f64;
-        for i in 0..points.len() {
-            for j in (i + 1)..points.len() {
-                diameter = diameter.max(euclidean_dist(&points[i], &points[j]));
-            }
-        }
-
-        let pairs = compute_persistence_h0(&points);
+        let (pairs, diameter) = compute_persistence_h0(&points);
         let summary = summarize(&pairs, diameter);
         self.last_summary = Some(summary);
 
@@ -438,14 +434,14 @@ mod tests {
 
     #[test]
     fn empty_cloud_has_no_pairs() {
-        let pairs = compute_persistence_h0(&[]);
+        let (pairs, _) = compute_persistence_h0(&[]);
         assert!(pairs.is_empty());
     }
 
     #[test]
     fn two_points_one_pair() {
         let points = [[0.0, 0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0]];
-        let pairs = compute_persistence_h0(&points);
+        let (pairs, _) = compute_persistence_h0(&points);
         assert_eq!(pairs.len(), 1);
         assert!(
             (pairs[0].death - 1.0).abs() < 1e-10,
@@ -461,7 +457,7 @@ mod tests {
         for (i, p) in points.iter_mut().enumerate() {
             p[0] = i as f64;
         }
-        let pairs = compute_persistence_h0(&points);
+        let (pairs, _) = compute_persistence_h0(&points);
         assert_eq!(pairs.len(), 9);
     }
 
@@ -472,7 +468,7 @@ mod tests {
         for (i, p) in points.iter_mut().enumerate() {
             p[0] = i as f64 * 10.0;
         }
-        let pairs = compute_persistence_h0(&points);
+        let (pairs, _) = compute_persistence_h0(&points);
         for i in 1..pairs.len() {
             assert!(
                 pairs[i].death >= pairs[i - 1].death - 1e-10,
@@ -499,8 +495,7 @@ mod tests {
         for (i, p) in points[4..8].iter_mut().enumerate() {
             p[0] = 100.0 + i as f64 * 0.1;
         }
-        let pairs = compute_persistence_h0(&points);
-        let diameter = 100.3; // approximate
+        let (pairs, diameter) = compute_persistence_h0(&points);
         let summary = summarize(&pairs, diameter);
         // The inter-cluster merge has persistence ≈ 100, which is >> 15% of diameter.
         assert!(
@@ -523,8 +518,7 @@ mod tests {
                 [x, x * 0.5, x * 0.3, x * 0.1]
             })
             .collect();
-        let pairs = compute_persistence_h0(&points);
-        let diameter = euclidean_dist(&points[0], &points[5]);
+        let (pairs, diameter) = compute_persistence_h0(&points);
         let summary = summarize(&pairs, diameter);
         assert!(
             summary.persistence_entropy >= 0.0,
