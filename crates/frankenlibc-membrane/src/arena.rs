@@ -200,11 +200,6 @@ impl AllocationArena {
             return (FreeResult::ForeignPointer, Vec::new());
         };
 
-        // Pointer validity changes at free boundaries. Bump the global TLS-cache epoch so
-        // any thread-local cached validations for this address (or other addresses)
-        // cannot return stale CachedValid results after this point.
-        bump_tls_cache_epoch();
-
         let slot = &mut shard.slots[slot_idx];
 
         match slot.state {
@@ -220,11 +215,15 @@ impl AllocationArena {
         // Verify canary before freeing
         let canary_ok = self.verify_canary_for_slot(slot);
 
-        // Move to quarantine
+        // Move to quarantine. Mark state FIRST, then bump the global TLS-cache epoch
+        // so that any thread that Acquires the new epoch is guaranteed to see the
+        // Quarantined state.
         slot.state = SafetyState::Quarantined;
         slot.generation = self
             .next_generation
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
+        bump_tls_cache_epoch();
 
         let raw_base = slot.raw_base;
         let offset = user_base - raw_base;
