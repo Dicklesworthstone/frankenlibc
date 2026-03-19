@@ -2,7 +2,7 @@
   "index_version": 1,
   "run_id": "bd15n2-fixture-v1",
   "bead_id": "bd-15n.2",
-  "generated_utc": "2026-03-19T03:18:13.528Z",
+  "generated_utc": "2026-03-19T04:21:55.678Z",
   "artifacts": [
     {
       "path": "tests/cve_arena/results/bd-15n.2/bin/fixture_ctype",
@@ -91,7 +91,7 @@
     {
       "path": "tests/cve_arena/results/bd-15n.2/report.json",
       "kind": "report",
-      "sha256": "fc67c0e5f24f0d9dc442d132dd5f723a82ea0f0709e1466233a7780c91a04516",
+      "sha256": "4ffc152bfb031524b8cc2dd7f7ab560f888e43ce84f9ca4fb66748e448c1096d",
       "size_bytes": 5134,
       "description": "bd-15n.2 fixture gap-fill artifact"
     },
@@ -161,7 +161,7 @@
     {
       "path": "tests/cve_arena/results/bd-15n.2/trace.jsonl",
       "kind": "log",
-      "sha256": "6167ce255db771af980f188964bd877318008036bf819f8244a63c1fe36a8753",
+      "sha256": "3641b2cac0cd9927c062c0c8b95ef13ca2cdf1341ee0f13cb6f567dc929c6dab",
       "size_bytes": 8557,
       "description": "bd-15n.2 fixture gap-fill artifact"
     }

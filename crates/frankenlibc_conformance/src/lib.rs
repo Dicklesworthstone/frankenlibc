@@ -4259,7 +4259,7 @@ fn run_impl_iconv_case(tocode: &str, fromcode: &str, input: &[u8], out_len: usiz
     };
 
     let mut output = vec![0u8; out_len];
-    let rendered = match frankenlibc_core::iconv::iconv(&mut cd, input, &mut output) {
+    let rendered = match frankenlibc_core::iconv::iconv(&mut cd, Some(input), &mut output) {
         Ok(result) => {
             let in_left = input.len().saturating_sub(result.in_consumed);
             let out_left = out_len.saturating_sub(result.out_written);

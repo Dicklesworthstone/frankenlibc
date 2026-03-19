@@ -24,8 +24,30 @@ pub const POLLWRNORM: i16 = 0x100;
 /// Priority data may be read without blocking.
 pub const POLLPRI: i16 = 0x002;
 
+// Linux specific poll flags
+/// Priority band 0 data may be read without blocking.
+pub const POLLRDBAND: i16 = 0x080;
+/// Priority band data may be written without blocking.
+pub const POLLWRBAND: i16 = 0x200;
+/// Stream head hang up (Linux 2.6.17+).
+pub const POLLRDHUP: i16 = 0x2000;
+/// Ignored (compatibility).
+pub const POLLMSG: i16 = 0x400;
+/// Internal use.
+pub const POLLREMOVE: i16 = 0x1000;
+/// Internal use.
+pub const POLLFREE: i16 = 0x4000;
+
 /// Bitmask of input-requestable events.
-const POLL_INPUT_MASK: i16 = POLLIN | POLLOUT | POLLPRI | POLLRDNORM | POLLWRNORM;
+const POLL_INPUT_MASK: i16 = POLLIN
+    | POLLOUT
+    | POLLPRI
+    | POLLRDNORM
+    | POLLWRNORM
+    | POLLRDBAND
+    | POLLWRBAND
+    | POLLRDHUP
+    | POLLMSG;
 
 // ---------------------------------------------------------------------------
 // select constants
@@ -66,7 +88,11 @@ pub const fn valid_poll_timeout(timeout_ms: i32) -> bool {
 /// Clamp nfds for poll to a safe maximum.
 #[must_use]
 pub const fn clamp_poll_nfds(nfds: u64) -> u64 {
-    if nfds > 1_048_576 { 1_048_576 } else { nfds }
+    if nfds > 1_048_576 {
+        1_048_576
+    } else {
+        nfds
+    }
 }
 
 /// Clamp nfds for select to FD_SETSIZE.
@@ -99,6 +125,7 @@ mod tests {
         assert_eq!(POLLRDNORM, 0x040);
         assert_eq!(POLLWRNORM, 0x100);
         assert_eq!(POLLPRI, 0x002);
+        assert_eq!(POLLRDHUP, 0x2000);
     }
 
     #[test]
@@ -106,6 +133,7 @@ mod tests {
         assert!(valid_poll_events(POLLIN));
         assert!(valid_poll_events(POLLIN | POLLOUT));
         assert!(valid_poll_events(POLLIN | POLLPRI | POLLRDNORM));
+        assert!(valid_poll_events(POLLRDHUP | POLLRDBAND | POLLWRBAND));
         assert!(valid_poll_events(0));
         // POLLERR is output-only, not valid as input request.
         assert!(!valid_poll_events(POLLERR));

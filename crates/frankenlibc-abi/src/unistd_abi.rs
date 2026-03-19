@@ -6364,7 +6364,7 @@ pub unsafe extern "C" fn sigtimedwait(
                 set,
                 info,
                 timeout,
-                std::mem::size_of::<libc::sigset_t>(),
+                std::mem::size_of::<libc::c_ulong>(),
             ),
             errno::EINVAL,
         )
@@ -6380,7 +6380,7 @@ pub unsafe extern "C" fn sigwaitinfo(set: *const c_void, info: *mut c_void) -> c
                 set,
                 info,
                 std::ptr::null::<libc::timespec>(),
-                std::mem::size_of::<libc::sigset_t>(),
+                std::mem::size_of::<libc::c_ulong>(),
             ),
             errno::EINVAL,
         )
@@ -9835,7 +9835,7 @@ pub unsafe extern "C" fn epoll_pwait2(
             maxevents,
             timeout,
             sigmask,
-            std::mem::size_of::<libc::sigset_t>(),
+            std::mem::size_of::<libc::c_ulong>(),
         ) as c_int
     };
     if rc < 0 {
@@ -10237,7 +10237,7 @@ pub unsafe extern "C" fn io_uring_enter(
             min_complete,
             flags,
             sig,
-            std::mem::size_of::<libc::sigset_t>(),
+            std::mem::size_of::<libc::c_ulong>(),
         ) as c_int
     };
     if rc < 0 {

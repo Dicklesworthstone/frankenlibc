@@ -228,7 +228,7 @@ pub unsafe extern "C" fn send(
     }
 
     let (_, decision) =
-        runtime_policy::decide(ApiFamily::Socket, buf as usize, len, false, true, 0);
+        runtime_policy::decide(ApiFamily::Socket, sockfd as usize, len, false, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         unsafe { set_abi_errno(errno::EACCES) };
         runtime_policy::observe(
@@ -278,7 +278,7 @@ pub unsafe extern "C" fn recv(sockfd: c_int, buf: *mut c_void, len: usize, flags
         return -1;
     }
 
-    let (_, decision) = runtime_policy::decide(ApiFamily::Socket, buf as usize, len, true, true, 0);
+    let (_, decision) = runtime_policy::decide(ApiFamily::Socket, sockfd as usize, len, true, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         unsafe { set_abi_errno(errno::EACCES) };
         runtime_policy::observe(
@@ -331,7 +331,7 @@ pub unsafe extern "C" fn sendto(
     addrlen: u32,
 ) -> isize {
     let (_, decision) =
-        runtime_policy::decide(ApiFamily::Socket, buf as usize, len, false, true, 0);
+        runtime_policy::decide(ApiFamily::Socket, sockfd as usize, len, false, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         unsafe { set_abi_errno(errno::EACCES) };
         runtime_policy::observe(
@@ -383,7 +383,7 @@ pub unsafe extern "C" fn recvfrom(
     src_addr: *mut libc::sockaddr,
     addrlen: *mut u32,
 ) -> isize {
-    let (_, decision) = runtime_policy::decide(ApiFamily::Socket, buf as usize, len, true, true, 0);
+    let (_, decision) = runtime_policy::decide(ApiFamily::Socket, sockfd as usize, len, true, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         unsafe { set_abi_errno(errno::EACCES) };
         runtime_policy::observe(

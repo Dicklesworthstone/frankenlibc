@@ -853,6 +853,89 @@ unsafe fn read_file_actions(fa_ptr: *const c_void) -> Option<&'static SpawnFileA
     Some(unsafe { &*raw })
 }
 
+/// Apply spawn attributes in the child process.
+/// Returns 0 on success, errno on failure.
+unsafe fn apply_spawn_attrs(attr: &SpawnAttrs) -> c_int {
+    let flags = attr.flags as c_int;
+
+    if flags & libc::POSIX_SPAWN_SETPGROUP != 0 {
+        let rc = unsafe { libc::syscall(libc::SYS_setpgid, 0, attr.pgroup) };
+        if rc < 0 {
+            return std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EINVAL);
+        }
+    }
+
+    if flags & libc::POSIX_SPAWN_SETSIGMASK != 0 {
+        let mut sigset: libc::sigset_t = unsafe { std::mem::zeroed() };
+        unsafe { libc::sigemptyset(&mut sigset) };
+        for sig in 1..=63 {
+            if attr.sigmask & (1u64 << sig) != 0 {
+                unsafe { libc::sigaddset(&mut sigset, sig) };
+            }
+        }
+        let rc = unsafe {
+            libc::syscall(
+                libc::SYS_rt_sigprocmask,
+                libc::SIG_SETMASK,
+                &sigset as *const libc::sigset_t,
+                std::ptr::null_mut::<libc::sigset_t>(),
+                8, // _NSIG / 8
+            )
+        };
+        if rc < 0 {
+            return std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EINVAL);
+        }
+    }
+
+    if flags & libc::POSIX_SPAWN_SETSIGDEF != 0 {
+        let mut act: libc::sigaction = unsafe { std::mem::zeroed() };
+        act.sa_sigaction = libc::SIG_DFL;
+        for sig in 1..=63 {
+            if attr.sigdefault & (1u64 << sig) != 0 {
+                let rc = unsafe {
+                    libc::syscall(
+                        libc::SYS_rt_sigaction,
+                        sig,
+                        &act as *const libc::sigaction,
+                        std::ptr::null_mut::<libc::sigaction>(),
+                        8, // _NSIG / 8
+                    )
+                };
+                if rc < 0 {
+                    return std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EINVAL);
+                }
+            }
+        }
+    }
+
+    // Process setscheduler / setparam if requested
+    if flags & libc::POSIX_SPAWN_SETSCHEDULER != 0 {
+        let param = libc::sched_param { sched_priority: attr.schedparam_priority };
+        let rc = unsafe { libc::syscall(libc::SYS_sched_setscheduler, 0, attr.schedpolicy, &param as *const _) };
+        if rc < 0 {
+            return std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EINVAL);
+        }
+    } else if flags & libc::POSIX_SPAWN_SETSCHEDPARAM != 0 {
+        let param = libc::sched_param { sched_priority: attr.schedparam_priority };
+        let rc = unsafe { libc::syscall(libc::SYS_sched_setparam, 0, &param as *const _) };
+        if rc < 0 {
+            return std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EINVAL);
+        }
+    }
+
+    if flags & libc::POSIX_SPAWN_RESETIDS != 0 {
+        let egid = unsafe { libc::syscall(libc::SYS_getegid) };
+        let euid = unsafe { libc::syscall(libc::SYS_geteuid) };
+        let rc1 = unsafe { libc::syscall(libc::SYS_setgid, egid) };
+        let rc2 = unsafe { libc::syscall(libc::SYS_setuid, euid) };
+        if rc1 < 0 || rc2 < 0 {
+            return std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EINVAL);
+        }
+    }
+
+    0
+}
+
 /// Apply file actions in the child process (between fork and exec).
 /// Returns 0 on success, errno on failure.
 unsafe fn apply_file_actions(fa: &SpawnFileActions) -> c_int {
@@ -954,7 +1037,7 @@ unsafe fn posix_spawn_impl(
     pid: *mut libc::pid_t,
     path: *const c_char,
     file_actions: *const c_void,
-    _attrp: *const c_void,
+    attrp: *const c_void,
     argv: *const *mut c_char,
     envp: *const *mut c_char,
     search_path: bool,
@@ -1034,6 +1117,14 @@ unsafe fn posix_spawn_impl(
         // --- Child process ---
         unsafe {
             libc::syscall(libc::SYS_close as c_long, err_pipe[0]);
+        }
+
+        // Apply spawn attributes if provided
+        if let Some(attr) = unsafe { read_spawn_attrs(attrp) } {
+            let err = unsafe { apply_spawn_attrs(attr) };
+            if err != 0 {
+                unsafe { child_spawn_fail(err_pipe[1], err) };
+            }
         }
 
         // Apply file actions if provided

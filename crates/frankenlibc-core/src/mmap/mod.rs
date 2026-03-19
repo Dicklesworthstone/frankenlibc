@@ -31,11 +31,49 @@ pub const MAP_FIXED: i32 = 0x10;
 /// The mapping is not backed by any file; contents are initialized to zero.
 pub const MAP_ANONYMOUS: i32 = 0x20;
 
+// Common Linux mmap flags
+/// Stack-like growth.
+pub const MAP_GROWSDOWN: i32 = 0x0100;
+/// Ignored (compatibility).
+pub const MAP_DENYWRITE: i32 = 0x0800;
+/// Ignored (compatibility).
+pub const MAP_EXECUTABLE: i32 = 0x1000;
+/// Lock the mapping into memory.
+pub const MAP_LOCKED: i32 = 0x2000;
+/// Do not reserve swap space.
+pub const MAP_NORESERVE: i32 = 0x4000;
+/// Populate (prefault) page tables.
+pub const MAP_POPULATE: i32 = 0x8000;
+/// Do not block on I/O.
+pub const MAP_NONBLOCK: i32 = 0x10000;
+/// Allocation suitable for a stack.
+pub const MAP_STACK: i32 = 0x20000;
+/// Create mapping using huge pages.
+pub const MAP_HUGETLB: i32 = 0x40000;
+/// Perform synchronous writes.
+pub const MAP_SYNC: i32 = 0x80000;
+/// MAP_FIXED but do not overwrite existing mapping.
+pub const MAP_FIXED_NOREPLACE: i32 = 0x100000;
+
 /// Returned by mmap on failure (equivalent to `(void *)-1`).
 pub const MAP_FAILED: usize = usize::MAX;
 
 const MAP_VISIBILITY_MASK: i32 = MAP_SHARED | MAP_PRIVATE;
-const MAP_FLAGS_MASK: i32 = MAP_SHARED | MAP_PRIVATE | MAP_FIXED | MAP_ANONYMOUS;
+const MAP_FLAGS_MASK: i32 = MAP_SHARED
+    | MAP_PRIVATE
+    | MAP_FIXED
+    | MAP_ANONYMOUS
+    | MAP_GROWSDOWN
+    | MAP_DENYWRITE
+    | MAP_EXECUTABLE
+    | MAP_LOCKED
+    | MAP_NORESERVE
+    | MAP_POPULATE
+    | MAP_NONBLOCK
+    | MAP_STACK
+    | MAP_HUGETLB
+    | MAP_SYNC
+    | MAP_FIXED_NOREPLACE;
 
 // ---------------------------------------------------------------------------
 // msync flags (MS_*)
@@ -64,6 +102,10 @@ pub const MADV_SEQUENTIAL: i32 = 2;
 pub const MADV_WILLNEED: i32 = 3;
 /// Do not expect access in the near future.
 pub const MADV_DONTNEED: i32 = 4;
+/// Use huge pages.
+pub const MADV_HUGEPAGE: i32 = 14;
+/// Do not use huge pages.
+pub const MADV_NOHUGEPAGE: i32 = 15;
 
 // ---------------------------------------------------------------------------
 // Validators
@@ -92,7 +134,13 @@ pub const fn valid_map_flags(flags: i32) -> bool {
 pub const fn valid_madvise(advice: i32) -> bool {
     matches!(
         advice,
-        MADV_NORMAL | MADV_RANDOM | MADV_SEQUENTIAL | MADV_WILLNEED | MADV_DONTNEED
+        MADV_NORMAL
+            | MADV_RANDOM
+            | MADV_SEQUENTIAL
+            | MADV_WILLNEED
+            | MADV_DONTNEED
+            | MADV_HUGEPAGE
+            | MADV_NOHUGEPAGE
     )
 }
 
@@ -178,6 +226,9 @@ mod tests {
         assert_eq!(MAP_PRIVATE, 0x02);
         assert_eq!(MAP_FIXED, 0x10);
         assert_eq!(MAP_ANONYMOUS, 0x20);
+        assert_eq!(MAP_GROWSDOWN, 0x0100);
+        assert_eq!(MAP_POPULATE, 0x8000);
+        assert_eq!(MAP_STACK, 0x20000);
     }
 
     #[test]
@@ -196,12 +247,13 @@ mod tests {
         assert!(valid_map_flags(MAP_SHARED));
         assert!(valid_map_flags(MAP_PRIVATE | MAP_ANONYMOUS));
         assert!(valid_map_flags(MAP_PRIVATE | MAP_FIXED));
+        assert!(valid_map_flags(MAP_PRIVATE | MAP_POPULATE | MAP_STACK));
         // Both SHARED and PRIVATE is invalid.
         assert!(!valid_map_flags(MAP_SHARED | MAP_PRIVATE));
         // Neither is invalid.
         assert!(!valid_map_flags(0));
         // Unknown bits.
-        assert!(!valid_map_flags(MAP_PRIVATE | 0x100));
+        assert!(!valid_map_flags(MAP_PRIVATE | 0x200000));
     }
 
     #[test]
@@ -211,6 +263,8 @@ mod tests {
         assert!(valid_madvise(MADV_SEQUENTIAL));
         assert!(valid_madvise(MADV_WILLNEED));
         assert!(valid_madvise(MADV_DONTNEED));
+        assert!(valid_madvise(MADV_HUGEPAGE));
+        assert!(valid_madvise(MADV_NOHUGEPAGE));
         assert!(!valid_madvise(100));
         assert!(!valid_madvise(-1));
     }

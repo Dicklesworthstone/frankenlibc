@@ -183,6 +183,11 @@ impl<'a, T> RcuReader<'a, T> {
         if self.cached_epoch != current_epoch {
             self.cached_snapshot = self.cell.load();
             self.cached_epoch = current_epoch;
+            crate::alien_cs_metrics::emit_alien_cs_event(
+                crate::alien_cs_metrics::MetricEventKind::RcuReaderRefresh,
+                current_epoch,
+                "rcu",
+            );
         }
         &self.cached_snapshot
     }

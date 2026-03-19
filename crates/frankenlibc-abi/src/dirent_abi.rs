@@ -32,16 +32,6 @@ struct DirState {
     last_d_off: i64,
 }
 
-/// Extract the kernel `d_off` field from a raw linux_dirent64 at the given buffer offset.
-/// Layout: d_ino(8) | d_off(8) | d_reclen(2) | d_type(1) | d_name(...)
-#[inline]
-fn extract_d_off(buffer: &[u8], offset: usize) -> i64 {
-    if offset + 16 > buffer.len() {
-        return 0;
-    }
-    i64::from_ne_bytes(buffer[offset + 8..offset + 16].try_into().unwrap_or([0; 8]))
-}
-
 /// Global registry of open directory streams, keyed by a unique handle.
 static DIR_REGISTRY: Mutex<Option<HashMap<usize, DirState>>> = Mutex::new(None);
 
@@ -161,12 +151,11 @@ pub unsafe extern "C" fn readdir(dirp: *mut DIR) -> *mut libc::dirent {
         }
     };
 
-    // Try to parse from current buffer
     if state.offset < state.valid_bytes
         && let Some((entry, next_off)) =
             dirent_core::parse_dirent64(&state.buffer[..state.valid_bytes], state.offset)
     {
-        state.last_d_off = extract_d_off(&state.buffer, state.offset);
+        state.last_d_off = entry.d_off;
         state.offset = next_off;
         return ENTRY_BUF.with(|cell| {
             let ptr = cell.get();
@@ -213,7 +202,7 @@ pub unsafe extern "C" fn readdir(dirp: *mut DIR) -> *mut libc::dirent {
     if let Some((entry, next_off)) =
         dirent_core::parse_dirent64(&state.buffer[..state.valid_bytes], 0)
     {
-        state.last_d_off = extract_d_off(&state.buffer, 0);
+        state.last_d_off = entry.d_off;
         state.offset = next_off;
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, false);
         return ENTRY_BUF.with(|cell| {

@@ -925,7 +925,7 @@ fn sigtimedwait_and_sigwaitinfo_invalid_inputs_match_kernel_syscalls() {
     let observed_timed_errno = unsafe { *__errno_location() };
 
     assert_eq!(observed_timed, -1);
-    assert_eq!(observed_timed_errno, libc::EINVAL);
+    assert_eq!(observed_timed_errno, libc::EFAULT);
 
     // SAFETY: __errno_location points to thread-local errno.
     unsafe {
@@ -937,7 +937,7 @@ fn sigtimedwait_and_sigwaitinfo_invalid_inputs_match_kernel_syscalls() {
     let observed_wait_errno = unsafe { *__errno_location() };
 
     assert_eq!(observed_wait, -1);
-    assert_eq!(observed_wait_errno, libc::EINVAL);
+    assert_eq!(observed_wait_errno, libc::EFAULT);
 }
 
 #[test]

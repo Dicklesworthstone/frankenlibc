@@ -309,12 +309,13 @@ pub unsafe extern "C" fn tdelete(
     if rootp.is_null() || unsafe { (*rootp).is_null() } {
         return std::ptr::null_mut();
     }
-    tdelete_recursive(key, rootp, compar)
+    tdelete_recursive(key, rootp, std::ptr::null_mut(), compar)
 }
 
 fn tdelete_recursive(
     key: *const c_void,
     nodep: *mut *mut c_void,
+    parent: *mut TreeNode,
     compar: CompareFn,
 ) -> *mut c_void {
     let node = unsafe { *nodep } as *mut TreeNode;
@@ -325,15 +326,14 @@ fn tdelete_recursive(
     let cmp = unsafe { compar(key, (*node).key) };
     if cmp < 0 {
         let left_ptr = unsafe { &mut (*node).left as *mut *mut TreeNode as *mut *mut c_void };
-        return tdelete_recursive(key, left_ptr, compar);
+        return tdelete_recursive(key, left_ptr, node, compar);
     }
     if cmp > 0 {
         let right_ptr = unsafe { &mut (*node).right as *mut *mut TreeNode as *mut *mut c_void };
-        return tdelete_recursive(key, right_ptr, compar);
+        return tdelete_recursive(key, right_ptr, node, compar);
     }
 
     // Found the node to delete.
-    let parent = node as *mut c_void; // Return parent (POSIX says return parent of deleted)
     unsafe {
         if (*node).left.is_null() {
             *nodep = (*node).right as *mut c_void;
@@ -358,7 +358,14 @@ fn tdelete_recursive(
             let _ = Box::from_raw(succ);
         }
     }
-    parent
+    
+    if parent.is_null() {
+        // POSIX: return unspecified non-null pointer if root node is deleted.
+        // Returning the address of rootp itself is a common implementation choice.
+        nodep as *mut c_void
+    } else {
+        parent as *mut c_void
+    }
 }
 
 /// POSIX `twalk` — traverse a binary tree.

@@ -71,21 +71,26 @@ unsafe fn apply_progress(
     in_consumed: usize,
     out_written: usize,
 ) {
-    // SAFETY: callers validate pointer arguments before invoking this helper.
-    let in_cur = unsafe { *inbuf };
-    // SAFETY: callers validate pointer arguments before invoking this helper.
-    let out_cur = unsafe { *outbuf };
-    // SAFETY: callers validate pointer arguments before invoking this helper.
-    let in_left = unsafe { *inbytesleft };
-    // SAFETY: callers validate pointer arguments before invoking this helper.
-    let out_left = unsafe { *outbytesleft };
+    if !inbuf.is_null() && !inbytesleft.is_null() {
+        let in_cur = unsafe { *inbuf };
+        if !in_cur.is_null() {
+            let in_left = unsafe { *inbytesleft };
+            unsafe {
+                *inbuf = in_cur.add(in_consumed);
+                *inbytesleft = in_left - in_consumed;
+            }
+        }
+    }
 
-    // SAFETY: conversion core guarantees consumed/written never exceed provided lengths.
-    unsafe {
-        *inbuf = in_cur.add(in_consumed);
-        *inbytesleft = in_left - in_consumed;
-        *outbuf = out_cur.add(out_written);
-        *outbytesleft = out_left - out_written;
+    if !outbuf.is_null() && !outbytesleft.is_null() {
+        let out_cur = unsafe { *outbuf };
+        if !out_cur.is_null() {
+            let out_left = unsafe { *outbytesleft };
+            unsafe {
+                *outbuf = out_cur.add(out_written);
+                *outbytesleft = out_left - out_written;
+            }
+        }
     }
 }
 
@@ -182,56 +187,66 @@ pub unsafe extern "C" fn iconv(
         return iconv_error_return();
     }
 
-    // POSIX reset path: if inbuf is null or *inbuf is null, reset shift state.
-    // Phase-1 encodings are stateless, so this is a no-op success.
-    if inbuf.is_null() || inbytesleft.is_null() {
-        runtime_policy::observe(ApiFamily::Locale, decision.profile, 4, false);
-        return 0;
-    }
-    // SAFETY: guarded by null check above.
-    let in_ptr = unsafe { *inbuf };
-    if in_ptr.is_null() {
-        runtime_policy::observe(ApiFamily::Locale, decision.profile, 4, false);
-        return 0;
-    }
-
-    if outbuf.is_null() || outbytesleft.is_null() {
-        // SAFETY: sets thread-local errno.
-        unsafe { set_abi_errno(errno::EFAULT) };
-        runtime_policy::observe(
-            ApiFamily::Locale,
-            decision.profile,
-            runtime_policy::scaled_cost(8, requested),
-            true,
-        );
-        return iconv_error_return();
-    }
-    // SAFETY: guarded by null checks above.
-    let out_ptr = unsafe { *outbuf };
-    if out_ptr.is_null() {
-        // SAFETY: sets thread-local errno.
-        unsafe { set_abi_errno(errno::EFAULT) };
-        runtime_policy::observe(
-            ApiFamily::Locale,
-            decision.profile,
-            runtime_policy::scaled_cost(8, requested),
-            true,
-        );
-        return iconv_error_return();
-    }
-
-    // SAFETY: pointers were validated for null; lengths come from caller contract.
-    let in_left = unsafe { *inbytesleft };
-    // SAFETY: pointers were validated for null; lengths come from caller contract.
-    let out_left = unsafe { *outbytesleft };
-    // SAFETY: slices are bounded by caller-provided remaining lengths.
-    let input = unsafe { slice::from_raw_parts(in_ptr.cast::<u8>(), in_left) };
-    // SAFETY: slices are bounded by caller-provided remaining lengths.
-    let output = unsafe { slice::from_raw_parts_mut(out_ptr.cast::<u8>(), out_left) };
-    // SAFETY: handle validity is checked via registry before cast.
     let descriptor = unsafe { &mut *cd.cast::<IconvDescriptor>() };
 
-    match iconv::iconv(descriptor, input, output) {
+    let input_opt = if inbuf.is_null() {
+        None
+    } else {
+        // SAFETY: inbuf is non-null.
+        let in_ptr = unsafe { *inbuf };
+        if in_ptr.is_null() {
+            None
+        } else {
+            // SAFETY: inbytesleft is validated for null in this path too.
+            if inbytesleft.is_null() {
+                None
+            } else {
+                let in_left = unsafe { *inbytesleft };
+                Some(unsafe { slice::from_raw_parts(in_ptr.cast::<u8>(), in_left) })
+            }
+        }
+    };
+
+    // outbuf and outbytesleft can only be null if inbuf or *inbuf is null (reset path).
+    // If they are null, we pass an empty slice to the core, which will skip BOM emission.
+    let mut out_dummy = [0u8; 0];
+    let output = if outbuf.is_null() || outbytesleft.is_null() {
+        if input_opt.is_some() {
+            // Mandatory for conversion path.
+            // SAFETY: sets thread-local errno.
+            unsafe { set_abi_errno(errno::EFAULT) };
+            runtime_policy::observe(
+                ApiFamily::Locale,
+                decision.profile,
+                runtime_policy::scaled_cost(8, requested),
+                true,
+            );
+            return iconv_error_return();
+        }
+        &mut out_dummy[..]
+    } else {
+        // SAFETY: guarded by null checks above.
+        let out_ptr = unsafe { *outbuf };
+        if out_ptr.is_null() {
+            if input_opt.is_some() {
+                // SAFETY: sets thread-local errno.
+                unsafe { set_abi_errno(errno::EFAULT) };
+                runtime_policy::observe(
+                    ApiFamily::Locale,
+                    decision.profile,
+                    runtime_policy::scaled_cost(8, requested),
+                    true,
+                );
+                return iconv_error_return();
+            }
+            &mut out_dummy[..]
+        } else {
+            let out_left = unsafe { *outbytesleft };
+            unsafe { slice::from_raw_parts_mut(out_ptr.cast::<u8>(), out_left) }
+        }
+    };
+
+    match iconv::iconv(descriptor, input_opt, output) {
         Ok(result) => {
             // SAFETY: progress fields are validated by core conversion logic.
             unsafe {
@@ -244,10 +259,11 @@ pub unsafe extern "C" fn iconv(
                     result.out_written,
                 )
             };
+            let consumed = result.in_consumed;
             runtime_policy::observe(
                 ApiFamily::Locale,
                 decision.profile,
-                runtime_policy::scaled_cost(10, in_left),
+                runtime_policy::scaled_cost(10, consumed),
                 false,
             );
             result.non_reversible
@@ -264,12 +280,13 @@ pub unsafe extern "C" fn iconv(
                     err.out_written,
                 )
             };
+            let consumed = err.in_consumed;
             // SAFETY: sets thread-local errno.
             unsafe { set_abi_errno(err.code) };
             runtime_policy::observe(
                 ApiFamily::Locale,
                 decision.profile,
-                runtime_policy::scaled_cost(10, in_left),
+                runtime_policy::scaled_cost(10, consumed),
                 true,
             );
             iconv_error_return()
@@ -409,6 +426,33 @@ mod tests {
             );
             assert_eq!(rc, iconv_error_return());
             assert_eq!(abi_errno(), errno::EBADF);
+        }
+    }
+
+    #[test]
+    fn iconv_null_inbuf_emits_bom_for_utf32() {
+        // SAFETY: valid buffers and descriptor lifecycle.
+        unsafe {
+            let cd = iconv_open(c_ptr(b"UTF-32\0"), c_ptr(b"UTF-8\0"));
+            assert!(!cd.is_null());
+
+            let mut output = [0u8; 16];
+            let mut out_ptr = output.as_mut_ptr().cast::<c_char>();
+            let mut out_left = output.len();
+
+            // Null inbuf pointer should trigger BOM emission for UTF-32
+            let rc = iconv(
+                cd,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                &mut out_ptr,
+                &mut out_left,
+            );
+            assert_eq!(rc, 0);
+            assert_eq!(out_left, 12); // 16 - 4
+            assert_eq!(&output[..4], &[0xFF, 0xFE, 0x00, 0x00]);
+
+            assert_eq!(iconv_close(cd), 0);
         }
     }
 }

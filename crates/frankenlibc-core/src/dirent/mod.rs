@@ -9,6 +9,8 @@
 pub struct DirEntry {
     /// Inode number.
     pub d_ino: u64,
+    /// Offset to the next `linux_dirent64` structure.
+    pub d_off: i64,
     /// File type (`DT_REG`, `DT_DIR`, etc.).
     pub d_type: u8,
     /// Entry name (without NUL terminator).
@@ -36,7 +38,7 @@ pub fn parse_dirent64(buffer: &[u8], offset: usize) -> Option<(DirEntry, usize)>
     let buf = &buffer[offset..];
 
     let d_ino = u64::from_ne_bytes(buf[0..8].try_into().ok()?);
-    // d_off at [8..16] — skip, we use reclen-based iteration
+    let d_off = i64::from_ne_bytes(buf[8..16].try_into().ok()?);
     let d_reclen = u16::from_ne_bytes(buf[16..18].try_into().ok()?) as usize;
     let d_type = buf[18];
 
@@ -55,6 +57,7 @@ pub fn parse_dirent64(buffer: &[u8], offset: usize) -> Option<(DirEntry, usize)>
     Some((
         DirEntry {
             d_ino,
+            d_off,
             d_type,
             d_name,
         },
@@ -85,6 +88,7 @@ mod tests {
         let buf = make_dirent64(12345, 100, 8, b"hello.txt");
         let (entry, next) = parse_dirent64(&buf, 0).unwrap();
         assert_eq!(entry.d_ino, 12345);
+        assert_eq!(entry.d_off, 100);
         assert_eq!(entry.d_type, 8);
         assert_eq!(entry.d_name, b"hello.txt");
         assert_eq!(next, buf.len());
@@ -92,17 +96,19 @@ mod tests {
 
     #[test]
     fn parse_two_entries() {
-        let e1 = make_dirent64(1, 0, 4, b".");
-        let e2 = make_dirent64(2, 1, 4, b"..");
+        let e1 = make_dirent64(1, 10, 4, b".");
+        let e2 = make_dirent64(2, 20, 4, b"..");
         let mut buf = e1.clone();
         buf.extend_from_slice(&e2);
 
         let (entry1, off1) = parse_dirent64(&buf, 0).unwrap();
         assert_eq!(entry1.d_ino, 1);
+        assert_eq!(entry1.d_off, 10);
         assert_eq!(entry1.d_name, b".");
 
         let (entry2, off2) = parse_dirent64(&buf, off1).unwrap();
         assert_eq!(entry2.d_ino, 2);
+        assert_eq!(entry2.d_off, 20);
         assert_eq!(entry2.d_name, b"..");
 
         assert!(parse_dirent64(&buf, off2).is_none());

@@ -275,6 +275,11 @@ where
                             None
                         }
                     });
+            crate::alien_cs_metrics::emit_alien_cs_event(
+                crate::alien_cs_metrics::MetricEventKind::FcCombiningPass,
+                batch_size,
+                "flat_combining",
+            );
         }
     }
 

@@ -133,7 +133,7 @@ pub unsafe extern "C" fn ppoll(
     };
 
     // Use SYS_ppoll with sigset size parameter.
-    let sigset_size = core::mem::size_of::<libc::sigset_t>();
+    let sigset_size = core::mem::size_of::<libc::c_ulong>();
     let rc = unsafe {
         libc::syscall(
             libc::SYS_ppoll as c_long,
@@ -299,7 +299,7 @@ pub unsafe extern "C" fn pselect(
     };
 
     // pselect6 expects a struct { sigset_t*, size_t } as the last parameter.
-    let sigset_size = core::mem::size_of::<libc::sigset_t>();
+    let sigset_size = core::mem::size_of::<libc::c_ulong>();
     let sig_data: [usize; 2] = [sigmask as usize, sigset_size];
     let sig_ptr = if sigmask.is_null() {
         std::ptr::null::<[usize; 2]>()
@@ -411,7 +411,7 @@ pub unsafe extern "C" fn epoll_wait(
             maxevents,
             timeout,
             std::ptr::null::<libc::sigset_t>(),
-            core::mem::size_of::<libc::sigset_t>(),
+            core::mem::size_of::<libc::c_ulong>(),
         ) as c_int
     };
     if rc < 0 {
@@ -444,7 +444,7 @@ pub unsafe extern "C" fn epoll_pwait(
             maxevents,
             timeout,
             sigmask,
-            core::mem::size_of::<libc::sigset_t>(),
+            core::mem::size_of::<libc::c_ulong>(),
         ) as c_int
     };
     if rc < 0 {

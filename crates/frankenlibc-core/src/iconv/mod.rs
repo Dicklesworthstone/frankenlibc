@@ -508,7 +508,7 @@ pub fn iconv(
     let input = match inbuf {
         Some(b) => b,
         None => {
-            if cd.emit_bom {
+            if cd.emit_bom && !outbuf.is_empty() {
                 let bom = match cd.to {
                     Encoding::Utf16Le => &[0xFF, 0xFE][..],
                     Encoding::Utf32 => &[0xFF, 0xFE, 0x00, 0x00][..],
@@ -526,6 +526,11 @@ pub fn iconv(
                     out_pos = bom.len();
                 }
                 cd.emit_bom = false;
+            } else if cd.emit_bom && outbuf.is_empty() {
+                // If outbuf is empty but we need to emit a BOM, we don't
+                // emit it yet and don't clear emit_bom, unless this is
+                // a pure state reset which POSIX allows to have null outbuf.
+                // For stateless phase-1, we just return success.
             }
             return Ok(IconvResult {
                 non_reversible,
@@ -657,7 +662,7 @@ mod tests {
     fn utf8_to_latin1_basic_conversion() {
         let mut cd = iconv_open(b"ISO-8859-1", b"UTF-8").unwrap();
         let mut out = [0u8; 16];
-        let res = iconv(&mut cd, "Héllo".as_bytes(), &mut out).unwrap();
+        let res = iconv(&mut cd, Some("Héllo".as_bytes()), &mut out).unwrap();
         assert_eq!(res.in_consumed, "Héllo".len());
         assert_eq!(res.out_written, 5);
         assert_eq!(&out[..5], b"H\xe9llo");
@@ -668,7 +673,7 @@ mod tests {
         let mut cd = iconv_open(b"UTF-8", b"ISO-8859-1").unwrap();
         let input = [0x48, 0xE9];
         let mut out = [0u8; 16];
-        let res = iconv(&mut cd, &input, &mut out).unwrap();
+        let res = iconv(&mut cd, Some(&input), &mut out).unwrap();
         assert_eq!(res.in_consumed, 2);
         assert_eq!(res.out_written, 3);
         assert_eq!(&out[..3], "Hé".as_bytes());
@@ -678,7 +683,7 @@ mod tests {
     fn utf8_to_utf16le_conversion() {
         let mut cd = iconv_open(b"UTF-16LE", b"UTF-8").unwrap();
         let mut out = [0u8; 16];
-        let res = iconv(&mut cd, "A€".as_bytes(), &mut out).unwrap();
+        let res = iconv(&mut cd, Some("A€".as_bytes()), &mut out).unwrap();
         assert_eq!(res.in_consumed, "A€".len());
         assert_eq!(res.out_written, 4);
         assert_eq!(&out[..4], &[0x41, 0x00, 0xAC, 0x20]);
@@ -689,27 +694,34 @@ mod tests {
         let mut cd = iconv_open(b"UTF-8", b"UTF-16LE").unwrap();
         let input = [0x41, 0x00, 0xAC, 0x20];
         let mut out = [0u8; 16];
-        let res = iconv(&mut cd, &input, &mut out).unwrap();
+        let res = iconv(&mut cd, Some(&input), &mut out).unwrap();
         assert_eq!(res.in_consumed, 4);
         assert_eq!(res.out_written, "A€".len());
         assert_eq!(&out[..res.out_written], "A€".as_bytes());
     }
 
     #[test]
-    fn utf8_to_utf32_conversion_emits_bom() {
+    fn utf8_to_utf32_conversion_reset_emits_bom() {
         let mut cd = iconv_open(b"UTF-32", b"UTF-8").unwrap();
         let mut out = [0u8; 16];
-        let res = iconv(&mut cd, b"A", &mut out).unwrap();
-        assert_eq!(res.in_consumed, 1);
-        assert_eq!(res.out_written, 8);
-        assert_eq!(&out[..8], &[0xFF, 0xFE, 0x00, 0x00, 0x41, 0x00, 0x00, 0x00]);
+        // First call with None should emit BOM
+        let res1 = iconv(&mut cd, None, &mut out).unwrap();
+        assert_eq!(res1.in_consumed, 0);
+        assert_eq!(res1.out_written, 4);
+        assert_eq!(&out[..4], &[0xFF, 0xFE, 0x00, 0x00]);
+
+        // Second call with Some should convert without another BOM
+        let res2 = iconv(&mut cd, Some(b"A"), &mut out[4..]).unwrap();
+        assert_eq!(res2.in_consumed, 1);
+        assert_eq!(res2.out_written, 4);
+        assert_eq!(&out[4..8], &[0x41, 0x00, 0x00, 0x00]);
     }
 
     #[test]
     fn utf8_to_utf32_e2big_before_bom() {
         let mut cd = iconv_open(b"UTF-32", b"UTF-8").unwrap();
         let mut out = [0u8; 3];
-        let err = iconv(&mut cd, b"A", &mut out).unwrap_err();
+        let err = iconv(&mut cd, None, &mut out).unwrap_err();
         assert_eq!(err.code, ICONV_E2BIG);
         assert_eq!(err.in_consumed, 0);
         assert_eq!(err.out_written, 0);
@@ -719,7 +731,7 @@ mod tests {
     fn e2big_reports_partial_progress() {
         let mut cd = iconv_open(b"UTF-16LE", b"UTF-8").unwrap();
         let mut out = [0u8; 2];
-        let err = iconv(&mut cd, b"AB", &mut out).unwrap_err();
+        let err = iconv(&mut cd, Some(b"AB"), &mut out).unwrap_err();
         assert_eq!(err.code, ICONV_E2BIG);
         assert_eq!(err.in_consumed, 1);
         assert_eq!(err.out_written, 2);
@@ -729,7 +741,7 @@ mod tests {
     fn invalid_utf8_reports_eilseq() {
         let mut cd = iconv_open(b"UTF-16LE", b"UTF-8").unwrap();
         let mut out = [0u8; 8];
-        let err = iconv(&mut cd, &[0xC3, 0x28], &mut out).unwrap_err();
+        let err = iconv(&mut cd, Some(&[0xC3, 0x28]), &mut out).unwrap_err();
         assert_eq!(err.code, ICONV_EILSEQ);
         assert_eq!(err.in_consumed, 0);
         assert_eq!(err.out_written, 0);
@@ -739,7 +751,7 @@ mod tests {
     fn incomplete_utf8_reports_einval() {
         let mut cd = iconv_open(b"UTF-16LE", b"UTF-8").unwrap();
         let mut out = [0u8; 8];
-        let err = iconv(&mut cd, &[0xE2, 0x82], &mut out).unwrap_err();
+        let err = iconv(&mut cd, Some(&[0xE2, 0x82]), &mut out).unwrap_err();
         assert_eq!(err.code, ICONV_EINVAL);
         assert_eq!(err.in_consumed, 0);
         assert_eq!(err.out_written, 0);
@@ -749,7 +761,7 @@ mod tests {
     fn invalid_utf16_reports_eilseq() {
         let mut cd = iconv_open(b"UTF-8", b"UTF-16LE").unwrap();
         let mut out = [0u8; 8];
-        let err = iconv(&mut cd, &[0x00, 0xDC], &mut out).unwrap_err();
+        let err = iconv(&mut cd, Some(&[0x00, 0xDC]), &mut out).unwrap_err();
         assert_eq!(err.code, ICONV_EILSEQ);
         assert_eq!(err.in_consumed, 0);
         assert_eq!(err.out_written, 0);
@@ -759,7 +771,7 @@ mod tests {
     fn incomplete_utf16_reports_einval() {
         let mut cd = iconv_open(b"UTF-8", b"UTF-16LE").unwrap();
         let mut out = [0u8; 8];
-        let err = iconv(&mut cd, &[0x34], &mut out).unwrap_err();
+        let err = iconv(&mut cd, Some(&[0x34]), &mut out).unwrap_err();
         assert_eq!(err.code, ICONV_EINVAL);
         assert_eq!(err.in_consumed, 0);
         assert_eq!(err.out_written, 0);
@@ -769,7 +781,7 @@ mod tests {
     fn latin1_unrepresentable_reports_eilseq() {
         let mut cd = iconv_open(b"ISO-8859-1", b"UTF-8").unwrap();
         let mut out = [0u8; 8];
-        let err = iconv(&mut cd, "€".as_bytes(), &mut out).unwrap_err();
+        let err = iconv(&mut cd, Some("€".as_bytes()), &mut out).unwrap_err();
         assert_eq!(err.code, ICONV_EILSEQ);
         assert_eq!(err.in_consumed, 0);
         assert_eq!(err.out_written, 0);

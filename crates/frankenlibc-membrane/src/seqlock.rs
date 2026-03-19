@@ -172,6 +172,11 @@ impl<T: Clone + Send + Sync> SeqLock<T> {
             guard
         } else {
             self.diag.contention_events.fetch_add(1, Ordering::Relaxed);
+            crate::alien_cs_metrics::emit_alien_cs_event(
+                crate::alien_cs_metrics::MetricEventKind::SeqLockContention,
+                self.diag.contention_events.load(Ordering::Relaxed),
+                "seqlock",
+            );
             self.writer_lock.lock()
         };
 
@@ -330,6 +335,11 @@ impl<'a, T: Clone + Send + Sync> SeqLockReader<'a, T> {
             self.lock.diag.cache_hits.fetch_add(1, Ordering::Relaxed);
         } else {
             self.lock.diag.cache_misses.fetch_add(1, Ordering::Relaxed);
+            crate::alien_cs_metrics::emit_alien_cs_event(
+                crate::alien_cs_metrics::MetricEventKind::SeqLockCacheMiss,
+                current_version,
+                "seqlock",
+            );
             self.cached_snapshot = self.lock.load();
             self.cached_version = current_version;
         }
