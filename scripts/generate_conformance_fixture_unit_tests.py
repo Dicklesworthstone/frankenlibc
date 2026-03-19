@@ -42,6 +42,32 @@ def compute_fixture_hash(data):
     return hashlib.sha256(canonical.encode()).hexdigest()[:16]
 
 
+def sanitize_trace_component(value):
+    sanitized = "".join(
+        ch if ch.isalnum() or ch in "-_." else "_" for ch in str(value)
+    )
+    return sanitized or "unknown"
+
+
+def make_log_row(timestamp, run_id, fixture_file, family, symbol, outcome, artifact_refs, details):
+    return {
+        "timestamp": timestamp,
+        "trace_id": f"bd-2hh.5::{run_id}::{sanitize_trace_component(fixture_file)}",
+        "bead_id": "bd-2hh.5",
+        "scenario_id": run_id,
+        "mode": "fixture_validation",
+        "api_family": family or "conformance",
+        "symbol": symbol or family or "fixture_validation",
+        "decision_path": "conformance::fixture_validation::report",
+        "healing_action": None,
+        "errno": 0,
+        "latency_ns": 0,
+        "artifact_refs": artifact_refs,
+        "outcome": outcome,
+        **details,
+    }
+
+
 def validate_fixture(fixture_path):
     """Validate a fixture file thoroughly."""
     issues = []
@@ -134,6 +160,12 @@ def main():
     parser = argparse.ArgumentParser(
         description="Conformance fixture unit test validation")
     parser.add_argument("-o", "--output", help="Output file path")
+    parser.add_argument("--log", help="Optional JSONL log output path")
+    parser.add_argument(
+        "--timestamp",
+        default=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        help="Deterministic timestamp to embed in generated artifacts",
+    )
     args = parser.parse_args()
 
     root = find_repo_root()
@@ -150,6 +182,7 @@ def main():
     total_warnings = 0
     total_cases = 0
     all_hashes = {}
+    log_rows = []
 
     for fp in fixture_files:
         data, issues, warnings = validate_fixture(fp)
@@ -175,6 +208,31 @@ def main():
             "data": data,
         })
 
+        primary_symbol = ""
+        if data and data.get("cases"):
+            primary_symbol = data["cases"][0].get("function", "")
+        log_rows.append(
+            make_log_row(
+                args.timestamp,
+                sanitize_trace_component(Path(args.output).stem if args.output else "fixture-unit-tests"),
+                fp.name,
+                data.get("family", "") if data else "",
+                primary_symbol,
+                "pass" if len(issues) == 0 else "fail",
+                [
+                    "scripts/generate_conformance_fixture_unit_tests.py",
+                    f"tests/conformance/fixtures/{fp.name}",
+                ],
+                {
+                    "event": "fixture_validation_result",
+                    "valid": len(issues) == 0,
+                    "issue_count": len(issues),
+                    "warning_count": len(warnings),
+                    "fixture_hash": fixture_hash,
+                },
+            )
+        )
+
     # Build regression baseline
     regression_baseline = build_regression_baseline(all_fixtures)
 
@@ -189,6 +247,7 @@ def main():
 
     # Summary
     valid_files = sum(1 for f in all_fixtures if f["valid"])
+    invalid_files = [f for f in all_fixtures if not f["valid"]]
     unique_families = len(set(f["family"] for f in all_fixtures if f["family"]))
     unique_symbols = len(regression_baseline)
 
@@ -209,16 +268,34 @@ def main():
     report = {
         "schema_version": "v1",
         "bead": "bd-2hh.5",
-        "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "generated_at": args.timestamp,
         "summary": {
             "total_fixture_files": len(fixture_files),
             "valid_fixture_files": valid_files,
+            "invalid_fixture_files": len(invalid_files),
             "total_cases": total_cases,
             "total_issues": total_issues,
             "total_warnings": total_warnings,
             "unique_families": unique_families,
             "unique_symbols": unique_symbols,
             "determinism_verified": determinism_ok,
+        },
+        "regression_detection": {
+            "status": "attention_required" if invalid_files else "clean",
+            "invalid_fixture_files": [f["file"] for f in invalid_files],
+            "invalid_fixture_issue_counts": {
+                f["file"]: len(f["issues"]) for f in invalid_files
+            },
+            "baseline_fixture_digest": hashlib.sha256(
+                json.dumps(
+                    {
+                        "fixture_hashes": all_hashes,
+                        "symbols": regression_baseline,
+                    },
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode()
+            ).hexdigest(),
         },
         "fixture_results": fixture_results,
         "regression_baseline": {
@@ -229,6 +306,31 @@ def main():
         "fixture_hashes": all_hashes,
     }
 
+    log_rows.append(
+        make_log_row(
+            args.timestamp,
+            sanitize_trace_component(Path(args.output).stem if args.output else "fixture-unit-tests"),
+            "summary",
+            "conformance",
+            "fixture_validation",
+            report["regression_detection"]["status"],
+            [
+                "scripts/generate_conformance_fixture_unit_tests.py",
+                args.output or "stdout",
+            ],
+            {
+                "event": "fixture_validation_summary",
+                "valid_fixture_files": valid_files,
+                "invalid_fixture_files": len(invalid_files),
+                "total_fixture_files": len(fixture_files),
+                "determinism_verified": determinism_ok,
+                "baseline_fixture_digest": report["regression_detection"][
+                    "baseline_fixture_digest"
+                ],
+            },
+        )
+    )
+
     output = json.dumps(report, indent=2) + "\n"
     if args.output:
         Path(args.output).parent.mkdir(parents=True, exist_ok=True)
@@ -236,6 +338,13 @@ def main():
         print(f"Report written to {args.output}", file=sys.stderr)
     else:
         print(output)
+
+    if args.log:
+        Path(args.log).parent.mkdir(parents=True, exist_ok=True)
+        Path(args.log).write_text(
+            "".join(json.dumps(row, sort_keys=True) + "\n" for row in log_rows),
+            encoding="utf-8",
+        )
 
 
 if __name__ == "__main__":
