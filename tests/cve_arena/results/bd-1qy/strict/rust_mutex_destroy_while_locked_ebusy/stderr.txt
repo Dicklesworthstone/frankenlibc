@@ -1,4 +1,99 @@
-    Blocking waiting for file lock on package cache
-    Blocking waiting for file lock on package cache
-    Blocking waiting for file lock on package cache
-    Blocking waiting for file lock on artifact directory
+  [2m2026-03-19T03:19:18.257512Z[0m [32m INFO[0m [1;32mrch::hook[0m[32m: [32mSelected worker: vmi1227854 at ubuntu@109.123.245.77 (5 slots, speed 50.0)[0m
+    [2;3mat[0m rch/src/hook.rs:288 [2;3mon[0m ThreadId(1)
+
+  [2m2026-03-19T03:19:18.448143Z[0m [32m INFO[0m [1;32mrch::hook[0m[32m: [32mStarting remote compilation pipeline for frankenlibc (hash: d93c60861ee06cb1)[0m
+    [2;3mat[0m rch/src/hook.rs:4381 [2;3mon[0m ThreadId(1)
+
+  [2m2026-03-19T03:19:18.448223Z[0m [32m INFO[0m [1;32mrch::hook[0m[32m: [32mPrepared dependency sync manifest for 9 roots[0m
+    [2;3mat[0m rch/src/hook.rs:4403 [2;3mon[0m ThreadId(1)
+
+  [2m2026-03-19T03:19:19.879441Z[0m [32m INFO[0m [1;32mrch::hook[0m[32m: [32mSyncing project to worker vmi1227854...[0m
+    [2;3mat[0m rch/src/hook.rs:4427 [2;3mon[0m ThreadId(1)
+
+  [2m2026-03-19T03:19:19.879498Z[0m [32m INFO[0m [1;32mrch::transfer[0m[32m: [32mSyncing /data/projects/frankenlibc -> /data/projects/frankenlibc on vmi1227854[0m
+    [2;3mat[0m rch/src/transfer.rs:928 [2;3mon[0m ThreadId(1)
+
+  [2m2026-03-19T03:19:22.089871Z[0m [32m INFO[0m [1;32mrch::transfer[0m[32m: [32mSync completed in 2210ms[0m
+    [2;3mat[0m rch/src/transfer.rs:997 [2;3mon[0m ThreadId(1)
+
+  [2m2026-03-19T03:19:22.089943Z[0m [32m INFO[0m [1;32mrch::transfer[0m[32m: [32mSyncing /data/projects/frankenlibc/crates/frankenlibc -> /data/projects/frankenlibc/crates/frankenlibc on vmi1227854[0m
+    [2;3mat[0m rch/src/transfer.rs:928 [2;3mon[0m ThreadId(1)
+
+  [2m2026-03-19T03:19:23.962999Z[0m [32m INFO[0m [1;32mrch::transfer[0m[32m: [32mSync completed in 1873ms[0m
+    [2;3mat[0m rch/src/transfer.rs:997 [2;3mon[0m ThreadId(1)
+
+  [2m2026-03-19T03:19:23.963078Z[0m [32m INFO[0m [1;32mrch::transfer[0m[32m: [32mSyncing /data/projects/frankenlibc/crates/frankenlibc-abi -> /data/projects/frankenlibc/crates/frankenlibc-abi on vmi1227854[0m
+    [2;3mat[0m rch/src/transfer.rs:928 [2;3mon[0m ThreadId(1)
+
+  [2m2026-03-19T03:19:25.854885Z[0m [32m INFO[0m [1;32mrch::transfer[0m[32m: [32mSync completed in 1891ms[0m
+    [2;3mat[0m rch/src/transfer.rs:997 [2;3mon[0m ThreadId(1)
+
+  [2m2026-03-19T03:19:25.854951Z[0m [32m INFO[0m [1;32mrch::transfer[0m[32m: [32mSyncing /data/projects/frankenlibc/crates/frankenlibc-bench -> /data/projects/frankenlibc/crates/frankenlibc-bench on vmi1227854[0m
+    [2;3mat[0m rch/src/transfer.rs:928 [2;3mon[0m ThreadId(1)
+
+  [2m2026-03-19T03:19:27.656393Z[0m [32m INFO[0m [1;32mrch::transfer[0m[32m: [32mSync completed in 1801ms[0m
+    [2;3mat[0m rch/src/transfer.rs:997 [2;3mon[0m ThreadId(1)
+
+  [2m2026-03-19T03:19:27.656470Z[0m [32m INFO[0m [1;32mrch::transfer[0m[32m: [32mSyncing /data/projects/frankenlibc/crates/frankenlibc-core -> /data/projects/frankenlibc/crates/frankenlibc-core on vmi1227854[0m
+    [2;3mat[0m rch/src/transfer.rs:928 [2;3mon[0m ThreadId(1)
+
+  [2m2026-03-19T03:19:29.432396Z[0m [32m INFO[0m [1;32mrch::transfer[0m[32m: [32mSync completed in 1775ms[0m
+    [2;3mat[0m rch/src/transfer.rs:997 [2;3mon[0m ThreadId(1)
+
+  [2m2026-03-19T03:19:29.432463Z[0m [32m INFO[0m [1;32mrch::transfer[0m[32m: [32mSyncing /data/projects/frankenlibc/crates/frankenlibc-fixture-exec -> /data/projects/frankenlibc/crates/frankenlibc-fixture-exec on vmi1227854[0m
+    [2;3mat[0m rch/src/transfer.rs:928 [2;3mon[0m ThreadId(1)
+
+  [2m2026-03-19T03:19:31.287079Z[0m [32m INFO[0m [1;32mrch::transfer[0m[32m: [32mSync completed in 1854ms[0m
+    [2;3mat[0m rch/src/transfer.rs:997 [2;3mon[0m ThreadId(1)
+
+  [2m2026-03-19T03:19:31.287150Z[0m [32m INFO[0m [1;32mrch::transfer[0m[32m: [32mSyncing /data/projects/frankenlibc/crates/frankenlibc-harness -> /data/projects/frankenlibc/crates/frankenlibc-harness on vmi1227854[0m
+    [2;3mat[0m rch/src/transfer.rs:928 [2;3mon[0m ThreadId(1)
+
+  [2m2026-03-19T03:19:33.106218Z[0m [32m INFO[0m [1;32mrch::transfer[0m[32m: [32mSync completed in 1819ms[0m
+    [2;3mat[0m rch/src/transfer.rs:997 [2;3mon[0m ThreadId(1)
+
+  [2m2026-03-19T03:19:33.106300Z[0m [32m INFO[0m [1;32mrch::transfer[0m[32m: [32mSyncing /data/projects/frankenlibc/crates/frankenlibc-membrane -> /data/projects/frankenlibc/crates/frankenlibc-membrane on vmi1227854[0m
+    [2;3mat[0m rch/src/transfer.rs:928 [2;3mon[0m ThreadId(1)
+
+  [2m2026-03-19T03:19:34.970258Z[0m [32m INFO[0m [1;32mrch::transfer[0m[32m: [32mSync completed in 1863ms[0m
+    [2;3mat[0m rch/src/transfer.rs:997 [2;3mon[0m ThreadId(1)
+
+  [2m2026-03-19T03:19:34.970330Z[0m [32m INFO[0m [1;32mrch::transfer[0m[32m: [32mSyncing /data/projects/frankenlibc/crates/frankenlibc_conformance -> /data/projects/frankenlibc/crates/frankenlibc_conformance on vmi1227854[0m
+    [2;3mat[0m rch/src/transfer.rs:928 [2;3mon[0m ThreadId(1)
+
+  [2m2026-03-19T03:19:36.768757Z[0m [32m INFO[0m [1;32mrch::transfer[0m[32m: [32mSync completed in 1798ms[0m
+    [2;3mat[0m rch/src/transfer.rs:997 [2;3mon[0m ThreadId(1)
+
+  [2m2026-03-19T03:19:36.768801Z[0m [32m INFO[0m [1;32mrch::hook[0m[32m: [32mSync complete: 2140 files, 77628 bytes in 16884ms[0m
+    [2;3mat[0m rch/src/hook.rs:4573 [2;3mon[0m ThreadId(1)
+
+  [2m2026-03-19T03:19:38.145392Z[0m [32m INFO[0m [1;32mrch::hook[0m[32m: [32mExecuting command remotely: cargo test -p frankenlibc-abi --test pthread_mutex_core_test futex_mutex_destroy_while_locked_is_ebusy -- --exact --nocapture --test-threads=1[0m
+    [2;3mat[0m rch/src/hook.rs:4600 [2;3mon[0m ThreadId(1)
+
+  [2m2026-03-19T03:19:38.145427Z[0m [32m INFO[0m [1;32mrch::transfer[0m[32m: [32mWrapping command with external timeout protection, [1;32mkind[0m[32m: cargo test, [1;32mtimeout_secs[0m[32m: 1800[0m
+    [2;3mat[0m rch/src/transfer.rs:689 [2;3mon[0m ThreadId(1)
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.05s
+     Running tests/pthread_mutex_core_test.rs (target/debug/deps/pthread_mutex_core_test-ae60a7b1c3f5fe37)
+
+running 1 test
+test futex_mutex_destroy_while_locked_is_ebusy ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 17 filtered out; finished in 0.00s
+
+  [2m2026-03-19T03:19:39.720240Z[0m [32m INFO[0m [1;32mrch::hook[0m[32m: [32mRemote command finished: exit=0 in 1574ms[0m
+    [2;3mat[0m rch/src/hook.rs:4721 [2;3mon[0m ThreadId(1)
+
+  [2m2026-03-19T03:19:39.720558Z[0m [32m INFO[0m [1;32mrch::hook[0m[32m: [32mRetrieving build artifacts...[0m
+    [2;3mat[0m rch/src/hook.rs:4770 [2;3mon[0m ThreadId(1)
+
+  [2m2026-03-19T03:19:39.720602Z[0m [32m INFO[0m [1;32mrch::transfer[0m[32m: [32mRetrieving artifacts from /data/projects/frankenlibc on vmi1227854[0m
+    [2;3mat[0m rch/src/transfer.rs:1544 [2;3mon[0m ThreadId(1)
+
+  [2m2026-03-19T03:19:41.850957Z[0m [32m INFO[0m [1;32mrch::transfer[0m[32m: [32mArtifacts retrieved in 2130ms (1891 files, 255 bytes)[0m
+    [2;3mat[0m rch/src/transfer.rs:1583 [2;3mon[0m ThreadId(1)
+
+  [2m2026-03-19T03:19:41.850988Z[0m [32m INFO[0m [1;32mrch::hook[0m[32m: [32mArtifacts retrieved: 1891 files, 255 bytes in 2130ms[0m
+    [2;3mat[0m rch/src/hook.rs:4803 [2;3mon[0m ThreadId(1)
+
+[RCH] remote vmi1227854 (23.6s)

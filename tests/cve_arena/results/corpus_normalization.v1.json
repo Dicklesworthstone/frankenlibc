@@ -1,7 +1,7 @@
 {
   "schema_version": "v1",
   "bead": "bd-1m5.5",
-  "generated_at": "2026-03-12T04:54:39Z",
+  "generated_at": "2026-03-19T03:05:43Z",
   "summary": {
     "total_cve_tests": 12,
     "manifests_valid": 12,
@@ -44,9 +44,9 @@
       "UpgradeToSafeVariant"
     ],
     "categories": {
+      "external": 5,
       "glibc-internal": 4,
-      "synthetic": 3,
-      "external": 5
+      "synthetic": 3
     }
   },
   "normalization_changes": [
@@ -151,6 +151,7 @@
     {
       "cve_id": "CVE-2023-6246",
       "base_cve_id": "CVE-2023-6246",
+      "scenario_id": "CVE-2023-6246:syslog_heap_overflow_suite",
       "test_name": "syslog_heap_overflow_suite",
       "category_raw": "glibc-internal",
       "category_canonical": "glibc-internal",
@@ -204,11 +205,13 @@
           ]
         }
       },
-      "manifest_path": "tests/cve_arena/glibc/cve_2023_6246_syslog_suite/manifest.json"
+      "manifest_path": "tests/cve_arena/glibc/cve_2023_6246_syslog_suite/manifest.json",
+      "manifest_sha256": "d7a5050e904531fc7cf2fa347911ef8307a30dd11b6aebf48f8f1d385b993655"
     },
     {
       "cve_id": "CVE-2024-2961",
       "base_cve_id": "CVE-2024-2961",
+      "scenario_id": "CVE-2024-2961:iconv_iso2022cn_ext_buffer_overflow",
       "test_name": "iconv_iso2022cn_ext_buffer_overflow",
       "category_raw": "glibc-internal",
       "category_canonical": "glibc-internal",
@@ -255,11 +258,13 @@
           ]
         }
       },
-      "manifest_path": "tests/cve_arena/glibc/cve_2024_2961_iconv/manifest.json"
+      "manifest_path": "tests/cve_arena/glibc/cve_2024_2961_iconv/manifest.json",
+      "manifest_sha256": "b78a60a9aad07ecc0795a847ea21d96fa1b5d2ef6be28a77681fa8da44366ff8"
     },
     {
       "cve_id": "CVE-2024-33599",
       "base_cve_id": "CVE-2024-33599",
+      "scenario_id": "CVE-2024-33599:nscd_netgroup_cache_memory_corruption_suite",
       "test_name": "nscd_netgroup_cache_memory_corruption_suite",
       "category_raw": "glibc-internal",
       "category_canonical": "glibc-internal",
@@ -316,11 +321,13 @@
           ]
         }
       },
-      "manifest_path": "tests/cve_arena/glibc/cve_2024_33599_nscd_suite/manifest.json"
+      "manifest_path": "tests/cve_arena/glibc/cve_2024_33599_nscd_suite/manifest.json",
+      "manifest_sha256": "4676f50f8f7ea225b7279b05669c279c1dc1df61b2482fa51e748291afde7fb1"
     },
     {
       "cve_id": "CVE-2025-8058",
       "base_cve_id": "CVE-2025-8058",
+      "scenario_id": "CVE-2025-8058:regcomp_double_free_on_alloc_failure",
       "test_name": "regcomp_double_free_on_alloc_failure",
       "category_raw": "glibc-internal",
       "category_canonical": "glibc-internal",
@@ -368,11 +375,13 @@
           ]
         }
       },
-      "manifest_path": "tests/cve_arena/glibc/cve_2025_8058_regcomp/manifest.json"
+      "manifest_path": "tests/cve_arena/glibc/cve_2025_8058_regcomp/manifest.json",
+      "manifest_sha256": "85424fdee41e673fd60cad94a24ed6645e5ac3dfe4e47116f11e42a71022f481"
     },
     {
       "cve_id": "CVE-2024-38812 (synthetic)",
       "base_cve_id": "CVE-2024-38812",
+      "scenario_id": "CVE-2024-38812:dcerpc_heap_overflow_cve_2024_38812",
       "test_name": "dcerpc_heap_overflow_cve_2024_38812",
       "category_raw": "synthetic",
       "category_canonical": "synthetic",
@@ -422,11 +431,13 @@
           ]
         }
       },
-      "manifest_path": "tests/cve_arena/synthetic/dcerpc_heap_overflow_cve_2024_38812/manifest.json"
+      "manifest_path": "tests/cve_arena/synthetic/dcerpc_heap_overflow_cve_2024_38812/manifest.json",
+      "manifest_sha256": "0081a2e5df87bc80563cfb3de9910ff25b9a2744c7062f27cac92ad1e7475cce"
     },
     {
       "cve_id": "CVE-2024-23113 (synthetic)",
       "base_cve_id": "CVE-2024-23113",
+      "scenario_id": "CVE-2024-23113:format_string_cve_2024_23113",
       "test_name": "format_string_cve_2024_23113",
       "category_raw": "synthetic",
       "category_canonical": "synthetic",
@@ -471,11 +482,13 @@
           ]
         }
       },
-      "manifest_path": "tests/cve_arena/synthetic/format_string_cve_2024_23113/manifest.json"
+      "manifest_path": "tests/cve_arena/synthetic/format_string_cve_2024_23113/manifest.json",
+      "manifest_sha256": "110bc5fcdb41ca844a6118d2b918547ef260d222eb99f5fa54f014b946642801"
     },
     {
       "cve_id": "CVE-2024-24990 (synthetic)",
       "base_cve_id": "CVE-2024-24990",
+      "scenario_id": "CVE-2024-24990:quic_uaf_cve_2024_24990",
       "test_name": "quic_uaf_cve_2024_24990",
       "category_raw": "synthetic",
       "category_canonical": "synthetic",
@@ -527,11 +540,13 @@
           ]
         }
       },
-      "manifest_path": "tests/cve_arena/synthetic/quic_uaf_cve_2024_24990/manifest.json"
+      "manifest_path": "tests/cve_arena/synthetic/quic_uaf_cve_2024_24990/manifest.json",
+      "manifest_sha256": "5f66bfad5b42d93610f2d439276b9501ad791be36ae80ba3142c9d46940c5290"
     },
     {
       "cve_id": "CVE-2024-6197",
       "base_cve_id": "CVE-2024-6197",
+      "scenario_id": "CVE-2024-6197:curl_asn1_stack_use_after_free",
       "test_name": "curl_asn1_stack_use_after_free",
       "category_raw": "external",
       "category_canonical": "external",
@@ -583,11 +598,13 @@
           ]
         }
       },
-      "manifest_path": "tests/cve_arena/targets/curl/manifest.json"
+      "manifest_path": "tests/cve_arena/targets/curl/manifest.json",
+      "manifest_sha256": "dac633a48238d0250e4c85fc4a06073482ffd969019680f7d39a28a7eeb74988"
     },
     {
       "cve_id": "CVE-2024-56406",
       "base_cve_id": "CVE-2024-56406",
+      "scenario_id": "CVE-2024-56406:perl_tr_transliteration_heap_overflow",
       "test_name": "perl_tr_transliteration_heap_overflow",
       "category_raw": "external",
       "category_canonical": "external",
@@ -641,11 +658,13 @@
           ]
         }
       },
-      "manifest_path": "tests/cve_arena/targets/perl/manifest.json"
+      "manifest_path": "tests/cve_arena/targets/perl/manifest.json",
+      "manifest_sha256": "3b52b5eaaa8d0d116c3d4b3b0ef45335b073a84846a4e5f86de47b2b324bdbdf"
     },
     {
       "cve_id": "CVE-2025-49844",
       "base_cve_id": "CVE-2025-49844",
+      "scenario_id": "CVE-2025-49844:redis_lua_gc_use_after_free",
       "test_name": "redis_lua_gc_use_after_free",
       "category_raw": "external",
       "category_canonical": "external",
@@ -698,11 +717,13 @@
           ]
         }
       },
-      "manifest_path": "tests/cve_arena/targets/redis/manifest.json"
+      "manifest_path": "tests/cve_arena/targets/redis/manifest.json",
+      "manifest_sha256": "f11e5283c00f44b57edfa39abf350774dd6b075cf40e2623a38149e605802b43"
     },
     {
       "cve_id": "CVE-2021-3156",
       "base_cve_id": "CVE-2021-3156",
+      "scenario_id": "CVE-2021-3156:sudo_baron_samedit_heap_overflow",
       "test_name": "sudo_baron_samedit_heap_overflow",
       "category_raw": "external",
       "category_canonical": "external",
@@ -755,11 +776,13 @@
           ]
         }
       },
-      "manifest_path": "tests/cve_arena/targets/sudo/manifest.json"
+      "manifest_path": "tests/cve_arena/targets/sudo/manifest.json",
+      "manifest_sha256": "7bc1fa0aa20258130a4f86b5147d93eb4609a4ec0d428eae0a78b42b99edf868"
     },
     {
       "cve_id": "CVE-2024-46461",
       "base_cve_id": "CVE-2024-46461",
+      "scenario_id": "CVE-2024-46461:vlc_mms_integer_overflow_heap_overflow",
       "test_name": "vlc_mms_integer_overflow_heap_overflow",
       "category_raw": "external",
       "category_canonical": "external",
@@ -813,7 +836,8 @@
           ]
         }
       },
-      "manifest_path": "tests/cve_arena/targets/vlc/manifest.json"
+      "manifest_path": "tests/cve_arena/targets/vlc/manifest.json",
+      "manifest_sha256": "5ed9dfb5e82624b04f07f85bf783126c7d6db135b325bb0ddc89a332d8a32e07"
     }
   ]
 }

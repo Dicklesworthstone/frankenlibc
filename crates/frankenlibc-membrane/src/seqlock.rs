@@ -27,8 +27,8 @@
 //! - Safety level + feature flags
 
 use parking_lot::{Mutex, MutexGuard};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 /// Sequence-locked configuration store.
 ///
@@ -827,5 +827,136 @@ mod tests {
     fn pending_writers_zero_when_idle() {
         let sl = SeqLock::new(0u64);
         assert_eq!(sl.pending_writers(), 0);
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // INTEGRATION: SeqLock + RCU composition
+    //
+    // Verifies that SeqLock (for configuration) and RCU (for data)
+    // can be used together. This models the real pattern in the
+    // membrane where config is in a SeqLock and metadata is in RCU.
+    // ═══════════════════════════════════════════════════════════════
+
+    #[test]
+    fn seqlock_config_with_rcu_data_concurrent() {
+        use crate::rcu::RcuCell;
+
+        let config = Arc::new(SeqLock::new(100u64)); // threshold config
+        let data = Arc::new(RcuCell::new(0u64)); // running counter
+        let barrier = Arc::new(std::sync::Barrier::new(4));
+        let mut handles = Vec::new();
+
+        // Config writer: updates the threshold periodically
+        {
+            let config = Arc::clone(&config);
+            let barrier = Arc::clone(&barrier);
+            handles.push(thread::spawn(move || {
+                barrier.wait();
+                for i in 0..50u64 {
+                    config.write_with(|val| *val = 100 + i);
+                    thread::yield_now();
+                }
+            }));
+        }
+
+        // Data writer: increments the counter
+        {
+            let data = Arc::clone(&data);
+            let barrier = Arc::clone(&barrier);
+            handles.push(thread::spawn(move || {
+                barrier.wait();
+                for i in 0..200u64 {
+                    data.update(i);
+                }
+            }));
+        }
+
+        // Reader threads: read both config and data consistently
+        for _ in 0..2 {
+            let config = Arc::clone(&config);
+            let data = Arc::clone(&data);
+            let barrier = Arc::clone(&barrier);
+            handles.push(thread::spawn(move || {
+                barrier.wait();
+                let mut reader = SeqLockReader::new(&config);
+                for _ in 0..300 {
+                    let threshold = *reader.read();
+                    let counter = *data.load();
+                    // Config threshold should always be >= 100
+                    assert!(
+                        threshold >= 100,
+                        "config threshold must be >= 100, got {threshold}"
+                    );
+                    // Counter should be a valid value
+                    assert!(counter <= 200, "counter must be <= 200, got {counter}");
+                }
+            }));
+        }
+
+        for h in handles {
+            h.join().expect("thread panicked");
+        }
+
+        // Final state checks
+        let final_threshold = *config.load();
+        assert!(final_threshold >= 100);
+        let final_counter = *data.load();
+        assert!(final_counter <= 200);
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // INTEGRATION: SeqLock diagnostics under sustained read pressure
+    //
+    // Verifies that diagnostics correctly track cache hit/miss
+    // ratios when readers sustain pressure while writers update.
+    // ═══════════════════════════════════════════════════════════════
+
+    #[test]
+    fn seqlock_diagnostics_track_hit_ratio_under_pressure() {
+        let sl = Arc::new(SeqLock::new(0u64));
+        let barrier = Arc::new(std::sync::Barrier::new(3));
+        let mut handles = Vec::new();
+
+        // Slow writer
+        {
+            let sl = Arc::clone(&sl);
+            let barrier = Arc::clone(&barrier);
+            handles.push(thread::spawn(move || {
+                barrier.wait();
+                for i in 0..20u64 {
+                    sl.write_with(|v| *v = i);
+                    thread::yield_now();
+                }
+            }));
+        }
+
+        // Fast readers
+        for _ in 0..2 {
+            let sl = Arc::clone(&sl);
+            let barrier = Arc::clone(&barrier);
+            handles.push(thread::spawn(move || {
+                barrier.wait();
+                let mut reader = SeqLockReader::new(&sl);
+                for _ in 0..500 {
+                    let _ = *reader.read();
+                }
+            }));
+        }
+
+        for h in handles {
+            h.join().expect("thread panicked");
+        }
+
+        let diag = sl.diagnostics();
+        // With many reads and few writes, cache hit ratio should be high
+        assert!(diag.reads > 0, "diagnostics should track reads");
+        assert!(diag.writes > 0, "diagnostics should track writes");
+        // Total reads should be much higher than writes
+        assert!(
+            diag.reads >= diag.writes,
+            "reads ({}) should exceed writes ({})",
+            diag.reads,
+            diag.writes
+        );
     }
 }

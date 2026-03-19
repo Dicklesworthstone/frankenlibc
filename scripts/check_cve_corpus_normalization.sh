@@ -6,25 +6,35 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 REPORT="$REPO_ROOT/tests/cve_arena/results/corpus_normalization.v1.json"
+LOG="$REPO_ROOT/tests/cve_arena/results/corpus_normalization.log.jsonl"
 
 echo "=== CVE Corpus Normalization Gate (bd-1m5.5) ==="
 
 echo "--- Generating corpus normalization report ---"
-python3 "$SCRIPT_DIR/generate_cve_corpus_normalization.py" -o "$REPORT" 2>&1 || true
+python3 "$SCRIPT_DIR/generate_cve_corpus_normalization.py" \
+    -o "$REPORT" \
+    --log "$LOG" 2>&1 || true
 
 if [ ! -f "$REPORT" ]; then
     echo "FAIL: normalization report not generated"
     exit 1
 fi
+if [ ! -f "$LOG" ]; then
+    echo "FAIL: normalization structured log not generated"
+    exit 1
+fi
 
-python3 - "$REPORT" <<'PY'
+python3 - "$REPORT" "$LOG" <<'PY'
 import json, sys
 
 report_path = sys.argv[1]
+log_path = sys.argv[2]
 errors = 0
 
 with open(report_path) as f:
     report = json.load(f)
+with open(log_path, encoding="utf-8") as f:
+    log_entries = [json.loads(line) for line in f if line.strip()]
 
 summary = report.get("summary", {})
 corpus = report.get("corpus_index", [])
@@ -49,6 +59,7 @@ print(f"  Vulnerability classes: {', '.join(vuln_classes)}")
 print(f"  Healing actions:      {', '.join(healing)}")
 print(f"  CWE coverage:         {len(cwes)} unique CWEs")
 print(f"  Categories:           {categories}")
+print(f"  Structured log:       {log_path} ({len(log_entries)} entries)")
 
 print("\nCorpus entries:")
 for entry in corpus:
@@ -127,6 +138,40 @@ else:
 if total == 0:
     print("FAIL: No CVE tests found")
     errors += 1
+
+expected_log_entries = total * 2 + 1
+if len(log_entries) != expected_log_entries:
+    print(
+        f"FAIL: structured log entry count mismatch "
+        f"(expected {expected_log_entries}, got {len(log_entries)})"
+    )
+    errors += 1
+else:
+    print(f"PASS: structured log has {expected_log_entries} deterministic entries")
+
+required_log_fields = {
+    "api_family",
+    "bead_id",
+    "cve_id",
+    "event",
+    "expected_outcome",
+    "manifest_path",
+    "manifest_sha256",
+    "mode",
+    "replay_key",
+    "scenario_id",
+    "timestamp",
+    "trace_id",
+}
+scenario_entries = [e for e in log_entries if e.get("event") == "scenario_expectation"]
+for entry in scenario_entries:
+    missing = sorted(field for field in required_log_fields if field not in entry)
+    if missing:
+        print(f"FAIL: structured log entry missing fields {missing}: {entry}")
+        errors += 1
+        break
+else:
+    print("PASS: scenario log entries include required structured fields")
 
 if errors > 0:
     print(f"\nFAIL: {errors} errors")

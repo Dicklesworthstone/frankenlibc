@@ -62,6 +62,26 @@ def load_json_file(path):
         return json.load(f)
 
 
+def parse_timestamp(raw):
+    """Parse a fixed UTC timestamp for deterministic report generation."""
+    if raw is None:
+        return datetime.now(timezone.utc).replace(microsecond=0)
+    try:
+        return datetime.strptime(raw, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    except ValueError as exc:
+        raise SystemExit(
+            "--timestamp must use UTC RFC3339 format YYYY-MM-DDTHH:MM:SSZ"
+        ) from exc
+
+
+def format_timestamp(ts):
+    return ts.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def sha256_file(path):
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
 def compute_replay_key(manifest, test_dir):
     """Compute a deterministic replay key from manifest content."""
     key_parts = [
@@ -96,6 +116,10 @@ def normalize_category(raw_category, dir_name):
 def extract_base_cve_id(cve_id):
     """Extract base CVE ID, stripping '(synthetic)' suffix."""
     return re.sub(r"\s*\(synthetic\)$", "", cve_id).strip()
+
+
+def build_scenario_id(base_cve_id, test_name):
+    return f"{base_cve_id}:{test_name}"
 
 
 def normalize_manifest(manifest, dir_name):
@@ -247,14 +271,88 @@ def build_replay_metadata(manifest, test_dir, normalized):
     }
 
 
+def expected_outcome_label(mode, replay):
+    """Summarize the expected outcome in a single stable string."""
+    if mode == "strict":
+        strict = replay.get("expected_strict", {})
+        if strict.get("crashes", True):
+            signal = strict.get("signal")
+            return f"detect_crash:{signal or 'unspecified'}"
+        return "detect_without_crash"
+
+    hardened = replay.get("expected_hardened", {})
+    actions = hardened.get("healing_actions", [])
+    if hardened.get("crashes", False):
+        return f"unexpected_hardened_crash:{hardened.get('exit_code', 0)}"
+    if actions:
+        return f"prevent_with_healing:{'+'.join(actions)}"
+    return f"prevent_without_crash:{hardened.get('exit_code', 0)}"
+
+
+def emit_structured_log(log_path, report_ts, corpus_entries):
+    """Emit deterministic JSONL evidence for downstream CVE runners."""
+    if log_path is None:
+        return
+
+    log_path = Path(log_path)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    timestamp = format_timestamp(report_ts)
+    lines = []
+
+    for entry in corpus_entries:
+        replay = entry["replay"]
+        for mode in ("strict", "hardened"):
+            record = {
+                "schema_version": "v1",
+                "timestamp": timestamp,
+                "bead_id": "bd-1m5.5",
+                "trace_id": f"bd-1m5.5:{entry['scenario_id']}:{mode}:{replay['replay_key']}",
+                "api_family": "cve_arena",
+                "event": "scenario_expectation",
+                "cve_id": entry["cve_id"],
+                "scenario_id": entry["scenario_id"],
+                "mode": mode,
+                "expected_outcome": expected_outcome_label(mode, replay),
+                "replay_key": replay["replay_key"],
+                "category": entry["category_canonical"],
+                "vulnerability_classes": entry["vulnerability_classes"],
+                "preconditions": replay["preconditions"],
+                "healing_actions": entry["healing_actions"] if mode == "hardened" else [],
+                "manifest_path": entry["manifest_path"],
+                "manifest_sha256": entry["manifest_sha256"],
+            }
+            lines.append(json.dumps(record, sort_keys=True))
+
+    summary = {
+        "schema_version": "v1",
+        "timestamp": timestamp,
+        "bead_id": "bd-1m5.5",
+        "trace_id": "bd-1m5.5:summary",
+        "api_family": "cve_arena",
+        "event": "corpus_summary",
+        "scenario_count": len(corpus_entries),
+        "strict_events": len(corpus_entries),
+        "hardened_events": len(corpus_entries),
+        "replay_keys": sorted(entry["replay"]["replay_key"] for entry in corpus_entries),
+    }
+    lines.append(json.dumps(summary, sort_keys=True))
+    log_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="CVE corpus normalization + deterministic scenario metadata")
     parser.add_argument("-o", "--output", help="Output file path")
+    parser.add_argument("--log", help="Optional structured JSONL log output path")
+    parser.add_argument(
+        "--timestamp",
+        help="Optional fixed UTC timestamp (YYYY-MM-DDTHH:MM:SSZ) for deterministic artifacts",
+    )
     args = parser.parse_args()
 
     root = find_repo_root()
     arena_root = root / "tests" / "cve_arena"
+    report_ts = parse_timestamp(args.timestamp)
 
     if not arena_root.exists():
         print("ERROR: tests/cve_arena/ not found", file=sys.stderr)
@@ -318,10 +416,12 @@ def main():
         triggers = get_trigger_files(test_dir)
 
         base_cve = extract_base_cve_id(cve_id)
+        scenario_id = build_scenario_id(base_cve, test_name)
 
         corpus_entries.append({
             "cve_id": cve_id,
             "base_cve_id": base_cve,
+            "scenario_id": scenario_id,
             "test_name": test_name,
             "category_raw": manifest.get("category", dir_name),
             "category_canonical": canon_cat,
@@ -336,6 +436,7 @@ def main():
             "normalization_changes": changes,
             "replay": replay,
             "manifest_path": str(test_info["manifest_path"].relative_to(root)),
+            "manifest_sha256": sha256_file(test_info["manifest_path"]),
         })
 
     # Build summary
@@ -351,7 +452,7 @@ def main():
     report = {
         "schema_version": "v1",
         "bead": "bd-1m5.5",
-        "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "generated_at": format_timestamp(report_ts),
         "summary": {
             "total_cve_tests": len(corpus_entries),
             "manifests_valid": valid_count,
@@ -361,16 +462,18 @@ def main():
             "unique_cwe_ids": sorted(cwe_set),
             "vulnerability_classes": sorted(vuln_classes),
             "unique_healing_actions": sorted(all_healing),
-            "categories": categories,
+            "categories": dict(sorted(categories.items())),
         },
         "normalization_changes": normalization_changes,
         "corpus_index": corpus_entries,
     }
 
+    emit_structured_log(args.log, report_ts, corpus_entries)
+
     output = json.dumps(report, indent=2) + "\n"
     if args.output:
         Path(args.output).parent.mkdir(parents=True, exist_ok=True)
-        Path(args.output).write_text(output)
+        Path(args.output).write_text(output, encoding="utf-8")
         print(f"Report written to {args.output}", file=sys.stderr)
     else:
         print(output)

@@ -70,7 +70,11 @@ impl SafetyState {
             // Everything joins downward toward Unknown
             (a, b) => {
                 // For non-diamond cases, take the lower rank
-                if (a as u8) <= (b as u8) { a } else { b }
+                if (a as u8) <= (b as u8) {
+                    a
+                } else {
+                    b
+                }
             }
         }
     }
@@ -581,6 +585,112 @@ mod tests {
                     assert!(!live, "{s:?} should not be live");
                     assert!(!terminal, "{s:?} should not be terminal");
                 }
+            }
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // PROPERTY-BASED: Lattice algebraic laws via proptest
+    //
+    // These tests generate random state pairs/triples and verify
+    // that the lattice laws hold for ALL combinations, not just
+    // the 7 hand-enumerated states.
+    // ═══════════════════════════════════════════════════════════════
+
+    fn arb_safety_state() -> impl proptest::strategy::Strategy<Value = SafetyState> {
+        (0u8..7).prop_map(|v| match v {
+            0 => SafetyState::Unknown,
+            1 => SafetyState::Invalid,
+            2 => SafetyState::Freed,
+            3 => SafetyState::Quarantined,
+            4 => SafetyState::Writable,
+            5 => SafetyState::Readable,
+            _ => SafetyState::Valid,
+        })
+    }
+
+    use proptest::prelude::*;
+
+    proptest! {
+        #[test]
+        fn prop_join_commutative(a in arb_safety_state(), b in arb_safety_state()) {
+            prop_assert_eq!(a.join(b), b.join(a));
+        }
+
+        #[test]
+        fn prop_join_associative(
+            a in arb_safety_state(),
+            b in arb_safety_state(),
+            c in arb_safety_state(),
+        ) {
+            prop_assert_eq!(a.join(b).join(c), a.join(b.join(c)));
+        }
+
+        #[test]
+        fn prop_join_idempotent(a in arb_safety_state()) {
+            prop_assert_eq!(a.join(a), a);
+        }
+
+        #[test]
+        fn prop_meet_commutative(a in arb_safety_state(), b in arb_safety_state()) {
+            prop_assert_eq!(a.meet(b), b.meet(a));
+        }
+
+        #[test]
+        fn prop_meet_associative(
+            a in arb_safety_state(),
+            b in arb_safety_state(),
+            c in arb_safety_state(),
+        ) {
+            prop_assert_eq!(a.meet(b).meet(c), a.meet(b.meet(c)));
+        }
+
+        #[test]
+        fn prop_meet_idempotent(a in arb_safety_state()) {
+            prop_assert_eq!(a.meet(a), a);
+        }
+
+        #[test]
+        fn prop_absorption_join(a in arb_safety_state(), b in arb_safety_state()) {
+            // a.join(a.meet(b)) == a
+            prop_assert_eq!(a.join(a.meet(b)), a);
+        }
+
+        #[test]
+        fn prop_absorption_meet(a in arb_safety_state(), b in arb_safety_state()) {
+            // a.meet(a.join(b)) == a
+            prop_assert_eq!(a.meet(a.join(b)), a);
+        }
+
+        #[test]
+        fn prop_join_with_valid_is_identity(a in arb_safety_state()) {
+            prop_assert_eq!(a.join(SafetyState::Valid), a);
+        }
+
+        #[test]
+        fn prop_join_with_unknown_is_absorbing(a in arb_safety_state()) {
+            prop_assert_eq!(a.join(SafetyState::Unknown), SafetyState::Unknown);
+        }
+
+        #[test]
+        fn prop_join_never_grants_new_read_permission(
+            a in arb_safety_state(),
+            b in arb_safety_state(),
+        ) {
+            let j = a.join(b);
+            if j.can_read() {
+                prop_assert!(a.can_read() && b.can_read());
+            }
+        }
+
+        #[test]
+        fn prop_join_never_grants_new_write_permission(
+            a in arb_safety_state(),
+            b in arb_safety_state(),
+        ) {
+            let j = a.join(b);
+            if j.can_write() {
+                prop_assert!(a.can_write() && b.can_write());
             }
         }
     }

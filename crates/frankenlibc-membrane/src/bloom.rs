@@ -197,4 +197,77 @@ mod tests {
         assert!(filter.num_bits() >= 1_000_000);
         assert!(filter.num_hashes() >= 7);
     }
+
+    // ═══════════════════════════════════════════════════════════════
+    // PROPERTY-BASED: Bloom filter invariants via proptest
+    //
+    // The key property: zero false negatives. Any inserted pointer
+    // must always be found by might_contain(). False positives are
+    // acceptable (bounded by the configured rate).
+    // ═══════════════════════════════════════════════════════════════
+
+    use proptest::prelude::*;
+
+    proptest! {
+        #[test]
+        fn prop_zero_false_negatives(ptrs in proptest::collection::vec(1usize..usize::MAX, 1..200)) {
+            let filter = PointerBloomFilter::with_capacity(1000, 0.01);
+            for &p in &ptrs {
+                filter.insert(p);
+            }
+            for &p in &ptrs {
+                prop_assert!(
+                    filter.might_contain(p),
+                    "false negative for inserted pointer {:#x}",
+                    p
+                );
+            }
+        }
+
+        #[test]
+        fn prop_insert_is_monotonic(ptr in 1usize..usize::MAX) {
+            // Once inserted, a pointer is always found (monotonic)
+            let filter = PointerBloomFilter::new();
+            prop_assert!(!filter.might_contain(ptr) || true); // may FP before insert
+            filter.insert(ptr);
+            prop_assert!(filter.might_contain(ptr)); // must be found after
+            // Insert again — still found (idempotent)
+            filter.insert(ptr);
+            prop_assert!(filter.might_contain(ptr));
+        }
+
+        #[test]
+        fn prop_concurrent_insert_no_false_negative(
+            ptrs in proptest::collection::vec(1usize..usize::MAX, 1..50)
+        ) {
+            use std::sync::Arc;
+            use std::thread;
+
+            let filter = Arc::new(PointerBloomFilter::with_capacity(1000, 0.01));
+
+            // Insert from multiple threads
+            let mut handles = Vec::new();
+            for chunk in ptrs.chunks(10) {
+                let filter = Arc::clone(&filter);
+                let chunk = chunk.to_vec();
+                handles.push(thread::spawn(move || {
+                    for &p in &chunk {
+                        filter.insert(p);
+                    }
+                }));
+            }
+            for h in handles {
+                h.join().expect("thread panicked");
+            }
+
+            // All inserted pointers must be found
+            for &p in &ptrs {
+                prop_assert!(
+                    filter.might_contain(p),
+                    "false negative after concurrent insert for {:#x}",
+                    p
+                );
+            }
+        }
+    }
 }

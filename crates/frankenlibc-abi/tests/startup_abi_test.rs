@@ -6,6 +6,9 @@
 //! the snapshot accessor, and the `__cxa_thread_atexit_impl` hook.
 
 use std::ffi::{c_char, c_int, c_void};
+use std::sync::Mutex;
+static STARTUP_TEST_LOCK: Mutex<()> = Mutex::new(());
+
 use std::ptr;
 use std::sync::atomic::Ordering;
 
@@ -73,6 +76,7 @@ unsafe extern "C" fn test_main(
 
 #[test]
 fn phase0_succeeds_with_valid_fixture() {
+    let _lock = STARTUP_TEST_LOCK.lock().unwrap();
     let mut fix = StartupFixture::new(b"/usr/bin/test");
     let rc = unsafe {
         __frankenlibc_startup_phase0(
@@ -90,6 +94,7 @@ fn phase0_succeeds_with_valid_fixture() {
 
 #[test]
 fn phase0_snapshot_records_allow_decision() {
+    let _lock = STARTUP_TEST_LOCK.lock().unwrap();
     let mut fix = StartupFixture::new(b"myapp");
     let _rc = unsafe {
         __frankenlibc_startup_phase0(
@@ -114,6 +119,7 @@ fn phase0_snapshot_records_allow_decision() {
 
 #[test]
 fn phase0_null_main_returns_negative() {
+    let _lock = STARTUP_TEST_LOCK.lock().unwrap();
     let mut fix = StartupFixture::new(b"app");
     let rc = unsafe {
         __frankenlibc_startup_phase0(
@@ -133,6 +139,7 @@ fn phase0_null_main_returns_negative() {
 
 #[test]
 fn phase0_null_argv_returns_negative() {
+    let _lock = STARTUP_TEST_LOCK.lock().unwrap();
     let mut fix = StartupFixture::new(b"app");
     let rc = unsafe {
         __frankenlibc_startup_phase0(
@@ -156,6 +163,7 @@ fn phase0_null_argv_returns_negative() {
 
 #[test]
 fn startup_snapshot_returns_invariants() {
+    let _lock = STARTUP_TEST_LOCK.lock().unwrap();
     let mut fix = StartupFixture::new(b"/bin/hello");
     let _rc = unsafe {
         __frankenlibc_startup_phase0(
@@ -186,6 +194,7 @@ fn startup_snapshot_returns_invariants() {
 
 #[test]
 fn startup_snapshot_null_returns_negative() {
+    let _lock = STARTUP_TEST_LOCK.lock().unwrap();
     let rc = unsafe { __frankenlibc_startup_snapshot(ptr::null_mut()) };
     assert_eq!(rc, -1);
 }
@@ -202,6 +211,7 @@ unsafe extern "C" fn test_dtor(_obj: *mut c_void) {
 
 #[test]
 fn cxa_thread_atexit_impl_returns_zero() {
+    let _lock = STARTUP_TEST_LOCK.lock().unwrap();
     let mut obj = 0u64;
     let rc = unsafe {
         __cxa_thread_atexit_impl(
@@ -219,6 +229,7 @@ fn cxa_thread_atexit_impl_returns_zero() {
 
 #[test]
 fn phase0_sets_program_name_globals() {
+    let _lock = STARTUP_TEST_LOCK.lock().unwrap();
     let mut fix = StartupFixture::new(b"/usr/local/bin/myapp");
     let _rc = unsafe {
         __frankenlibc_startup_phase0(
@@ -266,6 +277,7 @@ unsafe extern "C" fn fini_hook() {
 
 #[test]
 fn phase0_calls_init_and_fini_hooks() {
+    let _lock = STARTUP_TEST_LOCK.lock().unwrap();
     unsafe {
         INIT_CALLED = false;
         FINI_CALLED = false;
@@ -294,6 +306,7 @@ fn phase0_calls_init_and_fini_hooks() {
 
 #[test]
 fn phase0_zero_argc_succeeds() {
+    let _lock = STARTUP_TEST_LOCK.lock().unwrap();
     // argc=0 is technically valid (no program name)
     let mut argv = vec![ptr::null_mut::<c_char>()]; // just null terminator
     let mut auxv = vec![AT_NULL, 0usize];
@@ -313,6 +326,7 @@ fn phase0_zero_argc_succeeds() {
 
 #[test]
 fn phase0_negative_argc_still_runs() {
+    let _lock = STARTUP_TEST_LOCK.lock().unwrap();
     // Implementation treats argc as a hint; negative argc doesn't prevent execution
     let mut fix = StartupFixture::new(b"app");
     let rc = unsafe {
@@ -363,6 +377,7 @@ unsafe extern "C" fn main_returns_negative(
 
 #[test]
 fn phase0_propagates_zero_return() {
+    let _lock = STARTUP_TEST_LOCK.lock().unwrap();
     let mut fix = StartupFixture::new(b"app");
     let rc = unsafe {
         __frankenlibc_startup_phase0(
@@ -380,6 +395,7 @@ fn phase0_propagates_zero_return() {
 
 #[test]
 fn phase0_propagates_one_return() {
+    let _lock = STARTUP_TEST_LOCK.lock().unwrap();
     let mut fix = StartupFixture::new(b"app");
     let rc = unsafe {
         __frankenlibc_startup_phase0(
@@ -397,6 +413,7 @@ fn phase0_propagates_one_return() {
 
 #[test]
 fn phase0_propagates_negative_return() {
+    let _lock = STARTUP_TEST_LOCK.lock().unwrap();
     let mut fix = StartupFixture::new(b"app");
     let rc = unsafe {
         __frankenlibc_startup_phase0(
@@ -418,6 +435,7 @@ fn phase0_propagates_negative_return() {
 
 #[test]
 fn phase0_bare_name_sets_matching_short_name() {
+    let _lock = STARTUP_TEST_LOCK.lock().unwrap();
     let mut fix = StartupFixture::new(b"simple");
     let _rc = unsafe {
         __frankenlibc_startup_phase0(
@@ -445,6 +463,7 @@ fn phase0_bare_name_sets_matching_short_name() {
 
 #[test]
 fn phase0_deep_path_extracts_basename() {
+    let _lock = STARTUP_TEST_LOCK.lock().unwrap();
     let mut fix = StartupFixture::new(b"/a/b/c/d/e/prog");
     let _rc = unsafe {
         __frankenlibc_startup_phase0(
@@ -470,6 +489,7 @@ fn phase0_deep_path_extracts_basename() {
 
 #[test]
 fn cxa_thread_atexit_impl_null_obj_returns_zero() {
+    let _lock = STARTUP_TEST_LOCK.lock().unwrap();
     let rc = unsafe { __cxa_thread_atexit_impl(test_dtor, ptr::null_mut(), ptr::null_mut()) };
     assert_eq!(rc, 0, "null obj should still register successfully");
 }
@@ -480,6 +500,7 @@ fn cxa_thread_atexit_impl_null_obj_returns_zero() {
 
 #[test]
 fn startup_snapshot_argc_matches_fixture() {
+    let _lock = STARTUP_TEST_LOCK.lock().unwrap();
     let mut fix = StartupFixture::new(b"/bin/test");
     let _rc = unsafe {
         __frankenlibc_startup_phase0(
@@ -512,6 +533,7 @@ fn startup_snapshot_argc_matches_fixture() {
 
 #[test]
 fn phase0_only_init_hook_no_fini() {
+    let _lock = STARTUP_TEST_LOCK.lock().unwrap();
     let mut fix = StartupFixture::new(b"initonly");
     let rc = unsafe {
         __frankenlibc_startup_phase0(
@@ -529,6 +551,7 @@ fn phase0_only_init_hook_no_fini() {
 
 #[test]
 fn phase0_only_fini_hook_no_init() {
+    let _lock = STARTUP_TEST_LOCK.lock().unwrap();
     let mut fix = StartupFixture::new(b"finionly");
     let rc = unsafe {
         __frankenlibc_startup_phase0(

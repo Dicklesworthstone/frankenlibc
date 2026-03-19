@@ -1,0 +1,1 @@
+fixture_ctype: PASS (2 tests)

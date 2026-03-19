@@ -207,52 +207,79 @@ impl AllocationArena {
     pub fn free(&self, user_ptr: *mut u8) -> (FreeResult, Vec<QuarantineEntry>) {
         let user_base = user_ptr as usize;
         let shard_idx = self.shard_for(user_base);
-        let mut shard = self.shards[shard_idx].lock();
+        
+        let (canary_ok, drained) = {
+            let mut shard = self.shards[shard_idx].lock();
 
-        let Some(&slot_idx) = shard.addr_to_slot.get(&user_base) else {
-            return (FreeResult::ForeignPointer, Vec::new());
-        };
+            let Some(&slot_idx) = shard.addr_to_slot.get(&user_base) else {
+                return (FreeResult::ForeignPointer, Vec::new());
+            };
 
-        let slot = &mut shard.slots[slot_idx];
+            let slot = &mut shard.slots[slot_idx];
 
-        match slot.state {
-            SafetyState::Freed | SafetyState::Quarantined => {
-                return (FreeResult::DoubleFree, Vec::new());
+            match slot.state {
+                SafetyState::Freed | SafetyState::Quarantined => {
+                    return (FreeResult::DoubleFree, Vec::new());
+                }
+                SafetyState::Invalid => {
+                    return (FreeResult::InvalidPointer, Vec::new());
+                }
+                _ => {}
             }
-            SafetyState::Invalid => {
-                return (FreeResult::InvalidPointer, Vec::new());
+
+            // Verify canary before freeing
+            let canary_ok = self.verify_canary_for_slot(slot);
+
+            // Move to quarantine. Mark state FIRST, then bump the global TLS-cache epoch
+            // so that any thread that Acquires the new epoch is guaranteed to see the
+            // Quarantined state.
+            slot.state = SafetyState::Quarantined;
+            slot.generation = self
+                .next_generation
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
+            bump_tls_cache_epoch();
+
+            let raw_base = slot.raw_base;
+            let offset = user_base - raw_base;
+            let total_size = offset + slot.user_size + CANARY_SIZE;
+            let align = offset;
+
+            shard.quarantine.push_back(QuarantineEntry {
+                user_base,
+                raw_base,
+                total_size,
+                align,
+            });
+            shard.quarantine_bytes += total_size;
+
+            // Drain quarantine if over limit (returns entries without deallocating)
+            let drained = self.drain_quarantine(&mut shard);
+            
+            (canary_ok, drained)
+        }; // shard lock is released here!
+
+        // Actually release memory for all drained entries outside the lock.
+        for entry in &drained {
+            let layout = std::alloc::Layout::from_size_align(entry.total_size, entry.align)
+                .expect("valid layout");
+
+            if let Some(collector) = &self.collector {
+                let raw_base = entry.raw_base;
+                // Defer deallocation until grace period completes.
+                collector.retire_quarantined(move || {
+                    // SAFETY: raw_base was allocated with this layout.
+                    unsafe {
+                        std::alloc::dealloc(raw_base as *mut u8, layout);
+                    }
+                });
+            } else {
+                // Fallback: immediate deallocation (risky if validation is concurrent).
+                unsafe {
+                    std::alloc::dealloc(entry.raw_base as *mut u8, layout);
+                }
             }
-            _ => {}
         }
-
-        // Verify canary before freeing
-        let canary_ok = self.verify_canary_for_slot(slot);
-
-        // Move to quarantine. Mark state FIRST, then bump the global TLS-cache epoch
-        // so that any thread that Acquires the new epoch is guaranteed to see the
-        // Quarantined state.
-        slot.state = SafetyState::Quarantined;
-        slot.generation = self
-            .next_generation
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-
-        bump_tls_cache_epoch();
-
-        let raw_base = slot.raw_base;
-        let offset = user_base - raw_base;
-        let total_size = offset + slot.user_size + CANARY_SIZE;
-        let align = offset;
-
-        shard.quarantine.push_back(QuarantineEntry {
-            user_base,
-            raw_base,
-            total_size,
-            align,
-        });
-        shard.quarantine_bytes += total_size;
-
-        // Drain quarantine if over limit
-        let drained = self.drain_quarantine(&mut shard);
 
         if canary_ok {
             (FreeResult::Freed, drained)
@@ -394,28 +421,6 @@ impl AllocationArena {
             shard.quarantine_bytes -= entry.total_size;
 
             drained.push(entry);
-        }
-
-        // Actually release memory for all drained entries.
-        for entry in &drained {
-            let layout = std::alloc::Layout::from_size_align(entry.total_size, entry.align)
-                .expect("valid layout");
-
-            if let Some(collector) = &self.collector {
-                let raw_base = entry.raw_base;
-                // Defer deallocation until grace period completes.
-                collector.retire_quarantined(move || {
-                    // SAFETY: raw_base was allocated with this layout.
-                    unsafe {
-                        std::alloc::dealloc(raw_base as *mut u8, layout);
-                    }
-                });
-            } else {
-                // Fallback: immediate deallocation (risky if validation is concurrent).
-                unsafe {
-                    std::alloc::dealloc(entry.raw_base as *mut u8, layout);
-                }
-            }
         }
 
         drained
@@ -562,7 +567,7 @@ mod tests {
 
     #[test]
     fn quarantine_drain_evicts_oldest_when_entry_count_exceeded() {
-        use std::alloc::{Layout, alloc, dealloc};
+        use std::alloc::{alloc, dealloc, Layout};
 
         let arena = AllocationArena::new();
         let align = 16_usize;
@@ -860,7 +865,7 @@ mod tests {
 
     #[test]
     fn quarantine_drain_evicts_oldest_until_within_budget() {
-        use std::alloc::{Layout, alloc, dealloc};
+        use std::alloc::{alloc, dealloc, Layout};
 
         let arena = AllocationArena::new();
 
@@ -976,6 +981,263 @@ mod tests {
         // SAFETY: remaining.raw_base was allocated by alloc_block with the same layout.
         unsafe {
             dealloc(remaining.raw_base as *mut u8, layout);
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // INTEGRATION: Arena + EBR composition
+    //
+    // Verifies that the arena correctly integrates with the
+    // epoch-based reclamation collector for safe deferred cleanup.
+    // ═══════════════════════════════════════════════════════════════
+
+    #[test]
+    fn arena_with_ebr_collector_allocate_and_free() {
+        let ebr = Arc::new(crate::ebr::QuarantineEbr::new(2));
+        let arena = AllocationArena::new_with_collector(Some(Arc::clone(&ebr)));
+
+        let ptr = arena.allocate(128).expect("alloc should succeed");
+        assert!(!ptr.is_null());
+
+        let slot = arena.lookup(ptr as usize).expect("should find allocation");
+        assert_eq!(slot.state, SafetyState::Valid);
+        assert_eq!(slot.user_size, 128);
+
+        let (result, _) = arena.free(ptr);
+        assert_eq!(result, FreeResult::Freed);
+
+        let freed_slot = arena.lookup(ptr as usize).expect("quarantined slot");
+        assert_eq!(freed_slot.state, SafetyState::Quarantined);
+    }
+
+    #[test]
+    fn arena_with_ebr_multiple_alloc_free_cycles() {
+        let ebr = Arc::new(crate::ebr::QuarantineEbr::new(1));
+        let arena = AllocationArena::new_with_collector(Some(Arc::clone(&ebr)));
+
+        let mut ptrs = Vec::new();
+        for size in [16, 64, 256, 1024, 4096] {
+            let ptr = arena.allocate(size).expect("alloc");
+            ptrs.push((ptr, size));
+        }
+
+        // Verify all allocations
+        for &(ptr, size) in &ptrs {
+            let slot = arena.lookup(ptr as usize).expect("lookup");
+            assert_eq!(slot.user_size, size);
+            assert_eq!(slot.state, SafetyState::Valid);
+        }
+
+        // Free all
+        for &(ptr, _) in &ptrs {
+            let (result, _) = arena.free(ptr);
+            assert_eq!(result, FreeResult::Freed);
+        }
+
+        // All should be quarantined
+        for &(ptr, _) in &ptrs {
+            let slot = arena.lookup(ptr as usize).expect("freed lookup");
+            assert_eq!(slot.state, SafetyState::Quarantined);
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // INTEGRATION: Arena free -> TLS cache epoch invalidation
+    //
+    // Verifies that freeing an allocation in the arena correctly
+    // bumps the TLS cache epoch, causing stale cache entries to miss.
+    // ═══════════════════════════════════════════════════════════════
+
+    #[test]
+    fn arena_free_bumps_tls_cache_epoch() {
+        use crate::tls_cache::{
+            current_epoch, lock_tls_cache_epoch_for_tests, CachedValidation, TlsValidationCache,
+        };
+
+        let arena = AllocationArena::new();
+        let ptr = arena.allocate(256).expect("alloc");
+        let addr = ptr as usize;
+
+        // Insert a cached validation for this pointer
+        let mut cache = TlsValidationCache::new();
+        let cached = CachedValidation {
+            user_base: addr,
+            user_size: 256,
+            generation: 1,
+            state: SafetyState::Valid,
+        };
+
+        let epoch_before;
+        {
+            let _guard = lock_tls_cache_epoch_for_tests();
+            epoch_before = current_epoch();
+            cache.insert(addr, cached, epoch_before);
+            assert!(
+                cache.lookup(addr).is_some(),
+                "cache should hit before arena free"
+            );
+        }
+
+        // Free the allocation - this bumps the TLS cache epoch
+        let (result, _) = arena.free(ptr);
+        assert_eq!(result, FreeResult::Freed);
+
+        let epoch_after = current_epoch();
+        assert!(
+            epoch_after > epoch_before,
+            "arena free must bump TLS cache epoch: before={epoch_before}, after={epoch_after}"
+        );
+
+        // Cached entry should now miss due to epoch mismatch
+        assert!(
+            cache.lookup(addr).is_none(),
+            "cache should miss after arena free bumped epoch"
+        );
+    }
+
+    #[test]
+    fn tls_cache_reinsert_after_arena_free_uses_new_epoch() {
+        use crate::tls_cache::{
+            current_epoch, lock_tls_cache_epoch_for_tests, CachedValidation, TlsValidationCache,
+        };
+
+        let arena = AllocationArena::new();
+        let ptr = arena.allocate(64).expect("alloc");
+        let addr = ptr as usize;
+
+        let mut cache = TlsValidationCache::new();
+
+        // Insert at current epoch
+        {
+            let _guard = lock_tls_cache_epoch_for_tests();
+            cache.insert(
+                addr,
+                CachedValidation {
+                    user_base: addr,
+                    user_size: 64,
+                    generation: 1,
+                    state: SafetyState::Valid,
+                },
+                current_epoch(),
+            );
+        }
+
+        // Free bumps epoch
+        let (_, _) = arena.free(ptr);
+
+        // Re-insert with new epoch (simulating re-validation after free)
+        {
+            let _guard = lock_tls_cache_epoch_for_tests();
+            let new_epoch = current_epoch();
+            cache.insert(
+                addr,
+                CachedValidation {
+                    user_base: addr,
+                    user_size: 64,
+                    generation: 2,
+                    state: SafetyState::Quarantined,
+                },
+                new_epoch,
+            );
+
+            // Should hit with the new quarantined state
+            let result = cache.lookup(addr).expect("should hit after reinsert");
+            assert_eq!(result.state, SafetyState::Quarantined);
+            assert_eq!(result.generation, 2);
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // INTEGRATION: Concurrent arena alloc/free with TLS cache
+    //
+    // Multiple threads concurrently allocating and freeing while
+    // the TLS cache epoch is being bumped by frees. Validates that
+    // epochs remain monotonically non-decreasing.
+    // ═══════════════════════════════════════════════════════════════
+
+    #[test]
+    fn concurrent_alloc_free_cache_epoch_monotonic() {
+        use crate::tls_cache::current_epoch;
+        use std::sync::Barrier;
+        use std::thread;
+
+        let arena = Arc::new(AllocationArena::new());
+        let barrier = Arc::new(Barrier::new(4));
+        let mut handles = Vec::new();
+
+        for _ in 0..4 {
+            let arena = Arc::clone(&arena);
+            let barrier = Arc::clone(&barrier);
+            handles.push(thread::spawn(move || {
+                barrier.wait();
+                let mut prev_epoch = 0u64;
+                for _ in 0..200 {
+                    let ptr = arena.allocate(64).expect("alloc");
+                    let (result, _) = arena.free(ptr);
+                    assert_eq!(result, FreeResult::Freed);
+
+                    // Epoch must be monotonically non-decreasing
+                    let epoch = current_epoch();
+                    assert!(
+                        epoch >= prev_epoch,
+                        "TLS cache epoch must be monotonic: {epoch} < {prev_epoch}"
+                    );
+                    prev_epoch = epoch;
+                }
+            }));
+        }
+
+        for h in handles {
+            h.join().expect("thread panicked");
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // INTEGRATION: Arena generation counters under concurrent pressure
+    //
+    // Verifies that generation counters remain strictly monotonic
+    // even under concurrent alloc/free from multiple threads.
+    // ═══════════════════════════════════════════════════════════════
+
+    #[test]
+    fn concurrent_generation_monotonicity() {
+        use std::sync::Barrier;
+        use std::thread;
+
+        let arena = Arc::new(AllocationArena::new());
+        let barrier = Arc::new(Barrier::new(4));
+        let mut handles = Vec::new();
+
+        for _ in 0..4 {
+            let arena = Arc::clone(&arena);
+            let barrier = Arc::clone(&barrier);
+            handles.push(thread::spawn(move || {
+                barrier.wait();
+                let mut prev_gen = 0u64;
+                for _ in 0..100 {
+                    let ptr = arena.allocate(32).expect("alloc");
+                    let slot = arena.lookup(ptr as usize).expect("lookup");
+                    // Generation must be strictly increasing per-allocation
+                    assert!(
+                        slot.generation > prev_gen,
+                        "generation not increasing: {} <= {}",
+                        slot.generation,
+                        prev_gen
+                    );
+                    prev_gen = slot.generation;
+
+                    let (result, _) = arena.free(ptr);
+                    assert_eq!(result, FreeResult::Freed);
+
+                    let freed = arena.lookup(ptr as usize).expect("freed lookup");
+                    assert!(freed.generation > prev_gen);
+                    prev_gen = freed.generation;
+                }
+            }));
+        }
+
+        for h in handles {
+            h.join().expect("thread panicked");
         }
     }
 }

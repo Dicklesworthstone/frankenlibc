@@ -678,4 +678,207 @@ mod tests {
         assert_eq!(sanitize_trace_component("run id/1"), "run_id_1");
         assert_eq!(sanitize_trace_component(""), "unknown");
     }
+
+    // ═══════════════════════════════════════════════════════════════
+    // INTEGRATION: Live multi-concept snapshot under concurrent load
+    //
+    // Creates real instances of all alien CS primitives, exercises
+    // them under concurrent pressure, then builds a snapshot and
+    // verifies contention score and diagnostics coherence.
+    // ═══════════════════════════════════════════════════════════════
+
+    #[test]
+    fn live_multi_concept_snapshot_under_concurrent_load() {
+        use std::sync::{Arc, Barrier};
+        use std::thread;
+        use std::time::Instant;
+
+        let sl = Arc::new(SeqLock::new(0u64));
+        let collector = Arc::new(EbrCollector::new());
+        let fc = Arc::new(FlatCombiner::new(0u64, 16));
+        let rcu = Arc::new(RcuCell::new(0u64));
+        let barrier = Arc::new(Barrier::new(4));
+        let mut handles = Vec::new();
+
+        // Thread 1: SeqLock writer + reader
+        {
+            let sl = Arc::clone(&sl);
+            let barrier = Arc::clone(&barrier);
+            handles.push(thread::spawn(move || {
+                barrier.wait();
+                for i in 0..100u64 {
+                    sl.write_with(|v| *v = i);
+                }
+            }));
+        }
+
+        // Thread 2: EBR retire + advance
+        {
+            let collector = Arc::clone(&collector);
+            let barrier = Arc::clone(&barrier);
+            handles.push(thread::spawn(move || {
+                let handle = collector.register();
+                barrier.wait();
+                for _ in 0..100 {
+                    let guard = handle.pin();
+                    collector.retire(|| {});
+                    drop(guard);
+                    collector.try_advance();
+                }
+            }));
+        }
+
+        // Thread 3: FlatCombiner operations
+        {
+            let fc = Arc::clone(&fc);
+            let barrier = Arc::clone(&barrier);
+            handles.push(thread::spawn(move || {
+                barrier.wait();
+                for _ in 0..200 {
+                    fc.execute(1u64, |state, op| {
+                        *state += op;
+                        *state
+                    });
+                }
+            }));
+        }
+
+        // Thread 4: RCU updates + reads
+        {
+            let rcu = Arc::clone(&rcu);
+            let barrier = Arc::clone(&barrier);
+            handles.push(thread::spawn(move || {
+                barrier.wait();
+                for i in 0..100u64 {
+                    rcu.update(i);
+                    let _ = *rcu.load();
+                }
+            }));
+        }
+
+        for h in handles {
+            h.join().expect("thread panicked");
+        }
+
+        // Build snapshot from live diagnostics
+        let epoch_start = Instant::now();
+        let sl_diag = sl.diagnostics();
+        let ebr_diag = collector.diagnostics();
+        let fc_diag = fc.diagnostics();
+        let rcu_metrics = RcuMetrics {
+            epoch: rcu.epoch(),
+            reader_count: rcu.reader_count(),
+        };
+
+        let snapshot = build_snapshot(
+            Some(sl_diag.clone()),
+            Some(ebr_diag.clone()),
+            Some(fc_diag.clone()),
+            Some(rcu_metrics.clone()),
+            epoch_start,
+        );
+
+        // Verify diagnostics coherence
+        assert!(sl_diag.writes >= 100, "seqlock should have >= 100 writes");
+        assert_eq!(
+            fc_diag.total_ops, 200,
+            "flat combiner should have 200 ops"
+        );
+        assert!(
+            ebr_diag.total_retired >= 100,
+            "EBR should have retired >= 100 items"
+        );
+        assert!(
+            ebr_diag.total_reclaimed <= ebr_diag.total_retired,
+            "EBR reclaimed must not exceed retired"
+        );
+        assert!(rcu_metrics.epoch > 0, "RCU epoch should have advanced");
+
+        // Contention score should be finite and non-negative
+        assert!(
+            snapshot.contention_score >= 0.0,
+            "contention score must be non-negative"
+        );
+        assert!(
+            snapshot.contention_score.is_finite(),
+            "contention score must be finite"
+        );
+
+        // Snapshot export should produce valid JSONL
+        let jsonl = snapshot.export_jsonl("bd-1sp.9", "live-integration");
+        let line = jsonl.lines().next().expect("should have at least one line");
+        let parsed: serde_json::Value =
+            serde_json::from_str(line).expect("snapshot JSONL should parse");
+        assert_eq!(parsed["event"], "alien_cs_snapshot");
+        assert_eq!(parsed["bead_id"], "bd-1sp.9");
+        assert!(
+            parsed["flat_combining_total_ops"].as_u64().unwrap_or(0) > 0,
+            "snapshot should include flat combining ops"
+        );
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // INTEGRATION: Flat combining batching verification
+    //
+    // Verifies that under high contention, the flat combiner
+    // actually batches operations (max_batch_size > 1) and reduces
+    // the number of combining passes below total operations.
+    // ═══════════════════════════════════════════════════════════════
+
+    #[test]
+    fn flat_combining_batching_verified_under_contention() {
+        use std::sync::{Arc, Barrier};
+        use std::thread;
+
+        let fc = Arc::new(FlatCombiner::new(0u64, 32));
+        let barrier = Arc::new(Barrier::new(8));
+        let mut handles = Vec::new();
+
+        for _ in 0..8 {
+            let fc = Arc::clone(&fc);
+            let barrier = Arc::clone(&barrier);
+            handles.push(thread::spawn(move || {
+                barrier.wait();
+                for _ in 0..1000 {
+                    fc.execute(1u64, |state, op| {
+                        *state += op;
+                        *state
+                    });
+                }
+            }));
+        }
+
+        for h in handles {
+            h.join().expect("thread panicked");
+        }
+
+        let diag = fc.diagnostics();
+        assert_eq!(diag.total_ops, 8000, "all operations must complete");
+        assert_eq!(
+            fc.with_state_ref(|s| *s),
+            8000,
+            "final state must reflect all increments"
+        );
+
+        // Batching verification: under 8 threads, the combiner should
+        // batch operations, resulting in fewer passes than total ops
+        assert!(
+            diag.total_passes < diag.total_ops,
+            "combining should reduce passes ({}) below total ops ({})",
+            diag.total_passes,
+            diag.total_ops,
+        );
+        assert!(
+            diag.max_batch_size > 1,
+            "high contention should produce batch sizes > 1, got {}",
+            diag.max_batch_size
+        );
+
+        // Verify contention score reflects good batching
+        let score = compute_contention_score(None, None, Some(&diag));
+        assert!(
+            score.is_finite(),
+            "contention score must be finite"
+        );
+    }
 }
