@@ -56,6 +56,13 @@ TARGET_DOMAINS = {
         "cwe_coverage": ["CWE-134", "CWE-787"],
         "priority": "high",
     },
+    "fuzz_runtime_math": {
+        "domain": "runtime-kernel",
+        "category": "controller-transitions",
+        "description": "Runtime math decision and observation transition fuzzing",
+        "cwe_coverage": ["CWE-670", "CWE-682", "CWE-835"],
+        "priority": "high",
+    },
 }
 
 # Harness convention checks
@@ -156,11 +163,22 @@ def generate_printf_seeds():
     return seeds
 
 
+def generate_runtime_math_seeds():
+    """Deterministic seed corpus for runtime math transitions."""
+    seeds = []
+    seeds.append(bytes([0, 0, 0, 0, 0, 0, 1, 0]))
+    seeds.append(bytes([1, 1, 0x10, 0, 0x20, 0, 0x40, 0]))
+    seeds.append(bytes([2, 1, 0xFF, 0, 0x80, 0, 0xAA, 0x55]))
+    seeds.append(bytes([5, 2, 0x34, 0x12, 0x10, 0x27, 0x0F, 0xF0]))
+    return seeds
+
+
 SEED_GENERATORS = {
     "fuzz_string": generate_string_seeds,
     "fuzz_malloc": generate_malloc_seeds,
     "fuzz_membrane": generate_membrane_seeds,
     "fuzz_printf": generate_printf_seeds,
+    "fuzz_runtime_math": generate_runtime_math_seeds,
 }
 
 # Dictionary entries per domain
@@ -182,6 +200,10 @@ DICTIONARIES = {
     "fuzz_printf": [
         '"%d"', '"%s"', '"%f"', '"%p"', '"%x"', '"%n"',
         '"%10d"', '"%.5f"', '"%*d"', '"%1$d"', '"%%"',
+    ],
+    "fuzz_runtime_math": [
+        '"strict"', '"hardened"', '"off"',
+        '"allocator"', '"resolver"', '"locale"', '"runtime-math"',
     ],
 }
 

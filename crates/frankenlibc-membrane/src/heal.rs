@@ -209,6 +209,16 @@ impl HealingPolicy {
         let level = healing_log_level(action);
         let escalated = healing_action_escalated(action);
         let trace_id = decision_id.scoped_trace_id("membrane::heal");
+
+        // Emit to unified evidence ledger for cross-stream correlation.
+        crate::evidence_ledger::global_evidence_ledger().record_healing(
+            action,
+            trace_id.clone(),
+            decision_id,
+            "membrane-heal",
+            "",
+        );
+
         let line = format!(
             "{{\"trace_id\":\"{trace_id}\",\"decision_id\":{},\"schema_version\":\"{}\",\
 \"bead_id\":\"{HEALING_BEAD_ID}\",\"runtime_mode\":\"{}\",\"level\":\"{level}\",\

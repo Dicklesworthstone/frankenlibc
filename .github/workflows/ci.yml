@@ -187,6 +187,7 @@ jobs:
           mkdir -p artifacts/ci
           scripts/check_fuzz_harness_architecture.sh 2>&1 | tee artifacts/ci/fuzz-harness-architecture.log
           scripts/check_fuzz_phase1_targets.sh 2>&1 | tee artifacts/ci/fuzz-phase1-targets.log
+          scripts/check_fuzz_phase2_targets.sh 2>&1 | tee artifacts/ci/fuzz-phase2-targets.log
           scripts/check_fuzz_membrane_validation.sh 2>&1 | tee artifacts/ci/fuzz-membrane-validation.log
 
       - name: List fuzz targets
@@ -198,7 +199,16 @@ jobs:
           mkdir -p artifacts/ci/fuzz-runs
           FUZZ_RUNS_PER_TARGET="${FUZZ_RUNS_PER_TARGET:-1000000}"
           FUZZ_TIMEOUT_SECONDS="${FUZZ_TIMEOUT_SECONDS:-1800}"
-          targets=(fuzz_string fuzz_malloc fuzz_membrane fuzz_printf)
+          targets=(
+            fuzz_string
+            fuzz_malloc
+            fuzz_membrane
+            fuzz_printf
+            fuzz_resolver
+            fuzz_resolv
+            fuzz_iconv
+            fuzz_runtime_math
+          )
 
           for target in "${targets[@]}"; do
             log="artifacts/ci/fuzz-runs/${target}.log"

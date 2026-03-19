@@ -179,7 +179,11 @@ impl EbrCollector {
     /// Get the number of active (registered) threads.
     #[must_use]
     pub fn active_count(&self) -> usize {
-        self.slots.lock().iter().filter(|s| s.active.load(Ordering::Relaxed)).count()
+        self.slots
+            .lock()
+            .iter()
+            .filter(|s| s.active.load(Ordering::Relaxed))
+            .count()
     }
 
     /// Get diagnostic snapshot.
@@ -188,8 +192,14 @@ impl EbrCollector {
         let slots = self.slots.lock();
         EbrDiagnostics {
             global_epoch: self.global_epoch.load(Ordering::Acquire),
-            active_threads: slots.iter().filter(|s| s.active.load(Ordering::Relaxed)).count(),
-            pinned_threads: slots.iter().filter(|s| s.active.load(Ordering::Relaxed) && s.pinned.load(Ordering::Relaxed)).count(),
+            active_threads: slots
+                .iter()
+                .filter(|s| s.active.load(Ordering::Relaxed))
+                .count(),
+            pinned_threads: slots
+                .iter()
+                .filter(|s| s.active.load(Ordering::Relaxed) && s.pinned.load(Ordering::Relaxed))
+                .count(),
             total_retired: self.total_retired.load(Ordering::Relaxed),
             total_reclaimed: self.total_reclaimed.load(Ordering::Relaxed),
             pending_per_epoch: [
@@ -262,10 +272,13 @@ impl Drop for EbrGuard<'_> {
 
 // ──────────────── QuarantineEbr ────────────────
 
+/// A deferred cleanup entry: (epoch, cleanup closure).
+type QuarantineEntry = (u64, Box<dyn FnOnce() + Send>);
+
 pub struct QuarantineEbr {
     collector: EbrCollector,
     quarantine_depth: u64,
-    quarantine: Mutex<Vec<(u64, Box<dyn FnOnce() + Send>)>>,
+    quarantine: Mutex<Vec<QuarantineEntry>>,
     armed: AtomicBool,
 }
 

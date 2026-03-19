@@ -1,16 +1,16 @@
 {
   "schema_version": "v1",
   "bead": "bd-1oz.5",
-  "generated_at": "2026-02-16T16:36:12Z",
+  "generated_at": "2026-03-18T22:52:34Z",
   "summary": {
-    "total_targets": 4,
-    "functional_targets": 2,
-    "stub_targets": 2,
-    "checks_passed": 20,
-    "checks_total": 20,
-    "quality_score_pct": 100.0,
-    "total_seed_corpus": 29,
-    "total_dict_entries": 25,
+    "total_targets": 17,
+    "functional_targets": 17,
+    "stub_targets": 0,
+    "checks_passed": 65,
+    "checks_total": 85,
+    "quality_score_pct": 76.5,
+    "total_seed_corpus": 33,
+    "total_dict_entries": 32,
     "cwe_coverage": [
       "CWE-120",
       "CWE-122",
@@ -20,15 +20,19 @@
       "CWE-415",
       "CWE-416",
       "CWE-476",
+      "CWE-670",
+      "CWE-682",
       "CWE-787",
       "CWE-824",
-      "CWE-825"
+      "CWE-825",
+      "CWE-835"
     ],
-    "unique_cwes": 11,
+    "unique_cwes": 14,
     "domains_covered": [
       "abi-entrypoint",
       "allocator",
-      "membrane"
+      "membrane",
+      "runtime-kernel"
     ]
   },
   "harness_conventions": {
@@ -63,6 +67,170 @@
   },
   "target_analyses": [
     {
+      "target": "fuzz_ctype",
+      "source": "crates/frankenlibc-fuzz/fuzz_targets/fuzz_ctype.rs",
+      "domain": "unknown",
+      "category": "unknown",
+      "description": "",
+      "priority": "normal",
+      "cwe_coverage": [],
+      "checks": [
+        {
+          "check": "no_main_attr",
+          "passed": true,
+          "description": "Must use #![no_main] attribute"
+        },
+        {
+          "check": "fuzz_target_macro",
+          "passed": true,
+          "description": "Must use fuzz_target! macro"
+        },
+        {
+          "check": "input_size_guard",
+          "passed": false,
+          "description": "Should have input size guard"
+        },
+        {
+          "check": "no_unwrap",
+          "passed": true,
+          "description": "Should avoid unwrap (use safe alternatives)"
+        },
+        {
+          "check": "no_panic",
+          "passed": true,
+          "description": "Should avoid explicit panics"
+        }
+      ],
+      "checks_passed": 4,
+      "checks_total": 5,
+      "todos": [],
+      "implementation_status": "functional",
+      "lines": 195
+    },
+    {
+      "target": "fuzz_dirent",
+      "source": "crates/frankenlibc-fuzz/fuzz_targets/fuzz_dirent.rs",
+      "domain": "unknown",
+      "category": "unknown",
+      "description": "",
+      "priority": "normal",
+      "cwe_coverage": [],
+      "checks": [
+        {
+          "check": "no_main_attr",
+          "passed": true,
+          "description": "Must use #![no_main] attribute"
+        },
+        {
+          "check": "fuzz_target_macro",
+          "passed": true,
+          "description": "Must use fuzz_target! macro"
+        },
+        {
+          "check": "input_size_guard",
+          "passed": false,
+          "description": "Should have input size guard"
+        },
+        {
+          "check": "no_unwrap",
+          "passed": true,
+          "description": "Should avoid unwrap (use safe alternatives)"
+        },
+        {
+          "check": "no_panic",
+          "passed": false,
+          "description": "Should avoid explicit panics"
+        }
+      ],
+      "checks_passed": 3,
+      "checks_total": 5,
+      "todos": [],
+      "implementation_status": "functional",
+      "lines": 94
+    },
+    {
+      "target": "fuzz_iconv",
+      "source": "crates/frankenlibc-fuzz/fuzz_targets/fuzz_iconv.rs",
+      "domain": "unknown",
+      "category": "unknown",
+      "description": "",
+      "priority": "normal",
+      "cwe_coverage": [],
+      "checks": [
+        {
+          "check": "no_main_attr",
+          "passed": true,
+          "description": "Must use #![no_main] attribute"
+        },
+        {
+          "check": "fuzz_target_macro",
+          "passed": true,
+          "description": "Must use fuzz_target! macro"
+        },
+        {
+          "check": "input_size_guard",
+          "passed": false,
+          "description": "Should have input size guard"
+        },
+        {
+          "check": "no_unwrap",
+          "passed": true,
+          "description": "Should avoid unwrap (use safe alternatives)"
+        },
+        {
+          "check": "no_panic",
+          "passed": false,
+          "description": "Should avoid explicit panics"
+        }
+      ],
+      "checks_passed": 3,
+      "checks_total": 5,
+      "todos": [],
+      "implementation_status": "functional",
+      "lines": 116
+    },
+    {
+      "target": "fuzz_inet",
+      "source": "crates/frankenlibc-fuzz/fuzz_targets/fuzz_inet.rs",
+      "domain": "unknown",
+      "category": "unknown",
+      "description": "",
+      "priority": "normal",
+      "cwe_coverage": [],
+      "checks": [
+        {
+          "check": "no_main_attr",
+          "passed": true,
+          "description": "Must use #![no_main] attribute"
+        },
+        {
+          "check": "fuzz_target_macro",
+          "passed": true,
+          "description": "Must use fuzz_target! macro"
+        },
+        {
+          "check": "input_size_guard",
+          "passed": false,
+          "description": "Should have input size guard"
+        },
+        {
+          "check": "no_unwrap",
+          "passed": true,
+          "description": "Should avoid unwrap (use safe alternatives)"
+        },
+        {
+          "check": "no_panic",
+          "passed": true,
+          "description": "Should avoid explicit panics"
+        }
+      ],
+      "checks_passed": 4,
+      "checks_total": 5,
+      "todos": [],
+      "implementation_status": "functional",
+      "lines": 202
+    },
+    {
       "target": "fuzz_malloc",
       "source": "crates/frankenlibc-fuzz/fuzz_targets/fuzz_malloc.rs",
       "domain": "allocator",
@@ -88,7 +256,48 @@
         },
         {
           "check": "input_size_guard",
+          "passed": false,
+          "description": "Should have input size guard"
+        },
+        {
+          "check": "no_unwrap",
           "passed": true,
+          "description": "Should avoid unwrap (use safe alternatives)"
+        },
+        {
+          "check": "no_panic",
+          "passed": false,
+          "description": "Should avoid explicit panics"
+        }
+      ],
+      "checks_passed": 3,
+      "checks_total": 5,
+      "todos": [],
+      "implementation_status": "functional",
+      "lines": 222
+    },
+    {
+      "target": "fuzz_math",
+      "source": "crates/frankenlibc-fuzz/fuzz_targets/fuzz_math.rs",
+      "domain": "unknown",
+      "category": "unknown",
+      "description": "",
+      "priority": "normal",
+      "cwe_coverage": [],
+      "checks": [
+        {
+          "check": "no_main_attr",
+          "passed": true,
+          "description": "Must use #![no_main] attribute"
+        },
+        {
+          "check": "fuzz_target_macro",
+          "passed": true,
+          "description": "Must use fuzz_target! macro"
+        },
+        {
+          "check": "input_size_guard",
+          "passed": false,
           "description": "Should have input size guard"
         },
         {
@@ -102,13 +311,11 @@
           "description": "Should avoid explicit panics"
         }
       ],
-      "checks_passed": 5,
+      "checks_passed": 4,
       "checks_total": 5,
-      "todos": [
-        "fuzz malloc/free sequences"
-      ],
+      "todos": [],
       "implementation_status": "functional",
-      "lines": 47
+      "lines": 365
     },
     {
       "target": "fuzz_membrane",
@@ -153,7 +360,7 @@
       "checks_total": 5,
       "todos": [],
       "implementation_status": "functional",
-      "lines": 26
+      "lines": 25
     },
     {
       "target": "fuzz_printf",
@@ -166,6 +373,129 @@
         "CWE-134",
         "CWE-787"
       ],
+      "checks": [
+        {
+          "check": "no_main_attr",
+          "passed": true,
+          "description": "Must use #![no_main] attribute"
+        },
+        {
+          "check": "fuzz_target_macro",
+          "passed": true,
+          "description": "Must use fuzz_target! macro"
+        },
+        {
+          "check": "input_size_guard",
+          "passed": false,
+          "description": "Should have input size guard"
+        },
+        {
+          "check": "no_unwrap",
+          "passed": true,
+          "description": "Should avoid unwrap (use safe alternatives)"
+        },
+        {
+          "check": "no_panic",
+          "passed": true,
+          "description": "Should avoid explicit panics"
+        }
+      ],
+      "checks_passed": 4,
+      "checks_total": 5,
+      "todos": [],
+      "implementation_status": "functional",
+      "lines": 267
+    },
+    {
+      "target": "fuzz_pwd_grp",
+      "source": "crates/frankenlibc-fuzz/fuzz_targets/fuzz_pwd_grp.rs",
+      "domain": "unknown",
+      "category": "unknown",
+      "description": "",
+      "priority": "normal",
+      "cwe_coverage": [],
+      "checks": [
+        {
+          "check": "no_main_attr",
+          "passed": true,
+          "description": "Must use #![no_main] attribute"
+        },
+        {
+          "check": "fuzz_target_macro",
+          "passed": true,
+          "description": "Must use fuzz_target! macro"
+        },
+        {
+          "check": "input_size_guard",
+          "passed": false,
+          "description": "Should have input size guard"
+        },
+        {
+          "check": "no_unwrap",
+          "passed": true,
+          "description": "Should avoid unwrap (use safe alternatives)"
+        },
+        {
+          "check": "no_panic",
+          "passed": false,
+          "description": "Should avoid explicit panics"
+        }
+      ],
+      "checks_passed": 3,
+      "checks_total": 5,
+      "todos": [],
+      "implementation_status": "functional",
+      "lines": 158
+    },
+    {
+      "target": "fuzz_regex",
+      "source": "crates/frankenlibc-fuzz/fuzz_targets/fuzz_regex.rs",
+      "domain": "unknown",
+      "category": "unknown",
+      "description": "",
+      "priority": "normal",
+      "cwe_coverage": [],
+      "checks": [
+        {
+          "check": "no_main_attr",
+          "passed": true,
+          "description": "Must use #![no_main] attribute"
+        },
+        {
+          "check": "fuzz_target_macro",
+          "passed": true,
+          "description": "Must use fuzz_target! macro"
+        },
+        {
+          "check": "input_size_guard",
+          "passed": false,
+          "description": "Should have input size guard"
+        },
+        {
+          "check": "no_unwrap",
+          "passed": true,
+          "description": "Should avoid unwrap (use safe alternatives)"
+        },
+        {
+          "check": "no_panic",
+          "passed": true,
+          "description": "Should avoid explicit panics"
+        }
+      ],
+      "checks_passed": 4,
+      "checks_total": 5,
+      "todos": [],
+      "implementation_status": "functional",
+      "lines": 240
+    },
+    {
+      "target": "fuzz_resolv",
+      "source": "crates/frankenlibc-fuzz/fuzz_targets/fuzz_resolv.rs",
+      "domain": "unknown",
+      "category": "unknown",
+      "description": "",
+      "priority": "normal",
+      "cwe_coverage": [],
       "checks": [
         {
           "check": "no_main_attr",
@@ -195,12 +525,177 @@
       ],
       "checks_passed": 5,
       "checks_total": 5,
-      "todos": [
-        "fuzz printf format string parsing",
-        "wire to printf format engine once implemented"
+      "todos": [],
+      "implementation_status": "functional",
+      "lines": 150
+    },
+    {
+      "target": "fuzz_resolver",
+      "source": "crates/frankenlibc-fuzz/fuzz_targets/fuzz_resolver.rs",
+      "domain": "unknown",
+      "category": "unknown",
+      "description": "",
+      "priority": "normal",
+      "cwe_coverage": [],
+      "checks": [
+        {
+          "check": "no_main_attr",
+          "passed": true,
+          "description": "Must use #![no_main] attribute"
+        },
+        {
+          "check": "fuzz_target_macro",
+          "passed": true,
+          "description": "Must use fuzz_target! macro"
+        },
+        {
+          "check": "input_size_guard",
+          "passed": false,
+          "description": "Should have input size guard"
+        },
+        {
+          "check": "no_unwrap",
+          "passed": false,
+          "description": "Should avoid unwrap (use safe alternatives)"
+        },
+        {
+          "check": "no_panic",
+          "passed": true,
+          "description": "Should avoid explicit panics"
+        }
       ],
-      "implementation_status": "stub",
-      "lines": 14
+      "checks_passed": 3,
+      "checks_total": 5,
+      "todos": [],
+      "implementation_status": "functional",
+      "lines": 247
+    },
+    {
+      "target": "fuzz_runtime_math",
+      "source": "crates/frankenlibc-fuzz/fuzz_targets/fuzz_runtime_math.rs",
+      "domain": "runtime-kernel",
+      "category": "controller-transitions",
+      "description": "Runtime math decision and observation transition fuzzing",
+      "priority": "high",
+      "cwe_coverage": [
+        "CWE-670",
+        "CWE-682",
+        "CWE-835"
+      ],
+      "checks": [
+        {
+          "check": "no_main_attr",
+          "passed": true,
+          "description": "Must use #![no_main] attribute"
+        },
+        {
+          "check": "fuzz_target_macro",
+          "passed": true,
+          "description": "Must use fuzz_target! macro"
+        },
+        {
+          "check": "input_size_guard",
+          "passed": false,
+          "description": "Should have input size guard"
+        },
+        {
+          "check": "no_unwrap",
+          "passed": true,
+          "description": "Should avoid unwrap (use safe alternatives)"
+        },
+        {
+          "check": "no_panic",
+          "passed": true,
+          "description": "Should avoid explicit panics"
+        }
+      ],
+      "checks_passed": 4,
+      "checks_total": 5,
+      "todos": [],
+      "implementation_status": "functional",
+      "lines": 127
+    },
+    {
+      "target": "fuzz_scanf",
+      "source": "crates/frankenlibc-fuzz/fuzz_targets/fuzz_scanf.rs",
+      "domain": "unknown",
+      "category": "unknown",
+      "description": "",
+      "priority": "normal",
+      "cwe_coverage": [],
+      "checks": [
+        {
+          "check": "no_main_attr",
+          "passed": true,
+          "description": "Must use #![no_main] attribute"
+        },
+        {
+          "check": "fuzz_target_macro",
+          "passed": true,
+          "description": "Must use fuzz_target! macro"
+        },
+        {
+          "check": "input_size_guard",
+          "passed": true,
+          "description": "Should have input size guard"
+        },
+        {
+          "check": "no_unwrap",
+          "passed": true,
+          "description": "Should avoid unwrap (use safe alternatives)"
+        },
+        {
+          "check": "no_panic",
+          "passed": true,
+          "description": "Should avoid explicit panics"
+        }
+      ],
+      "checks_passed": 5,
+      "checks_total": 5,
+      "todos": [],
+      "implementation_status": "functional",
+      "lines": 253
+    },
+    {
+      "target": "fuzz_stdlib",
+      "source": "crates/frankenlibc-fuzz/fuzz_targets/fuzz_stdlib.rs",
+      "domain": "unknown",
+      "category": "unknown",
+      "description": "",
+      "priority": "normal",
+      "cwe_coverage": [],
+      "checks": [
+        {
+          "check": "no_main_attr",
+          "passed": true,
+          "description": "Must use #![no_main] attribute"
+        },
+        {
+          "check": "fuzz_target_macro",
+          "passed": true,
+          "description": "Must use fuzz_target! macro"
+        },
+        {
+          "check": "input_size_guard",
+          "passed": false,
+          "description": "Should have input size guard"
+        },
+        {
+          "check": "no_unwrap",
+          "passed": false,
+          "description": "Should avoid unwrap (use safe alternatives)"
+        },
+        {
+          "check": "no_panic",
+          "passed": true,
+          "description": "Should avoid explicit panics"
+        }
+      ],
+      "checks_passed": 3,
+      "checks_total": 5,
+      "todos": [],
+      "implementation_status": "functional",
+      "lines": 207
     },
     {
       "target": "fuzz_string",
@@ -227,7 +722,7 @@
         },
         {
           "check": "input_size_guard",
-          "passed": true,
+          "passed": false,
           "description": "Should have input size guard"
         },
         {
@@ -241,19 +736,78 @@
           "description": "Should avoid explicit panics"
         }
       ],
-      "checks_passed": 5,
+      "checks_passed": 4,
       "checks_total": 5,
-      "todos": [
-        "fuzz string functions with arbitrary byte inputs"
+      "todos": [],
+      "implementation_status": "functional",
+      "lines": 597
+    },
+    {
+      "target": "fuzz_time",
+      "source": "crates/frankenlibc-fuzz/fuzz_targets/fuzz_time.rs",
+      "domain": "unknown",
+      "category": "unknown",
+      "description": "",
+      "priority": "normal",
+      "cwe_coverage": [],
+      "checks": [
+        {
+          "check": "no_main_attr",
+          "passed": true,
+          "description": "Must use #![no_main] attribute"
+        },
+        {
+          "check": "fuzz_target_macro",
+          "passed": true,
+          "description": "Must use fuzz_target! macro"
+        },
+        {
+          "check": "input_size_guard",
+          "passed": false,
+          "description": "Should have input size guard"
+        },
+        {
+          "check": "no_unwrap",
+          "passed": true,
+          "description": "Should avoid unwrap (use safe alternatives)"
+        },
+        {
+          "check": "no_panic",
+          "passed": true,
+          "description": "Should avoid explicit panics"
+        }
       ],
-      "implementation_status": "stub",
-      "lines": 19
+      "checks_passed": 4,
+      "checks_total": 5,
+      "todos": [],
+      "implementation_status": "functional",
+      "lines": 198
     }
   ],
   "corpus_strategy": {
     "approach": "deterministic",
     "description": "Each target gets hand-crafted seed inputs covering boundary conditions, typical usage, and attack patterns. Seeds are content-addressed for reproducibility.",
     "manifests": [
+      {
+        "target": "fuzz_ctype",
+        "seeds": [],
+        "count": 0
+      },
+      {
+        "target": "fuzz_dirent",
+        "seeds": [],
+        "count": 0
+      },
+      {
+        "target": "fuzz_iconv",
+        "seeds": [],
+        "count": 0
+      },
+      {
+        "target": "fuzz_inet",
+        "seeds": [],
+        "count": 0
+      },
       {
         "target": "fuzz_malloc",
         "seeds": [
@@ -303,6 +857,11 @@
         "count": 7,
         "strategy": "deterministic",
         "reproducible": true
+      },
+      {
+        "target": "fuzz_math",
+        "seeds": [],
+        "count": 0
       },
       {
         "target": "fuzz_membrane",
@@ -405,6 +964,68 @@
         "reproducible": true
       },
       {
+        "target": "fuzz_pwd_grp",
+        "seeds": [],
+        "count": 0
+      },
+      {
+        "target": "fuzz_regex",
+        "seeds": [],
+        "count": 0
+      },
+      {
+        "target": "fuzz_resolv",
+        "seeds": [],
+        "count": 0
+      },
+      {
+        "target": "fuzz_resolver",
+        "seeds": [],
+        "count": 0
+      },
+      {
+        "target": "fuzz_runtime_math",
+        "seeds": [
+          {
+            "index": 0,
+            "seed_id": "seed-154d76fb8201",
+            "size_bytes": 8,
+            "sha256_prefix": "154d76fb8201"
+          },
+          {
+            "index": 1,
+            "seed_id": "seed-cca169e9b12b",
+            "size_bytes": 8,
+            "sha256_prefix": "cca169e9b12b"
+          },
+          {
+            "index": 2,
+            "seed_id": "seed-7a9afffba5a3",
+            "size_bytes": 8,
+            "sha256_prefix": "7a9afffba5a3"
+          },
+          {
+            "index": 3,
+            "seed_id": "seed-a2e8a864e3a4",
+            "size_bytes": 8,
+            "sha256_prefix": "a2e8a864e3a4"
+          }
+        ],
+        "count": 4,
+        "strategy": "deterministic",
+        "reproducible": true
+      },
+      {
+        "target": "fuzz_scanf",
+        "seeds": [],
+        "count": 0
+      },
+      {
+        "target": "fuzz_stdlib",
+        "seeds": [],
+        "count": 0
+      },
+      {
         "target": "fuzz_string",
         "seeds": [
           {
@@ -459,6 +1080,11 @@
         "count": 8,
         "strategy": "deterministic",
         "reproducible": true
+      },
+      {
+        "target": "fuzz_time",
+        "seeds": [],
+        "count": 0
       }
     ]
   },
@@ -466,6 +1092,30 @@
     "format": "libfuzzer",
     "description": "Per-target dictionaries with domain-specific tokens to guide mutation toward high-signal inputs.",
     "manifests": [
+      {
+        "target": "fuzz_ctype",
+        "entries": [],
+        "count": 0,
+        "format": "libfuzzer"
+      },
+      {
+        "target": "fuzz_dirent",
+        "entries": [],
+        "count": 0,
+        "format": "libfuzzer"
+      },
+      {
+        "target": "fuzz_iconv",
+        "entries": [],
+        "count": 0,
+        "format": "libfuzzer"
+      },
+      {
+        "target": "fuzz_inet",
+        "entries": [],
+        "count": 0,
+        "format": "libfuzzer"
+      },
       {
         "target": "fuzz_malloc",
         "entries": [
@@ -475,6 +1125,12 @@
           "\"\\x02\\x00\\x00\\x00\""
         ],
         "count": 4,
+        "format": "libfuzzer"
+      },
+      {
+        "target": "fuzz_math",
+        "entries": [],
+        "count": 0,
         "format": "libfuzzer"
       },
       {
@@ -505,6 +1161,56 @@
         "format": "libfuzzer"
       },
       {
+        "target": "fuzz_pwd_grp",
+        "entries": [],
+        "count": 0,
+        "format": "libfuzzer"
+      },
+      {
+        "target": "fuzz_regex",
+        "entries": [],
+        "count": 0,
+        "format": "libfuzzer"
+      },
+      {
+        "target": "fuzz_resolv",
+        "entries": [],
+        "count": 0,
+        "format": "libfuzzer"
+      },
+      {
+        "target": "fuzz_resolver",
+        "entries": [],
+        "count": 0,
+        "format": "libfuzzer"
+      },
+      {
+        "target": "fuzz_runtime_math",
+        "entries": [
+          "\"strict\"",
+          "\"hardened\"",
+          "\"off\"",
+          "\"allocator\"",
+          "\"resolver\"",
+          "\"locale\"",
+          "\"runtime-math\""
+        ],
+        "count": 7,
+        "format": "libfuzzer"
+      },
+      {
+        "target": "fuzz_scanf",
+        "entries": [],
+        "count": 0,
+        "format": "libfuzzer"
+      },
+      {
+        "target": "fuzz_stdlib",
+        "entries": [],
+        "count": 0,
+        "format": "libfuzzer"
+      },
+      {
         "target": "fuzz_string",
         "entries": [
           "\"\"",
@@ -518,14 +1224,20 @@
         ],
         "count": 8,
         "format": "libfuzzer"
+      },
+      {
+        "target": "fuzz_time",
+        "entries": [],
+        "count": 0,
+        "format": "libfuzzer"
       }
     ]
   },
   "quality_checklist": {
-    "convention_compliance": "20/20 checks passed",
-    "implementation_coverage": "2/4 targets functional",
-    "corpus_seeded": "4/4 targets with seeds",
-    "dictionary_created": "4/4 targets with dictionaries",
-    "cwe_mapping": "11 CWEs covered across targets"
+    "convention_compliance": "65/85 checks passed",
+    "implementation_coverage": "17/17 targets functional",
+    "corpus_seeded": "5/17 targets with seeds",
+    "dictionary_created": "5/17 targets with dictionaries",
+    "cwe_mapping": "14 CWEs covered across targets"
   }
 }

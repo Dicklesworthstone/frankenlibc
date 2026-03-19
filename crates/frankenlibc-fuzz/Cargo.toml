@@ -93,4 +93,9 @@ name = "fuzz_pwd_grp"
 path = "fuzz_targets/fuzz_pwd_grp.rs"
 doc = false
 
+[[bin]]
+name = "fuzz_runtime_math"
+path = "fuzz_targets/fuzz_runtime_math.rs"
+doc = false
+
 [workspace]

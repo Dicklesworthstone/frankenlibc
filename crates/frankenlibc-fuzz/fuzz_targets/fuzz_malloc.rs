@@ -19,6 +19,7 @@
 use arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
 
+use frankenlibc_core::malloc::MallocState;
 use frankenlibc_membrane::arena::FreeResult;
 use frankenlibc_membrane::ptr_validator::ValidationPipeline;
 
@@ -54,6 +55,22 @@ enum AllocOp {
     Contains { index: u8 },
     /// Check arena containment for a bogus address.
     ContainsBogus { addr_lo: u32 },
+    /// Allocate through the core allocator state machine.
+    StateMalloc { size: u16 },
+    /// calloc through the core allocator state machine.
+    StateCalloc { count: u8, size: u16 },
+    /// realloc a live state allocation.
+    StateRealloc { index: u8, new_size: u16 },
+    /// realloc a foreign/unknown pointer.
+    StateReallocBogus { addr_lo: u32, new_size: u16 },
+    /// free a live state allocation.
+    StateFree { index: u8 },
+    /// free an unknown pointer in the state allocator.
+    StateFreeBogus { addr_lo: u32 },
+    /// Query allocator lookup for a live pointer.
+    StateLookup { index: u8 },
+    /// Force a calloc overflow path.
+    StateCallocOverflow,
 }
 
 /// Structured fuzz input: a sequence of allocator operations.
@@ -62,10 +79,20 @@ struct AllocFuzzInput {
     ops: Vec<AllocOp>,
 }
 
+fn synthetic_state_bogus(addr_lo: u32, state_live: &[usize]) -> usize {
+    let mut candidate = ((addr_lo as usize).wrapping_mul(4099) | 1).max(1);
+    while state_live.contains(&candidate) {
+        candidate = candidate.wrapping_add(8191).max(1);
+    }
+    candidate
+}
+
 fuzz_target!(|input: AllocFuzzInput| {
     let pipeline = ValidationPipeline::new();
+    let mut state = MallocState::new();
     let mut live: Vec<*mut u8> = Vec::new();
     let mut last_freed: Option<*mut u8> = None;
+    let mut state_live: Vec<usize> = Vec::new();
 
     let ops = &input.ops[..input.ops.len().min(MAX_OPS)];
 
@@ -206,6 +233,90 @@ fuzz_target!(|input: AllocFuzzInput| {
                 // Bogus address — should not panic
                 let _ = pipeline.arena.contains(*addr_lo as usize);
             }
+
+            AllocOp::StateMalloc { size } => {
+                if state_live.len() >= MAX_LIVE {
+                    continue;
+                }
+                let sz = (*size as usize).min(MAX_ALLOC);
+                if let Some(ptr) = state.malloc(sz) {
+                    state_live.push(ptr);
+                    assert!(state.lookup(ptr).is_some());
+                }
+            }
+
+            AllocOp::StateCalloc { count, size } => {
+                if state_live.len() >= MAX_LIVE {
+                    continue;
+                }
+                let ct = (*count as usize).max(1);
+                let sz = (*size as usize).min(MAX_ALLOC / ct.max(1));
+                if let Some(ptr) = state.calloc(ct, sz) {
+                    state_live.push(ptr);
+                    assert!(state.lookup(ptr).is_some());
+                }
+            }
+
+            AllocOp::StateRealloc { index, new_size } => {
+                if state_live.is_empty() {
+                    continue;
+                }
+                let idx = (*index as usize) % state_live.len();
+                let old_ptr = state_live[idx];
+                let requested = (*new_size as usize).min(MAX_ALLOC);
+                if let Some(new_ptr) = state.realloc(old_ptr, requested) {
+                    state_live[idx] = new_ptr;
+                    let expected_size = requested.max(1);
+                    assert_eq!(state.lookup(new_ptr), Some(expected_size));
+                } else if state.lookup(old_ptr).is_none() {
+                    state_live.swap_remove(idx);
+                }
+            }
+
+            AllocOp::StateReallocBogus { addr_lo, new_size } => {
+                if state_live.len() >= MAX_LIVE {
+                    continue;
+                }
+                let bogus = synthetic_state_bogus(*addr_lo, &state_live);
+                let requested = (*new_size as usize).min(MAX_ALLOC);
+                if let Some(new_ptr) = state.realloc(bogus, requested) {
+                    state_live.push(new_ptr);
+                    assert_eq!(state.lookup(new_ptr), Some(requested.max(1)));
+                }
+            }
+
+            AllocOp::StateFree { index } => {
+                if state_live.is_empty() {
+                    continue;
+                }
+                let idx = (*index as usize) % state_live.len();
+                let ptr = state_live.swap_remove(idx);
+                state.free(ptr);
+                assert!(state.lookup(ptr).is_none());
+            }
+
+            AllocOp::StateFreeBogus { addr_lo } => {
+                state.free(synthetic_state_bogus(*addr_lo, &state_live));
+            }
+
+            AllocOp::StateLookup { index } => {
+                if state_live.is_empty() {
+                    continue;
+                }
+                let idx = (*index as usize) % state_live.len();
+                let ptr = state_live[idx];
+                assert!(state.lookup(ptr).is_some());
+            }
+
+            AllocOp::StateCallocOverflow => {
+                let _ = state.calloc(usize::MAX, 2);
+            }
+        }
+
+        let expected_total = state_live.len();
+        assert_eq!(state.active_count(), expected_total);
+        for ptr in &state_live {
+            assert!(state.lookup(*ptr).is_some());
         }
     }
 
@@ -219,4 +330,10 @@ fuzz_target!(|input: AllocFuzzInput| {
             }
         }
     }
+
+    for ptr in &state_live {
+        state.free(*ptr);
+        assert!(state.lookup(*ptr).is_none());
+    }
+    assert_eq!(state.active_count(), 0);
 });

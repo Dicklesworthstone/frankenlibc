@@ -6,11 +6,13 @@
 #
 # Usage:
 #   scripts/fuzz_nightly.sh [--duration SECS] [--fail-on-crash] [--artifacts-dir DIR]
+#                            [--target-group all|phase1|phase2]
 #
 # Environment:
 #   FUZZ_DURATION     - Per-target duration in seconds (default: 60)
 #   FUZZ_FAIL_CRASH   - Exit non-zero if any crash found (default: 1)
 #   FUZZ_ARTIFACTS    - Directory for crash artifacts (default: artifacts/fuzz)
+#   FUZZ_TARGET_GROUP - all | phase1 | phase2 (default: all)
 #
 # Bead: bd-1oz.7
 
@@ -24,9 +26,10 @@ FUZZ_DIR="crates/frankenlibc-fuzz"
 DURATION="${FUZZ_DURATION:-60}"
 FAIL_ON_CRASH="${FUZZ_FAIL_CRASH:-1}"
 ARTIFACTS_DIR="${FUZZ_ARTIFACTS:-artifacts/fuzz}"
+TARGET_GROUP="${FUZZ_TARGET_GROUP:-all}"
 
 # All registered fuzz targets
-TARGETS=(
+ALL_TARGETS=(
     fuzz_string
     fuzz_malloc
     fuzz_membrane
@@ -43,6 +46,21 @@ TARGETS=(
     fuzz_dirent
     fuzz_resolv
     fuzz_pwd_grp
+    fuzz_runtime_math
+)
+
+PHASE1_TARGETS=(
+    fuzz_string
+    fuzz_malloc
+    fuzz_membrane
+    fuzz_printf
+)
+
+PHASE2_TARGETS=(
+    fuzz_resolver
+    fuzz_resolv
+    fuzz_iconv
+    fuzz_runtime_math
 )
 
 # Parse CLI arguments
@@ -64,12 +82,32 @@ while [[ $# -gt 0 ]]; do
             ARTIFACTS_DIR="$2"
             shift 2
             ;;
+        --target-group)
+            TARGET_GROUP="$2"
+            shift 2
+            ;;
         *)
             echo "Unknown option: $1" >&2
             exit 2
             ;;
     esac
 done
+
+case "${TARGET_GROUP}" in
+    all)
+        TARGETS=("${ALL_TARGETS[@]}")
+        ;;
+    phase1)
+        TARGETS=("${PHASE1_TARGETS[@]}")
+        ;;
+    phase2)
+        TARGETS=("${PHASE2_TARGETS[@]}")
+        ;;
+    *)
+        echo "Unknown target group: ${TARGET_GROUP}" >&2
+        exit 2
+        ;;
+esac
 
 # ---------------------------------------------------------------------------
 # Setup
@@ -78,6 +116,7 @@ done
 echo "=== FrankenLibC Nightly Fuzz Campaign ==="
 echo "  Duration per target: ${DURATION}s"
 echo "  Targets: ${#TARGETS[@]}"
+echo "  Target group: ${TARGET_GROUP}"
 echo "  Artifacts: ${ARTIFACTS_DIR}"
 echo "  Fail on crash: ${FAIL_ON_CRASH}"
 echo ""
@@ -109,6 +148,7 @@ if ! command -v cargo-fuzz &>/dev/null; then
 {
     "run_id": "${RUN_ID}",
     "mode": "build-check-only",
+    "target_group": "${TARGET_GROUP}",
     "targets": ${#TARGETS[@]},
     "duration_per_target": ${DURATION},
     "total_crashes": 0,
@@ -179,6 +219,7 @@ cat > "${ARTIFACTS_DIR}/${RUN_ID}-summary.json" <<ENDJSON
 {
     "run_id": "${RUN_ID}",
     "mode": "full",
+    "target_group": "${TARGET_GROUP}",
     "targets": ${TOTAL_RUNS},
     "duration_per_target": ${DURATION},
     "total_crashes": ${TOTAL_CRASHES},

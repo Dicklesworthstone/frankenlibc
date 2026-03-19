@@ -1,0 +1,103 @@
+# Transparent Safety Membrane — Service Level Objectives
+#
+# These budgets define the performance and reliability contracts for the
+# membrane when used as a standalone safety wrapper. They apply to both
+# the data plane (per-call validation) and the decision plane (healing/routing).
+#
+# Reference: AGENTS.md "Performance Targets" section.
+
+schema_version: "1.0"
+component: "frankenlibc-membrane"
+
+data_plane:
+  # Per-call validation overhead budgets.
+  strict_mode:
+    description: "Strict mode: validate only, no healing"
+    p50_ns: 15
+    p95_ns: 20
+    p99_ns: 50
+    max_ns: 200
+    budget_label: "<20ns/call target from AGENTS.md"
+
+  hardened_mode:
+    description: "Hardened mode: validate + heal"
+    p50_ns: 100
+    p95_ns: 200
+    p99_ns: 500
+    max_ns: 2000
+    budget_label: "<200ns/call target from AGENTS.md"
+
+  pipeline_stages:
+    null_check:
+      budget_ns: 1
+      description: "Trivial null/immediate-fail check"
+    tls_cache:
+      budget_ns: 5
+      description: "Thread-local validation cache lookup"
+    bloom_filter:
+      budget_ns: 10
+      description: "Bloom filter pointer ownership pre-check"
+    arena_lookup:
+      budget_ns: 30
+      description: "Generational arena metadata lookup"
+    fingerprint_check:
+      budget_ns: 20
+      description: "SipHash fingerprint integrity verification"
+    canary_check:
+      budget_ns: 10
+      description: "Trailing canary buffer overflow detection"
+    bounds_check:
+      budget_ns: 5
+      description: "Allocation bounds policy check"
+
+decision_plane:
+  # Healing/routing decision budgets.
+  healing_decision:
+    description: "Time to select and apply a healing action"
+    budget_ns: 50
+    max_ns: 500
+
+  runtime_math_kernel:
+    description: "Runtime math kernel decision (risk/bandit/control)"
+    budget_ns: 100
+    max_ns: 1000
+
+reliability:
+  # Correctness guarantees.
+  undetected_corruption_probability: "2^-64"
+  description: "SipHash collision probability bound"
+
+  uaf_detection_probability: 1.0
+  uaf_description: "Generation counters detect use-after-free with P=1"
+
+  buffer_overflow_miss_probability: "2^-64"
+  overflow_description: "Trailing canary miss probability"
+
+  healing_completeness: 1.0
+  healing_description: "Every libc function has defined healing for every invalid input class"
+
+observability:
+  # Evidence and metrics contracts.
+  evidence_ledger:
+    capacity: 4096
+    description: "Ring buffer retains last 4096 evidence records"
+    export_formats:
+      - "jsonl"
+      - "otlp_stub"
+    redaction_default: "redact_pointers"
+
+  metrics:
+    counters: 14
+    description: "Atomic counters for all pipeline stages + healing actions"
+    snapshot_format: "jsonl"
+
+  structured_logging:
+    required_fields:
+      - "timestamp"
+      - "trace_id"
+      - "decision_id"
+      - "schema_version"
+      - "level"
+      - "mode"
+      - "api_family"
+      - "outcome"

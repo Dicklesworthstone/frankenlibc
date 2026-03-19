@@ -1,0 +1,419 @@
+{
+  "schema_version": "v1",
+  "bead": "bd-1oz.7",
+  "generated_at": "2026-03-18T22:57:28Z",
+  "summary": {
+    "phase": 2,
+    "total_targets": 4,
+    "functional_targets": 4,
+    "smoke_viable_targets": 4,
+    "average_readiness_score": 98.5,
+    "total_symbols_covered": 14,
+    "total_cwes_targeted": 8,
+    "transition_families_covered": 3,
+    "nightly_policy_checks": 6
+  },
+  "target_assessments": [
+    {
+      "target": "fuzz_resolver",
+      "family": "resolver",
+      "transition_family": "resolver",
+      "attack_surface": "dns-packet, name-compression, resolv-conf, parser-state",
+      "cwe_targets": [
+        "CWE-20",
+        "CWE-400",
+        "CWE-787"
+      ],
+      "source_analysis": {
+        "source_exists": true,
+        "total_lines": 247,
+        "logic_lines": 163,
+        "todo_count": 0,
+        "todos": [],
+        "uses_frankenlibc_crates": true,
+        "has_size_guard": true,
+        "has_iteration": true,
+        "has_determinism_check": true,
+        "has_transition_logic": true,
+        "ready": true
+      },
+      "symbol_coverage": {
+        "target_symbols": [
+          "res_mkquery",
+          "res_nclose",
+          "res_ninit",
+          "res_send"
+        ],
+        "available_symbols": [
+          "__h_errno_location",
+          "freeaddrinfo",
+          "gai_strerror",
+          "getaddrinfo",
+          "gethostbyaddr",
+          "gethostbyaddr_r",
+          "gethostbyname",
+          "gethostbyname_r",
+          "getnameinfo",
+          "getprotobyname",
+          "getprotobynumber",
+          "getservbyname",
+          "getservbyname_r",
+          "getservbyport",
+          "getservbyport_r",
+          "htonl",
+          "htons",
+          "if_freenameindex",
+          "if_indextoname",
+          "if_nameindex",
+          "if_nametoindex",
+          "inet_addr",
+          "inet_aton",
+          "inet_ntoa",
+          "inet_ntop",
+          "inet_pton",
+          "ntohl",
+          "ntohs"
+        ],
+        "covered_count": 0,
+        "available_count": 28,
+        "coverage_pct": 0.0,
+        "uncovered": [
+          "__h_errno_location",
+          "freeaddrinfo",
+          "gai_strerror",
+          "getaddrinfo",
+          "gethostbyaddr",
+          "gethostbyaddr_r",
+          "gethostbyname",
+          "gethostbyname_r",
+          "getnameinfo",
+          "getprotobyname",
+          "getprotobynumber",
+          "getservbyname",
+          "getservbyname_r",
+          "getservbyport",
+          "getservbyport_r",
+          "htonl",
+          "htons",
+          "if_freenameindex",
+          "if_indextoname",
+          "if_nameindex",
+          "if_nametoindex",
+          "inet_addr",
+          "inet_aton",
+          "inet_ntoa",
+          "inet_ntop",
+          "inet_pton",
+          "ntohl",
+          "ntohs"
+        ]
+      },
+      "readiness_score": 95,
+      "implementation_status": "functional",
+      "smoke_viable": true
+    },
+    {
+      "target": "fuzz_resolv",
+      "family": "resolver",
+      "transition_family": "resolver",
+      "attack_surface": "hosts-services parsing, addrinfo branching, lookup determinism",
+      "cwe_targets": [
+        "CWE-20",
+        "CWE-125",
+        "CWE-400"
+      ],
+      "source_analysis": {
+        "source_exists": true,
+        "total_lines": 150,
+        "logic_lines": 115,
+        "todo_count": 0,
+        "todos": [],
+        "uses_frankenlibc_crates": true,
+        "has_size_guard": true,
+        "has_iteration": true,
+        "has_determinism_check": true,
+        "has_transition_logic": true,
+        "ready": true
+      },
+      "symbol_coverage": {
+        "target_symbols": [
+          "getaddrinfo",
+          "getnameinfo",
+          "lookup_hosts",
+          "lookup_service"
+        ],
+        "available_symbols": [
+          "__h_errno_location",
+          "freeaddrinfo",
+          "gai_strerror",
+          "getaddrinfo",
+          "gethostbyaddr",
+          "gethostbyaddr_r",
+          "gethostbyname",
+          "gethostbyname_r",
+          "getnameinfo",
+          "getprotobyname",
+          "getprotobynumber",
+          "getservbyname",
+          "getservbyname_r",
+          "getservbyport",
+          "getservbyport_r",
+          "htonl",
+          "htons",
+          "if_freenameindex",
+          "if_indextoname",
+          "if_nameindex",
+          "if_nametoindex",
+          "inet_addr",
+          "inet_aton",
+          "inet_ntoa",
+          "inet_ntop",
+          "inet_pton",
+          "ntohl",
+          "ntohs"
+        ],
+        "covered_count": 2,
+        "available_count": 28,
+        "coverage_pct": 7.1,
+        "uncovered": [
+          "__h_errno_location",
+          "freeaddrinfo",
+          "gai_strerror",
+          "gethostbyaddr",
+          "gethostbyaddr_r",
+          "gethostbyname",
+          "gethostbyname_r",
+          "getprotobyname",
+          "getprotobynumber",
+          "getservbyname",
+          "getservbyname_r",
+          "getservbyport",
+          "getservbyport_r",
+          "htonl",
+          "htons",
+          "if_freenameindex",
+          "if_indextoname",
+          "if_nameindex",
+          "if_nametoindex",
+          "inet_addr",
+          "inet_aton",
+          "inet_ntoa",
+          "inet_ntop",
+          "inet_pton",
+          "ntohl",
+          "ntohs"
+        ]
+      },
+      "readiness_score": 99,
+      "implementation_status": "functional",
+      "smoke_viable": true
+    },
+    {
+      "target": "fuzz_iconv",
+      "family": "locale",
+      "transition_family": "locale",
+      "attack_surface": "codec dispatch, invalid descriptors, conversion-state drift",
+      "cwe_targets": [
+        "CWE-190",
+        "CWE-400",
+        "CWE-787"
+      ],
+      "source_analysis": {
+        "source_exists": true,
+        "total_lines": 116,
+        "logic_lines": 86,
+        "todo_count": 0,
+        "todos": [],
+        "uses_frankenlibc_crates": true,
+        "has_size_guard": true,
+        "has_iteration": true,
+        "has_determinism_check": true,
+        "has_transition_logic": true,
+        "ready": true
+      },
+      "symbol_coverage": {
+        "target_symbols": [
+          "iconv",
+          "iconv_close",
+          "iconv_open"
+        ],
+        "available_symbols": [
+          "bindtextdomain",
+          "catclose",
+          "catgets",
+          "catopen",
+          "dgettext",
+          "duplocale",
+          "freelocale",
+          "gettext",
+          "iconv",
+          "iconv_close",
+          "iconv_open",
+          "localeconv",
+          "newlocale",
+          "ngettext",
+          "nl_langinfo",
+          "nl_langinfo_l",
+          "setlocale",
+          "textdomain",
+          "uselocale"
+        ],
+        "covered_count": 3,
+        "available_count": 19,
+        "coverage_pct": 15.8,
+        "uncovered": [
+          "bindtextdomain",
+          "catclose",
+          "catgets",
+          "catopen",
+          "dgettext",
+          "duplocale",
+          "freelocale",
+          "gettext",
+          "localeconv",
+          "newlocale",
+          "ngettext",
+          "nl_langinfo",
+          "nl_langinfo_l",
+          "setlocale",
+          "textdomain",
+          "uselocale"
+        ]
+      },
+      "readiness_score": 100,
+      "implementation_status": "functional",
+      "smoke_viable": true
+    },
+    {
+      "target": "fuzz_runtime_math",
+      "family": "runtime_math",
+      "transition_family": "runtime-math",
+      "attack_surface": "mode switching, risk thresholds, controller-state transitions",
+      "cwe_targets": [
+        "CWE-670",
+        "CWE-682",
+        "CWE-835"
+      ],
+      "source_analysis": {
+        "source_exists": true,
+        "total_lines": 128,
+        "logic_lines": 109,
+        "todo_count": 0,
+        "todos": [],
+        "uses_frankenlibc_crates": true,
+        "has_size_guard": true,
+        "has_iteration": true,
+        "has_determinism_check": true,
+        "has_transition_logic": true,
+        "ready": true
+      },
+      "symbol_coverage": {
+        "target_symbols": [
+          "RuntimeMathKernel::decide",
+          "RuntimeMathKernel::observe_validation_result",
+          "runtime_policy::decide"
+        ],
+        "available_symbols": [
+          "RuntimeMathKernel::decide",
+          "RuntimeMathKernel::observe_validation_result",
+          "runtime_policy::decide"
+        ],
+        "covered_count": 3,
+        "available_count": 3,
+        "coverage_pct": 100.0,
+        "uncovered": []
+      },
+      "readiness_score": 100,
+      "implementation_status": "functional",
+      "smoke_viable": true
+    }
+  ],
+  "smoke_test_configs": {
+    "fuzz_resolver": {
+      "max_total_time_secs": 45,
+      "runs": 20000,
+      "expected_outcome": "no_crash"
+    },
+    "fuzz_resolv": {
+      "max_total_time_secs": 45,
+      "runs": 20000,
+      "expected_outcome": "no_crash"
+    },
+    "fuzz_iconv": {
+      "max_total_time_secs": 45,
+      "runs": 20000,
+      "expected_outcome": "no_crash"
+    },
+    "fuzz_runtime_math": {
+      "max_total_time_secs": 45,
+      "runs": 25000,
+      "expected_outcome": "no_crash"
+    }
+  },
+  "nightly_policy": {
+    "target_group": "phase2",
+    "runs_per_target": 1000000,
+    "timeout_seconds": 1800,
+    "max_crashes": 0,
+    "required_targets": [
+      "fuzz_resolver",
+      "fuzz_resolv",
+      "fuzz_iconv",
+      "fuzz_runtime_math"
+    ],
+    "required_transition_families": [
+      "resolver",
+      "locale",
+      "runtime-math"
+    ],
+    "risk_thresholds": {
+      "crash_regression": "fail_on_any_new_crash",
+      "missing_target_execution": "fail",
+      "missing_transition_family": "fail"
+    },
+    "coverage_thresholds": {
+      "min_phase2_targets": 4,
+      "min_transition_families": 3,
+      "min_symbol_coverage": 10
+    },
+    "artifacts": [
+      "artifacts/ci/fuzz-runs/*.log",
+      "artifacts/ci/fuzz-summary.v1.json",
+      "tests/conformance/fuzz_phase2_targets.v1.json"
+    ]
+  },
+  "coverage_summary": {
+    "all_symbols": [
+      "RuntimeMathKernel::decide",
+      "RuntimeMathKernel::observe_validation_result",
+      "getaddrinfo",
+      "getnameinfo",
+      "iconv",
+      "iconv_close",
+      "iconv_open",
+      "lookup_hosts",
+      "lookup_service",
+      "res_mkquery",
+      "res_nclose",
+      "res_ninit",
+      "res_send",
+      "runtime_policy::decide"
+    ],
+    "all_cwes": [
+      "CWE-125",
+      "CWE-190",
+      "CWE-20",
+      "CWE-400",
+      "CWE-670",
+      "CWE-682",
+      "CWE-787",
+      "CWE-835"
+    ],
+    "transition_families": [
+      "locale",
+      "resolver",
+      "runtime-math"
+    ]
+  },
+  "validation_hash": "70a602ce7d42783e"
+}

@@ -760,7 +760,7 @@ impl ValidationPipeline {
                             state,
                             cv.user_base,
                             remaining,
-                            u64::from(cv.generation),
+                            cv.generation,
                         );
                         self.runtime_math.note_check_order_outcome(
                             mode,

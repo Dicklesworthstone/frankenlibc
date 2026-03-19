@@ -34,6 +34,7 @@ pub mod check_oracle;
 pub mod config;
 pub mod decision_contract;
 pub mod ebr;
+pub mod evidence_ledger;
 pub mod fingerprint;
 pub mod flat_combining;
 pub mod galois;
@@ -67,6 +68,10 @@ pub use config::SafetyLevel;
 pub use decision_contract::{
     DecisionAction as DecisionContractAction, DecisionContractMachine,
     DecisionEvent as DecisionContractEvent, DecisionTransition, TsmState,
+};
+pub use evidence_ledger::{
+    EvidenceCategory, EvidenceLedger, EvidenceLevel, EvidenceRecord, OtlpExportSummary,
+    RedactionPolicy, ValidationEvidence, global_evidence_ledger,
 };
 pub use heal::{HealingAction, HealingPolicy};
 pub use ids::{DecisionId, MEMBRANE_SCHEMA_VERSION, PolicyId, SchemaVersion, TraceId};
