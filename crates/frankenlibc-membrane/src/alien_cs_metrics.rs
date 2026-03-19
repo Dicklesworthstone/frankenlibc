@@ -17,7 +17,33 @@ use crate::ids::{DecisionId, MEMBRANE_SCHEMA_VERSION, TraceId};
 use crate::seqlock::SeqLockDiagnostics;
 use std::fmt::Write as _;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::OnceLock;
 use std::time::Instant;
+
+// ──────────────── Global Metric Ring ────────────────
+
+/// Default capacity for the global alien CS metric ring.
+const GLOBAL_RING_CAPACITY: usize = 4096;
+
+static GLOBAL_ALIEN_CS_RING: OnceLock<MetricRing> = OnceLock::new();
+
+/// Access the global alien CS metric ring.
+///
+/// This is the shared emission target for all concurrency primitives.
+/// Zero-overhead when no consumer reads the ring.
+pub fn global_alien_cs_ring() -> &'static MetricRing {
+    GLOBAL_ALIEN_CS_RING.get_or_init(|| MetricRing::new(GLOBAL_RING_CAPACITY))
+}
+
+/// Emit a metric event to the global alien CS ring.
+///
+/// This is the hot-path emission point. The only cost when no
+/// consumer is attached is a single atomic increment + lock acquisition
+/// on the ring's internal mutex.
+#[inline]
+pub fn emit_alien_cs_event(kind: MetricEventKind, value: u64, concept: &'static str) {
+    global_alien_cs_ring().emit(kind, value, concept);
+}
 
 /// Unified diagnostics snapshot across all four Alien CS concepts.
 #[derive(Debug, Clone)]

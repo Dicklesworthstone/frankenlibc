@@ -2,12 +2,14 @@
 //!
 //! Implements `<iconv.h>` functions for converting between character encodings.
 
+use crate::errno;
+
 /// Core iconv error code: output buffer has insufficient capacity.
-pub const ICONV_E2BIG: i32 = 7;
+pub const ICONV_E2BIG: i32 = errno::E2BIG;
 /// Core iconv error code: invalid multibyte sequence encountered.
-pub const ICONV_EILSEQ: i32 = 84;
+pub const ICONV_EILSEQ: i32 = errno::EILSEQ;
 /// Core iconv error code: incomplete multibyte sequence at end of input.
-pub const ICONV_EINVAL: i32 = 22;
+pub const ICONV_EINVAL: i32 = errno::EINVAL;
 
 /// Dispatch classification for codec lookup in the phase-1 runtime table.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -472,7 +474,7 @@ pub fn iconv_open_detailed(
         IconvDescriptor {
             from,
             to,
-            emit_bom: matches!(to, Encoding::Utf32),
+            emit_bom: matches!(to, Encoding::Utf16Le | Encoding::Utf32),
         },
         dispatch,
     ))
@@ -494,28 +496,47 @@ pub fn iconv_open(tocode: &[u8], fromcode: &[u8]) -> Option<IconvDescriptor> {
 /// Returns deterministic conversion progress and either success or errno-style failure.
 pub fn iconv(
     cd: &mut IconvDescriptor,
-    inbuf: &[u8],
+    inbuf: Option<&[u8]>,
     outbuf: &mut [u8],
 ) -> Result<IconvResult, IconvError> {
     let mut in_pos = 0usize;
     let mut out_pos = 0usize;
     let non_reversible = 0usize;
 
-    if cd.emit_bom {
-        if outbuf.len() < 4 {
-            return Err(IconvError {
-                code: ICONV_E2BIG,
+    // Standard iconv reset behavior: if inbuf is None, reset shift state and
+    // potentially emit a Byte Order Mark if the destination encoding requires it.
+    let input = match inbuf {
+        Some(b) => b,
+        None => {
+            if cd.emit_bom {
+                let bom = match cd.to {
+                    Encoding::Utf16Le => &[0xFF, 0xFE][..],
+                    Encoding::Utf32 => &[0xFF, 0xFE, 0x00, 0x00][..],
+                    _ => &[][..],
+                };
+                if !bom.is_empty() {
+                    if outbuf.len() < bom.len() {
+                        return Err(IconvError {
+                            code: ICONV_E2BIG,
+                            in_consumed: 0,
+                            out_written: 0,
+                        });
+                    }
+                    outbuf[..bom.len()].copy_from_slice(bom);
+                    out_pos = bom.len();
+                }
+                cd.emit_bom = false;
+            }
+            return Ok(IconvResult {
+                non_reversible,
                 in_consumed: 0,
-                out_written: 0,
+                out_written: out_pos,
             });
         }
-        outbuf[..4].copy_from_slice(&[0xFF, 0xFE, 0x00, 0x00]);
-        out_pos = 4;
-        cd.emit_bom = false;
-    }
+    };
 
-    while in_pos < inbuf.len() {
-        let (ch, consumed) = match decode_char(cd.from, &inbuf[in_pos..]) {
+    while in_pos < input.len() {
+        let (ch, consumed) = match decode_char(cd.from, &input[in_pos..]) {
             Ok(v) => v,
             Err(DecodeError::Incomplete) => {
                 return Err(IconvError {

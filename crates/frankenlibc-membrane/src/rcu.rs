@@ -79,7 +79,12 @@ impl<T> RcuCell<T> {
         let mut guard = self.current.lock();
         *guard = Arc::new(new_value);
         // Release ensures the new Arc contents are visible before epoch is bumped.
-        self.epoch.fetch_add(1, Ordering::Release);
+        let new_epoch = self.epoch.fetch_add(1, Ordering::Release) + 1;
+        crate::alien_cs_metrics::emit_alien_cs_event(
+            crate::alien_cs_metrics::MetricEventKind::RcuUpdate,
+            new_epoch,
+            "rcu",
+        );
     }
 
     /// Update the shared state using a closure that receives the current value.

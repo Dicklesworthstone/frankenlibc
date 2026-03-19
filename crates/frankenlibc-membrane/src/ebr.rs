@@ -143,6 +143,13 @@ impl EbrCollector {
             let new_epoch = current + 1;
             self.global_epoch.store(new_epoch, Ordering::Release);
 
+            // Emit epoch advance event.
+            crate::alien_cs_metrics::emit_alien_cs_event(
+                crate::alien_cs_metrics::MetricEventKind::EbrEpochAdvance,
+                new_epoch,
+                "ebr",
+            );
+
             // Reclaim garbage from two epochs ago.
             let reclaim_bucket = (current % 3) as usize;
 
@@ -160,8 +167,22 @@ impl EbrCollector {
             }
             self.total_reclaimed.fetch_add(count, Ordering::Relaxed);
 
+            if count > 0 {
+                crate::alien_cs_metrics::emit_alien_cs_event(
+                    crate::alien_cs_metrics::MetricEventKind::EbrReclaim,
+                    count,
+                    "ebr",
+                );
+            }
+
             Some(new_epoch)
         } else {
+            // Grace period delayed — pinned threads blocking advance.
+            crate::alien_cs_metrics::emit_alien_cs_event(
+                crate::alien_cs_metrics::MetricEventKind::EbrGracePeriodDelay,
+                current,
+                "ebr",
+            );
             None
         }
     }

@@ -49,6 +49,7 @@ pub const ENOTEMPTY: i32 = 39;
 pub const ELOOP: i32 = 40;
 pub const ENAMETOOLONG: i32 = 36;
 pub const EOVERFLOW: i32 = 75;
+pub const EILSEQ: i32 = 84;
 pub const EAFNOSUPPORT: i32 = 97;
 pub const EADDRINUSE: i32 = 98;
 pub const EADDRNOTAVAIL: i32 = 99;
@@ -111,6 +112,7 @@ pub fn strerror_message(errnum: i32) -> &'static str {
         ENOTEMPTY => "Directory not empty",
         ELOOP => "Too many levels of symbolic links",
         EOVERFLOW => "Value too large for defined data type",
+        EILSEQ => "Invalid or incomplete multibyte or wide character",
         EAFNOSUPPORT => "Address family not supported by protocol",
         EADDRINUSE => "Address already in use",
         EADDRNOTAVAIL => "Cannot assign requested address",
