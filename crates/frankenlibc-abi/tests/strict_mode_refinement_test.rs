@@ -419,15 +419,12 @@ fn tsm_transparency_deterministic_outputs() {
     // Run the same operations 100 times and verify identical results
     for _ in 0..100 {
         // strlen
-        assert_eq!(unsafe { strlen(b"test\0".as_ptr() as *const c_char) }, 4);
+        assert_eq!(unsafe { strlen(c"test".as_ptr()) }, 4);
 
         // strcmp
         assert_eq!(
             unsafe {
-                strcmp(
-                    b"abc\0".as_ptr() as *const c_char,
-                    b"abc\0".as_ptr() as *const c_char,
-                )
+                strcmp(c"abc".as_ptr(), c"abc".as_ptr())
             },
             0
         );

@@ -390,21 +390,18 @@ fn safety_concurrent_recording_preserves_count_integrity() {
 #[test]
 fn valid_inputs_pass_through_without_healing() {
     use frankenlibc_abi::string_abi::{memcpy, memset, strcmp, strlen};
-    use std::ffi::{c_char, c_int};
+    use std::ffi::c_int;
 
     // All valid operations should produce correct results
     // with no healing interference
 
     // strlen on valid string
-    let len = unsafe { strlen(b"hello world\0".as_ptr() as *const c_char) };
+    let len = unsafe { strlen(c"hello world".as_ptr()) };
     assert_eq!(len, 11);
 
     // strcmp on valid strings
     let cmp = unsafe {
-        strcmp(
-            b"abc\0".as_ptr() as *const c_char,
-            b"abc\0".as_ptr() as *const c_char,
-        )
+        strcmp(c"abc".as_ptr(), c"abc".as_ptr())
     };
     assert_eq!(cmp, 0);
 

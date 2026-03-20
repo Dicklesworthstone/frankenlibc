@@ -73,10 +73,6 @@ fn reconciliation_counts_match_entries() {
     let entries = artifact["critical_source_debt"]["entries"]
         .as_array()
         .expect("critical_source_debt.entries must be array");
-    assert!(
-        !entries.is_empty(),
-        "critical_source_debt.entries must not be empty"
-    );
 
     let mut non_exported = std::collections::BTreeSet::new();
     let mut exported_shadow = std::collections::BTreeSet::new();

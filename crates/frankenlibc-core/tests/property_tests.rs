@@ -452,7 +452,7 @@ mod ctype_properties {
         /// is_digit only for '0'..'9'
         #[test]
         fn prop_digit_is_ascii_digit(c in any::<u8>()) {
-            prop_assert_eq!(is_digit(c), c >= b'0' && c <= b'9');
+            prop_assert_eq!(is_digit(c), c.is_ascii_digit());
         }
     }
 }

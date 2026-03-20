@@ -13,6 +13,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 fn workspace_root() -> PathBuf {
     let manifest = env!("CARGO_MANIFEST_DIR");
@@ -276,4 +277,20 @@ fn gate_script_exists_and_executable() {
             "check_stub_priority.sh must be executable"
         );
     }
+}
+
+#[test]
+fn gate_script_passes() {
+    let root = workspace_root();
+    let script = root.join("scripts/check_stub_priority.sh");
+    let output = Command::new(&script)
+        .current_dir(&root)
+        .output()
+        .expect("failed to run stub priority gate");
+    assert!(
+        output.status.success(),
+        "stub priority gate failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
