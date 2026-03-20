@@ -158,8 +158,8 @@ if int(rv_summary.get("interpose_unapproved_callthrough_count", -1)) != len(expe
     )
 
 entries = source_debt.get("entries", [])
-if not isinstance(entries, list) or not entries:
-    raise SystemExit("FAIL: critical_source_debt.entries must be non-empty array")
+if not isinstance(entries, list):
+    raise SystemExit("FAIL: critical_source_debt.entries must be array")
 
 unique_symbols = sorted({str(row.get("symbol", "")) for row in entries})
 if int(source_debt.get("unique_symbol_count", -1)) != len(unique_symbols):

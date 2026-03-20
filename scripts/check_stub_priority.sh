@@ -15,6 +15,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+GEN="${ROOT}/scripts/generate_stub_priority_ranking.py"
 RANKING="${ROOT}/tests/conformance/stub_priority_ranking.json"
 MATRIX="${ROOT}/support_matrix.json"
 WORKLOADS="${ROOT}/tests/conformance/workload_matrix.json"
@@ -22,6 +23,28 @@ WORKLOADS="${ROOT}/tests/conformance/workload_matrix.json"
 failures=0
 
 echo "=== Stub Priority Ranking Gate (bd-4ia) ==="
+echo ""
+
+# ---------------------------------------------------------------------------
+# Check 0: Artifact reproducibility
+# ---------------------------------------------------------------------------
+echo "--- Check 0: Artifact reproducibility ---"
+
+if [[ ! -f "${GEN}" ]]; then
+    echo "FAIL: scripts/generate_stub_priority_ranking.py not found"
+    failures=$((failures + 1))
+else
+    if python3 "${GEN}" \
+        --support-matrix "${MATRIX}" \
+        --workload-matrix "${WORKLOADS}" \
+        --output "${RANKING}" \
+        --check; then
+        echo "PASS: stub_priority_ranking.json is reproducible from support_matrix/workload_matrix"
+    else
+        echo "FAIL: stub_priority_ranking.json is stale or generator drifted"
+        failures=$((failures + 1))
+    fi
+fi
 echo ""
 
 # ---------------------------------------------------------------------------
