@@ -33,8 +33,10 @@ spec.loader.exec_module(pbv_mod)  # type: ignore[union-attr]
 ObligationViolation = pbv_mod.ObligationViolation
 ObligationStatus = pbv_mod.ObligationStatus
 BinderValidationReport = pbv_mod.BinderValidationReport
+CounterexampleWitness = pbv_mod.CounterexampleWitness
 validate_obligation = pbv_mod.validate_obligation
 validate_binder = pbv_mod.validate_binder
+build_counterexample_witness = pbv_mod.build_counterexample_witness
 file_sha256 = pbv_mod.file_sha256
 parse_source_ref = pbv_mod.parse_source_ref
 
@@ -358,26 +360,92 @@ class TestBinderValidationReport(unittest.TestCase):
             obligation_id="PO-01", statement="Test", category="core",
             evidence_found=1, gates_found=1,
         )
+        ce = CounterexampleWitness(
+            counterexample_id="CE-PO-01",
+            obligation_id="PO-01",
+            statement="Test",
+            category="core",
+            primary_violation_code="EVIDENCE_MISSING",
+            primary_message="missing",
+            remediation_hint="fix it",
+            reproduction_command="python3 scripts/gentoo/proof_binder_validator.py",
+        )
         report = BinderValidationReport(
             obligations=[o],
+            counterexamples=[ce],
             timestamp="2025-01-01T00:00:00Z",
         )
         d = report.to_dict()
         self.assertEqual(d["total_obligations"], 1)
         self.assertEqual(d["valid_obligations"], 1)
         self.assertTrue(d["binder_valid"])
+        self.assertEqual(len(d["counterexamples"]), 1)
 
     def test_markdown(self) -> None:
         o = ObligationStatus(
             obligation_id="PO-01", statement="Test theorem", category="core",
+            valid=False,
+            violations=[ObligationViolation("PO-01", "EVIDENCE_MISSING", "missing")],
+        )
+        ce = CounterexampleWitness(
+            counterexample_id="CE-PO-01",
+            obligation_id="PO-01",
+            statement="Test theorem",
+            category="core",
+            primary_violation_code="EVIDENCE_MISSING",
+            primary_message="missing",
+            remediation_hint="create artifact",
+            reproduction_command="python3 scripts/gentoo/proof_binder_validator.py",
         )
         report = BinderValidationReport(
             obligations=[o],
+            counterexamples=[ce],
             timestamp="2025-01-01T00:00:00Z",
         )
         md = report.to_markdown()
         self.assertIn("Proof Obligations Binder", md)
         self.assertIn("PO-01", md)
+        self.assertIn("Counterexamples", md)
+        self.assertIn("CE-PO-01", md)
+
+
+class TestCounterexampleWitness(unittest.TestCase):
+    def test_to_dict(self) -> None:
+        witness = CounterexampleWitness(
+            counterexample_id="CE-PO-X",
+            obligation_id="PO-X",
+            statement="Theorem",
+            category="core",
+            primary_violation_code="GATE_MISSING",
+            primary_message="missing gate",
+            remediation_hint="add gate",
+            reproduction_command="python3 scripts/gentoo/proof_binder_validator.py",
+            minimized_inputs={"gates": ["scripts/missing.sh"]},
+        )
+        data = witness.to_dict()
+        self.assertEqual(data["counterexample_id"], "CE-PO-X")
+        self.assertEqual(data["minimized_inputs"]["gates"], ["scripts/missing.sh"])
+
+    def test_build_counterexample_prefers_missing_evidence(self) -> None:
+        obligation = {
+            "id": "PO-CE",
+            "statement": "Counterexample theorem",
+            "category": "core",
+            "evidence_artifacts": ["nonexistent/proof.json"],
+            "gates": ["nonexistent/gate.sh"],
+            "join_keys": ["gate=test"],
+            "scope": {"modes": ["strict"]},
+        }
+        status = validate_obligation(obligation, REPO_ROOT, check_hashes=False)
+        witness = build_counterexample_witness(status, obligation, BINDER_PATH)
+        self.assertIsNotNone(witness)
+        assert witness is not None
+        self.assertEqual(witness.primary_violation_code, "EVIDENCE_MISSING")
+        self.assertEqual(
+            witness.minimized_inputs["evidence_artifacts"],
+            ["nonexistent/proof.json"],
+        )
+        self.assertIn("proof_binder_validator.py", witness.reproduction_command)
 
 
 class TestFileSha256(unittest.TestCase):
@@ -417,6 +485,7 @@ class TestCLI(unittest.TestCase):
             self.assertEqual(data["schema_version"], "v1")
             self.assertEqual(data["bead"], "bd-5fw.4")
             self.assertIn("obligations", data)
+            self.assertIn("counterexamples", data)
 
     def test_terminal_mode(self) -> None:
         result = subprocess.run(

@@ -74,6 +74,8 @@ if data.get('bead') != 'bd-5fw.4':
     print('bad bead'); sys.exit(1)
 if not isinstance(data.get('obligations'), list):
     print('missing obligations'); sys.exit(1)
+if not isinstance(data.get('counterexamples'), list):
+    print('missing counterexamples'); sys.exit(1)
 if 'binder_valid' not in data:
     print('missing binder_valid'); sys.exit(1)
 " || fail "validator output schema invalid"

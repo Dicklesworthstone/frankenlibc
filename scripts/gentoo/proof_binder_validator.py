@@ -129,6 +129,34 @@ class ObligationStatus:
 
 
 @dataclass
+class CounterexampleWitness:
+    """Minimal regression witness for an invalid proof obligation."""
+
+    counterexample_id: str
+    obligation_id: str
+    statement: str
+    category: str
+    primary_violation_code: str
+    primary_message: str
+    remediation_hint: str
+    reproduction_command: str
+    minimized_inputs: Dict[str, List[str]] = field(default_factory=dict)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "counterexample_id": self.counterexample_id,
+            "obligation_id": self.obligation_id,
+            "statement": self.statement,
+            "category": self.category,
+            "primary_violation_code": self.primary_violation_code,
+            "primary_message": self.primary_message,
+            "remediation_hint": self.remediation_hint,
+            "reproduction_command": self.reproduction_command,
+            "minimized_inputs": self.minimized_inputs,
+        }
+
+
+@dataclass
 class BinderValidationReport:
     """Complete binder validation report."""
     obligations: List[ObligationStatus] = field(default_factory=list)
@@ -140,6 +168,7 @@ class BinderValidationReport:
     invalid_obligations: int = 0
     total_violations: int = 0
     categories_covered: List[str] = field(default_factory=list)
+    counterexamples: List[CounterexampleWitness] = field(default_factory=list)
 
     def compute_status(self) -> None:
         self.total_obligations = len(self.obligations)
@@ -165,6 +194,7 @@ class BinderValidationReport:
             "invalid_obligations": self.invalid_obligations,
             "total_violations": self.total_violations,
             "categories_covered": self.categories_covered,
+            "counterexamples": [c.to_dict() for c in self.counterexamples],
             "obligations": [o.to_dict() for o in self.obligations],
         }
 
@@ -178,6 +208,7 @@ class BinderValidationReport:
             f"**Updated:** {self.timestamp or utc_now()}",
             f"**Obligations:** {self.valid_obligations}/{self.total_obligations} valid",
             f"**Categories:** {len(self.categories_covered)}",
+            f"**Counterexamples:** {len(self.counterexamples)} minimized witness(es)",
             "",
         ]
 
@@ -198,7 +229,99 @@ class BinderValidationReport:
                             lines.append(f"    Hint: {v.remediation_hint}")
             lines.append("")
 
+        if self.counterexamples:
+            lines.append("## Counterexamples")
+            lines.append("")
+            for witness in self.counterexamples:
+                lines.append(
+                    f"- **{witness.counterexample_id}** ({witness.obligation_id}) "
+                    f"{witness.primary_violation_code}: {witness.primary_message}"
+                )
+                lines.append(f"  - Repro: `{witness.reproduction_command}`")
+                if witness.remediation_hint:
+                    lines.append(f"  - Hint: {witness.remediation_hint}")
+            lines.append("")
+
         return "\n".join(lines)
+
+
+VIOLATION_PRIORITY: Dict[str, int] = {
+    "MISSING_OWNER": 0,
+    "MISSING_ARTIFACT_SCHEMA": 1,
+    "MISSING_VERIFICATION_COMMAND": 2,
+    "EVIDENCE_MISSING": 3,
+    "GATE_MISSING": 4,
+    "MISSING_JOIN_KEYS": 5,
+    "MISSING_SCOPE": 6,
+    "SOURCE_REF_INVALID_FORMAT": 7,
+    "SOURCE_REF_MISSING_FILE": 8,
+    "SOURCE_REF_BAD_LINE": 9,
+    "DUPLICATE_ID": 10,
+}
+
+
+def _priority_for_violation(code: str) -> int:
+    return VIOLATION_PRIORITY.get(code, len(VIOLATION_PRIORITY) + 100)
+
+
+def build_counterexample_witness(
+    status: ObligationStatus,
+    obligation: Dict[str, Any],
+    binder_path: Path,
+) -> Optional[CounterexampleWitness]:
+    """Build a single minimized witness for the most actionable failure in an obligation."""
+    if status.valid or not status.violations:
+        return None
+
+    primary = min(
+        status.violations,
+        key=lambda violation: (_priority_for_violation(violation.violation_code), violation.message),
+    )
+
+    minimized_inputs: Dict[str, List[str]] = {}
+    if primary.violation_code == "EVIDENCE_MISSING":
+        for artifact in obligation.get("evidence_artifacts", []):
+            if not (REPO_ROOT / artifact).exists():
+                minimized_inputs["evidence_artifacts"] = [artifact]
+                break
+    elif primary.violation_code == "GATE_MISSING":
+        for gate in obligation.get("gates", []):
+            gate_path = REPO_ROOT / gate
+            if not gate_path.exists():
+                minimized_inputs["gates"] = [gate]
+                break
+    elif primary.violation_code.startswith("SOURCE_REF_"):
+        invalid_refs = [
+            source_ref
+            for source_ref, result in sorted(status.source_ref_results.items())
+            if result != "valid"
+        ]
+        if invalid_refs:
+            minimized_inputs["source_refs"] = [invalid_refs[0]]
+    elif primary.violation_code == "MISSING_JOIN_KEYS":
+        minimized_inputs["join_keys"] = []
+    elif primary.violation_code == "MISSING_SCOPE":
+        minimized_inputs["scope"] = []
+
+    try:
+        binder_arg = str(binder_path.relative_to(REPO_ROOT))
+    except ValueError:
+        binder_arg = str(binder_path)
+
+    return CounterexampleWitness(
+        counterexample_id=f"CE-{status.obligation_id}",
+        obligation_id=status.obligation_id,
+        statement=status.statement,
+        category=status.category,
+        primary_violation_code=primary.violation_code,
+        primary_message=primary.message,
+        remediation_hint=primary.remediation_hint,
+        reproduction_command=(
+            f"python3 scripts/gentoo/proof_binder_validator.py --binder {binder_arg} "
+            "--format json --no-hashes"
+        ),
+        minimized_inputs=minimized_inputs,
+    )
 
 
 def validate_obligation(
@@ -405,6 +528,9 @@ def validate_binder(
 
         status = validate_obligation(ob, repo_root, check_hashes=check_hashes)
         report.obligations.append(status)
+        witness = build_counterexample_witness(status, ob, binder_path)
+        if witness is not None:
+            report.counterexamples.append(witness)
 
     report.compute_status()
     return report
@@ -447,6 +573,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     print(f"Overall: {status}")
     print(f"Obligations: {report.valid_obligations}/{report.total_obligations} valid")
     print(f"Violations: {report.total_violations}")
+    print(f"Counterexamples: {len(report.counterexamples)}")
     for o in report.obligations:
         icon = "+" if o.valid else "!"
         refs = (
