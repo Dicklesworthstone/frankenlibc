@@ -490,16 +490,21 @@ pub unsafe extern "C" fn getservbyname_r(
 
     // Find the matching service entry
     let entry = content.split(|&b| b == b'\n').find_map(|line| {
-        let (svc_name, port, svc_proto) = frankenlibc_core::resolv::parse_services_line(line)?;
-        if !svc_name.eq_ignore_ascii_case(name_cstr.to_bytes()) {
-            return None;
-        }
-        if let Some(pf) = proto_filter
-            && !svc_proto.eq_ignore_ascii_case(pf)
+        let entry = frankenlibc_core::resolv::parse_services_line(line)?;
+        if !entry.name.eq_ignore_ascii_case(name_cstr.to_bytes())
+            && !entry
+                .aliases
+                .iter()
+                .any(|alias| alias.eq_ignore_ascii_case(name_cstr.to_bytes()))
         {
             return None;
         }
-        Some((svc_name, port, svc_proto))
+        if let Some(pf) = proto_filter
+            && !entry.protocol.eq_ignore_ascii_case(pf)
+        {
+            return None;
+        }
+        Some((entry.name, entry.port, entry.protocol))
     });
 
     let (svc_name, port, svc_proto) = match entry {
@@ -576,16 +581,16 @@ pub unsafe extern "C" fn getservbyport_r(
     };
 
     let entry = content.split(|&b| b == b'\n').find_map(|line| {
-        let (svc_name, p, svc_proto) = frankenlibc_core::resolv::parse_services_line(line)?;
-        if p != port_host {
+        let entry = frankenlibc_core::resolv::parse_services_line(line)?;
+        if entry.port != port_host {
             return None;
         }
         if let Some(pf) = proto_filter
-            && !svc_proto.eq_ignore_ascii_case(pf)
+            && !entry.protocol.eq_ignore_ascii_case(pf)
         {
             return None;
         }
-        Some((svc_name, p, svc_proto))
+        Some((entry.name, entry.port, entry.protocol))
     });
 
     let (svc_name, _, svc_proto) = match entry {

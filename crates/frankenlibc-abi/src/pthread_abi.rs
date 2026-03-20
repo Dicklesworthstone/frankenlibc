@@ -2590,7 +2590,7 @@ pub unsafe extern "C" fn pthread_setcanceltype(typ: c_int, oldtype: *mut c_int) 
 pub unsafe extern "C" fn pthread_testcancel() {
     if consume_pending_cancel_for_current_thread() {
         // PTHREAD_CANCELED is typically defined as ((void *) -1)
-        pthread_exit(!0usize as *mut std::ffi::c_void);
+        unsafe { pthread_exit(!0usize as *mut std::ffi::c_void) };
     }
 }
 

@@ -41,6 +41,19 @@ pub const AF_UNSPEC: i32 = 0;
 pub const AF_INET: i32 = 2;
 pub const AF_INET6: i32 = 10;
 
+/// Parsed `/etc/services` entry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServiceEntry {
+    /// Canonical service name.
+    pub name: Vec<u8>,
+    /// Service port in host byte order.
+    pub port: u16,
+    /// Transport protocol name.
+    pub protocol: Vec<u8>,
+    /// Additional aliases for the service name.
+    pub aliases: Vec<Vec<u8>>,
+}
+
 /// Parse a single line from /etc/hosts.
 ///
 /// Format: `<address> <hostname> [<alias>...]`
@@ -109,8 +122,7 @@ pub fn reverse_lookup_hosts(content: &[u8], addr: &[u8]) -> Vec<Vec<u8>> {
 /// Parse a single line from /etc/services.
 ///
 /// Format: `<service-name> <port>/<protocol> [<alias>...]`
-/// Returns (service_name, port, protocol).
-pub fn parse_services_line(line: &[u8]) -> Option<(Vec<u8>, u16, Vec<u8>)> {
+pub fn parse_services_line(line: &[u8]) -> Option<ServiceEntry> {
     let line = if let Some(pos) = line.iter().position(|&b| b == b'#') {
         &line[..pos]
     } else {
@@ -123,6 +135,7 @@ pub fn parse_services_line(line: &[u8]) -> Option<(Vec<u8>, u16, Vec<u8>)> {
 
     let name = fields.next()?;
     let port_proto = fields.next()?;
+    let aliases: Vec<Vec<u8>> = fields.map(|field| field.to_vec()).collect();
 
     let slash_pos = port_proto.iter().position(|&b| b == b'/')?;
     let port_str = core::str::from_utf8(&port_proto[..slash_pos]).ok()?;
@@ -132,7 +145,20 @@ pub fn parse_services_line(line: &[u8]) -> Option<(Vec<u8>, u16, Vec<u8>)> {
         return None;
     }
 
-    Some((name.to_vec(), port, proto.to_vec()))
+    Some(ServiceEntry {
+        name: name.to_vec(),
+        port,
+        protocol: proto.to_vec(),
+        aliases,
+    })
+}
+
+fn service_name_matches(entry: &ServiceEntry, name: &[u8]) -> bool {
+    eq_ignore_ascii_case(&entry.name, name)
+        || entry
+            .aliases
+            .iter()
+            .any(|alias| eq_ignore_ascii_case(alias, name))
 }
 
 /// Look up a service name in /etc/services content.
@@ -140,15 +166,15 @@ pub fn parse_services_line(line: &[u8]) -> Option<(Vec<u8>, u16, Vec<u8>)> {
 /// Returns the port number for the given service name and optional protocol filter.
 pub fn lookup_service(content: &[u8], name: &[u8], protocol: Option<&[u8]>) -> Option<u16> {
     for line in content.split(|&b| b == b'\n') {
-        if let Some((svc_name, port, proto)) = parse_services_line(line)
-            && eq_ignore_ascii_case(&svc_name, name)
+        if let Some(entry) = parse_services_line(line)
+            && service_name_matches(&entry, name)
         {
             if let Some(filter) = protocol {
-                if eq_ignore_ascii_case(&proto, filter) {
-                    return Some(port);
+                if eq_ignore_ascii_case(&entry.protocol, filter) {
+                    return Some(entry.port);
                 }
             } else {
-                return Some(port);
+                return Some(entry.port);
             }
         }
     }
@@ -462,18 +488,20 @@ mod tests {
 
     #[test]
     fn parse_services_tcp() {
-        let (name, port, proto) = parse_services_line(b"http\t80/tcp").unwrap();
-        assert_eq!(name, b"http");
-        assert_eq!(port, 80);
-        assert_eq!(proto, b"tcp");
+        let entry = parse_services_line(b"http\t80/tcp").unwrap();
+        assert_eq!(entry.name, b"http");
+        assert_eq!(entry.port, 80);
+        assert_eq!(entry.protocol, b"tcp");
+        assert!(entry.aliases.is_empty());
     }
 
     #[test]
     fn parse_services_udp() {
-        let (name, port, proto) = parse_services_line(b"dns  53/udp  domain").unwrap();
-        assert_eq!(name, b"dns");
-        assert_eq!(port, 53);
-        assert_eq!(proto, b"udp");
+        let entry = parse_services_line(b"dns  53/udp  domain").unwrap();
+        assert_eq!(entry.name, b"dns");
+        assert_eq!(entry.port, 53);
+        assert_eq!(entry.protocol, b"udp");
+        assert_eq!(entry.aliases, vec![b"domain".to_vec()]);
     }
 
     #[test]
@@ -521,6 +549,12 @@ mod tests {
     fn lookup_service_case_insensitive() {
         let content = b"HTTP\t80/tcp";
         assert_eq!(lookup_service(content, b"http", None), Some(80));
+    }
+
+    #[test]
+    fn lookup_service_matches_alias() {
+        let content = b"http\t80/tcp\twww";
+        assert_eq!(lookup_service(content, b"www", Some(b"tcp")), Some(80));
     }
 
     // ---- getaddrinfo ----

@@ -1889,25 +1889,61 @@ pub(crate) unsafe fn render_printf(fmt: &[u8], args: *const u64, max_args: usize
                             arg_idx += 1;
                             if ptr_val != 0 {
                                 let count = buf.len();
-                                unsafe {
-                                    match resolved_spec.length {
-                                        LengthMod::Hh => {
-                                            *(ptr_val as *mut i8) = count as i8;
+                                let size = match resolved_spec.length {
+                                    LengthMod::Hh => 1,
+                                    LengthMod::H => 2,
+                                    LengthMod::L | LengthMod::Ll | LengthMod::J | LengthMod::Z | LengthMod::T => 8,
+                                    _ => 4,
+                                };
+                                let (mode, decision) = crate::runtime_policy::decide(
+                                    frankenlibc_membrane::runtime_math::ApiFamily::Stdio,
+                                    ptr_val,
+                                    size,
+                                    true,
+                                    false,
+                                    0,
+                                );
+                                
+                                let mut should_write = !matches!(decision.action, frankenlibc_membrane::runtime_math::MembraneAction::Deny);
+                                if mode.heals_enabled() || matches!(decision.action, frankenlibc_membrane::runtime_math::MembraneAction::Repair(_)) {
+                                    if let Some(rem) = crate::malloc_abi::known_remaining(ptr_val) {
+                                        if rem < size {
+                                            should_write = false;
+                                            frankenlibc_membrane::heal::global_healing_policy().record(&frankenlibc_membrane::heal::HealingAction::ReturnSafeDefault);
                                         }
-                                        LengthMod::H => {
-                                            *(ptr_val as *mut i16) = count as i16;
-                                        }
-                                        LengthMod::L | LengthMod::Ll | LengthMod::J => {
-                                            *(ptr_val as *mut i64) = count as i64;
-                                        }
-                                        LengthMod::Z | LengthMod::T => {
-                                            *(ptr_val as *mut isize) = count as isize;
-                                        }
-                                        _ => {
-                                            *(ptr_val as *mut i32) = count as i32;
+                                    } else {
+                                        should_write = false;
+                                        frankenlibc_membrane::heal::global_healing_policy().record(&frankenlibc_membrane::heal::HealingAction::ReturnSafeDefault);
+                                    }
+                                }
+
+                                if should_write {
+                                    unsafe {
+                                        match resolved_spec.length {
+                                            LengthMod::Hh => {
+                                                *(ptr_val as *mut i8) = count as i8;
+                                            }
+                                            LengthMod::H => {
+                                                *(ptr_val as *mut i16) = count as i16;
+                                            }
+                                            LengthMod::L | LengthMod::Ll | LengthMod::J => {
+                                                *(ptr_val as *mut i64) = count as i64;
+                                            }
+                                            LengthMod::Z | LengthMod::T => {
+                                                *(ptr_val as *mut isize) = count as isize;
+                                            }
+                                            _ => {
+                                                *(ptr_val as *mut i32) = count as i32;
+                                            }
                                         }
                                     }
                                 }
+                                crate::runtime_policy::observe(
+                                    frankenlibc_membrane::runtime_math::ApiFamily::Stdio,
+                                    decision.profile,
+                                    10,
+                                    !should_write,
+                                );
                             }
                         }
                     }
