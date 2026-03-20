@@ -24,6 +24,7 @@ use crate::metrics::{MembraneMetrics, global_metrics};
 use crate::page_oracle::PageOracle;
 use crate::runtime_math::{ApiFamily, RuntimeContext, RuntimeMathKernel, ValidationProfile};
 use crate::tls_cache::{CachedValidation, with_tls_cache};
+use crate::util::now_utc_iso_like;
 use parking_lot::Mutex;
 use std::collections::VecDeque;
 use std::fmt::Write;
@@ -191,7 +192,7 @@ impl ValidationSecurityContext {
     }
 }
 
-use crate::ebr::{EbrHandle, QuarantineEbr};
+use crate::ebr::QuarantineEbr;
 use std::sync::Arc;
 
 /// The validation pipeline with all backing data structures.
@@ -220,7 +221,11 @@ thread_local! {
     /// The handle is keyed by collector identity so tests and auxiliary
     /// pipelines do not accidentally reuse a registration from a different
     /// `ValidationPipeline` on the same thread.
-    static EBR_HANDLE: std::cell::RefCell<Option<(usize, EbrHandle<'static>)>> = const { std::cell::RefCell::new(None) };
+    ///
+    /// We store the Arc<QuarantineEbr> alongside the handle to ensure the
+    /// collector remains alive as long as the handle is cached, preventing
+    /// Use-After-Free if the original ValidationPipeline is dropped.
+    static EBR_HANDLE: std::cell::RefCell<Option<(std::sync::Arc<crate::ebr::QuarantineEbr>, crate::ebr::EbrHandle<'static>)>> = const { std::cell::RefCell::new(None) };
 }
 
 impl ValidationPipeline {
@@ -228,9 +233,9 @@ impl ValidationPipeline {
     #[must_use]
     pub fn new() -> Self {
         let logging_enabled = std::env::var_os("FRANKENLIBC_LOG").is_some();
-        let collector = Arc::new(QuarantineEbr::new(4));
+        let collector = std::sync::Arc::new(crate::ebr::QuarantineEbr::new(4));
         Self {
-            arena: AllocationArena::new_with_collector(Some(Arc::clone(&collector))),
+            arena: AllocationArena::new_with_collector(Some(std::sync::Arc::clone(&collector))),
             bloom: PointerBloomFilter::new(),
             page_oracle: PageOracle::new(),
             runtime_math: RuntimeMathKernel::new(),
@@ -243,22 +248,27 @@ impl ValidationPipeline {
 
     /// Pin the EBR epoch for the duration of validation.
     fn pin_epoch(&self) -> crate::ebr::EbrGuard<'_> {
-        let collector_id = Arc::as_ptr(&self.collector) as usize;
+        let collector_id = std::sync::Arc::as_ptr(&self.collector) as usize;
         EBR_HANDLE.with(|cell| {
             let mut cached = cell.borrow_mut();
             let needs_refresh = !matches!(
                 cached.as_ref(),
-                Some((cached_collector_id, _)) if *cached_collector_id == collector_id
+                Some((cached_collector, _)) if std::sync::Arc::as_ptr(cached_collector) as usize == collector_id
             );
             if needs_refresh {
                 let handle = {
-                    // SAFETY: The returned handle is stored thread-locally and
-                    // dropped before the underlying collector can be reused on
-                    // this thread because swapping the cached tuple releases the
-                    // previous registration first.
-                    unsafe { std::mem::transmute(self.collector.register()) }
+                    // SAFETY: The returned handle is stored thread-locally alongside
+                    // a strong reference (Arc) to the collector. This ensures the
+                    // collector stays alive and at the same address as long as the
+                    // handle is cached. Swapping the cached tuple releases the
+                    // previous registration and Arc first.
+                    unsafe {
+                        std::mem::transmute::<crate::ebr::EbrHandle<'_>, crate::ebr::EbrHandle<'static>>(
+                            self.collector.register(),
+                        )
+                    }
                 };
-                *cached = Some((collector_id, handle));
+                *cached = Some((std::sync::Arc::clone(&self.collector), handle));
             }
             cached
                 .as_ref()
@@ -351,7 +361,7 @@ impl ValidationPipeline {
                 | "post_pipeline"
         ));
 
-        let timestamp = Self::now_utc_iso_like();
+        let timestamp = now_utc_iso_like();
         let mode_label = Self::mode_name(mode);
         let policy_id = PolicyId::from_raw(policy_id);
         let mut line = String::with_capacity(512);
@@ -517,44 +527,6 @@ impl ValidationPipeline {
             CheckStage::Canary => "pipeline::stage6::canary",
             CheckStage::Bounds => "pipeline::stage7::bounds",
         }
-    }
-
-    #[must_use]
-    fn now_utc_iso_like() -> String {
-        let duration = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default();
-        let secs = duration.as_secs();
-        let millis = duration.subsec_millis();
-        let days = (secs / 86_400) as i64;
-        let seconds_of_day = secs % 86_400;
-        let (year, month, day) = Self::civil_date_from_unix_days(days);
-        format!(
-            "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",
-            year,
-            month,
-            day,
-            seconds_of_day / 3_600,
-            (seconds_of_day % 3_600) / 60,
-            seconds_of_day % 60,
-            millis,
-        )
-    }
-
-    #[must_use]
-    fn civil_date_from_unix_days(days_since_unix_epoch: i64) -> (i64, u32, u32) {
-        let z = days_since_unix_epoch + 719_468;
-        let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
-        let day_of_era = z - era * 146_097;
-        let year_of_era =
-            (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
-        let year = year_of_era + era * 400;
-        let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
-        let month_prime = (5 * day_of_year + 2) / 153;
-        let day = day_of_year - (153 * month_prime + 2) / 5 + 1;
-        let month = month_prime + if month_prime < 10 { 3 } else { -9 };
-        let year = year + if month <= 2 { 1 } else { 0 };
-        (year, month as u32, day as u32)
     }
 
     /// Run a pointer through the validation pipeline.
@@ -1782,18 +1754,10 @@ mod tests {
 
     #[test]
     fn civil_date_from_unix_days_handles_epoch_and_leap_day() {
-        assert_eq!(
-            ValidationPipeline::civil_date_from_unix_days(0),
-            (1970, 1, 1)
-        );
-        assert_eq!(
-            ValidationPipeline::civil_date_from_unix_days(11_016),
-            (2000, 2, 29)
-        );
-        assert_eq!(
-            ValidationPipeline::civil_date_from_unix_days(20_147),
-            (2025, 2, 28)
-        );
+        use crate::util::civil_date_from_unix_days;
+        assert_eq!(civil_date_from_unix_days(0), (1970, 1, 1));
+        assert_eq!(civil_date_from_unix_days(11_016), (2000, 2, 29));
+        assert_eq!(civil_date_from_unix_days(20_147), (2025, 2, 28));
     }
 
     #[test]

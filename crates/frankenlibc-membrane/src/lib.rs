@@ -63,6 +63,7 @@ pub mod spectral_monitor;
 pub mod symplectic_reduction;
 pub mod tls_cache;
 pub mod tropical_latency;
+pub mod util;
 
 pub use config::SafetyLevel;
 pub use decision_contract::{

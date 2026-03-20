@@ -107,6 +107,7 @@ const POLICY_LOAD_STATE_VERIFY_FAILED: u8 = 2;
 use std::fmt::Write as _;
 use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
 
+use crate::util::now_utc_iso_like;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 
@@ -5150,24 +5151,6 @@ fn sanitize_trace_component(raw: &str) -> String {
             _ => '_',
         })
         .collect()
-}
-
-fn now_utc_iso_like() -> String {
-    let duration = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default();
-    let secs = duration.as_secs();
-    let millis = duration.subsec_millis();
-    format!(
-        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",
-        1970 + secs / 31_557_600,
-        (secs % 31_557_600) / 2_629_800 + 1,
-        (secs % 2_629_800) / 86_400 + 1,
-        (secs % 86_400) / 3_600,
-        (secs % 3_600) / 60,
-        secs % 60,
-        millis,
-    )
 }
 
 fn compute_policy_id(

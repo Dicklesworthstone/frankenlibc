@@ -13,6 +13,7 @@ use std::panic::{self, AssertUnwindSafe};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicPtr, AtomicU8, AtomicU32, AtomicU64, Ordering as AtomicOrdering};
 
+use frankenlibc_membrane::util::now_utc_iso_like;
 use frankenlibc_core::syscall;
 use frankenlibc_membrane::check_oracle::CheckStage;
 use frankenlibc_membrane::config::SafetyLevel;
@@ -168,13 +169,6 @@ fn mode_name(level: SafetyLevel) -> &'static str {
         SafetyLevel::Hardened => "hardened",
         SafetyLevel::Off => "off",
     }
-}
-
-fn now_utc_iso_like() -> String {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default();
-    format!("{}.{:09}Z", now.as_secs(), now.subsec_nanos())
 }
 
 fn push_mode_event(

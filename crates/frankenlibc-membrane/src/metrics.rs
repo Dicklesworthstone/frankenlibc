@@ -4,6 +4,7 @@
 //! not synchronization primitives.
 
 use crate::ids::{DecisionId, MEMBRANE_SCHEMA_VERSION, TraceId};
+use crate::util::now_utc_iso_like;
 use std::fmt::Write as _;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -223,13 +224,6 @@ fn sanitize_trace_component(component: &str) -> String {
     } else {
         sanitized
     }
-}
-
-fn now_utc_iso_like() -> String {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default();
-    format!("{}.{:09}Z", now.as_secs(), now.subsec_nanos())
 }
 
 const fn ratio(numerator: u64, denominator: u64) -> f64 {
