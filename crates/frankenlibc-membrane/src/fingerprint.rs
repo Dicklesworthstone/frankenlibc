@@ -470,4 +470,82 @@ mod tests {
             "Distinct fingerprints must produce distinct byte representations"
         );
     }
+
+    // ═══════════════════════════════════════════════════════════════
+    // PROPERTY-BASED: Fingerprint invariants via proptest
+    // ═══════════════════════════════════════════════════════════════
+
+    use proptest::prelude::*;
+
+    proptest! {
+        #[test]
+        fn prop_fingerprint_roundtrip(
+            addr in 0usize..usize::MAX,
+            size in 0u64..u64::MAX,
+            generation in 0u64..u64::MAX,
+        ) {
+            let fp = AllocationFingerprint::compute(addr, size, generation);
+            let bytes = fp.to_bytes();
+            let fp2 = AllocationFingerprint::from_bytes(&bytes);
+            prop_assert_eq!(fp, fp2);
+        }
+
+        #[test]
+        fn prop_fingerprint_verify_correct_addr(
+            addr in 1usize..0xFFFF_FFFF,
+            size in 1u64..0xFFFF_FFFF,
+            generation in 1u64..0xFFFF_FFFF,
+        ) {
+            let fp = AllocationFingerprint::compute(addr, size, generation);
+            prop_assert!(fp.verify(addr), "fingerprint must verify for correct address");
+        }
+
+        #[test]
+        fn prop_fingerprint_verify_wrong_addr(
+            addr in 1usize..0x7FFF_FFFF,
+            size in 1u64..0xFFFF_FFFF,
+            generation in 1u64..0xFFFF_FFFF,
+        ) {
+            let fp = AllocationFingerprint::compute(addr, size, generation);
+            let wrong_addr = addr + 1;
+            prop_assert!(
+                !fp.verify(wrong_addr),
+                "fingerprint must NOT verify for wrong address"
+            );
+        }
+
+        #[test]
+        fn prop_canary_roundtrip(hash in 0u64..u64::MAX) {
+            let canary = Canary::from_hash(hash);
+            let bytes = canary.to_bytes();
+            prop_assert!(canary.verify(&bytes), "canary must verify its own bytes");
+        }
+
+        #[test]
+        fn prop_canary_detects_any_byte_flip(
+            hash in 0u64..u64::MAX,
+            byte_idx in 0usize..CANARY_SIZE,
+        ) {
+            let canary = Canary::from_hash(hash);
+            let mut corrupted = canary.to_bytes();
+            corrupted[byte_idx] ^= 0xFF; // flip all bits in one byte
+            prop_assert!(
+                !canary.verify(&corrupted),
+                "canary must detect byte flip at index {byte_idx}"
+            );
+        }
+
+        #[test]
+        fn prop_different_inputs_produce_different_hashes(
+            addr1 in 1usize..0xFFFF_FFFF,
+            addr2 in 1usize..0xFFFF_FFFF,
+            size in 1u64..0xFFFF_FFFF,
+            generation in 1u64..0xFFFF_FFFF,
+        ) {
+            prop_assume!(addr1 != addr2);
+            let fp1 = AllocationFingerprint::compute(addr1, size, generation);
+            let fp2 = AllocationFingerprint::compute(addr2, size, generation);
+            prop_assert_ne!(fp1.hash, fp2.hash, "different addresses must produce different hashes");
+        }
+    }
 }

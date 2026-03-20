@@ -456,4 +456,81 @@ mod tests {
         assert!(CheckStage::TlsCache.can_accept());
         assert!(!CheckStage::Bounds.can_reject());
     }
+
+    // ═══════════════════════════════════════════════════════════════
+    // PROPERTY-BASED: Check oracle invariants via proptest
+    // ═══════════════════════════════════════════════════════════════
+
+    use proptest::prelude::*;
+
+    proptest! {
+        #[test]
+        fn prop_pack_unpack_roundtrip(
+            s0 in 0u8..7, s1 in 0u8..7, s2 in 0u8..7, s3 in 0u8..7,
+            s4 in 0u8..7, s5 in 0u8..7, s6 in 0u8..7,
+        ) {
+            let ordering = [
+                CheckStage::from_u8(s0), CheckStage::from_u8(s1),
+                CheckStage::from_u8(s2), CheckStage::from_u8(s3),
+                CheckStage::from_u8(s4), CheckStage::from_u8(s5),
+                CheckStage::from_u8(s6),
+            ];
+            let packed = pack_ordering(&ordering);
+            let unpacked = unpack_ordering(packed);
+            prop_assert_eq!(ordering, unpacked, "pack/unpack roundtrip failed");
+        }
+
+        #[test]
+        fn prop_all_orderings_are_valid_permutations(ctx_idx in 0usize..NUM_CONTEXTS) {
+            let oracle = CheckOracle::new();
+            let ordering = &oracle.orderings[ctx_idx];
+            let mut seen = [false; NUM_STAGES];
+            for &stage in ordering.iter() {
+                let idx = stage as usize;
+                prop_assert!(!seen[idx], "duplicate stage {idx} in ordering");
+                seen[idx] = true;
+            }
+            for (i, &s) in seen.iter().enumerate() {
+                prop_assert!(s, "missing stage {i} from ordering");
+            }
+        }
+
+        #[test]
+        fn prop_oracle_total_calls_monotonic(n in 1usize..50) {
+            let mut oracle = CheckOracle::new();
+            let ctx = CheckContext { family: 0, aligned: true, recent_page: false };
+            let mut prev = oracle.total_calls();
+            for _ in 0..n {
+                oracle.report_outcome(&ctx, &DEFAULT_ORDER, None);
+                let now = oracle.total_calls();
+                prop_assert!(now > prev, "total_calls must increase monotonically");
+                prev = now;
+            }
+        }
+
+        #[test]
+        fn prop_early_exit_rate_bounded(exits in 0usize..100, total in 1usize..100) {
+            let mut oracle = CheckOracle::new();
+            let ctx = CheckContext { family: 0, aligned: true, recent_page: false };
+            let actual_exits = exits.min(total);
+            for i in 0..total {
+                let exit_stage = if i < actual_exits { Some(2) } else { None };
+                oracle.report_outcome(&ctx, &DEFAULT_ORDER, exit_stage);
+            }
+            let rate = oracle.early_exit_rate();
+            prop_assert!((0.0..=1.0).contains(&rate), "rate must be in [0, 1], got {rate}");
+        }
+
+        #[test]
+        fn prop_stage_from_u8_roundtrip(v in 0u8..7) {
+            let stage = CheckStage::from_u8(v);
+            prop_assert_eq!(stage as u8, v);
+        }
+
+        #[test]
+        fn prop_cost_is_positive(v in 0u8..7) {
+            let stage = CheckStage::from_u8(v);
+            prop_assert!(stage.cost_ns() > 0, "cost must be positive for stage {v}");
+        }
+    }
 }
