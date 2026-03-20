@@ -13,13 +13,8 @@ use frankenlibc_core::errno;
 use frankenlibc_core::syscall;
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
+use crate::errno_abi::set_abi_errno;
 use crate::runtime_policy;
-
-#[inline]
-unsafe fn set_abi_errno(val: c_int) {
-    let p = unsafe { super::errno_abi::__errno_location() };
-    unsafe { *p = val };
-}
 
 /// Internal directory stream state.
 struct DirState {

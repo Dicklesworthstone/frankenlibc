@@ -13,7 +13,6 @@ use std::panic::{self, AssertUnwindSafe};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicPtr, AtomicU8, AtomicU32, AtomicU64, Ordering as AtomicOrdering};
 
-use frankenlibc_membrane::util::now_utc_iso_like;
 use frankenlibc_core::syscall;
 use frankenlibc_membrane::check_oracle::CheckStage;
 use frankenlibc_membrane::config::SafetyLevel;
@@ -25,6 +24,7 @@ use frankenlibc_membrane::runtime_math::{
     ApiFamily, MembraneAction, RuntimeContext, RuntimeDecision, RuntimeEvidenceContractSnapshot,
     RuntimeKernelSnapshot, RuntimeMathKernel, ValidationProfile,
 };
+use frankenlibc_membrane::util::now_utc_iso_like;
 
 // Kernel lifecycle states.
 const STATE_UNINIT: u8 = 0;

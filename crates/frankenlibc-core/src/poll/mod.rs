@@ -88,11 +88,7 @@ pub const fn valid_poll_timeout(timeout_ms: i32) -> bool {
 /// Clamp nfds for poll to a safe maximum.
 #[must_use]
 pub const fn clamp_poll_nfds(nfds: u64) -> u64 {
-    if nfds > 1_048_576 {
-        1_048_576
-    } else {
-        nfds
-    }
+    if nfds > 1_048_576 { 1_048_576 } else { nfds }
 }
 
 /// Clamp nfds for select to FD_SETSIZE.

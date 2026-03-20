@@ -358,7 +358,7 @@ fn tdelete_recursive(
             let _ = Box::from_raw(succ);
         }
     }
-    
+
     if parent.is_null() {
         // POSIX: return unspecified non-null pointer if root node is deleted.
         // Returning the address of rootp itself is a common implementation choice.

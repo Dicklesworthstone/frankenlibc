@@ -12,13 +12,8 @@ use frankenlibc_core::poll as poll_core;
 use frankenlibc_membrane::heal::{HealingAction, global_healing_policy};
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
+use crate::errno_abi::set_abi_errno;
 use crate::runtime_policy;
-
-#[inline]
-unsafe fn set_abi_errno(val: c_int) {
-    let p = unsafe { super::errno_abi::__errno_location() };
-    unsafe { *p = val };
-}
 
 // ---------------------------------------------------------------------------
 // poll

@@ -10,13 +10,8 @@ use frankenlibc_core::errno;
 use frankenlibc_core::socket as socket_core;
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
+use crate::errno_abi::set_abi_errno;
 use crate::runtime_policy;
-
-#[inline]
-unsafe fn set_abi_errno(val: c_int) {
-    let p = unsafe { super::errno_abi::__errno_location() };
-    unsafe { *p = val };
-}
 
 #[inline]
 fn errno_from_syscall_failure(ret: libc::c_long, default_errno: c_int) -> c_int {
@@ -278,7 +273,8 @@ pub unsafe extern "C" fn recv(sockfd: c_int, buf: *mut c_void, len: usize, flags
         return -1;
     }
 
-    let (_, decision) = runtime_policy::decide(ApiFamily::Socket, sockfd as usize, len, true, true, 0);
+    let (_, decision) =
+        runtime_policy::decide(ApiFamily::Socket, sockfd as usize, len, true, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         unsafe { set_abi_errno(errno::EACCES) };
         runtime_policy::observe(
@@ -383,7 +379,8 @@ pub unsafe extern "C" fn recvfrom(
     src_addr: *mut libc::sockaddr,
     addrlen: *mut u32,
 ) -> isize {
-    let (_, decision) = runtime_policy::decide(ApiFamily::Socket, sockfd as usize, len, true, true, 0);
+    let (_, decision) =
+        runtime_policy::decide(ApiFamily::Socket, sockfd as usize, len, true, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         unsafe { set_abi_errno(errno::EACCES) };
         runtime_policy::observe(

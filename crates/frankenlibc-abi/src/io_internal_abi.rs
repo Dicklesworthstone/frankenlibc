@@ -12,28 +12,9 @@
 #![allow(non_snake_case, non_upper_case_globals)]
 
 use std::ffi::{c_char, c_int, c_void};
-use std::sync::LazyLock;
 use std::sync::atomic::{AtomicPtr, Ordering};
 
 use crate::stdio_abi;
-
-// ---------------------------------------------------------------------------
-// Helper macro: resolve a glibc symbol via RTLD_NEXT, cache in LazyLock
-// ---------------------------------------------------------------------------
-
-macro_rules! io_resolve {
-    ($sym:expr, $ty:ty) => {{
-        static FUNC: LazyLock<Option<$ty>> = LazyLock::new(|| {
-            let sym = unsafe { libc::dlsym(libc::RTLD_NEXT, $sym.as_ptr()) };
-            if sym.is_null() {
-                None
-            } else {
-                Some(unsafe { std::mem::transmute::<*mut c_void, $ty>(sym) })
-            }
-        });
-        *FUNC
-    }};
-}
 
 // ---------------------------------------------------------------------------
 // Global variable symbols (exported as static AtomicPtr, lazily resolved)
@@ -1004,8 +985,7 @@ pub unsafe extern "C" fn _IO_sputbackc(fp: *mut c_void, ch: c_int) -> c_int {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn _IO_sputbackwc(fp: *mut c_void, wch: u32) -> u32 {
     // Use the ungetwc ABI path for wide pushback
-    let result = unsafe { crate::wchar_abi::ungetwc(wch, fp) };
-    result
+    unsafe { crate::wchar_abi::ungetwc(wch, fp) }
 }
 
 /// `_IO_sungetc` — unget the last byte read.
@@ -1042,11 +1022,7 @@ pub unsafe extern "C" fn _IO_ungetc(ch: c_int, fp: *mut c_void) -> c_int {
 /// by our stdio layer.  This vtable hook is glibc's internal initializer
 /// for its `_IO_str_fields` overlay on `_IO_FILE`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn _IO_str_init_readonly(
-    _fp: *mut c_void,
-    _str: *const c_char,
-    _len: usize,
-) {
+pub unsafe extern "C" fn _IO_str_init_readonly(_fp: *mut c_void, _str: *const c_char, _len: usize) {
     // No-op: string stream init handled by fmemopen
 }
 
@@ -1253,11 +1229,7 @@ pub unsafe extern "C" fn _IO_wdefault_xsputn(
 /// Native: returns -1 since wide buffer flushing at vtable level
 /// requires internal wide-to-narrow conversion state we do not maintain.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn _IO_wdo_write(
-    _fp: *mut c_void,
-    _buf: *const c_void,
-    _n: usize,
-) -> c_int {
+pub unsafe extern "C" fn _IO_wdo_write(_fp: *mut c_void, _buf: *const c_void, _n: usize) -> c_int {
     -1 // wide write not supported at vtable level
 }
 

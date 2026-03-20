@@ -681,16 +681,10 @@ pub unsafe fn join_thread(handle_ptr: *mut ThreadHandle) -> Result<usize, i32> {
                     Ordering::Acquire,
                 ) {
                     Ok(_) => {
-                        // We own the join. Skip the futex wait (thread already exited).
-                        // Read retval, free resources, return.
-                        // SAFETY: retval written before FINISHED, tid==0 guarantees visibility.
-                        let retval = unsafe { *handle.retval.get() };
-                        let stack_base = handle.stack_base;
-                        let stack_total_size = handle.stack_total_size;
-                        free_thread_stack(stack_base, stack_total_size);
-                        // SAFETY: handle_ptr from Box::into_raw in create_thread.
-                        unsafe { drop(Box::from_raw(handle_ptr)) };
-                        return Ok(retval);
+                        // We own the join. Proceed to wait for tid == 0 to ensure
+                        // the kernel has finished the exit sequence before we
+                        // reclaim the stack and handle.
+                        break;
                     }
                     Err(new_state) => {
                         // Someone else changed the state (detach or another joiner).
@@ -758,9 +752,10 @@ pub unsafe fn join_thread(handle_ptr: *mut ThreadHandle) -> Result<usize, i32> {
     // exclusive ownership via the JOINED CAS.
     let retval = unsafe { *handle.retval.get() };
 
-    // Free resources.
     let stack_base = handle.stack_base;
     let stack_total_size = handle.stack_total_size;
+
+    // Thread is gone. Reclaim its resources.
     free_thread_stack(stack_base, stack_total_size);
 
     // SAFETY: handle_ptr was created via Box::into_raw in create_thread.
@@ -808,13 +803,10 @@ pub unsafe fn detach_thread(handle_ptr: *mut ThreadHandle) -> Result<(), i32> {
                     Ordering::Acquire,
                 ) {
                     Ok(_) => {
-                        // We own cleanup. Free resources immediately.
-                        let stack_base = handle.stack_base;
-                        let stack_total_size = handle.stack_total_size;
-                        free_thread_stack(stack_base, stack_total_size);
-                        // SAFETY: handle_ptr from Box::into_raw in create_thread.
-                        unsafe { drop(Box::from_raw(handle_ptr)) };
-                        return Ok(());
+                        // We own cleanup. Proceed to wait for tid == 0 to ensure
+                        // the kernel has finished the exit sequence before we
+                        // reclaim the stack and handle.
+                        break;
                     }
                     Err(THREAD_JOINED) => return Err(EINVAL),
                     Err(_) => continue, // Retry on unexpected state.
@@ -843,6 +835,32 @@ pub unsafe fn detach_thread(handle_ptr: *mut ThreadHandle) -> Result<(), i32> {
             _ => return Err(EINVAL), // Unknown state.
         }
     }
+
+    // Wait for the kernel to clear tid to 0 (CLONE_CHILD_CLEARTID).
+    loop {
+        let tid = handle.tid.load(Ordering::Acquire);
+        if tid == 0 {
+            break;
+        }
+        let futex_ptr = &handle.tid as *const AtomicI32 as *const u32;
+        let _ = unsafe {
+            syscall::sys_futex(
+                futex_ptr, 0x00, // FUTEX_WAIT
+                tid as u32, 0, 0, 0,
+            )
+        };
+    }
+
+    let stack_base = handle.stack_base;
+    let stack_total_size = handle.stack_total_size;
+
+    // Thread is gone. Reclaim its resources.
+    free_thread_stack(stack_base, stack_total_size);
+
+    // SAFETY: handle_ptr was created via Box::into_raw in create_thread.
+    unsafe { drop(Box::from_raw(handle_ptr)) };
+
+    Ok(())
 }
 
 /// Get the calling thread's TID.

@@ -52,10 +52,10 @@ fn is_glob_meta(ch: u8) -> bool {
 }
 
 /// Check if a pattern contains glob metacharacters.
-fn has_magic(pat: &[u8]) -> bool {
+fn has_magic(pat: &[u8], noescape: bool) -> bool {
     let mut i = 0;
     while i < pat.len() {
-        if pat[i] == b'\\' {
+        if pat[i] == b'\\' && !noescape {
             i += 2;
             continue;
         }
@@ -240,9 +240,10 @@ pub fn glob_expand(pattern: &[u8], flags: i32) -> Result<GlobResult, i32> {
     } else {
         pat
     };
+    let noescape = flags & GLOB_NOESCAPE != 0;
 
     // If no metacharacters, just check existence.
-    if !has_magic(pat) {
+    if !has_magic(pat, noescape) {
         let path = Path::new(OsStr::from_bytes(pat));
         if path.exists() {
             let mut p = pat.to_vec();
@@ -288,8 +289,6 @@ fn glob_recursive(pat: &[u8], flags: i32, results: &mut Vec<Vec<u8>>) -> Result<
         Some(pos) => (&tail[..pos], &tail[pos + 1..]),
         None => (tail, &[] as &[u8]),
     };
-
-    let noescape = flags & GLOB_NOESCAPE != 0;
 
     // Determine the directory to read.
     let dir_path = if dir_prefix.is_empty() {
@@ -391,12 +390,13 @@ mod tests {
 
     #[test]
     fn test_has_magic() {
-        assert!(!has_magic(b"hello"));
-        assert!(!has_magic(b"/usr/lib"));
-        assert!(has_magic(b"*.txt"));
-        assert!(has_magic(b"file?.log"));
-        assert!(has_magic(b"[abc]"));
-        assert!(!has_magic(b"\\*escaped"));
+        assert!(!has_magic(b"hello", false));
+        assert!(!has_magic(b"/usr/lib", false));
+        assert!(has_magic(b"*.txt", false));
+        assert!(has_magic(b"file?.log", false));
+        assert!(has_magic(b"[abc]", false));
+        assert!(!has_magic(b"\\*escaped", false));
+        assert!(has_magic(b"\\*", true));
     }
 
     #[test]
@@ -509,5 +509,14 @@ mod tests {
         assert_eq!(res.paths.len(), 1);
         // /tmp is a directory, so GLOB_MARK appends /
         assert!(res.paths[0].ends_with(b"/"));
+    }
+
+    #[test]
+    fn noescape_treats_backslash_star_as_magic() {
+        let result = glob_expand(b"\\*\0", GLOB_NOESCAPE | GLOB_NOCHECK);
+        assert!(result.is_ok());
+        let res = result.unwrap();
+        assert_eq!(res.paths, vec![b"\\*".to_vec()]);
+        assert!(has_magic(b"\\*", true));
     }
 }

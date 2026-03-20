@@ -10,13 +10,8 @@ use std::os::raw::c_long;
 use frankenlibc_membrane::config::SafetyLevel;
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
+use crate::errno_abi::set_abi_errno;
 use crate::runtime_policy;
-
-#[inline]
-unsafe fn set_abi_errno(val: c_int) {
-    let p = unsafe { crate::errno_abi::__errno_location() };
-    unsafe { *p = val };
-}
 
 #[inline]
 fn deny_fallback(mode: SafetyLevel) -> f64 {

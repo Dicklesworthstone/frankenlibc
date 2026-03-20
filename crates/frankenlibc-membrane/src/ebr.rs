@@ -5,8 +5,8 @@
 //! of retired items until all threads that might hold references have advanced.
 
 use parking_lot::Mutex;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 /// Global epoch counter for EBR.
 pub struct EbrCollector {

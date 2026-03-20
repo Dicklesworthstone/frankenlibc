@@ -19,14 +19,9 @@ use frankenlibc_membrane::check_oracle::CheckStage;
 use frankenlibc_membrane::heal::{HealingAction, global_healing_policy};
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
+use crate::errno_abi::set_abi_errno;
 use crate::malloc_abi::known_remaining;
 use crate::runtime_policy;
-
-#[inline]
-unsafe fn set_abi_errno(val: c_int) {
-    let p = unsafe { super::errno_abi::__errno_location() };
-    unsafe { *p = val };
-}
 
 const HOST_NOT_FOUND_ERRNO: c_int = 1;
 const NO_RECOVERY_ERRNO: c_int = 3;
@@ -996,8 +991,14 @@ pub unsafe extern "C" fn gethostbyaddr(
     len: libc::socklen_t,
     af: c_int,
 ) -> *mut c_void {
-    let (_, decision) =
-        runtime_policy::decide(ApiFamily::Resolver, addr as usize, len as usize, true, true, 0);
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Resolver,
+        addr as usize,
+        len as usize,
+        true,
+        true,
+        0,
+    );
     if matches!(decision.action, MembraneAction::Deny) {
         unsafe { set_h_errnop(ptr::null_mut(), NO_RECOVERY_ERRNO) };
         runtime_policy::observe(ApiFamily::Resolver, decision.profile, 18, true);
@@ -1037,8 +1038,14 @@ pub unsafe extern "C" fn gethostbyaddr(
 /// POSIX `getservbyname` — look up a service by name in /etc/services.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getservbyname(name: *const c_char, proto: *const c_char) -> *mut c_void {
-    let (_, decision) =
-        runtime_policy::decide(ApiFamily::Resolver, name as usize, 0, true, name.is_null(), 0);
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Resolver,
+        name as usize,
+        0,
+        true,
+        name.is_null(),
+        0,
+    );
     if matches!(decision.action, MembraneAction::Deny) {
         runtime_policy::observe(ApiFamily::Resolver, decision.profile, 15, true);
         return ptr::null_mut();
@@ -1108,8 +1115,14 @@ pub unsafe extern "C" fn getservbyname(name: *const c_char, proto: *const c_char
 /// POSIX `getservbyport` — look up a service by port number in /etc/services.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getservbyport(port: c_int, proto: *const c_char) -> *mut c_void {
-    let (_, decision) =
-        runtime_policy::decide(ApiFamily::Resolver, proto as usize, 0, true, proto.is_null(), 0);
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Resolver,
+        proto as usize,
+        0,
+        true,
+        proto.is_null(),
+        0,
+    );
     if matches!(decision.action, MembraneAction::Deny) {
         runtime_policy::observe(ApiFamily::Resolver, decision.profile, 15, true);
         return ptr::null_mut();
@@ -1163,8 +1176,14 @@ pub unsafe extern "C" fn getservbyport(port: c_int, proto: *const c_char) -> *mu
 /// POSIX `getprotobyname` — look up a protocol by name in /etc/protocols.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getprotobyname(name: *const c_char) -> *mut c_void {
-    let (_, decision) =
-        runtime_policy::decide(ApiFamily::Resolver, name as usize, 0, true, name.is_null(), 0);
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Resolver,
+        name as usize,
+        0,
+        true,
+        name.is_null(),
+        0,
+    );
     if matches!(decision.action, MembraneAction::Deny) {
         runtime_policy::observe(ApiFamily::Resolver, decision.profile, 15, true);
         return ptr::null_mut();

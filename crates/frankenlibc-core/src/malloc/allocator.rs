@@ -599,9 +599,14 @@ impl MallocState {
         if new_bin == old_bin && new_bin < NUM_SIZE_CLASSES {
             // Update record in place
             if let Some(record) = self.active.get_mut(&ptr) {
-                self.total_allocated = self.total_allocated.saturating_sub(record.user_size);
+                // Update total_allocated with the exact delta
+                let old_user_size = record.user_size;
+                if new_size > old_user_size {
+                    self.total_allocated += new_size - old_user_size;
+                } else {
+                    self.total_allocated -= old_user_size - new_size;
+                }
                 record.user_size = new_size;
-                self.total_allocated = self.total_allocated.saturating_add(new_size);
             }
             self.record_lifecycle(
                 AllocatorLogLevel::Trace,
@@ -635,7 +640,7 @@ impl MallocState {
 
         // In the logical model, we don't copy actual bytes.
         // The ABI layer handles the real memcpy.
-        let _ = old_size; // Suppress unused warning
+        // Note: malloc() already updated total_allocated and active_count.
 
         self.free(ptr);
         self.record_lifecycle(

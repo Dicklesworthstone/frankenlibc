@@ -142,7 +142,7 @@ fn determinism_canonical_class_mapping_is_pure() {
 
 #[test]
 fn determinism_across_threads() {
-    use frankenlibc_membrane::heal::{recommended_healing_for_canonical_class, HealingPolicy};
+    use frankenlibc_membrane::heal::{HealingPolicy, recommended_healing_for_canonical_class};
     use std::sync::{Arc, Barrier};
     use std::thread;
 
@@ -400,9 +400,7 @@ fn valid_inputs_pass_through_without_healing() {
     assert_eq!(len, 11);
 
     // strcmp on valid strings
-    let cmp = unsafe {
-        strcmp(c"abc".as_ptr(), c"abc".as_ptr())
-    };
+    let cmp = unsafe { strcmp(c"abc".as_ptr(), c"abc".as_ptr()) };
     assert_eq!(cmp, 0);
 
     // memcpy with valid buffers

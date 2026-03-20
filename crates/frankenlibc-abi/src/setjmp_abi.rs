@@ -14,14 +14,14 @@ use std::collections::HashMap;
 use std::ffi::{c_int, c_void};
 use std::sync::{Mutex, OnceLock};
 
+use crate::errno_abi::set_abi_errno;
+use crate::runtime_policy;
 use frankenlibc_core::errno;
 use frankenlibc_core::setjmp::{
     JmpBuf, Phase1JumpError, Phase1Mode, phase1_longjmp_restore, phase1_setjmp_capture,
 };
 use frankenlibc_membrane::config::SafetyLevel;
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
-
-use crate::runtime_policy;
 
 #[derive(Debug, Clone)]
 struct JumpRegistryEntry {
@@ -48,12 +48,6 @@ fn phase1_error_errno(err: Phase1JumpError) -> c_int {
         Phase1JumpError::ForeignContext => errno::EPERM,
         Phase1JumpError::CorruptedContext => errno::EFAULT,
     }
-}
-
-#[inline]
-unsafe fn set_abi_errno(val: c_int) {
-    let p = unsafe { crate::errno_abi::__errno_location() };
-    unsafe { *p = val };
 }
 
 fn capture_env(env_addr: usize, mode: SafetyLevel, savemask: bool) -> Result<c_int, c_int> {

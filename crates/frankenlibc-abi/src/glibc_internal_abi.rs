@@ -23,39 +23,6 @@ type SizeT = usize;
 type SSizeT = isize;
 
 // ==========================================================================
-// Helper: dlsym-based call-through for functions we also export
-// ==========================================================================
-macro_rules! dlsym_passthrough {
-    (fn $name:ident ( $($arg:ident : $ty:ty),* $(,)? ) -> $ret:ty) => {
-        #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-        pub unsafe extern "C" fn $name( $($arg: $ty),* ) -> $ret {
-            type F = unsafe extern "C" fn( $($ty),* ) -> $ret;
-            let sym = unsafe {
-                libc::dlsym(libc::RTLD_NEXT, concat!(stringify!($name), "\0").as_ptr().cast())
-            };
-            if sym.is_null() {
-                return unsafe { std::mem::zeroed() };
-            }
-            let f: F = unsafe { std::mem::transmute(sym) };
-            unsafe { f( $($arg),* ) }
-        }
-    };
-    (fn $name:ident ( $($arg:ident : $ty:ty),* $(,)? )) => {
-        #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-        pub unsafe extern "C" fn $name( $($arg: $ty),* ) {
-            type F = unsafe extern "C" fn( $($ty),* );
-            let sym = unsafe {
-                libc::dlsym(libc::RTLD_NEXT, concat!(stringify!($name), "\0").as_ptr().cast())
-            };
-            if !sym.is_null() {
-                let f: F = unsafe { std::mem::transmute(sym) };
-                unsafe { f( $($arg),* ) };
-            }
-        }
-    };
-}
-
-// ==========================================================================
 // Native math helpers
 // ==========================================================================
 
@@ -4288,9 +4255,47 @@ pub unsafe extern "C" fn create_module(name: *const c_char, size: SizeT) -> c_lo
 pub unsafe extern "C" fn delete_module(name: *const c_char, flags: c_uint) -> c_int {
     unsafe { libc::syscall(libc::SYS_delete_module, name, flags) as c_int }
 }
-dlsym_passthrough!(fn dladdr1(addr: *const c_void, info: *mut c_void, extra_info: *mut *mut c_void, flags: c_int) -> c_int);
-dlsym_passthrough!(fn dlinfo(handle: *mut c_void, request: c_int, info: *mut c_void) -> c_int);
-dlsym_passthrough!(fn dlmopen(lmid: c_long, filename: *const c_char, flags: c_int) -> *mut c_void);
+/// `dladdr1` — extended dladdr with extra info (ELF symbol/header).
+///
+/// Native: delegates to `dladdr` for the base Dl_info lookup, then
+/// clears the extra_info pointer since we don't provide ELF details.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn dladdr1(
+    addr: *const c_void,
+    info: *mut c_void,
+    extra_info: *mut *mut c_void,
+    _flags: c_int,
+) -> c_int {
+    if !extra_info.is_null() {
+        unsafe { *extra_info = std::ptr::null_mut() };
+    }
+    unsafe { crate::dlfcn_abi::dladdr(addr, info) }
+}
+
+/// `dlinfo` — get dynamic linker information about a loaded object.
+///
+/// Native: returns -1 with ENOSYS since we don't maintain linker metadata.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn dlinfo(
+    _handle: *mut c_void,
+    _request: c_int,
+    _info: *mut c_void,
+) -> c_int {
+    unsafe { *libc::__errno_location() = libc::ENOSYS };
+    -1
+}
+
+/// `dlmopen` — open shared object in a specific link-map namespace.
+///
+/// Native: ignores the namespace and delegates to dlopen.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn dlmopen(
+    _lmid: c_long,
+    filename: *const c_char,
+    flags: c_int,
+) -> *mut c_void {
+    unsafe { crate::dlfcn_abi::dlopen(filename, flags) }
+}
 // NOTE: dlvsym is defined in dlfcn_abi.rs with a full implementation.
 // dysize: native — returns 366 for leap years, 365 otherwise
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]

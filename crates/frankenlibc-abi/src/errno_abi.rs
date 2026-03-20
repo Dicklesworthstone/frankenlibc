@@ -17,3 +17,10 @@ pub unsafe extern "C" fn __errno_location() -> *mut c_int {
         Err(_) => core::ptr::addr_of_mut!(FALLBACK_ERRNO),
     }
 }
+
+/// Set the thread-local errno value.
+#[inline]
+pub unsafe fn set_abi_errno(val: c_int) {
+    let p = unsafe { __errno_location() };
+    unsafe { *p = val };
+}

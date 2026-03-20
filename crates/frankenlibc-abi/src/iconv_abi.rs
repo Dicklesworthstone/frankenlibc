@@ -18,6 +18,7 @@ use frankenlibc_core::errno;
 use frankenlibc_core::iconv::{self, IconvDescriptor};
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
+use crate::errno_abi::set_abi_errno;
 use crate::runtime_policy;
 
 const ICONV_ERROR_VALUE: usize = usize::MAX;
@@ -54,13 +55,6 @@ fn is_known_handle(ptr: *mut c_void) -> bool {
         .lock()
         .map(|set| set.contains(&(ptr as usize)))
         .unwrap_or(false)
-}
-
-unsafe fn set_abi_errno(val: c_int) {
-    // SAFETY: __errno_location returns a valid TLS pointer for this thread.
-    let p = unsafe { super::errno_abi::__errno_location() };
-    // SAFETY: pointer is valid for write per errno ABI contract.
-    unsafe { *p = val };
 }
 
 unsafe fn apply_progress(

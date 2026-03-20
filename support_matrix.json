@@ -16181,12 +16181,12 @@
     },
     {
       "symbol": "_IO_default_doallocate",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "io_internal_abi"
     },
     {
       "symbol": "_IO_default_finish",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "io_internal_abi"
     },
     {
@@ -16216,7 +16216,7 @@
     },
     {
       "symbol": "_IO_doallocbuf",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "io_internal_abi"
     },
     {
@@ -16251,7 +16251,7 @@
     },
     {
       "symbol": "_IO_file_attach",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "io_internal_abi"
     },
     {
@@ -16266,32 +16266,32 @@
     },
     {
       "symbol": "_IO_file_doallocate",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "io_internal_abi"
     },
     {
       "symbol": "_IO_file_finish",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "io_internal_abi"
     },
     {
       "symbol": "_IO_file_fopen",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "io_internal_abi"
     },
     {
       "symbol": "_IO_file_init",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "io_internal_abi"
     },
     {
       "symbol": "_IO_file_jumps",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "io_internal_abi"
     },
     {
       "symbol": "_IO_file_open",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "io_internal_abi"
     },
     {
@@ -16376,12 +16376,12 @@
     },
     {
       "symbol": "_IO_free_backup_area",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "io_internal_abi"
     },
     {
       "symbol": "_IO_free_wbackup_area",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "io_internal_abi"
     },
     {
@@ -16421,77 +16421,77 @@
     },
     {
       "symbol": "_IO_init",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "io_internal_abi"
     },
     {
       "symbol": "_IO_init_marker",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "io_internal_abi"
     },
     {
       "symbol": "_IO_init_wmarker",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "io_internal_abi"
     },
     {
       "symbol": "_IO_iter_begin",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "io_internal_abi"
     },
     {
       "symbol": "_IO_iter_end",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "io_internal_abi"
     },
     {
       "symbol": "_IO_iter_file",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "io_internal_abi"
     },
     {
       "symbol": "_IO_iter_next",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "io_internal_abi"
     },
     {
       "symbol": "_IO_least_wmarker",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "io_internal_abi"
     },
     {
       "symbol": "_IO_link_in",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "io_internal_abi"
     },
     {
       "symbol": "_IO_list_all",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "io_internal_abi"
     },
     {
       "symbol": "_IO_list_lock",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "io_internal_abi"
     },
     {
       "symbol": "_IO_list_resetlock",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "io_internal_abi"
     },
     {
       "symbol": "_IO_list_unlock",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "io_internal_abi"
     },
     {
       "symbol": "_IO_marker_delta",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "io_internal_abi"
     },
     {
       "symbol": "_IO_marker_difference",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "io_internal_abi"
     },
     {
@@ -16511,27 +16511,27 @@
     },
     {
       "symbol": "_IO_proc_open",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "io_internal_abi"
     },
     {
       "symbol": "_IO_remove_marker",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "io_internal_abi"
     },
     {
       "symbol": "_IO_seekmark",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "io_internal_abi"
     },
     {
       "symbol": "_IO_seekwmark",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "io_internal_abi"
     },
     {
       "symbol": "_IO_setb",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "io_internal_abi"
     },
     {
@@ -16556,7 +16556,7 @@
     },
     {
       "symbol": "_IO_sputbackwc",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "io_internal_abi"
     },
     {
@@ -16566,42 +16566,42 @@
     },
     {
       "symbol": "_IO_str_init_readonly",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "io_internal_abi"
     },
     {
       "symbol": "_IO_str_init_static",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "io_internal_abi"
     },
     {
       "symbol": "_IO_str_overflow",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "io_internal_abi"
     },
     {
       "symbol": "_IO_str_pbackfail",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "io_internal_abi"
     },
     {
       "symbol": "_IO_str_seekoff",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "io_internal_abi"
     },
     {
       "symbol": "_IO_str_underflow",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "io_internal_abi"
     },
     {
       "symbol": "_IO_sungetc",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "io_internal_abi"
     },
     {
       "symbol": "_IO_sungetwc",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "io_internal_abi"
     },
     {
@@ -16611,22 +16611,22 @@
     },
     {
       "symbol": "_IO_switch_to_main_wget_area",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "io_internal_abi"
     },
     {
       "symbol": "_IO_switch_to_wbackup_area",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "io_internal_abi"
     },
     {
       "symbol": "_IO_switch_to_wget_mode",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "io_internal_abi"
     },
     {
       "symbol": "_IO_un_link",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "io_internal_abi"
     },
     {
@@ -16636,12 +16636,12 @@
     },
     {
       "symbol": "_IO_unsave_markers",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "io_internal_abi"
     },
     {
       "symbol": "_IO_unsave_wmarkers",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "io_internal_abi"
     },
     {
@@ -16661,82 +16661,82 @@
     },
     {
       "symbol": "_IO_wdefault_doallocate",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "io_internal_abi"
     },
     {
       "symbol": "_IO_wdefault_finish",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "io_internal_abi"
     },
     {
       "symbol": "_IO_wdefault_pbackfail",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "io_internal_abi"
     },
     {
       "symbol": "_IO_wdefault_uflow",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "io_internal_abi"
     },
     {
       "symbol": "_IO_wdefault_xsgetn",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "io_internal_abi"
     },
     {
       "symbol": "_IO_wdefault_xsputn",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "io_internal_abi"
     },
     {
       "symbol": "_IO_wdo_write",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "io_internal_abi"
     },
     {
       "symbol": "_IO_wdoallocbuf",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "io_internal_abi"
     },
     {
       "symbol": "_IO_wfile_jumps",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "io_internal_abi"
     },
     {
       "symbol": "_IO_wfile_overflow",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "io_internal_abi"
     },
     {
       "symbol": "_IO_wfile_seekoff",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "io_internal_abi"
     },
     {
       "symbol": "_IO_wfile_sync",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "io_internal_abi"
     },
     {
       "symbol": "_IO_wfile_underflow",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "io_internal_abi"
     },
     {
       "symbol": "_IO_wfile_xsputn",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "io_internal_abi"
     },
     {
       "symbol": "_IO_wmarker_delta",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "io_internal_abi"
     },
     {
       "symbol": "_IO_wsetb",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "io_internal_abi"
     },
     {
@@ -18838,17 +18838,17 @@
     },
     {
       "symbol": "dladdr1",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "dlinfo",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "dlmopen",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "glibc_internal_abi"
     },
     {

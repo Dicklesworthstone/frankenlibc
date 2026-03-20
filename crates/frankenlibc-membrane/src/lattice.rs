@@ -70,11 +70,7 @@ impl SafetyState {
             // Everything joins downward toward Unknown
             (a, b) => {
                 // For non-diamond cases, take the lower rank
-                if (a as u8) <= (b as u8) {
-                    a
-                } else {
-                    b
-                }
+                if (a as u8) <= (b as u8) { a } else { b }
             }
         }
     }

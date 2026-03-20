@@ -463,14 +463,10 @@ fn extract_required_tlvs(tlvs: &[Tlv<'_>]) -> Result<TlvExtract, PolicyTableErro
 
     for tlv in tlvs {
         match tlv.t {
-            0x0001
-                if build_info.is_none() =>
-            {
+            0x0001 if build_info.is_none() => {
                 build_info = Some(ascii_lossy_trim(tlv.v));
             }
-            0x0002
-                if proof_digest.is_none() =>
-            {
+            0x0002 if proof_digest.is_none() => {
                 if tlv.v.len() != 32 {
                     return Err(PolicyTableError::MalformedTlv);
                 }
@@ -478,9 +474,7 @@ fn extract_required_tlvs(tlvs: &[Tlv<'_>]) -> Result<TlvExtract, PolicyTableErro
                 d.copy_from_slice(tlv.v);
                 proof_digest = Some(d);
             }
-            0x0003
-                if invariants.is_none() =>
-            {
+            0x0003 if invariants.is_none() => {
                 invariants = Some(ascii_lossy_trim(tlv.v));
             }
             _ => {}

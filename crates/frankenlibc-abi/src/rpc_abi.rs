@@ -294,8 +294,14 @@ pub unsafe extern "C" fn xdrmem_create(
     size: c_uint,
     op: c_int,
 ) {
-    let (_, decision) =
-        runtime_policy::decide(ApiFamily::Stdio, addr as usize, size as usize, true, true, 0);
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Stdio,
+        addr as usize,
+        size as usize,
+        true,
+        true,
+        0,
+    );
     if matches!(decision.action, MembraneAction::Deny) {
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
         return;

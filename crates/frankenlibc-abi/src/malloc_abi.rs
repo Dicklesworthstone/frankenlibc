@@ -19,13 +19,8 @@ use frankenlibc_membrane::check_oracle::CheckStage;
 use frankenlibc_membrane::heal::{HealingAction, global_healing_policy};
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
+use crate::errno_abi::set_abi_errno;
 use crate::runtime_policy;
-
-#[inline]
-unsafe fn set_abi_errno(val: c_int) {
-    let p = unsafe { super::errno_abi::__errno_location() };
-    unsafe { *p = val };
-}
 
 unsafe extern "C" {
     #[link_name = "__libc_malloc@GLIBC_2.2.5"]

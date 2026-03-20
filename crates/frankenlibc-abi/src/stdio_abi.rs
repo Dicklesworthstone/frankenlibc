@@ -21,6 +21,7 @@ use frankenlibc_core::stdio::{BufMode, OpenFlags, StdioStream, flags_to_oflags, 
 use frankenlibc_membrane::heal::{HealingAction, global_healing_policy};
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
+use crate::errno_abi::set_abi_errno;
 use crate::malloc_abi::{known_remaining, malloc};
 use crate::runtime_policy;
 use crate::unistd_abi::{sys_read_fd, sys_write_fd};
@@ -60,12 +61,6 @@ pub(crate) unsafe fn c_str_bytes<'a>(ptr: *const c_char) -> &'a [u8] {
     let (len, _) = unsafe { scan_c_str_len(ptr, None) };
     // SAFETY: `scan_c_str_len` scanned until the first NUL byte, so this range is readable.
     unsafe { std::slice::from_raw_parts(ptr.cast::<u8>(), len) }
-}
-
-#[inline]
-unsafe fn set_abi_errno(val: c_int) {
-    let p = unsafe { super::errno_abi::__errno_location() };
-    unsafe { *p = val };
 }
 
 /// Runtime-dispatch state for stream/syscall policy lookups.

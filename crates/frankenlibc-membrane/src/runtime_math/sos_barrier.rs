@@ -160,8 +160,7 @@ impl<const D: usize> SosCertificate<D> {
 
     /// Evaluate z(x)^T Q z(x) using fixed-point integer arithmetic.
     ///
-    /// `scale` controls post-accumulation downscaling to keep values in
-    /// milli-units.
+    /// `scale` controls post-accumulation downscaling.
     #[must_use]
     pub fn evaluate_quadratic_form(&self, basis: &[i64; D], scale: i64) -> i64 {
         let mut acc: i128 = 0;
@@ -487,30 +486,34 @@ pub fn evaluate_thread_safety_barrier(
 #[inline]
 fn evaluate_size_class_barrier_from_basis(basis: &[i64; SIZE_CLASS_CERT_DIM]) -> i64 {
     let q = &SIZE_CLASS_GRAM_MATRIX;
-    let b0 = basis[0];
-    let b1 = basis[1];
-    let b2 = basis[2];
-    let b3 = basis[3];
+    let b0 = i128::from(basis[0]);
+    let b1 = i128::from(basis[1]);
+    let b2 = i128::from(basis[2]);
+    let b3 = i128::from(basis[3]);
 
     // Fixed 4x4 unrolled quadratic form for hot allocator path.
-    let acc = q[0][0] * b0 * b0
-        + q[0][1] * b0 * b1
-        + q[0][2] * b0 * b2
-        + q[0][3] * b0 * b3
-        + q[1][0] * b1 * b0
-        + q[1][1] * b1 * b1
-        + q[1][2] * b1 * b2
-        + q[1][3] * b1 * b3
-        + q[2][0] * b2 * b0
-        + q[2][1] * b2 * b1
-        + q[2][2] * b2 * b2
-        + q[2][3] * b2 * b3
-        + q[3][0] * b3 * b0
-        + q[3][1] * b3 * b1
-        + q[3][2] * b3 * b2
-        + q[3][3] * b3 * b3;
+    // Intermediate products can reach ~1e18, fitting in i64, but i128 is safer
+    // for the accumulation step.
+    let acc: i128 = i128::from(q[0][0]) * b0 * b0
+        + i128::from(q[0][1]) * b0 * b1
+        + i128::from(q[0][2]) * b0 * b2
+        + i128::from(q[0][3]) * b0 * b3
+        + i128::from(q[1][0]) * b1 * b0
+        + i128::from(q[1][1]) * b1 * b1
+        + i128::from(q[1][2]) * b1 * b2
+        + i128::from(q[1][3]) * b1 * b3
+        + i128::from(q[2][0]) * b2 * b0
+        + i128::from(q[2][1]) * b2 * b1
+        + i128::from(q[2][2]) * b2 * b2
+        + i128::from(q[2][3]) * b2 * b3
+        + i128::from(q[3][0]) * b3 * b0
+        + i128::from(q[3][1]) * b3 * b1
+        + i128::from(q[3][2]) * b3 * b2
+        + i128::from(q[3][3]) * b3 * b3;
 
-    SIZE_CLASS_BARRIER_BUDGET_MILLI.saturating_sub(acc / SIZE_CLASS_SCORE_SCALE)
+    let score = (acc / i128::from(SIZE_CLASS_SCORE_SCALE))
+        .clamp(i128::from(i64::MIN), i128::from(i64::MAX)) as i64;
+    SIZE_CLASS_BARRIER_BUDGET_MILLI.saturating_sub(score)
 }
 
 /// Evaluate size-class admissibility barrier certificate.
@@ -597,32 +600,38 @@ pub fn evaluate_provenance_barrier(
     bloom_fp_rate_ppm: u32,
     arena_pressure_ppm: u32,
 ) -> i64 {
-    let r = risk_ppm as i64;
-    let v = validation_depth_ppm as i64;
-    let b = bloom_fp_rate_ppm as i64;
-    let p = arena_pressure_ppm as i64;
-    let one = 1_000_000i64;
+    let r = i128::from(risk_ppm);
+    let v = i128::from(validation_depth_ppm);
+    let b = i128::from(bloom_fp_rate_ppm);
+    let p = i128::from(arena_pressure_ppm);
+    let one = 1_000_000i128;
 
     // Risk headroom: positive when risk is below budget.
-    let headroom = PROVENANCE_RISK_BUDGET_PPM - r;
+    let headroom = i128::from(PROVENANCE_RISK_BUDGET_PPM) - r;
 
     // Penalty: risk × bloom_fp × (1 - depth). High risk + bad bloom + fast path → bad.
     // Scale: r * b / 1e6 gives ppm product; * (1-v) / 1e6 gives triple product.
-    let rb = r.saturating_mul(b) / one;
-    let penalty_1 = BETA_1.saturating_mul(rb).saturating_mul(one - v) / (one * one);
+    // We then multiply by BETA (milli-units) and divide by 1000 to get final penalty in ppm.
+    let rb = r * b / one;
+    let penalty_1_milli = i128::from(BETA_1) * rb * (one - v) / (one * one);
+    let penalty_1 = penalty_1_milli; // already ppm-normalized
 
     // Penalty: risk × arena_pressure × (1 - depth). High risk + full arena + fast → bad.
-    let rp = r.saturating_mul(p) / one;
-    let penalty_2 = BETA_2.saturating_mul(rp).saturating_mul(one - v) / (one * one);
+    let rp = r * p / one;
+    let penalty_2_milli = i128::from(BETA_2) * rp * (one - v) / (one * one);
+    let penalty_2 = penalty_2_milli;
 
     // Reward: validation_depth × (1 - bloom_fp). Full validation + good bloom → safe.
-    let reward = BETA_3.saturating_mul(v).saturating_mul(one - b) / (one * one);
+    let reward_milli = i128::from(BETA_3) * v * (one - b) / (one * one);
+    let reward = reward_milli;
 
     // Direct memory pressure penalty: if arena/headroom pressure is high,
     // force backpressure even when risk-only terms are mild.
-    let penalty_3 = BETA_4.saturating_mul(p) / one;
+    // BETA_4 is in milli-units, so we multiply by (p/one) and normalize.
+    let penalty_3 = i128::from(BETA_4) * p / one;
 
-    headroom - penalty_1 - penalty_2 - penalty_3 + reward
+    let final_ppm = headroom - penalty_1 - penalty_2 - penalty_3 + reward;
+    final_ppm.clamp(i128::from(i64::MIN), i128::from(i64::MAX)) as i64
 }
 
 // ---------------------------------------------------------------------------
@@ -774,7 +783,7 @@ pub fn evaluate_quarantine_barrier(
     let l = normalize_fixed(lambda_latency, NORM_LATENCY);
 
     let vars = [d, c, a, l];
-    let mut result: i64 = 0;
+    let mut result: i128 = 0;
 
     for (k, (exponents, &coeff)) in INVARIANT_A_EXPONENTS
         .iter()
@@ -786,31 +795,24 @@ pub fn evaluate_quarantine_barrier(
         }
         let mono = eval_monomial(&vars, &exponents[..MAX_VARS]);
         // coeff is in milli-units, mono is in FIXED_SCALE^(degree).
-        // For degree 0: mono = 1 (FIXED_SCALE^0)
-        // For degree 1: mono is in [0, FIXED_SCALE]
-        // For degree 2: mono is in [0, FIXED_SCALE²]
-        // For degree 3: mono is in [0, FIXED_SCALE³]
-        //
-        // We normalize by dividing by FIXED_SCALE^degree to keep
-        // the result in milli-units.
         let degree = exponents[..MAX_VARS].iter().map(|&e| e as u32).sum::<u32>();
         let scale = fixed_power(FIXED_SCALE, degree);
         let _ = k; // used for iteration only
         if scale != 0 {
-            result = result.saturating_add(coeff.saturating_mul(mono) / scale);
+            result = result.saturating_add(i128::from(coeff) * mono / scale);
         }
     }
 
-    result
+    result.clamp(i64::MIN as i128, i64::MAX as i128) as i64
 }
 
 /// Evaluate a monomial x₁^e₁ * x₂^e₂ * ... in fixed-point.
 #[inline]
-fn eval_monomial(vars: &[i64], exponents: &[u8]) -> i64 {
-    let mut product: i64 = 1;
+fn eval_monomial(vars: &[i64], exponents: &[u8]) -> i128 {
+    let mut product: i128 = 1;
     for (&var, &exp) in vars.iter().zip(exponents.iter()) {
         for _ in 0..exp {
-            product = product.saturating_mul(var);
+            product = product.saturating_mul(i128::from(var));
         }
     }
     product
@@ -818,11 +820,11 @@ fn eval_monomial(vars: &[i64], exponents: &[u8]) -> i64 {
 
 /// Compute base^exp for small non-negative exponents.
 #[inline]
-const fn fixed_power(base: i64, exp: u32) -> i64 {
-    let mut result = 1i64;
+const fn fixed_power(base: i64, exp: u32) -> i128 {
+    let mut result = 1i128;
     let mut i = 0;
     while i < exp {
-        result = result.saturating_mul(base);
+        result = result.saturating_mul(base as i128);
         i += 1;
     }
     result

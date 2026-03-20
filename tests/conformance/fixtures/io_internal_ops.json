@@ -1,0 +1,290 @@
+{
+  "version": "v1",
+  "family": "io_internal",
+  "captured_at": "2026-03-20T00:00:00Z",
+  "description": "Internal glibc _IO_* stdio functions — native implementations for ABI compatibility. Most are no-ops, safe defaults, or stdio_abi delegates.",
+  "cases": [
+    {
+      "name": "IO_adjust_column_newline_resets",
+      "function": "_IO_adjust_column",
+      "spec_section": "glibc libio internal",
+      "inputs": { "col": 10, "line": "abc\\ndef", "count": 7 },
+      "expected_output": "3",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "IO_adjust_column_tab_aligns",
+      "function": "_IO_adjust_column",
+      "spec_section": "glibc libio internal",
+      "inputs": { "col": 1, "line": "\\t", "count": 1 },
+      "expected_output": "8",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "IO_adjust_column_null_line_returns_col",
+      "function": "_IO_adjust_column",
+      "spec_section": "glibc libio internal",
+      "inputs": { "col": 42, "line": null, "count": 0 },
+      "expected_output": "42",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "IO_adjust_wcolumn_newline_resets",
+      "function": "_IO_adjust_wcolumn",
+      "spec_section": "glibc libio internal",
+      "inputs": { "col": 5, "line_wchars": [65, 10, 66], "count": 3 },
+      "expected_output": "1",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "IO_default_doallocate_returns_success",
+      "function": "_IO_default_doallocate",
+      "spec_section": "glibc libio internal",
+      "inputs": { "fp": "NULL" },
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "IO_default_finish_is_noop",
+      "function": "_IO_default_finish",
+      "spec_section": "glibc libio internal",
+      "inputs": { "fp": "NULL", "dummy": 0 },
+      "expected_output": "void",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "IO_doallocbuf_is_noop",
+      "function": "_IO_doallocbuf",
+      "spec_section": "glibc libio internal",
+      "inputs": { "fp": "NULL" },
+      "expected_output": "void",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "IO_file_init_is_noop",
+      "function": "_IO_file_init",
+      "spec_section": "glibc libio internal",
+      "inputs": { "fp": "NULL" },
+      "expected_output": "void",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "IO_init_is_noop",
+      "function": "_IO_init",
+      "spec_section": "glibc libio internal",
+      "inputs": { "fp": "NULL", "flags": 0 },
+      "expected_output": "void",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "IO_free_backup_area_is_noop",
+      "function": "_IO_free_backup_area",
+      "spec_section": "glibc libio internal",
+      "inputs": { "fp": "NULL" },
+      "expected_output": "void",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "IO_free_wbackup_area_is_noop",
+      "function": "_IO_free_wbackup_area",
+      "spec_section": "glibc libio internal",
+      "inputs": { "fp": "NULL" },
+      "expected_output": "void",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "IO_link_in_is_noop",
+      "function": "_IO_link_in",
+      "spec_section": "glibc libio internal",
+      "inputs": { "fp": "NULL" },
+      "expected_output": "void",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "IO_un_link_is_noop",
+      "function": "_IO_un_link",
+      "spec_section": "glibc libio internal",
+      "inputs": { "fp": "NULL" },
+      "expected_output": "void",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "IO_list_lock_is_noop",
+      "function": "_IO_list_lock",
+      "spec_section": "glibc libio internal",
+      "inputs": {},
+      "expected_output": "void",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "IO_list_unlock_is_noop",
+      "function": "_IO_list_unlock",
+      "spec_section": "glibc libio internal",
+      "inputs": {},
+      "expected_output": "void",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "IO_list_resetlock_is_noop",
+      "function": "_IO_list_resetlock",
+      "spec_section": "glibc libio internal",
+      "inputs": {},
+      "expected_output": "void",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "IO_iter_begin_returns_null",
+      "function": "_IO_iter_begin",
+      "spec_section": "glibc libio internal",
+      "inputs": {},
+      "expected_output": "NULL_PTR",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "IO_iter_end_returns_null",
+      "function": "_IO_iter_end",
+      "spec_section": "glibc libio internal",
+      "inputs": {},
+      "expected_output": "NULL_PTR",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "IO_iter_begin_equals_end_empty_list",
+      "function": "_IO_iter_begin",
+      "spec_section": "glibc libio internal",
+      "inputs": {},
+      "expected_output": "NULL_PTR",
+      "expected_errno": 0,
+      "mode": "both",
+      "notes": "begin==end signals empty iteration"
+    },
+    {
+      "name": "IO_marker_delta_returns_zero",
+      "function": "_IO_marker_delta",
+      "spec_section": "glibc libio internal",
+      "inputs": { "marker": "NULL" },
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "IO_marker_difference_returns_zero",
+      "function": "_IO_marker_difference",
+      "spec_section": "glibc libio internal",
+      "inputs": { "mark1": "NULL", "mark2": "NULL" },
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "IO_seekmark_returns_error",
+      "function": "_IO_seekmark",
+      "spec_section": "glibc libio internal",
+      "inputs": { "fp": "NULL", "marker": "NULL", "delta": 0 },
+      "expected_output": "-1",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "IO_sungetc_returns_eof",
+      "function": "_IO_sungetc",
+      "spec_section": "glibc libio internal",
+      "inputs": { "fp": "NULL" },
+      "expected_output": "-1",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "IO_sungetwc_returns_weof",
+      "function": "_IO_sungetwc",
+      "spec_section": "glibc libio internal",
+      "inputs": { "fp": "NULL" },
+      "expected_output": "4294967295",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "IO_str_overflow_returns_eof",
+      "function": "_IO_str_overflow",
+      "spec_section": "glibc libio internal",
+      "inputs": { "fp": "NULL", "ch": 65 },
+      "expected_output": "-1",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "IO_str_underflow_returns_eof",
+      "function": "_IO_str_underflow",
+      "spec_section": "glibc libio internal",
+      "inputs": { "fp": "NULL" },
+      "expected_output": "-1",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "IO_wdefault_doallocate_returns_success",
+      "function": "_IO_wdefault_doallocate",
+      "spec_section": "glibc libio internal",
+      "inputs": { "fp": "NULL" },
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "IO_wdefault_uflow_returns_weof",
+      "function": "_IO_wdefault_uflow",
+      "spec_section": "glibc libio internal",
+      "inputs": { "fp": "NULL" },
+      "expected_output": "4294967295",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "IO_wfile_sync_delegates_to_fflush",
+      "function": "_IO_wfile_sync",
+      "spec_section": "glibc libio internal",
+      "inputs": { "fp": "NULL" },
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "both",
+      "notes": "fflush(NULL) flushes all streams"
+    },
+    {
+      "name": "IO_switch_to_wget_mode_delegates_to_fflush",
+      "function": "_IO_switch_to_wget_mode",
+      "spec_section": "glibc libio internal",
+      "inputs": { "fp": "NULL" },
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "dlinfo_returns_enosys",
+      "function": "dlinfo",
+      "spec_section": "GNU extension dlinfo(3)",
+      "inputs": { "handle": "NULL", "request": 0, "info": "NULL" },
+      "expected_output": "-1",
+      "expected_errno": 38,
+      "mode": "both",
+      "notes": "ENOSYS=38, linker metadata not maintained"
+    }
+  ]
+}

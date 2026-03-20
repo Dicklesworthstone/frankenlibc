@@ -12,16 +12,11 @@ use frankenlibc_core::process;
 use frankenlibc_membrane::heal::{HealingAction, global_healing_policy};
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
+use crate::errno_abi::set_abi_errno;
 use crate::runtime_policy;
 
 unsafe extern "C" {
     static mut environ: *mut *mut c_char;
-}
-
-#[inline]
-unsafe fn set_abi_errno(val: c_int) {
-    let p = unsafe { super::errno_abi::__errno_location() };
-    unsafe { *p = val };
 }
 
 #[inline]
@@ -861,7 +856,9 @@ unsafe fn apply_spawn_attrs(attr: &SpawnAttrs) -> c_int {
     if flags & libc::POSIX_SPAWN_SETPGROUP != 0 {
         let rc = unsafe { libc::syscall(libc::SYS_setpgid, 0, attr.pgroup) };
         if rc < 0 {
-            return std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EINVAL);
+            return std::io::Error::last_os_error()
+                .raw_os_error()
+                .unwrap_or(libc::EINVAL);
         }
     }
 
@@ -883,7 +880,9 @@ unsafe fn apply_spawn_attrs(attr: &SpawnAttrs) -> c_int {
             )
         };
         if rc < 0 {
-            return std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EINVAL);
+            return std::io::Error::last_os_error()
+                .raw_os_error()
+                .unwrap_or(libc::EINVAL);
         }
     }
 
@@ -902,7 +901,9 @@ unsafe fn apply_spawn_attrs(attr: &SpawnAttrs) -> c_int {
                     )
                 };
                 if rc < 0 {
-                    return std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EINVAL);
+                    return std::io::Error::last_os_error()
+                        .raw_os_error()
+                        .unwrap_or(libc::EINVAL);
                 }
             }
         }
@@ -910,16 +911,31 @@ unsafe fn apply_spawn_attrs(attr: &SpawnAttrs) -> c_int {
 
     // Process setscheduler / setparam if requested
     if flags & libc::POSIX_SPAWN_SETSCHEDULER != 0 {
-        let param = libc::sched_param { sched_priority: attr.schedparam_priority };
-        let rc = unsafe { libc::syscall(libc::SYS_sched_setscheduler, 0, attr.schedpolicy, &param as *const _) };
+        let param = libc::sched_param {
+            sched_priority: attr.schedparam_priority,
+        };
+        let rc = unsafe {
+            libc::syscall(
+                libc::SYS_sched_setscheduler,
+                0,
+                attr.schedpolicy,
+                &param as *const _,
+            )
+        };
         if rc < 0 {
-            return std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EINVAL);
+            return std::io::Error::last_os_error()
+                .raw_os_error()
+                .unwrap_or(libc::EINVAL);
         }
     } else if flags & libc::POSIX_SPAWN_SETSCHEDPARAM != 0 {
-        let param = libc::sched_param { sched_priority: attr.schedparam_priority };
+        let param = libc::sched_param {
+            sched_priority: attr.schedparam_priority,
+        };
         let rc = unsafe { libc::syscall(libc::SYS_sched_setparam, 0, &param as *const _) };
         if rc < 0 {
-            return std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EINVAL);
+            return std::io::Error::last_os_error()
+                .raw_os_error()
+                .unwrap_or(libc::EINVAL);
         }
     }
 
@@ -929,7 +945,9 @@ unsafe fn apply_spawn_attrs(attr: &SpawnAttrs) -> c_int {
         let rc1 = unsafe { libc::syscall(libc::SYS_setgid, egid) };
         let rc2 = unsafe { libc::syscall(libc::SYS_setuid, euid) };
         if rc1 < 0 || rc2 < 0 {
-            return std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EINVAL);
+            return std::io::Error::last_os_error()
+                .raw_os_error()
+                .unwrap_or(libc::EINVAL);
         }
     }
 

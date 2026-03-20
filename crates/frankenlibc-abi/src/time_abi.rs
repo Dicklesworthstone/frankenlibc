@@ -9,20 +9,14 @@ use std::os::raw::c_long;
 use frankenlibc_core::errno;
 use frankenlibc_core::time as time_core;
 
+use crate::errno_abi::set_abi_errno;
 use crate::util::scan_c_string;
 
-/// Set the ABI errno via `__errno_location`.
 #[inline]
-unsafe fn set_abi_errno(val: c_int) {
-    let p = unsafe { super::errno_abi::__errno_location() };
-    unsafe { *p = val };
-}
-
-#[inline]
-fn last_host_errno(default_errno: c_int) -> c_int {
+fn last_host_errno(default: c_int) -> c_int {
     std::io::Error::last_os_error()
         .raw_os_error()
-        .unwrap_or(default_errno)
+        .unwrap_or(default)
 }
 
 #[inline]

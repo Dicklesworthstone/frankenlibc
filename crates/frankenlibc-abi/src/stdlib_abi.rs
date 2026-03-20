@@ -11,9 +11,9 @@ use std::ffi::{
 };
 use std::ptr;
 
+use crate::errno_abi::set_abi_errno;
 use crate::malloc_abi::known_remaining;
 use crate::runtime_policy;
-use crate::errno_abi::set_abi_errno;
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 use libc::{intmax_t, uintmax_t};
 
@@ -521,14 +521,14 @@ pub unsafe extern "C" fn strtoull(
 pub unsafe extern "C" fn exit(status: c_int) -> ! {
     let (_, decision) = runtime_policy::decide(ApiFamily::Stdlib, 0, 0, false, true, 0);
     runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 100, false);
-    
+
     // First flush stdio streams since atexit handlers might not do it
     // Wait, POSIX says atexit handlers run, THEN streams are flushed.
     // So if atexit handler prints something, it needs to be flushed.
     // However, frankenlibc_core::stdlib::exit calls atexit handlers,
     // and we can't easily hook back into stdio here without splitting exit.
     // Let's implement the full POSIX exit here, calling `_exit`.
-    
+
     // 1. Run atexit handlers.
     frankenlibc_core::stdlib::run_atexit_handlers();
 
@@ -2038,7 +2038,9 @@ pub unsafe extern "C" fn at_quick_exit(func: Option<unsafe extern "C" fn()>) -> 
         runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 4, true);
         return -1;
     };
-    let mut handlers = QUICK_EXIT_HANDLERS.lock().unwrap_or_else(|e| e.into_inner());
+    let mut handlers = QUICK_EXIT_HANDLERS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     handlers.push(f);
     runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 4, false);
     0
@@ -2048,7 +2050,9 @@ pub unsafe extern "C" fn at_quick_exit(func: Option<unsafe extern "C" fn()>) -> 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn quick_exit(status: c_int) -> ! {
     // Call registered quick_exit handlers in reverse order.
-    let handlers = QUICK_EXIT_HANDLERS.lock().unwrap_or_else(|e| e.into_inner());
+    let handlers = QUICK_EXIT_HANDLERS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     for func in handlers.iter().rev() {
         unsafe { func() };
     }
@@ -2837,11 +2841,7 @@ pub unsafe extern "C" fn __assert_fail(
         a.to_str().unwrap_or("??")
     );
     unsafe {
-        crate::unistd_abi::sys_write_fd(
-            libc::STDERR_FILENO,
-            msg.as_ptr().cast(),
-            msg.len(),
-        );
+        crate::unistd_abi::sys_write_fd(libc::STDERR_FILENO, msg.as_ptr().cast(), msg.len());
     }
     std::process::abort();
 }

@@ -36,11 +36,12 @@ fn unique_temp_path(name: &str, extension: &str) -> std::path::PathBuf {
 
 fn run_generator_with_args(extra_args: &[&str]) -> std::process::Output {
     let root = repo_root();
-    let mut args = vec![root
-        .join("scripts/generate_cve_corpus_normalization.py")
-        .to_str()
-        .unwrap()
-        .to_string()];
+    let mut args = vec![
+        root.join("scripts/generate_cve_corpus_normalization.py")
+            .to_str()
+            .unwrap()
+            .to_string(),
+    ];
     args.extend(extra_args.iter().map(|value| value.to_string()));
     Command::new("python3")
         .args(args)

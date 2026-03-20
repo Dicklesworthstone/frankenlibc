@@ -207,7 +207,7 @@ impl AllocationArena {
     pub fn free(&self, user_ptr: *mut u8) -> (FreeResult, Vec<QuarantineEntry>) {
         let user_base = user_ptr as usize;
         let shard_idx = self.shard_for(user_base);
-        
+
         let (canary_ok, drained) = {
             let mut shard = self.shards[shard_idx].lock();
 
@@ -255,7 +255,7 @@ impl AllocationArena {
 
             // Drain quarantine if over limit (returns entries without deallocating)
             let drained = self.drain_quarantine(&mut shard);
-            
+
             (canary_ok, drained)
         }; // shard lock is released here!
 
@@ -567,7 +567,7 @@ mod tests {
 
     #[test]
     fn quarantine_drain_evicts_oldest_when_entry_count_exceeded() {
-        use std::alloc::{alloc, dealloc, Layout};
+        use std::alloc::{Layout, alloc, dealloc};
 
         let arena = AllocationArena::new();
         let align = 16_usize;
@@ -865,7 +865,7 @@ mod tests {
 
     #[test]
     fn quarantine_drain_evicts_oldest_until_within_budget() {
-        use std::alloc::{alloc, dealloc, Layout};
+        use std::alloc::{Layout, alloc, dealloc};
 
         let arena = AllocationArena::new();
 
@@ -1051,7 +1051,7 @@ mod tests {
     #[test]
     fn arena_free_bumps_tls_cache_epoch() {
         use crate::tls_cache::{
-            current_epoch, lock_tls_cache_epoch_for_tests, CachedValidation, TlsValidationCache,
+            CachedValidation, TlsValidationCache, current_epoch, lock_tls_cache_epoch_for_tests,
         };
 
         let arena = AllocationArena::new();
@@ -1098,7 +1098,7 @@ mod tests {
     #[test]
     fn tls_cache_reinsert_after_arena_free_uses_new_epoch() {
         use crate::tls_cache::{
-            current_epoch, lock_tls_cache_epoch_for_tests, CachedValidation, TlsValidationCache,
+            CachedValidation, TlsValidationCache, current_epoch, lock_tls_cache_epoch_for_tests,
         };
 
         let arena = AllocationArena::new();

@@ -8,12 +8,8 @@ use std::ffi::{CStr, c_char, c_int, c_void};
 use frankenlibc_core::locale as locale_core;
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
+use crate::errno_abi::set_abi_errno;
 use crate::runtime_policy;
-
-unsafe fn set_abi_errno(val: c_int) {
-    // SAFETY: __errno_location returns a valid, thread-local pointer.
-    unsafe { *libc::__errno_location() = val };
-}
 
 /// Static C-locale name string.
 static C_LOCALE_NAME: &[u8] = b"C\0";

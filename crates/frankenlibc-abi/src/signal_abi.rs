@@ -577,7 +577,9 @@ pub unsafe extern "C" fn psiginfo(info: *const libc::siginfo_t, msg: *const std:
         let c_msg = unsafe { std::ffi::CStr::from_ptr(msg) };
         if let Ok(s) = c_msg.to_str() {
             let out = format!("{s}: SIG{desc}\n");
-            unsafe { crate::unistd_abi::sys_write_fd(libc::STDERR_FILENO, out.as_ptr().cast(), out.len()) };
+            unsafe {
+                crate::unistd_abi::sys_write_fd(libc::STDERR_FILENO, out.as_ptr().cast(), out.len())
+            };
             return;
         }
     }

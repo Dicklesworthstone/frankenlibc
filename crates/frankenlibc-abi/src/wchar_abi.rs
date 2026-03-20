@@ -10,6 +10,7 @@ use frankenlibc_core::stdio::printf::{FormatSegment, Precision, Width, parse_for
 use frankenlibc_membrane::heal::{HealingAction, global_healing_policy};
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
+use crate::errno_abi::set_abi_errno;
 use crate::malloc_abi::known_remaining;
 use crate::runtime_policy;
 use crate::util::scan_c_string;
@@ -1542,13 +1543,6 @@ fn maybe_clamp_wchars(
 
 use frankenlibc_core::stdlib::conversion::ConversionStatus;
 use frankenlibc_core::string::{wchar as wchar_core, wide as wide_core};
-
-/// Set the ABI errno via `__errno_location`.
-#[inline]
-unsafe fn set_abi_errno(val: c_int) {
-    let p = unsafe { super::errno_abi::__errno_location() };
-    unsafe { *p = val };
-}
 
 // ---------------------------------------------------------------------------
 // mblen

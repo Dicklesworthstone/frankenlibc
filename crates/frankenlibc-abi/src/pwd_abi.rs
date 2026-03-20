@@ -15,13 +15,8 @@ use std::time::UNIX_EPOCH;
 use frankenlibc_core::errno;
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
+use crate::errno_abi::set_abi_errno;
 use crate::runtime_policy;
-
-#[inline]
-unsafe fn set_abi_errno(val: c_int) {
-    let p = unsafe { super::errno_abi::__errno_location() };
-    unsafe { *p = val };
-}
 
 const PASSWD_PATH: &str = "/etc/passwd";
 const PASSWD_PATH_ENV: &str = "FRANKENLIBC_PASSWD_PATH";

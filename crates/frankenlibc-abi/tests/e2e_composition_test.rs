@@ -151,8 +151,8 @@ fn e2e_ctype_classify_string_characters() {
     let mut space_count = 0;
     let mut upper_result = Vec::new();
 
-    for i in 0..len {
-        let ch = input[i] as c_int;
+    for &byte in &input[..len] {
+        let ch = byte as c_int;
         if unsafe { isalpha(ch) } != 0 {
             alpha_count += 1;
         }

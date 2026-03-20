@@ -10,6 +10,7 @@ use std::time::Instant;
 
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
+use crate::errno_abi::set_abi_errno;
 use crate::runtime_policy;
 use crate::startup_helpers::{
     AT_NULL, MAX_STARTUP_SCAN, SecureModeState, StartupCheckpoint, StartupInvariants,
@@ -149,14 +150,6 @@ pub struct StartupPolicySnapshot {
     pub dag_valid: bool,
     pub last_phase: StartupCheckpoint,
     pub latency_ns: usize,
-}
-
-#[inline]
-unsafe fn set_abi_errno(val: c_int) {
-    // SAFETY: `__errno_location` returns a valid TLS errno pointer.
-    let p = unsafe { super::errno_abi::__errno_location() };
-    // SAFETY: errno pointer is valid for writes on this thread.
-    unsafe { *p = val };
 }
 
 fn store_invariants(inv: StartupInvariants) {

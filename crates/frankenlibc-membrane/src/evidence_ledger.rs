@@ -600,10 +600,9 @@ impl OtlpExportSummary {
 ///
 /// Users who need custom redaction should construct their own ledger
 /// via `EvidenceLedger::new()` or `EvidenceLedger::with_config()`.
-static GLOBAL_LEDGER: std::sync::LazyLock<EvidenceLedger> =
-    std::sync::LazyLock::new(|| {
-        EvidenceLedger::with_config(DEFAULT_LEDGER_CAPACITY, RedactionPolicy::RedactPointers)
-    });
+static GLOBAL_LEDGER: std::sync::LazyLock<EvidenceLedger> = std::sync::LazyLock::new(|| {
+    EvidenceLedger::with_config(DEFAULT_LEDGER_CAPACITY, RedactionPolicy::RedactPointers)
+});
 
 /// Access the global evidence ledger singleton.
 #[must_use]

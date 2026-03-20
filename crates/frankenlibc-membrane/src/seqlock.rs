@@ -27,8 +27,8 @@
 //! - Safety level + feature flags
 
 use parking_lot::{Mutex, MutexGuard};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Sequence-locked configuration store.
 ///
@@ -340,8 +340,11 @@ impl<'a, T: Clone + Send + Sync> SeqLockReader<'a, T> {
                 current_version,
                 "seqlock",
             );
-            self.cached_snapshot = self.lock.load();
-            self.cached_version = current_version;
+            // Use load_versioned to get a consistent pair and avoid redundant
+            // refreshes if another write happens between load and version load.
+            let (new_version, snapshot) = self.lock.load_versioned();
+            self.cached_snapshot = snapshot;
+            self.cached_version = new_version;
         }
         &self.cached_snapshot
     }
@@ -357,8 +360,9 @@ impl<'a, T: Clone + Send + Sync> SeqLockReader<'a, T> {
             None
         } else {
             self.lock.diag.cache_misses.fetch_add(1, Ordering::Relaxed);
-            self.cached_snapshot = self.lock.load();
-            self.cached_version = current_version;
+            let (new_version, snapshot) = self.lock.load_versioned();
+            self.cached_snapshot = snapshot;
+            self.cached_version = new_version;
             Some(&self.cached_snapshot)
         }
     }

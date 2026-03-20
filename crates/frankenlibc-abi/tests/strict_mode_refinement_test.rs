@@ -422,12 +422,7 @@ fn tsm_transparency_deterministic_outputs() {
         assert_eq!(unsafe { strlen(c"test".as_ptr()) }, 4);
 
         // strcmp
-        assert_eq!(
-            unsafe {
-                strcmp(c"abc".as_ptr(), c"abc".as_ptr())
-            },
-            0
-        );
+        assert_eq!(unsafe { strcmp(c"abc".as_ptr(), c"abc".as_ptr()) }, 0);
 
         // memset + memcpy roundtrip
         let mut buf = [0u8; 32];
