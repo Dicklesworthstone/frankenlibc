@@ -138,8 +138,19 @@ pub fn safety_level() -> SafetyLevel {
 }
 
 #[cfg(test)]
+static CONFIG_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Acquire this lock before any test that mutates CACHED_LEVEL.
+    /// Prevents parallel test interference on the process-global atomic.
+    fn lock_config_for_test() -> std::sync::MutexGuard<'static, ()> {
+        super::CONFIG_TEST_LOCK
+            .lock()
+            .expect("config test lock poisoned")
+    }
 
     #[test]
     fn parse_safety_levels() {
@@ -306,6 +317,7 @@ mod tests {
 
     #[test]
     fn proof_reentrant_resolution_safe_default() {
+        let _guard = lock_config_for_test();
         // Simulate the resolving state
         let previous = CACHED_LEVEL.swap(LEVEL_RESOLVING, Ordering::SeqCst);
 
@@ -333,6 +345,7 @@ mod tests {
 
     #[test]
     fn proof_mode_sticky_determinism() {
+        let _guard = lock_config_for_test();
         // Set to Strict and verify it stays
         let previous = CACHED_LEVEL.swap(LEVEL_STRICT, Ordering::SeqCst);
 
