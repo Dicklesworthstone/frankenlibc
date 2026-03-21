@@ -18854,7 +18854,7 @@
     {
       "symbol": "dlvsym",
       "status": "GlibcCallThrough",
-      "module": "glibc_internal_abi"
+      "module": "dlfcn_abi"
     },
     {
       "symbol": "dysize",
@@ -21188,7 +21188,7 @@
     },
     {
       "symbol": "__gconv",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "glibc_internal_abi",
       "perf_class": "O1",
       "strict_semantics": true,
@@ -21215,7 +21215,7 @@
     },
     {
       "symbol": "__gconv_create_spec",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "glibc_internal_abi",
       "perf_class": "O1",
       "strict_semantics": true,
@@ -21224,7 +21224,7 @@
     },
     {
       "symbol": "__gconv_destroy_spec",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "glibc_internal_abi",
       "perf_class": "O1",
       "strict_semantics": true,
@@ -21233,7 +21233,7 @@
     },
     {
       "symbol": "__gconv_transliterate",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "glibc_internal_abi",
       "perf_class": "O1",
       "strict_semantics": true,
@@ -21242,7 +21242,7 @@
     },
     {
       "symbol": "__gconv_get_alias_db",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "glibc_internal_abi",
       "perf_class": "O1",
       "strict_semantics": true,
@@ -21251,7 +21251,7 @@
     },
     {
       "symbol": "__gconv_get_cache",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "glibc_internal_abi",
       "perf_class": "O1",
       "strict_semantics": true,
@@ -21260,7 +21260,7 @@
     },
     {
       "symbol": "__gconv_get_modules_db",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "glibc_internal_abi",
       "perf_class": "O1",
       "strict_semantics": true,
@@ -31745,14 +31745,15 @@
     }
   ],
   "summary": {
-    "RawSyscall": 406,
-    "Implemented": 3457,
-    "GlibcCallThrough": 117,
-    "total_exported": 3980
+    "total": 3980,
+    "implemented": 3532,
+    "raw_syscall": 406,
+    "glibc_call_through": 42,
+    "stub": 0
   },
-  "implemented": 3399,
+  "implemented": 3532,
   "raw_syscall": 406,
-  "glibc_call_through": 175,
+  "glibc_call_through": 42,
   "stub": 0,
   "counts": {
     "Implemented": 3399,

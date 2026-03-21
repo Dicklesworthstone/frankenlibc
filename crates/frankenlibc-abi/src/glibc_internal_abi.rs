@@ -8423,3 +8423,161 @@ pub unsafe extern "C" fn __libc_res_dnok(dn: *const c_char) -> c_int {
 pub unsafe extern "C" fn __libc_res_hnok(dn: *const c_char) -> c_int {
     unsafe { res_hnok(dn) }
 }
+
+// ===========================================================================
+// Tests
+// ===========================================================================
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // -----------------------------------------------------------------------
+    // __gconv_create_spec / __gconv_destroy_spec
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn gconv_create_spec_null_returns_noconv() {
+        let rc = unsafe { __gconv_create_spec(std::ptr::null_mut()) };
+        assert_eq!(rc, GCONV_NOCONV);
+    }
+
+    #[test]
+    fn gconv_create_spec_valid_buffer_returns_ok() {
+        let mut buf = [0xFFu8; 64];
+        let rc = unsafe { __gconv_create_spec(buf.as_mut_ptr().cast()) };
+        assert_eq!(rc, GCONV_OK);
+        // Buffer should be zeroed
+        assert!(buf.iter().all(|&b| b == 0), "spec buffer should be zeroed");
+    }
+
+    #[test]
+    fn gconv_destroy_spec_null_is_noop() {
+        // Should not panic or crash
+        unsafe { __gconv_destroy_spec(std::ptr::null_mut()) };
+    }
+
+    #[test]
+    fn gconv_destroy_spec_valid_is_noop() {
+        let mut buf = [0u8; 64];
+        unsafe { __gconv_destroy_spec(buf.as_mut_ptr().cast()) };
+    }
+
+    // -----------------------------------------------------------------------
+    // __gconv_get_alias_db / __gconv_get_cache / __gconv_get_modules_db
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn gconv_get_alias_db_returns_null() {
+        let p = unsafe { __gconv_get_alias_db() };
+        assert!(p.is_null());
+    }
+
+    #[test]
+    fn gconv_get_cache_returns_null() {
+        let p = unsafe { __gconv_get_cache() };
+        assert!(p.is_null());
+    }
+
+    #[test]
+    fn gconv_get_modules_db_returns_null() {
+        let p = unsafe { __gconv_get_modules_db() };
+        assert!(p.is_null());
+    }
+
+    // -----------------------------------------------------------------------
+    // __gconv (conversion step)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn gconv_returns_noconv() {
+        let mut written: SizeT = 42;
+        let rc = unsafe {
+            __gconv(
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                &mut written,
+            )
+        };
+        assert_eq!(rc, GCONV_NOCONV);
+        assert_eq!(written, 0, "written count should be zeroed");
+    }
+
+    #[test]
+    fn gconv_null_written_ptr_does_not_crash() {
+        let rc = unsafe {
+            __gconv(
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+            )
+        };
+        assert_eq!(rc, GCONV_NOCONV);
+    }
+
+    // -----------------------------------------------------------------------
+    // __gconv_transliterate
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn gconv_transliterate_returns_noconv() {
+        let rc = unsafe {
+            __gconv_transliterate(
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null(),
+                std::ptr::null(),
+                std::ptr::null_mut(),
+                std::ptr::null(),
+            )
+        };
+        assert_eq!(rc, GCONV_NOCONV);
+    }
+
+    // -----------------------------------------------------------------------
+    // __gconv_open / __gconv_close (already Implemented via iconv_abi)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn gconv_open_null_handle_returns_noconv() {
+        let rc = unsafe {
+            __gconv_open(
+                c"UTF-8".as_ptr(),
+                c"ASCII".as_ptr(),
+                std::ptr::null_mut(),
+                0,
+            )
+        };
+        assert_eq!(rc, GCONV_NOCONV);
+    }
+
+    #[test]
+    fn gconv_close_null_returns_noconv() {
+        let rc = unsafe { __gconv_close(std::ptr::null_mut()) };
+        assert_eq!(rc, GCONV_NOCONV);
+    }
+
+    #[test]
+    fn gconv_close_error_sentinel_returns_noconv() {
+        let rc = unsafe { __gconv_close(ICONV_ERROR_VALUE as *mut c_void) };
+        assert_eq!(rc, GCONV_NOCONV);
+    }
+
+    // -----------------------------------------------------------------------
+    // Constants
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn gconv_constants_correct() {
+        assert_eq!(GCONV_OK, 0);
+        assert_eq!(GCONV_NOCONV, -1);
+        assert_eq!(ICONV_ERROR_VALUE, usize::MAX);
+    }
+}
