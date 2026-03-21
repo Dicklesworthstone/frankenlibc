@@ -11,8 +11,15 @@ use frankenlibc_abi::glibc_internal_abi::{
     __file_is_unchanged,
     __fseeko64,
     __ftello64,
+    __gconv,
     __gconv_close,
+    __gconv_create_spec,
+    __gconv_destroy_spec,
+    __gconv_get_alias_db,
+    __gconv_get_cache,
+    __gconv_get_modules_db,
     __gconv_open,
+    __gconv_transliterate,
     __idna_from_dns_encoding,
     __idna_to_dns_encoding,
     __inet_aton_exact,
@@ -207,6 +214,120 @@ fn gconv_open_unsupported_codec_returns_noconv() {
 #[test]
 fn gconv_close_rejects_null_handle() {
     assert_eq!(unsafe { __gconv_close(ptr::null_mut()) }, -1);
+}
+
+// ---------------------------------------------------------------------------
+// __gconv_create_spec / __gconv_destroy_spec — native safe-default tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn gconv_create_spec_null_returns_noconv() {
+    let rc = unsafe { __gconv_create_spec(ptr::null_mut()) };
+    assert_eq!(rc, -1); // GCONV_NOCONV
+}
+
+#[test]
+fn gconv_create_spec_valid_buffer_returns_ok_and_zeroes() {
+    let mut buf = [0xFFu8; 64];
+    let rc = unsafe { __gconv_create_spec(buf.as_mut_ptr().cast()) };
+    assert_eq!(rc, 0); // GCONV_OK
+    assert!(buf.iter().all(|&b| b == 0), "spec buffer should be zeroed");
+}
+
+#[test]
+fn gconv_destroy_spec_null_is_safe_noop() {
+    // Must not panic or crash
+    unsafe { __gconv_destroy_spec(ptr::null_mut()) };
+}
+
+#[test]
+fn gconv_destroy_spec_valid_buffer_is_safe_noop() {
+    let mut buf = [0u8; 64];
+    unsafe { __gconv_destroy_spec(buf.as_mut_ptr().cast()) };
+}
+
+#[test]
+fn gconv_create_destroy_roundtrip() {
+    let mut buf = [0xFFu8; 64];
+    let rc = unsafe { __gconv_create_spec(buf.as_mut_ptr().cast()) };
+    assert_eq!(rc, 0);
+    unsafe { __gconv_destroy_spec(buf.as_mut_ptr().cast()) };
+}
+
+// ---------------------------------------------------------------------------
+// __gconv_get_* database accessors — native safe-default tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn gconv_get_alias_db_returns_null() {
+    assert!(unsafe { __gconv_get_alias_db() }.is_null());
+}
+
+#[test]
+fn gconv_get_cache_returns_null() {
+    assert!(unsafe { __gconv_get_cache() }.is_null());
+}
+
+#[test]
+fn gconv_get_modules_db_returns_null() {
+    assert!(unsafe { __gconv_get_modules_db() }.is_null());
+}
+
+// ---------------------------------------------------------------------------
+// __gconv — conversion step — native safe-default tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn gconv_step_returns_noconv_and_zeroes_written() {
+    let mut written: usize = 42;
+    let rc = unsafe {
+        __gconv(
+            ptr::null_mut(),
+            ptr::null_mut(),
+            ptr::null_mut(),
+            ptr::null(),
+            ptr::null_mut(),
+            ptr::null_mut(),
+            &mut written,
+        )
+    };
+    assert_eq!(rc, -1); // GCONV_NOCONV
+    assert_eq!(written, 0, "written count should be zeroed");
+}
+
+#[test]
+fn gconv_step_null_written_ptr_does_not_crash() {
+    let rc = unsafe {
+        __gconv(
+            ptr::null_mut(),
+            ptr::null_mut(),
+            ptr::null_mut(),
+            ptr::null(),
+            ptr::null_mut(),
+            ptr::null_mut(),
+            ptr::null_mut(),
+        )
+    };
+    assert_eq!(rc, -1); // GCONV_NOCONV
+}
+
+// ---------------------------------------------------------------------------
+// __gconv_transliterate — native safe-default tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn gconv_transliterate_returns_noconv() {
+    let rc = unsafe {
+        __gconv_transliterate(
+            ptr::null_mut(),
+            ptr::null_mut(),
+            ptr::null(),
+            ptr::null(),
+            ptr::null_mut(),
+            ptr::null(),
+        )
+    };
+    assert_eq!(rc, -1); // GCONV_NOCONV
 }
 
 // ===========================================================================

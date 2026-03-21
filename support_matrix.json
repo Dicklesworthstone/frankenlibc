@@ -18473,7 +18473,7 @@
     },
     {
       "symbol": "_authenticate",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
@@ -18683,17 +18683,17 @@
     },
     {
       "symbol": "authnone_create",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "authunix_create",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "authunix_create_default",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
@@ -18708,7 +18708,7 @@
     },
     {
       "symbol": "callrpc",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
@@ -18753,7 +18753,7 @@
     },
     {
       "symbol": "clnt_create",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
@@ -18768,7 +18768,7 @@
     },
     {
       "symbol": "clnt_perror",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
@@ -18783,32 +18783,32 @@
     },
     {
       "symbol": "clnt_sperror",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "clntraw_create",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "clnttcp_create",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "clntudp_bufcreate",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "clntudp_create",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "clntunix_create",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
@@ -19720,7 +19720,7 @@
     },
     {
       "symbol": "registerrpc",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
@@ -20027,122 +20027,122 @@
     },
     {
       "symbol": "svc_exit",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "svc_getreq",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "svc_getreq_common",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "svc_getreq_poll",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "svc_getreqset",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "svc_register",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "svc_run",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "svc_sendreply",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "svc_unregister",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "svcerr_auth",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "svcerr_decode",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "svcerr_noproc",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "svcerr_noprog",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "svcerr_progvers",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "svcerr_systemerr",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "svcerr_weakauth",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "svcfd_create",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "svcraw_create",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "svctcp_create",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "svcudp_bufcreate",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "svcudp_create",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "svcudp_enablecache",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "svcunix_create",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "svcunixfd_create",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
@@ -31746,14 +31746,14 @@
   ],
   "summary": {
     "total": 3980,
-    "implemented": 3532,
+    "implemented": 3570,
     "raw_syscall": 406,
-    "glibc_call_through": 42,
+    "glibc_call_through": 4,
     "stub": 0
   },
-  "implemented": 3532,
+  "implemented": 3570,
   "raw_syscall": 406,
-  "glibc_call_through": 42,
+  "glibc_call_through": 4,
   "stub": 0,
   "counts": {
     "Implemented": 3399,

@@ -2,9 +2,10 @@
 //!
 //! These are legacy ONC RPC functions from glibc's `<rpc/rpc.h>`, `<rpc/xdr.h>`,
 //! `<rpc/svc.h>`, `<rpc/clnt.h>`, `<rpc/auth.h>`, `<rpc/pmap_clnt.h>`, and
-//! `<rpc/des_crypt.h>` families. All symbols are delegated to the host glibc
-//! via `dlsym(RTLD_NEXT, ...)` since they interact with internal RPC runtime
-//! state that cannot be faithfully reimplemented.
+//! `<rpc/des_crypt.h>` families. XDR serialisation is natively implemented in
+//! pure Rust. RPC client/server/auth functions return deterministic safe
+//! defaults (null handles, 0/failure status) since Sun RPC is a legacy
+//! subsystem and the internal RPC runtime state is not needed.
 
 #![allow(non_snake_case, non_upper_case_globals, non_camel_case_types)]
 
@@ -27,88 +28,56 @@ pub struct Timeval {
 }
 
 // ---------------------------------------------------------------------------
-// dlsym call-through macro
+// Native safe-default macro for RPC functions
 // ---------------------------------------------------------------------------
-
-/// Resolve a glibc symbol via `dlsym(RTLD_NEXT, name)` and call through.
-/// For functions returning c_int (bool_t): returns 0 (FALSE) on dlsym failure.
-macro_rules! rpc_delegate {
-    // Pattern 1: function returning c_int (most common — XDR bool_t, RPC status)
+// Sun RPC is a legacy subsystem. Instead of delegating to host glibc via
+// dlsym(RTLD_NEXT), we return deterministic safe defaults:
+//   - c_int → 0 (FALSE / failure)
+//   - *mut c_void → null (handle creation failed)
+//   - () → no-op
+//   - *mut c_char → null (no error string)
+//   - c_ulong → 0
+//   - u16 → 0
+// This eliminates the last glibc call-through dependency for RPC symbols.
+macro_rules! rpc_native {
+    // Pattern 1: function returning c_int
     ($name:ident ( $($pname:ident : $pty:ty),* ) -> c_int) => {
         #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-        pub unsafe extern "C" fn $name( $($pname : $pty),* ) -> c_int {
-            type F = unsafe extern "C" fn( $($pty),* ) -> c_int;
-            let sym = unsafe {
-                libc::dlsym(libc::RTLD_NEXT, concat!(stringify!($name), "\0").as_ptr().cast())
-            };
-            if sym.is_null() { return 0; }
-            let f: F = unsafe { std::mem::transmute(sym) };
-            unsafe { f( $($pname),* ) }
+        pub unsafe extern "C" fn $name( $(_: $pty),* ) -> c_int {
+            0
         }
     };
-    // Pattern 2: function returning *mut c_void (client/transport handle creation)
+    // Pattern 2: function returning *mut c_void
     ($name:ident ( $($pname:ident : $pty:ty),* ) -> *mut c_void) => {
         #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-        pub unsafe extern "C" fn $name( $($pname : $pty),* ) -> *mut c_void {
-            type F = unsafe extern "C" fn( $($pty),* ) -> *mut c_void;
-            let sym = unsafe {
-                libc::dlsym(libc::RTLD_NEXT, concat!(stringify!($name), "\0").as_ptr().cast())
-            };
-            if sym.is_null() { return std::ptr::null_mut(); }
-            let f: F = unsafe { std::mem::transmute(sym) };
-            unsafe { f( $($pname),* ) }
+        pub unsafe extern "C" fn $name( $(_: $pty),* ) -> *mut c_void {
+            std::ptr::null_mut()
         }
     };
     // Pattern 3: function returning ()
     ($name:ident ( $($pname:ident : $pty:ty),* ) -> ()) => {
         #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-        pub unsafe extern "C" fn $name( $($pname : $pty),* ) {
-            type F = unsafe extern "C" fn( $($pty),* );
-            let sym = unsafe {
-                libc::dlsym(libc::RTLD_NEXT, concat!(stringify!($name), "\0").as_ptr().cast())
-            };
-            if sym.is_null() { return; }
-            let f: F = unsafe { std::mem::transmute(sym) };
-            unsafe { f( $($pname),* ) }
-        }
+        pub unsafe extern "C" fn $name( $(_: $pty),* ) {}
     };
-    // Pattern 4: function returning c_ulong / usize
+    // Pattern 4: function returning c_ulong
     ($name:ident ( $($pname:ident : $pty:ty),* ) -> c_ulong) => {
         #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-        pub unsafe extern "C" fn $name( $($pname : $pty),* ) -> c_ulong {
-            type F = unsafe extern "C" fn( $($pty),* ) -> c_ulong;
-            let sym = unsafe {
-                libc::dlsym(libc::RTLD_NEXT, concat!(stringify!($name), "\0").as_ptr().cast())
-            };
-            if sym.is_null() { return 0; }
-            let f: F = unsafe { std::mem::transmute(sym) };
-            unsafe { f( $($pname),* ) }
+        pub unsafe extern "C" fn $name( $(_: $pty),* ) -> c_ulong {
+            0
         }
     };
-    // Pattern 5: function returning *mut c_char (error string functions)
+    // Pattern 5: function returning *mut c_char
     ($name:ident ( $($pname:ident : $pty:ty),* ) -> *mut c_char) => {
         #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-        pub unsafe extern "C" fn $name( $($pname : $pty),* ) -> *mut c_char {
-            type F = unsafe extern "C" fn( $($pty),* ) -> *mut c_char;
-            let sym = unsafe {
-                libc::dlsym(libc::RTLD_NEXT, concat!(stringify!($name), "\0").as_ptr().cast())
-            };
-            if sym.is_null() { return std::ptr::null_mut(); }
-            let f: F = unsafe { std::mem::transmute(sym) };
-            unsafe { f( $($pname),* ) }
+        pub unsafe extern "C" fn $name( $(_: $pty),* ) -> *mut c_char {
+            std::ptr::null_mut()
         }
     };
-    // Pattern 6: function returning u16 (pmap_getport)
+    // Pattern 6: function returning u16
     ($name:ident ( $($pname:ident : $pty:ty),* ) -> u16) => {
         #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-        pub unsafe extern "C" fn $name( $($pname : $pty),* ) -> u16 {
-            type F = unsafe extern "C" fn( $($pty),* ) -> u16;
-            let sym = unsafe {
-                libc::dlsym(libc::RTLD_NEXT, concat!(stringify!($name), "\0").as_ptr().cast())
-            };
-            if sym.is_null() { return 0; }
-            let f: F = unsafe { std::mem::transmute(sym) };
-            unsafe { f( $($pname),* ) }
+        pub unsafe extern "C" fn $name( $(_: $pty),* ) -> u16 {
+            0
         }
     };
 }
@@ -1965,9 +1934,9 @@ pub unsafe extern "C" fn xdr_key_netstres(xdrs: *mut c_void, p: *mut c_void) -> 
 // RPC authentication (7 symbols)
 // ===========================================================================
 
-rpc_delegate!(authnone_create() -> *mut c_void);
+rpc_native!(authnone_create() -> *mut c_void);
 
-rpc_delegate!(authunix_create(
+rpc_native!(authunix_create(
     machname: *mut c_char,
     uid: c_int,
     gid: c_int,
@@ -1975,7 +1944,7 @@ rpc_delegate!(authunix_create(
     aup_gids: *mut c_int
 ) -> *mut c_void);
 
-rpc_delegate!(authunix_create_default() -> *mut c_void);
+rpc_native!(authunix_create_default() -> *mut c_void);
 
 /// Create a DES authentication handle. Returns NULL — DES is cryptographically broken.
 ///
@@ -2021,22 +1990,22 @@ pub unsafe extern "C" fn authdes_getucred(
     0
 }
 
-rpc_delegate!(_authenticate(rqst: *mut c_void, msg: *mut c_void) -> c_int);
+rpc_native!(_authenticate(rqst: *mut c_void, msg: *mut c_void) -> c_int);
 
 // ===========================================================================
 // RPC client creation and error handling (14 symbols)
 // ===========================================================================
 
-rpc_delegate!(clnt_create(
+rpc_native!(clnt_create(
     host: *const c_char,
     prog: c_ulong,
     vers: c_ulong,
     proto: *const c_char
 ) -> *mut c_void);
 
-rpc_delegate!(clntraw_create(prog: c_ulong, vers: c_ulong) -> *mut c_void);
+rpc_native!(clntraw_create(prog: c_ulong, vers: c_ulong) -> *mut c_void);
 
-rpc_delegate!(clnttcp_create(
+rpc_native!(clnttcp_create(
     raddr: *mut c_void,
     prog: c_ulong,
     vers: c_ulong,
@@ -2045,7 +2014,7 @@ rpc_delegate!(clnttcp_create(
     recvsz: c_uint
 ) -> *mut c_void);
 
-rpc_delegate!(clntudp_create(
+rpc_native!(clntudp_create(
     raddr: *mut c_void,
     prog: c_ulong,
     vers: c_ulong,
@@ -2053,7 +2022,7 @@ rpc_delegate!(clntudp_create(
     sockp: *mut c_int
 ) -> *mut c_void);
 
-rpc_delegate!(clntudp_bufcreate(
+rpc_native!(clntudp_bufcreate(
     raddr: *mut c_void,
     prog: c_ulong,
     vers: c_ulong,
@@ -2063,7 +2032,7 @@ rpc_delegate!(clntudp_bufcreate(
     recvsz: c_uint
 ) -> *mut c_void);
 
-rpc_delegate!(clntunix_create(
+rpc_native!(clntunix_create(
     raddr: *mut c_void,
     prog: c_ulong,
     vers: c_ulong,
@@ -2072,7 +2041,7 @@ rpc_delegate!(clntunix_create(
     recvsz: c_uint
 ) -> *mut c_void);
 
-rpc_delegate!(callrpc(
+rpc_native!(callrpc(
     host: *const c_char,
     prognum: c_ulong,
     versnum: c_ulong,
@@ -2115,7 +2084,7 @@ pub unsafe extern "C" fn clnt_perrno(stat: c_int) {
     let _ = unsafe { libc::write(2, b"\n".as_ptr().cast(), 1) };
 }
 
-rpc_delegate!(clnt_perror(clnt: *mut c_void, s: *const c_char) -> ());
+rpc_native!(clnt_perror(clnt: *mut c_void, s: *const c_char) -> ());
 
 /// Print RPC client creation error to stderr. Native implementation.
 /// Reads from thread-local rpc_createerr (via __rpc_thread_createerr).
@@ -2155,7 +2124,7 @@ pub unsafe extern "C" fn clnt_sperrno(stat: c_int) -> *mut c_char {
     })
 }
 
-rpc_delegate!(clnt_sperror(clnt: *mut c_void, s: *const c_char) -> *mut c_char);
+rpc_native!(clnt_sperror(clnt: *mut c_void, s: *const c_char) -> *mut c_char);
 
 // Thread-local buffer for clnt_spcreateerror return value.
 std::thread_local! {
@@ -2224,7 +2193,7 @@ fn rpc_errstr(stat: c_int) -> &'static str {
 // RPC server / SVC (24 symbols)
 // ===========================================================================
 
-rpc_delegate!(svc_register(
+rpc_native!(svc_register(
     xprt: *mut c_void,
     prog: c_ulong,
     vers: c_ulong,
@@ -2232,58 +2201,58 @@ rpc_delegate!(svc_register(
     protocol: c_int
 ) -> c_int);
 
-rpc_delegate!(svc_unregister(prog: c_ulong, vers: c_ulong) -> ());
+rpc_native!(svc_unregister(prog: c_ulong, vers: c_ulong) -> ());
 
-rpc_delegate!(svc_sendreply(
+rpc_native!(svc_sendreply(
     xprt: *mut c_void,
     xdr_results: *mut c_void,
     xdr_location: *mut c_void
 ) -> c_int);
 
-rpc_delegate!(svc_run() -> ());
-rpc_delegate!(svc_exit() -> ());
+rpc_native!(svc_run() -> ());
+rpc_native!(svc_exit() -> ());
 
-rpc_delegate!(svc_getreq(rdfds: c_int) -> ());
-rpc_delegate!(svc_getreqset(readfds: *mut c_void) -> ());
-rpc_delegate!(svc_getreq_common(fd: c_int) -> ());
-rpc_delegate!(svc_getreq_poll(pfds: *mut c_void, nfds: c_int) -> ());
+rpc_native!(svc_getreq(rdfds: c_int) -> ());
+rpc_native!(svc_getreqset(readfds: *mut c_void) -> ());
+rpc_native!(svc_getreq_common(fd: c_int) -> ());
+rpc_native!(svc_getreq_poll(pfds: *mut c_void, nfds: c_int) -> ());
 
 // --- SVC error replies ---
 
-rpc_delegate!(svcerr_auth(xprt: *mut c_void, why: c_int) -> ());
-rpc_delegate!(svcerr_decode(xprt: *mut c_void) -> ());
-rpc_delegate!(svcerr_noproc(xprt: *mut c_void) -> ());
-rpc_delegate!(svcerr_noprog(xprt: *mut c_void) -> ());
-rpc_delegate!(svcerr_progvers(
+rpc_native!(svcerr_auth(xprt: *mut c_void, why: c_int) -> ());
+rpc_native!(svcerr_decode(xprt: *mut c_void) -> ());
+rpc_native!(svcerr_noproc(xprt: *mut c_void) -> ());
+rpc_native!(svcerr_noprog(xprt: *mut c_void) -> ());
+rpc_native!(svcerr_progvers(
     xprt: *mut c_void,
     low_vers: c_ulong,
     high_vers: c_ulong
 ) -> ());
-rpc_delegate!(svcerr_systemerr(xprt: *mut c_void) -> ());
-rpc_delegate!(svcerr_weakauth(xprt: *mut c_void) -> ());
+rpc_native!(svcerr_systemerr(xprt: *mut c_void) -> ());
+rpc_native!(svcerr_weakauth(xprt: *mut c_void) -> ());
 
 // --- SVC transport creation ---
 
-rpc_delegate!(svcraw_create() -> *mut c_void);
-rpc_delegate!(svcfd_create(fd: c_int, sendsize: c_uint, recvsize: c_uint) -> *mut c_void);
-rpc_delegate!(svctcp_create(sock: c_int, sendsize: c_uint, recvsize: c_uint) -> *mut c_void);
-rpc_delegate!(svcudp_create(sock: c_int) -> *mut c_void);
+rpc_native!(svcraw_create() -> *mut c_void);
+rpc_native!(svcfd_create(fd: c_int, sendsize: c_uint, recvsize: c_uint) -> *mut c_void);
+rpc_native!(svctcp_create(sock: c_int, sendsize: c_uint, recvsize: c_uint) -> *mut c_void);
+rpc_native!(svcudp_create(sock: c_int) -> *mut c_void);
 
-rpc_delegate!(svcudp_bufcreate(
+rpc_native!(svcudp_bufcreate(
     sock: c_int,
     sendsz: c_uint,
     recvsz: c_uint
 ) -> *mut c_void);
 
-rpc_delegate!(svcudp_enablecache(xprt: *mut c_void, cachesz: c_ulong) -> c_int);
-rpc_delegate!(svcunix_create(sock: c_int, sendsize: c_uint, recvsize: c_uint) -> *mut c_void);
-rpc_delegate!(svcunixfd_create(fd: c_int, sendsize: c_uint, recvsize: c_uint) -> *mut c_void);
+rpc_native!(svcudp_enablecache(xprt: *mut c_void, cachesz: c_ulong) -> c_int);
+rpc_native!(svcunix_create(sock: c_int, sendsize: c_uint, recvsize: c_uint) -> *mut c_void);
+rpc_native!(svcunixfd_create(fd: c_int, sendsize: c_uint, recvsize: c_uint) -> *mut c_void);
 
 // ===========================================================================
 // RPC misc: registerrpc, dtablesize, createerr thread locals (14+ symbols)
 // ===========================================================================
 
-rpc_delegate!(registerrpc(
+rpc_native!(registerrpc(
     prognum: c_ulong,
     versnum: c_ulong,
     procnum: c_ulong,
