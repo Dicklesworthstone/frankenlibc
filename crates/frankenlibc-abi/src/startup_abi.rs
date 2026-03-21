@@ -811,30 +811,16 @@ pub unsafe extern "C" fn __cxa_thread_atexit_impl(
     _dso_handle: *mut c_void,
 ) -> c_int {
     use std::sync::atomic::Ordering;
-    // Break recursion: if we're already inside __cxa_thread_atexit_impl
-    // (TLS init calling back to register a destructor), delegate to the
-    // host glibc implementation via dlsym(RTLD_NEXT).
+    // Break recursion: first TLS access triggers __cxa_thread_atexit_impl
+    // to register Rust's own TLS destructor.  We cannot use dlsym(RTLD_NEXT)
+    // because our interposed dlsym also accesses TLS, creating another cycle.
+    // On reentry, silently succeed without registering — the dropped destructor
+    // is Rust's own TLS cleanup which is harmless to skip during init.
     if CXA_THREAD_ATEXIT_REENTRY
         .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
         .is_err()
     {
-        // Reentrant call — delegate to host glibc to break the cycle.
-        type CxaFn = unsafe extern "C" fn(
-            unsafe extern "C" fn(*mut c_void),
-            *mut c_void,
-            *mut c_void,
-        ) -> c_int;
-        let sym = unsafe {
-            libc::dlsym(
-                libc::RTLD_NEXT,
-                c"__cxa_thread_atexit_impl".as_ptr(),
-            )
-        };
-        if !sym.is_null() {
-            let f: CxaFn = unsafe { std::mem::transmute(sym) };
-            return unsafe { f(dtor, obj, _dso_handle) };
-        }
-        return 0; // Silently drop if host symbol unavailable
+        return 0; // Silently drop reentrant registration
     }
     let result = TLS_ATEXIT_LIST.with(|list| {
         list.borrow_mut().push(TlsAtExitEntry { dtor, obj });

@@ -171,12 +171,28 @@ fn mode_name(level: SafetyLevel) -> &'static str {
     }
 }
 
+/// Deferred mode event log flag.  During early startup the heap may not be
+/// available (pre-TLS, bump allocator active).  `format!()` would trigger
+/// allocation → OOM → rust_oom → write(stderr) → runtime_policy::decide →
+/// mode() → push_mode_event → format!() → infinite recursion.
+///
+/// We suppress logging until the mode is fully resolved and stored.
+/// Events generated during resolution are dropped — an acceptable trade-off
+/// for preventing a startup crash.
+static MODE_LOG_READY: AtomicU8 = AtomicU8::new(0);
+
 fn push_mode_event(
     level: &'static str,
     event: &'static str,
     resolved_mode: SafetyLevel,
     requested_mode: Option<SafetyLevel>,
 ) {
+    // Suppress logging during early startup to prevent allocation recursion.
+    // MODE_LOG_READY is set to 1 after the first successful mode resolution.
+    if MODE_LOG_READY.load(AtomicOrdering::Relaxed) == 0 {
+        return;
+    }
+
     let decision_id = MODE_LOG_DECISION_SEQ.fetch_add(1, AtomicOrdering::Relaxed) + 1;
     let trace_id = format!("runtime_policy::mode::{decision_id:016x}");
     let requested_mode = requested_mode
@@ -308,35 +324,29 @@ pub(crate) fn mode() -> SafetyLevel {
         };
     }
 
-    match parse_mode_from_environ() {
+    let result = match parse_mode_from_environ() {
         Ok(Some(level)) => {
             MODE_STATE.store(mode_to_u8(level), AtomicOrdering::Release);
             store_thread_local_mode_cache(level);
-            push_mode_event("info", "runtime_mode_selected_startup", level, Some(level));
             level
         }
         Ok(None) => {
             MODE_STATE.store(MODE_STRICT, AtomicOrdering::Release);
             store_thread_local_mode_cache(SafetyLevel::Strict);
-            push_mode_event(
-                "info",
-                "runtime_mode_selected_startup_default",
-                SafetyLevel::Strict,
-                None,
-            );
             SafetyLevel::Strict
         }
         Err(_) => {
             MODE_STATE.store(MODE_UNRESOLVED, AtomicOrdering::Release);
-            push_mode_event(
-                "error",
-                "runtime_mode_resolution_failed",
-                SafetyLevel::Strict,
-                None,
-            );
             SafetyLevel::Strict
         }
-    }
+    };
+    // Enable mode event logging on a LATER call, not this one.
+    // The first push_mode_event would allocate via format!(), which can
+    // trigger OOM → write(stderr) → runtime_policy::decide → mode() →
+    // push_mode_event → infinite recursion during early startup.
+    // MODE_LOG_READY is set to 1 by decide() once its first successful
+    // call completes, ensuring the heap is operational before logging.
+    result
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -968,6 +978,10 @@ pub(crate) fn decide(
     contention_hint: u16,
 ) -> (SafetyLevel, RuntimeDecision) {
     let mode = mode();
+    // Enable mode event logging after the first successful mode() call.
+    // This is deferred from mode() itself because format!() allocations
+    // during early startup trigger OOM → write → decide → mode → recursion.
+    MODE_LOG_READY.store(1, AtomicOrdering::Relaxed);
     let ctx = RuntimeContext {
         family,
         addr_hint,
