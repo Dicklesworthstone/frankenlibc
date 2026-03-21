@@ -213,7 +213,7 @@ fn stage_index(ordering: &[CheckStage; 7], stage: CheckStage) -> usize {
 #[inline]
 fn stage_context_one(addr: usize) -> (bool, bool, [CheckStage; 7]) {
     let aligned = (addr & 0x7) == 0;
-    let recent_page = addr != 0 && known_remaining(addr).is_some();
+    let recent_page = addr != 0 && crate::malloc_abi::check_ownership(addr);
     let ordering = runtime_policy::check_ordering(ApiFamily::StringMemory, aligned, recent_page);
     (aligned, recent_page, ordering)
 }
@@ -221,8 +221,8 @@ fn stage_context_one(addr: usize) -> (bool, bool, [CheckStage; 7]) {
 #[inline]
 fn stage_context_two(addr1: usize, addr2: usize) -> (bool, bool, [CheckStage; 7]) {
     let aligned = ((addr1 | addr2) & 0x7) == 0;
-    let recent_page = (addr1 != 0 && known_remaining(addr1).is_some())
-        || (addr2 != 0 && known_remaining(addr2).is_some());
+    let recent_page = (addr1 != 0 && crate::malloc_abi::check_ownership(addr1))
+        || (addr2 != 0 && crate::malloc_abi::check_ownership(addr2));
     let ordering = runtime_policy::check_ordering(ApiFamily::StringMemory, aligned, recent_page);
     (aligned, recent_page, ordering)
 }

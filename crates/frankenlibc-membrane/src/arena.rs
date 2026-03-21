@@ -89,6 +89,8 @@ pub struct AllocationArena {
 pub struct AllocationResult {
     /// User-visible pointer (past fingerprint header).
     pub ptr: *mut u8,
+    /// User-visible base address (usize representation of ptr).
+    pub user_base: usize,
     /// Base address of the full allocation (including fingerprint header).
     pub raw_base: usize,
     /// Total size of the raw allocation (including all overhead).
@@ -193,6 +195,7 @@ impl AllocationArena {
 
         Some(AllocationResult {
             ptr: user_base as *mut u8,
+            user_base,
             raw_base,
             total_size,
         })
@@ -460,15 +463,15 @@ mod tests {
     fn allocate_and_free_cycle() {
         let arena = AllocationArena::new();
         let ptr = arena.allocate(256).expect("allocation should succeed");
-        assert!(!ptr.is_null());
+        assert!(!ptr.ptr.is_null());
 
         // Write to the allocation
         // SAFETY: ptr is valid for 256 bytes from allocate().
         unsafe {
-            std::ptr::write_bytes(ptr, 0xAB, 256);
+            std::ptr::write_bytes(ptr.ptr, 0xAB, 256);
         }
 
-        let (result, _) = arena.free(ptr);
+        let (result, _) = arena.free(ptr.ptr);
         assert_eq!(result, FreeResult::Freed);
     }
 
@@ -477,10 +480,10 @@ mod tests {
         let arena = AllocationArena::new();
         let ptr = arena.allocate(64).expect("allocation should succeed");
 
-        let (first, _) = arena.free(ptr);
+        let (first, _) = arena.free(ptr.ptr);
         assert_eq!(first, FreeResult::Freed);
 
-        let (second, _) = arena.free(ptr);
+        let (second, _) = arena.free(ptr.ptr);
         assert_eq!(second, FreeResult::DoubleFree);
     }
 
@@ -496,7 +499,7 @@ mod tests {
     fn lookup_finds_allocation() {
         let arena = AllocationArena::new();
         let ptr = arena.allocate(128).expect("allocation should succeed");
-        let addr = ptr as usize;
+        let addr = ptr.ptr as usize;
 
         let slot = arena.lookup(addr).expect("should find allocation");
         assert_eq!(slot.user_base, addr);
@@ -508,7 +511,7 @@ mod tests {
     fn lookup_into_middle_of_allocation() {
         let arena = AllocationArena::new();
         let ptr = arena.allocate(256).expect("allocation should succeed");
-        let addr = ptr as usize;
+        let addr = ptr.ptr as usize;
 
         let (slot, remaining) = arena
             .remaining_from(addr + 64)
@@ -525,11 +528,11 @@ mod tests {
         // Corrupt the canary by writing past the allocation
         // SAFETY: We intentionally write past bounds to test canary detection.
         unsafe {
-            let canary_ptr = ptr.add(32);
+            let canary_ptr = ptr.ptr.add(32);
             std::ptr::write_bytes(canary_ptr, 0xFF, CANARY_SIZE);
         }
 
-        let (result, _) = arena.free(ptr);
+        let (result, _) = arena.free(ptr.ptr);
         assert_eq!(result, FreeResult::FreedWithCanaryCorruption);
     }
 
@@ -539,12 +542,12 @@ mod tests {
         let p1 = arena.allocate(64).expect("alloc 1");
         let p2 = arena.allocate(64).expect("alloc 2");
 
-        let s1 = arena.lookup(p1 as usize).unwrap();
-        let s2 = arena.lookup(p2 as usize).unwrap();
+        let s1 = arena.lookup(p1.ptr as usize).unwrap();
+        let s2 = arena.lookup(p2.ptr as usize).unwrap();
         assert!(s2.generation > s1.generation);
 
-        let _ = arena.free(p1);
-        let _ = arena.free(p2);
+        let _ = arena.free(p1.ptr);
+        let _ = arena.free(p2.ptr);
     }
 
     #[test]
@@ -552,15 +555,15 @@ mod tests {
         let arena = AllocationArena::new();
         let ptr = arena.allocate(96).expect("allocation should succeed");
 
-        let before = arena.lookup(ptr as usize).expect("live slot");
+        let before = arena.lookup(ptr.ptr as usize).expect("live slot");
         assert_eq!(before.state, SafetyState::Valid);
 
-        let (result, drained) = arena.free(ptr);
+        let (result, drained) = arena.free(ptr.ptr);
         assert_eq!(result, FreeResult::Freed);
         assert!(drained.is_empty(), "small free should not force drain");
 
         let after = arena
-            .lookup(ptr as usize)
+            .lookup(ptr.ptr as usize)
             .expect("freed slot should remain quarantined and discoverable");
         assert_eq!(after.state, SafetyState::Quarantined);
         assert!(
@@ -670,13 +673,13 @@ mod tests {
 
         // Allocate and record the generation
         let ptr = arena.allocate(128).expect("allocation should succeed");
-        let addr = ptr as usize;
+        let addr = ptr.ptr as usize;
         let live_slot = arena.lookup(addr).expect("should find live allocation");
         let live_gen = live_slot.generation;
         assert_eq!(live_slot.state, SafetyState::Valid);
 
         // Free: slot transitions to Quarantined with bumped generation
-        let (result, _) = arena.free(ptr);
+        let (result, _) = arena.free(ptr.ptr);
         assert_eq!(result, FreeResult::Freed);
 
         let freed_slot = arena.lookup(addr).expect("should find quarantined slot");
@@ -715,7 +718,7 @@ mod tests {
 
         for _ in 0..50 {
             let ptr = arena.allocate(64).expect("alloc");
-            let slot = arena.lookup(ptr as usize).expect("lookup");
+            let slot = arena.lookup(ptr.ptr as usize).expect("lookup");
             assert!(
                 slot.generation > prev_gen,
                 "Generation not strictly increasing: {} <= {}",
@@ -724,10 +727,10 @@ mod tests {
             );
             prev_gen = slot.generation;
 
-            let (result, _) = arena.free(ptr);
+            let (result, _) = arena.free(ptr.ptr);
             assert_eq!(result, FreeResult::Freed);
 
-            let freed = arena.lookup(ptr as usize).expect("freed lookup");
+            let freed = arena.lookup(ptr.ptr as usize).expect("freed lookup");
             assert!(
                 freed.generation > prev_gen,
                 "Free generation not strictly increasing: {} <= {}",
@@ -753,13 +756,13 @@ mod tests {
         for _ in 0..10 {
             let ptr = arena.allocate(256).expect("alloc");
 
-            let (first, _) = arena.free(ptr);
+            let (first, _) = arena.free(ptr.ptr);
             assert_eq!(first, FreeResult::Freed);
 
             // Intervening allocation to test isolation
             let _ = arena.allocate(128);
 
-            let (second, _) = arena.free(ptr);
+            let (second, _) = arena.free(ptr.ptr);
             assert_eq!(
                 second,
                 FreeResult::DoubleFree,
@@ -791,9 +794,9 @@ mod tests {
         // Free in order
         let mut free_order = Vec::new();
         for &ptr in &ptrs {
-            let (result, _) = arena.free(ptr);
+            let (result, _) = arena.free(ptr.ptr);
             assert_eq!(result, FreeResult::Freed);
-            free_order.push(ptr as usize);
+            free_order.push(ptr.ptr as usize);
         }
 
         // Verify quarantine is populated in the same order
@@ -844,7 +847,7 @@ mod tests {
 
         // Also allocate a real pointer and try adjacent addresses
         let real = arena.allocate(256).expect("alloc");
-        let real_addr = real as usize;
+        let real_addr = real.ptr as usize;
 
         for &ptr in foreign_ptrs {
             if ptr.is_null() {
@@ -864,7 +867,7 @@ mod tests {
         assert_eq!(result, FreeResult::ForeignPointer);
 
         // Cleanup
-        let _ = arena.free(real);
+        let _ = arena.free(real.ptr);
     }
 
     #[test]
@@ -1001,16 +1004,16 @@ mod tests {
         let arena = AllocationArena::new_with_collector(Some(Arc::clone(&ebr)));
 
         let ptr = arena.allocate(128).expect("alloc should succeed");
-        assert!(!ptr.is_null());
+        assert!(!ptr.ptr.is_null());
 
-        let slot = arena.lookup(ptr as usize).expect("should find allocation");
+        let slot = arena.lookup(ptr.ptr as usize).expect("should find allocation");
         assert_eq!(slot.state, SafetyState::Valid);
         assert_eq!(slot.user_size, 128);
 
-        let (result, _) = arena.free(ptr);
+        let (result, _) = arena.free(ptr.ptr);
         assert_eq!(result, FreeResult::Freed);
 
-        let freed_slot = arena.lookup(ptr as usize).expect("quarantined slot");
+        let freed_slot = arena.lookup(ptr.ptr as usize).expect("quarantined slot");
         assert_eq!(freed_slot.state, SafetyState::Quarantined);
     }
 
@@ -1027,20 +1030,20 @@ mod tests {
 
         // Verify all allocations
         for &(ptr, size) in &ptrs {
-            let slot = arena.lookup(ptr as usize).expect("lookup");
+            let slot = arena.lookup(ptr.ptr as usize).expect("lookup");
             assert_eq!(slot.user_size, size);
             assert_eq!(slot.state, SafetyState::Valid);
         }
 
         // Free all
         for &(ptr, _) in &ptrs {
-            let (result, _) = arena.free(ptr);
+            let (result, _) = arena.free(ptr.ptr);
             assert_eq!(result, FreeResult::Freed);
         }
 
         // All should be quarantined
         for &(ptr, _) in &ptrs {
-            let slot = arena.lookup(ptr as usize).expect("freed lookup");
+            let slot = arena.lookup(ptr.ptr as usize).expect("freed lookup");
             assert_eq!(slot.state, SafetyState::Quarantined);
         }
     }
@@ -1060,7 +1063,7 @@ mod tests {
 
         let arena = AllocationArena::new();
         let ptr = arena.allocate(256).expect("alloc");
-        let addr = ptr as usize;
+        let addr = ptr.ptr as usize;
 
         // Insert a cached validation for this pointer
         let mut cache = TlsValidationCache::new();
@@ -1083,7 +1086,7 @@ mod tests {
         }
 
         // Free the allocation - this bumps the TLS cache epoch
-        let (result, _) = arena.free(ptr);
+        let (result, _) = arena.free(ptr.ptr);
         assert_eq!(result, FreeResult::Freed);
 
         let epoch_after = current_epoch();
@@ -1107,7 +1110,7 @@ mod tests {
 
         let arena = AllocationArena::new();
         let ptr = arena.allocate(64).expect("alloc");
-        let addr = ptr as usize;
+        let addr = ptr.ptr as usize;
 
         let mut cache = TlsValidationCache::new();
 
@@ -1127,7 +1130,7 @@ mod tests {
         }
 
         // Free bumps epoch
-        let (_, _) = arena.free(ptr);
+        let (_, _) = arena.free(ptr.ptr);
 
         // Re-insert with new epoch (simulating re-validation after free)
         {
@@ -1177,7 +1180,7 @@ mod tests {
                 let mut prev_epoch = 0u64;
                 for _ in 0..200 {
                     let ptr = arena.allocate(64).expect("alloc");
-                    let (result, _) = arena.free(ptr);
+                    let (result, _) = arena.free(ptr.ptr);
                     assert_eq!(result, FreeResult::Freed);
 
                     // Epoch must be monotonically non-decreasing
@@ -1220,7 +1223,7 @@ mod tests {
                 let mut prev_gen = 0u64;
                 for _ in 0..100 {
                     let ptr = arena.allocate(32).expect("alloc");
-                    let slot = arena.lookup(ptr as usize).expect("lookup");
+                    let slot = arena.lookup(ptr.ptr as usize).expect("lookup");
                     // Generation must be strictly increasing per-allocation
                     assert!(
                         slot.generation > prev_gen,
@@ -1230,10 +1233,10 @@ mod tests {
                     );
                     prev_gen = slot.generation;
 
-                    let (result, _) = arena.free(ptr);
+                    let (result, _) = arena.free(ptr.ptr);
                     assert_eq!(result, FreeResult::Freed);
 
-                    let freed = arena.lookup(ptr as usize).expect("freed lookup");
+                    let freed = arena.lookup(ptr.ptr as usize).expect("freed lookup");
                     assert!(freed.generation > prev_gen);
                     prev_gen = freed.generation;
                 }

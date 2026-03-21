@@ -19,7 +19,7 @@ use crate::check_oracle::CheckStage;
 use crate::config::safety_level;
 use crate::fingerprint::{AllocationFingerprint, CANARY_SIZE, FINGERPRINT_SIZE};
 use crate::galois::PointerAbstraction;
-use crate::ids::{DecisionId, MEMBRANE_SCHEMA_VERSION, PolicyId, TraceId};
+use crate::ids::{DecisionId, MEMBRANE_SCHEMA_VERSION, TraceId};
 use crate::metrics::{MembraneMetrics, global_metrics};
 use crate::page_oracle::PageOracle;
 use crate::runtime_math::{ApiFamily, RuntimeContext, RuntimeMathKernel, ValidationProfile};
@@ -45,7 +45,7 @@ struct ValidationLogRow {
     span_id: String,
     parent_span_id: String,
     decision_id: u64,
-    schema_version: &'static str,
+    schema_version: String,
     level: &'static str,
     event: &'static str,
     controller_id: &'static str,
@@ -404,7 +404,7 @@ impl ValidationPipeline {
             span_id: trace.span_id.clone(),
             parent_span_id: trace.parent_span_id.clone(),
             decision_id: trace.decision_id.as_u64(),
-            schema_version: MEMBRANE_SCHEMA_VERSION,
+            schema_version: MEMBRANE_SCHEMA_VERSION.to_string(),
             level,
             event,
             controller_id: "tsm_validation_pipeline.v1",
@@ -684,6 +684,13 @@ impl ValidationPipeline {
         // insert the CachedValid entry.
         let validation_epoch = crate::tls_cache::current_epoch();
 
+        let aligned = addr & 0x7 == 0;
+        let recent_page = self.page_oracle.query(addr);
+        let raw_order =
+            self.runtime_math
+                .check_ordering(ApiFamily::PointerValidation, aligned, recent_page);
+        let ordering = Self::dependency_safe_order(raw_order);
+
         // Stage 1: Null check (~1ns)
         self.emit_validation_log(
             &trace,
@@ -739,12 +746,7 @@ impl ValidationPipeline {
             );
             return ValidationOutcome::Null;
         }
-        let aligned = addr & 0x7 == 0;
-        let recent_page = self.page_oracle.query(addr);
-        let raw_order =
-            self.runtime_math
-                .check_ordering(ApiFamily::PointerValidation, aligned, recent_page);
-        let ordering = Self::dependency_safe_order(raw_order);
+
         if raw_order != ordering {
             self.emit_validation_log(
                 &trace,
@@ -1657,14 +1659,14 @@ impl ValidationPipeline {
     /// Allocate memory and register it with the safety model.
     pub fn allocate(&self, size: usize) -> Option<*mut u8> {
         let res = self.arena.allocate(size)?;
-        self.register_allocation(res.ptr as usize, res.raw_base, res.total_size);
+        self.register_allocation(res.user_base, res.raw_base, res.total_size);
         Some(res.ptr)
     }
 
     /// Allocate aligned memory and register it with the safety model.
     pub fn allocate_aligned(&self, size: usize, align: usize) -> Option<*mut u8> {
         let res = self.arena.allocate_aligned(size, align)?;
-        self.register_allocation(res.ptr as usize, res.raw_base, res.total_size);
+        self.register_allocation(res.user_base, res.raw_base, res.total_size);
         Some(res.ptr)
     }
 
@@ -1685,6 +1687,15 @@ impl ValidationPipeline {
         }
 
         result
+    }
+
+    /// Cheaply check if an address is likely owned by the membrane.
+    ///
+    /// This only queries the page oracle and does not perform full validation.
+    /// Useful for heuristic stage ordering in the ABI layer.
+    #[must_use]
+    pub fn check_ownership(&self, addr: usize) -> bool {
+        self.page_oracle.query(addr)
     }
 
     fn abstraction_from_slot(&self, addr: usize, slot: &ArenaSlot) -> PointerAbstraction {

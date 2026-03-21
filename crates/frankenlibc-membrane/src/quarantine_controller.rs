@@ -42,7 +42,7 @@ pub const MIN_DEPTH: usize = 64;
 pub const MAX_DEPTH: usize = 65536;
 
 /// Default initial quarantine depth.
-pub const DEFAULT_DEPTH: usize = 4096;
+pub const DEFAULT_DEPTH: usize = 8192;
 
 /// Controller epoch interval (number of free operations between updates).
 const EPOCH_INTERVAL: u64 = 256;

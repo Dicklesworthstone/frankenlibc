@@ -662,7 +662,7 @@ fn stage_index(ordering: &[CheckStage; 7], stage: CheckStage) -> usize {
 #[inline]
 fn allocator_stage_context(addr_hint: usize) -> (bool, bool, [CheckStage; 7]) {
     let aligned = (addr_hint & 0x7) == 0;
-    let recent_page = addr_hint != 0 && known_remaining(addr_hint).is_some();
+    let recent_page = addr_hint != 0 && check_ownership(addr_hint);
     let ordering = runtime_policy::check_ordering(ApiFamily::Allocator, aligned, recent_page);
     (aligned, recent_page, ordering)
 }
@@ -690,6 +690,16 @@ fn record_allocator_stage_outcome(
 pub(crate) fn validate_ptr(addr: usize) -> Option<PointerAbstraction> {
     let pipeline = crate::membrane_state::try_global_pipeline()?;
     pipeline.validate(addr).abstraction()
+}
+
+/// Cheaply check if an address is likely owned by the membrane.
+///
+/// Returns `false` if the pipeline is not yet initialized.
+#[must_use]
+pub(crate) fn check_ownership(addr: usize) -> bool {
+    crate::membrane_state::try_global_pipeline()
+        .map(|p| p.check_ownership(addr))
+        .unwrap_or(false)
 }
 
 /// Remaining bytes in a known live allocation at `addr`.

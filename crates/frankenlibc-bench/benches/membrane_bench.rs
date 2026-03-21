@@ -147,9 +147,9 @@ fn bench_membrane(c: &mut Criterion) {
     // validate_known
     {
         let pipeline = ValidationPipeline::new();
-        let ptr = pipeline.arena.allocate(256).expect("alloc");
-        let addr = ptr as usize;
-        pipeline.register_allocation(addr, 256);
+        let res = pipeline.arena.allocate(256).expect("alloc");
+        let addr = res.ptr as usize;
+        pipeline.register_allocation(addr, res.raw_base, res.total_size);
 
         for _ in 0..10_000 {
             black_box(pipeline.validate(addr));
@@ -169,7 +169,7 @@ fn bench_membrane(c: &mut Criterion) {
         });
         stats.borrow().report(mode_label, "validate_known");
 
-        pipeline.arena.free(ptr);
+        pipeline.arena.free(res.ptr);
     }
 
     group.finish();

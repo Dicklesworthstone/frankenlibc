@@ -16,10 +16,9 @@ parking_lot = { workspace = true }
 blake3 = { workspace = true }
 sha2 = { workspace = true }
 serde = { workspace = true }
+serde_json = { workspace = true }
 
 [dev-dependencies]
-criterion = { workspace = true }
-serde_json = { workspace = true }
 proptest = "1.6"
 libc = { workspace = true }
 
