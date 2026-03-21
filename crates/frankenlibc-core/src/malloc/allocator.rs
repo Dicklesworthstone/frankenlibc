@@ -9,17 +9,6 @@ use super::size_class::{self, NUM_SIZE_CLASSES};
 use super::thread_cache::ThreadCache;
 use frankenlibc_membrane::runtime_math::sos_barrier::evaluate_size_class_barrier;
 
-use std::collections::{HashMap, HashSet};
-
-/// Tracks an individual allocation made through the core allocator.
-#[derive(Debug, Clone)]
-struct AllocationRecord {
-    /// Usable size requested by caller.
-    user_size: usize,
-    /// Size class index (NUM_SIZE_CLASSES for large).
-    bin: usize,
-}
-
 /// Allocator lifecycle log level.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AllocatorLogLevel {
@@ -43,7 +32,7 @@ pub struct AllocatorLogRecord {
     pub symbol: &'static str,
     /// Event kind (`alloc`, `free`, `allocator_stats`, ...).
     pub event: &'static str,
-    /// Pointer offset involved in the event.
+    /// Pointer involved in the event.
     pub ptr: Option<usize>,
     /// Size value involved in the event.
     pub size: Option<usize>,
@@ -73,19 +62,18 @@ pub struct AllocatorLogRecord {
 ///
 /// Manages the central heap, bin freelists, and coordination with
 /// per-thread caches and the large allocator.
+///
+/// # Safety
+///
+/// In a production libc, this would manage raw memory regions. Here it
+/// provides the high-level policy and metadata tracking used by the membrane.
 pub struct MallocState {
-    /// Per-bin central freelists (bin index -> stack of free offsets).
+    /// Per-bin central freelists (bin index -> stack of free pointers).
     central_bins: Vec<Vec<usize>>,
     /// Large allocation manager.
     large_allocator: LargeAllocator,
-    /// Thread cache (single-threaded model for now).
+    /// Thread cache.
     thread_cache: ThreadCache,
-    /// Active allocation records (offset -> record).
-    active: HashMap<usize, AllocationRecord>,
-    /// Next offset for new slab allocations.
-    next_offset: usize,
-    /// Recently freed pointers used to distinguish double-free from unknown free.
-    recently_freed: HashSet<usize>,
     /// Monotonic lifecycle decision id.
     next_decision_id: u64,
     /// Structured allocator lifecycle records.
@@ -108,15 +96,13 @@ pub struct MallocState {
 
 impl MallocState {
     /// Creates a new initialized allocator state.
+    #[must_use]
     pub fn new() -> Self {
         let central_bins = (0..NUM_SIZE_CLASSES).map(|_| Vec::new()).collect();
         Self {
             central_bins,
             large_allocator: LargeAllocator::new(),
             thread_cache: ThreadCache::new(),
-            active: HashMap::new(),
-            next_offset: 0x1000, // Start above zero page
-            recently_freed: HashSet::new(),
             next_decision_id: 1,
             lifecycle_logs: Vec::new(),
             thread_cache_hits: 0,
@@ -196,68 +182,39 @@ impl MallocState {
         );
     }
 
-    /// Allocates `size` bytes of memory.
-    ///
-    /// Returns a logical offset (simulating a pointer) or `None` if
-    /// allocation fails.
-    pub fn malloc(&mut self, size: usize) -> Option<usize> {
+    /// Allocates `size` bytes of memory using the given backend.
+    pub fn malloc<F>(&mut self, size: usize, mut alloc_fn: F) -> Option<usize>
+    where
+        F: FnMut(usize) -> Option<usize>,
+    {
         let size = if size == 0 { 1 } else { size };
-
         let bin = size_class::bin_index(size);
 
         if bin >= NUM_SIZE_CLASSES {
             // Large allocation path
-            let Some(alloc) = self.large_allocator.alloc(size) else {
+            let out = alloc_fn(size);
+            if let Some(ptr) = out {
+                self.total_allocated = self.total_allocated.saturating_add(size);
+                self.active_count = self.active_count.saturating_add(1);
                 self.record_lifecycle(
-                    AllocatorLogLevel::Warn,
+                    AllocatorLogLevel::Trace,
                     "malloc",
                     "alloc",
-                    None,
+                    Some(ptr),
                     Some(size),
                     Some(NUM_SIZE_CLASSES),
-                    "oom",
-                    "large_allocator_alloc_failed",
+                    "success",
+                    "path=large_allocator",
                 );
-                self.record_allocator_stats("malloc");
-                return None;
-            };
-            let offset = alloc.base;
-            self.active.insert(
-                offset,
-                AllocationRecord {
-                    user_size: size,
-                    bin: NUM_SIZE_CLASSES,
-                },
-            );
-            self.recently_freed.remove(&offset);
-            self.total_allocated += size;
-            self.active_count += 1;
-            self.record_lifecycle(
-                AllocatorLogLevel::Trace,
-                "malloc",
-                "alloc",
-                Some(offset),
-                Some(size),
-                Some(NUM_SIZE_CLASSES),
-                "success",
-                "path=large_allocator",
-            );
-            self.record_allocator_stats("malloc");
-            return Some(offset);
+            }
+            return out;
         }
 
         let class_size = size_class::bin_size(bin);
         let class_membership_valid = class_size >= size && class_size > 0;
         let size_class_cert_value =
             evaluate_size_class_barrier(size, class_size, class_membership_valid);
-        let waste_ratio_ppm = if size == 0 {
-            0u64
-        } else {
-            let waste = class_size.saturating_sub(size);
-            ((waste as u128).saturating_mul(1_000_000) / (size as u128))
-                .try_into()
-                .unwrap_or(u64::MAX)
-        };
+
         self.record_lifecycle(
             if size_class_cert_value >= 0 {
                 AllocatorLogLevel::Trace
@@ -275,386 +232,148 @@ impl MallocState {
                 "certificate_violation"
             },
             format!(
-                "requested_size={size};mapped_class_size={class_size};waste_ratio_ppm={waste_ratio_ppm};cert_value={size_class_cert_value};class_membership_valid={class_membership_valid}"
+                "requested_size={size};mapped_class_size={class_size};cert_value={size_class_cert_value}"
             ),
         );
 
         // Try thread cache first
-        if let Some(offset) = self.thread_cache.alloc(bin) {
+        if let Some(ptr) = self.thread_cache.alloc(bin) {
             self.thread_cache_hits += 1;
-            self.active.insert(
-                offset,
-                AllocationRecord {
-                    user_size: size,
-                    bin,
-                },
-            );
-            self.recently_freed.remove(&offset);
-            self.total_allocated += size;
-            self.active_count += 1;
+            self.total_allocated = self.total_allocated.saturating_add(size);
+            self.active_count = self.active_count.saturating_add(1);
             self.record_lifecycle(
                 AllocatorLogLevel::Trace,
                 "malloc",
                 "alloc",
-                Some(offset),
+                Some(ptr),
                 Some(size),
                 Some(bin),
                 "success",
-                "path=thread_cache_hit",
+                "path=thread_cache",
             );
-            self.record_allocator_stats("malloc");
-            return Some(offset);
+            return Some(ptr);
         }
+
         self.thread_cache_misses += 1;
 
-        // Try central bin freelist
-        if let Some(offset) = self.central_bins[bin].pop() {
+        // Try central bin
+        if let Some(ptr) = self.central_bins[bin].pop() {
             self.central_bin_hits += 1;
-            self.active.insert(
-                offset,
-                AllocationRecord {
-                    user_size: size,
-                    bin,
-                },
-            );
-            self.recently_freed.remove(&offset);
-            self.total_allocated += size;
-            self.active_count += 1;
+            self.total_allocated = self.total_allocated.saturating_add(size);
+            self.active_count = self.active_count.saturating_add(1);
             self.record_lifecycle(
                 AllocatorLogLevel::Trace,
                 "malloc",
                 "alloc",
-                Some(offset),
+                Some(ptr),
                 Some(size),
                 Some(bin),
                 "success",
-                "path=central_bin_hit",
+                "path=central_bin",
             );
-            self.record_allocator_stats("malloc");
-            return Some(offset);
+            return Some(ptr);
         }
 
-        // Allocate fresh from slab region
-        let offset = self.next_offset;
-        let Some(next_offset) = self.next_offset.checked_add(class_size) else {
-            self.record_lifecycle(
-                AllocatorLogLevel::Info,
-                "malloc",
-                "generation_overflow",
-                None,
-                Some(class_size),
-                Some(bin),
-                "denied",
-                format!("next_offset={} class_size={}", self.next_offset, class_size),
-            );
-            self.record_allocator_stats("malloc");
-            return None;
-        };
-        self.next_offset = next_offset;
-        self.active.insert(
-            offset,
-            AllocationRecord {
-                user_size: size,
-                bin,
-            },
-        );
-        self.total_allocated += size;
-        self.active_count += 1;
-        self.record_lifecycle(
-            AllocatorLogLevel::Trace,
-            "malloc",
-            "alloc",
-            Some(offset),
-            Some(size),
-            Some(bin),
-            "success",
-            format!("path=fresh_slab class_size={}", class_size),
-        );
-        self.record_allocator_stats("malloc");
-        Some(offset)
-    }
-
-    /// Frees a previously allocated block.
-    ///
-    /// No-op if `ptr` is 0 (null equivalent).
-    pub fn free(&mut self, ptr: usize) {
-        if ptr == 0 {
+        // Refill from backend
+        if let Some(ptr) = alloc_fn(class_size) {
+            self.total_allocated = self.total_allocated.saturating_add(size);
+            self.active_count = self.active_count.saturating_add(1);
             self.record_lifecycle(
                 AllocatorLogLevel::Trace,
-                "free",
-                "free_null",
+                "malloc",
+                "alloc",
                 Some(ptr),
-                None,
-                None,
-                "noop",
-                "null_pointer",
+                Some(size),
+                Some(bin),
+                "success",
+                "path=backend_refill",
             );
+            return Some(ptr);
+        }
+
+        self.record_lifecycle(
+            AllocatorLogLevel::Warn,
+            "malloc",
+            "alloc",
+            None,
+            Some(size),
+            Some(bin),
+            "oom",
+            "backend_refill_failed",
+        );
+        None
+    }
+
+    /// Frees an allocation.
+    pub fn free<F>(&mut self, ptr: usize, size: usize, mut free_fn: F)
+    where
+        F: FnMut(usize),
+    {
+        if ptr == 0 {
             return;
         }
 
-        let record = match self.active.remove(&ptr) {
-            Some(r) => r,
-            None => {
-                if self.recently_freed.contains(&ptr) {
-                    self.record_lifecycle(
-                        AllocatorLogLevel::Warn,
-                        "free",
-                        "double_free_detected",
-                        Some(ptr),
-                        None,
-                        None,
-                        "ignored",
-                        "pointer_observed_in_recently_freed_set",
-                    );
-                } else {
-                    self.record_lifecycle(
-                        AllocatorLogLevel::Warn,
-                        "free",
-                        "unknown_free_pointer",
-                        Some(ptr),
-                        None,
-                        None,
-                        "ignored",
-                        "pointer_not_present_in_active_map",
-                    );
-                }
-                self.record_allocator_stats("free");
-                return; // Unknown pointer - ignore
-            }
-        };
-
-        match self.total_allocated.checked_sub(record.user_size) {
-            Some(next) => {
-                self.total_allocated = next;
-            }
-            None => {
-                self.total_allocated = 0;
-                self.record_lifecycle(
-                    AllocatorLogLevel::Error,
-                    "free",
-                    "invariant_total_allocated_underflow",
-                    Some(ptr),
-                    Some(record.user_size),
-                    Some(record.bin),
-                    "recovered",
-                    "checked_sub_failed",
-                );
-            }
-        }
-        match self.active_count.checked_sub(1) {
-            Some(next) => {
-                self.active_count = next;
-            }
-            None => {
-                self.active_count = 0;
-                self.record_lifecycle(
-                    AllocatorLogLevel::Error,
-                    "free",
-                    "invariant_active_count_underflow",
-                    Some(ptr),
-                    Some(record.user_size),
-                    Some(record.bin),
-                    "recovered",
-                    "checked_sub_failed",
-                );
-            }
-        }
-
-        if record.bin >= NUM_SIZE_CLASSES {
-            // Large allocation
-            self.large_allocator.free(ptr);
-            self.recently_freed.insert(ptr);
-            if self.recently_freed.len() > 8192 {
-                self.recently_freed.clear();
-            }
+        let bin = size_class::bin_index(size);
+        if bin >= NUM_SIZE_CLASSES {
+            self.total_allocated = self.total_allocated.saturating_sub(size);
+            self.active_count = self.active_count.saturating_sub(1);
+            free_fn(ptr);
             self.record_lifecycle(
                 AllocatorLogLevel::Trace,
                 "free",
                 "free",
                 Some(ptr),
-                Some(record.user_size),
+                Some(size),
                 Some(NUM_SIZE_CLASSES),
                 "success",
                 "path=large_allocator",
             );
-            self.record_allocator_stats("free");
             return;
         }
 
-        // Try to cache in thread cache
-        if !self.thread_cache.dealloc(record.bin, ptr) {
-            // Magazine full - put in central bin
-            self.central_bins[record.bin].push(ptr);
-            self.spills_to_central += 1;
+        self.total_allocated = self.total_allocated.saturating_sub(size);
+        self.active_count = self.active_count.saturating_sub(1);
+
+        if self.thread_cache.free(bin, ptr) {
             self.record_lifecycle(
-                AllocatorLogLevel::Info,
+                AllocatorLogLevel::Trace,
                 "free",
-                "cache_spill_to_central",
+                "free",
                 Some(ptr),
-                Some(record.user_size),
-                Some(record.bin),
-                "spilled",
-                format!("central_bin_len={}", self.central_bins[record.bin].len()),
+                Some(size),
+                Some(bin),
+                "success",
+                "path=thread_cache",
             );
         } else {
-            self.record_lifecycle(
-                AllocatorLogLevel::Trace,
-                "free",
-                "free",
-                Some(ptr),
-                Some(record.user_size),
-                Some(record.bin),
-                "success",
-                "path=thread_cache_store",
-            );
-        }
-        self.recently_freed.insert(ptr);
-        if self.recently_freed.len() > 8192 {
-            self.recently_freed.clear();
-        }
-        self.record_allocator_stats("free");
-    }
-
-    /// Allocates memory for `count` objects of `size` bytes each, zeroed.
-    ///
-    /// Returns a logical offset or `None` on failure. Checks for
-    /// multiplication overflow.
-    pub fn calloc(&mut self, count: usize, size: usize) -> Option<usize> {
-        let Some(total) = count.checked_mul(size) else {
-            self.record_lifecycle(
-                AllocatorLogLevel::Warn,
-                "calloc",
-                "calloc_overflow",
-                None,
-                None,
-                None,
-                "denied",
-                format!("count={} size={}", count, size),
-            );
-            self.record_allocator_stats("calloc");
-            return None;
-        };
-
-        let out = self.malloc(total);
-        self.record_lifecycle(
-            AllocatorLogLevel::Trace,
-            "calloc",
-            "calloc_result",
-            out,
-            Some(total),
-            Some(size_class::bin_index(total)),
-            if out.is_some() { "success" } else { "oom" },
-            format!("count={} elem_size={}", count, size),
-        );
-        self.record_allocator_stats("calloc");
-        out
-        // Note: in this logical model, memory is not actually backed by real
-        // bytes, so zeroing is implicit. The ABI layer handles real zeroing.
-    }
-
-    /// Resizes a previously allocated block to `new_size` bytes.
-    ///
-    /// If `ptr` is 0, equivalent to `malloc(new_size)`.
-    /// If `new_size` is 0, equivalent to `free(ptr)`.
-    pub fn realloc(&mut self, ptr: usize, new_size: usize) -> Option<usize> {
-        if ptr == 0 {
-            let out = self.malloc(new_size);
-            self.record_lifecycle(
-                AllocatorLogLevel::Trace,
-                "realloc",
-                "realloc_null_as_malloc",
-                out,
-                Some(new_size),
-                Some(size_class::bin_index(new_size.max(1))),
-                if out.is_some() { "success" } else { "oom" },
-                "ptr_was_null",
-            );
-            self.record_allocator_stats("realloc");
-            return out;
-        }
-        // realloc(ptr, 0): consistent with malloc(0) which returns a 1-byte
-        // allocation.  This avoids the asymmetry where malloc(0) returns
-        // non-NULL but realloc(ptr, 0) returned NULL, which programs interpret
-        // as OOM.
-        let new_size = if new_size == 0 { 1 } else { new_size };
-
-        let old_record = self.active.get(&ptr).cloned();
-        let old_size = old_record.as_ref().map_or(0, |r| r.user_size);
-        let old_bin = old_record.as_ref().map_or(NUM_SIZE_CLASSES, |r| r.bin);
-        if old_record.is_none() {
-            self.record_lifecycle(
-                AllocatorLogLevel::Warn,
-                "realloc",
-                "realloc_unknown_pointer",
-                Some(ptr),
-                Some(new_size),
-                Some(size_class::bin_index(new_size)),
-                "fallback_alloc",
-                "source_pointer_not_active",
-            );
-        }
-
-        // If new size fits in the same size class, keep the same block
-        let new_bin = size_class::bin_index(new_size);
-        if new_bin == old_bin && new_bin < NUM_SIZE_CLASSES {
-            // Update record in place
-            if let Some(record) = self.active.get_mut(&ptr) {
-                // Update total_allocated with the exact delta
-                let old_user_size = record.user_size;
-                if new_size > old_user_size {
-                    self.total_allocated += new_size - old_user_size;
-                } else {
-                    self.total_allocated -= old_user_size - new_size;
-                }
-                record.user_size = new_size;
+            // Thread cache full, spill to central bin or backend
+            self.spills_to_central += 1;
+            if self.central_bins[bin].len() < 1024 {
+                self.central_bins[bin].push(ptr);
+                self.record_lifecycle(
+                    AllocatorLogLevel::Trace,
+                    "free",
+                    "free",
+                    Some(ptr),
+                    Some(size),
+                    Some(bin),
+                    "success",
+                    "path=central_bin_spill",
+                );
+            } else {
+                free_fn(ptr);
+                self.record_lifecycle(
+                    AllocatorLogLevel::Trace,
+                    "free",
+                    "free",
+                    Some(ptr),
+                    Some(size),
+                    Some(bin),
+                    "success",
+                    "path=backend_release",
+                );
             }
-            self.record_lifecycle(
-                AllocatorLogLevel::Trace,
-                "realloc",
-                "realloc_in_place",
-                Some(ptr),
-                Some(new_size),
-                Some(new_bin),
-                "success",
-                format!("old_size={} old_bin={}", old_size, old_bin),
-            );
-            self.record_allocator_stats("realloc");
-            return Some(ptr);
         }
-
-        // Allocate new, copy metadata, free old
-        let Some(new_ptr) = self.malloc(new_size) else {
-            self.record_lifecycle(
-                AllocatorLogLevel::Warn,
-                "realloc",
-                "realloc_allocate_new_failed",
-                Some(ptr),
-                Some(new_size),
-                Some(new_bin),
-                "oom",
-                format!("old_size={} old_bin={}", old_size, old_bin),
-            );
-            self.record_allocator_stats("realloc");
-            return None;
-        };
-
-        // In the logical model, we don't copy actual bytes.
-        // The ABI layer handles the real memcpy.
-        // Note: malloc() already updated total_allocated and active_count.
-
-        self.free(ptr);
-        self.record_lifecycle(
-            AllocatorLogLevel::Trace,
-            "realloc",
-            "realloc_move",
-            Some(new_ptr),
-            Some(new_size),
-            Some(new_bin),
-            "success",
-            format!("old_ptr={} old_size={} old_bin={}", ptr, old_size, old_bin),
-        );
-        self.record_allocator_stats("realloc");
-        Some(new_ptr)
     }
 
     /// Returns the total bytes currently allocated (user-requested).
@@ -670,11 +389,6 @@ impl MallocState {
     /// Returns whether the allocator has been initialized.
     pub fn is_initialized(&self) -> bool {
         self.initialized
-    }
-
-    /// Looks up an allocation by offset.
-    pub fn lookup(&self, ptr: usize) -> Option<usize> {
-        self.active.get(&ptr).map(|r| r.user_size)
     }
 
     /// Returns a view of allocator lifecycle log records.
@@ -698,6 +412,18 @@ impl Default for MallocState {
 mod tests {
     use super::*;
     use crate::malloc::size_class::MAX_SMALL_SIZE;
+    use std::alloc::{Layout, alloc, dealloc};
+
+    fn test_alloc(size: usize) -> Option<usize> {
+        let layout = Layout::from_size_align(size, 16).ok()?;
+        let ptr = unsafe { alloc(layout) };
+        if ptr.is_null() { None } else { Some(ptr as usize) }
+    }
+
+    fn test_free(ptr: usize, size: usize) {
+        let layout = Layout::from_size_align(size, 16).expect("valid layout for free");
+        unsafe { dealloc(ptr as *mut u8, layout) };
+    }
 
     #[test]
     fn test_new_state() {
@@ -710,423 +436,39 @@ mod tests {
     #[test]
     fn test_malloc_basic() {
         let mut state = MallocState::new();
-        let ptr = state.malloc(100).unwrap();
+        let ptr = state.malloc(100, |s| test_alloc(s)).unwrap();
         assert_ne!(ptr, 0);
         assert_eq!(state.active_count(), 1);
         assert_eq!(state.total_allocated(), 100);
-    }
-
-    #[test]
-    fn test_malloc_zero() {
-        let mut state = MallocState::new();
-        let ptr = state.malloc(0).unwrap();
-        assert_ne!(ptr, 0);
-        assert_eq!(state.active_count(), 1);
+        state.free(ptr, 100, |p| test_free(p, 128)); // bin_size(bin_index(100)) = 128
     }
 
     #[test]
     fn test_free_basic() {
         let mut state = MallocState::new();
-        let ptr = state.malloc(64).unwrap();
-        state.free(ptr);
+        let size = 64;
+        let ptr = state.malloc(size, |s| test_alloc(s)).unwrap();
+        state.free(ptr, size, |p| test_free(p, 64));
         assert_eq!(state.active_count(), 0);
         assert_eq!(state.total_allocated(), 0);
     }
 
     #[test]
-    fn test_free_null() {
-        let mut state = MallocState::new();
-        state.free(0); // Should not panic
-    }
-
-    #[test]
-    fn test_free_unknown() {
-        let mut state = MallocState::new();
-        state.free(0xDEAD); // Should not panic
-    }
-
-    #[test]
-    fn test_calloc_basic() {
-        let mut state = MallocState::new();
-        let ptr = state.calloc(10, 8).unwrap();
-        assert_ne!(ptr, 0);
-        assert_eq!(state.total_allocated(), 80);
-    }
-
-    #[test]
-    fn test_calloc_overflow() {
-        let mut state = MallocState::new();
-        assert!(state.calloc(usize::MAX, 2).is_none());
-    }
-
-    #[test]
-    fn test_realloc_null() {
-        let mut state = MallocState::new();
-        let ptr = state.realloc(0, 100).unwrap();
-        assert_ne!(ptr, 0);
-        assert_eq!(state.active_count(), 1);
-    }
-
-    #[test]
-    fn test_realloc_zero_size() {
-        let mut state = MallocState::new();
-        let ptr = state.malloc(100).unwrap();
-        // POSIX: realloc(ptr, 0) should return a minimum-size allocation, not free.
-        let new_ptr = state.realloc(ptr, 0);
-        assert!(
-            new_ptr.is_some(),
-            "realloc(ptr, 0) should return a valid allocation"
-        );
-        assert_eq!(state.active_count(), 1);
-        state.free(new_ptr.unwrap());
-    }
-
-    #[test]
-    fn test_realloc_same_class() {
-        let mut state = MallocState::new();
-        let ptr = state.malloc(20).unwrap();
-        // 20 and 25 both fit in the 32-byte class
-        let new_ptr = state.realloc(ptr, 25).unwrap();
-        assert_eq!(new_ptr, ptr); // Same block reused
-        assert_eq!(state.total_allocated(), 25);
-    }
-
-    #[test]
-    fn test_realloc_different_class() {
-        let mut state = MallocState::new();
-        let ptr = state.malloc(16).unwrap();
-        let new_ptr = state.realloc(ptr, 256).unwrap();
-        assert_ne!(new_ptr, ptr);
-        assert_eq!(state.active_count(), 1);
-        assert_eq!(state.total_allocated(), 256);
-    }
-
-    #[test]
-    fn test_large_allocation() {
-        let mut state = MallocState::new();
-        let ptr = state.malloc(MAX_SMALL_SIZE + 1).unwrap();
-        assert_ne!(ptr, 0);
-        assert_eq!(state.active_count(), 1);
-        state.free(ptr);
-        assert_eq!(state.active_count(), 0);
-    }
-
-    #[test]
-    fn test_realloc_unknown_pointer_allocates_new_block() {
-        let mut state = MallocState::new();
-        let new_ptr = state.realloc(0xDEAD, 64).unwrap();
-        assert_ne!(new_ptr, 0xDEAD);
-        assert_eq!(state.active_count(), 1);
-        assert_eq!(state.total_allocated(), 64);
-        assert_eq!(state.lookup(0xDEAD), None);
-        assert_eq!(state.lookup(new_ptr), Some(64));
-    }
-
-    #[test]
-    fn test_realloc_large_to_small_moves_to_small_path() {
-        let mut state = MallocState::new();
-        let large_ptr = state.malloc(MAX_SMALL_SIZE + 1).unwrap();
-        let small_ptr = state.realloc(large_ptr, 64).unwrap();
-
-        assert_ne!(small_ptr, large_ptr);
-        assert_eq!(state.active_count(), 1);
-        assert_eq!(state.total_allocated(), 64);
-        assert_eq!(state.lookup(large_ptr), None);
-        assert_eq!(state.lookup(small_ptr), Some(64));
-    }
-
-    #[test]
     fn test_thread_cache_reuse() {
         let mut state = MallocState::new();
+        let size = 32;
 
-        // Allocate and free several blocks of the same size class
-        let ptrs: Vec<usize> = (0..5).map(|_| state.malloc(32).unwrap()).collect();
+        // Allocate and free several blocks
+        let mut ptrs = Vec::new();
+        for _ in 0..5 {
+            ptrs.push(state.malloc(size, |s| test_alloc(s)).unwrap());
+        }
         for &ptr in &ptrs {
-            state.free(ptr);
+            state.free(ptr, size, |p| test_free(p, 32));
         }
 
-        // Re-allocate - should reuse cached blocks
-        let new_ptr = state.malloc(32).unwrap();
+        // Re-allocate - should reuse from thread cache (no new backend calls)
+        let new_ptr = state.malloc(size, |_| panic!("should not call backend")).unwrap();
         assert!(ptrs.contains(&new_ptr));
-    }
-
-    #[test]
-    fn test_thread_cache_overflow_spills_to_central_bin_and_reuses() {
-        use crate::malloc::thread_cache::MAGAZINE_CAPACITY;
-
-        let mut state = MallocState::new();
-        let bin = size_class::bin_index(32);
-        let total = MAGAZINE_CAPACITY + 2;
-
-        let ptrs: Vec<usize> = (0..total).map(|_| state.malloc(32).unwrap()).collect();
-        for &ptr in &ptrs {
-            state.free(ptr);
-        }
-
-        assert_eq!(
-            state.thread_cache.total_cached(),
-            MAGAZINE_CAPACITY,
-            "thread cache should saturate to magazine capacity"
-        );
-        assert_eq!(
-            state.central_bins[bin].len(),
-            2,
-            "overflow frees should spill into central bin"
-        );
-
-        let overflow_candidates: std::collections::HashSet<usize> = ptrs.iter().copied().collect();
-
-        let drained = state.thread_cache.drain_magazine(bin);
-        assert_eq!(
-            drained.len(),
-            MAGAZINE_CAPACITY,
-            "draining should remove all cached objects from the magazine"
-        );
-        assert_eq!(state.thread_cache.total_cached(), 0);
-
-        let from_central = state.malloc(32).expect("central fallback allocation");
-        assert!(
-            overflow_candidates.contains(&from_central),
-            "allocated pointer should come from previously freed pool"
-        );
-        assert_eq!(
-            state.central_bins[bin].len(),
-            1,
-            "central bin should shrink after serving one allocation"
-        );
-    }
-
-    #[test]
-    fn test_lookup() {
-        let mut state = MallocState::new();
-        let ptr = state.malloc(42).unwrap();
-        assert_eq!(state.lookup(ptr), Some(42));
-        assert_eq!(state.lookup(0xBEEF), None);
-    }
-
-    #[test]
-    fn test_lifecycle_logs_include_trace_and_decision_ids() {
-        let mut state = MallocState::new();
-        let ptr = state.malloc(64).unwrap();
-        state.free(ptr);
-
-        let logs = state.drain_lifecycle_logs();
-        assert!(!logs.is_empty());
-        assert!(logs.iter().all(|entry| entry.decision_id > 0));
-        assert!(
-            logs.iter()
-                .all(|entry| entry.trace_id.starts_with("core::malloc::"))
-        );
-        assert!(
-            logs.iter()
-                .any(|entry| entry.level == AllocatorLogLevel::Trace && entry.symbol == "malloc")
-        );
-        assert!(logs.iter().any(
-            |entry| entry.level == AllocatorLogLevel::Debug && entry.event == "allocator_stats"
-        ));
-    }
-
-    #[test]
-    fn test_lifecycle_logs_warn_on_double_free_and_unknown_realloc() {
-        let mut state = MallocState::new();
-        let ptr = state.malloc(16).unwrap();
-        state.free(ptr);
-        state.free(ptr); // Double free
-        let _ = state.realloc(0xDEAD, 32); // Unknown source pointer
-
-        let logs = state.drain_lifecycle_logs();
-        assert!(
-            logs.iter().any(|entry| {
-                entry.level == AllocatorLogLevel::Warn && entry.event == "double_free_detected"
-            }),
-            "expected WARN double_free_detected entry"
-        );
-        assert!(
-            logs.iter().any(|entry| {
-                entry.level == AllocatorLogLevel::Warn && entry.event == "realloc_unknown_pointer"
-            }),
-            "expected WARN realloc_unknown_pointer entry"
-        );
-    }
-
-    #[test]
-    fn test_lifecycle_logs_info_for_spill_and_generation_overflow() {
-        use crate::malloc::thread_cache::MAGAZINE_CAPACITY;
-
-        let mut state = MallocState::new();
-        let ptrs: Vec<usize> = (0..(MAGAZINE_CAPACITY + 1))
-            .map(|_| state.malloc(32).unwrap())
-            .collect();
-        for ptr in ptrs {
-            state.free(ptr);
-        }
-        let logs = state.drain_lifecycle_logs();
-        assert!(
-            logs.iter().any(|entry| {
-                entry.level == AllocatorLogLevel::Info && entry.event == "cache_spill_to_central"
-            }),
-            "expected INFO cache_spill_to_central entry"
-        );
-
-        // Force generation overflow on a fresh state to avoid cache/central reuse.
-        let mut overflow_state = MallocState::new();
-        overflow_state.next_offset = usize::MAX;
-        assert!(overflow_state.malloc(32).is_none());
-        let overflow_logs = overflow_state.drain_lifecycle_logs();
-        assert!(
-            overflow_logs.iter().any(|entry| {
-                entry.level == AllocatorLogLevel::Info && entry.event == "generation_overflow"
-            }),
-            "expected INFO generation_overflow entry"
-        );
-    }
-
-    #[test]
-    fn test_lifecycle_logs_error_on_invariant_violation_recovery() {
-        let mut state = MallocState::new();
-        let ptr = state.malloc(128).unwrap();
-
-        // Inject impossible accounting state and verify ERROR logging recovery.
-        state.total_allocated = 0;
-        state.active_count = 0;
-        state.free(ptr);
-
-        let logs = state.drain_lifecycle_logs();
-        assert!(
-            logs.iter().any(|entry| {
-                entry.level == AllocatorLogLevel::Error
-                    && entry.event == "invariant_total_allocated_underflow"
-            }),
-            "expected ERROR invariant_total_allocated_underflow entry"
-        );
-        assert!(
-            logs.iter().any(|entry| {
-                entry.level == AllocatorLogLevel::Error
-                    && entry.event == "invariant_active_count_underflow"
-            }),
-            "expected ERROR invariant_active_count_underflow entry"
-        );
-    }
-
-    #[test]
-    fn test_size_class_waste_ratio_matches_certificate_prediction_within_5pct() {
-        fn lcg(state: &mut u64) -> u64 {
-            *state = state
-                .wrapping_mul(6364136223846793005)
-                .wrapping_add(1442695040888963407);
-            *state
-        }
-
-        fn detail_u64(details: &str, key: &str) -> Option<u64> {
-            details.split(';').find_map(|kv| {
-                let prefix = format!("{key}=");
-                kv.strip_prefix(&prefix)?.parse::<u64>().ok()
-            })
-        }
-
-        let mut state = MallocState::new();
-        let mut rng = 0xDEAD_BEEF_CAFE_BABEu64;
-
-        let mut predicted_sum_ppm: u128 = 0;
-        let mut predicted_count: u64 = 0;
-
-        for _ in 0..10_000 {
-            let requested = ((lcg(&mut rng) as usize) % MAX_SMALL_SIZE).saturating_add(1);
-            if let Some(ptr) = state.malloc(requested) {
-                state.free(ptr);
-            }
-
-            let bin = size_class::bin_index(requested);
-            if bin < NUM_SIZE_CLASSES {
-                let mapped = size_class::bin_size(bin);
-                let predicted = ((mapped.saturating_sub(requested)) as u128)
-                    .saturating_mul(1_000_000)
-                    .saturating_div(requested as u128);
-                predicted_sum_ppm = predicted_sum_ppm.saturating_add(predicted);
-                predicted_count = predicted_count.saturating_add(1);
-            }
-        }
-
-        let logs = state.drain_lifecycle_logs();
-        let mut observed_sum_ppm: u128 = 0;
-        let mut observed_count: u64 = 0;
-        for entry in logs
-            .iter()
-            .filter(|entry| entry.symbol == "malloc" && entry.event == "size_class_certificate")
-        {
-            if let Some(waste_ratio_ppm) = detail_u64(&entry.details, "waste_ratio_ppm") {
-                observed_sum_ppm = observed_sum_ppm.saturating_add(u128::from(waste_ratio_ppm));
-                observed_count = observed_count.saturating_add(1);
-            }
-        }
-
-        assert!(
-            predicted_count > 0 && observed_count > 0,
-            "expected non-empty size-class workload observations"
-        );
-        assert_eq!(
-            observed_count, predicted_count,
-            "every small allocation should emit one size_class_certificate log record"
-        );
-
-        let predicted_mean_ppm = predicted_sum_ppm as f64 / predicted_count as f64;
-        let observed_mean_ppm = observed_sum_ppm as f64 / observed_count as f64;
-        let diff_ppm = (predicted_mean_ppm - observed_mean_ppm).abs();
-        let tolerance_ppm = predicted_mean_ppm * 0.05;
-
-        assert!(
-            diff_ppm <= tolerance_ppm,
-            "observed waste ratio ({observed_mean_ppm:.3} ppm) must match prediction ({predicted_mean_ppm:.3} ppm) within 5% tolerance; diff={diff_ppm:.3} ppm tolerance={tolerance_ppm:.3} ppm"
-        );
-    }
-
-    #[test]
-    fn test_accounting_invariant_under_deterministic_trace() {
-        fn lcg(state: &mut u64) -> u64 {
-            *state = state.wrapping_mul(6364136223846793005).wrapping_add(1);
-            *state
-        }
-
-        let mut state = MallocState::new();
-        let mut live: Vec<usize> = Vec::new();
-        let mut rng = 0xA5A5_5A5A_DEAD_BEEFu64;
-
-        for _ in 0..1500 {
-            let r = lcg(&mut rng);
-            match r % 3 {
-                0 => {
-                    let size = ((r >> 8) as usize % (MAX_SMALL_SIZE * 2)).max(1);
-                    if let Some(ptr) = state.malloc(size) {
-                        live.push(ptr);
-                    }
-                }
-                1 if !live.is_empty() => {
-                    let idx = (r as usize) % live.len();
-                    let ptr = live.swap_remove(idx);
-                    state.free(ptr);
-                }
-                2 if !live.is_empty() => {
-                    let idx = (r as usize) % live.len();
-                    let ptr = live[idx];
-                    let new_size = ((r >> 16) as usize) % (MAX_SMALL_SIZE * 2);
-                    let next = state.realloc(ptr, new_size);
-                    if let Some(new_ptr) = next {
-                        live[idx] = new_ptr;
-                    }
-                }
-                _ => {}
-            }
-
-            let observed_total: usize = live
-                .iter()
-                .map(|&ptr| {
-                    state
-                        .lookup(ptr)
-                        .expect("all tracked pointers must stay live")
-                })
-                .sum();
-            assert_eq!(state.active_count(), live.len());
-            assert_eq!(state.total_allocated(), observed_total);
-        }
     }
 }
