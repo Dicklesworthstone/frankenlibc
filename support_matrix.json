@@ -2549,11 +2549,11 @@
     },
     {
       "symbol": "dlclose",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "dlfcn_abi",
       "perf_class": "coldpath",
-      "strict_semantics": "dlfcn boundary policy: host glibc call-through for dlopen/dlsym/dlclose with thread-local dlerror contract",
-      "hardened_semantics": "dlfcn boundary policy: invalid dlopen flags heal to RTLD_NOW; null/denied loader inputs return deterministic dlerror",
+      "strict_semantics": "Native main-program handle close with deterministic refcounted invalid-handle rejection and thread-local dlerror contract",
+      "hardened_semantics": "Native main-program handle close with deterministic refcounted invalid-handle rejection and thread-local dlerror contract",
       "default_stub": false
     },
     {
@@ -2567,20 +2567,20 @@
     },
     {
       "symbol": "dlopen",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "dlfcn_abi",
       "perf_class": "coldpath",
-      "strict_semantics": "dlfcn boundary policy: host glibc call-through for dlopen/dlsym/dlclose with thread-local dlerror contract",
-      "hardened_semantics": "dlfcn boundary policy: invalid dlopen flags heal to RTLD_NOW; null/denied loader inputs return deterministic dlerror",
+      "strict_semantics": "Native phase-1 loader: NULL and recognized libc NOLOAD aliases return a local main-program handle; unsupported libraries return NULL with thread-local dlerror",
+      "hardened_semantics": "Native phase-1 loader: invalid flags heal to RTLD_NOW and NULL / recognized libc NOLOAD aliases return a local main-program handle; unsupported libraries return NULL with thread-local dlerror",
       "default_stub": false
     },
     {
       "symbol": "dlsym",
-      "status": "GlibcCallThrough",
+      "status": "Implemented",
       "module": "dlfcn_abi",
       "perf_class": "coldpath",
-      "strict_semantics": "dlfcn boundary policy: host glibc call-through for dlopen/dlsym/dlclose with thread-local dlerror contract",
-      "hardened_semantics": "dlfcn boundary policy: invalid dlopen flags heal to RTLD_NOW; null/denied loader inputs return deterministic dlerror",
+      "strict_semantics": "Native exported-symbol resolver for RTLD_DEFAULT, RTLD_NEXT, and the local main-program handle with thread-local dlerror on misses",
+      "hardened_semantics": "Native exported-symbol resolver for RTLD_DEFAULT, RTLD_NEXT, and the local main-program handle with deterministic invalid-handle / symbol-miss dlerror behavior",
       "default_stub": false
     },
     {
@@ -6187,11 +6187,11 @@
     },
     {
       "symbol": "if_indextoname",
-      "status": "RawSyscall",
+      "status": "Implemented",
       "module": "inet_abi",
       "perf_class": "default",
-      "strict_semantics": "ioctl SIOCGIFNAME via raw syscall",
-      "hardened_semantics": "ioctl SIOCGIFNAME via raw syscall",
+      "strict_semantics": "Native /sys/class/net lookup from interface index to interface name with caller-buffer return contract",
+      "hardened_semantics": "Native /sys/class/net lookup from interface index to interface name with caller-buffer return contract",
       "default_stub": false
     },
     {
@@ -6205,11 +6205,11 @@
     },
     {
       "symbol": "if_nametoindex",
-      "status": "RawSyscall",
+      "status": "Implemented",
       "module": "inet_abi",
       "perf_class": "default",
-      "strict_semantics": "ioctl SIOCGIFINDEX via raw syscall",
-      "hardened_semantics": "ioctl SIOCGIFINDEX via raw syscall",
+      "strict_semantics": "Native /sys/class/net lookup from interface name to interface index",
+      "hardened_semantics": "Native /sys/class/net lookup from interface name to interface index",
       "default_stub": false
     },
     {
@@ -18853,8 +18853,10 @@
     },
     {
       "symbol": "dlvsym",
-      "status": "GlibcCallThrough",
-      "module": "dlfcn_abi"
+      "status": "Implemented",
+      "module": "dlfcn_abi",
+      "strict_semantics": "Native exported-symbol resolver with explicit GLIBC version allowlist for RTLD_DEFAULT, RTLD_NEXT, and the local main-program handle",
+      "hardened_semantics": "Native exported-symbol resolver with explicit GLIBC version allowlist and deterministic invalid-handle / symbol-miss dlerror behavior for RTLD_DEFAULT, RTLD_NEXT, and the local main-program handle"
     },
     {
       "symbol": "dysize",

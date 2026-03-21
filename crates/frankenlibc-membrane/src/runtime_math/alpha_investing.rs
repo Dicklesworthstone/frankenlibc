@@ -134,6 +134,9 @@ pub struct AlphaInvestingController {
     state: AlphaInvestingState,
 }
 
+/// Maximum wealth (milli-units). Bounding wealth is required for sequential FDR control.
+const MAX_WEALTH_MILLI: u64 = 2000;
+
 impl AlphaInvestingController {
     #[must_use]
     pub fn new() -> Self {
@@ -180,17 +183,13 @@ impl AlphaInvestingController {
 
         let mut accepted = 0u32;
 
-        // Collect pending indices and severities first to avoid borrowing self twice.
-        let pending: Vec<(usize, u8)> = self
-            .pending_severity
-            .iter()
-            .enumerate()
-            .filter_map(|(i, &sev)| if sev > 0 { Some((i, sev)) } else { None })
-            .collect();
-
-        for (i, peak_sev) in pending {
-            accepted += self.test_alarm(peak_sev);
-            self.pending_severity[i] = 0;
+        // Process pending alarms using a stack-based approach to avoid Vec allocation.
+        for i in 0..N {
+            let peak_sev = self.pending_severity[i];
+            if peak_sev > 0 {
+                accepted += self.test_alarm(peak_sev);
+                self.pending_severity[i] = 0;
+            }
         }
 
         self.state = self.classify_state();
@@ -219,8 +218,8 @@ impl AlphaInvestingController {
         // Strong evidence: accept the alarm.
         if severity >= STRONG_EVIDENCE_SEVERITY {
             // Deduct spend, add reward.
-            self.wealth_milli = self.wealth_milli.saturating_sub(spend);
-            self.wealth_milli = self.wealth_milli.saturating_add(REWARD_MILLI);
+            let next_wealth = self.wealth_milli.saturating_sub(spend);
+            self.wealth_milli = next_wealth.saturating_add(REWARD_MILLI).min(MAX_WEALTH_MILLI);
             self.rejections = self.rejections.saturating_add(1);
             1
         } else {

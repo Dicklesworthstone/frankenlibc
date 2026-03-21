@@ -349,7 +349,20 @@ impl QuarantineEbr {
         self.quarantine
             .lock()
             .push((target_epoch, Box::new(cleanup)));
-        self.collector.total_retired.fetch_add(1, Ordering::Relaxed);
+
+        let mut current = self.collector.total_retired.load(Ordering::Relaxed);
+        loop {
+            let next = current.saturating_add(1);
+            match self.collector.total_retired.compare_exchange_weak(
+                current,
+                next,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => break,
+                Err(actual) => current = actual,
+            }
+        }
     }
 
     pub fn try_advance(&self) -> Option<u64> {

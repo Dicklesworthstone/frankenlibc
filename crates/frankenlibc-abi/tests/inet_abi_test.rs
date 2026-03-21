@@ -581,6 +581,13 @@ fn if_nametoindex_nonexistent_returns_zero() {
     assert_eq!(idx, 0);
 }
 
+#[test]
+fn if_nametoindex_empty_string_returns_zero() {
+    let name = CString::new("").unwrap();
+    let idx = unsafe { if_nametoindex(name.as_ptr()) };
+    assert_eq!(idx, 0);
+}
+
 // Note: if_nametoindex(NULL) segfaults in glibc.
 // Our native impl handles NULL safely, but in test mode we link against glibc.
 
@@ -589,6 +596,7 @@ fn if_indextoname_one_returns_lo() {
     let mut buf = [0u8; 16]; // IFNAMSIZ = 16
     let ret = unsafe { if_indextoname(1, buf.as_mut_ptr().cast()) };
     assert!(!ret.is_null(), "if_indextoname(1) should return lo");
+    assert_eq!(ret, buf.as_mut_ptr().cast(), "should return caller buffer");
     let name = unsafe { CStr::from_ptr(ret) };
     assert_eq!(name.to_bytes(), b"lo");
 }

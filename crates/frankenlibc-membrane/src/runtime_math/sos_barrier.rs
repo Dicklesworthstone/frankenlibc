@@ -536,8 +536,8 @@ pub fn evaluate_size_class_barrier(
     let normalized_requested = requested_size.clamp(16, SIZE_CLASS_MAX_CERTIFIED_REQUEST);
     let mapped_for_ratio =
         mapped_class_size.clamp(normalized_requested, SIZE_CLASS_MAX_CERTIFIED_REQUEST);
-    let waste_ratio_ppm = (((mapped_for_ratio - normalized_requested) as u64) * 1_000_000
-        / (normalized_requested as u64)) as u32;
+    let waste = (mapped_for_ratio - normalized_requested) as u64;
+    let waste_ratio_ppm = (waste.saturating_mul(1_000_000) / (normalized_requested as u64)) as u32;
     let membership_violation_ppm = if class_membership_valid { 0 } else { 1_000_000 };
     let range_violation_ppm =
         if mapped_class_size == 0 || mapped_class_size > SIZE_CLASS_MAX_CERTIFIED_REQUEST {
