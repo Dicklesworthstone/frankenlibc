@@ -9,10 +9,11 @@ use std::cell::Cell;
 use std::ffi::{CStr, c_char, c_int, c_long, c_longlong, c_ulong, c_ulonglong, c_void};
 
 use frankenlibc_membrane::check_oracle::CheckStage;
+use frankenlibc_membrane::galois::{ConcreteAction, PointerAbstraction, SafetyAbstraction};
 use frankenlibc_membrane::heal::{HealingAction, global_healing_policy};
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
-use crate::malloc_abi::known_remaining;
+use crate::malloc_abi::{known_remaining, validate_ptr};
 use crate::runtime_policy;
 
 thread_local! {

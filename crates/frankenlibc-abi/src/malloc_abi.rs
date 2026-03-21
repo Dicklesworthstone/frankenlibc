@@ -16,6 +16,7 @@ use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering}
 use frankenlibc_core::errno::{EINVAL, ENOMEM};
 use frankenlibc_membrane::arena::{AllocationArena, FreeResult};
 use frankenlibc_membrane::check_oracle::CheckStage;
+use frankenlibc_membrane::galois::PointerAbstraction;
 use frankenlibc_membrane::heal::{HealingAction, global_healing_policy};
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
@@ -180,10 +181,28 @@ unsafe fn native_libc_posix_memalign(
     0
 }
 
+static NATIVE_MEMALIGN_REENTRY: AtomicBool = AtomicBool::new(false);
+
 #[inline]
 unsafe fn native_libc_memalign(alignment: usize, size: usize) -> *mut c_void {
-    // SAFETY: direct call to libc allocator symbol.
-    unsafe { native_libc_memalign_sym(alignment, size) }
+    if NATIVE_MEMALIGN_REENTRY
+        .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+        .is_err()
+    {
+        // Bump allocator is already 16-byte aligned; for larger alignments
+        // over-allocate and manually align.
+        let extra = if alignment > 16 { alignment } else { 0 };
+        let ptr = unsafe { bump_alloc(size + extra) };
+        if ptr.is_null() || alignment <= 16 {
+            return ptr;
+        }
+        let addr = ptr as usize;
+        let aligned = (addr + alignment - 1) & !(alignment - 1);
+        return aligned as *mut c_void;
+    }
+    let result = unsafe { native_libc_memalign_sym(alignment, size) };
+    NATIVE_MEMALIGN_REENTRY.store(false, Ordering::Release);
+    result
 }
 
 #[inline]
@@ -664,17 +683,21 @@ fn record_allocator_stage_outcome(
     );
 }
 
+/// Returns the full safety abstraction for a pointer at `addr`.
+///
+/// Returns `None` if the pipeline is not yet initialized.
+#[must_use]
+pub(crate) fn validate_ptr(addr: usize) -> Option<PointerAbstraction> {
+    let pipeline = crate::membrane_state::try_global_pipeline()?;
+    pipeline.validate(addr).abstraction()
+}
+
 /// Remaining bytes in a known live allocation at `addr`.
 ///
 /// Returns `None` if the pipeline is not yet initialized (reentrant guard).
 #[must_use]
 pub(crate) fn known_remaining(addr: usize) -> Option<usize> {
-    use frankenlibc_membrane::ptr_validator::ValidationOutcome;
-    let pipeline = crate::membrane_state::try_global_pipeline()?;
-    match pipeline.validate(addr) {
-        ValidationOutcome::CachedValid(abs) | ValidationOutcome::Validated(abs) => abs.remaining,
-        _ => None,
-    }
+    validate_ptr(addr).and_then(|abs| abs.remaining)
 }
 
 // ---------------------------------------------------------------------------
