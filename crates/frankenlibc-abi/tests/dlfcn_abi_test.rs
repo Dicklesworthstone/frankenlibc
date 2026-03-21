@@ -3,7 +3,9 @@
 use std::ffi::{CStr, CString, c_void};
 use std::sync::Mutex;
 
-use frankenlibc_abi::dlfcn_abi::{dl_iterate_phdr, dladdr, dlclose, dlerror, dlopen, dlsym};
+use frankenlibc_abi::dlfcn_abi::{
+    dl_iterate_phdr, dladdr, dlclose, dlerror, dlopen, dlsym, dlvsym,
+};
 
 static TEST_GUARD: Mutex<()> = Mutex::new(());
 
@@ -97,10 +99,23 @@ fn dlsym_finds_known_symbol() {
 
     let sym_name = CString::new("printf").unwrap();
     let sym = unsafe { dlsym(handle, sym_name.as_ptr()) };
-    // printf should be found in the main program (via libc)
-    assert!(!sym.is_null(), "dlsym should find 'printf' in main handle");
+    assert!(
+        !sym.is_null(),
+        "dlsym should find native 'printf' on main handle"
+    );
 
     unsafe { dlclose(handle) };
+}
+
+#[test]
+fn dlsym_rtld_default_finds_known_symbol() {
+    let _guard = TEST_GUARD.lock().unwrap();
+    let sym_name = CString::new("printf").unwrap();
+    let sym = unsafe { dlsym(libc::RTLD_DEFAULT, sym_name.as_ptr()) };
+    assert!(
+        !sym.is_null(),
+        "dlsym should resolve 'printf' through the native RTLD_DEFAULT path"
+    );
 }
 
 #[test]
@@ -158,11 +173,11 @@ fn dlopen_libc_succeeds() {
     let _guard = TEST_GUARD.lock().unwrap();
     let name = CString::new("libc.so.6").unwrap();
     let handle = unsafe { dlopen(name.as_ptr(), libc::RTLD_NOW | libc::RTLD_NOLOAD) };
-    // libc.so.6 should already be loaded in the process
-    if !handle.is_null() {
-        unsafe { dlclose(handle) };
-    }
-    // If null, that's OK too (some configurations might not have it at this name)
+    assert!(
+        !handle.is_null(),
+        "native phase-1 dlopen should surface the main handle for libc NOLOAD aliases"
+    );
+    unsafe { dlclose(handle) };
 }
 
 #[test]
@@ -225,6 +240,42 @@ fn dlclose_idempotent_for_main_handle() {
     // First close should succeed
     let rc1 = unsafe { dlclose(handle) };
     assert_eq!(rc1, 0, "first dlclose should succeed");
+}
+
+#[test]
+fn dlclose_second_close_returns_error() {
+    let _guard = TEST_GUARD.lock().unwrap();
+    let handle = unsafe { dlopen(std::ptr::null(), libc::RTLD_NOW) };
+    assert!(!handle.is_null());
+
+    let rc1 = unsafe { dlclose(handle) };
+    let rc2 = unsafe { dlclose(handle) };
+    assert_eq!(rc1, 0, "first close should succeed");
+    assert_ne!(rc2, 0, "second close should fail deterministically");
+}
+
+#[test]
+fn dlvsym_supported_version_resolves_native_symbol() {
+    let _guard = TEST_GUARD.lock().unwrap();
+    let sym_name = CString::new("malloc").unwrap();
+    let version = CString::new("GLIBC_2.2.5").unwrap();
+    let sym = unsafe { dlvsym(libc::RTLD_DEFAULT, sym_name.as_ptr(), version.as_ptr()) };
+    assert!(
+        !sym.is_null(),
+        "dlvsym should resolve known symbols for supported versions"
+    );
+}
+
+#[test]
+fn dlvsym_unsupported_version_returns_null() {
+    let _guard = TEST_GUARD.lock().unwrap();
+    let sym_name = CString::new("malloc").unwrap();
+    let version = CString::new("GLIBC_9.9").unwrap();
+    let sym = unsafe { dlvsym(libc::RTLD_DEFAULT, sym_name.as_ptr(), version.as_ptr()) };
+    assert!(
+        sym.is_null(),
+        "unsupported versions should not resolve native symbols"
+    );
 }
 
 #[test]

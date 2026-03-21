@@ -19,6 +19,7 @@ pub mod evidence_decode;
 pub mod evidence_decode_render;
 pub mod fixtures;
 pub mod healing_oracle;
+pub mod minimizer;
 pub mod kernel_regression_report;
 pub mod kernel_snapshot;
 pub mod membrane_tests;

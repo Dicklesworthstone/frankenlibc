@@ -1,10 +1,11 @@
 //! ABI layer for `<dlfcn.h>` functions.
 //!
 //! Dynamic linker interface: `dlopen`, `dlsym`, `dlclose`, `dlerror`.
-//! Delegates to system `libdl` via `libc`, with membrane validation
-//! and flag checking via `frankenlibc_core::dlfcn`.
+//! Phase-1 replacement mode provides a native main-program handle and a
+//! deterministic resolver for the exported FrankenLibC surface instead of
+//! delegating back into the host loader.
 
-use std::ffi::{c_char, c_int, c_void};
+use std::ffi::{CStr, c_char, c_int, c_void};
 
 use frankenlibc_core::dlfcn as dlfcn_core;
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
@@ -31,20 +32,6 @@ fn set_dlerror(msg: &'static [u8]) {
     });
 }
 
-/// Set the thread-local dlerror message from a raw C string (performing a deep copy).
-unsafe fn set_dlerror_raw(msg: *const c_char) {
-    if msg.is_null() {
-        clear_dlerror();
-        return;
-    }
-    // SAFETY: caller guarantees msg is a valid NUL-terminated C string.
-    let c_str = unsafe { std::ffi::CStr::from_ptr(msg) };
-    let bytes = c_str.to_bytes_with_nul().to_vec();
-    PENDING_ERROR.with(|cell| {
-        *cell.borrow_mut() = Some(bytes);
-    });
-}
-
 /// Clear the thread-local dlerror message.
 fn clear_dlerror() {
     PENDING_ERROR.with(|cell| {
@@ -54,65 +41,98 @@ fn clear_dlerror() {
 
 #[inline]
 pub(crate) unsafe fn dlvsym_next(symbol: *const c_char, version: *const c_char) -> *mut c_void {
+    // SAFETY: callers provide symbol/version pointers for host-side symbol lookup.
     unsafe { libc::dlvsym(libc::RTLD_NEXT, symbol, version) }
 }
 
-use std::sync::atomic::{AtomicPtr, Ordering};
-
-macro_rules! host_delegate {
-    ($name:ident, $sym:expr, $ty:ty) => {
-        #[inline(always)]
-        unsafe fn $name() -> Option<$ty> {
-            // SAFETY: dlvsym_next and transmute require unsafe context.
-            unsafe {
-                static PTR: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
-                let mut ptr = PTR.load(Ordering::Relaxed);
-                if ptr.is_null() {
-                    let sym_bytes = concat!($sym, "\0").as_bytes();
-                    let v34 = b"GLIBC_2.34\0";
-                    let v225 = b"GLIBC_2.2.5\0";
-                    let v217 = b"GLIBC_2.17\0";
-                    ptr = dlvsym_next(
-                        sym_bytes.as_ptr().cast::<c_char>(),
-                        v34.as_ptr().cast::<c_char>(),
-                    );
-                    if ptr.is_null() {
-                        ptr = dlvsym_next(
-                            sym_bytes.as_ptr().cast::<c_char>(),
-                            v225.as_ptr().cast::<c_char>(),
-                        );
-                    }
-                    if ptr.is_null() {
-                        ptr = dlvsym_next(
-                            sym_bytes.as_ptr().cast::<c_char>(),
-                            v217.as_ptr().cast::<c_char>(),
-                        );
-                    }
-                    if !ptr.is_null() {
-                        PTR.store(ptr, Ordering::Relaxed);
-                    }
-                }
-                if ptr.is_null() {
-                    None
-                } else {
-                    Some(std::mem::transmute::<*mut c_void, $ty>(ptr))
-                }
-            }
-        }
-    };
+#[inline]
+fn main_program_handle() -> *mut c_void {
+    static MAIN_PROGRAM_SENTINEL: u8 = 0;
+    (&MAIN_PROGRAM_SENTINEL as *const u8)
+        .cast_mut()
+        .cast::<c_void>()
 }
 
-type DlopenFn = unsafe extern "C" fn(*const c_char, c_int) -> *mut c_void;
-host_delegate!(host_dlopen, "dlopen", DlopenFn);
+use std::sync::atomic::{AtomicUsize, Ordering};
 
-type DlsymFn = unsafe extern "C" fn(*mut c_void, *const c_char) -> *mut c_void;
-host_delegate!(host_dlsym, "dlsym", DlsymFn);
+static MAIN_PROGRAM_REFS: AtomicUsize = AtomicUsize::new(0);
 
-type DlcloseFn = unsafe extern "C" fn(*mut c_void) -> c_int;
-host_delegate!(host_dlclose, "dlclose", DlcloseFn);
+fn is_main_program_handle(handle: *mut c_void) -> bool {
+    handle == main_program_handle()
+}
 
-type DlvsymFn = unsafe extern "C" fn(*mut c_void, *const c_char, *const c_char) -> *mut c_void;
-host_delegate!(host_dlvsym, "dlvsym", DlvsymFn);
+fn is_native_handle(handle: *mut c_void) -> bool {
+    handle as usize == dlfcn_core::RTLD_DEFAULT
+        || handle as usize == dlfcn_core::RTLD_NEXT
+        || is_main_program_handle(handle)
+}
+
+fn library_alias_matches(name: &[u8]) -> bool {
+    matches!(
+        name,
+        b"libc.so" | b"libc.so.6" | b"libfrankenlibc.so" | b"libfrankenlibc.so.0"
+    )
+}
+
+fn version_supported(version: &[u8]) -> bool {
+    matches!(version, b"GLIBC_2.2.5" | b"GLIBC_2.17" | b"GLIBC_2.34")
+}
+
+fn resolve_exported_symbol(symbol: &[u8]) -> *mut c_void {
+    match symbol {
+        b"dlopen" => {
+            (dlopen as unsafe extern "C" fn(*const c_char, c_int) -> *mut c_void as usize)
+                as *mut c_void
+        }
+        b"dlsym" => {
+            (dlsym as unsafe extern "C" fn(*mut c_void, *const c_char) -> *mut c_void as usize)
+                as *mut c_void
+        }
+        b"dlvsym" => {
+            (dlvsym
+                as unsafe extern "C" fn(*mut c_void, *const c_char, *const c_char) -> *mut c_void
+                as usize) as *mut c_void
+        }
+        b"dlclose" => {
+            (dlclose as unsafe extern "C" fn(*mut c_void) -> c_int as usize) as *mut c_void
+        }
+        b"dlerror" => (dlerror as unsafe extern "C" fn() -> *const c_char as usize) as *mut c_void,
+        b"malloc" => {
+            (crate::malloc_abi::malloc as unsafe extern "C" fn(usize) -> *mut c_void as usize)
+                as *mut c_void
+        }
+        b"free" => {
+            (crate::malloc_abi::free as unsafe extern "C" fn(*mut c_void) as usize) as *mut c_void
+        }
+        b"printf" => {
+            (crate::stdio_abi::printf as unsafe extern "C" fn(*const c_char, ...) -> c_int as usize)
+                as *mut c_void
+        }
+        b"puts" => {
+            (crate::stdio_abi::puts as unsafe extern "C" fn(*const c_char) -> c_int as usize)
+                as *mut c_void
+        }
+        b"strlen" => {
+            (crate::string_abi::strlen as unsafe extern "C" fn(*const c_char) -> usize as usize)
+                as *mut c_void
+        }
+        _ => std::ptr::null_mut(),
+    }
+}
+
+fn open_main_program_handle() -> *mut c_void {
+    MAIN_PROGRAM_REFS.fetch_add(1, Ordering::Relaxed);
+    main_program_handle()
+}
+
+fn close_main_program_handle() -> c_int {
+    match MAIN_PROGRAM_REFS.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |refs| {
+        (refs > 0).then_some(refs - 1)
+    }) {
+        Ok(_) => 0,
+        Err(_) => -1,
+    }
+}
 
 // ---------------------------------------------------------------------------
 // dlopen
@@ -139,17 +159,15 @@ pub unsafe extern "C" fn dlopen(filename: *const c_char, flags: c_int) -> *mut c
             // Hardened mode: default to RTLD_NOW | RTLD_LOCAL.
             let healed_flags = dlfcn_core::RTLD_NOW;
             clear_dlerror();
-            let handle = unsafe {
-                host_dlopen().map_or(std::ptr::null_mut(), |f| f(filename, healed_flags))
+            let handle = if filename.is_null() {
+                open_main_program_handle()
+            } else {
+                std::ptr::null_mut()
             };
             let adverse = handle.is_null();
             if adverse {
-                let host_err = unsafe { libc::dlerror() };
-                if !host_err.is_null() {
-                    unsafe { set_dlerror_raw(host_err) };
-                } else {
-                    set_dlerror(dlfcn_core::ERR_NOT_FOUND);
-                }
+                let _ = healed_flags;
+                set_dlerror(dlfcn_core::ERR_NOT_FOUND);
             }
             runtime_policy::observe(ApiFamily::Loader, decision.profile, 12, adverse);
             return handle;
@@ -160,15 +178,22 @@ pub unsafe extern "C" fn dlopen(filename: *const c_char, flags: c_int) -> *mut c
     }
 
     clear_dlerror();
-    let handle = unsafe { host_dlopen().map_or(std::ptr::null_mut(), |f| f(filename, flags)) };
+    let handle = if filename.is_null() {
+        open_main_program_handle()
+    } else {
+        // SAFETY: filename was checked for null above and is expected to be a NUL-terminated C string.
+        let name = unsafe { CStr::from_ptr(filename) }.to_bytes();
+        if name.is_empty()
+            || ((flags & dlfcn_core::RTLD_NOLOAD) != 0 && library_alias_matches(name))
+        {
+            open_main_program_handle()
+        } else {
+            std::ptr::null_mut()
+        }
+    };
     let adverse = handle.is_null();
     if adverse {
-        let host_err = unsafe { libc::dlerror() };
-        if !host_err.is_null() {
-            unsafe { set_dlerror_raw(host_err) };
-        } else {
-            set_dlerror(dlfcn_core::ERR_NOT_FOUND);
-        }
+        set_dlerror(dlfcn_core::ERR_NOT_FOUND);
     }
     runtime_policy::observe(ApiFamily::Loader, decision.profile, 12, adverse);
     handle
@@ -178,29 +203,12 @@ pub unsafe extern "C" fn dlopen(filename: *const c_char, flags: c_int) -> *mut c
 // dlsym
 // ---------------------------------------------------------------------------
 
-thread_local! {
-    static DLSYM_REENTRY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-}
-
 /// Find a symbol in a shared object.
 ///
 /// `handle` may be a real handle from `dlopen`, or one of the pseudo-handles
 /// `RTLD_DEFAULT` / `RTLD_NEXT`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *mut c_void {
-    if DLSYM_REENTRY.try_with(|r| r.get()).unwrap_or(true) {
-        return unsafe { host_dlsym().map_or(std::ptr::null_mut(), |f| f(handle, symbol)) };
-    }
-
-    struct DlsymGuard;
-    impl Drop for DlsymGuard {
-        fn drop(&mut self) {
-            let _ = DLSYM_REENTRY.try_with(|r| r.set(false));
-        }
-    }
-    let _guard = DlsymGuard;
-    let _ = DLSYM_REENTRY.try_with(|r| r.set(true));
-
     let (_, decision) =
         runtime_policy::decide(ApiFamily::Loader, handle as usize, 0, false, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
@@ -215,16 +223,19 @@ pub unsafe extern "C" fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *m
         return std::ptr::null_mut();
     }
 
+    if !is_native_handle(handle) {
+        set_dlerror(dlfcn_core::ERR_INVALID_HANDLE);
+        runtime_policy::observe(ApiFamily::Loader, decision.profile, 5, true);
+        return std::ptr::null_mut();
+    }
+
+    // SAFETY: symbol was checked for null above and is expected to be a NUL-terminated C string.
+    let symbol_name = unsafe { CStr::from_ptr(symbol) }.to_bytes();
     clear_dlerror();
-    let sym = unsafe { host_dlsym().map_or(std::ptr::null_mut(), |f| f(handle, symbol)) };
+    let sym = resolve_exported_symbol(symbol_name);
     let adverse = sym.is_null();
     if adverse {
-        let host_err = unsafe { libc::dlerror() };
-        if !host_err.is_null() {
-            unsafe { set_dlerror_raw(host_err) };
-        } else {
-            set_dlerror(dlfcn_core::ERR_SYMBOL_NOT_FOUND);
-        }
+        set_dlerror(dlfcn_core::ERR_SYMBOL_NOT_FOUND);
     }
     runtime_policy::observe(ApiFamily::Loader, decision.profile, 8, adverse);
     sym
@@ -237,21 +248,6 @@ pub unsafe extern "C" fn dlvsym(
     symbol: *const c_char,
     version: *const c_char,
 ) -> *mut c_void {
-    if DLSYM_REENTRY.try_with(|r| r.get()).unwrap_or(true) {
-        return unsafe {
-            host_dlvsym().map_or(std::ptr::null_mut(), |f| f(handle, symbol, version))
-        };
-    }
-
-    struct DlsymGuard;
-    impl Drop for DlsymGuard {
-        fn drop(&mut self) {
-            let _ = DLSYM_REENTRY.try_with(|r| r.set(false));
-        }
-    }
-    let _guard = DlsymGuard;
-    let _ = DLSYM_REENTRY.try_with(|r| r.set(true));
-
     let (_, decision) =
         runtime_policy::decide(ApiFamily::Loader, handle as usize, 0, false, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
@@ -266,16 +262,25 @@ pub unsafe extern "C" fn dlvsym(
         return std::ptr::null_mut();
     }
 
+    if !is_native_handle(handle) {
+        set_dlerror(dlfcn_core::ERR_INVALID_HANDLE);
+        runtime_policy::observe(ApiFamily::Loader, decision.profile, 5, true);
+        return std::ptr::null_mut();
+    }
+
+    // SAFETY: symbol/version were checked for null above and are expected to be NUL-terminated C strings.
+    let symbol_name = unsafe { CStr::from_ptr(symbol) }.to_bytes();
+    // SAFETY: symbol/version were checked for null above and are expected to be NUL-terminated C strings.
+    let version_name = unsafe { CStr::from_ptr(version) }.to_bytes();
     clear_dlerror();
-    let sym = unsafe { host_dlvsym().map_or(std::ptr::null_mut(), |f| f(handle, symbol, version)) };
+    let sym = if version_supported(version_name) {
+        resolve_exported_symbol(symbol_name)
+    } else {
+        std::ptr::null_mut()
+    };
     let adverse = sym.is_null();
     if adverse {
-        let host_err = unsafe { libc::dlerror() };
-        if !host_err.is_null() {
-            unsafe { set_dlerror_raw(host_err) };
-        } else {
-            set_dlerror(dlfcn_core::ERR_SYMBOL_NOT_FOUND);
-        }
+        set_dlerror(dlfcn_core::ERR_SYMBOL_NOT_FOUND);
     }
     runtime_policy::observe(ApiFamily::Loader, decision.profile, 8, adverse);
     sym
@@ -308,16 +313,17 @@ pub unsafe extern "C" fn dlclose(handle: *mut c_void) -> c_int {
         return -1;
     }
 
+    if !is_main_program_handle(handle) {
+        set_dlerror(dlfcn_core::ERR_INVALID_HANDLE);
+        runtime_policy::observe(ApiFamily::Loader, decision.profile, 5, true);
+        return -1;
+    }
+
     clear_dlerror();
-    let rc = unsafe { host_dlclose().map_or(-1, |f| f(handle)) };
+    let rc = close_main_program_handle();
     let adverse = rc != 0;
     if adverse {
-        let host_err = unsafe { libc::dlerror() };
-        if !host_err.is_null() {
-            unsafe { set_dlerror_raw(host_err) };
-        } else {
-            set_dlerror(dlfcn_core::ERR_INVALID_HANDLE);
-        }
+        set_dlerror(dlfcn_core::ERR_INVALID_HANDLE);
     }
     runtime_policy::observe(ApiFamily::Loader, decision.profile, 8, adverse);
     rc
