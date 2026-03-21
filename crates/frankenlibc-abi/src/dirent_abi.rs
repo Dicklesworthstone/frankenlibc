@@ -45,6 +45,25 @@ pub struct DIR {
 
 const GETDENTS_BUF_SIZE: usize = 4096;
 
+fn write_dirent(dst: *mut libc::dirent, entry: &dirent_core::DirEntry, d_reclen: libc::c_ushort) {
+    // SAFETY: caller provides a valid writable dirent slot.
+    unsafe {
+        std::ptr::write_bytes(dst, 0, 1);
+        (*dst).d_ino = entry.d_ino;
+        (*dst).d_off = entry.d_off;
+        (*dst).d_reclen = d_reclen;
+        (*dst).d_type = entry.d_type;
+        let name_dst = &mut (&mut (*dst).d_name)[..];
+        let copy_len = entry.d_name.len().min(name_dst.len().saturating_sub(1));
+        for (i, &b) in entry.d_name[..copy_len].iter().enumerate() {
+            name_dst[i] = b as i8;
+        }
+        if let Some(last) = name_dst.get_mut(copy_len) {
+            *last = 0;
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // opendir
 // ---------------------------------------------------------------------------
@@ -150,21 +169,12 @@ pub unsafe extern "C" fn readdir(dirp: *mut DIR) -> *mut libc::dirent {
         && let Some((entry, next_off)) =
             dirent_core::parse_dirent64(&state.buffer[..state.valid_bytes], state.offset)
     {
+        let d_reclen = (next_off - state.offset) as libc::c_ushort;
         state.last_d_off = entry.d_off;
         state.offset = next_off;
         return ENTRY_BUF.with(|cell| {
             let ptr = cell.get();
-            unsafe {
-                (*ptr).d_ino = entry.d_ino;
-                (*ptr).d_type = entry.d_type;
-                // Copy name, ensuring NUL termination
-                let name_dst = &mut (&mut (*ptr).d_name)[..];
-                let copy_len = entry.d_name.len().min(name_dst.len() - 1);
-                for (i, &b) in entry.d_name[..copy_len].iter().enumerate() {
-                    name_dst[i] = b as i8;
-                }
-                name_dst[copy_len] = 0;
-            }
+            write_dirent(ptr, &entry, d_reclen);
             ptr
         });
     }
@@ -197,21 +207,13 @@ pub unsafe extern "C" fn readdir(dirp: *mut DIR) -> *mut libc::dirent {
     if let Some((entry, next_off)) =
         dirent_core::parse_dirent64(&state.buffer[..state.valid_bytes], 0)
     {
+        let d_reclen = next_off as libc::c_ushort;
         state.last_d_off = entry.d_off;
         state.offset = next_off;
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, false);
         return ENTRY_BUF.with(|cell| {
             let ptr = cell.get();
-            unsafe {
-                (*ptr).d_ino = entry.d_ino;
-                (*ptr).d_type = entry.d_type;
-                let name_dst = &mut (&mut (*ptr).d_name)[..];
-                let copy_len = entry.d_name.len().min(name_dst.len() - 1);
-                for (i, &b) in entry.d_name[..copy_len].iter().enumerate() {
-                    name_dst[i] = b as i8;
-                }
-                name_dst[copy_len] = 0;
-            }
+            write_dirent(ptr, &entry, d_reclen);
             ptr
         });
     }
@@ -419,7 +421,7 @@ pub unsafe extern "C" fn alphasort(
     // Compare d_name fields using strcmp semantics.
     let na = unsafe { (*da).d_name.as_ptr() };
     let nb = unsafe { (*db).d_name.as_ptr() };
-    
+
     let mut i = 0usize;
     loop {
         let ca = unsafe { *na.add(i) } as u8;
@@ -637,20 +639,16 @@ pub unsafe extern "C" fn fdopendir(fd: c_int) -> *mut libc::DIR {
         return std::ptr::null_mut();
     }
 
-    // Verify the fd is a directory by attempting a zero-length getdents64.
-    // If it fails with ENOTDIR, the fd is not a directory.
-    let mut probe = [0u8; 1];
-    let rc = unsafe { libc::syscall(libc::SYS_getdents64 as c_long, fd, probe.as_mut_ptr(), 0i32) };
-    // getdents64 with count=0 returns 0 on directories, -1/ENOTDIR on non-dirs.
-    // But some kernels return EINVAL for count=0, so also accept that as "ok, it's an fd".
-    if rc < 0 {
-        let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
-        if e == libc::ENOTDIR {
-            unsafe { set_abi_errno(libc::ENOTDIR) };
-            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
-            return std::ptr::null_mut();
-        }
-        // EINVAL from count=0 is fine — just means it's a valid fd
+    let mut stat = std::mem::MaybeUninit::<libc::stat>::uninit();
+    if unsafe { crate::unistd_abi::fstat(fd, stat.as_mut_ptr()) } != 0 {
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
+        return std::ptr::null_mut();
+    }
+    let stat = unsafe { stat.assume_init() };
+    if (stat.st_mode & libc::S_IFMT) != libc::S_IFDIR {
+        unsafe { set_abi_errno(libc::ENOTDIR) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
+        return std::ptr::null_mut();
     }
 
     let handle = next_handle();

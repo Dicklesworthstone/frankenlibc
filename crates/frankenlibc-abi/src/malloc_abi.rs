@@ -35,28 +35,125 @@ unsafe extern "C" {
     fn native_libc_memalign_sym(alignment: usize, size: usize) -> *mut c_void;
 }
 
+// ---------------------------------------------------------------------------
+// Pre-TLS bootstrap bump allocator
+// ---------------------------------------------------------------------------
+// During early process startup, TLS is not initialized and the TLS-based
+// reentry guard in `malloc` returns None.  This causes `malloc` to call
+// `native_libc_malloc_sym` (linked to `__libc_malloc@GLIBC_2.2.5`).
+// However, our `glibc_internal_abi` exports an unversioned `__libc_malloc`
+// alias that the dynamic linker resolves first, creating infinite recursion:
+//   malloc → native_libc_malloc_sym → __libc_malloc → malloc → …
+//
+// The bump allocator breaks this cycle.  When the atomic reentry guard
+// detects recursion, we satisfy the allocation from a small static buffer.
+// This is sufficient for the handful of allocations during startup (Rust
+// runtime init, format strings in mode/policy setup) before TLS becomes
+// available and the normal allocator path takes over.
+
+static NATIVE_MALLOC_REENTRY: AtomicBool = AtomicBool::new(false);
+static NATIVE_CALLOC_REENTRY: AtomicBool = AtomicBool::new(false);
+static NATIVE_REALLOC_REENTRY: AtomicBool = AtomicBool::new(false);
+static NATIVE_FREE_REENTRY: AtomicBool = AtomicBool::new(false);
+
+static BUMP_POS: AtomicUsize = AtomicUsize::new(0);
+const BUMP_SIZE: usize = 4 * 1024 * 1024; // 4 MiB for Rust runtime init
+
+/// Bump heap uses `UnsafeCell` to avoid mutable-static references
+/// (forbidden in Rust 2024 edition).  Access is synchronized via
+/// `BUMP_POS` atomic CAS — only one thread can advance the position.
+#[repr(align(16))]
+struct BumpHeap(std::cell::UnsafeCell<[u8; BUMP_SIZE]>);
+// SAFETY: concurrent access is serialized by BUMP_POS atomic CAS.
+unsafe impl Sync for BumpHeap {}
+static BUMP_HEAP: BumpHeap = BumpHeap(std::cell::UnsafeCell::new([0u8; BUMP_SIZE]));
+
+#[cold]
+unsafe fn bump_alloc(size: usize) -> *mut c_void {
+    let align = 16;
+    loop {
+        let pos = BUMP_POS.load(Ordering::Relaxed);
+        let aligned_pos = (pos + align - 1) & !(align - 1);
+        let new_pos = aligned_pos + size;
+        if new_pos > BUMP_SIZE {
+            return std::ptr::null_mut();
+        }
+        if BUMP_POS
+            .compare_exchange_weak(pos, new_pos, Ordering::AcqRel, Ordering::Relaxed)
+            .is_ok()
+        {
+            let base = BUMP_HEAP.0.get().cast::<u8>();
+            return unsafe { base.add(aligned_pos).cast() };
+        }
+    }
+}
+
+#[inline]
+fn is_bump_ptr(ptr: *mut c_void) -> bool {
+    let addr = ptr as usize;
+    let base = BUMP_HEAP.0.get() as usize;
+    addr >= base && addr < base + BUMP_SIZE
+}
+
 #[inline]
 unsafe fn native_libc_malloc(size: usize) -> *mut c_void {
-    // SAFETY: direct call to libc allocator symbol.
-    unsafe { native_libc_malloc_sym(size) }
+    if NATIVE_MALLOC_REENTRY
+        .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+        .is_err()
+    {
+        return unsafe { bump_alloc(size) };
+    }
+    let result = unsafe { native_libc_malloc_sym(size) };
+    NATIVE_MALLOC_REENTRY.store(false, Ordering::Release);
+    result
 }
 
 #[inline]
 unsafe fn native_libc_calloc(nmemb: usize, size: usize) -> *mut c_void {
-    // SAFETY: direct call to libc allocator symbol.
-    unsafe { native_libc_calloc_sym(nmemb, size) }
+    if NATIVE_CALLOC_REENTRY
+        .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+        .is_err()
+    {
+        let total = nmemb.saturating_mul(size);
+        let ptr = unsafe { bump_alloc(total) };
+        // bump_alloc returns zeroed memory (static initializer).
+        return ptr;
+    }
+    let result = unsafe { native_libc_calloc_sym(nmemb, size) };
+    NATIVE_CALLOC_REENTRY.store(false, Ordering::Release);
+    result
 }
 
 #[inline]
 unsafe fn native_libc_realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
-    // SAFETY: direct call to libc allocator symbol.
-    unsafe { native_libc_realloc_sym(ptr, size) }
+    if NATIVE_REALLOC_REENTRY
+        .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+        .is_err()
+    {
+        let new_ptr = unsafe { bump_alloc(size) };
+        if !new_ptr.is_null() && !ptr.is_null() {
+            unsafe { std::ptr::copy_nonoverlapping(ptr.cast::<u8>(), new_ptr.cast::<u8>(), size) };
+        }
+        return new_ptr;
+    }
+    let result = unsafe { native_libc_realloc_sym(ptr, size) };
+    NATIVE_REALLOC_REENTRY.store(false, Ordering::Release);
+    result
 }
 
 #[inline]
 unsafe fn native_libc_free(ptr: *mut c_void) {
-    // SAFETY: direct call to libc allocator symbol.
-    unsafe { native_libc_free_sym(ptr) }
+    if is_bump_ptr(ptr) {
+        return; // Bump allocator: free is a no-op.
+    }
+    if NATIVE_FREE_REENTRY
+        .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+        .is_err()
+    {
+        return; // Reentrant free of non-bump ptr: no-op to avoid recursion.
+    }
+    unsafe { native_libc_free_sym(ptr) };
+    NATIVE_FREE_REENTRY.store(false, Ordering::Release);
 }
 
 #[inline]

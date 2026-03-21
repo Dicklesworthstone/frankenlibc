@@ -793,6 +793,15 @@ std::thread_local! {
     };
 }
 
+/// Reentry guard for `__cxa_thread_atexit_impl`.
+///
+/// First TLS access triggers initialization, which may call
+/// `__cxa_thread_atexit_impl` to register Rust's own TLS destructor.
+/// Without this guard, that re-enters `TLS_ATEXIT_LIST.with()` which
+/// tries to initialize TLS again → infinite recursion → stack overflow.
+static CXA_THREAD_ATEXIT_REENTRY: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
 /// `__cxa_thread_atexit_impl` — register a thread-local destructor.
 /// Called by C++ for thread_local objects with non-trivial destructors.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -801,10 +810,38 @@ pub unsafe extern "C" fn __cxa_thread_atexit_impl(
     obj: *mut c_void,
     _dso_handle: *mut c_void,
 ) -> c_int {
-    TLS_ATEXIT_LIST.with(|list| {
+    use std::sync::atomic::Ordering;
+    // Break recursion: if we're already inside __cxa_thread_atexit_impl
+    // (TLS init calling back to register a destructor), delegate to the
+    // host glibc implementation via dlsym(RTLD_NEXT).
+    if CXA_THREAD_ATEXIT_REENTRY
+        .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+        .is_err()
+    {
+        // Reentrant call — delegate to host glibc to break the cycle.
+        type CxaFn = unsafe extern "C" fn(
+            unsafe extern "C" fn(*mut c_void),
+            *mut c_void,
+            *mut c_void,
+        ) -> c_int;
+        let sym = unsafe {
+            libc::dlsym(
+                libc::RTLD_NEXT,
+                c"__cxa_thread_atexit_impl".as_ptr(),
+            )
+        };
+        if !sym.is_null() {
+            let f: CxaFn = unsafe { std::mem::transmute(sym) };
+            return unsafe { f(dtor, obj, _dso_handle) };
+        }
+        return 0; // Silently drop if host symbol unavailable
+    }
+    let result = TLS_ATEXIT_LIST.with(|list| {
         list.borrow_mut().push(TlsAtExitEntry { dtor, obj });
+        0
     });
-    0
+    CXA_THREAD_ATEXIT_REENTRY.store(false, Ordering::Release);
+    result
 }
 
 /// Drain and invoke all registered thread-local destructors in LIFO order.

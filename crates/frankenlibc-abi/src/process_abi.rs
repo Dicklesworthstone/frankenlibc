@@ -1076,9 +1076,23 @@ unsafe fn posix_spawn_impl(
         if file_bytes.contains(&b'/') {
             candidate_paths.push(std::ffi::CString::from(file_cstr));
         } else {
-            let path_env = std::env::var("PATH").unwrap_or_else(|_| "/usr/bin:/bin".to_string());
-            for dir in path_env.split(':') {
-                let mut full = dir.as_bytes().to_vec();
+            let mut path_bytes: &[u8] = b"/bin:/usr/bin";
+            unsafe {
+                let mut ep = environ;
+                if !ep.is_null() {
+                    while !(*ep).is_null() {
+                        let env_cstr = std::ffi::CStr::from_ptr(*ep);
+                        let env_slice = env_cstr.to_bytes();
+                        if env_slice.starts_with(b"PATH=") {
+                            path_bytes = &env_slice[5..];
+                            break;
+                        }
+                        ep = ep.add(1);
+                    }
+                }
+            }
+            for dir in path_bytes.split(|b| *b == b':') {
+                let mut full = dir.to_vec();
                 if !full.ends_with(b"/") && !full.is_empty() {
                     full.push(b'/');
                 }
