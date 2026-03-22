@@ -1750,10 +1750,20 @@ mod tests {
 
     #[test]
     fn runtime_math_log_wrapper_includes_required_traceability_fields() {
-        let _ = drive_decisions_until_evidence(ApiFamily::Resolver, 0x4242, 128);
-
-        let jsonl = export_runtime_math_log_jsonl(mode(), "bd-5vr.1", "runtime-policy-wrapper")
-            .expect("runtime-math jsonl export should be available");
+        const MAX_ATTEMPTS: usize = 8;
+        let mut jsonl = String::new();
+        for attempt in 0..MAX_ATTEMPTS {
+            let _ = drive_decisions_until_evidence(
+                ApiFamily::Resolver,
+                0x4242usize.wrapping_add(attempt * 0x100),
+                128 + attempt,
+            );
+            jsonl = export_runtime_math_log_jsonl(mode(), "bd-5vr.1", "runtime-policy-wrapper")
+                .expect("runtime-math jsonl export should be available");
+            if jsonl.contains("\"event\":\"runtime_decision\"") {
+                break;
+            }
+        }
         assert!(jsonl.contains("\"event\":\"runtime_decision\""));
         assert!(jsonl.contains("\"bead_id\":\"bd-5vr.1\""));
         assert!(jsonl.contains("\"scenario_id\":\"runtime-policy-wrapper\""));

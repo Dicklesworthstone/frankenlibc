@@ -7184,7 +7184,7 @@ pub unsafe extern "C" fn __idna_to_dns_encoding(
     output.push(0); // NUL terminator.
 
     // Allocate with malloc for caller ownership.
-    let buf = unsafe { crate::malloc_abi::raw_alloc(output.len()) } as *mut u8;
+    let buf = unsafe { libc::malloc(output.len()) } as *mut u8;
     if buf.is_null() {
         return libc::EAI_FAIL;
     }
@@ -7251,7 +7251,7 @@ pub unsafe extern "C" fn __idna_from_dns_encoding(
     let output_bytes = output.as_bytes();
     let alloc_len = output_bytes.len() + 1; // +1 for NUL.
 
-    let buf = unsafe { crate::malloc_abi::raw_alloc(alloc_len) } as *mut u8;
+    let buf = unsafe { libc::malloc(alloc_len) } as *mut u8;
     if buf.is_null() {
         return libc::EAI_FAIL;
     }
