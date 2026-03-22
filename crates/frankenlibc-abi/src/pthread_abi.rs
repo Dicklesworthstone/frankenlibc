@@ -380,6 +380,37 @@ unsafe fn host_pthread_cond_timedwait_fn() -> Option<HostPthreadCondTimedwaitFn>
     }
 }
 
+pub(crate) fn prewarm_host_thread_symbols() {
+    // Resolve the host pthread surface while startup is still in bootstrap
+    // passthrough, so active-mode execution does not lazily enter dl* symbol
+    // resolution through validated string/memory paths.
+    unsafe {
+        let _ = host_pthread_self_fn();
+        let _ = host_pthread_equal_fn();
+        let _ = host_pthread_create_fn();
+        let _ = host_pthread_join_fn();
+        let _ = host_pthread_detach_fn();
+        let _ = host_pthread_key_create_fn();
+        let _ = host_pthread_key_delete_fn();
+        #[cfg(target_arch = "x86_64")]
+        {
+            let _ = host_pthread_getspecific_fn();
+            let _ = host_pthread_setspecific_fn();
+        }
+        let _ = host_pthread_mutex_init_fn();
+        let _ = host_pthread_mutex_destroy_fn();
+        let _ = host_pthread_mutex_lock_fn();
+        let _ = host_pthread_mutex_trylock_fn();
+        let _ = host_pthread_mutex_unlock_fn();
+        let _ = host_pthread_cond_init_fn();
+        let _ = host_pthread_cond_destroy_fn();
+        let _ = host_pthread_cond_wait_fn();
+        let _ = host_pthread_cond_signal_fn();
+        let _ = host_pthread_cond_broadcast_fn();
+        let _ = host_pthread_cond_timedwait_fn();
+    }
+}
+
 // Host pthread attr/mutexattr/condattr/rwlockattr resolution functions removed:
 // all attribute operations are now native implementations.
 

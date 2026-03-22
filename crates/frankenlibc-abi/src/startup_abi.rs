@@ -84,6 +84,33 @@ pub(crate) fn init_program_name(argv: *mut *mut c_char) {
     }
     program_invocation_short_name.store(base, Ordering::Release);
     __progname.store(base, Ordering::Release);
+    // SAFETY: startup publishes caller-owned argv[0] as glibc-compatible
+    // process metadata for the remainder of process lifetime.
+    unsafe {
+        crate::glibc_internal_abi::__progname_full = argv0;
+    }
+}
+
+pub(crate) fn init_environment_globals(envp: *mut *mut c_char) {
+    let published = if envp.is_null() {
+        // SAFETY: host libc owns the process environment vector.
+        unsafe { environ }
+    } else {
+        envp
+    };
+
+    // SAFETY: glibc-compatible aliases all point at the active environment.
+    unsafe {
+        crate::glibc_internal_abi::__environ = published;
+        crate::glibc_internal_abi::_environ = published;
+        crate::glibc_internal_abi::environ = published;
+    }
+}
+
+#[inline]
+fn init_process_globals(argv: *mut *mut c_char, envp: *mut *mut c_char) {
+    init_program_name(argv);
+    init_environment_globals(envp);
 }
 
 #[repr(u8)]
@@ -367,11 +394,9 @@ unsafe extern "C" fn host_delegate_main_wrapper(
     argv: *mut *mut c_char,
     envp: *mut *mut c_char,
 ) -> c_int {
-    init_program_name(argv);
-    // NOTE: Do NOT call signal_runtime_ready() here.  The membrane's
-    // ValidationPipeline is not re-entrant — enabling it causes deadlocks
-    // when interposed string/memory functions re-enter the pipeline.
-    // All ABI functions run in passthrough mode under LD_PRELOAD.
+    init_process_globals(argv, envp);
+    crate::pthread_abi::prewarm_host_thread_symbols();
+    runtime_policy::signal_runtime_ready();
 
     let main_ptr = HOST_DELEGATED_MAIN.load(Ordering::Acquire);
     if main_ptr == 0 {
@@ -396,6 +421,7 @@ unsafe fn delegate_to_host_libc_start_main(
     rtld_fini: Option<HookFn>,
     stack_end: *mut c_void,
 ) -> Option<c_int> {
+    init_process_globals(ubp_av, unsafe { environ });
     let delegated_main = main.map_or(0usize, |f| f as usize);
     HOST_DELEGATED_MAIN.store(delegated_main, Ordering::Release);
     let wrapped_main = if delegated_main == 0 {
@@ -670,8 +696,9 @@ unsafe fn startup_phase0_impl(
     path.push(StartupCheckpoint::CaptureInvariants);
     store_invariants(inv);
 
-    // Initialize program_invocation_name / __progname from argv[0].
-    init_program_name(ubp_av);
+    init_process_globals(ubp_av, envp);
+    crate::pthread_abi::prewarm_host_thread_symbols();
+    runtime_policy::signal_runtime_ready();
 
     if let Some(init_fn) = init {
         path.push(StartupCheckpoint::CallInitHook);
@@ -718,10 +745,8 @@ pub unsafe extern "C" fn __libc_start_main(
     rtld_fini: Option<HookFn>,
     stack_end: *mut c_void,
 ) -> c_int {
-    // Keep loader/init in bootstrap passthrough mode and only flip runtime-ready
-    // from the wrapped `main` that host `__libc_start_main` invokes after libc
-    // initialization. This avoids enabling the membrane during loader-sensitive
-    // startup while still activating it before user code begins.
+    // Keep loader/init in bootstrap passthrough mode and flip runtime-ready only
+    // at the wrapped `main` boundary after host libc initialization completes.
 
     if startup_phase0_env_enabled() {
         // SAFETY: explicit phase-0 opt-in path.
@@ -792,13 +817,12 @@ pub unsafe extern "C" fn __libc_start_main(
         // SAFETY: init is the .init function from the ELF; call it for C++ constructors etc.
         unsafe { init_fn() };
     }
-    init_program_name(ubp_av);
-    // NOTE: Do NOT call signal_runtime_ready() here.  The membrane's
-    // ValidationPipeline is not re-entrant — enabling it causes deadlocks
-    // when interposed string/memory functions re-enter the pipeline.
-    // All ABI functions run in passthrough mode under LD_PRELOAD.
+    let envp = unsafe { environ };
+    init_process_globals(ubp_av, envp);
+    crate::pthread_abi::prewarm_host_thread_symbols();
+    runtime_policy::signal_runtime_ready();
     let rc = match main {
-        Some(main_fn) => unsafe { main_fn(argc, ubp_av, std::ptr::null_mut()) },
+        Some(main_fn) => unsafe { main_fn(argc, ubp_av, envp) },
         None => 0,
     };
     if let Some(fini_fn) = fini {
