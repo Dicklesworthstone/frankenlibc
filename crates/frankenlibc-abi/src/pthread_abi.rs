@@ -48,6 +48,13 @@ type HostPthreadJoinFn = unsafe extern "C" fn(libc::pthread_t, *mut *mut c_void)
 type HostPthreadDetachFn = unsafe extern "C" fn(libc::pthread_t) -> c_int;
 type HostPthreadSelfFn = unsafe extern "C" fn() -> libc::pthread_t;
 type HostPthreadEqualFn = unsafe extern "C" fn(libc::pthread_t, libc::pthread_t) -> c_int;
+type HostPthreadKeyCreateFn =
+    unsafe extern "C" fn(*mut libc::pthread_key_t, Option<unsafe extern "C" fn(*mut c_void)>) -> c_int;
+type HostPthreadKeyDeleteFn = unsafe extern "C" fn(libc::pthread_key_t) -> c_int;
+#[cfg(target_arch = "x86_64")]
+type HostPthreadGetspecificFn = unsafe extern "C" fn(libc::pthread_key_t) -> *mut c_void;
+#[cfg(target_arch = "x86_64")]
+type HostPthreadSetspecificFn = unsafe extern "C" fn(libc::pthread_key_t, *const c_void) -> c_int;
 type HostPthreadMutexInitFn =
     unsafe extern "C" fn(*mut libc::pthread_mutex_t, *const libc::pthread_mutexattr_t) -> c_int;
 type HostPthreadMutexDestroyFn = unsafe extern "C" fn(*mut libc::pthread_mutex_t) -> c_int;
@@ -218,6 +225,48 @@ unsafe fn host_pthread_equal_fn() -> Option<HostPthreadEqualFn> {
     } else {
         // SAFETY: resolved symbol has pthread_equal ABI.
         Some(unsafe { std::mem::transmute::<*mut c_void, HostPthreadEqualFn>(ptr) })
+    }
+}
+
+unsafe fn host_pthread_key_create_fn() -> Option<HostPthreadKeyCreateFn> {
+    let ptr = unsafe { resolve_host_symbol(b"pthread_key_create\0") };
+    if ptr.is_null() {
+        None
+    } else {
+        // SAFETY: resolved symbol has pthread_key_create ABI.
+        Some(unsafe { std::mem::transmute::<*mut c_void, HostPthreadKeyCreateFn>(ptr) })
+    }
+}
+
+unsafe fn host_pthread_key_delete_fn() -> Option<HostPthreadKeyDeleteFn> {
+    let ptr = unsafe { resolve_host_symbol(b"pthread_key_delete\0") };
+    if ptr.is_null() {
+        None
+    } else {
+        // SAFETY: resolved symbol has pthread_key_delete ABI.
+        Some(unsafe { std::mem::transmute::<*mut c_void, HostPthreadKeyDeleteFn>(ptr) })
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+unsafe fn host_pthread_getspecific_fn() -> Option<HostPthreadGetspecificFn> {
+    let ptr = unsafe { resolve_host_symbol(b"pthread_getspecific\0") };
+    if ptr.is_null() {
+        None
+    } else {
+        // SAFETY: resolved symbol has pthread_getspecific ABI.
+        Some(unsafe { std::mem::transmute::<*mut c_void, HostPthreadGetspecificFn>(ptr) })
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+unsafe fn host_pthread_setspecific_fn() -> Option<HostPthreadSetspecificFn> {
+    let ptr = unsafe { resolve_host_symbol(b"pthread_setspecific\0") };
+    if ptr.is_null() {
+        None
+    } else {
+        // SAFETY: resolved symbol has pthread_setspecific ABI.
+        Some(unsafe { std::mem::transmute::<*mut c_void, HostPthreadSetspecificFn>(ptr) })
     }
 }
 
@@ -1992,6 +2041,13 @@ pub unsafe extern "C" fn pthread_key_create(
     if key.is_null() {
         return libc::EINVAL;
     }
+    if !FORCE_NATIVE_THREADING.load(Ordering::Acquire) {
+        // SAFETY: host symbol lookup/transmute guarantees ABI if present.
+        if let Some(host_key_create) = unsafe { host_pthread_key_create_fn() } {
+            // SAFETY: direct call through resolved host symbol.
+            return unsafe { host_key_create(key, destructor) };
+        }
+    }
     let mut internal_key = PthreadKey::default();
     // Core now uses the same `unsafe extern "C" fn(*mut c_void)` type as POSIX.
     let rc = core_pthread_key_create(&mut internal_key, destructor);
@@ -2005,6 +2061,13 @@ pub unsafe extern "C" fn pthread_key_create(
 /// POSIX `pthread_key_delete`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pthread_key_delete(key: libc::pthread_key_t) -> c_int {
+    if !FORCE_NATIVE_THREADING.load(Ordering::Acquire) {
+        // SAFETY: host symbol lookup/transmute guarantees ABI if present.
+        if let Some(host_key_delete) = unsafe { host_pthread_key_delete_fn() } {
+            // SAFETY: direct call through resolved host symbol.
+            return unsafe { host_key_delete(key) };
+        }
+    }
     let internal_key = PthreadKey { id: key };
     core_pthread_key_delete(internal_key)
 }
@@ -2013,6 +2076,13 @@ pub unsafe extern "C" fn pthread_key_delete(key: libc::pthread_key_t) -> c_int {
 #[cfg(target_arch = "x86_64")]
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pthread_getspecific(key: libc::pthread_key_t) -> *mut c_void {
+    if !FORCE_NATIVE_THREADING.load(Ordering::Acquire) {
+        // SAFETY: host symbol lookup/transmute guarantees ABI if present.
+        if let Some(host_getspecific) = unsafe { host_pthread_getspecific_fn() } {
+            // SAFETY: direct call through resolved host symbol.
+            return unsafe { host_getspecific(key) };
+        }
+    }
     let internal_key = PthreadKey { id: key };
     core_pthread_getspecific(internal_key) as *mut c_void
 }
@@ -2024,6 +2094,13 @@ pub unsafe extern "C" fn pthread_setspecific(
     key: libc::pthread_key_t,
     value: *const c_void,
 ) -> c_int {
+    if !FORCE_NATIVE_THREADING.load(Ordering::Acquire) {
+        // SAFETY: host symbol lookup/transmute guarantees ABI if present.
+        if let Some(host_setspecific) = unsafe { host_pthread_setspecific_fn() } {
+            // SAFETY: direct call through resolved host symbol.
+            return unsafe { host_setspecific(key, value) };
+        }
+    }
     let internal_key = PthreadKey { id: key };
     core_pthread_setspecific(internal_key, value as u64)
 }
