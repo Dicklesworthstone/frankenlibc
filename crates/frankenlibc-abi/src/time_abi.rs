@@ -96,6 +96,10 @@ unsafe fn write_tm(result: *mut libc::tm, bd: &time_core::BrokenDownTime) {
         (*result).tm_wday = bd.tm_wday;
         (*result).tm_yday = bd.tm_yday;
         (*result).tm_isdst = bd.tm_isdst;
+        // glibc extension fields — required by Python, Ruby, and other runtimes
+        // that check tm_gmtoff for timezone validity.
+        (*result).tm_gmtoff = 0; // UTC offset in seconds
+        (*result).tm_zone = c"UTC".as_ptr();
     }
 }
 
