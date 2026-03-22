@@ -2254,7 +2254,7 @@ pub unsafe extern "C" fn confstr(name: c_int, buf: *mut c_char, len: usize) -> u
     // _CS_GNU_LIBPTHREAD_VERSION = 3
     // _CS_PATH = 0
     let value: &[u8] = match name {
-        0 => b"/usr/bin\0",   // _CS_PATH
+        0 => b"/bin:/usr/bin\0",   // _CS_PATH (matches glibc)
         2 => b"glibc 2.38\0", // _CS_GNU_LIBC_VERSION
         3 => b"NPTL 2.38\0",  // _CS_GNU_LIBPTHREAD_VERSION
         _ => {
