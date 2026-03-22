@@ -1217,6 +1217,27 @@ mod tests {
             .expect("env lock should not be poisoned")
     }
 
+    struct RuntimeReadyGuard {
+        previous_ready: u8,
+        previous_mode_log_ready: u8,
+    }
+
+    impl Drop for RuntimeReadyGuard {
+        fn drop(&mut self) {
+            RUNTIME_READY.store(self.previous_ready, AtomicOrdering::SeqCst);
+            MODE_LOG_READY.store(self.previous_mode_log_ready, AtomicOrdering::SeqCst);
+        }
+    }
+
+    fn enable_runtime_kernel_for_tests() -> RuntimeReadyGuard {
+        let previous_ready = RUNTIME_READY.swap(1, AtomicOrdering::SeqCst);
+        let previous_mode_log_ready = MODE_LOG_READY.swap(1, AtomicOrdering::SeqCst);
+        RuntimeReadyGuard {
+            previous_ready,
+            previous_mode_log_ready,
+        }
+    }
+
     fn reset_decision_contract_machine_for_tests() {
         let _ = DECISION_CONTRACT_MACHINE.try_with(|slot| {
             *slot.borrow_mut() = DecisionContractMachine::new(DECISION_CONTRACT_CLEAR_THRESHOLD);
@@ -1228,6 +1249,7 @@ mod tests {
         base_addr: usize,
         requested_bytes: usize,
     ) -> u64 {
+        let _runtime_ready = enable_runtime_kernel_for_tests();
         // Runtime evidence sampling is cadence-gated in both strict and hardened modes.
         // Drive a bounded deterministic sequence until at least one sampled decision appears.
         const MAX_ATTEMPTS: usize = 20_000;
@@ -1655,6 +1677,7 @@ mod tests {
 
     #[test]
     fn runtime_kernel_snapshot_wrapper_exposes_live_decision_state() {
+        let _runtime_ready = enable_runtime_kernel_for_tests();
         let baseline_decisions = runtime_kernel_snapshot(mode())
             .map(|snapshot| snapshot.decisions)
             .unwrap_or(0);

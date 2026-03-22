@@ -389,22 +389,31 @@ impl Default for MallocState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::malloc::size_class::MAX_SMALL_SIZE;
-    use std::alloc::{Layout, alloc, dealloc};
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
 
-    fn test_alloc(size: usize) -> Option<usize> {
-        let layout = Layout::from_size_align(size, 16).ok()?;
-        let ptr = unsafe { alloc(layout) };
-        if ptr.is_null() {
-            None
-        } else {
-            Some(ptr as usize)
-        }
+    fn test_alloc_registry() -> &'static Mutex<HashMap<usize, Box<[u8]>>> {
+        static REGISTRY: OnceLock<Mutex<HashMap<usize, Box<[u8]>>>> = OnceLock::new();
+        REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
     }
 
-    fn test_free(ptr: usize, size: usize) {
-        let layout = Layout::from_size_align(size, 16).expect("valid layout for free");
-        unsafe { dealloc(ptr as *mut u8, layout) };
+    fn test_alloc(size: usize) -> Option<usize> {
+        let alloc_size = size.max(1);
+        let mut backing = vec![0u8; alloc_size].into_boxed_slice();
+        let ptr = backing.as_mut_ptr() as usize;
+        test_alloc_registry()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(ptr, backing);
+        Some(ptr)
+    }
+
+    fn test_free(ptr: usize, _size: usize) {
+        let removed = test_alloc_registry()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&ptr);
+        assert!(removed.is_some(), "test_free must release a known test allocation");
     }
 
     #[test]
