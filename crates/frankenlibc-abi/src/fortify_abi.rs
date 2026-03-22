@@ -53,16 +53,16 @@ unsafe extern "C" {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __chk_fail() -> ! {
     let msg = b"*** buffer overflow detected ***: terminated\n";
-    unsafe { libc::write(2, msg.as_ptr().cast(), msg.len()) };
-    unsafe { libc::abort() }
+    unsafe { crate::unistd_abi::write(2, msg.as_ptr().cast(), msg.len()) };
+    unsafe { crate::stdlib_abi::abort() }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __stack_chk_fail() -> ! {
     let msg = b"*** stack smashing detected ***: terminated\n";
     unsafe {
-        libc::write(2, msg.as_ptr().cast(), msg.len());
-        libc::abort()
+        crate::unistd_abi::write(2, msg.as_ptr().cast(), msg.len());
+        crate::stdlib_abi::abort()
     }
 }
 
@@ -71,13 +71,13 @@ pub unsafe extern "C" fn __fortify_fail(msg: *const c_char) -> ! {
     let prefix = b"*** ";
     let suffix = b" ***: terminated\n";
     unsafe {
-        libc::write(2, prefix.as_ptr().cast(), prefix.len());
+        crate::unistd_abi::write(2, prefix.as_ptr().cast(), prefix.len());
         if !msg.is_null() {
             let len = crate::string_abi::strlen(msg);
-            libc::write(2, msg.cast(), len);
+            crate::unistd_abi::write(2, msg.cast(), len);
         }
-        libc::write(2, suffix.as_ptr().cast(), suffix.len());
-        libc::abort()
+        crate::unistd_abi::write(2, suffix.as_ptr().cast(), suffix.len());
+        crate::stdlib_abi::abort()
     }
 }
 
@@ -159,7 +159,7 @@ pub unsafe extern "C" fn __strncpy_chk(
     if n > destlen {
         unsafe { __chk_fail() }
     }
-    unsafe { libc::strncpy(dest, src, n) }
+    unsafe { crate::string_abi::strncpy(dest, src, n) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -173,7 +173,7 @@ pub unsafe extern "C" fn __strcat_chk(
     if dlen + slen + 1 > destlen {
         unsafe { __chk_fail() }
     }
-    unsafe { libc::strcat(dest, src) }
+    unsafe { crate::string_abi::strcat(dest, src) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -191,7 +191,7 @@ pub unsafe extern "C" fn __strncat_chk(
     if dlen + slen + 1 > destlen {
         unsafe { __chk_fail() }
     }
-    unsafe { libc::strncat(dest, src, n) }
+    unsafe { crate::string_abi::strncat(dest, src, n) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -218,7 +218,7 @@ pub unsafe extern "C" fn __stpncpy_chk(
     if n > destlen {
         unsafe { __chk_fail() }
     }
-    unsafe { libc::strncpy(dest, src, n) };
+    unsafe { crate::string_abi::strncpy(dest, src, n) };
     let mut i = 0;
     while i < n {
         if unsafe { *dest.add(i) } == 0 {
@@ -460,7 +460,7 @@ pub unsafe extern "C" fn __read_chk(
     if nbytes > buflen {
         unsafe { __chk_fail() }
     }
-    unsafe { libc::read(fd, buf, nbytes) }
+    unsafe { crate::unistd_abi::read(fd, buf, nbytes) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -537,12 +537,12 @@ pub unsafe extern "C" fn __getcwd_chk(buf: *mut c_char, len: usize, buflen: usiz
     if len > buflen {
         unsafe { __chk_fail() }
     }
-    unsafe { libc::getcwd(buf, len) }
+    unsafe { libc::syscall(libc::SYS_getcwd as i64, buf, len) as *mut c_char }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __getwd_chk(buf: *mut c_char, buflen: usize) -> *mut c_char {
-    unsafe { libc::getcwd(buf, buflen) }
+    unsafe { libc::syscall(libc::SYS_getcwd as i64, buf, buflen) as *mut c_char }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -577,7 +577,7 @@ pub unsafe extern "C" fn __gethostname_chk(buf: *mut c_char, len: usize, buflen:
     if len > buflen {
         unsafe { __chk_fail() }
     }
-    unsafe { libc::gethostname(buf, len) }
+    unsafe { crate::unistd_abi::gethostname(buf, len) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -972,7 +972,7 @@ pub unsafe extern "C" fn __poll_chk(
     if (nfds as usize) * 8 > fdslen {
         unsafe { __chk_fail() }
     }
-    unsafe { libc::poll(fds.cast(), nfds, timeout) }
+    unsafe { crate::poll_abi::poll(fds.cast(), nfds, timeout) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -986,7 +986,7 @@ pub unsafe extern "C" fn __ppoll_chk(
     if (nfds as usize) * 8 > fdslen {
         unsafe { __chk_fail() }
     }
-    unsafe { libc::ppoll(fds.cast(), nfds, timeout, sigmask.cast()) }
+    unsafe { crate::poll_abi::ppoll(fds.cast(), nfds, timeout, sigmask.cast()) }
 }
 
 // ── FD_SET check ───────────────────────────────────────────────────────────

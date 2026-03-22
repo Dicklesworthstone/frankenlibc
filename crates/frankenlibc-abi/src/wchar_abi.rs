@@ -1232,7 +1232,7 @@ pub unsafe extern "C" fn wcsdup(s: *const u32) -> *mut u32 {
         let alloc_elems = len + 1;
         let alloc_bytes = alloc_elems * 4;
 
-        let ptr = crate::malloc_abi::malloc(alloc_bytes) as *mut u32;
+        let ptr = crate::malloc_abi::raw_alloc(alloc_bytes) as *mut u32;
         if ptr.is_null() {
             runtime_policy::observe(ApiFamily::StringMemory, decision.profile, 8, true);
             return std::ptr::null_mut();
@@ -1913,7 +1913,7 @@ pub unsafe extern "C" fn realpath(
 
     let dst = if resolved_path.is_null() {
         // SAFETY: allocates writable C-compatible storage for the canonical path plus terminator.
-        let alloc = unsafe { crate::malloc_abi::malloc(out.len() + 1) as *mut std::ffi::c_char };
+        let alloc = unsafe { crate::malloc_abi::raw_alloc(out.len() + 1) as *mut std::ffi::c_char };
         if alloc.is_null() {
             unsafe { set_abi_errno(errno::ENOMEM) };
             runtime_policy::observe(ApiFamily::IoFd, decision.profile, 16, true);
@@ -4434,7 +4434,7 @@ pub unsafe extern "C" fn open_wmemstream(bufp: *mut *mut u32, sizep: *mut usize)
 
     // Use underlying open_memstream for byte-level storage, then track wide metadata.
     // Allocate initial wide buffer (empty, NUL-terminated).
-    let initial = unsafe { crate::malloc_abi::malloc(4) } as *mut u32;
+    let initial = unsafe { crate::malloc_abi::raw_alloc(4) } as *mut u32;
     if initial.is_null() {
         unsafe { set_abi_errno(libc::ENOMEM) };
         return std::ptr::null_mut();
@@ -4452,7 +4452,7 @@ pub unsafe extern "C" fn open_wmemstream(bufp: *mut *mut u32, sizep: *mut usize)
     let stream =
         unsafe { crate::stdio_abi::open_memstream(&mut byte_ptr as *mut *mut i8, &mut byte_size) };
     if stream.is_null() {
-        unsafe { crate::malloc_abi::free(initial as *mut c_void) };
+        unsafe { crate::malloc_abi::raw_free(initial as *mut c_void) };
         unsafe {
             *bufp = std::ptr::null_mut();
             *sizep = 0;

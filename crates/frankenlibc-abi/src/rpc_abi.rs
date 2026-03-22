@@ -604,12 +604,12 @@ unsafe extern "C" fn rec_destroy(x: *mut Xdr) {
         let r = unsafe { &*rs };
         if !r.out_base.is_null() {
             unsafe {
-                crate::malloc_abi::free(r.out_base.cast());
+                crate::malloc_abi::raw_free(r.out_base.cast());
             }
         }
         if !r.in_base.is_null() {
             unsafe {
-                crate::malloc_abi::free(r.in_base.cast());
+                crate::malloc_abi::raw_free(r.in_base.cast());
             }
         }
         unsafe {
@@ -643,17 +643,17 @@ pub unsafe extern "C" fn xdrrec_create(
 ) {
     let ss = if sendsize == 0 { 4096 } else { sendsize };
     let rs_val = if recvsize == 0 { 4096 } else { recvsize };
-    let out_buf = unsafe { crate::malloc_abi::malloc(ss as usize + 4) as *mut u8 };
-    let in_buf = unsafe { crate::malloc_abi::malloc(rs_val as usize) as *mut u8 };
+    let out_buf = unsafe { crate::malloc_abi::raw_alloc(ss as usize + 4) as *mut u8 };
+    let in_buf = unsafe { crate::malloc_abi::raw_alloc(rs_val as usize) as *mut u8 };
     if out_buf.is_null() || in_buf.is_null() {
         if !out_buf.is_null() {
             unsafe {
-                crate::malloc_abi::free(out_buf.cast());
+                crate::malloc_abi::raw_free(out_buf.cast());
             }
         }
         if !in_buf.is_null() {
             unsafe {
-                crate::malloc_abi::free(in_buf.cast());
+                crate::malloc_abi::raw_free(in_buf.cast());
             }
         }
         return;
@@ -1068,7 +1068,7 @@ pub unsafe extern "C" fn xdr_bytes(
                 return XDR_TRUE;
             }
             if unsafe { (*sp).is_null() } {
-                let buf = unsafe { crate::malloc_abi::calloc(1, len as usize) as *mut c_char };
+                let buf = unsafe { crate::malloc_abi::raw_alloc(len as usize) as *mut c_char };
                 if buf.is_null() {
                     return XDR_FALSE;
                 }
@@ -1082,7 +1082,7 @@ pub unsafe extern "C" fn xdr_bytes(
             let p = unsafe { *sp };
             if !p.is_null() {
                 unsafe {
-                    crate::malloc_abi::free(p.cast());
+                    crate::malloc_abi::raw_free(p.cast());
                     *sp = std::ptr::null_mut();
                 }
             }
@@ -1128,7 +1128,7 @@ pub unsafe extern "C" fn xdr_string(
         return XDR_FALSE;
     }
     if op == XDR_DECODE && unsafe { (*sp).is_null() } {
-        let buf = unsafe { crate::malloc_abi::calloc(1, size as usize + 1) as *mut c_char };
+        let buf = unsafe { crate::malloc_abi::raw_alloc(size as usize + 1) as *mut c_char };
         if buf.is_null() {
             return XDR_FALSE;
         }
@@ -1153,7 +1153,7 @@ pub unsafe extern "C" fn xdr_string(
         let p = unsafe { *sp };
         if !p.is_null() {
             unsafe {
-                crate::malloc_abi::free(p.cast());
+                crate::malloc_abi::raw_free(p.cast());
                 *sp = std::ptr::null_mut();
             }
         }
@@ -1197,7 +1197,7 @@ pub unsafe extern "C" fn xdr_array(
             Some(b) => b,
             None => return XDR_FALSE,
         };
-        let buf = unsafe { crate::malloc_abi::calloc(1, total_bytes) as *mut c_char };
+        let buf = unsafe { crate::malloc_abi::raw_alloc(total_bytes) as *mut c_char };
         if buf.is_null() {
             return XDR_FALSE;
         }
@@ -1220,7 +1220,7 @@ pub unsafe extern "C" fn xdr_array(
         let p = unsafe { *arrp };
         if !p.is_null() {
             unsafe {
-                crate::malloc_abi::free(p.cast());
+                crate::malloc_abi::raw_free(p.cast());
                 *arrp = std::ptr::null_mut();
             }
         }
@@ -1262,7 +1262,7 @@ pub unsafe extern "C" fn xdr_reference(
         if op != XDR_DECODE {
             return XDR_FALSE;
         }
-        let buf = unsafe { crate::malloc_abi::calloc(1, size as usize) as *mut c_char };
+        let buf = unsafe { crate::malloc_abi::raw_alloc(size as usize) as *mut c_char };
         if buf.is_null() {
             return XDR_FALSE;
         }
@@ -1276,7 +1276,7 @@ pub unsafe extern "C" fn xdr_reference(
         let p = unsafe { *pp };
         if !p.is_null() {
             unsafe {
-                crate::malloc_abi::free(p.cast());
+                crate::malloc_abi::raw_free(p.cast());
                 *pp = std::ptr::null_mut();
             }
         }
@@ -2079,9 +2079,9 @@ pub unsafe extern "C" fn clnt_broadcast(
 pub unsafe extern "C" fn clnt_perrno(stat: c_int) {
     let msg = rpc_errstr(stat);
     // Write to stderr: "RPC: <message>\n"
-    let _ = unsafe { libc::write(2, b"RPC: ".as_ptr().cast(), 5) };
-    let _ = unsafe { libc::write(2, msg.as_ptr().cast(), msg.len()) };
-    let _ = unsafe { libc::write(2, b"\n".as_ptr().cast(), 1) };
+    let _ = unsafe { crate::unistd_abi::write(2, b"RPC: ".as_ptr().cast(), 5) };
+    let _ = unsafe { crate::unistd_abi::write(2, msg.as_ptr().cast(), msg.len()) };
+    let _ = unsafe { crate::unistd_abi::write(2, b"\n".as_ptr().cast(), 1) };
 }
 
 rpc_native!(clnt_perror(clnt: *mut c_void, s: *const c_char) -> ());
@@ -2096,8 +2096,8 @@ pub unsafe extern "C" fn clnt_pcreateerror(s: *const c_char) {
     let msg = unsafe { clnt_spcreateerror(s) };
     if !msg.is_null() {
         let len = unsafe { crate::string_abi::strlen(msg) };
-        let _ = unsafe { libc::write(2, msg.cast(), len) };
-        let _ = unsafe { libc::write(2, b"\n".as_ptr().cast(), 1) };
+        let _ = unsafe { crate::unistd_abi::write(2, msg.cast(), len) };
+        let _ = unsafe { crate::unistd_abi::write(2, b"\n".as_ptr().cast(), 1) };
     }
 }
 
@@ -2751,7 +2751,7 @@ pub unsafe extern "C" fn getnetname(name: *mut c_char) -> c_int {
     if name.is_null() {
         return 0;
     }
-    let uid = unsafe { libc::geteuid() };
+    let uid = unsafe { libc::syscall(libc::SYS_geteuid as i64) as libc::uid_t };
     // Format: "unix.<uid>@localhost"
     let netname = format!("unix.{}@localhost\0", uid);
     let bytes = netname.as_bytes();
@@ -2837,7 +2837,7 @@ pub unsafe extern "C" fn host2netname(
         }
     };
     let name = format!("unix.{}@{}\0", host_str, domain_str);
-    let buf = unsafe { crate::malloc_abi::malloc(name.len()) } as *mut c_char;
+    let buf = unsafe { crate::malloc_abi::raw_alloc(name.len()) } as *mut c_char;
     if buf.is_null() {
         return 0;
     }
@@ -2948,7 +2948,7 @@ pub unsafe extern "C" fn user2netname(
         }
     };
     let name = format!("unix.{}@{}\0", uid, domain_str);
-    let buf = unsafe { crate::malloc_abi::malloc(name.len()) } as *mut c_char;
+    let buf = unsafe { crate::malloc_abi::raw_alloc(name.len()) } as *mut c_char;
     if buf.is_null() {
         return 0;
     }
@@ -2992,7 +2992,7 @@ pub unsafe extern "C" fn bindresvport(sd: c_int, sin: *mut c_void) -> c_int {
 
     // Try ports 512..1024 (reserved range per glibc convention)
     // Start from a "random" offset based on process ID for spread
-    let pid = unsafe { libc::getpid() } as u16;
+    let pid = unsafe { libc::syscall(libc::SYS_getpid as i64) as libc::pid_t } as u16;
     let start = 600 + (pid % 424); // range [600, 1023]
 
     for i in 0..512 {

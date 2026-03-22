@@ -946,7 +946,7 @@ fn res_randomid() -> c_int {
     let mut val = COUNTER.fetch_add(1, Ordering::Relaxed);
     // Mix with a time-based value for randomness
     let mut ts: libc::timespec = unsafe { std::mem::zeroed() };
-    unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut ts) };
+    unsafe { libc::syscall(libc::SYS_clock_gettime as i64, libc::CLOCK_MONOTONIC as i64, &mut ts) as c_int };
     val = val.wrapping_add(ts.tv_nsec as u32);
     val = val.wrapping_mul(1103515245).wrapping_add(12345);
     ((val >> 16) & 0xFFFF) as c_int
@@ -2857,7 +2857,7 @@ pub unsafe extern "C" fn __inet_ntop_chk(
 ) -> *const c_char {
     if size > dstsize {
         // Buffer overflow detected — abort in fortified mode
-        unsafe { libc::abort() };
+        unsafe { crate::stdlib_abi::abort() };
     }
     unsafe { super::inet_abi::inet_ntop(af, src, dst, size) }
 }
@@ -2876,7 +2876,7 @@ pub unsafe extern "C" fn __inet_pton_chk(
         _ => 0,
     };
     if needed > 0 && dstsize < needed {
-        unsafe { libc::abort() };
+        unsafe { crate::stdlib_abi::abort() };
     }
     unsafe { super::inet_abi::inet_pton(af, src, dst) }
 }
@@ -3068,7 +3068,7 @@ pub unsafe extern "C" fn __fdelt_warn(d: c_long) -> c_long {
     if !(0..1024).contains(&d) {
         // FD_SETSIZE overflow — abort like glibc
         unsafe {
-            libc::abort();
+            crate::stdlib_abi::abort();
         }
     }
     d / (8 * std::mem::size_of::<c_long>() as c_long)
@@ -3146,7 +3146,7 @@ pub unsafe extern "C" fn __getmntent_r(
 // __getpagesize: native syscall
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __getpagesize() -> c_int {
-    unsafe { libc::sysconf(libc::_SC_PAGESIZE) as c_int }
+    unsafe { crate::unistd_abi::sysconf(libc::_SC_PAGESIZE) as c_int }
 }
 // __getpgid: native syscall
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -3360,7 +3360,7 @@ pub unsafe extern "C" fn __secure_getenv(name: *const c_char) -> *mut c_char {
     if unsafe { libc::getauxval(libc::AT_SECURE) } != 0 {
         return std::ptr::null_mut();
     }
-    unsafe { libc::getenv(name) as *mut c_char }
+    unsafe { crate::stdlib_abi::getenv(name) as *mut c_char }
 }
 // __select: native syscall
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -3479,7 +3479,7 @@ pub unsafe extern "C" fn __statfs(path: *const c_char, buf: *mut c_void) -> c_in
 // __sysconf: native — forward to libc
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __sysconf(name: c_int) -> c_long {
-    unsafe { libc::sysconf(name) }
+    unsafe { crate::unistd_abi::sysconf(name) }
 }
 // __sysctl: deprecated syscall (removed in Linux 5.5) — return ENOSYS
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -3490,7 +3490,7 @@ pub unsafe extern "C" fn __sysctl(_args: *mut c_void) -> c_int {
 // __sysv_signal: native — System V signal semantics (one-shot)
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __sysv_signal(signum: c_int, handler: *mut c_void) -> *mut c_void {
-    unsafe { libc::signal(signum, handler as libc::sighandler_t) as *mut c_void }
+    unsafe { crate::signal_abi::signal(signum, handler as libc::sighandler_t) as *mut c_void }
 }
 // __vfork → vfork
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -3626,7 +3626,7 @@ pub unsafe extern "C" fn __mempcpy_chk(
 ) -> *mut c_void {
     if n > destlen {
         unsafe {
-            libc::abort();
+            crate::stdlib_abi::abort();
         }
     }
     unsafe {
@@ -3659,7 +3659,7 @@ pub unsafe extern "C" fn __strlcat_chk(
 ) -> SizeT {
     if size > destlen {
         unsafe {
-            libc::abort();
+            crate::stdlib_abi::abort();
         }
     }
     // Native strlcat: find end of dest, append src up to size
@@ -3695,7 +3695,7 @@ pub unsafe extern "C" fn __strlcpy_chk(
 ) -> SizeT {
     if size > destlen {
         unsafe {
-            libc::abort();
+            crate::stdlib_abi::abort();
         }
     }
     // Native strlcpy: copy src to dest up to size-1, nul-terminate
@@ -3731,7 +3731,7 @@ pub unsafe extern "C" fn __wcpcpy_chk(
     }
     if len + 1 > destlen {
         unsafe {
-            libc::abort();
+            crate::stdlib_abi::abort();
         }
     }
     unsafe {
@@ -3748,7 +3748,7 @@ pub unsafe extern "C" fn __wcpncpy_chk(
 ) -> *mut WcharT {
     if n > destlen {
         unsafe {
-            libc::abort();
+            crate::stdlib_abi::abort();
         }
     }
     let mut i = 0;
@@ -3789,7 +3789,7 @@ pub unsafe extern "C" fn __wcslcat_chk(
 ) -> SizeT {
     if size > destlen {
         unsafe {
-            libc::abort();
+            crate::stdlib_abi::abort();
         }
     }
     // Find end of dest within size
@@ -3825,7 +3825,7 @@ pub unsafe extern "C" fn __wcslcpy_chk(
 ) -> SizeT {
     if size > destlen {
         unsafe {
-            libc::abort();
+            crate::stdlib_abi::abort();
         }
     }
     let mut slen = 0;
@@ -3854,7 +3854,7 @@ pub unsafe extern "C" fn __wmempcpy_chk(
 ) -> *mut WcharT {
     if n > destlen {
         unsafe {
-            libc::abort();
+            crate::stdlib_abi::abort();
         }
     }
     unsafe {
@@ -3871,7 +3871,7 @@ pub unsafe extern "C" fn __wmempcpy_chk(
 pub unsafe extern "C" fn __mq_open_2(name: *const c_char, oflag: c_int) -> c_int {
     if oflag & libc::O_CREAT != 0 {
         // O_CREAT requires mode and attr args — missing is a bug
-        unsafe { libc::abort() };
+        unsafe { crate::stdlib_abi::abort() };
     }
     unsafe { libc::mq_open(name, oflag) as c_int }
 }
@@ -4371,7 +4371,7 @@ pub unsafe extern "C" fn ftime(tp: *mut c_void) -> c_int {
         return -1;
     }
     let mut ts: libc::timespec = unsafe { std::mem::zeroed() };
-    if unsafe { libc::clock_gettime(libc::CLOCK_REALTIME, &mut ts) } != 0 {
+    if unsafe { libc::syscall(libc::SYS_clock_gettime as i64, libc::CLOCK_REALTIME as i64, &mut ts) as c_int } != 0 {
         return -1;
     }
     // struct timeb layout: time_t(8), millitm(u16), timezone(i16), dstflag(i16)
@@ -4422,7 +4422,7 @@ pub unsafe extern "C" fn getdirentries(
     basep: *mut c_long,
 ) -> SSizeT {
     if !basep.is_null() {
-        unsafe { *basep = libc::lseek(fd, 0, libc::SEEK_CUR) as c_long };
+        unsafe { *basep = libc::syscall(libc::SYS_lseek as i64, fd as i64, 0 as i64, libc::SEEK_CUR as i64) as libc::off_t as c_long };
     }
     unsafe { libc::syscall(libc::SYS_getdents64, fd, buf, nbytes) as SSizeT }
 }
@@ -4434,7 +4434,7 @@ pub unsafe extern "C" fn getdirentries64(
     basep: *mut i64,
 ) -> SSizeT {
     if !basep.is_null() {
-        unsafe { *basep = libc::lseek(fd, 0, libc::SEEK_CUR) as i64 };
+        unsafe { *basep = libc::syscall(libc::SYS_lseek as i64, fd as i64, 0 as i64, libc::SEEK_CUR as i64) as libc::off_t as i64 };
     }
     unsafe { libc::syscall(libc::SYS_getdents64, fd, buf, nbytes) as SSizeT }
 }
@@ -4562,12 +4562,12 @@ pub unsafe extern "C" fn gettid() -> c_int {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getwd(buf: *mut c_char) -> *mut c_char {
     // PATH_MAX is typically 4096 on Linux
-    unsafe { libc::getcwd(buf, 4096) }
+    unsafe { libc::syscall(libc::SYS_getcwd as i64, buf, 4096) as *mut c_char }
 }
 // group_member: native — check if current process is in supplementary group
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn group_member(gid: c_uint) -> c_int {
-    if unsafe { libc::getegid() } == gid {
+    if unsafe { libc::syscall(libc::SYS_getegid as i64) as libc::gid_t } == gid {
         return 1;
     }
     let mut groups = [0u32; 64];
@@ -5283,7 +5283,7 @@ pub unsafe extern "C" fn rresvport_af(port: *mut c_int, af: c_int) -> c_int {
                 }
             }
             _ => {
-                unsafe { libc::close(fd) };
+                unsafe { libc::syscall(libc::SYS_close as i64, fd) as c_int };
                 unsafe { *libc::__errno_location() = libc::EAFNOSUPPORT };
                 return -1;
             }
@@ -5295,7 +5295,7 @@ pub unsafe extern "C" fn rresvport_af(port: *mut c_int, af: c_int) -> c_int {
             return fd;
         }
     }
-    unsafe { libc::close(fd) };
+    unsafe { libc::syscall(libc::SYS_close as i64, fd) as c_int };
     unsafe { *libc::__errno_location() = libc::EAGAIN };
     -1
 }
@@ -5361,7 +5361,7 @@ pub unsafe extern "C" fn scandirat(
     }
     let dir = unsafe { libc::fdopendir(fd) };
     if dir.is_null() {
-        unsafe { libc::close(fd) };
+        unsafe { libc::syscall(libc::SYS_close as i64, fd) as c_int };
         return -1;
     }
     // Use scandir-style iteration
@@ -5388,11 +5388,11 @@ pub unsafe extern "C" fn scandirat(
         };
         if include {
             let ent_size = std::mem::size_of::<libc::dirent>();
-            let copy = unsafe { crate::malloc_abi::malloc(ent_size) } as *mut libc::dirent;
+            let copy = unsafe { crate::malloc_abi::raw_alloc(ent_size) } as *mut libc::dirent;
             if copy.is_null() {
                 // Cleanup on OOM
                 for e in &entries {
-                    unsafe { crate::malloc_abi::free(*e as *mut c_void) };
+                    unsafe { crate::malloc_abi::raw_free(*e as *mut c_void) };
                 }
                 unsafe { libc::closedir(dir) };
                 return -1;
@@ -5415,11 +5415,11 @@ pub unsafe extern "C" fn scandirat(
         });
     }
     let count = entries.len() as c_int;
-    let arr = unsafe { crate::malloc_abi::malloc(entries.len() * std::mem::size_of::<*mut libc::dirent>()) }
+    let arr = unsafe { crate::malloc_abi::raw_alloc(entries.len() * std::mem::size_of::<*mut libc::dirent>()) }
         as *mut *mut c_void;
     if arr.is_null() && !entries.is_empty() {
         for e in &entries {
-            unsafe { crate::malloc_abi::free(*e as *mut c_void) };
+            unsafe { crate::malloc_abi::raw_free(*e as *mut c_void) };
         }
         return -1;
     }
@@ -5789,7 +5789,7 @@ pub unsafe extern "C" fn stime(t: *const c_long) -> c_int {
         tv_sec: unsafe { *t },
         tv_nsec: 0,
     };
-    unsafe { libc::clock_settime(libc::CLOCK_REALTIME, &ts) }
+    unsafe { libc::syscall(libc::SYS_clock_settime as i64, libc::CLOCK_REALTIME as i64, &ts) as c_int }
 }
 // stty: legacy V7 — return ENOSYS
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -6341,7 +6341,7 @@ pub unsafe extern "C" fn __mktemp(template: *mut c_char) -> *mut c_char {
             tv_sec: 0,
             tv_nsec: 0,
         };
-        unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut ts) };
+        unsafe { libc::syscall(libc::SYS_clock_gettime as i64, libc::CLOCK_MONOTONIC as i64, &mut ts) as c_int };
         let mut seed = ts.tv_nsec as u64 ^ ts.tv_sec as u64;
         for b in &mut rand_bytes {
             seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
@@ -6354,7 +6354,7 @@ pub unsafe extern "C" fn __mktemp(template: *mut c_char) -> *mut c_char {
     }
     // Check that the file doesn't exist (per mktemp spec)
     let mut statbuf: libc::stat = unsafe { std::mem::zeroed() };
-    if unsafe { libc::stat(template, &mut statbuf) } == 0 {
+    if unsafe { libc::syscall(libc::SYS_newfstatat as i64, libc::AT_FDCWD, template, &mut statbuf, 0) as c_int } == 0 {
         // File exists — set first byte to 0 and return error
         unsafe {
             *template = 0;
@@ -6813,7 +6813,7 @@ unsafe fn alloc_native_resolv_context(
     from_res: bool,
     next: *mut NativeResolvContext,
 ) -> *mut NativeResolvContext {
-    let raw = unsafe { crate::malloc_abi::malloc(std::mem::size_of::<NativeResolvContext>()) }
+    let raw = unsafe { crate::malloc_abi::raw_alloc(std::mem::size_of::<NativeResolvContext>()) }
         .cast::<NativeResolvContext>();
     if raw.is_null() {
         unsafe { *crate::errno_abi::__errno_location() = libc::ENOMEM };
@@ -6910,7 +6910,7 @@ pub unsafe extern "C" fn __resolv_context_put(ctx: *mut c_void) {
                             (*prev).__next = next;
                         }
                     }
-                    unsafe { crate::malloc_abi::free(current.cast()) };
+                    unsafe { crate::malloc_abi::raw_free(current.cast()) };
                 }
                 break;
             }
@@ -6936,7 +6936,7 @@ pub unsafe extern "C" fn __resolv_context_freeres() {
         let mut current = head.replace(std::ptr::null_mut());
         while !current.is_null() {
             let next = unsafe { (*current).__next };
-            unsafe { crate::malloc_abi::free(current.cast()) };
+            unsafe { crate::malloc_abi::raw_free(current.cast()) };
             current = next;
         }
     });
@@ -7184,7 +7184,7 @@ pub unsafe extern "C" fn __idna_to_dns_encoding(
     output.push(0); // NUL terminator.
 
     // Allocate with malloc for caller ownership.
-    let buf = unsafe { crate::malloc_abi::malloc(output.len()) } as *mut u8;
+    let buf = unsafe { crate::malloc_abi::raw_alloc(output.len()) } as *mut u8;
     if buf.is_null() {
         return libc::EAI_FAIL;
     }
@@ -7251,7 +7251,7 @@ pub unsafe extern "C" fn __idna_from_dns_encoding(
     let output_bytes = output.as_bytes();
     let alloc_len = output_bytes.len() + 1; // +1 for NUL.
 
-    let buf = unsafe { crate::malloc_abi::malloc(alloc_len) } as *mut u8;
+    let buf = unsafe { crate::malloc_abi::raw_alloc(alloc_len) } as *mut u8;
     if buf.is_null() {
         return libc::EAI_FAIL;
     }
@@ -7824,7 +7824,7 @@ pub unsafe extern "C" fn __file_change_detection_for_path(
     }
     let fcd = result as *mut FileChangeDetection;
     let mut st: libc::stat = unsafe { std::mem::zeroed() };
-    if unsafe { libc::stat(path, &mut st) } != 0 {
+    if unsafe { libc::syscall(libc::SYS_newfstatat as i64, libc::AT_FDCWD, path, &mut st, 0) as c_int } != 0 {
         // stat failed — zero out the detection struct
         unsafe { std::ptr::write_bytes(fcd, 0, 1) };
         return 0;
@@ -8268,7 +8268,7 @@ pub static mut h_errlist: [*mut c_char; 5] = [
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __libc_malloc(size: usize) -> *mut c_void {
-    unsafe { crate::malloc_abi::malloc(size) }
+    unsafe { crate::malloc_abi::raw_alloc(size) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -8283,7 +8283,7 @@ pub unsafe extern "C" fn __libc_realloc(ptr: *mut c_void, size: usize) -> *mut c
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __libc_free(ptr: *mut c_void) {
-    unsafe { crate::malloc_abi::free(ptr) }
+    unsafe { crate::malloc_abi::raw_free(ptr) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]

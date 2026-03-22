@@ -512,10 +512,10 @@ pub unsafe extern "C" fn scandir(
 
         if include {
             let size = std::mem::size_of::<libc::dirent>();
-            let copy = unsafe { crate::malloc_abi::malloc(size) } as *mut libc::dirent;
+            let copy = unsafe { crate::malloc_abi::raw_alloc(size) } as *mut libc::dirent;
             if copy.is_null() {
                 for &e in &entries {
-                    unsafe { crate::malloc_abi::free(e as *mut c_void) };
+                    unsafe { crate::malloc_abi::raw_free(e as *mut c_void) };
                 }
                 unsafe { closedir(dir) };
                 unsafe { set_abi_errno(errno::ENOMEM) };
@@ -534,7 +534,7 @@ pub unsafe extern "C" fn scandir(
     // libc::dirent is large (~280 bytes), and namelist is an array of pointers.
     if count > (usize::MAX / std::mem::size_of::<*mut libc::dirent>()) {
         for &e in &entries {
-            unsafe { crate::malloc_abi::free(e as *mut c_void) };
+            unsafe { crate::malloc_abi::raw_free(e as *mut c_void) };
         }
         unsafe { set_abi_errno(errno::ENOMEM) };
         return -1;
@@ -543,7 +543,7 @@ pub unsafe extern "C" fn scandir(
     // Allocate the namelist array
     if count == 0 {
         // Empty result — allocate a minimal array
-        let array = unsafe { crate::malloc_abi::malloc(std::mem::size_of::<*mut libc::dirent>()) }
+        let array = unsafe { crate::malloc_abi::raw_alloc(std::mem::size_of::<*mut libc::dirent>()) }
             as *mut *mut libc::dirent;
         if array.is_null() {
             unsafe { set_abi_errno(errno::ENOMEM) };
@@ -554,10 +554,10 @@ pub unsafe extern "C" fn scandir(
     }
 
     let array_size = count * std::mem::size_of::<*mut libc::dirent>();
-    let array = unsafe { crate::malloc_abi::malloc(array_size) } as *mut *mut libc::dirent;
+    let array = unsafe { crate::malloc_abi::raw_alloc(array_size) } as *mut *mut libc::dirent;
     if array.is_null() {
         for &e in &entries {
-            unsafe { crate::malloc_abi::free(e as *mut c_void) };
+            unsafe { crate::malloc_abi::raw_free(e as *mut c_void) };
         }
         unsafe { set_abi_errno(errno::ENOMEM) };
         return -1;

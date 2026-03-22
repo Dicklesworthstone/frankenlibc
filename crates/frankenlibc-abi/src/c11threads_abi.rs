@@ -111,7 +111,7 @@ pub unsafe extern "C" fn thrd_create(
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn thrd_join(thr: ThrdT, res: *mut c_int) -> c_int {
     let mut retval: *mut c_void = std::ptr::null_mut();
-    let rc = unsafe { libc::pthread_join(thr, &mut retval) };
+    let rc = unsafe { crate::pthread_abi::pthread_join(thr, &mut retval) };
     if rc == 0 && !res.is_null() {
         unsafe { *res = retval as usize as c_int };
     }
@@ -124,7 +124,7 @@ pub unsafe extern "C" fn thrd_join(thr: ThrdT, res: *mut c_int) -> c_int {
 /// C11 `thrd_detach` — detach a thread.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn thrd_detach(thr: ThrdT) -> c_int {
-    pthread_rc_to_thrd(unsafe { libc::pthread_detach(thr) })
+    pthread_rc_to_thrd(unsafe { crate::pthread_abi::pthread_detach(thr) })
 }
 
 // thrd_exit — Implemented
@@ -133,7 +133,7 @@ pub unsafe extern "C" fn thrd_detach(thr: ThrdT) -> c_int {
 /// C11 `thrd_exit` — terminate the calling thread.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn thrd_exit(res: c_int) -> ! {
-    unsafe { libc::pthread_exit(res as usize as *mut c_void) }
+    unsafe { crate::pthread_abi::pthread_exit(res as usize as *mut c_void) }
 }
 
 // thrd_current — Implemented
@@ -142,7 +142,7 @@ pub unsafe extern "C" fn thrd_exit(res: c_int) -> ! {
 /// C11 `thrd_current` — return the calling thread's ID.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub extern "C" fn thrd_current() -> ThrdT {
-    unsafe { libc::pthread_self() }
+    unsafe { crate::pthread_abi::pthread_self() }
 }
 
 // thrd_equal — Implemented
@@ -151,7 +151,7 @@ pub extern "C" fn thrd_current() -> ThrdT {
 /// C11 `thrd_equal` — compare two thread IDs.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub extern "C" fn thrd_equal(lhs: ThrdT, rhs: ThrdT) -> c_int {
-    unsafe { libc::pthread_equal(lhs, rhs) }
+    unsafe { crate::pthread_abi::pthread_equal(lhs, rhs) }
 }
 
 // thrd_sleep — Implemented
@@ -168,7 +168,7 @@ pub unsafe extern "C" fn thrd_sleep(
     if duration.is_null() {
         return -2;
     }
-    let rc = unsafe { libc::nanosleep(duration, remaining) };
+    let rc = unsafe { libc::syscall(libc::SYS_nanosleep as i64, duration, remaining) as c_int };
     if rc == 0 {
         0
     } else {
@@ -183,7 +183,7 @@ pub unsafe extern "C" fn thrd_sleep(
 /// C11 `thrd_yield` — yield the processor.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub extern "C" fn thrd_yield() {
-    unsafe { libc::sched_yield() };
+    unsafe { libc::syscall(libc::SYS_sched_yield as i64) as c_int };
 }
 
 // ===========================================================================
@@ -201,15 +201,15 @@ pub unsafe extern "C" fn mtx_init(mtx: *mut MtxT, typ: c_int) -> c_int {
     }
 
     let mut attr: libc::pthread_mutexattr_t = unsafe { std::mem::zeroed() };
-    unsafe { libc::pthread_mutexattr_init(&mut attr) };
+    unsafe { crate::pthread_abi::pthread_mutexattr_init(&mut attr) };
 
     // C11 MTX_RECURSIVE flag means recursive mutex.
     if typ & MTX_RECURSIVE != 0 {
-        unsafe { libc::pthread_mutexattr_settype(&mut attr, libc::PTHREAD_MUTEX_RECURSIVE) };
+        unsafe { crate::pthread_abi::pthread_mutexattr_settype(&mut attr, libc::PTHREAD_MUTEX_RECURSIVE) };
     }
 
-    let rc = unsafe { libc::pthread_mutex_init(mtx, &attr) };
-    unsafe { libc::pthread_mutexattr_destroy(&mut attr) };
+    let rc = unsafe { crate::pthread_abi::pthread_mutex_init(mtx, &attr) };
+    unsafe { crate::pthread_abi::pthread_mutexattr_destroy(&mut attr) };
     pthread_rc_to_thrd(rc)
 }
 
@@ -222,7 +222,7 @@ pub unsafe extern "C" fn mtx_lock(mtx: *mut MtxT) -> c_int {
     if mtx.is_null() {
         return THRD_ERROR;
     }
-    pthread_rc_to_thrd(unsafe { libc::pthread_mutex_lock(mtx) })
+    pthread_rc_to_thrd(unsafe { crate::pthread_abi::pthread_mutex_lock(mtx) })
 }
 
 // mtx_trylock — Implemented
@@ -234,7 +234,7 @@ pub unsafe extern "C" fn mtx_trylock(mtx: *mut MtxT) -> c_int {
     if mtx.is_null() {
         return THRD_ERROR;
     }
-    pthread_rc_to_thrd(unsafe { libc::pthread_mutex_trylock(mtx) })
+    pthread_rc_to_thrd(unsafe { crate::pthread_abi::pthread_mutex_trylock(mtx) })
 }
 
 // mtx_timedlock — Implemented
@@ -246,7 +246,7 @@ pub unsafe extern "C" fn mtx_timedlock(mtx: *mut MtxT, ts: *const libc::timespec
     if mtx.is_null() || ts.is_null() {
         return THRD_ERROR;
     }
-    pthread_rc_to_thrd(unsafe { libc::pthread_mutex_timedlock(mtx, ts) })
+    pthread_rc_to_thrd(unsafe { crate::pthread_abi::pthread_mutex_timedlock(mtx, ts) })
 }
 
 // mtx_unlock — Implemented
@@ -258,7 +258,7 @@ pub unsafe extern "C" fn mtx_unlock(mtx: *mut MtxT) -> c_int {
     if mtx.is_null() {
         return THRD_ERROR;
     }
-    pthread_rc_to_thrd(unsafe { libc::pthread_mutex_unlock(mtx) })
+    pthread_rc_to_thrd(unsafe { crate::pthread_abi::pthread_mutex_unlock(mtx) })
 }
 
 // mtx_destroy — Implemented
@@ -268,7 +268,7 @@ pub unsafe extern "C" fn mtx_unlock(mtx: *mut MtxT) -> c_int {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn mtx_destroy(mtx: *mut MtxT) {
     if !mtx.is_null() {
-        unsafe { libc::pthread_mutex_destroy(mtx) };
+        unsafe { crate::pthread_abi::pthread_mutex_destroy(mtx) };
     }
 }
 
@@ -285,7 +285,7 @@ pub unsafe extern "C" fn cnd_init(cond: *mut CndT) -> c_int {
     if cond.is_null() {
         return THRD_ERROR;
     }
-    pthread_rc_to_thrd(unsafe { libc::pthread_cond_init(cond, std::ptr::null()) })
+    pthread_rc_to_thrd(unsafe { crate::pthread_abi::pthread_cond_init(cond, std::ptr::null()) })
 }
 
 // cnd_signal — Implemented
@@ -297,7 +297,7 @@ pub unsafe extern "C" fn cnd_signal(cond: *mut CndT) -> c_int {
     if cond.is_null() {
         return THRD_ERROR;
     }
-    pthread_rc_to_thrd(unsafe { libc::pthread_cond_signal(cond) })
+    pthread_rc_to_thrd(unsafe { crate::pthread_abi::pthread_cond_signal(cond) })
 }
 
 // cnd_broadcast — Implemented
@@ -309,7 +309,7 @@ pub unsafe extern "C" fn cnd_broadcast(cond: *mut CndT) -> c_int {
     if cond.is_null() {
         return THRD_ERROR;
     }
-    pthread_rc_to_thrd(unsafe { libc::pthread_cond_broadcast(cond) })
+    pthread_rc_to_thrd(unsafe { crate::pthread_abi::pthread_cond_broadcast(cond) })
 }
 
 // cnd_wait — Implemented
@@ -321,7 +321,7 @@ pub unsafe extern "C" fn cnd_wait(cond: *mut CndT, mtx: *mut MtxT) -> c_int {
     if cond.is_null() || mtx.is_null() {
         return THRD_ERROR;
     }
-    pthread_rc_to_thrd(unsafe { libc::pthread_cond_wait(cond, mtx) })
+    pthread_rc_to_thrd(unsafe { crate::pthread_abi::pthread_cond_wait(cond, mtx) })
 }
 
 // cnd_timedwait — Implemented
@@ -337,7 +337,7 @@ pub unsafe extern "C" fn cnd_timedwait(
     if cond.is_null() || mtx.is_null() || ts.is_null() {
         return THRD_ERROR;
     }
-    pthread_rc_to_thrd(unsafe { libc::pthread_cond_timedwait(cond, mtx, ts) })
+    pthread_rc_to_thrd(unsafe { crate::pthread_abi::pthread_cond_timedwait(cond, mtx, ts) })
 }
 
 // cnd_destroy — Implemented
@@ -347,7 +347,7 @@ pub unsafe extern "C" fn cnd_timedwait(
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn cnd_destroy(cond: *mut CndT) {
     if !cond.is_null() {
-        unsafe { libc::pthread_cond_destroy(cond) };
+        unsafe { crate::pthread_abi::pthread_cond_destroy(cond) };
     }
 }
 
@@ -364,7 +364,7 @@ pub unsafe extern "C" fn tss_create(key: *mut TssT, dtor: Option<TssDtorT>) -> c
     if key.is_null() {
         return THRD_ERROR;
     }
-    pthread_rc_to_thrd(unsafe { libc::pthread_key_create(key, dtor) })
+    pthread_rc_to_thrd(unsafe { crate::pthread_abi::pthread_key_create(key, dtor) })
 }
 
 // tss_get — Implemented
@@ -373,7 +373,7 @@ pub unsafe extern "C" fn tss_create(key: *mut TssT, dtor: Option<TssDtorT>) -> c
 /// C11 `tss_get` — get thread-specific storage value.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub extern "C" fn tss_get(key: TssT) -> *mut c_void {
-    unsafe { libc::pthread_getspecific(key) }
+    unsafe { crate::pthread_abi::pthread_getspecific(key) }
 }
 
 // tss_set — Implemented
@@ -382,7 +382,7 @@ pub extern "C" fn tss_get(key: TssT) -> *mut c_void {
 /// C11 `tss_set` — set thread-specific storage value.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn tss_set(key: TssT, val: *mut c_void) -> c_int {
-    pthread_rc_to_thrd(unsafe { libc::pthread_setspecific(key, val) })
+    pthread_rc_to_thrd(unsafe { crate::pthread_abi::pthread_setspecific(key, val) })
 }
 
 // tss_delete — Implemented
@@ -391,7 +391,7 @@ pub unsafe extern "C" fn tss_set(key: TssT, val: *mut c_void) -> c_int {
 /// C11 `tss_delete` — delete thread-specific storage key.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn tss_delete(key: TssT) {
-    unsafe { libc::pthread_key_delete(key) };
+    unsafe { crate::pthread_abi::pthread_key_delete(key) };
 }
 
 // ===========================================================================

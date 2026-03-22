@@ -4189,7 +4189,7 @@ pub unsafe extern "C" fn pthread_sigqueue(
                 let p = &mut info as *mut libc::siginfo_t as *mut u8;
                 // si_pid at offset 16, si_uid at offset 20 on x86_64
                 *(p.add(16).cast::<i32>()) = pid;
-                *(p.add(20).cast::<u32>()) = libc::getuid();
+                *(p.add(20).cast::<u32>()) = libc::syscall(libc::SYS_getuid as i64) as libc::uid_t;
                 // si_value at offset 24
                 *(p.add(24).cast::<libc::sigval>()) = value;
             }

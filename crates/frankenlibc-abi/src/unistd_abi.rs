@@ -2280,7 +2280,7 @@ fn syslog_connect() -> c_int {
         )
     };
     if rc < 0 {
-        unsafe { libc::close(fd) };
+        unsafe { libc::syscall(libc::SYS_close as i64, fd) as c_int };
         return -1;
     }
     fd
@@ -2309,7 +2309,7 @@ fn syslog_send(priority: c_int, message: &[u8]) {
         tv_sec: 0,
         tv_nsec: 0,
     };
-    unsafe { libc::clock_gettime(libc::CLOCK_REALTIME, &mut tv) };
+    unsafe { libc::syscall(libc::SYS_clock_gettime as i64, libc::CLOCK_REALTIME as i64, &mut tv) as c_int };
     let epoch = tv.tv_sec;
     let secs_in_day = epoch % 86400;
     let hour = secs_in_day / 3600;
@@ -2327,7 +2327,7 @@ fn syslog_send(priority: c_int, message: &[u8]) {
     };
 
     let pid_part = if state.option & LOG_PID != 0 {
-        format!("[{}]", unsafe { libc::getpid() })
+        format!("[{}]", unsafe { libc::syscall(libc::SYS_getpid as i64) as libc::pid_t })
     } else {
         String::new()
     };
@@ -2355,7 +2355,7 @@ fn syslog_send(priority: c_int, message: &[u8]) {
         };
         sent = rc >= 0;
         if !sent {
-            unsafe { libc::close(state.sock_fd) };
+            unsafe { libc::syscall(libc::SYS_close as i64, state.sock_fd) as c_int };
             state.sock_fd = syslog_connect();
             if state.sock_fd >= 0 {
                 let rc2 = unsafe {
@@ -2462,7 +2462,7 @@ pub unsafe extern "C" fn syslog(priority: c_int, format: *const c_char, mut args
 pub unsafe extern "C" fn closelog() {
     let mut state = SYSLOG_STATE.lock().unwrap_or_else(|e| e.into_inner());
     if state.sock_fd >= 0 {
-        unsafe { libc::close(state.sock_fd) };
+        unsafe { libc::syscall(libc::SYS_close as i64, state.sock_fd) as c_int };
         state.sock_fd = -1;
     }
     state.ident_ptr = std::ptr::null();
@@ -2505,7 +2505,7 @@ static mut PTSNAME_FALLBACK: [c_char; PTSNAME_MAX_LEN] = [0; PTSNAME_MAX_LEN];
 
 #[inline]
 unsafe fn lookup_login_name_ptr() -> *const c_char {
-    let pwd = unsafe { crate::pwd_abi::getpwuid(libc::geteuid()) };
+    let pwd = unsafe { crate::pwd_abi::getpwuid(libc::syscall(libc::SYS_geteuid as i64) as libc::uid_t) };
     if pwd.is_null() {
         return std::ptr::null();
     }
@@ -3026,7 +3026,7 @@ unsafe fn ftw_walk_dir(
     const FTW_NS: c_int = 3; // stat failed
 
     let mut st: libc::stat = unsafe { std::mem::zeroed() };
-    let rc = unsafe { libc::stat(path, &mut st) };
+    let rc = unsafe { libc::syscall(libc::SYS_newfstatat as i64, libc::AT_FDCWD, path, &mut st, 0) as c_int };
     if rc != 0 {
         return unsafe { func(path, &st, FTW_NS) };
     }
@@ -3065,7 +3065,7 @@ unsafe fn ftw_walk_dir(
         // Build child path: path + "/" + name
         let path_len = unsafe { crate::string_abi::strlen(path) };
         let child_len = path_len + 1 + name_bytes.len() + 1;
-        let child_buf = unsafe { crate::malloc_abi::malloc(child_len) as *mut u8 };
+        let child_buf = unsafe { crate::malloc_abi::raw_alloc(child_len) as *mut u8 };
         if child_buf.is_null() {
             unsafe { libc::closedir(dir) };
             return -1;
@@ -3088,7 +3088,7 @@ unsafe fn ftw_walk_dir(
             unsafe { ftw_walk_dir(child_buf as *const c_char, func, max_fd, depth + 1) }
         };
 
-        unsafe { crate::malloc_abi::free(child_buf as *mut c_void) };
+        unsafe { crate::malloc_abi::raw_free(child_buf as *mut c_void) };
 
         if ret != 0 {
             unsafe { libc::closedir(dir) };
@@ -3164,7 +3164,7 @@ unsafe fn nftw_walk_dir(
     let rc = if flags & FTW_PHYS != 0 {
         unsafe { libc::lstat(path, &mut st) }
     } else {
-        unsafe { libc::stat(path, &mut st) }
+        unsafe { libc::syscall(libc::SYS_newfstatat as i64, libc::AT_FDCWD, path, &mut st, 0) as c_int }
     };
 
     // Compute base offset (last '/' + 1).
@@ -3199,7 +3199,7 @@ unsafe fn nftw_walk_dir(
     if is_link && flags & FTW_PHYS != 0 {
         // Check if dangling
         let mut target_st: libc::stat = unsafe { std::mem::zeroed() };
-        let typeflag = if unsafe { libc::stat(path, &mut target_st) } != 0 {
+        let typeflag = if unsafe { libc::syscall(libc::SYS_newfstatat as i64, libc::AT_FDCWD, path, &mut target_st, 0) as c_int } != 0 {
             NFTW_SLN
         } else {
             NFTW_SL
@@ -3254,7 +3254,7 @@ unsafe fn nftw_walk_dir(
 
         // Build child path
         let child_len = path_len + 1 + name_bytes.len() + 1;
-        let child_buf = unsafe { crate::malloc_abi::malloc(child_len) as *mut u8 };
+        let child_buf = unsafe { crate::malloc_abi::raw_alloc(child_len) as *mut u8 };
         if child_buf.is_null() {
             unsafe { libc::closedir(dir) };
             return -1;
@@ -3281,7 +3281,7 @@ unsafe fn nftw_walk_dir(
             )
         };
 
-        unsafe { crate::malloc_abi::free(child_buf as *mut c_void) };
+        unsafe { crate::malloc_abi::raw_free(child_buf as *mut c_void) };
 
         if ret != 0 {
             unsafe { libc::closedir(dir) };
@@ -4529,7 +4529,7 @@ pub unsafe extern "C" fn wordexp(
 
     // Allocate the wordv array
     let wordv_size = total_slots * std::mem::size_of::<*mut c_char>();
-    let new_wordv = unsafe { crate::malloc_abi::malloc(wordv_size) as *mut *mut c_char };
+    let new_wordv = unsafe { crate::malloc_abi::raw_alloc(wordv_size) as *mut *mut c_char };
     if new_wordv.is_null() {
         return WRDE_NOSPACE;
     }
@@ -4549,13 +4549,13 @@ pub unsafe extern "C" fn wordexp(
     // Add new words
     for (i, cstr) in final_words.iter().enumerate() {
         let len = cstr.as_bytes_with_nul().len();
-        let buf = unsafe { crate::malloc_abi::malloc(len) as *mut c_char };
+        let buf = unsafe { crate::malloc_abi::raw_alloc(len) as *mut c_char };
         if buf.is_null() {
             // Clean up on allocation failure
             for j in 0..i {
-                unsafe { crate::malloc_abi::free(*new_wordv.add(offs + old_count + j) as *mut c_void) };
+                unsafe { crate::malloc_abi::raw_free(*new_wordv.add(offs + old_count + j) as *mut c_void) };
             }
-            unsafe { crate::malloc_abi::free(new_wordv as *mut c_void) };
+            unsafe { crate::malloc_abi::raw_free(new_wordv as *mut c_void) };
             return WRDE_NOSPACE;
         }
         unsafe {
@@ -4569,7 +4569,7 @@ pub unsafe extern "C" fn wordexp(
 
     // Free old wordv array (but not the strings if appending)
     if !we.we_wordv.is_null() && ((flags & WRDE_APPEND) != 0 || old_count == 0) {
-        unsafe { crate::malloc_abi::free(we.we_wordv as *mut c_void) };
+        unsafe { crate::malloc_abi::raw_free(we.we_wordv as *mut c_void) };
     }
 
     we.we_wordc = old_count + new_count;
@@ -4590,10 +4590,10 @@ unsafe fn wordexp_free_wordv(we: &mut WordexpT) {
     for i in 0..we.we_wordc {
         let p = unsafe { *we.we_wordv.add(offs + i) };
         if !p.is_null() {
-            unsafe { crate::malloc_abi::free(p as *mut c_void) };
+            unsafe { crate::malloc_abi::raw_free(p as *mut c_void) };
         }
     }
-    unsafe { crate::malloc_abi::free(we.we_wordv as *mut c_void) };
+    unsafe { crate::malloc_abi::raw_free(we.we_wordv as *mut c_void) };
     we.we_wordv = std::ptr::null_mut();
     we.we_wordc = 0;
 }
@@ -6595,7 +6595,7 @@ fn netlink_dump(msg_type: u16, family: u8) -> Result<Vec<u8>, c_int> {
 fn alloc_sockaddr(family: u8, addr_data: &[u8]) -> *mut libc::sockaddr {
     match family as i32 {
         libc::AF_INET if addr_data.len() >= 4 => {
-            let sa = unsafe { crate::malloc_abi::calloc(1, std::mem::size_of::<libc::sockaddr_in>()) }
+            let sa = unsafe { crate::malloc_abi::raw_alloc(std::mem::size_of::<libc::sockaddr_in>()) }
                 as *mut libc::sockaddr_in;
             if sa.is_null() {
                 return std::ptr::null_mut();
@@ -6611,7 +6611,7 @@ fn alloc_sockaddr(family: u8, addr_data: &[u8]) -> *mut libc::sockaddr {
             sa as *mut libc::sockaddr
         }
         libc::AF_INET6 if addr_data.len() >= 16 => {
-            let sa = unsafe { crate::malloc_abi::calloc(1, std::mem::size_of::<libc::sockaddr_in6>()) }
+            let sa = unsafe { crate::malloc_abi::raw_alloc(std::mem::size_of::<libc::sockaddr_in6>()) }
                 as *mut libc::sockaddr_in6;
             if sa.is_null() {
                 return std::ptr::null_mut();
@@ -6634,7 +6634,7 @@ fn alloc_sockaddr(family: u8, addr_data: &[u8]) -> *mut libc::sockaddr {
 fn alloc_netmask(family: u8, prefixlen: u8) -> *mut libc::sockaddr {
     match family as i32 {
         libc::AF_INET => {
-            let sa = unsafe { crate::malloc_abi::calloc(1, std::mem::size_of::<libc::sockaddr_in>()) }
+            let sa = unsafe { crate::malloc_abi::raw_alloc(std::mem::size_of::<libc::sockaddr_in>()) }
                 as *mut libc::sockaddr_in;
             if sa.is_null() {
                 return std::ptr::null_mut();
@@ -6653,7 +6653,7 @@ fn alloc_netmask(family: u8, prefixlen: u8) -> *mut libc::sockaddr {
             sa as *mut libc::sockaddr
         }
         libc::AF_INET6 => {
-            let sa = unsafe { crate::malloc_abi::calloc(1, std::mem::size_of::<libc::sockaddr_in6>()) }
+            let sa = unsafe { crate::malloc_abi::raw_alloc(std::mem::size_of::<libc::sockaddr_in6>()) }
                 as *mut libc::sockaddr_in6;
             if sa.is_null() {
                 return std::ptr::null_mut();
@@ -6819,7 +6819,7 @@ fn parse_netlink_addrs(
             if let Some(addr_bytes) = effective_addr {
                 // Allocate an ifaddrs node
                 let node =
-                    unsafe { crate::malloc_abi::calloc(1, std::mem::size_of::<Ifaddrs>()) as *mut Ifaddrs };
+                    unsafe { crate::malloc_abi::raw_alloc(std::mem::size_of::<Ifaddrs>()) as *mut Ifaddrs };
                 if node.is_null() {
                     continue;
                 }
@@ -6828,7 +6828,7 @@ fn parse_netlink_addrs(
                 let name_cstr =
                     CString::new(if_name.as_str()).unwrap_or_else(|_| CString::new("?").unwrap());
                 let name_ptr =
-                    unsafe { crate::malloc_abi::malloc(name_cstr.as_bytes_with_nul().len()) as *mut c_char };
+                    unsafe { crate::malloc_abi::raw_alloc(name_cstr.as_bytes_with_nul().len()) as *mut c_char };
                 if !name_ptr.is_null() {
                     unsafe {
                         std::ptr::copy_nonoverlapping(
@@ -6878,18 +6878,18 @@ pub unsafe extern "C" fn freeifaddrs(ifa: *mut c_void) {
         let next = unsafe { (*cur).ifa_next };
         unsafe {
             if !(*cur).ifa_name.is_null() {
-                crate::malloc_abi::free((*cur).ifa_name as *mut c_void);
+                crate::malloc_abi::raw_free((*cur).ifa_name as *mut c_void);
             }
             if !(*cur).ifa_addr.is_null() {
-                crate::malloc_abi::free((*cur).ifa_addr as *mut c_void);
+                crate::malloc_abi::raw_free((*cur).ifa_addr as *mut c_void);
             }
             if !(*cur).ifa_netmask.is_null() {
-                crate::malloc_abi::free((*cur).ifa_netmask as *mut c_void);
+                crate::malloc_abi::raw_free((*cur).ifa_netmask as *mut c_void);
             }
             if !(*cur).ifa_broadaddr.is_null() {
-                crate::malloc_abi::free((*cur).ifa_broadaddr as *mut c_void);
+                crate::malloc_abi::raw_free((*cur).ifa_broadaddr as *mut c_void);
             }
-            crate::malloc_abi::free(cur as *mut c_void);
+            crate::malloc_abi::raw_free(cur as *mut c_void);
         };
         cur = next;
     }
@@ -9320,19 +9320,19 @@ pub unsafe extern "C" fn glob64(
             let count = res.paths.len();
             // Allocate pathv array (count + 1 for NULL sentinel).
             let pathv = unsafe {
-                crate::malloc_abi::malloc((count + 1) * std::mem::size_of::<*mut c_char>()) as *mut *mut c_char
+                crate::malloc_abi::raw_alloc((count + 1) * std::mem::size_of::<*mut c_char>()) as *mut *mut c_char
             };
             if pathv.is_null() {
                 return glob_core::GLOB_NOSPACE;
             }
             for (i, path) in res.paths.iter().enumerate() {
-                let dup = unsafe { crate::malloc_abi::malloc(path.len() + 1) as *mut c_char };
+                let dup = unsafe { crate::malloc_abi::raw_alloc(path.len() + 1) as *mut c_char };
                 if dup.is_null() {
                     // Free already allocated.
                     for j in 0..i {
-                        unsafe { crate::malloc_abi::free(*pathv.add(j) as *mut c_void) };
+                        unsafe { crate::malloc_abi::raw_free(*pathv.add(j) as *mut c_void) };
                     }
-                    unsafe { crate::malloc_abi::free(pathv as *mut c_void) };
+                    unsafe { crate::malloc_abi::raw_free(pathv as *mut c_void) };
                     return glob_core::GLOB_NOSPACE;
                 }
                 unsafe {
@@ -9368,10 +9368,10 @@ pub unsafe extern "C" fn globfree64(pglob: *mut c_void) {
         for i in offs..offs + pathc {
             let p = unsafe { *pathv.add(i) };
             if !p.is_null() {
-                unsafe { crate::malloc_abi::free(p as *mut c_void) };
+                unsafe { crate::malloc_abi::raw_free(p as *mut c_void) };
             }
         }
-        unsafe { crate::malloc_abi::free(pathv as *mut c_void) };
+        unsafe { crate::malloc_abi::raw_free(pathv as *mut c_void) };
     }
     // Zero out the glob_t.
     unsafe {
@@ -9567,7 +9567,7 @@ pub unsafe extern "C" fn get_current_dir_name() -> *mut c_char {
         return std::ptr::null_mut();
     }
     let len = buf.iter().position(|&b| b == 0).unwrap_or(rc as usize);
-    let ptr = unsafe { crate::malloc_abi::malloc(len + 1) as *mut c_char };
+    let ptr = unsafe { crate::malloc_abi::raw_alloc(len + 1) as *mut c_char };
     if ptr.is_null() {
         unsafe { set_abi_errno(libc::ENOMEM) };
         return std::ptr::null_mut();
@@ -9582,7 +9582,7 @@ pub unsafe extern "C" fn get_current_dir_name() -> *mut c_char {
 /// GNU `canonicalize_file_name` — resolve path like realpath(path, NULL).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn canonicalize_file_name(path: *const c_char) -> *mut c_char {
-    unsafe { crate::wchar_abi::realpath(path, std::ptr::null_mut()) }
+    unsafe { libc::realpath(path, std::ptr::null_mut()) }
 }
 
 // ---------------------------------------------------------------------------
@@ -9793,7 +9793,7 @@ pub unsafe extern "C" fn tempnam(dir: *const c_char, pfx: *const c_char) -> *mut
     let pid = unsafe { libc::syscall(libc::SYS_getpid) } as u32;
     let name = format!("{dir_str}/{pfx_str}{pid:x}{cnt:x}");
 
-    let ptr = unsafe { crate::malloc_abi::malloc(name.len() + 1) as *mut c_char };
+    let ptr = unsafe { crate::malloc_abi::raw_alloc(name.len() + 1) as *mut c_char };
     if ptr.is_null() {
         return std::ptr::null_mut();
     }
@@ -10116,7 +10116,7 @@ pub unsafe extern "C" fn pkey_mprotect(
 /// The TID (pid field) is at offset 720 in the NPTL struct (glibc 2.34+).
 /// For the common case of pthread_self(), we can detect this and use SYS_gettid.
 unsafe fn pthread_to_tid(thread: libc::pthread_t) -> c_long {
-    let self_handle = unsafe { libc::pthread_self() };
+    let self_handle = unsafe { crate::pthread_abi::pthread_self() };
     if thread == self_handle {
         // Common case: operating on current thread
         unsafe { libc::syscall(libc::SYS_gettid) as c_long }
@@ -11294,7 +11294,7 @@ pub unsafe extern "C" fn fts_read(ftsp: *mut c_void) -> *mut FTSENT {
     let stat_result = if stream.options & FTS_PHYSICAL != 0 {
         unsafe { libc::lstat(path_cstr.as_ptr(), &mut stat_buf) }
     } else {
-        unsafe { libc::stat(path_cstr.as_ptr(), &mut stat_buf) }
+        unsafe { libc::syscall(libc::SYS_newfstatat as i64, libc::AT_FDCWD, path_cstr.as_ptr(), &mut stat_buf, 0) as c_int }
     };
 
     let info = if stat_result < 0 {
@@ -11973,7 +11973,7 @@ pub unsafe extern "C" fn syscall(number: c_long, mut args: ...) -> c_long {
 /// C99 `_Exit` — terminate immediately without cleanup.
 #[cfg_attr(not(debug_assertions), unsafe(export_name = "_Exit"))]
 pub unsafe extern "C" fn frankenlibc_exit_immediate(status: c_int) -> ! {
-    unsafe { libc::_exit(status) }
+    unsafe { frankenlibc_core::syscall::sys_exit_group(status) }
 }
 
 /// POSIX `execv` — execute file with argument vector.
@@ -13455,7 +13455,7 @@ pub unsafe extern "C" fn obstack_vprintf(
     unsafe {
         std::ptr::copy_nonoverlapping(result_ptr as *const u8, (*h).next_free, data_len);
         (*h).next_free = (*h).next_free.add(data_len);
-        crate::malloc_abi::free(result_ptr as *mut c_void);
+        crate::malloc_abi::raw_free(result_ptr as *mut c_void);
     }
     len
 }
@@ -13662,7 +13662,7 @@ unsafe extern "C" fn ucontext_trampoline() {
         unsafe { setcontext(uc_link as *const libc::ucontext_t) };
     }
     // No uc_link — exit the thread/process
-    unsafe { libc::_exit(0) };
+    unsafe { frankenlibc_core::syscall::sys_exit_group(0) };
 }
 
 /// `swapcontext` — save current context and switch to new context (x86_64 native).
@@ -14168,7 +14168,7 @@ pub unsafe extern "C" fn ntp_gettime(ntv: *mut c_void) -> c_int {
         tv_sec: 0,
         tv_nsec: 0,
     };
-    unsafe { libc::clock_gettime(libc::CLOCK_REALTIME, &mut ts) };
+    unsafe { libc::syscall(libc::SYS_clock_gettime as i64, libc::CLOCK_REALTIME as i64, &mut ts) as c_int };
     // ntptimeval.time = timeval at offset 0
     let p = ntv as *mut i64;
     unsafe {
@@ -14245,7 +14245,7 @@ pub unsafe extern "C" fn getdate_r(_string: *const c_char, _result: *mut c_void)
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn timelocal(tm: *mut c_void) -> i64 {
     // timelocal is just mktime (BSD alias)
-    unsafe { libc::mktime(tm as *mut libc::tm) }
+    unsafe { crate::time_abi::mktime(tm as *mut libc::tm) }
 }
 
 // ===========================================================================
@@ -14642,7 +14642,7 @@ pub unsafe extern "C" fn __gmtime_r(
     time: *const libc::time_t,
     result: *mut libc::tm,
 ) -> *mut libc::tm {
-    unsafe { libc::gmtime_r(time, result) }
+    unsafe { crate::time_abi::gmtime_r(time, result) }
 }
 
 // ── __sched_* aliases ───────────────────────────────────────────────────────

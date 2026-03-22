@@ -69,6 +69,24 @@ struct BumpHeap(std::cell::UnsafeCell<[u8; BUMP_SIZE]>);
 unsafe impl Sync for BumpHeap {}
 static BUMP_HEAP: BumpHeap = BumpHeap(std::cell::UnsafeCell::new([0u8; BUMP_SIZE]));
 
+/// Raw allocator for internal ABI use.
+///
+/// Calls `libc::malloc` which routes through our interposed `malloc` under
+/// LD_PRELOAD (handled by the bump allocator reentry guard) or through the
+/// host allocator in non-interposition mode (cargo test).
+pub(crate) unsafe fn raw_alloc(size: usize) -> *mut c_void {
+    unsafe { libc::malloc(size) }
+}
+
+/// Raw free for internally-allocated memory.
+///
+/// Calls `libc::free` which routes through our interposed `free` under
+/// LD_PRELOAD (handles bump pointers) or through the host free in
+/// non-interposition mode.
+pub(crate) unsafe fn raw_free(ptr: *mut c_void) {
+    unsafe { libc::free(ptr) }
+}
+
 #[cold]
 unsafe fn bump_alloc(size: usize) -> *mut c_void {
     let align = 16;
@@ -1723,7 +1741,7 @@ pub unsafe extern "C" fn malloc_stats() {
     );
     // SAFETY: write(2, buf, len) - writing to stderr fd.
     unsafe {
-        libc::write(2, msg.as_ptr().cast(), msg.len());
+        crate::unistd_abi::write(2, msg.as_ptr().cast(), msg.len());
     }
 }
 
@@ -1778,7 +1796,7 @@ pub unsafe extern "C" fn malloc_info(options: c_int, stream: *mut c_void) -> c_i
 #[inline]
 fn page_size() -> usize {
     // SAFETY: sysconf(_SC_PAGESIZE) is always safe and returns the page size.
-    let ps = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+    let ps = unsafe { crate::unistd_abi::sysconf(libc::_SC_PAGESIZE) };
     if ps > 0 { ps as usize } else { 4096 }
 }
 

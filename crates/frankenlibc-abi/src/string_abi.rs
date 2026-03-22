@@ -2952,7 +2952,7 @@ pub unsafe extern "C" fn strdup(s: *const c_char) -> *mut c_char {
         let (s_len, _) = scan_c_string(s, bound);
         let alloc_size = s_len + 1;
 
-        let dst = crate::malloc_abi::malloc(alloc_size);
+        let dst = crate::malloc_abi::raw_alloc(alloc_size);
         if dst.is_null() {
             record_string_stage_outcome(
                 &ordering,
@@ -3046,7 +3046,7 @@ pub unsafe extern "C" fn strndup(s: *const c_char, n: usize) -> *mut c_char {
         let copy_len = s_len.min(n);
         let alloc_size = copy_len + 1;
 
-        let dst = crate::malloc_abi::malloc(alloc_size);
+        let dst = crate::malloc_abi::raw_alloc(alloc_size);
         if dst.is_null() {
             record_string_stage_outcome(
                 &ordering,
@@ -4736,7 +4736,7 @@ pub unsafe extern "C" fn glob(
 
             // Allocate pathv: offs + total + 1 (null terminator)
             let alloc_count = offs + total + 1;
-            let pathv = unsafe { crate::malloc_abi::malloc(alloc_count * std::mem::size_of::<*mut c_char>()) }
+            let pathv = unsafe { crate::malloc_abi::raw_alloc(alloc_count * std::mem::size_of::<*mut c_char>()) }
                 as *mut *mut c_char;
             if pathv.is_null() {
                 return glob_core::GLOB_NOSPACE;
@@ -4755,13 +4755,13 @@ pub unsafe extern "C" fn glob(
             // Copy new paths as strdup'd C strings.
             for (i, path) in res.paths.iter().enumerate() {
                 let len = path.len();
-                let s = unsafe { crate::malloc_abi::malloc(len + 1) } as *mut c_char;
+                let s = unsafe { crate::malloc_abi::raw_alloc(len + 1) } as *mut c_char;
                 if s.is_null() {
                     // Free everything allocated so far.
                     for j in 0..i {
-                        unsafe { crate::malloc_abi::free(*pathv.add(offs + existing_count + j) as *mut c_void) };
+                        unsafe { crate::malloc_abi::raw_free(*pathv.add(offs + existing_count + j) as *mut c_void) };
                     }
-                    unsafe { crate::malloc_abi::free(pathv as *mut c_void) };
+                    unsafe { crate::malloc_abi::raw_free(pathv as *mut c_void) };
                     return glob_core::GLOB_NOSPACE;
                 }
                 unsafe {
@@ -4778,7 +4778,7 @@ pub unsafe extern "C" fn glob(
             if append {
                 let old_pathv = unsafe { *((pglob as *const u8).add(8) as *const *mut c_void) };
                 if !old_pathv.is_null() {
-                    unsafe { crate::malloc_abi::free(old_pathv) };
+                    unsafe { crate::malloc_abi::raw_free(old_pathv) };
                 }
             }
 
@@ -4818,12 +4818,12 @@ pub unsafe extern "C" fn globfree(pglob: *mut c_void) {
     for i in offs..offs + pathc {
         let p = unsafe { *pathv.add(i) };
         if !p.is_null() {
-            unsafe { crate::malloc_abi::free(p as *mut c_void) };
+            unsafe { crate::malloc_abi::raw_free(p as *mut c_void) };
         }
     }
 
     // Free the pathv array.
-    unsafe { crate::malloc_abi::free(pathv as *mut c_void) };
+    unsafe { crate::malloc_abi::raw_free(pathv as *mut c_void) };
 
     // Zero out the glob_t.
     unsafe {
@@ -5323,7 +5323,7 @@ pub unsafe extern "C" fn argz_create(
         return 0;
     }
 
-    let buf = unsafe { crate::malloc_abi::malloc(total_len) as *mut c_char };
+    let buf = unsafe { crate::malloc_abi::raw_alloc(total_len) as *mut c_char };
     if buf.is_null() {
         return libc::ENOMEM;
     }
@@ -5378,7 +5378,7 @@ pub unsafe extern "C" fn argz_create_sep(
     }
 
     let len = buf.len();
-    let ptr = unsafe { crate::malloc_abi::malloc(len) as *mut c_char };
+    let ptr = unsafe { crate::malloc_abi::raw_alloc(len) as *mut c_char };
     if ptr.is_null() {
         return libc::ENOMEM;
     }
@@ -5439,11 +5439,14 @@ pub unsafe extern "C" fn argz_add(
     let slen = unsafe { crate::string_abi::strlen(str_) };
     let old_len = unsafe { *argz_len };
     let new_len = old_len + slen + 1;
-    let new_buf = unsafe { crate::malloc_abi::realloc((*argz) as *mut c_void, new_len) as *mut c_char };
+    let new_buf = unsafe { crate::malloc_abi::raw_alloc(new_len) as *mut c_char };
     if new_buf.is_null() {
         return libc::ENOMEM;
     }
     unsafe {
+        if old_len > 0 && !(*argz).is_null() {
+            std::ptr::copy_nonoverlapping(*argz as *const u8, new_buf as *mut u8, old_len);
+        }
         std::ptr::copy_nonoverlapping(str_ as *const u8, new_buf.add(old_len) as *mut u8, slen + 1);
         *argz = new_buf;
         *argz_len = new_len;
@@ -5490,11 +5493,14 @@ pub unsafe extern "C" fn argz_append(
     }
     let old_len = unsafe { *argz_len };
     let new_len = old_len + buf_len;
-    let new_buf = unsafe { crate::malloc_abi::realloc((*argz) as *mut c_void, new_len) as *mut c_char };
+    let new_buf = unsafe { crate::malloc_abi::raw_alloc(new_len) as *mut c_char };
     if new_buf.is_null() {
         return libc::ENOMEM;
     }
     unsafe {
+        if old_len > 0 && !(*argz).is_null() {
+            std::ptr::copy_nonoverlapping(*argz as *const u8, new_buf as *mut u8, old_len);
+        }
         std::ptr::copy_nonoverlapping(buf as *const u8, new_buf.add(old_len) as *mut u8, buf_len);
         *argz = new_buf;
         *argz_len = new_len;
@@ -5576,24 +5582,28 @@ pub unsafe extern "C" fn argz_insert(
     let az = unsafe { *argz };
     let before_offset = unsafe { before.offset_from(az) } as usize;
 
-    let new_buf = unsafe { crate::malloc_abi::realloc(az as *mut c_void, new_len) as *mut c_char };
+    let new_buf = unsafe { crate::malloc_abi::raw_alloc(new_len) as *mut c_char };
     if new_buf.is_null() {
         return libc::ENOMEM;
     }
 
-    // Shift tail right
     let tail_len = old_len - before_offset;
     unsafe {
-        std::ptr::copy(
-            new_buf.add(before_offset) as *const u8,
-            new_buf.add(before_offset + slen) as *mut u8,
-            tail_len,
-        );
+        if before_offset > 0 {
+            std::ptr::copy_nonoverlapping(az as *const u8, new_buf as *mut u8, before_offset);
+        }
         std::ptr::copy_nonoverlapping(
             entry as *const u8,
             new_buf.add(before_offset) as *mut u8,
             slen,
         );
+        if tail_len > 0 {
+            std::ptr::copy_nonoverlapping(
+                az.add(before_offset) as *const u8,
+                new_buf.add(before_offset + slen) as *mut u8,
+                tail_len,
+            );
+        }
         *argz = new_buf;
         *argz_len = new_len;
     }
@@ -5641,14 +5651,14 @@ pub unsafe extern "C" fn argz_replace(
     let new_len: usize = entries.iter().map(|e| e.len() + 1).sum();
     if new_len == 0 {
         unsafe {
-            crate::malloc_abi::free((*argz) as *mut c_void);
+            crate::malloc_abi::raw_free((*argz) as *mut c_void);
             *argz = std::ptr::null_mut();
             *argz_len = 0;
         }
         return 0;
     }
 
-    let new_buf = unsafe { crate::malloc_abi::realloc((*argz) as *mut c_void, new_len) as *mut c_char };
+    let new_buf = unsafe { crate::malloc_abi::raw_alloc(new_len) as *mut c_char };
     if new_buf.is_null() {
         return libc::ENOMEM;
     }

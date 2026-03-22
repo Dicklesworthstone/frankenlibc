@@ -130,7 +130,7 @@ fn open_main_program_handle() -> *mut c_void {
 
 fn close_main_program_handle() -> c_int {
     match MAIN_PROGRAM_REFS.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |refs| {
-        (refs > 0).then_some(refs - 1)
+        if refs > 0 { Some(refs - 1) } else { None }
     }) {
         Ok(_) => 0,
         Err(_) => -1,

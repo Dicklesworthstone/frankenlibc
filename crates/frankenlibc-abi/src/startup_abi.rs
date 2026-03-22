@@ -368,7 +368,10 @@ unsafe extern "C" fn host_delegate_main_wrapper(
     envp: *mut *mut c_char,
 ) -> c_int {
     init_program_name(argv);
-    runtime_policy::signal_runtime_ready();
+    // NOTE: Do NOT call signal_runtime_ready() here.  The membrane's
+    // ValidationPipeline is not re-entrant — enabling it causes deadlocks
+    // when interposed string/memory functions re-enter the pipeline.
+    // All ABI functions run in passthrough mode under LD_PRELOAD.
 
     let main_ptr = HOST_DELEGATED_MAIN.load(Ordering::Acquire);
     if main_ptr == 0 {
@@ -790,7 +793,10 @@ pub unsafe extern "C" fn __libc_start_main(
         unsafe { init_fn() };
     }
     init_program_name(ubp_av);
-    runtime_policy::signal_runtime_ready();
+    // NOTE: Do NOT call signal_runtime_ready() here.  The membrane's
+    // ValidationPipeline is not re-entrant — enabling it causes deadlocks
+    // when interposed string/memory functions re-enter the pipeline.
+    // All ABI functions run in passthrough mode under LD_PRELOAD.
     let rc = match main {
         Some(main_fn) => unsafe { main_fn(argc, ubp_av, std::ptr::null_mut()) },
         None => 0,

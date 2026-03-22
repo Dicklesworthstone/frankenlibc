@@ -596,7 +596,7 @@ pub unsafe extern "C" fn exit(status: c_int) -> ! {
 
     // 2. Flush all open stdio streams.
     unsafe {
-        crate::stdio_abi::fflush(std::ptr::null_mut());
+        libc::fflush(std::ptr::null_mut());
     }
 
     // 3. Terminate process.
@@ -2048,13 +2048,13 @@ pub unsafe extern "C" fn abort() -> ! {
     let _ = unsafe { libc::fflush(ptr::null_mut()) };
     // Raise SIGABRT. If the signal handler returns, re-raise with default.
     unsafe {
-        libc::raise(libc::SIGABRT);
+        crate::signal_abi::raise(libc::SIGABRT);
         // If we get here, reset handler and raise again.
-        libc::signal(libc::SIGABRT, libc::SIG_DFL);
-        libc::raise(libc::SIGABRT);
+        crate::signal_abi::signal(libc::SIGABRT, libc::SIG_DFL);
+        crate::signal_abi::raise(libc::SIGABRT);
     }
     // Should never reach here, but the compiler needs a diverging path.
-    unsafe { libc::_exit(134) }
+    unsafe { frankenlibc_core::syscall::sys_exit_group(134) }
 }
 
 /// Exit handler entry for `on_exit` — stores function pointer + arg.
@@ -2118,7 +2118,7 @@ pub unsafe extern "C" fn quick_exit(status: c_int) -> ! {
     for func in handlers.iter().rev() {
         unsafe { func() };
     }
-    unsafe { libc::_exit(status) }
+    unsafe { frankenlibc_core::syscall::sys_exit_group(status) }
 }
 
 // ===========================================================================
@@ -2389,7 +2389,7 @@ pub unsafe extern "C" fn error(status: c_int, errnum: c_int, fmt: *const c_char,
 
     if errnum != 0 {
         let err_msg = unsafe {
-            let p = libc::strerror(errnum);
+            let p = crate::string_abi::strerror(errnum);
             if !p.is_null() {
                 CStr::from_ptr(p).to_str().unwrap_or("Unknown error")
             } else {
@@ -2455,7 +2455,7 @@ pub unsafe extern "C" fn error_at_line(
 
     if errnum != 0 {
         let err_msg = unsafe {
-            let p = libc::strerror(errnum);
+            let p = crate::string_abi::strerror(errnum);
             if !p.is_null() {
                 CStr::from_ptr(p).to_str().unwrap_or("Unknown error")
             } else {
@@ -2538,7 +2538,7 @@ pub extern "C" fn get_phys_pages() -> c_long {
                 if parts.len() >= 2
                     && let Ok(kb) = parts[1].parse::<c_long>()
                 {
-                    let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+                    let page_size = unsafe { crate::unistd_abi::sysconf(libc::_SC_PAGESIZE) };
                     let page_size = if page_size > 0 { page_size } else { 4096 };
                     return (kb * 1024) / page_size;
                 }
@@ -2558,7 +2558,7 @@ pub extern "C" fn get_avphys_pages() -> c_long {
                 if parts.len() >= 2
                     && let Ok(kb) = parts[1].parse::<c_long>()
                 {
-                    let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+                    let page_size = unsafe { crate::unistd_abi::sysconf(libc::_SC_PAGESIZE) };
                     let page_size = if page_size > 0 { page_size } else { 4096 };
                     return (kb * 1024) / page_size;
                 }
@@ -2720,7 +2720,7 @@ pub unsafe extern "C" fn gets(s: *mut c_char) -> *mut c_char {
     let mut i = 0usize;
     loop {
         let mut ch: u8 = 0;
-        let n = unsafe { libc::read(0, &mut ch as *mut u8 as *mut c_void, 1) };
+        let n = unsafe { crate::unistd_abi::read(0, &mut ch as *mut u8 as *mut c_void, 1) };
         if n <= 0 {
             if i == 0 {
                 return ptr::null_mut();
@@ -2745,7 +2745,7 @@ pub unsafe extern "C" fn tmpnam_r(s: *mut c_char) -> *mut c_char {
     }
     // Generate /tmp/tmpXXXXXX pattern and check uniqueness
     static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    let pid = unsafe { libc::getpid() };
+    let pid = unsafe { libc::syscall(libc::SYS_getpid as i64) as libc::pid_t };
     let cnt = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let name = format!("/tmp/tmp{pid:06}{cnt:06}\0");
     let name_bytes = name.as_bytes();

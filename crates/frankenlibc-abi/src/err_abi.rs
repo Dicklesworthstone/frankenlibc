@@ -68,7 +68,7 @@ fn write_err_message(fmt_bytes: &[u8], arg_buf: &[u64], arg_count: usize, with_e
 
     // Write to stderr (fd 2) atomically.
     unsafe {
-        libc::write(2, out.as_ptr() as *const c_void, out.len());
+        crate::unistd_abi::write(2, out.as_ptr() as *const c_void, out.len());
     }
 }
 
@@ -214,7 +214,7 @@ pub unsafe extern "C" fn err(eval: c_int, fmt: *const c_char, mut args: ...) -> 
         extract_err_args!(&segments, &mut args, &mut arg_buf, extract_count);
         write_err_message(fmt_bytes, &arg_buf, extract_count, true);
     }
-    unsafe { libc::_exit(eval) }
+    unsafe { frankenlibc_core::syscall::sys_exit_group(eval) }
 }
 
 /// BSD `verr` — va_list version of `err`.
@@ -225,7 +225,7 @@ pub unsafe extern "C" fn verr(eval: c_int, fmt: *const c_char, ap: *mut c_void) 
     } else {
         vformat_and_write(fmt, ap, true);
     }
-    unsafe { libc::_exit(eval) }
+    unsafe { frankenlibc_core::syscall::sys_exit_group(eval) }
 }
 
 // ---------------------------------------------------------------------------
@@ -246,7 +246,7 @@ pub unsafe extern "C" fn errx(eval: c_int, fmt: *const c_char, mut args: ...) ->
         extract_err_args!(&segments, &mut args, &mut arg_buf, extract_count);
         write_err_message(fmt_bytes, &arg_buf, extract_count, false);
     }
-    unsafe { libc::_exit(eval) }
+    unsafe { frankenlibc_core::syscall::sys_exit_group(eval) }
 }
 
 /// BSD `verrx` — va_list version of `errx`.
@@ -257,5 +257,5 @@ pub unsafe extern "C" fn verrx(eval: c_int, fmt: *const c_char, ap: *mut c_void)
     } else {
         vformat_and_write(fmt, ap, false);
     }
-    unsafe { libc::_exit(eval) }
+    unsafe { frankenlibc_core::syscall::sys_exit_group(eval) }
 }
