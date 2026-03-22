@@ -4736,7 +4736,7 @@ pub unsafe extern "C" fn glob(
 
             // Allocate pathv: offs + total + 1 (null terminator)
             let alloc_count = offs + total + 1;
-            let pathv = unsafe { libc::malloc(alloc_count * std::mem::size_of::<*mut c_char>()) }
+            let pathv = unsafe { crate::malloc_abi::malloc(alloc_count * std::mem::size_of::<*mut c_char>()) }
                 as *mut *mut c_char;
             if pathv.is_null() {
                 return glob_core::GLOB_NOSPACE;
@@ -4755,13 +4755,13 @@ pub unsafe extern "C" fn glob(
             // Copy new paths as strdup'd C strings.
             for (i, path) in res.paths.iter().enumerate() {
                 let len = path.len();
-                let s = unsafe { libc::malloc(len + 1) } as *mut c_char;
+                let s = unsafe { crate::malloc_abi::malloc(len + 1) } as *mut c_char;
                 if s.is_null() {
                     // Free everything allocated so far.
                     for j in 0..i {
-                        unsafe { libc::free(*pathv.add(offs + existing_count + j) as *mut c_void) };
+                        unsafe { crate::malloc_abi::free(*pathv.add(offs + existing_count + j) as *mut c_void) };
                     }
-                    unsafe { libc::free(pathv as *mut c_void) };
+                    unsafe { crate::malloc_abi::free(pathv as *mut c_void) };
                     return glob_core::GLOB_NOSPACE;
                 }
                 unsafe {
@@ -4778,7 +4778,7 @@ pub unsafe extern "C" fn glob(
             if append {
                 let old_pathv = unsafe { *((pglob as *const u8).add(8) as *const *mut c_void) };
                 if !old_pathv.is_null() {
-                    unsafe { libc::free(old_pathv) };
+                    unsafe { crate::malloc_abi::free(old_pathv) };
                 }
             }
 
@@ -4818,12 +4818,12 @@ pub unsafe extern "C" fn globfree(pglob: *mut c_void) {
     for i in offs..offs + pathc {
         let p = unsafe { *pathv.add(i) };
         if !p.is_null() {
-            unsafe { libc::free(p as *mut c_void) };
+            unsafe { crate::malloc_abi::free(p as *mut c_void) };
         }
     }
 
     // Free the pathv array.
-    unsafe { libc::free(pathv as *mut c_void) };
+    unsafe { crate::malloc_abi::free(pathv as *mut c_void) };
 
     // Zero out the glob_t.
     unsafe {
@@ -5310,7 +5310,7 @@ pub unsafe extern "C" fn argz_create(
         if p.is_null() {
             break;
         }
-        total_len += unsafe { libc::strlen(p) } + 1;
+        total_len += unsafe { crate::string_abi::strlen(p) } + 1;
         count += 1;
         i += 1;
     }
@@ -5323,7 +5323,7 @@ pub unsafe extern "C" fn argz_create(
         return 0;
     }
 
-    let buf = unsafe { libc::malloc(total_len) as *mut c_char };
+    let buf = unsafe { crate::malloc_abi::malloc(total_len) as *mut c_char };
     if buf.is_null() {
         return libc::ENOMEM;
     }
@@ -5331,7 +5331,7 @@ pub unsafe extern "C" fn argz_create(
     let mut offset = 0;
     for j in 0..count {
         let p = unsafe { *argv.add(j) };
-        let slen = unsafe { libc::strlen(p) };
+        let slen = unsafe { crate::string_abi::strlen(p) };
         unsafe {
             std::ptr::copy_nonoverlapping(p as *const u8, buf.add(offset) as *mut u8, slen + 1);
         }
@@ -5378,7 +5378,7 @@ pub unsafe extern "C" fn argz_create_sep(
     }
 
     let len = buf.len();
-    let ptr = unsafe { libc::malloc(len) as *mut c_char };
+    let ptr = unsafe { crate::malloc_abi::malloc(len) as *mut c_char };
     if ptr.is_null() {
         return libc::ENOMEM;
     }
@@ -5436,10 +5436,10 @@ pub unsafe extern "C" fn argz_add(
     if argz.is_null() || argz_len.is_null() || str_.is_null() {
         return libc::EINVAL;
     }
-    let slen = unsafe { libc::strlen(str_) };
+    let slen = unsafe { crate::string_abi::strlen(str_) };
     let old_len = unsafe { *argz_len };
     let new_len = old_len + slen + 1;
-    let new_buf = unsafe { libc::realloc((*argz) as *mut c_void, new_len) as *mut c_char };
+    let new_buf = unsafe { crate::malloc_abi::realloc((*argz) as *mut c_void, new_len) as *mut c_char };
     if new_buf.is_null() {
         return libc::ENOMEM;
     }
@@ -5490,7 +5490,7 @@ pub unsafe extern "C" fn argz_append(
     }
     let old_len = unsafe { *argz_len };
     let new_len = old_len + buf_len;
-    let new_buf = unsafe { libc::realloc((*argz) as *mut c_void, new_len) as *mut c_char };
+    let new_buf = unsafe { crate::malloc_abi::realloc((*argz) as *mut c_void, new_len) as *mut c_char };
     if new_buf.is_null() {
         return libc::ENOMEM;
     }
@@ -5518,7 +5518,7 @@ pub unsafe extern "C" fn argz_delete(
     if entry_offset >= len {
         return;
     }
-    let entry_len = unsafe { libc::strlen(entry) } + 1; // include NUL
+    let entry_len = unsafe { crate::string_abi::strlen(entry) } + 1; // include NUL
     let remaining = len - entry_offset - entry_len;
     if remaining > 0 {
         unsafe {
@@ -5549,7 +5549,7 @@ pub unsafe extern "C" fn argz_extract(
         unsafe { *argv.add(idx) = entry as *mut c_char };
         idx += 1;
         // Skip to next NUL
-        let slen = unsafe { libc::strlen(entry) };
+        let slen = unsafe { crate::string_abi::strlen(entry) };
         entry = unsafe { entry.add(slen + 1) };
     }
     unsafe { *argv.add(idx) = std::ptr::null_mut() };
@@ -5570,13 +5570,13 @@ pub unsafe extern "C" fn argz_insert(
         // Append at end
         return unsafe { argz_add(argz, argz_len, entry) };
     }
-    let slen = unsafe { libc::strlen(entry) } + 1;
+    let slen = unsafe { crate::string_abi::strlen(entry) } + 1;
     let old_len = unsafe { *argz_len };
     let new_len = old_len + slen;
     let az = unsafe { *argz };
     let before_offset = unsafe { before.offset_from(az) } as usize;
 
-    let new_buf = unsafe { libc::realloc(az as *mut c_void, new_len) as *mut c_char };
+    let new_buf = unsafe { crate::malloc_abi::realloc(az as *mut c_void, new_len) as *mut c_char };
     if new_buf.is_null() {
         return libc::ENOMEM;
     }
@@ -5641,14 +5641,14 @@ pub unsafe extern "C" fn argz_replace(
     let new_len: usize = entries.iter().map(|e| e.len() + 1).sum();
     if new_len == 0 {
         unsafe {
-            libc::free((*argz) as *mut c_void);
+            crate::malloc_abi::free((*argz) as *mut c_void);
             *argz = std::ptr::null_mut();
             *argz_len = 0;
         }
         return 0;
     }
 
-    let new_buf = unsafe { libc::realloc((*argz) as *mut c_void, new_len) as *mut c_char };
+    let new_buf = unsafe { crate::malloc_abi::realloc((*argz) as *mut c_void, new_len) as *mut c_char };
     if new_buf.is_null() {
         return libc::ENOMEM;
     }

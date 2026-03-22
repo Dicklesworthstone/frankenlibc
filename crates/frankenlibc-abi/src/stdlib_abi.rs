@@ -2209,7 +2209,7 @@ pub unsafe extern "C" fn getsubopt(
     let mut tok_ptr = tokens;
     unsafe {
         while !(*tok_ptr).is_null() {
-            if libc::strcmp(opt_ptr, *tok_ptr) == 0 {
+            if crate::string_abi::strcmp(opt_ptr, *tok_ptr) == 0 {
                 *name_end = saved;
                 runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 8, false);
                 return idx;

@@ -4497,7 +4497,7 @@ pub unsafe extern "C" fn mktemp(template: *mut c_char) -> *mut c_char {
         return template;
     }
 
-    let len = unsafe { libc::strlen(template) };
+    let len = unsafe { crate::string_abi::strlen(template) };
     if len < 6 {
         unsafe { *template = 0 };
         return template;

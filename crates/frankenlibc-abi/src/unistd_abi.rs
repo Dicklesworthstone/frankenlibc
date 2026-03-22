@@ -3063,9 +3063,9 @@ unsafe fn ftw_walk_dir(
         }
 
         // Build child path: path + "/" + name
-        let path_len = unsafe { libc::strlen(path) };
+        let path_len = unsafe { crate::string_abi::strlen(path) };
         let child_len = path_len + 1 + name_bytes.len() + 1;
-        let child_buf = unsafe { libc::malloc(child_len) as *mut u8 };
+        let child_buf = unsafe { crate::malloc_abi::malloc(child_len) as *mut u8 };
         if child_buf.is_null() {
             unsafe { libc::closedir(dir) };
             return -1;
@@ -3088,7 +3088,7 @@ unsafe fn ftw_walk_dir(
             unsafe { ftw_walk_dir(child_buf as *const c_char, func, max_fd, depth + 1) }
         };
 
-        unsafe { libc::free(child_buf as *mut c_void) };
+        unsafe { crate::malloc_abi::free(child_buf as *mut c_void) };
 
         if ret != 0 {
             unsafe { libc::closedir(dir) };
@@ -3168,7 +3168,7 @@ unsafe fn nftw_walk_dir(
     };
 
     // Compute base offset (last '/' + 1).
-    let path_len = unsafe { libc::strlen(path) };
+    let path_len = unsafe { crate::string_abi::strlen(path) };
     let path_bytes = unsafe { std::slice::from_raw_parts(path as *const u8, path_len) };
     let base = path_bytes
         .iter()
@@ -3254,7 +3254,7 @@ unsafe fn nftw_walk_dir(
 
         // Build child path
         let child_len = path_len + 1 + name_bytes.len() + 1;
-        let child_buf = unsafe { libc::malloc(child_len) as *mut u8 };
+        let child_buf = unsafe { crate::malloc_abi::malloc(child_len) as *mut u8 };
         if child_buf.is_null() {
             unsafe { libc::closedir(dir) };
             return -1;
@@ -3281,7 +3281,7 @@ unsafe fn nftw_walk_dir(
             )
         };
 
-        unsafe { libc::free(child_buf as *mut c_void) };
+        unsafe { crate::malloc_abi::free(child_buf as *mut c_void) };
 
         if ret != 0 {
             unsafe { libc::closedir(dir) };
@@ -4529,7 +4529,7 @@ pub unsafe extern "C" fn wordexp(
 
     // Allocate the wordv array
     let wordv_size = total_slots * std::mem::size_of::<*mut c_char>();
-    let new_wordv = unsafe { libc::malloc(wordv_size) as *mut *mut c_char };
+    let new_wordv = unsafe { crate::malloc_abi::malloc(wordv_size) as *mut *mut c_char };
     if new_wordv.is_null() {
         return WRDE_NOSPACE;
     }
@@ -4549,13 +4549,13 @@ pub unsafe extern "C" fn wordexp(
     // Add new words
     for (i, cstr) in final_words.iter().enumerate() {
         let len = cstr.as_bytes_with_nul().len();
-        let buf = unsafe { libc::malloc(len) as *mut c_char };
+        let buf = unsafe { crate::malloc_abi::malloc(len) as *mut c_char };
         if buf.is_null() {
             // Clean up on allocation failure
             for j in 0..i {
-                unsafe { libc::free(*new_wordv.add(offs + old_count + j) as *mut c_void) };
+                unsafe { crate::malloc_abi::free(*new_wordv.add(offs + old_count + j) as *mut c_void) };
             }
-            unsafe { libc::free(new_wordv as *mut c_void) };
+            unsafe { crate::malloc_abi::free(new_wordv as *mut c_void) };
             return WRDE_NOSPACE;
         }
         unsafe {
@@ -4569,7 +4569,7 @@ pub unsafe extern "C" fn wordexp(
 
     // Free old wordv array (but not the strings if appending)
     if !we.we_wordv.is_null() && ((flags & WRDE_APPEND) != 0 || old_count == 0) {
-        unsafe { libc::free(we.we_wordv as *mut c_void) };
+        unsafe { crate::malloc_abi::free(we.we_wordv as *mut c_void) };
     }
 
     we.we_wordc = old_count + new_count;
@@ -4590,10 +4590,10 @@ unsafe fn wordexp_free_wordv(we: &mut WordexpT) {
     for i in 0..we.we_wordc {
         let p = unsafe { *we.we_wordv.add(offs + i) };
         if !p.is_null() {
-            unsafe { libc::free(p as *mut c_void) };
+            unsafe { crate::malloc_abi::free(p as *mut c_void) };
         }
     }
-    unsafe { libc::free(we.we_wordv as *mut c_void) };
+    unsafe { crate::malloc_abi::free(we.we_wordv as *mut c_void) };
     we.we_wordv = std::ptr::null_mut();
     we.we_wordc = 0;
 }
@@ -6595,7 +6595,7 @@ fn netlink_dump(msg_type: u16, family: u8) -> Result<Vec<u8>, c_int> {
 fn alloc_sockaddr(family: u8, addr_data: &[u8]) -> *mut libc::sockaddr {
     match family as i32 {
         libc::AF_INET if addr_data.len() >= 4 => {
-            let sa = unsafe { libc::calloc(1, std::mem::size_of::<libc::sockaddr_in>()) }
+            let sa = unsafe { crate::malloc_abi::calloc(1, std::mem::size_of::<libc::sockaddr_in>()) }
                 as *mut libc::sockaddr_in;
             if sa.is_null() {
                 return std::ptr::null_mut();
@@ -6611,7 +6611,7 @@ fn alloc_sockaddr(family: u8, addr_data: &[u8]) -> *mut libc::sockaddr {
             sa as *mut libc::sockaddr
         }
         libc::AF_INET6 if addr_data.len() >= 16 => {
-            let sa = unsafe { libc::calloc(1, std::mem::size_of::<libc::sockaddr_in6>()) }
+            let sa = unsafe { crate::malloc_abi::calloc(1, std::mem::size_of::<libc::sockaddr_in6>()) }
                 as *mut libc::sockaddr_in6;
             if sa.is_null() {
                 return std::ptr::null_mut();
@@ -6634,7 +6634,7 @@ fn alloc_sockaddr(family: u8, addr_data: &[u8]) -> *mut libc::sockaddr {
 fn alloc_netmask(family: u8, prefixlen: u8) -> *mut libc::sockaddr {
     match family as i32 {
         libc::AF_INET => {
-            let sa = unsafe { libc::calloc(1, std::mem::size_of::<libc::sockaddr_in>()) }
+            let sa = unsafe { crate::malloc_abi::calloc(1, std::mem::size_of::<libc::sockaddr_in>()) }
                 as *mut libc::sockaddr_in;
             if sa.is_null() {
                 return std::ptr::null_mut();
@@ -6653,7 +6653,7 @@ fn alloc_netmask(family: u8, prefixlen: u8) -> *mut libc::sockaddr {
             sa as *mut libc::sockaddr
         }
         libc::AF_INET6 => {
-            let sa = unsafe { libc::calloc(1, std::mem::size_of::<libc::sockaddr_in6>()) }
+            let sa = unsafe { crate::malloc_abi::calloc(1, std::mem::size_of::<libc::sockaddr_in6>()) }
                 as *mut libc::sockaddr_in6;
             if sa.is_null() {
                 return std::ptr::null_mut();
@@ -6819,7 +6819,7 @@ fn parse_netlink_addrs(
             if let Some(addr_bytes) = effective_addr {
                 // Allocate an ifaddrs node
                 let node =
-                    unsafe { libc::calloc(1, std::mem::size_of::<Ifaddrs>()) as *mut Ifaddrs };
+                    unsafe { crate::malloc_abi::calloc(1, std::mem::size_of::<Ifaddrs>()) as *mut Ifaddrs };
                 if node.is_null() {
                     continue;
                 }
@@ -6828,7 +6828,7 @@ fn parse_netlink_addrs(
                 let name_cstr =
                     CString::new(if_name.as_str()).unwrap_or_else(|_| CString::new("?").unwrap());
                 let name_ptr =
-                    unsafe { libc::malloc(name_cstr.as_bytes_with_nul().len()) as *mut c_char };
+                    unsafe { crate::malloc_abi::malloc(name_cstr.as_bytes_with_nul().len()) as *mut c_char };
                 if !name_ptr.is_null() {
                     unsafe {
                         std::ptr::copy_nonoverlapping(
@@ -6878,18 +6878,18 @@ pub unsafe extern "C" fn freeifaddrs(ifa: *mut c_void) {
         let next = unsafe { (*cur).ifa_next };
         unsafe {
             if !(*cur).ifa_name.is_null() {
-                libc::free((*cur).ifa_name as *mut c_void);
+                crate::malloc_abi::free((*cur).ifa_name as *mut c_void);
             }
             if !(*cur).ifa_addr.is_null() {
-                libc::free((*cur).ifa_addr as *mut c_void);
+                crate::malloc_abi::free((*cur).ifa_addr as *mut c_void);
             }
             if !(*cur).ifa_netmask.is_null() {
-                libc::free((*cur).ifa_netmask as *mut c_void);
+                crate::malloc_abi::free((*cur).ifa_netmask as *mut c_void);
             }
             if !(*cur).ifa_broadaddr.is_null() {
-                libc::free((*cur).ifa_broadaddr as *mut c_void);
+                crate::malloc_abi::free((*cur).ifa_broadaddr as *mut c_void);
             }
-            libc::free(cur as *mut c_void);
+            crate::malloc_abi::free(cur as *mut c_void);
         };
         cur = next;
     }
@@ -9320,19 +9320,19 @@ pub unsafe extern "C" fn glob64(
             let count = res.paths.len();
             // Allocate pathv array (count + 1 for NULL sentinel).
             let pathv = unsafe {
-                libc::malloc((count + 1) * std::mem::size_of::<*mut c_char>()) as *mut *mut c_char
+                crate::malloc_abi::malloc((count + 1) * std::mem::size_of::<*mut c_char>()) as *mut *mut c_char
             };
             if pathv.is_null() {
                 return glob_core::GLOB_NOSPACE;
             }
             for (i, path) in res.paths.iter().enumerate() {
-                let dup = unsafe { libc::malloc(path.len() + 1) as *mut c_char };
+                let dup = unsafe { crate::malloc_abi::malloc(path.len() + 1) as *mut c_char };
                 if dup.is_null() {
                     // Free already allocated.
                     for j in 0..i {
-                        unsafe { libc::free(*pathv.add(j) as *mut c_void) };
+                        unsafe { crate::malloc_abi::free(*pathv.add(j) as *mut c_void) };
                     }
-                    unsafe { libc::free(pathv as *mut c_void) };
+                    unsafe { crate::malloc_abi::free(pathv as *mut c_void) };
                     return glob_core::GLOB_NOSPACE;
                 }
                 unsafe {
@@ -9368,10 +9368,10 @@ pub unsafe extern "C" fn globfree64(pglob: *mut c_void) {
         for i in offs..offs + pathc {
             let p = unsafe { *pathv.add(i) };
             if !p.is_null() {
-                unsafe { libc::free(p as *mut c_void) };
+                unsafe { crate::malloc_abi::free(p as *mut c_void) };
             }
         }
-        unsafe { libc::free(pathv as *mut c_void) };
+        unsafe { crate::malloc_abi::free(pathv as *mut c_void) };
     }
     // Zero out the glob_t.
     unsafe {
@@ -9567,7 +9567,7 @@ pub unsafe extern "C" fn get_current_dir_name() -> *mut c_char {
         return std::ptr::null_mut();
     }
     let len = buf.iter().position(|&b| b == 0).unwrap_or(rc as usize);
-    let ptr = unsafe { libc::malloc(len + 1) as *mut c_char };
+    let ptr = unsafe { crate::malloc_abi::malloc(len + 1) as *mut c_char };
     if ptr.is_null() {
         unsafe { set_abi_errno(libc::ENOMEM) };
         return std::ptr::null_mut();
@@ -9793,7 +9793,7 @@ pub unsafe extern "C" fn tempnam(dir: *const c_char, pfx: *const c_char) -> *mut
     let pid = unsafe { libc::syscall(libc::SYS_getpid) } as u32;
     let name = format!("{dir_str}/{pfx_str}{pid:x}{cnt:x}");
 
-    let ptr = unsafe { libc::malloc(name.len() + 1) as *mut c_char };
+    let ptr = unsafe { crate::malloc_abi::malloc(name.len() + 1) as *mut c_char };
     if ptr.is_null() {
         return std::ptr::null_mut();
     }
@@ -12863,7 +12863,7 @@ pub unsafe extern "C" fn fgetspent(stream: *mut c_void) -> *mut libc::spwd {
         return std::ptr::null_mut();
     }
     // Convert to string for parsing.
-    let len = unsafe { libc::strlen(line_ptr) };
+    let len = unsafe { crate::string_abi::strlen(line_ptr) };
     let line = unsafe {
         std::str::from_utf8_unchecked(std::slice::from_raw_parts(line_ptr as *const u8, len))
     };
@@ -12937,7 +12937,7 @@ pub unsafe extern "C" fn fgetspent_r(
     if line_ptr.is_null() {
         return libc::ENOENT;
     }
-    let len = unsafe { libc::strlen(line_ptr) };
+    let len = unsafe { crate::string_abi::strlen(line_ptr) };
     let line = unsafe {
         std::str::from_utf8_unchecked(std::slice::from_raw_parts(line_ptr as *const u8, len))
     };
@@ -13011,7 +13011,7 @@ pub unsafe extern "C" fn fgetpwent_r(
     if line_ptr.is_null() {
         return libc::ENOENT;
     }
-    let len = unsafe { libc::strlen(line_ptr) };
+    let len = unsafe { crate::string_abi::strlen(line_ptr) };
     let line = unsafe {
         std::str::from_utf8_unchecked(std::slice::from_raw_parts(line_ptr as *const u8, len))
     };
@@ -13089,7 +13089,7 @@ pub unsafe extern "C" fn fgetgrent_r(
     if line_ptr.is_null() {
         return libc::ENOENT;
     }
-    let len = unsafe { libc::strlen(line_ptr) };
+    let len = unsafe { crate::string_abi::strlen(line_ptr) };
     let line = unsafe {
         std::str::from_utf8_unchecked(std::slice::from_raw_parts(line_ptr as *const u8, len))
     };
@@ -13455,7 +13455,7 @@ pub unsafe extern "C" fn obstack_vprintf(
     unsafe {
         std::ptr::copy_nonoverlapping(result_ptr as *const u8, (*h).next_free, data_len);
         (*h).next_free = (*h).next_free.add(data_len);
-        libc::free(result_ptr as *mut c_void);
+        crate::malloc_abi::free(result_ptr as *mut c_void);
     }
     len
 }

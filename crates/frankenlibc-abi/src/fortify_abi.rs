@@ -73,7 +73,7 @@ pub unsafe extern "C" fn __fortify_fail(msg: *const c_char) -> ! {
     unsafe {
         libc::write(2, prefix.as_ptr().cast(), prefix.len());
         if !msg.is_null() {
-            let len = libc::strlen(msg);
+            let len = crate::string_abi::strlen(msg);
             libc::write(2, msg.cast(), len);
         }
         libc::write(2, suffix.as_ptr().cast(), suffix.len());
@@ -93,7 +93,7 @@ pub unsafe extern "C" fn __memcpy_chk(
     if len > destlen {
         unsafe { __chk_fail() }
     }
-    unsafe { libc::memcpy(dest, src, len) }
+    unsafe { crate::string_abi::memcpy(dest, src, len) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -106,7 +106,7 @@ pub unsafe extern "C" fn __memmove_chk(
     if len > destlen {
         unsafe { __chk_fail() }
     }
-    unsafe { libc::memmove(dest, src, len) }
+    unsafe { crate::string_abi::memmove(dest, src, len) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -119,7 +119,7 @@ pub unsafe extern "C" fn __memset_chk(
     if len > destlen {
         unsafe { __chk_fail() }
     }
-    unsafe { libc::memset(dest, c, len) }
+    unsafe { crate::string_abi::memset(dest, c, len) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -141,11 +141,11 @@ pub unsafe extern "C" fn __strcpy_chk(
     src: *const c_char,
     destlen: usize,
 ) -> *mut c_char {
-    let len = unsafe { libc::strlen(src) } + 1;
+    let len = unsafe { crate::string_abi::strlen(src) } + 1;
     if len > destlen {
         unsafe { __chk_fail() }
     }
-    unsafe { libc::memcpy(dest.cast(), src.cast(), len) };
+    unsafe { crate::string_abi::memcpy(dest.cast(), src.cast(), len) };
     dest
 }
 
@@ -168,8 +168,8 @@ pub unsafe extern "C" fn __strcat_chk(
     src: *const c_char,
     destlen: usize,
 ) -> *mut c_char {
-    let dlen = unsafe { libc::strlen(dest) };
-    let slen = unsafe { libc::strlen(src) };
+    let dlen = unsafe { crate::string_abi::strlen(dest) };
+    let slen = unsafe { crate::string_abi::strlen(src) };
     if dlen + slen + 1 > destlen {
         unsafe { __chk_fail() }
     }
@@ -183,9 +183,9 @@ pub unsafe extern "C" fn __strncat_chk(
     n: usize,
     destlen: usize,
 ) -> *mut c_char {
-    let dlen = unsafe { libc::strlen(dest) };
+    let dlen = unsafe { crate::string_abi::strlen(dest) };
     let slen = {
-        let full = unsafe { libc::strlen(src) };
+        let full = unsafe { crate::string_abi::strlen(src) };
         if full < n { full } else { n }
     };
     if dlen + slen + 1 > destlen {
@@ -200,11 +200,11 @@ pub unsafe extern "C" fn __stpcpy_chk(
     src: *const c_char,
     destlen: usize,
 ) -> *mut c_char {
-    let len = unsafe { libc::strlen(src) } + 1;
+    let len = unsafe { crate::string_abi::strlen(src) } + 1;
     if len > destlen {
         unsafe { __chk_fail() }
     }
-    unsafe { libc::memcpy(dest.cast(), src.cast(), len) };
+    unsafe { crate::string_abi::memcpy(dest.cast(), src.cast(), len) };
     unsafe { dest.add(len - 1) }
 }
 
@@ -649,7 +649,7 @@ pub unsafe extern "C" fn __wcscpy_chk(
     if (len + 1) * 4 > destlen {
         unsafe { __chk_fail() }
     }
-    unsafe { libc::memcpy(dest.cast(), src.cast(), (len + 1) * 4) };
+    unsafe { crate::string_abi::memcpy(dest.cast(), src.cast(), (len + 1) * 4) };
     dest
 }
 
@@ -692,7 +692,7 @@ pub unsafe extern "C" fn __wcscat_chk(
     if (dlen + slen + 1) * 4 > destlen {
         unsafe { __chk_fail() }
     }
-    unsafe { libc::memcpy(dest.add(dlen).cast(), src.cast(), (slen + 1) * 4) };
+    unsafe { crate::string_abi::memcpy(dest.add(dlen).cast(), src.cast(), (slen + 1) * 4) };
     dest
 }
 
@@ -731,7 +731,7 @@ pub unsafe extern "C" fn __wmemcpy_chk(
     if n * 4 > destlen {
         unsafe { __chk_fail() }
     }
-    unsafe { libc::memcpy(dest.cast(), src.cast(), n * 4) };
+    unsafe { crate::string_abi::memcpy(dest.cast(), src.cast(), n * 4) };
     dest
 }
 
@@ -745,7 +745,7 @@ pub unsafe extern "C" fn __wmemmove_chk(
     if n * 4 > destlen {
         unsafe { __chk_fail() }
     }
-    unsafe { libc::memmove(dest.cast(), src.cast(), n * 4) };
+    unsafe { crate::string_abi::memmove(dest.cast(), src.cast(), n * 4) };
     dest
 }
 

@@ -4434,7 +4434,7 @@ pub unsafe extern "C" fn open_wmemstream(bufp: *mut *mut u32, sizep: *mut usize)
 
     // Use underlying open_memstream for byte-level storage, then track wide metadata.
     // Allocate initial wide buffer (empty, NUL-terminated).
-    let initial = unsafe { libc::malloc(4) } as *mut u32;
+    let initial = unsafe { crate::malloc_abi::malloc(4) } as *mut u32;
     if initial.is_null() {
         unsafe { set_abi_errno(libc::ENOMEM) };
         return std::ptr::null_mut();
@@ -4452,7 +4452,7 @@ pub unsafe extern "C" fn open_wmemstream(bufp: *mut *mut u32, sizep: *mut usize)
     let stream =
         unsafe { crate::stdio_abi::open_memstream(&mut byte_ptr as *mut *mut i8, &mut byte_size) };
     if stream.is_null() {
-        unsafe { libc::free(initial as *mut c_void) };
+        unsafe { crate::malloc_abi::free(initial as *mut c_void) };
         unsafe {
             *bufp = std::ptr::null_mut();
             *sizep = 0;

@@ -5388,11 +5388,11 @@ pub unsafe extern "C" fn scandirat(
         };
         if include {
             let ent_size = std::mem::size_of::<libc::dirent>();
-            let copy = unsafe { libc::malloc(ent_size) } as *mut libc::dirent;
+            let copy = unsafe { crate::malloc_abi::malloc(ent_size) } as *mut libc::dirent;
             if copy.is_null() {
                 // Cleanup on OOM
                 for e in &entries {
-                    unsafe { libc::free(*e as *mut c_void) };
+                    unsafe { crate::malloc_abi::free(*e as *mut c_void) };
                 }
                 unsafe { libc::closedir(dir) };
                 return -1;
@@ -5415,11 +5415,11 @@ pub unsafe extern "C" fn scandirat(
         });
     }
     let count = entries.len() as c_int;
-    let arr = unsafe { libc::malloc(entries.len() * std::mem::size_of::<*mut libc::dirent>()) }
+    let arr = unsafe { crate::malloc_abi::malloc(entries.len() * std::mem::size_of::<*mut libc::dirent>()) }
         as *mut *mut c_void;
     if arr.is_null() && !entries.is_empty() {
         for e in &entries {
-            unsafe { libc::free(*e as *mut c_void) };
+            unsafe { crate::malloc_abi::free(*e as *mut c_void) };
         }
         return -1;
     }
@@ -6312,7 +6312,7 @@ pub unsafe extern "C" fn __mktemp(template: *mut c_char) -> *mut c_char {
         unsafe { *libc::__errno_location() = libc::EINVAL };
         return template;
     }
-    let len = unsafe { libc::strlen(template) };
+    let len = unsafe { crate::string_abi::strlen(template) };
     if len < 6 {
         unsafe {
             *template = 0;
@@ -6813,7 +6813,7 @@ unsafe fn alloc_native_resolv_context(
     from_res: bool,
     next: *mut NativeResolvContext,
 ) -> *mut NativeResolvContext {
-    let raw = unsafe { libc::malloc(std::mem::size_of::<NativeResolvContext>()) }
+    let raw = unsafe { crate::malloc_abi::malloc(std::mem::size_of::<NativeResolvContext>()) }
         .cast::<NativeResolvContext>();
     if raw.is_null() {
         unsafe { *crate::errno_abi::__errno_location() = libc::ENOMEM };
@@ -6910,7 +6910,7 @@ pub unsafe extern "C" fn __resolv_context_put(ctx: *mut c_void) {
                             (*prev).__next = next;
                         }
                     }
-                    unsafe { libc::free(current.cast()) };
+                    unsafe { crate::malloc_abi::free(current.cast()) };
                 }
                 break;
             }
@@ -6936,7 +6936,7 @@ pub unsafe extern "C" fn __resolv_context_freeres() {
         let mut current = head.replace(std::ptr::null_mut());
         while !current.is_null() {
             let next = unsafe { (*current).__next };
-            unsafe { libc::free(current.cast()) };
+            unsafe { crate::malloc_abi::free(current.cast()) };
             current = next;
         }
     });
@@ -7184,7 +7184,7 @@ pub unsafe extern "C" fn __idna_to_dns_encoding(
     output.push(0); // NUL terminator.
 
     // Allocate with malloc for caller ownership.
-    let buf = unsafe { libc::malloc(output.len()) } as *mut u8;
+    let buf = unsafe { crate::malloc_abi::malloc(output.len()) } as *mut u8;
     if buf.is_null() {
         return libc::EAI_FAIL;
     }
@@ -7251,7 +7251,7 @@ pub unsafe extern "C" fn __idna_from_dns_encoding(
     let output_bytes = output.as_bytes();
     let alloc_len = output_bytes.len() + 1; // +1 for NUL.
 
-    let buf = unsafe { libc::malloc(alloc_len) } as *mut u8;
+    let buf = unsafe { crate::malloc_abi::malloc(alloc_len) } as *mut u8;
     if buf.is_null() {
         return libc::EAI_FAIL;
     }
@@ -7948,11 +7948,11 @@ pub unsafe extern "C" fn __copy_grp(
         (*dst).gr_gid = (*s).gr_gid;
 
         // Copy gr_name
-        let name_len = libc::strlen((*s).gr_name) + 1;
+        let name_len = crate::string_abi::strlen((*s).gr_name) + 1;
         if offset + name_len > buflen {
             return libc::ERANGE;
         }
-        libc::memcpy(
+        crate::string_abi::memcpy(
             buf.add(offset) as *mut c_void,
             (*s).gr_name as *const c_void,
             name_len,
@@ -7961,11 +7961,11 @@ pub unsafe extern "C" fn __copy_grp(
         offset += name_len;
 
         // Copy gr_passwd
-        let passwd_len = libc::strlen((*s).gr_passwd) + 1;
+        let passwd_len = crate::string_abi::strlen((*s).gr_passwd) + 1;
         if offset + passwd_len > buflen {
             return libc::ERANGE;
         }
-        libc::memcpy(
+        crate::string_abi::memcpy(
             buf.add(offset) as *mut c_void,
             (*s).gr_passwd as *const c_void,
             passwd_len,
@@ -7996,11 +7996,11 @@ pub unsafe extern "C" fn __copy_grp(
         // Copy each member string
         for i in 0..nmem {
             let member = *(*s).gr_mem.add(i);
-            let mlen = libc::strlen(member) + 1;
+            let mlen = crate::string_abi::strlen(member) + 1;
             if offset + mlen > buflen {
                 return libc::ERANGE;
             }
-            libc::memcpy(
+            crate::string_abi::memcpy(
                 buf.add(offset) as *mut c_void,
                 member as *const c_void,
                 mlen,
@@ -8054,7 +8054,7 @@ pub unsafe extern "C" fn __merge_grp(
                 // Check if already in dest
                 let mut found = false;
                 for j in 0..dest_count {
-                    if libc::strcmp(*(*dst).gr_mem.add(j), src_mem) == 0 {
+                    if crate::string_abi::strcmp(*(*dst).gr_mem.add(j), src_mem) == 0 {
                         found = true;
                         break;
                     }
@@ -8070,11 +8070,11 @@ pub unsafe extern "C" fn __merge_grp(
 
         // Copy gr_name from src
         (*dst).gr_gid = (*s).gr_gid;
-        let name_len = libc::strlen((*s).gr_name) + 1;
+        let name_len = crate::string_abi::strlen((*s).gr_name) + 1;
         if offset + name_len > buflen {
             return libc::ERANGE;
         }
-        libc::memcpy(
+        crate::string_abi::memcpy(
             buf.add(offset) as *mut c_void,
             (*s).gr_name as *const c_void,
             name_len,
@@ -8083,11 +8083,11 @@ pub unsafe extern "C" fn __merge_grp(
         offset += name_len;
 
         // Copy gr_passwd from src
-        let passwd_len = libc::strlen((*s).gr_passwd) + 1;
+        let passwd_len = crate::string_abi::strlen((*s).gr_passwd) + 1;
         if offset + passwd_len > buflen {
             return libc::ERANGE;
         }
-        libc::memcpy(
+        crate::string_abi::memcpy(
             buf.add(offset) as *mut c_void,
             (*s).gr_passwd as *const c_void,
             passwd_len,
@@ -8111,11 +8111,11 @@ pub unsafe extern "C" fn __merge_grp(
         let mut idx = 0;
         for i in 0..dest_count {
             let member = *(*dst).gr_mem.add(i);
-            let mlen = libc::strlen(member) + 1;
+            let mlen = crate::string_abi::strlen(member) + 1;
             if offset + mlen > buflen {
                 return libc::ERANGE;
             }
-            libc::memcpy(
+            crate::string_abi::memcpy(
                 buf.add(offset) as *mut c_void,
                 member as *const c_void,
                 mlen,
@@ -8130,17 +8130,17 @@ pub unsafe extern "C" fn __merge_grp(
             let src_mem = *(*s).gr_mem.add(i);
             let mut found = false;
             for j in 0..dest_count {
-                if libc::strcmp(*(*dst).gr_mem.add(j), src_mem) == 0 {
+                if crate::string_abi::strcmp(*(*dst).gr_mem.add(j), src_mem) == 0 {
                     found = true;
                     break;
                 }
             }
             if !found {
-                let mlen = libc::strlen(src_mem) + 1;
+                let mlen = crate::string_abi::strlen(src_mem) + 1;
                 if offset + mlen > buflen {
                     return libc::ERANGE;
                 }
-                libc::memcpy(
+                crate::string_abi::memcpy(
                     buf.add(offset) as *mut c_void,
                     src_mem as *const c_void,
                     mlen,
@@ -8174,7 +8174,7 @@ pub unsafe extern "C" fn __shm_get_name(
     if buf.is_null() || name.is_null() {
         return libc::EINVAL;
     }
-    let name_len = unsafe { libc::strlen(name) };
+    let name_len = unsafe { crate::string_abi::strlen(name) };
     if name_len == 0 {
         return libc::EINVAL;
     }

@@ -389,7 +389,7 @@ pub unsafe extern "C" fn if_nameindex() -> *mut c_void {
     // Allocate the result: (ifaces.len() + 1) entries, last is zero sentinel.
     let count = ifaces.len();
     let array_bytes = (count + 1) * IF_NAMEINDEX_ENTRY_SIZE;
-    let array = unsafe { libc::malloc(array_bytes) } as *mut u8;
+    let array = unsafe { crate::malloc_abi::malloc(array_bytes) } as *mut u8;
     if array.is_null() {
         unsafe { set_abi_errno(errno::ENOMEM) };
         return std::ptr::null_mut();
@@ -400,17 +400,17 @@ pub unsafe extern "C" fn if_nameindex() -> *mut c_void {
         let entry_ptr = unsafe { array.add(i * IF_NAMEINDEX_ENTRY_SIZE) };
 
         // Allocate and copy the name string (NUL-terminated).
-        let name_buf = unsafe { libc::malloc(name.len() + 1) } as *mut u8;
+        let name_buf = unsafe { crate::malloc_abi::malloc(name.len() + 1) } as *mut u8;
         if name_buf.is_null() {
             // Free everything allocated so far.
             for j in 0..i {
                 let prev = unsafe { array.add(j * IF_NAMEINDEX_ENTRY_SIZE) };
                 let prev_name = unsafe { *(prev.add(8) as *const *mut u8) };
                 if !prev_name.is_null() {
-                    unsafe { libc::free(prev_name.cast()) };
+                    unsafe { crate::malloc_abi::free(prev_name.cast()) };
                 }
             }
-            unsafe { libc::free(array.cast()) };
+            unsafe { crate::malloc_abi::free(array.cast()) };
             unsafe { set_abi_errno(errno::ENOMEM) };
             return std::ptr::null_mut();
         }
@@ -445,11 +445,11 @@ pub unsafe extern "C" fn if_freenameindex(ptr: *mut c_void) {
             break; // Sentinel reached.
         }
         if !name.is_null() {
-            unsafe { libc::free(name) };
+            unsafe { crate::malloc_abi::free(name) };
         }
         i += 1;
     }
-    unsafe { libc::free(ptr) };
+    unsafe { crate::malloc_abi::free(ptr) };
 }
 
 // ---------------------------------------------------------------------------

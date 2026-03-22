@@ -84,7 +84,7 @@ impl HashTable {
         if a.is_null() || b.is_null() {
             return a == b;
         }
-        unsafe { libc::strcmp(a, b) == 0 }
+        unsafe { crate::string_abi::strcmp(a, b) == 0 }
     }
 
     fn search(&mut self, item: Entry, action: Action) -> *mut Entry {
