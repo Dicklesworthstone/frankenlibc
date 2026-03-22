@@ -396,7 +396,10 @@ unsafe extern "C" fn host_delegate_main_wrapper(
 ) -> c_int {
     init_process_globals(argv, envp);
     crate::pthread_abi::prewarm_host_thread_symbols();
-    runtime_policy::signal_runtime_ready();
+    // NOTE: signal_runtime_ready() intentionally NOT called here.
+    // The membrane's ValidationPipeline is not re-entrant — enabling it
+    // causes deadlocks when interposed string/memory functions re-enter
+    // the pipeline during normal operation.
 
     let main_ptr = HOST_DELEGATED_MAIN.load(Ordering::Acquire);
     if main_ptr == 0 {
@@ -698,7 +701,10 @@ unsafe fn startup_phase0_impl(
 
     init_process_globals(ubp_av, envp);
     crate::pthread_abi::prewarm_host_thread_symbols();
-    runtime_policy::signal_runtime_ready();
+    // NOTE: signal_runtime_ready() intentionally NOT called here.
+    // The membrane's ValidationPipeline is not re-entrant — enabling it
+    // causes deadlocks when interposed string/memory functions re-enter
+    // the pipeline during normal operation.
 
     if let Some(init_fn) = init {
         path.push(StartupCheckpoint::CallInitHook);
@@ -820,7 +826,10 @@ pub unsafe extern "C" fn __libc_start_main(
     let envp = unsafe { environ };
     init_process_globals(ubp_av, envp);
     crate::pthread_abi::prewarm_host_thread_symbols();
-    runtime_policy::signal_runtime_ready();
+    // NOTE: signal_runtime_ready() intentionally NOT called here.
+    // The membrane's ValidationPipeline is not re-entrant — enabling it
+    // causes deadlocks when interposed string/memory functions re-enter
+    // the pipeline during normal operation.
     let rc = match main {
         Some(main_fn) => unsafe { main_fn(argc, ubp_av, envp) },
         None => 0,
