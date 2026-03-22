@@ -164,69 +164,38 @@ unsafe fn resolve_host_allocator_symbol(name: &'static [u8]) -> *mut c_void {
     ptr
 }
 
-#[inline]
-unsafe fn host_malloc_fn() -> Option<HostMallocFn> {
-    let ptr = *HOST_MALLOC_FN
-        .get_or_init(|| unsafe { resolve_host_allocator_symbol(b"malloc\0") as usize });
-    if ptr == 0 {
-        None
-    } else {
-        Some(unsafe { std::mem::transmute::<usize, HostMallocFn>(ptr) })
-    }
+/// Safe accessor: returns cached host fn or None (bump fallback).
+/// Does NOT call get_or_init — that deadlocks during _dl_init.
+macro_rules! host_fn_accessor {
+    ($name:ident, $lock:ident, $ty:ty) => {
+        #[inline]
+        unsafe fn $name() -> Option<$ty> {
+            if let Some(&ptr) = $lock.get() {
+                if ptr != 0 {
+                    return Some(unsafe { std::mem::transmute::<usize, $ty>(ptr) });
+                }
+            }
+            None
+        }
+    };
 }
 
-#[inline]
-unsafe fn host_calloc_fn() -> Option<HostCallocFn> {
-    let ptr = *HOST_CALLOC_FN
-        .get_or_init(|| unsafe { resolve_host_allocator_symbol(b"calloc\0") as usize });
-    if ptr == 0 {
-        None
-    } else {
-        Some(unsafe { std::mem::transmute::<usize, HostCallocFn>(ptr) })
-    }
-}
+host_fn_accessor!(host_malloc_fn, HOST_MALLOC_FN, HostMallocFn);
+host_fn_accessor!(host_calloc_fn, HOST_CALLOC_FN, HostCallocFn);
+host_fn_accessor!(host_realloc_fn, HOST_REALLOC_FN, HostReallocFn);
+host_fn_accessor!(host_free_fn, HOST_FREE_FN, HostFreeFn);
+host_fn_accessor!(host_memalign_fn, HOST_MEMALIGN_FN, HostMemalignFn);
 
-#[inline]
-unsafe fn host_realloc_fn() -> Option<HostReallocFn> {
-    let ptr = *HOST_REALLOC_FN
-        .get_or_init(|| unsafe { resolve_host_allocator_symbol(b"realloc\0") as usize });
-    if ptr == 0 {
-        None
-    } else {
-        Some(unsafe { std::mem::transmute::<usize, HostReallocFn>(ptr) })
-    }
-}
-
-#[inline]
-unsafe fn host_free_fn() -> Option<HostFreeFn> {
-    let ptr =
-        *HOST_FREE_FN.get_or_init(|| unsafe { resolve_host_allocator_symbol(b"free\0") as usize });
-    if ptr == 0 {
-        None
-    } else {
-        Some(unsafe { std::mem::transmute::<usize, HostFreeFn>(ptr) })
-    }
-}
-
-#[inline]
-unsafe fn host_memalign_fn() -> Option<HostMemalignFn> {
-    let ptr = *HOST_MEMALIGN_FN
-        .get_or_init(|| unsafe { resolve_host_allocator_symbol(b"memalign\0") as usize });
-    if ptr == 0 {
-        None
-    } else {
-        Some(unsafe { std::mem::transmute::<usize, HostMemalignFn>(ptr) })
-    }
-}
-
+/// Resolve and cache host allocator symbols.
+/// Called from __libc_start_main AFTER _dl_init, when dlvsym is safe.
 pub(crate) fn prewarm_host_allocator_symbols() {
-    // SAFETY: idempotent symbol resolution against RTLD_NEXT.
+    // SAFETY: called after dynamic linker init; dlvsym_next is safe.
     unsafe {
-        let _ = host_malloc_fn();
-        let _ = host_calloc_fn();
-        let _ = host_realloc_fn();
-        let _ = host_free_fn();
-        let _ = host_memalign_fn();
+        let _ = HOST_MALLOC_FN.get_or_init(|| resolve_host_allocator_symbol(b"malloc\0") as usize);
+        let _ = HOST_CALLOC_FN.get_or_init(|| resolve_host_allocator_symbol(b"calloc\0") as usize);
+        let _ = HOST_REALLOC_FN.get_or_init(|| resolve_host_allocator_symbol(b"realloc\0") as usize);
+        let _ = HOST_FREE_FN.get_or_init(|| resolve_host_allocator_symbol(b"free\0") as usize);
+        let _ = HOST_MEMALIGN_FN.get_or_init(|| resolve_host_allocator_symbol(b"memalign\0") as usize);
     }
 }
 
@@ -238,9 +207,18 @@ unsafe fn native_libc_malloc(size: usize) -> *mut c_void {
     {
         return unsafe { bump_alloc(size) };
     }
-    let result = match unsafe { host_malloc_fn() } {
-        Some(host_malloc) => unsafe { host_malloc(size) },
-        None => unsafe { bump_alloc(size) },
+    // Try cached host malloc first. If not yet resolved, use bump allocator.
+    // OnceLock::get_or_init deadlocks during _dl_init because the dlvsym
+    // resolution calls our interposed dlsym which needs malloc.
+    let result = if let Some(&ptr) = HOST_MALLOC_FN.get() {
+        if ptr != 0 {
+            let f: HostMallocFn = unsafe { std::mem::transmute(ptr) };
+            unsafe { f(size) }
+        } else {
+            unsafe { bump_alloc(size) }
+        }
+    } else {
+        unsafe { bump_alloc(size) }
     };
     NATIVE_MALLOC_REENTRY.store(false, Ordering::Release);
     result
