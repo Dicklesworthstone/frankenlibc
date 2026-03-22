@@ -204,8 +204,8 @@ fn ctype_b_loc_returns_valid_table() {
 
     // 'A' (65) should have alpha + upper + print + graph + alnum bits set
     let flags = unsafe { *p.offset(b'A' as isize) };
-    assert_ne!(flags & (1 << 0), 0, "'A' should have UPPER bit"); // _ISUPPER
-    assert_ne!(flags & (1 << 2), 0, "'A' should have ALPHA bit"); // _ISALPHA
+    assert_ne!(flags & (1 << 8), 0, "'A' should have UPPER bit"); // _ISUPPER = 0x0100
+    assert_ne!(flags & (1 << 10), 0, "'A' should have ALPHA bit"); // _ISALPHA = 0x0400
 }
 
 #[test]

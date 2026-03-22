@@ -51,16 +51,78 @@ unsafe fn native_getenv(name_bytes: &[u8]) -> *mut c_char {
     }
 }
 
+static NATIVE_SETENV_REENTRY: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
 #[inline]
 unsafe fn native_setenv(name: *const c_char, value: *const c_char, overwrite: c_int) -> c_int {
-    // SAFETY: direct call to host libc symbol.
-    unsafe { native_setenv_sym(name, value, overwrite) }
+    use std::sync::atomic::Ordering;
+    if NATIVE_SETENV_REENTRY
+        .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+        .is_err()
+    {
+        // Reentrant: silently succeed without modifying environ.
+        return 0;
+    }
+    let rc = unsafe { native_setenv_sym(name, value, overwrite) };
+    NATIVE_SETENV_REENTRY.store(false, Ordering::Release);
+    rc
 }
+
+static NATIVE_UNSETENV_REENTRY: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
 
 #[inline]
 unsafe fn native_unsetenv(name: *const c_char) -> c_int {
-    // SAFETY: direct call to host libc symbol.
-    unsafe { native_unsetenv_sym(name) }
+    use std::sync::atomic::Ordering;
+    // Guard against recursion: our unsetenv export shadows the host's
+    // versioned unsetenv@GLIBC_2.2.5, so native_unsetenv_sym may resolve
+    // back to our own unsetenv.  On reentry, remove from environ directly.
+    if NATIVE_UNSETENV_REENTRY
+        .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+        .is_err()
+    {
+        // Reentrant: remove from environ by scanning and shifting.
+        return unsafe { remove_from_environ(name) };
+    }
+    let rc = unsafe { native_unsetenv_sym(name) };
+    NATIVE_UNSETENV_REENTRY.store(false, Ordering::Release);
+    rc
+}
+
+/// Remove an env var by directly manipulating the environ array.
+unsafe fn remove_from_environ(name: *const c_char) -> c_int {
+    unsafe {
+        if HOST_ENVIRON.is_null() || name.is_null() {
+            return 0;
+        }
+        // Find name length
+        let mut nlen = 0usize;
+        while *name.add(nlen) != 0 {
+            nlen += 1;
+        }
+        let mut read = HOST_ENVIRON;
+        let mut write = HOST_ENVIRON;
+        while !(*read).is_null() {
+            let entry = *read as *const u8;
+            let mut match_len = 0usize;
+            while match_len < nlen
+                && *entry.add(match_len) == *(name as *const u8).add(match_len)
+            {
+                match_len += 1;
+            }
+            if match_len == nlen && *entry.add(match_len) == b'=' {
+                // Skip this entry (remove it)
+                read = read.add(1);
+                continue;
+            }
+            *write = *read;
+            write = write.add(1);
+            read = read.add(1);
+        }
+        *write = std::ptr::null_mut();
+        0
+    }
 }
 
 // Helper: Check if repair is enabled for this decision

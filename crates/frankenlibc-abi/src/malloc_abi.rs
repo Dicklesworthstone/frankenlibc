@@ -77,7 +77,8 @@ unsafe fn bump_alloc(size: usize) -> *mut c_void {
         let aligned_pos = (pos + align - 1) & !(align - 1);
         let new_pos = aligned_pos + size;
         if new_pos > BUMP_SIZE {
-            return std::ptr::null_mut();
+            // Static bump heap exhausted — fall back to mmap.
+            return unsafe { mmap_alloc(size) };
         }
         if BUMP_POS
             .compare_exchange_weak(pos, new_pos, Ordering::AcqRel, Ordering::Relaxed)
@@ -86,6 +87,30 @@ unsafe fn bump_alloc(size: usize) -> *mut c_void {
             let base = BUMP_HEAP.0.get().cast::<u8>();
             return unsafe { base.add(aligned_pos).cast() };
         }
+    }
+}
+
+/// Fallback allocator using raw mmap syscall.  Used when the static bump
+/// heap is exhausted.  No symbol resolution or libc calls — pure syscall.
+#[cold]
+unsafe fn mmap_alloc(size: usize) -> *mut c_void {
+    let page_size = 4096usize;
+    let alloc_size = (size + page_size - 1) & !(page_size - 1);
+    let ptr = unsafe {
+        libc::syscall(
+            libc::SYS_mmap,
+            std::ptr::null::<c_void>(),
+            alloc_size,
+            libc::PROT_READ | libc::PROT_WRITE,
+            libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
+            -1i32,
+            0i64,
+        ) as *mut c_void
+    };
+    if ptr == libc::MAP_FAILED {
+        std::ptr::null_mut()
+    } else {
+        ptr
     }
 }
 

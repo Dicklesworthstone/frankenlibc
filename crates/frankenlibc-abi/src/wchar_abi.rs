@@ -4,7 +4,6 @@
 //! On Linux/glibc, `wchar_t` is 32-bit (UTF-32).
 //!
 use std::ffi::{c_char, c_int, c_long, c_longlong, c_ulong, c_ulonglong, c_void};
-use std::os::unix::ffi::OsStrExt;
 
 use frankenlibc_core::stdio::printf::{FormatSegment, Precision, Width, parse_format_string};
 use frankenlibc_membrane::heal::{HealingAction, global_healing_policy};
@@ -1866,7 +1865,7 @@ pub unsafe extern "C" fn realpath(
     // Open the path with O_PATH (no actual I/O, just get an fd for the kernel path).
     let fd = unsafe {
         libc::syscall(
-            libc::SYS_openat as i64,
+            libc::SYS_openat,
             libc::AT_FDCWD,
             path_cstr.as_ptr(),
             libc::O_PATH | libc::O_CLOEXEC,
@@ -1890,14 +1889,14 @@ pub unsafe extern "C" fn realpath(
     let mut buf = [0u8; libc::PATH_MAX as usize];
     let n = unsafe {
         libc::syscall(
-            libc::SYS_readlinkat as i64,
+            libc::SYS_readlinkat,
             libc::AT_FDCWD,
             proc_path.as_ptr(),
             buf.as_mut_ptr(),
             buf.len() - 1,
         ) as isize
     };
-    unsafe { libc::syscall(libc::SYS_close as i64, fd) };
+    unsafe { libc::syscall(libc::SYS_close, fd) };
 
     if n <= 0 {
         unsafe { set_abi_errno(errno::ENOENT) };

@@ -22,18 +22,21 @@ use crate::runtime_policy;
 //
 // Bitmask layout matches glibc's <ctype.h> definitions.
 
-const _ISUPPER: u16 = 1 << 0;
-const _ISLOWER: u16 = 1 << 1;
-const _ISALPHA: u16 = 1 << 2;
-const _ISDIGIT: u16 = 1 << 3;
-const _ISXDIGIT: u16 = 1 << 4;
-const _ISSPACE: u16 = 1 << 5;
-const _ISPRINT: u16 = 1 << 6;
-const _ISGRAPH: u16 = 1 << 7;
-const _ISBLANK: u16 = 1 << 8;
-const _ISCNTRL: u16 = 1 << 9;
-const _ISPUNCT: u16 = 1 << 10;
-const _ISALNUM: u16 = 1 << 11;
+// Bit positions must match glibc's <ctype.h> exactly (little-endian / x86_64).
+// glibc uses a non-sequential layout where the low byte and high byte
+// encode different property groups.
+const _ISBLANK: u16 = 1 << 0; // 0x0001
+const _ISCNTRL: u16 = 1 << 1; // 0x0002
+const _ISPUNCT: u16 = 1 << 2; // 0x0004
+const _ISALNUM: u16 = 1 << 3; // 0x0008
+const _ISUPPER: u16 = 1 << 8; // 0x0100
+const _ISLOWER: u16 = 1 << 9; // 0x0200
+const _ISALPHA: u16 = 1 << 10; // 0x0400
+const _ISDIGIT: u16 = 1 << 11; // 0x0800
+const _ISXDIGIT: u16 = 1 << 12; // 0x1000
+const _ISSPACE: u16 = 1 << 13; // 0x2000
+const _ISPRINT: u16 = 1 << 14; // 0x4000
+const _ISGRAPH: u16 = 1 << 15; // 0x8000
 
 /// Build the 384-entry classification table for the C/POSIX locale.
 /// Indices 0..128 are the "negative" range (-128..-1), index 128 is char 0,
