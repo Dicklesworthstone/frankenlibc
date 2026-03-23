@@ -689,7 +689,13 @@ fn apply_decision_contract(
     let mut event = decision_contract_event_for_runtime_decision(decision);
     DECISION_CONTRACT_MACHINE
         .try_with(|slot| {
-            let mut machine = slot.borrow_mut();
+            let Ok(mut machine) = slot.try_borrow_mut() else {
+                return (
+                    TsmState::Safe,
+                    DecisionContractEvent::CheckPass,
+                    DecisionContractAction::Log,
+                );
+            };
             let mut transition = machine.observe(event, mode);
 
             // Hardened repairs require an explicit completion edge from Unsafe -> Safe.
@@ -735,7 +741,9 @@ fn record_last_explainability(mode: SafetyLevel, ctx: RuntimeContext, decision: 
     };
 
     let _ = LAST_EXPLAINABILITY.try_with(|slot| {
-        *slot.borrow_mut() = Some(explainability);
+        if let Ok(mut last) = slot.try_borrow_mut() {
+            *last = Some(explainability);
+        }
     });
 }
 

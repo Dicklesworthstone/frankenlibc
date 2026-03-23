@@ -121,6 +121,12 @@ static HOST_SYMBOL_CACHE: LazyLock<Mutex<HashMap<&'static [u8], usize>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 static HOST_LIBC_SYMBOL_CACHE: LazyLock<Mutex<HashMap<&'static str, usize>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
+static HOST_LIBC_HANDLE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+static HOST_PTHREAD_CREATE_PTR: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+static HOST_PTHREAD_JOIN_PTR: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+static HOST_PTHREAD_DETACH_PTR: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+static HOST_PTHREAD_SELF_PTR: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+static HOST_PTHREAD_EQUAL_PTR: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 static HOST_PTHREAD_KEY_CREATE_PTR: OnceLock<usize> = OnceLock::new();
 static HOST_PTHREAD_KEY_DELETE_PTR: OnceLock<usize> = OnceLock::new();
 #[cfg(target_arch = "x86_64")]
@@ -244,8 +250,45 @@ unsafe fn resolve_host_symbol_nocache(name: &'static [u8]) -> *mut c_void {
     ptr
 }
 
+fn host_libc_handle() -> Option<*mut c_void> {
+    let cached = HOST_LIBC_HANDLE.load(Ordering::Acquire);
+    if cached != 0 {
+        return Some(cached as *mut c_void);
+    }
+
+    // SAFETY: loading the process' already-present glibc image by SONAME.
+    let handle = unsafe {
+        libc::dlopen(
+            b"libc.so.6\0".as_ptr().cast::<libc::c_char>(),
+            libc::RTLD_NOW | libc::RTLD_LOCAL,
+        )
+    };
+    if handle.is_null() {
+        return None;
+    }
+
+    let handle_usize = handle as usize;
+    match HOST_LIBC_HANDLE.compare_exchange(0, handle_usize, Ordering::AcqRel, Ordering::Acquire) {
+        Ok(_) => Some(handle),
+        Err(existing) => Some(existing as *mut c_void),
+    }
+}
+
+unsafe fn resolve_host_symbol_via_libc_handle(name: &'static [u8]) -> *mut c_void {
+    let Some(handle) = host_libc_handle() else {
+        return std::ptr::null_mut();
+    };
+    // SAFETY: handle is a valid `dlopen` result and `name` is NUL-terminated.
+    unsafe { libc::dlsym(handle, name.as_ptr().cast::<libc::c_char>()) }
+}
+
 unsafe fn resolve_host_symbol_with_aliases(names: &[&'static [u8]]) -> *mut c_void {
     for name in names {
+        // SAFETY: each symbol name is a static NUL-terminated C string.
+        let ptr = unsafe { resolve_host_symbol_via_libc_handle(name) };
+        if !ptr.is_null() {
+            return ptr;
+        }
         // SAFETY: each symbol name is a static NUL-terminated C string.
         let ptr = unsafe { resolve_host_symbol_nocache(name) };
         if !ptr.is_null() {
@@ -255,74 +298,93 @@ unsafe fn resolve_host_symbol_with_aliases(names: &[&'static [u8]]) -> *mut c_vo
     std::ptr::null_mut()
 }
 
+fn load_cached_host_ptr(cache: &std::sync::atomic::AtomicUsize) -> Option<usize> {
+    let ptr = cache.load(Ordering::Acquire);
+    (ptr != 0).then_some(ptr)
+}
+
+fn cache_host_ptr(cache: &std::sync::atomic::AtomicUsize, ptr: usize) -> Option<usize> {
+    if ptr == 0 {
+        return None;
+    }
+    let _ = cache.compare_exchange(0, ptr, Ordering::AcqRel, Ordering::Acquire);
+    Some(cache.load(Ordering::Acquire))
+}
+
+unsafe fn resolve_cached_host_thread_symbol(
+    cache: &std::sync::atomic::AtomicUsize,
+    public_name: &'static str,
+    public_symbol: &'static [u8],
+) -> Option<usize> {
+    if let Some(ptr) = load_cached_host_ptr(cache) {
+        return Some(ptr);
+    }
+    if let Some(ptr) = resolve_loaded_libc_symbol_direct(public_name) {
+        return cache_host_ptr(cache, ptr);
+    }
+    // SAFETY: symbol name is NUL-terminated and belongs to the host pthread surface.
+    let ptr = unsafe { resolve_host_symbol_nocache(public_symbol) } as usize;
+    cache_host_ptr(cache, ptr)
+}
+
 unsafe fn host_pthread_create_fn() -> Option<HostPthreadCreateFn> {
-    if let Some(ptr) = resolve_loaded_libc_symbol_direct("pthread_create") {
-        // SAFETY: resolved symbol address comes from the loaded glibc dynsym table.
-        return Some(unsafe { std::mem::transmute::<usize, HostPthreadCreateFn>(ptr) });
-    }
-    let ptr = unsafe { resolve_host_symbol(b"pthread_create\0") };
-    if ptr.is_null() {
-        None
-    } else {
-        // SAFETY: resolved symbol has pthread_create ABI.
-        Some(unsafe { std::mem::transmute::<*mut c_void, HostPthreadCreateFn>(ptr) })
-    }
+    let ptr = unsafe {
+        resolve_cached_host_thread_symbol(
+            &HOST_PTHREAD_CREATE_PTR,
+            "pthread_create",
+            b"pthread_create\0",
+        )
+    }?;
+    // SAFETY: resolved symbol has pthread_create ABI.
+    Some(unsafe { std::mem::transmute::<usize, HostPthreadCreateFn>(ptr) })
 }
 
 unsafe fn host_pthread_join_fn() -> Option<HostPthreadJoinFn> {
-    if let Some(ptr) = resolve_loaded_libc_symbol_direct("pthread_join") {
-        // SAFETY: resolved symbol address comes from the loaded glibc dynsym table.
-        return Some(unsafe { std::mem::transmute::<usize, HostPthreadJoinFn>(ptr) });
-    }
-    let ptr = unsafe { resolve_host_symbol(b"pthread_join\0") };
-    if ptr.is_null() {
-        None
-    } else {
-        // SAFETY: resolved symbol has pthread_join ABI.
-        Some(unsafe { std::mem::transmute::<*mut c_void, HostPthreadJoinFn>(ptr) })
-    }
+    let ptr = unsafe {
+        resolve_cached_host_thread_symbol(
+            &HOST_PTHREAD_JOIN_PTR,
+            "pthread_join",
+            b"pthread_join\0",
+        )
+    }?;
+    // SAFETY: resolved symbol has pthread_join ABI.
+    Some(unsafe { std::mem::transmute::<usize, HostPthreadJoinFn>(ptr) })
 }
 
 unsafe fn host_pthread_detach_fn() -> Option<HostPthreadDetachFn> {
-    if let Some(ptr) = resolve_loaded_libc_symbol_direct("pthread_detach") {
-        // SAFETY: resolved symbol address comes from the loaded glibc dynsym table.
-        return Some(unsafe { std::mem::transmute::<usize, HostPthreadDetachFn>(ptr) });
-    }
-    let ptr = unsafe { resolve_host_symbol(b"pthread_detach\0") };
-    if ptr.is_null() {
-        None
-    } else {
-        // SAFETY: resolved symbol has pthread_detach ABI.
-        Some(unsafe { std::mem::transmute::<*mut c_void, HostPthreadDetachFn>(ptr) })
-    }
+    let ptr = unsafe {
+        resolve_cached_host_thread_symbol(
+            &HOST_PTHREAD_DETACH_PTR,
+            "pthread_detach",
+            b"pthread_detach\0",
+        )
+    }?;
+    // SAFETY: resolved symbol has pthread_detach ABI.
+    Some(unsafe { std::mem::transmute::<usize, HostPthreadDetachFn>(ptr) })
 }
 
 unsafe fn host_pthread_self_fn() -> Option<HostPthreadSelfFn> {
-    if let Some(ptr) = resolve_loaded_libc_symbol_direct("pthread_self") {
-        // SAFETY: resolved symbol address comes from the loaded glibc dynsym table.
-        return Some(unsafe { std::mem::transmute::<usize, HostPthreadSelfFn>(ptr) });
-    }
-    let ptr = unsafe { resolve_host_symbol(b"pthread_self\0") };
-    if ptr.is_null() {
-        None
-    } else {
-        // SAFETY: resolved symbol has pthread_self ABI.
-        Some(unsafe { std::mem::transmute::<*mut c_void, HostPthreadSelfFn>(ptr) })
-    }
+    let ptr = unsafe {
+        resolve_cached_host_thread_symbol(
+            &HOST_PTHREAD_SELF_PTR,
+            "pthread_self",
+            b"pthread_self\0",
+        )
+    }?;
+    // SAFETY: resolved symbol has pthread_self ABI.
+    Some(unsafe { std::mem::transmute::<usize, HostPthreadSelfFn>(ptr) })
 }
 
 unsafe fn host_pthread_equal_fn() -> Option<HostPthreadEqualFn> {
-    if let Some(ptr) = resolve_loaded_libc_symbol_direct("pthread_equal") {
-        // SAFETY: resolved symbol address comes from the loaded glibc dynsym table.
-        return Some(unsafe { std::mem::transmute::<usize, HostPthreadEqualFn>(ptr) });
-    }
-    let ptr = unsafe { resolve_host_symbol(b"pthread_equal\0") };
-    if ptr.is_null() {
-        None
-    } else {
-        // SAFETY: resolved symbol has pthread_equal ABI.
-        Some(unsafe { std::mem::transmute::<*mut c_void, HostPthreadEqualFn>(ptr) })
-    }
+    let ptr = unsafe {
+        resolve_cached_host_thread_symbol(
+            &HOST_PTHREAD_EQUAL_PTR,
+            "pthread_equal",
+            b"pthread_equal\0",
+        )
+    }?;
+    // SAFETY: resolved symbol has pthread_equal ABI.
+    Some(unsafe { std::mem::transmute::<usize, HostPthreadEqualFn>(ptr) })
 }
 
 unsafe fn host_pthread_key_create_fn() -> Option<HostPthreadKeyCreateFn> {
