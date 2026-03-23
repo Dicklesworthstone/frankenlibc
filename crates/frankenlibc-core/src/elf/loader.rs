@@ -234,16 +234,15 @@ impl ElfLoader {
                 SectionType::Dynsym => {
                     dynsym = parse_symbols(data, section.sh_offset, section.sh_size)?;
                 }
-                SectionType::Strtab => {
+                SectionType::Strtab if dynstr.is_empty() => {
                     // Assume first strtab is dynstr (simplification)
-                    if dynstr.is_empty() {
-                        let start = section.sh_offset as usize;
-                        let end = start + section.sh_size as usize;
-                        if end <= data.len() {
-                            dynstr = data[start..end].to_vec();
-                        }
+                    let start = section.sh_offset as usize;
+                    let end = start + section.sh_size as usize;
+                    if end <= data.len() {
+                        dynstr = data[start..end].to_vec();
                     }
                 }
+                SectionType::Strtab => {}
                 SectionType::Rela => {
                     let relocs = parse_relocations(data, section.sh_offset, section.sh_size)?;
                     // Distinguish .rela.dyn from .rela.plt by section name or flags

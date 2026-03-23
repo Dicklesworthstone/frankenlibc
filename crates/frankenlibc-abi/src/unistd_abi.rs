@@ -2389,7 +2389,7 @@ fn syslog_connect() -> c_int {
         )
     };
     if rc < 0 {
-        unsafe { libc::syscall(libc::SYS_close as i64, fd) as c_int };
+        unsafe { libc::syscall(libc::SYS_close, fd) as c_int };
         return -1;
     }
     fd
@@ -2420,7 +2420,7 @@ fn syslog_send(priority: c_int, message: &[u8]) {
     };
     unsafe {
         libc::syscall(
-            libc::SYS_clock_gettime as i64,
+            libc::SYS_clock_gettime,
             libc::CLOCK_REALTIME as i64,
             &mut tv,
         ) as c_int
@@ -2443,7 +2443,7 @@ fn syslog_send(priority: c_int, message: &[u8]) {
 
     let pid_part = if state.option & LOG_PID != 0 {
         format!("[{}]", unsafe {
-            libc::syscall(libc::SYS_getpid as i64) as libc::pid_t
+            libc::syscall(libc::SYS_getpid) as libc::pid_t
         })
     } else {
         String::new()
@@ -2472,7 +2472,7 @@ fn syslog_send(priority: c_int, message: &[u8]) {
         };
         sent = rc >= 0;
         if !sent {
-            unsafe { libc::syscall(libc::SYS_close as i64, state.sock_fd) as c_int };
+            unsafe { libc::syscall(libc::SYS_close, state.sock_fd) as c_int };
             state.sock_fd = syslog_connect();
             if state.sock_fd >= 0 {
                 let rc2 = unsafe {
@@ -2579,7 +2579,7 @@ pub unsafe extern "C" fn syslog(priority: c_int, format: *const c_char, mut args
 pub unsafe extern "C" fn closelog() {
     let mut state = SYSLOG_STATE.lock().unwrap_or_else(|e| e.into_inner());
     if state.sock_fd >= 0 {
-        unsafe { libc::syscall(libc::SYS_close as i64, state.sock_fd) as c_int };
+        unsafe { libc::syscall(libc::SYS_close, state.sock_fd) as c_int };
         state.sock_fd = -1;
     }
     state.ident_ptr = std::ptr::null();
@@ -2623,7 +2623,7 @@ static mut PTSNAME_FALLBACK: [c_char; PTSNAME_MAX_LEN] = [0; PTSNAME_MAX_LEN];
 #[inline]
 unsafe fn lookup_login_name_ptr() -> *const c_char {
     let pwd =
-        unsafe { crate::pwd_abi::getpwuid(libc::syscall(libc::SYS_geteuid as i64) as libc::uid_t) };
+        unsafe { crate::pwd_abi::getpwuid(libc::syscall(libc::SYS_geteuid) as libc::uid_t) };
     if pwd.is_null() {
         return std::ptr::null();
     }
@@ -3146,7 +3146,7 @@ unsafe fn ftw_walk_dir(
     let mut st: libc::stat = unsafe { std::mem::zeroed() };
     let rc = unsafe {
         libc::syscall(
-            libc::SYS_newfstatat as i64,
+            libc::SYS_newfstatat,
             libc::AT_FDCWD,
             path,
             &mut st,
@@ -3292,7 +3292,7 @@ unsafe fn nftw_walk_dir(
     } else {
         unsafe {
             libc::syscall(
-                libc::SYS_newfstatat as i64,
+                libc::SYS_newfstatat,
                 libc::AT_FDCWD,
                 path,
                 &mut st,
@@ -3335,7 +3335,7 @@ unsafe fn nftw_walk_dir(
         let mut target_st: libc::stat = unsafe { std::mem::zeroed() };
         let typeflag = if unsafe {
             libc::syscall(
-                libc::SYS_newfstatat as i64,
+                libc::SYS_newfstatat,
                 libc::AT_FDCWD,
                 path,
                 &mut target_st,
@@ -11448,7 +11448,7 @@ pub unsafe extern "C" fn fts_read(ftsp: *mut c_void) -> *mut FTSENT {
     } else {
         unsafe {
             libc::syscall(
-                libc::SYS_newfstatat as i64,
+                libc::SYS_newfstatat,
                 libc::AT_FDCWD,
                 path_cstr.as_ptr(),
                 &mut stat_buf,
@@ -12029,7 +12029,7 @@ pub unsafe extern "C" fn pututxline(ut: *const libc::utmpx) -> *mut libc::utmpx 
     let cpath = std::ffi::CString::new(path.as_str()).unwrap_or_default();
     let fd = unsafe {
         libc::syscall(
-            libc::SYS_openat as c_long,
+            libc::SYS_openat,
             libc::AT_FDCWD,
             cpath.as_ptr(),
             libc::O_RDWR | libc::O_CREAT,
@@ -12041,7 +12041,7 @@ pub unsafe extern "C" fn pututxline(ut: *const libc::utmpx) -> *mut libc::utmpx 
     }
 
     let record_size = std::mem::size_of::<libc::utmpx>();
-    unsafe { libc::syscall(libc::SYS_lseek as c_long, fd, 0i64, libc::SEEK_END) };
+    unsafe { libc::syscall(libc::SYS_lseek, fd, 0i64, libc::SEEK_END) };
     let written = unsafe {
         libc::syscall(
             libc::SYS_write as c_long,
@@ -12133,7 +12133,7 @@ pub unsafe extern "C" fn syscall(number: c_long, mut args: ...) -> c_long {
 /// C99 `_Exit` — terminate immediately without cleanup.
 #[cfg_attr(not(debug_assertions), unsafe(export_name = "_Exit"))]
 pub unsafe extern "C" fn frankenlibc_exit_immediate(status: c_int) -> ! {
-    unsafe { frankenlibc_core::syscall::sys_exit_group(status) }
+    frankenlibc_core::syscall::sys_exit_group(status)
 }
 
 /// POSIX `execv` — execute file with argument vector.
@@ -13822,7 +13822,7 @@ unsafe extern "C" fn ucontext_trampoline() {
         unsafe { setcontext(uc_link as *const libc::ucontext_t) };
     }
     // No uc_link — exit the thread/process
-    unsafe { frankenlibc_core::syscall::sys_exit_group(0) };
+    frankenlibc_core::syscall::sys_exit_group(0);
 }
 
 /// `swapcontext` — save current context and switch to new context (x86_64 native).
@@ -14330,7 +14330,7 @@ pub unsafe extern "C" fn ntp_gettime(ntv: *mut c_void) -> c_int {
     };
     unsafe {
         libc::syscall(
-            libc::SYS_clock_gettime as i64,
+            libc::SYS_clock_gettime,
             libc::CLOCK_REALTIME as i64,
             &mut ts,
         ) as c_int

@@ -948,7 +948,7 @@ fn res_randomid() -> c_int {
     let mut ts: libc::timespec = unsafe { std::mem::zeroed() };
     unsafe {
         libc::syscall(
-            libc::SYS_clock_gettime as i64,
+            libc::SYS_clock_gettime,
             libc::CLOCK_MONOTONIC as i64,
             &mut ts,
         ) as c_int
@@ -4379,7 +4379,7 @@ pub unsafe extern "C" fn ftime(tp: *mut c_void) -> c_int {
     let mut ts: libc::timespec = unsafe { std::mem::zeroed() };
     if unsafe {
         libc::syscall(
-            libc::SYS_clock_gettime as i64,
+            libc::SYS_clock_gettime,
             libc::CLOCK_REALTIME as i64,
             &mut ts,
         ) as c_int
@@ -4437,7 +4437,7 @@ pub unsafe extern "C" fn getdirentries(
     if !basep.is_null() {
         unsafe {
             *basep = libc::syscall(
-                libc::SYS_lseek as i64,
+                libc::SYS_lseek,
                 fd as i64,
                 0 as i64,
                 libc::SEEK_CUR as i64,
@@ -4456,7 +4456,7 @@ pub unsafe extern "C" fn getdirentries64(
     if !basep.is_null() {
         unsafe {
             *basep = libc::syscall(
-                libc::SYS_lseek as i64,
+                libc::SYS_lseek,
                 fd as i64,
                 0 as i64,
                 libc::SEEK_CUR as i64,
@@ -4589,12 +4589,12 @@ pub unsafe extern "C" fn gettid() -> c_int {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getwd(buf: *mut c_char) -> *mut c_char {
     // PATH_MAX is typically 4096 on Linux
-    unsafe { libc::syscall(libc::SYS_getcwd as i64, buf, 4096) as *mut c_char }
+    unsafe { libc::syscall(libc::SYS_getcwd, buf, 4096) as *mut c_char }
 }
 // group_member: native — check if current process is in supplementary group
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn group_member(gid: c_uint) -> c_int {
-    if unsafe { libc::syscall(libc::SYS_getegid as i64) as libc::gid_t } == gid {
+    if unsafe { libc::syscall(libc::SYS_getegid) as libc::gid_t } == gid {
         return 1;
     }
     let mut groups = [0u32; 64];
@@ -5310,7 +5310,7 @@ pub unsafe extern "C" fn rresvport_af(port: *mut c_int, af: c_int) -> c_int {
                 }
             }
             _ => {
-                unsafe { libc::syscall(libc::SYS_close as i64, fd) as c_int };
+                unsafe { libc::syscall(libc::SYS_close, fd) as c_int };
                 unsafe { *libc::__errno_location() = libc::EAFNOSUPPORT };
                 return -1;
             }
@@ -5322,7 +5322,7 @@ pub unsafe extern "C" fn rresvport_af(port: *mut c_int, af: c_int) -> c_int {
             return fd;
         }
     }
-    unsafe { libc::syscall(libc::SYS_close as i64, fd) as c_int };
+    unsafe { libc::syscall(libc::SYS_close, fd) as c_int };
     unsafe { *libc::__errno_location() = libc::EAGAIN };
     -1
 }
@@ -5388,7 +5388,7 @@ pub unsafe extern "C" fn scandirat(
     }
     let dir = unsafe { libc::fdopendir(fd) };
     if dir.is_null() {
-        unsafe { libc::syscall(libc::SYS_close as i64, fd) as c_int };
+        unsafe { libc::syscall(libc::SYS_close, fd) as c_int };
         return -1;
     }
     // Use scandir-style iteration
@@ -5819,7 +5819,7 @@ pub unsafe extern "C" fn stime(t: *const c_long) -> c_int {
     };
     unsafe {
         libc::syscall(
-            libc::SYS_clock_settime as i64,
+            libc::SYS_clock_settime,
             libc::CLOCK_REALTIME as i64,
             &ts,
         ) as c_int
@@ -6377,7 +6377,7 @@ pub unsafe extern "C" fn __mktemp(template: *mut c_char) -> *mut c_char {
         };
         unsafe {
             libc::syscall(
-                libc::SYS_clock_gettime as i64,
+                libc::SYS_clock_gettime,
                 libc::CLOCK_MONOTONIC as i64,
                 &mut ts,
             ) as c_int
@@ -6396,7 +6396,7 @@ pub unsafe extern "C" fn __mktemp(template: *mut c_char) -> *mut c_char {
     let mut statbuf: libc::stat = unsafe { std::mem::zeroed() };
     if unsafe {
         libc::syscall(
-            libc::SYS_newfstatat as i64,
+            libc::SYS_newfstatat,
             libc::AT_FDCWD,
             template,
             &mut statbuf,
@@ -7875,7 +7875,7 @@ pub unsafe extern "C" fn __file_change_detection_for_path(
     let mut st: libc::stat = unsafe { std::mem::zeroed() };
     if unsafe {
         libc::syscall(
-            libc::SYS_newfstatat as i64,
+            libc::SYS_newfstatat,
             libc::AT_FDCWD,
             path,
             &mut st,

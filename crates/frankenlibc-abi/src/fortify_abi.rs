@@ -536,12 +536,12 @@ pub unsafe extern "C" fn __getcwd_chk(buf: *mut c_char, len: usize, buflen: usiz
     if buflen != usize::MAX && len > buflen {
         unsafe { __chk_fail() }
     }
-    unsafe { libc::syscall(libc::SYS_getcwd as i64, buf, len) as *mut c_char }
+    unsafe { libc::syscall(libc::SYS_getcwd, buf, len) as *mut c_char }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __getwd_chk(buf: *mut c_char, buflen: usize) -> *mut c_char {
-    unsafe { libc::syscall(libc::SYS_getcwd as i64, buf, buflen) as *mut c_char }
+    unsafe { libc::syscall(libc::SYS_getcwd, buf, buflen) as *mut c_char }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]

@@ -919,7 +919,7 @@ impl<T: Copy> SeqLock<T> {
     }
 
     fn store_lanes(&self, lanes: [u64; SEQLOCK_LANES]) {
-        for (slot, lane) in self.lanes.iter().zip(lanes.into_iter()) {
+        for (slot, lane) in self.lanes.iter().zip(lanes) {
             slot.store(lane, Ordering::Relaxed);
         }
     }

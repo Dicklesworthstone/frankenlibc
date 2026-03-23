@@ -14,7 +14,6 @@ use std::collections::HashMap;
 use std::ffi::{CStr, c_char, c_int, c_void};
 use std::os::raw::c_long;
 use std::sync::Mutex;
-use std::sync::OnceLock;
 
 use frankenlibc_core::errno;
 use frankenlibc_core::stdio::{BufMode, OpenFlags, StdioStream, flags_to_oflags, parse_mode};
@@ -410,7 +409,7 @@ pub unsafe extern "C" fn fopen(pathname: *const c_char, mode: *const c_char) -> 
     let create_mode: libc::mode_t = 0o666;
     let fd = unsafe {
         libc::syscall(
-            libc::SYS_openat as c_long,
+            libc::SYS_openat,
             libc::AT_FDCWD,
             pathname,
             oflags,
@@ -430,7 +429,7 @@ pub unsafe extern "C" fn fopen(pathname: *const c_char, mode: *const c_char) -> 
     let mut stream = StdioStream::new(fd, open_flags);
     if open_flags.append {
         // POSIX append streams start at end-of-file for logical position tracking.
-        let end_off = unsafe { libc::syscall(libc::SYS_lseek as c_long, fd, 0, libc::SEEK_END) };
+        let end_off = unsafe { libc::syscall(libc::SYS_lseek, fd, 0, libc::SEEK_END) };
         if end_off >= 0 {
             stream.set_offset(end_off as i64);
         }
@@ -1479,7 +1478,7 @@ pub unsafe extern "C" fn fseek(stream: *mut c_void, offset: c_long, whence: c_in
     };
 
     let new_off =
-        unsafe { libc::syscall(libc::SYS_lseek as c_long, fd, target_off, target_whence) as i64 };
+        unsafe { libc::syscall(libc::SYS_lseek, fd, target_off, target_whence) as i64 };
     if new_off < 0 {
         let e = std::io::Error::last_os_error()
             .raw_os_error()
@@ -3522,7 +3521,7 @@ pub unsafe extern "C" fn freopen(
     let create_mode: libc::mode_t = 0o666;
     let mut fd = unsafe {
         libc::syscall(
-            libc::SYS_openat as c_long,
+            libc::SYS_openat,
             libc::AT_FDCWD,
             pathname,
             oflags,
@@ -3724,7 +3723,7 @@ pub unsafe extern "C" fn tmpfile() -> *mut c_void {
     // Use O_TMPFILE for efficient temporary file creation.
     let fd = unsafe {
         libc::syscall(
-            libc::SYS_openat as c_long,
+            libc::SYS_openat,
             libc::AT_FDCWD,
             c"/tmp".as_ptr(),
             libc::O_RDWR | libc::O_TMPFILE | libc::O_EXCL,

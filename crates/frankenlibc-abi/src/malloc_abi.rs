@@ -192,6 +192,7 @@ unsafe fn resolve_host_allocator_symbol(name: &'static [u8]) -> *mut c_void {
     ptr
 }
 
+#[allow(dead_code)]
 /// Safe accessor: returns cached host fn or None (bump fallback).
 /// Does NOT call get_or_init — that deadlocks during _dl_init.
 macro_rules! host_fn_accessor {
@@ -504,6 +505,7 @@ struct FlatCombiningStats {
 }
 
 impl FlatCombiningStats {
+    #[allow(dead_code)]
     fn new() -> Self {
         Self {
             combiner_lock: AtomicBool::new(false),

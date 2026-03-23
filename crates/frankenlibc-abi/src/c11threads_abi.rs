@@ -168,7 +168,7 @@ pub unsafe extern "C" fn thrd_sleep(
     if duration.is_null() {
         return -2;
     }
-    let rc = unsafe { libc::syscall(libc::SYS_nanosleep as i64, duration, remaining) as c_int };
+    let rc = unsafe { libc::syscall(libc::SYS_nanosleep, duration, remaining) as c_int };
     if rc == 0 {
         0
     } else {
@@ -183,7 +183,7 @@ pub unsafe extern "C" fn thrd_sleep(
 /// C11 `thrd_yield` — yield the processor.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub extern "C" fn thrd_yield() {
-    unsafe { libc::syscall(libc::SYS_sched_yield as i64) as c_int };
+    unsafe { libc::syscall(libc::SYS_sched_yield) as c_int };
 }
 
 // ===========================================================================

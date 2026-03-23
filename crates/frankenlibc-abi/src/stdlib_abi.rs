@@ -2052,7 +2052,7 @@ pub unsafe extern "C" fn abort() -> ! {
         crate::signal_abi::raise(libc::SIGABRT);
     }
     // Should never reach here, but the compiler needs a diverging path.
-    unsafe { frankenlibc_core::syscall::sys_exit_group(134) }
+    frankenlibc_core::syscall::sys_exit_group(134)
 }
 
 /// Exit handler entry for `on_exit` — stores function pointer + arg.
@@ -2116,7 +2116,7 @@ pub unsafe extern "C" fn quick_exit(status: c_int) -> ! {
     for func in handlers.iter().rev() {
         unsafe { func() };
     }
-    unsafe { frankenlibc_core::syscall::sys_exit_group(status) }
+    frankenlibc_core::syscall::sys_exit_group(status)
 }
 
 // ===========================================================================
@@ -2755,7 +2755,7 @@ pub unsafe extern "C" fn tmpnam_r(s: *mut c_char) -> *mut c_char {
     }
     // Generate /tmp/tmpXXXXXX pattern and check uniqueness
     static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    let pid = unsafe { libc::syscall(libc::SYS_getpid as i64) as libc::pid_t };
+    let pid = unsafe { libc::syscall(libc::SYS_getpid) as libc::pid_t };
     let cnt = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let name = format!("/tmp/tmp{pid:06}{cnt:06}\0");
     let name_bytes = name.as_bytes();

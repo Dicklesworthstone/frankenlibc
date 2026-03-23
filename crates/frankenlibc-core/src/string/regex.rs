@@ -784,15 +784,16 @@ impl<'a> PikeVm<'a> {
                     continue;
                 }
                 match &self.nfa[t.pc] {
-                    NfaInstr::Match(mk) => {
-                        if self.matches(mk, sp, notbol, noteol) {
-                            let new_t = Thread {
-                                pc: t.pc + 1,
-                                slots: t.slots,
-                            };
-                            self.add_thread(&mut next, new_t, sp + 1, notbol, noteol);
-                        }
+                    NfaInstr::Match(mk)
+                        if self.matches(mk, sp, notbol, noteol) =>
+                    {
+                        let new_t = Thread {
+                            pc: t.pc + 1,
+                            slots: t.slots,
+                        };
+                        self.add_thread(&mut next, new_t, sp + 1, notbol, noteol);
                     }
+                    NfaInstr::Match(_) => {}
                     NfaInstr::Accept => {
                         let mut final_slots = t.slots;
                         final_slots[1] = sp as i32; // group 0 end

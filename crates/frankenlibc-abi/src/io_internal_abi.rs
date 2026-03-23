@@ -425,7 +425,7 @@ pub unsafe extern "C" fn _IO_file_open(
     };
     let fp = unsafe { stdio_abi::fdopen(fd, mode.as_ptr()) };
     if fp.is_null() {
-        unsafe { libc::syscall(libc::SYS_close as i64, fd) as c_int };
+        unsafe { libc::syscall(libc::SYS_close, fd) as c_int };
     }
     fp
 }
