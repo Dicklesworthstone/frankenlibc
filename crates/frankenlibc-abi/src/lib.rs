@@ -25,6 +25,7 @@
 #[macro_use]
 mod macros;
 
+pub(crate) mod host_resolve;
 mod membrane_state;
 mod runtime_policy;
 

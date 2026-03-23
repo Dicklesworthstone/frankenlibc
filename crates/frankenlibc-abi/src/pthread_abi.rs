@@ -920,26 +920,29 @@ unsafe fn native_pthread_create(
     arg: *mut c_void,
 ) -> c_int {
     if !FORCE_NATIVE_THREADING.load(Ordering::Acquire) {
-        // SAFETY: host symbol lookup/transmute guarantees ABI if present.
+        // === ALIEN-ARTIFACT PATH ===
+        // Resolve host pthread_create by directly parsing glibc's in-memory
+        // ELF image using only raw syscalls + pointer math. This completely
+        // bypasses the dynamic linker interposition that makes dlsym/dlvsym
+        // recursion unbreakable.
+        if let Some(host_create) = crate::host_resolve::host_pthread_create_raw() {
+            return unsafe {
+                host_create(
+                    thread_out,
+                    attr,
+                    Some(start_routine),
+                    arg,
+                )
+            };
+        }
+
+        // Fallback: try the OnceLock-cached path (works after prewarm).
         if let Some(host_create) = unsafe { host_pthread_create_fn() } {
-            // SAFETY: direct call through resolved host symbol.
             return unsafe { host_create(thread_out, attr, Some(start_routine), arg) };
         }
         prewarm_host_thread_lifecycle_symbols();
         if let Some(host_create) = unsafe { host_pthread_create_fn() } {
-            // SAFETY: direct call through resolved host symbol.
             return unsafe { host_create(thread_out, attr, Some(start_routine), arg) };
-        }
-        // Last resort: open libc.so.6 directly and dlsym pthread_create.
-        // This works when dlvsym_next fails (our interposed dlvsym doesn't
-        // delegate RTLD_NEXT to the host dynamic linker).
-        let handle = unsafe { libc::dlopen(c"libc.so.6".as_ptr(), libc::RTLD_NOW | libc::RTLD_NOLOAD) };
-        if !handle.is_null() {
-            let sym = unsafe { libc::dlsym(handle, c"pthread_create".as_ptr()) };
-            if !sym.is_null() {
-                let f: HostPthreadCreateFn = unsafe { std::mem::transmute(sym) };
-                return unsafe { f(thread_out, attr, Some(start_routine), arg) };
-            }
         }
     }
     if thread_out.is_null() {
