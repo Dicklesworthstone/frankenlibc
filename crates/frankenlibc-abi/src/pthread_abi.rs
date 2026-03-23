@@ -2146,18 +2146,31 @@ pub unsafe extern "C" fn pthread_key_create(
             // SAFETY: direct call through resolved host symbol.
             return unsafe { host_key_create(key, destructor) };
         }
-        if sensitive_context {
-            return libc::EAGAIN;
-        }
     }
-    let mut internal_key = PthreadKey::default();
-    // Core now uses the same `unsafe extern "C" fn(*mut c_void)` type as POSIX.
-    let rc = core_pthread_key_create(&mut internal_key, destructor);
-    if rc == 0 {
-        // SAFETY: key is non-null and we write the index.
-        unsafe { *key = internal_key.id };
-    }
-    rc
+    with_threading_policy_guard(
+        || {
+            if sensitive_context {
+                libc::EAGAIN
+            } else {
+                let mut internal_key = PthreadKey::default();
+                let rc = core_pthread_key_create(&mut internal_key, destructor);
+                if rc == 0 {
+                    // SAFETY: key is non-null and we write the index.
+                    unsafe { *key = internal_key.id };
+                }
+                rc
+            }
+        },
+        || {
+            let mut internal_key = PthreadKey::default();
+            let rc = core_pthread_key_create(&mut internal_key, destructor);
+            if rc == 0 {
+                // SAFETY: key is non-null and we write the index.
+                unsafe { *key = internal_key.id };
+            }
+            rc
+        },
+    )
 }
 
 /// POSIX `pthread_key_delete`.
@@ -2172,12 +2185,17 @@ pub unsafe extern "C" fn pthread_key_delete(key: libc::pthread_key_t) -> c_int {
             // SAFETY: direct call through resolved host symbol.
             return unsafe { host_key_delete(key) };
         }
-        if sensitive_context {
-            return libc::EINVAL;
-        }
     }
-    let internal_key = PthreadKey { id: key };
-    core_pthread_key_delete(internal_key)
+    with_threading_policy_guard(
+        || {
+            if sensitive_context {
+                libc::EINVAL
+            } else {
+                core_pthread_key_delete(PthreadKey { id: key })
+            }
+        },
+        || core_pthread_key_delete(PthreadKey { id: key }),
+    )
 }
 
 /// POSIX `pthread_getspecific`.
@@ -2193,12 +2211,17 @@ pub unsafe extern "C" fn pthread_getspecific(key: libc::pthread_key_t) -> *mut c
             // SAFETY: direct call through resolved host symbol.
             return unsafe { host_getspecific(key) };
         }
-        if sensitive_context {
-            return std::ptr::null_mut();
-        }
     }
-    let internal_key = PthreadKey { id: key };
-    core_pthread_getspecific(internal_key) as *mut c_void
+    with_threading_policy_guard(
+        || {
+            if sensitive_context {
+                std::ptr::null_mut()
+            } else {
+                core_pthread_getspecific(PthreadKey { id: key }) as *mut c_void
+            }
+        },
+        || core_pthread_getspecific(PthreadKey { id: key }) as *mut c_void,
+    )
 }
 
 /// POSIX `pthread_setspecific`.
@@ -2217,12 +2240,17 @@ pub unsafe extern "C" fn pthread_setspecific(
             // SAFETY: direct call through resolved host symbol.
             return unsafe { host_setspecific(key, value) };
         }
-        if sensitive_context {
-            return libc::EINVAL;
-        }
     }
-    let internal_key = PthreadKey { id: key };
-    core_pthread_setspecific(internal_key, value as u64)
+    with_threading_policy_guard(
+        || {
+            if sensitive_context {
+                libc::EINVAL
+            } else {
+                core_pthread_setspecific(PthreadKey { id: key }, value as u64)
+            }
+        },
+        || core_pthread_setspecific(PthreadKey { id: key }, value as u64),
+    )
 }
 
 // ===========================================================================
