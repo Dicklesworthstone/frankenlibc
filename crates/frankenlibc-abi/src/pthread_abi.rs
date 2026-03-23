@@ -13,6 +13,7 @@ use std::io::{Read, Write};
 use std::sync::atomic::{AtomicI32, AtomicU32, AtomicU64, Ordering};
 use std::sync::{LazyLock, Mutex, OnceLock};
 
+use frankenlibc_core::elf::ElfLoader;
 use frankenlibc_core::pthread::tls::{
     PthreadKey, pthread_key_create as core_pthread_key_create,
     pthread_key_delete as core_pthread_key_delete,
@@ -116,6 +117,8 @@ static CANCEL_PENDING_REGISTRY: LazyLock<Mutex<HashMap<usize, bool>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 static HOST_SYMBOL_CACHE: LazyLock<Mutex<HashMap<&'static [u8], usize>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
+static HOST_LIBC_SYMBOL_CACHE: LazyLock<Mutex<HashMap<&'static str, usize>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 static HOST_PTHREAD_KEY_CREATE_PTR: OnceLock<usize> = OnceLock::new();
 static HOST_PTHREAD_KEY_DELETE_PTR: OnceLock<usize> = OnceLock::new();
 #[cfg(target_arch = "x86_64")]
@@ -184,6 +187,51 @@ unsafe fn resolve_host_symbol(name: &'static [u8]) -> *mut c_void {
     resolved
 }
 
+fn loaded_libc_base_and_path() -> Option<(u64, String)> {
+    let maps = std::fs::read_to_string("/proc/self/maps").ok()?;
+    for line in maps.lines() {
+        let mut parts = line.split_whitespace();
+        let range = parts.next()?;
+        let _perms = parts.next()?;
+        let offset = parts.next()?;
+        let _dev = parts.next()?;
+        let _inode = parts.next()?;
+        let path = parts.next()?;
+        if !path.contains("libc.so.6") {
+            continue;
+        }
+        let mut range_parts = range.split('-');
+        let start = u64::from_str_radix(range_parts.next()?, 16).ok()?;
+        let file_offset = u64::from_str_radix(offset, 16).ok()?;
+        return Some((start.saturating_sub(file_offset), path.to_string()));
+    }
+    None
+}
+
+fn resolve_loaded_libc_symbol_direct(symbol: &'static str) -> Option<usize> {
+    if let Some(addr) = HOST_LIBC_SYMBOL_CACHE
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(symbol)
+        .copied()
+    {
+        return (addr != 0).then_some(addr);
+    }
+
+    let (base, path) = loaded_libc_base_and_path()?;
+    let data = std::fs::read(path).ok()?;
+    let object = ElfLoader::new(0).parse(&data).ok()?;
+    let symbol_addr = object
+        .lookup_symbol(symbol)
+        .map(|sym| base.saturating_add(sym.st_value) as usize)
+        .unwrap_or(0);
+    HOST_LIBC_SYMBOL_CACHE
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(symbol, symbol_addr);
+    (symbol_addr != 0).then_some(symbol_addr)
+}
+
 unsafe fn resolve_host_symbol_nocache(name: &'static [u8]) -> *mut c_void {
     let glibc_v225 = b"GLIBC_2.2.5\0";
     let glibc_v232 = b"GLIBC_2.3.2\0";
@@ -232,6 +280,10 @@ unsafe fn resolve_host_symbol_with_aliases(names: &[&'static [u8]]) -> *mut c_vo
 }
 
 unsafe fn host_pthread_create_fn() -> Option<HostPthreadCreateFn> {
+    if let Some(ptr) = resolve_loaded_libc_symbol_direct("pthread_create") {
+        // SAFETY: resolved symbol address comes from the loaded glibc dynsym table.
+        return Some(unsafe { std::mem::transmute::<usize, HostPthreadCreateFn>(ptr) });
+    }
     let ptr = unsafe { resolve_host_symbol(b"pthread_create\0") };
     if ptr.is_null() {
         None
@@ -242,6 +294,10 @@ unsafe fn host_pthread_create_fn() -> Option<HostPthreadCreateFn> {
 }
 
 unsafe fn host_pthread_join_fn() -> Option<HostPthreadJoinFn> {
+    if let Some(ptr) = resolve_loaded_libc_symbol_direct("pthread_join") {
+        // SAFETY: resolved symbol address comes from the loaded glibc dynsym table.
+        return Some(unsafe { std::mem::transmute::<usize, HostPthreadJoinFn>(ptr) });
+    }
     let ptr = unsafe { resolve_host_symbol(b"pthread_join\0") };
     if ptr.is_null() {
         None
@@ -252,6 +308,10 @@ unsafe fn host_pthread_join_fn() -> Option<HostPthreadJoinFn> {
 }
 
 unsafe fn host_pthread_detach_fn() -> Option<HostPthreadDetachFn> {
+    if let Some(ptr) = resolve_loaded_libc_symbol_direct("pthread_detach") {
+        // SAFETY: resolved symbol address comes from the loaded glibc dynsym table.
+        return Some(unsafe { std::mem::transmute::<usize, HostPthreadDetachFn>(ptr) });
+    }
     let ptr = unsafe { resolve_host_symbol(b"pthread_detach\0") };
     if ptr.is_null() {
         None
@@ -262,6 +322,10 @@ unsafe fn host_pthread_detach_fn() -> Option<HostPthreadDetachFn> {
 }
 
 unsafe fn host_pthread_self_fn() -> Option<HostPthreadSelfFn> {
+    if let Some(ptr) = resolve_loaded_libc_symbol_direct("pthread_self") {
+        // SAFETY: resolved symbol address comes from the loaded glibc dynsym table.
+        return Some(unsafe { std::mem::transmute::<usize, HostPthreadSelfFn>(ptr) });
+    }
     let ptr = unsafe { resolve_host_symbol(b"pthread_self\0") };
     if ptr.is_null() {
         None
@@ -272,6 +336,10 @@ unsafe fn host_pthread_self_fn() -> Option<HostPthreadSelfFn> {
 }
 
 unsafe fn host_pthread_equal_fn() -> Option<HostPthreadEqualFn> {
+    if let Some(ptr) = resolve_loaded_libc_symbol_direct("pthread_equal") {
+        // SAFETY: resolved symbol address comes from the loaded glibc dynsym table.
+        return Some(unsafe { std::mem::transmute::<usize, HostPthreadEqualFn>(ptr) });
+    }
     let ptr = unsafe { resolve_host_symbol(b"pthread_equal\0") };
     if ptr.is_null() {
         None
