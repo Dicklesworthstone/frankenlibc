@@ -236,18 +236,6 @@ pub unsafe extern "C" fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *m
     let symbol_name = unsafe { CStr::from_ptr(symbol) }.to_bytes();
     clear_dlerror();
 
-    // For RTLD_NEXT and real library handles: use the alien-artifact raw
-    // ELF resolver to find host symbols without any dynamic linker recursion.
-    if handle as usize == dlfcn_core::RTLD_NEXT || handle as usize == dlfcn_core::RTLD_DEFAULT {
-        if let Some(host_dlsym) = crate::host_resolve::host_dlsym_raw() {
-            let sym = unsafe { host_dlsym(handle, symbol) };
-            if !sym.is_null() {
-                runtime_policy::observe(ApiFamily::Loader, decision.profile, 8, false);
-                return sym;
-            }
-        }
-    }
-
     let handle_val = handle as usize;
     let sym = if handle_val != dlfcn_core::RTLD_DEFAULT
         && handle_val != dlfcn_core::RTLD_NEXT
