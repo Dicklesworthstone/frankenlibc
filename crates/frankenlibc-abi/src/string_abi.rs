@@ -4736,8 +4736,9 @@ pub unsafe extern "C" fn glob(
 
             // Allocate pathv: offs + total + 1 (null terminator)
             let alloc_count = offs + total + 1;
-            let pathv = unsafe { crate::malloc_abi::raw_alloc(alloc_count * std::mem::size_of::<*mut c_char>()) }
-                as *mut *mut c_char;
+            let pathv = unsafe {
+                crate::malloc_abi::raw_alloc(alloc_count * std::mem::size_of::<*mut c_char>())
+            } as *mut *mut c_char;
             if pathv.is_null() {
                 return glob_core::GLOB_NOSPACE;
             }
@@ -4759,7 +4760,11 @@ pub unsafe extern "C" fn glob(
                 if s.is_null() {
                     // Free everything allocated so far.
                     for j in 0..i {
-                        unsafe { crate::malloc_abi::raw_free(*pathv.add(offs + existing_count + j) as *mut c_void) };
+                        unsafe {
+                            crate::malloc_abi::raw_free(
+                                *pathv.add(offs + existing_count + j) as *mut c_void
+                            )
+                        };
                     }
                     unsafe { crate::malloc_abi::raw_free(pathv as *mut c_void) };
                     return glob_core::GLOB_NOSPACE;

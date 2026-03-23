@@ -205,7 +205,9 @@ pub unsafe extern "C" fn mtx_init(mtx: *mut MtxT, typ: c_int) -> c_int {
 
     // C11 MTX_RECURSIVE flag means recursive mutex.
     if typ & MTX_RECURSIVE != 0 {
-        unsafe { crate::pthread_abi::pthread_mutexattr_settype(&mut attr, libc::PTHREAD_MUTEX_RECURSIVE) };
+        unsafe {
+            crate::pthread_abi::pthread_mutexattr_settype(&mut attr, libc::PTHREAD_MUTEX_RECURSIVE)
+        };
     }
 
     let rc = unsafe { crate::pthread_abi::pthread_mutex_init(mtx, &attr) };

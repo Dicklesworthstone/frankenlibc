@@ -219,7 +219,9 @@ impl AlphaInvestingController {
         if severity >= STRONG_EVIDENCE_SEVERITY {
             // Deduct spend, add reward.
             let next_wealth = self.wealth_milli.saturating_sub(spend);
-            self.wealth_milli = next_wealth.saturating_add(REWARD_MILLI).min(MAX_WEALTH_MILLI);
+            self.wealth_milli = next_wealth
+                .saturating_add(REWARD_MILLI)
+                .min(MAX_WEALTH_MILLI);
             self.rejections = self.rejections.saturating_add(1);
             1
         } else {

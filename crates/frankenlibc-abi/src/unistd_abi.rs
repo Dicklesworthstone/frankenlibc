@@ -1850,13 +1850,18 @@ pub unsafe extern "C" fn sysconf(name: c_int) -> libc::c_long {
             // Read MemTotal from /proc/meminfo, convert to pages.
             let mut buf = [0u8; 256];
             let fd = unsafe {
-                libc::syscall(libc::SYS_openat, libc::AT_FDCWD,
-                    c"/proc/meminfo".as_ptr(), libc::O_RDONLY, 0)
+                libc::syscall(
+                    libc::SYS_openat,
+                    libc::AT_FDCWD,
+                    c"/proc/meminfo".as_ptr(),
+                    libc::O_RDONLY,
+                    0,
+                )
             } as c_int;
             if fd >= 0 {
-                let n = unsafe {
-                    libc::syscall(libc::SYS_read, fd, buf.as_mut_ptr(), buf.len() - 1)
-                } as isize;
+                let n =
+                    unsafe { libc::syscall(libc::SYS_read, fd, buf.as_mut_ptr(), buf.len() - 1) }
+                        as isize;
                 unsafe { libc::syscall(libc::SYS_close, fd) };
                 if n > 0 {
                     let s = std::str::from_utf8(&buf[..n as usize]).unwrap_or("");
@@ -1877,13 +1882,18 @@ pub unsafe extern "C" fn sysconf(name: c_int) -> libc::c_long {
             // Read MemAvailable from /proc/meminfo.
             let mut buf = [0u8; 512];
             let fd = unsafe {
-                libc::syscall(libc::SYS_openat, libc::AT_FDCWD,
-                    c"/proc/meminfo".as_ptr(), libc::O_RDONLY, 0)
+                libc::syscall(
+                    libc::SYS_openat,
+                    libc::AT_FDCWD,
+                    c"/proc/meminfo".as_ptr(),
+                    libc::O_RDONLY,
+                    0,
+                )
             } as c_int;
             if fd >= 0 {
-                let n = unsafe {
-                    libc::syscall(libc::SYS_read, fd, buf.as_mut_ptr(), buf.len() - 1)
-                } as isize;
+                let n =
+                    unsafe { libc::syscall(libc::SYS_read, fd, buf.as_mut_ptr(), buf.len() - 1) }
+                        as isize;
                 unsafe { libc::syscall(libc::SYS_close, fd) };
                 if n > 0 {
                     let s = std::str::from_utf8(&buf[..n as usize]).unwrap_or("");
@@ -2408,7 +2418,13 @@ fn syslog_send(priority: c_int, message: &[u8]) {
         tv_sec: 0,
         tv_nsec: 0,
     };
-    unsafe { libc::syscall(libc::SYS_clock_gettime as i64, libc::CLOCK_REALTIME as i64, &mut tv) as c_int };
+    unsafe {
+        libc::syscall(
+            libc::SYS_clock_gettime as i64,
+            libc::CLOCK_REALTIME as i64,
+            &mut tv,
+        ) as c_int
+    };
     let epoch = tv.tv_sec;
     let secs_in_day = epoch % 86400;
     let hour = secs_in_day / 3600;
@@ -2426,7 +2442,9 @@ fn syslog_send(priority: c_int, message: &[u8]) {
     };
 
     let pid_part = if state.option & LOG_PID != 0 {
-        format!("[{}]", unsafe { libc::syscall(libc::SYS_getpid as i64) as libc::pid_t })
+        format!("[{}]", unsafe {
+            libc::syscall(libc::SYS_getpid as i64) as libc::pid_t
+        })
     } else {
         String::new()
     };
@@ -2604,7 +2622,8 @@ static mut PTSNAME_FALLBACK: [c_char; PTSNAME_MAX_LEN] = [0; PTSNAME_MAX_LEN];
 
 #[inline]
 unsafe fn lookup_login_name_ptr() -> *const c_char {
-    let pwd = unsafe { crate::pwd_abi::getpwuid(libc::syscall(libc::SYS_geteuid as i64) as libc::uid_t) };
+    let pwd =
+        unsafe { crate::pwd_abi::getpwuid(libc::syscall(libc::SYS_geteuid as i64) as libc::uid_t) };
     if pwd.is_null() {
         return std::ptr::null();
     }
@@ -3125,7 +3144,15 @@ unsafe fn ftw_walk_dir(
     const FTW_NS: c_int = 3; // stat failed
 
     let mut st: libc::stat = unsafe { std::mem::zeroed() };
-    let rc = unsafe { libc::syscall(libc::SYS_newfstatat as i64, libc::AT_FDCWD, path, &mut st, 0) as c_int };
+    let rc = unsafe {
+        libc::syscall(
+            libc::SYS_newfstatat as i64,
+            libc::AT_FDCWD,
+            path,
+            &mut st,
+            0,
+        ) as c_int
+    };
     if rc != 0 {
         return unsafe { func(path, &st, FTW_NS) };
     }
@@ -3263,7 +3290,15 @@ unsafe fn nftw_walk_dir(
     let rc = if flags & FTW_PHYS != 0 {
         unsafe { libc::lstat(path, &mut st) }
     } else {
-        unsafe { libc::syscall(libc::SYS_newfstatat as i64, libc::AT_FDCWD, path, &mut st, 0) as c_int }
+        unsafe {
+            libc::syscall(
+                libc::SYS_newfstatat as i64,
+                libc::AT_FDCWD,
+                path,
+                &mut st,
+                0,
+            ) as c_int
+        }
     };
 
     // Compute base offset (last '/' + 1).
@@ -3298,7 +3333,16 @@ unsafe fn nftw_walk_dir(
     if is_link && flags & FTW_PHYS != 0 {
         // Check if dangling
         let mut target_st: libc::stat = unsafe { std::mem::zeroed() };
-        let typeflag = if unsafe { libc::syscall(libc::SYS_newfstatat as i64, libc::AT_FDCWD, path, &mut target_st, 0) as c_int } != 0 {
+        let typeflag = if unsafe {
+            libc::syscall(
+                libc::SYS_newfstatat as i64,
+                libc::AT_FDCWD,
+                path,
+                &mut target_st,
+                0,
+            ) as c_int
+        } != 0
+        {
             NFTW_SLN
         } else {
             NFTW_SL
@@ -4652,7 +4696,9 @@ pub unsafe extern "C" fn wordexp(
         if buf.is_null() {
             // Clean up on allocation failure
             for j in 0..i {
-                unsafe { crate::malloc_abi::raw_free(*new_wordv.add(offs + old_count + j) as *mut c_void) };
+                unsafe {
+                    crate::malloc_abi::raw_free(*new_wordv.add(offs + old_count + j) as *mut c_void)
+                };
             }
             unsafe { crate::malloc_abi::raw_free(new_wordv as *mut c_void) };
             return WRDE_NOSPACE;
@@ -5149,11 +5195,11 @@ pub unsafe extern "C" fn forkpty(
     }
 
     crate::pthread_abi::run_atfork_prepare();
-    let _pipeline_guard = crate::membrane_state::try_global_pipeline()
-        .map(|pipeline| pipeline.atfork_prepare());
+    let _pipeline_guard =
+        crate::membrane_state::try_global_pipeline().map(|pipeline| pipeline.atfork_prepare());
 
     let pid = unsafe { libc::syscall(libc::SYS_clone, libc::SIGCHLD as i64, 0i64) } as libc::pid_t;
-    
+
     drop(_pipeline_guard);
 
     if pid == 0 {
@@ -6694,8 +6740,9 @@ fn netlink_dump(msg_type: u16, family: u8) -> Result<Vec<u8>, c_int> {
 fn alloc_sockaddr(family: u8, addr_data: &[u8]) -> *mut libc::sockaddr {
     match family as i32 {
         libc::AF_INET if addr_data.len() >= 4 => {
-            let sa = unsafe { crate::malloc_abi::raw_alloc(std::mem::size_of::<libc::sockaddr_in>()) }
-                as *mut libc::sockaddr_in;
+            let sa =
+                unsafe { crate::malloc_abi::raw_alloc(std::mem::size_of::<libc::sockaddr_in>()) }
+                    as *mut libc::sockaddr_in;
             if sa.is_null() {
                 return std::ptr::null_mut();
             }
@@ -6710,8 +6757,9 @@ fn alloc_sockaddr(family: u8, addr_data: &[u8]) -> *mut libc::sockaddr {
             sa as *mut libc::sockaddr
         }
         libc::AF_INET6 if addr_data.len() >= 16 => {
-            let sa = unsafe { crate::malloc_abi::raw_alloc(std::mem::size_of::<libc::sockaddr_in6>()) }
-                as *mut libc::sockaddr_in6;
+            let sa =
+                unsafe { crate::malloc_abi::raw_alloc(std::mem::size_of::<libc::sockaddr_in6>()) }
+                    as *mut libc::sockaddr_in6;
             if sa.is_null() {
                 return std::ptr::null_mut();
             }
@@ -6733,8 +6781,9 @@ fn alloc_sockaddr(family: u8, addr_data: &[u8]) -> *mut libc::sockaddr {
 fn alloc_netmask(family: u8, prefixlen: u8) -> *mut libc::sockaddr {
     match family as i32 {
         libc::AF_INET => {
-            let sa = unsafe { crate::malloc_abi::raw_alloc(std::mem::size_of::<libc::sockaddr_in>()) }
-                as *mut libc::sockaddr_in;
+            let sa =
+                unsafe { crate::malloc_abi::raw_alloc(std::mem::size_of::<libc::sockaddr_in>()) }
+                    as *mut libc::sockaddr_in;
             if sa.is_null() {
                 return std::ptr::null_mut();
             }
@@ -6752,8 +6801,9 @@ fn alloc_netmask(family: u8, prefixlen: u8) -> *mut libc::sockaddr {
             sa as *mut libc::sockaddr
         }
         libc::AF_INET6 => {
-            let sa = unsafe { crate::malloc_abi::raw_alloc(std::mem::size_of::<libc::sockaddr_in6>()) }
-                as *mut libc::sockaddr_in6;
+            let sa =
+                unsafe { crate::malloc_abi::raw_alloc(std::mem::size_of::<libc::sockaddr_in6>()) }
+                    as *mut libc::sockaddr_in6;
             if sa.is_null() {
                 return std::ptr::null_mut();
             }
@@ -6917,8 +6967,9 @@ fn parse_netlink_addrs(
 
             if let Some(addr_bytes) = effective_addr {
                 // Allocate an ifaddrs node
-                let node =
-                    unsafe { crate::malloc_abi::raw_alloc(std::mem::size_of::<Ifaddrs>()) as *mut Ifaddrs };
+                let node = unsafe {
+                    crate::malloc_abi::raw_alloc(std::mem::size_of::<Ifaddrs>()) as *mut Ifaddrs
+                };
                 if node.is_null() {
                     continue;
                 }
@@ -6926,8 +6977,9 @@ fn parse_netlink_addrs(
                 // Name
                 let name_cstr =
                     CString::new(if_name.as_str()).unwrap_or_else(|_| CString::new("?").unwrap());
-                let name_ptr =
-                    unsafe { crate::malloc_abi::raw_alloc(name_cstr.as_bytes_with_nul().len()) as *mut c_char };
+                let name_ptr = unsafe {
+                    crate::malloc_abi::raw_alloc(name_cstr.as_bytes_with_nul().len()) as *mut c_char
+                };
                 if !name_ptr.is_null() {
                     unsafe {
                         std::ptr::copy_nonoverlapping(
@@ -9419,7 +9471,8 @@ pub unsafe extern "C" fn glob64(
             let count = res.paths.len();
             // Allocate pathv array (count + 1 for NULL sentinel).
             let pathv = unsafe {
-                crate::malloc_abi::raw_alloc((count + 1) * std::mem::size_of::<*mut c_char>()) as *mut *mut c_char
+                crate::malloc_abi::raw_alloc((count + 1) * std::mem::size_of::<*mut c_char>())
+                    as *mut *mut c_char
             };
             if pathv.is_null() {
                 return glob_core::GLOB_NOSPACE;
@@ -11393,7 +11446,15 @@ pub unsafe extern "C" fn fts_read(ftsp: *mut c_void) -> *mut FTSENT {
     let stat_result = if stream.options & FTS_PHYSICAL != 0 {
         unsafe { libc::lstat(path_cstr.as_ptr(), &mut stat_buf) }
     } else {
-        unsafe { libc::syscall(libc::SYS_newfstatat as i64, libc::AT_FDCWD, path_cstr.as_ptr(), &mut stat_buf, 0) as c_int }
+        unsafe {
+            libc::syscall(
+                libc::SYS_newfstatat as i64,
+                libc::AT_FDCWD,
+                path_cstr.as_ptr(),
+                &mut stat_buf,
+                0,
+            ) as c_int
+        }
     };
 
     let info = if stat_result < 0 {
@@ -14267,7 +14328,13 @@ pub unsafe extern "C" fn ntp_gettime(ntv: *mut c_void) -> c_int {
         tv_sec: 0,
         tv_nsec: 0,
     };
-    unsafe { libc::syscall(libc::SYS_clock_gettime as i64, libc::CLOCK_REALTIME as i64, &mut ts) as c_int };
+    unsafe {
+        libc::syscall(
+            libc::SYS_clock_gettime as i64,
+            libc::CLOCK_REALTIME as i64,
+            &mut ts,
+        ) as c_int
+    };
     // ntptimeval.time = timeval at offset 0
     let p = ntv as *mut i64;
     unsafe {
@@ -14441,13 +14508,13 @@ pub unsafe extern "C" fn pkey_set(pkey: c_int, rights: c_int) -> c_int {
 #[allow(non_snake_case)]
 pub unsafe extern "C" fn _Fork() -> c_int {
     // _Fork is async-signal-safe fork (C23), no atfork handlers
-    let _pipeline_guard = crate::membrane_state::try_global_pipeline()
-        .map(|pipeline| pipeline.atfork_prepare());
+    let _pipeline_guard =
+        crate::membrane_state::try_global_pipeline().map(|pipeline| pipeline.atfork_prepare());
 
     let ret = unsafe { libc::syscall(libc::SYS_clone, libc::SIGCHLD, 0, 0, 0, 0) };
-    
+
     drop(_pipeline_guard);
-    
+
     if ret < 0 { -1 } else { ret as c_int }
 }
 

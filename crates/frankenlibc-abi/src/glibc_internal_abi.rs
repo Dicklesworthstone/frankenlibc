@@ -946,7 +946,13 @@ fn res_randomid() -> c_int {
     let mut val = COUNTER.fetch_add(1, Ordering::Relaxed);
     // Mix with a time-based value for randomness
     let mut ts: libc::timespec = unsafe { std::mem::zeroed() };
-    unsafe { libc::syscall(libc::SYS_clock_gettime as i64, libc::CLOCK_MONOTONIC as i64, &mut ts) as c_int };
+    unsafe {
+        libc::syscall(
+            libc::SYS_clock_gettime as i64,
+            libc::CLOCK_MONOTONIC as i64,
+            &mut ts,
+        ) as c_int
+    };
     val = val.wrapping_add(ts.tv_nsec as u32);
     val = val.wrapping_mul(1103515245).wrapping_add(12345);
     ((val >> 16) & 0xFFFF) as c_int
@@ -4371,7 +4377,14 @@ pub unsafe extern "C" fn ftime(tp: *mut c_void) -> c_int {
         return -1;
     }
     let mut ts: libc::timespec = unsafe { std::mem::zeroed() };
-    if unsafe { libc::syscall(libc::SYS_clock_gettime as i64, libc::CLOCK_REALTIME as i64, &mut ts) as c_int } != 0 {
+    if unsafe {
+        libc::syscall(
+            libc::SYS_clock_gettime as i64,
+            libc::CLOCK_REALTIME as i64,
+            &mut ts,
+        ) as c_int
+    } != 0
+    {
         return -1;
     }
     // struct timeb layout: time_t(8), millitm(u16), timezone(i16), dstflag(i16)
@@ -4422,7 +4435,14 @@ pub unsafe extern "C" fn getdirentries(
     basep: *mut c_long,
 ) -> SSizeT {
     if !basep.is_null() {
-        unsafe { *basep = libc::syscall(libc::SYS_lseek as i64, fd as i64, 0 as i64, libc::SEEK_CUR as i64) as libc::off_t as c_long };
+        unsafe {
+            *basep = libc::syscall(
+                libc::SYS_lseek as i64,
+                fd as i64,
+                0 as i64,
+                libc::SEEK_CUR as i64,
+            ) as libc::off_t as c_long
+        };
     }
     unsafe { libc::syscall(libc::SYS_getdents64, fd, buf, nbytes) as SSizeT }
 }
@@ -4434,7 +4454,14 @@ pub unsafe extern "C" fn getdirentries64(
     basep: *mut i64,
 ) -> SSizeT {
     if !basep.is_null() {
-        unsafe { *basep = libc::syscall(libc::SYS_lseek as i64, fd as i64, 0 as i64, libc::SEEK_CUR as i64) as libc::off_t as i64 };
+        unsafe {
+            *basep = libc::syscall(
+                libc::SYS_lseek as i64,
+                fd as i64,
+                0 as i64,
+                libc::SEEK_CUR as i64,
+            ) as libc::off_t as i64
+        };
     }
     unsafe { libc::syscall(libc::SYS_getdents64, fd, buf, nbytes) as SSizeT }
 }
@@ -5415,8 +5442,9 @@ pub unsafe extern "C" fn scandirat(
         });
     }
     let count = entries.len() as c_int;
-    let arr = unsafe { crate::malloc_abi::raw_alloc(entries.len() * std::mem::size_of::<*mut libc::dirent>()) }
-        as *mut *mut c_void;
+    let arr = unsafe {
+        crate::malloc_abi::raw_alloc(entries.len() * std::mem::size_of::<*mut libc::dirent>())
+    } as *mut *mut c_void;
     if arr.is_null() && !entries.is_empty() {
         for e in &entries {
             unsafe { crate::malloc_abi::raw_free(*e as *mut c_void) };
@@ -5789,7 +5817,13 @@ pub unsafe extern "C" fn stime(t: *const c_long) -> c_int {
         tv_sec: unsafe { *t },
         tv_nsec: 0,
     };
-    unsafe { libc::syscall(libc::SYS_clock_settime as i64, libc::CLOCK_REALTIME as i64, &ts) as c_int }
+    unsafe {
+        libc::syscall(
+            libc::SYS_clock_settime as i64,
+            libc::CLOCK_REALTIME as i64,
+            &ts,
+        ) as c_int
+    }
 }
 // stty: legacy V7 — return ENOSYS
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -6341,7 +6375,13 @@ pub unsafe extern "C" fn __mktemp(template: *mut c_char) -> *mut c_char {
             tv_sec: 0,
             tv_nsec: 0,
         };
-        unsafe { libc::syscall(libc::SYS_clock_gettime as i64, libc::CLOCK_MONOTONIC as i64, &mut ts) as c_int };
+        unsafe {
+            libc::syscall(
+                libc::SYS_clock_gettime as i64,
+                libc::CLOCK_MONOTONIC as i64,
+                &mut ts,
+            ) as c_int
+        };
         let mut seed = ts.tv_nsec as u64 ^ ts.tv_sec as u64;
         for b in &mut rand_bytes {
             seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
@@ -6354,7 +6394,16 @@ pub unsafe extern "C" fn __mktemp(template: *mut c_char) -> *mut c_char {
     }
     // Check that the file doesn't exist (per mktemp spec)
     let mut statbuf: libc::stat = unsafe { std::mem::zeroed() };
-    if unsafe { libc::syscall(libc::SYS_newfstatat as i64, libc::AT_FDCWD, template, &mut statbuf, 0) as c_int } == 0 {
+    if unsafe {
+        libc::syscall(
+            libc::SYS_newfstatat as i64,
+            libc::AT_FDCWD,
+            template,
+            &mut statbuf,
+            0,
+        ) as c_int
+    } == 0
+    {
         // File exists — set first byte to 0 and return error
         unsafe {
             *template = 0;
@@ -7824,7 +7873,16 @@ pub unsafe extern "C" fn __file_change_detection_for_path(
     }
     let fcd = result as *mut FileChangeDetection;
     let mut st: libc::stat = unsafe { std::mem::zeroed() };
-    if unsafe { libc::syscall(libc::SYS_newfstatat as i64, libc::AT_FDCWD, path, &mut st, 0) as c_int } != 0 {
+    if unsafe {
+        libc::syscall(
+            libc::SYS_newfstatat as i64,
+            libc::AT_FDCWD,
+            path,
+            &mut st,
+            0,
+        ) as c_int
+    } != 0
+    {
         // stat failed — zero out the detection struct
         unsafe { std::ptr::write_bytes(fcd, 0, 1) };
         return 0;

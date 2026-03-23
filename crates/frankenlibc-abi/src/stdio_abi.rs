@@ -253,7 +253,10 @@ fn registry() -> &'static Mutex<StreamRegistry> {
         return unsafe { &*p };
     }
     // First call — initialize without futex.
-    if INIT.compare_exchange(false, true, Ordering::AcqRel, Ordering::Relaxed).is_ok() {
+    if INIT
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Relaxed)
+        .is_ok()
+    {
         let reg = Box::new(Mutex::new(StreamRegistry::new()));
         PTR.store(Box::into_raw(reg), Ordering::Release);
         return unsafe { &*PTR.load(Ordering::Acquire) };
@@ -1891,7 +1894,11 @@ pub(crate) unsafe fn render_printf(fmt: &[u8], args: *const u64, max_args: usize
                         let e = unsafe { *crate::errno_abi::__errno_location() };
                         let mut err_buf = [0u8; 256];
                         let rc = unsafe {
-                            crate::string_abi::strerror_r(e, err_buf.as_mut_ptr() as *mut c_char, err_buf.len())
+                            crate::string_abi::strerror_r(
+                                e,
+                                err_buf.as_mut_ptr() as *mut c_char,
+                                err_buf.len(),
+                            )
                         };
                         if rc == 0 {
                             let msg = unsafe { CStr::from_ptr(err_buf.as_ptr() as *const c_char) };

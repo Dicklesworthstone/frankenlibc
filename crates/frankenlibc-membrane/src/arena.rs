@@ -1022,7 +1022,9 @@ mod tests {
         let ptr = arena.allocate(128).expect("alloc should succeed");
         assert!(!ptr.ptr.is_null());
 
-        let slot = arena.lookup(ptr.ptr as usize).expect("should find allocation");
+        let slot = arena
+            .lookup(ptr.ptr as usize)
+            .expect("should find allocation");
         assert_eq!(slot.state, SafetyState::Valid);
         assert_eq!(slot.user_size, 128);
 

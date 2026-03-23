@@ -333,10 +333,7 @@ mod tests {
     #[test]
     fn normalize_expected_output_object() {
         let v = serde_json::json!({"key": "val"});
-        assert_eq!(
-            normalize_expected_output_value(&v),
-            r#"{"key":"val"}"#
-        );
+        assert_eq!(normalize_expected_output_value(&v), r#"{"key":"val"}"#);
     }
 
     #[test]

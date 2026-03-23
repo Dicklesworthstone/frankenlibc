@@ -106,9 +106,7 @@ unsafe fn remove_from_environ(name: *const c_char) -> c_int {
         while !(*read).is_null() {
             let entry = *read as *const u8;
             let mut match_len = 0usize;
-            while match_len < nlen
-                && *entry.add(match_len) == *(name as *const u8).add(match_len)
-            {
+            while match_len < nlen && *entry.add(match_len) == *(name as *const u8).add(match_len) {
                 match_len += 1;
             }
             if match_len == nlen && *entry.add(match_len) == b'=' {
@@ -2254,9 +2252,9 @@ pub unsafe extern "C" fn confstr(name: c_int, buf: *mut c_char, len: usize) -> u
     // _CS_GNU_LIBPTHREAD_VERSION = 3
     // _CS_PATH = 0
     let value: &[u8] = match name {
-        0 => b"/bin:/usr/bin\0",   // _CS_PATH (matches glibc)
-        2 => b"glibc 2.38\0", // _CS_GNU_LIBC_VERSION
-        3 => b"NPTL 2.38\0",  // _CS_GNU_LIBPTHREAD_VERSION
+        0 => b"/bin:/usr/bin\0", // _CS_PATH (matches glibc)
+        2 => b"glibc 2.38\0",    // _CS_GNU_LIBC_VERSION
+        3 => b"NPTL 2.38\0",     // _CS_GNU_LIBPTHREAD_VERSION
         _ => {
             unsafe { set_abi_errno(libc::EINVAL) };
             return 0;
@@ -2609,7 +2607,13 @@ pub unsafe extern "C" fn getauxval(type_: c_ulong) -> c_ulong {
     // Read from /proc/self/auxv using raw syscalls to avoid recursion
     // (libc::getauxval goes through our interposed getauxval).
     let fd = unsafe {
-        libc::syscall(libc::SYS_openat, libc::AT_FDCWD, c"/proc/self/auxv".as_ptr(), libc::O_RDONLY, 0)
+        libc::syscall(
+            libc::SYS_openat,
+            libc::AT_FDCWD,
+            c"/proc/self/auxv".as_ptr(),
+            libc::O_RDONLY,
+            0,
+        )
     } as c_int;
     if fd < 0 {
         unsafe { set_abi_errno(libc::ENOENT) };

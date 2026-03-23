@@ -543,8 +543,9 @@ pub unsafe extern "C" fn scandir(
     // Allocate the namelist array
     if count == 0 {
         // Empty result — allocate a minimal array
-        let array = unsafe { crate::malloc_abi::raw_alloc(std::mem::size_of::<*mut libc::dirent>()) }
-            as *mut *mut libc::dirent;
+        let array =
+            unsafe { crate::malloc_abi::raw_alloc(std::mem::size_of::<*mut libc::dirent>()) }
+                as *mut *mut libc::dirent;
         if array.is_null() {
             unsafe { set_abi_errno(errno::ENOMEM) };
             return -1;

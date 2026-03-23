@@ -413,7 +413,10 @@ mod tests {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .remove(&ptr);
-        assert!(removed.is_some(), "test_free must release a known test allocation");
+        assert!(
+            removed.is_some(),
+            "test_free must release a known test allocation"
+        );
     }
 
     #[test]

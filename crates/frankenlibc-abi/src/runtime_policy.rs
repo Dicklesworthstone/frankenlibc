@@ -1012,10 +1012,7 @@ pub(crate) fn abi_runtime_phase() -> AbiRuntimePhase {
 
 #[inline]
 pub(crate) fn bootstrap_passthrough_active() -> bool {
-    matches!(
-        abi_runtime_phase(),
-        AbiRuntimePhase::BootstrapPassthrough
-    )
+    matches!(abi_runtime_phase(), AbiRuntimePhase::BootstrapPassthrough)
 }
 
 /// Signal that the dynamic linker's init phase is complete and the

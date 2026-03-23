@@ -38,7 +38,8 @@ impl L2Bitmap {
         // SAFETY: AtomicU32 has the same layout as u32. We can initialize a zeroed
         // array of u32s and safely treat it as AtomicU32. For now, we'll use a safer
         // approach with a typed initializer to avoid any UB risks.
-        let counts: Box<[AtomicU32; PAGES_PER_L2]> = std::array::from_fn(|_| AtomicU32::new(0)).into();
+        let counts: Box<[AtomicU32; PAGES_PER_L2]> =
+            std::array::from_fn(|_| AtomicU32::new(0)).into();
         Self { counts }
     }
 

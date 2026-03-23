@@ -286,7 +286,9 @@ fn enter_validation_execution_context() -> ValidationExecutionGuard {
 
 #[must_use]
 pub fn in_validation_context() -> bool {
-    VALIDATION_DEPTH.try_with(|depth| depth.get() > 0).unwrap_or(false)
+    VALIDATION_DEPTH
+        .try_with(|depth| depth.get() > 0)
+        .unwrap_or(false)
 }
 
 impl ValidationPipeline {

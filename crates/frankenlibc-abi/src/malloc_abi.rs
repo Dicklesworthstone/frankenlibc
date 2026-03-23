@@ -221,9 +221,11 @@ pub(crate) fn prewarm_host_allocator_symbols() {
     unsafe {
         let _ = HOST_MALLOC_FN.get_or_init(|| resolve_host_allocator_symbol(b"malloc\0") as usize);
         let _ = HOST_CALLOC_FN.get_or_init(|| resolve_host_allocator_symbol(b"calloc\0") as usize);
-        let _ = HOST_REALLOC_FN.get_or_init(|| resolve_host_allocator_symbol(b"realloc\0") as usize);
+        let _ =
+            HOST_REALLOC_FN.get_or_init(|| resolve_host_allocator_symbol(b"realloc\0") as usize);
         let _ = HOST_FREE_FN.get_or_init(|| resolve_host_allocator_symbol(b"free\0") as usize);
-        let _ = HOST_MEMALIGN_FN.get_or_init(|| resolve_host_allocator_symbol(b"memalign\0") as usize);
+        let _ =
+            HOST_MEMALIGN_FN.get_or_init(|| resolve_host_allocator_symbol(b"memalign\0") as usize);
     }
 }
 

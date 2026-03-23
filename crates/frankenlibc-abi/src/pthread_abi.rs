@@ -51,8 +51,10 @@ type HostPthreadJoinFn = unsafe extern "C" fn(libc::pthread_t, *mut *mut c_void)
 type HostPthreadDetachFn = unsafe extern "C" fn(libc::pthread_t) -> c_int;
 type HostPthreadSelfFn = unsafe extern "C" fn() -> libc::pthread_t;
 type HostPthreadEqualFn = unsafe extern "C" fn(libc::pthread_t, libc::pthread_t) -> c_int;
-type HostPthreadKeyCreateFn =
-    unsafe extern "C" fn(*mut libc::pthread_key_t, Option<unsafe extern "C" fn(*mut c_void)>) -> c_int;
+type HostPthreadKeyCreateFn = unsafe extern "C" fn(
+    *mut libc::pthread_key_t,
+    Option<unsafe extern "C" fn(*mut c_void)>,
+) -> c_int;
 type HostPthreadKeyDeleteFn = unsafe extern "C" fn(libc::pthread_key_t) -> c_int;
 #[cfg(target_arch = "x86_64")]
 type HostPthreadGetspecificFn = unsafe extern "C" fn(libc::pthread_key_t) -> *mut c_void;
@@ -122,11 +124,16 @@ static HOST_SYMBOL_CACHE: LazyLock<Mutex<HashMap<&'static [u8], usize>>> =
 static HOST_LIBC_SYMBOL_CACHE: LazyLock<Mutex<HashMap<&'static str, usize>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 static HOST_LIBC_HANDLE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-static HOST_PTHREAD_CREATE_PTR: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-static HOST_PTHREAD_JOIN_PTR: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-static HOST_PTHREAD_DETACH_PTR: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-static HOST_PTHREAD_SELF_PTR: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-static HOST_PTHREAD_EQUAL_PTR: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+static HOST_PTHREAD_CREATE_PTR: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+static HOST_PTHREAD_JOIN_PTR: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+static HOST_PTHREAD_DETACH_PTR: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+static HOST_PTHREAD_SELF_PTR: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+static HOST_PTHREAD_EQUAL_PTR: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
 static HOST_PTHREAD_KEY_CREATE_PTR: OnceLock<usize> = OnceLock::new();
 static HOST_PTHREAD_KEY_DELETE_PTR: OnceLock<usize> = OnceLock::new();
 #[cfg(target_arch = "x86_64")]
@@ -194,7 +201,8 @@ fn resolve_loaded_libc_symbol_direct(symbol: &'static str) -> Option<usize> {
     let (base, path) = loaded_libc_base_and_path()?;
     let data = std::fs::read(path).ok()?;
     let header = Elf64Header::parse(&data).ok()?;
-    let sections = parse_section_headers(&data, header.e_shoff, header.e_shentsize, header.e_shnum).ok()?;
+    let sections =
+        parse_section_headers(&data, header.e_shoff, header.e_shentsize, header.e_shnum).ok()?;
     let dynsym_section = sections
         .iter()
         .find(|section| matches!(section.sh_type, SectionType::Dynsym))?;
@@ -341,11 +349,7 @@ unsafe fn host_pthread_create_fn() -> Option<HostPthreadCreateFn> {
 
 unsafe fn host_pthread_join_fn() -> Option<HostPthreadJoinFn> {
     let ptr = unsafe {
-        resolve_cached_host_thread_symbol(
-            &HOST_PTHREAD_JOIN_PTR,
-            "pthread_join",
-            b"pthread_join\0",
-        )
+        resolve_cached_host_thread_symbol(&HOST_PTHREAD_JOIN_PTR, "pthread_join", b"pthread_join\0")
     }?;
     // SAFETY: resolved symbol has pthread_join ABI.
     Some(unsafe { std::mem::transmute::<usize, HostPthreadJoinFn>(ptr) })
@@ -365,11 +369,7 @@ unsafe fn host_pthread_detach_fn() -> Option<HostPthreadDetachFn> {
 
 unsafe fn host_pthread_self_fn() -> Option<HostPthreadSelfFn> {
     let ptr = unsafe {
-        resolve_cached_host_thread_symbol(
-            &HOST_PTHREAD_SELF_PTR,
-            "pthread_self",
-            b"pthread_self\0",
-        )
+        resolve_cached_host_thread_symbol(&HOST_PTHREAD_SELF_PTR, "pthread_self", b"pthread_self\0")
     }?;
     // SAFETY: resolved symbol has pthread_self ABI.
     Some(unsafe { std::mem::transmute::<usize, HostPthreadSelfFn>(ptr) })
@@ -921,6 +921,12 @@ unsafe fn native_pthread_create(
             // SAFETY: direct call through resolved host symbol.
             return unsafe { host_create(thread_out, attr, Some(start_routine), arg) };
         }
+        prewarm_host_thread_symbols();
+        // SAFETY: retry after an explicit prewarm in case startup missed the host surface.
+        if let Some(host_create) = unsafe { host_pthread_create_fn() } {
+            // SAFETY: direct call through resolved host symbol.
+            return unsafe { host_create(thread_out, attr, Some(start_routine), arg) };
+        }
     }
     if thread_out.is_null() {
         return libc::EINVAL;
@@ -1000,6 +1006,12 @@ unsafe fn native_pthread_join(thread: libc::pthread_t, retval: *mut *mut c_void)
             // SAFETY: direct call through resolved host symbol.
             return unsafe { host_join(thread, retval) };
         }
+        prewarm_host_thread_symbols();
+        // SAFETY: retry after an explicit prewarm in case startup missed the host surface.
+        if let Some(host_join) = unsafe { host_pthread_join_fn() } {
+            // SAFETY: direct call through resolved host symbol.
+            return unsafe { host_join(thread, retval) };
+        }
     }
 
     let thread_key = thread as usize;
@@ -1048,6 +1060,12 @@ unsafe fn native_pthread_join(thread: libc::pthread_t, retval: *mut *mut c_void)
 unsafe fn native_pthread_detach(thread: libc::pthread_t) -> c_int {
     if !FORCE_NATIVE_THREADING.load(Ordering::Acquire) {
         // SAFETY: host symbol lookup/transmute guarantees ABI if present.
+        if let Some(host_detach) = unsafe { host_pthread_detach_fn() } {
+            // SAFETY: direct call through resolved host symbol.
+            return unsafe { host_detach(thread) };
+        }
+        prewarm_host_thread_symbols();
+        // SAFETY: retry after an explicit prewarm in case startup missed the host surface.
         if let Some(host_detach) = unsafe { host_pthread_detach_fn() } {
             // SAFETY: direct call through resolved host symbol.
             return unsafe { host_detach(thread) };

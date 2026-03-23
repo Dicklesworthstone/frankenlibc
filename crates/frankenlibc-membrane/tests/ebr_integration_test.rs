@@ -224,12 +224,18 @@ fn pinned_guard_delays_epoch_advance() {
     // In 3-epoch EBR, advancing from 0 to 1 reclaims bucket (0+1)%3 = 1.
     // Our item is in bucket (0%3) = 0.
     let _ = collector.try_advance().expect("advance 0->1");
-    assert!(!reclaimed.load(Ordering::Relaxed), "should not reclaim bucket 0 yet");
+    assert!(
+        !reclaimed.load(Ordering::Relaxed),
+        "should not reclaim bucket 0 yet"
+    );
 
     // Advance 1->2 (needs everyone to have observed epoch 1).
     // But guard1 is pinned at epoch 0! 0 < 1, so this MUST FAIL.
     let advanced_blocked = collector.try_advance();
-    assert!(advanced_blocked.is_none(), "advance 1->2 must be blocked by guard1 pinned at 0");
+    assert!(
+        advanced_blocked.is_none(),
+        "advance 1->2 must be blocked by guard1 pinned at 0"
+    );
     assert!(!reclaimed.load(Ordering::Relaxed));
 
     // Drop the guard.
@@ -241,7 +247,10 @@ fn pinned_guard_delays_epoch_advance() {
 
     // Advance 2->3 (reclaims bucket 0).
     let _ = collector.try_advance().expect("advance 2->3");
-    assert!(reclaimed.load(Ordering::Relaxed), "bucket 0 should now be reclaimed");
+    assert!(
+        reclaimed.load(Ordering::Relaxed),
+        "bucket 0 should now be reclaimed"
+    );
 
     drop(h1);
     drop(h2);

@@ -325,6 +325,10 @@ mod tests {
         assert_eq!(result.cases.len(), 1);
         assert_eq!(result.cases[0].name, "c73");
         // ddmin should be efficient
-        assert!(result.evaluations < 30, "evaluations: {}", result.evaluations);
+        assert!(
+            result.evaluations < 30,
+            "evaluations: {}",
+            result.evaluations
+        );
     }
 }

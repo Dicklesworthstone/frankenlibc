@@ -210,10 +210,7 @@ mod tests {
 
     #[test]
     fn summary_serialization_roundtrip() {
-        let results = vec![
-            make_result("memcpy", true),
-            make_result("strlen", false),
-        ];
+        let results = vec![make_result("memcpy", true), make_result("strlen", false)];
         let s = VerificationSummary::from_results(results);
         let json = serde_json::to_string(&s).unwrap();
         let deserialized: VerificationSummary = serde_json::from_str(&json).unwrap();
