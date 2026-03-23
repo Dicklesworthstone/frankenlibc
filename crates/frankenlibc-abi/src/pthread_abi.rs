@@ -546,16 +546,25 @@ unsafe fn host_pthread_cond_timedwait_fn() -> Option<HostPthreadCondTimedwaitFn>
     }
 }
 
-pub(crate) fn prewarm_host_thread_symbols() {
-    // Resolve the host pthread surface while startup is still in bootstrap
-    // passthrough, so active-mode execution does not lazily enter dl* symbol
-    // resolution through validated string/memory paths.
+pub(crate) fn prewarm_host_thread_lifecycle_symbols() {
+    // Resolve the thread lifecycle surface while startup is still in bootstrap
+    // passthrough, before constructors or early runtime paths can create or
+    // detach threads.
     unsafe {
         let _ = host_pthread_self_fn();
         let _ = host_pthread_equal_fn();
         let _ = host_pthread_create_fn();
         let _ = host_pthread_join_fn();
         let _ = host_pthread_detach_fn();
+    }
+}
+
+pub(crate) fn prewarm_host_thread_symbols() {
+    prewarm_host_thread_lifecycle_symbols();
+    // Resolve the rest of the host pthread surface while startup is still in
+    // bootstrap passthrough, so active-mode execution does not lazily enter
+    // dl* symbol resolution through validated string/memory paths.
+    unsafe {
         let _ = host_pthread_key_create_fn();
         let _ = host_pthread_key_delete_fn();
         #[cfg(target_arch = "x86_64")]
@@ -916,11 +925,21 @@ unsafe fn native_pthread_create(
             // SAFETY: direct call through resolved host symbol.
             return unsafe { host_create(thread_out, attr, Some(start_routine), arg) };
         }
-        prewarm_host_thread_symbols();
-        // SAFETY: retry after an explicit prewarm in case startup missed the host surface.
+        prewarm_host_thread_lifecycle_symbols();
         if let Some(host_create) = unsafe { host_pthread_create_fn() } {
             // SAFETY: direct call through resolved host symbol.
             return unsafe { host_create(thread_out, attr, Some(start_routine), arg) };
+        }
+        // Last resort: open libc.so.6 directly and dlsym pthread_create.
+        // This works when dlvsym_next fails (our interposed dlvsym doesn't
+        // delegate RTLD_NEXT to the host dynamic linker).
+        let handle = unsafe { libc::dlopen(c"libc.so.6".as_ptr(), libc::RTLD_NOW | libc::RTLD_NOLOAD) };
+        if !handle.is_null() {
+            let sym = unsafe { libc::dlsym(handle, c"pthread_create".as_ptr()) };
+            if !sym.is_null() {
+                let f: HostPthreadCreateFn = unsafe { std::mem::transmute(sym) };
+                return unsafe { f(thread_out, attr, Some(start_routine), arg) };
+            }
         }
     }
     if thread_out.is_null() {
@@ -1001,7 +1020,7 @@ unsafe fn native_pthread_join(thread: libc::pthread_t, retval: *mut *mut c_void)
             // SAFETY: direct call through resolved host symbol.
             return unsafe { host_join(thread, retval) };
         }
-        prewarm_host_thread_symbols();
+        prewarm_host_thread_lifecycle_symbols();
         // SAFETY: retry after an explicit prewarm in case startup missed the host surface.
         if let Some(host_join) = unsafe { host_pthread_join_fn() } {
             // SAFETY: direct call through resolved host symbol.
@@ -1059,7 +1078,7 @@ unsafe fn native_pthread_detach(thread: libc::pthread_t) -> c_int {
             // SAFETY: direct call through resolved host symbol.
             return unsafe { host_detach(thread) };
         }
-        prewarm_host_thread_symbols();
+        prewarm_host_thread_lifecycle_symbols();
         // SAFETY: retry after an explicit prewarm in case startup missed the host surface.
         if let Some(host_detach) = unsafe { host_pthread_detach_fn() } {
             // SAFETY: direct call through resolved host symbol.
@@ -4938,6 +4957,42 @@ pub unsafe extern "C" fn __pthread_get_minstack(_attr: *const libc::pthread_attr
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __pthread_unwind_next(_buf: *mut c_void) {
     std::process::abort();
+}
+
+/// Probe helper for in-process host pthread resolution debugging.
+///
+/// Kind:
+/// 1 = RTLD_NEXT/host nocache pthread_create
+/// 2 = libc-handle pthread_create
+/// 3 = direct loaded-libc ELF pthread_create
+/// 4 = RTLD_NEXT/host nocache pthread_self
+/// 5 = libc-handle pthread_self
+/// 6 = direct loaded-libc ELF pthread_self
+/// 7 = cached host pthread_create fn
+/// 8 = direct loaded-libc ELF pthread_detach
+/// 9 = cached host pthread_detach fn
+/// 10 = direct loaded-libc ELF pthread_join
+/// 11 = cached host pthread_join fn
+/// 12 = direct loaded-libc ELF pthread_equal
+/// 13 = cached host pthread_equal fn
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __frankenlibc_host_pthread_probe(kind: c_int) -> usize {
+    match kind {
+        1 => unsafe { resolve_host_symbol_nocache(b"pthread_create\0") as usize },
+        2 => unsafe { resolve_host_symbol_via_libc_handle(b"pthread_create\0") as usize },
+        3 => resolve_loaded_libc_symbol_direct("pthread_create").unwrap_or(0),
+        4 => unsafe { resolve_host_symbol_nocache(b"pthread_self\0") as usize },
+        5 => unsafe { resolve_host_symbol_via_libc_handle(b"pthread_self\0") as usize },
+        6 => resolve_loaded_libc_symbol_direct("pthread_self").unwrap_or(0),
+        7 => unsafe { host_pthread_create_fn().map(|func| func as usize).unwrap_or(0) },
+        8 => resolve_loaded_libc_symbol_direct("pthread_detach").unwrap_or(0),
+        9 => unsafe { host_pthread_detach_fn().map(|func| func as usize).unwrap_or(0) },
+        10 => resolve_loaded_libc_symbol_direct("pthread_join").unwrap_or(0),
+        11 => unsafe { host_pthread_join_fn().map(|func| func as usize).unwrap_or(0) },
+        12 => resolve_loaded_libc_symbol_direct("pthread_equal").unwrap_or(0),
+        13 => unsafe { host_pthread_equal_fn().map(|func| func as usize).unwrap_or(0) },
+        _ => 0,
+    }
 }
 
 #[cfg(test)]

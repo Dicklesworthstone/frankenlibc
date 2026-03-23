@@ -235,7 +235,32 @@ pub unsafe extern "C" fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *m
     // SAFETY: symbol was checked for null above and is expected to be a NUL-terminated C string.
     let symbol_name = unsafe { CStr::from_ptr(symbol) }.to_bytes();
     clear_dlerror();
-    let sym = resolve_exported_symbol(symbol_name);
+
+    // For handles other than RTLD_DEFAULT and our main program handle,
+    // delegate to the host dlsym which knows the actual library contents.
+    let handle_val = handle as usize;
+    let sym = if handle_val != dlfcn_core::RTLD_DEFAULT
+        && handle_val != dlfcn_core::RTLD_NEXT
+        && !is_main_program_handle(handle)
+    {
+        // Real library handle — delegate to host via dlvsym_next-style lookup
+        // since we can't call host dlsym directly (it's us).
+        // Try versioned resolution first, then fall back to our table.
+        let mut found = std::ptr::null_mut();
+        for ver in [c"GLIBC_2.34", c"GLIBC_2.2.5", c"GLIBC_2.17"] {
+            found = unsafe { dlvsym_next(symbol, ver.as_ptr()) };
+            if !found.is_null() { break; }
+        }
+        if found.is_null() {
+            // Fall back to our internal table
+            resolve_exported_symbol(symbol_name)
+        } else {
+            found
+        }
+    } else {
+        resolve_exported_symbol(symbol_name)
+    };
+
     let adverse = sym.is_null();
     if adverse {
         set_dlerror(dlfcn_core::ERR_SYMBOL_NOT_FOUND);
