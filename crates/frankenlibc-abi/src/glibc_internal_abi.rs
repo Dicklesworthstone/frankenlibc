@@ -5773,7 +5773,7 @@ pub unsafe extern "C" fn sgetspent_r(
     unsafe {
         std::ptr::copy_nonoverlapping(pw.as_ptr(), buf_u8.add(off), pw.len());
         *buf_u8.add(off + pw.len()) = 0;
-        (*sp).sp_pwdp = buf.add(off as isize as usize) as *mut c_char;
+        (*sp).sp_pwdp = buf.add(off) as *mut c_char;
     }
     off += passwd_len;
     let _ = off;

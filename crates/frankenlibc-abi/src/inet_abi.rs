@@ -13,6 +13,13 @@ use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 use crate::errno_abi::set_abi_errno;
 use crate::runtime_policy;
 
+#[inline]
+fn last_host_errno(default: c_int) -> c_int {
+    std::io::Error::last_os_error()
+        .raw_os_error()
+        .unwrap_or(default)
+}
+
 // ---------------------------------------------------------------------------
 // htons
 // ---------------------------------------------------------------------------
@@ -261,6 +268,7 @@ struct IfreqCompat {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn if_nametoindex(ifname: *const c_char) -> libc::c_uint {
     if ifname.is_null() {
+        unsafe { set_abi_errno(errno::EFAULT) };
         return 0;
     }
     let sock = unsafe {
@@ -272,6 +280,7 @@ pub unsafe extern "C" fn if_nametoindex(ifname: *const c_char) -> libc::c_uint {
         ) as c_int
     };
     if sock < 0 {
+        unsafe { set_abi_errno(last_host_errno(errno::ENODEV)) };
         return 0;
     }
 
@@ -289,9 +298,15 @@ pub unsafe extern "C" fn if_nametoindex(ifname: *const c_char) -> libc::c_uint {
             &ifr,
         ) as c_int
     };
+    let failure_errno = if rc < 0 {
+        Some(last_host_errno(errno::ENODEV))
+    } else {
+        None
+    };
     unsafe { libc::syscall(libc::SYS_close as c_long, sock) };
 
     if rc < 0 {
+        unsafe { set_abi_errno(failure_errno.unwrap_or(errno::ENODEV)) };
         0
     } else {
         ifr.ifr_ifindex as libc::c_uint
@@ -302,6 +317,7 @@ pub unsafe extern "C" fn if_nametoindex(ifname: *const c_char) -> libc::c_uint {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn if_indextoname(ifindex: libc::c_uint, ifname: *mut c_char) -> *mut c_char {
     if ifname.is_null() {
+        unsafe { set_abi_errno(errno::EFAULT) };
         return std::ptr::null_mut();
     }
     let sock = unsafe {
@@ -313,6 +329,7 @@ pub unsafe extern "C" fn if_indextoname(ifindex: libc::c_uint, ifname: *mut c_ch
         ) as c_int
     };
     if sock < 0 {
+        unsafe { set_abi_errno(last_host_errno(errno::ENXIO)) };
         return std::ptr::null_mut();
     }
 
@@ -330,6 +347,7 @@ pub unsafe extern "C" fn if_indextoname(ifindex: libc::c_uint, ifname: *mut c_ch
     unsafe { libc::syscall(libc::SYS_close as c_long, sock) };
 
     if rc < 0 {
+        unsafe { set_abi_errno(errno::ENXIO) };
         return std::ptr::null_mut();
     }
 

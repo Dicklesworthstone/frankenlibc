@@ -592,12 +592,20 @@ pub unsafe extern "C" fn exit(status: c_int) -> ! {
     // 1. Run atexit handlers.
     frankenlibc_core::stdlib::run_atexit_handlers();
 
-    // 2. Flush all open stdio streams.
+    // 2. Run on_exit handlers (in reverse registration order, per glibc convention).
+    {
+        let handlers = ON_EXIT_HANDLERS.lock().unwrap_or_else(|e| e.into_inner());
+        for entry in handlers.iter().rev() {
+            unsafe { (entry.func)(status, entry.arg) };
+        }
+    }
+
+    // 3. Flush all open stdio streams.
     unsafe {
         libc::fflush(std::ptr::null_mut());
     }
 
-    // 3. Terminate process.
+    // 4. Terminate process.
     frankenlibc_core::syscall::sys_exit_group(status)
 }
 
@@ -2056,7 +2064,6 @@ pub unsafe extern "C" fn abort() -> ! {
 }
 
 /// Exit handler entry for `on_exit` — stores function pointer + arg.
-#[allow(dead_code)]
 struct OnExitEntry {
     func: unsafe extern "C" fn(c_int, *mut c_void),
     arg: *mut c_void,

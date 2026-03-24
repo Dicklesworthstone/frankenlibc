@@ -8,6 +8,8 @@
 
 use std::ffi::{CStr, CString, c_char, c_int, c_void};
 
+use frankenlibc_abi::errno_abi::{__errno_location, set_abi_errno};
+
 unsafe extern "C" {
     fn htons(hostshort: u16) -> u16;
     fn htonl(hostlong: u32) -> u32;
@@ -531,6 +533,46 @@ fn inet_addr_empty_returns_none() {
     let src = CString::new("").unwrap();
     let result = unsafe { inet_addr(src.as_ptr()) };
     assert_eq!(result, INADDR_NONE);
+}
+
+#[test]
+fn if_nametoindex_invalid_name_sets_errno_like_host() {
+    let missing = CString::new("frankenlibc-no-such-iface-9999").unwrap();
+
+    unsafe { set_abi_errno(0) };
+    let observed = unsafe { frankenlibc_abi::inet_abi::if_nametoindex(missing.as_ptr()) };
+    let observed_errno = unsafe { *__errno_location() };
+
+    unsafe {
+        *__errno_location() = 0;
+    }
+    let expected = unsafe { libc::if_nametoindex(missing.as_ptr()) };
+    let expected_errno = unsafe { *libc::__errno_location() };
+
+    assert_eq!(observed, expected);
+    assert_eq!(observed_errno, expected_errno);
+}
+
+#[test]
+fn if_indextoname_invalid_index_sets_errno_like_host() {
+    let invalid_index = u32::MAX;
+    let mut observed_buf = [0i8; 16];
+    let mut expected_buf = [0i8; 16];
+
+    unsafe { set_abi_errno(0) };
+    let observed = unsafe {
+        frankenlibc_abi::inet_abi::if_indextoname(invalid_index, observed_buf.as_mut_ptr())
+    };
+    let observed_errno = unsafe { *__errno_location() };
+
+    unsafe {
+        *libc::__errno_location() = 0;
+    }
+    let expected = unsafe { libc::if_indextoname(invalid_index, expected_buf.as_mut_ptr()) };
+    let expected_errno = unsafe { *libc::__errno_location() };
+
+    assert_eq!(observed.is_null(), expected.is_null());
+    assert_eq!(observed_errno, expected_errno);
 }
 
 #[test]
