@@ -1585,7 +1585,10 @@ pub unsafe extern "C" fn mbtowc(pwc: *mut u32, s: *const u8, n: usize) -> c_int 
             }
             len as c_int
         }
-        None => -1,
+        None => {
+            unsafe { set_abi_errno(libc::EILSEQ) };
+            -1
+        }
     }
 }
 
@@ -1603,7 +1606,10 @@ pub unsafe extern "C" fn wctomb(s: *mut u8, wc: u32) -> c_int {
     let buf = unsafe { std::slice::from_raw_parts_mut(s, 4) };
     match wchar_core::wctomb(wc, buf) {
         Some(n) => n as c_int,
-        None => -1,
+        None => {
+            unsafe { set_abi_errno(libc::EILSEQ) };
+            -1
+        }
     }
 }
 

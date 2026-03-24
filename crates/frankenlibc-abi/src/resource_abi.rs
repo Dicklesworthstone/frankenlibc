@@ -13,6 +13,13 @@ use crate::errno_abi::set_abi_errno;
 use crate::runtime_policy;
 
 #[inline]
+fn last_host_errno(default_errno: c_int) -> c_int {
+    std::io::Error::last_os_error()
+        .raw_os_error()
+        .unwrap_or(default_errno)
+}
+
+#[inline]
 unsafe fn raw_prlimit64(
     resource: c_int,
     new_limit: *const libc::rlimit,
@@ -58,7 +65,7 @@ pub unsafe extern "C" fn getrlimit(resource: c_int, rlim: *mut libc::rlimit) -> 
     let rc = unsafe { raw_prlimit64(resource, std::ptr::null(), rlim) };
     let adverse = rc != 0;
     if adverse {
-        unsafe { set_abi_errno(errno::EINVAL) };
+        unsafe { set_abi_errno(last_host_errno(errno::EINVAL)) };
     }
     runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, adverse);
     rc
@@ -98,6 +105,9 @@ pub unsafe extern "C" fn setrlimit(resource: c_int, rlim: *const libc::rlimit) -
             clamped.rlim_cur = clamped.rlim_max;
             let rc = unsafe { raw_prlimit64(resource, &clamped, std::ptr::null_mut()) };
             let adverse = rc != 0;
+            if adverse {
+                unsafe { set_abi_errno(last_host_errno(errno::EINVAL)) };
+            }
             runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, adverse);
             return rc;
         }
@@ -109,7 +119,7 @@ pub unsafe extern "C" fn setrlimit(resource: c_int, rlim: *const libc::rlimit) -
     let rc = unsafe { raw_prlimit64(resource, effective_rlim, std::ptr::null_mut()) };
     let adverse = rc != 0;
     if adverse {
-        unsafe { set_abi_errno(errno::EINVAL) };
+        unsafe { set_abi_errno(last_host_errno(errno::EINVAL)) };
     }
     runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, adverse);
     rc

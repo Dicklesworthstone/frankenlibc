@@ -78,6 +78,15 @@ pub unsafe extern "C" fn raise(signum: c_int) -> c_int {
     let pid = syscall::sys_getpid();
     let rc = unsafe { libc::syscall(libc::SYS_kill, pid, signum) as c_int };
     let adverse = rc != 0;
+    if adverse {
+        unsafe {
+            set_abi_errno(
+                std::io::Error::last_os_error()
+                    .raw_os_error()
+                    .unwrap_or(libc::EINVAL),
+            )
+        };
+    }
     runtime_policy::observe(ApiFamily::Signal, decision.profile, 10, adverse);
     rc
 }

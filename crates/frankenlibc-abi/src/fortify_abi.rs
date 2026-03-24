@@ -588,7 +588,10 @@ pub unsafe extern "C" fn __getdomainname_chk(buf: *mut c_char, len: usize, bufle
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __getlogin_r_chk(buf: *mut c_char, buflen: usize, _nreal: usize) -> c_int {
+pub unsafe extern "C" fn __getlogin_r_chk(buf: *mut c_char, buflen: usize, nreal: usize) -> c_int {
+    if nreal != usize::MAX && buflen > nreal {
+        unsafe { __chk_fail() }
+    }
     unsafe { getlogin_r(buf, buflen) }
 }
 
@@ -597,8 +600,11 @@ pub unsafe extern "C" fn __ttyname_r_chk(
     fd: c_int,
     buf: *mut c_char,
     buflen: usize,
-    _nreal: usize,
+    nreal: usize,
 ) -> c_int {
+    if nreal != usize::MAX && buflen > nreal {
+        unsafe { __chk_fail() }
+    }
     unsafe { libc::ttyname_r(fd, buf, buflen) }
 }
 

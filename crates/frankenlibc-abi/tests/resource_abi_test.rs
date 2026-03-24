@@ -248,6 +248,44 @@ fn setrlimit_soft_exceeding_hard_fails() {
     }
 }
 
+#[test]
+fn setrlimit_preserves_kernel_errno_on_failed_raise() {
+    let mut current: libc::rlimit = unsafe { std::mem::zeroed() };
+    let rc = unsafe { getrlimit(libc::RLIMIT_NOFILE as i32, &mut current) };
+    assert_eq!(rc, 0);
+
+    if current.rlim_max == libc::RLIM_INFINITY {
+        return;
+    }
+
+    let attempted = libc::rlimit {
+        rlim_cur: current.rlim_max.saturating_add(1),
+        rlim_max: current.rlim_max.saturating_add(1),
+    };
+
+    unsafe {
+        *libc::__errno_location() = 0;
+    }
+    let libc_rc = unsafe { libc::setrlimit(libc::RLIMIT_NOFILE, &attempted) };
+    assert_eq!(
+        libc_rc, -1,
+        "host libc should reject an unprivileged hard-limit raise"
+    );
+    let libc_err = unsafe { *libc::__errno_location() };
+
+    let abi_rc = unsafe { setrlimit(libc::RLIMIT_NOFILE as i32, &attempted) };
+    assert_eq!(
+        abi_rc, -1,
+        "ABI setrlimit should also fail for the same request"
+    );
+    let abi_err = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+
+    assert_eq!(
+        abi_err, libc_err,
+        "ABI errno should preserve the real kernel failure"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // getrlimit/setrlimit round-trip for various resources
 // ---------------------------------------------------------------------------

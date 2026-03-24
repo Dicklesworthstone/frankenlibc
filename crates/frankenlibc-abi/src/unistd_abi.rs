@@ -91,6 +91,7 @@ pub(crate) unsafe fn sys_write_fd(fd: c_int, buf: *const c_void, count: usize) -
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn read(fd: c_int, buf: *mut c_void, count: usize) -> libc::ssize_t {
     if buf.is_null() && count > 0 {
+        unsafe { set_abi_errno(errno::EFAULT) };
         return -1;
     }
 
@@ -142,6 +143,7 @@ pub unsafe extern "C" fn read(fd: c_int, buf: *mut c_void, count: usize) -> libc
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn write(fd: c_int, buf: *const c_void, count: usize) -> libc::ssize_t {
     if buf.is_null() && count > 0 {
+        unsafe { set_abi_errno(errno::EFAULT) };
         return -1;
     }
 
@@ -3272,11 +3274,20 @@ unsafe fn nftw_walk_dir(
 ) -> c_int {
     let mut st: libc::stat = unsafe { std::mem::zeroed() };
 
-    // Use lstat if FTW_PHYS, stat otherwise.
-    let rc = if flags & FTW_PHYS != 0 {
-        unsafe { libc::lstat(path, &mut st) }
+    // Use lstat (AT_SYMLINK_NOFOLLOW) if FTW_PHYS, stat otherwise.
+    let stat_flags = if flags & FTW_PHYS != 0 {
+        libc::AT_SYMLINK_NOFOLLOW
     } else {
-        unsafe { libc::syscall(libc::SYS_newfstatat, libc::AT_FDCWD, path, &mut st, 0) as c_int }
+        0
+    };
+    let rc = unsafe {
+        libc::syscall(
+            libc::SYS_newfstatat,
+            libc::AT_FDCWD,
+            path,
+            &mut st,
+            stat_flags,
+        ) as c_int
     };
 
     // Compute base offset (last '/' + 1).
@@ -11346,18 +11357,19 @@ pub unsafe extern "C" fn fts_read(ftsp: *mut c_void) -> *mut FTSENT {
     };
 
     let mut stat_buf: libc::stat = unsafe { std::mem::zeroed() };
-    let stat_result = if stream.options & FTS_PHYSICAL != 0 {
-        unsafe { libc::lstat(path_cstr.as_ptr(), &mut stat_buf) }
+    let fts_stat_flags = if stream.options & FTS_PHYSICAL != 0 {
+        libc::AT_SYMLINK_NOFOLLOW
     } else {
-        unsafe {
-            libc::syscall(
-                libc::SYS_newfstatat,
-                libc::AT_FDCWD,
-                path_cstr.as_ptr(),
-                &mut stat_buf,
-                0,
-            ) as c_int
-        }
+        0
+    };
+    let stat_result = unsafe {
+        libc::syscall(
+            libc::SYS_newfstatat,
+            libc::AT_FDCWD,
+            path_cstr.as_ptr(),
+            &mut stat_buf,
+            fts_stat_flags,
+        ) as c_int
     };
 
     let info = if stat_result < 0 {
