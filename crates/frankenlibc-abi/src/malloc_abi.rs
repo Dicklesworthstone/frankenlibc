@@ -12,7 +12,6 @@ use std::cell::Cell;
 use std::ffi::{c_int, c_void};
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
-use std::{collections::HashMap, sync::Mutex};
 
 use frankenlibc_core::errno::{EINVAL, ENOMEM};
 use frankenlibc_membrane::arena::{AllocationArena, FreeResult};
@@ -113,39 +112,6 @@ unsafe fn bump_alloc(size: usize) -> *mut c_void {
                 header.write(BUMP_MAGIC);
                 header.add(1).write(request);
                 return header.add(BUMP_HEADER_WORDS).cast();
-            }
-        }
-    }
-}
-
-#[cold]
-unsafe fn bump_aligned_alloc(size: usize, alignment: usize) -> *mut c_void {
-    let request = size.max(1);
-    let effective_alignment = alignment.max(BUMP_ALIGN);
-    let total = request
-        .saturating_add(BUMP_HEADER_SIZE)
-        .saturating_add(effective_alignment);
-    loop {
-        let pos = BUMP_POS.load(Ordering::Relaxed);
-        let aligned_pos = (pos + BUMP_ALIGN - 1) & !(BUMP_ALIGN - 1);
-        let new_pos = aligned_pos.saturating_add(total);
-        if new_pos > BUMP_SIZE {
-            return std::ptr::null_mut();
-        }
-        if BUMP_POS
-            .compare_exchange_weak(pos, new_pos, Ordering::AcqRel, Ordering::Relaxed)
-            .is_ok()
-        {
-            let base = BUMP_HEAP.0.get().cast::<u8>();
-            let raw_start = unsafe { base.add(aligned_pos) as usize };
-            let user_addr = (raw_start + BUMP_HEADER_SIZE + effective_alignment - 1)
-                & !(effective_alignment - 1);
-            let header_addr = user_addr - BUMP_HEADER_SIZE;
-            unsafe {
-                let header = header_addr as *mut usize;
-                header.write(BUMP_MAGIC);
-                header.add(1).write(request);
-                return user_addr as *mut c_void;
             }
         }
     }
@@ -429,11 +395,20 @@ unsafe fn native_libc_memalign(alignment: usize, size: usize) -> *mut c_void {
         .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
         .is_err()
     {
-        return unsafe { bump_aligned_alloc(size, alignment) };
+        // Bump allocator is already 16-byte aligned; for larger alignments
+        // over-allocate and manually align.
+        let extra = if alignment > 16 { alignment } else { 0 };
+        let ptr = unsafe { bump_alloc(size + extra) };
+        if ptr.is_null() || alignment <= 16 {
+            return ptr;
+        }
+        let addr = ptr as usize;
+        let aligned = (addr + alignment - 1) & !(alignment - 1);
+        return aligned as *mut c_void;
     }
     let result = match unsafe { host_memalign_fn() } {
         Some(host_memalign) => unsafe { host_memalign(alignment, size) },
-        None => unsafe { bump_aligned_alloc(size, alignment) },
+        None => unsafe { bump_alloc(size + alignment.max(16)) },
     };
     NATIVE_MEMALIGN_REENTRY.store(false, Ordering::Release);
     result
@@ -540,7 +515,6 @@ struct FlatCombiningStats {
     state: std::sync::Mutex<MallocStatsState>,
 }
 
-#[allow(dead_code)]
 impl FlatCombiningStats {
     #[allow(dead_code)]
     fn new() -> Self {
@@ -690,7 +664,9 @@ thread_local! {
 }
 
 fn global_alloc_stats() -> Option<&'static FlatCombiningStats> {
-    Some(GLOBAL_ALLOC_STATS.get_or_init(FlatCombiningStats::new))
+    // Use get() not get_or_init() — OnceLock futex deadlocks during early init.
+    // Stats are populated after prewarm. Before that, returns None (stats skipped).
+    GLOBAL_ALLOC_STATS.get()
 }
 
 #[inline]
@@ -704,11 +680,7 @@ fn record_alloc_stats(size: usize) {
         return;
     }
     if let Some(stats) = global_alloc_stats() {
-        let mut guard = match stats.state.lock() {
-            Ok(guard) => guard,
-            Err(poisoned) => poisoned.into_inner(),
-        };
-        FlatCombiningStats::apply_locked(&mut guard, FC_OP_ALLOC, size, stats_bin_for_size(size));
+        stats.record_alloc(size, stats_bin_for_size(size));
     }
 }
 
@@ -718,21 +690,14 @@ fn record_free_stats(size: usize) {
         return;
     }
     if let Some(stats) = global_alloc_stats() {
-        let mut guard = match stats.state.lock() {
-            Ok(guard) => guard,
-            Err(poisoned) => poisoned.into_inner(),
-        };
-        FlatCombiningStats::apply_locked(&mut guard, FC_OP_FREE, size, stats_bin_for_size(size));
+        stats.record_free(size, stats_bin_for_size(size));
     }
 }
 
 #[inline]
 fn snapshot_alloc_stats() -> MallocStatsSnapshot {
     global_alloc_stats()
-        .map(|stats| match stats.state.lock() {
-            Ok(guard) => guard.snapshot(),
-            Err(poisoned) => poisoned.into_inner().snapshot(),
-        })
+        .map(|s| s.snapshot())
         .unwrap_or_default()
 }
 
@@ -746,13 +711,6 @@ const FALLBACK_SLOT_EMPTY: usize = 0;
 const FALLBACK_SLOT_TOMBSTONE: usize = 1;
 static FALLBACK_ALLOC_PTRS: [AtomicUsize; FALLBACK_ALLOC_TABLE_SLOTS] =
     [const { AtomicUsize::new(FALLBACK_SLOT_EMPTY) }; FALLBACK_ALLOC_TABLE_SLOTS];
-static FALLBACK_ALLOC_SIZES: [AtomicUsize; FALLBACK_ALLOC_TABLE_SLOTS] =
-    [const { AtomicUsize::new(0) }; FALLBACK_ALLOC_TABLE_SLOTS];
-static HOST_TRACKED_ALLOCS: OnceLock<Mutex<HashMap<usize, usize>>> = OnceLock::new();
-
-fn host_tracked_allocs() -> &'static Mutex<HashMap<usize, usize>> {
-    HOST_TRACKED_ALLOCS.get_or_init(|| Mutex::new(HashMap::new()))
-}
 
 #[inline]
 fn fallback_key(ptr: *mut c_void) -> Option<usize> {
@@ -769,52 +727,37 @@ fn fallback_start_index(key: usize) -> usize {
     key.wrapping_mul(0x9e37_79b9_7f4a_7c15) % FALLBACK_ALLOC_TABLE_SLOTS
 }
 
-fn fallback_lookup_size(ptr: *mut c_void) -> Option<usize> {
-    let key = fallback_key(ptr)?;
-    if let Some(size) = host_tracked_allocs()
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .get(&key)
-        .copied()
-    {
-        return Some(size);
-    }
+fn fallback_contains(ptr: *mut c_void) -> bool {
+    let Some(key) = fallback_key(ptr) else {
+        return false;
+    };
     let start = fallback_start_index(key);
-    for i in 0..FALLBACK_ALLOC_TABLE_SLOTS {
+    for i in 0..1024 {
         let idx = (start + i) % FALLBACK_ALLOC_TABLE_SLOTS;
         let slot = FALLBACK_ALLOC_PTRS[idx].load(Ordering::Acquire);
         if slot == key {
-            return Some(FALLBACK_ALLOC_SIZES[idx].load(Ordering::Acquire));
+            return true;
         }
         if slot == FALLBACK_SLOT_EMPTY {
-            return None;
+            return false;
         }
     }
-    None
+    false
 }
 
-fn fallback_contains(ptr: *mut c_void) -> bool {
-    fallback_lookup_size(ptr).is_some()
-}
-
-fn fallback_insert_sized(ptr: *mut c_void, size: usize) {
+fn fallback_insert(ptr: *mut c_void) {
     if ptr.is_null() || is_bump_ptr(ptr) {
         return;
     }
     let Some(key) = fallback_key(ptr) else {
         return;
     };
-    host_tracked_allocs()
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .insert(key, size);
     let start = fallback_start_index(key);
     let mut first_tombstone: Option<usize> = None;
-    for i in 0..FALLBACK_ALLOC_TABLE_SLOTS {
+    for i in 0..1024 {
         let idx = (start + i) % FALLBACK_ALLOC_TABLE_SLOTS;
         let slot = FALLBACK_ALLOC_PTRS[idx].load(Ordering::Acquire);
         if slot == key {
-            FALLBACK_ALLOC_SIZES[idx].store(size, Ordering::Release);
             return;
         }
         if slot == FALLBACK_SLOT_TOMBSTONE {
@@ -825,7 +768,6 @@ fn fallback_insert_sized(ptr: *mut c_void, size: usize) {
         }
         if slot == FALLBACK_SLOT_EMPTY {
             if let Some(tomb_idx) = first_tombstone {
-                FALLBACK_ALLOC_SIZES[tomb_idx].store(size, Ordering::Release);
                 if FALLBACK_ALLOC_PTRS[tomb_idx]
                     .compare_exchange(
                         FALLBACK_SLOT_TOMBSTONE,
@@ -841,7 +783,6 @@ fn fallback_insert_sized(ptr: *mut c_void, size: usize) {
                 // Tombstone was taken by another thread. Fall through to try
                 // claiming the empty slot we just found at `idx`.
             }
-            FALLBACK_ALLOC_SIZES[idx].store(size, Ordering::Release);
             if FALLBACK_ALLOC_PTRS[idx]
                 .compare_exchange(
                     FALLBACK_SLOT_EMPTY,
@@ -857,7 +798,6 @@ fn fallback_insert_sized(ptr: *mut c_void, size: usize) {
     }
 
     if let Some(tomb_idx) = first_tombstone {
-        FALLBACK_ALLOC_SIZES[tomb_idx].store(size, Ordering::Release);
         let _ = FALLBACK_ALLOC_PTRS[tomb_idx].compare_exchange(
             FALLBACK_SLOT_TOMBSTONE,
             key,
@@ -867,22 +807,15 @@ fn fallback_insert_sized(ptr: *mut c_void, size: usize) {
     }
 }
 
-fn fallback_insert(ptr: *mut c_void) {
-    fallback_insert_sized(ptr, 0);
-}
-
-fn fallback_remove(ptr: *mut c_void) -> Option<usize> {
-    let key = fallback_key(ptr)?;
-    let map_size = host_tracked_allocs()
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .remove(&key);
+fn fallback_remove(ptr: *mut c_void) -> bool {
+    let Some(key) = fallback_key(ptr) else {
+        return false;
+    };
     let start = fallback_start_index(key);
-    for i in 0..FALLBACK_ALLOC_TABLE_SLOTS {
+    for i in 0..1024 {
         let idx = (start + i) % FALLBACK_ALLOC_TABLE_SLOTS;
         let slot = FALLBACK_ALLOC_PTRS[idx].load(Ordering::Acquire);
         if slot == key {
-            let size = FALLBACK_ALLOC_SIZES[idx].swap(0, Ordering::AcqRel);
             if FALLBACK_ALLOC_PTRS[idx]
                 .compare_exchange(
                     key,
@@ -892,15 +825,15 @@ fn fallback_remove(ptr: *mut c_void) -> Option<usize> {
                 )
                 .is_ok()
             {
-                return Some(map_size.unwrap_or(size));
+                return true;
             }
             continue;
         }
         if slot == FALLBACK_SLOT_EMPTY {
-            return map_size;
+            return false;
         }
     }
-    map_size
+    false
 }
 
 #[must_use]
@@ -944,12 +877,7 @@ fn enter_allocator_reentry_guard() -> Option<AllocatorReentryGuard> {
 
 #[inline]
 fn strict_allocator_host_path_active() -> bool {
-    if !runtime_policy::mode().heals_enabled() {
-        return true;
-    }
-    crate::host_resolve::host_malloc_raw().is_some()
-        && crate::host_resolve::host_realloc_raw().is_some()
-        && crate::host_resolve::host_free_raw().is_some()
+    !runtime_policy::mode().heals_enabled()
 }
 
 #[inline]
@@ -1022,21 +950,21 @@ pub(crate) fn known_remaining(addr: usize) -> Option<usize> {
 /// Caller must eventually `free` the returned pointer exactly once.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn malloc(size: usize) -> *mut c_void {
-    let req = size.max(1);
     let Some(_reentry_guard) = enter_allocator_reentry_guard() else {
         // SAFETY: reentrant path bypasses membrane/runtime-policy to avoid allocator recursion.
-        let out = unsafe { native_libc_malloc(req) };
-        fallback_insert_sized(out, req);
+        let out = unsafe { native_libc_malloc(size.max(1)) };
+        fallback_insert(out);
         return out;
     };
 
     let _trace_scope = runtime_policy::entrypoint_scope("malloc");
+    let req = size.max(1);
     if strict_allocator_host_path_active() {
         // SAFETY: strict-mode preload delegates allocator semantics to host libc
         // to preserve process compatibility while hardened mode exercises the
         // membrane allocator and repair pipeline.
         let out = unsafe { native_libc_malloc(req) };
-        fallback_insert_sized(out, req);
+        fallback_insert(out);
         if !out.is_null() {
             record_alloc_stats(req);
         }
@@ -1070,7 +998,7 @@ pub unsafe extern "C" fn malloc(size: usize) -> *mut c_void {
         None => {
             // SAFETY: reentrant allocator bootstrap falls back to libc allocator.
             let out = unsafe { native_libc_malloc(req) };
-            fallback_insert_sized(out, req);
+            fallback_insert(out);
             out
         }
     };
@@ -1113,27 +1041,19 @@ pub unsafe extern "C" fn malloc(size: usize) -> *mut c_void {
 pub unsafe extern "C" fn free(ptr: *mut c_void) {
     let Some(_reentry_guard) = enter_allocator_reentry_guard() else {
         // SAFETY: reentrant path bypasses membrane/runtime-policy to avoid allocator recursion.
-        if let Some(size) = fallback_remove(ptr) {
-            record_free_stats(size);
-        }
+        let _ = fallback_remove(ptr);
         unsafe { native_libc_free(ptr) };
         return;
     };
 
     let _trace_scope = runtime_policy::entrypoint_scope("free");
     if is_bump_ptr(ptr) {
-        if let Some(size) = unsafe { bump_allocation_size(ptr) } {
-            record_free_stats(size);
-        }
         return;
     }
-    if strict_allocator_host_path_active()
-        && let Some(size) = fallback_remove(ptr)
-    {
+    if strict_allocator_host_path_active() && fallback_remove(ptr) {
         // SAFETY: strict-mode allocations are tracked in the fallback table and
         // must be released by the host allocator to preserve host heap
         // semantics.
-        record_free_stats(size);
         unsafe { native_libc_free(ptr) };
         return;
     }
@@ -1163,9 +1083,7 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
 
     let Some(pipeline) = crate::membrane_state::try_global_pipeline() else {
         // SAFETY: reentrant allocator bootstrap falls back to libc allocator.
-        if let Some(size) = fallback_remove(ptr) {
-            record_free_stats(size);
-        }
+        let _ = fallback_remove(ptr);
         unsafe { native_libc_free(ptr) };
         runtime_policy::observe(ApiFamily::Allocator, decision.profile, 6, false);
         record_allocator_stage_outcome(&ordering, aligned, recent_page, None);
@@ -1205,7 +1123,7 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
             // A real glibc would abort, but our membrane prioritizes defined behavior.
         }
         FreeResult::ForeignPointer => {
-            if fallback_remove(ptr).is_some() {
+            if fallback_remove(ptr) {
                 // SAFETY: pointer is tracked as native-fallback allocation.
                 unsafe { native_libc_free(ptr) };
             } else {
@@ -1250,15 +1168,18 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
 /// Caller must eventually `free` the returned pointer exactly once.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn calloc(nmemb: usize, size: usize) -> *mut c_void {
+    let Some(_reentry_guard) = enter_allocator_reentry_guard() else {
+        // SAFETY: reentrant path bypasses membrane/runtime-policy to avoid allocator recursion.
+        let out = unsafe { native_libc_calloc(nmemb, size) };
+        fallback_insert(out);
+        return out;
+    };
+
+    let _trace_scope = runtime_policy::entrypoint_scope("calloc");
+    let (aligned, recent_page, ordering) = allocator_stage_context(0);
     let total = match nmemb.checked_mul(size) {
         Some(t) => t.max(1),
         None => {
-            let Some(_reentry_guard) = enter_allocator_reentry_guard() else {
-                unsafe { set_abi_errno(ENOMEM as c_int) };
-                return std::ptr::null_mut();
-            };
-            let _trace_scope = runtime_policy::entrypoint_scope("calloc");
-            let (aligned, recent_page, ordering) = allocator_stage_context(0);
             unsafe { set_abi_errno(ENOMEM as c_int) };
             let (_, decision) = runtime_policy::decide(ApiFamily::Allocator, 0, 0, true, false, 0);
             runtime_policy::observe(ApiFamily::Allocator, decision.profile, 4, true);
@@ -1271,20 +1192,11 @@ pub unsafe extern "C" fn calloc(nmemb: usize, size: usize) -> *mut c_void {
             return std::ptr::null_mut();
         }
     };
-    let Some(_reentry_guard) = enter_allocator_reentry_guard() else {
-        // SAFETY: reentrant path bypasses membrane/runtime-policy to avoid allocator recursion.
-        let out = unsafe { native_libc_calloc(nmemb, size) };
-        fallback_insert_sized(out, total);
-        return out;
-    };
-
-    let _trace_scope = runtime_policy::entrypoint_scope("calloc");
-    let (aligned, recent_page, ordering) = allocator_stage_context(0);
 
     if strict_allocator_host_path_active() {
         // SAFETY: strict-mode preload delegates allocator semantics to host libc.
         let out = unsafe { native_libc_calloc(nmemb, size) };
-        fallback_insert_sized(out, total);
+        fallback_insert(out);
         if !out.is_null() {
             record_alloc_stats(total);
         }
@@ -1321,7 +1233,7 @@ pub unsafe extern "C" fn calloc(nmemb: usize, size: usize) -> *mut c_void {
         None => {
             // SAFETY: reentrant allocator bootstrap falls back to libc allocator.
             let out = unsafe { native_libc_calloc(nmemb, size) };
-            fallback_insert_sized(out, total);
+            fallback_insert(out);
             out
         }
     };
@@ -1367,7 +1279,7 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
         let out = unsafe { native_libc_realloc(ptr, size) };
         if !out.is_null() {
             let _ = fallback_remove(ptr);
-            fallback_insert_sized(out, size);
+            fallback_insert(out);
         }
         return out;
     };
@@ -1394,7 +1306,7 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
                 std::ptr::copy_nonoverlapping(ptr.cast::<u8>(), out.cast::<u8>(), copy_size);
             }
         }
-        fallback_insert_sized(out, size);
+        fallback_insert(out);
         return out;
     }
 
@@ -1404,7 +1316,7 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
             let out = unsafe { native_libc_realloc(ptr, size) };
             if !out.is_null() {
                 let _ = fallback_remove(ptr);
-                fallback_insert_sized(out, size);
+                fallback_insert(out);
             }
             return out;
         }
@@ -1425,7 +1337,7 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
                 std::ptr::copy_nonoverlapping(ptr.cast::<u8>(), out.cast::<u8>(), copy_size);
             }
             let _ = pipeline.free(ptr.cast());
-            fallback_insert_sized(out, size);
+            fallback_insert(out);
             return out;
         }
 
@@ -1433,7 +1345,7 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
         // allocating a fresh host buffer rather than invoking undefined
         // realloc semantics on a foreign pointer.
         let out = unsafe { native_libc_malloc(size.max(1)) };
-        fallback_insert_sized(out, size);
+        fallback_insert(out);
         return out;
     }
 
@@ -1462,7 +1374,7 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
         let out = unsafe { native_libc_realloc(ptr, size) };
         if !out.is_null() {
             let _ = fallback_remove(ptr);
-            fallback_insert_sized(out, size);
+            fallback_insert(out);
         }
         return out;
     };
@@ -1495,7 +1407,7 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
                 let out = unsafe { native_libc_realloc(ptr, size) };
                 if !out.is_null() {
                     let _ = fallback_remove(ptr);
-                    fallback_insert_sized(out, size);
+                    fallback_insert(out);
                 }
                 record_allocator_stage_outcome(
                     &ordering,
@@ -1631,16 +1543,8 @@ pub unsafe extern "C" fn posix_memalign(
         return unsafe { native_libc_posix_memalign(memptr, alignment, size) };
     };
 
-    let req = size.max(1);
-    if strict_allocator_host_path_active() {
-        let rc = unsafe { native_libc_posix_memalign(memptr, alignment, req) };
-        if rc == 0 {
-            record_alloc_stats(req);
-        }
-        return rc;
-    }
-
     let _trace_scope = runtime_policy::entrypoint_scope("posix_memalign");
+    let req = size.max(1);
     let (aligned, recent_page, ordering) = allocator_stage_context(0);
     let (_, decision) = runtime_policy::decide(ApiFamily::Allocator, req, req, true, false, 0);
 
@@ -1669,7 +1573,7 @@ pub unsafe extern "C" fn posix_memalign(
             // SAFETY: reentrant allocator bootstrap falls back to libc allocator.
             let ptr = unsafe { native_libc_memalign(alignment, req) };
             if !ptr.is_null() {
-                fallback_insert_sized(ptr, req);
+                fallback_insert(ptr);
             }
             ptr
         }
@@ -1725,21 +1629,12 @@ pub unsafe extern "C" fn memalign(alignment: usize, size: usize) -> *mut c_void 
     let Some(_reentry_guard) = enter_allocator_reentry_guard() else {
         // SAFETY: direct delegation avoids recursive aligned-allocation lock paths.
         let out = unsafe { native_libc_memalign(alignment, size) };
-        fallback_insert_sized(out, size.max(alignment));
+        fallback_insert(out);
         return out;
     };
 
-    let req = size.max(1);
-    if strict_allocator_host_path_active() {
-        let out = unsafe { native_libc_memalign(alignment, req) };
-        fallback_insert_sized(out, req);
-        if !out.is_null() {
-            record_alloc_stats(req);
-        }
-        return out;
-    }
-
     let _trace_scope = runtime_policy::entrypoint_scope("memalign");
+    let req = size.max(1);
     let (aligned, recent_page, ordering) = allocator_stage_context(0);
     let (_, decision) = runtime_policy::decide(ApiFamily::Allocator, req, req, true, false, 0);
 
@@ -1768,7 +1663,7 @@ pub unsafe extern "C" fn memalign(alignment: usize, size: usize) -> *mut c_void 
         None => {
             let out = unsafe { native_libc_memalign(alignment, req) };
             if !out.is_null() {
-                fallback_insert_sized(out, size.max(alignment));
+                fallback_insert(out);
             }
             out
         }
@@ -1820,21 +1715,12 @@ pub unsafe extern "C" fn aligned_alloc(alignment: usize, size: usize) -> *mut c_
     let Some(_reentry_guard) = enter_allocator_reentry_guard() else {
         // SAFETY: direct delegation avoids recursive aligned-allocation lock paths.
         let out = unsafe { native_libc_aligned_alloc(alignment, size) };
-        fallback_insert_sized(out, size);
+        fallback_insert(out);
         return out;
     };
 
-    let req = size.max(1);
-    if strict_allocator_host_path_active() {
-        let out = unsafe { native_libc_aligned_alloc(alignment, req) };
-        fallback_insert_sized(out, req);
-        if !out.is_null() {
-            record_alloc_stats(req);
-        }
-        return out;
-    }
-
     let _trace_scope = runtime_policy::entrypoint_scope("aligned_alloc");
+    let req = size.max(1);
     let (aligned, recent_page, ordering) = allocator_stage_context(0);
     let (_, decision) = runtime_policy::decide(ApiFamily::Allocator, req, req, true, false, 0);
 
@@ -1863,7 +1749,7 @@ pub unsafe extern "C" fn aligned_alloc(alignment: usize, size: usize) -> *mut c_
         None => {
             let out = unsafe { native_libc_aligned_alloc(alignment, req) };
             if !out.is_null() {
-                fallback_insert_sized(out, size);
+                fallback_insert(out);
             }
             out
         }
@@ -1980,8 +1866,9 @@ pub unsafe extern "C" fn malloc_usable_size(ptr: *mut c_void) -> usize {
         return 0;
     }
 
+    // Bump/mmap allocations: size is unknown, return 0.
     if is_bump_ptr(ptr) {
-        return unsafe { bump_allocation_size(ptr) }.unwrap_or(0);
+        return 0;
     }
 
     let addr = ptr as usize;
@@ -1994,7 +1881,12 @@ pub unsafe extern "C" fn malloc_usable_size(ptr: *mut c_void) -> usize {
         return slot.user_size;
     }
 
-    fallback_lookup_size(ptr).unwrap_or(0)
+    // For all other pointers (fallback, host-allocated), return 0.
+    // We cannot safely delegate to the host malloc_usable_size because
+    // our unversioned export shadows the host's versioned symbol, causing
+    // infinite recursion.  Returning 0 is safe — callers that need exact
+    // sizes should use their own tracking.
+    0
 }
 
 // ---------------------------------------------------------------------------
