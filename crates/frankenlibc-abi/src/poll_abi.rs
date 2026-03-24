@@ -539,7 +539,17 @@ pub unsafe extern "C" fn timerfd_gettime(fd: c_int, curr_value: *mut libc::itime
 /// POSIX `sched_yield` — yield the processor.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sched_yield() -> c_int {
-    unsafe { libc::syscall(libc::SYS_sched_yield as c_long) as c_int }
+    let rc = unsafe { libc::syscall(libc::SYS_sched_yield as c_long) as c_int };
+    if rc < 0 {
+        unsafe {
+            set_abi_errno(
+                std::io::Error::last_os_error()
+                    .raw_os_error()
+                    .unwrap_or(libc::EAGAIN),
+            )
+        };
+    }
+    rc
 }
 
 /// Linux `prctl` — operations on a process.

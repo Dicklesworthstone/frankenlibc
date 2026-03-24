@@ -174,7 +174,7 @@ pub unsafe extern "C" fn thrd_sleep(
     if rc == 0 {
         0
     } else {
-        let e = unsafe { *libc::__errno_location() };
+        let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
         if e == libc::EINTR { -1 } else { -2 }
     }
 }
