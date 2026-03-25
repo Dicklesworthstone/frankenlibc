@@ -4592,11 +4592,13 @@ pub unsafe extern "C" fn group_member(gid: c_uint) -> c_int {
     // Query actual group count first, then allocate dynamically.
     // This avoids the old hard-coded 64-group limit which silently
     // truncated membership for users in many groups.
-    let n = unsafe { libc::syscall(libc::SYS_getgroups, 0, std::ptr::null_mut::<u32>()) as c_int };
+    let n = unsafe {
+        libc::syscall(libc::SYS_getgroups, 0, std::ptr::null_mut::<libc::gid_t>()) as c_int
+    };
     if n <= 0 {
         return 0;
     }
-    let mut groups = vec![0u32; n as usize];
+    let mut groups = vec![0 as libc::gid_t; n as usize];
     let actual = unsafe { libc::syscall(libc::SYS_getgroups, n, groups.as_mut_ptr()) as c_int };
     if actual < 0 {
         return 0;

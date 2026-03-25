@@ -36,10 +36,11 @@ fn runtime_page_size() -> usize {
     let page_sz = (|| -> Option<usize> {
         let data = std::fs::read("/proc/self/auxv").ok()?;
         // auxv entries are pairs of usize (type, value)
-        let entry_size = std::mem::size_of::<usize>() * 2;
+        let word = std::mem::size_of::<usize>();
+        let entry_size = word * 2;
         for chunk in data.chunks_exact(entry_size) {
-            let a_type = usize::from_ne_bytes(chunk[..8].try_into().ok()?);
-            let a_val = usize::from_ne_bytes(chunk[8..16].try_into().ok()?);
+            let a_type = usize::from_ne_bytes(chunk[..word].try_into().ok()?);
+            let a_val = usize::from_ne_bytes(chunk[word..word * 2].try_into().ok()?);
             if a_type == 6 {
                 // AT_PAGESZ
                 return Some(a_val);

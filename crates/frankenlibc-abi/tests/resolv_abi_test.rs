@@ -67,6 +67,21 @@ fn gethostbyname_unknown_host_returns_null() {
     assert!(ptr.is_null());
 }
 
+#[test]
+fn gethostbyname_unknown_host_sets_thread_local_h_errno() {
+    let query = CString::new("missing.example.invalid").expect("query should be valid C string");
+    unsafe {
+        *resolv_abi::__h_errno_location() = 0;
+    }
+
+    let ptr = unsafe { resolv_abi::gethostbyname(query.as_ptr()) };
+    assert!(ptr.is_null());
+    assert_eq!(
+        unsafe { *resolv_abi::__h_errno_location() },
+        HOST_NOT_FOUND_ERRNO
+    );
+}
+
 // ===========================================================================
 // gethostbyname_r
 // ===========================================================================
@@ -460,6 +475,22 @@ fn gethostbyaddr_short_len_returns_null() {
         )
     };
     assert!(ptr.is_null());
+}
+
+#[test]
+fn gethostbyaddr_unsupported_af_sets_thread_local_h_errno() {
+    let addr: [u8; 4] = [127, 0, 0, 1];
+    unsafe {
+        *resolv_abi::__h_errno_location() = 0;
+    }
+
+    let ptr =
+        unsafe { resolv_abi::gethostbyaddr(addr.as_ptr().cast::<c_void>(), 4, libc::AF_INET6) };
+    assert!(ptr.is_null());
+    assert_eq!(
+        unsafe { *resolv_abi::__h_errno_location() },
+        HOST_NOT_FOUND_ERRNO
+    );
 }
 
 // ===========================================================================
