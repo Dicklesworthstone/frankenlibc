@@ -2593,8 +2593,7 @@ fn on_exit_handler_called_during_exit_in_child() {
 
         let write_fd = fds[1] as usize as *mut libc::c_void;
         unsafe { on_exit(Some(write_pipe), write_fd) };
-        // Use _exit to avoid interference with test harness atexit handlers.
-        // Actually, we need exit() (not _exit) to trigger on_exit handlers.
+        // Must use exit() (not _exit) — on_exit handlers only run via exit().
         unsafe { frankenlibc_abi::stdlib_abi::exit(42) };
     }
 
