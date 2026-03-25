@@ -40,6 +40,7 @@ fn get_progname() -> &'static [u8] {
 /// If `fmt_bytes` is non-empty, the message is printf-formatted from the
 /// provided arg buffer. If `with_errno` is true, appends ": strerror(errno)".
 fn write_err_message(fmt_bytes: &[u8], arg_buf: &[u64], arg_count: usize, with_errno: bool) {
+    let saved_errno = unsafe { *crate::errno_abi::__errno_location() };
     let progname = get_progname();
 
     // Build the output: "progname: "
@@ -59,8 +60,7 @@ fn write_err_message(fmt_bytes: &[u8], arg_buf: &[u64], arg_count: usize, with_e
         if !fmt_bytes.is_empty() {
             out.extend_from_slice(b": ");
         }
-        let errno_val = unsafe { *crate::errno_abi::__errno_location() };
-        let errno_msg = strerror_bytes(errno_val);
+        let errno_msg = strerror_bytes(saved_errno);
         out.extend_from_slice(errno_msg);
     }
 
@@ -69,6 +69,7 @@ fn write_err_message(fmt_bytes: &[u8], arg_buf: &[u64], arg_count: usize, with_e
     // Write to stderr (fd 2) atomically.
     unsafe {
         crate::unistd_abi::write(2, out.as_ptr() as *const c_void, out.len());
+        *crate::errno_abi::__errno_location() = saved_errno;
     }
 }
 

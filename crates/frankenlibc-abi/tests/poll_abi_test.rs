@@ -8,8 +8,10 @@
 use std::ffi::c_int;
 use std::ptr;
 
+use frankenlibc_abi::errno_abi::__errno_location;
 use frankenlibc_abi::poll_abi::{epoll_create, epoll_create1, epoll_ctl, epoll_wait, poll};
 use frankenlibc_abi::unistd_abi::close;
+use frankenlibc_core::errno;
 
 // ---------------------------------------------------------------------------
 // Helper: create a pipe pair
@@ -234,8 +236,10 @@ fn epoll_ctl_add_and_wait() {
 fn epoll_wait_null_events_fails() {
     let epfd = unsafe { epoll_create1(0) };
     assert!(epfd >= 0);
+    unsafe { *__errno_location() = 0 };
     let n = unsafe { epoll_wait(epfd, ptr::null_mut(), 4, 0) };
     assert_eq!(n, -1, "epoll_wait with null events should fail");
+    assert_eq!(unsafe { *__errno_location() }, errno::EFAULT);
     unsafe { close(epfd) };
 }
 
@@ -244,8 +248,23 @@ fn epoll_wait_zero_maxevents_fails() {
     let epfd = unsafe { epoll_create1(0) };
     assert!(epfd >= 0);
     let mut events = [libc::epoll_event { events: 0, u64: 0 }; 1];
+    unsafe { *__errno_location() = 0 };
     let n = unsafe { epoll_wait(epfd, events.as_mut_ptr(), 0, 0) };
     assert_eq!(n, -1, "epoll_wait with maxevents=0 should fail");
+    assert_eq!(unsafe { *__errno_location() }, errno::EINVAL);
+    unsafe { close(epfd) };
+}
+
+#[test]
+fn epoll_pwait_null_events_sets_efault() {
+    use frankenlibc_abi::poll_abi::epoll_pwait;
+
+    let epfd = unsafe { epoll_create1(0) };
+    assert!(epfd >= 0);
+    unsafe { *__errno_location() = 0 };
+    let n = unsafe { epoll_pwait(epfd, ptr::null_mut(), 4, 0, ptr::null()) };
+    assert_eq!(n, -1, "epoll_pwait with null events should fail");
+    assert_eq!(unsafe { *__errno_location() }, errno::EFAULT);
     unsafe { close(epfd) };
 }
 

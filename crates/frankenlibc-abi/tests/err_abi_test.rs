@@ -111,6 +111,28 @@ fn test_warn_with_zero_errno() {
     unsafe { warn(msg.as_ptr() as *const c_char) };
 }
 
+#[test]
+fn test_warn_preserves_errno() {
+    unsafe { *frankenlibc_abi::errno_abi::__errno_location() = libc::EACCES };
+    let msg = b"errno preserved\0";
+    unsafe { warn(msg.as_ptr() as *const c_char) };
+    assert_eq!(
+        unsafe { *frankenlibc_abi::errno_abi::__errno_location() },
+        libc::EACCES
+    );
+}
+
+#[test]
+fn test_warnx_preserves_errno() {
+    unsafe { *frankenlibc_abi::errno_abi::__errno_location() = libc::ENOENT };
+    let msg = b"warnx errno preserved\0";
+    unsafe { warnx(msg.as_ptr() as *const c_char) };
+    assert_eq!(
+        unsafe { *frankenlibc_abi::errno_abi::__errno_location() },
+        libc::ENOENT
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Multiple sequential calls — exercise progname caching
 // ---------------------------------------------------------------------------

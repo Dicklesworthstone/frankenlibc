@@ -394,8 +394,12 @@ pub unsafe extern "C" fn epoll_wait(
     maxevents: c_int,
     timeout: c_int,
 ) -> c_int {
-    if events.is_null() || maxevents <= 0 {
+    if maxevents <= 0 {
         unsafe { set_abi_errno(errno::EINVAL) };
+        return -1;
+    }
+    if events.is_null() {
+        unsafe { set_abi_errno(errno::EFAULT) };
         return -1;
     }
     let rc = unsafe {
@@ -427,8 +431,12 @@ pub unsafe extern "C" fn epoll_pwait(
     timeout: c_int,
     sigmask: *const libc::sigset_t,
 ) -> c_int {
-    if events.is_null() || maxevents <= 0 {
+    if maxevents <= 0 {
         unsafe { set_abi_errno(errno::EINVAL) };
+        return -1;
+    }
+    if events.is_null() {
+        unsafe { set_abi_errno(errno::EFAULT) };
         return -1;
     }
     let rc = unsafe {

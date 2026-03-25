@@ -2862,30 +2862,50 @@ fn decode_utf8(bytes: &[u8]) -> (u32, usize) {
     }
     let b0 = bytes[0];
     if b0 < 0x80 {
-        (b0 as u32, 1)
-    } else if b0 < 0xC0 {
-        (0xFFFD, 1) // Continuation byte without lead.
-    } else if b0 < 0xE0 {
-        if bytes.len() < 2 {
+        return (b0 as u32, 1);
+    }
+    if b0 < 0xC0 {
+        return (0xFFFD, 1); // Continuation byte without lead.
+    }
+
+    // Validate continuation byte: must be 10xxxxxx (0x80..=0xBF).
+    let is_cont = |b: u8| (b & 0xC0) == 0x80;
+
+    if b0 < 0xE0 {
+        if bytes.len() < 2 || !is_cont(bytes[1]) {
             return (0xFFFD, 1);
         }
         let cp = ((b0 as u32 & 0x1F) << 6) | (bytes[1] as u32 & 0x3F);
+        // Reject overlong: 2-byte must encode >= 0x80
+        if cp < 0x80 {
+            return (0xFFFD, 2);
+        }
         (cp, 2)
     } else if b0 < 0xF0 {
-        if bytes.len() < 3 {
+        if bytes.len() < 3 || !is_cont(bytes[1]) || !is_cont(bytes[2]) {
             return (0xFFFD, 1);
         }
         let cp =
             ((b0 as u32 & 0x0F) << 12) | ((bytes[1] as u32 & 0x3F) << 6) | (bytes[2] as u32 & 0x3F);
+        // Reject overlong: 3-byte must encode >= 0x800
+        // Reject surrogates: 0xD800..=0xDFFF
+        if cp < 0x800 || (0xD800..=0xDFFF).contains(&cp) {
+            return (0xFFFD, 3);
+        }
         (cp, 3)
     } else {
-        if bytes.len() < 4 {
+        if bytes.len() < 4 || !is_cont(bytes[1]) || !is_cont(bytes[2]) || !is_cont(bytes[3]) {
             return (0xFFFD, 1);
         }
         let cp = ((b0 as u32 & 0x07) << 18)
             | ((bytes[1] as u32 & 0x3F) << 12)
             | ((bytes[2] as u32 & 0x3F) << 6)
             | (bytes[3] as u32 & 0x3F);
+        // Reject overlong: 4-byte must encode >= 0x10000
+        // Reject above Unicode max: > 0x10FFFF
+        if cp < 0x10000 || cp > 0x10FFFF {
+            return (0xFFFD, 4);
+        }
         (cp, 4)
     }
 }
