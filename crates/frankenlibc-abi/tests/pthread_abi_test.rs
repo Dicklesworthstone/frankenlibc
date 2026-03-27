@@ -2009,6 +2009,49 @@ fn setattr_default_np_roundtrip() {
 }
 
 #[test]
+fn setattr_default_np_preserves_affinity_and_sigmask() {
+    unsafe {
+        let mut attr: libc::pthread_attr_t = std::mem::zeroed();
+        assert_eq!(pthread_attr_init(&mut attr), 0);
+
+        let mut cpuset: libc::cpu_set_t = std::mem::zeroed();
+        libc::CPU_SET(0, &mut cpuset);
+        assert_eq!(
+            pthread_attr_setaffinity_np(&mut attr, std::mem::size_of::<libc::cpu_set_t>(), &cpuset),
+            0
+        );
+
+        let mut sigmask: libc::sigset_t = std::mem::zeroed();
+        libc::sigemptyset(&mut sigmask);
+        libc::sigaddset(&mut sigmask, libc::SIGUSR1);
+        assert_eq!(pthread_attr_setsigmask_np(&mut attr, &sigmask), 0);
+
+        assert_eq!(pthread_setattr_default_np(&attr), 0);
+
+        let mut got: libc::pthread_attr_t = std::mem::zeroed();
+        assert_eq!(pthread_getattr_default_np(&mut got), 0);
+
+        let mut got_cpuset: libc::cpu_set_t = std::mem::zeroed();
+        assert_eq!(
+            pthread_attr_getaffinity_np(
+                &got,
+                std::mem::size_of::<libc::cpu_set_t>(),
+                &mut got_cpuset
+            ),
+            0
+        );
+        assert!(libc::CPU_ISSET(0, &got_cpuset));
+
+        let mut got_sigmask: libc::sigset_t = std::mem::zeroed();
+        assert_eq!(pthread_attr_getsigmask_np(&got, &mut got_sigmask), 0);
+        assert_eq!(libc::sigismember(&got_sigmask, libc::SIGUSR1), 1);
+
+        assert_eq!(pthread_attr_destroy(&mut got), 0);
+        assert_eq!(pthread_attr_destroy(&mut attr), 0);
+    }
+}
+
+#[test]
 fn thread_create_with_managed_attr_succeeds() {
     unsafe {
         let mut attr: libc::pthread_attr_t = std::mem::zeroed();
@@ -2034,7 +2077,7 @@ fn thread_create_rejects_destroyed_managed_attr() {
         assert_eq!(pthread_attr_destroy(&mut attr), 0);
 
         let mut thr: libc::pthread_t = 0;
-        let rc = pthread_create(&mut thr, &attr, Some(add_ten), 1usize as *mut c_void);
+        let rc = pthread_create(&mut thr, &attr, Some(add_ten), ptr::null_mut());
         assert_eq!(rc, libc::EINVAL);
     }
 }

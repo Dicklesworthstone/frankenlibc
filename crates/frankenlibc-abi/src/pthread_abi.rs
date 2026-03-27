@@ -1081,9 +1081,6 @@ unsafe fn host_pthread_create_with_managed_attr(
         param.sched_priority = data.sched_priority;
         rc = unsafe { libc::pthread_attr_setschedparam(&mut host_attr, &param) };
     }
-    if rc == 0 {
-        rc = unsafe { libc::pthread_attr_setscope(&mut host_attr, PTHREAD_SCOPE_SYSTEM) };
-    }
     if rc == 0 && data.flags & 0b01 != 0 {
         let key = attr as usize;
         let reg = EXTENDED_ATTR_REGISTRY
@@ -2606,6 +2603,7 @@ const PTHREAD_INHERIT_SCHED_VAL: i32 = 0;
 
 /// Extended attribute data that doesn't fit in the 56-byte inline overlay.
 /// Keyed by attr address, stores affinity mask and signal mask.
+#[derive(Clone)]
 struct ExtendedAttrData {
     affinity: Option<(usize, Vec<u8>)>, // (cpusetsize, raw bytes)
     sigmask: Option<[u8; 128]>,         // sigset_t is 128 bytes on x86_64
@@ -2618,6 +2616,7 @@ static EXTENDED_ATTR_REGISTRY: LazyLock<Mutex<HashMap<usize, ExtendedAttrData>>>
 static DEFAULT_THREAD_ATTR: LazyLock<Mutex<PthreadAttrDefaults>> =
     LazyLock::new(|| Mutex::new(PthreadAttrDefaults::new()));
 
+#[derive(Clone)]
 struct PthreadAttrDefaults {
     detach_state: i32,
     stack_size: usize,
@@ -2625,6 +2624,7 @@ struct PthreadAttrDefaults {
     inherit_sched: i32,
     sched_policy: i32,
     sched_priority: i32,
+    extended: ExtendedAttrData,
 }
 
 impl PthreadAttrDefaults {
@@ -2636,6 +2636,10 @@ impl PthreadAttrDefaults {
             inherit_sched: PTHREAD_INHERIT_SCHED_VAL,
             sched_policy: 0, // SCHED_OTHER
             sched_priority: 0,
+            extended: ExtendedAttrData {
+                affinity: None,
+                sigmask: None,
+            },
         }
     }
 }
@@ -5102,7 +5106,7 @@ pub unsafe extern "C" fn pthread_getattr_default_np(attr: *mut libc::pthread_att
         return libc::EINVAL;
     };
     let defaults = match DEFAULT_THREAD_ATTR.lock() {
-        Ok(d) => d,
+        Ok(d) => d.clone(),
         Err(_) => return libc::EINVAL,
     };
     // SAFETY: data pointer is non-null and aligned.
@@ -5116,6 +5120,22 @@ pub unsafe extern "C" fn pthread_getattr_default_np(attr: *mut libc::pthread_att
         (*data).sched_policy = defaults.sched_policy;
         (*data).sched_priority = defaults.sched_priority;
         (*data).flags = 0;
+        if defaults.extended.affinity.is_some() {
+            (*data).flags |= 1;
+        }
+        if defaults.extended.sigmask.is_some() {
+            (*data).flags |= 2;
+        }
+    }
+    let key = attr as usize;
+    let mut reg = match EXTENDED_ATTR_REGISTRY.lock() {
+        Ok(r) => r,
+        Err(_) => return libc::EINVAL,
+    };
+    if defaults.extended.affinity.is_some() || defaults.extended.sigmask.is_some() {
+        reg.insert(key, defaults.extended.clone());
+    } else {
+        reg.remove(&key);
     }
     0
 }
@@ -5126,6 +5146,17 @@ pub unsafe extern "C" fn pthread_getattr_default_np(attr: *mut libc::pthread_att
 pub unsafe extern "C" fn pthread_setattr_default_np(attr: *const libc::pthread_attr_t) -> c_int {
     let Some(data) = attr_data_ptr_const(attr) else {
         return libc::EINVAL;
+    };
+    let key = attr as usize;
+    let extended = {
+        let reg = match EXTENDED_ATTR_REGISTRY.lock() {
+            Ok(r) => r,
+            Err(_) => return libc::EINVAL,
+        };
+        reg.get(&key).cloned().unwrap_or(ExtendedAttrData {
+            affinity: None,
+            sigmask: None,
+        })
     };
     let mut defaults = match DEFAULT_THREAD_ATTR.lock() {
         Ok(d) => d,
@@ -5140,6 +5171,7 @@ pub unsafe extern "C" fn pthread_setattr_default_np(attr: *const libc::pthread_a
         defaults.sched_policy = (*data).sched_policy;
         defaults.sched_priority = (*data).sched_priority;
     }
+    defaults.extended = extended;
     0
 }
 
