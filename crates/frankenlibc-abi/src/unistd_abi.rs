@@ -17,184 +17,13 @@ use crate::malloc_abi::known_remaining;
 use crate::runtime_policy;
 
 #[repr(C)]
-struct NetEnt {
-    n_name: *mut c_char,
-    n_aliases: *mut *mut c_char,
-    n_addrtype: c_int,
-    n_net: u32,
-}
-
-#[repr(C)]
-struct Fstab {
-    fs_spec: *mut c_char,
-    fs_file: *mut c_char,
-    fs_vfstype: *mut c_char,
-    fs_mntops: *mut c_char,
-    fs_type: *const c_char,
-    fs_freq: c_int,
-    fs_passno: c_int,
-}
-
-#[repr(C)]
 struct RpcEnt {
     r_name: *mut c_char,
     r_aliases: *mut *mut c_char,
     r_number: c_int,
 }
 
-#[repr(C)]
-struct TtyEnt {
-    ty_name: *mut c_char,
-    ty_getty: *mut c_char,
-    ty_type: *mut c_char,
-    ty_status: c_int,
-    ty_window: *mut c_char,
-    ty_comment: *mut c_char,
-}
-
-unsafe extern "C" {
-    #[link_name = "setfsent"]
-    fn host_setfsent() -> c_int;
-
-    #[link_name = "endfsent"]
-    fn host_endfsent();
-
-    #[link_name = "getfsent"]
-    fn host_getfsent() -> *mut Fstab;
-
-    #[link_name = "getfsfile"]
-    fn host_getfsfile(file: *const c_char) -> *mut Fstab;
-
-    #[link_name = "getfsspec"]
-    fn host_getfsspec(spec: *const c_char) -> *mut Fstab;
-
-    #[link_name = "setservent"]
-    fn host_setservent(stayopen: c_int);
-
-    #[link_name = "endservent"]
-    fn host_endservent();
-
-    #[link_name = "getservent"]
-    fn host_getservent() -> *mut libc::servent;
-
-    #[link_name = "getservent_r"]
-    fn host_getservent_r(
-        result_buf: *mut libc::servent,
-        buf: *mut c_char,
-        buflen: usize,
-        result: *mut *mut libc::servent,
-    ) -> c_int;
-
-    #[link_name = "sethostent"]
-    fn host_sethostent(stayopen: c_int);
-
-    #[link_name = "endhostent"]
-    fn host_endhostent();
-
-    #[link_name = "gethostent"]
-    fn host_gethostent() -> *mut libc::hostent;
-
-    #[link_name = "setnetent"]
-    fn host_setnetent(stayopen: c_int);
-
-    #[link_name = "endnetent"]
-    fn host_endnetent();
-
-    #[link_name = "getnetent"]
-    fn host_getnetent() -> *mut NetEnt;
-
-    #[link_name = "getnetbyname"]
-    fn host_getnetbyname(name: *const c_char) -> *mut NetEnt;
-
-    #[link_name = "getnetbyaddr"]
-    fn host_getnetbyaddr(net: u32, type_: c_int) -> *mut NetEnt;
-
-    #[link_name = "gethostent_r"]
-    fn host_gethostent_r(
-        result_buf: *mut libc::hostent,
-        buf: *mut c_char,
-        buflen: usize,
-        result: *mut *mut libc::hostent,
-        h_errnop: *mut c_int,
-    ) -> c_int;
-
-    #[link_name = "getnetbyaddr_r"]
-    fn host_getnetbyaddr_r(
-        net: u32,
-        type_: c_int,
-        result_buf: *mut NetEnt,
-        buf: *mut c_char,
-        buflen: usize,
-        result: *mut *mut NetEnt,
-        h_errnop: *mut c_int,
-    ) -> c_int;
-
-    #[link_name = "getnetbyname_r"]
-    fn host_getnetbyname_r(
-        name: *const c_char,
-        result_buf: *mut NetEnt,
-        buf: *mut c_char,
-        buflen: usize,
-        result: *mut *mut NetEnt,
-        h_errnop: *mut c_int,
-    ) -> c_int;
-
-    #[link_name = "getnetent_r"]
-    fn host_getnetent_r(
-        result_buf: *mut NetEnt,
-        buf: *mut c_char,
-        buflen: usize,
-        result: *mut *mut NetEnt,
-        h_errnop: *mut c_int,
-    ) -> c_int;
-
-    #[link_name = "setprotoent"]
-    fn host_setprotoent(stayopen: c_int);
-
-    #[link_name = "endprotoent"]
-    fn host_endprotoent();
-
-    #[link_name = "getprotoent"]
-    fn host_getprotoent() -> *mut libc::protoent;
-
-    #[link_name = "getprotobyname_r"]
-    fn host_getprotobyname_r(
-        name: *const c_char,
-        result_buf: *mut libc::protoent,
-        buf: *mut c_char,
-        buflen: usize,
-        result: *mut *mut libc::protoent,
-    ) -> c_int;
-
-    #[link_name = "getprotobynumber_r"]
-    fn host_getprotobynumber_r(
-        proto: c_int,
-        result_buf: *mut libc::protoent,
-        buf: *mut c_char,
-        buflen: usize,
-        result: *mut *mut libc::protoent,
-    ) -> c_int;
-
-    #[link_name = "getprotoent_r"]
-    fn host_getprotoent_r(
-        result_buf: *mut libc::protoent,
-        buf: *mut c_char,
-        buflen: usize,
-        result: *mut *mut libc::protoent,
-    ) -> c_int;
-
-    #[link_name = "setttyent"]
-    fn host_setttyent() -> c_int;
-
-    #[link_name = "getttyent"]
-    fn host_getttyent() -> *mut TtyEnt;
-
-    #[link_name = "getttynam"]
-    fn host_getttynam(name: *const c_char) -> *mut TtyEnt;
-
-    #[link_name = "endttyent"]
-    fn host_endttyent() -> c_int;
-}
+unsafe extern "C" {}
 
 #[inline]
 fn last_host_errno(default_errno: c_int) -> c_int {
@@ -11087,13 +10916,35 @@ pub(crate) fn init_stack_canary() {
 /// `gethostbyname2` — IPv6-aware hostname lookup (C locale, /etc/hosts only).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn gethostbyname2(name: *const c_char, af: c_int) -> *mut c_void {
-    // For now, delegate to gethostbyname for AF_INET; return null for others
-    if af == libc::AF_INET {
-        unsafe { crate::resolv_abi::gethostbyname(name) }
-    } else {
-        unsafe { set_abi_errno(libc::EAFNOSUPPORT) };
-        std::ptr::null_mut()
+    thread_local! {
+        static HOSTENT: std::cell::RefCell<libc::hostent> =
+            const { std::cell::RefCell::new(unsafe { std::mem::zeroed() }) };
+        static BUFFER: std::cell::RefCell<[c_char; 1024]> = const { std::cell::RefCell::new([0; 1024]) };
     }
+
+    HOSTENT.with(|hostent| {
+        BUFFER.with(|buffer| {
+            let mut hostent = hostent.borrow_mut();
+            let mut buffer = buffer.borrow_mut();
+            let mut result: *mut libc::hostent = std::ptr::null_mut();
+            let h_errno = unsafe { crate::resolv_abi::__h_errno_location() };
+            let rc = unsafe {
+                gethostbyname2_r(
+                    name,
+                    af,
+                    (&mut *hostent as *mut libc::hostent).cast(),
+                    buffer.as_mut_ptr(),
+                    buffer.len(),
+                    (&mut result as *mut *mut libc::hostent).cast(),
+                    h_errno,
+                )
+            };
+            if rc != 0 || result.is_null() {
+                return std::ptr::null_mut();
+            }
+            result.cast()
+        })
+    })
 }
 
 /// `setservent` — rewind /etc/services enumeration.
@@ -12873,12 +12724,14 @@ pub unsafe extern "C" fn endnetgrent() {
 
 /// `setnetgrent` — start netgroup iteration.
 ///
-/// Native implementation: returns 1 (success) but configures empty iteration.
-/// Netgroup is a legacy NIS feature; most modern systems have no /etc/netgroup.
+/// Delegates to host libc so missing-group success/failure shape matches glibc.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn setnetgrent(_netgroup: *const c_char) -> c_int {
-    // Accept the call but produce no entries on subsequent getnetgrent() calls.
-    1
+pub unsafe extern "C" fn setnetgrent(netgroup: *const c_char) -> c_int {
+    type F = unsafe extern "C" fn(*const c_char) -> c_int;
+    if let Some(a) = crate::host_resolve::resolve_host_symbol_raw("setnetgrent") {
+        return unsafe { core::mem::transmute::<usize, F>(a)(netgroup) };
+    }
+    0
 }
 
 /// `getnetgrent` — get next netgroup entry (host, user, domain triple).
@@ -15006,13 +14859,30 @@ pub unsafe extern "C" fn gethostent_r(
         unsafe { *result = std::ptr::null_mut() };
     }
 
-    let mut host_result: *mut libc::hostent = std::ptr::null_mut();
-    let rc =
-        unsafe { host_gethostent_r(result_buf.cast(), buf, buflen, &mut host_result, h_errnop) };
-    if !result.is_null() {
-        unsafe { *result = host_result.cast() };
+    type F = unsafe extern "C" fn(
+        *mut libc::hostent,
+        *mut c_char,
+        usize,
+        *mut *mut libc::hostent,
+        *mut c_int,
+    ) -> c_int;
+    if let Some(a) = crate::host_resolve::resolve_host_symbol_raw("gethostent_r") {
+        let mut host_result: *mut libc::hostent = std::ptr::null_mut();
+        let rc = unsafe {
+            core::mem::transmute::<usize, F>(a)(
+                result_buf.cast(),
+                buf,
+                buflen,
+                &mut host_result,
+                h_errnop,
+            )
+        };
+        if !result.is_null() {
+            unsafe { *result = host_result.cast() };
+        }
+        return rc;
     }
-    rc
+    libc::ENOENT
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -15029,22 +14899,24 @@ pub unsafe extern "C" fn getnetbyaddr_r(
         unsafe { *result = std::ptr::null_mut() };
     }
 
-    let mut host_result: *mut NetEnt = std::ptr::null_mut();
-    let rc = unsafe {
-        host_getnetbyaddr_r(
-            net,
-            type_,
-            result_buf.cast(),
-            buf,
-            buflen,
-            &mut host_result,
-            h_errnop,
-        )
-    };
-    if !result.is_null() {
-        unsafe { *result = host_result.cast() };
+    type F = unsafe extern "C" fn(
+        u32,
+        c_int,
+        *mut c_void,
+        *mut c_char,
+        usize,
+        *mut *mut c_void,
+        *mut c_int,
+    ) -> c_int;
+    if let Some(a) = crate::host_resolve::resolve_host_symbol_raw("getnetbyaddr_r") {
+        let rc = unsafe {
+            core::mem::transmute::<usize, F>(a)(
+                net, type_, result_buf, buf, buflen, result, h_errnop,
+            )
+        };
+        return rc;
     }
-    rc
+    libc::ENOENT
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -15059,22 +14931,20 @@ pub unsafe extern "C" fn getnetbyname_r(
     if !result.is_null() {
         unsafe { *result = std::ptr::null_mut() };
     }
-
-    let mut host_result: *mut NetEnt = std::ptr::null_mut();
-    let rc = unsafe {
-        host_getnetbyname_r(
-            name,
-            result_buf.cast(),
-            buf,
-            buflen,
-            &mut host_result,
-            h_errnop,
-        )
-    };
-    if !result.is_null() {
-        unsafe { *result = host_result.cast() };
+    type F = unsafe extern "C" fn(
+        *const c_char,
+        *mut c_void,
+        *mut c_char,
+        usize,
+        *mut *mut c_void,
+        *mut c_int,
+    ) -> c_int;
+    if let Some(a) = crate::host_resolve::resolve_host_symbol_raw("getnetbyname_r") {
+        return unsafe {
+            core::mem::transmute::<usize, F>(a)(name, result_buf, buf, buflen, result, h_errnop)
+        };
     }
-    rc
+    libc::ENOENT
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -15088,14 +14958,19 @@ pub unsafe extern "C" fn getnetent_r(
     if !result.is_null() {
         unsafe { *result = std::ptr::null_mut() };
     }
-
-    let mut host_result: *mut NetEnt = std::ptr::null_mut();
-    let rc =
-        unsafe { host_getnetent_r(result_buf.cast(), buf, buflen, &mut host_result, h_errnop) };
-    if !result.is_null() {
-        unsafe { *result = host_result.cast() };
+    type F = unsafe extern "C" fn(
+        *mut c_void,
+        *mut c_char,
+        usize,
+        *mut *mut c_void,
+        *mut c_int,
+    ) -> c_int;
+    if let Some(a) = crate::host_resolve::resolve_host_symbol_raw("getnetent_r") {
+        return unsafe {
+            core::mem::transmute::<usize, F>(a)(result_buf, buf, buflen, result, h_errnop)
+        };
     }
-    rc
+    libc::ENOENT
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -15110,13 +14985,19 @@ pub unsafe extern "C" fn getprotobyname_r(
         unsafe { *result = std::ptr::null_mut() };
     }
 
-    let mut host_result: *mut libc::protoent = std::ptr::null_mut();
-    let rc =
-        unsafe { host_getprotobyname_r(name, result_buf.cast(), buf, buflen, &mut host_result) };
-    if !result.is_null() {
-        unsafe { *result = host_result.cast() };
+    type F = unsafe extern "C" fn(
+        *const c_char,
+        *mut c_void,
+        *mut c_char,
+        usize,
+        *mut *mut c_void,
+    ) -> c_int;
+    if let Some(a) = crate::host_resolve::resolve_host_symbol_raw("getprotobyname_r") {
+        return unsafe {
+            core::mem::transmute::<usize, F>(a)(name, result_buf, buf, buflen, result)
+        };
     }
-    rc
+    libc::ENOENT
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -15131,13 +15012,14 @@ pub unsafe extern "C" fn getprotobynumber_r(
         unsafe { *result = std::ptr::null_mut() };
     }
 
-    let mut host_result: *mut libc::protoent = std::ptr::null_mut();
-    let rc =
-        unsafe { host_getprotobynumber_r(proto, result_buf.cast(), buf, buflen, &mut host_result) };
-    if !result.is_null() {
-        unsafe { *result = host_result.cast() };
+    type F =
+        unsafe extern "C" fn(c_int, *mut c_void, *mut c_char, usize, *mut *mut c_void) -> c_int;
+    if let Some(a) = crate::host_resolve::resolve_host_symbol_raw("getprotobynumber_r") {
+        return unsafe {
+            core::mem::transmute::<usize, F>(a)(proto, result_buf, buf, buflen, result)
+        };
     }
-    rc
+    libc::ENOENT
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -15151,12 +15033,11 @@ pub unsafe extern "C" fn getprotoent_r(
         unsafe { *result = std::ptr::null_mut() };
     }
 
-    let mut host_result: *mut libc::protoent = std::ptr::null_mut();
-    let rc = unsafe { host_getprotoent_r(result_buf.cast(), buf, buflen, &mut host_result) };
-    if !result.is_null() {
-        unsafe { *result = host_result.cast() };
+    type F = unsafe extern "C" fn(*mut c_void, *mut c_char, usize, *mut *mut c_void) -> c_int;
+    if let Some(a) = crate::host_resolve::resolve_host_symbol_raw("getprotoent_r") {
+        return unsafe { core::mem::transmute::<usize, F>(a)(result_buf, buf, buflen, result) };
     }
-    rc
+    libc::ENOENT
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -15169,13 +15050,11 @@ pub unsafe extern "C" fn getservent_r(
     if !result.is_null() {
         unsafe { *result = std::ptr::null_mut() };
     }
-
-    let mut host_result: *mut libc::servent = std::ptr::null_mut();
-    let rc = unsafe { host_getservent_r(result_buf.cast(), buf, buflen, &mut host_result) };
-    if !result.is_null() {
-        unsafe { *result = host_result.cast() };
+    type F = unsafe extern "C" fn(*mut c_void, *mut c_char, usize, *mut *mut c_void) -> c_int;
+    if let Some(a) = crate::host_resolve::resolve_host_symbol_raw("getservent_r") {
+        return unsafe { core::mem::transmute::<usize, F>(a)(result_buf, buf, buflen, result) };
     }
-    rc
+    libc::ENOENT
 }
 
 // ===========================================================================

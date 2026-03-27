@@ -16,18 +16,19 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use frankenlibc_abi::errno_abi::__errno_location;
 use frankenlibc_abi::glibc_internal_abi::getdate_err;
+use frankenlibc_abi::resolv_abi::__h_errno_location;
 use frankenlibc_abi::unistd_abi::{
     access, alarm, chdir, chmod, chown, close, creat, eaccess, euidaccess, faccessat, fchmod,
     fchown, fdatasync, flock, fstat, fsync, ftruncate, gai_cancel, gai_error, gai_suspend,
     getaddrinfo_a, getcwd, getdate, getdate_r, getegid, geteuid, getfsent, getfsfile, getfsspec,
-    getgid, gethostent_r, gethostname, getnetbyaddr_r, getnetbyname_r, getnetent_r, getpid,
-    getppid, getprotobyname_r, getprotobynumber_r, getprotoent, getprotoent_r, getservent,
-    getservent_r, getttyent, getttynam, getuid, getutent_r, getutid, getutid_r, getutline,
-    getutline_r, gsignal, isatty, link, lseek, lstat, mkdir, mkfifo, msgrcv, msgsnd, open,
-    pathconf, process_madvise, process_mrelease, process_vm_readv, process_vm_writev, read,
-    readlink, rename, rmdir, semctl, semop, setfsent, sethostent, setnetent, setprotoent,
-    setservent, setttyent, setutent, shmdt, ssignal, stat, strfmon, strfmon_l, symlink, sysconf,
-    truncate, umask, uname, unlink, usleep, utmpname, write,
+    getgid, gethostbyname2, gethostent_r, gethostname, getnetbyaddr_r, getnetbyname_r, getnetent_r,
+    getnetgrent, getpid, getppid, getprotobyname_r, getprotobynumber_r, getprotoent, getprotoent_r,
+    getservent, getservent_r, getttyent, getttynam, getuid, getutent_r, getutid, getutid_r,
+    getutline, getutline_r, gsignal, isatty, link, lseek, lstat, mkdir, mkfifo, msgrcv, msgsnd,
+    open, pathconf, process_madvise, process_mrelease, process_vm_readv, process_vm_writev, read,
+    readlink, rename, rmdir, semctl, semop, setfsent, sethostent, setnetent, setnetgrent,
+    setprotoent, setservent, setttyent, setutent, shmdt, ssignal, stat, strfmon, strfmon_l,
+    symlink, sysconf, truncate, umask, uname, unlink, usleep, utmpname, write,
 };
 
 static SIGNAL_HIT: AtomicI32 = AtomicI32::new(0);
@@ -1592,6 +1593,46 @@ fn getdate_and_getdate_r_follow_host_datemsk_contract() {
     unsafe {
         libc::unsetenv(c"DATEMSK".as_ptr());
     }
+}
+
+#[test]
+fn gethostbyname2_supports_ipv6_localhost() {
+    unsafe { *__h_errno_location() = -1 };
+    let name = CString::new("localhost").unwrap();
+    let host = unsafe { gethostbyname2(name.as_ptr(), libc::AF_INET6) as *mut libc::hostent };
+    assert!(
+        !host.is_null(),
+        "gethostbyname2 should resolve IPv6 localhost"
+    );
+    assert_eq!(unsafe { (*host).h_addrtype }, libc::AF_INET6);
+    assert_eq!(unsafe { (*host).h_length }, 16);
+    assert!(
+        unsafe { !(*host).h_addr_list.is_null() && !(*(*host).h_addr_list).is_null() },
+        "IPv6 hostent should expose at least one address"
+    );
+
+    let first_addr = unsafe { *(*host).h_addr_list } as *const libc::in6_addr;
+    assert_eq!(
+        unsafe { (*first_addr).s6_addr },
+        [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]
+    );
+    assert_eq!(unsafe { *__h_errno_location() }, 0);
+}
+
+#[test]
+fn setnetgrent_missing_group_matches_host_miss_shape() {
+    let missing = CString::new("frankenlibc-no-such-netgroup").unwrap();
+    let rc = unsafe { setnetgrent(missing.as_ptr()) };
+    assert_eq!(rc, 0, "missing netgroup should mirror host failure shape");
+
+    let mut host = std::ptr::dangling_mut::<c_char>();
+    let mut user = std::ptr::dangling_mut::<c_char>();
+    let mut domain = std::ptr::dangling_mut::<c_char>();
+    let next = unsafe { getnetgrent(&mut host, &mut user, &mut domain) };
+    assert_eq!(next, 0, "missing netgroup should enumerate no entries");
+    assert_eq!(host, std::ptr::dangling_mut::<c_char>());
+    assert_eq!(user, std::ptr::dangling_mut::<c_char>());
+    assert_eq!(domain, std::ptr::dangling_mut::<c_char>());
 }
 
 #[test]
