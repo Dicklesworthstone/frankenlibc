@@ -2944,14 +2944,43 @@ pub unsafe extern "C" fn pthread_condattr_getclock(
 // pthread_rwlockattr_t is 8 bytes. We store the kind (reader/writer preference)
 // in the first c_int. Default is PREFER_READER.
 
+const RWLOCKATTR_VALID_BIT: c_int = 1 << 8;
+const RWLOCKATTR_PSHARED_BIT: c_int = 1 << 0;
+
+fn rwlockattr_word_valid(word: c_int) -> bool {
+    word & RWLOCKATTR_VALID_BIT != 0
+}
+
+fn encode_rwlockattr(pshared: c_int) -> Option<c_int> {
+    if pshared != libc::PTHREAD_PROCESS_PRIVATE && pshared != libc::PTHREAD_PROCESS_SHARED {
+        return None;
+    }
+    let mut word = RWLOCKATTR_VALID_BIT;
+    if pshared == libc::PTHREAD_PROCESS_SHARED {
+        word |= RWLOCKATTR_PSHARED_BIT;
+    }
+    Some(word)
+}
+
+fn decode_rwlockattr_pshared(word: c_int) -> c_int {
+    if word & RWLOCKATTR_PSHARED_BIT != 0 {
+        libc::PTHREAD_PROCESS_SHARED
+    } else {
+        libc::PTHREAD_PROCESS_PRIVATE
+    }
+}
+
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pthread_rwlockattr_init(attr: *mut libc::pthread_rwlockattr_t) -> c_int {
     if attr.is_null() {
         return libc::EINVAL;
     }
-    // SAFETY: attr is non-null; caller owns the memory. Default kind is 0 (prefer reader).
+    let Some(default_word) = encode_rwlockattr(libc::PTHREAD_PROCESS_PRIVATE) else {
+        return libc::EINVAL;
+    };
+    // SAFETY: attr is non-null; caller owns the memory.
     let word = unsafe { &mut *(attr.cast::<c_int>()) };
-    *word = 0;
+    *word = default_word;
     0
 }
 
@@ -3961,7 +3990,7 @@ pub unsafe extern "C" fn pthread_barrierattr_init(attr: *mut libc::pthread_barri
     }
     // SAFETY: attr is non-null; store default (private) pshared.
     let word = unsafe { &mut *(attr.cast::<c_int>()) };
-    *word = libc::PTHREAD_PROCESS_PRIVATE;
+    *word = BARRIERATTR_VALID_BIT | libc::PTHREAD_PROCESS_PRIVATE;
     0
 }
 
@@ -3979,6 +4008,8 @@ pub unsafe extern "C" fn pthread_barrierattr_destroy(
     0
 }
 
+const BARRIERATTR_VALID_BIT: c_int = 1 << 8;
+
 /// POSIX `pthread_barrierattr_getpshared` — get barrier process-shared attribute.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pthread_barrierattr_getpshared(
@@ -3989,8 +4020,12 @@ pub unsafe extern "C" fn pthread_barrierattr_getpshared(
         return libc::EINVAL;
     }
     // SAFETY: both pointers are non-null.
+    let word = unsafe { *(attr.cast::<c_int>()) };
+    if word & BARRIERATTR_VALID_BIT == 0 {
+        return libc::EINVAL;
+    }
     unsafe {
-        *pshared = *(attr.cast::<c_int>());
+        *pshared = word & !BARRIERATTR_VALID_BIT;
     }
     0
 }
@@ -4009,7 +4044,10 @@ pub unsafe extern "C" fn pthread_barrierattr_setpshared(
     }
     // SAFETY: attr is non-null.
     let word = unsafe { &mut *(attr.cast::<c_int>()) };
-    *word = pshared;
+    if *word & BARRIERATTR_VALID_BIT == 0 {
+        return libc::EINVAL;
+    }
+    *word = BARRIERATTR_VALID_BIT | pshared;
     0
 }
 
@@ -4198,9 +4236,12 @@ pub unsafe extern "C" fn pthread_rwlockattr_getpshared(
     if attr.is_null() || pshared.is_null() {
         return libc::EINVAL;
     }
-    // SAFETY: attr is non-null.
+    let word = unsafe { *(attr.cast::<c_int>()) };
+    if !rwlockattr_word_valid(word) {
+        return libc::EINVAL;
+    }
     unsafe {
-        *pshared = *(attr.cast::<c_int>());
+        *pshared = decode_rwlockattr_pshared(word);
     }
     0
 }
@@ -4214,12 +4255,16 @@ pub unsafe extern "C" fn pthread_rwlockattr_setpshared(
     if attr.is_null() {
         return libc::EINVAL;
     }
-    if pshared != libc::PTHREAD_PROCESS_PRIVATE && pshared != libc::PTHREAD_PROCESS_SHARED {
+    let word = unsafe { *(attr.cast::<c_int>()) };
+    if !rwlockattr_word_valid(word) {
         return libc::EINVAL;
     }
+    let Some(next_word) = encode_rwlockattr(pshared) else {
+        return libc::EINVAL;
+    };
     // SAFETY: attr is non-null.
     let word = unsafe { &mut *(attr.cast::<c_int>()) };
-    *word = pshared;
+    *word = next_word;
     0
 }
 

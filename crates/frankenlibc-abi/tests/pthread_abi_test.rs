@@ -1610,6 +1610,18 @@ fn rwlockattr_setpshared_roundtrip() {
     }
 }
 
+#[test]
+fn rwlockattr_getpshared_after_destroy_is_rejected() {
+    unsafe {
+        let mut attr: libc::pthread_rwlockattr_t = std::mem::zeroed();
+        assert_eq!(pthread_rwlockattr_init(&mut attr), 0);
+        assert_eq!(pthread_rwlockattr_destroy(&mut attr), 0);
+
+        let mut val: c_int = -1;
+        assert_eq!(pthread_rwlockattr_getpshared(&attr, &mut val), libc::EINVAL);
+    }
+}
+
 // ===========================================================================
 // Barrierattr setpshared
 // ===========================================================================
@@ -1629,6 +1641,21 @@ fn barrierattr_setpshared_roundtrip() {
         assert_eq!(val, libc::PTHREAD_PROCESS_PRIVATE);
 
         pthread_barrierattr_destroy(&mut attr);
+    }
+}
+
+#[test]
+fn barrierattr_getpshared_after_destroy_is_rejected() {
+    unsafe {
+        let mut attr: libc::pthread_barrierattr_t = std::mem::zeroed();
+        assert_eq!(pthread_barrierattr_init(&mut attr), 0);
+        assert_eq!(pthread_barrierattr_destroy(&mut attr), 0);
+
+        let mut val: c_int = -1;
+        assert_eq!(
+            pthread_barrierattr_getpshared(&attr, &mut val),
+            libc::EINVAL
+        );
     }
 }
 
