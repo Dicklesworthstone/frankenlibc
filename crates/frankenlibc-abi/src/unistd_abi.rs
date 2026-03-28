@@ -13275,61 +13275,63 @@ pub unsafe extern "C" fn fgetspent_r(
     unsafe { *result = std::ptr::null_mut() };
 
     let mut line_buf = [0u8; 1024];
-    let line_ptr = unsafe {
-        libc::fgets(
-            line_buf.as_mut_ptr() as *mut c_char,
-            line_buf.len() as c_int,
-            stream,
-        )
-    };
-    if line_ptr.is_null() {
-        return libc::ENOENT;
-    }
-    let len = unsafe { crate::string_abi::strlen(line_ptr) };
-    let line = unsafe {
-        std::str::from_utf8_unchecked(std::slice::from_raw_parts(line_ptr as *const u8, len))
-    };
-    let line = line.trim_end_matches('\n');
-    if line.is_empty() || line.starts_with('#') {
-        return libc::ENOENT;
-    }
-    let parts: Vec<&str> = line.split(':').collect();
-    if parts.len() < 8 {
-        return libc::ENOENT;
-    }
-
-    let name_bytes = parts[0].as_bytes();
-    let pass_bytes = parts[1].as_bytes();
-    let needed = name_bytes.len() + 1 + pass_bytes.len() + 1;
-    if needed > buflen {
-        return libc::ERANGE;
-    }
-
-    let buf_slice = unsafe { std::slice::from_raw_parts_mut(buffer as *mut u8, buflen) };
-    buf_slice[..name_bytes.len()].copy_from_slice(name_bytes);
-    buf_slice[name_bytes.len()] = 0;
-    let pass_off = name_bytes.len() + 1;
-    buf_slice[pass_off..pass_off + pass_bytes.len()].copy_from_slice(pass_bytes);
-    buf_slice[pass_off + pass_bytes.len()] = 0;
-
-    let sp = result_buf;
-    unsafe {
-        (*sp).sp_namp = buffer;
-        (*sp).sp_pwdp = buffer.add(pass_off);
-        (*sp).sp_lstchg = parts[2].parse().unwrap_or(-1);
-        (*sp).sp_min = parts[3].parse().unwrap_or(-1);
-        (*sp).sp_max = parts[4].parse().unwrap_or(-1);
-        (*sp).sp_warn = parts[5].parse().unwrap_or(-1);
-        (*sp).sp_inact = parts[6].parse().unwrap_or(-1);
-        (*sp).sp_expire = parts[7].parse().unwrap_or(-1);
-        (*sp).sp_flag = if parts.len() > 8 {
-            parts[8].parse().unwrap_or(0)
-        } else {
-            0
+    loop {
+        let line_ptr = unsafe {
+            libc::fgets(
+                line_buf.as_mut_ptr() as *mut c_char,
+                line_buf.len() as c_int,
+                stream,
+            )
         };
-        *result = sp;
+        if line_ptr.is_null() {
+            return libc::ENOENT;
+        }
+        let len = unsafe { crate::string_abi::strlen(line_ptr) };
+        let line = unsafe {
+            std::str::from_utf8_unchecked(std::slice::from_raw_parts(line_ptr as *const u8, len))
+        };
+        let line = line.trim_end_matches('\n');
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let parts: Vec<&str> = line.split(':').collect();
+        if parts.len() < 8 {
+            continue;
+        }
+
+        let name_bytes = parts[0].as_bytes();
+        let pass_bytes = parts[1].as_bytes();
+        let needed = name_bytes.len() + 1 + pass_bytes.len() + 1;
+        if needed > buflen {
+            return libc::ERANGE;
+        }
+
+        let buf_slice = unsafe { std::slice::from_raw_parts_mut(buffer as *mut u8, buflen) };
+        buf_slice[..name_bytes.len()].copy_from_slice(name_bytes);
+        buf_slice[name_bytes.len()] = 0;
+        let pass_off = name_bytes.len() + 1;
+        buf_slice[pass_off..pass_off + pass_bytes.len()].copy_from_slice(pass_bytes);
+        buf_slice[pass_off + pass_bytes.len()] = 0;
+
+        let sp = result_buf;
+        unsafe {
+            (*sp).sp_namp = buffer;
+            (*sp).sp_pwdp = buffer.add(pass_off);
+            (*sp).sp_lstchg = parts[2].parse().unwrap_or(-1);
+            (*sp).sp_min = parts[3].parse().unwrap_or(-1);
+            (*sp).sp_max = parts[4].parse().unwrap_or(-1);
+            (*sp).sp_warn = parts[5].parse().unwrap_or(-1);
+            (*sp).sp_inact = parts[6].parse().unwrap_or(-1);
+            (*sp).sp_expire = parts[7].parse().unwrap_or(-1);
+            (*sp).sp_flag = if parts.len() > 8 {
+                parts[8].parse().unwrap_or(0)
+            } else {
+                0
+            };
+            *result = sp;
+        }
+        return 0;
     }
-    0
 }
 
 /// `fgetpwent_r` — reentrant read passwd entry from stream.
@@ -13349,65 +13351,65 @@ pub unsafe extern "C" fn fgetpwent_r(
     unsafe { *result = std::ptr::null_mut() };
 
     let mut line_buf = [0u8; 1024];
-    let line_ptr = unsafe {
-        libc::fgets(
-            line_buf.as_mut_ptr() as *mut c_char,
-            line_buf.len() as c_int,
-            stream,
-        )
-    };
-    if line_ptr.is_null() {
-        return libc::ENOENT;
-    }
-    let len = unsafe { crate::string_abi::strlen(line_ptr) };
-    let line = unsafe {
-        std::str::from_utf8_unchecked(std::slice::from_raw_parts(line_ptr as *const u8, len))
-    };
-    let line = line.trim_end_matches('\n');
-    if line.is_empty() || line.starts_with('#') {
-        return libc::ENOENT;
-    }
-    let parts: Vec<&str> = line.split(':').collect();
-    if parts.len() < 7 {
-        return libc::ENOENT;
-    }
+    loop {
+        let line_ptr = unsafe {
+            libc::fgets(
+                line_buf.as_mut_ptr() as *mut c_char,
+                line_buf.len() as c_int,
+                stream,
+            )
+        };
+        if line_ptr.is_null() {
+            return libc::ENOENT;
+        }
+        let len = unsafe { crate::string_abi::strlen(line_ptr) };
+        let line = unsafe {
+            std::str::from_utf8_unchecked(std::slice::from_raw_parts(line_ptr as *const u8, len))
+        };
+        let line = line.trim_end_matches('\n');
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let parts: Vec<&str> = line.split(':').collect();
+        if parts.len() < 7 {
+            continue;
+        }
 
-    // Calculate needed buffer: name\0 + passwd\0 + gecos\0 + dir\0 + shell\0
-    let needed = parts[0].len()
-        + 1
-        + parts[1].len()
-        + 1
-        + parts[4].len()
-        + 1
-        + parts[5].len()
-        + 1
-        + parts[6].len()
-        + 1;
-    if needed > buflen {
-        return libc::ERANGE;
+        let needed = parts[0].len()
+            + 1
+            + parts[1].len()
+            + 1
+            + parts[4].len()
+            + 1
+            + parts[5].len()
+            + 1
+            + parts[6].len()
+            + 1;
+        if needed > buflen {
+            return libc::ERANGE;
+        }
+
+        let buf = unsafe { std::slice::from_raw_parts_mut(buffer as *mut u8, buflen) };
+        let mut off = 0usize;
+        let mut copy_field = |field: &str| -> *mut c_char {
+            let ptr = unsafe { buffer.add(off) };
+            buf[off..off + field.len()].copy_from_slice(field.as_bytes());
+            buf[off + field.len()] = 0;
+            off += field.len() + 1;
+            ptr
+        };
+        let pw = unsafe { &mut *result_buf };
+        pw.pw_name = copy_field(parts[0]);
+        pw.pw_passwd = copy_field(parts[1]);
+        pw.pw_uid = parts[2].parse().unwrap_or(65534);
+        pw.pw_gid = parts[3].parse().unwrap_or(65534);
+        pw.pw_gecos = copy_field(parts[4]);
+        pw.pw_dir = copy_field(parts[5]);
+        pw.pw_shell = copy_field(parts[6]);
+
+        unsafe { *result = result_buf };
+        return 0;
     }
-
-    let buf = unsafe { std::slice::from_raw_parts_mut(buffer as *mut u8, buflen) };
-    let mut off = 0usize;
-    // Helper: copy field into buffer, return pointer, advance offset
-    let mut copy_field = |field: &str| -> *mut c_char {
-        let ptr = unsafe { buffer.add(off) };
-        buf[off..off + field.len()].copy_from_slice(field.as_bytes());
-        buf[off + field.len()] = 0;
-        off += field.len() + 1;
-        ptr
-    };
-    let pw = unsafe { &mut *result_buf };
-    pw.pw_name = copy_field(parts[0]);
-    pw.pw_passwd = copy_field(parts[1]);
-    pw.pw_uid = parts[2].parse().unwrap_or(65534);
-    pw.pw_gid = parts[3].parse().unwrap_or(65534);
-    pw.pw_gecos = copy_field(parts[4]);
-    pw.pw_dir = copy_field(parts[5]);
-    pw.pw_shell = copy_field(parts[6]);
-
-    unsafe { *result = result_buf };
-    0
 }
 
 /// `fgetgrent_r` — reentrant read group entry from stream.
@@ -13427,91 +13429,88 @@ pub unsafe extern "C" fn fgetgrent_r(
     unsafe { *result = std::ptr::null_mut() };
 
     let mut line_buf = [0u8; 1024];
-    let line_ptr = unsafe {
-        libc::fgets(
-            line_buf.as_mut_ptr() as *mut c_char,
-            line_buf.len() as c_int,
-            stream,
-        )
-    };
-    if line_ptr.is_null() {
-        return libc::ENOENT;
+    loop {
+        let line_ptr = unsafe {
+            libc::fgets(
+                line_buf.as_mut_ptr() as *mut c_char,
+                line_buf.len() as c_int,
+                stream,
+            )
+        };
+        if line_ptr.is_null() {
+            return libc::ENOENT;
+        }
+        let len = unsafe { crate::string_abi::strlen(line_ptr) };
+        let line = unsafe {
+            std::str::from_utf8_unchecked(std::slice::from_raw_parts(line_ptr as *const u8, len))
+        };
+        let line = line.trim_end_matches('\n');
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let parts: Vec<&str> = line.split(':').collect();
+        if parts.len() < 3 {
+            continue;
+        }
+
+        let members_str = if parts.len() > 3 { parts[3] } else { "" };
+        let member_names: Vec<&str> = if members_str.is_empty() {
+            Vec::new()
+        } else {
+            members_str.split(',').collect()
+        };
+
+        let ptr_size = std::mem::size_of::<*mut c_char>();
+        let needed = parts[0].len()
+            + 1
+            + parts[1].len()
+            + 1
+            + member_names.iter().map(|m| m.len() + 1).sum::<usize>()
+            + (member_names.len() + 1) * ptr_size;
+        if needed > buflen {
+            return libc::ERANGE;
+        }
+
+        let buf = unsafe { std::slice::from_raw_parts_mut(buffer as *mut u8, buflen) };
+        let mut off = 0usize;
+
+        fn copy_field_at(
+            buf: &mut [u8],
+            buffer: *mut c_char,
+            off: &mut usize,
+            field: &str,
+        ) -> *mut c_char {
+            let ptr = unsafe { buffer.add(*off) };
+            buf[*off..*off + field.len()].copy_from_slice(field.as_bytes());
+            buf[*off + field.len()] = 0;
+            *off += field.len() + 1;
+            ptr
+        }
+
+        let gr = unsafe { &mut *result_buf };
+        gr.gr_name = copy_field_at(buf, buffer, &mut off, parts[0]);
+        gr.gr_passwd = copy_field_at(buf, buffer, &mut off, parts[1]);
+        gr.gr_gid = parts[2].parse().unwrap_or(65534);
+
+        let align = off % ptr_size;
+        if align != 0 {
+            off += ptr_size - align;
+        }
+
+        let mem_array_ptr = unsafe { buffer.add(off) as *mut *mut c_char };
+        let mem_array_bytes = (member_names.len() + 1) * ptr_size;
+        off += mem_array_bytes;
+
+        for (i, name) in member_names.iter().enumerate() {
+            let str_ptr = copy_field_at(buf, buffer, &mut off, name);
+            unsafe { *mem_array_ptr.add(i) = str_ptr };
+        }
+        unsafe { *mem_array_ptr.add(member_names.len()) = std::ptr::null_mut() };
+        gr.gr_mem = mem_array_ptr;
+
+        unsafe { *result = result_buf };
+        return 0;
     }
-    let len = unsafe { crate::string_abi::strlen(line_ptr) };
-    let line = unsafe {
-        std::str::from_utf8_unchecked(std::slice::from_raw_parts(line_ptr as *const u8, len))
-    };
-    let line = line.trim_end_matches('\n');
-    if line.is_empty() || line.starts_with('#') {
-        return libc::ENOENT;
-    }
-    let parts: Vec<&str> = line.split(':').collect();
-    if parts.len() < 3 {
-        return libc::ENOENT;
-    }
-
-    // Parse member list (field 3, comma-separated)
-    let members_str = if parts.len() > 3 { parts[3] } else { "" };
-    let member_names: Vec<&str> = if members_str.is_empty() {
-        Vec::new()
-    } else {
-        members_str.split(',').collect()
-    };
-
-    // Calculate needed buffer: name\0 + passwd\0 + each_member\0 + (member_count+1)*ptr
-    let ptr_size = std::mem::size_of::<*mut c_char>();
-    let needed = parts[0].len()
-        + 1
-        + parts[1].len()
-        + 1
-        + member_names.iter().map(|m| m.len() + 1).sum::<usize>()
-        + (member_names.len() + 1) * ptr_size;
-    if needed > buflen {
-        return libc::ERANGE;
-    }
-
-    let buf = unsafe { std::slice::from_raw_parts_mut(buffer as *mut u8, buflen) };
-    let mut off = 0usize;
-
-    // Helper: copy a field string into the buffer at current offset.
-    fn copy_field_at(
-        buf: &mut [u8],
-        buffer: *mut c_char,
-        off: &mut usize,
-        field: &str,
-    ) -> *mut c_char {
-        let ptr = unsafe { buffer.add(*off) };
-        buf[*off..*off + field.len()].copy_from_slice(field.as_bytes());
-        buf[*off + field.len()] = 0;
-        *off += field.len() + 1;
-        ptr
-    }
-
-    let gr = unsafe { &mut *result_buf };
-    gr.gr_name = copy_field_at(buf, buffer, &mut off, parts[0]);
-    gr.gr_passwd = copy_field_at(buf, buffer, &mut off, parts[1]);
-    gr.gr_gid = parts[2].parse().unwrap_or(65534);
-
-    // Align offset for pointer array
-    let align = off % ptr_size;
-    if align != 0 {
-        off += ptr_size - align;
-    }
-
-    // Write member string pointers, then copy strings after
-    let mem_array_ptr = unsafe { buffer.add(off) as *mut *mut c_char };
-    let mem_array_bytes = (member_names.len() + 1) * ptr_size;
-    off += mem_array_bytes;
-
-    for (i, name) in member_names.iter().enumerate() {
-        let str_ptr = copy_field_at(buf, buffer, &mut off, name);
-        unsafe { *mem_array_ptr.add(i) = str_ptr };
-    }
-    unsafe { *mem_array_ptr.add(member_names.len()) = std::ptr::null_mut() };
-    gr.gr_mem = mem_array_ptr;
-
-    unsafe { *result = result_buf };
-    0
 }
 
 // ===========================================================================

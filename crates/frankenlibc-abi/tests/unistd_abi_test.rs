@@ -19,17 +19,17 @@ use frankenlibc_abi::glibc_internal_abi::getdate_err;
 use frankenlibc_abi::resolv_abi::__h_errno_location;
 use frankenlibc_abi::unistd_abi::{
     access, alarm, chdir, chmod, chown, close, creat, eaccess, ether_line, euidaccess, faccessat,
-    fchmod, fchown, fdatasync, flock, fstat, fsync, ftruncate, gai_cancel, gai_error, gai_suspend,
-    getaddrinfo_a, getaliasbyname, getaliasbyname_r, getcwd, getdate, getdate_r, getegid, geteuid,
-    getfsent, getfsfile, getfsspec, getgid, gethostbyname2, gethostbyname2_r, gethostent_r,
-    gethostname, getnetbyaddr_r, getnetbyname_r, getnetent_r, getnetgrent, getpid, getppid,
-    getprotobyname_r, getprotobynumber_r, getprotoent, getprotoent_r, getservent, getservent_r,
-    getttyent, getttynam, getuid, getutent_r, getutid, getutid_r, getutline, getutline_r, gsignal,
-    isatty, link, lseek, lstat, mkdir, mkfifo, msgrcv, msgsnd, open, pathconf, process_madvise,
-    process_mrelease, process_vm_readv, process_vm_writev, read, readlink, rename, rmdir, semctl,
-    semop, setfsent, sethostent, setnetent, setnetgrent, setprotoent, setservent, setttyent,
-    setutent, shmdt, ssignal, stat, strfmon, strfmon_l, symlink, sysconf, truncate, umask, uname,
-    unlink, usleep, utmpname, write,
+    fchmod, fchown, fdatasync, fgetgrent_r, fgetpwent_r, fgetspent_r, flock, fstat, fsync,
+    ftruncate, gai_cancel, gai_error, gai_suspend, getaddrinfo_a, getaliasbyname, getaliasbyname_r,
+    getcwd, getdate, getdate_r, getegid, geteuid, getfsent, getfsfile, getfsspec, getgid,
+    gethostbyname2, gethostbyname2_r, gethostent_r, gethostname, getnetbyaddr_r, getnetbyname_r,
+    getnetent_r, getnetgrent, getpid, getppid, getprotobyname_r, getprotobynumber_r, getprotoent,
+    getprotoent_r, getservent, getservent_r, getttyent, getttynam, getuid, getutent_r, getutid,
+    getutid_r, getutline, getutline_r, gsignal, isatty, link, lseek, lstat, mkdir, mkfifo, msgrcv,
+    msgsnd, open, pathconf, process_madvise, process_mrelease, process_vm_readv, process_vm_writev,
+    read, readlink, rename, rmdir, semctl, semop, setfsent, sethostent, setnetent, setnetgrent,
+    setprotoent, setservent, setttyent, setutent, shmdt, ssignal, stat, strfmon, strfmon_l,
+    symlink, sysconf, truncate, umask, uname, unlink, usleep, utmpname, write,
 };
 
 static SIGNAL_HIT: AtomicI32 = AtomicI32::new(0);
@@ -572,6 +572,99 @@ fn fgetgrent_reads_multiple_entries() {
     );
 
     unsafe { fclose(stream) };
+}
+
+#[test]
+fn fgetpwent_r_skips_comments_and_blank_lines() {
+    let path = temp_path("fgetpwent_r_skip");
+    let path_str = path.as_c_str().to_str().unwrap();
+    std::fs::write(path_str, b"\n# comment\nroot:x:0:0:root:/root:/bin/sh\n").unwrap();
+
+    let mode = b"r\0";
+    let stream = unsafe { fopen(path.as_ptr(), mode.as_ptr() as *const c_char) };
+    assert!(!stream.is_null());
+
+    let mut entry: libc::passwd = unsafe { std::mem::zeroed() };
+    let mut buf = [0 as c_char; 256];
+    let mut result: *mut libc::passwd = std::ptr::null_mut();
+    let rc = unsafe {
+        fgetpwent_r(
+            stream.cast(),
+            &mut entry,
+            buf.as_mut_ptr(),
+            buf.len(),
+            &mut result,
+        )
+    };
+    assert_eq!(rc, 0);
+    assert_eq!(result, &mut entry as *mut libc::passwd);
+    let name = unsafe { std::ffi::CStr::from_ptr(entry.pw_name) };
+    assert_eq!(name.to_bytes(), b"root");
+
+    unsafe { fclose(stream) };
+    std::fs::remove_file(path_str).unwrap();
+}
+
+#[test]
+fn fgetgrent_r_skips_comments_and_blank_lines() {
+    let path = temp_path("fgetgrent_r_skip");
+    let path_str = path.as_c_str().to_str().unwrap();
+    std::fs::write(path_str, b"\n# comment\nwheel:x:10:root\n").unwrap();
+
+    let mode = b"r\0";
+    let stream = unsafe { fopen(path.as_ptr(), mode.as_ptr() as *const c_char) };
+    assert!(!stream.is_null());
+
+    let mut entry: libc::group = unsafe { std::mem::zeroed() };
+    let mut buf = [0 as c_char; 256];
+    let mut result: *mut libc::group = std::ptr::null_mut();
+    let rc = unsafe {
+        fgetgrent_r(
+            stream.cast(),
+            &mut entry,
+            buf.as_mut_ptr(),
+            buf.len(),
+            &mut result,
+        )
+    };
+    assert_eq!(rc, 0);
+    assert_eq!(result, &mut entry as *mut libc::group);
+    let name = unsafe { std::ffi::CStr::from_ptr(entry.gr_name) };
+    assert_eq!(name.to_bytes(), b"wheel");
+
+    unsafe { fclose(stream) };
+    std::fs::remove_file(path_str).unwrap();
+}
+
+#[test]
+fn fgetspent_r_skips_comments_and_blank_lines() {
+    let path = temp_path("fgetspent_r_skip");
+    let path_str = path.as_c_str().to_str().unwrap();
+    std::fs::write(path_str, b"\n# comment\nroot:*:1:0:99999:7:::\n").unwrap();
+
+    let mode = b"r\0";
+    let stream = unsafe { fopen(path.as_ptr(), mode.as_ptr() as *const c_char) };
+    assert!(!stream.is_null());
+
+    let mut entry: libc::spwd = unsafe { std::mem::zeroed() };
+    let mut buf = [0 as c_char; 256];
+    let mut result: *mut libc::spwd = std::ptr::null_mut();
+    let rc = unsafe {
+        fgetspent_r(
+            stream.cast(),
+            &mut entry,
+            buf.as_mut_ptr(),
+            buf.len(),
+            &mut result,
+        )
+    };
+    assert_eq!(rc, 0);
+    assert_eq!(result, &mut entry as *mut libc::spwd);
+    let name = unsafe { std::ffi::CStr::from_ptr(entry.sp_namp) };
+    assert_eq!(name.to_bytes(), b"root");
+
+    unsafe { fclose(stream) };
+    std::fs::remove_file(path_str).unwrap();
 }
 
 fn errno_value() -> i32 {
