@@ -276,6 +276,20 @@ pub unsafe extern "C" fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *m
     }
 
     if !is_native_handle(handle) {
+        // Handle is from host dlopen — delegate to host dlsym.
+        type DlsymFn = unsafe extern "C" fn(*mut c_void, *const c_char) -> *mut c_void;
+        if let Some(addr) = crate::host_resolve::resolve_host_symbol_raw("dlsym") {
+            let host_dlsym: DlsymFn = unsafe { core::mem::transmute(addr) };
+            let sym = unsafe { host_dlsym(handle, symbol) };
+            let adverse = sym.is_null();
+            if adverse {
+                set_dlerror(dlfcn_core::ERR_SYMBOL_NOT_FOUND);
+            } else {
+                clear_dlerror();
+            }
+            runtime_policy::observe(ApiFamily::Loader, decision.profile, 8, adverse);
+            return sym;
+        }
         set_dlerror(dlfcn_core::ERR_INVALID_HANDLE);
         runtime_policy::observe(ApiFamily::Loader, decision.profile, 5, true);
         return std::ptr::null_mut();
@@ -403,6 +417,14 @@ pub unsafe extern "C" fn dlclose(handle: *mut c_void) -> c_int {
     }
 
     if !is_main_program_handle(handle) {
+        // Handle from host dlopen — delegate to host dlclose.
+        type DlcloseFn = unsafe extern "C" fn(*mut c_void) -> c_int;
+        if let Some(addr) = crate::host_resolve::resolve_host_symbol_raw("dlclose") {
+            let host_dlclose: DlcloseFn = unsafe { core::mem::transmute(addr) };
+            let rc = unsafe { host_dlclose(handle) };
+            runtime_policy::observe(ApiFamily::Loader, decision.profile, 8, rc != 0);
+            return rc;
+        }
         set_dlerror(dlfcn_core::ERR_INVALID_HANDLE);
         runtime_policy::observe(ApiFamily::Loader, decision.profile, 5, true);
         return -1;
