@@ -18,18 +18,18 @@ use frankenlibc_abi::errno_abi::__errno_location;
 use frankenlibc_abi::glibc_internal_abi::getdate_err;
 use frankenlibc_abi::resolv_abi::__h_errno_location;
 use frankenlibc_abi::unistd_abi::{
-    access, alarm, chdir, chmod, chown, close, creat, eaccess, euidaccess, faccessat, fchmod,
-    fchown, fdatasync, flock, fstat, fsync, ftruncate, gai_cancel, gai_error, gai_suspend,
+    access, alarm, chdir, chmod, chown, close, creat, eaccess, ether_line, euidaccess, faccessat,
+    fchmod, fchown, fdatasync, flock, fstat, fsync, ftruncate, gai_cancel, gai_error, gai_suspend,
     getaddrinfo_a, getaliasbyname, getaliasbyname_r, getcwd, getdate, getdate_r, getegid, geteuid,
-    getfsent, getfsfile, getfsspec, getgid, gethostbyname2, gethostent_r, gethostname,
-    getnetbyaddr_r, getnetbyname_r, getnetent_r, getnetgrent, getpid, getppid, getprotobyname_r,
-    getprotobynumber_r, getprotoent, getprotoent_r, getservent, getservent_r, getttyent, getttynam,
-    getuid, getutent_r, getutid, getutid_r, getutline, getutline_r, gsignal, isatty, link, lseek,
-    lstat, mkdir, mkfifo, msgrcv, msgsnd, open, pathconf, process_madvise, process_mrelease,
-    process_vm_readv, process_vm_writev, read, readlink, rename, rmdir, semctl, semop, setfsent,
-    sethostent, setnetent, setnetgrent, setprotoent, setservent, setttyent, setutent, shmdt,
-    ssignal, stat, strfmon, strfmon_l, symlink, sysconf, truncate, umask, uname, unlink, usleep,
-    utmpname, write,
+    getfsent, getfsfile, getfsspec, getgid, gethostbyname2, gethostbyname2_r, gethostent_r,
+    gethostname, getnetbyaddr_r, getnetbyname_r, getnetent_r, getnetgrent, getpid, getppid,
+    getprotobyname_r, getprotobynumber_r, getprotoent, getprotoent_r, getservent, getservent_r,
+    getttyent, getttynam, getuid, getutent_r, getutid, getutid_r, getutline, getutline_r, gsignal,
+    isatty, link, lseek, lstat, mkdir, mkfifo, msgrcv, msgsnd, open, pathconf, process_madvise,
+    process_mrelease, process_vm_readv, process_vm_writev, read, readlink, rename, rmdir, semctl,
+    semop, setfsent, sethostent, setnetent, setnetgrent, setprotoent, setservent, setttyent,
+    setutent, shmdt, ssignal, stat, strfmon, strfmon_l, symlink, sysconf, truncate, umask, uname,
+    unlink, usleep, utmpname, write,
 };
 
 static SIGNAL_HIT: AtomicI32 = AtomicI32::new(0);
@@ -1618,6 +1618,50 @@ fn gethostbyname2_supports_ipv6_localhost() {
         [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]
     );
     assert_eq!(unsafe { *__h_errno_location() }, 0);
+}
+
+#[test]
+fn gethostbyname2_r_missing_host_returns_zero_with_null_result() {
+    let name = CString::new("frankenlibc-no-such-host.invalid").unwrap();
+    let mut hostent: libc::hostent = unsafe { std::mem::zeroed() };
+    let mut buf = [0i8; 1024];
+    let mut result: *mut libc::hostent = std::ptr::dangling_mut::<libc::hostent>();
+    let mut h_errno = -1;
+
+    let rc = unsafe {
+        gethostbyname2_r(
+            name.as_ptr(),
+            libc::AF_INET6,
+            (&mut hostent as *mut libc::hostent).cast(),
+            buf.as_mut_ptr(),
+            buf.len(),
+            &mut result,
+            &mut h_errno,
+        )
+    };
+    assert_eq!(rc, 0);
+    assert!(result.is_null(), "missing host should yield NULL result");
+    assert_eq!(h_errno, 1);
+}
+
+#[test]
+fn ether_line_parses_valid_ethers_entry() {
+    let line = CString::new("08:00:20:00:61:cb printer").unwrap();
+    let mut addr = [0u8; 6];
+    let mut hostname = [0 as c_char; 64];
+
+    let rc = unsafe {
+        ether_line(
+            line.as_ptr(),
+            addr.as_mut_ptr().cast(),
+            hostname.as_mut_ptr(),
+        )
+    };
+    assert_eq!(rc, 0);
+    assert_eq!(addr, [0x08, 0x00, 0x20, 0x00, 0x61, 0xcb]);
+
+    let parsed_name = unsafe { std::ffi::CStr::from_ptr(hostname.as_ptr()) };
+    assert_eq!(parsed_name.to_bytes(), b"printer");
 }
 
 #[test]

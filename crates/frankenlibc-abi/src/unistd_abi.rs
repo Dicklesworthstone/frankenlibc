@@ -11733,24 +11733,35 @@ pub unsafe extern "C" fn versionsort64(
 /// `ether_ntohost` — look up hostname by Ethernet address (/etc/ethers).
 /// Returns 0 on success, non-zero on failure.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn ether_ntohost(_hostname: *mut c_char, _addr: *const c_void) -> c_int {
-    // /etc/ethers lookup is rare; return "not found" for now
+pub unsafe extern "C" fn ether_ntohost(hostname: *mut c_char, addr: *const c_void) -> c_int {
+    type F = unsafe extern "C" fn(*mut c_char, *const c_void) -> c_int;
+    if let Some(a) = crate::host_resolve::resolve_host_symbol_raw("ether_ntohost") {
+        return unsafe { core::mem::transmute::<usize, F>(a)(hostname, addr) };
+    }
     -1
 }
 
 /// `ether_hostton` — look up Ethernet address by hostname (/etc/ethers).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn ether_hostton(_hostname: *const c_char, _addr: *mut c_void) -> c_int {
+pub unsafe extern "C" fn ether_hostton(hostname: *const c_char, addr: *mut c_void) -> c_int {
+    type F = unsafe extern "C" fn(*const c_char, *mut c_void) -> c_int;
+    if let Some(a) = crate::host_resolve::resolve_host_symbol_raw("ether_hostton") {
+        return unsafe { core::mem::transmute::<usize, F>(a)(hostname, addr) };
+    }
     -1
 }
 
 /// `ether_line` — parse an /etc/ethers format line.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn ether_line(
-    _line: *const c_char,
-    _addr: *mut c_void,
-    _hostname: *mut c_char,
+    line: *const c_char,
+    addr: *mut c_void,
+    hostname: *mut c_char,
 ) -> c_int {
+    type F = unsafe extern "C" fn(*const c_char, *mut c_void, *mut c_char) -> c_int;
+    if let Some(a) = crate::host_resolve::resolve_host_symbol_raw("ether_line") {
+        return unsafe { core::mem::transmute::<usize, F>(a)(line, addr, hostname) };
+    }
     -1
 }
 
