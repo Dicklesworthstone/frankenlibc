@@ -14397,14 +14397,22 @@ pub unsafe extern "C" fn pututline(ut: *const c_void) -> *mut c_void {
 
 /// `updwtmp` — append to wtmp file.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn updwtmp(_file: *const c_char, _ut: *const c_void) {
-    // no-op — write accounting not supported
+pub unsafe extern "C" fn updwtmp(file: *const c_char, ut: *const c_void) {
+    type UpdwtmpFn = unsafe extern "C" fn(*const c_char, *const c_void);
+    if let Some(addr) = crate::host_resolve::resolve_host_symbol_raw("updwtmp") {
+        let host_fn: UpdwtmpFn = unsafe { core::mem::transmute(addr) };
+        unsafe { host_fn(file, ut) };
+    }
 }
 
 /// `updwtmpx` — append to wtmpx file.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn updwtmpx(_file: *const c_char, _utx: *const c_void) {
-    // no-op
+pub unsafe extern "C" fn updwtmpx(file: *const c_char, utx: *const c_void) {
+    type UpdwtmpxFn = unsafe extern "C" fn(*const c_char, *const c_void);
+    if let Some(addr) = crate::host_resolve::resolve_host_symbol_raw("updwtmpx") {
+        let host_fn: UpdwtmpxFn = unsafe { core::mem::transmute(addr) };
+        unsafe { host_fn(file, utx) };
+    }
 }
 
 /// `getutmp` — convert utmpx to utmp.
@@ -14520,9 +14528,18 @@ pub unsafe extern "C" fn sigvec(sig: c_int, vec: *const c_void, ovec: *mut c_voi
 
 /// `sigstack` — set alternate signal stack (deprecated, use sigaltstack).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn sigstack(_ss: *const c_void, _oss: *mut c_void) -> c_int {
-    // Deprecated — return success no-op
-    0
+pub unsafe extern "C" fn sigstack(ss: *const c_void, oss: *mut c_void) -> c_int {
+    type SigstackFn = unsafe extern "C" fn(*const c_void, *mut c_void) -> c_int;
+    if let Some(addr) = crate::host_resolve::resolve_host_symbol_raw("sigstack") {
+        let host_fn: SigstackFn = unsafe { core::mem::transmute(addr) };
+        let rc = unsafe { host_fn(ss, oss) };
+        if rc != 0 {
+            unsafe { set_abi_errno(last_host_errno(libc::EINVAL)) };
+        }
+        return rc;
+    }
+    unsafe { set_abi_errno(libc::ENOSYS) };
+    -1
 }
 
 /// `sigreturn` — return from signal handler (kernel does this, not userspace).
@@ -15191,18 +15208,30 @@ pub unsafe extern "C" fn strfmon_l(
 // ===========================================================================
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn login(_ut: *const c_void) {
-    // no-op — login accounting not supported
+pub unsafe extern "C" fn login(ut: *const c_void) {
+    type F = unsafe extern "C" fn(*const c_void);
+    if let Some(a) = crate::host_resolve::resolve_host_symbol_raw("login") {
+        unsafe { core::mem::transmute::<usize, F>(a)(ut) };
+    }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn logout(_line: *const c_char) -> c_int {
-    0 // success stub
+pub unsafe extern "C" fn logout(line: *const c_char) -> c_int {
+    type F = unsafe extern "C" fn(*const c_char) -> c_int;
+    if let Some(a) = crate::host_resolve::resolve_host_symbol_raw("logout") {
+        let rc = unsafe { core::mem::transmute::<usize, F>(a)(line) };
+        unsafe { set_abi_errno(last_host_errno(libc::ENOENT)) };
+        return rc;
+    }
+    0
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn logwtmp(_line: *const c_char, _name: *const c_char, _host: *const c_char) {
-    // no-op
+pub unsafe extern "C" fn logwtmp(line: *const c_char, name: *const c_char, host: *const c_char) {
+    type F = unsafe extern "C" fn(*const c_char, *const c_char, *const c_char);
+    if let Some(a) = crate::host_resolve::resolve_host_symbol_raw("logwtmp") {
+        unsafe { core::mem::transmute::<usize, F>(a)(line, name, host) };
+    }
 }
 
 // ===========================================================================

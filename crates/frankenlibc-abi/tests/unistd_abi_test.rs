@@ -27,11 +27,12 @@ use frankenlibc_abi::unistd_abi::{
     gethostname, getnetbyaddr_r, getnetbyname_r, getnetent_r, getnetgrent, getnetgrent_r, getpid,
     getppid, getprotobyname_r, getprotobynumber_r, getprotoent, getprotoent_r, getservent,
     getservent_r, getttyent, getttynam, getuid, getutent_r, getutid, getutid_r, getutline,
-    getutline_r, gsignal, isatty, link, lseek, lstat, mkdir, mkfifo, msgrcv, msgsnd, open,
+    getutline_r, gsignal, isatty, link, logout, lseek, lstat, mkdir, mkfifo, msgrcv, msgsnd, open,
     pathconf, process_madvise, process_mrelease, process_vm_readv, process_vm_writev, read,
     readlink, rename, rmdir, semctl, semop, setfsent, sethostent, setnetent, setnetgrent,
-    setprotoent, setservent, setttyent, setutent, shmdt, ssignal, stat, strfmon, strfmon_l,
-    symlink, sysconf, truncate, umask, uname, unlink, usleep, utmpname, write,
+    setprotoent, setservent, setttyent, setutent, shmdt, sigstack, ssignal, stat, strfmon,
+    strfmon_l, symlink, sysconf, truncate, umask, uname, unlink, updwtmp, updwtmpx, usleep,
+    utmpname, write,
 };
 
 static SIGNAL_HIT: AtomicI32 = AtomicI32::new(0);
@@ -881,6 +882,104 @@ fn netgroup_iterators_match_host_shape() {
     assert_eq!(our_plain_errno, host_plain_errno);
     assert_eq!(our_r_rc, host_r_rc);
     assert_eq!(our_r_errno, host_r_errno);
+}
+
+#[test]
+fn logout_matches_host_missing_line_shape() {
+    type HostLogoutFn = unsafe extern "C" fn(*const c_char) -> c_int;
+    let Some(host_logout) = (unsafe { load_host_symbol("logout") })
+        .map(|p| unsafe { std::mem::transmute::<*mut c_void, HostLogoutFn>(p) })
+    else {
+        return;
+    };
+
+    let line = CString::new("frankenlibc-no-such-line").unwrap();
+
+    let host_rc = unsafe { host_logout(line.as_ptr()) };
+    let host_errno = unsafe { *libc::__errno_location() };
+
+    let our_rc = unsafe { logout(line.as_ptr()) };
+    let our_errno = unsafe { *__errno_location() };
+
+    assert_eq!(our_rc, host_rc);
+    assert_eq!(our_errno, host_errno);
+}
+
+#[test]
+fn updwtmp_and_updwtmpx_match_host_file_effects() {
+    type HostUpdwtmpFn = unsafe extern "C" fn(*const c_char, *const c_void);
+    type HostUpdwtmpxFn = unsafe extern "C" fn(*const c_char, *const c_void);
+
+    let Some(host_updwtmp) = (unsafe { load_host_symbol("updwtmp") })
+        .map(|p| unsafe { std::mem::transmute::<*mut c_void, HostUpdwtmpFn>(p) })
+    else {
+        return;
+    };
+    let Some(host_updwtmpx) = (unsafe { load_host_symbol("updwtmpx") })
+        .map(|p| unsafe { std::mem::transmute::<*mut c_void, HostUpdwtmpxFn>(p) })
+    else {
+        return;
+    };
+
+    let mut entry: libc::utmpx = unsafe { std::mem::zeroed() };
+    entry.ut_type = libc::USER_PROCESS;
+    entry.ut_pid = std::process::id() as libc::pid_t;
+    entry.ut_tv.tv_sec = 1_700_000_000;
+    entry.ut_tv.tv_usec = 123_456;
+    entry.ut_line[..4].copy_from_slice(&[b't' as i8, b't' as i8, b'y' as i8, b'7' as i8]);
+    entry.ut_id[..4].copy_from_slice(&[b'f' as i8, b'l' as i8, b'i' as i8, b'b' as i8]);
+    entry.ut_user[..4].copy_from_slice(&[b'r' as i8, b'o' as i8, b'o' as i8, b't' as i8]);
+    entry.ut_host[..9].copy_from_slice(&[
+        b'l' as i8, b'o' as i8, b'c' as i8, b'a' as i8, b'l' as i8, b'h' as i8, b'o' as i8,
+        b's' as i8, b't' as i8,
+    ]);
+
+    let host_wtmp = temp_path("host_wtmp");
+    let our_wtmp = temp_path("our_wtmp");
+    let host_wtmpx = temp_path("host_wtmpx");
+    let our_wtmpx = temp_path("our_wtmpx");
+
+    std::fs::write(host_wtmp.to_str().unwrap(), []).unwrap();
+    std::fs::write(our_wtmp.to_str().unwrap(), []).unwrap();
+    std::fs::write(host_wtmpx.to_str().unwrap(), []).unwrap();
+    std::fs::write(our_wtmpx.to_str().unwrap(), []).unwrap();
+
+    unsafe { host_updwtmp(host_wtmp.as_ptr(), (&entry as *const libc::utmpx).cast()) };
+    unsafe { updwtmp(our_wtmp.as_ptr(), (&entry as *const libc::utmpx).cast()) };
+    unsafe { host_updwtmpx(host_wtmpx.as_ptr(), (&entry as *const libc::utmpx).cast()) };
+    unsafe { updwtmpx(our_wtmpx.as_ptr(), (&entry as *const libc::utmpx).cast()) };
+
+    let host_wtmp_bytes = std::fs::read(host_wtmp.to_str().unwrap()).unwrap();
+    let our_wtmp_bytes = std::fs::read(our_wtmp.to_str().unwrap()).unwrap();
+    let host_wtmpx_bytes = std::fs::read(host_wtmpx.to_str().unwrap()).unwrap();
+    let our_wtmpx_bytes = std::fs::read(our_wtmpx.to_str().unwrap()).unwrap();
+
+    assert_eq!(our_wtmp_bytes, host_wtmp_bytes);
+    assert_eq!(our_wtmpx_bytes, host_wtmpx_bytes);
+
+    std::fs::remove_file(host_wtmp.to_str().unwrap()).unwrap();
+    std::fs::remove_file(our_wtmp.to_str().unwrap()).unwrap();
+    std::fs::remove_file(host_wtmpx.to_str().unwrap()).unwrap();
+    std::fs::remove_file(our_wtmpx.to_str().unwrap()).unwrap();
+}
+
+#[test]
+fn sigstack_null_args_match_host_shape() {
+    type HostSigstackFn = unsafe extern "C" fn(*const c_void, *mut c_void) -> c_int;
+    let Some(host_sigstack) = (unsafe { load_host_symbol("sigstack") })
+        .map(|p| unsafe { std::mem::transmute::<*mut c_void, HostSigstackFn>(p) })
+    else {
+        return;
+    };
+
+    let host_rc = unsafe { host_sigstack(std::ptr::null(), std::ptr::null_mut()) };
+    let host_errno = unsafe { *libc::__errno_location() };
+
+    let our_rc = unsafe { sigstack(std::ptr::null(), std::ptr::null_mut()) };
+    let our_errno = unsafe { *__errno_location() };
+
+    assert_eq!(our_rc, host_rc);
+    assert_eq!(our_errno, host_errno);
 }
 
 fn errno_value() -> i32 {
