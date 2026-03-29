@@ -14489,6 +14489,31 @@ pub unsafe extern "C" fn sigsetmask(mask: c_int) -> c_int {
 /// `sigpause` — atomically release blocked signal and pause.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sigpause(sig: c_int) -> c_int {
+    if sig <= 0 {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return -1;
+    }
+
+    let mut validation_set: libc::sigset_t = unsafe { std::mem::zeroed() };
+    let validation_rc = unsafe {
+        libc::sigemptyset(&mut validation_set);
+        libc::sigaddset(&mut validation_set, sig)
+    };
+    if validation_rc != 0 {
+        unsafe { set_abi_errno(last_host_errno(libc::EINVAL)) };
+        return -1;
+    }
+
+    type SigpauseFn = unsafe extern "C" fn(c_int) -> c_int;
+    if let Some(addr) = crate::host_resolve::resolve_host_symbol_raw("sigpause") {
+        let host_fn: SigpauseFn = unsafe { core::mem::transmute(addr) };
+        let rc = unsafe { host_fn(sig) };
+        if rc != 0 {
+            unsafe { set_abi_errno(last_host_errno(libc::EINVAL)) };
+        }
+        return rc;
+    }
+
     // BSD sigpause: unblock sig and pause
     let mut mask: u64 = 0;
     unsafe {
@@ -14502,14 +14527,18 @@ pub unsafe extern "C" fn sigpause(sig: c_int) -> c_int {
     }
     // Clear the bit for sig
     mask &= !(1u64 << (sig as u64 - 1));
-    unsafe { libc::sigsuspend(&mask as *const u64 as *const libc::sigset_t) }
+    let rc = unsafe { libc::sigsuspend(&mask as *const u64 as *const libc::sigset_t) };
+    if rc != 0 {
+        unsafe { set_abi_errno(last_host_errno(libc::EINTR)) };
+    }
+    rc
 }
 
 /// `sigvec` — BSD signal handler (maps to sigaction).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sigvec(sig: c_int, vec: *const c_void, ovec: *mut c_void) -> c_int {
     // sigvec and sigaction have compatible layouts on Linux
-    unsafe {
+    let rc = unsafe {
         libc::sigaction(
             sig,
             if vec.is_null() {
@@ -14523,7 +14552,11 @@ pub unsafe extern "C" fn sigvec(sig: c_int, vec: *const c_void, ovec: *mut c_voi
                 ovec as *mut libc::sigaction
             },
         )
+    };
+    if rc != 0 {
+        unsafe { set_abi_errno(last_host_errno(libc::EINVAL)) };
     }
+    rc
 }
 
 /// `sigstack` — set alternate signal stack (deprecated, use sigaltstack).
@@ -14562,7 +14595,11 @@ pub unsafe extern "C" fn ssignal(
 /// `gsignal` — raise software signal (legacy SVR2).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn gsignal(sig: c_int) -> c_int {
-    unsafe { libc::raise(sig) }
+    let rc = unsafe { libc::raise(sig) };
+    if rc != 0 {
+        unsafe { set_abi_errno(last_host_errno(libc::EINVAL)) };
+    }
+    rc
 }
 
 /// `sysv_signal` — System V signal semantics (one-shot).
@@ -14578,6 +14615,7 @@ pub unsafe extern "C" fn sysv_signal(
     let mut old_sa: libc::sigaction = unsafe { std::mem::zeroed() };
     let ret = unsafe { libc::sigaction(sig, &sa, &mut old_sa) };
     if ret < 0 {
+        unsafe { set_abi_errno(last_host_errno(libc::EINVAL)) };
         None
     } else {
         let old_handler = old_sa.sa_sigaction;

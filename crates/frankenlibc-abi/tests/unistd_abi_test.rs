@@ -30,9 +30,9 @@ use frankenlibc_abi::unistd_abi::{
     getutline_r, gsignal, isatty, link, logout, lseek, lstat, mkdir, mkfifo, msgrcv, msgsnd, open,
     pathconf, process_madvise, process_mrelease, process_vm_readv, process_vm_writev, read,
     readlink, rename, rmdir, semctl, semop, setfsent, sethostent, setnetent, setnetgrent,
-    setprotoent, setservent, setttyent, setutent, shmdt, sigstack, ssignal, stat, strfmon,
-    strfmon_l, symlink, sysconf, truncate, umask, uname, unlink, updwtmp, updwtmpx, usleep,
-    utmpname, write,
+    setprotoent, setservent, setttyent, setutent, shmdt, sigpause, sigstack, sigvec, ssignal, stat,
+    strfmon, strfmon_l, symlink, sysconf, truncate, umask, uname, unlink, updwtmp, updwtmpx,
+    usleep, utmpname, write,
 };
 
 static SIGNAL_HIT: AtomicI32 = AtomicI32::new(0);
@@ -980,6 +980,49 @@ fn sigstack_null_args_match_host_shape() {
 
     assert_eq!(our_rc, host_rc);
     assert_eq!(our_errno, host_errno);
+}
+
+#[test]
+fn sigvec_invalid_signal_sets_errno_like_sigaction() {
+    let host_rc = unsafe { libc::sigaction(0, std::ptr::null(), std::ptr::null_mut()) };
+    let host_errno = unsafe { *libc::__errno_location() };
+
+    let our_rc = unsafe { sigvec(0, std::ptr::null(), std::ptr::null_mut()) };
+    let our_errno = unsafe { *__errno_location() };
+
+    assert_eq!(our_rc, host_rc);
+    assert_eq!(our_errno, host_errno);
+}
+
+#[test]
+fn sigpause_invalid_signal_is_rejected_without_blocking() {
+    let our_rc = unsafe { sigpause(0) };
+    let our_errno = unsafe { *__errno_location() };
+
+    assert_eq!(our_rc, -1);
+    assert_eq!(our_errno, libc::EINVAL);
+}
+
+#[test]
+fn gsignal_invalid_signal_sets_errno_like_raise() {
+    let invalid_sig = 1024;
+    let host_rc = unsafe { libc::raise(invalid_sig) };
+    let host_errno = unsafe { *libc::__errno_location() };
+
+    let our_rc = unsafe { gsignal(invalid_sig) };
+    let our_errno = unsafe { *__errno_location() };
+
+    assert_eq!(our_rc, host_rc);
+    assert_eq!(our_errno, host_errno);
+}
+
+#[test]
+fn ssignal_invalid_signal_sets_errno() {
+    let previous = unsafe { ssignal(1024, Some(record_sigusr1)) };
+    let err = unsafe { *__errno_location() };
+
+    assert!(previous.is_none());
+    assert_eq!(err, libc::EINVAL);
 }
 
 fn errno_value() -> i32 {
