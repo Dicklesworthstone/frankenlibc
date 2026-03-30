@@ -15,6 +15,7 @@ use std::sync::atomic::AtomicI32;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use frankenlibc_abi::errno_abi::__errno_location;
+use frankenlibc_abi::glibc_internal_abi::__sysv_signal;
 use frankenlibc_abi::glibc_internal_abi::getdate_err;
 use frankenlibc_abi::glibc_internal_abi::setaliasent as abi_setaliasent;
 use frankenlibc_abi::resolv_abi::__h_errno_location;
@@ -1031,6 +1032,15 @@ fn sigset_invalid_signal_sets_errno() {
     let err = unsafe { *__errno_location() };
 
     assert_eq!(previous, libc::SIG_ERR);
+    assert_eq!(err, libc::EINVAL);
+}
+
+#[test]
+fn __sysv_signal_invalid_signal_sets_errno() {
+    let previous = unsafe { __sysv_signal(1024, record_sigusr1 as *const () as *mut c_void) };
+    let err = unsafe { *__errno_location() };
+
+    assert_eq!(previous, libc::SIG_ERR as *mut c_void);
     assert_eq!(err, libc::EINVAL);
 }
 
@@ -2617,6 +2627,45 @@ fn pathconf_on_slash() {
     let root = CString::new("/").unwrap();
     let name_max = unsafe { pathconf(root.as_ptr(), libc::_PC_NAME_MAX) };
     assert!(name_max > 0, "NAME_MAX on / should be positive");
+}
+
+#[test]
+fn sysconf_ngroups_max_matches_procfs_when_available() {
+    let value = unsafe { sysconf(libc::_SC_NGROUPS_MAX) };
+    assert!(value > 0, "NGROUPS_MAX should be positive");
+
+    if let Ok(raw) = std::fs::read_to_string("/proc/sys/kernel/ngroups_max")
+        && let Ok(expected) = raw.trim().parse::<libc::c_long>()
+    {
+        assert_eq!(value, expected);
+    }
+}
+
+#[test]
+fn sysconf_thread_stack_min_matches_libc_constant() {
+    let value = unsafe { sysconf(libc::_SC_THREAD_STACK_MIN) };
+    assert_eq!(value, libc::PTHREAD_STACK_MIN as libc::c_long);
+}
+
+#[test]
+fn sysconf_phys_pages_uses_runtime_page_size() {
+    let value = unsafe { sysconf(libc::_SC_PHYS_PAGES) };
+    assert!(value > 0, "PHYS_PAGES should be positive");
+
+    let page_size = unsafe { sysconf(libc::_SC_PAGESIZE) } as u64;
+    let meminfo = std::fs::read_to_string("/proc/meminfo").expect("/proc/meminfo should exist");
+    let total_kb = meminfo
+        .lines()
+        .find_map(|line| {
+            if !line.starts_with("MemTotal:") {
+                return None;
+            }
+            line.split_whitespace().nth(1)?.parse::<u64>().ok()
+        })
+        .expect("MemTotal should be present");
+    let expected = ((total_kb * 1024) / page_size) as libc::c_long;
+
+    assert_eq!(value, expected);
 }
 
 // ---------------------------------------------------------------------------

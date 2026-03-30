@@ -3497,7 +3497,7 @@ pub unsafe extern "C" fn __sysctl(_args: *mut c_void) -> c_int {
 // __sysv_signal: native — System V signal semantics (one-shot)
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __sysv_signal(signum: c_int, handler: *mut c_void) -> *mut c_void {
-    unsafe { crate::signal_abi::signal(signum, handler as libc::sighandler_t) as *mut c_void }
+    unsafe { crate::unistd_abi::sysv_signal(signum, handler as libc::sighandler_t) as *mut c_void }
 }
 // __vfork → vfork
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]

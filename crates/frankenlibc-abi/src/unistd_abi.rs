@@ -66,6 +66,40 @@ fn runtime_page_size() -> usize {
 }
 
 #[inline]
+fn runtime_procfs_long(path: &str) -> Option<libc::c_long> {
+    std::fs::read_to_string(path)
+        .ok()?
+        .trim()
+        .parse::<u64>()
+        .ok()
+        .and_then(|value| libc::c_long::try_from(value).ok())
+}
+
+#[inline]
+fn runtime_meminfo_pages(field: &str) -> Option<libc::c_long> {
+    let page_size = runtime_page_size();
+    if page_size == 0 {
+        return None;
+    }
+
+    let meminfo = std::fs::read_to_string("/proc/meminfo").ok()?;
+    for line in meminfo.lines() {
+        if !line.starts_with(field) {
+            continue;
+        }
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() < 2 {
+            return None;
+        }
+        let kb = parts[1].parse::<u64>().ok()?;
+        let bytes = kb.checked_mul(1024)?;
+        let pages = bytes / page_size as u64;
+        return libc::c_long::try_from(pages).ok();
+    }
+    None
+}
+
+#[inline]
 unsafe fn syscall_ret_int(ret: libc::c_long, default_errno: c_int) -> c_int {
     if ret < 0 {
         unsafe { set_abi_errno(last_host_errno(default_errno)) };
@@ -1904,72 +1938,11 @@ pub unsafe extern "C" fn sysconf(name: c_int) -> libc::c_long {
         }
         libc::_SC_CHILD_MAX => 32768,
         libc::_SC_IOV_MAX => 1024,
-        libc::_SC_PHYS_PAGES => {
-            // Read MemTotal from /proc/meminfo, convert to pages.
-            let mut buf = [0u8; 256];
-            let fd = unsafe {
-                libc::syscall(
-                    libc::SYS_openat,
-                    libc::AT_FDCWD,
-                    c"/proc/meminfo".as_ptr(),
-                    libc::O_RDONLY,
-                    0,
-                )
-            } as c_int;
-            if fd >= 0 {
-                let n =
-                    unsafe { libc::syscall(libc::SYS_read, fd, buf.as_mut_ptr(), buf.len() - 1) }
-                        as isize;
-                unsafe { libc::syscall(libc::SYS_close, fd) };
-                if n > 0 {
-                    let s = std::str::from_utf8(&buf[..n as usize]).unwrap_or("");
-                    // Parse "MemTotal:   NNNNN kB"
-                    if let Some(line) = s.lines().next() {
-                        let parts: Vec<&str> = line.split_whitespace().collect();
-                        if parts.len() >= 2
-                            && let Ok(kb) = parts[1].parse::<u64>()
-                        {
-                            return (kb * 1024 / 4096) as libc::c_long;
-                        }
-                    }
-                }
-            }
-            -1
+        libc::_SC_PHYS_PAGES => runtime_meminfo_pages("MemTotal:").unwrap_or(-1),
+        libc::_SC_AVPHYS_PAGES => runtime_meminfo_pages("MemAvailable:").unwrap_or(-1),
+        libc::_SC_NGROUPS_MAX => {
+            runtime_procfs_long("/proc/sys/kernel/ngroups_max").unwrap_or(65536)
         }
-        libc::_SC_AVPHYS_PAGES => {
-            // Read MemAvailable from /proc/meminfo.
-            let mut buf = [0u8; 512];
-            let fd = unsafe {
-                libc::syscall(
-                    libc::SYS_openat,
-                    libc::AT_FDCWD,
-                    c"/proc/meminfo".as_ptr(),
-                    libc::O_RDONLY,
-                    0,
-                )
-            } as c_int;
-            if fd >= 0 {
-                let n =
-                    unsafe { libc::syscall(libc::SYS_read, fd, buf.as_mut_ptr(), buf.len() - 1) }
-                        as isize;
-                unsafe { libc::syscall(libc::SYS_close, fd) };
-                if n > 0 {
-                    let s = std::str::from_utf8(&buf[..n as usize]).unwrap_or("");
-                    for line in s.lines() {
-                        if line.starts_with("MemAvailable:") {
-                            let parts: Vec<&str> = line.split_whitespace().collect();
-                            if parts.len() >= 2
-                                && let Ok(kb) = parts[1].parse::<u64>()
-                            {
-                                return (kb * 1024 / 4096) as libc::c_long;
-                            }
-                        }
-                    }
-                }
-            }
-            -1
-        }
-        libc::_SC_NGROUPS_MAX => 65536,
         libc::_SC_GETPW_R_SIZE_MAX => 4096,
         libc::_SC_GETGR_R_SIZE_MAX => 4096,
         libc::_SC_LOGIN_NAME_MAX => 256,
@@ -1981,7 +1954,7 @@ pub unsafe extern "C" fn sysconf(name: c_int) -> libc::c_long {
         libc::_SC_THREAD_SAFE_FUNCTIONS => 1,
         libc::_SC_THREADS => 1,
         libc::_SC_THREAD_KEYS_MAX => 1024,
-        libc::_SC_THREAD_STACK_MIN => 16384,
+        libc::_SC_THREAD_STACK_MIN => libc::PTHREAD_STACK_MIN as libc::c_long,
         libc::_SC_THREAD_THREADS_MAX => -1i64 as libc::c_long, // unlimited
         libc::_SC_THREAD_DESTRUCTOR_ITERATIONS => 4,
         libc::_SC_MONOTONIC_CLOCK => 1,
