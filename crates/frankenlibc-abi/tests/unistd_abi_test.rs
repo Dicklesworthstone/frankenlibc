@@ -30,9 +30,9 @@ use frankenlibc_abi::unistd_abi::{
     getutline_r, gsignal, isatty, link, logout, lseek, lstat, mkdir, mkfifo, msgrcv, msgsnd, open,
     pathconf, process_madvise, process_mrelease, process_vm_readv, process_vm_writev, read,
     readlink, rename, rmdir, semctl, semop, setfsent, sethostent, setnetent, setnetgrent,
-    setprotoent, setservent, setttyent, setutent, shmdt, sigpause, sigstack, sigvec, ssignal, stat,
-    strfmon, strfmon_l, symlink, sysconf, truncate, umask, uname, unlink, updwtmp, updwtmpx,
-    usleep, utmpname, write,
+    setprotoent, setservent, setttyent, setutent, shmdt, sigpause, sigset, sigstack, sigvec,
+    ssignal, stat, strfmon, strfmon_l, symlink, sysconf, truncate, umask, uname, unlink, updwtmp,
+    updwtmpx, usleep, utmpname, write,
 };
 
 static SIGNAL_HIT: AtomicI32 = AtomicI32::new(0);
@@ -1018,10 +1018,19 @@ fn gsignal_invalid_signal_sets_errno_like_raise() {
 
 #[test]
 fn ssignal_invalid_signal_sets_errno() {
-    let previous = unsafe { ssignal(1024, Some(record_sigusr1)) };
+    let previous = unsafe { ssignal(1024, record_sigusr1 as *const () as libc::sighandler_t) };
     let err = unsafe { *__errno_location() };
 
-    assert!(previous.is_none());
+    assert_eq!(previous, libc::SIG_ERR);
+    assert_eq!(err, libc::EINVAL);
+}
+
+#[test]
+fn sigset_invalid_signal_sets_errno() {
+    let previous = unsafe { sigset(1024, record_sigusr1 as *const () as libc::sighandler_t) };
+    let err = unsafe { *__errno_location() };
+
+    assert_eq!(previous, libc::SIG_ERR);
     assert_eq!(err, libc::EINVAL);
 }
 
@@ -1432,7 +1441,13 @@ fn strfmon_invalid_inputs_set_einval() {
 #[test]
 fn ssignal_and_gsignal_deliver_signal() {
     SIGNAL_HIT.store(0, Ordering::SeqCst);
-    let _previous = unsafe { ssignal(libc::SIGUSR1, Some(record_sigusr1)) };
+    let previous = unsafe {
+        ssignal(
+            libc::SIGUSR1,
+            record_sigusr1 as *const () as libc::sighandler_t,
+        )
+    };
+    assert_ne!(previous, libc::SIG_ERR);
     let rc = unsafe { gsignal(libc::SIGUSR1) };
     assert_eq!(rc, 0, "gsignal should report successful signal delivery");
     assert_eq!(

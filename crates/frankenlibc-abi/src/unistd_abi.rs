@@ -14585,10 +14585,7 @@ pub unsafe extern "C" fn sigreturn(_scp: *mut c_void) -> c_int {
 
 /// `ssignal` — software signal (legacy SVR2 interface).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn ssignal(
-    sig: c_int,
-    action: Option<unsafe extern "C" fn(c_int)>,
-) -> Option<unsafe extern "C" fn(c_int)> {
+pub unsafe extern "C" fn ssignal(sig: c_int, action: libc::sighandler_t) -> libc::sighandler_t {
     unsafe { sysv_signal(sig, action) }
 }
 
@@ -14606,33 +14603,26 @@ pub unsafe extern "C" fn gsignal(sig: c_int) -> c_int {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sysv_signal(
     sig: c_int,
-    handler: Option<unsafe extern "C" fn(c_int)>,
-) -> Option<unsafe extern "C" fn(c_int)> {
+    handler: libc::sighandler_t,
+) -> libc::sighandler_t {
+    let sig_err = libc::SIG_ERR;
     // Use sigaction with SA_RESETHAND for one-shot semantics
     let mut sa: libc::sigaction = unsafe { std::mem::zeroed() };
-    sa.sa_sigaction = handler.map_or(0, |h| h as usize);
+    sa.sa_sigaction = handler;
     sa.sa_flags = libc::SA_RESETHAND | libc::SA_NODEFER;
     let mut old_sa: libc::sigaction = unsafe { std::mem::zeroed() };
     let ret = unsafe { libc::sigaction(sig, &sa, &mut old_sa) };
     if ret < 0 {
         unsafe { set_abi_errno(last_host_errno(libc::EINVAL)) };
-        None
+        sig_err
     } else {
-        let old_handler = old_sa.sa_sigaction;
-        if old_handler == 0 {
-            None
-        } else {
-            Some(unsafe { std::mem::transmute::<usize, unsafe extern "C" fn(c_int)>(old_handler) })
-        }
+        old_sa.sa_sigaction
     }
 }
 
 /// `sigset` — reliable signal (XSI extension).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn sigset(
-    sig: c_int,
-    disp: Option<unsafe extern "C" fn(c_int)>,
-) -> Option<unsafe extern "C" fn(c_int)> {
+pub unsafe extern "C" fn sigset(sig: c_int, disp: libc::sighandler_t) -> libc::sighandler_t {
     unsafe { sysv_signal(sig, disp) }
 }
 
