@@ -13350,40 +13350,214 @@ pub unsafe extern "C" fn dn_comp(
 }
 
 // ===========================================================================
-// Database iteration (aliases, rpc, netgroup, fs, tty, shadow file parsing)
+// /etc/aliases database — native parser
 // ===========================================================================
+//
+// Format: "name: member1, member2, ..."
+//
+// struct aliasent (x86_64, 32 bytes):
+//   alias_name:        *mut c_char    (offset 0)
+//   alias_members_len: size_t         (offset 8)
+//   alias_members:     *mut *mut c_char (offset 16)
+//   alias_local:       c_int          (offset 24)
 
-/// `endaliasent` — close alias database.
-///
-/// Delegates to host libc so alias database iteration semantics match glibc.
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn endaliasent() {
-    type F = unsafe extern "C" fn();
-    if let Some(a) = crate::host_resolve::resolve_host_symbol_raw("endaliasent") {
-        unsafe { core::mem::transmute::<usize, F>(a)() };
+const ALIASES_PATH: &str = "/etc/aliases";
+
+struct AliasIterState {
+    reader: Option<std::io::BufReader<std::fs::File>>,
+    line_buf: Vec<u8>,
+    entry_buf: [u8; 4096],
+    member_ptrs: [*mut c_char; 64],
+}
+
+impl AliasIterState {
+    const fn new() -> Self {
+        Self {
+            reader: None,
+            line_buf: Vec::new(),
+            entry_buf: [0u8; 4096],
+            member_ptrs: [std::ptr::null_mut(); 64],
+        }
     }
 }
 
-/// `getaliasbyname` — look up alias by name.
-///
-/// Delegates to host libc so missing-alias errno behavior matches glibc.
+std::thread_local! {
+    static ALIAS_ITER: std::cell::UnsafeCell<AliasIterState> =
+        const { std::cell::UnsafeCell::new(AliasIterState::new()) };
+}
+
+/// Parse an /etc/aliases line into name + member list.
+fn parse_aliases_line(line: &[u8]) -> Option<(&[u8], Vec<&[u8]>)> {
+    // Strip comments
+    let line = if let Some(pos) = line.iter().position(|&b| b == b'#') {
+        &line[..pos]
+    } else {
+        line
+    };
+    // Strip trailing whitespace/newlines
+    let line = {
+        let mut end = line.len();
+        while end > 0
+            && matches!(line[end - 1], b' ' | b'\t' | b'\n' | b'\r')
+        {
+            end -= 1;
+        }
+        &line[..end]
+    };
+    // Find colon separator
+    let colon = line.iter().position(|&b| b == b':')?;
+    let name = &line[..colon];
+    let name = name
+        .iter()
+        .position(|&b| b != b' ' && b != b'\t')
+        .map(|start| {
+            let mut end = name.len();
+            while end > start && matches!(name[end - 1], b' ' | b'\t') {
+                end -= 1;
+            }
+            &name[start..end]
+        })?;
+    if name.is_empty() {
+        return None;
+    }
+    // Parse comma-separated members after colon
+    let rest = &line[colon + 1..];
+    let members: Vec<&[u8]> = rest
+        .split(|&b| b == b',')
+        .filter_map(|m| {
+            let m = m
+                .iter()
+                .position(|&b| b != b' ' && b != b'\t')
+                .map(|start| {
+                    let mut end = m.len();
+                    while end > start && matches!(m[end - 1], b' ' | b'\t') {
+                        end -= 1;
+                    }
+                    &m[start..end]
+                })?;
+            if m.is_empty() { None } else { Some(m) }
+        })
+        .collect();
+    Some((name, members))
+}
+
+/// Fill an aliasent in the entry_buf from parsed data.
+unsafe fn fill_aliasent_buf(
+    state: &mut AliasIterState,
+    name: &[u8],
+    members: &[&[u8]],
+) -> *mut c_void {
+    let str_offset = 32usize; // sizeof(struct aliasent)
+    let mut needed = str_offset + name.len() + 1;
+    for m in members {
+        needed += m.len() + 1;
+    }
+    if needed > state.entry_buf.len() || members.len() + 1 > state.member_ptrs.len() {
+        return std::ptr::null_mut();
+    }
+
+    let buf = state.entry_buf.as_mut_ptr();
+    let mut off = str_offset;
+
+    // Pack name
+    let name_ptr = unsafe { buf.add(off) } as *mut c_char;
+    unsafe {
+        std::ptr::copy_nonoverlapping(name.as_ptr(), buf.add(off), name.len());
+        *buf.add(off + name.len()) = 0;
+    }
+    off += name.len() + 1;
+
+    // Pack members and build pointer array
+    for (i, m) in members.iter().enumerate() {
+        state.member_ptrs[i] = unsafe { buf.add(off) } as *mut c_char;
+        unsafe {
+            std::ptr::copy_nonoverlapping(m.as_ptr(), buf.add(off), m.len());
+            *buf.add(off + m.len()) = 0;
+        }
+        off += m.len() + 1;
+    }
+    state.member_ptrs[members.len()] = std::ptr::null_mut();
+
+    // Fill struct aliasent
+    unsafe {
+        *(buf as *mut *mut c_char) = name_ptr;                    // alias_name
+        *(buf.add(8) as *mut usize) = members.len();              // alias_members_len
+        *(buf.add(16) as *mut *mut *mut c_char) =
+            state.member_ptrs.as_mut_ptr();                       // alias_members
+        *(buf.add(24) as *mut c_int) = 0;                         // alias_local
+    }
+    buf as *mut c_void
+}
+
+/// Parse next alias entry from iterator.
+unsafe fn alias_iter_next(state: &mut AliasIterState) -> *mut c_void {
+    use std::io::BufRead;
+    loop {
+        let reader = match state.reader.as_mut() {
+            Some(r) => r,
+            None => return std::ptr::null_mut(),
+        };
+        state.line_buf.clear();
+        match reader.read_until(b'\n', &mut state.line_buf) {
+            Ok(0) => return std::ptr::null_mut(),
+            Err(_) => return std::ptr::null_mut(),
+            Ok(_) => {}
+        }
+        if let Some((name, members)) = parse_aliases_line(&state.line_buf) {
+            let mut name_copy = [0u8; 256];
+            let nlen = name.len().min(255);
+            name_copy[..nlen].copy_from_slice(&name[..nlen]);
+            // Copy members to stack to avoid borrow conflict
+            let member_copies: Vec<Vec<u8>> = members.iter().map(|m| m.to_vec()).collect();
+            let member_refs: Vec<&[u8]> = member_copies.iter().map(|v| v.as_slice()).collect();
+            let result = unsafe { fill_aliasent_buf(state, &name_copy[..nlen], &member_refs) };
+            if !result.is_null() {
+                return result;
+            }
+        }
+    }
+}
+
+/// `endaliasent` — close alias database iteration.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn endaliasent() {
+    ALIAS_ITER.with(|cell| {
+        let state = unsafe { &mut *cell.get() };
+        state.reader = None;
+    });
+}
+
+/// `getaliasbyname` — look up alias by name in /etc/aliases.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getaliasbyname(name: *const c_char) -> *mut c_void {
-    type F = unsafe extern "C" fn(*const c_char) -> *mut c_void;
-    if let Some(a) = crate::host_resolve::resolve_host_symbol_raw("getaliasbyname") {
-        let result = unsafe { core::mem::transmute::<usize, F>(a)(name) };
-        if result.is_null() {
-            unsafe { set_abi_errno(last_host_errno(libc::ENOENT)) };
+    if name.is_null() {
+        unsafe { set_abi_errno(libc::ENOENT) };
+        return std::ptr::null_mut();
+    }
+    let needle = unsafe { std::ffi::CStr::from_ptr(name) }.to_bytes();
+    let content = match std::fs::read(ALIASES_PATH) {
+        Ok(c) => c,
+        Err(_) => {
+            unsafe { set_abi_errno(libc::ENOENT) };
+            return std::ptr::null_mut();
         }
-        return result;
+    };
+    for line in content.split(|&b| b == b'\n') {
+        if let Some((pname, members)) = parse_aliases_line(line)
+            && pname.eq_ignore_ascii_case(needle)
+        {
+            return ALIAS_ITER.with(|cell| {
+                let state = unsafe { &mut *cell.get() };
+                let member_refs: Vec<&[u8]> = members.to_vec();
+                unsafe { fill_aliasent_buf(state, pname, &member_refs) }
+            });
+        }
     }
     unsafe { set_abi_errno(libc::ENOENT) };
     std::ptr::null_mut()
 }
 
-/// `getaliasbyname_r` — reentrant alias lookup.
-///
-/// Delegates to host libc so return value and errno shape match glibc.
+/// `getaliasbyname_r` — reentrant alias lookup by name.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getaliasbyname_r(
     name: *const c_char,
@@ -13395,45 +13569,93 @@ pub unsafe extern "C" fn getaliasbyname_r(
     if !result.is_null() {
         unsafe { *result = std::ptr::null_mut() };
     }
-    type F = unsafe extern "C" fn(
-        *const c_char,
-        *mut c_void,
-        *mut c_char,
-        usize,
-        *mut *mut c_void,
-    ) -> c_int;
-    if let Some(a) = crate::host_resolve::resolve_host_symbol_raw("getaliasbyname_r") {
-        let rc = unsafe {
-            core::mem::transmute::<usize, F>(a)(name, result_buf, buffer, buflen, result)
-        };
-        if rc != 0 {
-            unsafe { set_abi_errno(last_host_errno(rc)) };
+    if name.is_null() || result_buf.is_null() || buffer.is_null() {
+        return libc::EINVAL;
+    }
+    let needle = unsafe { std::ffi::CStr::from_ptr(name) }.to_bytes();
+    let content = match std::fs::read(ALIASES_PATH) {
+        Ok(c) => c,
+        Err(_) => {
+            unsafe { set_abi_errno(libc::ENOENT) };
+            return libc::ENOENT;
         }
-        return rc;
+    };
+    for line in content.split(|&b| b == b'\n') {
+        if let Some((pname, members)) = parse_aliases_line(line)
+            && pname.eq_ignore_ascii_case(needle)
+        {
+            // Pack into caller buffer: name + NUL + members + NULs + ptr array
+            let ptr_size = core::mem::size_of::<*mut c_char>();
+            let mut needed = pname.len() + 1;
+            for m in &members {
+                needed += m.len() + 1;
+            }
+            let ptrs_offset = (needed + (ptr_size - 1)) & !(ptr_size - 1);
+            let total = ptrs_offset + (members.len() + 1) * ptr_size;
+            if total > buflen {
+                return libc::ERANGE;
+            }
+
+            let buf_u8 = buffer as *mut u8;
+
+            // Pack name
+            let name_ptr = buffer;
+            unsafe {
+                std::ptr::copy_nonoverlapping(pname.as_ptr(), buf_u8, pname.len());
+                *buf_u8.add(pname.len()) = 0;
+            }
+            let mut off = pname.len() + 1;
+
+            // Pack members + build pointer list
+            let member_ptrs_base = unsafe { buf_u8.add(ptrs_offset) } as *mut *mut c_char;
+            for (i, m) in members.iter().enumerate() {
+                unsafe {
+                    *(member_ptrs_base.add(i)) = buf_u8.add(off) as *mut c_char;
+                    std::ptr::copy_nonoverlapping(m.as_ptr(), buf_u8.add(off), m.len());
+                    *buf_u8.add(off + m.len()) = 0;
+                }
+                off += m.len() + 1;
+            }
+            unsafe { *(member_ptrs_base.add(members.len())) = std::ptr::null_mut() };
+
+            // Fill struct aliasent in result_buf
+            let ent = result_buf as *mut u8;
+            unsafe {
+                *(ent as *mut *mut c_char) = name_ptr;
+                *(ent.add(8) as *mut usize) = members.len();
+                *(ent.add(16) as *mut *mut *mut c_char) = member_ptrs_base;
+                *(ent.add(24) as *mut c_int) = 0;
+            }
+            if !result.is_null() {
+                unsafe { *result = result_buf };
+            }
+            return 0;
+        }
     }
     unsafe { set_abi_errno(libc::ENOENT) };
     libc::ENOENT
 }
 
-/// `getaliasent` — get next alias entry.
-///
-/// Delegates to host libc so iterator state matches glibc.
+/// `getaliasent` — get next alias entry from /etc/aliases.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getaliasent() -> *mut c_void {
-    type F = unsafe extern "C" fn() -> *mut c_void;
-    if let Some(a) = crate::host_resolve::resolve_host_symbol_raw("getaliasent") {
-        let result = unsafe { core::mem::transmute::<usize, F>(a)() };
-        if result.is_null() {
-            unsafe { set_abi_errno(last_host_errno(libc::ENOENT)) };
+    let result = ALIAS_ITER.with(|cell| {
+        let state = unsafe { &mut *cell.get() };
+        if state.reader.is_none() {
+            match std::fs::File::open(ALIASES_PATH) {
+                Ok(f) => state.reader = Some(std::io::BufReader::new(f)),
+                Err(_) => return std::ptr::null_mut(),
+            }
         }
-        return result;
+        unsafe { alias_iter_next(state) }
+    });
+    if result.is_null() {
+        unsafe { set_abi_errno(libc::ENOENT) };
     }
-    std::ptr::null_mut()
+    result
 }
 
 /// `getaliasent_r` — reentrant get next alias entry.
-///
-/// Delegates to host libc so return/result shape matches glibc.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getaliasent_r(
     result_buf: *mut c_void,
@@ -13441,14 +13663,72 @@ pub unsafe extern "C" fn getaliasent_r(
     buflen: usize,
     result: *mut *mut c_void,
 ) -> c_int {
+    use std::io::BufRead;
     if !result.is_null() {
         unsafe { *result = std::ptr::null_mut() };
     }
-    type F = unsafe extern "C" fn(*mut c_void, *mut c_char, usize, *mut *mut c_void) -> c_int;
-    if let Some(a) = crate::host_resolve::resolve_host_symbol_raw("getaliasent_r") {
-        return unsafe { core::mem::transmute::<usize, F>(a)(result_buf, buffer, buflen, result) };
+    if result_buf.is_null() || buffer.is_null() {
+        return libc::EINVAL;
     }
-    libc::ENOENT
+
+    ALIAS_ITER.with(|cell| {
+        let state = unsafe { &mut *cell.get() };
+        if state.reader.is_none() {
+            match std::fs::File::open(ALIASES_PATH) {
+                Ok(f) => state.reader = Some(std::io::BufReader::new(f)),
+                Err(_) => return libc::ENOENT,
+            }
+        }
+        let reader = state.reader.as_mut().unwrap();
+        loop {
+            state.line_buf.clear();
+            match reader.read_until(b'\n', &mut state.line_buf) {
+                Ok(0) => return libc::ENOENT,
+                Err(_) => return libc::ENOENT,
+                Ok(_) => {}
+            }
+            if let Some((pname, members)) = parse_aliases_line(&state.line_buf) {
+                let ptr_size = core::mem::size_of::<*mut c_char>();
+                let mut needed = pname.len() + 1;
+                for m in &members {
+                    needed += m.len() + 1;
+                }
+                let ptrs_offset = (needed + (ptr_size - 1)) & !(ptr_size - 1);
+                let total = ptrs_offset + (members.len() + 1) * ptr_size;
+                if total > buflen {
+                    return libc::ERANGE;
+                }
+                let buf_u8 = buffer as *mut u8;
+                let name_ptr = buffer;
+                unsafe {
+                    std::ptr::copy_nonoverlapping(pname.as_ptr(), buf_u8, pname.len());
+                    *buf_u8.add(pname.len()) = 0;
+                }
+                let mut off = pname.len() + 1;
+                let member_ptrs_base = unsafe { buf_u8.add(ptrs_offset) } as *mut *mut c_char;
+                for (i, m) in members.iter().enumerate() {
+                    unsafe {
+                        *(member_ptrs_base.add(i)) = buf_u8.add(off) as *mut c_char;
+                        std::ptr::copy_nonoverlapping(m.as_ptr(), buf_u8.add(off), m.len());
+                        *buf_u8.add(off + m.len()) = 0;
+                    }
+                    off += m.len() + 1;
+                }
+                unsafe { *(member_ptrs_base.add(members.len())) = std::ptr::null_mut() };
+                let ent = result_buf as *mut u8;
+                unsafe {
+                    *(ent as *mut *mut c_char) = name_ptr;
+                    *(ent.add(8) as *mut usize) = members.len();
+                    *(ent.add(16) as *mut *mut *mut c_char) = member_ptrs_base;
+                    *(ent.add(24) as *mut c_int) = 0;
+                }
+                if !result.is_null() {
+                    unsafe { *result = result_buf };
+                }
+                return 0;
+            }
+        }
+    })
 }
 
 /// `endfsent` — close filesystem table iteration.
