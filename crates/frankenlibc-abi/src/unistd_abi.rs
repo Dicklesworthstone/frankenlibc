@@ -11092,50 +11092,207 @@ pub unsafe extern "C" fn getservent() -> *mut c_void {
     })
 }
 
-/// `setnetent` — rewind /etc/networks enumeration.
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn setnetent(stayopen: c_int) {
-    type F = unsafe extern "C" fn(c_int);
-    if let Some(a) = crate::host_resolve::resolve_host_symbol_raw("setnetent") {
-        unsafe { core::mem::transmute::<usize, F>(a)(stayopen) };
+// ---------------------------------------------------------------------------
+// /etc/networks iteration — native
+// ---------------------------------------------------------------------------
+
+const NETWORKS_PATH: &str = "/etc/networks";
+
+struct NetIterState {
+    reader: Option<std::io::BufReader<std::fs::File>>,
+    line_buf: Vec<u8>,
+    entry_buf: [u8; 512],
+    aliases_ptrs: [*mut c_char; 2],
+}
+
+impl NetIterState {
+    const fn new() -> Self {
+        Self {
+            reader: None,
+            line_buf: Vec::new(),
+            entry_buf: [0u8; 512],
+            aliases_ptrs: [std::ptr::null_mut(); 2],
+        }
     }
 }
 
-/// `endnetent` — close /etc/networks enumeration.
+std::thread_local! {
+    static NET_ITER: std::cell::UnsafeCell<NetIterState> =
+        const { std::cell::UnsafeCell::new(NetIterState::new()) };
+}
+
+/// Parse a /etc/networks line: "name number [aliases...]"
+/// Returns (name, network_number) or None.
+fn parse_networks_line(line: &[u8]) -> Option<(&[u8], u32)> {
+    let line = if let Some(pos) = line.iter().position(|&b| b == b'#') {
+        &line[..pos]
+    } else {
+        line
+    };
+    let mut fields = line
+        .split(|&b| b == b' ' || b == b'\t' || b == b'\n' || b == b'\r')
+        .filter(|f| !f.is_empty());
+    let name = fields.next()?;
+    let num_str = std::str::from_utf8(fields.next()?).ok()?;
+    // Network number can be dotted-quad or plain integer
+    let net_num = if num_str.contains('.') {
+        // Parse as IP address, convert to host-order network number
+        let parts: Vec<u32> = num_str
+            .split('.')
+            .filter_map(|p| p.parse().ok())
+            .collect();
+        match parts.len() {
+            1 => parts[0] << 24,
+            2 => (parts[0] << 24) | (parts[1] << 16),
+            3 => (parts[0] << 24) | (parts[1] << 16) | (parts[2] << 8),
+            4 => (parts[0] << 24) | (parts[1] << 16) | (parts[2] << 8) | parts[3],
+            _ => return None,
+        }
+    } else {
+        num_str.parse().ok()?
+    };
+    Some((name, net_num))
+}
+
+/// Fill a netent struct in the entry buffer.
+///
+/// struct netent (x86_64, 24 bytes):
+///   n_name:     *mut c_char    (offset 0)
+///   n_aliases:  *mut *mut c_char (offset 8)
+///   n_addrtype: c_int          (offset 16)
+///   n_net:      u32            (offset 20)
+unsafe fn fill_netent_buf(
+    state: &mut NetIterState,
+    name: &[u8],
+    net: u32,
+) -> *mut c_void {
+    let str_offset = 24usize;
+    let needed = str_offset + name.len() + 1;
+    if needed > state.entry_buf.len() {
+        return std::ptr::null_mut();
+    }
+    let buf = state.entry_buf.as_mut_ptr();
+    let name_ptr = unsafe { buf.add(str_offset) } as *mut c_char;
+    unsafe {
+        std::ptr::copy_nonoverlapping(name.as_ptr(), buf.add(str_offset), name.len());
+        *buf.add(str_offset + name.len()) = 0;
+    }
+    state.aliases_ptrs[0] = std::ptr::null_mut();
+
+    let ptrs = buf as *mut *mut c_char;
+    unsafe {
+        *ptrs = name_ptr;
+        *(ptrs.add(1) as *mut *mut *mut c_char) = state.aliases_ptrs.as_mut_ptr();
+        *(buf.add(16) as *mut c_int) = libc::AF_INET;
+        *(buf.add(20) as *mut u32) = net;
+    }
+    buf as *mut c_void
+}
+
+/// Parse the next networks entry from the reader.
+unsafe fn net_iter_next(state: &mut NetIterState) -> *mut c_void {
+    use std::io::BufRead;
+    loop {
+        let reader = match state.reader.as_mut() {
+            Some(r) => r,
+            None => return std::ptr::null_mut(),
+        };
+        state.line_buf.clear();
+        match reader.read_until(b'\n', &mut state.line_buf) {
+            Ok(0) => return std::ptr::null_mut(),
+            Err(_) => return std::ptr::null_mut(),
+            Ok(_) => {}
+        }
+        // Parse and extract values before passing state to fill_netent_buf
+        if let Some((name, net)) = parse_networks_line(&state.line_buf) {
+            // Copy name to stack to avoid borrowing state.line_buf through fill
+            let mut name_copy = [0u8; 256];
+            let nlen = name.len().min(255);
+            name_copy[..nlen].copy_from_slice(&name[..nlen]);
+            let result = unsafe { fill_netent_buf(state, &name_copy[..nlen], net) };
+            if !result.is_null() {
+                return result;
+            }
+        }
+    }
+}
+
+/// `setnetent` — open /etc/networks for iteration.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn setnetent(_stayopen: c_int) {
+    NET_ITER.with(|cell| {
+        let state = unsafe { &mut *cell.get() };
+        match std::fs::File::open(NETWORKS_PATH) {
+            Ok(f) => state.reader = Some(std::io::BufReader::new(f)),
+            Err(_) => state.reader = None,
+        }
+    });
+}
+
+/// `endnetent` — close /etc/networks iteration.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn endnetent() {
-    type F = unsafe extern "C" fn();
-    if let Some(a) = crate::host_resolve::resolve_host_symbol_raw("endnetent") {
-        unsafe { core::mem::transmute::<usize, F>(a)() };
-    }
+    NET_ITER.with(|cell| {
+        let state = unsafe { &mut *cell.get() };
+        state.reader = None;
+    });
 }
 
 /// `getnetent` — get next /etc/networks entry.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getnetent() -> *mut c_void {
-    type F = unsafe extern "C" fn() -> *mut c_void;
-    if let Some(a) = crate::host_resolve::resolve_host_symbol_raw("getnetent") {
-        return unsafe { core::mem::transmute::<usize, F>(a)() };
-    }
-    std::ptr::null_mut()
+    NET_ITER.with(|cell| {
+        let state = unsafe { &mut *cell.get() };
+        if state.reader.is_none() {
+            match std::fs::File::open(NETWORKS_PATH) {
+                Ok(f) => state.reader = Some(std::io::BufReader::new(f)),
+                Err(_) => return std::ptr::null_mut(),
+            }
+        }
+        unsafe { net_iter_next(state) }
+    })
 }
 
-/// `getnetbyname` — look up network by name.
+/// `getnetbyname` — look up network by name in /etc/networks.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getnetbyname(name: *const c_char) -> *mut c_void {
-    type F = unsafe extern "C" fn(*const c_char) -> *mut c_void;
-    if let Some(a) = crate::host_resolve::resolve_host_symbol_raw("getnetbyname") {
-        return unsafe { core::mem::transmute::<usize, F>(a)(name) };
+    if name.is_null() {
+        return std::ptr::null_mut();
+    }
+    let needle = unsafe { std::ffi::CStr::from_ptr(name) }.to_bytes();
+    let content = match std::fs::read(NETWORKS_PATH) {
+        Ok(c) => c,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    for line in content.split(|&b| b == b'\n') {
+        if let Some((pname, net)) = parse_networks_line(line)
+            && pname.eq_ignore_ascii_case(needle)
+        {
+            return NET_ITER.with(|cell| {
+                let state = unsafe { &mut *cell.get() };
+                unsafe { fill_netent_buf(state, pname, net) }
+            });
+        }
     }
     std::ptr::null_mut()
 }
 
-/// `getnetbyaddr` — look up network by address.
+/// `getnetbyaddr` — look up network by address in /etc/networks.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn getnetbyaddr(net: u32, type_: c_int) -> *mut c_void {
-    type F = unsafe extern "C" fn(u32, c_int) -> *mut c_void;
-    if let Some(a) = crate::host_resolve::resolve_host_symbol_raw("getnetbyaddr") {
-        return unsafe { core::mem::transmute::<usize, F>(a)(net, type_) };
+pub unsafe extern "C" fn getnetbyaddr(net: u32, _type: c_int) -> *mut c_void {
+    let content = match std::fs::read(NETWORKS_PATH) {
+        Ok(c) => c,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    for line in content.split(|&b| b == b'\n') {
+        if let Some((pname, pnet)) = parse_networks_line(line)
+            && pnet == net
+        {
+            return NET_ITER.with(|cell| {
+                let state = unsafe { &mut *cell.get() };
+                unsafe { fill_netent_buf(state, pname, pnet) }
+            });
+        }
     }
     std::ptr::null_mut()
 }
@@ -15782,40 +15939,76 @@ pub unsafe extern "C" fn gethostent_r(
     libc::ENOENT
 }
 
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn getnetbyaddr_r(
+/// Helper: fill a netent struct in caller-supplied buffers.
+unsafe fn fill_netent_r(
+    name: &[u8],
     net: u32,
-    type_: c_int,
     result_buf: *mut c_void,
     buf: *mut c_char,
     buflen: usize,
     result: *mut *mut c_void,
-    h_errnop: *mut c_int,
+) -> c_int {
+    let alias_ptr_size = core::mem::size_of::<*mut c_char>();
+    let needed = name.len() + 1 + alias_ptr_size;
+    if needed > buflen {
+        return libc::ERANGE;
+    }
+    let buf_u8 = buf as *mut u8;
+    // Copy name
+    unsafe {
+        std::ptr::copy_nonoverlapping(name.as_ptr(), buf_u8, name.len());
+        *buf_u8.add(name.len()) = 0;
+    }
+    // NULL-terminated aliases
+    let alias_offset = (name.len() + 1 + (alias_ptr_size - 1)) & !(alias_ptr_size - 1);
+    if alias_offset + alias_ptr_size > buflen {
+        return libc::ERANGE;
+    }
+    unsafe { *(buf_u8.add(alias_offset) as *mut *mut c_char) = std::ptr::null_mut() };
+
+    // Fill struct netent: { n_name, n_aliases, n_addrtype, n_net }
+    let ent = result_buf as *mut *mut c_char;
+    unsafe {
+        *ent = buf;
+        *(ent.add(1) as *mut *mut *mut c_char) = buf_u8.add(alias_offset) as *mut *mut c_char;
+        *((result_buf as *mut u8).add(16) as *mut c_int) = libc::AF_INET;
+        *((result_buf as *mut u8).add(20) as *mut u32) = net;
+    }
+    if !result.is_null() {
+        unsafe { *result = result_buf };
+    }
+    0
+}
+
+/// `getnetbyaddr_r` — reentrant network lookup by address.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getnetbyaddr_r(
+    net: u32,
+    _type: c_int,
+    result_buf: *mut c_void,
+    buf: *mut c_char,
+    buflen: usize,
+    result: *mut *mut c_void,
+    _h_errnop: *mut c_int,
 ) -> c_int {
     if !result.is_null() {
         unsafe { *result = std::ptr::null_mut() };
     }
-
-    type F = unsafe extern "C" fn(
-        u32,
-        c_int,
-        *mut c_void,
-        *mut c_char,
-        usize,
-        *mut *mut c_void,
-        *mut c_int,
-    ) -> c_int;
-    if let Some(a) = crate::host_resolve::resolve_host_symbol_raw("getnetbyaddr_r") {
-        let rc = unsafe {
-            core::mem::transmute::<usize, F>(a)(
-                net, type_, result_buf, buf, buflen, result, h_errnop,
-            )
-        };
-        return rc;
+    let content = match std::fs::read(NETWORKS_PATH) {
+        Ok(c) => c,
+        Err(_) => return 0,
+    };
+    for line in content.split(|&b| b == b'\n') {
+        if let Some((pname, pnet)) = parse_networks_line(line)
+            && pnet == net
+        {
+            return unsafe { fill_netent_r(pname, pnet, result_buf, buf, buflen, result) };
+        }
     }
-    libc::ENOENT
+    0
 }
 
+/// `getnetbyname_r` — reentrant network lookup by name.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getnetbyname_r(
     name: *const c_char,
@@ -15823,51 +16016,65 @@ pub unsafe extern "C" fn getnetbyname_r(
     buf: *mut c_char,
     buflen: usize,
     result: *mut *mut c_void,
-    h_errnop: *mut c_int,
+    _h_errnop: *mut c_int,
 ) -> c_int {
     if !result.is_null() {
         unsafe { *result = std::ptr::null_mut() };
     }
-    type F = unsafe extern "C" fn(
-        *const c_char,
-        *mut c_void,
-        *mut c_char,
-        usize,
-        *mut *mut c_void,
-        *mut c_int,
-    ) -> c_int;
-    if let Some(a) = crate::host_resolve::resolve_host_symbol_raw("getnetbyname_r") {
-        return unsafe {
-            core::mem::transmute::<usize, F>(a)(name, result_buf, buf, buflen, result, h_errnop)
-        };
+    if name.is_null() {
+        return libc::EINVAL;
     }
-    libc::ENOENT
+    let needle = unsafe { std::ffi::CStr::from_ptr(name) }.to_bytes();
+    let content = match std::fs::read(NETWORKS_PATH) {
+        Ok(c) => c,
+        Err(_) => return 0,
+    };
+    for line in content.split(|&b| b == b'\n') {
+        if let Some((pname, pnet)) = parse_networks_line(line)
+            && pname.eq_ignore_ascii_case(needle)
+        {
+            return unsafe { fill_netent_r(pname, pnet, result_buf, buf, buflen, result) };
+        }
+    }
+    0
 }
 
+/// `getnetent_r` — reentrant sequential network entry read.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getnetent_r(
     result_buf: *mut c_void,
     buf: *mut c_char,
     buflen: usize,
     result: *mut *mut c_void,
-    h_errnop: *mut c_int,
+    _h_errnop: *mut c_int,
 ) -> c_int {
+    use std::io::BufRead;
+
     if !result.is_null() {
         unsafe { *result = std::ptr::null_mut() };
     }
-    type F = unsafe extern "C" fn(
-        *mut c_void,
-        *mut c_char,
-        usize,
-        *mut *mut c_void,
-        *mut c_int,
-    ) -> c_int;
-    if let Some(a) = crate::host_resolve::resolve_host_symbol_raw("getnetent_r") {
-        return unsafe {
-            core::mem::transmute::<usize, F>(a)(result_buf, buf, buflen, result, h_errnop)
-        };
-    }
-    libc::ENOENT
+
+    NET_ITER.with(|cell| {
+        let state = unsafe { &mut *cell.get() };
+        if state.reader.is_none() {
+            match std::fs::File::open(NETWORKS_PATH) {
+                Ok(f) => state.reader = Some(std::io::BufReader::new(f)),
+                Err(_) => return libc::ENOENT,
+            }
+        }
+        let reader = state.reader.as_mut().unwrap();
+        loop {
+            state.line_buf.clear();
+            match reader.read_until(b'\n', &mut state.line_buf) {
+                Ok(0) => return libc::ENOENT,
+                Err(_) => return libc::ENOENT,
+                Ok(_) => {}
+            }
+            if let Some((pname, pnet)) = parse_networks_line(&state.line_buf) {
+                return unsafe { fill_netent_r(pname, pnet, result_buf, buf, buflen, result) };
+            }
+        }
+    })
 }
 
 /// Helper: fill a protoent struct in caller-supplied buffers.
