@@ -16404,34 +16404,124 @@ pub unsafe extern "C" fn getttynam(name: *const c_char) -> *mut c_void {
 // getdate / timelocal
 // ===========================================================================
 
+// Thread-local static tm for the non-reentrant `getdate`.
+std::thread_local! {
+    static GETDATE_TM: std::cell::UnsafeCell<libc::tm> =
+        const { std::cell::UnsafeCell::new(unsafe { std::mem::zeroed() }) };
+}
+
+/// Core getdate implementation: reads DATEMSK file and tries each template
+/// with strptime. Returns 0 on success (result filled), or error code 1-8.
+///
+/// Error codes per POSIX:
+///   1 = DATEMSK not set or empty
+///   2 = cannot open DATEMSK file
+///   3 = stat failed on DATEMSK
+///   4 = DATEMSK is not a regular file
+///   5 = read error on DATEMSK
+///   6 = malloc failure (not applicable in our impl)
+///   7 = no matching template found
+///   8 = invalid input specification
+unsafe fn getdate_core(string: *const c_char, result: *mut libc::tm) -> c_int {
+    if string.is_null() || result.is_null() {
+        return 8; // invalid input
+    }
+    // Check that input string is non-empty
+    if unsafe { *string == 0 } {
+        return 8;
+    }
+
+    // Read DATEMSK environment variable
+    let datemsk_ptr = unsafe { libc::getenv(c"DATEMSK".as_ptr()) };
+    if datemsk_ptr.is_null() || unsafe { *datemsk_ptr == 0 } {
+        return 1; // DATEMSK not set
+    }
+    let datemsk = unsafe { std::ffi::CStr::from_ptr(datemsk_ptr) };
+    let datemsk_path = match datemsk.to_str() {
+        Ok(s) => s,
+        Err(_) => return 2,
+    };
+
+    // Stat the file to verify it's regular
+    let metadata = match std::fs::metadata(datemsk_path) {
+        Ok(m) => m,
+        Err(_) => return 2, // cannot open
+    };
+    if !metadata.is_file() {
+        return 4; // not a regular file
+    }
+
+    // Read the file
+    let content = match std::fs::read(datemsk_path) {
+        Ok(c) => c,
+        Err(_) => return 5, // read error
+    };
+
+    // Try each line as a strptime template
+    for line in content.split(|&b| b == b'\n') {
+        // Skip empty lines
+        if line.is_empty() || line.iter().all(|&b| b == b' ' || b == b'\t' || b == b'\r') {
+            continue;
+        }
+        // NUL-terminate the template
+        let mut template = Vec::with_capacity(line.len() + 1);
+        // Strip trailing whitespace/CR
+        let mut end = line.len();
+        while end > 0 && matches!(line[end - 1], b' ' | b'\t' | b'\r') {
+            end -= 1;
+        }
+        template.extend_from_slice(&line[..end]);
+        template.push(0);
+
+        // Initialize result to a clean state
+        unsafe { std::ptr::write_bytes(result as *mut u8, 0, core::mem::size_of::<libc::tm>()) };
+
+        let remainder = unsafe {
+            crate::time_abi::strptime(
+                string,
+                template.as_ptr() as *const c_char,
+                result,
+            )
+        };
+        if !remainder.is_null() {
+            // Check that strptime consumed the entire input string (or only trailing whitespace)
+            let rest = unsafe { std::ffi::CStr::from_ptr(remainder) }.to_bytes();
+            if rest.iter().all(|&b| b == b' ' || b == b'\t') {
+                return 0; // success
+            }
+        }
+    }
+    7 // no matching template
+}
+
+/// `getdate` — convert a date string to struct tm using DATEMSK templates.
+///
+/// Native implementation using our strptime and DATEMSK file parsing.
+/// Sets `getdate_err` on error. Returns pointer to static thread-local
+/// struct tm on success, NULL on failure.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getdate(string: *const c_char) -> *mut c_void {
     use crate::glibc_internal_abi::getdate_err;
 
-    type GetdateFn = unsafe extern "C" fn(*const c_char) -> *mut libc::tm;
-    let Some(addr) = crate::host_resolve::resolve_host_symbol_raw("getdate") else {
-        unsafe { getdate_err = 7 };
-        return std::ptr::null_mut();
-    };
-    let host_getdate: GetdateFn = unsafe { core::mem::transmute(addr) };
-    let result = unsafe { host_getdate(string) };
-    let host_err = crate::host_resolve::resolve_host_symbol_raw("getdate_err")
-        .map(|addr| unsafe { *(addr as *const c_int) })
-        .unwrap_or(if result.is_null() { 7 } else { 0 });
-    unsafe {
-        getdate_err = host_err;
-    }
-    result.cast()
+    GETDATE_TM.with(|cell| {
+        let tm = unsafe { &mut *cell.get() };
+        let rc = unsafe { getdate_core(string, tm) };
+        if rc != 0 {
+            unsafe { getdate_err = rc };
+            std::ptr::null_mut()
+        } else {
+            unsafe { getdate_err = 0 };
+            tm as *mut libc::tm as *mut c_void
+        }
+    })
 }
 
+/// `getdate_r` — reentrant version of getdate.
+///
+/// Native implementation. Returns 0 on success, error code 1-8 on failure.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getdate_r(string: *const c_char, result: *mut c_void) -> c_int {
-    type GetdateRFn = unsafe extern "C" fn(*const c_char, *mut libc::tm) -> c_int;
-    let Some(addr) = crate::host_resolve::resolve_host_symbol_raw("getdate_r") else {
-        return 7;
-    };
-    let host_getdate_r: GetdateRFn = unsafe { core::mem::transmute(addr) };
-    unsafe { host_getdate_r(string, result.cast()) }
+    unsafe { getdate_core(string, result as *mut libc::tm) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
