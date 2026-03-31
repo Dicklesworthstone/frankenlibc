@@ -21,6 +21,13 @@ serde_json = { workspace = true }
 [dev-dependencies]
 proptest = "1.6"
 libc = { workspace = true }
+asupersync-conformance = { workspace = true }
+ftui-harness = { workspace = true }
+ftui-core = "0.2.1"
+ftui-layout = "0.2.1"
+ftui-render = "0.2.1"
+ftui-style = "0.2.1"
+ftui-widgets = "0.2.1"
 
 [build-dependencies]
 sha2 = { workspace = true }

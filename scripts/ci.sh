@@ -200,6 +200,11 @@ if [[ "${FRANKENLIBC_EXTENDED_GATES:-0}" == "1" ]]; then
     echo "PASS"
     echo ""
 
+    echo "--- killer demo gate ---"
+    scripts/check_killer_demo.sh
+    echo "PASS"
+    echo ""
+
     echo "--- closure contract gate ---"
     scripts/check_closure_contract.sh
     echo "PASS"
