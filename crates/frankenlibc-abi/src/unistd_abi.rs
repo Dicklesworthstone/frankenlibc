@@ -11019,32 +11019,162 @@ pub unsafe extern "C" fn getnetbyaddr(net: u32, type_: c_int) -> *mut c_void {
     std::ptr::null_mut()
 }
 
-/// `setprotoent` — rewind /etc/protocols enumeration.
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn setprotoent(stayopen: c_int) {
-    type F = unsafe extern "C" fn(c_int);
-    if let Some(a) = crate::host_resolve::resolve_host_symbol_raw("setprotoent") {
-        unsafe { core::mem::transmute::<usize, F>(a)(stayopen) };
+// ---------------------------------------------------------------------------
+// /etc/protocols iteration — native
+// ---------------------------------------------------------------------------
+
+const PROTOCOLS_PATH: &str = "/etc/protocols";
+
+struct ProtoIterState {
+    reader: Option<std::io::BufReader<std::fs::File>>,
+    line_buf: Vec<u8>,
+    /// Thread-local protoent + string data for non-reentrant getprotoent.
+    entry_buf: [u8; 512],
+    aliases_ptrs: [*mut c_char; 2], // NULL-terminated alias list (empty)
+}
+
+impl ProtoIterState {
+    const fn new() -> Self {
+        Self {
+            reader: None,
+            line_buf: Vec::new(),
+            entry_buf: [0u8; 512],
+            aliases_ptrs: [std::ptr::null_mut(); 2],
+        }
     }
 }
 
-/// `endprotoent` — close /etc/protocols enumeration.
+std::thread_local! {
+    static PROTO_ITER: std::cell::UnsafeCell<ProtoIterState> =
+        const { std::cell::UnsafeCell::new(ProtoIterState::new()) };
+}
+
+/// Parse the next protocol entry from the reader into the entry_buf.
+///
+/// struct protoent layout (x86_64):
+///   p_name:    *mut c_char   (offset 0, 8 bytes)
+///   p_aliases: *mut *mut c_char (offset 8, 8 bytes)
+///   p_proto:   c_int         (offset 16, 4 bytes)
+///   [pad 4 bytes]
+///   Total: 24 bytes (with padding)
+unsafe fn proto_iter_next(state: &mut ProtoIterState) -> *mut c_void {
+    use std::io::BufRead;
+
+    let reader = match state.reader.as_mut() {
+        Some(r) => r,
+        None => return std::ptr::null_mut(),
+    };
+
+    loop {
+        state.line_buf.clear();
+        match reader.read_until(b'\n', &mut state.line_buf) {
+            Ok(0) => return std::ptr::null_mut(),
+            Err(_) => return std::ptr::null_mut(),
+            Ok(_) => {}
+        }
+
+        // Parse using the same logic as resolv_abi::parse_protocols_line
+        let line = &state.line_buf;
+        // Strip comments
+        let line = if let Some(pos) = line.iter().position(|&b| b == b'#') {
+            &line[..pos]
+        } else {
+            line
+        };
+
+        let mut fields = line
+            .split(|&b| b == b' ' || b == b'\t' || b == b'\n' || b == b'\r')
+            .filter(|f| !f.is_empty());
+
+        let name = match fields.next() {
+            Some(f) => f,
+            None => continue,
+        };
+        let num_str = match fields.next() {
+            Some(f) => f,
+            None => continue,
+        };
+        let proto_num: c_int = match std::str::from_utf8(num_str)
+            .ok()
+            .and_then(|s| s.parse().ok())
+        {
+            Some(n) => n,
+            None => continue,
+        };
+
+        // struct protoent is 24 bytes; strings packed after
+        let str_offset = 24usize;
+        let needed = str_offset + name.len() + 1;
+        if needed > state.entry_buf.len() {
+            continue;
+        }
+
+        let buf = state.entry_buf.as_mut_ptr();
+
+        // Copy name string after struct
+        let name_ptr = unsafe { buf.add(str_offset) } as *mut c_char;
+        unsafe {
+            std::ptr::copy_nonoverlapping(name.as_ptr(), buf.add(str_offset), name.len());
+            *buf.add(str_offset + name.len()) = 0;
+        }
+
+        // Set up NULL-terminated aliases list (empty for now)
+        state.aliases_ptrs[0] = std::ptr::null_mut();
+
+        // Fill struct protoent
+        let ptrs = buf as *mut *mut c_char;
+        unsafe {
+            *ptrs = name_ptr;                             // p_name
+            *(ptrs.add(1) as *mut *mut *mut c_char) =
+                state.aliases_ptrs.as_mut_ptr();          // p_aliases
+            *(buf.add(16) as *mut c_int) = proto_num;     // p_proto
+        }
+
+        return buf as *mut c_void;
+    }
+}
+
+/// `setprotoent` — open /etc/protocols for iteration.
+///
+/// Native implementation.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn setprotoent(_stayopen: c_int) {
+    PROTO_ITER.with(|cell| {
+        let state = unsafe { &mut *cell.get() };
+        match std::fs::File::open(PROTOCOLS_PATH) {
+            Ok(f) => state.reader = Some(std::io::BufReader::new(f)),
+            Err(_) => state.reader = None,
+        }
+    });
+}
+
+/// `endprotoent` — close /etc/protocols iteration.
+///
+/// Native implementation.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn endprotoent() {
-    type F = unsafe extern "C" fn();
-    if let Some(a) = crate::host_resolve::resolve_host_symbol_raw("endprotoent") {
-        unsafe { core::mem::transmute::<usize, F>(a)() };
-    }
+    PROTO_ITER.with(|cell| {
+        let state = unsafe { &mut *cell.get() };
+        state.reader = None;
+    });
 }
 
 /// `getprotoent` — get next /etc/protocols entry.
+///
+/// Native implementation using thread-local iterator state.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getprotoent() -> *mut c_void {
-    type F = unsafe extern "C" fn() -> *mut c_void;
-    if let Some(a) = crate::host_resolve::resolve_host_symbol_raw("getprotoent") {
-        return unsafe { core::mem::transmute::<usize, F>(a)() };
-    }
-    std::ptr::null_mut()
+    PROTO_ITER.with(|cell| {
+        let state = unsafe { &mut *cell.get() };
+        if state.reader.is_none() {
+            // Auto-open on first call (glibc behavior)
+            match std::fs::File::open(PROTOCOLS_PATH) {
+                Ok(f) => state.reader = Some(std::io::BufReader::new(f)),
+                Err(_) => return std::ptr::null_mut(),
+            }
+        }
+        unsafe { proto_iter_next(state) }
+    })
 }
 
 /// `sethostent` — rewind /etc/hosts enumeration.
@@ -15619,6 +15749,61 @@ pub unsafe extern "C" fn getnetent_r(
     libc::ENOENT
 }
 
+/// Helper: fill a protoent struct in caller-supplied buffers.
+///
+/// Packs p_name into `buf`, sets p_aliases to a NULL-terminated list at the
+/// end of `buf`, and fills the protoent at `result_buf`.
+unsafe fn fill_protoent_r(
+    name: &[u8],
+    proto: c_int,
+    result_buf: *mut c_void,
+    buf: *mut c_char,
+    buflen: usize,
+    result: *mut *mut c_void,
+) -> c_int {
+    // Need room for: name + NUL + null-terminated alias pointer
+    let alias_ptr_size = core::mem::size_of::<*mut c_char>();
+    let needed = name.len() + 1 + alias_ptr_size;
+    if needed > buflen {
+        return libc::ERANGE;
+    }
+
+    // Copy name
+    let buf_u8 = buf as *mut u8;
+    unsafe {
+        std::ptr::copy_nonoverlapping(name.as_ptr(), buf_u8, name.len());
+        *buf_u8.add(name.len()) = 0;
+    }
+
+    // Aliases: NULL-terminated list at end of buffer (just a single NULL ptr)
+    let alias_offset = name.len() + 1;
+    // Align to pointer size
+    let alias_offset = (alias_offset + (alias_ptr_size - 1)) & !(alias_ptr_size - 1);
+    if alias_offset + alias_ptr_size > buflen {
+        return libc::ERANGE;
+    }
+    unsafe {
+        *(buf_u8.add(alias_offset) as *mut *mut c_char) = std::ptr::null_mut();
+    }
+
+    // Fill struct protoent: { p_name, p_aliases, p_proto }
+    let ent = result_buf as *mut *mut c_char;
+    unsafe {
+        *ent = buf;                                                       // p_name
+        *(ent.add(1) as *mut *mut *mut c_char) =
+            buf_u8.add(alias_offset) as *mut *mut c_char;                 // p_aliases
+        *((result_buf as *mut u8).add(16) as *mut c_int) = proto;         // p_proto
+    }
+
+    if !result.is_null() {
+        unsafe { *result = result_buf };
+    }
+    0
+}
+
+/// `getprotobyname_r` — reentrant protocol lookup by name.
+///
+/// Native implementation: scans /etc/protocols.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getprotobyname_r(
     name: *const c_char,
@@ -15630,22 +15815,47 @@ pub unsafe extern "C" fn getprotobyname_r(
     if !result.is_null() {
         unsafe { *result = std::ptr::null_mut() };
     }
-
-    type F = unsafe extern "C" fn(
-        *const c_char,
-        *mut c_void,
-        *mut c_char,
-        usize,
-        *mut *mut c_void,
-    ) -> c_int;
-    if let Some(a) = crate::host_resolve::resolve_host_symbol_raw("getprotobyname_r") {
-        return unsafe {
-            core::mem::transmute::<usize, F>(a)(name, result_buf, buf, buflen, result)
-        };
+    if name.is_null() || result_buf.is_null() || buf.is_null() {
+        return libc::EINVAL;
     }
-    libc::ENOENT
+
+    let needle = unsafe { std::ffi::CStr::from_ptr(name) }.to_bytes();
+    let content = match std::fs::read(PROTOCOLS_PATH) {
+        Ok(c) => c,
+        Err(_) => return 0, // not found, result stays NULL (glibc behavior)
+    };
+
+    for line in content.split(|&b| b == b'\n') {
+        let line = if let Some(pos) = line.iter().position(|&b| b == b'#') {
+            &line[..pos]
+        } else {
+            line
+        };
+        let mut fields = line
+            .split(|&b| b == b' ' || b == b'\t')
+            .filter(|f| !f.is_empty());
+        let pname = match fields.next() {
+            Some(f) => f,
+            None => continue,
+        };
+        let pnum_str = match fields.next() {
+            Some(f) => f,
+            None => continue,
+        };
+        if pname.eq_ignore_ascii_case(needle)
+            && let Some(num) = std::str::from_utf8(pnum_str)
+                .ok()
+                .and_then(|s| s.parse::<c_int>().ok())
+        {
+            return unsafe { fill_protoent_r(pname, num, result_buf, buf, buflen, result) };
+        }
+    }
+    0 // not found, result stays NULL (glibc behavior)
 }
 
+/// `getprotobynumber_r` — reentrant protocol lookup by number.
+///
+/// Native implementation: scans /etc/protocols.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getprotobynumber_r(
     proto: c_int,
@@ -15657,17 +15867,46 @@ pub unsafe extern "C" fn getprotobynumber_r(
     if !result.is_null() {
         unsafe { *result = std::ptr::null_mut() };
     }
-
-    type F =
-        unsafe extern "C" fn(c_int, *mut c_void, *mut c_char, usize, *mut *mut c_void) -> c_int;
-    if let Some(a) = crate::host_resolve::resolve_host_symbol_raw("getprotobynumber_r") {
-        return unsafe {
-            core::mem::transmute::<usize, F>(a)(proto, result_buf, buf, buflen, result)
-        };
+    if result_buf.is_null() || buf.is_null() {
+        return libc::EINVAL;
     }
-    libc::ENOENT
+
+    let content = match std::fs::read(PROTOCOLS_PATH) {
+        Ok(c) => c,
+        Err(_) => return 0,
+    };
+
+    for line in content.split(|&b| b == b'\n') {
+        let line = if let Some(pos) = line.iter().position(|&b| b == b'#') {
+            &line[..pos]
+        } else {
+            line
+        };
+        let mut fields = line
+            .split(|&b| b == b' ' || b == b'\t')
+            .filter(|f| !f.is_empty());
+        let pname = match fields.next() {
+            Some(f) => f,
+            None => continue,
+        };
+        let pnum_str = match fields.next() {
+            Some(f) => f,
+            None => continue,
+        };
+        if let Some(num) = std::str::from_utf8(pnum_str)
+            .ok()
+            .and_then(|s| s.parse::<c_int>().ok())
+            .filter(|&n| n == proto)
+        {
+            return unsafe { fill_protoent_r(pname, num, result_buf, buf, buflen, result) };
+        }
+    }
+    0
 }
 
+/// `getprotoent_r` — reentrant sequential protocol entry read.
+///
+/// Native implementation using thread-local file iterator.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getprotoent_r(
     result_buf: *mut c_void,
@@ -15675,15 +15914,59 @@ pub unsafe extern "C" fn getprotoent_r(
     buflen: usize,
     result: *mut *mut c_void,
 ) -> c_int {
+    use std::io::BufRead;
+
     if !result.is_null() {
         unsafe { *result = std::ptr::null_mut() };
     }
-
-    type F = unsafe extern "C" fn(*mut c_void, *mut c_char, usize, *mut *mut c_void) -> c_int;
-    if let Some(a) = crate::host_resolve::resolve_host_symbol_raw("getprotoent_r") {
-        return unsafe { core::mem::transmute::<usize, F>(a)(result_buf, buf, buflen, result) };
+    if result_buf.is_null() || buf.is_null() {
+        return libc::EINVAL;
     }
-    libc::ENOENT
+
+    PROTO_ITER.with(|cell| {
+        let state = unsafe { &mut *cell.get() };
+        if state.reader.is_none() {
+            match std::fs::File::open(PROTOCOLS_PATH) {
+                Ok(f) => state.reader = Some(std::io::BufReader::new(f)),
+                Err(_) => return libc::ENOENT,
+            }
+        }
+        let reader = state.reader.as_mut().unwrap();
+
+        loop {
+            state.line_buf.clear();
+            match reader.read_until(b'\n', &mut state.line_buf) {
+                Ok(0) => return libc::ENOENT,
+                Err(_) => return libc::ENOENT,
+                Ok(_) => {}
+            }
+            let line = &state.line_buf;
+            let line = if let Some(pos) = line.iter().position(|&b| b == b'#') {
+                &line[..pos]
+            } else {
+                line
+            };
+            let mut fields = line
+                .split(|&b| b == b' ' || b == b'\t' || b == b'\n' || b == b'\r')
+                .filter(|f| !f.is_empty());
+            let pname = match fields.next() {
+                Some(f) => f,
+                None => continue,
+            };
+            let pnum_str = match fields.next() {
+                Some(f) => f,
+                None => continue,
+            };
+            if let Some(num) = std::str::from_utf8(pnum_str)
+                .ok()
+                .and_then(|s| s.parse::<c_int>().ok())
+            {
+                return unsafe {
+                    fill_protoent_r(pname, num, result_buf, buf, buflen, result)
+                };
+            }
+        }
+    })
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
