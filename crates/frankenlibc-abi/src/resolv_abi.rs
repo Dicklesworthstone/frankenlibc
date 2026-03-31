@@ -574,15 +574,9 @@ pub unsafe extern "C" fn freeaddrinfo(res: *mut libc::addrinfo) {
     if res.is_null() {
         return;
     }
-    // Delegate to host freeaddrinfo to handle both host-allocated and
-    // our Box-allocated addrinfos correctly.
-    type HostFreeaddrinfoFn = unsafe extern "C" fn(*mut libc::addrinfo);
-    if let Some(addr) = crate::host_resolve::resolve_host_symbol_raw("freeaddrinfo") {
-        let host_fn: HostFreeaddrinfoFn = unsafe { core::mem::transmute(addr) };
-        unsafe { host_fn(res) };
-        return;
-    }
-    // Fallback: manual free for our Box-allocated addrinfos only.
+    // Native free: walk the linked list and free each node.
+    // Under LD_PRELOAD, our malloc is the process allocator, so Box::from_raw
+    // works for both our allocations and any host-getaddrinfo allocations.
     let (aligned, recent_page, ordering) = resolver_stage_context(res as usize, 0);
     let (_, decision) =
         runtime_policy::decide(ApiFamily::Resolver, res as usize, 0, true, false, 0);
