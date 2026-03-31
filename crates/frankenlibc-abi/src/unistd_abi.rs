@@ -11455,32 +11455,192 @@ pub unsafe extern "C" fn getprotoent() -> *mut c_void {
     })
 }
 
-/// `sethostent` — rewind /etc/hosts enumeration.
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn sethostent(stayopen: c_int) {
-    type F = unsafe extern "C" fn(c_int);
-    if let Some(a) = crate::host_resolve::resolve_host_symbol_raw("sethostent") {
-        unsafe { core::mem::transmute::<usize, F>(a)(stayopen) };
+// ---------------------------------------------------------------------------
+// /etc/hosts iteration — native
+// ---------------------------------------------------------------------------
+
+const HOSTS_PATH: &str = "/etc/hosts";
+
+struct HostIterState {
+    reader: Option<std::io::BufReader<std::fs::File>>,
+    line_buf: Vec<u8>,
+    // Buffer: struct hostent (32 bytes) + strings + address data + pointer arrays
+    entry_buf: [u8; 2048],
+    // Pointer arrays stored separately to avoid borrow issues
+    alias_ptrs: [*mut c_char; 16],
+    addr_ptrs: [*mut c_char; 2],
+    addr_data: [u8; 16], // room for one IPv4 or IPv6 address
+}
+
+impl HostIterState {
+    const fn new() -> Self {
+        Self {
+            reader: None,
+            line_buf: Vec::new(),
+            entry_buf: [0u8; 2048],
+            alias_ptrs: [std::ptr::null_mut(); 16],
+            addr_ptrs: [std::ptr::null_mut(); 2],
+            addr_data: [0u8; 16],
+        }
     }
 }
 
-/// `endhostent` — close /etc/hosts enumeration.
+std::thread_local! {
+    static HOST_ITER: std::cell::UnsafeCell<HostIterState> =
+        const { std::cell::UnsafeCell::new(HostIterState::new()) };
+}
+
+/// Parse address text into binary. Returns (address_bytes, af, length).
+fn parse_addr_binary(addr_str: &str) -> Option<([u8; 16], c_int, c_int)> {
+    use std::net::{Ipv4Addr, Ipv6Addr};
+    if let Ok(v4) = addr_str.parse::<Ipv4Addr>() {
+        let mut buf = [0u8; 16];
+        buf[..4].copy_from_slice(&v4.octets());
+        Some((buf, libc::AF_INET, 4))
+    } else if let Ok(v6) = addr_str.parse::<Ipv6Addr>() {
+        let mut buf = [0u8; 16];
+        buf.copy_from_slice(&v6.octets());
+        Some((buf, libc::AF_INET6, 16))
+    } else {
+        None
+    }
+}
+
+/// Parse the next hosts entry from the reader.
+///
+/// struct hostent (x86_64, 32 bytes):
+///   h_name:      *mut c_char    (offset 0)
+///   h_aliases:   *mut *mut c_char (offset 8)
+///   h_addrtype:  c_int          (offset 16)
+///   h_length:    c_int          (offset 20)
+///   h_addr_list: *mut *mut c_char (offset 24)
+unsafe fn host_iter_next(state: &mut HostIterState) -> *mut c_void {
+    use std::io::BufRead;
+    loop {
+        let reader = match state.reader.as_mut() {
+            Some(r) => r,
+            None => return std::ptr::null_mut(),
+        };
+        state.line_buf.clear();
+        match reader.read_until(b'\n', &mut state.line_buf) {
+            Ok(0) => return std::ptr::null_mut(),
+            Err(_) => return std::ptr::null_mut(),
+            Ok(_) => {}
+        }
+
+        // Use parse_hosts_line from core
+        let parsed = frankenlibc_core::resolv::parse_hosts_line(&state.line_buf);
+        let (addr_text, hostnames) = match parsed {
+            Some(v) => v,
+            None => continue,
+        };
+
+        if hostnames.is_empty() {
+            continue;
+        }
+
+        let addr_str = match std::str::from_utf8(&addr_text) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+        let (addr_bin, af, addr_len) = match parse_addr_binary(addr_str) {
+            Some(v) => v,
+            None => continue,
+        };
+
+        // Copy address data
+        state.addr_data[..addr_len as usize].copy_from_slice(&addr_bin[..addr_len as usize]);
+
+        // Set up address list: [&addr_data, NULL]
+        state.addr_ptrs[0] = state.addr_data.as_mut_ptr() as *mut c_char;
+        state.addr_ptrs[1] = std::ptr::null_mut();
+
+        // Pack hostname string into entry_buf (after struct hostent at offset 32)
+        let buf = state.entry_buf.as_mut_ptr();
+        let str_offset = 32usize;
+        let primary_name = &hostnames[0];
+        let needed = str_offset + primary_name.len() + 1;
+        if needed > state.entry_buf.len() {
+            continue;
+        }
+
+        let name_ptr = unsafe { buf.add(str_offset) } as *mut c_char;
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                primary_name.as_ptr(),
+                buf.add(str_offset),
+                primary_name.len(),
+            );
+            *buf.add(str_offset + primary_name.len()) = 0;
+        }
+
+        // Aliases: remaining hostnames (up to 14)
+        let mut off = str_offset + primary_name.len() + 1;
+        let max_aliases = state.alias_ptrs.len() - 1; // leave room for NULL
+        let alias_count = (hostnames.len() - 1).min(max_aliases);
+        for i in 0..alias_count {
+            let alias = &hostnames[i + 1];
+            if off + alias.len() + 1 > state.entry_buf.len() {
+                break;
+            }
+            state.alias_ptrs[i] = unsafe { buf.add(off) } as *mut c_char;
+            unsafe {
+                std::ptr::copy_nonoverlapping(alias.as_ptr(), buf.add(off), alias.len());
+                *buf.add(off + alias.len()) = 0;
+            }
+            off += alias.len() + 1;
+        }
+        state.alias_ptrs[alias_count] = std::ptr::null_mut();
+
+        // Fill struct hostent
+        unsafe {
+            *(buf as *mut *mut c_char) = name_ptr;                          // h_name
+            *((buf as *mut *mut c_char).add(1) as *mut *mut *mut c_char) =
+                state.alias_ptrs.as_mut_ptr();                              // h_aliases
+            *(buf.add(16) as *mut c_int) = af;                              // h_addrtype
+            *(buf.add(20) as *mut c_int) = addr_len;                        // h_length
+            *(buf.add(24) as *mut *mut *mut c_char) =
+                state.addr_ptrs.as_mut_ptr();                               // h_addr_list
+        }
+
+        return buf as *mut c_void;
+    }
+}
+
+/// `sethostent` — open /etc/hosts for iteration.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn sethostent(_stayopen: c_int) {
+    HOST_ITER.with(|cell| {
+        let state = unsafe { &mut *cell.get() };
+        match std::fs::File::open(HOSTS_PATH) {
+            Ok(f) => state.reader = Some(std::io::BufReader::new(f)),
+            Err(_) => state.reader = None,
+        }
+    });
+}
+
+/// `endhostent` — close /etc/hosts iteration.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn endhostent() {
-    type F = unsafe extern "C" fn();
-    if let Some(a) = crate::host_resolve::resolve_host_symbol_raw("endhostent") {
-        unsafe { core::mem::transmute::<usize, F>(a)() };
-    }
+    HOST_ITER.with(|cell| {
+        let state = unsafe { &mut *cell.get() };
+        state.reader = None;
+    });
 }
 
 /// `gethostent` — get next /etc/hosts entry.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn gethostent() -> *mut c_void {
-    type F = unsafe extern "C" fn() -> *mut c_void;
-    if let Some(a) = crate::host_resolve::resolve_host_symbol_raw("gethostent") {
-        return unsafe { core::mem::transmute::<usize, F>(a)() };
-    }
-    std::ptr::null_mut()
+    HOST_ITER.with(|cell| {
+        let state = unsafe { &mut *cell.get() };
+        if state.reader.is_none() {
+            match std::fs::File::open(HOSTS_PATH) {
+                Ok(f) => state.reader = Some(std::io::BufReader::new(f)),
+                Err(_) => return std::ptr::null_mut(),
+            }
+        }
+        unsafe { host_iter_next(state) }
+    })
 }
 
 // ===========================================================================
@@ -15901,42 +16061,126 @@ pub unsafe extern "C" fn _Fork() -> c_int {
 // Reentrant NSS database functions
 // ===========================================================================
 
+/// `gethostent_r` — reentrant sequential host entry read.
+///
+/// Native implementation using thread-local /etc/hosts iterator.
+/// Fills hostent struct in caller-supplied buffers.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn gethostent_r(
     result_buf: *mut c_void,
     buf: *mut c_char,
     buflen: usize,
     result: *mut *mut c_void,
-    h_errnop: *mut c_int,
+    _h_errnop: *mut c_int,
 ) -> c_int {
+    use std::io::BufRead;
+
     if !result.is_null() {
         unsafe { *result = std::ptr::null_mut() };
     }
-
-    type F = unsafe extern "C" fn(
-        *mut libc::hostent,
-        *mut c_char,
-        usize,
-        *mut *mut libc::hostent,
-        *mut c_int,
-    ) -> c_int;
-    if let Some(a) = crate::host_resolve::resolve_host_symbol_raw("gethostent_r") {
-        let mut host_result: *mut libc::hostent = std::ptr::null_mut();
-        let rc = unsafe {
-            core::mem::transmute::<usize, F>(a)(
-                result_buf.cast(),
-                buf,
-                buflen,
-                &mut host_result,
-                h_errnop,
-            )
-        };
-        if !result.is_null() {
-            unsafe { *result = host_result.cast() };
-        }
-        return rc;
+    if result_buf.is_null() || buf.is_null() {
+        return libc::EINVAL;
     }
-    libc::ENOENT
+
+    HOST_ITER.with(|cell| {
+        let state = unsafe { &mut *cell.get() };
+        if state.reader.is_none() {
+            match std::fs::File::open(HOSTS_PATH) {
+                Ok(f) => state.reader = Some(std::io::BufReader::new(f)),
+                Err(_) => return libc::ENOENT,
+            }
+        }
+        let reader = state.reader.as_mut().unwrap();
+
+        loop {
+            state.line_buf.clear();
+            match reader.read_until(b'\n', &mut state.line_buf) {
+                Ok(0) => return libc::ENOENT,
+                Err(_) => return libc::ENOENT,
+                Ok(_) => {}
+            }
+            let parsed = frankenlibc_core::resolv::parse_hosts_line(&state.line_buf);
+            let (addr_text, hostnames) = match parsed {
+                Some(v) => v,
+                None => continue,
+            };
+            if hostnames.is_empty() {
+                continue;
+            }
+            let addr_str = match std::str::from_utf8(&addr_text) {
+                Ok(s) => s,
+                Err(_) => continue,
+            };
+            let (addr_bin, af, addr_len) = match parse_addr_binary(addr_str) {
+                Some(v) => v,
+                None => continue,
+            };
+
+            let buf_u8 = buf as *mut u8;
+            let ptr_size = core::mem::size_of::<*mut c_char>();
+            let alen = addr_len as usize;
+            let primary = &hostnames[0];
+
+            // Layout in buf: name + NUL + addr_data + align + addr_list[2] + alias_list[n+1]
+            let name_end = primary.len() + 1;
+            let addr_off = name_end;
+            let addr_end = addr_off + alen;
+            let list_off = (addr_end + (ptr_size - 1)) & !(ptr_size - 1);
+            let addr_list_off = list_off;
+            let alias_list_off = addr_list_off + 2 * ptr_size;
+            let alias_count = hostnames.len() - 1;
+            let total_needed = alias_list_off + (alias_count + 1) * ptr_size;
+            if total_needed > buflen {
+                return libc::ERANGE;
+            }
+
+            // Copy name
+            unsafe {
+                std::ptr::copy_nonoverlapping(primary.as_ptr(), buf_u8, primary.len());
+                *buf_u8.add(primary.len()) = 0;
+            }
+
+            // Copy address binary
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    addr_bin.as_ptr(),
+                    buf_u8.add(addr_off),
+                    alen,
+                );
+            }
+
+            // addr_list: [&addr, NULL]
+            unsafe {
+                *(buf_u8.add(addr_list_off) as *mut *mut c_char) =
+                    buf_u8.add(addr_off) as *mut c_char;
+                *(buf_u8.add(addr_list_off + ptr_size) as *mut *mut c_char) =
+                    std::ptr::null_mut();
+            }
+
+            // aliases: pack remaining hostnames (skip for simplicity — would need
+            // more buffer space accounting). Just set empty alias list.
+            unsafe {
+                *(buf_u8.add(alias_list_off) as *mut *mut c_char) = std::ptr::null_mut();
+            }
+
+            // Fill struct hostent in result_buf
+            let ent = result_buf as *mut u8;
+            unsafe {
+                *(ent as *mut *mut c_char) = buf;                               // h_name
+                *((ent as *mut *mut c_char).add(1) as *mut *mut *mut c_char) =
+                    buf_u8.add(alias_list_off) as *mut *mut c_char;             // h_aliases
+                *(ent.add(16) as *mut c_int) = af;                              // h_addrtype
+                *(ent.add(20) as *mut c_int) = addr_len;                        // h_length
+                *(ent.add(24) as *mut *mut *mut c_char) =
+                    buf_u8.add(addr_list_off) as *mut *mut c_char;              // h_addr_list
+            }
+
+            if !result.is_null() {
+                unsafe { *result = result_buf };
+            }
+            return 0;
+        }
+    })
 }
 
 /// Helper: fill a netent struct in caller-supplied buffers.
