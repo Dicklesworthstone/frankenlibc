@@ -18,12 +18,6 @@ use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 use libc::{intmax_t, uintmax_t};
 
 unsafe extern "C" {
-    #[link_name = "setenv@GLIBC_2.2.5"]
-    fn native_setenv_sym(name: *const c_char, value: *const c_char, overwrite: c_int) -> c_int;
-    #[link_name = "unsetenv@GLIBC_2.2.5"]
-    fn native_unsetenv_sym(name: *const c_char) -> c_int;
-    #[link_name = "putenv@GLIBC_2.2.5"]
-    fn native_putenv_sym(string: *mut c_char) -> c_int;
     #[link_name = "__environ"]
     static mut HOST_ENVIRON: *mut *mut c_char;
 }
@@ -51,56 +45,214 @@ unsafe fn native_getenv(name_bytes: &[u8]) -> *mut c_char {
     }
 }
 
-static NATIVE_SETENV_REENTRY: std::sync::atomic::AtomicBool =
+// ---------------------------------------------------------------------------
+// Native environ manipulation — no host delegation
+// ---------------------------------------------------------------------------
+//
+// setenv/unsetenv/putenv directly manipulate the HOST_ENVIRON array.
+// On first mutation that requires growing the array, we copy it to our
+// own malloc'd buffer (the original is on the process stack from crt0).
+
+/// Whether we've already copied environ to our own allocation.
+static ENVIRON_OWNED: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
-#[inline]
-unsafe fn native_setenv(name: *const c_char, value: *const c_char, overwrite: c_int) -> c_int {
-    use std::sync::atomic::Ordering;
-    if NATIVE_SETENV_REENTRY
-        .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
-        .is_err()
-    {
-        // Reentrant: silently succeed without modifying environ.
+/// Mutex protecting all environ mutations.
+static ENVIRON_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Count entries in the current environ array (excluding NULL terminator).
+unsafe fn environ_len() -> usize {
+    if unsafe { HOST_ENVIRON.is_null() } {
         return 0;
     }
-    // Prefer host resolution to avoid versioned-symbol recursion under LD_PRELOAD.
-    type SetenvFn = unsafe extern "C" fn(*const c_char, *const c_char, c_int) -> c_int;
-    let rc = if let Some(addr) = crate::host_resolve::resolve_host_symbol_raw("setenv") {
-        let host_fn: SetenvFn = unsafe { core::mem::transmute(addr) };
-        unsafe { host_fn(name, value, overwrite) }
-    } else {
-        unsafe { native_setenv_sym(name, value, overwrite) }
-    };
-    NATIVE_SETENV_REENTRY.store(false, Ordering::Release);
-    rc
+    let mut n = 0usize;
+    unsafe {
+        while !(*HOST_ENVIRON.add(n)).is_null() {
+            n += 1;
+        }
+    }
+    n
 }
 
-static NATIVE_UNSETENV_REENTRY: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
+/// Ensure environ is in our own allocation so we can grow it.
+/// Must be called with ENVIRON_LOCK held.
+unsafe fn ensure_environ_owned() {
+    use std::sync::atomic::Ordering;
+    if ENVIRON_OWNED.load(Ordering::Acquire) {
+        return;
+    }
+    let count = unsafe { environ_len() };
+    // Allocate count + 1 (for NULL) + 8 (growth room) pointers
+    let new_cap = count + 9;
+    let new_array =
+        unsafe { libc::malloc(new_cap * core::mem::size_of::<*mut c_char>()) } as *mut *mut c_char;
+    if new_array.is_null() {
+        return; // OOM — keep using original
+    }
+    if !unsafe { HOST_ENVIRON.is_null() } {
+        unsafe {
+            std::ptr::copy_nonoverlapping(HOST_ENVIRON, new_array, count);
+        }
+    }
+    unsafe { *new_array.add(count) = std::ptr::null_mut() };
+    unsafe { HOST_ENVIRON = new_array };
+    ENVIRON_OWNED.store(true, Ordering::Release);
+}
 
+/// Native setenv: scan environ for NAME=, replace or append.
+#[inline]
+unsafe fn native_setenv(name: *const c_char, value: *const c_char, overwrite: c_int) -> c_int {
+    if name.is_null() || unsafe { *name == 0 } {
+        return -1;
+    }
+    // Check name doesn't contain '='
+    let name_len = unsafe { libc::strlen(name) };
+    for i in 0..name_len {
+        if unsafe { *name.add(i) } == b'=' as c_char {
+            return -1;
+        }
+    }
+    let val_len = if value.is_null() {
+        0
+    } else {
+        unsafe { libc::strlen(value) }
+    };
+
+    let _lock = ENVIRON_LOCK.lock();
+    unsafe { ensure_environ_owned() };
+
+    // Build "NAME=value" string
+    let entry_len = name_len + 1 + val_len + 1; // name + '=' + value + NUL
+    let new_entry = unsafe { libc::malloc(entry_len) } as *mut c_char;
+    if new_entry.is_null() {
+        return -1;
+    }
+    unsafe {
+        std::ptr::copy_nonoverlapping(name as *const u8, new_entry as *mut u8, name_len);
+        *new_entry.add(name_len) = b'=' as c_char;
+        if !value.is_null() {
+            std::ptr::copy_nonoverlapping(
+                value as *const u8,
+                new_entry.add(name_len + 1) as *mut u8,
+                val_len,
+            );
+        }
+        *new_entry.add(name_len + 1 + val_len) = 0;
+    }
+
+    // Scan for existing entry
+    if !unsafe { HOST_ENVIRON.is_null() } {
+        let mut i = 0usize;
+        unsafe {
+            while !(*HOST_ENVIRON.add(i)).is_null() {
+                let entry = *HOST_ENVIRON.add(i) as *const u8;
+                let mut match_len = 0usize;
+                while match_len < name_len
+                    && *entry.add(match_len) == *(name as *const u8).add(match_len)
+                {
+                    match_len += 1;
+                }
+                if match_len == name_len && *entry.add(match_len) == b'=' {
+                    if overwrite == 0 {
+                        libc::free(new_entry as *mut c_void);
+                        return 0; // already exists, don't overwrite
+                    }
+                    // Replace existing entry
+                    *HOST_ENVIRON.add(i) = new_entry;
+                    return 0;
+                }
+                i += 1;
+            }
+        }
+    }
+
+    // Not found — append to environ
+    let count = unsafe { environ_len() };
+    // May need to grow the array
+    let new_array = unsafe {
+        libc::realloc(
+            HOST_ENVIRON as *mut c_void,
+            (count + 2) * core::mem::size_of::<*mut c_char>(),
+        )
+    } as *mut *mut c_char;
+    if new_array.is_null() {
+        unsafe { libc::free(new_entry as *mut c_void) };
+        return -1;
+    }
+    unsafe {
+        HOST_ENVIRON = new_array;
+        *HOST_ENVIRON.add(count) = new_entry;
+        *HOST_ENVIRON.add(count + 1) = std::ptr::null_mut();
+    }
+    0
+}
+
+/// Native unsetenv: scan and remove from environ.
 #[inline]
 unsafe fn native_unsetenv(name: *const c_char) -> c_int {
-    use std::sync::atomic::Ordering;
-    // Guard against recursion: our unsetenv export shadows the host's
-    // versioned unsetenv@GLIBC_2.2.5, so native_unsetenv_sym may resolve
-    // back to our own unsetenv.  On reentry, remove from environ directly.
-    if NATIVE_UNSETENV_REENTRY
-        .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
-        .is_err()
-    {
-        // Reentrant: remove from environ by scanning and shifting.
-        return unsafe { remove_from_environ(name) };
+    let _lock = ENVIRON_LOCK.lock();
+    unsafe { remove_from_environ(name) }
+}
+
+/// Native putenv: store the string directly in environ (no copy).
+/// Unlike setenv, the string must remain valid for the lifetime of the process.
+unsafe fn native_putenv_impl(string: *mut c_char) -> c_int {
+    if string.is_null() {
+        return -1;
     }
-    type UnsetenvFn = unsafe extern "C" fn(*const c_char) -> c_int;
-    let rc = if let Some(addr) = crate::host_resolve::resolve_host_symbol_raw("unsetenv") {
-        let host_fn: UnsetenvFn = unsafe { core::mem::transmute(addr) };
-        unsafe { host_fn(name) }
-    } else {
-        unsafe { native_unsetenv_sym(name) }
+    let s = unsafe { std::ffi::CStr::from_ptr(string) };
+    let bytes = s.to_bytes();
+    let eq_pos = match bytes.iter().position(|&b| b == b'=') {
+        Some(p) => p,
+        None => {
+            // No '=': unset the variable (glibc behavior)
+            return unsafe { remove_from_environ(string) };
+        }
     };
-    NATIVE_UNSETENV_REENTRY.store(false, Ordering::Release);
-    rc
+    let name_len = eq_pos;
+
+    let _lock = ENVIRON_LOCK.lock();
+    unsafe { ensure_environ_owned() };
+
+    // Scan for existing entry with same name
+    if !unsafe { HOST_ENVIRON.is_null() } {
+        let mut i = 0usize;
+        unsafe {
+            while !(*HOST_ENVIRON.add(i)).is_null() {
+                let entry = *HOST_ENVIRON.add(i) as *const u8;
+                let mut match_len = 0usize;
+                while match_len < name_len
+                    && *entry.add(match_len) == *(string as *const u8).add(match_len)
+                {
+                    match_len += 1;
+                }
+                if match_len == name_len && *entry.add(match_len) == b'=' {
+                    // Replace existing entry (putenv always overwrites)
+                    *HOST_ENVIRON.add(i) = string;
+                    return 0;
+                }
+                i += 1;
+            }
+        }
+    }
+
+    // Not found — append
+    let count = unsafe { environ_len() };
+    let new_array = unsafe {
+        libc::realloc(
+            HOST_ENVIRON as *mut c_void,
+            (count + 2) * core::mem::size_of::<*mut c_char>(),
+        )
+    } as *mut *mut c_char;
+    if new_array.is_null() {
+        return -1;
+    }
+    unsafe {
+        HOST_ENVIRON = new_array;
+        *HOST_ENVIRON.add(count) = string;
+        *HOST_ENVIRON.add(count + 1) = std::ptr::null_mut();
+    }
+    0
 }
 
 /// Remove an env var by directly manipulating the environ array.
@@ -1363,16 +1515,8 @@ pub unsafe extern "C" fn putenv(string: *mut c_char) -> c_int {
         return unsafe { super::stdlib_abi::unsetenv(string) };
     }
 
-    // Delegate to host putenv via ELF resolver to avoid recursion
-    // (the link_name "putenv@GLIBC_2.2.5" can resolve to our own putenv
-    // under LD_PRELOAD).
-    type PutenvFn = unsafe extern "C" fn(*mut c_char) -> c_int;
-    let ret = if let Some(addr) = crate::host_resolve::resolve_host_symbol_raw("putenv") {
-        let host_fn: PutenvFn = unsafe { core::mem::transmute(addr) };
-        unsafe { host_fn(string) }
-    } else {
-        unsafe { native_putenv_sym(string) }
-    };
+    // Native putenv: store the string directly in environ (no copy).
+    let ret = unsafe { native_putenv_impl(string) };
 
     runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 10, ret != 0);
     ret
