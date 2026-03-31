@@ -5534,13 +5534,11 @@ pub unsafe extern "C" fn sem_clockwait(
         }
     }
 }
-// setaliasent: mail alias iterator reset
+// setaliasent: mail alias iterator reset — native via endaliasent
+// (resets the thread-local alias iterator so getaliasent starts from the top)
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn setaliasent() {
-    type F = unsafe extern "C" fn();
-    if let Some(a) = crate::host_resolve::resolve_host_symbol_raw("setaliasent") {
-        unsafe { core::mem::transmute::<usize, F>(a)() };
-    }
+    unsafe { super::unistd_abi::endaliasent() };
 }
 // setfsgid/setfsuid: native syscalls
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
