@@ -13742,48 +13742,210 @@ pub unsafe extern "C" fn endfsent() {
     });
 }
 
-/// `endnetgrent` — end netgroup iteration.
-///
-/// Delegates to host libc so iterator state matches glibc.
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn endnetgrent() {
-    type F = unsafe extern "C" fn();
-    if let Some(a) = crate::host_resolve::resolve_host_symbol_raw("endnetgrent") {
-        unsafe { core::mem::transmute::<usize, F>(a)() };
+// ---------------------------------------------------------------------------
+// /etc/netgroup iteration — native
+// ---------------------------------------------------------------------------
+//
+// Format: "groupname (host,user,domain) (host,user,domain) ..."
+// Fields within parens can be empty (wildcard). Groups can reference
+// other groups by name (non-paren tokens), but we don't expand those
+// recursively (matching minimal glibc files-backend behavior).
+
+const NETGROUP_PATH: &str = "/etc/netgroup";
+
+/// Parsed netgroup triple.
+struct NetgroupTriple {
+    host: Vec<u8>,
+    user: Vec<u8>,
+    domain: Vec<u8>,
+}
+
+struct NetgroupIterState {
+    /// Pre-parsed triples for the current group.
+    triples: Vec<NetgroupTriple>,
+    /// Current position in the triples vector.
+    pos: usize,
+    /// Thread-local string buffer for non-reentrant getnetgrent.
+    str_buf: [u8; 1024],
+}
+
+impl NetgroupIterState {
+    const fn new() -> Self {
+        Self {
+            triples: Vec::new(),
+            pos: 0,
+            str_buf: [0u8; 1024],
+        }
     }
 }
 
-/// `setnetgrent` — start netgroup iteration.
+std::thread_local! {
+    static NETGROUP_ITER: std::cell::UnsafeCell<NetgroupIterState> =
+        const { std::cell::UnsafeCell::new(NetgroupIterState::new()) };
+}
+
+/// Parse triples from the file content for a given group name.
+fn parse_netgroup_triples(content: &[u8], group: &[u8]) -> Vec<NetgroupTriple> {
+    let mut result = Vec::new();
+    for line in content.split(|&b| b == b'\n') {
+        // Strip comments
+        let line = if let Some(pos) = line.iter().position(|&b| b == b'#') {
+            &line[..pos]
+        } else {
+            line
+        };
+        let mut fields = line
+            .split(|&b| b == b' ' || b == b'\t')
+            .filter(|f| !f.is_empty());
+        let name = match fields.next() {
+            Some(n) => n,
+            None => continue,
+        };
+        if !name.eq_ignore_ascii_case(group) {
+            continue;
+        }
+        // Rejoin remaining fields and parse triples
+        let rest_start = name.len();
+        let rest = &line[rest_start..];
+        // Find all (host,user,domain) triples
+        let mut i = 0;
+        let bytes = rest;
+        while i < bytes.len() {
+            if bytes[i] == b'(' {
+                if let Some(close) = bytes[i..].iter().position(|&b| b == b')') {
+                    let inner = &bytes[i + 1..i + close];
+                    let parts: Vec<&[u8]> = inner.split(|&b| b == b',').collect();
+                    let host = parts.first().copied().unwrap_or(b"");
+                    let user = parts.get(1).copied().unwrap_or(b"");
+                    let domain = parts.get(2).copied().unwrap_or(b"");
+                    // Trim whitespace
+                    let trim = |s: &[u8]| -> Vec<u8> {
+                        let s = s
+                            .iter()
+                            .position(|&b| b != b' ' && b != b'\t')
+                            .map(|start| {
+                                let mut end = s.len();
+                                while end > start && matches!(s[end - 1], b' ' | b'\t') {
+                                    end -= 1;
+                                }
+                                &s[start..end]
+                            })
+                            .unwrap_or(b"");
+                        s.to_vec()
+                    };
+                    result.push(NetgroupTriple {
+                        host: trim(host),
+                        user: trim(user),
+                        domain: trim(domain),
+                    });
+                    i += close + 1;
+                } else {
+                    break;
+                }
+            } else {
+                i += 1;
+            }
+        }
+    }
+    result
+}
+
+/// `endnetgrent` — end netgroup iteration.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn endnetgrent() {
+    NETGROUP_ITER.with(|cell| {
+        let state = unsafe { &mut *cell.get() };
+        state.triples.clear();
+        state.pos = 0;
+    });
+}
+
+/// `setnetgrent` — start netgroup iteration for the named group.
 ///
-/// Delegates to host libc so missing-group success/failure shape matches glibc.
+/// Native implementation: reads /etc/netgroup and pre-parses all triples
+/// for the specified group.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn setnetgrent(netgroup: *const c_char) -> c_int {
-    type F = unsafe extern "C" fn(*const c_char) -> c_int;
-    if let Some(a) = crate::host_resolve::resolve_host_symbol_raw("setnetgrent") {
-        return unsafe { core::mem::transmute::<usize, F>(a)(netgroup) };
+    if netgroup.is_null() {
+        return 0;
     }
-    0
+    let group = unsafe { std::ffi::CStr::from_ptr(netgroup) }.to_bytes();
+    let content = match std::fs::read(NETGROUP_PATH) {
+        Ok(c) => c,
+        Err(_) => {
+            // No /etc/netgroup — not an error, just empty results
+            NETGROUP_ITER.with(|cell| {
+                let state = unsafe { &mut *cell.get() };
+                state.triples.clear();
+                state.pos = 0;
+            });
+            return 0;
+        }
+    };
+    let triples = parse_netgroup_triples(&content, group);
+    NETGROUP_ITER.with(|cell| {
+        let state = unsafe { &mut *cell.get() };
+        state.triples = triples;
+        state.pos = 0;
+    });
+    1
 }
 
 /// `getnetgrent` — get next netgroup entry (host, user, domain triple).
 ///
-/// Delegates to host libc so enumeration semantics match glibc.
+/// Native implementation using thread-local pre-parsed triples.
+/// Returns 1 on success, 0 when exhausted.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getnetgrent(
     hostp: *mut *mut c_char,
     userp: *mut *mut c_char,
     domainp: *mut *mut c_char,
 ) -> c_int {
-    type F = unsafe extern "C" fn(*mut *mut c_char, *mut *mut c_char, *mut *mut c_char) -> c_int;
-    if let Some(a) = crate::host_resolve::resolve_host_symbol_raw("getnetgrent") {
-        return unsafe { core::mem::transmute::<usize, F>(a)(hostp, userp, domainp) };
+    if hostp.is_null() || userp.is_null() || domainp.is_null() {
+        return 0;
     }
-    0
+    NETGROUP_ITER.with(|cell| {
+        let state = unsafe { &mut *cell.get() };
+        if state.pos >= state.triples.len() {
+            return 0;
+        }
+        let triple = &state.triples[state.pos];
+        state.pos += 1;
+
+        // Pack strings into thread-local buffer
+        let buf = state.str_buf.as_mut_ptr();
+        let mut off = 0usize;
+
+        macro_rules! pack_or_null {
+            ($field:expr, $ptr:expr) => {
+                if $field.is_empty() {
+                    unsafe { *$ptr = std::ptr::null_mut() };
+                } else if off + $field.len() < state.str_buf.len() {
+                    let p = unsafe { buf.add(off) } as *mut c_char;
+                    unsafe {
+                        std::ptr::copy_nonoverlapping($field.as_ptr(), buf.add(off), $field.len());
+                        *buf.add(off + $field.len()) = 0;
+                        *$ptr = p;
+                    }
+                    off += $field.len() + 1;
+                } else {
+                    unsafe { *$ptr = std::ptr::null_mut() };
+                }
+            };
+        }
+
+        pack_or_null!(triple.host, hostp);
+        pack_or_null!(triple.user, userp);
+        pack_or_null!(triple.domain, domainp);
+        let _ = off;
+        1
+    })
 }
 
 /// `getnetgrent_r` — reentrant netgroup entry.
 ///
-/// Delegates to host libc so reentrant enumeration matches glibc.
+/// Native implementation using thread-local pre-parsed triples,
+/// packing strings into caller-supplied buffer.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getnetgrent_r(
     hostp: *mut *mut c_char,
@@ -13792,19 +13954,48 @@ pub unsafe extern "C" fn getnetgrent_r(
     buffer: *mut c_char,
     buflen: usize,
 ) -> c_int {
-    type F = unsafe extern "C" fn(
-        *mut *mut c_char,
-        *mut *mut c_char,
-        *mut *mut c_char,
-        *mut c_char,
-        usize,
-    ) -> c_int;
-    if let Some(a) = crate::host_resolve::resolve_host_symbol_raw("getnetgrent_r") {
-        return unsafe {
-            core::mem::transmute::<usize, F>(a)(hostp, userp, domainp, buffer, buflen)
-        };
+    if hostp.is_null() || userp.is_null() || domainp.is_null() || buffer.is_null() {
+        return 0;
     }
-    0
+    NETGROUP_ITER.with(|cell| {
+        let state = unsafe { &mut *cell.get() };
+        if state.pos >= state.triples.len() {
+            return 0;
+        }
+        let triple = &state.triples[state.pos];
+
+        // Check buffer space
+        let needed = triple.host.len() + 1 + triple.user.len() + 1 + triple.domain.len() + 1;
+        if needed > buflen {
+            return 0; // ERANGE-like, but getnetgrent_r returns 0/1
+        }
+        state.pos += 1;
+
+        let buf = buffer as *mut u8;
+        let mut off = 0usize;
+
+        macro_rules! pack_r {
+            ($field:expr, $ptr:expr) => {
+                if $field.is_empty() {
+                    unsafe { *$ptr = std::ptr::null_mut() };
+                } else {
+                    let p = unsafe { buf.add(off) } as *mut c_char;
+                    unsafe {
+                        std::ptr::copy_nonoverlapping($field.as_ptr(), buf.add(off), $field.len());
+                        *buf.add(off + $field.len()) = 0;
+                        *$ptr = p;
+                    }
+                    off += $field.len() + 1;
+                }
+            };
+        }
+
+        pack_r!(triple.host, hostp);
+        pack_r!(triple.user, userp);
+        pack_r!(triple.domain, domainp);
+        let _ = off;
+        1
+    })
 }
 
 // ---------------------------------------------------------------------------
