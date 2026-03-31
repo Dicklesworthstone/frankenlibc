@@ -374,6 +374,11 @@ if [[ "${FRANKENLIBC_EXTENDED_GATES:-0}" == "1" ]]; then
     echo "PASS"
     echo ""
 
+    echo "--- preemption storm gate (bd-18qq.3) ---"
+    scripts/check_preemption_storms.sh
+    echo "PASS"
+    echo ""
+
     echo "--- progress reporter gate (bd-2icq.21) ---"
     scripts/check_progress_reporter.sh
     echo "PASS"
