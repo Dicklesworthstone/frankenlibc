@@ -455,11 +455,7 @@ impl AlienCsSnapshot {
     #[must_use]
     pub fn export_jsonl_with_context(&self, context: &AlienCsLogContext) -> String {
         let timestamp = now_utc_iso_like();
-        let level = if self.contention_score >= 0.75 {
-            "warn"
-        } else {
-            "info"
-        };
+        let level = aggregate_level(self.contention_score);
         let seqlock_reads = self.seqlock.as_ref().map_or(0, |diag| diag.reads);
         let seqlock_writes = self.seqlock.as_ref().map_or(0, |diag| diag.writes);
         let ebr_epoch = self.ebr.as_ref().map_or(0, |diag| diag.global_epoch);
@@ -500,6 +496,242 @@ impl AlienCsSnapshot {
             breakdown.flat_combining_efficiency_loss,
         )
     }
+
+    /// Export per-concept diagnostic rows as JSONL.
+    #[must_use]
+    pub fn export_diagnostics_jsonl(&self, bead_id: &str, run_id: &str) -> String {
+        self.export_diagnostics_jsonl_with_context(&AlienCsLogContext::strict_defaults(
+            bead_id, run_id,
+        ))
+    }
+
+    /// Export per-concept diagnostic rows with explicit logging context.
+    #[must_use]
+    pub fn export_diagnostics_jsonl_with_context(&self, context: &AlienCsLogContext) -> String {
+        let timestamp = now_utc_iso_like();
+        let breakdown = compute_contention_breakdown(
+            self.seqlock.as_ref(),
+            self.ebr.as_ref(),
+            self.flat_combining.as_ref(),
+        );
+        let mut out = String::with_capacity(2048);
+        let mut decision_id = 1_u64;
+
+        if let Some(diag) = self.seqlock.as_ref() {
+            append_concept_row(
+                &mut out,
+                ConceptRow {
+                    timestamp: &timestamp,
+                    context,
+                    concept: "seqlock",
+                    event: "alien_cs_seqlock_evaluation",
+                    decision_path: "alien_cs::seqlock::diagnostics",
+                    level: if diag.contention_events > 0 || diag.pending_writers > 0 {
+                        "warn"
+                    } else if diag.reads > 0 || diag.writes > 0 {
+                        "debug"
+                    } else {
+                        "trace"
+                    },
+                    outcome: if diag.contention_events > 0 || diag.pending_writers > 0 {
+                        "contention_alert"
+                    } else {
+                        "steady_state"
+                    },
+                    decision_id,
+                    latency_ns: self.captured_at_ns,
+                    details: format!(
+                        "\"reads\":{},\"cache_hits\":{},\"cache_misses\":{},\"writes\":{},\"contention_events\":{},\"pending_writers\":{},\"hit_ratio\":{},\"contention_metric\":{}",
+                        diag.reads,
+                        diag.cache_hits,
+                        diag.cache_misses,
+                        diag.writes,
+                        diag.contention_events,
+                        diag.pending_writers,
+                        diag.hit_ratio,
+                        breakdown.seqlock_contention_per_write,
+                    ),
+                },
+            );
+            decision_id += 1;
+        }
+
+        if let Some(diag) = self.ebr.as_ref() {
+            let pending_total = diag.pending_per_epoch.iter().sum::<usize>();
+            append_concept_row(
+                &mut out,
+                ConceptRow {
+                    timestamp: &timestamp,
+                    context,
+                    concept: "ebr",
+                    event: "alien_cs_ebr_evaluation",
+                    decision_path: "alien_cs::ebr::diagnostics",
+                    level: if diag.pinned_threads > 0 && pending_total > 0 {
+                        "warn"
+                    } else if diag.total_retired > 0 || diag.total_reclaimed > 0 {
+                        "info"
+                    } else {
+                        "trace"
+                    },
+                    outcome: if diag.pinned_threads > 0 && pending_total > 0 {
+                        "grace_period_delay"
+                    } else {
+                        "epoch_progress"
+                    },
+                    decision_id,
+                    latency_ns: self.captured_at_ns,
+                    details: format!(
+                        "\"global_epoch\":{},\"active_threads\":{},\"pinned_threads\":{},\"total_retired\":{},\"total_reclaimed\":{},\"pending_epoch0\":{},\"pending_epoch1\":{},\"pending_epoch2\":{},\"pending_total\":{},\"contention_metric\":{}",
+                        diag.global_epoch,
+                        diag.active_threads,
+                        diag.pinned_threads,
+                        diag.total_retired,
+                        diag.total_reclaimed,
+                        diag.pending_per_epoch[0],
+                        diag.pending_per_epoch[1],
+                        diag.pending_per_epoch[2],
+                        pending_total,
+                        breakdown.ebr_pinned_fraction,
+                    ),
+                },
+            );
+            decision_id += 1;
+        }
+
+        if let Some(diag) = self.flat_combining.as_ref() {
+            append_concept_row(
+                &mut out,
+                ConceptRow {
+                    timestamp: &timestamp,
+                    context,
+                    concept: "flat_combining",
+                    event: "alien_cs_flat_combining_evaluation",
+                    decision_path: "alien_cs::flat_combining::diagnostics",
+                    level: if diag.total_passes > 0
+                        && breakdown.flat_combining_efficiency_loss >= 0.75
+                    {
+                        "warn"
+                    } else if diag.total_passes > 0 {
+                        "debug"
+                    } else {
+                        "trace"
+                    },
+                    outcome: if diag.total_passes > 0
+                        && breakdown.flat_combining_efficiency_loss >= 0.75
+                    {
+                        "batch_efficiency_degraded"
+                    } else {
+                        "batching_observed"
+                    },
+                    decision_id,
+                    latency_ns: self.captured_at_ns,
+                    details: format!(
+                        "\"total_ops\":{},\"total_passes\":{},\"max_batch_size\":{},\"avg_batch_size\":{},\"active_slots\":{},\"total_slots\":{},\"ops_per_pass\":{},\"efficiency_loss\":{}",
+                        diag.total_ops,
+                        diag.total_passes,
+                        diag.max_batch_size,
+                        diag.avg_batch_size,
+                        diag.active_slots,
+                        diag.total_slots,
+                        breakdown.flat_combining_ops_per_pass,
+                        breakdown.flat_combining_efficiency_loss,
+                    ),
+                },
+            );
+            decision_id += 1;
+        }
+
+        if let Some(diag) = self.rcu.as_ref() {
+            append_concept_row(
+                &mut out,
+                ConceptRow {
+                    timestamp: &timestamp,
+                    context,
+                    concept: "rcu",
+                    event: "alien_cs_rcu_evaluation",
+                    decision_path: "alien_cs::rcu::diagnostics",
+                    level: if diag.reader_count > 0 {
+                        "debug"
+                    } else {
+                        "trace"
+                    },
+                    outcome: if diag.reader_count > 0 {
+                        "reader_activity"
+                    } else {
+                        "idle"
+                    },
+                    decision_id,
+                    latency_ns: self.captured_at_ns,
+                    details: format!(
+                        "\"epoch\":{},\"reader_count\":{}",
+                        diag.epoch, diag.reader_count,
+                    ),
+                },
+            );
+        }
+
+        out
+    }
+
+    /// Export the aggregate snapshot row followed by per-concept diagnostic rows.
+    #[must_use]
+    pub fn export_full_jsonl(&self, bead_id: &str, run_id: &str) -> String {
+        self.export_full_jsonl_with_context(&AlienCsLogContext::strict_defaults(bead_id, run_id))
+    }
+
+    /// Export the aggregate snapshot row followed by per-concept diagnostic rows.
+    #[must_use]
+    pub fn export_full_jsonl_with_context(&self, context: &AlienCsLogContext) -> String {
+        let mut out = self.export_jsonl_with_context(context);
+        out.push_str(&self.export_diagnostics_jsonl_with_context(context));
+        out
+    }
+}
+
+fn aggregate_level(contention_score: f64) -> &'static str {
+    if contention_score >= 0.75 {
+        "warn"
+    } else {
+        "info"
+    }
+}
+
+struct ConceptRow<'a> {
+    timestamp: &'a str,
+    context: &'a AlienCsLogContext,
+    concept: &'static str,
+    event: &'static str,
+    decision_path: &'static str,
+    level: &'static str,
+    outcome: &'static str,
+    decision_id: u64,
+    latency_ns: u64,
+    details: String,
+}
+
+fn append_concept_row(out: &mut String, row: ConceptRow<'_>) {
+    let trace_id =
+        alien_cs_scope_trace_id(row.decision_path, &row.context.bead_id, &row.context.run_id);
+    let _ = writeln!(
+        out,
+        "{{\"timestamp\":\"{}\",\"trace_id\":\"{}\",\"bead_id\":\"{}\",\"scenario_id\":\"{}\",\"decision_id\":{},\"schema_version\":\"{}\",\"level\":\"{}\",\"event\":\"{}\",\"controller_id\":\"alien_cs_metrics.v1\",\"mode\":\"{}\",\"api_family\":\"alien_cs\",\"symbol\":\"{}::{}\",\"decision_path\":\"{}\",\"decision_action\":\"observe\",\"outcome\":\"{}\",\"healing_action\":null,\"errno\":0,\"latency_ns\":{},\"concept\":\"{}\",\"artifact_refs\":[\"crates/frankenlibc-membrane/src/alien_cs_metrics.rs\"],{}}}",
+        row.timestamp,
+        trace_id.as_str(),
+        row.context.bead_id,
+        row.context.run_id,
+        row.decision_id,
+        MEMBRANE_SCHEMA_VERSION,
+        row.level,
+        row.event,
+        row.context.mode,
+        row.context.symbol,
+        row.concept,
+        row.decision_path,
+        row.outcome,
+        row.latency_ns,
+        row.concept,
+        row.details,
+    );
 }
 
 fn alien_cs_scope_trace_id(scope: &'static str, bead_id: &str, run_id: &str) -> TraceId {
@@ -953,6 +1185,120 @@ mod tests {
         assert_eq!(parsed["scenario_id"], "rcu_smoke");
         assert_eq!(parsed["mode"], "hard_mode");
         assert_eq!(parsed["symbol"], "alien_cs::snapshot");
+    }
+
+    #[test]
+    fn snapshot_export_diagnostics_jsonl_contains_per_concept_rows() {
+        let snapshot = AlienCsSnapshot {
+            captured_at_ns: 42,
+            seqlock: Some(SeqLockDiagnostics {
+                reads: 8,
+                cache_hits: 6,
+                cache_misses: 2,
+                writes: 2,
+                contention_events: 1,
+                pending_writers: 1,
+                hit_ratio: 0.75,
+            }),
+            ebr: Some(EbrDiagnostics {
+                global_epoch: 7,
+                active_threads: 3,
+                pinned_threads: 1,
+                total_retired: 9,
+                total_reclaimed: 4,
+                pending_per_epoch: [1, 0, 2],
+            }),
+            flat_combining: Some(FlatCombinerDiagnostics {
+                total_ops: 6,
+                total_passes: 3,
+                max_batch_size: 4,
+                avg_batch_size: 2.0,
+                active_slots: 2,
+                total_slots: 8,
+            }),
+            rcu: Some(RcuMetrics {
+                epoch: 11,
+                reader_count: 2,
+            }),
+            contention_score: 0.8,
+        };
+        let context = AlienCsLogContext::new("bd 1sp.11", "robot smoke", "hard mode", "alien cs");
+
+        let jsonl = snapshot.export_diagnostics_jsonl_with_context(&context);
+        let rows: Vec<serde_json::Value> = jsonl
+            .lines()
+            .map(|line| serde_json::from_str(line).expect("diagnostic export should parse"))
+            .collect();
+
+        assert_eq!(rows.len(), 4, "expected one row per populated concept");
+        for (index, row) in rows.iter().enumerate() {
+            for field in [
+                "timestamp",
+                "trace_id",
+                "bead_id",
+                "scenario_id",
+                "decision_id",
+                "schema_version",
+                "level",
+                "event",
+                "controller_id",
+                "mode",
+                "api_family",
+                "symbol",
+                "decision_path",
+                "decision_action",
+                "outcome",
+                "latency_ns",
+                "concept",
+                "artifact_refs",
+            ] {
+                assert!(row.get(field).is_some(), "missing {field}: {row}");
+            }
+            assert_eq!(row["decision_id"], (index + 1) as u64);
+            assert_eq!(row["api_family"], "alien_cs");
+            assert_eq!(row["bead_id"], "bd_1sp.11");
+            assert_eq!(row["scenario_id"], "robot_smoke");
+            assert_eq!(row["mode"], "hard_mode");
+        }
+
+        assert_eq!(rows[0]["event"], "alien_cs_seqlock_evaluation");
+        assert_eq!(rows[0]["level"], "warn");
+        assert_eq!(rows[1]["event"], "alien_cs_ebr_evaluation");
+        assert_eq!(rows[1]["outcome"], "grace_period_delay");
+        assert_eq!(rows[2]["event"], "alien_cs_flat_combining_evaluation");
+        assert_eq!(rows[3]["event"], "alien_cs_rcu_evaluation");
+    }
+
+    #[test]
+    fn snapshot_export_full_jsonl_stacks_aggregate_and_diagnostics() {
+        let snapshot = AlienCsSnapshot {
+            captured_at_ns: 5,
+            seqlock: Some(SeqLockDiagnostics {
+                reads: 1,
+                cache_hits: 1,
+                cache_misses: 0,
+                writes: 0,
+                contention_events: 0,
+                pending_writers: 0,
+                hit_ratio: 1.0,
+            }),
+            ebr: None,
+            flat_combining: None,
+            rcu: None,
+            contention_score: 0.0,
+        };
+
+        let jsonl = snapshot.export_full_jsonl("bd-1sp.11", "smoke");
+        let rows: Vec<serde_json::Value> = jsonl
+            .lines()
+            .map(|line| serde_json::from_str(line).expect("full export should parse"))
+            .collect();
+
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0]["event"], "alien_cs_snapshot");
+        assert_eq!(rows[0]["decision_id"], 0);
+        assert_eq!(rows[1]["event"], "alien_cs_seqlock_evaluation");
+        assert_eq!(rows[1]["decision_id"], 1);
     }
 
     // ═══════════════════════════════════════════════════════════════
