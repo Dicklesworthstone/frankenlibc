@@ -10942,33 +10942,154 @@ pub unsafe extern "C" fn gethostbyname2(name: *const c_char, af: c_int) -> *mut 
     })
 }
 
-/// `setservent` — rewind /etc/services enumeration.
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn setservent(stayopen: c_int) {
-    // Use ELF resolver to avoid link_name recursion under LD_PRELOAD.
-    type F = unsafe extern "C" fn(c_int);
-    if let Some(a) = crate::host_resolve::resolve_host_symbol_raw("setservent") {
-        unsafe { core::mem::transmute::<usize, F>(a)(stayopen) };
+// ---------------------------------------------------------------------------
+// /etc/services iteration — native
+// ---------------------------------------------------------------------------
+
+const SERVICES_PATH: &str = "/etc/services";
+
+struct ServIterState {
+    reader: Option<std::io::BufReader<std::fs::File>>,
+    line_buf: Vec<u8>,
+    /// Thread-local servent struct + string data for non-reentrant getservent.
+    /// struct servent is 32 bytes on x86_64; rest is string data.
+    entry_buf: [u8; 1024],
+    aliases_ptrs: [*mut c_char; 8], // NULL-terminated alias pointer list
+}
+
+impl ServIterState {
+    const fn new() -> Self {
+        Self {
+            reader: None,
+            line_buf: Vec::new(),
+            entry_buf: [0u8; 1024],
+            aliases_ptrs: [std::ptr::null_mut(); 8],
+        }
     }
 }
 
-/// `endservent` — close /etc/services enumeration.
+std::thread_local! {
+    static SERV_ITER: std::cell::UnsafeCell<ServIterState> =
+        const { std::cell::UnsafeCell::new(ServIterState::new()) };
+}
+
+/// Parse the next service entry into the entry_buf.
+///
+/// struct servent layout (x86_64, 32 bytes):
+///   s_name:    *mut c_char    (offset 0)
+///   s_aliases: *mut *mut c_char (offset 8)
+///   s_port:    c_int          (offset 16, network byte order)
+///   [pad 4]
+///   s_proto:   *mut c_char    (offset 24)
+unsafe fn serv_iter_next(state: &mut ServIterState) -> *mut c_void {
+    use std::io::BufRead;
+
+    let reader = match state.reader.as_mut() {
+        Some(r) => r,
+        None => return std::ptr::null_mut(),
+    };
+
+    loop {
+        state.line_buf.clear();
+        match reader.read_until(b'\n', &mut state.line_buf) {
+            Ok(0) => return std::ptr::null_mut(),
+            Err(_) => return std::ptr::null_mut(),
+            Ok(_) => {}
+        }
+
+        let entry = match frankenlibc_core::resolv::parse_services_line(&state.line_buf) {
+            Some(e) => e,
+            None => continue,
+        };
+
+        // Pack into entry_buf: struct servent (32 bytes) + strings
+        let str_offset = 32usize;
+        let needed = str_offset
+            + entry.name.len() + 1
+            + entry.protocol.len() + 1;
+        if needed > state.entry_buf.len() {
+            continue;
+        }
+
+        let buf = state.entry_buf.as_mut_ptr();
+        let mut off = str_offset;
+
+        // Name
+        let name_ptr = unsafe { buf.add(off) } as *mut c_char;
+        unsafe {
+            std::ptr::copy_nonoverlapping(entry.name.as_ptr(), buf.add(off), entry.name.len());
+            *buf.add(off + entry.name.len()) = 0;
+        }
+        off += entry.name.len() + 1;
+
+        // Protocol
+        let proto_ptr = unsafe { buf.add(off) } as *mut c_char;
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                entry.protocol.as_ptr(),
+                buf.add(off),
+                entry.protocol.len(),
+            );
+            *buf.add(off + entry.protocol.len()) = 0;
+        }
+
+        // Aliases: NULL-terminated
+        state.aliases_ptrs[0] = std::ptr::null_mut();
+
+        // Fill struct servent
+        let ptrs = buf as *mut *mut c_char;
+        unsafe {
+            *ptrs = name_ptr;                                                  // s_name
+            *(ptrs.add(1) as *mut *mut *mut c_char) =
+                state.aliases_ptrs.as_mut_ptr();                               // s_aliases
+            *(buf.add(16) as *mut c_int) = (entry.port as c_int).to_be();      // s_port (NBO)
+            *(buf.add(24) as *mut *mut c_char) = proto_ptr;                    // s_proto
+        }
+
+        return buf as *mut c_void;
+    }
+}
+
+/// `setservent` — open /etc/services for iteration.
+///
+/// Native implementation.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn setservent(_stayopen: c_int) {
+    SERV_ITER.with(|cell| {
+        let state = unsafe { &mut *cell.get() };
+        match std::fs::File::open(SERVICES_PATH) {
+            Ok(f) => state.reader = Some(std::io::BufReader::new(f)),
+            Err(_) => state.reader = None,
+        }
+    });
+}
+
+/// `endservent` — close /etc/services iteration.
+///
+/// Native implementation.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn endservent() {
-    type F = unsafe extern "C" fn();
-    if let Some(a) = crate::host_resolve::resolve_host_symbol_raw("endservent") {
-        unsafe { core::mem::transmute::<usize, F>(a)() };
-    }
+    SERV_ITER.with(|cell| {
+        let state = unsafe { &mut *cell.get() };
+        state.reader = None;
+    });
 }
 
 /// `getservent` — get next /etc/services entry.
+///
+/// Native implementation using thread-local iterator state.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getservent() -> *mut c_void {
-    type F = unsafe extern "C" fn() -> *mut c_void;
-    if let Some(a) = crate::host_resolve::resolve_host_symbol_raw("getservent") {
-        return unsafe { core::mem::transmute::<usize, F>(a)() };
-    }
-    std::ptr::null_mut()
+    SERV_ITER.with(|cell| {
+        let state = unsafe { &mut *cell.get() };
+        if state.reader.is_none() {
+            match std::fs::File::open(SERVICES_PATH) {
+                Ok(f) => state.reader = Some(std::io::BufReader::new(f)),
+                Err(_) => return std::ptr::null_mut(),
+            }
+        }
+        unsafe { serv_iter_next(state) }
+    })
 }
 
 /// `setnetent` — rewind /etc/networks enumeration.
@@ -15969,6 +16090,10 @@ pub unsafe extern "C" fn getprotoent_r(
     })
 }
 
+/// `getservent_r` — reentrant sequential service entry read.
+///
+/// Native implementation using thread-local file iterator and
+/// `frankenlibc_core::resolv::parse_services_line`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getservent_r(
     result_buf: *mut c_void,
@@ -15976,14 +16101,95 @@ pub unsafe extern "C" fn getservent_r(
     buflen: usize,
     result: *mut *mut c_void,
 ) -> c_int {
+    use std::io::BufRead;
+
     if !result.is_null() {
         unsafe { *result = std::ptr::null_mut() };
     }
-    type F = unsafe extern "C" fn(*mut c_void, *mut c_char, usize, *mut *mut c_void) -> c_int;
-    if let Some(a) = crate::host_resolve::resolve_host_symbol_raw("getservent_r") {
-        return unsafe { core::mem::transmute::<usize, F>(a)(result_buf, buf, buflen, result) };
+    if result_buf.is_null() || buf.is_null() {
+        return libc::EINVAL;
     }
-    libc::ENOENT
+
+    SERV_ITER.with(|cell| {
+        let state = unsafe { &mut *cell.get() };
+        if state.reader.is_none() {
+            match std::fs::File::open(SERVICES_PATH) {
+                Ok(f) => state.reader = Some(std::io::BufReader::new(f)),
+                Err(_) => return libc::ENOENT,
+            }
+        }
+        let reader = state.reader.as_mut().unwrap();
+
+        loop {
+            state.line_buf.clear();
+            match reader.read_until(b'\n', &mut state.line_buf) {
+                Ok(0) => return libc::ENOENT,
+                Err(_) => return libc::ENOENT,
+                Ok(_) => {}
+            }
+
+            let entry = match frankenlibc_core::resolv::parse_services_line(&state.line_buf) {
+                Some(e) => e,
+                None => continue,
+            };
+
+            // Pack into caller-supplied buffer: struct servent is 32 bytes
+            let needed = entry.name.len() + 1 + entry.protocol.len() + 1
+                + core::mem::size_of::<*mut c_char>(); // NULL alias ptr
+            if needed > buflen {
+                return libc::ERANGE;
+            }
+
+            let buf_u8 = buf as *mut u8;
+            let mut off = 0usize;
+
+            let name_ptr = unsafe { buf_u8.add(off) } as *mut c_char;
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    entry.name.as_ptr(),
+                    buf_u8.add(off),
+                    entry.name.len(),
+                );
+                *buf_u8.add(off + entry.name.len()) = 0;
+            }
+            off += entry.name.len() + 1;
+
+            let proto_ptr = unsafe { buf_u8.add(off) } as *mut c_char;
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    entry.protocol.as_ptr(),
+                    buf_u8.add(off),
+                    entry.protocol.len(),
+                );
+                *buf_u8.add(off + entry.protocol.len()) = 0;
+            }
+            off += entry.protocol.len() + 1;
+
+            // Align alias pointer
+            let alias_ptr_size = core::mem::size_of::<*mut c_char>();
+            off = (off + (alias_ptr_size - 1)) & !(alias_ptr_size - 1);
+            if off + alias_ptr_size > buflen {
+                return libc::ERANGE;
+            }
+            let aliases_ptr = unsafe { buf_u8.add(off) } as *mut *mut c_char;
+            unsafe { *aliases_ptr = std::ptr::null_mut() };
+
+            // Fill struct servent in result_buf
+            let ent = result_buf as *mut *mut c_char;
+            unsafe {
+                *ent = name_ptr;                                                // s_name
+                *(ent.add(1) as *mut *mut *mut c_char) = aliases_ptr;           // s_aliases
+                *((result_buf as *mut u8).add(16) as *mut c_int) =
+                    (entry.port as c_int).to_be();                              // s_port (NBO)
+                *((result_buf as *mut u8).add(24) as *mut *mut c_char) = proto_ptr; // s_proto
+            }
+
+            if !result.is_null() {
+                unsafe { *result = result_buf };
+            }
+            return 0;
+        }
+    })
 }
 
 // ===========================================================================
