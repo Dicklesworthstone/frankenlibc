@@ -566,6 +566,19 @@ pub(crate) const fn stdin_stream_id() -> usize {
     STDIN_SENTINEL
 }
 
+#[inline]
+fn active_stdout_stream() -> *mut c_void {
+    // SAFETY: reading the exported `stdout` global is required to keep
+    // output helpers coherent with later `fflush(stdout)` and redirection.
+    unsafe {
+        if stdout.is_null() {
+            STDOUT_SENTINEL as *mut c_void
+        } else {
+            stdout
+        }
+    }
+}
+
 /// Resolve host libc's stdin/stdout/stderr FILE* pointers and update our globals.
 /// Called from startup after host symbols are resolved.
 pub(crate) fn init_host_stdio_streams() {
@@ -2015,7 +2028,7 @@ pub unsafe extern "C" fn setbuf(stream: *mut c_void, buf: *mut c_char) {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn putchar(c: c_int) -> c_int {
     // POSIX: putchar(c) is equivalent to fputc(c, stdout).
-    unsafe { fputc(c, STDOUT_SENTINEL as *mut c_void) }
+    unsafe { fputc(c, active_stdout_stream()) }
 }
 
 /// POSIX `puts`.
@@ -2042,7 +2055,7 @@ pub unsafe extern "C" fn puts(s: *const c_char) -> c_int {
 
     // POSIX: puts writes s followed by a newline to stdout.
     // Use the buffered stream to maintain coherence with fprintf(stdout, ...).
-    let stdout_ptr = STDOUT_SENTINEL as *mut c_void;
+    let stdout_ptr = active_stdout_stream();
     let rc_body = unsafe { fputs(s, stdout_ptr) };
     if rc_body == libc::EOF {
         runtime_policy::observe(
@@ -2627,7 +2640,7 @@ pub unsafe extern "C" fn printf(format: *const c_char, mut args: ...) -> c_int {
 
     // POSIX: printf(...) is equivalent to fprintf(stdout, ...).
     // Route through the stdout stream to maintain buffer coherence.
-    let stdout_ptr = STDOUT_SENTINEL as *mut c_void;
+    let stdout_ptr = active_stdout_stream();
     let id = stdout_ptr as usize;
 
     let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, id, 0, false, false, 0);
@@ -2678,6 +2691,22 @@ pub unsafe extern "C" fn printf(format: *const c_char, mut args: ...) -> c_int {
             }
         }
     } else {
+        drop(reg);
+        if let Some(host_fwrite) = unsafe { host_fwrite_fn() } {
+            let written =
+                unsafe { host_fwrite(rendered.as_ptr().cast(), 1, rendered.len(), stdout_ptr) };
+            runtime_policy::observe(
+                ApiFamily::Stdio,
+                decision.profile,
+                runtime_policy::scaled_cost(15, total_len),
+                written < rendered.len(),
+            );
+            return if written == rendered.len() {
+                total_len as c_int
+            } else {
+                -1
+            };
+        }
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
         return -1;
     }
@@ -3094,7 +3123,7 @@ pub unsafe extern "C" fn vprintf(format: *const c_char, ap: *mut c_void) -> c_in
         return -1;
     }
 
-    let stdout_ptr = STDOUT_SENTINEL as *mut c_void;
+    let stdout_ptr = active_stdout_stream();
     let id = stdout_ptr as usize;
     let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, id, 0, false, false, 0);
     if matches!(decision.action, MembraneAction::Deny) {
@@ -3144,6 +3173,22 @@ pub unsafe extern "C" fn vprintf(format: *const c_char, ap: *mut c_void) -> c_in
             }
         }
     } else {
+        drop(reg);
+        if let Some(host_fwrite) = unsafe { host_fwrite_fn() } {
+            let written =
+                unsafe { host_fwrite(rendered.as_ptr().cast(), 1, rendered.len(), stdout_ptr) };
+            runtime_policy::observe(
+                ApiFamily::Stdio,
+                decision.profile,
+                runtime_policy::scaled_cost(15, total_len),
+                written < rendered.len(),
+            );
+            return if written == rendered.len() {
+                total_len as c_int
+            } else {
+                -1
+            };
+        }
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
         return -1;
     }

@@ -1,3 +1,4 @@
+#[allow(dead_code)]
 #[path = "../examples/killer_demo.rs"]
 mod killer_demo;
 

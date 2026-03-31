@@ -63,6 +63,14 @@ static int call_vdprintf(int fd, const char *fmt, ...) {
     return rc;
 }
 
+static int call_vasprintf(char **out, const char *fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    int rc = vasprintf(out, fmt, ap);
+    va_end(ap);
+    return rc;
+}
+
 static int test_snprintf_contracts(void) {
     char buf[5] = {0};
     int rc = snprintf(buf, sizeof(buf), "abcdef");
@@ -331,6 +339,27 @@ static int test_asprintf_contracts(void) {
     return 0;
 }
 
+static int test_vasprintf_contracts(void) {
+    char *out = NULL;
+    int rc = call_vasprintf(&out, "vasprintf-%u:%s", 66u, "ok");
+    if (rc != 15) {
+        fprintf(stderr, "FAIL: vasprintf length expected 15 got %d\n", rc);
+        free(out);
+        return 1;
+    }
+    if (out == NULL) {
+        fprintf(stderr, "FAIL: vasprintf returned NULL output pointer\n");
+        return 1;
+    }
+    if (strcmp(out, "vasprintf-66:ok") != 0) {
+        fprintf(stderr, "FAIL: vasprintf output mismatch got '%s'\n", out);
+        free(out);
+        return 1;
+    }
+    free(out);
+    return 0;
+}
+
 int main(void) {
     int fails = 0;
     fails += test_snprintf_contracts();
@@ -342,11 +371,12 @@ int main(void) {
     fails += test_dprintf_contracts();
     fails += test_vdprintf_contracts();
     fails += test_asprintf_contracts();
+    fails += test_vasprintf_contracts();
 
     if (fails) {
         fprintf(stderr, "fixture_stdio_printf: %d FAILED\n", fails);
         return 1;
     }
-    printf("fixture_stdio_printf: PASS (9 tests)\n");
+    printf("fixture_stdio_printf: PASS (10 tests)\n");
     return 0;
 }

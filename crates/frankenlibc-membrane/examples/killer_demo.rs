@@ -26,6 +26,7 @@ use std::env;
 use std::error::Error;
 use std::fmt::Write as _;
 use std::fs;
+use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
@@ -36,34 +37,34 @@ const PERF_ITERS: u32 = 512;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct DemoScenario {
-    mode: String,
-    label: String,
-    decision_path: String,
-    detected: bool,
-    repaired: bool,
-    continued: bool,
-    errno: i32,
-    latency_ns: u64,
-    overhead_ns: u64,
-    baseline_ns: u64,
-    reused_same_addr: bool,
-    corruption_observed: bool,
-    healing_action: Option<String>,
-    summary: String,
-    artifact_refs: Vec<String>,
+    pub mode: String,
+    pub label: String,
+    pub decision_path: String,
+    pub detected: bool,
+    pub repaired: bool,
+    pub continued: bool,
+    pub errno: i32,
+    pub latency_ns: u64,
+    pub overhead_ns: u64,
+    pub baseline_ns: u64,
+    pub reused_same_addr: bool,
+    pub corruption_observed: bool,
+    pub healing_action: Option<String>,
+    pub summary: String,
+    pub artifact_refs: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct DemoReport {
-    schema_version: &'static str,
-    bead_id: &'static str,
-    run_id: String,
-    output_dir: String,
-    trace_log: String,
-    artifact_index: String,
-    asupersync_suite: String,
-    summary_ftui: String,
-    scenarios: Vec<DemoScenario>,
+    pub schema_version: &'static str,
+    pub bead_id: &'static str,
+    pub run_id: String,
+    pub output_dir: String,
+    pub trace_log: String,
+    pub artifact_index: String,
+    pub asupersync_suite: String,
+    pub summary_ftui: String,
+    pub scenarios: Vec<DemoScenario>,
 }
 
 #[derive(Debug, Clone)]
@@ -307,7 +308,7 @@ fn run_membrane_mode(run_id: &str, mode: SafetyLevel) -> ScenarioArtifacts {
     logger.phase("execute");
 
     let started = Instant::now();
-    let artifact = with_test_logger(&logger, || {
+    with_test_logger(&logger, || {
         let pipeline = ValidationPipeline::new();
         pipeline.set_validation_logging_enabled(true);
         pipeline.clear_validation_logs();
@@ -523,9 +524,7 @@ fn run_membrane_mode(run_id: &str, mode: SafetyLevel) -> ScenarioArtifacts {
             scenario_log_lines: log_lines,
             suite_item,
         }
-    });
-
-    artifact
+    })
 }
 
 fn measure_glibc_baseline_ns() -> u64 {
@@ -612,7 +611,7 @@ fn render_summary_ftui(scenarios: &[DemoScenario], ansi: bool) -> String {
             Constraint::Fixed(10),
             Constraint::Fixed(8),
             Constraint::Fixed(14),
-            Constraint::Fill(1),
+            Constraint::Fill,
         ],
     )
     .header(header)

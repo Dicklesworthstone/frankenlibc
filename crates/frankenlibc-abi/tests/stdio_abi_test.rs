@@ -110,6 +110,7 @@ use frankenlibc_abi::stdio_abi::{
     tmpfile64,
     tmpnam,
     ungetc,
+    vasprintf,
 };
 
 const IOFBF: i32 = 0;
@@ -150,6 +151,14 @@ unsafe extern "C" fn call_io_vsprintf(
     mut args: ...
 ) -> c_int {
     unsafe { _IO_vsprintf(buf, format, std::ptr::addr_of_mut!(args).cast::<c_void>()) }
+}
+
+unsafe extern "C" fn call_vasprintf(
+    out: *mut *mut c_char,
+    format: *const c_char,
+    mut args: ...
+) -> c_int {
+    unsafe { vasprintf(out, format, std::ptr::addr_of_mut!(args).cast::<c_void>()) }
 }
 
 fn path_cstring(path: &Path) -> CString {
@@ -915,6 +924,45 @@ fn asprintf_rejects_null_arguments() {
     assert_eq!(unsafe { asprintf(std::ptr::null_mut(), c"x".as_ptr()) }, -1);
     // SAFETY: null format pointer is rejected by contract.
     assert_eq!(unsafe { asprintf(&mut out, std::ptr::null()) }, -1);
+}
+
+#[test]
+fn vasprintf_allocates_and_formats_output() {
+    let mut out: *mut c_char = std::ptr::null_mut();
+    // SAFETY: out-pointer and format are valid; variadic args match specifiers.
+    let written = unsafe {
+        call_vasprintf(
+            &mut out,
+            c"vasprintf-%u:%s".as_ptr(),
+            66_u32,
+            c"ok".as_ptr(),
+        )
+    };
+    assert_eq!(written, 15);
+    assert!(!out.is_null());
+
+    // SAFETY: vasprintf returns a NUL-terminated allocated string on success.
+    let rendered = unsafe { CStr::from_ptr(out) };
+    assert_eq!(rendered.to_bytes(), b"vasprintf-66:ok");
+
+    // SAFETY: `vasprintf` in this crate allocates via frankenlibc's allocator,
+    // so release with the matching frankenlibc free entrypoint.
+    unsafe { frankenlibc_abi::malloc_abi::free(out.cast()) };
+}
+
+#[test]
+fn vasprintf_rejects_null_arguments() {
+    let mut out: *mut c_char = std::ptr::null_mut();
+    // SAFETY: null out-pointer is rejected by contract.
+    assert_eq!(
+        unsafe { vasprintf(std::ptr::null_mut(), c"x".as_ptr(), std::ptr::null_mut()) },
+        -1
+    );
+    // SAFETY: null format pointer is rejected by contract.
+    assert_eq!(
+        unsafe { vasprintf(&mut out, std::ptr::null(), std::ptr::null_mut()) },
+        -1
+    );
 }
 
 #[test]
