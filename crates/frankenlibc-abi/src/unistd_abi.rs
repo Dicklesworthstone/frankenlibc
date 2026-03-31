@@ -15562,24 +15562,40 @@ pub unsafe extern "C" fn pututline(ut: *const c_void) -> *mut c_void {
     unsafe { pututxline(ut as *const libc::utmpx) as *mut c_void }
 }
 
-/// `updwtmp` — append to wtmp file.
+/// `updwtmp` — append a utmp record to the specified wtmp file.
+///
+/// Native implementation: opens the file, seeks to end, writes the 384-byte
+/// utmp record, and closes. On Linux, utmp and utmpx are the same struct.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn updwtmp(file: *const c_char, ut: *const c_void) {
-    type UpdwtmpFn = unsafe extern "C" fn(*const c_char, *const c_void);
-    if let Some(addr) = crate::host_resolve::resolve_host_symbol_raw("updwtmp") {
-        let host_fn: UpdwtmpFn = unsafe { core::mem::transmute(addr) };
-        unsafe { host_fn(file, ut) };
+    if file.is_null() || ut.is_null() {
+        return;
     }
+    // Open file for appending (O_WRONLY | O_APPEND)
+    let fd = unsafe {
+        libc::syscall(
+            libc::SYS_openat,
+            libc::AT_FDCWD,
+            file,
+            libc::O_WRONLY | libc::O_APPEND | libc::O_CLOEXEC,
+            0o644,
+        )
+    };
+    if fd < 0 {
+        return;
+    }
+    // Write the 384-byte utmp struct
+    let _ = unsafe { libc::syscall(libc::SYS_write, fd, ut, 384usize) };
+    unsafe { libc::syscall(libc::SYS_close, fd) };
 }
 
-/// `updwtmpx` — append to wtmpx file.
+/// `updwtmpx` — append a utmpx record to the specified wtmpx file.
+///
+/// Native implementation. On Linux, utmpx and utmp are identical (384 bytes).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn updwtmpx(file: *const c_char, utx: *const c_void) {
-    type UpdwtmpxFn = unsafe extern "C" fn(*const c_char, *const c_void);
-    if let Some(addr) = crate::host_resolve::resolve_host_symbol_raw("updwtmpx") {
-        let host_fn: UpdwtmpxFn = unsafe { core::mem::transmute(addr) };
-        unsafe { host_fn(file, utx) };
-    }
+    // On Linux, utmpx == utmp; delegate to updwtmp.
+    unsafe { updwtmp(file, utx) };
 }
 
 /// `getutmp` — convert utmpx to utmp.
@@ -17178,31 +17194,122 @@ pub unsafe extern "C" fn strfmon_l(
 // login/logout/logwtmp
 // ===========================================================================
 
+/// `login` — write a utmp entry for a login session.
+///
+/// Native implementation: writes the utmp entry via pututxline and appends
+/// to /var/log/wtmp via updwtmp.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn login(ut: *const c_void) {
-    type F = unsafe extern "C" fn(*const c_void);
-    if let Some(a) = crate::host_resolve::resolve_host_symbol_raw("login") {
-        unsafe { core::mem::transmute::<usize, F>(a)(ut) };
+    if ut.is_null() {
+        return;
     }
+    // Write to utmp database
+    unsafe { pututxline(ut as *const libc::utmpx) };
+    // Append to wtmp
+    unsafe { updwtmp(c"/var/log/wtmp".as_ptr(), ut) };
 }
 
+/// `logout` — mark a login session as terminated in utmp.
+///
+/// Native implementation: finds the utmp entry for the given tty line,
+/// marks it as DEAD_PROCESS, zeroes the user/host, and writes it back.
+/// Returns 1 on success, 0 if the entry was not found.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn logout(line: *const c_char) -> c_int {
-    type F = unsafe extern "C" fn(*const c_char) -> c_int;
-    if let Some(a) = crate::host_resolve::resolve_host_symbol_raw("logout") {
-        let rc = unsafe { core::mem::transmute::<usize, F>(a)(line) };
-        unsafe { set_abi_errno(last_host_errno(libc::ENOENT)) };
-        return rc;
+    if line.is_null() {
+        return 0;
     }
-    0
+    // Rewind utmp
+    unsafe { setutxent() };
+    // Scan for matching entry
+    let mut search: libc::utmpx = unsafe { std::mem::zeroed() };
+    search.ut_type = 7; // USER_PROCESS
+    // Copy line into ut_line (max 32 bytes on Linux)
+    let line_cstr = unsafe { std::ffi::CStr::from_ptr(line) };
+    let line_bytes = line_cstr.to_bytes();
+    let copy_len = line_bytes.len().min(31);
+    for (i, &b) in line_bytes[..copy_len].iter().enumerate() {
+        search.ut_line[i] = b as c_char;
+    }
+
+    let found = unsafe { getutxline(&search as *const libc::utmpx) };
+    if found.is_null() {
+        unsafe { endutxent() };
+        unsafe { set_abi_errno(libc::ENOENT) };
+        return 0;
+    }
+
+    // Modify: mark as DEAD_PROCESS, zero user and host
+    let entry = unsafe { &mut *found };
+    entry.ut_type = 8; // DEAD_PROCESS
+    entry.ut_user = [0; 32];
+    entry.ut_host = [0; 256];
+    // Update timestamp
+    let mut ts = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    unsafe {
+        libc::syscall(libc::SYS_clock_gettime, libc::CLOCK_REALTIME, &mut ts);
+    }
+    entry.ut_tv.tv_sec = ts.tv_sec as i32;
+    entry.ut_tv.tv_usec = (ts.tv_nsec / 1000) as i32;
+
+    // Write back
+    unsafe { pututxline(entry as *const libc::utmpx) };
+    // Append to wtmp
+    unsafe { updwtmp(c"/var/log/wtmp".as_ptr(), entry as *const libc::utmpx as *const c_void) };
+    unsafe { endutxent() };
+    1
 }
 
+/// `logwtmp` — write a simple wtmp record.
+///
+/// Native implementation: constructs a utmpx record from line/name/host
+/// and appends it to /var/log/wtmp.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn logwtmp(line: *const c_char, name: *const c_char, host: *const c_char) {
-    type F = unsafe extern "C" fn(*const c_char, *const c_char, *const c_char);
-    if let Some(a) = crate::host_resolve::resolve_host_symbol_raw("logwtmp") {
-        unsafe { core::mem::transmute::<usize, F>(a)(line, name, host) };
+    let mut entry: libc::utmpx = unsafe { std::mem::zeroed() };
+
+    // If name is non-empty, this is a login (USER_PROCESS), else logout (DEAD_PROCESS)
+    let has_name = !name.is_null() && unsafe { *name != 0 };
+    entry.ut_type = if has_name { 7 } else { 8 }; // USER_PROCESS or DEAD_PROCESS
+    entry.ut_pid = unsafe { libc::syscall(libc::SYS_getpid) } as i32;
+
+    // Copy line
+    if !line.is_null() {
+        let s = unsafe { std::ffi::CStr::from_ptr(line) }.to_bytes();
+        let n = s.len().min(31);
+        for (i, &b) in s[..n].iter().enumerate() {
+            entry.ut_line[i] = b as c_char;
+        }
     }
+    // Copy name
+    if !name.is_null() {
+        let s = unsafe { std::ffi::CStr::from_ptr(name) }.to_bytes();
+        let n = s.len().min(31);
+        for (i, &b) in s[..n].iter().enumerate() {
+            entry.ut_user[i] = b as c_char;
+        }
+    }
+    // Copy host
+    if !host.is_null() {
+        let s = unsafe { std::ffi::CStr::from_ptr(host) }.to_bytes();
+        let n = s.len().min(255);
+        for (i, &b) in s[..n].iter().enumerate() {
+            entry.ut_host[i] = b as c_char;
+        }
+    }
+    // Timestamp
+    let mut ts = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    unsafe { libc::syscall(libc::SYS_clock_gettime, libc::CLOCK_REALTIME, &mut ts) };
+    entry.ut_tv.tv_sec = ts.tv_sec as i32;
+    entry.ut_tv.tv_usec = (ts.tv_nsec / 1000) as i32;
+
+    unsafe { updwtmp(c"/var/log/wtmp".as_ptr(), &entry as *const libc::utmpx as *const c_void) };
 }
 
 // ===========================================================================
