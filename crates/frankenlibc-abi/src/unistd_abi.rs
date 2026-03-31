@@ -7107,9 +7107,9 @@ unsafe fn parse_ether_addr(asc: *const c_char, out: *mut EtherAddrBytes) -> bool
     // SAFETY: `asc` is validated non-null above and expected to be NUL-terminated by caller.
     let bytes = unsafe { CStr::from_ptr(asc) }.to_bytes();
     let mut index = 0usize;
-    let mut octets = [0_u8; 6];
+    let mut octet = [0_u8; 6];
 
-    for (slot, octet) in octets.iter_mut().enumerate() {
+    for (slot, octet) in octet.iter_mut().enumerate() {
         if index >= bytes.len() {
             return false;
         }
@@ -7142,7 +7142,7 @@ unsafe fn parse_ether_addr(asc: *const c_char, out: *mut EtherAddrBytes) -> bool
 
     // SAFETY: `out` is non-null and points to writable storage provided by caller.
     unsafe {
-        (*out).octet = octets;
+        (*out).octet = octet;
     }
     true
 }
@@ -7155,12 +7155,12 @@ unsafe fn format_ether_addr(addr: *const EtherAddrBytes, buf: *mut c_char) -> *m
     const HEX: &[u8; 16] = b"0123456789abcdef";
 
     // SAFETY: `addr` is non-null and points to a 6-octet address layout.
-    let octets = unsafe { (*addr).octet };
+    let octet = unsafe { (*addr).octet };
     // SAFETY: caller guarantees `buf` has room for 18 bytes (`xx:..:xx\0`).
     let out = unsafe { std::slice::from_raw_parts_mut(buf.cast::<u8>(), 18) };
     let mut pos = 0usize;
 
-    for (slot, value) in octets.iter().enumerate() {
+    for (slot, value) in octet.iter().enumerate() {
         out[pos] = HEX[(value >> 4) as usize];
         pos += 1;
         out[pos] = HEX[(value & 0x0f) as usize];
@@ -7828,75 +7828,112 @@ pub unsafe extern "C" fn lio_listio(
 // mount table — Implemented (native /proc/mounts parser)
 // ---------------------------------------------------------------------------
 
-/// Internal mount table stream state.
-#[allow(dead_code)]
+/// Internal mount table stream state for native mntent implementation.
 struct MntStream {
-    file: std::fs::File,
+    reader: std::io::BufReader<std::fs::File>,
     line_buf: Vec<u8>,
-    // Static-lifetime buffers for mntent fields (glibc contract).
-    fsname_buf: Vec<u8>,
-    dir_buf: Vec<u8>,
-    type_buf: Vec<u8>,
-    opts_buf: Vec<u8>,
-    // The mntent struct (6 fields: 4 ptrs + 2 ints).
-    mntent: [u8; 48], // sizeof(struct mntent) on x86_64
 }
 
 /// `setmntent` — open a mount table file.
 ///
-/// Delegates to the host libc setmntent which returns a real FILE*.
-/// Falls back to fopen if host setmntent is unavailable.
+/// Native implementation: opens the file and returns an opaque MntStream
+/// pointer. The stream is used by getmntent/getmntent_r/addmntent/endmntent.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn setmntent(filename: *const c_char, type_: *const c_char) -> *mut c_void {
     if filename.is_null() {
         return std::ptr::null_mut();
     }
-    // Delegate to host libc setmntent for proper FILE* return.
-    type SetmntentFn = unsafe extern "C" fn(*const c_char, *const c_char) -> *mut c_void;
-    if let Some(addr) = crate::host_resolve::resolve_host_symbol_raw("setmntent") {
-        let host_fn: SetmntentFn = unsafe { core::mem::transmute(addr) };
-        return unsafe { host_fn(filename, type_) };
-    }
-    // Fallback: use fopen (which now delegates to host).
-    let mode = if type_.is_null() {
-        c"r".as_ptr()
-    } else {
-        type_
+    let path = unsafe { std::ffi::CStr::from_ptr(filename) };
+    let path_str = match path.to_str() {
+        Ok(s) => s,
+        Err(_) => return std::ptr::null_mut(),
     };
-    unsafe { crate::stdio_abi::fopen(filename, mode) }
+
+    // Determine open mode from the type string (fopen-style mode).
+    let mode_bytes = if type_.is_null() {
+        b"r" as &[u8]
+    } else {
+        unsafe { std::ffi::CStr::from_ptr(type_) }.to_bytes()
+    };
+
+    use std::fs::OpenOptions;
+    let mut opts = OpenOptions::new();
+    match mode_bytes.first() {
+        Some(b'r') => {
+            opts.read(true);
+            if mode_bytes.contains(&b'+') {
+                opts.write(true);
+            }
+        }
+        Some(b'w') => {
+            opts.write(true).create(true).truncate(true);
+            if mode_bytes.contains(&b'+') {
+                opts.read(true);
+            }
+        }
+        Some(b'a') => {
+            opts.append(true).create(true);
+            if mode_bytes.contains(&b'+') {
+                opts.read(true);
+            }
+        }
+        _ => {
+            opts.read(true);
+        }
+    }
+
+    match opts.open(path_str) {
+        Ok(file) => {
+            let ms = Box::new(MntStream {
+                reader: std::io::BufReader::new(file),
+                line_buf: Vec::with_capacity(256),
+            });
+            Box::into_raw(ms) as *mut c_void
+        }
+        Err(_) => std::ptr::null_mut(),
+    }
 }
 
-/// `getmntent` — read next mount entry.
+/// Thread-local buffer for the non-reentrant `getmntent`.
 ///
-/// Delegates to host libc getmntent for proper FILE*-based operation.
+/// glibc uses a static internal mntent + string buffer per-thread.
+/// Layout: first 48 bytes = struct mntent, rest = string data.
+const GETMNTENT_BUFSIZE: usize = 4096;
+std::thread_local! {
+    static GETMNTENT_BUF: std::cell::UnsafeCell<[u8; GETMNTENT_BUFSIZE]> =
+        const { std::cell::UnsafeCell::new([0u8; GETMNTENT_BUFSIZE]) };
+}
+
+/// `getmntent` — read next mount entry (non-reentrant).
+///
+/// Native implementation using thread-local storage. Calls getmntent_r
+/// internally with a thread-local buffer.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getmntent(stream: *mut c_void) -> *mut c_void {
     if stream.is_null() {
         return std::ptr::null_mut();
     }
-    type GetmntentFn = unsafe extern "C" fn(*mut c_void) -> *mut c_void;
-    if let Some(addr) = crate::host_resolve::resolve_host_symbol_raw("getmntent") {
-        let host_fn: GetmntentFn = unsafe { core::mem::transmute(addr) };
-        return unsafe { host_fn(stream) };
-    }
-    std::ptr::null_mut()
+    GETMNTENT_BUF.with(|cell| {
+        let buf = unsafe { &mut *cell.get() };
+        // struct mntent is the first 48 bytes; string data starts after.
+        let mntbuf = buf.as_mut_ptr() as *mut c_void;
+        let str_buf = unsafe { buf.as_mut_ptr().add(48) } as *mut c_char;
+        let str_len = (GETMNTENT_BUFSIZE - 48) as c_int;
+        unsafe { getmntent_r(stream, mntbuf, str_buf, str_len) }
+    })
 }
 
 /// `endmntent` — close a mount table stream.
 ///
-/// Delegates to host libc endmntent. Always returns 1 (glibc contract).
+/// Native implementation: drops the MntStream box. Always returns 1
+/// per the glibc contract.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn endmntent(stream: *mut c_void) -> c_int {
     if stream.is_null() {
         return 1;
     }
-    type EndmntentFn = unsafe extern "C" fn(*mut c_void) -> c_int;
-    if let Some(addr) = crate::host_resolve::resolve_host_symbol_raw("endmntent") {
-        let host_fn: EndmntentFn = unsafe { core::mem::transmute(addr) };
-        return unsafe { host_fn(stream) };
-    }
-    // Fallback: just fclose
-    unsafe { crate::stdio_abi::fclose(stream) };
+    // SAFETY: stream was created by setmntent via Box::into_raw.
+    let _ = unsafe { Box::from_raw(stream as *mut MntStream) };
     1
 }
 
@@ -7937,8 +7974,9 @@ pub unsafe extern "C" fn hasmntopt(mnt: *const c_void, opt: *const c_char) -> *m
 
 /// GNU `getmntent_r` — reentrant mount entry reader.
 ///
-/// Reads the next mount entry from the stream into caller-supplied buffers.
-/// Delegates to host libc getmntent_r for proper FILE*-based operation.
+/// Native implementation: reads the next mount entry from the stream into
+/// caller-supplied buffers by parsing whitespace-separated fields from the
+/// mount table file.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getmntent_r(
     stream: *mut c_void,
@@ -7946,41 +7984,25 @@ pub unsafe extern "C" fn getmntent_r(
     buf: *mut c_char,
     buflen: c_int,
 ) -> *mut c_void {
+    use std::io::BufRead;
+
     if stream.is_null() || mntbuf.is_null() || buf.is_null() || buflen <= 0 {
         return std::ptr::null_mut();
     }
-    type GetmntentRFn =
-        unsafe extern "C" fn(*mut c_void, *mut c_void, *mut c_char, c_int) -> *mut c_void;
-    if let Some(addr) = crate::host_resolve::resolve_host_symbol_raw("getmntent_r") {
-        let host_fn: GetmntentRFn = unsafe { core::mem::transmute(addr) };
-        return unsafe { host_fn(stream, mntbuf, buf, buflen) };
-    }
-    // Fallback (should not normally be reached)
-    std::ptr::null_mut()
-}
-
-#[allow(dead_code)]
-unsafe fn getmntent_r_fallback(
-    stream: *mut c_void,
-    mntbuf: *mut c_void,
-    buf: *mut c_char,
-    buflen: c_int,
-) -> *mut c_void {
-    use std::io::BufRead;
+    // SAFETY: stream was created by setmntent via Box::into_raw.
     let ms = unsafe { &mut *(stream as *mut MntStream) };
     let buflen_u = buflen as usize;
-    let mut reader = std::io::BufReader::new(&ms.file);
 
     loop {
         ms.line_buf.clear();
-        let bytes_read = match reader.read_until(b'\n', &mut ms.line_buf) {
+        let bytes_read = match ms.reader.read_until(b'\n', &mut ms.line_buf) {
             Ok(n) => n,
             Err(_) => return std::ptr::null_mut(),
         };
         if bytes_read == 0 {
             return std::ptr::null_mut(); // EOF
         }
-        // Strip trailing newline
+        // Strip trailing newline/CR
         while ms.line_buf.last() == Some(&b'\n') || ms.line_buf.last() == Some(&b'\r') {
             ms.line_buf.pop();
         }
@@ -8021,7 +8043,7 @@ unsafe fn getmntent_r_fallback(
             continue;
         }
 
-        // Pack strings into caller buffer
+        // Pack NUL-terminated strings into caller buffer
         let buf_u8 = buf as *mut u8;
         let mut off = 0usize;
 
@@ -8109,9 +8131,9 @@ pub unsafe extern "C" fn addmntent(stream: *mut c_void, mnt: *const c_void) -> c
 
     let line = format!("{fsname_s} {dir_s} {type_s} {opts_s} {freq} {passno}\n");
 
-    // Write to the underlying file
+    // Write to the underlying file (accessed via BufReader::get_mut).
     let ms = unsafe { &mut *(stream as *mut MntStream) };
-    match ms.file.write_all(line.as_bytes()) {
+    match ms.reader.get_mut().write_all(line.as_bytes()) {
         Ok(()) => 0,
         Err(_) => 1,
     }
@@ -11700,42 +11722,178 @@ pub unsafe extern "C" fn versionsort64(
 }
 
 // ===========================================================================
-// ether_ntohost / ether_hostton / ether_line — ethers database (stub)
+// ether_ntohost / ether_hostton / ether_line — native /etc/ethers parser
 // ===========================================================================
 
-/// `ether_ntohost` — look up hostname by Ethernet address (/etc/ethers).
-/// Returns 0 on success, non-zero on failure.
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn ether_ntohost(hostname: *mut c_char, addr: *const c_void) -> c_int {
-    type F = unsafe extern "C" fn(*mut c_char, *const c_void) -> c_int;
-    if let Some(a) = crate::host_resolve::resolve_host_symbol_raw("ether_ntohost") {
-        return unsafe { core::mem::transmute::<usize, F>(a)(hostname, addr) };
-    }
-    -1
-}
+const ETHERS_PATH: &str = "/etc/ethers";
 
-/// `ether_hostton` — look up Ethernet address by hostname (/etc/ethers).
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn ether_hostton(hostname: *const c_char, addr: *mut c_void) -> c_int {
-    type F = unsafe extern "C" fn(*const c_char, *mut c_void) -> c_int;
-    if let Some(a) = crate::host_resolve::resolve_host_symbol_raw("ether_hostton") {
-        return unsafe { core::mem::transmute::<usize, F>(a)(hostname, addr) };
-    }
-    -1
-}
-
-/// `ether_line` — parse an /etc/ethers format line.
+/// `ether_line` — parse an /etc/ethers format line into addr + hostname.
+///
+/// Native implementation. Line format: "XX:XX:XX:XX:XX:XX hostname".
+/// Returns 0 on success, -1 on parse error.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn ether_line(
     line: *const c_char,
     addr: *mut c_void,
     hostname: *mut c_char,
 ) -> c_int {
-    type F = unsafe extern "C" fn(*const c_char, *mut c_void, *mut c_char) -> c_int;
-    if let Some(a) = crate::host_resolve::resolve_host_symbol_raw("ether_line") {
-        return unsafe { core::mem::transmute::<usize, F>(a)(line, addr, hostname) };
+    if line.is_null() || addr.is_null() || hostname.is_null() {
+        return -1;
     }
-    -1
+    let s = unsafe { std::ffi::CStr::from_ptr(line) }.to_bytes();
+    // Skip leading whitespace
+    let s = match s.iter().position(|&b| b != b' ' && b != b'\t') {
+        Some(i) => &s[i..],
+        None => return -1,
+    };
+    // Find end of MAC address (next whitespace)
+    let mac_end = s
+        .iter()
+        .position(|&b| b == b' ' || b == b'\t')
+        .unwrap_or(s.len());
+    if mac_end == 0 || mac_end >= s.len() {
+        return -1;
+    }
+    // NUL-terminate MAC in a stack buffer for parse_ether_addr
+    let mut mac_buf = [0u8; 32];
+    if mac_end >= mac_buf.len() {
+        return -1;
+    }
+    mac_buf[..mac_end].copy_from_slice(&s[..mac_end]);
+    mac_buf[mac_end] = 0;
+
+    if !unsafe { parse_ether_addr(mac_buf.as_ptr() as *const c_char, addr.cast()) } {
+        return -1;
+    }
+
+    // Skip whitespace after MAC to get hostname
+    let rest = &s[mac_end..];
+    let host_start = match rest.iter().position(|&b| b != b' ' && b != b'\t') {
+        Some(i) => i,
+        None => return -1,
+    };
+    let host_bytes = &rest[host_start..];
+    // Hostname ends at whitespace/newline/NUL
+    let host_len = host_bytes
+        .iter()
+        .position(|&b| b == b' ' || b == b'\t' || b == b'\n' || b == b'\r')
+        .unwrap_or(host_bytes.len());
+    if host_len == 0 {
+        return -1;
+    }
+    unsafe {
+        std::ptr::copy_nonoverlapping(host_bytes.as_ptr(), hostname as *mut u8, host_len);
+        *(hostname as *mut u8).add(host_len) = 0;
+    }
+    0
+}
+
+/// `ether_ntohost` — look up hostname by Ethernet address in /etc/ethers.
+///
+/// Native implementation: scans /etc/ethers line by line.
+/// Returns 0 on success, -1 if not found or file unavailable.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ether_ntohost(hostname: *mut c_char, addr: *const c_void) -> c_int {
+    use std::io::BufRead;
+
+    if hostname.is_null() || addr.is_null() {
+        return -1;
+    }
+    let file = match std::fs::File::open(ETHERS_PATH) {
+        Ok(f) => f,
+        Err(_) => return -1,
+    };
+    let needle = unsafe { *(addr as *const EtherAddrBytes) };
+    let mut reader = std::io::BufReader::new(file);
+    let mut line_buf = Vec::with_capacity(256);
+
+    loop {
+        line_buf.clear();
+        match reader.read_until(b'\n', &mut line_buf) {
+            Ok(0) => return -1, // EOF
+            Err(_) => return -1,
+            Ok(_) => {}
+        }
+        // NUL-terminate for ether_line
+        if line_buf.last() == Some(&b'\n') {
+            *line_buf.last_mut().unwrap() = 0;
+        } else {
+            line_buf.push(0);
+        }
+
+        let mut parsed_addr = EtherAddrBytes { octet: [0; 6] };
+        let mut host_buf = [0u8; 256];
+
+        let rc = unsafe {
+            ether_line(
+                line_buf.as_ptr() as *const c_char,
+                (&mut parsed_addr as *mut EtherAddrBytes).cast(),
+                host_buf.as_mut_ptr() as *mut c_char,
+            )
+        };
+        if rc == 0 && parsed_addr.octet == needle.octet {
+            // Found it — copy hostname to caller
+            let hlen = host_buf.iter().position(|&b| b == 0).unwrap_or(0);
+            unsafe {
+                std::ptr::copy_nonoverlapping(host_buf.as_ptr(), hostname as *mut u8, hlen);
+                *(hostname as *mut u8).add(hlen) = 0;
+            }
+            return 0;
+        }
+    }
+}
+
+/// `ether_hostton` — look up Ethernet address by hostname in /etc/ethers.
+///
+/// Native implementation: scans /etc/ethers line by line.
+/// Returns 0 on success, -1 if not found or file unavailable.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ether_hostton(hostname: *const c_char, addr: *mut c_void) -> c_int {
+    use std::io::BufRead;
+
+    if hostname.is_null() || addr.is_null() {
+        return -1;
+    }
+    let needle = unsafe { std::ffi::CStr::from_ptr(hostname) }.to_bytes();
+    let mut reader = std::io::BufReader::new(match std::fs::File::open(ETHERS_PATH) {
+        Ok(f) => f,
+        Err(_) => return -1,
+    });
+    let mut line_buf = Vec::with_capacity(256);
+
+    loop {
+        line_buf.clear();
+        match reader.read_until(b'\n', &mut line_buf) {
+            Ok(0) => return -1,
+            Err(_) => return -1,
+            Ok(_) => {}
+        }
+        if line_buf.last() == Some(&b'\n') {
+            *line_buf.last_mut().unwrap() = 0;
+        } else {
+            line_buf.push(0);
+        }
+
+        let mut parsed_addr = EtherAddrBytes { octet: [0; 6] };
+        let mut host_buf = [0u8; 256];
+
+        let rc = unsafe {
+            ether_line(
+                line_buf.as_ptr() as *const c_char,
+                (&mut parsed_addr as *mut EtherAddrBytes).cast(),
+                host_buf.as_mut_ptr() as *mut c_char,
+            )
+        };
+        if rc == 0 {
+            let hlen = host_buf.iter().position(|&b| b == 0).unwrap_or(0);
+            if &host_buf[..hlen] == needle {
+                unsafe {
+                    *(addr as *mut EtherAddrBytes) = parsed_addr;
+                }
+                return 0;
+            }
+        }
+    }
 }
 
 // ===========================================================================
@@ -12727,15 +12885,13 @@ pub unsafe extern "C" fn getaliasent_r(
 
 /// `endfsent` — close filesystem table iteration.
 ///
-/// Delegates to host libc via ELF resolver (not link_name, which recurses
-/// under LD_PRELOAD since we export this symbol).
+/// Native implementation: resets the thread-local fstab parser state.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn endfsent() {
-    type EndfsentFn = unsafe extern "C" fn();
-    if let Some(addr) = crate::host_resolve::resolve_host_symbol_raw("endfsent") {
-        let f: EndfsentFn = unsafe { core::mem::transmute(addr) };
-        unsafe { f() };
-    }
+    FSTAB_STATE.with(|cell| {
+        let state = unsafe { &mut *cell.get() };
+        state.reader = None;
+    });
 }
 
 /// `endnetgrent` — end netgroup iteration.
@@ -13178,15 +13334,14 @@ pub unsafe extern "C" fn getrpcent_r(
 
 /// `endttyent` — close tty database iteration.
 ///
-/// Delegates to host libc `endttyent`.
+/// Native implementation: resets the thread-local ttyent parser state.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn endttyent() -> c_int {
-    type EndttyentFn = unsafe extern "C" fn() -> c_int;
-    if let Some(addr) = crate::host_resolve::resolve_host_symbol_raw("endttyent") {
-        let f: EndttyentFn = unsafe { core::mem::transmute(addr) };
-        return unsafe { f() };
-    }
-    0
+    TTYENT_STATE.with(|cell| {
+        let state = unsafe { &mut *cell.get() };
+        state.reader = None;
+    });
+    1
 }
 
 /// `fgetspent` — read shadow entry from stream.
@@ -14460,6 +14615,9 @@ pub unsafe extern "C" fn sigsetmask(mask: c_int) -> c_int {
 }
 
 /// `sigpause` — atomically release blocked signal and pause.
+///
+/// Native implementation via raw syscalls: gets current signal mask,
+/// clears the specified signal bit, then calls sigsuspend.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sigpause(sig: c_int) -> c_int {
     if sig <= 0 {
@@ -14473,21 +14631,11 @@ pub unsafe extern "C" fn sigpause(sig: c_int) -> c_int {
         libc::sigaddset(&mut validation_set, sig)
     };
     if validation_rc != 0 {
-        unsafe { set_abi_errno(last_host_errno(libc::EINVAL)) };
+        unsafe { set_abi_errno(libc::EINVAL) };
         return -1;
     }
 
-    type SigpauseFn = unsafe extern "C" fn(c_int) -> c_int;
-    if let Some(addr) = crate::host_resolve::resolve_host_symbol_raw("sigpause") {
-        let host_fn: SigpauseFn = unsafe { core::mem::transmute(addr) };
-        let rc = unsafe { host_fn(sig) };
-        if rc != 0 {
-            unsafe { set_abi_errno(last_host_errno(libc::EINVAL)) };
-        }
-        return rc;
-    }
-
-    // BSD sigpause: unblock sig and pause
+    // BSD sigpause: get current mask, unblock sig, then suspend.
     let mut mask: u64 = 0;
     unsafe {
         libc::syscall(
@@ -14502,7 +14650,7 @@ pub unsafe extern "C" fn sigpause(sig: c_int) -> c_int {
     mask &= !(1u64 << (sig as u64 - 1));
     let rc = unsafe { libc::sigsuspend(&mask as *const u64 as *const libc::sigset_t) };
     if rc != 0 {
-        unsafe { set_abi_errno(last_host_errno(libc::EINTR)) };
+        unsafe { set_abi_errno(libc::EINTR) };
     }
     rc
 }
@@ -14533,19 +14681,59 @@ pub unsafe extern "C" fn sigvec(sig: c_int, vec: *const c_void, ovec: *mut c_voi
 }
 
 /// `sigstack` — set alternate signal stack (deprecated, use sigaltstack).
+///
+/// Native implementation: translates the legacy `struct sigstack`
+/// (ss_sp, ss_onstack) into a `sigaltstack` call.
+/// struct sigstack { void *ss_sp; int ss_onstack; }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sigstack(ss: *const c_void, oss: *mut c_void) -> c_int {
-    type SigstackFn = unsafe extern "C" fn(*const c_void, *mut c_void) -> c_int;
-    if let Some(addr) = crate::host_resolve::resolve_host_symbol_raw("sigstack") {
-        let host_fn: SigstackFn = unsafe { core::mem::transmute(addr) };
-        let rc = unsafe { host_fn(ss, oss) };
-        if rc != 0 {
-            unsafe { set_abi_errno(last_host_errno(libc::EINVAL)) };
+    // If caller wants the old stack, query via sigaltstack first.
+    if !oss.is_null() {
+        let mut old_alt: libc::stack_t = unsafe { std::mem::zeroed() };
+        let rc = unsafe {
+            libc::syscall(
+                libc::SYS_sigaltstack,
+                std::ptr::null::<libc::stack_t>(),
+                &mut old_alt as *mut libc::stack_t,
+            )
+        };
+        if rc < 0 {
+            unsafe { set_abi_errno(libc::EINVAL) };
+            return -1;
         }
-        return rc;
+        // Fill legacy struct sigstack: { ss_sp, ss_onstack }
+        let out = oss as *mut *mut c_void;
+        unsafe {
+            *out = old_alt.ss_sp;
+            *(out.add(1) as *mut c_int) =
+                if old_alt.ss_flags & libc::SS_ONSTACK != 0 { 1 } else { 0 };
+        }
     }
-    unsafe { set_abi_errno(libc::ENOSYS) };
-    -1
+
+    if !ss.is_null() {
+        let inp = ss as *const *const c_void;
+        let sp = unsafe { *inp };
+        let onstack = unsafe { *(inp.add(1) as *const c_int) };
+
+        let mut new_alt: libc::stack_t = unsafe { std::mem::zeroed() };
+        new_alt.ss_sp = sp as *mut c_void;
+        new_alt.ss_size = libc::SIGSTKSZ;
+        new_alt.ss_flags = if onstack != 0 { libc::SS_DISABLE } else { 0 };
+
+        let rc = unsafe {
+            libc::syscall(
+                libc::SYS_sigaltstack,
+                &new_alt as *const libc::stack_t,
+                std::ptr::null::<libc::stack_t>(),
+            )
+        };
+        if rc < 0 {
+            unsafe { set_abi_errno(libc::EINVAL) };
+            return -1;
+        }
+    }
+
+    0
 }
 
 /// `sigreturn` — return from signal handler (kernel does this, not userspace).
@@ -14701,89 +14889,460 @@ pub unsafe extern "C" fn ntp_gettimex(ntv: *mut c_void) -> c_int {
 }
 
 // ===========================================================================
-// fstab database
+// fstab database — native /etc/fstab parser
 // ===========================================================================
 
+/// Thread-local state for the fstab iteration API.
+///
+/// struct fstab layout (x86_64):
+///   fs_spec:    *mut c_char  (offset 0)
+///   fs_file:    *mut c_char  (offset 8)
+///   fs_vfstype: *mut c_char  (offset 16)
+///   fs_mntops:  *mut c_char  (offset 24)
+///   fs_type:    *mut c_char  (offset 32)
+///   fs_freq:    c_int        (offset 40)
+///   fs_passno:  c_int        (offset 44)
+///   Total: 48 bytes
+const FSTAB_BUF_SIZE: usize = 4096;
+const FSTAB_PATH: &str = "/etc/fstab";
+
+struct FstabState {
+    reader: Option<std::io::BufReader<std::fs::File>>,
+    line_buf: Vec<u8>,
+    /// Buffer for the current fstab entry (struct fstab + string data).
+    entry_buf: [u8; FSTAB_BUF_SIZE],
+}
+
+impl FstabState {
+    const fn new() -> Self {
+        Self {
+            reader: None,
+            line_buf: Vec::new(),
+            entry_buf: [0u8; FSTAB_BUF_SIZE],
+        }
+    }
+}
+
+std::thread_local! {
+    static FSTAB_STATE: std::cell::UnsafeCell<FstabState> =
+        const { std::cell::UnsafeCell::new(FstabState::new()) };
+}
+
+/// Parse the next fstab line into the entry buffer, returning a pointer to
+/// the struct fstab or null on EOF/error. The struct is laid out at the
+/// start of `entry_buf`; string data follows at offset 48.
+unsafe fn fstab_next(state: &mut FstabState) -> *mut c_void {
+    use std::io::BufRead;
+
+    let reader = match state.reader.as_mut() {
+        Some(r) => r,
+        None => return std::ptr::null_mut(),
+    };
+
+    loop {
+        state.line_buf.clear();
+        let n = match reader.read_until(b'\n', &mut state.line_buf) {
+            Ok(n) => n,
+            Err(_) => return std::ptr::null_mut(),
+        };
+        if n == 0 {
+            return std::ptr::null_mut(); // EOF
+        }
+        // Strip trailing newline/CR
+        while state.line_buf.last() == Some(&b'\n') || state.line_buf.last() == Some(&b'\r') {
+            state.line_buf.pop();
+        }
+        // Skip comments and blank lines
+        let first = state
+            .line_buf
+            .iter()
+            .position(|&b| b != b' ' && b != b'\t');
+        if first.is_none_or(|i| state.line_buf[i] == b'#') {
+            continue;
+        }
+
+        // Parse: fs_spec fs_file fs_vfstype fs_mntops fs_freq fs_passno
+        let line = &state.line_buf;
+        let mut fields = line
+            .split(|&b| b == b' ' || b == b'\t')
+            .filter(|f| !f.is_empty());
+
+        let spec = match fields.next() {
+            Some(f) => f,
+            None => continue,
+        };
+        let file = match fields.next() {
+            Some(f) => f,
+            None => continue,
+        };
+        let vfstype = match fields.next() {
+            Some(f) => f,
+            None => continue,
+        };
+        let mntops = match fields.next() {
+            Some(f) => f,
+            None => continue,
+        };
+        let freq_s = fields.next().unwrap_or(b"0");
+        let passno_s = fields.next().unwrap_or(b"0");
+
+        // Derive fs_type from mntops: "ro" if contains "ro", else "rw"
+        let fs_type_str = if mntops
+            .windows(2)
+            .any(|w| w == b"ro" )
+        {
+            b"ro" as &[u8]
+        } else {
+            b"rw" as &[u8]
+        };
+
+        // Check that all strings fit after the 48-byte struct header
+        let str_offset = 48usize; // sizeof(struct fstab) on x86_64
+        let needed = str_offset
+            + spec.len() + 1
+            + file.len() + 1
+            + vfstype.len() + 1
+            + mntops.len() + 1
+            + fs_type_str.len() + 1;
+        if needed > FSTAB_BUF_SIZE {
+            continue;
+        }
+
+        let buf = state.entry_buf.as_mut_ptr();
+        let mut off = str_offset;
+
+        // Helper: copy a field into the buffer, NUL-terminate, return pointer
+        macro_rules! pack_field {
+            ($src:expr) => {{
+                let ptr = unsafe { buf.add(off) } as *mut c_char;
+                unsafe {
+                    std::ptr::copy_nonoverlapping($src.as_ptr(), buf.add(off), $src.len());
+                    *buf.add(off + $src.len()) = 0;
+                }
+                off += $src.len() + 1;
+                ptr
+            }};
+        }
+
+        let spec_ptr = pack_field!(spec);
+        let file_ptr = pack_field!(file);
+        let vfstype_ptr = pack_field!(vfstype);
+        let mntops_ptr = pack_field!(mntops);
+        let type_ptr = pack_field!(fs_type_str);
+        let _ = off; // suppress unused assignment warning from last pack_field
+
+        let freq: c_int = std::str::from_utf8(freq_s)
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0);
+        let passno: c_int = std::str::from_utf8(passno_s)
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0);
+
+        // Fill struct fstab at the start of the buffer
+        let ent = buf as *mut *mut c_char;
+        unsafe {
+            *ent = spec_ptr;           // fs_spec
+            *ent.add(1) = file_ptr;    // fs_file
+            *ent.add(2) = vfstype_ptr; // fs_vfstype
+            *ent.add(3) = mntops_ptr;  // fs_mntops
+            *ent.add(4) = type_ptr;    // fs_type
+            let int_ptr = ent.add(5) as *mut c_int;
+            *int_ptr = freq;           // fs_freq
+            *int_ptr.add(1) = passno;  // fs_passno
+        }
+
+        return buf as *mut c_void;
+    }
+}
+
+/// `setfsent` — open /etc/fstab for iteration.
+///
+/// Native implementation: opens /etc/fstab and initializes the parser.
+/// Returns 1 on success, 0 on failure.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn setfsent() -> c_int {
-    type SetfsentFn = unsafe extern "C" fn() -> c_int;
-    if let Some(addr) = crate::host_resolve::resolve_host_symbol_raw("setfsent") {
-        let f: SetfsentFn = unsafe { core::mem::transmute(addr) };
-        let rc = unsafe { f() };
-        if rc == 0 {
-            unsafe { set_abi_errno(last_host_errno(libc::ENOENT)) };
+    FSTAB_STATE.with(|cell| {
+        let state = unsafe { &mut *cell.get() };
+        match std::fs::File::open(FSTAB_PATH) {
+            Ok(f) => {
+                state.reader = Some(std::io::BufReader::new(f));
+                1
+            }
+            Err(_) => {
+                state.reader = None;
+                unsafe { set_abi_errno(libc::ENOENT) };
+                0
+            }
         }
-        return rc;
-    }
-    0
+    })
 }
 
+/// `getfsent` — read next entry from /etc/fstab.
+///
+/// Native implementation. Returns pointer to a thread-local struct fstab,
+/// or NULL at EOF.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getfsent() -> *mut c_void {
-    type GetfsentFn = unsafe extern "C" fn() -> *mut c_void;
-    if let Some(addr) = crate::host_resolve::resolve_host_symbol_raw("getfsent") {
-        let f: GetfsentFn = unsafe { core::mem::transmute(addr) };
-        return unsafe { f() };
-    }
-    std::ptr::null_mut()
+    FSTAB_STATE.with(|cell| {
+        let state = unsafe { &mut *cell.get() };
+        unsafe { fstab_next(state) }
+    })
 }
 
+/// `getfsfile` — find fstab entry by mount point.
+///
+/// Native implementation: rewinds /etc/fstab and searches for the entry
+/// whose fs_file matches the given path.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getfsfile(file: *const c_char) -> *mut c_void {
-    type GetfsfileFn = unsafe extern "C" fn(*const c_char) -> *mut c_void;
-    if let Some(addr) = crate::host_resolve::resolve_host_symbol_raw("getfsfile") {
-        let f: GetfsfileFn = unsafe { core::mem::transmute(addr) };
-        return unsafe { f(file) };
+    if file.is_null() {
+        return std::ptr::null_mut();
     }
-    std::ptr::null_mut()
+    let needle = unsafe { std::ffi::CStr::from_ptr(file) }.to_bytes();
+    // Rewind
+    unsafe { setfsent() };
+    FSTAB_STATE.with(|cell| {
+        let state = unsafe { &mut *cell.get() };
+        loop {
+            let ent = unsafe { fstab_next(state) };
+            if ent.is_null() {
+                return std::ptr::null_mut();
+            }
+            // fs_file is at offset 1 * sizeof(pointer)
+            let file_ptr = unsafe { *((ent as *const *const c_char).add(1)) };
+            if !file_ptr.is_null() {
+                let entry_file = unsafe { std::ffi::CStr::from_ptr(file_ptr) }.to_bytes();
+                if entry_file == needle {
+                    return ent;
+                }
+            }
+        }
+    })
 }
 
+/// `getfsspec` — find fstab entry by device spec.
+///
+/// Native implementation: rewinds /etc/fstab and searches for the entry
+/// whose fs_spec matches the given device.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getfsspec(spec: *const c_char) -> *mut c_void {
-    type GetfsspecFn = unsafe extern "C" fn(*const c_char) -> *mut c_void;
-    if let Some(addr) = crate::host_resolve::resolve_host_symbol_raw("getfsspec") {
-        let f: GetfsspecFn = unsafe { core::mem::transmute(addr) };
-        return unsafe { f(spec) };
+    if spec.is_null() {
+        return std::ptr::null_mut();
     }
-    std::ptr::null_mut()
+    let needle = unsafe { std::ffi::CStr::from_ptr(spec) }.to_bytes();
+    // Rewind
+    unsafe { setfsent() };
+    FSTAB_STATE.with(|cell| {
+        let state = unsafe { &mut *cell.get() };
+        loop {
+            let ent = unsafe { fstab_next(state) };
+            if ent.is_null() {
+                return std::ptr::null_mut();
+            }
+            // fs_spec is at offset 0
+            let spec_ptr = unsafe { *(ent as *const *const c_char) };
+            if !spec_ptr.is_null() {
+                let entry_spec = unsafe { std::ffi::CStr::from_ptr(spec_ptr) }.to_bytes();
+                if entry_spec == needle {
+                    return ent;
+                }
+            }
+        }
+    })
 }
 
 // ===========================================================================
-// ttyent database
+// ttyent database — native /etc/ttys parser
 // ===========================================================================
+//
+// The ttyent API (setttyent/getttyent/getttynam/endttyent) originates from
+// BSD. On Linux, /etc/ttys typically does not exist; glibc's implementation
+// returns the same results as parsing a missing file. Our native
+// implementation opens the file if present, otherwise returns NULL entries.
+//
+// struct ttyent layout (x86_64, 48 bytes):
+//   ty_name:    *mut c_char  (offset 0)
+//   ty_getty:   *mut c_char  (offset 8)
+//   ty_type:    *mut c_char  (offset 16)
+//   ty_status:  c_int        (offset 24)
+//   [pad 4]
+//   ty_window:  *mut c_char  (offset 32)
+//   ty_comment: *mut c_char  (offset 40)
 
+const TTYENT_BUF_SIZE: usize = 2048;
+const TTYENT_PATH: &str = "/etc/ttys";
+
+struct TtyentState {
+    reader: Option<std::io::BufReader<std::fs::File>>,
+    line_buf: Vec<u8>,
+    entry_buf: [u8; TTYENT_BUF_SIZE],
+}
+
+impl TtyentState {
+    const fn new() -> Self {
+        Self {
+            reader: None,
+            line_buf: Vec::new(),
+            entry_buf: [0u8; TTYENT_BUF_SIZE],
+        }
+    }
+}
+
+std::thread_local! {
+    static TTYENT_STATE: std::cell::UnsafeCell<TtyentState> =
+        const { std::cell::UnsafeCell::new(TtyentState::new()) };
+}
+
+/// Parse the next ttyent line into the entry buffer.
+unsafe fn ttyent_next(state: &mut TtyentState) -> *mut c_void {
+    use std::io::BufRead;
+
+    let reader = match state.reader.as_mut() {
+        Some(r) => r,
+        None => return std::ptr::null_mut(),
+    };
+
+    loop {
+        state.line_buf.clear();
+        let n = match reader.read_until(b'\n', &mut state.line_buf) {
+            Ok(n) => n,
+            Err(_) => return std::ptr::null_mut(),
+        };
+        if n == 0 {
+            return std::ptr::null_mut();
+        }
+        while state.line_buf.last() == Some(&b'\n') || state.line_buf.last() == Some(&b'\r') {
+            state.line_buf.pop();
+        }
+        let first = state
+            .line_buf
+            .iter()
+            .position(|&b| b != b' ' && b != b'\t');
+        if first.is_none_or(|i| state.line_buf[i] == b'#') {
+            continue;
+        }
+
+        // Parse: ty_name [ty_getty [ty_type]]
+        // ty_status defaults to 0, ty_window and ty_comment default to empty.
+        let line = &state.line_buf;
+        let mut fields = line
+            .split(|&b| b == b' ' || b == b'\t')
+            .filter(|f| !f.is_empty());
+
+        let name = match fields.next() {
+            Some(f) => f,
+            None => continue,
+        };
+        let getty = fields.next().unwrap_or(b"");
+        let ttype = fields.next().unwrap_or(b"");
+        let empty = b"" as &[u8];
+
+        // Struct is 48 bytes; strings packed after
+        let str_offset = 48usize;
+        let needed = str_offset + name.len() + 1 + getty.len() + 1 + ttype.len() + 1 + 1 + 1;
+        if needed > TTYENT_BUF_SIZE {
+            continue;
+        }
+
+        let buf = state.entry_buf.as_mut_ptr();
+        let mut off = str_offset;
+
+        macro_rules! pack {
+            ($src:expr) => {{
+                let ptr = unsafe { buf.add(off) } as *mut c_char;
+                unsafe {
+                    std::ptr::copy_nonoverlapping($src.as_ptr(), buf.add(off), $src.len());
+                    *buf.add(off + $src.len()) = 0;
+                }
+                off += $src.len() + 1;
+                ptr
+            }};
+        }
+
+        let name_ptr = pack!(name);
+        let getty_ptr = pack!(getty);
+        let type_ptr = pack!(ttype);
+        let window_ptr = pack!(empty);
+        let comment_ptr = pack!(empty);
+        let _ = off;
+
+        // Fill struct ttyent
+        let ptrs = buf as *mut *mut c_char;
+        unsafe {
+            *ptrs = name_ptr;           // ty_name
+            *ptrs.add(1) = getty_ptr;   // ty_getty
+            *ptrs.add(2) = type_ptr;    // ty_type
+            // ty_status at byte offset 24 (after 3 pointers)
+            let status_ptr = buf.add(24) as *mut c_int;
+            *status_ptr = 0;
+            // ty_window at byte offset 32
+            *(buf.add(32) as *mut *mut c_char) = window_ptr;
+            // ty_comment at byte offset 40
+            *(buf.add(40) as *mut *mut c_char) = comment_ptr;
+        }
+
+        return buf as *mut c_void;
+    }
+}
+
+/// `setttyent` — open /etc/ttys for iteration.
+///
+/// Native implementation. Returns 1 on success, 0 if file missing (common
+/// on Linux where /etc/ttys is a BSD convention). Sets errno to ENOENT on
+/// failure to match glibc behavior.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn setttyent() -> c_int {
-    type SetttyentFn = unsafe extern "C" fn() -> c_int;
-    if let Some(addr) = crate::host_resolve::resolve_host_symbol_raw("setttyent") {
-        let f: SetttyentFn = unsafe { core::mem::transmute(addr) };
-        let rc = unsafe { f() };
-        if rc == 0 {
-            unsafe { set_abi_errno(last_host_errno(libc::ENOENT)) };
+    TTYENT_STATE.with(|cell| {
+        let state = unsafe { &mut *cell.get() };
+        match std::fs::File::open(TTYENT_PATH) {
+            Ok(f) => {
+                state.reader = Some(std::io::BufReader::new(f));
+                1
+            }
+            Err(_) => {
+                state.reader = None;
+                unsafe { set_abi_errno(libc::ENOENT) };
+                0
+            }
         }
-        return rc;
-    }
-    0
+    })
 }
 
+/// `getttyent` — read next entry from /etc/ttys.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getttyent() -> *mut c_void {
-    type GetttyentFn = unsafe extern "C" fn() -> *mut c_void;
-    if let Some(addr) = crate::host_resolve::resolve_host_symbol_raw("getttyent") {
-        let f: GetttyentFn = unsafe { core::mem::transmute(addr) };
-        return unsafe { f() };
-    }
-    std::ptr::null_mut()
+    TTYENT_STATE.with(|cell| {
+        let state = unsafe { &mut *cell.get() };
+        unsafe { ttyent_next(state) }
+    })
 }
 
+/// `getttynam` — find ttyent entry by terminal name.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getttynam(name: *const c_char) -> *mut c_void {
-    type GettynamFn = unsafe extern "C" fn(*const c_char) -> *mut c_void;
-    if let Some(addr) = crate::host_resolve::resolve_host_symbol_raw("getttynam") {
-        let f: GettynamFn = unsafe { core::mem::transmute(addr) };
-        return unsafe { f(name) };
+    if name.is_null() {
+        return std::ptr::null_mut();
     }
-    std::ptr::null_mut()
+    let needle = unsafe { std::ffi::CStr::from_ptr(name) }.to_bytes();
+    unsafe { setttyent() };
+    TTYENT_STATE.with(|cell| {
+        let state = unsafe { &mut *cell.get() };
+        loop {
+            let ent = unsafe { ttyent_next(state) };
+            if ent.is_null() {
+                return std::ptr::null_mut();
+            }
+            let name_ptr = unsafe { *(ent as *const *const c_char) };
+            if !name_ptr.is_null() {
+                let entry_name = unsafe { std::ffi::CStr::from_ptr(name_ptr) }.to_bytes();
+                if entry_name == needle {
+                    return ent;
+                }
+            }
+        }
+    })
 }
 
 // ===========================================================================
