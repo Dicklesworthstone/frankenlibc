@@ -2269,6 +2269,23 @@ pub unsafe extern "C" fn pthread_cond_init(
     if !FORCE_NATIVE_MUTEX.load(Ordering::Acquire)
         && let Some(host_init) = unsafe { host_pthread_cond_init_fn() }
     {
+        // If attr uses our custom encoding (valid bit set), translate to
+        // host-compatible format before delegating. Same issue as mutex:
+        // our bitfield layout differs from glibc's internal layout.
+        if !attr.is_null() {
+            let word = unsafe { *(attr.cast::<c_int>()) };
+            if word & CONDATTR_VALID_BIT != 0 {
+                let clock = decode_condattr_clock(word);
+                let mut host_attr: libc::pthread_condattr_t = unsafe { std::mem::zeroed() };
+                unsafe { libc::pthread_condattr_init(&mut host_attr) };
+                if clock != libc::CLOCK_REALTIME {
+                    unsafe { libc::pthread_condattr_setclock(&mut host_attr, clock) };
+                }
+                let rc = unsafe { host_init(cond, &host_attr) };
+                unsafe { libc::pthread_condattr_destroy(&mut host_attr) };
+                return rc;
+            }
+        }
         return unsafe { host_init(cond, attr) };
     }
 
