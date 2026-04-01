@@ -410,6 +410,188 @@ unsafe fn write_c_buffer(
     Ok(true)
 }
 
+// ---------------------------------------------------------------------------
+// Native DNS stub resolver (UDP query to nameservers)
+// ---------------------------------------------------------------------------
+
+/// Perform a single UDP DNS query to a nameserver.
+/// Returns parsed answer records on success, None on network/timeout/parse error.
+fn udp_dns_query(
+    hostname: &[u8],
+    qtype_val: u16,
+    nameserver: std::net::IpAddr,
+    timeout_secs: u32,
+) -> Option<Vec<frankenlibc_core::resolv::dns::DnsRecord>> {
+    use frankenlibc_core::resolv::dns::{
+        DnsMessage, DNS_HEADER_SIZE, DNS_MAX_UDP_SIZE, parse_dns_response,
+    };
+    use std::ffi::c_void;
+
+    // Generate transaction ID
+    let id = {
+        let mut h = 0u16;
+        for &b in hostname {
+            h = h.wrapping_mul(31).wrapping_add(b as u16);
+        }
+        let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+        unsafe { libc::syscall(libc::SYS_clock_gettime, libc::CLOCK_MONOTONIC, &mut ts) };
+        h ^ (ts.tv_nsec as u16)
+    };
+
+    // Encode query
+    let msg = DnsMessage::new_query(id, hostname, qtype_val);
+    let mut send_buf = [0u8; DNS_MAX_UDP_SIZE];
+    let send_len = msg.encode(&mut send_buf)?;
+
+    // Create UDP socket via raw syscall
+    let af = if nameserver.is_ipv4() { libc::AF_INET } else { libc::AF_INET6 };
+    let fd = unsafe {
+        libc::syscall(libc::SYS_socket, af, libc::SOCK_DGRAM | libc::SOCK_CLOEXEC, 0) as i32
+    };
+    if fd < 0 {
+        return None;
+    }
+
+    // Set receive timeout
+    let tv = libc::timeval { tv_sec: timeout_secs as i64, tv_usec: 0 };
+    unsafe {
+        libc::syscall(
+            libc::SYS_setsockopt,
+            fd,
+            libc::SOL_SOCKET,
+            libc::SO_RCVTIMEO,
+            &tv as *const libc::timeval,
+            core::mem::size_of::<libc::timeval>(),
+        );
+    }
+
+    // Build destination sockaddr and send
+    let sent = if nameserver.is_ipv4() {
+        let octets = match nameserver {
+            std::net::IpAddr::V4(v4) => v4.octets(),
+            _ => unreachable!(),
+        };
+        let sa = libc::sockaddr_in {
+            sin_family: libc::AF_INET as u16,
+            sin_port: 53u16.to_be(),
+            sin_addr: libc::in_addr {
+                s_addr: u32::from_ne_bytes(octets),
+            },
+            sin_zero: [0; 8],
+        };
+        unsafe {
+            libc::syscall(
+                libc::SYS_sendto,
+                fd,
+                send_buf.as_ptr(),
+                send_len,
+                0i32,
+                &sa as *const libc::sockaddr_in,
+                core::mem::size_of::<libc::sockaddr_in>(),
+            )
+        }
+    } else {
+        let octets = match nameserver {
+            std::net::IpAddr::V6(v6) => v6.octets(),
+            _ => unreachable!(),
+        };
+        let mut sa: libc::sockaddr_in6 = unsafe { core::mem::zeroed() };
+        sa.sin6_family = libc::AF_INET6 as u16;
+        sa.sin6_port = 53u16.to_be();
+        sa.sin6_addr.s6_addr = octets;
+        unsafe {
+            libc::syscall(
+                libc::SYS_sendto,
+                fd,
+                send_buf.as_ptr(),
+                send_len,
+                0i32,
+                &sa as *const libc::sockaddr_in6,
+                core::mem::size_of::<libc::sockaddr_in6>(),
+            )
+        }
+    };
+
+    if sent < 0 {
+        unsafe { libc::syscall(libc::SYS_close, fd) };
+        return None;
+    }
+
+    // Receive response
+    let mut recv_buf = [0u8; DNS_MAX_UDP_SIZE];
+    let received = unsafe {
+        libc::syscall(
+            libc::SYS_recvfrom,
+            fd,
+            recv_buf.as_mut_ptr(),
+            DNS_MAX_UDP_SIZE,
+            0i32,
+            core::ptr::null::<c_void>(),
+            core::ptr::null::<u32>(),
+        )
+    };
+    unsafe { libc::syscall(libc::SYS_close, fd) };
+
+    if received < DNS_HEADER_SIZE as i64 {
+        return None;
+    }
+
+    parse_dns_response(&recv_buf[..received as usize], id)
+}
+
+/// Resolve hostname via DNS stub resolver. Returns resolved addresses.
+fn native_dns_resolve(
+    hostname: &[u8],
+    want_v4: bool,
+    want_v6: bool,
+) -> frankenlibc_core::resolv::dns::DnsResolution {
+    use frankenlibc_core::resolv::dns::{qtype, DnsResolution};
+
+    let config = match std::fs::read("/etc/resolv.conf") {
+        Ok(content) => frankenlibc_core::resolv::ResolverConfig::parse(&content),
+        Err(_) => frankenlibc_core::resolv::ResolverConfig::default(),
+    };
+
+    let mut result = DnsResolution::default();
+    let names = frankenlibc_core::resolv::dns::build_search_names(
+        hostname,
+        &config.search,
+        config.ndots,
+    );
+
+    for name in &names {
+        for _attempt in 0..config.attempts {
+            for ns in &config.nameservers {
+                if want_v4 && result.ipv4.is_empty()
+                    && let Some(records) = udp_dns_query(name, qtype::A, *ns, config.timeout)
+                {
+                    for rec in &records {
+                        if let Some(v4) = rec.as_ipv4() {
+                            result.ipv4.push(v4);
+                        }
+                    }
+                }
+                if want_v6 && result.ipv6.is_empty()
+                    && let Some(records) = udp_dns_query(name, qtype::AAAA, *ns, config.timeout)
+                {
+                    for rec in &records {
+                        if let Some(v6) = rec.as_ipv6() {
+                            result.ipv6.push(v6);
+                        }
+                    }
+                }
+                if (!want_v4 || !result.ipv4.is_empty()) && (!want_v6 || !result.ipv6.is_empty()) {
+                    return result;
+                }
+            }
+        }
+        if !result.ipv4.is_empty() || !result.ipv6.is_empty() {
+            return result;
+        }
+    }
+    result
+}
+
 /// POSIX `getaddrinfo` (numeric address bootstrap implementation).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getaddrinfo(
@@ -508,31 +690,44 @@ pub unsafe extern "C" fn getaddrinfo(
 
             if nodes.is_empty() {
                 // Hostname not found in /etc/hosts and not a numeric address.
-                // Delegate to host libc's getaddrinfo for real DNS resolution.
-                type HostGetaddrinfoFn = unsafe extern "C" fn(
-                    *const c_char,
-                    *const c_char,
-                    *const libc::addrinfo,
-                    *mut *mut libc::addrinfo,
-                ) -> c_int;
-                if let Some(addr) = crate::host_resolve::resolve_host_symbol_raw("getaddrinfo") {
-                    let host_fn: HostGetaddrinfoFn = unsafe { core::mem::transmute(addr) };
-                    let rc = unsafe { host_fn(node, service, hints, res) };
-                    runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, rc != 0);
-                    return rc;
+                // Use native DNS stub resolver.
+                let want_v4 = family == libc::AF_UNSPEC || family == libc::AF_INET;
+                let want_v6 = family == libc::AF_UNSPEC || family == libc::AF_INET6;
+                let hostname_bytes = node_cstr.map(|c| c.to_bytes()).unwrap_or(b"");
+                let dns_result = native_dns_resolve(hostname_bytes, want_v4, want_v6);
+
+                for v4 in &dns_result.ipv4 {
+                    if family == libc::AF_UNSPEC || family == libc::AF_INET {
+                        nodes.push(unsafe { build_addrinfo_v4(*v4, port, hints_ref) });
+                    }
                 }
-                if repair {
-                    global_healing_policy().record(&HealingAction::ReturnSafeDefault);
-                    nodes.push(unsafe { build_addrinfo_v4(Ipv4Addr::LOCALHOST, port, hints_ref) });
-                } else {
-                    record_resolver_stage_outcome(
-                        &ordering,
-                        aligned,
-                        recent_page,
-                        Some(stage_index(&ordering, CheckStage::Bounds)),
-                    );
-                    runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
-                    return libc::EAI_NONAME;
+                for v6 in &dns_result.ipv6 {
+                    if family == libc::AF_UNSPEC || family == libc::AF_INET6 {
+                        nodes.push(unsafe { build_addrinfo_v6(*v6, port, hints_ref) });
+                    }
+                }
+
+                if nodes.is_empty() {
+                    if repair {
+                        global_healing_policy().record(&HealingAction::ReturnSafeDefault);
+                        nodes.push(unsafe {
+                            build_addrinfo_v4(Ipv4Addr::LOCALHOST, port, hints_ref)
+                        });
+                    } else {
+                        record_resolver_stage_outcome(
+                            &ordering,
+                            aligned,
+                            recent_page,
+                            Some(stage_index(&ordering, CheckStage::Bounds)),
+                        );
+                        runtime_policy::observe(
+                            ApiFamily::Resolver,
+                            decision.profile,
+                            25,
+                            true,
+                        );
+                        return libc::EAI_NONAME;
+                    }
                 }
             }
         }

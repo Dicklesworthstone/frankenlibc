@@ -528,6 +528,65 @@ fn decode_domain_name_at_offset(
 // Tests
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// DNS Resolution Result
+// ---------------------------------------------------------------------------
+
+/// Result of a DNS resolution attempt.
+#[derive(Debug, Default)]
+pub struct DnsResolution {
+    /// Resolved IPv4 addresses.
+    pub ipv4: Vec<Ipv4Addr>,
+    /// Resolved IPv6 addresses.
+    pub ipv6: Vec<Ipv6Addr>,
+}
+
+/// Parse a DNS response buffer and extract address records.
+///
+/// Used by the ABI layer's DNS stub resolver after receiving a UDP response.
+/// Returns the answer records on success, empty vec on NXDOMAIN, None on error.
+pub fn parse_dns_response(recv_buf: &[u8], expected_id: u16) -> Option<Vec<DnsRecord>> {
+    if recv_buf.len() < DNS_HEADER_SIZE {
+        return None;
+    }
+    let header = DnsHeader::decode(recv_buf)?;
+    if !header.is_response() || header.id != expected_id {
+        return None;
+    }
+    if header.rcode() == rcode::NXDOMAIN {
+        return Some(Vec::new());
+    }
+    if header.rcode() != rcode::NOERROR {
+        return None;
+    }
+    let decoded = DnsMessage::decode(recv_buf)?;
+    Some(decoded.answers)
+}
+
+/// Build the list of hostnames to try, applying search domains per resolv.conf.
+pub fn build_search_names(
+    hostname: &[u8],
+    search_domains: &[String],
+    ndots: u32,
+) -> Vec<Vec<u8>> {
+    let dot_count = hostname.iter().filter(|&&b| b == b'.').count();
+    if dot_count >= ndots as usize || hostname.last() == Some(&b'.') {
+        vec![hostname.to_vec()]
+    } else {
+        let mut names: Vec<Vec<u8>> = search_domains
+            .iter()
+            .map(|domain| {
+                let mut fqdn = hostname.to_vec();
+                fqdn.push(b'.');
+                fqdn.extend_from_slice(domain.as_bytes());
+                fqdn
+            })
+            .collect();
+        names.push(hostname.to_vec());
+        names
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
