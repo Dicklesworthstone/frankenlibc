@@ -172,6 +172,20 @@ mod tests {
     }
 
     #[test]
+    fn thresholds_do_not_move_before_cadence_boundary() {
+        let ctl = PrimalDualController::new();
+        let baseline_strict = ctl.limits(SafetyLevel::Strict);
+        let baseline_hardened = ctl.limits(SafetyLevel::Hardened);
+
+        for _ in 0..127 {
+            ctl.observe(10_000, true);
+        }
+
+        assert_eq!(ctl.limits(SafetyLevel::Strict), baseline_strict);
+        assert_eq!(ctl.limits(SafetyLevel::Hardened), baseline_hardened);
+    }
+
+    #[test]
     fn off_mode_limits_are_high_and_bounded() {
         let ctl = PrimalDualController::new();
         let off = ctl.limits(SafetyLevel::Off);
@@ -246,5 +260,30 @@ mod tests {
         assert_eq!(ctl.observed_calls.load(Ordering::Relaxed), u64::MAX);
         assert_eq!(ctl.total_cost_ns.load(Ordering::Relaxed), u64::MAX);
         assert_eq!(ctl.adverse_events.load(Ordering::Relaxed), u64::MAX);
+    }
+
+    #[test]
+    fn higher_latency_pressure_relaxes_thresholds_when_risk_is_equal() {
+        let low_latency = PrimalDualController::new();
+        let high_latency = PrimalDualController::new();
+
+        for i in 0..1024_u64 {
+            let adverse = i % 16 == 0;
+            low_latency.observe(60, adverse);
+            high_latency.observe(5_000, adverse);
+        }
+
+        let low_strict = low_latency.limits(SafetyLevel::Strict);
+        let high_strict = high_latency.limits(SafetyLevel::Strict);
+        let low_hardened = low_latency.limits(SafetyLevel::Hardened);
+        let high_hardened = high_latency.limits(SafetyLevel::Hardened);
+
+        assert!(high_strict.full_validation_trigger_ppm > low_strict.full_validation_trigger_ppm);
+        assert_eq!(low_strict.repair_trigger_ppm, 980_000);
+        assert_eq!(high_strict.repair_trigger_ppm, 980_000);
+        assert!(
+            high_hardened.full_validation_trigger_ppm > low_hardened.full_validation_trigger_ppm
+        );
+        assert!(high_hardened.repair_trigger_ppm > low_hardened.repair_trigger_ppm);
     }
 }

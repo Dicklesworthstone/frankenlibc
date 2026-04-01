@@ -267,4 +267,59 @@ mod tests {
             "max_e_value should include high-index family contributions"
         );
     }
+
+    #[test]
+    fn warning_precedes_alarm_when_thresholds_are_separated() {
+        let mon = AnytimeEProcessMonitor::new_with_params(0.10, 0.30, 1, 2.0, 10.0);
+
+        mon.observe(ApiFamily::Stdio, true);
+        assert_eq!(mon.state(ApiFamily::Stdio), SequentialState::Warning);
+        assert!(mon.e_value(ApiFamily::Stdio) >= 2.0);
+        assert!(mon.e_value(ApiFamily::Stdio) < 10.0);
+
+        mon.observe(ApiFamily::Stdio, true);
+        assert_eq!(mon.state(ApiFamily::Stdio), SequentialState::Warning);
+
+        mon.observe(ApiFamily::Stdio, true);
+        assert_eq!(mon.state(ApiFamily::Stdio), SequentialState::Alarm);
+        assert!(mon.e_value(ApiFamily::Stdio) >= 10.0);
+    }
+
+    #[test]
+    fn adverse_evidence_saturates_at_cap() {
+        let mon = AnytimeEProcessMonitor::new_with_params(0.001, 0.999, 1, 2.0, 4.0);
+
+        for _ in 0..10_000 {
+            mon.observe(ApiFamily::PointerValidation, true);
+        }
+
+        let idx = usize::from(ApiFamily::PointerValidation as u8);
+        assert_eq!(mon.log_e_scaled[idx].load(Ordering::Relaxed), LOG_E_CAP);
+
+        let capped_e = mon.e_value(ApiFamily::PointerValidation);
+        let expected_cap = ((LOG_E_CAP as f64) / SCALE).exp();
+        assert!(capped_e.is_finite());
+        assert!(capped_e >= expected_cap * 0.999_999);
+        assert!(capped_e <= expected_cap * 1.000_001);
+    }
+
+    #[test]
+    fn clean_evidence_saturates_at_floor() {
+        let mon = AnytimeEProcessMonitor::new_with_params(0.02, 0.80, 1, 2.0, 4.0);
+
+        for _ in 0..10_000 {
+            mon.observe(ApiFamily::Allocator, false);
+        }
+
+        let idx = usize::from(ApiFamily::Allocator as u8);
+        assert_eq!(mon.log_e_scaled[idx].load(Ordering::Relaxed), LOG_E_FLOOR);
+
+        let floored_e = mon.e_value(ApiFamily::Allocator);
+        let expected_floor = ((LOG_E_FLOOR as f64) / SCALE).exp();
+        assert!(floored_e.is_finite());
+        assert!(floored_e > 0.0);
+        assert!(floored_e >= expected_floor * 0.999_999);
+        assert!(floored_e <= expected_floor * 1.000_001);
+        assert_eq!(mon.state(ApiFamily::Allocator), SequentialState::Normal);
+    }
 }

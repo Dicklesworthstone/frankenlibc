@@ -112,6 +112,19 @@ mod tests {
     }
 
     #[test]
+    fn startup_cache_does_not_recompute_before_minimum_volume() {
+        let risk = ConformalRiskEngine::new(7_777, 3.0);
+        for _ in 0..31 {
+            risk.observe(ApiFamily::Allocator, true);
+        }
+        assert_eq!(
+            risk.upper_bound_ppm(ApiFamily::Allocator),
+            7_777,
+            "cached startup prior should remain until cadence recomputation is eligible"
+        );
+    }
+
+    #[test]
     fn adverse_outcomes_increase_upper_bound() {
         let risk = ConformalRiskEngine::default();
         for _ in 0..128 {
@@ -169,6 +182,45 @@ mod tests {
         assert!(high_rate > low_rate);
         assert!(high_rate <= 1_000_000);
         assert!(low_rate <= 1_000_000);
+    }
+
+    #[test]
+    fn higher_z_score_widens_bound_for_same_observations() {
+        let conservative = ConformalRiskEngine::new(1_000, 4.0);
+        let relaxed = ConformalRiskEngine::new(1_000, 1.0);
+
+        for i in 0..512 {
+            let adverse = i % 11 == 0;
+            conservative.observe(ApiFamily::Process, adverse);
+            relaxed.observe(ApiFamily::Process, adverse);
+        }
+
+        let conservative_bound = conservative.upper_bound_ppm(ApiFamily::Process);
+        let relaxed_bound = relaxed.upper_bound_ppm(ApiFamily::Process);
+        assert!(
+            conservative_bound > relaxed_bound,
+            "larger z-score should produce a more conservative upper bound"
+        );
+    }
+
+    #[test]
+    fn same_adverse_rate_tightens_with_more_samples() {
+        let sparse = ConformalRiskEngine::new(1_000, 3.0);
+        let dense = ConformalRiskEngine::new(1_000, 3.0);
+
+        for i in 0..64 {
+            sparse.observe(ApiFamily::VirtualMemory, i % 8 == 0);
+        }
+        for i in 0..512 {
+            dense.observe(ApiFamily::VirtualMemory, i % 8 == 0);
+        }
+
+        let sparse_bound = sparse.upper_bound_ppm(ApiFamily::VirtualMemory);
+        let dense_bound = dense.upper_bound_ppm(ApiFamily::VirtualMemory);
+        assert!(
+            dense_bound < sparse_bound,
+            "for the same empirical adverse rate, more volume should narrow the confidence envelope"
+        );
     }
 
     #[test]

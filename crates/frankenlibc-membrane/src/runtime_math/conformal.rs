@@ -248,6 +248,21 @@ mod tests {
     }
 
     #[test]
+    fn transitions_out_of_calibrating_at_warmup_boundary() {
+        let mut ctrl = ConformalRiskController::new();
+
+        for _ in 0..(WARMUP_COUNT - 1) {
+            ctrl.observe(1.0);
+        }
+        assert_eq!(ctrl.state(), ConformalState::Calibrating);
+        assert_eq!(ctrl.summary().total_observations, WARMUP_COUNT - 1);
+
+        ctrl.observe(1.0);
+        assert_eq!(ctrl.state(), ConformalState::Covered);
+        assert_eq!(ctrl.summary().total_observations, WARMUP_COUNT);
+    }
+
+    #[test]
     fn threshold_tracks_calibration_quantile() {
         let mut ctrl = ConformalRiskController::new();
         // Feed scores 1.0, 2.0, ..., 100.0
@@ -415,5 +430,30 @@ mod tests {
             drop > 0.0,
             "EWMA should register at least some movement from outlier"
         );
+    }
+
+    #[test]
+    fn wrapped_window_forgets_replaced_scores() {
+        let mut ctrl = ConformalRiskController::new();
+
+        for i in 1..=WINDOW_SIZE {
+            ctrl.observe(i as f64);
+        }
+        let initial_threshold = ctrl.summary().conformal_threshold;
+        assert!(
+            initial_threshold >= (WINDOW_SIZE as f64 * 0.90),
+            "expected initial threshold to reflect the high-valued calibration window"
+        );
+
+        for _ in 0..WINDOW_SIZE {
+            ctrl.observe(0.0);
+        }
+
+        let replaced_threshold = ctrl.summary().conformal_threshold;
+        assert_eq!(
+            replaced_threshold, 0.0,
+            "after fully overwriting the calibration window, stale high scores should no longer influence the threshold"
+        );
+        assert_eq!(ctrl.fill, WINDOW_SIZE);
     }
 }
