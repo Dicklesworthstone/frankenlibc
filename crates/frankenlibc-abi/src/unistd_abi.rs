@@ -5659,8 +5659,7 @@ fn crypt_sha256(key: &[u8], salt_bytes: &[u8]) -> Option<String> {
 
 /// MD5 crypt ($1$) — legacy but still encountered.
 fn crypt_md5(key: &[u8], salt_bytes: &[u8]) -> Option<String> {
-    use md5::Md5;
-    use sha2::Digest;
+    use md5::{Digest, Md5};
 
     // Parse salt (max 8 chars after $1$)
     let rest = &salt_bytes[3..];
