@@ -393,6 +393,30 @@ mod tests {
     }
 
     #[test]
+    fn hardened_summary_adds_fixed_protective_bonus() {
+        let mut strict = LocalizationChooser::new(SafetyLevel::Strict);
+        let mut hardened = LocalizationChooser::new(SafetyLevel::Hardened);
+
+        for _ in 0..CALIBRATION_THRESHOLD + 200 {
+            strict.observe(300_000, 2, 1, 2, 1);
+            hardened.observe(300_000, 2, 1, 2, 1);
+        }
+
+        let strict_summary = strict.summary();
+        let hardened_summary = hardened.summary();
+        assert_eq!(
+            hardened_summary.arm_scores[3] - strict_summary.arm_scores[3],
+            2 * SCALE / EULER_WEIGHT[3],
+            "hardened mode should add a fixed +2 raw-score bonus to protective arm 3"
+        );
+        assert_eq!(
+            hardened_summary.arm_scores[4] - strict_summary.arm_scores[4],
+            2 * SCALE / EULER_WEIGHT[4],
+            "hardened mode should add the same fixed bonus to lockdown arm 4"
+        );
+    }
+
+    #[test]
     fn ewma_smooths_transient_spikes() {
         let mut c = LocalizationChooser::new(SafetyLevel::Strict);
         // Mostly calm with occasional spike.
@@ -410,6 +434,34 @@ mod tests {
             c.selected_arm(),
             calm_arm,
             "EWMA should smooth single spike"
+        );
+    }
+
+    #[test]
+    fn ewma_crosses_quantization_boundary_only_after_sustained_pressure() {
+        let mut c = LocalizationChooser::new(SafetyLevel::Strict);
+
+        for _ in 0..CALIBRATION_THRESHOLD + 50 {
+            c.observe(10_000, 0, 0, 0, 0);
+        }
+        assert_eq!(c.summary().signals[0], 0);
+
+        for _ in 0..5 {
+            c.observe(900_000, 0, 0, 0, 0);
+        }
+        assert_eq!(
+            c.summary().signals[0],
+            0,
+            "five high-risk samples should not yet lift EWMA risk above the 750-milli quantization boundary"
+        );
+
+        for _ in 0..2 {
+            c.observe(900_000, 0, 0, 0, 0);
+        }
+        assert_eq!(
+            c.summary().signals[0],
+            1,
+            "sustained high-risk samples should eventually lift the EWMA risk signal into band 1"
         );
     }
 
