@@ -564,11 +564,7 @@ pub fn parse_dns_response(recv_buf: &[u8], expected_id: u16) -> Option<Vec<DnsRe
 }
 
 /// Build the list of hostnames to try, applying search domains per resolv.conf.
-pub fn build_search_names(
-    hostname: &[u8],
-    search_domains: &[String],
-    ndots: u32,
-) -> Vec<Vec<u8>> {
+pub fn build_search_names(hostname: &[u8], search_domains: &[String], ndots: u32) -> Vec<Vec<u8>> {
     let dot_count = hostname.iter().filter(|&&b| b == b'.').count();
     if dot_count >= ndots as usize || hostname.last() == Some(&b'.') {
         vec![hostname.to_vec()]

@@ -231,20 +231,16 @@ core::arch::global_asm!(
     ".type sigsetjmp, @function",
     ".type setjmp, @function",
     ".type _setjmp, @function",
-
     // setjmp = __sigsetjmp(env, 1)
     "setjmp:",
     "  mov esi, 1",
     "  jmp __sigsetjmp",
-
     // _setjmp = __sigsetjmp(env, 0)
     "_setjmp:",
     "  xor esi, esi",
     "  jmp __sigsetjmp",
-
     // sigsetjmp = __sigsetjmp
     "sigsetjmp:",
-
     "__sigsetjmp:",
     // Save callee-saved registers
     "  mov [rdi + 0],  rbx",
@@ -266,18 +262,17 @@ core::arch::global_asm!(
     "  jz 2f",
     // Save signal mask: rt_sigprocmask(SIG_BLOCK=0, NULL, &env[72], 8)
     "  push rdi",
-    "  lea rdx, [rdi + 72]",   // old mask output
-    "  xor edi, edi",          // how = SIG_BLOCK (just query)
-    "  xor esi, esi",          // new = NULL
-    "  mov r10d, 8",           // sigsetsize
-    "  mov eax, 14",           // SYS_rt_sigprocmask
+    "  lea rdx, [rdi + 72]", // old mask output
+    "  xor edi, edi",        // how = SIG_BLOCK (just query)
+    "  xor esi, esi",        // new = NULL
+    "  mov r10d, 8",         // sigsetsize
+    "  mov eax, 14",         // SYS_rt_sigprocmask
     "  syscall",
     "  pop rdi",
     "2:",
     // Return 0 (direct call from setjmp always returns 0)
     "  xor eax, eax",
     "  ret",
-
     // longjmp(env: *mut c_void, val: c_int) -> !
     // rdi = env, esi = val
     ".global longjmp",
@@ -286,7 +281,6 @@ core::arch::global_asm!(
     ".type longjmp, @function",
     ".type _longjmp, @function",
     ".type siglongjmp, @function",
-
     // All variants share the same implementation
     "siglongjmp:",
     "_longjmp:",
@@ -298,21 +292,20 @@ core::arch::global_asm!(
     "  mov eax, 1",
     "3:",
     // Save return value and env pointer in caller-saved regs
-    "  mov r8d, eax",          // return value
-    "  mov r9, rdi",           // env pointer
-
+    "  mov r8d, eax", // return value
+    "  mov r9, rdi",  // env pointer
     // Check savemask flag
     "  mov ecx, [rdi + 64]",
     "  test ecx, ecx",
     "  jz 4f",
     // Restore signal mask: rt_sigprocmask(SIG_SETMASK=2, &env[72], NULL, 8)
-    "  lea rsi, [rdi + 72]",   // new mask = &env[72]
-    "  mov edi, 2",            // how = SIG_SETMASK
-    "  xor edx, edx",          // old = NULL
-    "  mov r10d, 8",           // sigsetsize
-    "  mov eax, 14",           // SYS_rt_sigprocmask
+    "  lea rsi, [rdi + 72]", // new mask = &env[72]
+    "  mov edi, 2",          // how = SIG_SETMASK
+    "  xor edx, edx",        // old = NULL
+    "  mov r10d, 8",         // sigsetsize
+    "  mov eax, 14",         // SYS_rt_sigprocmask
     "  syscall",
-    "  mov rdi, r9",           // restore env pointer
+    "  mov rdi, r9", // restore env pointer
     "4:",
     // Restore callee-saved registers
     "  mov rbx, [rdi + 0]",

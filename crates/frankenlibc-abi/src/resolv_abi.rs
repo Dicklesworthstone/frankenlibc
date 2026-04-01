@@ -423,7 +423,7 @@ fn udp_dns_query(
     timeout_secs: u32,
 ) -> Option<Vec<frankenlibc_core::resolv::dns::DnsRecord>> {
     use frankenlibc_core::resolv::dns::{
-        DnsMessage, DNS_HEADER_SIZE, DNS_MAX_UDP_SIZE, parse_dns_response,
+        DNS_HEADER_SIZE, DNS_MAX_UDP_SIZE, DnsMessage, parse_dns_response,
     };
     use std::ffi::c_void;
 
@@ -433,7 +433,10 @@ fn udp_dns_query(
         for &b in hostname {
             h = h.wrapping_mul(31).wrapping_add(b as u16);
         }
-        let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+        let mut ts = libc::timespec {
+            tv_sec: 0,
+            tv_nsec: 0,
+        };
         unsafe { libc::syscall(libc::SYS_clock_gettime, libc::CLOCK_MONOTONIC, &mut ts) };
         h ^ (ts.tv_nsec as u16)
     };
@@ -444,16 +447,28 @@ fn udp_dns_query(
     let send_len = msg.encode(&mut send_buf)?;
 
     // Create UDP socket via raw syscall
-    let af = if nameserver.is_ipv4() { libc::AF_INET } else { libc::AF_INET6 };
+    let af = if nameserver.is_ipv4() {
+        libc::AF_INET
+    } else {
+        libc::AF_INET6
+    };
     let fd = unsafe {
-        libc::syscall(libc::SYS_socket, af, libc::SOCK_DGRAM | libc::SOCK_CLOEXEC, 0) as i32
+        libc::syscall(
+            libc::SYS_socket,
+            af,
+            libc::SOCK_DGRAM | libc::SOCK_CLOEXEC,
+            0,
+        ) as i32
     };
     if fd < 0 {
         return None;
     }
 
     // Set receive timeout
-    let tv = libc::timeval { tv_sec: timeout_secs as i64, tv_usec: 0 };
+    let tv = libc::timeval {
+        tv_sec: timeout_secs as i64,
+        tv_usec: 0,
+    };
     unsafe {
         libc::syscall(
             libc::SYS_setsockopt,
@@ -545,7 +560,7 @@ fn native_dns_resolve(
     want_v4: bool,
     want_v6: bool,
 ) -> frankenlibc_core::resolv::dns::DnsResolution {
-    use frankenlibc_core::resolv::dns::{qtype, DnsResolution};
+    use frankenlibc_core::resolv::dns::{DnsResolution, qtype};
 
     let config = match std::fs::read("/etc/resolv.conf") {
         Ok(content) => frankenlibc_core::resolv::ResolverConfig::parse(&content),
@@ -553,16 +568,14 @@ fn native_dns_resolve(
     };
 
     let mut result = DnsResolution::default();
-    let names = frankenlibc_core::resolv::dns::build_search_names(
-        hostname,
-        &config.search,
-        config.ndots,
-    );
+    let names =
+        frankenlibc_core::resolv::dns::build_search_names(hostname, &config.search, config.ndots);
 
     for name in &names {
         for _attempt in 0..config.attempts {
             for ns in &config.nameservers {
-                if want_v4 && result.ipv4.is_empty()
+                if want_v4
+                    && result.ipv4.is_empty()
                     && let Some(records) = udp_dns_query(name, qtype::A, *ns, config.timeout)
                 {
                     for rec in &records {
@@ -571,7 +584,8 @@ fn native_dns_resolve(
                         }
                     }
                 }
-                if want_v6 && result.ipv6.is_empty()
+                if want_v6
+                    && result.ipv6.is_empty()
                     && let Some(records) = udp_dns_query(name, qtype::AAAA, *ns, config.timeout)
                 {
                     for rec in &records {
@@ -720,12 +734,7 @@ pub unsafe extern "C" fn getaddrinfo(
                             recent_page,
                             Some(stage_index(&ordering, CheckStage::Bounds)),
                         );
-                        runtime_policy::observe(
-                            ApiFamily::Resolver,
-                            decision.profile,
-                            25,
-                            true,
-                        );
+                        runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
                         return libc::EAI_NONAME;
                     }
                 }

@@ -11004,9 +11004,7 @@ unsafe fn serv_iter_next(state: &mut ServIterState) -> *mut c_void {
 
         // Pack into entry_buf: struct servent (32 bytes) + strings
         let str_offset = 32usize;
-        let needed = str_offset
-            + entry.name.len() + 1
-            + entry.protocol.len() + 1;
+        let needed = str_offset + entry.name.len() + 1 + entry.protocol.len() + 1;
         if needed > state.entry_buf.len() {
             continue;
         }
@@ -11039,11 +11037,10 @@ unsafe fn serv_iter_next(state: &mut ServIterState) -> *mut c_void {
         // Fill struct servent
         let ptrs = buf as *mut *mut c_char;
         unsafe {
-            *ptrs = name_ptr;                                                  // s_name
-            *(ptrs.add(1) as *mut *mut *mut c_char) =
-                state.aliases_ptrs.as_mut_ptr();                               // s_aliases
-            *(buf.add(16) as *mut c_int) = (entry.port as c_int).to_be();      // s_port (NBO)
-            *(buf.add(24) as *mut *mut c_char) = proto_ptr;                    // s_proto
+            *ptrs = name_ptr; // s_name
+            *(ptrs.add(1) as *mut *mut *mut c_char) = state.aliases_ptrs.as_mut_ptr(); // s_aliases
+            *(buf.add(16) as *mut c_int) = (entry.port as c_int).to_be(); // s_port (NBO)
+            *(buf.add(24) as *mut *mut c_char) = proto_ptr; // s_proto
         }
 
         return buf as *mut c_void;
@@ -11137,10 +11134,7 @@ fn parse_networks_line(line: &[u8]) -> Option<(&[u8], u32)> {
     // Network number can be dotted-quad or plain integer
     let net_num = if num_str.contains('.') {
         // Parse as IP address, convert to host-order network number
-        let parts: Vec<u32> = num_str
-            .split('.')
-            .filter_map(|p| p.parse().ok())
-            .collect();
+        let parts: Vec<u32> = num_str.split('.').filter_map(|p| p.parse().ok()).collect();
         match parts.len() {
             1 => parts[0] << 24,
             2 => (parts[0] << 24) | (parts[1] << 16),
@@ -11161,11 +11155,7 @@ fn parse_networks_line(line: &[u8]) -> Option<(&[u8], u32)> {
 ///   n_aliases:  *mut *mut c_char (offset 8)
 ///   n_addrtype: c_int          (offset 16)
 ///   n_net:      u32            (offset 20)
-unsafe fn fill_netent_buf(
-    state: &mut NetIterState,
-    name: &[u8],
-    net: u32,
-) -> *mut c_void {
+unsafe fn fill_netent_buf(state: &mut NetIterState, name: &[u8], net: u32) -> *mut c_void {
     let str_offset = 24usize;
     let needed = str_offset + name.len() + 1;
     if needed > state.entry_buf.len() {
@@ -11402,10 +11392,9 @@ unsafe fn proto_iter_next(state: &mut ProtoIterState) -> *mut c_void {
         // Fill struct protoent
         let ptrs = buf as *mut *mut c_char;
         unsafe {
-            *ptrs = name_ptr;                             // p_name
-            *(ptrs.add(1) as *mut *mut *mut c_char) =
-                state.aliases_ptrs.as_mut_ptr();          // p_aliases
-            *(buf.add(16) as *mut c_int) = proto_num;     // p_proto
+            *ptrs = name_ptr; // p_name
+            *(ptrs.add(1) as *mut *mut *mut c_char) = state.aliases_ptrs.as_mut_ptr(); // p_aliases
+            *(buf.add(16) as *mut c_int) = proto_num; // p_proto
         }
 
         return buf as *mut c_void;
@@ -11594,13 +11583,12 @@ unsafe fn host_iter_next(state: &mut HostIterState) -> *mut c_void {
 
         // Fill struct hostent
         unsafe {
-            *(buf as *mut *mut c_char) = name_ptr;                          // h_name
+            *(buf as *mut *mut c_char) = name_ptr; // h_name
             *((buf as *mut *mut c_char).add(1) as *mut *mut *mut c_char) =
-                state.alias_ptrs.as_mut_ptr();                              // h_aliases
-            *(buf.add(16) as *mut c_int) = af;                              // h_addrtype
-            *(buf.add(20) as *mut c_int) = addr_len;                        // h_length
-            *(buf.add(24) as *mut *mut *mut c_char) =
-                state.addr_ptrs.as_mut_ptr();                               // h_addr_list
+                state.alias_ptrs.as_mut_ptr(); // h_aliases
+            *(buf.add(16) as *mut c_int) = af; // h_addrtype
+            *(buf.add(20) as *mut c_int) = addr_len; // h_length
+            *(buf.add(24) as *mut *mut *mut c_char) = state.addr_ptrs.as_mut_ptr(); // h_addr_list
         }
 
         return buf as *mut c_void;
@@ -13397,9 +13385,7 @@ fn parse_aliases_line(line: &[u8]) -> Option<(&[u8], Vec<&[u8]>)> {
     // Strip trailing whitespace/newlines
     let line = {
         let mut end = line.len();
-        while end > 0
-            && matches!(line[end - 1], b' ' | b'\t' | b'\n' | b'\r')
-        {
+        while end > 0 && matches!(line[end - 1], b' ' | b'\t' | b'\n' | b'\r') {
             end -= 1;
         }
         &line[..end]
@@ -13480,11 +13466,10 @@ unsafe fn fill_aliasent_buf(
 
     // Fill struct aliasent
     unsafe {
-        *(buf as *mut *mut c_char) = name_ptr;                    // alias_name
-        *(buf.add(8) as *mut usize) = members.len();              // alias_members_len
-        *(buf.add(16) as *mut *mut *mut c_char) =
-            state.member_ptrs.as_mut_ptr();                       // alias_members
-        *(buf.add(24) as *mut c_int) = 0;                         // alias_local
+        *(buf as *mut *mut c_char) = name_ptr; // alias_name
+        *(buf.add(8) as *mut usize) = members.len(); // alias_members_len
+        *(buf.add(16) as *mut *mut *mut c_char) = state.member_ptrs.as_mut_ptr(); // alias_members
+        *(buf.add(24) as *mut c_int) = 0; // alias_local
     }
     buf as *mut c_void
 }
@@ -15760,8 +15745,11 @@ pub unsafe extern "C" fn sigstack(ss: *const c_void, oss: *mut c_void) -> c_int 
         let out = oss as *mut *mut c_void;
         unsafe {
             *out = old_alt.ss_sp;
-            *(out.add(1) as *mut c_int) =
-                if old_alt.ss_flags & libc::SS_ONSTACK != 0 { 1 } else { 0 };
+            *(out.add(1) as *mut c_int) = if old_alt.ss_flags & libc::SS_ONSTACK != 0 {
+                1
+            } else {
+                0
+            };
         }
     }
 
@@ -16008,10 +15996,7 @@ unsafe fn fstab_next(state: &mut FstabState) -> *mut c_void {
             state.line_buf.pop();
         }
         // Skip comments and blank lines
-        let first = state
-            .line_buf
-            .iter()
-            .position(|&b| b != b' ' && b != b'\t');
+        let first = state.line_buf.iter().position(|&b| b != b' ' && b != b'\t');
         if first.is_none_or(|i| state.line_buf[i] == b'#') {
             continue;
         }
@@ -16042,10 +16027,7 @@ unsafe fn fstab_next(state: &mut FstabState) -> *mut c_void {
         let passno_s = fields.next().unwrap_or(b"0");
 
         // Derive fs_type from mntops: "ro" if contains "ro", else "rw"
-        let fs_type_str = if mntops
-            .windows(2)
-            .any(|w| w == b"ro" )
-        {
+        let fs_type_str = if mntops.windows(2).any(|w| w == b"ro") {
             b"ro" as &[u8]
         } else {
             b"rw" as &[u8]
@@ -16054,11 +16036,16 @@ unsafe fn fstab_next(state: &mut FstabState) -> *mut c_void {
         // Check that all strings fit after the 48-byte struct header
         let str_offset = 48usize; // sizeof(struct fstab) on x86_64
         let needed = str_offset
-            + spec.len() + 1
-            + file.len() + 1
-            + vfstype.len() + 1
-            + mntops.len() + 1
-            + fs_type_str.len() + 1;
+            + spec.len()
+            + 1
+            + file.len()
+            + 1
+            + vfstype.len()
+            + 1
+            + mntops.len()
+            + 1
+            + fs_type_str.len()
+            + 1;
         if needed > FSTAB_BUF_SIZE {
             continue;
         }
@@ -16098,14 +16085,14 @@ unsafe fn fstab_next(state: &mut FstabState) -> *mut c_void {
         // Fill struct fstab at the start of the buffer
         let ent = buf as *mut *mut c_char;
         unsafe {
-            *ent = spec_ptr;           // fs_spec
-            *ent.add(1) = file_ptr;    // fs_file
+            *ent = spec_ptr; // fs_spec
+            *ent.add(1) = file_ptr; // fs_file
             *ent.add(2) = vfstype_ptr; // fs_vfstype
-            *ent.add(3) = mntops_ptr;  // fs_mntops
-            *ent.add(4) = type_ptr;    // fs_type
+            *ent.add(3) = mntops_ptr; // fs_mntops
+            *ent.add(4) = type_ptr; // fs_type
             let int_ptr = ent.add(5) as *mut c_int;
-            *int_ptr = freq;           // fs_freq
-            *int_ptr.add(1) = passno;  // fs_passno
+            *int_ptr = freq; // fs_freq
+            *int_ptr.add(1) = passno; // fs_passno
         }
 
         return buf as *mut c_void;
@@ -16271,10 +16258,7 @@ unsafe fn ttyent_next(state: &mut TtyentState) -> *mut c_void {
         while state.line_buf.last() == Some(&b'\n') || state.line_buf.last() == Some(&b'\r') {
             state.line_buf.pop();
         }
-        let first = state
-            .line_buf
-            .iter()
-            .position(|&b| b != b' ' && b != b'\t');
+        let first = state.line_buf.iter().position(|&b| b != b' ' && b != b'\t');
         if first.is_none_or(|i| state.line_buf[i] == b'#') {
             continue;
         }
@@ -16326,9 +16310,9 @@ unsafe fn ttyent_next(state: &mut TtyentState) -> *mut c_void {
         // Fill struct ttyent
         let ptrs = buf as *mut *mut c_char;
         unsafe {
-            *ptrs = name_ptr;           // ty_name
-            *ptrs.add(1) = getty_ptr;   // ty_getty
-            *ptrs.add(2) = type_ptr;    // ty_type
+            *ptrs = name_ptr; // ty_name
+            *ptrs.add(1) = getty_ptr; // ty_getty
+            *ptrs.add(2) = type_ptr; // ty_type
             // ty_status at byte offset 24 (after 3 pointers)
             let status_ptr = buf.add(24) as *mut c_int;
             *status_ptr = 0;
@@ -16477,11 +16461,7 @@ unsafe fn getdate_core(string: *const c_char, result: *mut libc::tm) -> c_int {
         unsafe { std::ptr::write_bytes(result as *mut u8, 0, core::mem::size_of::<libc::tm>()) };
 
         let remainder = unsafe {
-            crate::time_abi::strptime(
-                string,
-                template.as_ptr() as *const c_char,
-                result,
-            )
+            crate::time_abi::strptime(string, template.as_ptr() as *const c_char, result)
         };
         if !remainder.is_null() {
             // Check that strptime consumed the entire input string (or only trailing whitespace)
@@ -16719,19 +16699,14 @@ pub unsafe extern "C" fn gethostent_r(
 
             // Copy address binary
             unsafe {
-                std::ptr::copy_nonoverlapping(
-                    addr_bin.as_ptr(),
-                    buf_u8.add(addr_off),
-                    alen,
-                );
+                std::ptr::copy_nonoverlapping(addr_bin.as_ptr(), buf_u8.add(addr_off), alen);
             }
 
             // addr_list: [&addr, NULL]
             unsafe {
                 *(buf_u8.add(addr_list_off) as *mut *mut c_char) =
                     buf_u8.add(addr_off) as *mut c_char;
-                *(buf_u8.add(addr_list_off + ptr_size) as *mut *mut c_char) =
-                    std::ptr::null_mut();
+                *(buf_u8.add(addr_list_off + ptr_size) as *mut *mut c_char) = std::ptr::null_mut();
             }
 
             // aliases: pack remaining hostnames (skip for simplicity — would need
@@ -16743,13 +16718,13 @@ pub unsafe extern "C" fn gethostent_r(
             // Fill struct hostent in result_buf
             let ent = result_buf as *mut u8;
             unsafe {
-                *(ent as *mut *mut c_char) = buf;                               // h_name
+                *(ent as *mut *mut c_char) = buf; // h_name
                 *((ent as *mut *mut c_char).add(1) as *mut *mut *mut c_char) =
-                    buf_u8.add(alias_list_off) as *mut *mut c_char;             // h_aliases
-                *(ent.add(16) as *mut c_int) = af;                              // h_addrtype
-                *(ent.add(20) as *mut c_int) = addr_len;                        // h_length
+                    buf_u8.add(alias_list_off) as *mut *mut c_char; // h_aliases
+                *(ent.add(16) as *mut c_int) = af; // h_addrtype
+                *(ent.add(20) as *mut c_int) = addr_len; // h_length
                 *(ent.add(24) as *mut *mut *mut c_char) =
-                    buf_u8.add(addr_list_off) as *mut *mut c_char;              // h_addr_list
+                    buf_u8.add(addr_list_off) as *mut *mut c_char; // h_addr_list
             }
 
             if !result.is_null() {
@@ -16938,10 +16913,9 @@ unsafe fn fill_protoent_r(
     // Fill struct protoent: { p_name, p_aliases, p_proto }
     let ent = result_buf as *mut *mut c_char;
     unsafe {
-        *ent = buf;                                                       // p_name
-        *(ent.add(1) as *mut *mut *mut c_char) =
-            buf_u8.add(alias_offset) as *mut *mut c_char;                 // p_aliases
-        *((result_buf as *mut u8).add(16) as *mut c_int) = proto;         // p_proto
+        *ent = buf; // p_name
+        *(ent.add(1) as *mut *mut *mut c_char) = buf_u8.add(alias_offset) as *mut *mut c_char; // p_aliases
+        *((result_buf as *mut u8).add(16) as *mut c_int) = proto; // p_proto
     }
 
     if !result.is_null() {
@@ -17110,9 +17084,7 @@ pub unsafe extern "C" fn getprotoent_r(
                 .ok()
                 .and_then(|s| s.parse::<c_int>().ok())
             {
-                return unsafe {
-                    fill_protoent_r(pname, num, result_buf, buf, buflen, result)
-                };
+                return unsafe { fill_protoent_r(pname, num, result_buf, buf, buflen, result) };
             }
         }
     })
@@ -17162,7 +17134,10 @@ pub unsafe extern "C" fn getservent_r(
             };
 
             // Pack into caller-supplied buffer: struct servent is 32 bytes
-            let needed = entry.name.len() + 1 + entry.protocol.len() + 1
+            let needed = entry.name.len()
+                + 1
+                + entry.protocol.len()
+                + 1
                 + core::mem::size_of::<*mut c_char>(); // NULL alias ptr
             if needed > buflen {
                 return libc::ERANGE;
@@ -17205,10 +17180,9 @@ pub unsafe extern "C" fn getservent_r(
             // Fill struct servent in result_buf
             let ent = result_buf as *mut *mut c_char;
             unsafe {
-                *ent = name_ptr;                                                // s_name
-                *(ent.add(1) as *mut *mut *mut c_char) = aliases_ptr;           // s_aliases
-                *((result_buf as *mut u8).add(16) as *mut c_int) =
-                    (entry.port as c_int).to_be();                              // s_port (NBO)
+                *ent = name_ptr; // s_name
+                *(ent.add(1) as *mut *mut *mut c_char) = aliases_ptr; // s_aliases
+                *((result_buf as *mut u8).add(16) as *mut c_int) = (entry.port as c_int).to_be(); // s_port (NBO)
                 *((result_buf as *mut u8).add(24) as *mut *mut c_char) = proto_ptr; // s_proto
             }
 
@@ -17348,7 +17322,12 @@ pub unsafe extern "C" fn logout(line: *const c_char) -> c_int {
     // Write back
     unsafe { pututxline(entry as *const libc::utmpx) };
     // Append to wtmp
-    unsafe { updwtmp(c"/var/log/wtmp".as_ptr(), entry as *const libc::utmpx as *const c_void) };
+    unsafe {
+        updwtmp(
+            c"/var/log/wtmp".as_ptr(),
+            entry as *const libc::utmpx as *const c_void,
+        )
+    };
     unsafe { endutxent() };
     1
 }
@@ -17399,7 +17378,12 @@ pub unsafe extern "C" fn logwtmp(line: *const c_char, name: *const c_char, host:
     entry.ut_tv.tv_sec = ts.tv_sec as i32;
     entry.ut_tv.tv_usec = (ts.tv_nsec / 1000) as i32;
 
-    unsafe { updwtmp(c"/var/log/wtmp".as_ptr(), &entry as *const libc::utmpx as *const c_void) };
+    unsafe {
+        updwtmp(
+            c"/var/log/wtmp".as_ptr(),
+            &entry as *const libc::utmpx as *const c_void,
+        )
+    };
 }
 
 // ===========================================================================

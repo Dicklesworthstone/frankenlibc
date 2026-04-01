@@ -54,8 +54,7 @@ unsafe fn native_getenv(name_bytes: &[u8]) -> *mut c_char {
 // own malloc'd buffer (the original is on the process stack from crt0).
 
 /// Whether we've already copied environ to our own allocation.
-static ENVIRON_OWNED: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
+static ENVIRON_OWNED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Mutex protecting all environ mutations.
 static ENVIRON_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
