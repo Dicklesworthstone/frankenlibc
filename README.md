@@ -193,8 +193,8 @@ In practice:
 - The current shipping artifact is the **interpose** shared library: `target/release/libfrankenlibc_abi.so`.
 - The future **replace** artifact (`libfrankenlibc_replace.so`) is still planned, not done.
 - The classified symbol surface no longer reports direct `GlibcCallThrough` symbols, but the current shipping artifact is still an interpose-first preload library rather than a full standalone libc replacement.
-- The latest broad preload smoke run is not fully green yet. As of **March 23, 2026**, the checked smoke artifact recorded `23 passes / 35 fails / 6 skips`, and hardened mode remained unstable on that broader workload set.
-- Small strict-mode repros such as `echo`, `env`, `ls`, `sort`, `git --version`, and `du -s` have been brought up successfully, but that does **not** yet mean the interpose artifact is broadly production-ready.
+- The latest broad preload smoke run is **fully green**. As of **April 1, 2026**, the checked smoke artifact recorded `58 passes / 0 fails / 6 skips` (skips are missing optional binaries: sqlite3, redis-cli, nginx). Both strict and hardened modes pass all workloads.
+- The full smoke suite (echo, env, ls, sort, cat, head, tail, wc, cut, tr, sed, awk, grep, find, xargs, date, hostname, uname, id, whoami, stat, du, df, git, python3, busybox, ln, readlink, basename, dirname) passes in both strict and hardened modes. The interpose artifact is usable for a broad workload set, with broader production hardening still in progress.
 
 ## Threat Model
 
