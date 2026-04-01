@@ -1291,10 +1291,13 @@ GLIBC_2.2.5 {
         sigwait;
         sigpending;
 
-        /* setjmp/_setjmp/sigsetjmp NOT exported — they save the caller's
-           CPU context and cannot work through a function-pointer trampoline.
-           Programs call the host's setjmp directly.
-           longjmp/siglongjmp CAN be delegated (they don't return). */
+        /* setjmp family — native x86_64 assembly (global_asm!) saves the
+           caller's registers directly with no function prologue. All
+           variants exported so LD_PRELOAD intercepts them. */
+        setjmp;
+        _setjmp;
+        __sigsetjmp;
+        sigsetjmp;
         longjmp;
         _longjmp;
         siglongjmp;
@@ -2954,7 +2957,7 @@ GLIBC_2.2.5 {
         __sigismember;
         __signbitl;
         __sigpause;
-        /* __sigsetjmp NOT exported — see setjmp comment above */
+        /* __sigsetjmp now exported — native assembly in setjmp_abi.rs */
         __sigsuspend;
         __statfs;
         __stpcpy;

@@ -198,77 +198,247 @@ fn restore_entrypoint(env: *mut c_void, val: c_int, is_signal_variant: bool) -> 
     }
 }
 
-/// C ABI `setjmp` entrypoint.
-///
-/// NOT exported via `no_mangle` — setjmp must save the CALLER's CPU context,
-/// which cannot work through a function-pointer trampoline. Programs call
-/// the host libc's setjmp directly.
+// ===========================================================================
+// Native x86_64 setjmp/longjmp via global_asm!
+// ===========================================================================
+//
+// jmp_buf layout (our own, self-consistent under LD_PRELOAD):
+//   [0]:  rbx         (8 bytes)
+//   [8]:  rbp         (8 bytes)
+//   [16]: r12         (8 bytes)
+//   [24]: r13         (8 bytes)
+//   [32]: r14         (8 bytes)
+//   [40]: r15         (8 bytes)
+//   [48]: rsp         (8 bytes, caller's stack pointer)
+//   [56]: rip         (8 bytes, return address)
+//   [64]: savemask    (4 bytes, int flag)
+//   [72]: saved_mask  (128 bytes, __sigset_t for signal mask)
+//
+// Total: 200 bytes — matches glibc's sizeof(sigjmp_buf) on x86_64.
+//
+// Under LD_PRELOAD, both setjmp and longjmp are our implementations,
+// so the jmp_buf layout only needs to be self-consistent.
+
+#[cfg(not(debug_assertions))]
+core::arch::global_asm!(
+    // __sigsetjmp(env: *mut c_void, savemask: c_int) -> c_int
+    // rdi = env, esi = savemask
+    ".global __sigsetjmp",
+    ".global sigsetjmp",
+    ".global setjmp",
+    ".global _setjmp",
+    ".type __sigsetjmp, @function",
+    ".type sigsetjmp, @function",
+    ".type setjmp, @function",
+    ".type _setjmp, @function",
+
+    // setjmp = __sigsetjmp(env, 1)
+    "setjmp:",
+    "  mov esi, 1",
+    "  jmp __sigsetjmp",
+
+    // _setjmp = __sigsetjmp(env, 0)
+    "_setjmp:",
+    "  xor esi, esi",
+    "  jmp __sigsetjmp",
+
+    // sigsetjmp = __sigsetjmp
+    "sigsetjmp:",
+
+    "__sigsetjmp:",
+    // Save callee-saved registers
+    "  mov [rdi + 0],  rbx",
+    "  mov [rdi + 8],  rbp",
+    "  mov [rdi + 16], r12",
+    "  mov [rdi + 24], r13",
+    "  mov [rdi + 32], r14",
+    "  mov [rdi + 40], r15",
+    // Save caller's rsp (rsp currently points at return address)
+    "  lea rax, [rsp + 8]",
+    "  mov [rdi + 48], rax",
+    // Save return address
+    "  mov rax, [rsp]",
+    "  mov [rdi + 56], rax",
+    // Save savemask flag
+    "  mov [rdi + 64], esi",
+    // If savemask == 0, skip signal mask save
+    "  test esi, esi",
+    "  jz 2f",
+    // Save signal mask: rt_sigprocmask(SIG_BLOCK=0, NULL, &env[72], 8)
+    "  push rdi",
+    "  lea rdx, [rdi + 72]",   // old mask output
+    "  xor edi, edi",          // how = SIG_BLOCK (just query)
+    "  xor esi, esi",          // new = NULL
+    "  mov r10d, 8",           // sigsetsize
+    "  mov eax, 14",           // SYS_rt_sigprocmask
+    "  syscall",
+    "  pop rdi",
+    "2:",
+    // Return 0 (direct call from setjmp always returns 0)
+    "  xor eax, eax",
+    "  ret",
+
+    // longjmp(env: *mut c_void, val: c_int) -> !
+    // rdi = env, esi = val
+    ".global longjmp",
+    ".global _longjmp",
+    ".global siglongjmp",
+    ".type longjmp, @function",
+    ".type _longjmp, @function",
+    ".type siglongjmp, @function",
+
+    // All variants share the same implementation
+    "siglongjmp:",
+    "_longjmp:",
+    "longjmp:",
+    // Normalize return value: if val==0, return 1
+    "  mov eax, esi",
+    "  test eax, eax",
+    "  jnz 3f",
+    "  mov eax, 1",
+    "3:",
+    // Save return value and env pointer in caller-saved regs
+    "  mov r8d, eax",          // return value
+    "  mov r9, rdi",           // env pointer
+
+    // Check savemask flag
+    "  mov ecx, [rdi + 64]",
+    "  test ecx, ecx",
+    "  jz 4f",
+    // Restore signal mask: rt_sigprocmask(SIG_SETMASK=2, &env[72], NULL, 8)
+    "  lea rsi, [rdi + 72]",   // new mask = &env[72]
+    "  mov edi, 2",            // how = SIG_SETMASK
+    "  xor edx, edx",          // old = NULL
+    "  mov r10d, 8",           // sigsetsize
+    "  mov eax, 14",           // SYS_rt_sigprocmask
+    "  syscall",
+    "  mov rdi, r9",           // restore env pointer
+    "4:",
+    // Restore callee-saved registers
+    "  mov rbx, [rdi + 0]",
+    "  mov rbp, [rdi + 8]",
+    "  mov r12, [rdi + 16]",
+    "  mov r13, [rdi + 24]",
+    "  mov r14, [rdi + 32]",
+    "  mov r15, [rdi + 40]",
+    // Load return address before restoring rsp
+    "  mov rcx, [rdi + 56]",
+    // Restore stack pointer
+    "  mov rsp, [rdi + 48]",
+    // Set return value
+    "  mov eax, r8d",
+    // Jump to saved return address (appears as setjmp returning val)
+    "  jmp rcx",
+);
+
+// Rust-callable wrappers that dispatch to either our global_asm symbols
+// (release) or host delegation (debug/test). These are needed because
+// other modules (e.g., glibc_internal_abi) call these as Rust functions.
+
+#[cfg(not(debug_assertions))]
+unsafe extern "C" {
+    #[link_name = "setjmp"]
+    fn asm_setjmp(env: *mut c_void) -> c_int;
+    #[link_name = "_setjmp"]
+    fn asm__setjmp(env: *mut c_void) -> c_int;
+    #[link_name = "__sigsetjmp"]
+    fn asm_sigsetjmp(env: *mut c_void, savemask: c_int) -> c_int;
+    #[link_name = "longjmp"]
+    fn asm_longjmp(env: *mut c_void, val: c_int) -> !;
+    #[link_name = "_longjmp"]
+    fn asm__longjmp(env: *mut c_void, val: c_int) -> !;
+    #[link_name = "siglongjmp"]
+    fn asm_siglongjmp(env: *mut c_void, val: c_int) -> !;
+}
+
+#[cfg(not(debug_assertions))]
 pub unsafe extern "C" fn setjmp(env: *mut c_void) -> c_int {
-    type SetjmpFn = unsafe extern "C" fn(*mut c_void) -> c_int;
-    if let Some(addr) = crate::host_resolve::resolve_host_symbol_raw("setjmp") {
-        let host_fn: SetjmpFn = unsafe { core::mem::transmute(addr) };
-        return unsafe { host_fn(env) };
-    }
-    capture_entrypoint(env, false)
+    unsafe { asm_setjmp(env) }
 }
 
-/// C ABI `_setjmp` entrypoint — not exported (see setjmp comment).
+#[cfg(not(debug_assertions))]
 pub unsafe extern "C" fn _setjmp(env: *mut c_void) -> c_int {
-    type SetjmpFn = unsafe extern "C" fn(*mut c_void) -> c_int;
-    if let Some(addr) = crate::host_resolve::resolve_host_symbol_raw("_setjmp") {
-        let host_fn: SetjmpFn = unsafe { core::mem::transmute(addr) };
-        return unsafe { host_fn(env) };
+    unsafe { asm__setjmp(env) }
+}
+
+#[cfg(not(debug_assertions))]
+pub unsafe extern "C" fn sigsetjmp(env: *mut c_void, savemask: c_int) -> c_int {
+    unsafe { asm_sigsetjmp(env, savemask) }
+}
+
+#[cfg(not(debug_assertions))]
+pub unsafe extern "C" fn longjmp(env: *mut c_void, val: c_int) -> ! {
+    unsafe { asm_longjmp(env, val) }
+}
+
+#[cfg(not(debug_assertions))]
+pub unsafe extern "C" fn _longjmp(env: *mut c_void, val: c_int) -> ! {
+    unsafe { asm__longjmp(env, val) }
+}
+
+#[cfg(not(debug_assertions))]
+pub unsafe extern "C" fn siglongjmp(env: *mut c_void, val: c_int) -> ! {
+    unsafe { asm_siglongjmp(env, val) }
+}
+
+// In debug/test builds, keep the existing host-delegation path so tests
+// can run without the global_asm symbols conflicting with glibc.
+#[cfg(debug_assertions)]
+pub unsafe extern "C" fn setjmp(env: *mut c_void) -> c_int {
+    type F = unsafe extern "C" fn(*mut c_void) -> c_int;
+    if let Some(a) = crate::host_resolve::resolve_host_symbol_raw("setjmp") {
+        return unsafe { core::mem::transmute::<usize, F>(a)(env) };
     }
     capture_entrypoint(env, false)
 }
 
-/// C ABI `sigsetjmp` entrypoint — not exported (see setjmp comment).
+#[cfg(debug_assertions)]
+pub unsafe extern "C" fn _setjmp(env: *mut c_void) -> c_int {
+    type F = unsafe extern "C" fn(*mut c_void) -> c_int;
+    if let Some(a) = crate::host_resolve::resolve_host_symbol_raw("_setjmp") {
+        return unsafe { core::mem::transmute::<usize, F>(a)(env) };
+    }
+    capture_entrypoint(env, false)
+}
+
+#[cfg(debug_assertions)]
 pub unsafe extern "C" fn sigsetjmp(env: *mut c_void, savemask: c_int) -> c_int {
-    type SigsetjmpFn = unsafe extern "C" fn(*mut c_void, c_int) -> c_int;
-    if let Some(addr) = crate::host_resolve::resolve_host_symbol_raw("__sigsetjmp") {
-        let host_fn: SigsetjmpFn = unsafe { core::mem::transmute(addr) };
-        return unsafe { host_fn(env, savemask) };
+    type F = unsafe extern "C" fn(*mut c_void, c_int) -> c_int;
+    if let Some(a) = crate::host_resolve::resolve_host_symbol_raw("__sigsetjmp") {
+        return unsafe { core::mem::transmute::<usize, F>(a)(env, savemask) };
     }
     capture_entrypoint(env, savemask != 0)
 }
 
-/// C ABI `longjmp` entrypoint.
-///
-/// Delegates to host libc's longjmp for correct stack unwinding.
-/// Our capture-side metadata is informational; the actual jmp_buf context
-/// is managed by the host.
+#[cfg(debug_assertions)]
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn longjmp(env: *mut c_void, val: c_int) -> ! {
-    type LongjmpFn = unsafe extern "C" fn(*mut c_void, c_int) -> !;
-    if let Some(addr) = crate::host_resolve::resolve_host_symbol_raw("longjmp") {
-        let host_fn: LongjmpFn = unsafe { core::mem::transmute(addr) };
-        unsafe { host_fn(env, val) }
+    type F = unsafe extern "C" fn(*mut c_void, c_int) -> !;
+    if let Some(a) = crate::host_resolve::resolve_host_symbol_raw("longjmp") {
+        unsafe { core::mem::transmute::<usize, F>(a)(env, val) }
     }
     restore_entrypoint(env, val, false)
 }
 
-/// C ABI `_longjmp` entrypoint.
+#[cfg(debug_assertions)]
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn _longjmp(env: *mut c_void, val: c_int) -> ! {
-    type LongjmpFn = unsafe extern "C" fn(*mut c_void, c_int) -> !;
-    if let Some(addr) = crate::host_resolve::resolve_host_symbol_raw("longjmp") {
-        let host_fn: LongjmpFn = unsafe { core::mem::transmute(addr) };
-        unsafe { host_fn(env, val) }
+    type F = unsafe extern "C" fn(*mut c_void, c_int) -> !;
+    if let Some(a) = crate::host_resolve::resolve_host_symbol_raw("longjmp") {
+        unsafe { core::mem::transmute::<usize, F>(a)(env, val) }
     }
     restore_entrypoint(env, val, false)
 }
 
-/// C ABI `siglongjmp` entrypoint.
+#[cfg(debug_assertions)]
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn siglongjmp(env: *mut c_void, val: c_int) -> ! {
-    type LongjmpFn = unsafe extern "C" fn(*mut c_void, c_int) -> !;
-    if let Some(addr) = crate::host_resolve::resolve_host_symbol_raw("siglongjmp") {
-        let host_fn: LongjmpFn = unsafe { core::mem::transmute(addr) };
-        unsafe { host_fn(env, val) }
+    type F = unsafe extern "C" fn(*mut c_void, c_int) -> !;
+    if let Some(a) = crate::host_resolve::resolve_host_symbol_raw("siglongjmp") {
+        unsafe { core::mem::transmute::<usize, F>(a)(env, val) }
     }
-    if let Some(addr) = crate::host_resolve::resolve_host_symbol_raw("longjmp") {
-        let host_fn: LongjmpFn = unsafe { core::mem::transmute(addr) };
-        unsafe { host_fn(env, val) }
+    if let Some(a) = crate::host_resolve::resolve_host_symbol_raw("longjmp") {
+        unsafe { core::mem::transmute::<usize, F>(a)(env, val) }
     }
     restore_entrypoint(env, val, true)
 }
