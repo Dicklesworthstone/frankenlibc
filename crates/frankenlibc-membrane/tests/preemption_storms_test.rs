@@ -1,6 +1,6 @@
 use frankenlibc_membrane::ValidationOutcome;
 use frankenlibc_membrane::ValidationPipeline;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
@@ -95,7 +95,7 @@ unsafe extern "C" fn record_sigusr1(_sig: libc::c_int) {
 }
 
 fn current_mode_name() -> &'static str {
-    use frankenlibc_membrane::config::{safety_level, SafetyLevel};
+    use frankenlibc_membrane::config::{SafetyLevel, safety_level};
     match safety_level() {
         SafetyLevel::Off => "off",
         SafetyLevel::Strict => "strict",

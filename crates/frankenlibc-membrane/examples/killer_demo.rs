@@ -3,7 +3,7 @@
 //! Run:
 //! `cargo run -p frankenlibc-membrane --example killer_demo -- --output-dir target/killer_demo/manual`
 
-use asupersync_conformance::logging::{with_test_logger, ConformanceTestLogger};
+use asupersync_conformance::logging::{ConformanceTestLogger, with_test_logger};
 use asupersync_conformance::{Checkpoint, SuiteResult, SuiteTestResult, TestCategory, TestResult};
 use frankenlibc_membrane::{
     DecisionId, EvidenceLedger, HealingAction, HealingPolicy, PolicyId, RedactionPolicy,
@@ -15,12 +15,12 @@ use ftui_render::cell::PackedRgba;
 use ftui_render::frame::Frame;
 use ftui_render::grapheme_pool::GraphemePool;
 use ftui_style::Style;
+use ftui_widgets::Widget;
 use ftui_widgets::block::Block;
 use ftui_widgets::borders::{BorderType, Borders};
 use ftui_widgets::table::{Row, Table};
-use ftui_widgets::Widget;
 use serde::Serialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::env;
 use std::error::Error;
@@ -268,27 +268,29 @@ fn run_glibc_baseline(run_id: &str) -> ScenarioArtifacts {
         events: logger.events(),
     };
 
-    let scenario_log_lines = vec![json!({
-        "timestamp": now_utc_like(),
-        "trace_id": trace_id,
-        "bead_id": BEAD_ID,
-        "mode": "glibc",
-        "api_family": "allocator",
-        "symbol": "malloc/free",
-        "decision_path": "raw::malloc_free::uaf",
-        "healing_action": null,
-        "errno": 0,
-        "latency_ns": latency_ns,
-        "artifact_refs": scenario.artifact_refs,
-        "event": "killer_demo.scenario_result",
-        "outcome": if corruption_observed { "pass" } else { "fail" },
-        "details": {
-            "reused_same_addr": reused_same_addr,
-            "corruption_observed": corruption_observed,
-            "summary": scenario.summary,
-        }
-    })
-    .to_string()];
+    let scenario_log_lines = vec![
+        json!({
+            "timestamp": now_utc_like(),
+            "trace_id": trace_id,
+            "bead_id": BEAD_ID,
+            "mode": "glibc",
+            "api_family": "allocator",
+            "symbol": "malloc/free",
+            "decision_path": "raw::malloc_free::uaf",
+            "healing_action": null,
+            "errno": 0,
+            "latency_ns": latency_ns,
+            "artifact_refs": scenario.artifact_refs,
+            "event": "killer_demo.scenario_result",
+            "outcome": if corruption_observed { "pass" } else { "fail" },
+            "details": {
+                "reused_same_addr": reused_same_addr,
+                "corruption_observed": corruption_observed,
+                "summary": scenario.summary,
+            }
+        })
+        .to_string(),
+    ];
 
     ScenarioArtifacts {
         scenario,
@@ -435,31 +437,33 @@ fn run_membrane_mode(run_id: &str, mode: SafetyLevel) -> ScenarioArtifacts {
             )],
         };
 
-        let mut log_lines = vec![json!({
-            "timestamp": now_utc_like(),
-            "trace_id": trace_id,
-            "bead_id": BEAD_ID,
-            "mode": mode_label,
-            "api_family": "allocator",
-            "symbol": "free/use-after-free",
-            "decision_path": scenario.decision_path,
-            "healing_action": scenario.healing_action,
-            "errno": errno,
-            "latency_ns": latency_ns,
-            "artifact_refs": scenario.artifact_refs,
-            "event": "killer_demo.scenario_result",
-            "outcome": if detected { "pass" } else { "fail" },
-            "details": {
-                "validation_outcome": format!("{outcome:?}"),
-                "free_result": format!("{free_result:?}"),
-                "repaired": repaired,
-                "continued": scenario.continued,
-                "summary": scenario.summary,
-                "overhead_ns": overhead_ns,
-                "baseline_ns": baseline_ns,
-            }
-        })
-        .to_string()];
+        let mut log_lines = vec![
+            json!({
+                "timestamp": now_utc_like(),
+                "trace_id": trace_id,
+                "bead_id": BEAD_ID,
+                "mode": mode_label,
+                "api_family": "allocator",
+                "symbol": "free/use-after-free",
+                "decision_path": scenario.decision_path,
+                "healing_action": scenario.healing_action,
+                "errno": errno,
+                "latency_ns": latency_ns,
+                "artifact_refs": scenario.artifact_refs,
+                "event": "killer_demo.scenario_result",
+                "outcome": if detected { "pass" } else { "fail" },
+                "details": {
+                    "validation_outcome": format!("{outcome:?}"),
+                    "free_result": format!("{free_result:?}"),
+                    "repaired": repaired,
+                    "continued": scenario.continued,
+                    "summary": scenario.summary,
+                    "overhead_ns": overhead_ns,
+                    "baseline_ns": baseline_ns,
+                }
+            })
+            .to_string(),
+        ];
         let validation_jsonl = pipeline.export_validation_log_jsonl();
         if !validation_jsonl.trim().is_empty() {
             log_lines.extend(
@@ -697,7 +701,9 @@ fn parse_args() -> (PathBuf, bool) {
 fn print_report(report: &DemoReport, ansi: bool) {
     let summary = render_summary_ftui(&report.scenarios, ansi);
     println!("FrankenLibC Killer Demo");
-    println!("Shows the same stale-pointer story three ways: raw baseline, strict detection, hardened repair.\n");
+    println!(
+        "Shows the same stale-pointer story three ways: raw baseline, strict detection, hardened repair.\n"
+    );
     println!("{summary}");
     println!("Artifacts:");
     println!("  report: {}", report.output_dir);

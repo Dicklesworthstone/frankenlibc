@@ -695,6 +695,27 @@ unsafe extern "C" fn delayed_condvar_signal(arg: *mut c_void) -> *mut c_void {
     ptr::null_mut()
 }
 
+fn absolute_deadline_after(clock_id: libc::clockid_t, millis: i64) -> libc::timespec {
+    unsafe {
+        let mut ts: libc::timespec = std::mem::zeroed();
+        assert_eq!(
+            libc::clock_gettime(clock_id, &mut ts),
+            0,
+            "clock_gettime({clock_id}) should succeed"
+        );
+        ts.tv_sec += millis / 1000;
+        ts.tv_nsec += (millis % 1000) * 1_000_000;
+        if ts.tv_nsec >= 1_000_000_000 {
+            ts.tv_sec += 1;
+            ts.tv_nsec -= 1_000_000_000;
+        } else if ts.tv_nsec < 0 {
+            ts.tv_sec -= 1;
+            ts.tv_nsec += 1_000_000_000;
+        }
+        ts
+    }
+}
+
 unsafe extern "C" fn hold_mutex_briefly(arg: *mut c_void) -> *mut c_void {
     let ctx = unsafe { &*(arg as *const TimedMutexCtx) };
     unsafe {
@@ -869,6 +890,160 @@ fn cond_clockwait_realtime_deadline_on_monotonic_condvar_times_out_before_signal
             rc,
             libc::ETIMEDOUT,
             "clockwait should honor the requested realtime deadline even on a monotonic condvar"
+        );
+        assert_eq!(pthread_mutex_unlock(&state.mutex as *const _ as *mut _), 0);
+
+        assert_eq!(pthread_join(signaler, ptr::null_mut()), 0);
+        assert_eq!(pthread_cond_destroy(&state.cond as *const _ as *mut _), 0);
+        assert_eq!(pthread_mutex_destroy(&state.mutex as *const _ as *mut _), 0);
+    }
+}
+
+#[test]
+fn cond_clockwait_realtime_immediate_timeout_on_managed_condvar() {
+    unsafe {
+        let mut mutex: libc::pthread_mutex_t = std::mem::zeroed();
+        let mut cond: libc::pthread_cond_t = std::mem::zeroed();
+        assert_eq!(pthread_mutex_init(&mut mutex, ptr::null()), 0);
+        assert_eq!(pthread_cond_init(&mut cond, ptr::null()), 0);
+        assert_eq!(pthread_mutex_lock(&mut mutex), 0);
+
+        let deadline = absolute_deadline_after(libc::CLOCK_REALTIME, -1);
+        assert_eq!(
+            pthread_cond_clockwait(&mut cond, &mut mutex, libc::CLOCK_REALTIME, &deadline),
+            libc::ETIMEDOUT
+        );
+
+        assert_eq!(pthread_mutex_unlock(&mut mutex), 0);
+        assert_eq!(pthread_cond_destroy(&mut cond), 0);
+        assert_eq!(pthread_mutex_destroy(&mut mutex), 0);
+    }
+}
+
+#[test]
+fn cond_clockwait_realtime_future_signal_returns_zero_on_managed_condvar() {
+    unsafe {
+        let state = Box::new(SharedCondState {
+            mutex: std::mem::zeroed(),
+            cond: std::mem::zeroed(),
+            ready: AtomicI32::new(0),
+        });
+        assert_eq!(
+            pthread_mutex_init(&state.mutex as *const _ as *mut _, ptr::null()),
+            0
+        );
+        assert_eq!(
+            pthread_cond_init(&state.cond as *const _ as *mut _, ptr::null()),
+            0
+        );
+
+        let state_ptr = &*state as *const SharedCondState as *mut c_void;
+        let mut signaler: libc::pthread_t = 0;
+        assert_eq!(
+            pthread_create(
+                &mut signaler,
+                ptr::null(),
+                Some(delayed_condvar_signal),
+                state_ptr
+            ),
+            0
+        );
+
+        assert_eq!(pthread_mutex_lock(&state.mutex as *const _ as *mut _), 0);
+        let deadline = absolute_deadline_after(libc::CLOCK_REALTIME, 500);
+        assert_eq!(
+            pthread_cond_clockwait(
+                &state.cond as *const _ as *mut _,
+                &state.mutex as *const _ as *mut _,
+                libc::CLOCK_REALTIME,
+                &deadline,
+            ),
+            0
+        );
+        assert_eq!(pthread_mutex_unlock(&state.mutex as *const _ as *mut _), 0);
+
+        assert_eq!(pthread_join(signaler, ptr::null_mut()), 0);
+        assert_eq!(pthread_cond_destroy(&state.cond as *const _ as *mut _), 0);
+        assert_eq!(pthread_mutex_destroy(&state.mutex as *const _ as *mut _), 0);
+    }
+}
+
+#[test]
+fn cond_clockwait_monotonic_immediate_timeout_on_managed_condvar() {
+    unsafe {
+        let mut attr: libc::pthread_condattr_t = std::mem::zeroed();
+        assert_eq!(pthread_condattr_init(&mut attr), 0);
+        assert_eq!(
+            pthread_condattr_setclock(&mut attr, libc::CLOCK_MONOTONIC),
+            0
+        );
+
+        let mut mutex: libc::pthread_mutex_t = std::mem::zeroed();
+        let mut cond: libc::pthread_cond_t = std::mem::zeroed();
+        assert_eq!(pthread_mutex_init(&mut mutex, ptr::null()), 0);
+        assert_eq!(pthread_cond_init(&mut cond, &attr), 0);
+        assert_eq!(pthread_condattr_destroy(&mut attr), 0);
+        assert_eq!(pthread_mutex_lock(&mut mutex), 0);
+
+        let deadline = absolute_deadline_after(libc::CLOCK_MONOTONIC, -1);
+        assert_eq!(
+            pthread_cond_clockwait(&mut cond, &mut mutex, libc::CLOCK_MONOTONIC, &deadline),
+            libc::ETIMEDOUT
+        );
+
+        assert_eq!(pthread_mutex_unlock(&mut mutex), 0);
+        assert_eq!(pthread_cond_destroy(&mut cond), 0);
+        assert_eq!(pthread_mutex_destroy(&mut mutex), 0);
+    }
+}
+
+#[test]
+fn cond_clockwait_monotonic_future_signal_returns_zero_on_managed_condvar() {
+    unsafe {
+        let mut cond_attr: libc::pthread_condattr_t = std::mem::zeroed();
+        assert_eq!(pthread_condattr_init(&mut cond_attr), 0);
+        assert_eq!(
+            pthread_condattr_setclock(&mut cond_attr, libc::CLOCK_MONOTONIC),
+            0
+        );
+
+        let state = Box::new(SharedCondState {
+            mutex: std::mem::zeroed(),
+            cond: std::mem::zeroed(),
+            ready: AtomicI32::new(0),
+        });
+        assert_eq!(
+            pthread_mutex_init(&state.mutex as *const _ as *mut _, ptr::null()),
+            0
+        );
+        assert_eq!(
+            pthread_cond_init(&state.cond as *const _ as *mut _, &cond_attr),
+            0
+        );
+        assert_eq!(pthread_condattr_destroy(&mut cond_attr), 0);
+
+        let state_ptr = &*state as *const SharedCondState as *mut c_void;
+        let mut signaler: libc::pthread_t = 0;
+        assert_eq!(
+            pthread_create(
+                &mut signaler,
+                ptr::null(),
+                Some(delayed_condvar_signal),
+                state_ptr
+            ),
+            0
+        );
+
+        assert_eq!(pthread_mutex_lock(&state.mutex as *const _ as *mut _), 0);
+        let deadline = absolute_deadline_after(libc::CLOCK_MONOTONIC, 500);
+        assert_eq!(
+            pthread_cond_clockwait(
+                &state.cond as *const _ as *mut _,
+                &state.mutex as *const _ as *mut _,
+                libc::CLOCK_MONOTONIC,
+                &deadline,
+            ),
+            0
         );
         assert_eq!(pthread_mutex_unlock(&state.mutex as *const _ as *mut _), 0);
 
