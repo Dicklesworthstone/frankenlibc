@@ -270,4 +270,70 @@ mod tests {
         let selected = router.select_profile(family, SafetyLevel::Strict, 10_000, 0);
         assert_eq!(selected, ValidationProfile::Fast);
     }
+
+    #[test]
+    fn cached_profile_does_not_change_before_recompute_boundary() {
+        let router = ConstrainedBanditRouter::new();
+        let family = ApiFamily::Allocator;
+        let family_idx = usize::from(family as u8);
+
+        // Explore both arms so selection consults the cached value.
+        router.observe(family, ValidationProfile::Fast, 8, false);
+        router.observe(family, ValidationProfile::Full, 180, false);
+        assert_eq!(
+            router.cached_ucb_profile[family_idx].load(Ordering::Relaxed),
+            ARM_FULL as u8
+        );
+
+        // Feed strong Fast outcomes, but stop one pull short of the 64-total cadence.
+        for _ in 0..30 {
+            router.observe(family, ValidationProfile::Fast, 4, false);
+            router.observe(family, ValidationProfile::Full, 220, true);
+        }
+
+        assert_eq!(
+            router.family_pulls[family_idx].load(Ordering::Relaxed),
+            UCB_RECOMPUTE_CADENCE - 2
+        );
+        assert_eq!(
+            router.cached_ucb_profile[family_idx].load(Ordering::Relaxed),
+            ARM_FULL as u8,
+            "cached UCB choice should remain frozen until the cadence boundary is reached"
+        );
+        assert_eq!(
+            router.select_profile(family, SafetyLevel::Strict, 10_000, 0),
+            ValidationProfile::Full
+        );
+    }
+
+    #[test]
+    fn ucb_cache_isolated_per_family() {
+        let router = ConstrainedBanditRouter::new();
+        let fast_family = ApiFamily::Allocator;
+        let untouched_family = ApiFamily::Resolver;
+
+        router.observe(fast_family, ValidationProfile::Fast, 4, false);
+        router.observe(fast_family, ValidationProfile::Full, 180, false);
+        for _ in 0..31 {
+            router.observe(fast_family, ValidationProfile::Fast, 4, false);
+            router.observe(fast_family, ValidationProfile::Full, 220, true);
+        }
+
+        let fast_idx = usize::from(fast_family as u8);
+        let untouched_idx = usize::from(untouched_family as u8);
+        assert_eq!(
+            router.cached_ucb_profile[fast_idx].load(Ordering::Relaxed),
+            ARM_FAST as u8
+        );
+        assert_eq!(
+            router.cached_ucb_profile[untouched_idx].load(Ordering::Relaxed),
+            ARM_FULL as u8,
+            "families that never hit cadence should retain the conservative default cache"
+        );
+        assert_eq!(
+            router.select_profile(untouched_family, SafetyLevel::Strict, 10_000, 0),
+            ValidationProfile::Fast,
+            "an untouched family should still follow the exploration path rather than another family's cached choice"
+        );
+    }
 }
