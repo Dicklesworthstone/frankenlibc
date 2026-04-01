@@ -295,6 +295,26 @@ mod tests {
     }
 
     #[test]
+    fn off_mode_uses_strict_safe_set() {
+        let mut ctrl = ApproachabilityController::new(SafetyLevel::Off);
+        // This point is inside the strict target as well as the hardened target.
+        for _ in 0..CALIBRATION_THRESHOLD + 10 {
+            ctrl.observe(300, 400, 300);
+        }
+        assert_eq!(ctrl.state(), ApproachabilityState::Approaching);
+
+        let mut off = ApproachabilityController::new(SafetyLevel::Off);
+        let mut hardened = ApproachabilityController::new(SafetyLevel::Hardened);
+        // Risk=300 violates hardened (<=200) but not strict/off (<=500).
+        for _ in 0..CALIBRATION_THRESHOLD + 10 {
+            off.observe(300, 300, 600);
+            hardened.observe(300, 300, 600);
+        }
+        assert_eq!(off.state(), ApproachabilityState::Approaching);
+        assert_eq!(hardened.state(), ApproachabilityState::Drifting);
+    }
+
+    #[test]
     fn detects_latency_violation() {
         let mut ctrl = ApproachabilityController::new(SafetyLevel::Strict);
         // Strict safe set: lat≤350. Feed lat=800 (way over).
@@ -382,6 +402,32 @@ mod tests {
         assert!(
             final_dev < initial_dev,
             "Deviation should decrease: {final_dev} < {initial_dev}"
+        );
+    }
+
+    #[test]
+    fn safe_set_reentry_preserves_last_recommended_arm() {
+        let mut ctrl = ApproachabilityController::new(SafetyLevel::Strict);
+        for _ in 0..CALIBRATION_THRESHOLD + 50 {
+            ctrl.observe(900, 100, 800);
+        }
+        let chosen_arm = ctrl.recommended_arm();
+        assert!(chosen_arm <= 1, "latency pressure should pick a fast arm");
+
+        for _ in 0..2048 {
+            ctrl.observe(200, 200, 400);
+        }
+
+        assert_eq!(ctrl.state(), ApproachabilityState::Approaching);
+        assert_eq!(
+            ctrl.summary().deviation_sq_milli,
+            0,
+            "re-entering the safe set should zero out deviation"
+        );
+        assert_eq!(
+            ctrl.recommended_arm(),
+            chosen_arm,
+            "controller keeps the last recommendation while averages remain inside the safe set"
         );
     }
 

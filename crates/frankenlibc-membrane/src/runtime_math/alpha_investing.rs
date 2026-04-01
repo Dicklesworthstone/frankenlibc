@@ -379,6 +379,25 @@ mod tests {
     }
 
     #[test]
+    fn pending_alarm_uses_peak_severity_before_cadence_processing() {
+        let mut c = AlphaInvestingController::new();
+        advance_to(&mut c, WARMUP, 0);
+
+        // Start a weak alarm onset off-cadence, then escalate it to strong
+        // before the cadence boundary is reached. The pending severity should
+        // preserve the stronger evidence for the eventual test.
+        c.observe_and_update(&[2u8; N]);
+        for _ in 0..(CADENCE - 2) {
+            c.observe_and_update(&[3u8; N]);
+        }
+
+        let accepted = c.observe_and_update(&[3u8; N]);
+        assert_eq!(accepted, N as u32);
+        assert_eq!(c.rejections, N as u64);
+        assert_eq!(c.suppressions, 0);
+    }
+
+    #[test]
     fn depleted_state_suppresses_all() {
         let mut c = AlphaInvestingController::new();
         // Force depletion: set count past warmup on a cadence boundary.
@@ -479,6 +498,16 @@ mod tests {
         let s = c.summary();
         // Under mixed random alarms, the FDR should be bounded.
         assert!(s.empirical_fdr <= 1.0);
+    }
+
+    #[test]
+    fn wealth_is_capped_under_repeated_strong_discoveries() {
+        let mut c = AlphaInvestingController::new();
+        // Seed an over-cap state directly; the update path must clamp it.
+        c.wealth_milli = MAX_WEALTH_MILLI + 500;
+
+        assert_eq!(c.test_alarm(STRONG_EVIDENCE_SEVERITY), 1);
+        assert_eq!(c.wealth_milli, MAX_WEALTH_MILLI);
     }
 
     // ── bd-l2r: FDR correctness tests + perf evidence ──────────────
