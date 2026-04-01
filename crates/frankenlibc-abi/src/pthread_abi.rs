@@ -1869,6 +1869,26 @@ pub unsafe extern "C" fn pthread_mutex_init(
     if !FORCE_NATIVE_MUTEX.load(Ordering::Acquire)
         && let Some(host_init) = unsafe { host_pthread_mutex_init_fn() }
     {
+        // If attr uses our custom encoding (valid bit set), translate to
+        // host-compatible format. Our bitfield layout differs from glibc's,
+        // so passing our encoded attr directly causes glibc to misinterpret
+        // the mutex kind/protocol, triggering __pthread_tpp_change_priority
+        // assertions.
+        if !attr.is_null() {
+            let word = unsafe { *(attr.cast::<c_int>()) };
+            if word & MUTEXATTR_VALID_BIT != 0 {
+                // This is our managed attr — translate to host format.
+                let mtype = decode_mutexattr_type(word);
+                let mut host_attr: libc::pthread_mutexattr_t = unsafe { std::mem::zeroed() };
+                unsafe { libc::pthread_mutexattr_init(&mut host_attr) };
+                if mtype != libc::PTHREAD_MUTEX_DEFAULT {
+                    unsafe { libc::pthread_mutexattr_settype(&mut host_attr, mtype) };
+                }
+                let rc = unsafe { host_init(mutex, &host_attr) };
+                unsafe { libc::pthread_mutexattr_destroy(&mut host_attr) };
+                return rc;
+            }
+        }
         return unsafe { host_init(mutex, attr) };
     }
 
