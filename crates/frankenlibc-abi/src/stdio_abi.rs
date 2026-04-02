@@ -22,6 +22,7 @@ use frankenlibc_membrane::heal::{HealingAction, global_healing_policy};
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
 use crate::errno_abi::set_abi_errno;
+use crate::io_internal_abi::{self, NativeFileBufMode};
 use crate::malloc_abi::{known_remaining, malloc};
 use crate::runtime_policy;
 use crate::unistd_abi::{sys_read_fd, sys_write_fd};
@@ -43,6 +44,7 @@ type HostUngetcFn = unsafe extern "C" fn(c_int, *mut c_void) -> c_int;
 type HostFseekFn = unsafe extern "C" fn(*mut c_void, c_long, c_int) -> c_int;
 type HostFtellFn = unsafe extern "C" fn(*mut c_void) -> c_long;
 type HostFflushFn = unsafe extern "C" fn(*mut c_void) -> c_int;
+type HostSetvbufFn = unsafe extern "C" fn(*mut c_void, *mut c_char, c_int, usize) -> c_int;
 type HostGetdelimFn =
     unsafe extern "C" fn(*mut *mut c_char, *mut usize, c_int, *mut c_void) -> isize;
 type HostGetlineFn = unsafe extern "C" fn(*mut *mut c_char, *mut usize, *mut c_void) -> isize;
@@ -64,6 +66,7 @@ static HOST_UNGETC_FN: OnceLock<usize> = OnceLock::new();
 static HOST_FSEEK_FN: OnceLock<usize> = OnceLock::new();
 static HOST_FTELL_FN: OnceLock<usize> = OnceLock::new();
 static HOST_FFLUSH_FN: OnceLock<usize> = OnceLock::new();
+static HOST_SETVBUF_FN: OnceLock<usize> = OnceLock::new();
 static HOST_GETDELIM_FN: OnceLock<usize> = OnceLock::new();
 static HOST_GETLINE_FN: OnceLock<usize> = OnceLock::new();
 
@@ -73,6 +76,15 @@ static HOST_GETLINE_FN: OnceLock<usize> = OnceLock::new();
 
 fn repair_enabled(heals_enabled: bool, action: MembraneAction) -> bool {
     heals_enabled || matches!(action, MembraneAction::Repair(_))
+}
+
+#[inline]
+fn native_file_buf_mode(mode: BufMode) -> NativeFileBufMode {
+    match mode {
+        BufMode::Full => NativeFileBufMode::Full,
+        BufMode::Line => NativeFileBufMode::Line,
+        BufMode::None => NativeFileBufMode::None,
+    }
 }
 
 #[inline]
@@ -323,10 +335,58 @@ fn registry_contains_stream(id: usize) -> bool {
 }
 
 #[inline]
+fn standard_stream_id(stream: *mut c_void) -> Option<usize> {
+    if stream.is_null() {
+        return None;
+    }
+    let addr = stream as usize;
+    if addr == STDIN_SENTINEL
+        || stream == io_internal_abi::native_stdio_stream_ptr(libc::STDIN_FILENO)
+    {
+        return Some(STDIN_SENTINEL);
+    }
+    if addr == STDOUT_SENTINEL
+        || stream == io_internal_abi::native_stdio_stream_ptr(libc::STDOUT_FILENO)
+    {
+        return Some(STDOUT_SENTINEL);
+    }
+    if addr == STDERR_SENTINEL
+        || stream == io_internal_abi::native_stdio_stream_ptr(libc::STDERR_FILENO)
+    {
+        return Some(STDERR_SENTINEL);
+    }
+    None
+}
+
+#[inline]
+fn canonical_stream_id(stream: *mut c_void) -> usize {
+    standard_stream_id(stream).unwrap_or(stream as usize)
+}
+
+#[inline]
+fn sync_native_stdio_buffering(stream: *mut c_void, mode: BufMode, buf: *mut c_char, size: usize) {
+    let Some(fd) = (match standard_stream_id(stream) {
+        Some(STDIN_SENTINEL) => Some(libc::STDIN_FILENO),
+        Some(STDOUT_SENTINEL) => Some(libc::STDOUT_FILENO),
+        Some(STDERR_SENTINEL) => Some(libc::STDERR_FILENO),
+        _ => None,
+    }) else {
+        return;
+    };
+    // SAFETY: buf (if non-null) comes from the caller with `size` bytes of storage.
+    let _ = unsafe {
+        io_internal_abi::configure_native_stdio_stream(
+            fd,
+            native_file_buf_mode(mode),
+            buf.cast(),
+            size,
+        )
+    };
+}
+
+#[inline]
 unsafe fn host_stdio_symbol(slot: &OnceLock<usize>, symbol: &'static str) -> Option<usize> {
-    let ptr =
-        *slot.get_or_init(|| crate::host_resolve::resolve_host_symbol_raw(symbol).unwrap_or(0));
-    (ptr != 0).then_some(ptr)
+    crate::host_resolve::resolve_host_symbol_cached(slot, symbol)
 }
 
 #[inline]
@@ -445,6 +505,12 @@ unsafe fn host_getdelim_fn() -> Option<HostGetdelimFn> {
 #[inline]
 unsafe fn host_getline_fn() -> Option<HostGetlineFn> {
     unsafe { host_stdio_symbol(&HOST_GETLINE_FN, "getline") }
+        .map(|ptr| unsafe { std::mem::transmute(ptr) })
+}
+
+#[inline]
+unsafe fn host_setvbuf_fn() -> Option<HostSetvbufFn> {
+    unsafe { host_stdio_symbol(&HOST_SETVBUF_FN, "setvbuf") }
         .map(|ptr| unsafe { std::mem::transmute(ptr) })
 }
 
@@ -572,35 +638,26 @@ fn active_stdout_stream() -> *mut c_void {
     // output helpers coherent with later `fflush(stdout)` and redirection.
     unsafe {
         if stdout.is_null() {
-            STDOUT_SENTINEL as *mut c_void
+            io_internal_abi::native_stdio_stream_ptr(libc::STDOUT_FILENO)
         } else {
             stdout
         }
     }
 }
 
-/// Resolve host libc's stdin/stdout/stderr FILE* pointers and update our globals.
-/// Called from startup after host symbols are resolved.
+/// Publish FrankenLibC-owned stdio globals and mark host stdio delegation ready.
 pub(crate) fn init_host_stdio_streams() {
-    // Resolve _IO_2_1_{stdin,stdout,stderr}_ from host glibc.
-    // These are the actual FILE structs that programs dereference.
-    let stdin_addr = crate::host_resolve::resolve_host_symbol_raw("_IO_2_1_stdin_");
-    let stdout_addr = crate::host_resolve::resolve_host_symbol_raw("_IO_2_1_stdout_");
-    let stderr_addr = crate::host_resolve::resolve_host_symbol_raw("_IO_2_1_stderr_");
-
-    if let (Some(stdin_addr), Some(stdout_addr), Some(stderr_addr)) =
-        (stdin_addr, stdout_addr, stderr_addr)
-        && stdin_addr != 0
-        && stdout_addr != 0
-        && stderr_addr != 0
-    {
+    let stdin_ptr = io_internal_abi::native_stdio_stream_ptr(libc::STDIN_FILENO);
+    let stdout_ptr = io_internal_abi::native_stdio_stream_ptr(libc::STDOUT_FILENO);
+    let stderr_ptr = io_internal_abi::native_stdio_stream_ptr(libc::STDERR_FILENO);
+    if !stdin_ptr.is_null() && !stdout_ptr.is_null() && !stderr_ptr.is_null() {
         unsafe {
-            stdin = stdin_addr as *mut c_void;
-            stdout = stdout_addr as *mut c_void;
-            stderr = stderr_addr as *mut c_void;
+            stdin = stdin_ptr;
+            stdout = stdout_ptr;
+            stderr = stderr_ptr;
         }
-        HOST_STDIO_BOOTSTRAPPED.store(true, Ordering::Release);
     }
+    HOST_STDIO_BOOTSTRAPPED.store(true, Ordering::Release);
 }
 
 // ---------------------------------------------------------------------------
@@ -670,7 +727,7 @@ pub unsafe extern "C" fn fopen(pathname: *const c_char, mode: *const c_char) -> 
 /// POSIX `fclose`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fclose(stream: *mut c_void) -> c_int {
-    let id = stream as usize;
+    let id = canonical_stream_id(stream);
     if id == 0 {
         return libc::EOF;
     }
@@ -759,7 +816,7 @@ pub unsafe extern "C" fn fclose(stream: *mut c_void) -> c_int {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fflush(stream: *mut c_void) -> c_int {
     if !stream.is_null() {
-        let id = stream as usize;
+        let id = canonical_stream_id(stream);
         if !registry_contains_stream(id)
             && let Some(host_fflush) = unsafe { host_fflush_fn() }
         {
@@ -770,8 +827,14 @@ pub unsafe extern "C" fn fflush(stream: *mut c_void) -> c_int {
             return rc;
         }
     }
-    let (_, decision) =
-        runtime_policy::decide(ApiFamily::Stdio, stream as usize, 0, true, false, 0);
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Stdio,
+        canonical_stream_id(stream),
+        0,
+        true,
+        false,
+        0,
+    );
     if matches!(decision.action, MembraneAction::Deny) {
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 4, true);
         return libc::EOF;
@@ -801,7 +864,7 @@ pub unsafe extern "C" fn fflush(stream: *mut c_void) -> c_int {
         return if any_fail { libc::EOF } else { 0 };
     }
 
-    let id = stream as usize;
+    let id = canonical_stream_id(stream);
     if is_cookie_stream(id) {
         let adverse = !stream_exists(id);
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 8, adverse);
@@ -832,7 +895,7 @@ pub unsafe extern "C" fn fflush(stream: *mut c_void) -> c_int {
 /// POSIX `fgetc`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fgetc(stream: *mut c_void) -> c_int {
-    let id = stream as usize;
+    let id = canonical_stream_id(stream);
     if !registry_contains_stream(id)
         && let Some(host_fgetc) = unsafe { host_fgetc_fn() }
     {
@@ -948,7 +1011,7 @@ pub unsafe extern "C" fn fgetc(stream: *mut c_void) -> c_int {
 /// POSIX `fputc`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fputc(c: c_int, stream: *mut c_void) -> c_int {
-    let id = stream as usize;
+    let id = canonical_stream_id(stream);
     let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, id, 1, false, false, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
@@ -1053,7 +1116,7 @@ pub unsafe extern "C" fn fgets(buf: *mut c_char, size: c_int, stream: *mut c_voi
         unsafe { *buf = 0 };
         return buf;
     }
-    let id = stream as usize;
+    let id = canonical_stream_id(stream);
     if !registry_contains_stream(id)
         && let Some(host_fgets) = unsafe { host_fgets_fn() }
     {
@@ -1227,7 +1290,7 @@ pub unsafe extern "C" fn fputs(s: *const c_char, stream: *mut c_void) -> c_int {
         return libc::EOF;
     }
 
-    let id = stream as usize;
+    let id = canonical_stream_id(stream);
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::Stdio,
         id,
@@ -1381,7 +1444,7 @@ pub unsafe extern "C" fn fread(
         return 0;
     }
 
-    let id = stream as usize;
+    let id = canonical_stream_id(stream);
     if !registry_contains_stream(id)
         && let Some(host_fread) = unsafe { host_fread_fn() }
     {
@@ -1520,7 +1583,7 @@ pub unsafe extern "C" fn fwrite(
         return 0;
     }
 
-    let id = stream as usize;
+    let id = canonical_stream_id(stream);
     let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, id, total, false, false, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
@@ -1673,7 +1736,7 @@ pub unsafe extern "C" fn fseek(stream: *mut c_void, offset: c_long, whence: c_in
         unsafe { set_abi_errno(errno::EBADF) };
         return -1;
     }
-    let id = stream as usize;
+    let id = canonical_stream_id(stream);
     if !registry_contains_stream(id)
         && let Some(host_fseek) = unsafe { host_fseek_fn() }
     {
@@ -1802,7 +1865,7 @@ pub unsafe extern "C" fn ftell(stream: *mut c_void) -> c_long {
         unsafe { set_abi_errno(errno::EBADF) };
         return -1;
     }
-    let id = stream as usize;
+    let id = canonical_stream_id(stream);
     if !registry_contains_stream(id)
         && let Some(host_ftell) = unsafe { host_ftell_fn() }
     {
@@ -1849,7 +1912,7 @@ pub unsafe extern "C" fn rewind(stream: *mut c_void) {
     // rewind is fseek(stream, 0, SEEK_SET) + clearerr.
     unsafe { fseek(stream, 0, libc::SEEK_SET) };
 
-    let id = stream as usize;
+    let id = canonical_stream_id(stream);
     let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
     if let Some(s) = reg.streams.get_mut(&id) {
         s.clear_err();
@@ -1863,7 +1926,7 @@ pub unsafe extern "C" fn rewind(stream: *mut c_void) {
 /// POSIX `feof`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn feof(stream: *mut c_void) -> c_int {
-    let id = stream as usize;
+    let id = canonical_stream_id(stream);
     if id == 0 {
         return 0;
     }
@@ -1883,7 +1946,7 @@ pub unsafe extern "C" fn feof(stream: *mut c_void) -> c_int {
 /// POSIX `ferror`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn ferror(stream: *mut c_void) -> c_int {
-    let id = stream as usize;
+    let id = canonical_stream_id(stream);
     if id == 0 {
         return 0;
     }
@@ -1903,7 +1966,7 @@ pub unsafe extern "C" fn ferror(stream: *mut c_void) -> c_int {
 /// POSIX `clearerr`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn clearerr(stream: *mut c_void) {
-    let id = stream as usize;
+    let id = canonical_stream_id(stream);
     if id == 0 {
         return;
     }
@@ -1925,7 +1988,7 @@ pub unsafe extern "C" fn ungetc(c: c_int, stream: *mut c_void) -> c_int {
     if c == libc::EOF {
         return libc::EOF;
     }
-    let id = stream as usize;
+    let id = canonical_stream_id(stream);
     if !registry_contains_stream(id)
         && let Some(host_ungetc) = unsafe { host_ungetc_fn() }
     {
@@ -1946,7 +2009,7 @@ pub unsafe extern "C" fn ungetc(c: c_int, stream: *mut c_void) -> c_int {
 /// POSIX `fileno`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fileno(stream: *mut c_void) -> c_int {
-    let id = stream as usize;
+    let id = canonical_stream_id(stream);
     if id == 0 {
         unsafe { set_abi_errno(errno::EBADF) };
         return -1;
@@ -1985,11 +2048,12 @@ pub unsafe extern "C" fn setvbuf(
         return -1;
     };
 
-    let id = stream as usize;
+    let id = canonical_stream_id(stream);
     let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
     if let Some(s) = reg.streams.get_mut(&id) {
         // Note: we ignore the caller's buffer pointer; we always use internal allocation.
         if s.set_buffering(buf_mode, size) {
+            sync_native_stdio_buffering(stream, buf_mode, _buf, size);
             0
         } else {
             -1
@@ -1997,10 +2061,12 @@ pub unsafe extern "C" fn setvbuf(
     } else {
         drop(reg);
         // Not in our registry — delegate to host libc setvbuf (real FILE*).
-        type HostSetvbufFn = unsafe extern "C" fn(*mut c_void, *mut c_char, c_int, usize) -> c_int;
-        if let Some(addr) = crate::host_resolve::resolve_host_symbol_raw("setvbuf") {
-            let host_fn: HostSetvbufFn = unsafe { core::mem::transmute(addr) };
-            return unsafe { host_fn(stream, _buf, mode, size) };
+        if let Some(host_fn) = unsafe { host_setvbuf_fn() } {
+            let rc = unsafe { host_fn(stream, _buf, mode, size) };
+            if rc != 0 {
+                unsafe { sync_host_errno(errno::EBADF) };
+            }
+            return rc;
         }
         -1
     }
@@ -2549,7 +2615,7 @@ pub unsafe extern "C" fn fprintf(
     if format.is_null() {
         return -1;
     }
-    let id = stream as usize;
+    let id = canonical_stream_id(stream);
 
     let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, id, 0, false, false, 0);
     if matches!(decision.action, MembraneAction::Deny) {
@@ -2641,7 +2707,7 @@ pub unsafe extern "C" fn printf(format: *const c_char, mut args: ...) -> c_int {
     // POSIX: printf(...) is equivalent to fprintf(stdout, ...).
     // Route through the stdout stream to maintain buffer coherence.
     let stdout_ptr = active_stdout_stream();
-    let id = stdout_ptr as usize;
+    let id = canonical_stream_id(stdout_ptr);
 
     let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, id, 0, false, false, 0);
     if matches!(decision.action, MembraneAction::Deny) {
@@ -3053,7 +3119,7 @@ pub unsafe extern "C" fn vfprintf(
     if format.is_null() {
         return -1;
     }
-    let id = stream as usize;
+    let id = canonical_stream_id(stream);
     let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, id, 0, false, false, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
@@ -3124,7 +3190,7 @@ pub unsafe extern "C" fn vprintf(format: *const c_char, ap: *mut c_void) -> c_in
     }
 
     let stdout_ptr = active_stdout_stream();
-    let id = stdout_ptr as usize;
+    let id = canonical_stream_id(stdout_ptr);
     let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, id, 0, false, false, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
@@ -3499,7 +3565,7 @@ pub unsafe extern "C" fn fscanf(
     if format.is_null() {
         return -1;
     }
-    let id = stream as usize;
+    let id = canonical_stream_id(stream);
     let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, id, 0, false, false, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
@@ -3606,7 +3672,7 @@ pub unsafe extern "C" fn vfscanf(
     if format.is_null() || ap.is_null() {
         return -1;
     }
-    let id = stream as usize;
+    let id = canonical_stream_id(stream);
     let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, id, 0, false, false, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
@@ -3791,7 +3857,7 @@ pub unsafe extern "C" fn fgetpos(stream: *mut c_void, pos: *mut libc::fpos_t) ->
         return -1;
     }
 
-    let id = stream as usize;
+    let id = canonical_stream_id(stream);
     let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, id, 0, false, false, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
@@ -3903,7 +3969,7 @@ pub unsafe extern "C" fn freopen(
         return std::ptr::null_mut();
     }
 
-    let id = stream as usize;
+    let id = canonical_stream_id(stream);
     let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, id, 0, true, false, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         unsafe { set_abi_errno(errno::EACCES) };
@@ -4068,7 +4134,7 @@ pub unsafe extern "C" fn getdelim(
         return -1;
     }
 
-    let id = stream as usize;
+    let id = canonical_stream_id(stream);
     if !registry_contains_stream(id)
         && let Some(host_getdelim) = unsafe { host_getdelim_fn() }
     {
@@ -4078,7 +4144,7 @@ pub unsafe extern "C" fn getdelim(
         }
         return rc;
     }
-    let id = stream as usize;
+    let id = canonical_stream_id(stream);
     let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, id, 0, false, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
@@ -4158,7 +4224,7 @@ pub unsafe extern "C" fn getline(
         return -1;
     }
 
-    let id = stream as usize;
+    let id = canonical_stream_id(stream);
     if !registry_contains_stream(id)
         && let Some(host_getline) = unsafe { host_getline_fn() }
     {
@@ -4477,7 +4543,7 @@ pub unsafe extern "C" fn pclose(stream: *mut c_void) -> c_int {
         return -1;
     }
 
-    let id = stream as usize;
+    let id = canonical_stream_id(stream);
 
     // Look up and remove the child PID.
     let child_pid = {

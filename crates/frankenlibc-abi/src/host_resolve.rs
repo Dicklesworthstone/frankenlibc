@@ -425,6 +425,14 @@ pub(crate) fn resolve_host_symbol_raw(symbol: &str) -> Option<usize> {
     resolve_symbol_from_data(image.base, data, symbol)
 }
 
+pub(crate) fn resolve_host_symbol_cached(
+    slot: &OnceLock<usize>,
+    symbol: &'static str,
+) -> Option<usize> {
+    let ptr = *slot.get_or_init(|| resolve_host_symbol_raw(symbol).unwrap_or(0));
+    (ptr != 0).then_some(ptr)
+}
+
 #[inline]
 fn load_host_symbol(cache: &AtomicUsize) -> Option<usize> {
     bootstrap_host_symbols();

@@ -195,6 +195,40 @@ impl NativeFile {
     pub fn is_writable(&self) -> bool {
         self.flags & file_flags::WRITE != 0
     }
+
+    /// Update the exported buffering metadata for externally visible FILE* globals.
+    /// # Safety
+    /// If `user_buf` is non-null, it must point to at least `size` bytes of valid memory.
+    pub unsafe fn configure_buffering(
+        &mut self,
+        mode: NativeFileBufMode,
+        user_buf: *mut u8,
+        size: usize,
+    ) {
+        self.buf_mode = mode;
+        self.buffer_size = size;
+        if matches!(mode, NativeFileBufMode::None) || size == 0 {
+            self.buffer_base = ptr::null_mut();
+            self.buffer_pos = ptr::null_mut();
+            self.buffer_end = ptr::null_mut();
+            self.flags &= !file_flags::OWN_BUFFER;
+            return;
+        }
+
+        if user_buf.is_null() {
+            self.buffer_base = ptr::null_mut();
+            self.buffer_pos = ptr::null_mut();
+            self.buffer_end = ptr::null_mut();
+            self.flags &= !file_flags::OWN_BUFFER;
+            return;
+        }
+
+        self.buffer_base = user_buf;
+        self.buffer_pos = user_buf;
+        // SAFETY: caller provided a buffer pointer with `size` bytes of storage.
+        self.buffer_end = unsafe { user_buf.add(size) };
+        self.flags &= !file_flags::OWN_BUFFER;
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -417,15 +451,27 @@ impl NativeStreamRegistry {
         // Pre-register stdin (fd 0), stdout (fd 1), stderr (fd 2).
         registry.slots[0] = StreamSlot {
             state: SLOT_OCCUPIED,
-            file: NativeFile::new(0, file_flags::READ, NativeFileBufMode::Full),
+            file: {
+                let mut file = NativeFile::new(0, file_flags::READ, NativeFileBufMode::Full);
+                file.vtable = &DEFAULT_FD_VTABLE as *const _ as *const c_void;
+                file
+            },
         };
         registry.slots[1] = StreamSlot {
             state: SLOT_OCCUPIED,
-            file: NativeFile::new(1, file_flags::WRITE, NativeFileBufMode::Line),
+            file: {
+                let mut file = NativeFile::new(1, file_flags::WRITE, NativeFileBufMode::Line);
+                file.vtable = &DEFAULT_FD_VTABLE as *const _ as *const c_void;
+                file
+            },
         };
         registry.slots[2] = StreamSlot {
             state: SLOT_OCCUPIED,
-            file: NativeFile::new(2, file_flags::WRITE, NativeFileBufMode::None),
+            file: {
+                let mut file = NativeFile::new(2, file_flags::WRITE, NativeFileBufMode::None);
+                file.vtable = &DEFAULT_FD_VTABLE as *const _ as *const c_void;
+                file
+            },
         };
         registry
     }
@@ -516,6 +562,43 @@ pub fn native_stream_registry() -> std::sync::MutexGuard<'static, NativeStreamRe
     NATIVE_STREAM_REGISTRY
         .lock()
         .unwrap_or_else(|e| e.into_inner())
+}
+
+pub fn native_stdio_stream_ptr(fd: c_int) -> *mut c_void {
+    let index = match fd {
+        libc::STDIN_FILENO => 0,
+        libc::STDOUT_FILENO => 1,
+        libc::STDERR_FILENO => 2,
+        _ => return ptr::null_mut(),
+    };
+    let mut registry = native_stream_registry();
+    let Some(file) = registry.get_mut(index) else {
+        return ptr::null_mut();
+    };
+    file as *mut NativeFile as *mut c_void
+}
+
+/// # Safety
+/// If `user_buf` is non-null, it must point to at least `size` bytes of valid memory.
+pub unsafe fn configure_native_stdio_stream(
+    fd: c_int,
+    mode: NativeFileBufMode,
+    user_buf: *mut u8,
+    size: usize,
+) -> bool {
+    let index = match fd {
+        libc::STDIN_FILENO => 0,
+        libc::STDOUT_FILENO => 1,
+        libc::STDERR_FILENO => 2,
+        _ => return false,
+    };
+    let mut registry = native_stream_registry();
+    let Some(file) = registry.get_mut(index) else {
+        return false;
+    };
+    // SAFETY: caller guarantees `user_buf` (if non-null) has `size` bytes of storage.
+    unsafe { file.configure_buffering(mode, user_buf, size) };
+    true
 }
 
 // ---------------------------------------------------------------------------

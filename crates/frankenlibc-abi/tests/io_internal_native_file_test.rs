@@ -356,10 +356,9 @@ fn vtable_flush_writes_buffer() {
     assert_eq!(n, data.len() as i64);
     assert_eq!(&read_buf[..data.len()], data);
 
-    // Clean up without using vtable close (buffer is on stack).
-    f.buffer_base = std::ptr::null_mut();
-    f.buffer_pos = std::ptr::null_mut();
+    // Clean up: close fd (buffer is on the stack and will be dropped with `f`).
     unsafe { libc::syscall(libc::SYS_close, fd) };
+    let _ = f;
 }
 
 #[test]
@@ -397,8 +396,8 @@ fn vtable_close_flushes_before_closing() {
     assert_eq!(&read_buf[..data.len()], data);
 
     unsafe { libc::syscall(libc::SYS_close, verify_fd) };
-    // Clean up heap buffer - detach from file first since fd is closed.
-    f.buffer_base = std::ptr::null_mut();
+    // Clean up heap buffer (f no longer owns it since fd is already closed).
+    let _ = f;
     unsafe { std::alloc::dealloc(heap_buf, layout) };
 }
 
