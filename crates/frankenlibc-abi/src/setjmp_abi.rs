@@ -343,8 +343,9 @@ core::arch::global_asm!(
 );
 
 // Rust-callable wrappers that dispatch to either our global_asm symbols
-// (release) or host delegation (debug/test). These are needed because
-// other modules (e.g., glibc_internal_abi) call these as Rust functions.
+// (release) or the deterministic phase-1 capture/restore path (debug/test).
+// These are needed because other modules (e.g., glibc_internal_abi) call
+// these as Rust functions.
 
 #[cfg(not(debug_assertions))]
 unsafe extern "C" {
@@ -392,65 +393,38 @@ pub unsafe extern "C" fn siglongjmp(env: *mut c_void, val: c_int) -> ! {
     unsafe { asm_siglongjmp(env, val) }
 }
 
-// In debug/test builds, keep the existing host-delegation path so tests
-// can run without the global_asm symbols conflicting with glibc.
+// In debug/test builds, use the deterministic phase-1 path instead of
+// host delegation so verification stays on FrankenLibC-owned behavior.
 #[cfg(debug_assertions)]
 pub unsafe extern "C" fn setjmp(env: *mut c_void) -> c_int {
-    type F = unsafe extern "C" fn(*mut c_void) -> c_int;
-    if let Some(a) = crate::host_resolve::resolve_host_symbol_raw("setjmp") {
-        return unsafe { core::mem::transmute::<usize, F>(a)(env) };
-    }
     capture_entrypoint(env, false)
 }
 
 #[cfg(debug_assertions)]
 pub unsafe extern "C" fn _setjmp(env: *mut c_void) -> c_int {
-    type F = unsafe extern "C" fn(*mut c_void) -> c_int;
-    if let Some(a) = crate::host_resolve::resolve_host_symbol_raw("_setjmp") {
-        return unsafe { core::mem::transmute::<usize, F>(a)(env) };
-    }
     capture_entrypoint(env, false)
 }
 
 #[cfg(debug_assertions)]
 pub unsafe extern "C" fn sigsetjmp(env: *mut c_void, savemask: c_int) -> c_int {
-    type F = unsafe extern "C" fn(*mut c_void, c_int) -> c_int;
-    if let Some(a) = crate::host_resolve::resolve_host_symbol_raw("__sigsetjmp") {
-        return unsafe { core::mem::transmute::<usize, F>(a)(env, savemask) };
-    }
     capture_entrypoint(env, savemask != 0)
 }
 
 #[cfg(debug_assertions)]
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn longjmp(env: *mut c_void, val: c_int) -> ! {
-    type F = unsafe extern "C" fn(*mut c_void, c_int) -> !;
-    if let Some(a) = crate::host_resolve::resolve_host_symbol_raw("longjmp") {
-        unsafe { core::mem::transmute::<usize, F>(a)(env, val) }
-    }
     restore_entrypoint(env, val, false)
 }
 
 #[cfg(debug_assertions)]
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn _longjmp(env: *mut c_void, val: c_int) -> ! {
-    type F = unsafe extern "C" fn(*mut c_void, c_int) -> !;
-    if let Some(a) = crate::host_resolve::resolve_host_symbol_raw("longjmp") {
-        unsafe { core::mem::transmute::<usize, F>(a)(env, val) }
-    }
     restore_entrypoint(env, val, false)
 }
 
 #[cfg(debug_assertions)]
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn siglongjmp(env: *mut c_void, val: c_int) -> ! {
-    type F = unsafe extern "C" fn(*mut c_void, c_int) -> !;
-    if let Some(a) = crate::host_resolve::resolve_host_symbol_raw("siglongjmp") {
-        unsafe { core::mem::transmute::<usize, F>(a)(env, val) }
-    }
-    if let Some(a) = crate::host_resolve::resolve_host_symbol_raw("longjmp") {
-        unsafe { core::mem::transmute::<usize, F>(a)(env, val) }
-    }
     restore_entrypoint(env, val, true)
 }
 

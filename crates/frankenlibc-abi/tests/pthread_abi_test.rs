@@ -2981,7 +2981,10 @@ fn getattr_np_main_thread_native_via_proc_maps() {
         let self_id = pthread_self();
         let mut attr: libc::pthread_attr_t = std::mem::zeroed();
         let rc = pthread_getattr_np(self_id, &mut attr);
-        assert_eq!(rc, 0, "pthread_getattr_np should succeed for main thread via /proc maps");
+        assert_eq!(
+            rc, 0,
+            "pthread_getattr_np should succeed for main thread via /proc maps"
+        );
 
         let mut stack_size: usize = 0;
         assert_eq!(pthread_attr_getstacksize(&attr, &mut stack_size), 0);
@@ -3023,25 +3026,26 @@ fn getattr_np_main_thread_native_via_proc_maps() {
 fn getattr_np_spawned_thread_native_via_proc_maps() {
     // A thread spawned via std::thread (not our pthread_create) should also
     // work via the /proc maps fallback when forced native.
-    let result = std::thread::spawn(|| {
-        unsafe {
-            let _guard = ThreadingForceNativeGuard {
-                previous: pthread_threading_swap_force_native_for_tests(),
-            };
-            let self_id = pthread_self();
-            let mut attr: libc::pthread_attr_t = std::mem::zeroed();
-            let rc = pthread_getattr_np(self_id, &mut attr);
-            assert_eq!(rc, 0, "pthread_getattr_np should succeed for std::thread via /proc maps");
+    let result = std::thread::spawn(|| unsafe {
+        let _guard = ThreadingForceNativeGuard {
+            previous: pthread_threading_swap_force_native_for_tests(),
+        };
+        let self_id = pthread_self();
+        let mut attr: libc::pthread_attr_t = std::mem::zeroed();
+        let rc = pthread_getattr_np(self_id, &mut attr);
+        assert_eq!(
+            rc, 0,
+            "pthread_getattr_np should succeed for std::thread via /proc maps"
+        );
 
-            let mut stack_size: usize = 0;
-            assert_eq!(pthread_attr_getstacksize(&attr, &mut stack_size), 0);
-            assert!(
-                stack_size >= 16384,
-                "spawned thread stack_size ({stack_size}) should be >= PTHREAD_STACK_MIN"
-            );
-            assert_eq!(pthread_attr_destroy(&mut attr), 0);
-            stack_size
-        }
+        let mut stack_size: usize = 0;
+        assert_eq!(pthread_attr_getstacksize(&attr, &mut stack_size), 0);
+        assert!(
+            stack_size >= 16384,
+            "spawned thread stack_size ({stack_size}) should be >= PTHREAD_STACK_MIN"
+        );
+        assert_eq!(pthread_attr_destroy(&mut attr), 0);
+        stack_size
     })
     .join()
     .expect("thread should not panic");

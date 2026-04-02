@@ -331,14 +331,8 @@ unsafe fn vtable_fd_flush(file: *mut NativeFile) -> c_int {
     let pending = unsafe { pos.offset_from(base) } as usize;
     let mut written = 0usize;
     while written < pending {
-        let ret = unsafe {
-            libc::syscall(
-                libc::SYS_write,
-                fd,
-                base.add(written),
-                pending - written,
-            )
-        };
+        let ret =
+            unsafe { libc::syscall(libc::SYS_write, fd, base.add(written), pending - written) };
         if ret < 0 {
             unsafe { (*file).set_error() };
             return -1;
@@ -1836,4 +1830,3 @@ pub unsafe extern "C" fn _IO_wsetb(
 ) {
     // No-op: wide buffer management is internal to our stdio layer
 }
-

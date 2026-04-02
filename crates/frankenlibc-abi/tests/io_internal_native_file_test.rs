@@ -5,8 +5,8 @@
 use std::ffi::c_int;
 
 use frankenlibc_abi::io_internal_abi::{
-    file_flags, native_stream_registry, NativeFile, NativeFileBufMode, NativeFileVtable,
-    DEFAULT_FD_VTABLE, NATIVE_FILE_MAGIC,
+    DEFAULT_FD_VTABLE, NATIVE_FILE_MAGIC, NativeFile, NativeFileBufMode, NativeFileVtable,
+    file_flags, native_stream_registry,
 };
 
 // ---------------------------------------------------------------------------
@@ -225,13 +225,21 @@ fn vtable_struct_size() {
 #[test]
 fn vtable_write_and_read_roundtrip() {
     let fd = temp_memfd();
-    let mut f = NativeFile::new(fd, file_flags::WRITE | file_flags::READ, NativeFileBufMode::None);
+    let mut f = NativeFile::new(
+        fd,
+        file_flags::WRITE | file_flags::READ,
+        NativeFileBufMode::None,
+    );
     let vtable = &DEFAULT_FD_VTABLE;
 
     // Write data.
     let data = b"Hello, vtable!";
     let written = unsafe { (vtable.write)(&mut f, data.as_ptr(), data.len()) };
-    assert_eq!(written, data.len() as isize, "write should return bytes written");
+    assert_eq!(
+        written,
+        data.len() as isize,
+        "write should return bytes written"
+    );
     assert_eq!(f.offset, data.len() as i64, "offset should advance");
     assert!(!f.is_error());
 
@@ -271,7 +279,11 @@ fn vtable_read_eof() {
 #[test]
 fn vtable_seek_end() {
     let fd = temp_memfd();
-    let mut f = NativeFile::new(fd, file_flags::WRITE | file_flags::READ, NativeFileBufMode::None);
+    let mut f = NativeFile::new(
+        fd,
+        file_flags::WRITE | file_flags::READ,
+        NativeFileBufMode::None,
+    );
     let vtable = &DEFAULT_FD_VTABLE;
 
     // Write some data.
@@ -310,7 +322,11 @@ fn vtable_seek_clears_eof() {
 #[test]
 fn vtable_flush_writes_buffer() {
     let fd = temp_memfd();
-    let mut f = NativeFile::new(fd, file_flags::WRITE | file_flags::READ, NativeFileBufMode::Full);
+    let mut f = NativeFile::new(
+        fd,
+        file_flags::WRITE | file_flags::READ,
+        NativeFileBufMode::Full,
+    );
     let vtable = &DEFAULT_FD_VTABLE;
 
     // Set up a buffer and simulate buffered writes.
@@ -325,7 +341,10 @@ fn vtable_flush_writes_buffer() {
     // Flush should write the buffered data to fd.
     let rc = unsafe { (vtable.flush)(&mut f) };
     assert_eq!(rc, 0, "flush should succeed");
-    assert_eq!(f.buffer_pos, f.buffer_base, "buffer_pos should reset after flush");
+    assert_eq!(
+        f.buffer_pos, f.buffer_base,
+        "buffer_pos should reset after flush"
+    );
     assert!(!f.is_error());
 
     // Verify data was written by seeking back and reading.
@@ -473,7 +492,11 @@ fn registry_register_multiple_and_count() {
 
     let mut slots = Vec::new();
     for i in 0..10 {
-        let f = NativeFile::new(100 + i, file_flags::READ | file_flags::WRITE, NativeFileBufMode::Full);
+        let f = NativeFile::new(
+            100 + i,
+            file_flags::READ | file_flags::WRITE,
+            NativeFileBufMode::Full,
+        );
         let slot = reg.register(f).expect("should register");
         slots.push(slot);
     }
