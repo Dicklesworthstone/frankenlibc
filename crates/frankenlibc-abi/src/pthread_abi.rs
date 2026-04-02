@@ -944,6 +944,67 @@ fn thread_tid_appears_alive(tid: i32) -> bool {
     }
 }
 
+/// Parse `/proc/self/task/<tid>/maps` (or `/proc/self/maps` for the main thread)
+/// to discover stack boundaries. Returns `(stack_start, stack_size)` where
+/// `stack_start` is the lowest address of the stack mapping.
+///
+/// For the main thread the kernel labels the mapping `[stack]`. For spawned
+/// threads there is no such label, but we can locate the mapping that contains
+/// the current stack pointer.
+fn stack_bounds_from_proc_maps(tid: i32) -> Option<(usize, usize)> {
+    // Try thread-specific maps first, fall back to process-wide.
+    let maps_content = std::fs::read_to_string(format!("/proc/self/task/{tid}/maps"))
+        .or_else(|_| std::fs::read_to_string("/proc/self/maps"))
+        .ok()?;
+
+    // First pass: look for the explicit [stack] annotation (main thread).
+    for line in maps_content.lines() {
+        if line.ends_with("[stack]")
+            && let Some((start, end)) = parse_maps_range(line)
+        {
+            return Some((start, end - start));
+        }
+    }
+
+    // Second pass: find the mapping containing our current stack pointer.
+    // This handles spawned threads whose stack mappings have no label.
+    let sp: usize;
+    #[cfg(target_arch = "x86_64")]
+    {
+        // SAFETY: reading rsp is a single instruction with no side effects.
+        unsafe { core::arch::asm!("mov {}, rsp", out(reg) sp, options(nomem, nostack)) };
+    }
+    #[cfg(target_arch = "aarch64")]
+    {
+        unsafe { core::arch::asm!("mov {}, sp", out(reg) sp, options(nomem, nostack)) };
+    }
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    {
+        return None;
+    }
+
+    for line in maps_content.lines() {
+        if let Some((start, end)) = parse_maps_range(line)
+            && sp >= start
+            && sp < end
+        {
+            return Some((start, end - start));
+        }
+    }
+
+    None
+}
+
+/// Extract (start_addr, end_addr) from a `/proc/self/maps` line.
+/// Format: `start-end perms offset dev inode [pathname]`
+fn parse_maps_range(line: &str) -> Option<(usize, usize)> {
+    let range = line.split_whitespace().next()?;
+    let mut parts = range.split('-');
+    let start = usize::from_str_radix(parts.next()?, 16).ok()?;
+    let end = usize::from_str_radix(parts.next()?, 16).ok()?;
+    Some((start, end))
+}
+
 fn detached_thread_tid_snapshot(handle_ptr: *mut ThreadHandle) -> Option<i32> {
     if handle_ptr.is_null() {
         return None;
@@ -3792,6 +3853,27 @@ pub unsafe extern "C" fn pthread_getattr_np(
             (*data).stack_size = stack_total_size.saturating_sub(ATTR_DEFAULT_GUARD_SIZE);
             (*data).guard_size = ATTR_DEFAULT_GUARD_SIZE;
             (*data).stack_addr = stack_base + ATTR_DEFAULT_GUARD_SIZE;
+        }
+        return 0;
+    }
+
+    // Fallback: parse /proc/self/task/<tid>/maps to discover stack boundaries.
+    // This handles the main thread (not created by pthread_create) and any
+    // thread whose handle we can't locate in our registries.
+    let probe_tid = if thread == native_pthread_self() {
+        core_self_tid()
+    } else {
+        resolve_thread_tid(thread).unwrap_or(-1)
+    };
+    if probe_tid > 0
+        && let Some((stack_start, stack_size)) = stack_bounds_from_proc_maps(probe_tid)
+    {
+        // The main thread is always joinable (it cannot be detached).
+        unsafe {
+            (*data).detach_state = libc::PTHREAD_CREATE_JOINABLE;
+            (*data).stack_size = stack_size.saturating_sub(ATTR_DEFAULT_GUARD_SIZE);
+            (*data).guard_size = ATTR_DEFAULT_GUARD_SIZE;
+            (*data).stack_addr = stack_start + ATTR_DEFAULT_GUARD_SIZE;
         }
         return 0;
     }

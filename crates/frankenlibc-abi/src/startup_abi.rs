@@ -105,6 +105,10 @@ pub(crate) fn init_environment_globals(envp: *mut *mut c_char) {
         crate::glibc_internal_abi::_environ = published;
         crate::glibc_internal_abi::environ = published;
     }
+
+    // Transfer environ ownership to FrankenLibC so setenv/unsetenv can safely
+    // realloc without conflicting with glibc's crt0-allocated environ (bd-zh1y.6.1).
+    crate::stdlib_abi::take_environ_ownership();
 }
 
 #[inline]

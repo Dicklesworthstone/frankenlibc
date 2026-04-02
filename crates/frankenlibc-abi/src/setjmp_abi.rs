@@ -10,19 +10,29 @@
 //! This keeps behavior explicit and auditable: there is no silent call-through
 //! to host `setjmp` symbols and no silent fallback.
 
-use std::collections::HashMap;
 use std::ffi::{c_int, c_void};
+
+#[cfg(any(debug_assertions, test))]
+use std::collections::HashMap;
+#[cfg(any(debug_assertions, test))]
 use std::sync::{Mutex, OnceLock};
 
+#[cfg(any(debug_assertions, test))]
 use crate::errno_abi::set_abi_errno;
+#[cfg(any(debug_assertions, test))]
 use crate::runtime_policy;
+#[cfg(any(debug_assertions, test))]
 use frankenlibc_core::errno;
+#[cfg(any(debug_assertions, test))]
 use frankenlibc_core::setjmp::{
     JmpBuf, Phase1JumpError, Phase1Mode, phase1_longjmp_restore, phase1_setjmp_capture,
 };
+#[cfg(any(debug_assertions, test))]
 use frankenlibc_membrane::config::SafetyLevel;
+#[cfg(any(debug_assertions, test))]
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
+#[cfg(any(debug_assertions, test))]
 #[derive(Debug, Clone)]
 struct JumpRegistryEntry {
     env: JmpBuf,
@@ -30,11 +40,13 @@ struct JumpRegistryEntry {
     savemask: bool,
 }
 
+#[cfg(any(debug_assertions, test))]
 fn registry() -> &'static Mutex<HashMap<usize, JumpRegistryEntry>> {
     static REGISTRY: OnceLock<Mutex<HashMap<usize, JumpRegistryEntry>>> = OnceLock::new();
     REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+#[cfg(any(debug_assertions, test))]
 fn safety_to_phase1(mode: SafetyLevel) -> Phase1Mode {
     match mode {
         SafetyLevel::Hardened => Phase1Mode::Hardened,
@@ -42,6 +54,7 @@ fn safety_to_phase1(mode: SafetyLevel) -> Phase1Mode {
     }
 }
 
+#[cfg(any(debug_assertions, test))]
 fn phase1_error_errno(err: Phase1JumpError) -> c_int {
     match err {
         Phase1JumpError::UninitializedContext | Phase1JumpError::ModeMismatch => errno::EINVAL,
@@ -50,6 +63,7 @@ fn phase1_error_errno(err: Phase1JumpError) -> c_int {
     }
 }
 
+#[cfg(any(debug_assertions, test))]
 fn capture_env(env_addr: usize, mode: SafetyLevel, savemask: bool) -> Result<c_int, c_int> {
     if env_addr == 0 {
         return Err(errno::EFAULT);
@@ -74,6 +88,7 @@ fn capture_env(env_addr: usize, mode: SafetyLevel, savemask: bool) -> Result<c_i
     Ok(0)
 }
 
+#[cfg(any(debug_assertions, test))]
 fn restore_env(env_addr: usize, val: c_int, mode: SafetyLevel) -> Result<(i32, bool), c_int> {
     if env_addr == 0 {
         return Err(errno::EFAULT);
@@ -119,6 +134,7 @@ struct DeferredTransferPanic {
 }
 
 #[cfg(test)]
+#[cfg(any(debug_assertions, test))]
 fn terminate_deferred_transfer(
     errno_val: c_int,
     reason: &'static str,
@@ -135,7 +151,7 @@ fn terminate_deferred_transfer(
     });
 }
 
-#[cfg(not(test))]
+#[cfg(all(not(test), any(debug_assertions, test)))]
 fn terminate_deferred_transfer(
     errno_val: c_int,
     _reason: &'static str,
@@ -147,6 +163,7 @@ fn terminate_deferred_transfer(
     std::process::abort()
 }
 
+#[cfg(any(debug_assertions, test))]
 fn capture_entrypoint(env: *mut c_void, savemask: bool) -> c_int {
     let (mode, decision) =
         runtime_policy::decide(ApiFamily::Signal, env as usize, 0, true, env.is_null(), 0);
@@ -171,6 +188,7 @@ fn capture_entrypoint(env: *mut c_void, savemask: bool) -> c_int {
     }
 }
 
+#[cfg(any(debug_assertions, test))]
 fn restore_entrypoint(env: *mut c_void, val: c_int, is_signal_variant: bool) -> ! {
     let (mode, decision) =
         runtime_policy::decide(ApiFamily::Signal, env as usize, 0, true, env.is_null(), 0);

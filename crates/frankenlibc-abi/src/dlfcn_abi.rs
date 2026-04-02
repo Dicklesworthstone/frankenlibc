@@ -168,7 +168,13 @@ pub unsafe extern "C" fn dlopen(filename: *const c_char, flags: c_int) -> *mut c
         type DlopenFn = unsafe extern "C" fn(*const c_char, c_int) -> *mut c_void;
         if let Some(addr) = crate::host_resolve::resolve_host_symbol_raw("dlopen") {
             let host_dlopen: DlopenFn = unsafe { core::mem::transmute(addr) };
-            return unsafe { host_dlopen(filename, flags) };
+            let handle = unsafe { host_dlopen(filename, flags) };
+            if handle.is_null() {
+                set_dlerror(dlfcn_core::ERR_NOT_FOUND);
+            } else {
+                clear_dlerror();
+            }
+            return handle;
         }
         set_dlerror(dlfcn_core::ERR_NOT_FOUND);
         return std::ptr::null_mut();
@@ -222,8 +228,15 @@ pub unsafe extern "C" fn dlopen(filename: *const c_char, flags: c_int) -> *mut c
             type DlopenFn = unsafe extern "C" fn(*const c_char, c_int) -> *mut c_void;
             if let Some(addr) = crate::host_resolve::resolve_host_symbol_raw("dlopen") {
                 let host_dlopen: DlopenFn = unsafe { core::mem::transmute(addr) };
-                unsafe { host_dlopen(filename, flags) }
+                let handle = unsafe { host_dlopen(filename, flags) };
+                if handle.is_null() {
+                    set_dlerror(dlfcn_core::ERR_NOT_FOUND);
+                } else {
+                    clear_dlerror();
+                }
+                handle
             } else {
+                set_dlerror(dlfcn_core::ERR_NOT_FOUND);
                 std::ptr::null_mut()
             }
         }

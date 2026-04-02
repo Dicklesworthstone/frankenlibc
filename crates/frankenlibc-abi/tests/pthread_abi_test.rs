@@ -2964,6 +2964,90 @@ fn getattr_np_returns_valid_info_for_live_detached_managed_thread_after_restorin
     }
 }
 
+// ---------------------------------------------------------------------------
+// pthread_getattr_np — /proc/self/maps fallback (bd-zh1y.1.1)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn getattr_np_main_thread_native_via_proc_maps() {
+    // The main test thread is NOT created by pthread_create, so there is no
+    // ThreadHandle in the registry. With FORCE_NATIVE_THREADING the host
+    // delegation path is skipped. The implementation must fall back to
+    // /proc/self/task/<tid>/maps parsing to discover the stack boundaries.
+    unsafe {
+        let _guard = ThreadingForceNativeGuard {
+            previous: pthread_threading_swap_force_native_for_tests(),
+        };
+        let self_id = pthread_self();
+        let mut attr: libc::pthread_attr_t = std::mem::zeroed();
+        let rc = pthread_getattr_np(self_id, &mut attr);
+        assert_eq!(rc, 0, "pthread_getattr_np should succeed for main thread via /proc maps");
+
+        let mut stack_size: usize = 0;
+        assert_eq!(pthread_attr_getstacksize(&attr, &mut stack_size), 0);
+        // The main thread typically has an 8 MiB stack (Linux default).
+        // At minimum it must be larger than PTHREAD_STACK_MIN (16384).
+        assert!(
+            stack_size >= 16384,
+            "main thread stack_size ({stack_size}) should be >= PTHREAD_STACK_MIN"
+        );
+
+        let mut stack_addr: *mut c_void = ptr::null_mut();
+        let mut stack_addr_size: usize = 0;
+        assert_eq!(
+            pthread_attr_getstack(&attr, &mut stack_addr, &mut stack_addr_size),
+            0
+        );
+        assert!(
+            !stack_addr.is_null(),
+            "stack_addr should be non-null for main thread"
+        );
+        assert!(
+            stack_addr_size >= 16384,
+            "stack from getstack ({stack_addr_size}) should be >= PTHREAD_STACK_MIN"
+        );
+
+        let mut detach_state: c_int = -1;
+        assert_eq!(pthread_attr_getdetachstate(&attr, &mut detach_state), 0);
+        assert_eq!(
+            detach_state,
+            libc::PTHREAD_CREATE_JOINABLE,
+            "main thread should report JOINABLE"
+        );
+
+        assert_eq!(pthread_attr_destroy(&mut attr), 0);
+    }
+}
+
+#[test]
+fn getattr_np_spawned_thread_native_via_proc_maps() {
+    // A thread spawned via std::thread (not our pthread_create) should also
+    // work via the /proc maps fallback when forced native.
+    let result = std::thread::spawn(|| {
+        unsafe {
+            let _guard = ThreadingForceNativeGuard {
+                previous: pthread_threading_swap_force_native_for_tests(),
+            };
+            let self_id = pthread_self();
+            let mut attr: libc::pthread_attr_t = std::mem::zeroed();
+            let rc = pthread_getattr_np(self_id, &mut attr);
+            assert_eq!(rc, 0, "pthread_getattr_np should succeed for std::thread via /proc maps");
+
+            let mut stack_size: usize = 0;
+            assert_eq!(pthread_attr_getstacksize(&attr, &mut stack_size), 0);
+            assert!(
+                stack_size >= 16384,
+                "spawned thread stack_size ({stack_size}) should be >= PTHREAD_STACK_MIN"
+            );
+            assert_eq!(pthread_attr_destroy(&mut attr), 0);
+            stack_size
+        }
+    })
+    .join()
+    .expect("thread should not panic");
+    assert!(result >= 16384);
+}
+
 // ===========================================================================
 // pthread_gettid_np
 // ===========================================================================

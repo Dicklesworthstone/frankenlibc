@@ -8,11 +8,19 @@
 
 use std::ffi::{CStr, CString, c_char};
 use std::ptr;
+use std::sync::Mutex;
 
 use frankenlibc_abi::locale_abi::{
     bindtextdomain, catclose, catgets, catopen, dgettext, duplocale, freelocale, gettext,
-    localeconv, newlocale, ngettext, nl_langinfo, nl_langinfo_l, setlocale, textdomain, uselocale,
+    locale_reset_gettext_state_for_tests, localeconv, newlocale, ngettext, nl_langinfo,
+    nl_langinfo_l, setlocale, textdomain, uselocale,
 };
+
+static GETTEXT_STATE_GUARD: Mutex<()> = Mutex::new(());
+
+fn reset_gettext_state() {
+    locale_reset_gettext_state_for_tests();
+}
 
 // ---------------------------------------------------------------------------
 // setlocale
@@ -172,6 +180,8 @@ fn ngettext_zero_is_plural() {
 
 #[test]
 fn textdomain_null_returns_default() {
+    let _guard = GETTEXT_STATE_GUARD.lock().unwrap();
+    reset_gettext_state();
     let result = unsafe { textdomain(ptr::null()) };
     assert!(!result.is_null());
     let domain = unsafe { CStr::from_ptr(result) };
@@ -180,6 +190,8 @@ fn textdomain_null_returns_default() {
 
 #[test]
 fn textdomain_set_returns_name() {
+    let _guard = GETTEXT_STATE_GUARD.lock().unwrap();
+    reset_gettext_state();
     let name = CString::new("myapp").unwrap();
     let result = unsafe { textdomain(name.as_ptr()) };
     let domain = unsafe { CStr::from_ptr(result) };
@@ -188,6 +200,8 @@ fn textdomain_set_returns_name() {
 
 #[test]
 fn textdomain_query_reflects_previous_set() {
+    let _guard = GETTEXT_STATE_GUARD.lock().unwrap();
+    reset_gettext_state();
     let name = CString::new("frankenlibc-test-domain").unwrap();
     let set_result = unsafe { textdomain(name.as_ptr()) };
     let set_name = unsafe { CStr::from_ptr(set_result) };
@@ -200,6 +214,8 @@ fn textdomain_query_reflects_previous_set() {
 
 #[test]
 fn textdomain_empty_resets_to_default() {
+    let _guard = GETTEXT_STATE_GUARD.lock().unwrap();
+    reset_gettext_state();
     let empty = CString::new("").unwrap();
     let result = unsafe { textdomain(empty.as_ptr()) };
     let domain = unsafe { CStr::from_ptr(result) };
@@ -208,6 +224,8 @@ fn textdomain_empty_resets_to_default() {
 
 #[test]
 fn bindtextdomain_null_dirname_returns_default() {
+    let _guard = GETTEXT_STATE_GUARD.lock().unwrap();
+    reset_gettext_state();
     let domain = CString::new("myapp-default-query").unwrap();
     let result = unsafe { bindtextdomain(domain.as_ptr(), ptr::null()) };
     assert!(!result.is_null());
@@ -217,6 +235,8 @@ fn bindtextdomain_null_dirname_returns_default() {
 
 #[test]
 fn bindtextdomain_null_domain_returns_null() {
+    let _guard = GETTEXT_STATE_GUARD.lock().unwrap();
+    reset_gettext_state();
     let dirname = CString::new("/tmp/frankenlibc-locale").unwrap();
     let result = unsafe { bindtextdomain(ptr::null(), dirname.as_ptr()) };
     assert!(
@@ -227,6 +247,8 @@ fn bindtextdomain_null_domain_returns_null() {
 
 #[test]
 fn bindtextdomain_empty_domain_returns_null() {
+    let _guard = GETTEXT_STATE_GUARD.lock().unwrap();
+    reset_gettext_state();
     let domain = CString::new("").unwrap();
     let dirname = CString::new("/tmp/frankenlibc-locale").unwrap();
     let result = unsafe { bindtextdomain(domain.as_ptr(), dirname.as_ptr()) };
@@ -238,6 +260,8 @@ fn bindtextdomain_empty_domain_returns_null() {
 
 #[test]
 fn bindtextdomain_set_dirname() {
+    let _guard = GETTEXT_STATE_GUARD.lock().unwrap();
+    reset_gettext_state();
     let domain = CString::new("myapp").unwrap();
     let dirname = CString::new("/opt/locale").unwrap();
     let result = unsafe { bindtextdomain(domain.as_ptr(), dirname.as_ptr()) };
@@ -247,6 +271,8 @@ fn bindtextdomain_set_dirname() {
 
 #[test]
 fn bindtextdomain_query_reflects_previous_set() {
+    let _guard = GETTEXT_STATE_GUARD.lock().unwrap();
+    reset_gettext_state();
     let domain = CString::new("myapp").unwrap();
     let dirname = CString::new("/tmp/frankenlibc-locale").unwrap();
     let set_result = unsafe { bindtextdomain(domain.as_ptr(), dirname.as_ptr()) };
@@ -260,6 +286,8 @@ fn bindtextdomain_query_reflects_previous_set() {
 
 #[test]
 fn bindtextdomain_keeps_domains_separate() {
+    let _guard = GETTEXT_STATE_GUARD.lock().unwrap();
+    reset_gettext_state();
     let domain_a = CString::new("app-a").unwrap();
     let domain_b = CString::new("app-b").unwrap();
     let dir_a = CString::new("/tmp/frankenlibc-locale-a").unwrap();

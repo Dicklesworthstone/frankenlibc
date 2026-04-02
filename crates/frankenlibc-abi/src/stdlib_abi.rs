@@ -73,6 +73,17 @@ unsafe fn environ_len() -> usize {
     n
 }
 
+/// Transfer ownership of the process environ array during startup (bd-zh1y.6.1).
+///
+/// Deep-copies the host environ into our own allocation so setenv/unsetenv can
+/// safely realloc. Safe to call multiple times (idempotent). Must be called
+/// after `init_environment_globals` has set the environ aliases.
+pub fn take_environ_ownership() {
+    let _lock = ENVIRON_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    // SAFETY: we hold the environ lock.
+    unsafe { ensure_environ_owned() };
+}
+
 /// Ensure environ is in our own allocation so we can grow it.
 /// Must be called with ENVIRON_LOCK held.
 unsafe fn ensure_environ_owned() {

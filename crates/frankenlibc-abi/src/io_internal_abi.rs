@@ -13,16 +13,521 @@
 
 use std::ffi::{c_char, c_int, c_void};
 use std::ptr;
-use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 
 use crate::stdio_abi;
+
+// ---------------------------------------------------------------------------
+// Native FILE struct (bd-zh1y.3.1)
+// ---------------------------------------------------------------------------
+
+/// Buffering mode flags for [`NativeFile`].
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NativeFileBufMode {
+    /// `_IOFBF` — fully buffered (flush when buffer is full).
+    Full = 0,
+    /// `_IOLBF` — line buffered (flush on newline or full).
+    Line = 1,
+    /// `_IONBF` — unbuffered (no buffering).
+    None = 2,
+}
+
+/// Bitflags for [`NativeFile::flags`].
+pub mod file_flags {
+    /// Stream is open for reading.
+    pub const READ: u32 = 1 << 0;
+    /// Stream is open for writing.
+    pub const WRITE: u32 = 1 << 1;
+    /// Stream is in append mode.
+    pub const APPEND: u32 = 1 << 2;
+    /// End-of-file has been reached.
+    pub const EOF: u32 = 1 << 3;
+    /// An I/O error has occurred.
+    pub const ERROR: u32 = 1 << 4;
+    /// I/O has started (prevents setvbuf changes).
+    pub const IO_STARTED: u32 = 1 << 5;
+    /// Stream is wide-oriented.
+    pub const WIDE: u32 = 1 << 6;
+    /// Stream owns its buffer (must free on close).
+    pub const OWN_BUFFER: u32 = 1 << 7;
+}
+
+/// FrankenLibC-owned FILE structure.
+///
+/// Programs interact with `FILE*` as an opaque pointer, so this struct does NOT
+/// need to replicate glibc's internal `_IO_FILE` field layout. However, its
+/// `size_of` must be **at least** 216 bytes (glibc `sizeof(FILE)` on x86_64) so
+/// that allocations returned by `fopen` / `fdopen` are safe for callers that
+/// store extra data adjacent to the FILE (e.g., glibc's `_IO_FILE_plus`).
+///
+/// This struct is the foundation for replacing the current stream-registry
+/// approach with direct `FILE*` pointers that FrankenLibC fully owns.
+#[repr(C)]
+pub struct NativeFile {
+    /// Magic sentinel: `0x464b_4c43` ("FKLC") marks this as a FrankenLibC FILE.
+    pub magic: u32,
+
+    /// Underlying file descriptor (-1 = closed, -2 = memory-backed).
+    pub fd: i32,
+
+    /// Base address of the I/O buffer (null if unbuffered or not yet allocated).
+    pub buffer_base: *mut u8,
+
+    /// Current read/write position within the buffer.
+    pub buffer_pos: *mut u8,
+
+    /// One past the last valid byte in the buffer (read) or buffer capacity limit (write).
+    pub buffer_end: *mut u8,
+
+    /// Total allocated buffer size in bytes.
+    pub buffer_size: usize,
+
+    /// Bitfield of `file_flags::*` constants.
+    pub flags: u32,
+
+    /// Buffering mode.
+    pub buf_mode: NativeFileBufMode,
+
+    /// Padding for alignment after buf_mode (u8).
+    _pad0: [u8; 3],
+
+    /// One-byte pushback buffer for `ungetc`. 0xFF = empty, otherwise the byte.
+    pub ungetc_buf: i16,
+
+    /// Padding for alignment.
+    _pad1: [u8; 6],
+
+    /// Logical byte offset in the underlying file.
+    pub offset: i64,
+
+    /// Pointer to the stream vtable (read/write/seek/close/flush callbacks).
+    /// Null means use default fd-based I/O.
+    pub vtable: *const c_void,
+
+    /// Per-stream mutex for thread safety (futex-based, 0 = unlocked).
+    pub lock: i32,
+
+    /// Padding for alignment after lock.
+    _pad2: [u8; 4],
+
+    /// Reserved space to ensure sizeof(NativeFile) >= 216 bytes (glibc FILE size)
+    /// and to accommodate future fields (wide orientation state, cookie data,
+    /// _IO_list chain pointer, etc.).
+    _reserved: [u8; 136],
+}
+
+/// Magic value identifying a [`NativeFile`] struct: "FKLC".
+pub const NATIVE_FILE_MAGIC: u32 = 0x464b_4c43;
+
+// Compile-time assertions: NativeFile must be at least as large as glibc FILE (216 bytes).
+const _: () = assert!(
+    std::mem::size_of::<NativeFile>() >= 216,
+    "NativeFile must be >= 216 bytes (glibc FILE size)"
+);
+
+impl NativeFile {
+    /// Create a new `NativeFile` for the given file descriptor and flags.
+    pub fn new(fd: i32, flags: u32, buf_mode: NativeFileBufMode) -> Self {
+        Self {
+            magic: NATIVE_FILE_MAGIC,
+            fd,
+            buffer_base: ptr::null_mut(),
+            buffer_pos: ptr::null_mut(),
+            buffer_end: ptr::null_mut(),
+            buffer_size: 0,
+            flags,
+            buf_mode,
+            _pad0: [0; 3],
+            ungetc_buf: -1, // empty
+            _pad1: [0; 6],
+            offset: 0,
+            vtable: ptr::null(),
+            lock: 0,
+            _pad2: [0; 4],
+            _reserved: [0; 136],
+        }
+    }
+
+    /// Returns `true` if this struct has the correct magic value.
+    #[inline]
+    pub fn is_valid(&self) -> bool {
+        self.magic == NATIVE_FILE_MAGIC
+    }
+
+    /// Returns `true` if the EOF flag is set.
+    #[inline]
+    pub fn is_eof(&self) -> bool {
+        self.flags & file_flags::EOF != 0
+    }
+
+    /// Returns `true` if the error flag is set.
+    #[inline]
+    pub fn is_error(&self) -> bool {
+        self.flags & file_flags::ERROR != 0
+    }
+
+    /// Set the EOF flag.
+    #[inline]
+    pub fn set_eof(&mut self) {
+        self.flags |= file_flags::EOF;
+    }
+
+    /// Set the error flag.
+    #[inline]
+    pub fn set_error(&mut self) {
+        self.flags |= file_flags::ERROR;
+    }
+
+    /// Clear both EOF and error flags (for `clearerr`).
+    #[inline]
+    pub fn clear_errors(&mut self) {
+        self.flags &= !(file_flags::EOF | file_flags::ERROR);
+    }
+
+    /// Returns `true` if the stream is readable.
+    #[inline]
+    pub fn is_readable(&self) -> bool {
+        self.flags & file_flags::READ != 0
+    }
+
+    /// Returns `true` if the stream is writable.
+    #[inline]
+    pub fn is_writable(&self) -> bool {
+        self.flags & file_flags::WRITE != 0
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Native stream vtable (bd-zh1y.3.2)
+// ---------------------------------------------------------------------------
+
+/// Function pointer signatures for stream I/O operations.
+///
+/// `read`:  Read up to `count` bytes from the stream into `buf`. Returns bytes read, 0 on EOF, -1 on error.
+/// `write`: Write up to `count` bytes from `buf` to the stream. Returns bytes written, -1 on error.
+/// `seek`:  Seek to `offset` relative to `whence` (SEEK_SET/CUR/END). Returns new offset, -1 on error.
+/// `close`: Close the stream. Returns 0 on success, -1 on error.
+/// `flush`: Flush any pending write data. Returns 0 on success, -1 on error.
+#[repr(C)]
+pub struct NativeFileVtable {
+    pub read: unsafe fn(file: *mut NativeFile, buf: *mut u8, count: usize) -> isize,
+    pub write: unsafe fn(file: *mut NativeFile, buf: *const u8, count: usize) -> isize,
+    pub seek: unsafe fn(file: *mut NativeFile, offset: i64, whence: c_int) -> i64,
+    pub close: unsafe fn(file: *mut NativeFile) -> c_int,
+    pub flush: unsafe fn(file: *mut NativeFile) -> c_int,
+}
+
+/// Default vtable for fd-backed streams using raw Linux syscalls.
+pub static DEFAULT_FD_VTABLE: NativeFileVtable = NativeFileVtable {
+    read: vtable_fd_read,
+    write: vtable_fd_write,
+    seek: vtable_fd_seek,
+    close: vtable_fd_close,
+    flush: vtable_fd_flush,
+};
+
+/// Read from the underlying fd via `SYS_read`.
+///
+/// # Safety
+/// `file` must be a valid `NativeFile` pointer with a valid fd.
+/// `buf` must be writable for `count` bytes.
+unsafe fn vtable_fd_read(file: *mut NativeFile, buf: *mut u8, count: usize) -> isize {
+    let fd = unsafe { (*file).fd };
+    if fd < 0 {
+        return -1;
+    }
+    let ret = unsafe { libc::syscall(libc::SYS_read, fd, buf, count) };
+    if ret < 0 {
+        unsafe { (*file).set_error() };
+        return -1;
+    }
+    if ret == 0 && count > 0 {
+        unsafe { (*file).set_eof() };
+    }
+    let n = ret as isize;
+    // Advance the logical offset.
+    unsafe { (*file).offset += n as i64 };
+    n
+}
+
+/// Write to the underlying fd via `SYS_write`.
+///
+/// # Safety
+/// `file` must be a valid `NativeFile` pointer with a valid fd.
+/// `buf` must be readable for `count` bytes.
+unsafe fn vtable_fd_write(file: *mut NativeFile, buf: *const u8, count: usize) -> isize {
+    let fd = unsafe { (*file).fd };
+    if fd < 0 {
+        return -1;
+    }
+    let ret = unsafe { libc::syscall(libc::SYS_write, fd, buf, count) };
+    if ret < 0 {
+        unsafe { (*file).set_error() };
+        return -1;
+    }
+    let n = ret as isize;
+    unsafe { (*file).offset += n as i64 };
+    n
+}
+
+/// Seek to a position via `SYS_lseek`.
+///
+/// # Safety
+/// `file` must be a valid `NativeFile` pointer with a valid fd.
+unsafe fn vtable_fd_seek(file: *mut NativeFile, offset: i64, whence: c_int) -> i64 {
+    let fd = unsafe { (*file).fd };
+    if fd < 0 {
+        return -1;
+    }
+    let ret = unsafe { libc::syscall(libc::SYS_lseek, fd, offset, whence) };
+    if ret < 0 {
+        unsafe { (*file).set_error() };
+        return -1;
+    }
+    let new_offset = ret as i64;
+    unsafe { (*file).offset = new_offset };
+    // Clear EOF on successful seek.
+    unsafe { (*file).flags &= !file_flags::EOF };
+    new_offset
+}
+
+/// Close the underlying fd via `SYS_close` after flushing.
+///
+/// # Safety
+/// `file` must be a valid `NativeFile` pointer.
+unsafe fn vtable_fd_close(file: *mut NativeFile) -> c_int {
+    // Flush any pending writes first.
+    let flush_rc = unsafe { vtable_fd_flush(file) };
+    let fd = unsafe { (*file).fd };
+    if fd < 0 {
+        return if flush_rc != 0 { -1 } else { 0 };
+    }
+    let ret = unsafe { libc::syscall(libc::SYS_close, fd) };
+    unsafe { (*file).fd = -1 };
+    if ret < 0 || flush_rc != 0 { -1 } else { 0 }
+}
+
+/// Flush pending write buffer to the fd via `SYS_write`.
+///
+/// Writes all bytes between `buffer_base` and `buffer_pos` to the fd,
+/// then resets the write cursor.
+///
+/// # Safety
+/// `file` must be a valid `NativeFile` pointer.
+unsafe fn vtable_fd_flush(file: *mut NativeFile) -> c_int {
+    let base = unsafe { (*file).buffer_base };
+    let pos = unsafe { (*file).buffer_pos };
+    if base.is_null() || pos <= base {
+        return 0; // Nothing to flush.
+    }
+    // Only flush if the stream is writable (buffered write data exists).
+    if unsafe { (*file).flags } & file_flags::WRITE == 0 {
+        return 0;
+    }
+    let fd = unsafe { (*file).fd };
+    if fd < 0 {
+        return -1;
+    }
+    let pending = unsafe { pos.offset_from(base) } as usize;
+    let mut written = 0usize;
+    while written < pending {
+        let ret = unsafe {
+            libc::syscall(
+                libc::SYS_write,
+                fd,
+                base.add(written),
+                pending - written,
+            )
+        };
+        if ret < 0 {
+            unsafe { (*file).set_error() };
+            return -1;
+        }
+        written += ret as usize;
+    }
+    // Reset buffer position after flush.
+    unsafe { (*file).buffer_pos = base };
+    0
+}
+
+// ---------------------------------------------------------------------------
+// Native stream registry (bd-zh1y.3.3)
+// ---------------------------------------------------------------------------
+
+use std::sync::Mutex;
+
+/// Maximum number of concurrently open native streams.
+const STREAM_REGISTRY_CAPACITY: usize = 256;
+
+/// Slot state: slot is free.
+const SLOT_FREE: u32 = 0;
+/// Slot state: slot is occupied by an open stream.
+const SLOT_OCCUPIED: u32 = 1;
+
+/// A slot in the stream registry.
+struct StreamSlot {
+    state: u32,
+    file: NativeFile,
+}
+
+impl StreamSlot {
+    const fn empty() -> Self {
+        Self {
+            state: SLOT_FREE,
+            file: NativeFile {
+                magic: 0,
+                fd: -1,
+                buffer_base: ptr::null_mut(),
+                buffer_pos: ptr::null_mut(),
+                buffer_end: ptr::null_mut(),
+                buffer_size: 0,
+                flags: 0,
+                buf_mode: NativeFileBufMode::None,
+                _pad0: [0; 3],
+                ungetc_buf: -1,
+                _pad1: [0; 6],
+                offset: 0,
+                vtable: ptr::null(),
+                lock: 0,
+                _pad2: [0; 4],
+                _reserved: [0; 136],
+            },
+        }
+    }
+}
+
+/// Thread-safe registry of all open native FILE streams.
+///
+/// Replaces glibc's `_IO_list_all` linked list. Supports:
+/// - `register`: add a new stream (returns slot index as stream ID)
+/// - `unregister`: remove a stream by slot index
+/// - `get_mut`: get mutable access to a stream by slot index
+/// - `flush_all`: flush all writable streams (for `fflush(NULL)`)
+///
+/// Slots 0/1/2 are pre-registered for stdin/stdout/stderr.
+pub struct NativeStreamRegistry {
+    slots: [StreamSlot; STREAM_REGISTRY_CAPACITY],
+}
+
+impl NativeStreamRegistry {
+    /// Create a new registry with stdin/stdout/stderr pre-registered.
+    fn new() -> Self {
+        let mut registry = Self {
+            slots: {
+                // Initialize all slots as empty.
+                // SAFETY: StreamSlot has no non-trivial drop and all-zeros is valid.
+                const EMPTY: StreamSlot = StreamSlot::empty();
+                [EMPTY; STREAM_REGISTRY_CAPACITY]
+            },
+        };
+        // Pre-register stdin (fd 0), stdout (fd 1), stderr (fd 2).
+        registry.slots[0] = StreamSlot {
+            state: SLOT_OCCUPIED,
+            file: NativeFile::new(0, file_flags::READ, NativeFileBufMode::Full),
+        };
+        registry.slots[1] = StreamSlot {
+            state: SLOT_OCCUPIED,
+            file: NativeFile::new(1, file_flags::WRITE, NativeFileBufMode::Line),
+        };
+        registry.slots[2] = StreamSlot {
+            state: SLOT_OCCUPIED,
+            file: NativeFile::new(2, file_flags::WRITE, NativeFileBufMode::None),
+        };
+        registry
+    }
+
+    /// Register a new stream. Returns the slot index, or `None` if full.
+    pub fn register(&mut self, file: NativeFile) -> Option<usize> {
+        // Start from slot 3 (0/1/2 are reserved for stdin/stdout/stderr).
+        for i in 3..STREAM_REGISTRY_CAPACITY {
+            if self.slots[i].state == SLOT_FREE {
+                self.slots[i].state = SLOT_OCCUPIED;
+                self.slots[i].file = file;
+                return Some(i);
+            }
+        }
+        None // Registry full.
+    }
+
+    /// Unregister a stream by slot index. Returns `true` if the slot was occupied.
+    pub fn unregister(&mut self, index: usize) -> bool {
+        if index >= STREAM_REGISTRY_CAPACITY || self.slots[index].state != SLOT_OCCUPIED {
+            return false;
+        }
+        self.slots[index].state = SLOT_FREE;
+        self.slots[index].file.magic = 0;
+        self.slots[index].file.fd = -1;
+        true
+    }
+
+    /// Get a mutable reference to a stream by slot index.
+    pub fn get_mut(&mut self, index: usize) -> Option<&mut NativeFile> {
+        if index < STREAM_REGISTRY_CAPACITY && self.slots[index].state == SLOT_OCCUPIED {
+            Some(&mut self.slots[index].file)
+        } else {
+            None
+        }
+    }
+
+    /// Get a reference to a stream by slot index.
+    pub fn get(&self, index: usize) -> Option<&NativeFile> {
+        if index < STREAM_REGISTRY_CAPACITY && self.slots[index].state == SLOT_OCCUPIED {
+            Some(&self.slots[index].file)
+        } else {
+            None
+        }
+    }
+
+    /// Flush all writable streams. Returns the number of streams that failed to flush.
+    ///
+    /// This implements `fflush(NULL)` semantics: flush every open output stream.
+    pub fn flush_all(&mut self) -> usize {
+        let mut errors = 0;
+        for i in 0..STREAM_REGISTRY_CAPACITY {
+            if self.slots[i].state == SLOT_OCCUPIED
+                && self.slots[i].file.flags & file_flags::WRITE != 0
+            {
+                let file_ptr: *mut NativeFile = &mut self.slots[i].file;
+                // SAFETY: file_ptr is a valid pointer to our registry-owned NativeFile.
+                let rc = unsafe { vtable_fd_flush(file_ptr) };
+                if rc != 0 {
+                    errors += 1;
+                }
+            }
+        }
+        errors
+    }
+
+    /// Count of currently open streams.
+    pub fn open_count(&self) -> usize {
+        self.slots
+            .iter()
+            .filter(|s| s.state == SLOT_OCCUPIED)
+            .count()
+    }
+}
+
+// SAFETY: NativeStreamRegistry contains NativeFile which has raw pointers.
+// The registry is always accessed behind a Mutex, so raw pointer fields are
+// never shared across threads without synchronization.
+unsafe impl Send for NativeStreamRegistry {}
+unsafe impl Sync for NativeStreamRegistry {}
+
+/// Global stream registry instance, protected by a mutex.
+static NATIVE_STREAM_REGISTRY: std::sync::LazyLock<Mutex<NativeStreamRegistry>> =
+    std::sync::LazyLock::new(|| Mutex::new(NativeStreamRegistry::new()));
+
+/// Access the global stream registry.
+pub fn native_stream_registry() -> std::sync::MutexGuard<'static, NativeStreamRegistry> {
+    NATIVE_STREAM_REGISTRY
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+}
 
 // ---------------------------------------------------------------------------
 // Global variable symbols
 // ---------------------------------------------------------------------------
 
-// Sentinel value indicating "not yet resolved".
-const UNRESOLVED: *mut c_void = std::ptr::dangling_mut::<c_void>();
 const IO_JUMPS_EXPORT_SIZE: usize = 168;
 
 #[repr(C, align(16))]
@@ -38,150 +543,47 @@ impl IoJumpsExport {
     }
 }
 
-static HOST_LIBIO_BOOTSTRAPPED: AtomicBool = AtomicBool::new(false);
-
 /// `_IO_list_all` — head of the linked list of all open FILE streams.
-/// Exported as the head pointer value glibc expects to walk during teardown.
+/// Native-owned: always points to our own list (null until streams are opened).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub static mut _IO_list_all: *mut c_void = std::ptr::null_mut();
 
 /// `_IO_file_jumps` — default FILE vtable for regular files.
+/// Native-owned: zeroed vtable (our stdio layer uses its own vtable dispatch).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub static mut _IO_file_jumps: IoJumpsExport = IoJumpsExport::zeroed();
 
 /// `_IO_wfile_jumps` — default FILE vtable for wide-oriented files.
+/// Native-owned: zeroed vtable (our stdio layer uses its own vtable dispatch).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub static mut _IO_wfile_jumps: IoJumpsExport = IoJumpsExport::zeroed();
 
-static HOST_IO_LIST_ALL: AtomicPtr<c_void> = AtomicPtr::new(UNRESOLVED);
-static HOST_IO_FILE_JUMPS: AtomicPtr<c_void> = AtomicPtr::new(UNRESOLVED);
-static HOST_IO_WFILE_JUMPS: AtomicPtr<c_void> = AtomicPtr::new(UNRESOLVED);
-
-unsafe fn copy_host_object(symbol: &str, dst: *mut u8, len: usize) {
-    let Some(src) = crate::host_resolve::resolve_host_symbol_raw(symbol) else {
-        return;
-    };
-    // SAFETY: caller guarantees `dst` points at writable export storage and
-    // `resolve_host_symbol_raw` returns a valid mapped host object address.
-    unsafe { ptr::copy_nonoverlapping(src as *const u8, dst, len) };
-}
-
+/// Legacy bootstrap hook — now a no-op (bd-zh1y.3.4).
+///
+/// Previously resolved host glibc's `_IO_list_all`, `_IO_file_jumps`, and
+/// `_IO_wfile_jumps` symbols. With native FILE struct, vtable, and stream
+/// registry in place, host interop is no longer needed for these symbols.
+///
+/// Kept as a no-op for ABI compatibility with startup_abi.rs callers.
 pub(crate) unsafe fn bootstrap_host_libio_exports() {
-    if HOST_LIBIO_BOOTSTRAPPED.load(Ordering::Acquire) {
-        return;
-    }
-
-    let mut resolved_count = 0u8;
-
-    if let Some(host_list_ptr_addr) = crate::host_resolve::resolve_host_symbol_raw("_IO_list_all") {
-        // SAFETY: host `_IO_list_all` is an 8-byte object containing the list head pointer.
-        let io_list_all = unsafe { *(host_list_ptr_addr as *const *mut c_void) };
-        unsafe { _IO_list_all = io_list_all };
-        HOST_IO_LIST_ALL.store(io_list_all, Ordering::Release);
-        resolved_count += 1;
-    }
-
-    if let Some(host_jumps) = crate::host_resolve::resolve_host_symbol_raw("_IO_file_jumps") {
-        HOST_IO_FILE_JUMPS.store(host_jumps as *mut c_void, Ordering::Release);
-        // SAFETY: export storage is writable and sized for the host jump table on x86_64 glibc.
-        unsafe {
-            copy_host_object(
-                "_IO_file_jumps",
-                ptr::addr_of_mut!(_IO_file_jumps).cast::<u8>(),
-                IO_JUMPS_EXPORT_SIZE,
-            );
-        }
-        resolved_count += 1;
-    }
-
-    if let Some(host_wjumps) = crate::host_resolve::resolve_host_symbol_raw("_IO_wfile_jumps") {
-        HOST_IO_WFILE_JUMPS.store(host_wjumps as *mut c_void, Ordering::Release);
-        // SAFETY: export storage is writable and sized for the host jump table on x86_64 glibc.
-        unsafe {
-            copy_host_object(
-                "_IO_wfile_jumps",
-                ptr::addr_of_mut!(_IO_wfile_jumps).cast::<u8>(),
-                IO_JUMPS_EXPORT_SIZE,
-            );
-        }
-        resolved_count += 1;
-    }
-
-    // NOTE: _IO_2_1_{stdin,stdout,stderr}_ exports have been removed.
-    // Copying host FILE structs into our address space breaks glibc's
-    // internal _IO_list chain (entries point to host addresses, not ours).
-    // The host's original _IO_2_1_* symbols remain visible since we no
-    // longer shadow them.
-
-    if resolved_count == 3 {
-        HOST_LIBIO_BOOTSTRAPPED.store(true, Ordering::Release);
-    }
+    // No-op: native stdio owns all _IO_* symbols now.
 }
 
-/// Accessor: resolve `_IO_list_all` from glibc on first call.
+/// Accessor: return our native `_IO_list_all` pointer.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn _IO_list_all_get() -> *mut c_void {
-    unsafe { bootstrap_host_libio_exports() };
-    let cached = HOST_IO_LIST_ALL.load(Ordering::Acquire);
-    if cached != UNRESOLVED {
-        return cached;
-    }
-    let Some(host_list_ptr_addr) = crate::host_resolve::resolve_host_symbol_raw("_IO_list_all")
-    else {
-        return std::ptr::null_mut();
-    };
-    // SAFETY: host `_IO_list_all` points to a process-global pointer-sized object.
-    let head = unsafe { *(host_list_ptr_addr as *const *mut c_void) };
-    let _ =
-        HOST_IO_LIST_ALL.compare_exchange(UNRESOLVED, head, Ordering::AcqRel, Ordering::Acquire);
-    head
+    unsafe { _IO_list_all }
 }
 
-/// Accessor: resolve `_IO_file_jumps` from glibc on first call.
+/// Accessor: return pointer to our native `_IO_file_jumps` vtable.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn _IO_file_jumps_get() -> *mut c_void {
-    unsafe { bootstrap_host_libio_exports() };
-    if HOST_LIBIO_BOOTSTRAPPED.load(Ordering::Acquire) {
-        return ptr::addr_of_mut!(_IO_file_jumps).cast::<u8>().cast();
-    }
-    let cached = HOST_IO_FILE_JUMPS.load(Ordering::Acquire);
-    if cached != UNRESOLVED {
-        return cached;
-    }
-    if let Some(host_jumps) = crate::host_resolve::resolve_host_symbol_raw("_IO_file_jumps") {
-        let host_ptr = host_jumps as *mut c_void;
-        let _ = HOST_IO_FILE_JUMPS.compare_exchange(
-            UNRESOLVED,
-            host_ptr,
-            Ordering::AcqRel,
-            Ordering::Acquire,
-        );
-        return host_ptr;
-    }
     ptr::addr_of_mut!(_IO_file_jumps).cast::<u8>().cast()
 }
 
-/// Accessor: resolve `_IO_wfile_jumps` from glibc on first call.
+/// Accessor: return pointer to our native `_IO_wfile_jumps` vtable.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn _IO_wfile_jumps_get() -> *mut c_void {
-    unsafe { bootstrap_host_libio_exports() };
-    if HOST_LIBIO_BOOTSTRAPPED.load(Ordering::Acquire) {
-        return ptr::addr_of_mut!(_IO_wfile_jumps).cast::<u8>().cast();
-    }
-    let cached = HOST_IO_WFILE_JUMPS.load(Ordering::Acquire);
-    if cached != UNRESOLVED {
-        return cached;
-    }
-    if let Some(host_wjumps) = crate::host_resolve::resolve_host_symbol_raw("_IO_wfile_jumps") {
-        let host_ptr = host_wjumps as *mut c_void;
-        let _ = HOST_IO_WFILE_JUMPS.compare_exchange(
-            UNRESOLVED,
-            host_ptr,
-            Ordering::AcqRel,
-            Ordering::Acquire,
-        );
-        return host_ptr;
-    }
     ptr::addr_of_mut!(_IO_wfile_jumps).cast::<u8>().cast()
 }
 
@@ -1434,3 +1836,4 @@ pub unsafe extern "C" fn _IO_wsetb(
 ) {
     // No-op: wide buffer management is internal to our stdio layer
 }
+

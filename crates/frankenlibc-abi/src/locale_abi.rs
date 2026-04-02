@@ -318,6 +318,24 @@ fn locale_dir_bindings() -> &'static Mutex<LocaleDirState> {
     })
 }
 
+/// Test hook: reset process-global gettext domain state for deterministic
+/// integration tests that exercise `textdomain`/`bindtextdomain`.
+#[doc(hidden)]
+pub fn locale_reset_gettext_state_for_tests() {
+    let mut domains = text_domain_storage()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    domains.current = DEFAULT_TEXT_DOMAIN.as_ptr() as *mut c_char;
+    domains.pool.clear();
+    drop(domains);
+
+    let mut bindings = locale_dir_bindings()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    bindings.current_by_domain.clear();
+    bindings.pool.clear();
+}
+
 /// GNU `textdomain` — set/query current text domain.
 ///
 /// In C-locale mode, the domain is irrelevant since no translations are loaded.
