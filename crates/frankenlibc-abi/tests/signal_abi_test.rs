@@ -8,6 +8,7 @@
 //! kill, sighold, sigrelse, sigignore.
 
 use std::ffi::c_int;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 
 use frankenlibc_abi::errno_abi::__errno_location;
@@ -15,12 +16,19 @@ use frankenlibc_abi::signal_abi::{
     __libc_current_sigrtmax, __libc_current_sigrtmin, kill, sigabbrev_np, sigaction, sigaddset,
     sigandset, sigdelset, sigdescr_np, sigemptyset, sigfillset, sighold, sigignore, siginterrupt,
     sigisemptyset, sigismember, signal, sigorset, sigpending, sigprocmask, sigrelse,
+    current_signal_classification_for_test, enter_signal_critical_section,
+    invoke_signal_handler_for_test, SignalCriticalSectionKind, SignalSafetyClassification,
+    SIGNAL_SAFETY_MAP,
 };
 use frankenlibc_core::errno;
 
 static TEST_GUARD: Mutex<()> = Mutex::new(());
+static DEFERRED_HANDLER_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 unsafe extern "C" fn noop_handler(_: c_int) {}
+unsafe extern "C" fn counting_handler(_: c_int) {
+    DEFERRED_HANDLER_COUNT.fetch_add(1, Ordering::Relaxed);
+}
 
 // ---------------------------------------------------------------------------
 // sigemptyset / sigfillset
@@ -386,6 +394,93 @@ fn signal_sigpipe_ign_roundtrip_succeeds() {
         libc::SIG_ERR,
         "restoring previous SIGPIPE disposition should not return SIG_ERR"
     );
+}
+
+#[test]
+fn signal_safety_map_covers_allocator_and_membrane_ranges() {
+    assert!(
+        SIGNAL_SAFETY_MAP.len() >= 10,
+        "expected at least 10 critical sections"
+    );
+    assert!(SIGNAL_SAFETY_MAP.iter().any(|range| {
+        range.range_label == "malloc.arena_lock_acquire"
+            && range.classification == SignalSafetyClassification::MaskRequired
+    }));
+    assert!(SIGNAL_SAFETY_MAP.iter().any(|range| {
+        range.range_label == "membrane.arena_lookup"
+            && range.classification == SignalSafetyClassification::DeferSignal
+    }));
+}
+
+#[test]
+fn signal_delivery_is_deferred_inside_critical_section() {
+    let _guard = TEST_GUARD.lock().expect("test guard lock should succeed");
+    DEFERRED_HANDLER_COUNT.store(0, Ordering::Relaxed);
+
+    let mut old: libc::sigaction = unsafe { std::mem::zeroed() };
+    let rc = unsafe { sigaction(libc::SIGUSR1, std::ptr::null(), &mut old) };
+    assert_eq!(rc, 0, "must capture original SIGUSR1 disposition");
+
+    let mut act: libc::sigaction = unsafe { std::mem::zeroed() };
+    act.sa_sigaction = counting_handler as *const () as usize;
+    let rc = unsafe { sigaction(libc::SIGUSR1, &act, std::ptr::null_mut()) };
+    assert_eq!(rc, 0, "must install counting handler");
+
+    {
+        let _critical =
+            enter_signal_critical_section(SignalCriticalSectionKind::MallocArenaLockAcquire);
+        assert_eq!(
+            current_signal_classification_for_test(),
+            SignalSafetyClassification::MaskRequired
+        );
+        unsafe { invoke_signal_handler_for_test(libc::SIGUSR1) };
+        assert_eq!(
+            DEFERRED_HANDLER_COUNT.load(Ordering::Relaxed),
+            0,
+            "SIGUSR1 should stay deferred until the critical section exits"
+        );
+    }
+
+    assert_eq!(
+        DEFERRED_HANDLER_COUNT.load(Ordering::Relaxed),
+        1,
+        "deferred signal must flush on critical section exit"
+    );
+
+    let rc = unsafe { sigaction(libc::SIGUSR1, &old, std::ptr::null_mut()) };
+    assert_eq!(rc, 0, "must restore original SIGUSR1 disposition");
+}
+
+#[test]
+fn signal_delivery_remains_immediate_for_safe_classification() {
+    let _guard = TEST_GUARD.lock().expect("test guard lock should succeed");
+    DEFERRED_HANDLER_COUNT.store(0, Ordering::Relaxed);
+
+    let mut old: libc::sigaction = unsafe { std::mem::zeroed() };
+    let rc = unsafe { sigaction(libc::SIGUSR1, std::ptr::null(), &mut old) };
+    assert_eq!(rc, 0, "must capture original SIGUSR1 disposition");
+
+    let mut act: libc::sigaction = unsafe { std::mem::zeroed() };
+    act.sa_sigaction = counting_handler as *const () as usize;
+    let rc = unsafe { sigaction(libc::SIGUSR1, &act, std::ptr::null_mut()) };
+    assert_eq!(rc, 0, "must install counting handler");
+
+    {
+        let _critical = enter_signal_critical_section(SignalCriticalSectionKind::PtrValidatorTlsCache);
+        assert_eq!(
+            current_signal_classification_for_test(),
+            SignalSafetyClassification::Safe
+        );
+        unsafe { invoke_signal_handler_for_test(libc::SIGUSR1) };
+        assert_eq!(
+            DEFERRED_HANDLER_COUNT.load(Ordering::Relaxed),
+            1,
+            "safe classifications should dispatch immediately"
+        );
+    }
+
+    let rc = unsafe { sigaction(libc::SIGUSR1, &old, std::ptr::null_mut()) };
+    assert_eq!(rc, 0, "must restore original SIGUSR1 disposition");
 }
 
 // ---------------------------------------------------------------------------
