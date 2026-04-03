@@ -22,6 +22,7 @@ use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
 use crate::errno_abi::set_abi_errno;
 use crate::runtime_policy;
+use crate::signal_abi::{SignalCriticalSectionKind, enter_signal_critical_section};
 
 type HostMallocFn = unsafe extern "C" fn(usize) -> *mut c_void;
 type HostCallocFn = unsafe extern "C" fn(usize, usize) -> *mut c_void;
@@ -1002,6 +1003,7 @@ pub unsafe extern "C" fn malloc(size: usize) -> *mut c_void {
     };
 
     let _trace_scope = runtime_policy::entrypoint_scope("malloc");
+    let _signal_guard = enter_signal_critical_section(SignalCriticalSectionKind::MallocArenaLockAcquire);
     let req = size.max(1);
     if strict_allocator_host_path_active() {
         // SAFETY: strict-mode preload delegates allocator semantics to host libc
@@ -1091,6 +1093,7 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
     };
 
     let _trace_scope = runtime_policy::entrypoint_scope("free");
+    let _signal_guard = enter_signal_critical_section(SignalCriticalSectionKind::MallocFastbinMutation);
     if is_bump_ptr(ptr) {
         return;
     }
@@ -1220,6 +1223,7 @@ pub unsafe extern "C" fn calloc(nmemb: usize, size: usize) -> *mut c_void {
     };
 
     let _trace_scope = runtime_policy::entrypoint_scope("calloc");
+    let _signal_guard = enter_signal_critical_section(SignalCriticalSectionKind::MallocArenaLockAcquire);
     let (aligned, recent_page, ordering) = allocator_stage_context(0);
     let total = match nmemb.checked_mul(size) {
         Some(t) => t.max(1),
@@ -1329,6 +1333,7 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
     };
 
     let _trace_scope = runtime_policy::entrypoint_scope("realloc");
+    let _signal_guard = enter_signal_critical_section(SignalCriticalSectionKind::MallocLargebinLink);
     // realloc(NULL, size) == malloc(size)
     if ptr.is_null() {
         return unsafe { malloc(size) };

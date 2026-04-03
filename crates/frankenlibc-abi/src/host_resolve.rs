@@ -154,15 +154,21 @@ fn find_glibc_image_via_maps() -> Option<(usize, [u8; 512])> {
         if !line.contains("libc.so") {
             continue;
         }
-        let parts: Vec<&str> = line.split_whitespace().collect();
-        if parts.len() < 6 {
+        let mut parts = line.split_whitespace();
+        let range = parts.next()?;
+        let perms = parts.next()?;
+        let offset = parts.next()?;
+        let _dev = parts.next()?;
+        let _inode = parts.next()?;
+        let path_part = parts.next()?;
+        if parts.next().is_some() {
             continue;
         }
-        if parts[1].starts_with("r--p") && parts[2] == "00000000" {
-            let dash = parts[0].find('-')?;
-            let base = usize::from_str_radix(&parts[0][..dash], 16).ok()?;
+        if perms.starts_with("r--p") && offset == "00000000" {
+            let dash = range.find('-')?;
+            let base = usize::from_str_radix(&range[..dash], 16).ok()?;
             let mut path = [0u8; 512];
-            let bytes = parts[5].as_bytes();
+            let bytes = path_part.as_bytes();
             let len = bytes.len().min(path.len().saturating_sub(1));
             path[..len].copy_from_slice(&bytes[..len]);
             path[len] = 0;

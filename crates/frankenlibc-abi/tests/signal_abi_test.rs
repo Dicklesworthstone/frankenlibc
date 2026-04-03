@@ -8,8 +8,11 @@
 //! kill, sighold, sigrelse, sigignore.
 
 use std::ffi::c_int;
+use std::sync::mpsc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
+use std::thread;
+use std::time::Duration;
 
 use frankenlibc_abi::errno_abi::__errno_location;
 use frankenlibc_abi::signal_abi::{
@@ -17,7 +20,8 @@ use frankenlibc_abi::signal_abi::{
     sigandset, sigdelset, sigdescr_np, sigemptyset, sigfillset, sighold, sigignore, siginterrupt,
     sigisemptyset, sigismember, signal, sigorset, sigpending, sigprocmask, sigrelse,
     current_signal_classification_for_test, enter_signal_critical_section,
-    invoke_signal_handler_for_test, SignalCriticalSectionKind, SignalSafetyClassification,
+    invoke_signal_handler_for_test, reset_signal_delivery_metrics_for_test,
+    signal_delivery_metrics_for_test, SignalCriticalSectionKind, SignalSafetyClassification,
     SIGNAL_SAFETY_MAP,
 };
 use frankenlibc_core::errno;
@@ -478,6 +482,80 @@ fn signal_delivery_remains_immediate_for_safe_classification() {
             "safe classifications should dispatch immediately"
         );
     }
+
+    let rc = unsafe { sigaction(libc::SIGUSR1, &old, std::ptr::null_mut()) };
+    assert_eq!(rc, 0, "must restore original SIGUSR1 disposition");
+}
+
+#[test]
+#[ignore = "async signal storm prototype currently segfaults under real pthread_kill delivery"]
+fn malloc_storm_defers_reentrant_signal_handler_until_safe_exit() {
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|poison| poison.into_inner());
+    DEFERRED_HANDLER_COUNT.store(0, Ordering::Relaxed);
+    reset_signal_delivery_metrics_for_test();
+
+    let mut old: libc::sigaction = unsafe { std::mem::zeroed() };
+    let rc = unsafe { sigaction(libc::SIGUSR1, std::ptr::null(), &mut old) };
+    assert_eq!(rc, 0, "must capture original SIGUSR1 disposition");
+
+    let mut act: libc::sigaction = unsafe { std::mem::zeroed() };
+    act.sa_sigaction = counting_handler as *const () as usize;
+    let rc = unsafe { sigaction(libc::SIGUSR1, &act, std::ptr::null_mut()) };
+    assert_eq!(rc, 0, "must install SIGUSR1 handler");
+
+    let (pthread_tx, pthread_rx) = mpsc::channel::<usize>();
+    let (done_tx, done_rx) = mpsc::channel::<usize>();
+
+    let worker = thread::spawn(move || {
+        let tid = unsafe { libc::pthread_self() as usize };
+        pthread_tx.send(tid).expect("must publish pthread_t");
+        for iter in 0..20_000usize {
+            let size = 32 + (iter % 257);
+            let ptr = unsafe { frankenlibc_abi::malloc_abi::malloc(size) };
+            assert!(!ptr.is_null(), "malloc storm allocation {iter} must succeed");
+            // SAFETY: abi_malloc(size) returned a live allocation of at least size bytes.
+            unsafe {
+                std::ptr::write_bytes(ptr.cast::<u8>(), (iter & 0xFF) as u8, size);
+                frankenlibc_abi::malloc_abi::free(ptr);
+            }
+        }
+        done_tx.send(20_000).expect("must publish worker completion");
+    });
+
+    let worker_tid = pthread_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("worker must publish pthread_t promptly");
+
+    let signaler = thread::spawn(move || {
+        for _ in 0..8_000 {
+            let rc = unsafe { libc::pthread_kill(worker_tid as libc::pthread_t, libc::SIGUSR1) };
+            if rc == libc::ESRCH {
+                break;
+            }
+            assert_eq!(rc, 0, "pthread_kill to storm target must succeed");
+        }
+    });
+
+    let completed = done_rx
+        .recv_timeout(Duration::from_secs(10))
+        .expect("malloc storm should complete without deadlock");
+    worker.join().expect("worker must not panic");
+    signaler.join().expect("signaler must not panic");
+
+    let metrics = signal_delivery_metrics_for_test();
+    assert_eq!(completed, 20_000);
+    assert!(
+        DEFERRED_HANDLER_COUNT.load(Ordering::Relaxed) > 0,
+        "signal storm should deliver at least one handler invocation"
+    );
+    assert!(
+        metrics.deferred > 0,
+        "malloc storm should observe at least one deferred signal delivery"
+    );
+    assert!(
+        metrics.flushed >= metrics.deferred,
+        "all deferred deliveries should flush after exiting critical sections"
+    );
 
     let rc = unsafe { sigaction(libc::SIGUSR1, &old, std::ptr::null_mut()) };
     assert_eq!(rc, 0, "must restore original SIGUSR1 disposition");

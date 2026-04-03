@@ -3,9 +3,9 @@
 //! Validates via `frankenlibc_core::signal` helpers, then calls `libc` for
 //! actual signal delivery.
 
-use std::cell::{Cell, RefCell, UnsafeCell};
+use std::cell::RefCell;
 use std::ffi::{c_int, c_void};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU8, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 
 use frankenlibc_core::errno;
 use frankenlibc_core::signal as signal_core;
@@ -24,8 +24,6 @@ fn last_host_errno(default_errno: c_int) -> c_int {
 }
 
 const MAX_TRACKED_SIGNAL: usize = 128;
-const DEFERRED_WORD_BITS: usize = std::mem::size_of::<libc::c_ulong>() * 8;
-const DEFERRED_WORDS: usize = MAX_TRACKED_SIGNAL.div_ceil(DEFERRED_WORD_BITS);
 const HJI_WARMUP_OBSERVATIONS: usize = 64;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -206,14 +204,18 @@ static SIGNAL_HANDLER_SLOTS: [SignalHandlerSlot; MAX_TRACKED_SIGNAL + 1] =
     [const { SignalHandlerSlot::new() }; MAX_TRACKED_SIGNAL + 1];
 
 thread_local! {
-    static SIGNAL_CRITICAL_DEPTH: Cell<u32> = const { Cell::new(0) };
-    static SIGNAL_CLASSIFICATION: Cell<u8> =
-        const { Cell::new(SignalSafetyClassification::Safe as u8) };
-    static DEFERRED_SIGNALS: UnsafeCell<[libc::c_ulong; DEFERRED_WORDS]> =
-        const { UnsafeCell::new([0; DEFERRED_WORDS]) };
+    static SIGNAL_CRITICAL_DEPTH: AtomicU32 = const { AtomicU32::new(0) };
+    static SIGNAL_CLASSIFICATION: AtomicU8 =
+        const { AtomicU8::new(SignalSafetyClassification::Safe as u8) };
+    static DEFERRED_SIGNALS: [AtomicU32; MAX_TRACKED_SIGNAL + 1] =
+        const { [const { AtomicU32::new(0) }; MAX_TRACKED_SIGNAL + 1] };
     static SIGNAL_HJI_CONTROLLER: RefCell<HjiReachabilityController> =
         RefCell::new(HjiReachabilityController::new());
 }
+
+static SIGNAL_DEFERRED_DELIVERIES: AtomicU64 = AtomicU64::new(0);
+static SIGNAL_FLUSHED_DELIVERIES: AtomicU64 = AtomicU64::new(0);
+static SIGNAL_IMMEDIATE_DELIVERIES: AtomicU64 = AtomicU64::new(0);
 
 fn signal_slot(signum: c_int) -> Option<&'static SignalHandlerSlot> {
     if (1..=MAX_TRACKED_SIGNAL as c_int).contains(&signum) {
@@ -240,7 +242,7 @@ fn is_signal_trampoline(handler: usize) -> bool {
 }
 
 fn handler_dispatch_classification(kind: SignalCriticalSectionKind) -> SignalSafetyClassification {
-    let depth = SIGNAL_CRITICAL_DEPTH.with(Cell::get);
+    let depth = SIGNAL_CRITICAL_DEPTH.with(|value| value.load(Ordering::Relaxed));
     let adverse = depth > 1;
     let hji_state = SIGNAL_HJI_CONTROLLER.with(|controller| {
         let mut controller = controller.borrow_mut();
@@ -261,30 +263,18 @@ fn queue_deferred_signal(signum: c_int) {
         return;
     }
     DEFERRED_SIGNALS.with(|pending| {
-        let idx = (signum - 1) as usize;
-        let word = idx / DEFERRED_WORD_BITS;
-        let bit = idx % DEFERRED_WORD_BITS;
-        // SAFETY: the bitmap is thread-local and accessed only by the current thread's
-        // signal context plus ordinary execution on the same thread.
-        unsafe {
-            (*pending.get())[word] |= (1 as libc::c_ulong) << bit;
-        }
+        pending[signum as usize].fetch_add(1, Ordering::Relaxed);
     });
+    SIGNAL_DEFERRED_DELIVERIES.fetch_add(1, Ordering::Relaxed);
 }
 
-fn take_deferred_signals() -> Vec<c_int> {
+fn take_deferred_signals() -> Vec<(c_int, u32)> {
     DEFERRED_SIGNALS.with(|pending| {
         let mut out = Vec::new();
-        // SAFETY: the bitmap is thread-local and we clear it before replaying handlers.
-        let words = unsafe { &mut *pending.get() };
         for signum in 1..=MAX_TRACKED_SIGNAL as c_int {
-            let idx = (signum - 1) as usize;
-            let word = idx / DEFERRED_WORD_BITS;
-            let bit = idx % DEFERRED_WORD_BITS;
-            let mask = (1 as libc::c_ulong) << bit;
-            if words[word] & mask != 0 {
-                words[word] &= !mask;
-                out.push(signum);
+            let count = pending[signum as usize].swap(0, Ordering::Relaxed);
+            if count != 0 {
+                out.push((signum, count));
             }
         }
         out
@@ -317,15 +307,15 @@ unsafe fn dispatch_registered_handler(
 }
 
 unsafe extern "C" fn signal_handler_trampoline(signum: c_int) {
-    let classification = SIGNAL_CLASSIFICATION.with(|value| {
-        SignalSafetyClassification::from_u8(value.get())
-    });
-    if SIGNAL_CRITICAL_DEPTH.with(Cell::get) > 0
+    let classification =
+        SIGNAL_CLASSIFICATION.with(|value| SignalSafetyClassification::from_u8(value.load(Ordering::Relaxed)));
+    if SIGNAL_CRITICAL_DEPTH.with(|value| value.load(Ordering::Relaxed)) > 0
         && !matches!(classification, SignalSafetyClassification::Safe)
     {
         queue_deferred_signal(signum);
         return;
     }
+    SIGNAL_IMMEDIATE_DELIVERIES.fetch_add(1, Ordering::Relaxed);
     // SAFETY: dispatch uses the stored user handler for this signal number.
     unsafe { dispatch_registered_handler(signum, std::ptr::null_mut(), std::ptr::null_mut()) };
 }
@@ -335,15 +325,15 @@ unsafe extern "C" fn signal_siginfo_trampoline(
     info: *mut libc::siginfo_t,
     context: *mut c_void,
 ) {
-    let classification = SIGNAL_CLASSIFICATION.with(|value| {
-        SignalSafetyClassification::from_u8(value.get())
-    });
-    if SIGNAL_CRITICAL_DEPTH.with(Cell::get) > 0
+    let classification =
+        SIGNAL_CLASSIFICATION.with(|value| SignalSafetyClassification::from_u8(value.load(Ordering::Relaxed)));
+    if SIGNAL_CRITICAL_DEPTH.with(|value| value.load(Ordering::Relaxed)) > 0
         && !matches!(classification, SignalSafetyClassification::Safe)
     {
         queue_deferred_signal(signum);
         return;
     }
+    SIGNAL_IMMEDIATE_DELIVERIES.fetch_add(1, Ordering::Relaxed);
     // SAFETY: dispatch uses the stored user handler for this signal number.
     unsafe { dispatch_registered_handler(signum, info, context) };
 }
@@ -375,35 +365,43 @@ impl Drop for SignalCriticalSectionGuard {
 
 #[must_use]
 pub fn enter_signal_critical_section(kind: SignalCriticalSectionKind) -> SignalCriticalSectionGuard {
-    SIGNAL_CRITICAL_DEPTH.with(|depth| depth.set(depth.get().saturating_add(1)));
+    SIGNAL_CRITICAL_DEPTH.with(|depth| {
+        depth.fetch_add(1, Ordering::Relaxed);
+    });
     let classification = handler_dispatch_classification(kind);
-    SIGNAL_CLASSIFICATION.with(|value| value.set(classification.as_u8()));
+    SIGNAL_CLASSIFICATION.with(|value| value.store(classification.as_u8(), Ordering::Relaxed));
     SignalCriticalSectionGuard { active: true }
 }
 
 pub fn exit_signal_critical_section() {
     let should_flush = SIGNAL_CRITICAL_DEPTH.with(|depth| {
-        let current = depth.get();
+        let current = depth.load(Ordering::Relaxed);
         if current == 0 {
             return false;
         }
         let next = current - 1;
-        depth.set(next);
+        depth.store(next, Ordering::Relaxed);
         next == 0
     });
     if !should_flush {
         return;
     }
-    SIGNAL_CLASSIFICATION.with(|value| value.set(SignalSafetyClassification::Safe.as_u8()));
-    for signum in take_deferred_signals() {
-        // SAFETY: deferred delivery replays the previously registered handler on the same thread.
-        unsafe { dispatch_registered_handler(signum, std::ptr::null_mut(), std::ptr::null_mut()) };
+    SIGNAL_CLASSIFICATION
+        .with(|value| value.store(SignalSafetyClassification::Safe.as_u8(), Ordering::Relaxed));
+    for (signum, count) in take_deferred_signals() {
+        for _ in 0..count {
+            SIGNAL_FLUSHED_DELIVERIES.fetch_add(1, Ordering::Relaxed);
+            // SAFETY: deferred delivery replays the previously registered handler on the same thread.
+            unsafe {
+                dispatch_registered_handler(signum, std::ptr::null_mut(), std::ptr::null_mut())
+            };
+        }
     }
 }
 
 #[doc(hidden)]
 pub fn current_signal_classification_for_test() -> SignalSafetyClassification {
-    SIGNAL_CLASSIFICATION.with(|value| SignalSafetyClassification::from_u8(value.get()))
+    SIGNAL_CLASSIFICATION.with(|value| SignalSafetyClassification::from_u8(value.load(Ordering::Relaxed)))
 }
 
 #[doc(hidden)]
@@ -417,6 +415,29 @@ pub unsafe fn invoke_signal_handler_for_test(signum: c_int) {
     } else {
         // SAFETY: this test hook exercises the same trampoline path used by the kernel.
         unsafe { signal_handler_trampoline(signum) };
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SignalDeliveryMetrics {
+    pub deferred: u64,
+    pub flushed: u64,
+    pub immediate: u64,
+}
+
+#[doc(hidden)]
+pub fn reset_signal_delivery_metrics_for_test() {
+    SIGNAL_DEFERRED_DELIVERIES.store(0, Ordering::Relaxed);
+    SIGNAL_FLUSHED_DELIVERIES.store(0, Ordering::Relaxed);
+    SIGNAL_IMMEDIATE_DELIVERIES.store(0, Ordering::Relaxed);
+}
+
+#[doc(hidden)]
+pub fn signal_delivery_metrics_for_test() -> SignalDeliveryMetrics {
+    SignalDeliveryMetrics {
+        deferred: SIGNAL_DEFERRED_DELIVERIES.load(Ordering::Relaxed),
+        flushed: SIGNAL_FLUSHED_DELIVERIES.load(Ordering::Relaxed),
+        immediate: SIGNAL_IMMEDIATE_DELIVERIES.load(Ordering::Relaxed),
     }
 }
 
