@@ -164,9 +164,54 @@ static HOST_PTHREAD_GETSPECIFIC_PTR: OnceLock<usize> = OnceLock::new();
 static HOST_PTHREAD_SETSPECIFIC_PTR: OnceLock<usize> = OnceLock::new();
 
 thread_local! {
+    static FORCE_NATIVE_THREADING_OVERRIDE: Cell<Option<bool>> = const { Cell::new(None) };
     static THREADING_POLICY_DEPTH: Cell<u32> = const { Cell::new(0) };
     static THREAD_CANCEL_STATE: Cell<c_int> = const { Cell::new(PTHREAD_CANCEL_ENABLE_STATE) };
     static THREAD_CANCEL_TYPE: Cell<c_int> = const { Cell::new(PTHREAD_CANCEL_DEFERRED_TYPE) };
+    static CURRENT_THREADING_BACKEND: Cell<u8> = const { Cell::new(THREAD_BACKEND_UNKNOWN) };
+    static CURRENT_PTHREAD_SELF_CACHE: Cell<libc::pthread_t> = const { Cell::new(0) };
+}
+
+#[inline]
+fn force_native_threading_enabled() -> bool {
+    FORCE_NATIVE_THREADING_OVERRIDE.with(|override_cell| {
+        override_cell
+            .get()
+            .unwrap_or_else(|| FORCE_NATIVE_THREADING.load(Ordering::Acquire))
+    })
+}
+
+const THREAD_BACKEND_UNKNOWN: u8 = 0;
+const THREAD_BACKEND_MANAGED: u8 = 1;
+const THREAD_BACKEND_HOST: u8 = 2;
+
+#[inline]
+fn current_threading_backend() -> u8 {
+    if force_native_threading_enabled() {
+        return THREAD_BACKEND_MANAGED;
+    }
+
+    CURRENT_THREADING_BACKEND
+        .try_with(|backend| {
+            let cached = backend.get();
+            if cached != THREAD_BACKEND_UNKNOWN {
+                return cached;
+            }
+
+            let resolved = match core_self_tid() {
+                tid if tid > 0 && core_handle_for_tid(tid).is_some() => THREAD_BACKEND_MANAGED,
+                _ => {
+                    if crate::host_resolve::host_pthread_self_raw().is_some() {
+                        THREAD_BACKEND_HOST
+                    } else {
+                        THREAD_BACKEND_MANAGED
+                    }
+                }
+            };
+            backend.set(resolved);
+            resolved
+        })
+        .unwrap_or(THREAD_BACKEND_MANAGED)
 }
 
 unsafe fn resolve_host_symbol(name: &'static [u8]) -> *mut c_void {
@@ -859,6 +904,26 @@ fn is_managed_condvar(cond: *mut libc::pthread_cond_t) -> bool {
 
 #[inline]
 fn native_pthread_self() -> libc::pthread_t {
+    if current_threading_backend() == THREAD_BACKEND_HOST
+        && let Some(cached_self) = CURRENT_PTHREAD_SELF_CACHE
+            .try_with(|cache| {
+                let value = cache.get();
+                (value != 0).then_some(value)
+            })
+            .ok()
+            .flatten()
+    {
+        return cached_self;
+    }
+
+    if current_threading_backend() == THREAD_BACKEND_HOST
+        && let Some(host_self) = crate::host_resolve::host_pthread_self_raw()
+    {
+        let host_thread = unsafe { host_self() };
+        let _ = CURRENT_PTHREAD_SELF_CACHE.try_with(|cache| cache.set(host_thread));
+        return host_thread;
+    }
+
     let tid = core_self_tid();
     if tid > 0 {
         // Use the TLS table to resolve our own ThreadHandle in O(1) time
@@ -867,11 +932,6 @@ fn native_pthread_self() -> libc::pthread_t {
         if let Some(handle_ptr) = core_handle_for_tid(tid) {
             return handle_ptr as usize as libc::pthread_t;
         }
-    }
-    if !FORCE_NATIVE_THREADING.load(Ordering::Acquire)
-        && let Some(host_self) = crate::host_resolve::host_pthread_self_raw()
-    {
-        return unsafe { host_self() };
     }
     // Fallback for threads not created via our managed pthread_create path.
     tid as libc::pthread_t
@@ -1788,6 +1848,26 @@ pub fn pthread_mutex_reset_state_for_tests() {
     reset_mutex_registry_for_tests();
 }
 
+/// Test hook: force mutex/condvar lifecycle operations onto the native path.
+#[doc(hidden)]
+pub fn pthread_mutex_force_native_for_tests() {
+    FORCE_NATIVE_MUTEX.store(true, Ordering::Release);
+}
+
+/// Test hook: force native mutex/condvar behavior and return the previous mode
+/// so callers can restore it afterwards.
+#[doc(hidden)]
+pub fn pthread_mutex_swap_force_native_for_tests() -> bool {
+    FORCE_NATIVE_MUTEX.swap(true, Ordering::AcqRel)
+}
+
+/// Test hook: restore the mutex/condvar delegation mode after temporarily
+/// forcing native behavior in a test.
+#[doc(hidden)]
+pub fn pthread_mutex_restore_for_tests(previous: bool) {
+    FORCE_NATIVE_MUTEX.store(previous, Ordering::Release);
+}
+
 /// Test hook: snapshot spin/wait/wake branch counters.
 #[doc(hidden)]
 #[must_use]
@@ -1799,21 +1879,27 @@ pub fn pthread_mutex_branch_counters_for_tests() -> (u64, u64, u64) {
 /// to use the native implementation, bypassing host glibc delegation.
 #[doc(hidden)]
 pub fn pthread_threading_force_native_for_tests() {
-    FORCE_NATIVE_THREADING.store(true, Ordering::Release);
+    FORCE_NATIVE_THREADING_OVERRIDE.with(|override_cell| override_cell.set(Some(true)));
 }
 
 /// Test hook: force native threading and return the previous mode so callers
 /// can restore it afterwards.
 #[doc(hidden)]
 pub fn pthread_threading_swap_force_native_for_tests() -> bool {
-    FORCE_NATIVE_THREADING.swap(true, Ordering::AcqRel)
+    FORCE_NATIVE_THREADING_OVERRIDE.with(|override_cell| {
+        let previous = override_cell
+            .get()
+            .unwrap_or_else(|| FORCE_NATIVE_THREADING.load(Ordering::Acquire));
+        override_cell.set(Some(true));
+        previous
+    })
 }
 
 /// Test hook: restore the thread lifecycle delegation mode after temporarily
 /// forcing native behavior in a test.
 #[doc(hidden)]
 pub fn pthread_threading_restore_for_tests(previous: bool) {
-    FORCE_NATIVE_THREADING.store(previous, Ordering::Release);
+    FORCE_NATIVE_THREADING_OVERRIDE.with(|override_cell| override_cell.set(Some(previous)));
 }
 
 #[inline]
@@ -1877,7 +1963,7 @@ pub unsafe extern "C" fn pthread_create(
     // Clear __libc_single_threaded on first thread creation.
     crate::glibc_internal_abi::__libc_single_threaded
         .store(0, std::sync::atomic::Ordering::Release);
-    let force_native = FORCE_NATIVE_THREADING.load(Ordering::Acquire);
+    let force_native = force_native_threading_enabled();
     // Prefer host pthread_create for correct TLS setup, stack guard pages,
     // and compatibility with programs that depend on glibc thread internals
     // (Python, Node.js, etc.).
@@ -1894,7 +1980,7 @@ pub unsafe extern "C" fn pthread_create(
 /// POSIX `pthread_join`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pthread_join(thread: libc::pthread_t, retval: *mut *mut c_void) -> c_int {
-    if !FORCE_NATIVE_THREADING.load(Ordering::Acquire)
+    if !force_native_threading_enabled()
         && !is_managed_thread_handle(thread)
         && let Some(host_join) = crate::host_resolve::host_pthread_join_raw()
     {
@@ -1906,7 +1992,7 @@ pub unsafe extern "C" fn pthread_join(thread: libc::pthread_t, retval: *mut *mut
 /// POSIX `pthread_detach`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pthread_detach(thread: libc::pthread_t) -> c_int {
-    if !FORCE_NATIVE_THREADING.load(Ordering::Acquire)
+    if !force_native_threading_enabled()
         && !is_managed_thread_handle(thread)
         && let Some(host_detach) = crate::host_resolve::host_pthread_detach_raw()
     {
@@ -1937,7 +2023,19 @@ pub unsafe extern "C" fn pthread_mutex_init(
         // assertions.
         if !attr.is_null() {
             let word = unsafe { *(attr.cast::<c_int>()) };
+            if word == 0 {
+                return libc::EINVAL;
+            }
             if word & MUTEXATTR_VALID_BIT != 0 {
+                if !mutexattr_word_valid(word) {
+                    return libc::EINVAL;
+                }
+                if decode_mutexattr_protocol(word) != libc::PTHREAD_PRIO_NONE
+                    || decode_mutexattr_pshared(word) != libc::PTHREAD_PROCESS_PRIVATE
+                    || decode_mutexattr_robust(word) != libc::PTHREAD_MUTEX_STALLED
+                {
+                    return libc::EINVAL;
+                }
                 // This is our managed attr — translate to host format.
                 let mtype = decode_mutexattr_type(word);
                 let mut host_attr: libc::pthread_mutexattr_t = unsafe { std::mem::zeroed() };
@@ -2335,7 +2433,13 @@ pub unsafe extern "C" fn pthread_cond_init(
         // our bitfield layout differs from glibc's internal layout.
         if !attr.is_null() {
             let word = unsafe { *(attr.cast::<c_int>()) };
+            if word == 0 {
+                return libc::EINVAL;
+            }
             if word & CONDATTR_VALID_BIT != 0 {
+                if !condattr_word_valid(word) {
+                    return libc::EINVAL;
+                }
                 let clock = decode_condattr_clock(word);
                 let mut host_attr: libc::pthread_condattr_t = unsafe { std::mem::zeroed() };
                 unsafe { libc::pthread_condattr_init(&mut host_attr) };
@@ -2728,6 +2832,11 @@ pub unsafe extern "C" fn pthread_key_create(
     if key.is_null() {
         return libc::EINVAL;
     }
+    if current_threading_backend() == THREAD_BACKEND_HOST
+        && let Some(host_key_create) = unsafe { host_pthread_key_create_fn() }
+    {
+        return unsafe { host_key_create(key, destructor) };
+    }
     let sensitive_context = runtime_policy::bootstrap_passthrough_active()
         || crate::malloc_abi::in_allocator_reentry_context()
         || frankenlibc_membrane::ptr_validator::in_validation_context();
@@ -2760,6 +2869,11 @@ pub unsafe extern "C" fn pthread_key_create(
 /// POSIX `pthread_key_delete`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pthread_key_delete(key: libc::pthread_key_t) -> c_int {
+    if current_threading_backend() == THREAD_BACKEND_HOST
+        && let Some(host_key_delete) = unsafe { host_pthread_key_delete_fn() }
+    {
+        return unsafe { host_key_delete(key) };
+    }
     let sensitive_context = runtime_policy::bootstrap_passthrough_active()
         || crate::malloc_abi::in_allocator_reentry_context()
         || frankenlibc_membrane::ptr_validator::in_validation_context();
@@ -2779,6 +2893,12 @@ pub unsafe extern "C" fn pthread_key_delete(key: libc::pthread_key_t) -> c_int {
 #[cfg(target_arch = "x86_64")]
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pthread_getspecific(key: libc::pthread_key_t) -> *mut c_void {
+    if current_threading_backend() == THREAD_BACKEND_HOST
+        && let Some(host_getspecific) = unsafe { host_pthread_getspecific_fn() }
+    {
+        return unsafe { host_getspecific(key) };
+    }
+
     let sensitive_context = runtime_policy::bootstrap_passthrough_active()
         || crate::malloc_abi::in_allocator_reentry_context()
         || frankenlibc_membrane::ptr_validator::in_validation_context();
@@ -2801,6 +2921,12 @@ pub unsafe extern "C" fn pthread_setspecific(
     key: libc::pthread_key_t,
     value: *const c_void,
 ) -> c_int {
+    if current_threading_backend() == THREAD_BACKEND_HOST
+        && let Some(host_setspecific) = unsafe { host_pthread_setspecific_fn() }
+    {
+        return unsafe { host_setspecific(key, value) };
+    }
+
     let sensitive_context = runtime_policy::bootstrap_passthrough_active()
         || crate::malloc_abi::in_allocator_reentry_context()
         || frankenlibc_membrane::ptr_validator::in_validation_context();
@@ -3643,7 +3769,7 @@ pub unsafe extern "C" fn pthread_cancel(thread: libc::pthread_t) -> c_int {
     // Host-backed pthread_create remains the default. Those pthread_t values are
     // opaque glibc handles, so our native kill/TID path cannot validate or cancel
     // them reliably. Delegate non-self, non-managed threads back to host pthread.
-    if !FORCE_NATIVE_THREADING.load(Ordering::Acquire)
+    if !force_native_threading_enabled()
         && !is_managed_thread_handle(thread)
         && let Some(host_cancel) = crate::host_resolve::host_pthread_cancel_raw()
     {
@@ -3676,7 +3802,7 @@ pub unsafe extern "C" fn pthread_setcancelstate(state: c_int, oldstate: *mut c_i
     if state != PTHREAD_CANCEL_ENABLE_STATE && state != PTHREAD_CANCEL_DISABLE_STATE {
         return libc::EINVAL;
     }
-    if !FORCE_NATIVE_THREADING.load(Ordering::Acquire)
+    if !force_native_threading_enabled()
         && !current_thread_is_managed()
         && let Some(host_setcancelstate) = crate::host_resolve::host_pthread_setcancelstate_raw()
     {
@@ -3704,7 +3830,7 @@ pub unsafe extern "C" fn pthread_setcanceltype(typ: c_int, oldtype: *mut c_int) 
     if typ != PTHREAD_CANCEL_DEFERRED_TYPE && typ != PTHREAD_CANCEL_ASYNCHRONOUS_TYPE {
         return libc::EINVAL;
     }
-    if !FORCE_NATIVE_THREADING.load(Ordering::Acquire)
+    if !force_native_threading_enabled()
         && !current_thread_is_managed()
         && let Some(host_setcanceltype) = crate::host_resolve::host_pthread_setcanceltype_raw()
     {
@@ -3729,7 +3855,7 @@ pub unsafe extern "C" fn pthread_setcanceltype(typ: c_int, oldtype: *mut c_int) 
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pthread_testcancel() {
-    if !FORCE_NATIVE_THREADING.load(Ordering::Acquire)
+    if !force_native_threading_enabled()
         && !current_thread_is_managed()
         && let Some(host_testcancel) = crate::host_resolve::host_pthread_testcancel_raw()
     {
@@ -3750,7 +3876,7 @@ pub unsafe extern "C" fn pthread_getattr_np(
     if attr.is_null() {
         return libc::EINVAL;
     }
-    let force_native = FORCE_NATIVE_THREADING.load(Ordering::Acquire);
+    let force_native = force_native_threading_enabled();
     if !force_native
         && !is_managed_thread_handle(thread)
         && let Some(host_addr) = crate::host_resolve::resolve_host_symbol_raw("pthread_getattr_np")
@@ -4252,7 +4378,7 @@ pub unsafe extern "C" fn pthread_setname_np(
         return libc::ERANGE;
     }
     if _thread != native_pthread_self() {
-        if !FORCE_NATIVE_THREADING.load(Ordering::Acquire)
+        if !force_native_threading_enabled()
             && !is_managed_thread_handle(_thread)
             && let Some(host_setname) = crate::host_resolve::host_pthread_setname_np_raw()
         {
@@ -4287,7 +4413,7 @@ pub unsafe extern "C" fn pthread_getname_np(
         return libc::ERANGE;
     }
     if _thread != native_pthread_self() {
-        if !FORCE_NATIVE_THREADING.load(Ordering::Acquire)
+        if !force_native_threading_enabled()
             && !is_managed_thread_handle(_thread)
             && let Some(host_getname) = crate::host_resolve::host_pthread_getname_np_raw()
         {
@@ -5350,7 +5476,7 @@ pub unsafe extern "C" fn pthread_timedjoin_np(
     retval: *mut *mut c_void,
     abstime: *const libc::timespec,
 ) -> c_int {
-    if !FORCE_NATIVE_THREADING.load(Ordering::Acquire)
+    if !force_native_threading_enabled()
         && !is_managed_thread_handle(thread)
         && let Some(host_addr) =
             crate::host_resolve::resolve_host_symbol_raw("pthread_timedjoin_np")
@@ -5446,7 +5572,7 @@ pub unsafe extern "C" fn pthread_tryjoin_np(
     thread: libc::pthread_t,
     retval: *mut *mut c_void,
 ) -> c_int {
-    if !FORCE_NATIVE_THREADING.load(Ordering::Acquire)
+    if !force_native_threading_enabled()
         && !is_managed_thread_handle(thread)
         && let Some(host_addr) = crate::host_resolve::resolve_host_symbol_raw("pthread_tryjoin_np")
     {
@@ -5514,7 +5640,7 @@ pub unsafe extern "C" fn pthread_clockjoin_np(
     clockid: c_int,
     abstime: *const libc::timespec,
 ) -> c_int {
-    if !FORCE_NATIVE_THREADING.load(Ordering::Acquire)
+    if !force_native_threading_enabled()
         && !is_managed_thread_handle(thread)
         && let Some(host_addr) =
             crate::host_resolve::resolve_host_symbol_raw("pthread_clockjoin_np")
@@ -5554,7 +5680,7 @@ pub unsafe extern "C" fn pthread_kill(thread: libc::pthread_t, sig: c_int) -> c_
     if !(0..=64).contains(&sig) {
         return libc::EINVAL;
     }
-    if !FORCE_NATIVE_THREADING.load(Ordering::Acquire)
+    if !force_native_threading_enabled()
         && thread != native_pthread_self()
         && !is_managed_thread_handle(thread)
         && let Some(host_kill) = crate::host_resolve::host_pthread_kill_raw()
@@ -5587,7 +5713,7 @@ pub unsafe extern "C" fn pthread_sigqueue(
     if !(1..=64).contains(&sig) {
         return libc::EINVAL;
     }
-    if !FORCE_NATIVE_THREADING.load(Ordering::Acquire)
+    if !force_native_threading_enabled()
         && thread != native_pthread_self()
         && !is_managed_thread_handle(thread)
         && let Some(host_sigqueue) = crate::host_resolve::host_pthread_sigqueue_raw()
@@ -5653,7 +5779,7 @@ pub unsafe extern "C" fn pthread_getaffinity_np(
     if cpuset.is_null() {
         return libc::EINVAL;
     }
-    if !FORCE_NATIVE_THREADING.load(Ordering::Acquire)
+    if !force_native_threading_enabled()
         && thread != native_pthread_self()
         && !is_managed_thread_handle(thread)
         && let Some(host_getaffinity) = crate::host_resolve::host_pthread_getaffinity_np_raw()
@@ -5697,7 +5823,7 @@ pub unsafe extern "C" fn pthread_setaffinity_np(
     if cpuset.is_null() {
         return libc::EINVAL;
     }
-    if !FORCE_NATIVE_THREADING.load(Ordering::Acquire)
+    if !force_native_threading_enabled()
         && thread != native_pthread_self()
         && !is_managed_thread_handle(thread)
         && let Some(host_setaffinity) = crate::host_resolve::host_pthread_setaffinity_np_raw()
@@ -5758,7 +5884,7 @@ pub unsafe extern "C" fn pthread_exit(retval: *mut c_void) -> ! {
         unsafe { core_exit_current_thread(handle_ptr, retval as usize) };
     }
 
-    if !FORCE_NATIVE_THREADING.load(Ordering::Acquire)
+    if !force_native_threading_enabled()
         && let Some(host_exit) = crate::host_resolve::host_pthread_exit_raw()
     {
         unsafe { host_exit(retval) };
@@ -5783,7 +5909,7 @@ pub unsafe extern "C" fn pthread_getcpuclockid(
     if clockid.is_null() {
         return libc::EINVAL;
     }
-    if !FORCE_NATIVE_THREADING.load(Ordering::Acquire)
+    if !force_native_threading_enabled()
         && thread != native_pthread_self()
         && !is_managed_thread_handle(thread)
         && let Some(host_getcpuclockid) = crate::host_resolve::host_pthread_getcpuclockid_raw()
@@ -5815,7 +5941,7 @@ pub unsafe extern "C" fn pthread_getcpuclockid(
 /// Native implementation using `THREAD_HANDLE_REGISTRY` lookup.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pthread_gettid_np(thread: libc::pthread_t) -> libc::pid_t {
-    if !FORCE_NATIVE_THREADING.load(Ordering::Acquire)
+    if !force_native_threading_enabled()
         && thread != native_pthread_self()
         && !is_managed_thread_handle(thread)
         && let Some(host_gettid) = crate::host_resolve::host_pthread_gettid_np_raw()

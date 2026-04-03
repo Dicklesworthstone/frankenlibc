@@ -95,6 +95,16 @@ impl Drop for ThreadingForceNativeGuard {
     }
 }
 
+struct MutexForceNativeGuard {
+    previous: bool,
+}
+
+impl Drop for MutexForceNativeGuard {
+    fn drop(&mut self) {
+        pthread_mutex_restore_for_tests(self.previous);
+    }
+}
+
 fn first_allowed_cpu() -> usize {
     unsafe {
         let mut cpuset: libc::cpu_set_t = std::mem::zeroed();
@@ -810,6 +820,9 @@ fn condvar_native_attr_stays_on_native_path_for_lifecycle_and_waits() {
 #[test]
 fn native_condvar_wait_rejects_host_mutex_mismatch() {
     unsafe {
+        let _guard = MutexForceNativeGuard {
+            previous: pthread_mutex_swap_force_native_for_tests(),
+        };
         let mut attr: libc::pthread_condattr_t = std::mem::zeroed();
         assert_eq!(pthread_condattr_init(&mut attr), 0);
         assert_eq!(
@@ -821,13 +834,13 @@ fn native_condvar_wait_rejects_host_mutex_mismatch() {
         let mut mutex: libc::pthread_mutex_t = std::mem::zeroed();
         assert_eq!(pthread_cond_init(&mut cond, &attr), 0);
         assert_eq!(pthread_condattr_destroy(&mut attr), 0);
-        assert_eq!(pthread_mutex_init(&mut mutex, ptr::null()), 0);
-        assert_eq!(pthread_mutex_lock(&mut mutex), 0);
+        assert_eq!(libc::pthread_mutex_init(&mut mutex, ptr::null()), 0);
+        assert_eq!(libc::pthread_mutex_lock(&mut mutex), 0);
 
         assert_eq!(pthread_cond_wait(&mut cond, &mut mutex), libc::EINVAL);
 
-        assert_eq!(pthread_mutex_unlock(&mut mutex), 0);
-        assert_eq!(pthread_mutex_destroy(&mut mutex), 0);
+        assert_eq!(libc::pthread_mutex_unlock(&mut mutex), 0);
+        assert_eq!(libc::pthread_mutex_destroy(&mut mutex), 0);
         assert_eq!(pthread_cond_destroy(&mut cond), 0);
     }
 }

@@ -886,17 +886,25 @@ pub unsafe extern "C" fn sigaction(
     act: *const libc::sigaction,
     oldact: *mut libc::sigaction,
 ) -> c_int {
-    let (_mode, decision) =
-        runtime_policy::decide(ApiFamily::Signal, signum as usize, 0, false, true, 0);
-    if matches!(decision.action, MembraneAction::Deny) {
-        unsafe { set_abi_errno(errno::EINVAL) };
-        runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, true);
-        return -1;
-    }
+    let mode = runtime_policy::mode();
+    let decision = if mode.heals_enabled() {
+        let (_, decision) =
+            runtime_policy::decide(ApiFamily::Signal, signum as usize, 0, false, true, 0);
+        if matches!(decision.action, MembraneAction::Deny) {
+            unsafe { set_abi_errno(errno::EINVAL) };
+            runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, true);
+            return -1;
+        }
+        Some(decision)
+    } else {
+        None
+    };
 
     if !signal_core::catchable_signal(signum) {
         unsafe { set_abi_errno(errno::EINVAL) };
-        runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, true);
+        if let Some(decision) = decision {
+            runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, true);
+        }
         return -1;
     }
 
@@ -972,7 +980,9 @@ pub unsafe extern "C" fn sigaction(
             }
         }
     }
-    runtime_policy::observe(ApiFamily::Signal, decision.profile, 10, adverse);
+    if let Some(decision) = decision {
+        runtime_policy::observe(ApiFamily::Signal, decision.profile, 10, adverse);
+    }
     rc
 }
 

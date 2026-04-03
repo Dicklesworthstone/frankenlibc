@@ -1024,9 +1024,6 @@ pub unsafe extern "C" fn malloc(size: usize) -> *mut c_void {
         return out;
     };
 
-    let _trace_scope = runtime_policy::entrypoint_scope("malloc");
-    let _signal_guard =
-        enter_signal_critical_section(SignalCriticalSectionKind::MallocArenaLockAcquire);
     let req = size.max(1);
     if strict_allocator_host_path_active() {
         // SAFETY: strict-mode preload delegates allocator semantics to host libc
@@ -1039,6 +1036,9 @@ pub unsafe extern "C" fn malloc(size: usize) -> *mut c_void {
         }
         return out;
     }
+    let _trace_scope = runtime_policy::entrypoint_scope("malloc");
+    let _signal_guard =
+        enter_signal_critical_section(SignalCriticalSectionKind::MallocArenaLockAcquire);
     let (aligned, recent_page, ordering) = allocator_stage_context(0);
     let (_, decision) = runtime_policy::decide(ApiFamily::Allocator, req, req, true, false, 0);
 
@@ -1115,9 +1115,6 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
         return;
     };
 
-    let _trace_scope = runtime_policy::entrypoint_scope("free");
-    let _signal_guard =
-        enter_signal_critical_section(SignalCriticalSectionKind::MallocFastbinMutation);
     if is_bump_ptr(ptr) {
         return;
     }
@@ -1128,6 +1125,9 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
         unsafe { native_libc_free(ptr) };
         return;
     }
+    let _trace_scope = runtime_policy::entrypoint_scope("free");
+    let _signal_guard =
+        enter_signal_critical_section(SignalCriticalSectionKind::MallocFastbinMutation);
     let (aligned, recent_page, ordering) = allocator_stage_context(ptr as usize);
     if ptr.is_null() {
         record_allocator_stage_outcome(
@@ -1246,6 +1246,15 @@ pub unsafe extern "C" fn calloc(nmemb: usize, size: usize) -> *mut c_void {
         return out;
     };
 
+    if strict_allocator_host_path_active() {
+        // SAFETY: strict-mode preload delegates allocator semantics to host libc.
+        let out = unsafe { native_libc_calloc(nmemb, size) };
+        fallback_insert(out);
+        if !out.is_null() {
+            record_alloc_stats(nmemb.saturating_mul(size).max(1));
+        }
+        return out;
+    }
     let _trace_scope = runtime_policy::entrypoint_scope("calloc");
     let _signal_guard =
         enter_signal_critical_section(SignalCriticalSectionKind::MallocArenaLockAcquire);
@@ -1265,16 +1274,6 @@ pub unsafe extern "C" fn calloc(nmemb: usize, size: usize) -> *mut c_void {
             return std::ptr::null_mut();
         }
     };
-
-    if strict_allocator_host_path_active() {
-        // SAFETY: strict-mode preload delegates allocator semantics to host libc.
-        let out = unsafe { native_libc_calloc(nmemb, size) };
-        fallback_insert(out);
-        if !out.is_null() {
-            record_alloc_stats(total);
-        }
-        return out;
-    }
 
     let (_, decision) = runtime_policy::decide(ApiFamily::Allocator, total, total, true, false, 0);
     if matches!(decision.action, MembraneAction::Deny) {
@@ -1356,10 +1355,6 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
         }
         return out;
     };
-
-    let _trace_scope = runtime_policy::entrypoint_scope("realloc");
-    let _signal_guard =
-        enter_signal_critical_section(SignalCriticalSectionKind::MallocLargebinLink);
     // realloc(NULL, size) == malloc(size)
     if ptr.is_null() {
         return unsafe { malloc(size) };
@@ -1423,6 +1418,9 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
         fallback_insert(out);
         return out;
     }
+    let _trace_scope = runtime_policy::entrypoint_scope("realloc");
+    let _signal_guard =
+        enter_signal_critical_section(SignalCriticalSectionKind::MallocLargebinLink);
 
     let (aligned, recent_page, ordering) = allocator_stage_context(ptr as usize);
     let (_, decision) =

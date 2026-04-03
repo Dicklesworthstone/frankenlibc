@@ -271,6 +271,10 @@ pub unsafe extern "C" fn memcpy(dst: *mut c_void, src: *const c_void, n: usize) 
         unsafe { raw_memcpy_bytes(dst.cast::<u8>(), src.cast::<u8>(), n) };
         return dst;
     }
+    if !runtime_policy::mode().heals_enabled() {
+        unsafe { raw_memcpy_bytes(dst.cast::<u8>(), src.cast::<u8>(), n) };
+        return dst;
+    }
 
     let Some(_membrane_guard) = enter_string_membrane_guard() else {
         // SAFETY: reentrant fallback avoids runtime-policy recursion and mirrors memcpy semantics.
@@ -871,6 +875,15 @@ pub unsafe extern "C" fn strlen(s: *const c_char) -> usize {
     // The membrane's ValidationPipeline uses PageOracle (RwLock) and TLS,
     // which deadlock during init when called from dlvsym → strlen chains.
     if runtime_policy::bootstrap_passthrough_active() {
+        unsafe {
+            let mut len = 0usize;
+            while *s.add(len) != 0 {
+                len += 1;
+            }
+            return len;
+        }
+    }
+    if !runtime_policy::mode().heals_enabled() {
         unsafe {
             let mut len = 0usize;
             while *s.add(len) != 0 {
