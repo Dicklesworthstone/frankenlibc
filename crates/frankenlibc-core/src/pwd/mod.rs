@@ -3,6 +3,8 @@
 //! Implements a files backend for `<pwd.h>` functions: `getpwnam`, `getpwuid`.
 //! Parses `/etc/passwd` in the standard colon-delimited format.
 
+pub mod gshadow;
+
 /// A parsed passwd entry (analogous to `struct passwd`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Passwd {

@@ -947,63 +947,283 @@ pub unsafe extern "C" fn getspent_r(
 // ===========================================================================
 // gshadow database — /etc/gshadow
 // ===========================================================================
+// ---------------------------------------------------------------------------
+// gshadow database (bd-kcbm)
+// ---------------------------------------------------------------------------
 //
 // The gshadow database stores group passwords and admin lists.
 // Format: groupname:password:admins:members
 // struct sgrp { sg_namp, sg_passwd, *sg_adm, *sg_mem } (glibc)
 //
-// Most systems don't use gshadow heavily, so we provide safe stubs
-// that always return "not found" for lookups and empty iteration.
+// Implementation reads /etc/gshadow using the core parser from
+// frankenlibc_core::pwd::gshadow.
+
+use frankenlibc_core::pwd::gshadow::{Gshadow, lookup_gshadow_by_name, parse_gshadow_line};
+
+/// C-compatible struct sgrp layout (matches glibc <gshadow.h>).
+#[repr(C)]
+struct Sgrp {
+    sg_namp: *mut c_char,
+    sg_passwd: *mut c_char,
+    sg_adm: *mut *mut c_char,
+    sg_mem: *mut *mut c_char,
+}
+
+/// Thread-local buffer for non-reentrant gshadow functions.
+/// Stores the sgrp struct + all strings + pointer arrays.
+const GSHADOW_BUF_SIZE: usize = 4096;
+
+thread_local! {
+    static GSHADOW_BUF: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
+    static GSHADOW_ENUM_OFFSET: RefCell<usize> = const { RefCell::new(0) };
+}
+
+/// Read /etc/gshadow content. Returns None if file doesn't exist.
+fn read_gshadow_file() -> Option<Vec<u8>> {
+    std::fs::read("/etc/gshadow").ok()
+}
+
+/// Pack a Gshadow entry into a buffer, returning a pointer to the sgrp struct.
+/// Returns null if the buffer is too small.
+///
+/// Buffer layout: [Sgrp] [name\0] [passwd\0] [adm_ptrs... NULL] [mem_ptrs... NULL] [adm_strs\0...] [mem_strs\0...]
+unsafe fn pack_gshadow_into_buf(entry: &Gshadow, buf: *mut u8, buflen: usize) -> *mut Sgrp {
+    // Align the struct to pointer alignment (8 bytes on x86_64).
+    let align = core::mem::align_of::<Sgrp>();
+    let buf_addr = buf as usize;
+    let align_offset = buf_addr.wrapping_neg() & (align - 1);
+    if align_offset >= buflen {
+        return ptr::null_mut();
+    }
+    let aligned_buf = unsafe { buf.add(align_offset) };
+    let effective_buflen = buflen - align_offset;
+
+    let sgrp_size = core::mem::size_of::<Sgrp>();
+
+    // Split comma-separated lists.
+    let adm_list: Vec<&[u8]> = if entry.sg_adm.is_empty() {
+        vec![]
+    } else {
+        entry.sg_adm.split(|&b| b == b',').collect()
+    };
+    let mem_list: Vec<&[u8]> = if entry.sg_mem.is_empty() {
+        vec![]
+    } else {
+        entry.sg_mem.split(|&b| b == b',').collect()
+    };
+
+    // Calculate total space needed.
+    let name_len = entry.sg_namp.len() + 1;
+    let passwd_len = entry.sg_passwd.len() + 1;
+    let adm_ptrs_size = (adm_list.len() + 1) * core::mem::size_of::<*mut c_char>();
+    let mem_ptrs_size = (mem_list.len() + 1) * core::mem::size_of::<*mut c_char>();
+    let adm_strs_size: usize = adm_list.iter().map(|s| s.len() + 1).sum();
+    let mem_strs_size: usize = mem_list.iter().map(|s| s.len() + 1).sum();
+    let total = sgrp_size
+        + name_len
+        + passwd_len
+        + adm_ptrs_size
+        + mem_ptrs_size
+        + adm_strs_size
+        + mem_strs_size;
+
+    if total > effective_buflen {
+        return ptr::null_mut();
+    }
+
+    let sgrp = aligned_buf as *mut Sgrp;
+    let mut cursor = unsafe { aligned_buf.add(sgrp_size) };
+
+    // Write name string.
+    let name_ptr = cursor as *mut c_char;
+    unsafe {
+        ptr::copy_nonoverlapping(entry.sg_namp.as_ptr(), cursor, entry.sg_namp.len());
+        *cursor.add(entry.sg_namp.len()) = 0;
+        cursor = cursor.add(name_len);
+    }
+
+    // Write passwd string.
+    let passwd_ptr = cursor as *mut c_char;
+    unsafe {
+        ptr::copy_nonoverlapping(entry.sg_passwd.as_ptr(), cursor, entry.sg_passwd.len());
+        *cursor.add(entry.sg_passwd.len()) = 0;
+        cursor = cursor.add(passwd_len);
+    }
+
+    // Write admin pointer array.
+    let adm_ptrs = cursor as *mut *mut c_char;
+    unsafe { cursor = cursor.add(adm_ptrs_size) };
+    // Write admin strings and fill pointers.
+    for (i, adm) in adm_list.iter().enumerate() {
+        unsafe {
+            *(adm_ptrs.add(i)) = cursor as *mut c_char;
+            ptr::copy_nonoverlapping(adm.as_ptr(), cursor, adm.len());
+            *cursor.add(adm.len()) = 0;
+            cursor = cursor.add(adm.len() + 1);
+        }
+    }
+    unsafe { *(adm_ptrs.add(adm_list.len())) = ptr::null_mut() };
+
+    // Write member pointer array.
+    let mem_ptrs = cursor as *mut *mut c_char;
+    unsafe { cursor = cursor.add(mem_ptrs_size) };
+    for (i, mem) in mem_list.iter().enumerate() {
+        unsafe {
+            *(mem_ptrs.add(i)) = cursor as *mut c_char;
+            ptr::copy_nonoverlapping(mem.as_ptr(), cursor, mem.len());
+            *cursor.add(mem.len()) = 0;
+            cursor = cursor.add(mem.len() + 1);
+        }
+    }
+    unsafe { *(mem_ptrs.add(mem_list.len())) = ptr::null_mut() };
+
+    // Fill sgrp struct.
+    unsafe {
+        (*sgrp).sg_namp = name_ptr;
+        (*sgrp).sg_passwd = passwd_ptr;
+        (*sgrp).sg_adm = adm_ptrs;
+        (*sgrp).sg_mem = mem_ptrs;
+    }
+
+    sgrp
+}
+
+/// Pack into thread-local buffer and return pointer (for non-_r functions).
+fn gshadow_to_static_sgrp(entry: &Gshadow) -> *mut c_void {
+    GSHADOW_BUF.with(|buf| {
+        let mut buf = buf.borrow_mut();
+        buf.resize(GSHADOW_BUF_SIZE, 0);
+        let ptr = unsafe { pack_gshadow_into_buf(entry, buf.as_mut_ptr(), GSHADOW_BUF_SIZE) };
+        ptr as *mut c_void
+    })
+}
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn setsgent() {
-    // no-op
+    GSHADOW_ENUM_OFFSET.with(|off| *off.borrow_mut() = 0);
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn endsgent() {
-    // no-op
+    GSHADOW_ENUM_OFFSET.with(|off| *off.borrow_mut() = 0);
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getsgent() -> *mut c_void {
-    ptr::null_mut()
+    let content = match read_gshadow_file() {
+        Some(c) => c,
+        None => return ptr::null_mut(),
+    };
+    GSHADOW_ENUM_OFFSET.with(|off| {
+        let mut offset = off.borrow_mut();
+        let remaining = if *offset < content.len() {
+            &content[*offset..]
+        } else {
+            return ptr::null_mut();
+        };
+        for line in remaining.split(|&b| b == b'\n') {
+            *offset += line.len() + 1; // +1 for the newline
+            if let Some(entry) = parse_gshadow_line(line) {
+                return gshadow_to_static_sgrp(&entry);
+            }
+        }
+        ptr::null_mut()
+    })
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getsgent_r(
     _result_buf: *mut c_void,
-    _buffer: *mut c_char,
-    _buflen: usize,
+    buffer: *mut c_char,
+    buflen: usize,
     result: *mut *mut c_void,
 ) -> c_int {
     if !result.is_null() {
         unsafe { *result = ptr::null_mut() };
     }
-    libc::ENOENT
+    let content = match read_gshadow_file() {
+        Some(c) => c,
+        None => return libc::ENOENT,
+    };
+    GSHADOW_ENUM_OFFSET.with(|off| {
+        let mut offset = off.borrow_mut();
+        let remaining = if *offset < content.len() {
+            &content[*offset..]
+        } else {
+            return libc::ENOENT;
+        };
+        for line in remaining.split(|&b| b == b'\n') {
+            *offset += line.len() + 1;
+            if let Some(entry) = parse_gshadow_line(line) {
+                let sgrp = unsafe { pack_gshadow_into_buf(&entry, buffer as *mut u8, buflen) };
+                if sgrp.is_null() {
+                    return libc::ERANGE;
+                }
+                if !result.is_null() {
+                    unsafe { *result = sgrp as *mut c_void };
+                }
+                return 0;
+            }
+        }
+        libc::ENOENT
+    })
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn getsgnam(_name: *const c_char) -> *mut c_void {
-    ptr::null_mut()
+pub unsafe extern "C" fn getsgnam(name: *const c_char) -> *mut c_void {
+    if name.is_null() {
+        return ptr::null_mut();
+    }
+    let name_cstr = unsafe { std::ffi::CStr::from_ptr(name) };
+    let content = match read_gshadow_file() {
+        Some(c) => c,
+        None => return ptr::null_mut(),
+    };
+    match lookup_gshadow_by_name(&content, name_cstr.to_bytes()) {
+        Some(entry) => gshadow_to_static_sgrp(&entry),
+        None => ptr::null_mut(),
+    }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getsgnam_r(
-    _name: *const c_char,
+    name: *const c_char,
     _result_buf: *mut c_void,
-    _buffer: *mut c_char,
-    _buflen: usize,
+    buffer: *mut c_char,
+    buflen: usize,
     result: *mut *mut c_void,
 ) -> c_int {
     if !result.is_null() {
         unsafe { *result = ptr::null_mut() };
     }
-    libc::ENOENT
+    if name.is_null() {
+        return libc::EINVAL;
+    }
+    let name_cstr = unsafe { std::ffi::CStr::from_ptr(name) };
+    let content = match read_gshadow_file() {
+        Some(c) => c,
+        None => return libc::ENOENT,
+    };
+    match lookup_gshadow_by_name(&content, name_cstr.to_bytes()) {
+        Some(entry) => {
+            let sgrp = unsafe { pack_gshadow_into_buf(&entry, buffer as *mut u8, buflen) };
+            if sgrp.is_null() {
+                return libc::ERANGE;
+            }
+            if !result.is_null() {
+                unsafe { *result = sgrp as *mut c_void };
+            }
+            0
+        }
+        None => libc::ENOENT,
+    }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fgetsgent(_stream: *mut c_void) -> *mut c_void {
+    // fgetsgent reads a single gshadow line from a FILE* stream.
+    // Since we don't have a way to safely read a line from an arbitrary
+    // FILE* in the interpose model, return null (not found).
     ptr::null_mut()
 }
 
@@ -1022,22 +1242,45 @@ pub unsafe extern "C" fn fgetsgent_r(
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn sgetsgent(_string: *const c_char) -> *mut c_void {
-    ptr::null_mut()
+pub unsafe extern "C" fn sgetsgent(string: *const c_char) -> *mut c_void {
+    if string.is_null() {
+        return ptr::null_mut();
+    }
+    let cstr = unsafe { std::ffi::CStr::from_ptr(string) };
+    match parse_gshadow_line(cstr.to_bytes()) {
+        Some(entry) => gshadow_to_static_sgrp(&entry),
+        None => ptr::null_mut(),
+    }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sgetsgent_r(
-    _string: *const c_char,
+    string: *const c_char,
     _result_buf: *mut c_void,
-    _buffer: *mut c_char,
-    _buflen: usize,
+    buffer: *mut c_char,
+    buflen: usize,
     result: *mut *mut c_void,
 ) -> c_int {
     if !result.is_null() {
         unsafe { *result = ptr::null_mut() };
     }
-    libc::ENOENT
+    if string.is_null() {
+        return libc::EINVAL;
+    }
+    let cstr = unsafe { std::ffi::CStr::from_ptr(string) };
+    match parse_gshadow_line(cstr.to_bytes()) {
+        Some(entry) => {
+            let sgrp = unsafe { pack_gshadow_into_buf(&entry, buffer as *mut u8, buflen) };
+            if sgrp.is_null() {
+                return libc::ERANGE;
+            }
+            if !result.is_null() {
+                unsafe { *result = sgrp as *mut c_void };
+            }
+            0
+        }
+        None => libc::ENOENT,
+    }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]

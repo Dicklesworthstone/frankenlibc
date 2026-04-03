@@ -17400,26 +17400,61 @@ pub unsafe extern "C" fn getaddrinfo_a(
     libc::EAI_SYSTEM
 }
 
+// ---------------------------------------------------------------------------
+// Async DNS constants (glibc <netdb.h> values)
+// ---------------------------------------------------------------------------
+#[allow(dead_code)] // Defined for completeness; used if getaddrinfo_a is implemented.
+const EAI_INPROGRESS: c_int = -100;
+#[allow(dead_code)]
+const EAI_CANCELED: c_int = -101;
+const EAI_NOTCANCELED: c_int = -102;
+const EAI_ALLDONE: c_int = -103;
+
+/// `gai_cancel` — cancel an asynchronous name resolution request (bd-9dq5).
+///
+/// FrankenLibC resolves all `getaddrinfo` calls synchronously and does not
+/// export `getaddrinfo_a`, so no async requests ever exist. A non-NULL request
+/// pointer is treated as "already completed" (`EAI_ALLDONE`); NULL is invalid
+/// (`EAI_NOCANCEL` per glibc convention, mapped to `EAI_NOTCANCELED`).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn gai_cancel(_req: *mut c_void) -> c_int {
-    unsafe { set_abi_errno(libc::ENOSYS) };
-    libc::EAI_SYSTEM
+pub unsafe extern "C" fn gai_cancel(req: *mut c_void) -> c_int {
+    if req.is_null() {
+        return EAI_NOTCANCELED;
+    }
+    // All getaddrinfo calls resolve synchronously, so any gaicb is already done.
+    EAI_ALLDONE
 }
 
+/// `gai_error` — query status of an asynchronous name resolution request (bd-9dq5).
+///
+/// Since all resolution is synchronous, a non-NULL request is always "completed"
+/// (return 0). NULL is an invalid request (return `EAI_SYSTEM` with `EINVAL`).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn gai_error(_req: *mut c_void) -> c_int {
-    unsafe { set_abi_errno(libc::ENOSYS) };
-    libc::EAI_SYSTEM
+pub unsafe extern "C" fn gai_error(req: *mut c_void) -> c_int {
+    if req.is_null() {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return libc::EAI_SYSTEM;
+    }
+    // Synchronous resolver: every gaicb is already resolved.
+    0
 }
 
+/// `gai_suspend` — wait for async name resolution requests to complete (bd-9dq5).
+///
+/// Since all resolution is synchronous, every request in the list is already
+/// complete by the time `gai_suspend` is called. Returns 0 immediately (at
+/// least one request is done). Empty/NULL lists also return 0.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn gai_suspend(
     _list: *const *const c_void,
-    _nitems: c_int,
+    nitems: c_int,
     _timeout: *const libc::timespec,
 ) -> c_int {
-    unsafe { set_abi_errno(libc::ENOSYS) };
-    libc::EAI_SYSTEM
+    if nitems <= 0 {
+        return 0; // Nothing to wait for.
+    }
+    // All requests resolved synchronously — at least one is "done."
+    0
 }
 
 // ===========================================================================

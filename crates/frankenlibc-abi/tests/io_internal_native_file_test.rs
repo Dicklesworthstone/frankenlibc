@@ -5,8 +5,9 @@
 use std::ffi::c_int;
 
 use frankenlibc_abi::io_internal_abi::{
-    DEFAULT_FD_VTABLE, NATIVE_FILE_MAGIC, NativeFile, NativeFileBufMode, NativeFileVtable,
-    file_flags, native_stream_registry,
+    _IO_iter_begin, _IO_iter_end, _IO_iter_file, _IO_iter_next, DEFAULT_FD_VTABLE,
+    NATIVE_FILE_MAGIC, NativeFile, NativeFileBufMode, NativeFileVtable, file_flags,
+    native_stream_registry,
 };
 
 // ---------------------------------------------------------------------------
@@ -610,4 +611,141 @@ fn registry_flush_all_flushes_writable_streams() {
     reg.unregister(slot);
     unsafe { libc::syscall(libc::SYS_close, fd) };
     unsafe { std::alloc::dealloc(heap_buf, layout) };
+}
+
+// ===========================================================================
+// _IO_iter_* stream iterator tests (bd-di5w)
+// ===========================================================================
+
+#[test]
+fn iter_begin_returns_first_stream() {
+    let _guard = REGISTRY_TEST_LOCK.lock().unwrap();
+    // Registry has stdin/stdout/stderr pre-registered at slots 0/1/2.
+    let begin = unsafe { _IO_iter_begin() };
+    let end = unsafe { _IO_iter_end() };
+    assert_ne!(
+        begin, end,
+        "begin should differ from end when stdio streams exist"
+    );
+    assert!(
+        !begin.is_null(),
+        "begin should not be null with stdio streams"
+    );
+}
+
+#[test]
+fn iter_end_is_constant_sentinel() {
+    let end1 = unsafe { _IO_iter_end() };
+    let end2 = unsafe { _IO_iter_end() };
+    assert_eq!(end1, end2, "end sentinel should be stable");
+    assert!(!end1.is_null(), "end sentinel should not be null");
+}
+
+#[test]
+fn iter_file_returns_valid_native_file() {
+    let _guard = REGISTRY_TEST_LOCK.lock().unwrap();
+    let begin = unsafe { _IO_iter_begin() };
+    let file_ptr = unsafe { _IO_iter_file(begin) };
+    assert!(
+        !file_ptr.is_null(),
+        "iter_file on begin should return non-null FILE*"
+    );
+}
+
+#[test]
+fn iter_file_on_end_returns_null() {
+    let end = unsafe { _IO_iter_end() };
+    let file_ptr = unsafe { _IO_iter_file(end) };
+    assert!(
+        file_ptr.is_null(),
+        "iter_file on end sentinel should return null"
+    );
+}
+
+#[test]
+fn iter_file_on_null_returns_null() {
+    let file_ptr = unsafe { _IO_iter_file(std::ptr::null_mut()) };
+    assert!(file_ptr.is_null(), "iter_file on null should return null");
+}
+
+#[test]
+fn iter_next_advances_past_end() {
+    let _guard = REGISTRY_TEST_LOCK.lock().unwrap();
+    let end = unsafe { _IO_iter_end() };
+    // Advancing past end should stay at end.
+    let next = unsafe { _IO_iter_next(end) };
+    assert_eq!(next, end, "next on end should return end");
+}
+
+#[test]
+fn iter_full_traversal_visits_all_streams() {
+    let _guard = REGISTRY_TEST_LOCK.lock().unwrap();
+    let mut reg = native_stream_registry();
+    let initial_count = reg.open_count();
+
+    // Register 3 extra streams.
+    let mut slots = Vec::new();
+    for i in 0..3 {
+        let f = NativeFile::new(
+            100 + i,
+            file_flags::READ | file_flags::WRITE,
+            NativeFileBufMode::Full,
+        );
+        slots.push(reg.register(f).expect("should register"));
+    }
+    let expected_count = initial_count + 3;
+    drop(reg);
+
+    // Iterate and count.
+    let end = unsafe { _IO_iter_end() };
+    let mut it = unsafe { _IO_iter_begin() };
+    let mut count = 0;
+    while it != end {
+        let file_ptr = unsafe { _IO_iter_file(it) };
+        assert!(
+            !file_ptr.is_null(),
+            "iter_file should return non-null for occupied slot"
+        );
+        count += 1;
+        it = unsafe { _IO_iter_next(it) };
+        assert!(count <= 300, "infinite loop guard");
+    }
+    assert_eq!(
+        count, expected_count,
+        "traversal count should match open_count"
+    );
+
+    // Cleanup.
+    let mut reg = native_stream_registry();
+    for slot in slots {
+        reg.unregister(slot);
+    }
+}
+
+#[test]
+fn iter_traversal_after_unregister() {
+    let _guard = REGISTRY_TEST_LOCK.lock().unwrap();
+    let mut reg = native_stream_registry();
+
+    // Register 2 streams, unregister 1.
+    let f1 = NativeFile::new(200, file_flags::READ, NativeFileBufMode::Full);
+    let f2 = NativeFile::new(201, file_flags::READ, NativeFileBufMode::Full);
+    let s1 = reg.register(f1).expect("register 1");
+    let s2 = reg.register(f2).expect("register 2");
+    reg.unregister(s1);
+    let expected = reg.open_count();
+    drop(reg);
+
+    let end = unsafe { _IO_iter_end() };
+    let mut it = unsafe { _IO_iter_begin() };
+    let mut count = 0;
+    while it != end {
+        count += 1;
+        it = unsafe { _IO_iter_next(it) };
+        assert!(count <= 300, "infinite loop guard");
+    }
+    assert_eq!(count, expected, "should skip unregistered slot");
+
+    let mut reg = native_stream_registry();
+    reg.unregister(s2);
 }

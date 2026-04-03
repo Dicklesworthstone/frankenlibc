@@ -4283,17 +4283,153 @@ pub unsafe extern "C" fn dladdr1(
     unsafe { crate::dlfcn_abi::dladdr(addr, info) }
 }
 
-/// `dlinfo` — get dynamic linker information about a loaded object.
+// ---------------------------------------------------------------------------
+// dlinfo — dynamic linker information (bd-olgi)
+// ---------------------------------------------------------------------------
+
+/// RTLD_DI_LINKMAP request code: write `struct link_map *` to info.
+const RTLD_DI_LINKMAP: c_int = 2;
+/// RTLD_DI_ORIGIN request code: write directory path string to info.
+const RTLD_DI_ORIGIN: c_int = 6;
+
+/// Cached self-identification: (base_addr, lib_path).
+static SELF_LIB_INFO: std::sync::OnceLock<Option<(usize, String)>> = std::sync::OnceLock::new();
+
+/// Find our own library in /proc/self/maps by looking for "frankenlibc".
+fn resolve_self_lib_info() -> Option<(usize, String)> {
+    let maps = std::fs::read_to_string("/proc/self/maps").ok()?;
+    for line in maps.lines() {
+        let mut parts = line.split_whitespace();
+        let range = parts.next()?;
+        let _perms = parts.next()?;
+        let _offset = parts.next()?;
+        let _dev = parts.next()?;
+        let _inode = parts.next()?;
+        let path = parts.next().unwrap_or("");
+        if path.contains("frankenlibc") {
+            let start_hex = range.split('-').next()?;
+            let base = usize::from_str_radix(start_hex, 16).ok()?;
+            return Some((base, path.to_string()));
+        }
+    }
+    None
+}
+
+fn self_lib_info() -> &'static Option<(usize, String)> {
+    SELF_LIB_INFO.get_or_init(resolve_self_lib_info)
+}
+
+/// Minimal `link_map` struct matching glibc's `<link.h>` layout.
+#[repr(C)]
+struct LinkMap {
+    l_addr: usize,         // Base address
+    l_name: *const c_char, // Absolute pathname
+    l_ld: *mut c_void,     // Dynamic section (null for us)
+    l_next: *mut LinkMap,  // Next in chain
+    l_prev: *mut LinkMap,  // Previous in chain
+}
+
+/// Wrapper to make *const LinkMap Sync-safe (the pointer is immutable after init).
+struct SyncLinkMapPtr(*const LinkMap);
+// SAFETY: The leaked LinkMap is never mutated after initialization.
+unsafe impl Send for SyncLinkMapPtr {}
+unsafe impl Sync for SyncLinkMapPtr {}
+
+/// Static link_map for our own library (leaked on first use).
+static SELF_LINK_MAP: std::sync::OnceLock<SyncLinkMapPtr> = std::sync::OnceLock::new();
+
+fn self_link_map() -> *const LinkMap {
+    SELF_LINK_MAP
+        .get_or_init(|| {
+            let Some((base, ref path)) = *self_lib_info() else {
+                return SyncLinkMapPtr(std::ptr::null());
+            };
+            let name_cstr = std::ffi::CString::new(path.as_str()).unwrap_or_default();
+            let name_ptr = name_cstr.into_raw() as *const c_char; // intentional leak
+            let lm = Box::new(LinkMap {
+                l_addr: base,
+                l_name: name_ptr,
+                l_ld: std::ptr::null_mut(),
+                l_next: std::ptr::null_mut(),
+                l_prev: std::ptr::null_mut(),
+            });
+            SyncLinkMapPtr(Box::into_raw(lm) as *const LinkMap) // intentional leak
+        })
+        .0
+}
+
+/// `dlinfo` — get dynamic linker information about a loaded object (bd-olgi).
 ///
-/// Native: returns -1 with ENOSYS since we don't maintain linker metadata.
+/// Supports RTLD_DI_LINKMAP (2) and RTLD_DI_ORIGIN (6) for the default/self
+/// handle. For other handles, delegates to host dlinfo if available.
+/// Returns -1 with errno set on error.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn dlinfo(
-    _handle: *mut c_void,
-    _request: c_int,
-    _info: *mut c_void,
-) -> c_int {
-    unsafe { *libc::__errno_location() = libc::ENOSYS };
-    -1
+pub unsafe extern "C" fn dlinfo(handle: *mut c_void, request: c_int, info: *mut c_void) -> c_int {
+    if info.is_null() {
+        unsafe { *libc::__errno_location() = libc::EINVAL };
+        return -1;
+    }
+
+    // Classify handle: NULL or RTLD_DEFAULT (0) = self.
+    let is_self = handle.is_null();
+
+    match request {
+        RTLD_DI_LINKMAP => {
+            if is_self {
+                let lm = self_link_map();
+                if lm.is_null() {
+                    unsafe { *libc::__errno_location() = libc::ENOENT };
+                    return -1;
+                }
+                // Write link_map* into info (info points to a link_map**).
+                unsafe { *(info as *mut *const LinkMap) = lm };
+                return 0;
+            }
+            // Non-self handle: delegate to host dlinfo if available.
+            if let Some(host_addr) = crate::host_resolve::resolve_host_symbol_raw("dlinfo") {
+                type HostDlinfoFn = unsafe extern "C" fn(*mut c_void, c_int, *mut c_void) -> c_int;
+                let host_fn: HostDlinfoFn = unsafe { core::mem::transmute(host_addr) };
+                return unsafe { host_fn(handle, request, info) };
+            }
+            unsafe { *libc::__errno_location() = libc::ENOSYS };
+            -1
+        }
+        RTLD_DI_ORIGIN => {
+            if is_self {
+                let Some((_, ref path)) = *self_lib_info() else {
+                    unsafe { *libc::__errno_location() = libc::ENOENT };
+                    return -1;
+                };
+                // Extract dirname: "/usr/lib/libfoo.so" -> "/usr/lib"
+                // Special case: "/libfoo.so" -> "/" (root directory).
+                let dir = match path.rfind('/') {
+                    Some(0) => "/",
+                    Some(pos) => &path[..pos],
+                    None => ".",
+                };
+                let dir_bytes = dir.as_bytes();
+                let dst = info as *mut u8;
+                unsafe {
+                    std::ptr::copy_nonoverlapping(dir_bytes.as_ptr(), dst, dir_bytes.len());
+                    *dst.add(dir_bytes.len()) = 0; // NUL terminate
+                };
+                return 0;
+            }
+            // Non-self: delegate to host.
+            if let Some(host_addr) = crate::host_resolve::resolve_host_symbol_raw("dlinfo") {
+                type HostDlinfoFn = unsafe extern "C" fn(*mut c_void, c_int, *mut c_void) -> c_int;
+                let host_fn: HostDlinfoFn = unsafe { core::mem::transmute(host_addr) };
+                return unsafe { host_fn(handle, request, info) };
+            }
+            unsafe { *libc::__errno_location() = libc::ENOSYS };
+            -1
+        }
+        _ => {
+            // Unsupported request code.
+            unsafe { *libc::__errno_location() = libc::ENOSYS };
+            -1
+        }
+    }
 }
 
 /// `dlmopen` — open shared object in a specific link-map namespace.

@@ -28,6 +28,65 @@ const HJI_WARMUP_OBSERVATIONS: usize = 64;
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 const SA_RESTORER_FLAG: c_int = 0x04000000;
 
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct KernelSigaction {
+    sa_handler: usize,
+    sa_flags: usize,
+    sa_restorer: usize,
+    sa_mask: libc::c_ulong,
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+impl KernelSigaction {
+    const fn zeroed() -> Self {
+        Self {
+            sa_handler: 0,
+            sa_flags: 0,
+            sa_restorer: 0,
+            sa_mask: 0,
+        }
+    }
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn sigset_first_word(set: &libc::sigset_t) -> libc::c_ulong {
+    // SAFETY: x86_64 rt_sigaction consumes only the first kernel-sized word.
+    unsafe { *(set as *const libc::sigset_t).cast::<libc::c_ulong>() }
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn write_sigset_first_word(set: &mut libc::sigset_t, value: libc::c_ulong) {
+    // SAFETY: the caller zero-initializes the rest of the sigset_t storage.
+    unsafe {
+        *(set as *mut libc::sigset_t).cast::<libc::c_ulong>() = value;
+    }
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn user_to_kernel_sigaction(act: &libc::sigaction) -> KernelSigaction {
+    KernelSigaction {
+        sa_handler: act.sa_sigaction,
+        sa_flags: act.sa_flags as usize,
+        sa_restorer: act.sa_restorer.map_or(0usize, |restorer| restorer as usize),
+        sa_mask: sigset_first_word(&act.sa_mask),
+    }
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn kernel_to_user_sigaction(act: &KernelSigaction) -> libc::sigaction {
+    let mut user = unsafe { std::mem::zeroed::<libc::sigaction>() };
+    user.sa_sigaction = act.sa_handler;
+    user.sa_flags = act.sa_flags as c_int;
+    if act.sa_restorer != 0 {
+        // SAFETY: kernel-provided restorer address is surfaced verbatim.
+        user.sa_restorer = unsafe { std::mem::transmute(act.sa_restorer) };
+    }
+    write_sigset_first_word(&mut user.sa_mask, act.sa_mask);
+    user
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum SignalSafetyClassification {
@@ -125,7 +184,6 @@ impl SignalCriticalSectionKind {
             Self::StdioRegistryFlush => "stdio.registry_flush",
         }
     }
-
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -255,7 +313,9 @@ fn handler_dispatch_classification(kind: SignalCriticalSectionKind) -> SignalSaf
     });
     match hji_state {
         ReachState::Safe => SignalSafetyClassification::Safe,
-        ReachState::Approaching | ReachState::Calibrating => SignalSafetyClassification::DeferSignal,
+        ReachState::Approaching | ReachState::Calibrating => {
+            SignalSafetyClassification::DeferSignal
+        }
         ReachState::Breached => SignalSafetyClassification::MaskRequired,
     }
 }
@@ -309,8 +369,8 @@ unsafe fn dispatch_registered_handler(
 }
 
 unsafe extern "C" fn signal_handler_trampoline(signum: c_int) {
-    let classification =
-        SIGNAL_CLASSIFICATION.with(|value| SignalSafetyClassification::from_u8(value.load(Ordering::Relaxed)));
+    let classification = SIGNAL_CLASSIFICATION
+        .with(|value| SignalSafetyClassification::from_u8(value.load(Ordering::Relaxed)));
     if SIGNAL_CRITICAL_DEPTH.with(|value| value.load(Ordering::Relaxed)) > 0
         && !matches!(classification, SignalSafetyClassification::Safe)
     {
@@ -327,8 +387,8 @@ unsafe extern "C" fn signal_siginfo_trampoline(
     info: *mut libc::siginfo_t,
     context: *mut c_void,
 ) {
-    let classification =
-        SIGNAL_CLASSIFICATION.with(|value| SignalSafetyClassification::from_u8(value.load(Ordering::Relaxed)));
+    let classification = SIGNAL_CLASSIFICATION
+        .with(|value| SignalSafetyClassification::from_u8(value.load(Ordering::Relaxed)));
     if SIGNAL_CRITICAL_DEPTH.with(|value| value.load(Ordering::Relaxed)) > 0
         && !matches!(classification, SignalSafetyClassification::Safe)
     {
@@ -340,12 +400,7 @@ unsafe extern "C" fn signal_siginfo_trampoline(
     unsafe { dispatch_registered_handler(signum, info, context) };
 }
 
-fn rewrite_old_sigaction(oldact: *mut libc::sigaction, prev_handler: usize, prev_flags: usize) {
-    if oldact.is_null() {
-        return;
-    }
-    // SAFETY: oldact comes from the caller and has been written by rt_sigaction.
-    let oldact_ref = unsafe { &mut *oldact };
+fn rewrite_old_sigaction(oldact_ref: &mut libc::sigaction, prev_handler: usize, prev_flags: usize) {
     if is_signal_trampoline(oldact_ref.sa_sigaction) && prev_handler != 0 {
         let kernel_flags = oldact_ref.sa_flags;
         oldact_ref.sa_sigaction = prev_handler;
@@ -367,7 +422,9 @@ impl Drop for SignalCriticalSectionGuard {
 }
 
 #[must_use]
-pub fn enter_signal_critical_section(kind: SignalCriticalSectionKind) -> SignalCriticalSectionGuard {
+pub fn enter_signal_critical_section(
+    kind: SignalCriticalSectionKind,
+) -> SignalCriticalSectionGuard {
     SIGNAL_CRITICAL_DEPTH.with(|depth| {
         depth.fetch_add(1, Ordering::Relaxed);
     });
@@ -404,7 +461,8 @@ pub fn exit_signal_critical_section() {
 
 #[doc(hidden)]
 pub fn current_signal_classification_for_test() -> SignalSafetyClassification {
-    SIGNAL_CLASSIFICATION.with(|value| SignalSafetyClassification::from_u8(value.load(Ordering::Relaxed)))
+    SIGNAL_CLASSIFICATION
+        .with(|value| SignalSafetyClassification::from_u8(value.load(Ordering::Relaxed)))
 }
 
 #[doc(hidden)]
@@ -830,8 +888,9 @@ pub unsafe extern "C" fn sigaction(
     // Linux `rt_sigaction` expects the kernel sigset size (`sizeof(unsigned long)`),
     // not libc's userspace `sigset_t` size.
     let kernel_sigset_size = std::mem::size_of::<libc::c_ulong>();
-    let mut kernel_act = unsafe { std::mem::zeroed::<libc::sigaction>() };
-    let mut current_kernel_act = unsafe { std::mem::zeroed::<libc::sigaction>() };
+    let mut kernel_act = KernelSigaction::zeroed();
+    let mut current_kernel_act = KernelSigaction::zeroed();
+    let mut kernel_oldact = KernelSigaction::zeroed();
     let kernel_act_ptr = if act.is_null() {
         std::ptr::null()
     } else {
@@ -839,28 +898,33 @@ pub unsafe extern "C" fn sigaction(
             libc::syscall(
                 libc::SYS_rt_sigaction,
                 signum,
-                std::ptr::null::<libc::sigaction>(),
-                &mut current_kernel_act as *mut libc::sigaction,
+                std::ptr::null::<KernelSigaction>(),
+                &mut current_kernel_act as *mut KernelSigaction,
                 kernel_sigset_size,
             ) as c_int
         };
         // SAFETY: act was supplied by the caller for this syscall wrapper.
-        kernel_act = unsafe { *act };
-        let user_handler = kernel_act.sa_sigaction;
+        kernel_act = user_to_kernel_sigaction(unsafe { &*act });
+        let user_handler = kernel_act.sa_handler;
         if !is_default_or_ignore_handler(user_handler) {
-            if kernel_act.sa_flags & libc::SA_SIGINFO != 0 {
-                kernel_act.sa_sigaction = signal_siginfo_trampoline_addr();
+            if kernel_act.sa_flags & libc::SA_SIGINFO as usize != 0 {
+                kernel_act.sa_handler = signal_siginfo_trampoline_addr();
             } else {
-                kernel_act.sa_sigaction = signal_handler_trampoline_addr();
+                kernel_act.sa_handler = signal_handler_trampoline_addr();
             }
-            if kernel_act.sa_flags & SA_RESTORER_FLAG == 0
-                && current_kernel_act.sa_flags & SA_RESTORER_FLAG != 0
+            if kernel_act.sa_flags & SA_RESTORER_FLAG as usize == 0
+                && current_kernel_act.sa_flags & SA_RESTORER_FLAG as usize != 0
             {
-                kernel_act.sa_flags |= current_kernel_act.sa_flags & SA_RESTORER_FLAG;
+                kernel_act.sa_flags |= current_kernel_act.sa_flags & SA_RESTORER_FLAG as usize;
                 kernel_act.sa_restorer = current_kernel_act.sa_restorer;
             }
         }
-        &kernel_act as *const libc::sigaction
+        &kernel_act as *const KernelSigaction
+    };
+    let kernel_oldact_ptr = if oldact.is_null() {
+        std::ptr::null_mut()
+    } else {
+        &mut kernel_oldact as *mut KernelSigaction
     };
     let (prev_handler, prev_flags) = signal_slot(signum)
         .map(|slot| {
@@ -875,7 +939,7 @@ pub unsafe extern "C" fn sigaction(
             libc::SYS_rt_sigaction,
             signum,
             kernel_act_ptr,
-            oldact,
+            kernel_oldact_ptr,
             kernel_sigset_size,
         ) as c_int
     };
@@ -883,19 +947,24 @@ pub unsafe extern "C" fn sigaction(
     if adverse {
         unsafe { set_abi_errno(last_host_errno(errno::EINVAL)) };
     } else {
-        rewrite_old_sigaction(oldact, prev_handler, prev_flags);
+        if !oldact.is_null() {
+            let mut user_oldact = kernel_to_user_sigaction(&kernel_oldact);
+            rewrite_old_sigaction(&mut user_oldact, prev_handler, prev_flags);
+            // SAFETY: oldact is caller-provided writable storage.
+            unsafe { *oldact = user_oldact };
+        }
         if !act.is_null() {
-            let user_handler = kernel_act.sa_sigaction;
+            let user_handler = kernel_act.sa_handler;
             if let Some(slot) = signal_slot(signum) {
                 if is_default_or_ignore_handler(user_handler) {
                     slot.handler.store(user_handler, Ordering::Relaxed);
-                    slot.flags.store(kernel_act.sa_flags as usize, Ordering::Relaxed);
+                    slot.flags.store(kernel_act.sa_flags, Ordering::Relaxed);
                 } else {
                     // SAFETY: act is non-null in this branch.
                     let user_act = unsafe { &*act };
-                    slot.handler
-                        .store(user_act.sa_sigaction, Ordering::Relaxed);
-                    slot.flags.store(user_act.sa_flags as usize, Ordering::Relaxed);
+                    slot.handler.store(user_act.sa_sigaction, Ordering::Relaxed);
+                    slot.flags
+                        .store(user_act.sa_flags as usize, Ordering::Relaxed);
                 }
             }
         }

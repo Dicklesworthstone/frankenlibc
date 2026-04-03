@@ -8,30 +8,34 @@
 //! kill, sighold, sigrelse, sigignore.
 
 use std::ffi::c_int;
-use std::sync::mpsc;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
 use frankenlibc_abi::errno_abi::__errno_location;
 use frankenlibc_abi::signal_abi::{
-    __libc_current_sigrtmax, __libc_current_sigrtmin, kill, sigabbrev_np, sigaction, sigaddset,
-    sigandset, sigdelset, sigdescr_np, sigemptyset, sigfillset, sighold, sigignore, siginterrupt,
-    sigisemptyset, sigismember, signal, sigorset, sigpending, sigprocmask, sigrelse,
-    current_signal_classification_for_test, enter_signal_critical_section,
-    invoke_signal_handler_for_test, reset_signal_delivery_metrics_for_test,
-    signal_delivery_metrics_for_test, SignalCriticalSectionKind, SignalSafetyClassification,
-    SIGNAL_SAFETY_MAP,
+    __libc_current_sigrtmax, __libc_current_sigrtmin, SIGNAL_SAFETY_MAP, SignalCriticalSectionKind,
+    SignalSafetyClassification, current_signal_classification_for_test,
+    enter_signal_critical_section, invoke_signal_handler_for_test, kill,
+    reset_signal_delivery_metrics_for_test, sigabbrev_np, sigaction, sigaddset, sigandset,
+    sigdelset, sigdescr_np, sigemptyset, sigfillset, sighold, sigignore, siginterrupt,
+    sigisemptyset, sigismember, signal, signal_delivery_metrics_for_test, sigorset, sigpending,
+    sigprocmask, sigrelse,
 };
 use frankenlibc_core::errno;
 
 static TEST_GUARD: Mutex<()> = Mutex::new(());
 static DEFERRED_HANDLER_COUNT: AtomicUsize = AtomicUsize::new(0);
+static LIVE_HANDLER_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 unsafe extern "C" fn noop_handler(_: c_int) {}
 unsafe extern "C" fn counting_handler(_: c_int) {
     DEFERRED_HANDLER_COUNT.fetch_add(1, Ordering::Relaxed);
+}
+unsafe extern "C" fn live_counting_handler(_: c_int) {
+    LIVE_HANDLER_COUNT.fetch_add(1, Ordering::Relaxed);
 }
 
 // ---------------------------------------------------------------------------
@@ -470,7 +474,8 @@ fn signal_delivery_remains_immediate_for_safe_classification() {
     assert_eq!(rc, 0, "must install counting handler");
 
     {
-        let _critical = enter_signal_critical_section(SignalCriticalSectionKind::PtrValidatorTlsCache);
+        let _critical =
+            enter_signal_critical_section(SignalCriticalSectionKind::PtrValidatorTlsCache);
         assert_eq!(
             current_signal_classification_for_test(),
             SignalSafetyClassification::Safe
@@ -490,9 +495,16 @@ fn signal_delivery_remains_immediate_for_safe_classification() {
 #[test]
 #[ignore = "async signal storm prototype currently segfaults under real pthread_kill delivery"]
 fn malloc_storm_defers_reentrant_signal_handler_until_safe_exit() {
-    let _guard = TEST_GUARD.lock().unwrap_or_else(|poison| poison.into_inner());
+    let _guard = TEST_GUARD
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner());
     DEFERRED_HANDLER_COUNT.store(0, Ordering::Relaxed);
     reset_signal_delivery_metrics_for_test();
+    frankenlibc_abi::malloc_abi::prewarm_host_allocator_symbols_for_test();
+    assert!(
+        frankenlibc_abi::malloc_abi::host_allocator_symbols_prewarmed_for_test(),
+        "host allocator delegates must prewarm before live signal delivery begins"
+    );
 
     let mut old: libc::sigaction = unsafe { std::mem::zeroed() };
     let rc = unsafe { sigaction(libc::SIGUSR1, std::ptr::null(), &mut old) };
@@ -512,14 +524,19 @@ fn malloc_storm_defers_reentrant_signal_handler_until_safe_exit() {
         for iter in 0..20_000usize {
             let size = 32 + (iter % 257);
             let ptr = unsafe { frankenlibc_abi::malloc_abi::malloc(size) };
-            assert!(!ptr.is_null(), "malloc storm allocation {iter} must succeed");
+            assert!(
+                !ptr.is_null(),
+                "malloc storm allocation {iter} must succeed"
+            );
             // SAFETY: abi_malloc(size) returned a live allocation of at least size bytes.
             unsafe {
                 std::ptr::write_bytes(ptr.cast::<u8>(), (iter & 0xFF) as u8, size);
                 frankenlibc_abi::malloc_abi::free(ptr);
             }
         }
-        done_tx.send(20_000).expect("must publish worker completion");
+        done_tx
+            .send(20_000)
+            .expect("must publish worker completion");
     });
 
     let worker_tid = pthread_rx
@@ -555,6 +572,57 @@ fn malloc_storm_defers_reentrant_signal_handler_until_safe_exit() {
     assert!(
         metrics.flushed >= metrics.deferred,
         "all deferred deliveries should flush after exiting critical sections"
+    );
+
+    let rc = unsafe { sigaction(libc::SIGUSR1, &old, std::ptr::null_mut()) };
+    assert_eq!(rc, 0, "must restore original SIGUSR1 disposition");
+}
+
+#[test]
+fn pthread_kill_delivers_sigusr1_without_allocator_pressure() {
+    let _guard = TEST_GUARD
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner());
+    LIVE_HANDLER_COUNT.store(0, Ordering::Relaxed);
+
+    let mut old: libc::sigaction = unsafe { std::mem::zeroed() };
+    let rc = unsafe { sigaction(libc::SIGUSR1, std::ptr::null(), &mut old) };
+    assert_eq!(rc, 0, "must capture original SIGUSR1 disposition");
+
+    let mut act: libc::sigaction = unsafe { std::mem::zeroed() };
+    act.sa_sigaction = live_counting_handler as *const () as usize;
+    let rc = unsafe { sigaction(libc::SIGUSR1, &act, std::ptr::null_mut()) };
+    assert_eq!(rc, 0, "must install SIGUSR1 handler");
+
+    let (pthread_tx, pthread_rx) = mpsc::channel::<usize>();
+    let (done_tx, done_rx) = mpsc::channel::<()>();
+
+    let worker = thread::spawn(move || {
+        let tid = unsafe { libc::pthread_self() as usize };
+        pthread_tx.send(tid).expect("must publish pthread_t");
+        for _ in 0..200 {
+            if LIVE_HANDLER_COUNT.load(Ordering::Relaxed) != 0 {
+                break;
+            }
+            thread::sleep(Duration::from_millis(1));
+        }
+        done_tx.send(()).expect("must report worker exit");
+    });
+
+    let worker_tid = pthread_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("worker must publish pthread_t promptly");
+    let rc = unsafe { libc::pthread_kill(worker_tid as libc::pthread_t, libc::SIGUSR1) };
+    assert_eq!(rc, 0, "pthread_kill must succeed");
+
+    done_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("worker must exit without hanging");
+    worker.join().expect("worker must not panic");
+    assert_eq!(
+        LIVE_HANDLER_COUNT.load(Ordering::Relaxed),
+        1,
+        "real pthread_kill delivery should invoke the installed SIGUSR1 handler exactly once"
     );
 
     let rc = unsafe { sigaction(libc::SIGUSR1, &old, std::ptr::null_mut()) };

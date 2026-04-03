@@ -545,6 +545,22 @@ impl NativeStreamRegistry {
             .filter(|s| s.state == SLOT_OCCUPIED)
             .count()
     }
+
+    /// Find the first occupied slot index (for `_IO_iter_begin`).
+    pub fn first_occupied(&self) -> Option<usize> {
+        self.slots.iter().position(|s| s.state == SLOT_OCCUPIED)
+    }
+
+    /// Find the next occupied slot index after `after` (for `_IO_iter_next`).
+    pub fn next_occupied(&self, after: usize) -> Option<usize> {
+        if after + 1 >= STREAM_REGISTRY_CAPACITY {
+            return None;
+        }
+        self.slots[after + 1..]
+            .iter()
+            .position(|s| s.state == SLOT_OCCUPIED)
+            .map(|offset| after + 1 + offset)
+    }
 }
 
 // SAFETY: NativeStreamRegistry contains NativeFile which has raw pointers.
@@ -1422,38 +1438,82 @@ pub unsafe extern "C" fn _IO_wmarker_delta(_marker: *mut c_void) -> c_int {
 // Iterator operations (FILE list traversal)
 // ---------------------------------------------------------------------------
 
-/// `_IO_iter_begin` — get iterator to first FILE in list.
+/// Iterator encoding: slot index + 1 as opaque pointer (bd-di5w).
+/// Slot 0 (stdin) encodes as 1, slot 1 (stdout) as 2, etc.
+/// End sentinel = STREAM_REGISTRY_CAPACITY + 1 = 257.
+const IO_ITER_END_SENTINEL: usize = STREAM_REGISTRY_CAPACITY + 1;
+
+/// Decode an iterator pointer to a slot index.
+#[inline]
+fn io_iter_decode(iter: *mut c_void) -> Option<usize> {
+    let encoded = iter as usize;
+    if encoded == 0 || encoded > STREAM_REGISTRY_CAPACITY {
+        None
+    } else {
+        Some(encoded - 1)
+    }
+}
+
+/// Encode a slot index as an iterator pointer.
+#[inline]
+fn io_iter_encode(slot: usize) -> *mut c_void {
+    (slot + 1) as *mut c_void
+}
+
+/// `_IO_iter_begin` — get iterator to first FILE in the native stream list (bd-di5w).
 ///
-/// Native: returns NULL (empty list).  We do not maintain glibc's linked
-/// FILE list, so iteration yields no elements.
+/// Returns an opaque iterator pointing to the first occupied slot in the
+/// `NativeStreamRegistry`, or the end sentinel if no streams are open.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn _IO_iter_begin() -> *mut c_void {
-    std::ptr::null_mut() // empty list
+    let reg = native_stream_registry();
+    match reg.first_occupied() {
+        Some(slot) => io_iter_encode(slot),
+        None => IO_ITER_END_SENTINEL as *mut c_void,
+    }
 }
 
-/// `_IO_iter_end` — get sentinel iterator (end of list).
+/// `_IO_iter_end` — get end-of-list sentinel iterator (bd-di5w).
 ///
-/// Native: returns NULL sentinel.  Since `_IO_iter_begin` also returns
-/// NULL, `begin == end` correctly indicates an empty iteration.
+/// Returns a sentinel value that compares unequal to any valid iterator.
+/// The iteration loop `for it = begin; it != end; it = next(it)` terminates
+/// when all occupied slots have been visited.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn _IO_iter_end() -> *mut c_void {
-    std::ptr::null_mut()
+    IO_ITER_END_SENTINEL as *mut c_void
 }
 
-/// `_IO_iter_file` — dereference iterator to get FILE*.
+/// `_IO_iter_file` — dereference iterator to get the FILE* it points to (bd-di5w).
 ///
-/// Native: returns NULL since our iterators are always at end-of-list.
+/// Decodes the iterator to a slot index, looks up the `NativeFile` in the
+/// registry, and returns a pointer to it. Returns NULL for invalid or
+/// end-sentinel iterators.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn _IO_iter_file(_iter: *mut c_void) -> *mut c_void {
-    std::ptr::null_mut()
+pub unsafe extern "C" fn _IO_iter_file(iter: *mut c_void) -> *mut c_void {
+    let Some(slot) = io_iter_decode(iter) else {
+        return ptr::null_mut();
+    };
+    let mut reg = native_stream_registry();
+    match reg.get_mut(slot) {
+        Some(file) => file as *mut NativeFile as *mut c_void,
+        None => ptr::null_mut(),
+    }
 }
 
-/// `_IO_iter_next` — advance iterator to next FILE.
+/// `_IO_iter_next` — advance iterator to next occupied FILE slot (bd-di5w).
 ///
-/// Native: returns NULL (end sentinel) since we have no FILE list.
+/// Scans forward from the current slot for the next occupied entry.
+/// Returns the end sentinel when no more streams remain.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn _IO_iter_next(_iter: *mut c_void) -> *mut c_void {
-    std::ptr::null_mut()
+pub unsafe extern "C" fn _IO_iter_next(iter: *mut c_void) -> *mut c_void {
+    let Some(current_slot) = io_iter_decode(iter) else {
+        return IO_ITER_END_SENTINEL as *mut c_void;
+    };
+    let reg = native_stream_registry();
+    match reg.next_occupied(current_slot) {
+        Some(next_slot) => io_iter_encode(next_slot),
+        None => IO_ITER_END_SENTINEL as *mut c_void,
+    }
 }
 
 // ---------------------------------------------------------------------------
