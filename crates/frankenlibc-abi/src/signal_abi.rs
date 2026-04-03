@@ -25,6 +25,8 @@ fn last_host_errno(default_errno: c_int) -> c_int {
 
 const MAX_TRACKED_SIGNAL: usize = 128;
 const HJI_WARMUP_OBSERVATIONS: usize = 64;
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+const SA_RESTORER_FLAG: c_int = 0x04000000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
@@ -345,8 +347,9 @@ fn rewrite_old_sigaction(oldact: *mut libc::sigaction, prev_handler: usize, prev
     // SAFETY: oldact comes from the caller and has been written by rt_sigaction.
     let oldact_ref = unsafe { &mut *oldact };
     if is_signal_trampoline(oldact_ref.sa_sigaction) && prev_handler != 0 {
+        let kernel_flags = oldact_ref.sa_flags;
         oldact_ref.sa_sigaction = prev_handler;
-        oldact_ref.sa_flags = prev_flags as c_int;
+        oldact_ref.sa_flags = (prev_flags as c_int) | (kernel_flags & SA_RESTORER_FLAG);
     }
 }
 
@@ -828,9 +831,19 @@ pub unsafe extern "C" fn sigaction(
     // not libc's userspace `sigset_t` size.
     let kernel_sigset_size = std::mem::size_of::<libc::c_ulong>();
     let mut kernel_act = unsafe { std::mem::zeroed::<libc::sigaction>() };
+    let mut current_kernel_act = unsafe { std::mem::zeroed::<libc::sigaction>() };
     let kernel_act_ptr = if act.is_null() {
         std::ptr::null()
     } else {
+        let _ = unsafe {
+            libc::syscall(
+                libc::SYS_rt_sigaction,
+                signum,
+                std::ptr::null::<libc::sigaction>(),
+                &mut current_kernel_act as *mut libc::sigaction,
+                kernel_sigset_size,
+            ) as c_int
+        };
         // SAFETY: act was supplied by the caller for this syscall wrapper.
         kernel_act = unsafe { *act };
         let user_handler = kernel_act.sa_sigaction;
@@ -839,6 +852,12 @@ pub unsafe extern "C" fn sigaction(
                 kernel_act.sa_sigaction = signal_siginfo_trampoline_addr();
             } else {
                 kernel_act.sa_sigaction = signal_handler_trampoline_addr();
+            }
+            if kernel_act.sa_flags & SA_RESTORER_FLAG == 0
+                && current_kernel_act.sa_flags & SA_RESTORER_FLAG != 0
+            {
+                kernel_act.sa_flags |= current_kernel_act.sa_flags & SA_RESTORER_FLAG;
+                kernel_act.sa_restorer = current_kernel_act.sa_restorer;
             }
         }
         &kernel_act as *const libc::sigaction

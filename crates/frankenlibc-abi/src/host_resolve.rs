@@ -136,46 +136,66 @@ fn find_glibc_image_via_maps() -> Option<(usize, [u8; 512])> {
     if fd < 0 {
         return None;
     }
-    let mut buf = [0u8; 262144];
-    let mut total = 0usize;
+    let mut buf = [0u8; 4096];
+    let mut line_buf = [0u8; 1024];
+    let mut line_len = 0usize;
     loop {
-        let n = unsafe { raw_read(fd, buf.as_mut_ptr().add(total), buf.len() - total) };
+        let n = unsafe { raw_read(fd, buf.as_mut_ptr(), buf.len()) };
         if n <= 0 {
             break;
         }
-        total += n as usize;
-        if total >= buf.len() {
-            break;
+        for &byte in &buf[..n as usize] {
+            if byte == b'\n' {
+                if let Ok(line) = core::str::from_utf8(&line_buf[..line_len])
+                    && let Some(image) = parse_maps_line(line)
+                {
+                    unsafe { raw_close(fd) };
+                    return Some(image);
+                }
+                line_len = 0;
+                continue;
+            }
+            if line_len < line_buf.len() {
+                line_buf[line_len] = byte;
+                line_len += 1;
+            } else {
+                // Discard overlong lines until the next newline.
+                line_len = line_buf.len();
+            }
         }
     }
     unsafe { raw_close(fd) };
-    let text = core::str::from_utf8(&buf[..total]).ok()?;
-    for line in text.lines() {
-        if !line.contains("libc.so") {
-            continue;
-        }
-        let mut parts = line.split_whitespace();
-        let range = parts.next()?;
-        let perms = parts.next()?;
-        let offset = parts.next()?;
-        let _dev = parts.next()?;
-        let _inode = parts.next()?;
-        let path_part = parts.next()?;
-        if parts.next().is_some() {
-            continue;
-        }
-        if perms.starts_with("r--p") && offset == "00000000" {
-            let dash = range.find('-')?;
-            let base = usize::from_str_radix(&range[..dash], 16).ok()?;
-            let mut path = [0u8; 512];
-            let bytes = path_part.as_bytes();
-            let len = bytes.len().min(path.len().saturating_sub(1));
-            path[..len].copy_from_slice(&bytes[..len]);
-            path[len] = 0;
-            return Some((base, path));
-        }
+    if let Ok(line) = core::str::from_utf8(&line_buf[..line_len]) {
+        return parse_maps_line(line);
     }
     None
+}
+
+fn parse_maps_line(line: &str) -> Option<(usize, [u8; 512])> {
+    if !line.contains("libc.so") {
+        return None;
+    }
+    let mut parts = line.split_whitespace();
+    let range = parts.next()?;
+    let perms = parts.next()?;
+    let offset = parts.next()?;
+    let _dev = parts.next()?;
+    let _inode = parts.next()?;
+    let path_part = parts.next()?;
+    if parts.next().is_some() {
+        return None;
+    }
+    if !perms.starts_with("r--p") || offset != "00000000" {
+        return None;
+    }
+    let dash = range.find('-')?;
+    let base = usize::from_str_radix(&range[..dash], 16).ok()?;
+    let mut path = [0u8; 512];
+    let bytes = path_part.as_bytes();
+    let len = bytes.len().min(path.len().saturating_sub(1));
+    path[..len].copy_from_slice(&bytes[..len]);
+    path[len] = 0;
+    Some((base, path))
 }
 
 fn loaded_glibc_image() -> Option<(usize, [u8; 512])> {
