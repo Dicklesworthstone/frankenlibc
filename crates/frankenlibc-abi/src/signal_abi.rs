@@ -51,6 +51,20 @@ impl KernelSigaction {
 }
 
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[unsafe(naked)]
+unsafe extern "C" fn signal_restorer_trampoline() {
+    // SAFETY: this is the x86_64 Linux signal restorer sequence. The kernel
+    // enters here after a user handler returns and expects a bare rt_sigreturn
+    // syscall with no Rust prologue/epilogue.
+    std::arch::naked_asm!("mov rax, 15", "syscall", "ud2",);
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn signal_restorer_trampoline_addr() -> usize {
+    signal_restorer_trampoline as *const () as usize
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 fn sigset_first_word(set: &libc::sigset_t) -> libc::c_ulong {
     // SAFETY: x86_64 rt_sigaction consumes only the first kernel-sized word.
     unsafe { *(set as *const libc::sigset_t).cast::<libc::c_ulong>() }
@@ -81,7 +95,8 @@ fn kernel_to_user_sigaction(act: &KernelSigaction) -> libc::sigaction {
     user.sa_flags = act.sa_flags as c_int;
     if act.sa_restorer != 0 {
         // SAFETY: kernel-provided restorer address is surfaced verbatim.
-        user.sa_restorer = unsafe { std::mem::transmute(act.sa_restorer) };
+        user.sa_restorer =
+            unsafe { std::mem::transmute::<usize, Option<extern "C" fn()>>(act.sa_restorer) };
     }
     write_sigset_first_word(&mut user.sa_mask, act.sa_mask);
     user
@@ -889,20 +904,10 @@ pub unsafe extern "C" fn sigaction(
     // not libc's userspace `sigset_t` size.
     let kernel_sigset_size = std::mem::size_of::<libc::c_ulong>();
     let mut kernel_act = KernelSigaction::zeroed();
-    let mut current_kernel_act = KernelSigaction::zeroed();
     let mut kernel_oldact = KernelSigaction::zeroed();
     let kernel_act_ptr = if act.is_null() {
         std::ptr::null()
     } else {
-        let _ = unsafe {
-            libc::syscall(
-                libc::SYS_rt_sigaction,
-                signum,
-                std::ptr::null::<KernelSigaction>(),
-                &mut current_kernel_act as *mut KernelSigaction,
-                kernel_sigset_size,
-            ) as c_int
-        };
         // SAFETY: act was supplied by the caller for this syscall wrapper.
         kernel_act = user_to_kernel_sigaction(unsafe { &*act });
         let user_handler = kernel_act.sa_handler;
@@ -912,11 +917,9 @@ pub unsafe extern "C" fn sigaction(
             } else {
                 kernel_act.sa_handler = signal_handler_trampoline_addr();
             }
-            if kernel_act.sa_flags & SA_RESTORER_FLAG as usize == 0
-                && current_kernel_act.sa_flags & SA_RESTORER_FLAG as usize != 0
-            {
-                kernel_act.sa_flags |= current_kernel_act.sa_flags & SA_RESTORER_FLAG as usize;
-                kernel_act.sa_restorer = current_kernel_act.sa_restorer;
+            if kernel_act.sa_flags & SA_RESTORER_FLAG as usize == 0 || kernel_act.sa_restorer == 0 {
+                kernel_act.sa_flags |= SA_RESTORER_FLAG as usize;
+                kernel_act.sa_restorer = signal_restorer_trampoline_addr();
             }
         }
         &kernel_act as *const KernelSigaction

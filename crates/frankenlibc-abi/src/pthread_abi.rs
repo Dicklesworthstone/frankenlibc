@@ -5609,9 +5609,13 @@ pub unsafe extern "C" fn pthread_sigqueue(
             unsafe {
                 *info_words.add(3) = pid as u32;
                 *info_words.add(4) = caller_uid;
-                *info_words.add(5) = value_bits as u32;
                 if std::mem::size_of::<usize>() > 4 {
-                    *info_words.add(6) = (value_bits >> 32) as u32;
+                    // Linux aligns `sigval_t` to 8 bytes inside the SI_QUEUE
+                    // payload, leaving one 32-bit hole after `si_uid`.
+                    *info_words.add(6) = value_bits as u32;
+                    *info_words.add(7) = (value_bits >> 32) as u32;
+                } else {
+                    *info_words.add(5) = value_bits as u32;
                 }
             }
             let ret = unsafe {
