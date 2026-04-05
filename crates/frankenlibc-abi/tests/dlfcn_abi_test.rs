@@ -1,6 +1,6 @@
 #![cfg(target_os = "linux")]
 
-use std::ffi::{CStr, CString, c_void};
+use std::ffi::{CStr, CString, c_int, c_void};
 use std::sync::Mutex;
 
 use frankenlibc_abi::dlfcn_abi::{
@@ -9,6 +9,25 @@ use frankenlibc_abi::dlfcn_abi::{
 
 static TEST_GUARD: Mutex<()> = Mutex::new(());
 
+#[derive(Default)]
+struct DlIterateProbe {
+    count: usize,
+    saw_nonnull_info: bool,
+    saw_nonzero_size: bool,
+}
+
+unsafe extern "C" fn record_first_phdr(
+    info: *mut libc::dl_phdr_info,
+    size: usize,
+    data: *mut c_void,
+) -> c_int {
+    let probe = unsafe { &mut *data.cast::<DlIterateProbe>() };
+    probe.count += 1;
+    probe.saw_nonnull_info = !info.is_null();
+    probe.saw_nonzero_size = size >= core::mem::size_of::<libc::dl_phdr_info>();
+    1
+}
+
 #[test]
 fn dl_iterate_phdr_native_fallback_returns_zero_without_callback() {
     let _guard = TEST_GUARD.lock().unwrap();
@@ -16,6 +35,33 @@ fn dl_iterate_phdr_native_fallback_returns_zero_without_callback() {
     // SAFETY: no callback is provided and no pointers are dereferenced.
     let rc = unsafe { dl_iterate_phdr(None, std::ptr::null_mut()) };
     assert_eq!(rc, 0);
+}
+
+#[test]
+fn dl_iterate_phdr_invokes_callback_with_host_phdr_data() {
+    let _guard = TEST_GUARD.lock().unwrap();
+    let mut probe = DlIterateProbe::default();
+
+    let rc = unsafe {
+        dl_iterate_phdr(
+            Some(record_first_phdr),
+            (&mut probe as *mut DlIterateProbe).cast::<c_void>(),
+        )
+    };
+
+    assert_eq!(rc, 1, "callback should stop iteration by returning 1");
+    assert_eq!(
+        probe.count, 1,
+        "callback should be invoked exactly once before stopping"
+    );
+    assert!(
+        probe.saw_nonnull_info,
+        "host dl_iterate_phdr should provide a non-null info record"
+    );
+    assert!(
+        probe.saw_nonzero_size,
+        "host dl_iterate_phdr should report at least a dl_phdr_info-sized record"
+    );
 }
 
 #[test]

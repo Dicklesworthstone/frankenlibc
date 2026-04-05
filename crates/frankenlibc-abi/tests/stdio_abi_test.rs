@@ -161,6 +161,20 @@ unsafe extern "C" fn call_vasprintf(
     unsafe { vasprintf(out, format, std::ptr::addr_of_mut!(args).cast::<c_void>()) }
 }
 
+unsafe extern "C" fn call_vfprintf(
+    stream: *mut c_void,
+    format: *const c_char,
+    mut args: ...
+) -> c_int {
+    unsafe {
+        frankenlibc_abi::stdio_abi::vfprintf(
+            stream,
+            format,
+            std::ptr::addr_of_mut!(args).cast::<c_void>(),
+        )
+    }
+}
+
 fn path_cstring(path: &Path) -> CString {
     CString::new(path.as_os_str().as_bytes()).expect("temp path must not contain interior NUL")
 }
@@ -765,6 +779,48 @@ fn fgets_rejects_invalid_destination_or_size() {
 }
 
 #[test]
+fn fopen_returns_host_file_handle_usable_by_libc_and_our_fclose() {
+    let path = temp_path("fopen_host_interop");
+    let _ = fs::remove_file(&path);
+    let path_c = path_cstring(&path);
+
+    let stream = unsafe { fopen(path_c.as_ptr(), c"w+".as_ptr()) };
+    assert!(!stream.is_null());
+
+    let host_stream = stream.cast::<libc::FILE>();
+    assert!(unsafe { libc::fileno(host_stream) } >= 0);
+    assert_ne!(
+        unsafe { libc::fputs(c"host-write".as_ptr(), host_stream) },
+        libc::EOF
+    );
+    assert_eq!(unsafe { fclose(stream) }, 0);
+
+    let bytes = fs::read(&path).expect("host-written fopen file should exist");
+    assert_eq!(bytes, b"host-write");
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn host_fopen_handle_is_accepted_by_our_fclose() {
+    let path = temp_path("host_fopen_our_fclose");
+    let _ = fs::remove_file(&path);
+    let path_c = path_cstring(&path);
+
+    let host_stream = unsafe { libc::fopen(path_c.as_ptr(), c"w+".as_ptr()) };
+    assert!(!host_stream.is_null());
+    assert_ne!(
+        unsafe { libc::fputs(c"mixed-close".as_ptr(), host_stream) },
+        libc::EOF
+    );
+
+    assert_eq!(unsafe { fclose(host_stream.cast::<c_void>()) }, 0);
+
+    let bytes = fs::read(&path).expect("host fopen output should exist");
+    assert_eq!(bytes, b"mixed-close");
+    let _ = fs::remove_file(path);
+}
+
+#[test]
 fn snprintf_truncates_and_reports_full_length() {
     let mut buf = [0_i8; 5];
 
@@ -775,6 +831,56 @@ fn snprintf_truncates_and_reports_full_length() {
     // SAFETY: snprintf guarantees NUL-termination when size > 0.
     let out = unsafe { CStr::from_ptr(buf.as_ptr()) };
     assert_eq!(out.to_bytes(), b"abcd");
+}
+
+#[test]
+fn snprintf_supports_positional_value_reordering() {
+    let mut buf = [0_i8; 64];
+
+    let written = unsafe {
+        snprintf(
+            buf.as_mut_ptr(),
+            buf.len(),
+            c"%2$s is %1$d".as_ptr(),
+            42_i32,
+            c"answer".as_ptr(),
+        )
+    };
+    assert_eq!(written, 12);
+
+    let out = unsafe { CStr::from_ptr(buf.as_ptr()) };
+    assert_eq!(out.to_bytes(), b"answer is 42");
+}
+
+#[test]
+fn snprintf_supports_positional_width_and_precision() {
+    let mut buf = [0_i8; 64];
+
+    let written = unsafe {
+        snprintf(
+            buf.as_mut_ptr(),
+            buf.len(),
+            c"%3$*2$.*1$f".as_ptr(),
+            2_i32,
+            8_i32,
+            core::f64::consts::PI,
+        )
+    };
+    assert_eq!(written, 8);
+
+    let out = unsafe { CStr::from_ptr(buf.as_ptr()) };
+    assert_eq!(out.to_bytes(), b"    3.14");
+}
+
+#[test]
+fn sprintf_supports_reusing_positional_argument() {
+    let mut buf = [0_i8; 64];
+
+    let written = unsafe { sprintf(buf.as_mut_ptr(), c"%1$d %1$d %1$d".as_ptr(), 7_i32) };
+    assert_eq!(written, 5);
+
+    let out = unsafe { CStr::from_ptr(buf.as_ptr()) };
+    assert_eq!(out.to_bytes(), b"7 7 7");
 }
 
 #[test]
@@ -818,6 +924,47 @@ fn fprintf_formats_and_persists_to_stream() {
     let bytes = fs::read(&path).expect("fprintf output file should exist");
     assert_eq!(bytes, b"v=42:Z");
     let _ = fs::remove_file(path);
+}
+
+#[test]
+fn fprintf_writes_to_host_tmpfile_handle() {
+    let stream = unsafe { libc::tmpfile() };
+    assert!(!stream.is_null());
+    let stream_void = stream.cast::<c_void>();
+
+    let written = unsafe { fprintf(stream_void, c"host=%d:%s".as_ptr(), 11_i32, c"ok".as_ptr()) };
+    assert_eq!(written, 10);
+    assert_eq!(unsafe { fflush(stream_void) }, 0);
+
+    unsafe { libc::rewind(stream) };
+    let mut buf = [0 as c_char; 32];
+    let out = unsafe { libc::fgets(buf.as_mut_ptr(), buf.len() as c_int, stream) };
+    assert_eq!(out, buf.as_mut_ptr());
+    let rendered = unsafe { CStr::from_ptr(buf.as_ptr()) };
+    assert_eq!(rendered.to_bytes(), b"host=11:ok");
+
+    assert_eq!(unsafe { fclose(stream_void) }, 0);
+}
+
+#[test]
+fn vfprintf_writes_to_host_tmpfile_handle() {
+    let stream = unsafe { libc::tmpfile() };
+    assert!(!stream.is_null());
+    let stream_void = stream.cast::<c_void>();
+
+    let written =
+        unsafe { call_vfprintf(stream_void, c"%s=%d".as_ptr(), c"host".as_ptr(), 21_i32) };
+    assert_eq!(written, 7);
+    assert_eq!(unsafe { fflush(stream_void) }, 0);
+
+    unsafe { libc::rewind(stream) };
+    let mut buf = [0 as c_char; 32];
+    let out = unsafe { libc::fgets(buf.as_mut_ptr(), buf.len() as c_int, stream) };
+    assert_eq!(out, buf.as_mut_ptr());
+    let rendered = unsafe { CStr::from_ptr(buf.as_ptr()) };
+    assert_eq!(rendered.to_bytes(), b"host=21");
+
+    assert_eq!(unsafe { fclose(stream_void) }, 0);
 }
 
 #[test]

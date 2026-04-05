@@ -4,8 +4,8 @@
 
 use frankenlibc_abi::malloc_abi::{
     __libc_freeres, aligned_alloc, calloc, cfree, free, mallinfo, mallinfo2, malloc, malloc_info,
-    malloc_stats, malloc_trim, malloc_usable_size, mallopt, memalign, posix_memalign, pvalloc,
-    realloc, valloc,
+    malloc_restore_reentry_depth_for_tests, malloc_stats, malloc_swap_reentry_depth_for_tests,
+    malloc_trim, malloc_usable_size, mallopt, memalign, posix_memalign, pvalloc, realloc, valloc,
 };
 use std::ffi::c_void;
 use std::ptr;
@@ -571,26 +571,33 @@ fn test_malloc_usable_size_after_realloc() {
 #[test]
 fn test_calloc_overflow_returns_null() {
     let _guard = test_lock().lock().expect("test lock poisoned");
-    // These values overflow when multiplied: (SIZE_MAX/2 + 1) * 3 > SIZE_MAX.
-    // Our calloc uses checked_mul and returns NULL on overflow.
-    // NOTE: In test mode the allocator may delegate to host, which also
-    // handles overflow. Both should return NULL.
     let p = unsafe { calloc(usize::MAX / 2 + 1, 3) };
-    // Either NULL (overflow detected) or non-NULL (host allocated something).
-    // The important thing is it doesn't crash.
-    if !p.is_null() {
-        unsafe { free(p) };
-    }
+    assert!(
+        p.is_null(),
+        "calloc overflow must return NULL on the normal allocation path"
+    );
 }
 
 #[test]
 fn test_calloc_size_max_returns_null() {
     let _guard = test_lock().lock().expect("test lock poisoned");
     let p = unsafe { calloc(usize::MAX, 2) };
-    // Either NULL (overflow detected) or host may have its own handling.
-    if !p.is_null() {
-        unsafe { free(p) };
-    }
+    assert!(
+        p.is_null(),
+        "calloc overflow at SIZE_MAX must return NULL on the normal allocation path"
+    );
+}
+
+#[test]
+fn test_calloc_overflow_returns_null_in_reentrant_path() {
+    let _guard = test_lock().lock().expect("test lock poisoned");
+    let previous_depth = malloc_swap_reentry_depth_for_tests(1);
+    let p = unsafe { calloc(usize::MAX / 2 + 1, 3) };
+    malloc_restore_reentry_depth_for_tests(previous_depth);
+    assert!(
+        p.is_null(),
+        "calloc overflow must return NULL when allocator reentry forces the fallback path"
+    );
 }
 
 #[test]

@@ -24,6 +24,7 @@ BEAD_ID="${BEAD_ID:-bd-1ah8}"
 FAILURE_SIGNATURE_DENYLIST="${FAILURE_SIGNATURE_DENYLIST:-startup_timeout,startup_segv,startup_abort,startup_symbol_lookup_error,startup_loader_missing_library,startup_glibc_version_mismatch,startup_elf_class_mismatch}"
 
 LIB_CANDIDATES=(
+  "${FRANKENLIBC_SMOKE_LIB_PATH:-}"
   "${ROOT}/target/release/libfrankenlibc_abi.so"
   "/data/tmp/cargo-target/release/libfrankenlibc_abi.so"
 )
