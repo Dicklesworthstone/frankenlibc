@@ -942,6 +942,26 @@ fn enter_allocator_reentry_guard() -> Option<AllocatorReentryGuard> {
         .unwrap_or(None)
 }
 
+/// Test hook: force allocator entrypoints down the reentrant fallback path and
+/// return the previous depth so callers can restore it afterwards.
+#[doc(hidden)]
+pub fn malloc_swap_reentry_depth_for_tests(depth: u32) -> u32 {
+    ALLOCATOR_REENTRY_DEPTH
+        .try_with(|current_depth| {
+            let previous = current_depth.get();
+            current_depth.set(depth);
+            previous
+        })
+        .unwrap_or(0)
+}
+
+/// Test hook: restore allocator reentry depth after
+/// [`malloc_swap_reentry_depth_for_tests`].
+#[doc(hidden)]
+pub fn malloc_restore_reentry_depth_for_tests(previous: u32) {
+    let _ = ALLOCATOR_REENTRY_DEPTH.try_with(|depth| depth.set(previous));
+}
+
 #[inline]
 fn strict_allocator_host_path_active() -> bool {
     !runtime_policy::mode().heals_enabled()

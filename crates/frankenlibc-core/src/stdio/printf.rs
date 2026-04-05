@@ -30,6 +30,20 @@ pub enum Width {
     None,
     Fixed(usize),
     FromArg, // '*'
+    FromArgPosition(usize),
+}
+
+impl Width {
+    pub fn uses_arg(self) -> bool {
+        matches!(self, Self::FromArg | Self::FromArgPosition(_))
+    }
+
+    pub fn position(self) -> Option<usize> {
+        match self {
+            Self::FromArgPosition(position) => Some(position),
+            _ => None,
+        }
+    }
 }
 
 /// Precision specification.
@@ -38,6 +52,20 @@ pub enum Precision {
     None,
     Fixed(usize),
     FromArg, // '.*'
+    FromArgPosition(usize),
+}
+
+impl Precision {
+    pub fn uses_arg(self) -> bool {
+        matches!(self, Self::FromArg | Self::FromArgPosition(_))
+    }
+
+    pub fn position(self) -> Option<usize> {
+        match self {
+            Self::FromArgPosition(position) => Some(position),
+            _ => None,
+        }
+    }
 }
 
 /// Length modifier.
@@ -62,6 +90,15 @@ pub struct FormatSpec {
     pub precision: Precision,
     pub length: LengthMod,
     pub conversion: u8,
+    pub value_position: Option<usize>,
+}
+
+impl FormatSpec {
+    pub fn uses_positional_args(&self) -> bool {
+        self.value_position.is_some()
+            || self.width.position().is_some()
+            || self.precision.position().is_some()
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -109,6 +146,12 @@ pub enum FormatSegment<'a> {
 pub fn parse_format_spec(fmt: &[u8]) -> Option<(FormatSpec, usize)> {
     let mut pos = 0;
     let len = fmt.len();
+    let value_position = if let Some((position, consumed)) = parse_positional_index(fmt) {
+        pos += consumed;
+        Some(position)
+    } else {
+        None
+    };
 
     // --- flags ---
     let mut flags = FormatFlags::default();
@@ -134,7 +177,12 @@ pub fn parse_format_spec(fmt: &[u8]) -> Option<(FormatSpec, usize)> {
     // --- width ---
     let width = if pos < len && fmt[pos] == b'*' {
         pos += 1;
-        Width::FromArg
+        if let Some((position, consumed)) = parse_positional_index(&fmt[pos..]) {
+            pos += consumed;
+            Width::FromArgPosition(position)
+        } else {
+            Width::FromArg
+        }
     } else {
         let start = pos;
         while pos < len && fmt[pos].is_ascii_digit() {
@@ -152,7 +200,12 @@ pub fn parse_format_spec(fmt: &[u8]) -> Option<(FormatSpec, usize)> {
         pos += 1;
         if pos < len && fmt[pos] == b'*' {
             pos += 1;
-            Precision::FromArg
+            if let Some((position, consumed)) = parse_positional_index(&fmt[pos..]) {
+                pos += consumed;
+                Precision::FromArgPosition(position)
+            } else {
+                Precision::FromArg
+            }
         } else {
             let start = pos;
             while pos < len && fmt[pos].is_ascii_digit() {
@@ -231,6 +284,7 @@ pub fn parse_format_spec(fmt: &[u8]) -> Option<(FormatSpec, usize)> {
             precision,
             length,
             conversion,
+            value_position,
         },
         pos,
     ))
@@ -421,7 +475,7 @@ pub fn format_float(value: f64, spec: &FormatSpec, buf: &mut Vec<u8>) {
     let precision = match spec.precision {
         Precision::Fixed(p) => p,
         Precision::None => 6, // POSIX default
-        Precision::FromArg => 6,
+        Precision::FromArg | Precision::FromArgPosition(_) => 6,
     };
 
     // Handle special values.
@@ -598,6 +652,21 @@ fn parse_decimal(digits: &[u8]) -> usize {
             .saturating_add((d - b'0') as usize);
     }
     result
+}
+
+fn parse_positional_index(fmt: &[u8]) -> Option<(usize, usize)> {
+    let mut pos = 0usize;
+    while pos < fmt.len() && fmt[pos].is_ascii_digit() {
+        pos += 1;
+    }
+    if pos == 0 || pos >= fmt.len() || fmt[pos] != b'$' {
+        return None;
+    }
+    let position = parse_decimal(&fmt[..pos]);
+    if position == 0 {
+        return None;
+    }
+    Some((position, pos + 1))
 }
 
 fn resolve_width(spec: &FormatSpec) -> usize {
@@ -888,6 +957,7 @@ mod tests {
         assert_eq!(spec.conversion, b'd');
         assert_eq!(spec.width, Width::None);
         assert_eq!(spec.precision, Precision::None);
+        assert_eq!(spec.value_position, None);
     }
 
     #[test]
@@ -936,6 +1006,16 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_positional_value_width_and_precision() {
+        let (spec, consumed) = parse_format_spec(b"3$*2$.*1$f").unwrap();
+        assert_eq!(consumed, 10);
+        assert_eq!(spec.value_position, Some(3));
+        assert_eq!(spec.width, Width::FromArgPosition(2));
+        assert_eq!(spec.precision, Precision::FromArgPosition(1));
+        assert_eq!(spec.conversion, b'f');
+    }
+
+    #[test]
     fn test_parse_format_string_segments() {
         let segments = parse_format_string(b"hello %d world %s!");
         assert_eq!(segments.len(), 5);
@@ -955,6 +1035,19 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_format_string_positional_segments() {
+        let segments = parse_format_string(b"%2$s is %1$d");
+        assert_eq!(segments.len(), 3);
+        assert!(
+            matches!(&segments[0], FormatSegment::Spec(s) if s.value_position == Some(2) && s.conversion == b's')
+        );
+        assert!(matches!(segments[1], FormatSegment::Literal(b" is ")));
+        assert!(
+            matches!(&segments[2], FormatSegment::Spec(s) if s.value_position == Some(1) && s.conversion == b'd')
+        );
+    }
+
+    #[test]
     fn test_format_signed_basic() {
         let spec = FormatSpec {
             flags: FormatFlags::default(),
@@ -962,6 +1055,7 @@ mod tests {
             precision: Precision::None,
             length: LengthMod::None,
             conversion: b'd',
+            value_position: None,
         };
         let mut buf = Vec::new();
         format_signed(42, &spec, &mut buf);
@@ -976,6 +1070,7 @@ mod tests {
             precision: Precision::None,
             length: LengthMod::None,
             conversion: b'd',
+            value_position: None,
         };
         let mut buf = Vec::new();
         format_signed(-123, &spec, &mut buf);
@@ -990,6 +1085,7 @@ mod tests {
             precision: Precision::None,
             length: LengthMod::None,
             conversion: b'd',
+            value_position: None,
         };
         let mut buf = Vec::new();
         format_signed(42, &spec, &mut buf);
@@ -1007,6 +1103,7 @@ mod tests {
             precision: Precision::None,
             length: LengthMod::None,
             conversion: b'd',
+            value_position: None,
         };
         let mut buf = Vec::new();
         format_signed(42, &spec, &mut buf);
@@ -1024,6 +1121,7 @@ mod tests {
             precision: Precision::None,
             length: LengthMod::None,
             conversion: b'd',
+            value_position: None,
         };
         let mut buf = Vec::new();
         format_signed(42, &spec, &mut buf);
@@ -1041,6 +1139,7 @@ mod tests {
             precision: Precision::None,
             length: LengthMod::None,
             conversion: b'x',
+            value_position: None,
         };
         let mut buf = Vec::new();
         format_unsigned(255, &spec, &mut buf);
@@ -1058,6 +1157,7 @@ mod tests {
             precision: Precision::None,
             length: LengthMod::None,
             conversion: b'o',
+            value_position: None,
         };
         let mut buf = Vec::new();
         format_unsigned(8, &spec, &mut buf);
@@ -1072,6 +1172,7 @@ mod tests {
             precision: Precision::None,
             length: LengthMod::None,
             conversion: b's',
+            value_position: None,
         };
         let mut buf = Vec::new();
         format_str(b"hello", &spec, &mut buf);
@@ -1086,6 +1187,7 @@ mod tests {
             precision: Precision::Fixed(3),
             length: LengthMod::None,
             conversion: b's',
+            value_position: None,
         };
         let mut buf = Vec::new();
         format_str(b"hello", &spec, &mut buf);
@@ -1100,6 +1202,7 @@ mod tests {
             precision: Precision::None,
             length: LengthMod::None,
             conversion: b'c',
+            value_position: None,
         };
         let mut buf = Vec::new();
         format_char(b'A', &spec, &mut buf);
@@ -1114,6 +1217,7 @@ mod tests {
             precision: Precision::None,
             length: LengthMod::None,
             conversion: b'p',
+            value_position: None,
         };
         let mut buf = Vec::new();
         format_pointer(0, &spec, &mut buf);
@@ -1128,6 +1232,7 @@ mod tests {
             precision: Precision::None,
             length: LengthMod::None,
             conversion: b'p',
+            value_position: None,
         };
         let mut buf = Vec::new();
         format_pointer(0xDEAD, &spec, &mut buf);
@@ -1142,6 +1247,7 @@ mod tests {
             precision: Precision::None,
             length: LengthMod::None,
             conversion: b'f',
+            value_position: None,
         };
         let mut buf = Vec::new();
         format_float(core::f64::consts::PI, &spec, &mut buf);
@@ -1157,6 +1263,7 @@ mod tests {
             precision: Precision::None,
             length: LengthMod::None,
             conversion: b'f',
+            value_position: None,
         };
         let mut buf = Vec::new();
         format_float(f64::NAN, &spec, &mut buf);
@@ -1171,6 +1278,7 @@ mod tests {
             precision: Precision::None,
             length: LengthMod::None,
             conversion: b'f',
+            value_position: None,
         };
         let mut buf = Vec::new();
         format_float(f64::INFINITY, &spec, &mut buf);
@@ -1185,6 +1293,7 @@ mod tests {
             precision: Precision::Fixed(0),
             length: LengthMod::None,
             conversion: b'd',
+            value_position: None,
         };
         let mut buf = Vec::new();
         format_signed(0, &spec, &mut buf);
@@ -1202,6 +1311,7 @@ mod tests {
             precision: Precision::None,
             length: LengthMod::None,
             conversion: b'd',
+            value_position: None,
         };
         let mut buf = Vec::new();
         format_signed(42, &spec, &mut buf);
@@ -1216,6 +1326,7 @@ mod tests {
             precision: Precision::None,
             length: LengthMod::None,
             conversion: b'd',
+            value_position: None,
         };
         let mut buf = Vec::new();
         format_signed(i64::MIN, &spec, &mut buf);

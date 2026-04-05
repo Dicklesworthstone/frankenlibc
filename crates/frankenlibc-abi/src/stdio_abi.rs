@@ -89,6 +89,10 @@ fn native_file_buf_mode(mode: BufMode) -> NativeFileBufMode {
 
 #[inline]
 fn prefer_host_stdio_streams() -> bool {
+    if HOST_STDIO_BOOTSTRAPPED.load(Ordering::Acquire) {
+        return true;
+    }
+    init_host_stdio_streams();
     HOST_STDIO_BOOTSTRAPPED.load(Ordering::Acquire)
 }
 
@@ -2218,15 +2222,76 @@ use frankenlibc_core::stdio::{
 /// Maximum variadic arguments we extract per printf call.
 pub(crate) const MAX_VA_ARGS: usize = 32;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PrintfArgKind {
+    Gp,
+    Fp,
+}
+
+fn spec_value_kind(spec: &frankenlibc_core::stdio::FormatSpec) -> Option<PrintfArgKind> {
+    match spec.conversion {
+        b'%' | b'm' => None,
+        b'f' | b'F' | b'e' | b'E' | b'g' | b'G' | b'a' | b'A' => Some(PrintfArgKind::Fp),
+        _ => Some(PrintfArgKind::Gp),
+    }
+}
+
+pub(crate) fn positional_printf_arg_plan(
+    segments: &[FormatSegment<'_>],
+) -> Option<Vec<PrintfArgKind>> {
+    let mut any_positional = false;
+    let mut plan: Vec<Option<PrintfArgKind>> = Vec::new();
+
+    let mut assign = |position: usize, kind: PrintfArgKind| {
+        if position == 0 {
+            return;
+        }
+        any_positional = true;
+        let slot = position - 1;
+        if slot >= plan.len() {
+            plan.resize(slot + 1, None);
+        }
+        if plan[slot].is_none() {
+            plan[slot] = Some(kind);
+        }
+    };
+
+    for seg in segments {
+        if let FormatSegment::Spec(spec) = seg {
+            if let Some(position) = spec.width.position() {
+                assign(position, PrintfArgKind::Gp);
+            }
+            if let Some(position) = spec.precision.position() {
+                assign(position, PrintfArgKind::Gp);
+            }
+            if let Some(position) = spec.value_position
+                && let Some(kind) = spec_value_kind(spec)
+            {
+                assign(position, kind);
+            }
+        }
+    }
+
+    any_positional.then(|| {
+        plan.into_iter()
+            .map(|kind| kind.unwrap_or(PrintfArgKind::Gp))
+            .collect()
+    })
+}
+
 /// Count how many variadic arguments a parsed format string needs.
 pub(crate) fn count_printf_args(segments: &[FormatSegment<'_>]) -> usize {
+    if let Some(plan) = positional_printf_arg_plan(segments) {
+        return plan.len().min(MAX_VA_ARGS);
+    }
+
     let mut needed = 0usize;
     for seg in segments {
         if let FormatSegment::Spec(spec) = seg {
-            if matches!(spec.width, Width::FromArg) {
+            if spec.width.uses_arg() {
                 needed += 1;
             }
-            if matches!(spec.precision, Precision::FromArg) {
+            if spec.precision.uses_arg() {
                 needed += 1;
             }
             match spec.conversion {
@@ -2243,28 +2308,47 @@ pub(crate) fn count_printf_args(segments: &[FormatSegment<'_>]) -> usize {
 macro_rules! extract_va_args {
     ($segments:expr, $args:expr, $buf:expr, $extract_count:expr) => {{
         let mut _idx = 0usize;
-        for seg in $segments {
-            if let FormatSegment::Spec(spec) = seg {
-                if matches!(spec.width, Width::FromArg) && _idx < $extract_count {
-                    $buf[_idx] = unsafe { $args.arg::<u64>() };
-                    _idx += 1;
-                }
-                if matches!(spec.precision, Precision::FromArg) && _idx < $extract_count {
-                    $buf[_idx] = unsafe { $args.arg::<u64>() };
-                    _idx += 1;
-                }
-                match spec.conversion {
-                    b'%' | b'm' => {}
-                    b'f' | b'F' | b'e' | b'E' | b'g' | b'G' | b'a' | b'A' => {
+        if let Some(_plan) = positional_printf_arg_plan($segments) {
+            for _kind in _plan.iter().take($extract_count) {
+                match _kind {
+                    PrintfArgKind::Gp => {
+                        if _idx < $extract_count {
+                            $buf[_idx] = unsafe { $args.arg::<u64>() };
+                            _idx += 1;
+                        }
+                    }
+                    PrintfArgKind::Fp => {
                         if _idx < $extract_count {
                             $buf[_idx] = unsafe { $args.arg::<f64>() }.to_bits();
                             _idx += 1;
                         }
                     }
-                    _ => {
-                        if _idx < $extract_count {
-                            $buf[_idx] = unsafe { $args.arg::<u64>() };
-                            _idx += 1;
+                }
+            }
+        } else {
+            for seg in $segments {
+                if let FormatSegment::Spec(spec) = seg {
+                    if spec.width.uses_arg() && _idx < $extract_count {
+                        $buf[_idx] = unsafe { $args.arg::<u64>() };
+                        _idx += 1;
+                    }
+                    if spec.precision.uses_arg() && _idx < $extract_count {
+                        $buf[_idx] = unsafe { $args.arg::<u64>() };
+                        _idx += 1;
+                    }
+                    match spec.conversion {
+                        b'%' | b'm' => {}
+                        b'f' | b'F' | b'e' | b'E' | b'g' | b'G' | b'a' | b'A' => {
+                            if _idx < $extract_count {
+                                $buf[_idx] = unsafe { $args.arg::<f64>() }.to_bits();
+                                _idx += 1;
+                            }
+                        }
+                        _ => {
+                            if _idx < $extract_count {
+                                $buf[_idx] = unsafe { $args.arg::<u64>() };
+                                _idx += 1;
+                            }
                         }
                     }
                 }
@@ -2284,7 +2368,19 @@ macro_rules! extract_va_args {
 pub(crate) unsafe fn render_printf(fmt: &[u8], args: *const u64, max_args: usize) -> Vec<u8> {
     let segments = parse_format_string(fmt);
     let mut buf = Vec::with_capacity(256);
+    let uses_positional = positional_printf_arg_plan(&segments).is_some();
     let mut arg_idx = 0usize;
+
+    let read_arg = |position: Option<usize>, next_idx: &mut usize| -> Option<u64> {
+        let idx = if let Some(position) = position {
+            position.checked_sub(1)?
+        } else {
+            let current = *next_idx;
+            *next_idx = (*next_idx).saturating_add(1);
+            current
+        };
+        (idx < max_args).then(|| unsafe { *args.add(idx) })
+    };
 
     for seg in &segments {
         match seg {
@@ -2293,10 +2389,14 @@ pub(crate) unsafe fn render_printf(fmt: &[u8], args: *const u64, max_args: usize
             FormatSegment::Spec(spec) => {
                 // Resolve width from args if needed.
                 let mut resolved_spec = spec.clone();
-                if matches!(spec.width, Width::FromArg) {
-                    if arg_idx < max_args {
-                        let w = unsafe { *args.add(arg_idx) } as i64;
-                        arg_idx += 1;
+                if spec.width.uses_arg() {
+                    let width_position = if uses_positional {
+                        spec.width.position()
+                    } else {
+                        None
+                    };
+                    if let Some(raw_width) = read_arg(width_position, &mut arg_idx) {
+                        let w = raw_width as i64;
                         if w < 0 {
                             resolved_spec.flags.left_justify = true;
                             resolved_spec.width = Width::Fixed((-w) as usize);
@@ -2307,10 +2407,14 @@ pub(crate) unsafe fn render_printf(fmt: &[u8], args: *const u64, max_args: usize
                         resolved_spec.width = Width::None;
                     }
                 }
-                if matches!(spec.precision, Precision::FromArg) {
-                    if arg_idx < max_args {
-                        let p = unsafe { *args.add(arg_idx) } as i64;
-                        arg_idx += 1;
+                if spec.precision.uses_arg() {
+                    let precision_position = if uses_positional {
+                        spec.precision.position()
+                    } else {
+                        None
+                    };
+                    if let Some(raw_precision) = read_arg(precision_position, &mut arg_idx) {
+                        let p = raw_precision as i64;
                         resolved_spec.precision = if p < 0 {
                             Precision::None
                         } else {
@@ -2320,6 +2424,12 @@ pub(crate) unsafe fn render_printf(fmt: &[u8], args: *const u64, max_args: usize
                         resolved_spec.precision = Precision::None;
                     }
                 }
+
+                let value_position = if uses_positional {
+                    spec.value_position
+                } else {
+                    None
+                };
 
                 // Consume one argument for the conversion.
                 match spec.conversion {
@@ -2341,13 +2451,12 @@ pub(crate) unsafe fn render_printf(fmt: &[u8], args: *const u64, max_args: usize
                             buf.extend_from_slice(b"Unknown error");
                         }
                     }
-                    b'n'
+                    b'n' => {
                         // %n: store count of bytes written so far.
                         // Respects length modifier: %hhn→i8, %hn→i16,
                         // %n→i32, %ln→i64, %lln→i64, %zn→isize, %jn→i64.
-                        if arg_idx < max_args => {
-                            let ptr_val = unsafe { *args.add(arg_idx) } as usize;
-                            arg_idx += 1;
+                        if let Some(raw_ptr) = read_arg(value_position, &mut arg_idx) {
+                            let ptr_val = raw_ptr as usize;
                             if ptr_val != 0 {
                                 let count = buf.len();
                                 let size = match resolved_spec.length {
@@ -2421,10 +2530,9 @@ pub(crate) unsafe fn render_printf(fmt: &[u8], args: *const u64, max_args: usize
                                 );
                             }
                         }
-                    b'd' | b'i'
-                        if arg_idx < max_args => {
-                            let raw = unsafe { *args.add(arg_idx) };
-                            arg_idx += 1;
+                    }
+                    b'd' | b'i' => {
+                        if let Some(raw) = read_arg(value_position, &mut arg_idx) {
                             let val = match spec.length {
                                 LengthMod::Hh => (raw as i8) as i64,
                                 LengthMod::H => (raw as i16) as i64,
@@ -2433,10 +2541,9 @@ pub(crate) unsafe fn render_printf(fmt: &[u8], args: *const u64, max_args: usize
                             };
                             format_signed(val, &resolved_spec, &mut buf);
                         }
-                    b'u' | b'x' | b'X' | b'o'
-                        if arg_idx < max_args => {
-                            let raw = unsafe { *args.add(arg_idx) };
-                            arg_idx += 1;
+                    }
+                    b'u' | b'x' | b'X' | b'o' => {
+                        if let Some(raw) = read_arg(value_position, &mut arg_idx) {
                             let val = match spec.length {
                                 LengthMod::Hh => (raw as u8) as u64,
                                 LengthMod::H => (raw as u16) as u64,
@@ -2445,23 +2552,20 @@ pub(crate) unsafe fn render_printf(fmt: &[u8], args: *const u64, max_args: usize
                             };
                             format_unsigned(val, &resolved_spec, &mut buf);
                         }
-                    b'f' | b'F' | b'e' | b'E' | b'g' | b'G' | b'a' | b'A'
-                        if arg_idx < max_args => {
-                            let raw = unsafe { *args.add(arg_idx) };
-                            arg_idx += 1;
+                    }
+                    b'f' | b'F' | b'e' | b'E' | b'g' | b'G' | b'a' | b'A' => {
+                        if let Some(raw) = read_arg(value_position, &mut arg_idx) {
                             let val = f64::from_bits(raw);
                             format_float(val, &resolved_spec, &mut buf);
                         }
-                    b'c'
-                        if arg_idx < max_args => {
-                            let raw = unsafe { *args.add(arg_idx) };
-                            arg_idx += 1;
+                    }
+                    b'c' => {
+                        if let Some(raw) = read_arg(value_position, &mut arg_idx) {
                             format_char(raw as u8, &resolved_spec, &mut buf);
                         }
-                    b's'
-                        if arg_idx < max_args => {
-                            let raw = unsafe { *args.add(arg_idx) };
-                            arg_idx += 1;
+                    }
+                    b's' => {
+                        if let Some(raw) = read_arg(value_position, &mut arg_idx) {
                             let ptr = raw as usize as *const u8;
                             if ptr.is_null() {
                                 format_str(b"(null)", &resolved_spec, &mut buf);
@@ -2470,12 +2574,12 @@ pub(crate) unsafe fn render_printf(fmt: &[u8], args: *const u64, max_args: usize
                                 format_str(s_bytes, &resolved_spec, &mut buf);
                             }
                         }
-                    b'p'
-                        if arg_idx < max_args => {
-                            let raw = unsafe { *args.add(arg_idx) };
-                            arg_idx += 1;
+                    }
+                    b'p' => {
+                        if let Some(raw) = read_arg(value_position, &mut arg_idx) {
                             format_pointer(raw as usize, &resolved_spec, &mut buf);
                         }
+                    }
                     _ => {}
                 }
             }
@@ -2919,32 +3023,55 @@ pub(crate) unsafe fn vprintf_extract_args(
     let reg_save_ptr = unsafe { (ap as *mut u8).add(16) as *mut *mut u8 };
 
     let mut idx = 0usize;
-    for seg in segments {
-        if let FormatSegment::Spec(spec) = seg {
-            // Width from arg
-            if matches!(spec.width, Width::FromArg) && idx < extract_count {
-                buf[idx] = unsafe { vprintf_read_gp(gp_offset_ptr, overflow_ptr, reg_save_ptr) };
-                idx += 1;
-            }
-            // Precision from arg
-            if matches!(spec.precision, Precision::FromArg) && idx < extract_count {
-                buf[idx] = unsafe { vprintf_read_gp(gp_offset_ptr, overflow_ptr, reg_save_ptr) };
-                idx += 1;
-            }
-            match spec.conversion {
-                b'%' | b'm' => {}
-                b'f' | b'F' | b'e' | b'E' | b'g' | b'G' | b'a' | b'A' => {
+    if let Some(plan) = positional_printf_arg_plan(segments) {
+        for kind in plan.iter().take(extract_count) {
+            match kind {
+                PrintfArgKind::Gp => {
+                    if idx < extract_count {
+                        buf[idx] =
+                            unsafe { vprintf_read_gp(gp_offset_ptr, overflow_ptr, reg_save_ptr) };
+                        idx += 1;
+                    }
+                }
+                PrintfArgKind::Fp => {
                     if idx < extract_count {
                         buf[idx] =
                             unsafe { vprintf_read_fp(fp_offset_ptr, overflow_ptr, reg_save_ptr) };
                         idx += 1;
                     }
                 }
-                _ => {
-                    if idx < extract_count {
-                        buf[idx] =
-                            unsafe { vprintf_read_gp(gp_offset_ptr, overflow_ptr, reg_save_ptr) };
-                        idx += 1;
+            }
+        }
+    } else {
+        for seg in segments {
+            if let FormatSegment::Spec(spec) = seg {
+                if spec.width.uses_arg() && idx < extract_count {
+                    buf[idx] =
+                        unsafe { vprintf_read_gp(gp_offset_ptr, overflow_ptr, reg_save_ptr) };
+                    idx += 1;
+                }
+                if spec.precision.uses_arg() && idx < extract_count {
+                    buf[idx] =
+                        unsafe { vprintf_read_gp(gp_offset_ptr, overflow_ptr, reg_save_ptr) };
+                    idx += 1;
+                }
+                match spec.conversion {
+                    b'%' | b'm' => {}
+                    b'f' | b'F' | b'e' | b'E' | b'g' | b'G' | b'a' | b'A' => {
+                        if idx < extract_count {
+                            buf[idx] = unsafe {
+                                vprintf_read_fp(fp_offset_ptr, overflow_ptr, reg_save_ptr)
+                            };
+                            idx += 1;
+                        }
+                    }
+                    _ => {
+                        if idx < extract_count {
+                            buf[idx] = unsafe {
+                                vprintf_read_gp(gp_offset_ptr, overflow_ptr, reg_save_ptr)
+                            };
+                            idx += 1;
+                        }
                     }
                 }
             }

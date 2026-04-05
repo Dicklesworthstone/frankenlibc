@@ -90,30 +90,49 @@ fn strerror_bytes(errnum: c_int) -> &'static [u8] {
 
 macro_rules! extract_err_args {
     ($segments:expr, $args:expr, $buf:expr, $extract_count:expr) => {{
-        use frankenlibc_core::stdio::printf::{FormatSegment, Precision, Width};
+        use frankenlibc_core::stdio::printf::FormatSegment;
         let mut _idx = 0usize;
-        for seg in $segments {
-            if let FormatSegment::Spec(spec) = seg {
-                if matches!(spec.width, Width::FromArg) && _idx < $extract_count {
-                    $buf[_idx] = unsafe { $args.arg::<u64>() };
-                    _idx += 1;
-                }
-                if matches!(spec.precision, Precision::FromArg) && _idx < $extract_count {
-                    $buf[_idx] = unsafe { $args.arg::<u64>() };
-                    _idx += 1;
-                }
-                match spec.conversion {
-                    b'%' => {}
-                    b'f' | b'F' | b'e' | b'E' | b'g' | b'G' | b'a' | b'A' => {
+        if let Some(_plan) = super::stdio_abi::positional_printf_arg_plan($segments) {
+            for _kind in _plan.iter().take($extract_count) {
+                match _kind {
+                    super::stdio_abi::PrintfArgKind::Gp => {
+                        if _idx < $extract_count {
+                            $buf[_idx] = unsafe { $args.arg::<u64>() };
+                            _idx += 1;
+                        }
+                    }
+                    super::stdio_abi::PrintfArgKind::Fp => {
                         if _idx < $extract_count {
                             $buf[_idx] = unsafe { $args.arg::<f64>() }.to_bits();
                             _idx += 1;
                         }
                     }
-                    _ => {
-                        if _idx < $extract_count {
-                            $buf[_idx] = unsafe { $args.arg::<u64>() };
-                            _idx += 1;
+                }
+            }
+        } else {
+            for seg in $segments {
+                if let FormatSegment::Spec(spec) = seg {
+                    if spec.width.uses_arg() && _idx < $extract_count {
+                        $buf[_idx] = unsafe { $args.arg::<u64>() };
+                        _idx += 1;
+                    }
+                    if spec.precision.uses_arg() && _idx < $extract_count {
+                        $buf[_idx] = unsafe { $args.arg::<u64>() };
+                        _idx += 1;
+                    }
+                    match spec.conversion {
+                        b'%' => {}
+                        b'f' | b'F' | b'e' | b'E' | b'g' | b'G' | b'a' | b'A' => {
+                            if _idx < $extract_count {
+                                $buf[_idx] = unsafe { $args.arg::<f64>() }.to_bits();
+                                _idx += 1;
+                            }
+                        }
+                        _ => {
+                            if _idx < $extract_count {
+                                $buf[_idx] = unsafe { $args.arg::<u64>() };
+                                _idx += 1;
+                            }
                         }
                     }
                 }

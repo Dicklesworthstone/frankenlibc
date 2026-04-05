@@ -492,7 +492,14 @@ pub unsafe extern "C" fn dl_iterate_phdr(
         Option<unsafe extern "C" fn(*mut libc::dl_phdr_info, usize, *mut c_void) -> c_int>,
         *mut c_void,
     ) -> c_int;
-    if let Some(addr) = crate::host_resolve::host_dl_iterate_phdr_cached() {
+    if callback.is_none() {
+        return 0;
+    }
+    let host_addr = crate::host_resolve::host_dl_iterate_phdr_cached().or_else(|| {
+        crate::host_resolve::bootstrap_host_symbols();
+        crate::host_resolve::host_dl_iterate_phdr_cached()
+    });
+    if let Some(addr) = host_addr {
         let host_fn: DlIteratePhdrFn = unsafe { core::mem::transmute(addr) };
         return unsafe { host_fn(callback, data) };
     }
