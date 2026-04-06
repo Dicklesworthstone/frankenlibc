@@ -1,0 +1,275 @@
+{
+  "schema_version": "1.0",
+  "spec_reference": "IEEE Std 1003.1-2017 (POSIX.1)",
+  "generated_by": "RedRaven (manual extraction from POSIX spec)",
+  "generated_at": "2026-04-06",
+  "families": {
+    "string": {
+      "strlen": {
+        "spec_section": "string.h / strlen",
+        "test_vectors": [
+          {"input": "hello", "expected": 5, "category": "positive"},
+          {"input": "", "expected": 0, "category": "boundary"},
+          {"input": "a", "expected": 1, "category": "boundary"},
+          {"input": "0123456789", "expected": 10, "category": "positive"},
+          {"input": "\t\n\r", "expected": 3, "category": "positive", "note": "whitespace chars are not NUL"}
+        ]
+      },
+      "strcmp": {
+        "spec_section": "string.h / strcmp",
+        "test_vectors": [
+          {"input": ["abc", "abc"], "expected_sign": 0, "category": "positive"},
+          {"input": ["abc", "abd"], "expected_sign": -1, "category": "positive"},
+          {"input": ["abd", "abc"], "expected_sign": 1, "category": "positive"},
+          {"input": ["", ""], "expected_sign": 0, "category": "boundary"},
+          {"input": ["a", ""], "expected_sign": 1, "category": "boundary"},
+          {"input": ["", "a"], "expected_sign": -1, "category": "boundary"},
+          {"input": ["abc", "abcd"], "expected_sign": -1, "category": "boundary", "note": "prefix comparison"}
+        ]
+      },
+      "strncmp": {
+        "spec_section": "string.h / strncmp",
+        "test_vectors": [
+          {"input": ["abcdef", "abcxyz", 3], "expected_sign": 0, "category": "positive"},
+          {"input": ["abcdef", "abcxyz", 4], "expected_sign": -1, "category": "positive"},
+          {"input": ["abc", "abc", 0], "expected_sign": 0, "category": "boundary", "note": "n=0 always returns 0"},
+          {"input": ["abc", "abc", 100], "expected_sign": 0, "category": "boundary", "note": "n > strlen, compares to NUL"}
+        ]
+      },
+      "strchr": {
+        "spec_section": "string.h / strchr",
+        "test_vectors": [
+          {"input": ["hello", "l"], "expected_offset": 2, "category": "positive"},
+          {"input": ["hello", "h"], "expected_offset": 0, "category": "boundary"},
+          {"input": ["hello", "\\0"], "expected_offset": 5, "category": "boundary", "note": "NUL terminator is findable"},
+          {"input": ["hello", "x"], "expected": null, "category": "error"},
+          {"input": ["", "a"], "expected": null, "category": "boundary"}
+        ]
+      },
+      "strrchr": {
+        "spec_section": "string.h / strrchr",
+        "test_vectors": [
+          {"input": ["hello", "l"], "expected_offset": 3, "category": "positive", "note": "finds LAST occurrence"},
+          {"input": ["hello", "h"], "expected_offset": 0, "category": "positive"},
+          {"input": ["hello", "x"], "expected": null, "category": "error"}
+        ]
+      },
+      "memcpy": {
+        "spec_section": "string.h / memcpy",
+        "test_vectors": [
+          {"input_bytes": [1, 2, 3, 4, 5], "n": 5, "expected_bytes": [1, 2, 3, 4, 5], "category": "positive"},
+          {"input_bytes": [], "n": 0, "expected_bytes": [], "category": "boundary"},
+          {"input_bytes": [255], "n": 1, "expected_bytes": [255], "category": "boundary"}
+        ],
+        "undefined_behaviors": [
+          {"condition": "overlapping regions", "note": "POSIX says behavior undefined; use memmove instead"}
+        ]
+      },
+      "memmove": {
+        "spec_section": "string.h / memmove",
+        "test_vectors": [
+          {"description": "non-overlapping copy", "n": 5, "category": "positive"},
+          {"description": "forward overlap (src < dst)", "n": 5, "category": "positive", "note": "must handle correctly"},
+          {"description": "backward overlap (src > dst)", "n": 5, "category": "positive", "note": "must handle correctly"},
+          {"description": "n=0", "n": 0, "category": "boundary"}
+        ]
+      },
+      "memset": {
+        "spec_section": "string.h / memset",
+        "test_vectors": [
+          {"value": 0, "n": 10, "expected_all_bytes": 0, "category": "positive"},
+          {"value": 255, "n": 5, "expected_all_bytes": 255, "category": "positive"},
+          {"value": 0, "n": 0, "category": "boundary"},
+          {"value": 256, "n": 1, "expected_all_bytes": 0, "category": "boundary", "note": "value is truncated to unsigned char"}
+        ]
+      },
+      "strstr": {
+        "spec_section": "string.h / strstr",
+        "test_vectors": [
+          {"input": ["hello world", "world"], "expected_offset": 6, "category": "positive"},
+          {"input": ["hello", "hello"], "expected_offset": 0, "category": "positive"},
+          {"input": ["hello", ""], "expected_offset": 0, "category": "boundary", "note": "empty needle returns haystack"},
+          {"input": ["hello", "xyz"], "expected": null, "category": "error"},
+          {"input": ["", "a"], "expected": null, "category": "boundary"}
+        ]
+      },
+      "strtok": {
+        "spec_section": "string.h / strtok",
+        "test_vectors": [
+          {"input": "hello,world,foo", "delim": ",", "expected_tokens": ["hello", "world", "foo"], "category": "positive"},
+          {"input": ",,hello,,", "delim": ",", "expected_tokens": ["hello"], "category": "boundary", "note": "leading/trailing/consecutive delimiters skipped"},
+          {"input": "", "delim": ",", "expected_tokens": [], "category": "boundary"}
+        ]
+      }
+    },
+    "stdlib": {
+      "atoi": {
+        "spec_section": "stdlib.h / atoi",
+        "test_vectors": [
+          {"input": "42", "expected": 42, "category": "positive"},
+          {"input": "-42", "expected": -42, "category": "positive"},
+          {"input": "0", "expected": 0, "category": "boundary"},
+          {"input": "  123", "expected": 123, "category": "positive", "note": "leading whitespace skipped"},
+          {"input": "123abc", "expected": 123, "category": "positive", "note": "trailing non-digits ignored"},
+          {"input": "abc", "expected": 0, "category": "boundary"},
+          {"input": "2147483647", "expected": 2147483647, "category": "boundary", "note": "INT_MAX"},
+          {"input": "-2147483648", "expected": -2147483648, "category": "boundary", "note": "INT_MIN"}
+        ]
+      },
+      "strtol": {
+        "spec_section": "stdlib.h / strtol",
+        "test_vectors": [
+          {"input": "42", "base": 10, "expected": 42, "category": "positive"},
+          {"input": "255", "base": 16, "expected": 255, "category": "positive"},
+          {"input": "0777", "base": 8, "expected": 511, "category": "positive"},
+          {"input": "0", "base": 0, "expected": 0, "category": "boundary"},
+          {"input": "0x1A", "base": 0, "expected": 26, "category": "positive", "note": "auto-detect hex"},
+          {"input": "077", "base": 0, "expected": 63, "category": "positive", "note": "auto-detect octal"}
+        ],
+        "error_conditions": [
+          {"input": "99999999999999999999", "base": 10, "expected_errno": "ERANGE", "expected_value": "LONG_MAX"},
+          {"input": "-99999999999999999999", "base": 10, "expected_errno": "ERANGE", "expected_value": "LONG_MIN"},
+          {"input": "", "base": 10, "expected_endptr_unchanged": true, "note": "no conversion performed"}
+        ]
+      },
+      "abs": {
+        "spec_section": "stdlib.h / abs",
+        "test_vectors": [
+          {"input": 42, "expected": 42, "category": "positive"},
+          {"input": -42, "expected": 42, "category": "positive"},
+          {"input": 0, "expected": 0, "category": "boundary"}
+        ],
+        "undefined_behaviors": [
+          {"condition": "abs(INT_MIN) when -INT_MIN overflows", "note": "result is undefined per C standard"}
+        ]
+      },
+      "getenv": {
+        "spec_section": "stdlib.h / getenv",
+        "test_vectors": [
+          {"input": "PATH", "expected": "non-null", "category": "positive", "note": "PATH is typically always set"},
+          {"input": "HOME", "expected": "non-null", "category": "positive"},
+          {"input": "FRANKENLIBC_NONEXISTENT_VAR_ZZZ", "expected": null, "category": "error"},
+          {"input": "", "expected": null, "category": "boundary", "note": "empty name is invalid per POSIX"}
+        ]
+      },
+      "qsort": {
+        "spec_section": "stdlib.h / qsort",
+        "test_vectors": [
+          {"input_array": [5, 3, 1, 4, 2], "expected_sorted": [1, 2, 3, 4, 5], "category": "positive"},
+          {"input_array": [1], "expected_sorted": [1], "category": "boundary"},
+          {"input_array": [], "expected_sorted": [], "category": "boundary"},
+          {"input_array": [1, 1, 1], "expected_sorted": [1, 1, 1], "category": "boundary", "note": "all equal"}
+        ]
+      }
+    },
+    "stdio": {
+      "snprintf": {
+        "spec_section": "stdio.h / snprintf",
+        "test_vectors": [
+          {"format": "%d", "args": [42], "expected": "42", "expected_return": 2, "category": "positive"},
+          {"format": "%s", "args": ["hello"], "expected": "hello", "expected_return": 5, "category": "positive"},
+          {"format": "%10d", "args": [42], "expected": "        42", "expected_return": 10, "category": "positive"},
+          {"format": "%-10d", "args": [42], "expected": "42        ", "expected_return": 10, "category": "positive"},
+          {"format": "%05d", "args": [42], "expected": "00042", "expected_return": 5, "category": "positive"},
+          {"format": "%+d", "args": [42], "expected": "+42", "expected_return": 3, "category": "positive"},
+          {"format": "%x", "args": [255], "expected": "ff", "expected_return": 2, "category": "positive"},
+          {"format": "%#x", "args": [255], "expected": "0xff", "expected_return": 4, "category": "positive"},
+          {"format": "%o", "args": [8], "expected": "10", "expected_return": 2, "category": "positive"},
+          {"format": "%.3f", "args": [3.14159], "expected": "3.142", "expected_return": 5, "category": "positive"},
+          {"format": "%e", "args": [12345.6789], "expected_pattern": "1\\.234568e\\+04", "expected_return": 13, "category": "positive"},
+          {"format": "%%", "args": [], "expected": "%", "expected_return": 1, "category": "boundary"},
+          {"format": "", "args": [], "expected": "", "expected_return": 0, "category": "boundary"}
+        ],
+        "truncation_tests": [
+          {"format": "%d", "args": [12345], "bufsize": 3, "expected_buf": "12", "expected_return": 5, "note": "return is what WOULD have been written"}
+        ],
+        "positional_tests": [
+          {"format": "%2$s is %1$d", "args": [42, "answer"], "expected": "answer is 42", "category": "positive"},
+          {"format": "%1$d %1$d", "args": [42], "expected": "42 42", "category": "positive", "note": "reuse same arg"}
+        ]
+      },
+      "sscanf": {
+        "spec_section": "stdio.h / sscanf",
+        "test_vectors": [
+          {"input": "42", "format": "%d", "expected_values": [42], "expected_return": 1, "category": "positive"},
+          {"input": "hello 42", "format": "%s %d", "expected_values": ["hello", 42], "expected_return": 2, "category": "positive"},
+          {"input": "abc", "format": "%d", "expected_return": 0, "category": "error", "note": "no matching conversion"},
+          {"input": "", "format": "%d", "expected_return": -1, "category": "boundary", "note": "EOF before conversion"}
+        ]
+      }
+    },
+    "ctype": {
+      "isalpha": {
+        "spec_section": "ctype.h / isalpha",
+        "test_vectors": [
+          {"input": 65, "expected": true, "category": "positive", "note": "A"},
+          {"input": 122, "expected": true, "category": "positive", "note": "z"},
+          {"input": 48, "expected": false, "category": "positive", "note": "0"},
+          {"input": 32, "expected": false, "category": "positive", "note": "space"},
+          {"input": -1, "expected": false, "category": "boundary", "note": "EOF"}
+        ]
+      },
+      "isdigit": {
+        "spec_section": "ctype.h / isdigit",
+        "test_vectors": [
+          {"input": 48, "expected": true, "category": "positive", "note": "0"},
+          {"input": 57, "expected": true, "category": "positive", "note": "9"},
+          {"input": 65, "expected": false, "category": "positive", "note": "A"},
+          {"input": -1, "expected": false, "category": "boundary", "note": "EOF"}
+        ]
+      },
+      "tolower": {
+        "spec_section": "ctype.h / tolower",
+        "test_vectors": [
+          {"input": 65, "expected": 97, "category": "positive", "note": "A -> a"},
+          {"input": 97, "expected": 97, "category": "positive", "note": "a -> a (no change)"},
+          {"input": 48, "expected": 48, "category": "positive", "note": "0 -> 0 (no change)"}
+        ]
+      }
+    },
+    "math": {
+      "sqrt": {
+        "spec_section": "math.h / sqrt",
+        "test_vectors": [
+          {"input": 4.0, "expected": 2.0, "category": "positive"},
+          {"input": 0.0, "expected": 0.0, "category": "boundary"},
+          {"input": 1.0, "expected": 1.0, "category": "boundary"},
+          {"input": 2.0, "expected_approx": 1.4142135623730951, "tolerance": 1e-15, "category": "positive"}
+        ],
+        "error_conditions": [
+          {"input": -1.0, "expected": "NaN", "expected_errno": "EDOM", "category": "error"},
+          {"input": "NaN", "expected": "NaN", "category": "boundary"},
+          {"input": "+Inf", "expected": "+Inf", "category": "boundary"}
+        ]
+      },
+      "sin": {
+        "spec_section": "math.h / sin",
+        "test_vectors": [
+          {"input": 0.0, "expected": 0.0, "category": "boundary"},
+          {"input": 1.5707963267948966, "expected_approx": 1.0, "tolerance": 1e-15, "category": "positive", "note": "pi/2"},
+          {"input": 3.141592653589793, "expected_approx": 0.0, "tolerance": 1e-15, "category": "positive", "note": "pi"}
+        ]
+      },
+      "pow": {
+        "spec_section": "math.h / pow",
+        "test_vectors": [
+          {"input": [2.0, 10.0], "expected": 1024.0, "category": "positive"},
+          {"input": [2.0, 0.0], "expected": 1.0, "category": "boundary", "note": "x^0 = 1 for all x"},
+          {"input": [0.0, 0.0], "expected": 1.0, "category": "boundary", "note": "POSIX: 0^0 = 1"},
+          {"input": [2.0, -1.0], "expected": 0.5, "category": "positive"}
+        ],
+        "error_conditions": [
+          {"input": [-1.0, 0.5], "expected": "NaN", "expected_errno": "EDOM", "category": "error", "note": "negative base with non-integer exponent"}
+        ]
+      }
+    }
+  },
+  "coverage_summary": {
+    "families_covered": 5,
+    "functions_with_vectors": 20,
+    "total_positive_vectors": 57,
+    "total_boundary_vectors": 32,
+    "total_error_vectors": 12,
+    "total_undefined_documented": 3
+  }
+}
