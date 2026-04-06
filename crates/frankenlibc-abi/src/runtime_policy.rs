@@ -25,6 +25,7 @@ use frankenlibc_membrane::runtime_math::{
     RuntimeKernelSnapshot, RuntimeMathKernel, ValidationProfile,
 };
 use frankenlibc_membrane::util::now_utc_iso_like;
+use sha2::{Digest, Sha256};
 
 // Kernel lifecycle states.
 const STATE_UNINIT: u8 = 0;
@@ -44,6 +45,7 @@ const PANIC_HOOK_LOG_LIMIT: u32 = 64;
 const TRACE_UNKNOWN_SYMBOL: &str = "unknown";
 const CONTROLLER_ID_RUNTIME_MATH: &str = "runtime_math_kernel.v1";
 const DECISION_GATE_RUNTIME_POLICY: &str = "runtime_policy.decide";
+const DECISION_GATE_FFI_PCC: &str = "runtime_policy.ffi_pcc.decide";
 const DECISION_CONTRACT_CLEAR_THRESHOLD: u16 = 3;
 const MODE_SWITCH_CHECK_STRIDE: u64 = 4096;
 const MODE_LOG_CAPACITY: usize = 256;
@@ -51,6 +53,12 @@ const MODE_LOG_CAPACITY: usize = 256;
 const KERNEL_EXPORT_RETRY_ATTEMPTS: usize = 5_000;
 const CONTROLLER_ID_RUNTIME_MODE: &str = "runtime_policy.mode.v1";
 const MODE_LOG_ARTIFACT: &str = "crates/frankenlibc-abi/src/runtime_policy.rs";
+const FFI_PCC_ARTIFACT: &str = "crates/frankenlibc-abi/src/runtime_policy.rs";
+const FFI_PCC_STATE_UNVERIFIED: u8 = 0;
+const FFI_PCC_STATE_VERIFYING: u8 = 1;
+const FFI_PCC_STATE_VERIFIED: u8 = 2;
+const FFI_PCC_STATE_REJECTED: u8 = 3;
+const FFI_PCC_POLICY_BASE: u32 = 0x5043_4300;
 
 // Manual init guard that avoids OnceLock's internal futex.
 // OnceLock::get_or_init uses a futex wait when it sees init-in-progress,
@@ -67,6 +75,9 @@ static PANIC_HOOK_LOG_COUNT: AtomicU32 = AtomicU32::new(0);
 static MODE_SWITCH_CHECK_COUNTER: AtomicU64 = AtomicU64::new(0);
 static MODE_LOG_DECISION_SEQ: AtomicU64 = AtomicU64::new(0);
 static MODE_EVENT_LOGS: Mutex<VecDeque<String>> = Mutex::new(VecDeque::new());
+static FFI_PCC_STATE: AtomicU8 = AtomicU8::new(FFI_PCC_STATE_UNVERIFIED);
+static FFI_PCC_HASH_PREFIX: AtomicU64 = AtomicU64::new(0);
+static FFI_PCC_ROW_COUNT: AtomicU32 = AtomicU32::new(0);
 
 unsafe extern "C" {
     static mut environ: *mut *mut c_char;
@@ -169,6 +180,298 @@ fn mode_name(level: SafetyLevel) -> &'static str {
         SafetyLevel::Hardened => "hardened",
         SafetyLevel::Off => "off",
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct FfiPccCertificate {
+    symbol: &'static str,
+    family: ApiFamily,
+    policy_id: u32,
+    max_requested_bytes: usize,
+    allow_write: bool,
+    allow_bloom_negative: bool,
+    skip_stage_ordering: bool,
+    skip_pointer_validation: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct FfiPccCertificateFlags {
+    allow_write: bool,
+    allow_bloom_negative: bool,
+    skip_stage_ordering: bool,
+    skip_pointer_validation: bool,
+}
+
+impl FfiPccCertificate {
+    const fn new(
+        symbol: &'static str,
+        family: ApiFamily,
+        policy_offset: u32,
+        max_requested_bytes: usize,
+        flags: FfiPccCertificateFlags,
+    ) -> Self {
+        Self {
+            symbol,
+            family,
+            policy_id: FFI_PCC_POLICY_BASE + policy_offset,
+            max_requested_bytes,
+            allow_write: flags.allow_write,
+            allow_bloom_negative: flags.allow_bloom_negative,
+            skip_stage_ordering: flags.skip_stage_ordering,
+            skip_pointer_validation: flags.skip_pointer_validation,
+        }
+    }
+
+    #[inline]
+    fn matches_request(
+        self,
+        family: ApiFamily,
+        requested_bytes: usize,
+        is_write: bool,
+        bloom_negative: bool,
+    ) -> bool {
+        self.family == family
+            && requested_bytes <= self.max_requested_bytes
+            && (!is_write || self.allow_write)
+            && (!bloom_negative || self.allow_bloom_negative)
+    }
+}
+
+const FFI_PCC_ALLOCATOR_FLAGS: FfiPccCertificateFlags = FfiPccCertificateFlags {
+    allow_write: true,
+    allow_bloom_negative: false,
+    skip_stage_ordering: true,
+    skip_pointer_validation: false,
+};
+
+const FFI_PCC_READ_ONLY_FLAGS: FfiPccCertificateFlags = FfiPccCertificateFlags {
+    allow_write: false,
+    allow_bloom_negative: true,
+    skip_stage_ordering: true,
+    skip_pointer_validation: true,
+};
+
+const FFI_PCC_CERTIFICATES: [FfiPccCertificate; 9] = [
+    FfiPccCertificate::new(
+        "malloc",
+        ApiFamily::Allocator,
+        1,
+        usize::MAX,
+        FFI_PCC_ALLOCATOR_FLAGS,
+    ),
+    FfiPccCertificate::new(
+        "calloc",
+        ApiFamily::Allocator,
+        2,
+        usize::MAX,
+        FFI_PCC_ALLOCATOR_FLAGS,
+    ),
+    FfiPccCertificate::new(
+        "realloc",
+        ApiFamily::Allocator,
+        3,
+        usize::MAX,
+        FFI_PCC_ALLOCATOR_FLAGS,
+    ),
+    FfiPccCertificate::new(
+        "posix_memalign",
+        ApiFamily::Allocator,
+        4,
+        usize::MAX,
+        FFI_PCC_ALLOCATOR_FLAGS,
+    ),
+    FfiPccCertificate::new(
+        "memalign",
+        ApiFamily::Allocator,
+        5,
+        usize::MAX,
+        FFI_PCC_ALLOCATOR_FLAGS,
+    ),
+    FfiPccCertificate::new(
+        "aligned_alloc",
+        ApiFamily::Allocator,
+        6,
+        usize::MAX,
+        FFI_PCC_ALLOCATOR_FLAGS,
+    ),
+    FfiPccCertificate::new(
+        "free",
+        ApiFamily::Allocator,
+        7,
+        usize::MAX,
+        FFI_PCC_ALLOCATOR_FLAGS,
+    ),
+    FfiPccCertificate::new(
+        "memcmp",
+        ApiFamily::StringMemory,
+        8,
+        usize::MAX,
+        FFI_PCC_READ_ONLY_FLAGS,
+    ),
+    FfiPccCertificate::new(
+        "strlen",
+        ApiFamily::StringMemory,
+        9,
+        usize::MAX,
+        FFI_PCC_READ_ONLY_FLAGS,
+    ),
+];
+
+fn ffi_pcc_verify_and_hash() -> Result<u64, &'static str> {
+    if FFI_PCC_CERTIFICATES.is_empty() {
+        return Err("ffi_pcc: certificate table must not be empty");
+    }
+
+    let mut digest = Sha256::new();
+    for (idx, row) in FFI_PCC_CERTIFICATES.iter().copied().enumerate() {
+        if row.symbol.is_empty() {
+            return Err("ffi_pcc: symbol must not be empty");
+        }
+        if row.policy_id == 0 {
+            return Err("ffi_pcc: policy_id must be non-zero");
+        }
+        if row.skip_pointer_validation && (!row.skip_stage_ordering || row.allow_write) {
+            return Err("ffi_pcc: pointer-validation bypass must be read-only and stage-skipping");
+        }
+        for prior in &FFI_PCC_CERTIFICATES[..idx] {
+            if prior.symbol == row.symbol && prior.family == row.family {
+                return Err("ffi_pcc: duplicate symbol/family certificate");
+            }
+            if prior.policy_id == row.policy_id {
+                return Err("ffi_pcc: duplicate policy_id");
+            }
+        }
+
+        digest.update(row.symbol.as_bytes());
+        digest.update([0]);
+        digest.update([row.family as u8]);
+        digest.update(row.policy_id.to_le_bytes());
+        digest.update((row.max_requested_bytes as u64).to_le_bytes());
+        digest.update([
+            row.allow_write as u8,
+            row.allow_bloom_negative as u8,
+            row.skip_stage_ordering as u8,
+            row.skip_pointer_validation as u8,
+        ]);
+    }
+
+    let bytes = digest.finalize();
+    let mut prefix = [0u8; 8];
+    prefix.copy_from_slice(&bytes[..8]);
+    Ok(u64::from_le_bytes(prefix))
+}
+
+fn ensure_ffi_pcc_verified() -> bool {
+    let state = FFI_PCC_STATE.load(AtomicOrdering::Acquire);
+    if state == FFI_PCC_STATE_VERIFIED {
+        return true;
+    }
+    if state == FFI_PCC_STATE_REJECTED || state == FFI_PCC_STATE_VERIFYING {
+        return false;
+    }
+
+    if FFI_PCC_STATE
+        .compare_exchange(
+            FFI_PCC_STATE_UNVERIFIED,
+            FFI_PCC_STATE_VERIFYING,
+            AtomicOrdering::SeqCst,
+            AtomicOrdering::Relaxed,
+        )
+        .is_err()
+    {
+        return FFI_PCC_STATE.load(AtomicOrdering::Acquire) == FFI_PCC_STATE_VERIFIED;
+    }
+
+    match ffi_pcc_verify_and_hash() {
+        Ok(hash_prefix) => {
+            FFI_PCC_HASH_PREFIX.store(hash_prefix, AtomicOrdering::Release);
+            FFI_PCC_ROW_COUNT.store(
+                u32::try_from(FFI_PCC_CERTIFICATES.len()).unwrap_or(u32::MAX),
+                AtomicOrdering::Release,
+            );
+            FFI_PCC_STATE.store(FFI_PCC_STATE_VERIFIED, AtomicOrdering::Release);
+            true
+        }
+        Err(_) => {
+            FFI_PCC_HASH_PREFIX.store(0, AtomicOrdering::Release);
+            FFI_PCC_ROW_COUNT.store(0, AtomicOrdering::Release);
+            FFI_PCC_STATE.store(FFI_PCC_STATE_REJECTED, AtomicOrdering::Release);
+            false
+        }
+    }
+}
+
+fn lookup_active_ffi_pcc_certificate(
+    family: ApiFamily,
+    requested_bytes: usize,
+    is_write: bool,
+    bloom_negative: bool,
+) -> Option<&'static FfiPccCertificate> {
+    if !ensure_ffi_pcc_verified() {
+        return None;
+    }
+    let trace = active_trace_context();
+    FFI_PCC_CERTIFICATES.iter().find(|row| {
+        row.symbol == trace.symbol
+            && row.matches_request(family, requested_bytes, is_write, bloom_negative)
+    })
+}
+
+fn active_ffi_pcc_symbol_certificate() -> Option<&'static FfiPccCertificate> {
+    if !ensure_ffi_pcc_verified() {
+        return None;
+    }
+    let trace = active_trace_context();
+    FFI_PCC_CERTIFICATES
+        .iter()
+        .find(|row| row.symbol == trace.symbol)
+}
+
+fn ffi_pcc_decision(cert: &FfiPccCertificate) -> RuntimeDecision {
+    RuntimeDecision {
+        action: MembraneAction::Allow,
+        profile: ValidationProfile::Fast,
+        policy_id: cert.policy_id,
+        risk_upper_bound_ppm: 0,
+        evidence_seqno: 0,
+    }
+}
+
+#[must_use]
+pub(crate) fn proof_carried_pointer_validation_active() -> bool {
+    active_ffi_pcc_symbol_certificate().is_some_and(|row| row.skip_pointer_validation)
+}
+
+#[must_use]
+pub(crate) fn export_ffi_pcc_manifest_json() -> String {
+    let verification = match FFI_PCC_STATE.load(AtomicOrdering::Relaxed) {
+        FFI_PCC_STATE_VERIFIED => "verified",
+        FFI_PCC_STATE_REJECTED => "rejected",
+        FFI_PCC_STATE_VERIFYING => "verifying",
+        _ => "unverified",
+    };
+    let rows = FFI_PCC_CERTIFICATES
+        .iter()
+        .map(|row| {
+            format!(
+                "{{\"symbol\":\"{}\",\"family\":\"{:?}\",\"policy_id\":{},\"max_requested_bytes\":{},\"allow_write\":{},\"allow_bloom_negative\":{},\"skip_stage_ordering\":{},\"skip_pointer_validation\":{}}}",
+                row.symbol,
+                row.family,
+                row.policy_id,
+                row.max_requested_bytes,
+                row.allow_write,
+                row.allow_bloom_negative,
+                row.skip_stage_ordering,
+                row.skip_pointer_validation,
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    format!(
+        "{{\"schema_version\":1,\"verification\":\"{verification}\",\"hash_prefix\":{},\"row_count\":{},\"artifact_refs\":[\"{FFI_PCC_ARTIFACT}\"],\"rows\":[{rows}]}}",
+        FFI_PCC_HASH_PREFIX.load(AtomicOrdering::Relaxed),
+        FFI_PCC_ROW_COUNT.load(AtomicOrdering::Relaxed),
+    )
 }
 
 /// Deferred mode event log flag.  During early startup the heap may not be
@@ -713,7 +1016,12 @@ fn apply_decision_contract(
         ))
 }
 
-fn record_last_explainability(mode: SafetyLevel, ctx: RuntimeContext, decision: RuntimeDecision) {
+fn record_last_explainability(
+    mode: SafetyLevel,
+    ctx: RuntimeContext,
+    decision: RuntimeDecision,
+    decision_gate: &'static str,
+) {
     let trace = active_trace_context();
     let (contract_state, contract_event, contract_action) = apply_decision_contract(mode, decision);
     let explainability = DecisionExplainability {
@@ -722,7 +1030,7 @@ fn record_last_explainability(mode: SafetyLevel, ctx: RuntimeContext, decision: 
         parent_span_seq: trace.parent_span_seq,
         symbol: trace.symbol,
         controller_id: CONTROLLER_ID_RUNTIME_MATH,
-        decision_gate: DECISION_GATE_RUNTIME_POLICY,
+        decision_gate,
         mode,
         family: ctx.family,
         profile: decision.profile,
@@ -1018,6 +1326,7 @@ pub(crate) fn bootstrap_passthrough_active() -> bool {
 /// Signal that the dynamic linker's init phase is complete and the
 /// membrane can safely use TLS, locks, and the heap.
 pub(crate) fn signal_runtime_ready() {
+    let _ = ensure_ffi_pcc_verified();
     RUNTIME_READY.store(1, AtomicOrdering::Release);
 }
 
@@ -1042,20 +1351,6 @@ pub(crate) fn decide(
     }
 
     let mode = mode();
-    if strict_runtime_kernel_fast_path(mode) {
-        let decision = passthrough_decision();
-        let ctx = RuntimeContext {
-            family,
-            addr_hint,
-            requested_bytes,
-            is_write,
-            contention_hint,
-            bloom_negative,
-        };
-        record_last_explainability(mode, ctx, decision);
-        return (mode, decision);
-    }
-    MODE_LOG_READY.store(1, AtomicOrdering::Relaxed);
     let ctx = RuntimeContext {
         family,
         addr_hint,
@@ -1064,17 +1359,30 @@ pub(crate) fn decide(
         contention_hint,
         bloom_negative,
     };
+    if let Some(cert) =
+        lookup_active_ffi_pcc_certificate(family, requested_bytes, is_write, bloom_negative)
+    {
+        let decision = ffi_pcc_decision(cert);
+        record_last_explainability(mode, ctx, decision, DECISION_GATE_FFI_PCC);
+        return (mode, decision);
+    }
+    if strict_runtime_kernel_fast_path(mode) {
+        let decision = passthrough_decision();
+        record_last_explainability(mode, ctx, decision, DECISION_GATE_RUNTIME_POLICY);
+        return (mode, decision);
+    }
+    MODE_LOG_READY.store(1, AtomicOrdering::Relaxed);
 
     let Some(_reentry_guard) = enter_policy_reentry_guard() else {
         let decision = passthrough_decision();
-        record_last_explainability(mode, ctx, decision);
+        record_last_explainability(mode, ctx, decision, DECISION_GATE_RUNTIME_POLICY);
         return (mode, decision);
     };
 
     ensure_minimal_panic_hook();
     let Some(k) = kernel() else {
         let decision = passthrough_decision();
-        record_last_explainability(mode, ctx, decision);
+        record_last_explainability(mode, ctx, decision, DECISION_GATE_RUNTIME_POLICY);
         return (mode, decision);
     };
     let decision = match panic::catch_unwind(AssertUnwindSafe(|| k.decide(mode, ctx))) {
@@ -1082,11 +1390,11 @@ pub(crate) fn decide(
         Err(_) => {
             mark_kernel_broken();
             let decision = passthrough_decision();
-            record_last_explainability(mode, ctx, decision);
+            record_last_explainability(mode, ctx, decision, DECISION_GATE_RUNTIME_POLICY);
             return (mode, decision);
         }
     };
-    record_last_explainability(mode, ctx, decision);
+    record_last_explainability(mode, ctx, decision, DECISION_GATE_RUNTIME_POLICY);
     (mode, decision)
 }
 
@@ -1097,6 +1405,12 @@ pub(crate) fn observe(
     adverse: bool,
 ) {
     let mode = mode();
+    if lookup_active_ffi_pcc_certificate(family, usize::MAX, true, adverse).is_some()
+        || lookup_active_ffi_pcc_certificate(family, usize::MAX, false, adverse).is_some()
+    {
+        let _ = (profile, estimated_cost_ns);
+        return;
+    }
     if strict_runtime_kernel_fast_path(mode) {
         let _ = (family, profile, estimated_cost_ns, adverse);
         return;
@@ -1121,6 +1435,12 @@ pub(crate) fn check_ordering(
     aligned: bool,
     recent_page: bool,
 ) -> [CheckStage; 7] {
+    if active_ffi_pcc_symbol_certificate()
+        .is_some_and(|row| row.family == family && row.skip_stage_ordering)
+    {
+        let _ = (aligned, recent_page);
+        return PASSTHROUGH_ORDERING;
+    }
     if strict_runtime_kernel_fast_path(mode()) {
         let _ = (family, aligned, recent_page);
         return PASSTHROUGH_ORDERING;
@@ -1150,6 +1470,12 @@ pub(crate) fn note_check_order_outcome(
     ordering_used: &[CheckStage; 7],
     exit_stage: Option<usize>,
 ) {
+    if active_ffi_pcc_symbol_certificate()
+        .is_some_and(|row| row.family == family && row.skip_stage_ordering)
+    {
+        let _ = (aligned, recent_page, ordering_used, exit_stage);
+        return;
+    }
     let mode = mode();
     if strict_runtime_kernel_fast_path(mode) {
         let _ = (family, aligned, recent_page, ordering_used, exit_stage);
@@ -1295,6 +1621,12 @@ mod tests {
             previous_ready,
             previous_mode_log_ready,
         }
+    }
+
+    fn reset_ffi_pcc_state_for_tests() {
+        FFI_PCC_HASH_PREFIX.store(0, AtomicOrdering::SeqCst);
+        FFI_PCC_ROW_COUNT.store(0, AtomicOrdering::SeqCst);
+        FFI_PCC_STATE.store(FFI_PCC_STATE_UNVERIFIED, AtomicOrdering::SeqCst);
     }
 
     fn reset_decision_contract_machine_for_tests() {
@@ -1494,7 +1826,12 @@ mod tests {
             contention_hint: 7,
             bloom_negative: false,
         };
-        record_last_explainability(SafetyLevel::Strict, ctx, decision);
+        record_last_explainability(
+            SafetyLevel::Strict,
+            ctx,
+            decision,
+            DECISION_GATE_RUNTIME_POLICY,
+        );
         let explain = take_last_explainability().expect("explainability should be recorded");
 
         assert_eq!(explain.symbol, "malloc");
@@ -1526,7 +1863,12 @@ mod tests {
             contention_hint: 0,
             bloom_negative: true,
         };
-        record_last_explainability(SafetyLevel::Strict, ctx, decision);
+        record_last_explainability(
+            SafetyLevel::Strict,
+            ctx,
+            decision,
+            DECISION_GATE_RUNTIME_POLICY,
+        );
         let explain = take_last_explainability().expect("fallback explainability should exist");
 
         assert_eq!(explain.symbol, TRACE_UNKNOWN_SYMBOL);
@@ -1555,7 +1897,12 @@ mod tests {
             bloom_negative: false,
         };
 
-        record_last_explainability(SafetyLevel::Strict, ctx, decision);
+        record_last_explainability(
+            SafetyLevel::Strict,
+            ctx,
+            decision,
+            DECISION_GATE_RUNTIME_POLICY,
+        );
         let explain = take_last_explainability().expect("explainability should be recorded");
 
         assert_eq!(explain.contract_state, TsmState::Suspicious);
@@ -1583,7 +1930,12 @@ mod tests {
             bloom_negative: true,
         };
 
-        record_last_explainability(SafetyLevel::Hardened, ctx, decision);
+        record_last_explainability(
+            SafetyLevel::Hardened,
+            ctx,
+            decision,
+            DECISION_GATE_RUNTIME_POLICY,
+        );
         let explain = take_last_explainability().expect("explainability should be recorded");
 
         assert_eq!(explain.contract_state, TsmState::Safe);
@@ -1611,6 +1963,63 @@ mod tests {
 
         let restored_ctx = active_trace_context();
         assert_eq!(restored_ctx.symbol, "outer_symbol");
+    }
+
+    #[test]
+    fn ffi_pcc_manifest_exports_verified_rows() {
+        reset_ffi_pcc_state_for_tests();
+        assert!(ensure_ffi_pcc_verified(), "ffi pcc table should verify");
+
+        let manifest = export_ffi_pcc_manifest_json();
+        assert!(manifest.contains("\"verification\":\"verified\""));
+        assert!(manifest.contains("\"symbol\":\"malloc\""));
+        assert!(manifest.contains("\"symbol\":\"memcmp\""));
+        assert!(manifest.contains("\"skip_pointer_validation\":true"));
+        assert!(
+            FFI_PCC_HASH_PREFIX.load(AtomicOrdering::SeqCst) != 0,
+            "verified manifest should publish a non-zero hash prefix"
+        );
+    }
+
+    #[test]
+    fn ffi_pcc_decide_uses_certificate_gate_for_malloc() {
+        reset_ffi_pcc_state_for_tests();
+        reset_decision_contract_machine_for_tests();
+        let _runtime_ready = enable_runtime_kernel_for_tests();
+        let _mode = set_mode_state_for_tests(MODE_HARDENED);
+        let _scope = entrypoint_scope("malloc");
+
+        let (_, decision) = decide(ApiFamily::Allocator, 0x1000, 64, true, false, 0);
+        let explain = take_last_explainability().expect("explainability should be recorded");
+
+        assert_eq!(decision.policy_id, FFI_PCC_POLICY_BASE + 1);
+        assert_eq!(decision.profile, ValidationProfile::Fast);
+        assert_eq!(decision.action, MembraneAction::Allow);
+        assert_eq!(explain.decision_gate, DECISION_GATE_FFI_PCC);
+        assert_eq!(explain.policy_id, FFI_PCC_POLICY_BASE + 1);
+    }
+
+    #[test]
+    fn ffi_pcc_pointer_validation_bypass_only_applies_to_certified_read_symbols() {
+        reset_ffi_pcc_state_for_tests();
+        assert!(ensure_ffi_pcc_verified(), "ffi pcc table should verify");
+
+        let _memcmp = entrypoint_scope("memcmp");
+        assert!(proof_carried_pointer_validation_active());
+        drop(_memcmp);
+
+        let _malloc = entrypoint_scope("malloc");
+        assert!(!proof_carried_pointer_validation_active());
+    }
+
+    #[test]
+    fn ffi_pcc_stage_ordering_bypasses_kernel_for_certified_symbols() {
+        reset_ffi_pcc_state_for_tests();
+        assert!(ensure_ffi_pcc_verified(), "ffi pcc table should verify");
+
+        let _scope = entrypoint_scope("strlen");
+        let ordering = check_ordering(ApiFamily::StringMemory, true, false);
+        assert_eq!(ordering, PASSTHROUGH_ORDERING);
     }
 
     #[test]

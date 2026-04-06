@@ -4,6 +4,10 @@
 
 use std::ffi::{CStr, c_char, c_int, c_void};
 
+use frankenlibc_abi::htm_fast_path::{
+    HtmTestMode, htm_restore_test_mode_for_tests, htm_swap_abort_code_for_tests,
+    htm_swap_test_mode_for_tests,
+};
 use frankenlibc_abi::string_abi::*;
 use frankenlibc_abi::unistd_abi::strerror_l;
 
@@ -26,6 +30,56 @@ fn memcpy_zero_length_is_noop() {
     let mut dst = [0u8; 8];
     unsafe { memcpy(dst.as_mut_ptr().cast(), src.as_ptr().cast(), 0) };
     assert_eq!(dst, [0u8; 8]);
+}
+
+#[test]
+fn memcpy_htm_fast_path_commits_when_forced() {
+    memcpy_htm_reset_for_tests();
+    let previous_mode = htm_swap_test_mode_for_tests(HtmTestMode::ForceCommit);
+    let before = memcpy_htm_snapshot_for_tests();
+
+    let src = *b"speculative-copy-works";
+    let mut dst = [0u8; 22];
+    let ret = unsafe { memcpy(dst.as_mut_ptr().cast(), src.as_ptr().cast(), src.len()) };
+
+    let after = memcpy_htm_snapshot_for_tests();
+    htm_restore_test_mode_for_tests(previous_mode);
+
+    assert_eq!(ret, dst.as_mut_ptr().cast::<c_void>());
+    assert_eq!(&dst[..src.len()], &src);
+    assert!(
+        after.commits >= before.commits + 1,
+        "memcpy should record an HTM commit before={before:?} after={after:?}"
+    );
+    assert_eq!(after.fallbacks, before.fallbacks);
+}
+
+#[test]
+fn memcpy_htm_abort_falls_back_and_preserves_bytes() {
+    memcpy_htm_reset_for_tests();
+    let previous_mode = htm_swap_test_mode_for_tests(HtmTestMode::ForceAbort);
+    let previous_code = htm_swap_abort_code_for_tests(0x55AA);
+    let before = memcpy_htm_snapshot_for_tests();
+
+    let src = *b"fallback-copy-preserves-data";
+    let mut dst = [0u8; 28];
+    let ret = unsafe { memcpy(dst.as_mut_ptr().cast(), src.as_ptr().cast(), src.len()) };
+
+    let after = memcpy_htm_snapshot_for_tests();
+    htm_restore_test_mode_for_tests(previous_mode);
+    let _ = htm_swap_abort_code_for_tests(previous_code);
+
+    assert_eq!(ret, dst.as_mut_ptr().cast::<c_void>());
+    assert_eq!(&dst[..src.len()], &src);
+    assert!(
+        after.aborts >= before.aborts + 1,
+        "memcpy should record an HTM abort before={before:?} after={after:?}"
+    );
+    assert!(
+        after.fallbacks >= before.fallbacks + 1,
+        "memcpy aborts should take the software fallback before={before:?} after={after:?}"
+    );
+    assert_eq!(after.last_abort_code, 0x55AA);
 }
 
 #[test]

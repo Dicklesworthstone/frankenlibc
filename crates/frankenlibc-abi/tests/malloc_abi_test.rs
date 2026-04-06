@@ -2,10 +2,16 @@
 
 //! Integration tests for malloc introspection ABI entrypoints.
 
+use frankenlibc_abi::htm_fast_path::{
+    HtmTestMode, htm_restore_test_mode_for_tests, htm_swap_abort_code_for_tests,
+    htm_swap_test_mode_for_tests,
+};
 use frankenlibc_abi::malloc_abi::{
-    __libc_freeres, aligned_alloc, calloc, cfree, free, mallinfo, mallinfo2, malloc, malloc_info,
-    malloc_restore_reentry_depth_for_tests, malloc_stats, malloc_swap_reentry_depth_for_tests,
-    malloc_trim, malloc_usable_size, mallopt, memalign, posix_memalign, pvalloc, realloc, valloc,
+    __libc_freeres, aligned_alloc, calloc, cfree, free, mallinfo, mallinfo2, malloc,
+    malloc_htm_reset_for_tests, malloc_htm_snapshot_for_tests, malloc_info,
+    malloc_restore_reentry_depth_for_tests, malloc_stats, malloc_stats_init_for_tests,
+    malloc_swap_reentry_depth_for_tests, malloc_trim, malloc_usable_size, mallopt, memalign,
+    posix_memalign, pvalloc, realloc, valloc,
 };
 use std::ffi::c_void;
 use std::ptr;
@@ -432,6 +438,64 @@ fn test_mallinfo2_balanced_after_concurrent_alloc_free() {
         after.uordblks, before.uordblks,
         "live bytes should return to baseline after balanced ops"
     );
+}
+
+#[test]
+fn test_malloc_stats_htm_fast_path_commits_when_forced() {
+    let _guard = test_lock().lock().expect("test lock poisoned");
+    malloc_stats_init_for_tests();
+    malloc_htm_reset_for_tests();
+
+    let previous_mode = htm_swap_test_mode_for_tests(HtmTestMode::ForceCommit);
+    let before = malloc_htm_snapshot_for_tests();
+
+    let p = unsafe { malloc(4096) };
+    assert!(!p.is_null(), "malloc should succeed with forced HTM commit");
+    unsafe { free(p) };
+
+    let after = malloc_htm_snapshot_for_tests();
+    htm_restore_test_mode_for_tests(previous_mode);
+
+    assert!(
+        after.commits >= before.commits + 1,
+        "malloc/free stats path should commit via HTM before={before:?} after={after:?}"
+    );
+    assert_eq!(
+        after.fallbacks, before.fallbacks,
+        "forced commit mode should not take the fallback path"
+    );
+}
+
+#[test]
+fn test_malloc_stats_htm_abort_falls_back_without_breaking_alloc_free() {
+    let _guard = test_lock().lock().expect("test lock poisoned");
+    malloc_stats_init_for_tests();
+    malloc_htm_reset_for_tests();
+
+    let previous_mode = htm_swap_test_mode_for_tests(HtmTestMode::ForceAbort);
+    let previous_code = htm_swap_abort_code_for_tests(0xABCD);
+    let before = malloc_htm_snapshot_for_tests();
+
+    let p = unsafe { malloc(2048) };
+    assert!(
+        !p.is_null(),
+        "malloc should still succeed after HTM fallback"
+    );
+    unsafe { free(p) };
+
+    let after = malloc_htm_snapshot_for_tests();
+    htm_restore_test_mode_for_tests(previous_mode);
+    let _ = htm_swap_abort_code_for_tests(previous_code);
+
+    assert!(
+        after.aborts >= before.aborts + 1,
+        "malloc/free stats path should record abort fallbacks before={before:?} after={after:?}"
+    );
+    assert!(
+        after.fallbacks >= before.fallbacks + 1,
+        "abort mode should route malloc/free bookkeeping through fallback before={before:?} after={after:?}"
+    );
+    assert_eq!(after.last_abort_code, 0xABCD);
 }
 
 // ---------------------------------------------------------------------------

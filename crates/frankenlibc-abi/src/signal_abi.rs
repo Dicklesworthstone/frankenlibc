@@ -3,8 +3,9 @@
 //! Validates via `frankenlibc_core::signal` helpers, then calls `libc` for
 //! actual signal delivery.
 
-use std::cell::RefCell;
+use std::cell::{RefCell, UnsafeCell};
 use std::ffi::{c_int, c_void};
+use std::mem::MaybeUninit;
 use std::sync::atomic::{AtomicU8, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 
 use frankenlibc_core::errno;
@@ -275,6 +276,33 @@ impl SignalHandlerSlot {
     }
 }
 
+struct DeferredSignalSlot {
+    count: AtomicU32,
+    has_siginfo: AtomicU8,
+    has_ucontext: AtomicU8,
+    siginfo: UnsafeCell<MaybeUninit<libc::siginfo_t>>,
+    ucontext: UnsafeCell<MaybeUninit<libc::ucontext_t>>,
+}
+
+impl DeferredSignalSlot {
+    const fn new() -> Self {
+        Self {
+            count: AtomicU32::new(0),
+            has_siginfo: AtomicU8::new(0),
+            has_ucontext: AtomicU8::new(0),
+            siginfo: UnsafeCell::new(MaybeUninit::uninit()),
+            ucontext: UnsafeCell::new(MaybeUninit::uninit()),
+        }
+    }
+}
+
+struct DeferredSignalReplay {
+    signum: c_int,
+    count: u32,
+    siginfo: Option<libc::siginfo_t>,
+    ucontext: Option<libc::ucontext_t>,
+}
+
 static SIGNAL_HANDLER_SLOTS: [SignalHandlerSlot; MAX_TRACKED_SIGNAL + 1] =
     [const { SignalHandlerSlot::new() }; MAX_TRACKED_SIGNAL + 1];
 
@@ -282,8 +310,8 @@ thread_local! {
     static SIGNAL_CRITICAL_DEPTH: AtomicU32 = const { AtomicU32::new(0) };
     static SIGNAL_CLASSIFICATION: AtomicU8 =
         const { AtomicU8::new(SignalSafetyClassification::Safe as u8) };
-    static DEFERRED_SIGNALS: [AtomicU32; MAX_TRACKED_SIGNAL + 1] =
-        const { [const { AtomicU32::new(0) }; MAX_TRACKED_SIGNAL + 1] };
+    static DEFERRED_SIGNALS: [DeferredSignalSlot; MAX_TRACKED_SIGNAL + 1] =
+        const { [const { DeferredSignalSlot::new() }; MAX_TRACKED_SIGNAL + 1] };
     static SIGNAL_HJI_CONTROLLER: RefCell<HjiReachabilityController> =
         RefCell::new(HjiReachabilityController::new());
 }
@@ -335,23 +363,73 @@ fn handler_dispatch_classification(kind: SignalCriticalSectionKind) -> SignalSaf
     }
 }
 
-fn queue_deferred_signal(signum: c_int) {
+fn queue_deferred_signal(signum: c_int, info: *mut libc::siginfo_t, context: *mut c_void) {
     if !(1..=MAX_TRACKED_SIGNAL as c_int).contains(&signum) {
         return;
     }
     DEFERRED_SIGNALS.with(|pending| {
-        pending[signum as usize].fetch_add(1, Ordering::Relaxed);
+        let slot = &pending[signum as usize];
+        if !info.is_null() {
+            // SAFETY: the kernel owns `info` for the duration of the signal
+            // trampoline. We snapshot it into thread-local storage before
+            // returning so deferred replay can hand the user handler the
+            // original metadata instead of `NULL`.
+            unsafe {
+                std::ptr::copy_nonoverlapping(info, (*slot.siginfo.get()).as_mut_ptr(), 1);
+            }
+            slot.has_siginfo.store(1, Ordering::Relaxed);
+        } else {
+            slot.has_siginfo.store(0, Ordering::Relaxed);
+        }
+        if !context.is_null() {
+            // SAFETY: Linux passes a `ucontext_t` behind the opaque third
+            // handler argument. We snapshot that frame while it is live so
+            // deferred replay preserves the kernel delivery context.
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    context.cast::<libc::ucontext_t>(),
+                    (*slot.ucontext.get()).as_mut_ptr(),
+                    1,
+                );
+            }
+            slot.has_ucontext.store(1, Ordering::Relaxed);
+        } else {
+            slot.has_ucontext.store(0, Ordering::Relaxed);
+        }
+        slot.count.fetch_add(1, Ordering::Relaxed);
     });
     SIGNAL_DEFERRED_DELIVERIES.fetch_add(1, Ordering::Relaxed);
 }
 
-fn take_deferred_signals() -> Vec<(c_int, u32)> {
+fn take_deferred_signals() -> Vec<DeferredSignalReplay> {
     DEFERRED_SIGNALS.with(|pending| {
         let mut out = Vec::new();
         for signum in 1..=MAX_TRACKED_SIGNAL as c_int {
-            let count = pending[signum as usize].swap(0, Ordering::Relaxed);
+            let slot = &pending[signum as usize];
+            let count = slot.count.swap(0, Ordering::Relaxed);
             if count != 0 {
-                out.push((signum, count));
+                let siginfo = if slot.has_siginfo.swap(0, Ordering::Relaxed) != 0 {
+                    // SAFETY: the slot was populated before `has_siginfo` was
+                    // set, and swapping the flag back to zero gives the caller
+                    // exclusive ownership of this snapshot.
+                    Some(unsafe { (*slot.siginfo.get()).assume_init_read() })
+                } else {
+                    None
+                };
+                let ucontext = if slot.has_ucontext.swap(0, Ordering::Relaxed) != 0 {
+                    // SAFETY: the slot was populated before `has_ucontext` was
+                    // set, and swapping the flag back to zero gives the caller
+                    // exclusive ownership of this snapshot.
+                    Some(unsafe { (*slot.ucontext.get()).assume_init_read() })
+                } else {
+                    None
+                };
+                out.push(DeferredSignalReplay {
+                    signum,
+                    count,
+                    siginfo,
+                    ucontext,
+                });
             }
         }
         out
@@ -389,7 +467,7 @@ unsafe extern "C" fn signal_handler_trampoline(signum: c_int) {
     if SIGNAL_CRITICAL_DEPTH.with(|value| value.load(Ordering::Relaxed)) > 0
         && !matches!(classification, SignalSafetyClassification::Safe)
     {
-        queue_deferred_signal(signum);
+        queue_deferred_signal(signum, std::ptr::null_mut(), std::ptr::null_mut());
         return;
     }
     SIGNAL_IMMEDIATE_DELIVERIES.fetch_add(1, Ordering::Relaxed);
@@ -407,7 +485,7 @@ unsafe extern "C" fn signal_siginfo_trampoline(
     if SIGNAL_CRITICAL_DEPTH.with(|value| value.load(Ordering::Relaxed)) > 0
         && !matches!(classification, SignalSafetyClassification::Safe)
     {
-        queue_deferred_signal(signum);
+        queue_deferred_signal(signum, info, context);
         return;
     }
     SIGNAL_IMMEDIATE_DELIVERIES.fetch_add(1, Ordering::Relaxed);
@@ -463,12 +541,32 @@ pub fn exit_signal_critical_section() {
     }
     SIGNAL_CLASSIFICATION
         .with(|value| value.store(SignalSafetyClassification::Safe.as_u8(), Ordering::Relaxed));
-    for (signum, count) in take_deferred_signals() {
-        for _ in 0..count {
+    for deferred in take_deferred_signals() {
+        for _ in 0..deferred.count {
             SIGNAL_FLUSHED_DELIVERIES.fetch_add(1, Ordering::Relaxed);
+            let mut siginfo = deferred.siginfo.as_ref().map(|snapshot| {
+                // SAFETY: `siginfo_t` is plain kernel data; copying the
+                // snapshot preserves the original deferred-delivery view for
+                // each replayed handler invocation.
+                unsafe { std::ptr::read(snapshot) }
+            });
+            let mut ucontext = deferred.ucontext.as_ref().map(|snapshot| {
+                // SAFETY: `ucontext_t` is a kernel snapshot captured at
+                // delivery time; copying it lets each replayed invocation
+                // see a stable context value.
+                unsafe { std::ptr::read(snapshot) }
+            });
             // SAFETY: deferred delivery replays the previously registered handler on the same thread.
             unsafe {
-                dispatch_registered_handler(signum, std::ptr::null_mut(), std::ptr::null_mut())
+                dispatch_registered_handler(
+                    deferred.signum,
+                    siginfo
+                        .as_mut()
+                        .map_or(std::ptr::null_mut(), |info| info as *mut libc::siginfo_t),
+                    ucontext.as_mut().map_or(std::ptr::null_mut(), |context| {
+                        context as *mut libc::ucontext_t as *mut c_void
+                    }),
+                )
             };
         }
     }

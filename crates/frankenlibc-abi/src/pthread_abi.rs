@@ -38,6 +38,7 @@ use frankenlibc_core::pthread::{
 use frankenlibc_membrane::check_oracle::CheckStage;
 use frankenlibc_membrane::runtime_math::ApiFamily;
 
+use crate::htm_fast_path::{HtmSite, HtmSiteSnapshot};
 use crate::malloc_abi::known_remaining;
 use crate::runtime_policy;
 
@@ -93,6 +94,8 @@ static MUTEX_SPIN_BRANCHES: AtomicU64 = AtomicU64::new(0);
 static MUTEX_WAIT_BRANCHES: AtomicU64 = AtomicU64::new(0);
 static MUTEX_WAKE_BRANCHES: AtomicU64 = AtomicU64::new(0);
 static PTHREAD_CONCURRENCY_LEVEL: AtomicI32 = AtomicI32::new(0);
+#[allow(dead_code)]
+static PTHREAD_MUTEX_HTM_SITE: HtmSite = HtmSite::new("pthread_mutex_lock");
 
 /// When true, mutex operations skip host delegation and use the native futex
 /// implementation directly. Set by [`pthread_mutex_reset_state_for_tests`] so
@@ -1560,6 +1563,20 @@ fn futex_wake_private(word: &AtomicI32, count: i32) -> c_int {
 }
 
 fn futex_lock_normal(word: &AtomicI32) -> c_int {
+    if matches!(
+        PTHREAD_MUTEX_HTM_SITE.run(|| {
+            if word.load(Ordering::Acquire) == 0 {
+                word.store(1, Ordering::Release);
+                true
+            } else {
+                false
+            }
+        }),
+        Ok(true)
+    ) {
+        return 0;
+    }
+
     if word
         .compare_exchange(0, 1, Ordering::Acquire, Ordering::Relaxed)
         .is_ok()
@@ -1846,6 +1863,7 @@ fn mutex_branch_counters() -> (u64, u64, u64) {
 #[doc(hidden)]
 pub fn pthread_mutex_reset_state_for_tests() {
     reset_mutex_registry_for_tests();
+    PTHREAD_MUTEX_HTM_SITE.reset_for_tests();
 }
 
 /// Test hook: force mutex/condvar lifecycle operations onto the native path.
@@ -1873,6 +1891,13 @@ pub fn pthread_mutex_restore_for_tests(previous: bool) {
 #[must_use]
 pub fn pthread_mutex_branch_counters_for_tests() -> (u64, u64, u64) {
     mutex_branch_counters()
+}
+
+/// Test hook: snapshot HTM controller state for the native mutex fast path.
+#[doc(hidden)]
+#[must_use]
+pub fn pthread_mutex_htm_snapshot_for_tests() -> HtmSiteSnapshot {
+    PTHREAD_MUTEX_HTM_SITE.snapshot()
 }
 
 /// Test hook: force thread lifecycle operations (create/join/detach/self/equal)

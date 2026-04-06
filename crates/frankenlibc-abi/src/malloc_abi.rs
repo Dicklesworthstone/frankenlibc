@@ -8,19 +8,23 @@
 //! In test mode, this module is suppressed to avoid shadowing the system allocator
 //! (which would cause infinite recursion in the test binary itself).
 
-use std::cell::Cell;
+use std::cell::{Cell, UnsafeCell};
 use std::ffi::{c_int, c_void};
+use std::fmt::Write as _;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 
 use frankenlibc_core::errno::{EINVAL, ENOMEM};
+use frankenlibc_membrane::MEMBRANE_SCHEMA_VERSION;
 use frankenlibc_membrane::arena::{AllocationArena, FreeResult};
 use frankenlibc_membrane::check_oracle::CheckStage;
 use frankenlibc_membrane::galois::PointerAbstraction;
 use frankenlibc_membrane::heal::{HealingAction, global_healing_policy};
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
+use frankenlibc_membrane::util::now_utc_iso_like;
 
 use crate::errno_abi::set_abi_errno;
+use crate::htm_fast_path::HtmSite;
 use crate::runtime_policy;
 use crate::signal_abi::{SignalCriticalSectionKind, enter_signal_critical_section};
 
@@ -35,6 +39,14 @@ static HOST_CALLOC_FN: OnceLock<usize> = OnceLock::new();
 static HOST_REALLOC_FN: OnceLock<usize> = OnceLock::new();
 static HOST_FREE_FN: OnceLock<usize> = OnceLock::new();
 static HOST_MEMALIGN_FN: OnceLock<usize> = OnceLock::new();
+static HOST_ALLOCATOR_RAW_FALLBACK_HITS: AtomicU64 = AtomicU64::new(0);
+static HOST_ALLOCATOR_DLVSYM_FALLBACK_HITS: AtomicU64 = AtomicU64::new(0);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HostAllocatorResolutionMetrics {
+    pub raw_host_fallback_hits: u64,
+    pub direct_dlvsym_fallback_hits: u64,
+}
 
 // ---------------------------------------------------------------------------
 // Pre-TLS bootstrap bump allocator
@@ -264,16 +276,30 @@ host_fn_accessor!(host_memalign_fn, HOST_MEMALIGN_FN, HostMemalignFn);
 /// Resolve and cache host allocator symbols.
 /// Called from __libc_start_main AFTER _dl_init, when dlvsym is safe.
 pub(crate) fn prewarm_host_allocator_symbols() {
+    crate::host_resolve::bootstrap_host_symbols();
     // SAFETY: called after dynamic linker init; dlvsym_next is safe.
     unsafe {
-        let _ = HOST_MALLOC_FN.get_or_init(|| resolve_host_allocator_symbol(b"malloc\0") as usize);
-        let _ = HOST_CALLOC_FN.get_or_init(|| resolve_host_allocator_symbol(b"calloc\0") as usize);
-        let _ =
-            HOST_REALLOC_FN.get_or_init(|| resolve_host_allocator_symbol(b"realloc\0") as usize);
-        let _ = HOST_FREE_FN.get_or_init(|| resolve_host_allocator_symbol(b"free\0") as usize);
-        let _ =
-            HOST_MEMALIGN_FN.get_or_init(|| resolve_host_allocator_symbol(b"memalign\0") as usize);
+        let malloc_ptr = crate::host_resolve::host_malloc_raw()
+            .map(|host_fn| host_fn as usize)
+            .unwrap_or_else(|| resolve_host_allocator_symbol(b"malloc\0") as usize);
+        let calloc_ptr = crate::host_resolve::host_calloc_raw()
+            .map(|host_fn| host_fn as usize)
+            .unwrap_or_else(|| resolve_host_allocator_symbol(b"calloc\0") as usize);
+        let realloc_ptr = crate::host_resolve::host_realloc_raw()
+            .map(|host_fn| host_fn as usize)
+            .unwrap_or_else(|| resolve_host_allocator_symbol(b"realloc\0") as usize);
+        let free_ptr = crate::host_resolve::host_free_raw()
+            .map(|host_fn| host_fn as usize)
+            .unwrap_or_else(|| resolve_host_allocator_symbol(b"free\0") as usize);
+        let memalign_ptr = resolve_host_allocator_symbol(b"memalign\0") as usize;
+
+        let _ = HOST_MALLOC_FN.get_or_init(|| malloc_ptr);
+        let _ = HOST_CALLOC_FN.get_or_init(|| calloc_ptr);
+        let _ = HOST_REALLOC_FN.get_or_init(|| realloc_ptr);
+        let _ = HOST_FREE_FN.get_or_init(|| free_ptr);
+        let _ = HOST_MEMALIGN_FN.get_or_init(|| memalign_ptr);
     }
+    let _ = GLOBAL_ALLOC_STATS.get_or_init(FlatCombiningStats::new);
 }
 
 #[doc(hidden)]
@@ -298,6 +324,36 @@ pub fn host_allocator_symbols_prewarmed_for_test() -> bool {
     malloc_ptr != 0 && calloc_ptr != 0 && realloc_ptr != 0 && free_ptr != 0
 }
 
+#[doc(hidden)]
+pub fn reset_host_allocator_resolution_metrics_for_test() {
+    HOST_ALLOCATOR_RAW_FALLBACK_HITS.store(0, Ordering::Relaxed);
+    HOST_ALLOCATOR_DLVSYM_FALLBACK_HITS.store(0, Ordering::Relaxed);
+}
+
+#[doc(hidden)]
+pub fn host_allocator_resolution_metrics_for_test() -> HostAllocatorResolutionMetrics {
+    HostAllocatorResolutionMetrics {
+        raw_host_fallback_hits: HOST_ALLOCATOR_RAW_FALLBACK_HITS.load(Ordering::Relaxed),
+        direct_dlvsym_fallback_hits: HOST_ALLOCATOR_DLVSYM_FALLBACK_HITS.load(Ordering::Relaxed),
+    }
+}
+
+#[doc(hidden)]
+pub fn malloc_stats_init_for_tests() {
+    let _ = GLOBAL_ALLOC_STATS.get_or_init(FlatCombiningStats::new);
+}
+
+#[doc(hidden)]
+pub fn malloc_htm_reset_for_tests() {
+    MALLOC_STATS_HTM_SITE.reset_for_tests();
+}
+
+#[doc(hidden)]
+#[must_use]
+pub fn malloc_htm_snapshot_for_tests() -> crate::htm_fast_path::HtmSiteSnapshot {
+    MALLOC_STATS_HTM_SITE.snapshot()
+}
+
 #[inline]
 unsafe fn native_libc_malloc(size: usize) -> *mut c_void {
     if NATIVE_MALLOC_REENTRY
@@ -309,8 +365,10 @@ unsafe fn native_libc_malloc(size: usize) -> *mut c_void {
     let ptr = if let Some(&ptr) = HOST_MALLOC_FN.get() {
         ptr
     } else if let Some(raw_host_malloc) = crate::host_resolve::host_malloc_raw() {
+        HOST_ALLOCATOR_RAW_FALLBACK_HITS.fetch_add(1, Ordering::Relaxed);
         raw_host_malloc as usize
     } else {
+        HOST_ALLOCATOR_DLVSYM_FALLBACK_HITS.fetch_add(1, Ordering::Relaxed);
         let resolved = unsafe { resolve_host_allocator_symbol(b"malloc\0") as usize };
         let _ = HOST_MALLOC_FN.set(resolved);
         resolved
@@ -341,8 +399,10 @@ unsafe fn native_libc_calloc(nmemb: usize, size: usize) -> *mut c_void {
     let ptr = if let Some(&ptr) = HOST_CALLOC_FN.get() {
         ptr
     } else if let Some(raw_host_calloc) = crate::host_resolve::host_calloc_raw() {
+        HOST_ALLOCATOR_RAW_FALLBACK_HITS.fetch_add(1, Ordering::Relaxed);
         raw_host_calloc as usize
     } else {
+        HOST_ALLOCATOR_DLVSYM_FALLBACK_HITS.fetch_add(1, Ordering::Relaxed);
         let resolved = unsafe { resolve_host_allocator_symbol(b"calloc\0") as usize };
         let _ = HOST_CALLOC_FN.set(resolved);
         resolved
@@ -387,8 +447,10 @@ unsafe fn native_libc_realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
     let host_ptr = if let Some(&host_ptr) = HOST_REALLOC_FN.get() {
         host_ptr
     } else if let Some(raw_host_realloc) = crate::host_resolve::host_realloc_raw() {
+        HOST_ALLOCATOR_RAW_FALLBACK_HITS.fetch_add(1, Ordering::Relaxed);
         raw_host_realloc as usize
     } else {
+        HOST_ALLOCATOR_DLVSYM_FALLBACK_HITS.fetch_add(1, Ordering::Relaxed);
         let resolved = unsafe { resolve_host_allocator_symbol(b"realloc\0") as usize };
         let _ = HOST_REALLOC_FN.set(resolved);
         resolved
@@ -426,8 +488,10 @@ unsafe fn native_libc_free(ptr: *mut c_void) {
     let host_ptr = if let Some(&host_ptr) = HOST_FREE_FN.get() {
         host_ptr
     } else if let Some(raw_host_free) = crate::host_resolve::host_free_raw() {
+        HOST_ALLOCATOR_RAW_FALLBACK_HITS.fetch_add(1, Ordering::Relaxed);
         raw_host_free as usize
     } else {
+        HOST_ALLOCATOR_DLVSYM_FALLBACK_HITS.fetch_add(1, Ordering::Relaxed);
         let resolved = unsafe { resolve_host_allocator_symbol(b"free\0") as usize };
         let _ = HOST_FREE_FN.set(resolved);
         resolved
@@ -497,9 +561,12 @@ const FC_OP_NONE: usize = 0;
 const FC_OP_ALLOC: usize = 1;
 const FC_OP_FREE: usize = 2;
 const FC_OP_SNAPSHOT: usize = 3;
+static MALLOC_STATS_HTM_SITE: HtmSite = HtmSite::new("malloc_stats_combiner");
 
 #[derive(Debug, Clone, Copy, Default)]
 struct MallocStatsSnapshot {
+    allocation_events: usize,
+    free_events: usize,
     total_allocated: usize,
     total_freed: usize,
     active_allocations: usize,
@@ -509,6 +576,8 @@ struct MallocStatsSnapshot {
 
 #[derive(Debug, Clone, Copy)]
 struct MallocStatsState {
+    allocation_events: usize,
+    free_events: usize,
     total_allocated: usize,
     total_freed: usize,
     active_allocations: usize,
@@ -520,6 +589,8 @@ struct MallocStatsState {
 impl MallocStatsState {
     const fn new() -> Self {
         Self {
+            allocation_events: 0,
+            free_events: 0,
             total_allocated: 0,
             total_freed: 0,
             active_allocations: 0,
@@ -531,6 +602,8 @@ impl MallocStatsState {
 
     const fn snapshot(self) -> MallocStatsSnapshot {
         MallocStatsSnapshot {
+            allocation_events: self.allocation_events,
+            free_events: self.free_events,
             total_allocated: self.total_allocated,
             total_freed: self.total_freed,
             active_allocations: self.active_allocations,
@@ -549,6 +622,8 @@ struct PublicationSlot {
     bin: AtomicUsize,
     active: AtomicBool,
     age: AtomicU32,
+    result_allocation_events: AtomicUsize,
+    result_free_events: AtomicUsize,
     result_total_allocated: AtomicUsize,
     result_total_freed: AtomicUsize,
     result_active_allocations: AtomicUsize,
@@ -566,6 +641,8 @@ impl PublicationSlot {
             bin: AtomicUsize::new(0),
             active: AtomicBool::new(false),
             age: AtomicU32::new(0),
+            result_allocation_events: AtomicUsize::new(0),
+            result_free_events: AtomicUsize::new(0),
             result_total_allocated: AtomicUsize::new(0),
             result_total_freed: AtomicUsize::new(0),
             result_active_allocations: AtomicUsize::new(0),
@@ -579,8 +656,12 @@ struct FlatCombiningStats {
     combiner_lock: AtomicBool,
     next_slot: AtomicUsize,
     slots: [PublicationSlot; FLAT_COMBINER_SLOT_COUNT],
-    state: std::sync::Mutex<MallocStatsState>,
+    state: UnsafeCell<MallocStatsState>,
 }
+
+// SAFETY: access to `state` is serialized by `combiner_lock` on the fallback
+// path or by HTM conflict detection on the optimistic path.
+unsafe impl Sync for FlatCombiningStats {}
 
 impl FlatCombiningStats {
     #[allow(dead_code)]
@@ -589,7 +670,7 @@ impl FlatCombiningStats {
             combiner_lock: AtomicBool::new(false),
             next_slot: AtomicUsize::new(0),
             slots: [const { PublicationSlot::new() }; FLAT_COMBINER_SLOT_COUNT],
-            state: std::sync::Mutex::new(MallocStatsState::new()),
+            state: UnsafeCell::new(MallocStatsState::new()),
         }
     }
 
@@ -635,6 +716,8 @@ impl FlatCombiningStats {
         }
 
         MallocStatsSnapshot {
+            allocation_events: slot.result_allocation_events.load(Ordering::Acquire),
+            free_events: slot.result_free_events.load(Ordering::Acquire),
             total_allocated: slot.result_total_allocated.load(Ordering::Acquire),
             total_freed: slot.result_total_freed.load(Ordering::Acquire),
             active_allocations: slot.result_active_allocations.load(Ordering::Acquire),
@@ -644,6 +727,10 @@ impl FlatCombiningStats {
     }
 
     fn try_combine_round(&self) {
+        if self.try_combine_round_htm() {
+            return;
+        }
+
         if self
             .combiner_lock
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
@@ -652,11 +739,31 @@ impl FlatCombiningStats {
             return;
         }
 
-        let mut guard = match self.state.lock() {
-            Ok(guard) => guard,
-            Err(poisoned) => poisoned.into_inner(),
-        };
+        // SAFETY: `combiner_lock` is held exclusively for this combining round.
+        let state = unsafe { &mut *self.state.get() };
+        self.combine_with_state(state);
+        self.combiner_lock.store(false, Ordering::Release);
+    }
 
+    fn try_combine_round_htm(&self) -> bool {
+        matches!(
+            MALLOC_STATS_HTM_SITE.run(|| {
+                if self.combiner_lock.load(Ordering::Acquire) {
+                    return false;
+                }
+
+                // SAFETY: speculative mutation is safe because any conflicting
+                // fallback combiner mutates either `combiner_lock` or `state`,
+                // which forces the transaction to abort before commit.
+                let state = unsafe { &mut *self.state.get() };
+                self.combine_with_state(state);
+                true
+            }),
+            Ok(true)
+        )
+    }
+
+    fn combine_with_state(&self, state: &mut MallocStatsState) {
         for slot in &self.slots {
             // Capture req_id before swap to ensure we acknowledge exactly the
             // request we are about to process (or NONE if it hasn't arrived).
@@ -671,9 +778,13 @@ impl FlatCombiningStats {
                 .bin
                 .load(Ordering::Relaxed)
                 .min(MALLOC_STATS_BIN_COUNT - 1);
-            Self::apply_locked(&mut guard, op, size, bin);
-            let snapshot = guard.snapshot();
+            Self::apply_locked(state, op, size, bin);
+            let snapshot = state.snapshot();
 
+            slot.result_allocation_events
+                .store(snapshot.allocation_events, Ordering::Release);
+            slot.result_free_events
+                .store(snapshot.free_events, Ordering::Release);
             slot.result_total_allocated
                 .store(snapshot.total_allocated, Ordering::Release);
             slot.result_total_freed
@@ -687,13 +798,12 @@ impl FlatCombiningStats {
 
             slot.completed_id.store(req_id, Ordering::Release);
         }
-
-        self.combiner_lock.store(false, Ordering::Release);
     }
 
     fn apply_locked(state: &mut MallocStatsState, op: usize, size: usize, bin: usize) {
         match op {
             FC_OP_ALLOC => {
+                state.allocation_events = state.allocation_events.saturating_add(1);
                 state.total_allocated = state.total_allocated.saturating_add(size);
                 state.active_allocations = state.active_allocations.saturating_add(1);
                 state.live_bytes = state.live_bytes.saturating_add(size);
@@ -701,6 +811,7 @@ impl FlatCombiningStats {
                 state.per_size_class[bin] = state.per_size_class[bin].saturating_add(1);
             }
             FC_OP_FREE => {
+                state.free_events = state.free_events.saturating_add(1);
                 state.total_freed = state.total_freed.saturating_add(size);
                 state.active_allocations = state.active_allocations.saturating_sub(1);
                 state.live_bytes = state.live_bytes.saturating_sub(size);
@@ -766,6 +877,56 @@ fn snapshot_alloc_stats() -> MallocStatsSnapshot {
     global_alloc_stats()
         .map(|s| s.snapshot())
         .unwrap_or_default()
+}
+
+fn sanitize_trace_component(component: &str) -> String {
+    let sanitized: String = component
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.') {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    if sanitized.is_empty() {
+        String::from("unknown")
+    } else {
+        sanitized
+    }
+}
+
+fn export_alloc_stats_snapshot_jsonl_from_snapshot(
+    snapshot: MallocStatsSnapshot,
+    bead_id: &str,
+    run_id: &str,
+    mode: &str,
+) -> String {
+    let bead = sanitize_trace_component(bead_id);
+    let run = sanitize_trace_component(run_id);
+    let mode = sanitize_trace_component(mode);
+    let timestamp = now_utc_iso_like();
+    let trace_id = format!("allocator::metrics::{bead}::{run}");
+    let mut out = String::with_capacity(768);
+    let _ = writeln!(
+        &mut out,
+        "{{\"timestamp\":\"{timestamp}\",\"trace_id\":\"{trace_id}\",\"bead_id\":\"{bead}\",\"scenario_id\":\"{run}\",\"decision_id\":0,\"schema_version\":\"{}\",\"level\":\"info\",\"event\":\"allocator_metrics_snapshot\",\"controller_id\":\"malloc_stats.v1\",\"mode\":\"{mode}\",\"api_family\":\"allocator\",\"symbol\":\"malloc::stats\",\"decision_path\":\"allocator::stats::snapshot\",\"decision_action\":\"observe\",\"outcome\":\"snapshot\",\"healing_action\":null,\"errno\":0,\"latency_ns\":0,\"allocations_total\":{},\"frees_total\":{},\"active_allocations\":{},\"bytes_allocated\":{},\"total_allocated_bytes\":{},\"total_freed_bytes\":{},\"peak_usage_bytes\":{},\"artifact_refs\":[\"crates/frankenlibc-abi/src/malloc_abi.rs\"]}}",
+        MEMBRANE_SCHEMA_VERSION,
+        snapshot.allocation_events,
+        snapshot.free_events,
+        snapshot.active_allocations,
+        snapshot.live_bytes,
+        snapshot.total_allocated,
+        snapshot.total_freed,
+        snapshot.peak_usage,
+    );
+    out
+}
+
+#[must_use]
+pub fn export_alloc_stats_snapshot_jsonl(bead_id: &str, run_id: &str, mode: &str) -> String {
+    export_alloc_stats_snapshot_jsonl_from_snapshot(snapshot_alloc_stats(), bead_id, run_id, mode)
 }
 
 // Native-fallback allocation tracking.
@@ -1001,6 +1162,9 @@ fn record_allocator_stage_outcome(
 /// Returns `None` if the pipeline is not yet initialized.
 #[must_use]
 pub(crate) fn validate_ptr(addr: usize) -> Option<PointerAbstraction> {
+    if runtime_policy::proof_carried_pointer_validation_active() {
+        return Some(PointerAbstraction::unknown(addr));
+    }
     let pipeline = crate::membrane_state::try_global_pipeline()?;
     pipeline.validate(addr).abstraction()
 }
@@ -1010,6 +1174,9 @@ pub(crate) fn validate_ptr(addr: usize) -> Option<PointerAbstraction> {
 /// Returns `false` if the pipeline is not yet initialized.
 #[must_use]
 pub(crate) fn check_ownership(addr: usize) -> bool {
+    if runtime_policy::proof_carried_pointer_validation_active() {
+        return false;
+    }
     crate::membrane_state::try_global_pipeline()
         .map(|p| p.check_ownership(addr))
         .unwrap_or(false)
@@ -2167,3 +2334,43 @@ fn page_size() -> usize {
 /// `__libc_freeres` — release all libc internal resources (no-op).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __libc_freeres() {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn allocator_metrics_snapshot_jsonl_exports_dashboard_fields() {
+        let row: serde_json::Value = serde_json::from_str(
+            export_alloc_stats_snapshot_jsonl_from_snapshot(
+                MallocStatsSnapshot {
+                    allocation_events: 9,
+                    free_events: 4,
+                    total_allocated: 16_384,
+                    total_freed: 6_144,
+                    active_allocations: 5,
+                    live_bytes: 10_240,
+                    peak_usage: 12_288,
+                },
+                "bd-282v",
+                "smoke",
+                "hardened",
+            )
+            .trim(),
+        )
+        .expect("allocator metrics snapshot should parse");
+
+        assert_eq!(row["event"].as_str(), Some("allocator_metrics_snapshot"));
+        assert_eq!(row["api_family"].as_str(), Some("allocator"));
+        assert_eq!(row["symbol"].as_str(), Some("malloc::stats"));
+        assert_eq!(row["allocations_total"].as_u64(), Some(9));
+        assert_eq!(row["frees_total"].as_u64(), Some(4));
+        assert_eq!(row["active_allocations"].as_u64(), Some(5));
+        assert_eq!(row["bytes_allocated"].as_u64(), Some(10_240));
+        assert_eq!(row["total_allocated_bytes"].as_u64(), Some(16_384));
+        assert_eq!(row["total_freed_bytes"].as_u64(), Some(6_144));
+        assert_eq!(row["peak_usage_bytes"].as_u64(), Some(12_288));
+        assert_eq!(row["bead_id"].as_str(), Some("bd-282v"));
+        assert_eq!(row["scenario_id"].as_str(), Some("smoke"));
+    }
+}

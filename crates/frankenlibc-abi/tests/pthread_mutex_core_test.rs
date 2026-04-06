@@ -4,10 +4,13 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Barrier};
 use std::time::Duration;
 
+use frankenlibc_abi::htm_fast_path::{
+    HtmTestMode, htm_restore_test_mode_for_tests, htm_swap_test_mode_for_tests,
+};
 use frankenlibc_abi::pthread_abi::{
-    pthread_mutex_branch_counters_for_tests, pthread_mutex_destroy, pthread_mutex_init,
-    pthread_mutex_lock, pthread_mutex_reset_state_for_tests, pthread_mutex_trylock,
-    pthread_mutex_unlock,
+    pthread_mutex_branch_counters_for_tests, pthread_mutex_destroy,
+    pthread_mutex_htm_snapshot_for_tests, pthread_mutex_init, pthread_mutex_lock,
+    pthread_mutex_reset_state_for_tests, pthread_mutex_trylock, pthread_mutex_unlock,
 };
 
 static TEST_GUARD_HELD: AtomicBool = AtomicBool::new(false);
@@ -76,6 +79,33 @@ fn futex_mutex_roundtrip_and_trylock_busy() {
         assert_eq!(pthread_mutex_destroy(mutex), 0);
         free_mutex_ptr(mutex);
     }
+}
+
+#[test]
+fn futex_mutex_htm_fast_path_commits_when_forced() {
+    let _guard = acquire_test_guard();
+    pthread_mutex_reset_state_for_tests();
+
+    let previous_mode = htm_swap_test_mode_for_tests(HtmTestMode::ForceCommit);
+    let before = pthread_mutex_htm_snapshot_for_tests();
+    let mutex = alloc_mutex_ptr();
+
+    unsafe {
+        assert_eq!(pthread_mutex_init(mutex, std::ptr::null()), 0);
+        assert_eq!(pthread_mutex_lock(mutex), 0);
+        assert_eq!(pthread_mutex_unlock(mutex), 0);
+        assert_eq!(pthread_mutex_destroy(mutex), 0);
+        free_mutex_ptr(mutex);
+    }
+
+    let after = pthread_mutex_htm_snapshot_for_tests();
+    htm_restore_test_mode_for_tests(previous_mode);
+
+    assert!(
+        after.commits >= before.commits + 1,
+        "pthread_mutex_lock should record an HTM commit before={before:?} after={after:?}"
+    );
+    assert_eq!(after.fallbacks, before.fallbacks);
 }
 
 #[test]

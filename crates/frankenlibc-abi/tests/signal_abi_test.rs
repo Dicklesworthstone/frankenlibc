@@ -29,6 +29,15 @@ use frankenlibc_core::errno;
 static TEST_GUARD: Mutex<()> = Mutex::new(());
 static DEFERRED_HANDLER_COUNT: AtomicUsize = AtomicUsize::new(0);
 static LIVE_HANDLER_COUNT: AtomicUsize = AtomicUsize::new(0);
+static SIGINFO_HANDLER_COUNT: AtomicUsize = AtomicUsize::new(0);
+static LAST_SIGINFO_NONNULL: AtomicUsize = AtomicUsize::new(0);
+static LAST_UCONTEXT_NONNULL: AtomicUsize = AtomicUsize::new(0);
+static LAST_SIGINFO_CODE: AtomicUsize = AtomicUsize::new(0);
+static LAST_SIGINFO_SIGNO: AtomicUsize = AtomicUsize::new(0);
+static LAST_SIGINFO_VALUE_BITS: AtomicUsize = AtomicUsize::new(0);
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+const SA_RESTORER_FLAG: c_int = 0x04000000;
 
 unsafe extern "C" fn noop_handler(_: c_int) {}
 unsafe extern "C" fn counting_handler(_: c_int) {
@@ -36,6 +45,25 @@ unsafe extern "C" fn counting_handler(_: c_int) {
 }
 unsafe extern "C" fn live_counting_handler(_: c_int) {
     LIVE_HANDLER_COUNT.fetch_add(1, Ordering::Relaxed);
+}
+unsafe extern "C" fn siginfo_counting_handler(
+    signum: c_int,
+    info: *mut libc::siginfo_t,
+    context: *mut std::ffi::c_void,
+) {
+    SIGINFO_HANDLER_COUNT.fetch_add(1, Ordering::Relaxed);
+    LAST_SIGINFO_SIGNO.store(signum as usize, Ordering::Relaxed);
+    LAST_SIGINFO_NONNULL.store((!info.is_null()) as usize, Ordering::Relaxed);
+    LAST_UCONTEXT_NONNULL.store((!context.is_null()) as usize, Ordering::Relaxed);
+    if !info.is_null() {
+        // SAFETY: the kernel or deferred replay hands the handler a valid
+        // `siginfo_t` snapshot for the current delivery.
+        let info_ref = unsafe { &*info };
+        let value = unsafe { info_ref.si_value() };
+        LAST_SIGINFO_CODE.store(info_ref.si_code as usize, Ordering::Relaxed);
+        LAST_SIGINFO_SIGNO.store(info_ref.si_signo as usize, Ordering::Relaxed);
+        LAST_SIGINFO_VALUE_BITS.store(value.sival_ptr as usize, Ordering::Relaxed);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -493,8 +521,7 @@ fn signal_delivery_remains_immediate_for_safe_classification() {
 }
 
 #[test]
-#[ignore = "async signal storm prototype currently segfaults under real pthread_kill delivery"]
-fn malloc_storm_defers_reentrant_signal_handler_until_safe_exit() {
+fn malloc_storm_prewarm_prevents_lazy_host_allocator_resolution_during_live_signal_delivery() {
     let _guard = TEST_GUARD
         .lock()
         .unwrap_or_else(|poison| poison.into_inner());
@@ -505,6 +532,7 @@ fn malloc_storm_defers_reentrant_signal_handler_until_safe_exit() {
         frankenlibc_abi::malloc_abi::host_allocator_symbols_prewarmed_for_test(),
         "host allocator delegates must prewarm before live signal delivery begins"
     );
+    frankenlibc_abi::malloc_abi::reset_host_allocator_resolution_metrics_for_test();
 
     let mut old: libc::sigaction = unsafe { std::mem::zeroed() };
     let rc = unsafe { sigaction(libc::SIGUSR1, std::ptr::null(), &mut old) };
@@ -560,18 +588,28 @@ fn malloc_storm_defers_reentrant_signal_handler_until_safe_exit() {
     signaler.join().expect("signaler must not panic");
 
     let metrics = signal_delivery_metrics_for_test();
+    let resolution = frankenlibc_abi::malloc_abi::host_allocator_resolution_metrics_for_test();
     assert_eq!(completed, 20_000);
     assert!(
         DEFERRED_HANDLER_COUNT.load(Ordering::Relaxed) > 0,
         "signal storm should deliver at least one handler invocation"
     );
     assert!(
-        metrics.deferred > 0,
-        "malloc storm should observe at least one deferred signal delivery"
+        resolution.raw_host_fallback_hits == 0,
+        "allocator path must not re-enter raw host fallback after prewarm: {resolution:?}"
     );
     assert!(
-        metrics.flushed >= metrics.deferred,
-        "all deferred deliveries should flush after exiting critical sections"
+        resolution.direct_dlvsym_fallback_hits == 0,
+        "allocator path must not re-enter direct dlvsym fallback after prewarm: {resolution:?}"
+    );
+    assert_eq!(
+        metrics.deferred, metrics.flushed,
+        "all deferred deliveries should flush once the storm quiesces: {metrics:?}"
+    );
+    assert_eq!(
+        DEFERRED_HANDLER_COUNT.load(Ordering::Relaxed) as u64,
+        metrics.immediate + metrics.flushed,
+        "handler invocation accounting should match immediate+flushed deliveries: {metrics:?}"
     );
 
     let rc = unsafe { sigaction(libc::SIGUSR1, &old, std::ptr::null_mut()) };
@@ -623,6 +661,289 @@ fn pthread_kill_delivers_sigusr1_without_allocator_pressure() {
         LIVE_HANDLER_COUNT.load(Ordering::Relaxed),
         1,
         "real pthread_kill delivery should invoke the installed SIGUSR1 handler exactly once"
+    );
+
+    let rc = unsafe { sigaction(libc::SIGUSR1, &old, std::ptr::null_mut()) };
+    assert_eq!(rc, 0, "must restore original SIGUSR1 disposition");
+}
+
+#[test]
+fn sigaction_query_preserves_user_handler_and_restorer_metadata() {
+    let _guard = TEST_GUARD
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner());
+
+    let mut old: libc::sigaction = unsafe { std::mem::zeroed() };
+    let rc = unsafe { sigaction(libc::SIGUSR1, std::ptr::null(), &mut old) };
+    assert_eq!(rc, 0, "must capture original SIGUSR1 disposition");
+
+    let mut act: libc::sigaction = unsafe { std::mem::zeroed() };
+    act.sa_sigaction = counting_handler as *const () as usize;
+    let rc = unsafe { sigaction(libc::SIGUSR1, &act, std::ptr::null_mut()) };
+    assert_eq!(rc, 0, "must install SIGUSR1 handler");
+
+    let mut queried: libc::sigaction = unsafe { std::mem::zeroed() };
+    let rc = unsafe { sigaction(libc::SIGUSR1, std::ptr::null(), &mut queried) };
+    assert_eq!(rc, 0, "must query installed SIGUSR1 disposition");
+    assert_eq!(
+        queried.sa_sigaction, counting_handler as *const () as usize,
+        "query path must rewrite the trampoline back to the user handler"
+    );
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    {
+        assert_ne!(
+            queried.sa_flags & SA_RESTORER_FLAG,
+            0,
+            "query path should preserve kernel restorer metadata"
+        );
+        assert!(
+            queried.sa_restorer.is_some(),
+            "query path should surface the restorer trampoline address"
+        );
+    }
+
+    let rc = unsafe { sigaction(libc::SIGUSR1, &old, std::ptr::null_mut()) };
+    assert_eq!(rc, 0, "must restore original SIGUSR1 disposition");
+}
+
+#[test]
+fn pthread_kill_is_deferred_inside_live_critical_section_until_exit() {
+    let _guard = TEST_GUARD
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner());
+    DEFERRED_HANDLER_COUNT.store(0, Ordering::Relaxed);
+    reset_signal_delivery_metrics_for_test();
+
+    let mut old: libc::sigaction = unsafe { std::mem::zeroed() };
+    let rc = unsafe { sigaction(libc::SIGUSR1, std::ptr::null(), &mut old) };
+    assert_eq!(rc, 0, "must capture original SIGUSR1 disposition");
+
+    let mut act: libc::sigaction = unsafe { std::mem::zeroed() };
+    act.sa_sigaction = counting_handler as *const () as usize;
+    let rc = unsafe { sigaction(libc::SIGUSR1, &act, std::ptr::null_mut()) };
+    assert_eq!(rc, 0, "must install SIGUSR1 handler");
+
+    let (pthread_tx, pthread_rx) = mpsc::channel::<usize>();
+    let (entered_tx, entered_rx) = mpsc::channel::<()>();
+    let (release_tx, release_rx) = mpsc::channel::<()>();
+    let (done_tx, done_rx) = mpsc::channel::<()>();
+
+    let worker = thread::spawn(move || {
+        let tid = unsafe { libc::pthread_self() as usize };
+        pthread_tx.send(tid).expect("must publish pthread_t");
+        {
+            let _critical =
+                enter_signal_critical_section(SignalCriticalSectionKind::MallocArenaLockAcquire);
+            entered_tx
+                .send(())
+                .expect("must publish critical-section entry");
+            release_rx
+                .recv_timeout(Duration::from_secs(2))
+                .expect("test must release worker from critical section");
+        }
+        done_tx.send(()).expect("worker must report exit");
+    });
+
+    let worker_tid = pthread_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("worker must publish pthread_t promptly");
+    entered_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("worker must enter the critical section promptly");
+
+    let rc = unsafe { libc::pthread_kill(worker_tid as libc::pthread_t, libc::SIGUSR1) };
+    assert_eq!(rc, 0, "pthread_kill must succeed while worker is critical");
+
+    let deferred_seen = (0..200).any(|_| {
+        let metrics = signal_delivery_metrics_for_test();
+        if metrics.deferred != 0 {
+            return true;
+        }
+        thread::sleep(Duration::from_millis(1));
+        false
+    });
+    assert!(
+        deferred_seen,
+        "real pthread_kill delivery should enter the deferred path while the worker is critical"
+    );
+
+    let metrics = signal_delivery_metrics_for_test();
+    assert_eq!(
+        DEFERRED_HANDLER_COUNT.load(Ordering::Relaxed),
+        0,
+        "handler must remain deferred until the critical section exits"
+    );
+    assert_eq!(
+        metrics.immediate, 0,
+        "masked critical-section delivery should not dispatch immediately: {metrics:?}"
+    );
+    assert_eq!(
+        metrics.deferred, 1,
+        "one real SIGUSR1 delivery should be queued while the worker is critical: {metrics:?}"
+    );
+
+    release_tx
+        .send(())
+        .expect("main thread must release the critical-section worker");
+    done_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("worker must exit the critical section without hanging");
+    worker.join().expect("worker must not panic");
+
+    let metrics = signal_delivery_metrics_for_test();
+    assert_eq!(
+        DEFERRED_HANDLER_COUNT.load(Ordering::Relaxed),
+        1,
+        "deferred real-kernel delivery should replay exactly once on exit"
+    );
+    assert_eq!(
+        metrics.deferred, 1,
+        "deferred delivery count should remain stable after replay: {metrics:?}"
+    );
+    assert_eq!(
+        metrics.flushed, 1,
+        "deferred delivery should flush once the worker exits the critical section: {metrics:?}"
+    );
+    assert_eq!(
+        metrics.immediate, 0,
+        "the critical-section signal should never be recorded as immediate: {metrics:?}"
+    );
+
+    let rc = unsafe { sigaction(libc::SIGUSR1, &old, std::ptr::null_mut()) };
+    assert_eq!(rc, 0, "must restore original SIGUSR1 disposition");
+}
+
+#[test]
+fn pthread_sigqueue_preserves_siginfo_and_ucontext_after_deferred_replay() {
+    let _guard = TEST_GUARD
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner());
+    SIGINFO_HANDLER_COUNT.store(0, Ordering::Relaxed);
+    LAST_SIGINFO_NONNULL.store(0, Ordering::Relaxed);
+    LAST_UCONTEXT_NONNULL.store(0, Ordering::Relaxed);
+    LAST_SIGINFO_CODE.store(0, Ordering::Relaxed);
+    LAST_SIGINFO_SIGNO.store(0, Ordering::Relaxed);
+    LAST_SIGINFO_VALUE_BITS.store(0, Ordering::Relaxed);
+    reset_signal_delivery_metrics_for_test();
+
+    let mut old: libc::sigaction = unsafe { std::mem::zeroed() };
+    let rc = unsafe { sigaction(libc::SIGUSR1, std::ptr::null(), &mut old) };
+    assert_eq!(rc, 0, "must capture original SIGUSR1 disposition");
+
+    let mut act: libc::sigaction = unsafe { std::mem::zeroed() };
+    act.sa_sigaction = siginfo_counting_handler as *const () as usize;
+    act.sa_flags = libc::SA_SIGINFO;
+    let rc = unsafe { sigaction(libc::SIGUSR1, &act, std::ptr::null_mut()) };
+    assert_eq!(rc, 0, "must install SIGUSR1 SA_SIGINFO handler");
+
+    let (pthread_tx, pthread_rx) = mpsc::channel::<usize>();
+    let (entered_tx, entered_rx) = mpsc::channel::<()>();
+    let (release_tx, release_rx) = mpsc::channel::<()>();
+    let (done_tx, done_rx) = mpsc::channel::<()>();
+
+    let worker = thread::spawn(move || {
+        let tid = unsafe { libc::pthread_self() as usize };
+        pthread_tx.send(tid).expect("must publish pthread_t");
+        {
+            let _critical =
+                enter_signal_critical_section(SignalCriticalSectionKind::MallocArenaLockAcquire);
+            entered_tx
+                .send(())
+                .expect("must publish critical-section entry");
+            release_rx
+                .recv_timeout(Duration::from_secs(2))
+                .expect("test must release worker from critical section");
+        }
+        done_tx.send(()).expect("worker must report exit");
+    });
+
+    let worker_tid = pthread_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("worker must publish pthread_t promptly");
+    entered_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("worker must enter the critical section promptly");
+
+    let payload = 0x1234usize;
+    let sigval = libc::sigval {
+        sival_ptr: payload as *mut std::ffi::c_void,
+    };
+    let rc = unsafe {
+        frankenlibc_abi::pthread_abi::pthread_sigqueue(
+            worker_tid as libc::pthread_t,
+            libc::SIGUSR1,
+            sigval,
+        )
+    };
+    assert_eq!(
+        rc, 0,
+        "pthread_sigqueue must succeed while the worker is critical"
+    );
+
+    let deferred_seen = (0..200).any(|_| {
+        let metrics = signal_delivery_metrics_for_test();
+        if metrics.deferred != 0 {
+            return true;
+        }
+        thread::sleep(Duration::from_millis(1));
+        false
+    });
+    assert!(
+        deferred_seen,
+        "queued live-kernel SIGUSR1 delivery should enter the deferred path"
+    );
+    assert_eq!(
+        SIGINFO_HANDLER_COUNT.load(Ordering::Relaxed),
+        0,
+        "SA_SIGINFO handler must remain deferred until the critical section exits"
+    );
+
+    release_tx
+        .send(())
+        .expect("main thread must release the critical-section worker");
+    done_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("worker must exit the critical section without hanging");
+    worker.join().expect("worker must not panic");
+
+    let metrics = signal_delivery_metrics_for_test();
+    assert_eq!(
+        SIGINFO_HANDLER_COUNT.load(Ordering::Relaxed),
+        1,
+        "deferred queued delivery should replay exactly once on exit"
+    );
+    assert_eq!(
+        LAST_SIGINFO_NONNULL.load(Ordering::Relaxed),
+        1,
+        "deferred SA_SIGINFO replay must preserve non-null siginfo metadata"
+    );
+    assert_eq!(
+        LAST_UCONTEXT_NONNULL.load(Ordering::Relaxed),
+        1,
+        "deferred SA_SIGINFO replay must preserve non-null delivery context"
+    );
+    assert_eq!(
+        LAST_SIGINFO_CODE.load(Ordering::Relaxed) as c_int,
+        libc::SI_QUEUE,
+        "queued delivery should preserve SI_QUEUE metadata"
+    );
+    assert_eq!(
+        LAST_SIGINFO_SIGNO.load(Ordering::Relaxed) as c_int,
+        libc::SIGUSR1,
+        "queued delivery should preserve the original signal number metadata"
+    );
+    assert_eq!(
+        LAST_SIGINFO_VALUE_BITS.load(Ordering::Relaxed),
+        payload,
+        "queued delivery should preserve the original sigqueue payload value"
+    );
+    assert_eq!(
+        metrics.deferred, 1,
+        "deferred delivery count should remain stable after replay: {metrics:?}"
+    );
+    assert_eq!(
+        metrics.flushed, 1,
+        "deferred queued delivery should flush once the worker exits the critical section: {metrics:?}"
     );
 
     let rc = unsafe { sigaction(libc::SIGUSR1, &old, std::ptr::null_mut()) };

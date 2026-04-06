@@ -12,12 +12,16 @@ use frankenlibc_membrane::check_oracle::CheckStage;
 use frankenlibc_membrane::heal::{HealingAction, global_healing_policy};
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
+use crate::htm_fast_path::{HtmSite, HtmSiteSnapshot};
 use crate::malloc_abi::known_remaining;
 use crate::runtime_policy;
 
 thread_local! {
     static STRING_MEMBRANE_DEPTH: Cell<u32> = const { Cell::new(0) };
 }
+
+const MEMCPY_HTM_MAX_BYTES: usize = 256;
+static MEMCPY_HTM_SITE: HtmSite = HtmSite::new("memcpy");
 
 struct StringMembraneGuard;
 
@@ -144,6 +148,32 @@ unsafe fn raw_memset_bytes(dst: *mut u8, value: u8, n: usize) {
     }
 }
 
+fn try_memcpy_htm(dst: *mut u8, src: *const u8, n: usize) -> bool {
+    if n > MEMCPY_HTM_MAX_BYTES {
+        return false;
+    }
+
+    matches!(
+        MEMCPY_HTM_SITE.run(|| {
+            // SAFETY: callers only invoke the HTM helper after validating the
+            // same preconditions as the raw memcpy fallback.
+            unsafe { raw_memcpy_bytes(dst, src, n) };
+        }),
+        Ok(())
+    )
+}
+
+#[doc(hidden)]
+pub fn memcpy_htm_reset_for_tests() {
+    MEMCPY_HTM_SITE.reset_for_tests();
+}
+
+#[doc(hidden)]
+#[must_use]
+pub fn memcpy_htm_snapshot_for_tests() -> HtmSiteSnapshot {
+    MEMCPY_HTM_SITE.snapshot()
+}
+
 fn maybe_clamp_copy_len(
     requested: usize,
     src_remaining: Option<usize>,
@@ -268,11 +298,17 @@ pub unsafe extern "C" fn memcpy(dst: *mut c_void, src: *const c_void, n: usize) 
 
     // Fast path during early startup: skip membrane entirely.
     if runtime_policy::bootstrap_passthrough_active() {
-        unsafe { raw_memcpy_bytes(dst.cast::<u8>(), src.cast::<u8>(), n) };
+        if !(crate::htm_fast_path::htm_forced_mode_active_for_tests()
+            && try_memcpy_htm(dst.cast::<u8>(), src.cast::<u8>(), n))
+        {
+            unsafe { raw_memcpy_bytes(dst.cast::<u8>(), src.cast::<u8>(), n) };
+        }
         return dst;
     }
     if !runtime_policy::mode().heals_enabled() {
-        unsafe { raw_memcpy_bytes(dst.cast::<u8>(), src.cast::<u8>(), n) };
+        if !try_memcpy_htm(dst.cast::<u8>(), src.cast::<u8>(), n) {
+            unsafe { raw_memcpy_bytes(dst.cast::<u8>(), src.cast::<u8>(), n) };
+        }
         return dst;
     }
 
@@ -337,8 +373,10 @@ pub unsafe extern "C" fn memcpy(dst: *mut c_void, src: *const c_void, n: usize) 
     }
 
     // SAFETY: `copy_len` is either original `n` (strict) or clamped to known bounds.
-    unsafe {
-        raw_memcpy_bytes(dst.cast::<u8>(), src.cast::<u8>(), copy_len);
+    if !try_memcpy_htm(dst.cast::<u8>(), src.cast::<u8>(), copy_len) {
+        unsafe {
+            raw_memcpy_bytes(dst.cast::<u8>(), src.cast::<u8>(), copy_len);
+        }
     }
     record_string_stage_outcome(&ordering, aligned, recent_page, None);
     runtime_policy::observe(
@@ -558,6 +596,7 @@ pub unsafe extern "C" fn memset(dst: *mut c_void, c: c_int, n: usize) -> *mut c_
 /// Caller must ensure `s1` and `s2` are valid for `n` bytes.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn memcmp(s1: *const c_void, s2: *const c_void, n: usize) -> c_int {
+    let _trace_scope = runtime_policy::entrypoint_scope("memcmp");
     let (aligned, recent_page, ordering) = stage_context_two(s1 as usize, s2 as usize);
     if n == 0 {
         return 0;
@@ -870,6 +909,7 @@ pub unsafe extern "C" fn strlen(s: *const c_char) -> usize {
     if s.is_null() {
         return 0;
     }
+    let _trace_scope = runtime_policy::entrypoint_scope("strlen");
 
     // Fast path during early startup: skip membrane validation entirely.
     // The membrane's ValidationPipeline uses PageOracle (RwLock) and TLS,

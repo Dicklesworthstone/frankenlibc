@@ -1,4 +1,6 @@
 #![feature(c_variadic)]
+#![feature(rtm_target_feature)]
+#![feature(stdarch_x86_rtm)]
 #![allow(unused_features)]
 // All extern "C" ABI exports accept raw pointers from C callers; the membrane
 // validates at runtime, so per-function safety docs would be redundant boilerplate.
@@ -27,6 +29,8 @@
 mod macros;
 
 pub(crate) mod host_resolve;
+#[doc(hidden)]
+pub mod htm_fast_path;
 mod membrane_state;
 mod runtime_policy;
 
