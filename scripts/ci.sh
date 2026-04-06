@@ -300,6 +300,11 @@ if [[ "${FRANKENLIBC_EXTENDED_GATES:-0}" == "1" ]]; then
     echo "PASS"
     echo ""
 
+    echo "--- runtime_math epic closure gate ---"
+    scripts/check_runtime_math_epic_closure.sh
+    echo "PASS"
+    echo ""
+
     echo "--- math production-set change policy gate ---"
     scripts/check_math_production_set_policy.sh
     echo "PASS"
