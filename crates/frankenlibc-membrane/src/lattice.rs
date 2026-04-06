@@ -606,8 +606,25 @@ mod tests {
     }
 
     use proptest::prelude::*;
+    use proptest::test_runner::Config as ProptestConfig;
+
+    fn property_proptest_config(default_cases: u32) -> ProptestConfig {
+        let cases = std::env::var("FRANKENLIBC_PROPTEST_CASES")
+            .ok()
+            .and_then(|value| value.parse::<u32>().ok())
+            .filter(|&value| value > 0)
+            .unwrap_or(default_cases);
+
+        ProptestConfig {
+            cases,
+            failure_persistence: None,
+            ..ProptestConfig::default()
+        }
+    }
 
     proptest! {
+        #![proptest_config(property_proptest_config(256))]
+
         #[test]
         fn prop_join_commutative(a in arb_safety_state(), b in arb_safety_state()) {
             prop_assert_eq!(a.join(b), b.join(a));
