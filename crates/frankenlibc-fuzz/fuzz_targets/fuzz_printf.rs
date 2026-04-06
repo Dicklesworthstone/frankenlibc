@@ -104,6 +104,7 @@ fn make_spec(input: &PrintfFuzzInput) -> FormatSpec {
         precision,
         length,
         conversion,
+        value_position: None,
     }
 }
 

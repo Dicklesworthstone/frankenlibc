@@ -74,10 +74,16 @@ fn fuzz_reverse_lookup_hosts(input: &ResolvFuzzInput) {
 
 fn fuzz_parse_services_line(input: &ResolvFuzzInput) {
     let line = &input.data[..input.data.len().min(512)];
-    if let Some((name, port, proto)) = resolv::parse_services_line(line) {
-        assert!(!name.is_empty(), "parsed service name should not be empty");
-        assert!(port > 0, "parsed port should be positive");
-        assert!(!proto.is_empty(), "parsed protocol should not be empty");
+    if let Some(entry) = resolv::parse_services_line(line) {
+        assert!(
+            !entry.name.is_empty(),
+            "parsed service name should not be empty"
+        );
+        assert!(entry.port > 0, "parsed port should be positive");
+        assert!(
+            !entry.protocol.is_empty(),
+            "parsed protocol should not be empty"
+        );
     }
 }
 

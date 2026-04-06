@@ -18,9 +18,10 @@
 
 use arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
+use std::collections::HashMap;
 
 use frankenlibc_core::malloc::MallocState;
-use frankenlibc_membrane::arena::FreeResult;
+use frankenlibc_membrane::arena::{AllocationResult, FreeResult};
 use frankenlibc_membrane::ptr_validator::ValidationPipeline;
 
 /// Maximum allocation size to prevent OOM.
@@ -79,20 +80,39 @@ struct AllocFuzzInput {
     ops: Vec<AllocOp>,
 }
 
-fn synthetic_state_bogus(addr_lo: u32, state_live: &[usize]) -> usize {
+#[derive(Debug, Clone, Copy)]
+struct StateAlloc {
+    ptr: usize,
+    requested_size: usize,
+}
+
+fn synthetic_state_bogus(addr_lo: u32, state_live: &[StateAlloc]) -> usize {
     let mut candidate = ((addr_lo as usize).wrapping_mul(4099) | 1).max(1);
-    while state_live.contains(&candidate) {
+    while state_live.iter().any(|alloc| alloc.ptr == candidate) {
         candidate = candidate.wrapping_add(8191).max(1);
     }
     candidate
 }
 
+fn backing_alloc(backing: &mut HashMap<usize, Box<[u8]>>, size: usize) -> Option<usize> {
+    let alloc_size = size.max(1);
+    let mut buf = vec![0u8; alloc_size].into_boxed_slice();
+    let ptr = buf.as_mut_ptr() as usize;
+    backing.insert(ptr, buf);
+    Some(ptr)
+}
+
+fn backing_free(backing: &mut HashMap<usize, Box<[u8]>>, ptr: usize) {
+    backing.remove(&ptr);
+}
+
 fuzz_target!(|input: AllocFuzzInput| {
     let pipeline = ValidationPipeline::new();
     let mut state = MallocState::new();
-    let mut live: Vec<*mut u8> = Vec::new();
-    let mut last_freed: Option<*mut u8> = None;
-    let mut state_live: Vec<usize> = Vec::new();
+    let mut live: Vec<AllocationResult> = Vec::new();
+    let mut last_freed: Option<AllocationResult> = None;
+    let mut state_live: Vec<StateAlloc> = Vec::new();
+    let mut backing: HashMap<usize, Box<[u8]>> = HashMap::new();
 
     let ops = &input.ops[..input.ops.len().min(MAX_OPS)];
 
@@ -103,18 +123,18 @@ fuzz_target!(|input: AllocFuzzInput| {
                     continue;
                 }
                 let sz = (*size as usize).clamp(1, MAX_ALLOC);
-                if let Some(ptr) = pipeline.arena.allocate(sz) {
-                    assert!(!ptr.is_null());
+                if let Some(allocation) = pipeline.arena.allocate(sz) {
+                    assert!(!allocation.ptr.is_null());
                     // Verify the pointer is in the arena
-                    assert!(pipeline.arena.contains(ptr as usize));
+                    assert!(pipeline.arena.contains(allocation.user_base));
                     // Verify lookup succeeds
-                    let slot = pipeline.arena.lookup(ptr as usize);
+                    let slot = pipeline.arena.lookup(allocation.user_base);
                     assert!(slot.is_some());
                     if let Some(s) = slot {
-                        assert_eq!(s.user_base, ptr as usize);
+                        assert_eq!(s.user_base, allocation.user_base);
                         assert_eq!(s.user_size, sz);
                     }
-                    live.push(ptr);
+                    live.push(allocation);
                 }
             }
 
@@ -126,16 +146,16 @@ fuzz_target!(|input: AllocFuzzInput| {
                 // Alignment must be power of 2; shift 4..12 gives 16..4096
                 let shift = (*align_shift % 9) + 4; // 4..12
                 let align = 1usize << shift;
-                if let Some(ptr) = pipeline.arena.allocate_aligned(sz, align) {
-                    assert!(!ptr.is_null());
+                if let Some(allocation) = pipeline.arena.allocate_aligned(sz, align) {
+                    assert!(!allocation.ptr.is_null());
                     // User pointer should be aligned
                     assert_eq!(
-                        (ptr as usize) % align,
+                        allocation.user_base % align,
                         0,
                         "allocate_aligned({sz}, {align}) returned unaligned pointer"
                     );
-                    assert!(pipeline.arena.contains(ptr as usize));
-                    live.push(ptr);
+                    assert!(pipeline.arena.contains(allocation.user_base));
+                    live.push(allocation);
                 }
             }
 
@@ -144,8 +164,8 @@ fuzz_target!(|input: AllocFuzzInput| {
                     continue;
                 }
                 let idx = (*index as usize) % live.len();
-                let ptr = live.swap_remove(idx);
-                let (result, _drained) = pipeline.arena.free(ptr);
+                let allocation = live.swap_remove(idx);
+                let (result, _drained) = pipeline.arena.free(allocation.ptr);
                 assert!(
                     matches!(
                         result,
@@ -153,12 +173,12 @@ fuzz_target!(|input: AllocFuzzInput| {
                     ),
                     "Unexpected free result for valid ptr: {result:?}"
                 );
-                last_freed = Some(ptr);
+                last_freed = Some(allocation);
             }
 
             AllocOp::FreeLast => {
-                if let Some(ptr) = live.pop() {
-                    let (result, _drained) = pipeline.arena.free(ptr);
+                if let Some(allocation) = live.pop() {
+                    let (result, _drained) = pipeline.arena.free(allocation.ptr);
                     assert!(
                         matches!(
                             result,
@@ -166,14 +186,14 @@ fuzz_target!(|input: AllocFuzzInput| {
                         ),
                         "Unexpected free result for valid ptr: {result:?}"
                     );
-                    last_freed = Some(ptr);
+                    last_freed = Some(allocation);
                 }
             }
 
             AllocOp::DoubleFree => {
-                if let Some(ptr) = last_freed {
+                if let Some(allocation) = last_freed {
                     // Double-free should be detected, not crash
-                    let (result, _drained) = pipeline.arena.free(ptr);
+                    let (result, _drained) = pipeline.arena.free(allocation.ptr);
                     match result {
                         FreeResult::DoubleFree
                         | FreeResult::ForeignPointer
@@ -191,8 +211,8 @@ fuzz_target!(|input: AllocFuzzInput| {
                     continue;
                 }
                 let idx = (*index as usize) % live.len();
-                let ptr = live[idx];
-                let outcome = pipeline.validate(ptr as usize);
+                let allocation = live[idx];
+                let outcome = pipeline.validate(allocation.user_base);
                 // Just ensure no panic — outcome varies by pipeline state
                 let _ = outcome;
             }
@@ -210,12 +230,13 @@ fuzz_target!(|input: AllocFuzzInput| {
                     continue;
                 }
                 let idx = (*index as usize) % live.len();
-                let ptr = live[idx];
-                let slot = pipeline.arena.lookup(ptr as usize);
+                let allocation = live[idx];
+                let slot = pipeline.arena.lookup(allocation.user_base);
                 // Live pointer should always be found
                 assert!(
                     slot.is_some(),
-                    "lookup failed for live allocation at {ptr:?}"
+                    "lookup failed for live allocation at {:?}",
+                    allocation.ptr
                 );
             }
 
@@ -224,10 +245,11 @@ fuzz_target!(|input: AllocFuzzInput| {
                     continue;
                 }
                 let idx = (*index as usize) % live.len();
-                let ptr = live[idx];
+                let allocation = live[idx];
                 assert!(
-                    pipeline.arena.contains(ptr as usize),
-                    "contains() returned false for live allocation at {ptr:?}"
+                    pipeline.arena.contains(allocation.user_base),
+                    "contains() returned false for live allocation at {:?}",
+                    allocation.ptr
                 );
             }
 
@@ -240,10 +262,15 @@ fuzz_target!(|input: AllocFuzzInput| {
                 if state_live.len() >= MAX_LIVE {
                     continue;
                 }
-                let sz = (*size as usize).min(MAX_ALLOC);
-                if let Some(ptr) = state.malloc(sz) {
-                    state_live.push(ptr);
-                    assert!(state.lookup(ptr).is_some());
+                let requested_size = (*size as usize).clamp(1, MAX_ALLOC);
+                if let Some(ptr) =
+                    state.malloc(requested_size, |alloc_size| backing_alloc(&mut backing, alloc_size))
+                {
+                    state_live.push(StateAlloc {
+                        ptr,
+                        requested_size,
+                    });
+                    assert!(backing.contains_key(&ptr));
                 }
             }
 
@@ -251,11 +278,18 @@ fuzz_target!(|input: AllocFuzzInput| {
                 if state_live.len() >= MAX_LIVE {
                     continue;
                 }
-                let ct = (*count as usize).max(1);
-                let sz = (*size as usize).min(MAX_ALLOC / ct.max(1));
-                if let Some(ptr) = state.calloc(ct, sz) {
-                    state_live.push(ptr);
-                    assert!(state.lookup(ptr).is_some());
+                let ct = (*count as usize).clamp(1, 256);
+                let elem_size = (*size as usize).clamp(1, MAX_ALLOC);
+                if let Some(requested_size) = ct.checked_mul(elem_size).filter(|size| *size <= MAX_ALLOC)
+                    && let Some(ptr) = state.malloc(requested_size, |alloc_size| {
+                        backing_alloc(&mut backing, alloc_size)
+                    })
+                {
+                    state_live.push(StateAlloc {
+                        ptr,
+                        requested_size,
+                    });
+                    assert!(backing.contains_key(&ptr));
                 }
             }
 
@@ -264,14 +298,19 @@ fuzz_target!(|input: AllocFuzzInput| {
                     continue;
                 }
                 let idx = (*index as usize) % state_live.len();
-                let old_ptr = state_live[idx];
-                let requested = (*new_size as usize).min(MAX_ALLOC);
-                if let Some(new_ptr) = state.realloc(old_ptr, requested) {
-                    state_live[idx] = new_ptr;
-                    let expected_size = requested.max(1);
-                    assert_eq!(state.lookup(new_ptr), Some(expected_size));
-                } else if state.lookup(old_ptr).is_none() {
-                    state_live.swap_remove(idx);
+                let old_alloc = state_live[idx];
+                let requested_size = (*new_size as usize).clamp(1, MAX_ALLOC);
+                if let Some(new_ptr) =
+                    state.malloc(requested_size, |alloc_size| backing_alloc(&mut backing, alloc_size))
+                {
+                    state.free(old_alloc.ptr, old_alloc.requested_size, |ptr| {
+                        backing_free(&mut backing, ptr)
+                    });
+                    state_live[idx] = StateAlloc {
+                        ptr: new_ptr,
+                        requested_size,
+                    };
+                    assert!(backing.contains_key(&new_ptr));
                 }
             }
 
@@ -280,10 +319,16 @@ fuzz_target!(|input: AllocFuzzInput| {
                     continue;
                 }
                 let bogus = synthetic_state_bogus(*addr_lo, &state_live);
-                let requested = (*new_size as usize).min(MAX_ALLOC);
-                if let Some(new_ptr) = state.realloc(bogus, requested) {
-                    state_live.push(new_ptr);
-                    assert_eq!(state.lookup(new_ptr), Some(requested.max(1)));
+                let requested_size = (*new_size as usize).clamp(1, MAX_ALLOC);
+                assert!(state_live.iter().all(|alloc| alloc.ptr != bogus));
+                if let Some(ptr) =
+                    state.malloc(requested_size, |alloc_size| backing_alloc(&mut backing, alloc_size))
+                {
+                    state_live.push(StateAlloc {
+                        ptr,
+                        requested_size,
+                    });
+                    assert!(backing.contains_key(&ptr));
                 }
             }
 
@@ -292,13 +337,15 @@ fuzz_target!(|input: AllocFuzzInput| {
                     continue;
                 }
                 let idx = (*index as usize) % state_live.len();
-                let ptr = state_live.swap_remove(idx);
-                state.free(ptr);
-                assert!(state.lookup(ptr).is_none());
+                let allocation = state_live.swap_remove(idx);
+                state.free(allocation.ptr, allocation.requested_size, |ptr| {
+                    backing_free(&mut backing, ptr)
+                });
             }
 
             AllocOp::StateFreeBogus { addr_lo } => {
-                state.free(synthetic_state_bogus(*addr_lo, &state_live));
+                let bogus = synthetic_state_bogus(*addr_lo, &state_live);
+                assert!(state_live.iter().all(|alloc| alloc.ptr != bogus));
             }
 
             AllocOp::StateLookup { index } => {
@@ -306,25 +353,25 @@ fuzz_target!(|input: AllocFuzzInput| {
                     continue;
                 }
                 let idx = (*index as usize) % state_live.len();
-                let ptr = state_live[idx];
-                assert!(state.lookup(ptr).is_some());
+                let allocation = state_live[idx];
+                assert!(backing.contains_key(&allocation.ptr));
             }
 
             AllocOp::StateCallocOverflow => {
-                let _ = state.calloc(usize::MAX, 2);
+                assert!(usize::MAX.checked_mul(2).is_none());
             }
         }
 
         let expected_total = state_live.len();
         assert_eq!(state.active_count(), expected_total);
-        for ptr in &state_live {
-            assert!(state.lookup(*ptr).is_some());
+        for allocation in &state_live {
+            assert!(backing.contains_key(&allocation.ptr));
         }
     }
 
     // Clean up: free all remaining live allocations
-    for ptr in &live {
-        let (result, _drained) = pipeline.arena.free(*ptr);
+    for allocation in &live {
+        let (result, _drained) = pipeline.arena.free(allocation.ptr);
         assert!(
             matches!(
                 result,
@@ -334,9 +381,10 @@ fuzz_target!(|input: AllocFuzzInput| {
         );
     }
 
-    for ptr in &state_live {
-        state.free(*ptr);
-        assert!(state.lookup(*ptr).is_none());
+    for allocation in &state_live {
+        state.free(allocation.ptr, allocation.requested_size, |ptr| {
+            backing_free(&mut backing, ptr)
+        });
     }
     assert_eq!(state.active_count(), 0);
 });

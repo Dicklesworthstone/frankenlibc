@@ -54,7 +54,7 @@ fn fuzz_convert(input: &IconvFuzzInput) {
         let payload = &input.payload[..input.payload.len().min(4096)];
 
         // Should not panic regardless of input.
-        let _ = iconv::iconv(&mut cd, payload, &mut outbuf);
+        let _ = iconv::iconv(&mut cd, Some(payload), &mut outbuf);
         let _ = iconv::iconv_close(cd);
     }
 }
@@ -70,8 +70,8 @@ fn fuzz_determinism(input: &IconvFuzzInput) {
             let mut out1 = vec![0u8; out_size];
             let mut out2 = vec![0u8; out_size];
 
-            let r1 = iconv::iconv(&mut cd1, payload, &mut out1);
-            let r2 = iconv::iconv(&mut cd2, payload, &mut out2);
+            let r1 = iconv::iconv(&mut cd1, Some(payload), &mut out1);
+            let r2 = iconv::iconv(&mut cd2, Some(payload), &mut out2);
             assert_eq!(
                 r1.is_ok(),
                 r2.is_ok(),
@@ -115,7 +115,7 @@ fn fuzz_known_codecs(input: &IconvFuzzInput) {
     if let Some(mut cd) = iconv::iconv_open(tocode, fromcode) {
         let payload = &input.payload[..input.payload.len().min(2048)];
         let mut outbuf = vec![0u8; payload.len().max(1) * 4];
-        let _ = iconv::iconv(&mut cd, payload, &mut outbuf);
+        let _ = iconv::iconv(&mut cd, Some(payload), &mut outbuf);
         let _ = iconv::iconv_close(cd);
     }
 }
