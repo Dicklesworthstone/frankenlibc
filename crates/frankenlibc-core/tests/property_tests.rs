@@ -5,13 +5,28 @@
 //! - Math operations: identities (sin²+cos²=1), symmetry, domain constraints
 //! - Numeric conversion: round-trip correctness (strtol ↔ format)
 //! - ctype classification: partition exhaustiveness, idempotent case conversion
-//! - Allocator/membrane: out of scope here (tested in membrane crate)
+//! - Allocator/core bookkeeping: size-class rounding, page alignment, registry invariants
 //!
 //! Uses proptest for generative input with shrinking on failure.
 //!
 //! Bead: bd-2tq.3
 
 use proptest::prelude::*;
+use proptest::test_runner::Config as ProptestConfig;
+
+fn property_proptest_config(default_cases: u32) -> ProptestConfig {
+    let cases = std::env::var("FRANKENLIBC_PROPTEST_CASES")
+        .ok()
+        .and_then(|value| value.parse::<u32>().ok())
+        .filter(|&value| value > 0)
+        .unwrap_or(default_cases);
+
+    ProptestConfig {
+        cases,
+        failure_persistence: None,
+        ..ProptestConfig::default()
+    }
+}
 
 // ---------------------------------------------------------------------------
 // String operation properties (mem.rs + str.rs)
@@ -23,6 +38,8 @@ mod string_properties {
     use frankenlibc_core::string::str::*;
 
     proptest! {
+        #![proptest_config(super::property_proptest_config(256))]
+
         /// strlen(s) == position of first NUL byte (or slice length if no NUL)
         #[test]
         fn prop_strlen_finds_first_nul(data in proptest::collection::vec(any::<u8>(), 0..256)) {
@@ -196,6 +213,8 @@ mod math_properties {
     use frankenlibc_core::math::trig::{cos, sin};
 
     proptest! {
+        #![proptest_config(super::property_proptest_config(256))]
+
         /// Pythagorean identity: sin²(x) + cos²(x) ≈ 1
         #[test]
         fn prop_pythagorean_identity(x in -1000.0f64..1000.0) {
@@ -322,6 +341,8 @@ mod conversion_properties {
     use frankenlibc_core::stdlib::conversion::*;
 
     proptest! {
+        #![proptest_config(super::property_proptest_config(256))]
+
         /// strtol round-trip: format(n, base 10) -> parse -> n
         #[test]
         fn prop_strtol_base10_round_trip(value in any::<i64>()) {
@@ -380,6 +401,8 @@ mod ctype_properties {
     use frankenlibc_core::ctype::*;
 
     proptest! {
+        #![proptest_config(super::property_proptest_config(256))]
+
         /// is_alnum == is_alpha || is_digit  (partition)
         #[test]
         fn prop_alnum_is_alpha_or_digit(c in any::<u8>()) {
@@ -467,6 +490,8 @@ mod inet_properties {
     use frankenlibc_core::socket::AF_INET;
 
     proptest! {
+        #![proptest_config(super::property_proptest_config(256))]
+
         /// inet_addr of valid dotted-quad should succeed
         #[test]
         fn prop_inet_addr_valid_quad(
@@ -509,6 +534,107 @@ mod inet_properties {
         fn prop_htons_ntohs_round_trip(x in any::<u16>()) {
             prop_assert_eq!(htons(ntohs(x)), x);
             prop_assert_eq!(ntohs(htons(x)), x);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Allocator properties
+// ---------------------------------------------------------------------------
+
+mod allocator_properties {
+    use super::*;
+    use frankenlibc_core::malloc::large::LargeAllocator;
+    use frankenlibc_core::malloc::size_class::{
+        MAX_SMALL_SIZE, MIN_SIZE, NUM_SIZE_CLASSES, bin_index, bin_size,
+    };
+    use std::collections::HashSet;
+
+    proptest! {
+        #![proptest_config(super::property_proptest_config(256))]
+
+        /// Small-allocation bin selection rounds up to a class that covers the request.
+        #[test]
+        fn prop_bin_index_rounds_up_to_cover_request(size in 0usize..(MAX_SMALL_SIZE + 1024)) {
+            let index = bin_index(size);
+            let normalized = size.max(MIN_SIZE);
+
+            if size > MAX_SMALL_SIZE {
+                prop_assert_eq!(index, NUM_SIZE_CLASSES);
+                prop_assert_eq!(bin_size(index), 0);
+            } else {
+                prop_assert!(index < NUM_SIZE_CLASSES);
+                let class_size = bin_size(index);
+                prop_assert!(class_size >= normalized);
+                if index > 0 {
+                    prop_assert!(bin_size(index - 1) < normalized);
+                }
+            }
+        }
+
+        /// Public bin descriptors round-trip through the size-to-index mapping.
+        #[test]
+        fn prop_bin_size_round_trips(index in 0usize..NUM_SIZE_CLASSES) {
+            let size = bin_size(index);
+            prop_assert!(size >= MIN_SIZE);
+            prop_assert_eq!(bin_index(size), index);
+        }
+
+        /// Large allocations always report page-aligned mapped sizes and consistent accounting.
+        #[test]
+        fn prop_large_alloc_alignment_and_accounting(size in 1usize..262_145) {
+            let mut allocator = LargeAllocator::new();
+            let alloc = allocator.alloc(size).expect("positive sizes must allocate");
+
+            prop_assert_eq!(alloc.user_size, size);
+            prop_assert!(alloc.mapped_size >= size);
+            prop_assert_eq!(alloc.mapped_size % 4096, 0);
+            prop_assert_eq!(allocator.active_count(), 1);
+            prop_assert_eq!(allocator.total_mapped(), alloc.mapped_size);
+            prop_assert_eq!(
+                allocator.lookup(alloc.base).map(|entry| entry.user_size),
+                Some(size)
+            );
+        }
+
+        /// Independent large allocations must get distinct bases and exact total mapping.
+        #[test]
+        fn prop_large_alloc_distinct_bases(
+            sizes in proptest::collection::vec(1usize..262_145, 1..16)
+        ) {
+            let mut allocator = LargeAllocator::new();
+            let mut seen_bases = HashSet::new();
+            let mut expected_total = 0usize;
+
+            for size in sizes {
+                let alloc = allocator.alloc(size).expect("positive sizes must allocate");
+                prop_assert!(seen_bases.insert(alloc.base));
+                expected_total += alloc.mapped_size;
+            }
+
+            prop_assert_eq!(allocator.active_count(), seen_bases.len());
+            prop_assert_eq!(allocator.total_mapped(), expected_total);
+        }
+
+        /// Realloc keeps the allocator in a single-live-allocation state and refreshes accounting.
+        #[test]
+        fn prop_large_realloc_preserves_single_live_allocation(
+            old_size in 1usize..262_145,
+            new_size in 1usize..262_145
+        ) {
+            let mut allocator = LargeAllocator::new();
+            let original = allocator.alloc(old_size).expect("positive sizes must allocate");
+            let replacement = allocator
+                .realloc(original.base, new_size)
+                .expect("positive realloc sizes must allocate");
+
+            prop_assert_eq!(allocator.active_count(), 1);
+            prop_assert_eq!(allocator.total_mapped(), replacement.mapped_size);
+            prop_assert!(allocator.lookup(original.base).is_none());
+            prop_assert_eq!(
+                allocator.lookup(replacement.base).map(|entry| entry.user_size),
+                Some(new_size)
+            );
         }
     }
 }

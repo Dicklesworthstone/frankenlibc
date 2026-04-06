@@ -1839,8 +1839,23 @@ mod tests {
     use crate::lattice::SafetyState;
     use crate::tls_cache::lock_tls_cache_epoch_for_tests;
     use proptest::prelude::*;
+    use proptest::test_runner::Config as ProptestConfig;
     use serde_json::Value;
     use std::collections::HashSet;
+
+    fn property_proptest_config(default_cases: u32) -> ProptestConfig {
+        let cases = std::env::var("FRANKENLIBC_PROPTEST_CASES")
+            .ok()
+            .and_then(|value| value.parse::<u32>().ok())
+            .filter(|&value| value > 0)
+            .unwrap_or(default_cases);
+
+        ProptestConfig {
+            cases,
+            failure_persistence: None,
+            ..ProptestConfig::default()
+        }
+    }
 
     fn collected_stage_labels(jsonl: &str) -> HashSet<String> {
         let mut stages = HashSet::new();
@@ -2362,7 +2377,50 @@ mod tests {
     }
 
     proptest! {
-        #![proptest_config(ProptestConfig::with_cases(128))]
+        #![proptest_config(property_proptest_config(256))]
+
+        #[test]
+        fn allocated_pointer_property_validates_as_live(size in 1usize..2049) {
+            let pipeline = ValidationPipeline::new();
+            let ptr = pipeline.allocate(size).expect("allocation must succeed");
+            let addr = ptr as usize;
+
+            let outcome = pipeline.validate(addr);
+            prop_assert!(matches!(
+                outcome,
+                ValidationOutcome::Validated(_) | ValidationOutcome::CachedValid(_)
+            ));
+            prop_assert!(outcome.can_read());
+            prop_assert!(outcome.can_write());
+
+            let abs = outcome.abstraction().expect("validated allocation abstraction");
+            prop_assert_eq!(abs.state, SafetyState::Valid);
+            prop_assert_eq!(abs.alloc_base, Some(addr));
+            prop_assert_eq!(abs.remaining, Some(size));
+
+            prop_assert_eq!(pipeline.free(ptr), FreeResult::Freed);
+        }
+
+        #[test]
+        fn freed_pointer_property_becomes_temporal_violation(size in 1usize..2049) {
+            let pipeline = ValidationPipeline::new();
+            let ptr = pipeline.allocate(size).expect("allocation must succeed");
+            let addr = ptr as usize;
+
+            prop_assert_eq!(pipeline.free(ptr), FreeResult::Freed);
+
+            let outcome = pipeline.validate(addr);
+            prop_assert!(matches!(outcome, ValidationOutcome::TemporalViolation(_)));
+            prop_assert!(!outcome.can_read());
+            prop_assert!(!outcome.can_write());
+
+            let abs = outcome.abstraction().expect("temporal violation abstraction");
+            prop_assert_eq!(abs.alloc_base, Some(addr));
+            prop_assert!(matches!(
+                abs.state,
+                SafetyState::Quarantined | SafetyState::Freed
+            ));
+        }
 
         #[test]
         fn dependency_safe_order_property_holds(random_keys in proptest::array::uniform7(any::<u16>())) {
