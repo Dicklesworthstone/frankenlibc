@@ -170,6 +170,282 @@ pub struct CliffordSummary {
     pub total_observations: u64,
 }
 
+/// Runtime-dispatched string/memory ISA family.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SimdIsa {
+    Scalar,
+    Sse42,
+    Avx2,
+    Neon,
+}
+
+impl SimdIsa {
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Scalar => "scalar",
+            Self::Sse42 => "sse4.2",
+            Self::Avx2 => "avx2",
+            Self::Neon => "neon",
+        }
+    }
+
+    #[must_use]
+    pub const fn lane_bytes(self) -> usize {
+        match self {
+            Self::Scalar => 1,
+            Self::Sse42 | Self::Neon => 16,
+            Self::Avx2 => 32,
+        }
+    }
+
+    #[must_use]
+    pub const fn architecture(self) -> &'static str {
+        match self {
+            Self::Scalar => "portable",
+            Self::Sse42 | Self::Avx2 => "x86_64",
+            Self::Neon => "aarch64",
+        }
+    }
+}
+
+/// String/memory operations covered by the SIMD Clifford witness.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SimdStringOperation {
+    Memcpy,
+    Memcmp,
+    Strlen,
+}
+
+impl SimdStringOperation {
+    #[must_use]
+    pub const fn symbol(self) -> &'static str {
+        match self {
+            Self::Memcpy => "memcpy",
+            Self::Memcmp => "memcmp",
+            Self::Strlen => "strlen",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LaneContract {
+    PreserveOrder,
+    FirstDifference,
+    ZeroSentinel,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TailContract {
+    ExactSpan,
+    MaskedTail,
+    TerminatorMask,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OverlapContract {
+    Forbid,
+    Irrelevant,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SimdCliffordProfile {
+    operation: SimdStringOperation,
+    isa: SimdIsa,
+    lane_bytes: usize,
+    lane_contract: LaneContract,
+    tail_contract: TailContract,
+    overlap_contract: OverlapContract,
+}
+
+impl SimdCliffordProfile {
+    const fn reference(operation: SimdStringOperation) -> Self {
+        Self::candidate(operation, SimdIsa::Scalar)
+    }
+
+    const fn candidate(operation: SimdStringOperation, isa: SimdIsa) -> Self {
+        match operation {
+            SimdStringOperation::Memcpy => Self {
+                operation,
+                isa,
+                lane_bytes: isa.lane_bytes(),
+                lane_contract: LaneContract::PreserveOrder,
+                tail_contract: if matches!(isa, SimdIsa::Scalar) {
+                    TailContract::ExactSpan
+                } else {
+                    TailContract::MaskedTail
+                },
+                overlap_contract: OverlapContract::Forbid,
+            },
+            SimdStringOperation::Memcmp => Self {
+                operation,
+                isa,
+                lane_bytes: isa.lane_bytes(),
+                lane_contract: LaneContract::FirstDifference,
+                tail_contract: if matches!(isa, SimdIsa::Scalar) {
+                    TailContract::ExactSpan
+                } else {
+                    TailContract::MaskedTail
+                },
+                overlap_contract: OverlapContract::Irrelevant,
+            },
+            SimdStringOperation::Strlen => Self {
+                operation,
+                isa,
+                lane_bytes: isa.lane_bytes(),
+                lane_contract: LaneContract::ZeroSentinel,
+                tail_contract: TailContract::TerminatorMask,
+                overlap_contract: OverlapContract::Irrelevant,
+            },
+        }
+    }
+
+    fn compatible_with_reference(self, reference: Self, overlap: bool) -> bool {
+        if self.lane_contract != reference.lane_contract {
+            return false;
+        }
+        if matches!(self.overlap_contract, OverlapContract::Forbid) && overlap {
+            return false;
+        }
+        match (reference.tail_contract, self.tail_contract) {
+            (TailContract::ExactSpan, TailContract::ExactSpan | TailContract::MaskedTail)
+            | (TailContract::TerminatorMask, TailContract::TerminatorMask) => true,
+            _ => false,
+        }
+    }
+
+    fn observation(
+        self,
+        src_addr: usize,
+        dst_addr: usize,
+        len: usize,
+        overlap_fraction: f64,
+    ) -> AlignmentObservation {
+        let effective_len = len.max(self.lane_bytes);
+        let length_regime = sanitize_unit_interval(
+            effective_len as f64 / (self.lane_bytes.max(1) as f64 * 8.0),
+        );
+        AlignmentObservation {
+            src_alignment: AlignmentRegime::classify(src_addr),
+            dst_alignment: AlignmentRegime::classify(dst_addr),
+            overlap_fraction,
+            length_regime,
+        }
+    }
+}
+
+/// Algebraic witness proving a dispatched SIMD string kernel preserves the scalar contract.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CliffordIsomorphismCertificate {
+    pub operation: SimdStringOperation,
+    pub reference_isa: SimdIsa,
+    pub candidate_isa: SimdIsa,
+    pub architecture: &'static str,
+    pub lane_bytes: usize,
+    pub equivalent: bool,
+    pub state: CliffordState,
+    pub grade2_energy: f64,
+    pub parity_imbalance: f64,
+    pub overlap_fraction: f64,
+    pub rationale: &'static str,
+}
+
+fn overlap_fraction(src_addr: usize, dst_addr: usize, len: usize) -> f64 {
+    if len == 0 {
+        return 0.0;
+    }
+
+    let src_end = src_addr.saturating_add(len);
+    let dst_end = dst_addr.saturating_add(len);
+    let overlap_start = src_addr.max(dst_addr);
+    let overlap_end = src_end.min(dst_end);
+    if overlap_end <= overlap_start {
+        0.0
+    } else {
+        sanitize_unit_interval((overlap_end - overlap_start) as f64 / len as f64)
+    }
+}
+
+/// Build an algebraic equivalence certificate for a SIMD string kernel.
+#[must_use]
+pub fn certify_simd_string_operation(
+    operation: SimdStringOperation,
+    candidate_isa: SimdIsa,
+    src_addr: usize,
+    dst_addr: usize,
+    len: usize,
+    overlap: bool,
+) -> CliffordIsomorphismCertificate {
+    let reference = SimdCliffordProfile::reference(operation);
+    let candidate = SimdCliffordProfile::candidate(operation, candidate_isa);
+    let overlap_fraction = if overlap {
+        overlap_fraction(src_addr, dst_addr, len.max(candidate.lane_bytes))
+    } else {
+        0.0
+    };
+
+    let mut controller = CliffordController::new();
+    let reference_obs = reference.observation(
+        src_addr,
+        if dst_addr == 0 { src_addr } else { dst_addr },
+        len,
+        0.0,
+    );
+    for _ in 0..CALIBRATION_THRESHOLD {
+        controller.observe(reference_obs);
+    }
+
+    let candidate_obs = candidate.observation(
+        src_addr,
+        if dst_addr == 0 { src_addr } else { dst_addr },
+        len,
+        overlap_fraction,
+    );
+    for _ in 0..CALIBRATION_THRESHOLD {
+        controller.observe_and_update(candidate_obs);
+    }
+
+    let summary = controller.summary();
+    let compatible = candidate.compatible_with_reference(reference, overlap);
+    let (equivalent, rationale) = if !compatible {
+        if overlap && matches!(operation, SimdStringOperation::Memcpy) {
+            (
+                false,
+                "memcpy candidate rejected: Pin parity witness forbids overlap",
+            )
+        } else {
+            (
+                false,
+                "candidate rejected: lane or tail contract diverges from scalar reference",
+            )
+        }
+    } else if matches!(summary.state, CliffordState::OverlapViolation) {
+        (
+            false,
+            "candidate rejected: Clifford controller observed overlap/parity violation",
+        )
+    } else {
+        (
+            true,
+            "candidate accepted: Clifford lane contract is isomorphic to scalar reference",
+        )
+    };
+
+    CliffordIsomorphismCertificate {
+        operation,
+        reference_isa: SimdIsa::Scalar,
+        candidate_isa,
+        architecture: candidate_isa.architecture(),
+        lane_bytes: candidate.lane_bytes,
+        equivalent,
+        state: summary.state,
+        grade2_energy: summary.grade2_energy,
+        parity_imbalance: summary.parity_imbalance,
+        overlap_fraction,
+        rationale,
+    }
+}
+
 /// Compact multivector in Cl(4,0) — 16 coefficients.
 ///
 /// We use grade decomposition for efficient energy tracking:

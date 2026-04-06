@@ -11,7 +11,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Condvar, Mutex, MutexGuard, WaitTimeoutResult};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 pub const DEFAULT_ELIMINATION_SLOTS: usize = 8;
 
@@ -60,6 +60,33 @@ pub struct EliminationStats {
     pub disabled_skips: u64,
     pub published_slots: usize,
     pub slots: Vec<EliminationSlotStats>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct EliminationExchangeMeta {
+    pub slot_index: Option<usize>,
+    pub wait_cycles: u64,
+    pub partner_thread: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OfferOutcome<T> {
+    Matched(EliminationExchangeMeta),
+    Fallback {
+        value: T,
+        meta: EliminationExchangeMeta,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TakeOutcome<T> {
+    Matched {
+        value: T,
+        meta: EliminationExchangeMeta,
+    },
+    Fallback {
+        meta: EliminationExchangeMeta,
+    },
 }
 
 enum SlotState<T> {
@@ -117,7 +144,7 @@ struct AttemptGate {
 impl AdaptiveController {
     fn begin(&mut self) -> AttemptGate {
         self.observed = self.observed.saturating_add(1);
-        let should_log_summary = self.observed % SUMMARY_INTERVAL == 0;
+        let should_log_summary = self.observed.is_multiple_of(SUMMARY_INTERVAL);
 
         if self.disabled_remaining > 0 {
             self.disabled_remaining -= 1;
@@ -156,7 +183,7 @@ impl AdaptiveController {
             self.window_successes = 0;
         }
 
-        self.observed % SUMMARY_INTERVAL == 0
+        self.observed.is_multiple_of(SUMMARY_INTERVAL)
     }
 
     fn success_rate_ppm(&self) -> u32 {
@@ -370,6 +397,16 @@ impl<T: Send, const SLOTS: usize> EliminationArray<T, SLOTS> {
         Err(value.expect("offer collision must return the original value"))
     }
 
+    pub fn try_offer(&self, _slot_bias: usize, value: T) -> OfferOutcome<T> {
+        match self.offer(value) {
+            Ok(()) => OfferOutcome::Matched(EliminationExchangeMeta::default()),
+            Err(value) => OfferOutcome::Fallback {
+                value,
+                meta: EliminationExchangeMeta::default(),
+            },
+        }
+    }
+
     #[must_use]
     pub fn pop(&self) -> Option<T> {
         let gate = self.begin_attempt();
@@ -393,7 +430,6 @@ impl<T: Send, const SLOTS: usize> EliminationArray<T, SLOTS> {
             let slot_index = (base + step) % SLOTS;
             let slot = &self.slots[slot_index];
             let mut state = lock_no_poison(&slot.state);
-            let mut taken = None;
 
             let replaced = std::mem::replace(&mut *state, SlotState::Empty);
             match replaced {
@@ -403,7 +439,6 @@ impl<T: Send, const SLOTS: usize> EliminationArray<T, SLOTS> {
                     value,
                     ..
                 } => {
-                    taken = Some(value);
                     slot.matches.fetch_add(1, Ordering::Relaxed);
                     if wait_for_match {
                         *state = SlotState::Taken { consumer_thread };
@@ -419,7 +454,7 @@ impl<T: Send, const SLOTS: usize> EliminationArray<T, SLOTS> {
                         producer_thread,
                         (step + 1) as u64,
                     );
-                    return taken;
+                    return Some(value);
                 }
                 SlotState::Empty => {
                     *state = SlotState::Empty;
@@ -442,6 +477,99 @@ impl<T: Send, const SLOTS: usize> EliminationArray<T, SLOTS> {
             SLOTS as u64,
         );
         None
+    }
+
+    pub fn try_take(&self, slot_bias: usize) -> TakeOutcome<T> {
+        let gate = self.begin_attempt();
+        let consumer_thread = current_thread_tag();
+
+        if !gate.allowed {
+            self.record_skip(gate.should_log_summary);
+            self.log_event(
+                EliminationOp::Pop,
+                EliminationOutcome::Disabled,
+                0,
+                consumer_thread,
+                0,
+            );
+            return TakeOutcome::Fallback {
+                meta: EliminationExchangeMeta::default(),
+            };
+        }
+
+        let deadline = Instant::now() + self.wait_budget;
+        let base = slot_base::<SLOTS>(slot_bias);
+        let mut wait_cycles = 0u64;
+
+        loop {
+            for step in 0..SLOTS {
+                let slot_index = (base + step) % SLOTS;
+                let slot = &self.slots[slot_index];
+                let mut state = lock_no_poison(&slot.state);
+
+                let replaced = std::mem::replace(&mut *state, SlotState::Empty);
+                match replaced {
+                    SlotState::Offered {
+                        producer_thread,
+                        wait_for_match,
+                        value,
+                        ..
+                    } => {
+                        slot.matches.fetch_add(1, Ordering::Relaxed);
+                        if wait_for_match {
+                            *state = SlotState::Taken { consumer_thread };
+                            slot.condvar.notify_all();
+                        }
+                        drop(state);
+                        remember_next_slot::<SLOTS>(slot_index + 1);
+                        let meta = EliminationExchangeMeta {
+                            slot_index: Some(slot_index),
+                            wait_cycles: wait_cycles + (step + 1) as u64,
+                            partner_thread: Some(producer_thread),
+                        };
+                        self.record_attempt(true, gate.should_log_summary);
+                        self.log_event(
+                            EliminationOp::Pop,
+                            EliminationOutcome::Matched,
+                            slot_index,
+                            producer_thread,
+                            meta.wait_cycles,
+                        );
+                        return TakeOutcome::Matched { value, meta };
+                    }
+                    SlotState::Empty => {
+                        *state = SlotState::Empty;
+                    }
+                    SlotState::Taken { consumer_thread } => {
+                        *state = SlotState::Taken { consumer_thread };
+                    }
+                }
+
+                slot.collisions.fetch_add(1, Ordering::Relaxed);
+                remember_next_slot::<SLOTS>(slot_index + 1);
+            }
+
+            wait_cycles = wait_cycles.saturating_add(SLOTS as u64);
+            if Instant::now() >= deadline {
+                self.record_attempt(false, gate.should_log_summary);
+                self.log_event(
+                    EliminationOp::Pop,
+                    EliminationOutcome::Timeout,
+                    base,
+                    consumer_thread,
+                    wait_cycles,
+                );
+                return TakeOutcome::Fallback {
+                    meta: EliminationExchangeMeta {
+                        slot_index: None,
+                        wait_cycles,
+                        partner_thread: None,
+                    },
+                };
+            }
+
+            std::thread::yield_now();
+        }
     }
 
     #[must_use]
@@ -609,6 +737,10 @@ fn slot_hint<const SLOTS: usize>() -> usize {
 
 fn remember_next_slot<const SLOTS: usize>(next: usize) {
     SLOT_HINT.with(|hint| hint.set(next % SLOTS));
+}
+
+fn slot_base<const SLOTS: usize>(bias: usize) -> usize {
+    (slot_hint::<SLOTS>() + bias) % SLOTS
 }
 
 #[cfg(test)]

@@ -1726,18 +1726,19 @@ impl ValidationPipeline {
     ///
     /// This is a testing/tooling hook used by reusable fault-injection workflows
     /// so the harness can exercise corruption paths without using `unsafe` code.
+    /// The address is treated as an opaque allocation identifier; the pipeline
+    /// validates ownership and exact size before touching the trailing canary.
     #[must_use]
     pub fn inject_trailing_canary_corruption(
         &self,
-        ptr: *mut u8,
+        addr: usize,
         user_size: usize,
         fill_byte: u8,
     ) -> bool {
-        if ptr.is_null() {
+        if addr == 0 {
             return false;
         }
 
-        let addr = ptr as usize;
         let Some(slot) = self.arena.lookup(addr) else {
             return false;
         };
@@ -2103,7 +2104,7 @@ mod tests {
         let ptr = pipeline.allocate(size).expect("alloc");
         let addr = ptr as usize;
 
-        assert!(pipeline.inject_trailing_canary_corruption(ptr, size, 0xFF));
+        assert!(pipeline.inject_trailing_canary_corruption(addr, size, 0xFF));
 
         let result = pipeline.free(ptr);
         assert_eq!(result, FreeResult::FreedWithCanaryCorruption);

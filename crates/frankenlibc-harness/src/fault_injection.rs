@@ -534,7 +534,7 @@ fn execute_memory_case(
                         scenario: scenario.id.clone(),
                         reason: format!("failed to allocate {size} bytes"),
                     })?;
-            if !pipeline.inject_trailing_canary_corruption(ptr, size, fill_byte) {
+            if !pipeline.inject_trailing_canary_corruption(ptr as usize, size, fill_byte) {
                 return Err(FaultInjectionError::ExecutionFailure {
                     scenario: scenario.id.clone(),
                     reason: "failed to inject canary corruption".to_string(),
