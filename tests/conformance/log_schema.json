@@ -57,6 +57,10 @@
       "type": "string",
       "description": "Pipeline step / gate name (e.g., ci, e2e_suite, perf_gate, closure_gate)"
     },
+    "scenario_id": {
+      "type": "string",
+      "description": "Scenario identifier for manifest-driven runs (e.g., fault injection, shadow run)"
+    },
     "mode": {
       "type": "string",
       "enum": ["strict", "hardened"],
@@ -69,6 +73,10 @@
     "symbol": {
       "type": "string",
       "description": "Specific ABI symbol being tested (e.g., memcpy, malloc, strlen)"
+    },
+    "decision_path": {
+      "type": "string",
+      "description": "Explainable control-flow / policy path taken for this event"
     },
     "span_id": {
       "type": "string",

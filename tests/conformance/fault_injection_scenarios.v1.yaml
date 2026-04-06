@@ -1,0 +1,257 @@
+schema_version: v1
+manifest_id: bd-3fil-franken-fault-catalog
+generated_utc: "2026-04-06T00:00:00Z"
+description: >
+  Reusable declarative fault-injection catalog for franken_fault and future
+  FrankenLab scenario runners. The catalog mixes real membrane-backed memory
+  probes with deterministic model scenarios for time and concurrency failures.
+scenarios:
+  - id: memory.use_after_free
+    label: use_after_free
+    domain: memory
+    target: membrane_ptr_validator
+    operation: use_after_free
+    description: Deterministic temporal-safety probe against the membrane validator.
+    api_family: pointer_validation
+    symbol: membrane::ptr_validator::validate
+    strict:
+      detected: true
+      classification: TemporalViolation
+      decision_path: TemporalViolation
+      healing_action: None
+      errno: 14
+    hardened:
+      detected: true
+      classification: TemporalViolation
+      decision_path: Repair
+      healing_action: ReturnSafeDefault
+      errno: 14
+    variants:
+      - id: delay_0_size_32
+        params:
+          size: 32
+          delay: 0
+      - id: delay_64_size_128
+        params:
+          size: 128
+          delay: 64
+      - id: delay_1024_size_256
+        params:
+          size: 256
+          delay: 1024
+  - id: memory.double_free
+    label: double_free
+    domain: memory
+    target: membrane_ptr_validator
+    operation: double_free
+    description: Deterministic double-free probe through the membrane allocator path.
+    api_family: malloc
+    symbol: free
+    strict:
+      detected: true
+      classification: DoubleFree
+      decision_path: Deny
+      healing_action: None
+      errno: 14
+    hardened:
+      detected: true
+      classification: DoubleFree
+      decision_path: Repair
+      healing_action: IgnoreDoubleFree
+      errno: 14
+    variants:
+      - id: delay_0
+        params:
+          size: 64
+          delay: 0
+      - id: delay_8
+        params:
+          size: 96
+          delay: 8
+      - id: delay_128
+        params:
+          size: 192
+          delay: 128
+  - id: memory.off_by_one
+    label: off_by_one
+    domain: memory
+    target: membrane_ptr_validator
+    operation: off_by_one
+    description: Trailing-canary corruption injection without harness-side unsafe code.
+    api_family: string
+    symbol: memcpy
+    strict:
+      detected: true
+      classification: FreedWithCanaryCorruption
+      decision_path: Deny
+      healing_action: None
+      errno: 14
+    hardened:
+      detected: true
+      classification: FreedWithCanaryCorruption
+      decision_path: Repair
+      healing_action: TruncateWithNull
+      errno: 14
+    variants:
+      - id: size_16
+        params:
+          size: 16
+      - id: size_64
+        params:
+          size: 64
+      - id: size_257
+        params:
+          size: 257
+  - id: memory.oom_budget
+    label: oom_budget
+    domain: memory
+    target: memory_budget
+    operation: oom
+    description: Deterministic OOM injection model for allocator-budget exhaustion.
+    api_family: malloc
+    symbol: malloc
+    strict:
+      detected: true
+      classification: OutOfMemoryInjected
+      decision_path: Deny
+      healing_action: None
+      errno: 12
+    hardened:
+      detected: true
+      classification: OutOfMemoryInjected
+      decision_path: Repair
+      healing_action: ReturnSafeDefault
+      errno: 12
+    variants:
+      - id: immediate_oom
+        params:
+          budget_bytes: 64
+          reserve_bytes: 0
+          requested_bytes: 256
+      - id: exhausted_after_reserve
+        params:
+          budget_bytes: 128
+          reserve_bytes: 112
+          requested_bytes: 32
+  - id: time.virtual_drift
+    label: virtual_drift
+    domain: time
+    target: virtual_clock
+    operation: virtual_drift
+    description: Virtual-time drift detection for deadline-sensitive control paths.
+    api_family: time
+    symbol: clock_gettime
+    strict:
+      detected: true
+      classification: ClockDriftExceeded
+      decision_path: Deny
+      healing_action: None
+      errno: 34
+    hardened:
+      detected: true
+      classification: ClockDriftExceeded
+      decision_path: Repair
+      healing_action: ReturnSafeDefault
+      errno: 34
+    variants:
+      - id: forward_drift
+        params:
+          base_ns: 1000000
+          drift_ns: 90000
+          max_drift_ns: 25000
+      - id: backward_drift
+        params:
+          base_ns: 1000000
+          drift_ns: -120000
+          max_drift_ns: 25000
+  - id: concurrency.aba_hazard
+    label: aba_hazard
+    domain: concurrency
+    target: deterministic_scheduler
+    operation: aba_hazard
+    description: Generation-reuse fault model for ABA hazard detection.
+    api_family: pthread
+    symbol: pthread_mutex_lock
+    strict:
+      detected: true
+      classification: AbaHazard
+      decision_path: Deny
+      healing_action: None
+      errno: 11
+    hardened:
+      detected: true
+      classification: AbaHazard
+      decision_path: Repair
+      healing_action: UpgradeToSafeVariant
+      errno: 11
+    variants:
+      - id: generation_reused
+        params:
+          initial_generation: 41
+          recycled_generation: 41
+      - id: high_contention_reuse
+        params:
+          initial_generation: 4096
+          recycled_generation: 4096
+  - id: concurrency.starvation_budget
+    label: starvation_budget
+    domain: concurrency
+    target: deterministic_scheduler
+    operation: starvation_budget
+    description: Fairness-budget probe for starvation under deterministic scheduling.
+    api_family: pthread
+    symbol: pthread_mutex_lock
+    strict:
+      detected: true
+      classification: StarvationDetected
+      decision_path: Deny
+      healing_action: None
+      errno: 11
+    hardened:
+      detected: true
+      classification: StarvationDetected
+      decision_path: Repair
+      healing_action: UpgradeToSafeVariant
+      errno: 11
+    variants:
+      - id: eight_waiters
+        params:
+          waiters: 8
+          max_skips: 3
+          grants: [0, 0, 0, 0, 1, 0]
+      - id: sixteen_waiters
+        params:
+          waiters: 16
+          max_skips: 4
+          grants: [0, 0, 0, 0, 0, 1, 0]
+  - id: concurrency.cancellation_window
+    label: cancellation_window
+    domain: concurrency
+    target: deterministic_scheduler
+    operation: cancellation_window
+    description: Worst-point cancellation injection for critical sections.
+    api_family: pthread
+    symbol: pthread_cancel
+    strict:
+      detected: true
+      classification: CancellationAtWorstPoint
+      decision_path: Deny
+      healing_action: None
+      errno: 4
+    hardened:
+      detected: true
+      classification: CancellationAtWorstPoint
+      decision_path: Repair
+      healing_action: ReturnSafeDefault
+      errno: 4
+    variants:
+      - id: cancel_inside_critical
+        params:
+          cancel_at: critical
+          worst_point: critical
+          phase_count: 3
+      - id: cancel_before_commit
+        params:
+          cancel_at: commit
+          worst_point: commit
+          phase_count: 4

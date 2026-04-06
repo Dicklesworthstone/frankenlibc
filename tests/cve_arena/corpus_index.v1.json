@@ -1,0 +1,202 @@
+{
+  "schema_version": "1.0",
+  "description": "FrankenLibC CVE Arena — Normalized Corpus Index (bd-1m5.5)",
+  "generated_at": "2026-04-06",
+  "generated_by": "RedRaven",
+  "metadata_schema": {
+    "required_fields": [
+      "cve_id",
+      "test_name",
+      "category",
+      "cwe_ids",
+      "cvss_score",
+      "build_cmd",
+      "run_cmd",
+      "expected_stock",
+      "expected_tsm",
+      "tsm_features_tested"
+    ],
+    "optional_fields": [
+      "description",
+      "affected_versions",
+      "patch_commit",
+      "discovery_date",
+      "replay_env",
+      "timeout_seconds"
+    ],
+    "expected_stock_schema": {
+      "crashes": "boolean — whether stock glibc crashes",
+      "signal": "string|null — signal name if crashes (SIGSEGV, SIGABRT, etc.)",
+      "exit_code": "integer|null — expected exit code if no crash",
+      "description": "string — human-readable description of stock behavior"
+    },
+    "expected_tsm_schema": {
+      "crashes": "boolean — whether FrankenLibC TSM prevents the crash",
+      "exit_code": "integer — expected exit code under TSM",
+      "healing_actions": "string[] — TSM healing actions applied (ClampSize, TruncateWithNull, etc.)",
+      "description": "string — human-readable description of TSM behavior"
+    },
+    "vulnerability_classes": [
+      "heap-buffer-overflow",
+      "stack-buffer-overflow",
+      "use-after-free",
+      "double-free",
+      "null-pointer-deref",
+      "integer-overflow",
+      "format-string",
+      "memory-corruption",
+      "cache-poisoning"
+    ],
+    "tsm_feature_vocabulary": [
+      "canary",
+      "bounds_checking",
+      "clamp_size",
+      "truncate_with_null",
+      "return_safe_default",
+      "quarantine",
+      "generational_arena",
+      "ignore_double_free",
+      "ignore_foreign_free",
+      "realloc_as_malloc",
+      "upgrade_to_safe_variant",
+      "allocation_fingerprints",
+      "bloom_filter",
+      "page_oracle"
+    ]
+  },
+  "scenarios": [
+    {
+      "cve_id": "CVE-2023-6246",
+      "test_name": "syslog_heap_overflow_suite",
+      "directory": "glibc/cve_2023_6246_syslog_suite",
+      "category": "glibc-internal",
+      "vulnerability_class": "heap-buffer-overflow",
+      "cwe_ids": ["CWE-787", "CWE-131", "CWE-190"],
+      "cvss_score": 8.4,
+      "description": "__vsyslog_internal heap overflow via crafted ident/format string causing integer overflow in buffer size calculation",
+      "affected_component": "syslog",
+      "trigger_file": "trigger.c",
+      "build_cmd": "cc -o trigger trigger.c -Wall -Wextra",
+      "run_cmd": "./trigger",
+      "expected_stock": {
+        "crashes": true,
+        "signal": "SIGSEGV",
+        "description": "Heap corruption from integer overflow in buffer size calculation; controlled heap overwrite enables local privilege escalation"
+      },
+      "expected_tsm": {
+        "crashes": false,
+        "exit_code": 0,
+        "healing_actions": ["ClampSize", "TruncateWithNull"],
+        "description": "TSM detects overflow via trailing canary and clamps the buffer size; truncation prevents the overwrite"
+      },
+      "tsm_features_tested": ["canary", "bounds_checking", "clamp_size", "truncate_with_null"],
+      "replay_deterministic": true,
+      "timeout_seconds": 5
+    },
+    {
+      "cve_id": "CVE-2024-2961",
+      "test_name": "iconv_iso2022cn_ext_buffer_overflow",
+      "directory": "glibc/cve_2024_2961_iconv",
+      "category": "glibc-internal",
+      "vulnerability_class": "heap-buffer-overflow",
+      "cwe_ids": ["CWE-787"],
+      "cvss_score": 8.8,
+      "description": "iconv() writes up to 8 bytes past the output buffer when converting to ISO-2022-CN-EXT due to incorrect bounds computation in the internal encoder",
+      "affected_component": "iconv",
+      "trigger_file": "trigger.c",
+      "build_cmd": "cc -o trigger trigger.c -Wall -Wextra",
+      "run_cmd": "./trigger",
+      "expected_stock": {
+        "crashes": true,
+        "signal": "SIGSEGV",
+        "description": "Heap corruption from 8-byte overwrite past output buffer; may crash at free() or silently corrupt adjacent allocations enabling code execution"
+      },
+      "expected_tsm": {
+        "crashes": false,
+        "exit_code": 0,
+        "healing_actions": ["ClampSize"],
+        "description": "Trailing canary detects overflow at free(); ClampSize would prevent the overwrite in iconv internal memcpy; bounds computation catches the out-of-range write"
+      },
+      "tsm_features_tested": ["canary", "bounds_checking", "clamp_size"],
+      "replay_deterministic": true,
+      "timeout_seconds": 5
+    },
+    {
+      "cve_id": "CVE-2024-33599",
+      "test_name": "nscd_netgroup_cache_memory_corruption_suite",
+      "directory": "glibc/cve_2024_33599_nscd_suite",
+      "category": "glibc-internal",
+      "vulnerability_class": "memory-corruption",
+      "cwe_ids": ["CWE-121", "CWE-476", "CWE-787", "CWE-908"],
+      "cvss_score": 7.6,
+      "description": "nscd netgroup cache corruption via stack overflow and null pointer dereference; multiple memory safety violations in netgroup response handling",
+      "affected_component": "nscd",
+      "trigger_file": "trigger.c",
+      "build_cmd": "cc -o trigger trigger.c -Wall -Wextra",
+      "run_cmd": "./trigger",
+      "expected_stock": {
+        "crashes": true,
+        "signal": "SIGSEGV",
+        "description": "Stack overflow from recursive netgroup expansion; null pointer dereference in cache lookup; heap corruption from incorrect size calculations"
+      },
+      "expected_tsm": {
+        "crashes": false,
+        "exit_code": 0,
+        "healing_actions": ["ClampSize", "ReturnSafeDefault"],
+        "description": "TSM detects stack overflow via canary, clamps recursive depth, returns safe default for missing cache entries, and quarantines corrupted allocations"
+      },
+      "tsm_features_tested": ["canary", "bounds_checking", "clamp_size", "return_safe_default", "quarantine"],
+      "replay_deterministic": true,
+      "timeout_seconds": 10
+    },
+    {
+      "cve_id": "CVE-2025-8058",
+      "test_name": "regcomp_double_free_on_alloc_failure",
+      "directory": "glibc/cve_2025_8058_regcomp",
+      "category": "glibc-internal",
+      "vulnerability_class": "double-free",
+      "cwe_ids": ["CWE-415"],
+      "cvss_score": 5.5,
+      "description": "regcomp() double-frees internal regex parse tree nodes when malloc fails during compilation of a complex regex, due to incorrect error-path cleanup",
+      "affected_component": "regex",
+      "trigger_file": "trigger.c",
+      "build_cmd": "cc -o trigger trigger.c -Wall -Wextra",
+      "run_cmd": "./trigger",
+      "expected_stock": {
+        "crashes": true,
+        "signal": "SIGABRT",
+        "description": "Double free detected by glibc allocator; aborts with 'double free or corruption' message"
+      },
+      "expected_tsm": {
+        "crashes": false,
+        "exit_code": 0,
+        "healing_actions": ["IgnoreDoubleFree"],
+        "description": "Generational arena detects the double-free via generation counter mismatch; IgnoreDoubleFree healing action silently discards the second free; quarantine prevents the freed memory from being reused during the vulnerable window"
+      },
+      "tsm_features_tested": ["generational_arena", "quarantine", "ignore_double_free", "allocation_fingerprints"],
+      "replay_deterministic": true,
+      "timeout_seconds": 5
+    }
+  ],
+  "corpus_summary": {
+    "total_scenarios": 4,
+    "vulnerability_classes": {
+      "heap-buffer-overflow": 2,
+      "memory-corruption": 1,
+      "double-free": 1
+    },
+    "tsm_features_coverage": {
+      "canary": 3,
+      "bounds_checking": 3,
+      "clamp_size": 3,
+      "truncate_with_null": 1,
+      "return_safe_default": 1,
+      "quarantine": 2,
+      "generational_arena": 1,
+      "ignore_double_free": 1,
+      "allocation_fingerprints": 1
+    },
+    "average_cvss": 7.575,
+    "all_replay_deterministic": true
+  }
+}
