@@ -179,6 +179,21 @@ pub fn swab(src: &[u8], dest: &mut [u8], n: usize) -> usize {
 mod tests {
     use super::*;
     use proptest::prelude::*;
+    use proptest::test_runner::Config as ProptestConfig;
+
+    fn property_proptest_config(default_cases: u32) -> ProptestConfig {
+        let cases = std::env::var("FRANKENLIBC_PROPTEST_CASES")
+            .ok()
+            .and_then(|value| value.parse::<u32>().ok())
+            .filter(|&value| value > 0)
+            .unwrap_or(default_cases);
+
+        ProptestConfig {
+            cases,
+            failure_persistence: None,
+            ..ProptestConfig::default()
+        }
+    }
 
     #[test]
     fn test_memcpy_basic() {
@@ -337,6 +352,8 @@ mod tests {
     }
 
     proptest! {
+        #![proptest_config(property_proptest_config(256))]
+
         #[test]
         fn prop_memcpy_matches_prefix_copy(
             src in proptest::collection::vec(any::<u8>(), 0..128),

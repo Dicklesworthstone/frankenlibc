@@ -5,6 +5,7 @@
 //! - Large allocations (>32KB): tracked via the large allocator
 
 pub mod allocator;
+mod elimination;
 pub mod large;
 pub mod size_class;
 pub mod thread_cache;

@@ -105,6 +105,21 @@ pub fn to_ascii(c: u8) -> u8 {
 mod tests {
     use super::*;
     use proptest::prelude::*;
+    use proptest::test_runner::Config as ProptestConfig;
+
+    fn property_proptest_config(default_cases: u32) -> ProptestConfig {
+        let cases = std::env::var("FRANKENLIBC_PROPTEST_CASES")
+            .ok()
+            .and_then(|value| value.parse::<u32>().ok())
+            .filter(|&value| value > 0)
+            .unwrap_or(default_cases);
+
+        ProptestConfig {
+            cases,
+            failure_persistence: None,
+            ..ProptestConfig::default()
+        }
+    }
 
     #[test]
     fn test_is_alpha() {
@@ -314,6 +329,8 @@ mod tests {
     }
 
     proptest! {
+        #![proptest_config(property_proptest_config(256))]
+
         #[test]
         fn prop_core_classification_invariants(c in any::<u8>()) {
             prop_assert_eq!(is_alnum(c), is_alpha(c) || is_digit(c));

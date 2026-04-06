@@ -4,9 +4,11 @@
 //! size-class bins, and large-allocation paths. This is the safe Rust
 //! layer managing allocation policy and metadata.
 
+use super::elimination::{DEFAULT_ELIMINATION_SLOTS, EliminationArray, OfferOutcome, TakeOutcome};
 use super::size_class::{self, NUM_SIZE_CLASSES};
 use super::thread_cache::ThreadCache;
 use frankenlibc_membrane::runtime_math::sos_barrier::evaluate_size_class_barrier;
+use std::sync::Arc;
 
 /// Allocator lifecycle log level.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -69,6 +71,8 @@ pub struct AllocatorLogRecord {
 pub struct MallocState {
     /// Per-bin central freelists (bin index -> stack of free pointers).
     central_bins: Vec<Vec<usize>>,
+    /// Direct handoff array for complementary `free`/`malloc` traffic.
+    elimination: Arc<EliminationArray<usize, DEFAULT_ELIMINATION_SLOTS>>,
     /// Thread cache.
     thread_cache: ThreadCache,
     /// Monotonic lifecycle decision id.
@@ -98,6 +102,7 @@ impl MallocState {
         let central_bins = (0..NUM_SIZE_CLASSES).map(|_| Vec::new()).collect();
         Self {
             central_bins,
+            elimination: Arc::new(EliminationArray::new()),
             thread_cache: ThreadCache::new(),
             next_decision_id: 1,
             lifecycle_logs: Vec::new(),
@@ -234,6 +239,30 @@ impl MallocState {
 
         self.thread_cache_misses += 1;
 
+        match self.elimination.try_take(bin) {
+            TakeOutcome::Matched { value: ptr, meta } => {
+                self.total_allocated = self.total_allocated.saturating_add(size);
+                self.active_count = self.active_count.saturating_add(1);
+                self.record_lifecycle(
+                    AllocatorLogLevel::Trace,
+                    "malloc",
+                    "alloc",
+                    Some(ptr),
+                    Some(size),
+                    Some(bin),
+                    "success",
+                    format!(
+                        "path=elimination;slot={};wait_cycles={};partner_thread={}",
+                        meta.slot_index.unwrap_or(usize::MAX),
+                        meta.wait_cycles,
+                        meta.partner_thread.unwrap_or(0)
+                    ),
+                );
+                return Some(ptr);
+            }
+            TakeOutcome::Fallback { .. } => {}
+        }
+
         // Try central bin
         if let Some(ptr) = self.central_bins[bin].pop() {
             self.central_bin_hits += 1;
@@ -290,6 +319,7 @@ impl MallocState {
         if ptr == 0 {
             return;
         }
+        let mut ptr = ptr;
 
         let bin = size_class::bin_index(size);
         if bin >= NUM_SIZE_CLASSES {
@@ -311,6 +341,30 @@ impl MallocState {
 
         self.total_allocated = self.total_allocated.saturating_sub(size);
         self.active_count = self.active_count.saturating_sub(1);
+
+        match self.elimination.try_offer(bin, ptr) {
+            OfferOutcome::Matched(meta) => {
+                self.record_lifecycle(
+                    AllocatorLogLevel::Trace,
+                    "free",
+                    "free",
+                    Some(ptr),
+                    Some(size),
+                    Some(bin),
+                    "success",
+                    format!(
+                        "path=elimination;slot={};wait_cycles={};partner_thread={}",
+                        meta.slot_index.unwrap_or(usize::MAX),
+                        meta.wait_cycles,
+                        meta.partner_thread.unwrap_or(0)
+                    ),
+                );
+                return;
+            }
+            OfferOutcome::Fallback { value, .. } => {
+                ptr = value;
+            }
+        }
 
         if self.thread_cache.dealloc(bin, ptr) {
             self.record_lifecycle(
@@ -378,6 +432,13 @@ impl MallocState {
     pub fn drain_lifecycle_logs(&mut self) -> Vec<AllocatorLogRecord> {
         std::mem::take(&mut self.lifecycle_logs)
     }
+
+    #[cfg(test)]
+    pub(crate) fn elimination_handle(
+        &self,
+    ) -> Arc<EliminationArray<usize, DEFAULT_ELIMINATION_SLOTS>> {
+        Arc::clone(&self.elimination)
+    }
 }
 
 impl Default for MallocState {
@@ -390,7 +451,8 @@ impl Default for MallocState {
 mod tests {
     use super::*;
     use std::collections::HashMap;
-    use std::sync::{Mutex, OnceLock};
+    use std::sync::{Barrier, Mutex, OnceLock};
+    use std::thread;
 
     fn test_alloc_registry() -> &'static Mutex<HashMap<usize, Box<[u8]>>> {
         static REGISTRY: OnceLock<Mutex<HashMap<usize, Box<[u8]>>>> = OnceLock::new();
@@ -466,5 +528,43 @@ mod tests {
             .malloc(size, |_| panic!("should not call backend"))
             .unwrap();
         assert!(ptrs.contains(&new_ptr));
+    }
+
+    #[test]
+    fn free_matches_waiting_consumer_through_elimination() {
+        let mut state = MallocState::new();
+        let size = 32;
+        let ptr = state.malloc(size, test_alloc).unwrap();
+        let elimination = state.elimination_handle();
+        let barrier = Barrier::new(2);
+
+        let consumer = thread::scope(|scope| {
+            let barrier_ref = &barrier;
+            let elimination_ref = &elimination;
+            let consumer = scope.spawn(move || {
+                barrier_ref.wait();
+                elimination_ref.try_take(size_class::bin_index(size))
+            });
+
+            barrier.wait();
+            for _ in 0..16 {
+                thread::yield_now();
+            }
+            state.free(ptr, size, |p| test_free(p, 32));
+            consumer.join().expect("consumer thread must join")
+        });
+
+        match consumer {
+            TakeOutcome::Matched { value, .. } => assert_eq!(value, ptr),
+            other => panic!("expected elimination match, got {other:?}"),
+        }
+        assert_eq!(state.active_count(), 0);
+        assert_eq!(state.total_allocated(), 0);
+        let last = state
+            .lifecycle_logs()
+            .last()
+            .expect("expected at least one lifecycle record");
+        assert_eq!(last.symbol, "free");
+        assert!(last.details.contains("path=elimination"));
     }
 }

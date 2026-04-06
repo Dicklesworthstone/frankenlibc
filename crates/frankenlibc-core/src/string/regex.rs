@@ -96,6 +96,270 @@ enum AnchorKind {
 }
 
 // ---------------------------------------------------------------------------
+// Compile-time complexity certificate
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RegexComplexityClass {
+    Linear,
+    SuperLinear,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RegexRiskReason {
+    NestedUnboundedRepeat,
+    NullableRepeatedTerm,
+    AmbiguousRepeatedAlternation,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RegexComplexityCertificate {
+    pub pattern_hash: u64,
+    pub complexity: RegexComplexityClass,
+    pub estimated_nfa_states: usize,
+    pub max_repeat_depth: u32,
+    pub unbounded_repeat_count: u32,
+    pub risk_reason: Option<RegexRiskReason>,
+}
+
+#[derive(Clone, Copy)]
+struct FirstByteSet {
+    words: [u64; 4],
+    any: bool,
+}
+
+impl FirstByteSet {
+    fn empty() -> Self {
+        Self {
+            words: [0; 4],
+            any: false,
+        }
+    }
+
+    fn any() -> Self {
+        Self {
+            words: [u64::MAX; 4],
+            any: true,
+        }
+    }
+
+    fn singleton(byte: u8) -> Self {
+        let mut set = Self::empty();
+        set.insert(byte);
+        set
+    }
+
+    fn range(lo: u8, hi: u8) -> Self {
+        let mut set = Self::empty();
+        let mut byte = lo;
+        loop {
+            set.insert(byte);
+            if byte == hi {
+                break;
+            }
+            byte = byte.saturating_add(1);
+        }
+        set
+    }
+
+    fn insert(&mut self, byte: u8) {
+        let index = (byte / 64) as usize;
+        let bit = byte % 64;
+        self.words[index] |= 1u64 << bit;
+    }
+
+    fn union(self, other: Self) -> Self {
+        if self.any || other.any {
+            return Self::any();
+        }
+        let mut out = Self::empty();
+        for (dst, (left, right)) in out
+            .words
+            .iter_mut()
+            .zip(self.words.into_iter().zip(other.words))
+        {
+            *dst = left | right;
+        }
+        out
+    }
+
+    fn overlaps(self, other: Self) -> bool {
+        if self.any || other.any {
+            return true;
+        }
+        self.words
+            .iter()
+            .zip(other.words.iter())
+            .any(|(left, right)| (*left & *right) != 0)
+    }
+}
+
+#[derive(Clone, Copy)]
+struct AstAnalysis {
+    nullable: bool,
+    first_bytes: FirstByteSet,
+    contains_unbounded_repeat: bool,
+    unbounded_repeat_count: u32,
+    max_repeat_depth: u32,
+    complexity: RegexComplexityClass,
+    risk_reason: Option<RegexRiskReason>,
+}
+
+impl AstAnalysis {
+    fn linear(nullable: bool, first_bytes: FirstByteSet) -> Self {
+        Self {
+            nullable,
+            first_bytes,
+            contains_unbounded_repeat: false,
+            unbounded_repeat_count: 0,
+            max_repeat_depth: 0,
+            complexity: RegexComplexityClass::Linear,
+            risk_reason: None,
+        }
+    }
+
+    fn merge_risk(&mut self, other: Self) {
+        if self.risk_reason.is_none() {
+            self.risk_reason = other.risk_reason;
+        }
+        if matches!(other.complexity, RegexComplexityClass::SuperLinear) {
+            self.complexity = RegexComplexityClass::SuperLinear;
+        }
+    }
+
+    fn mark_super_linear(&mut self, reason: RegexRiskReason) {
+        self.complexity = RegexComplexityClass::SuperLinear;
+        if self.risk_reason.is_none() {
+            self.risk_reason = Some(reason);
+        }
+    }
+}
+
+fn stable_pattern_hash(pattern: &[u8]) -> u64 {
+    const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+    const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
+
+    let mut hash = FNV_OFFSET;
+    for byte in pattern {
+        hash ^= *byte as u64;
+        hash = hash.wrapping_mul(FNV_PRIME);
+    }
+    hash
+}
+
+fn strip_groups(mut ast: &Ast) -> &Ast {
+    while let Ast::Group { inner, .. } = ast {
+        ast = inner.as_ref();
+    }
+    ast
+}
+
+fn analyze_ast(ast: &Ast) -> AstAnalysis {
+    match ast {
+        Ast::Literal(byte) => AstAnalysis::linear(false, FirstByteSet::singleton(*byte)),
+        Ast::AnyChar => AstAnalysis::linear(false, FirstByteSet::any()),
+        Ast::CharClass { ranges, .. } => {
+            let mut set = FirstByteSet::empty();
+            for &(lo, hi) in ranges {
+                set = set.union(FirstByteSet::range(lo, hi));
+            }
+            AstAnalysis::linear(false, set)
+        }
+        Ast::Anchor(_) => AstAnalysis::linear(true, FirstByteSet::empty()),
+        Ast::Group { inner, .. } => analyze_ast(inner),
+        Ast::Concat(items) => {
+            let mut out = AstAnalysis::linear(true, FirstByteSet::empty());
+            let mut prefix_nullable = true;
+
+            for item in items {
+                let analysis = analyze_ast(item);
+                out.merge_risk(analysis);
+                out.unbounded_repeat_count += analysis.unbounded_repeat_count;
+                out.max_repeat_depth = out.max_repeat_depth.max(analysis.max_repeat_depth);
+                out.contains_unbounded_repeat |= analysis.contains_unbounded_repeat;
+
+                if prefix_nullable {
+                    out.first_bytes = out.first_bytes.union(analysis.first_bytes);
+                }
+                prefix_nullable &= analysis.nullable;
+            }
+
+            out.nullable = prefix_nullable;
+            out
+        }
+        Ast::Alternate(left, right) => {
+            let left_analysis = analyze_ast(left);
+            let right_analysis = analyze_ast(right);
+            let mut out = AstAnalysis::linear(
+                left_analysis.nullable || right_analysis.nullable,
+                left_analysis.first_bytes.union(right_analysis.first_bytes),
+            );
+            out.unbounded_repeat_count =
+                left_analysis.unbounded_repeat_count + right_analysis.unbounded_repeat_count;
+            out.max_repeat_depth = left_analysis
+                .max_repeat_depth
+                .max(right_analysis.max_repeat_depth);
+            out.contains_unbounded_repeat =
+                left_analysis.contains_unbounded_repeat || right_analysis.contains_unbounded_repeat;
+            out.merge_risk(left_analysis);
+            out.merge_risk(right_analysis);
+            out
+        }
+        Ast::Repeat { inner, min, max } => {
+            let inner_analysis = analyze_ast(inner);
+            let repeated = max.is_none() || max.is_some_and(|count| count > 1);
+            let mut out = AstAnalysis::linear(
+                *min == 0 || inner_analysis.nullable,
+                inner_analysis.first_bytes,
+            );
+            out.unbounded_repeat_count =
+                inner_analysis.unbounded_repeat_count + u32::from(max.is_none());
+            out.contains_unbounded_repeat =
+                inner_analysis.contains_unbounded_repeat || max.is_none();
+            out.max_repeat_depth = inner_analysis.max_repeat_depth + u32::from(repeated);
+            out.merge_risk(inner_analysis);
+
+            if repeated && inner_analysis.nullable {
+                out.mark_super_linear(RegexRiskReason::NullableRepeatedTerm);
+            }
+            if max.is_none() && inner_analysis.contains_unbounded_repeat {
+                out.mark_super_linear(RegexRiskReason::NestedUnboundedRepeat);
+            }
+            if repeated && let Ast::Alternate(left, right) = strip_groups(inner.as_ref()) {
+                let left_analysis = analyze_ast(left);
+                let right_analysis = analyze_ast(right);
+                if left_analysis
+                    .first_bytes
+                    .overlaps(right_analysis.first_bytes)
+                    || left_analysis.nullable
+                    || right_analysis.nullable
+                {
+                    out.mark_super_linear(RegexRiskReason::AmbiguousRepeatedAlternation);
+                }
+            }
+
+            out
+        }
+    }
+}
+
+fn build_complexity_certificate(
+    pattern: &[u8],
+    ast: &Ast,
+    estimated_nfa_states: usize,
+) -> RegexComplexityCertificate {
+    let analysis = analyze_ast(ast);
+    RegexComplexityCertificate {
+        pattern_hash: stable_pattern_hash(pattern),
+        complexity: analysis.complexity,
+        estimated_nfa_states,
+        max_repeat_depth: analysis.max_repeat_depth,
+        unbounded_repeat_count: analysis.unbounded_repeat_count,
+        risk_reason: analysis.risk_reason,
+    }
+}
+
+// ---------------------------------------------------------------------------
 // NFA
 // ---------------------------------------------------------------------------
 
@@ -132,15 +396,21 @@ enum MatchKind {
 // Compiled regex
 // ---------------------------------------------------------------------------
 
+#[derive(Debug)]
 pub struct CompiledRegex {
     nfa: Vec<NfaInstr>,
     num_groups: usize,
     nosub: bool,
+    complexity_certificate: RegexComplexityCertificate,
 }
 
 impl CompiledRegex {
     fn num_slots(&self) -> usize {
         (self.num_groups + 1) * 2
+    }
+
+    pub fn complexity_certificate(&self) -> RegexComplexityCertificate {
+        self.complexity_certificate
     }
 }
 
@@ -1011,11 +1281,13 @@ pub fn regex_compile(pattern: &[u8], cflags: i32) -> Result<Box<CompiledRegex>, 
     compiler.compile(&ast);
     compiler.emit(NfaInstr::Save(1));
     let nfa = compiler.finish();
+    let complexity_certificate = build_complexity_certificate(pat, &ast, nfa.len());
 
     Ok(Box::new(CompiledRegex {
         nfa,
         num_groups,
         nosub,
+        complexity_certificate,
     }))
 }
 
@@ -1248,5 +1520,37 @@ mod tests {
     fn escaped_metachar() {
         assert!(compile_and_match("a\\.b", "a.b", REG_EXTENDED));
         assert!(!compile_and_match("a\\.b", "axb", REG_EXTENDED));
+    }
+
+    #[test]
+    fn complexity_certificate_marks_linear_patterns() {
+        let compiled = regex_compile(b"(foo|bar)+baz", REG_EXTENDED).unwrap();
+        let certificate = compiled.complexity_certificate();
+        assert_eq!(certificate.complexity, RegexComplexityClass::Linear);
+        assert_eq!(certificate.risk_reason, None);
+        assert!(certificate.estimated_nfa_states > 0);
+        assert!(certificate.pattern_hash != 0);
+    }
+
+    #[test]
+    fn complexity_certificate_marks_risky_patterns_without_rejecting_them() {
+        let cases = [
+            (b"(a+)+$".as_slice(), RegexRiskReason::NestedUnboundedRepeat),
+            (
+                b"(a|aa)+$".as_slice(),
+                RegexRiskReason::AmbiguousRepeatedAlternation,
+            ),
+            (b"(a?)+$".as_slice(), RegexRiskReason::NullableRepeatedTerm),
+        ];
+
+        for (pattern, expected_reason) in cases {
+            let compiled = regex_compile(pattern, REG_EXTENDED).unwrap();
+            let certificate = compiled.complexity_certificate();
+            assert_eq!(certificate.complexity, RegexComplexityClass::SuperLinear);
+            assert_eq!(certificate.risk_reason, Some(expected_reason));
+        }
+
+        assert!(compile_and_match("(a+)+$", "aaaa", REG_EXTENDED));
+        assert!(compile_and_match("([a-z]+)*$", "abcxyz", REG_EXTENDED));
     }
 }

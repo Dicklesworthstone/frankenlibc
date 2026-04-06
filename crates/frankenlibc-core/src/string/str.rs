@@ -442,6 +442,21 @@ pub fn strxfrm(dest: &mut [u8], src: &[u8], n: usize) -> usize {
 mod tests {
     use super::*;
     use proptest::prelude::*;
+    use proptest::test_runner::Config as ProptestConfig;
+
+    fn property_proptest_config(default_cases: u32) -> ProptestConfig {
+        let cases = std::env::var("FRANKENLIBC_PROPTEST_CASES")
+            .ok()
+            .and_then(|value| value.parse::<u32>().ok())
+            .filter(|&value| value > 0)
+            .unwrap_or(default_cases);
+
+        ProptestConfig {
+            cases,
+            failure_persistence: None,
+            ..ProptestConfig::default()
+        }
+    }
 
     fn to_c_string(mut bytes: Vec<u8>) -> Vec<u8> {
         bytes.retain(|byte| *byte != 0);
@@ -700,6 +715,8 @@ mod tests {
     }
 
     proptest! {
+        #![proptest_config(property_proptest_config(256))]
+
         #[test]
         fn prop_strlen_matches_first_nul_or_slice_len(data in proptest::collection::vec(any::<u8>(), 0..128)) {
             let expected = data.iter().position(|byte| *byte == 0).unwrap_or(data.len());

@@ -520,6 +520,21 @@ fn simple_towlower(c: u32) -> u32 {
 mod tests {
     use super::*;
     use proptest::prelude::*;
+    use proptest::test_runner::Config as ProptestConfig;
+
+    fn property_proptest_config(default_cases: u32) -> ProptestConfig {
+        let cases = std::env::var("FRANKENLIBC_PROPTEST_CASES")
+            .ok()
+            .and_then(|value| value.parse::<u32>().ok())
+            .filter(|&value| value > 0)
+            .unwrap_or(default_cases);
+
+        ProptestConfig {
+            cases,
+            failure_persistence: None,
+            ..ProptestConfig::default()
+        }
+    }
 
     fn to_wide_cstring(bytes: &[u8]) -> Vec<u32> {
         let mut out: Vec<u32> = bytes.iter().map(|&byte| byte as u32).collect();
@@ -927,6 +942,8 @@ mod tests {
     }
 
     proptest! {
+        #![proptest_config(property_proptest_config(256))]
+
         #[test]
         fn prop_wcslen_matches_first_nul_or_slice_len(data in proptest::collection::vec(any::<u32>(), 0..64)) {
             let expected = data.iter().position(|&ch| ch == 0).unwrap_or(data.len());
