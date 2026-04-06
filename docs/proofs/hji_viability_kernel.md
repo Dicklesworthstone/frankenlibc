@@ -1,4 +1,4 @@
-# HJI Viability Kernel Proof Note (bd-249m.6)
+# HJI Viability Kernel Proof Note (bd-34s.2)
 
 ## Scope
 - This artifact covers the HJI controller that is live in the repo today: the discrete 4x4x4 state model over `(risk, latency, adverse_rate)` implemented in `crates/frankenlibc-membrane/src/hji_reachability.rs`.

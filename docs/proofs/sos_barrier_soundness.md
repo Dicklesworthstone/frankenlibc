@@ -1,4 +1,4 @@
-# SOS Barrier Certificate Soundness (bd-249m.5)
+# SOS Barrier Soundness + Barrier Invariance (bd-34s.2)
 
 ## Scope
 This note documents soundness obligations and implemented checks for the SOS barrier certificates used by FrankenLibC runtime membrane policies.
@@ -57,6 +57,21 @@ Runtime/test-time checks include:
 - upper bounds on reconstruction/stability residuals
 - explicit conjunction test for composed guards (fragmentation + memory-pressure-driven provenance)
 
+## Barrier Invariance Companion
+`bd-34s.2` also needs the runtime admissibility story, not only the offline SOS artifact story.
+That companion surface lives in `crates/frankenlibc-membrane/src/runtime_math/barrier.rs`, where the checked-in proof tests establish:
+- admissibility is monotone in risk,
+- each guard is necessary,
+- mode/profile/family coverage is total for the declared runtime surface.
+
+The runtime-linkage side of the theorem is checked separately by:
+- `scripts/check_runtime_math_linkage_proofs.sh`
+- `tests/runtime_math/runtime_math_linkage.v1.json`
+
+Together, these give the bead a concrete split:
+- SOS soundness proves the offline certificate shape and integrity.
+- Barrier invariance proves the runtime admission guard remains conservative and total on the shipped domain.
+
 ## Numerical Stability
 The runtime evaluation path is integer/fixed-point based.
 Floating-point is used in build-time Cholesky diagnostics only.
@@ -84,3 +99,4 @@ Implication:
 Remaining hardening items:
 - formalized completeness-bound examples tied to concrete FrankenLibC invariants
 - startup telemetry hook exposing `soundness_verified` summary in runtime logs
+- richer forward-invariance arguments once the barrier state is widened beyond the current shipped domain

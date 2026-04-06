@@ -1,4 +1,4 @@
-# Hardened Mode Safety Proof (bd-249m.2)
+# Hardened Mode Safety Proof (bd-34s.1)
 
 ## Scope
 - Theorem: hardened mode applies deterministic repair/deny behavior for declared invalid-input classes on membrane-gated paths.
@@ -47,5 +47,6 @@ For covered valid inputs, hardened mode remains behavior-compatible with the str
 - POSIX mapping companion: `docs/proofs/repair_posix_mapping.md`
 
 ## Status
-This artifact establishes hardened-mode deterministic repair/deny evidence for the currently declared invalid-input classes.
-Full project-level closure still requires extending the matrix as additional membrane-gated symbol families gain hardened invalid-input fixtures.
+This artifact establishes the `bd-34s.1` hardened-safety proof surface for the currently declared invalid-input classes.
+It closes the binder wiring for `PO-02` by linking the deterministic matrix, the repair/POSIX mapping, and the CI gate into a single machine-checkable record.
+Future work remains incremental: extend the matrix as additional membrane-gated symbol families gain hardened invalid-input fixtures.

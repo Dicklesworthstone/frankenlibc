@@ -1,4 +1,4 @@
-# Deterministic Replay Proof (bd-249m.3)
+# Deterministic Replay Proof (bd-34s.1)
 
 ## Scope
 - Theorem target: replaying the same `(mode, input trace, environment fingerprint)` yields identical runtime decisions and evidence outputs.
@@ -61,12 +61,12 @@ for:
   - `bash scripts/check_e2e_suite.sh`
 
 ## Current Status
-- Status: in progress.
+- Status: binder-wired for `bd-34s.1`.
 - Completed in this phase:
   - added deterministic replay theorem artifact,
-  - wired PO-03 to bead ownership and source anchors in binder,
+  - wired `PO-03` to `bd-34s.1` ownership and current source anchors in the binder,
   - synchronized proof traceability report with PO-03 source-reference checks.
 - Remaining before closure:
   - symbol-level purity classification artifact (`pure/impure` map with explicit implicit-state dependencies),
   - concurrent replay schedule harness and evidence,
-  - reviewer sign-off on full theorem argument.
+  - reviewer sign-off on the full theorem argument as more replay-sensitive surfaces are promoted.

@@ -1,4 +1,4 @@
-# Hardened Repair/POSIX Mapping (bd-249m.2)
+# Hardened Repair/POSIX Mapping (bd-34s.1)
 
 This table records the deterministic mapping from hardened invalid-input class to repair/deny action and POSIX-facing fixture outcome.
 

@@ -1,4 +1,4 @@
-# Strict Mode Refinement Proof (bd-249m.1)
+# Strict Mode Refinement Proof (bd-34s.1)
 
 ## Scope and Snapshot
 - Theorem target: strict mode is a refinement of the current FrankenLibC/glibc contract on declared domains.
@@ -55,6 +55,6 @@ Refinement obligation:
   `python3 scripts/gentoo/proof_binder_validator.py --dry-run --format json --no-hashes --output tests/conformance/proof_traceability_check.json`
 
 ## Current Status
-- Status: in progress.
-- Completed in this phase: refreshed strict-refinement theorem statement, updated source anchors to current code, and synchronized machine-checkable binder/report artifacts.
-- Remaining for closure: exhaustive symbol-domain argumentation, full strict transparency stress evidence across declared fixture families, and independent review sign-off.
+- Status: binder-wired for `bd-34s.1`.
+- Completed in this phase: refreshed strict-refinement theorem statement, updated source anchors to current code, and synchronized machine-checkable binder/report artifacts for `PO-01`.
+- Remaining after bead closure: broader symbol-domain argumentation and independent review as the declared fixture surface expands.
