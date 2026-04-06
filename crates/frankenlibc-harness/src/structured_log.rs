@@ -90,11 +90,15 @@ pub struct LogEntry {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub gate: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub scenario_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub mode: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub api_family: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub symbol: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub decision_path: Option<String>,
     /// Optional span id for multi-component traces under one `trace_id`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub span_id: Option<String>,
@@ -158,9 +162,11 @@ impl LogEntry {
             bead_id: None,
             stream: None,
             gate: None,
+            scenario_id: None,
             mode: None,
             api_family: None,
             symbol: None,
+            decision_path: None,
             span_id: None,
             parent_span_id: None,
             profile: None,
@@ -203,6 +209,13 @@ impl LogEntry {
         self
     }
 
+    /// Set the scenario identifier for manifest-driven workflows.
+    #[must_use]
+    pub fn with_scenario_id(mut self, scenario_id: impl Into<String>) -> Self {
+        self.scenario_id = Some(scenario_id.into());
+        self
+    }
+
     /// Set the runtime mode.
     #[must_use]
     pub fn with_mode(mut self, mode: impl Into<String>) -> Self {
@@ -215,6 +228,13 @@ impl LogEntry {
     pub fn with_api(mut self, family: impl Into<String>, symbol: impl Into<String>) -> Self {
         self.api_family = Some(family.into());
         self.symbol = Some(symbol.into());
+        self
+    }
+
+    /// Set the explainable decision path label.
+    #[must_use]
+    pub fn with_decision_path(mut self, decision_path: impl Into<String>) -> Self {
+        self.decision_path = Some(decision_path.into());
         self
     }
 

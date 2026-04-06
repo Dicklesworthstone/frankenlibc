@@ -9,6 +9,7 @@ use std::time::{Duration, Instant};
 
 use frankenlibc_harness::conformance_matrix::{CaseExecution, ConformanceMatrixReport};
 use frankenlibc_harness::healing_oracle::HealingOracleReport;
+use frankenlibc_harness::shadow_run::{ProcessShadowExecutor, ShadowRunConfig, ShadowRunManifest};
 use frankenlibc_harness::structured_log::{LogEmitter, LogEntry, LogLevel, Outcome, StreamKind};
 
 use clap::{Parser, Subcommand};
@@ -329,6 +330,30 @@ enum Command {
         )]
         report: PathBuf,
     },
+    /// Prove CPOMDP safety feasibility for the repair-policy abstraction.
+    RuntimeMathCpomdpFeasibilityProofs {
+        /// Workspace root used for resolving canonical artifacts.
+        #[arg(long, default_value = ".")]
+        workspace_root: PathBuf,
+        /// Structured JSONL log output path.
+        #[arg(
+            long,
+            default_value = "target/conformance/runtime_math_cpomdp_feasibility_proofs.log.jsonl"
+        )]
+        log: PathBuf,
+        /// JSON report output path.
+        #[arg(
+            long,
+            default_value = "target/conformance/runtime_math_cpomdp_feasibility_proofs.report.json"
+        )]
+        report: PathBuf,
+        /// CPOMDP feasibility artifact output path.
+        #[arg(long, default_value = "target/conformance/cpomdp_feasibility.json")]
+        feasibility_artifact: PathBuf,
+        /// CPOMDP epsilon-sensitivity artifact output path.
+        #[arg(long, default_value = "target/conformance/cpomdp_sensitivity.json")]
+        sensitivity_artifact: PathBuf,
+    },
     /// Validate runtime_math determinism + invariants for decide/observe integration.
     RuntimeMathDeterminismProofs {
         /// Workspace root used for resolving canonical artifacts.
@@ -364,6 +389,111 @@ enum Command {
             default_value = "target/conformance/runtime_math_divergence_bounds.report.json"
         )]
         report: PathBuf,
+    },
+    /// Build an operator-facing observability dashboard bundle from JSONL metrics streams.
+    ObservabilityDashboard {
+        /// One or more JSONL metric/evidence inputs.
+        #[arg(long = "input", required = true, num_args = 1..)]
+        input: Vec<PathBuf>,
+        /// JSON summary output path.
+        #[arg(
+            long,
+            default_value = "target/conformance/observability_dashboard.current.v1.json"
+        )]
+        output: PathBuf,
+        /// Prometheus exposition output path.
+        #[arg(
+            long,
+            default_value = "target/conformance/observability_dashboard.prom"
+        )]
+        prometheus_output: PathBuf,
+        /// StatsD line protocol output path.
+        #[arg(
+            long,
+            default_value = "target/conformance/observability_dashboard.statsd"
+        )]
+        statsd_output: PathBuf,
+        /// Grafana dashboard template output path.
+        #[arg(
+            long,
+            default_value = "target/conformance/observability_dashboard.grafana.json"
+        )]
+        grafana_output: PathBuf,
+        /// Prometheus alert-rules output path.
+        #[arg(
+            long,
+            default_value = "target/conformance/observability_dashboard.alerts.yaml"
+        )]
+        alerts_output: PathBuf,
+    },
+    /// Execute manifest-driven shadow runs against host glibc vs FrankenLibC.
+    ShadowRun {
+        /// Shadow-run manifest JSON path.
+        #[arg(long)]
+        manifest: PathBuf,
+        /// Workspace root used as the command cwd.
+        #[arg(long, default_value = ".")]
+        workspace_root: PathBuf,
+        /// Output directory for per-scenario artifacts.
+        #[arg(long, default_value = "target/conformance/shadow_run")]
+        out_dir: PathBuf,
+        /// JSON report output path.
+        #[arg(long, default_value = "target/conformance/shadow_run.current.v1.json")]
+        report: PathBuf,
+        /// Structured JSONL output path.
+        #[arg(long, default_value = "target/conformance/shadow_run.log.jsonl")]
+        log: PathBuf,
+        /// FrankenLibC interpose library to preload for candidate runs.
+        #[arg(long, default_value = "target/release/libfrankenlibc_abi.so")]
+        lib_path: PathBuf,
+        /// Reference label recorded in reports.
+        #[arg(long, default_value = "glibc")]
+        reference: String,
+        /// Runtime mode to evaluate (`strict`, `hardened`, or `both`).
+        #[arg(long, default_value = "both")]
+        mode: String,
+        /// Per-run timeout in milliseconds.
+        #[arg(long, default_value_t = 5_000)]
+        timeout_ms: u64,
+        /// Disable syscall-trace capture even when `strace` is available.
+        #[arg(long)]
+        no_syscall_trace: bool,
+        /// Return non-zero when any scenario diverges or errors.
+        #[arg(long)]
+        fail_on_mismatch: bool,
+    },
+    /// Execute declarative fault-injection scenarios with reusable tooling.
+    FaultInject {
+        /// Fault-injection manifest path (YAML or JSON).
+        #[arg(long)]
+        manifest: PathBuf,
+        /// Optional single scenario id to run.
+        #[arg(long)]
+        scenario: Option<String>,
+        /// Output directory for fault-injection artifacts.
+        #[arg(long, default_value = "target/conformance/fault_injection")]
+        out_dir: PathBuf,
+        /// JSON report output path.
+        #[arg(
+            long,
+            default_value = "target/conformance/fault_injection.current.v1.json"
+        )]
+        report: PathBuf,
+        /// Structured JSONL output path.
+        #[arg(long, default_value = "target/conformance/fault_injection.log.jsonl")]
+        log: PathBuf,
+        /// Artifact-index JSON output path.
+        #[arg(
+            long,
+            default_value = "target/conformance/fault_injection.artifacts.v1.json"
+        )]
+        artifact_index: PathBuf,
+        /// Runtime mode to evaluate (`strict`, `hardened`, or `both`).
+        #[arg(long, default_value = "both")]
+        mode: String,
+        /// Return non-zero when any scenario fails its expected classification.
+        #[arg(long)]
+        fail_on_mismatch: bool,
     },
     /// Generate differential conformance matrix (host vs implementation).
     ConformanceMatrix {
@@ -1009,6 +1139,35 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 report.display()
             );
         }
+        Command::RuntimeMathCpomdpFeasibilityProofs {
+            workspace_root,
+            log,
+            report,
+            feasibility_artifact,
+            sensitivity_artifact,
+        } => {
+            let rep = frankenlibc_harness::runtime_math_cpomdp_feasibility_proofs::run_and_write(
+                &workspace_root,
+                &log,
+                &report,
+                &feasibility_artifact,
+                &sensitivity_artifact,
+            )?;
+            if rep.summary.failed != 0 {
+                return Err(std::io::Error::other(format!(
+                    "runtime_math CPOMDP feasibility proofs FAILED: {} check(s) failed (report: {})",
+                    rep.summary.failed,
+                    report.display()
+                ))
+                .into());
+            }
+            eprintln!(
+                "OK: runtime_math CPOMDP feasibility proofs passed for {} checks (log: {}, report: {})",
+                rep.summary.checks,
+                log.display(),
+                report.display()
+            );
+        }
         Command::RuntimeMathDeterminismProofs {
             workspace_root,
             log,
@@ -1059,6 +1218,136 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 log.display(),
                 report.display()
             );
+        }
+        Command::ObservabilityDashboard {
+            input,
+            output,
+            prometheus_output,
+            statsd_output,
+            grafana_output,
+            alerts_output,
+        } => {
+            let report = frankenlibc_harness::observability_dashboard::write_bundle(
+                &input,
+                &output,
+                &prometheus_output,
+                &statsd_output,
+                &grafana_output,
+                &alerts_output,
+            )
+            .map_err(std::io::Error::other)?;
+            eprintln!(
+                "Observability dashboard complete: total_rows={}, invalid_rows={} -> {} (prometheus: {}, statsd: {}, grafana: {}, alerts: {})",
+                report.summary.total_rows,
+                report.summary.invalid_rows,
+                output.display(),
+                prometheus_output.display(),
+                statsd_output.display(),
+                grafana_output.display(),
+                alerts_output.display()
+            );
+        }
+        Command::ShadowRun {
+            manifest,
+            workspace_root,
+            out_dir,
+            report,
+            log,
+            lib_path,
+            reference,
+            mode,
+            timeout_ms,
+            no_syscall_trace,
+            fail_on_mismatch,
+        } => {
+            let manifest_doc = ShadowRunManifest::from_path(&manifest)?;
+            let modes = shadow_run_modes(&mode)
+                .map_err(|err| format!("Unsupported mode '{mode}': {err}"))?;
+            let mut config = ShadowRunConfig::new(
+                workspace_root,
+                out_dir,
+                lib_path,
+                Duration::from_millis(timeout_ms.max(1)),
+            );
+            config.report_path = Some(report.clone());
+            config.log_path = Some(log.clone());
+            config.reference_label = reference;
+            config.capture_syscall_traces = !no_syscall_trace;
+            config.run_id = manifest_doc.manifest_id.clone();
+
+            let shadow_report = frankenlibc_harness::shadow_run::run_shadow_manifest_with_executor(
+                &manifest_doc,
+                &modes,
+                &config,
+                &mut ProcessShadowExecutor,
+            )?;
+            eprintln!(
+                "Shadow run complete: total={}, passed={}, diverged={}, skipped={}, errors={} -> {} (log: {})",
+                shadow_report.summary.total_runs,
+                shadow_report.summary.passed,
+                shadow_report.summary.diverged,
+                shadow_report.summary.skipped,
+                shadow_report.summary.errors,
+                report.display(),
+                log.display()
+            );
+
+            if fail_on_mismatch
+                && (shadow_report.summary.diverged > 0 || shadow_report.summary.errors > 0)
+            {
+                return Err(format!(
+                    "Shadow run mismatch: diverged={}, errors={}",
+                    shadow_report.summary.diverged, shadow_report.summary.errors
+                )
+                .into());
+            }
+        }
+        Command::FaultInject {
+            manifest,
+            scenario,
+            out_dir,
+            report,
+            log,
+            artifact_index,
+            mode,
+            fail_on_mismatch,
+        } => {
+            let manifest_doc =
+                frankenlibc_harness::fault_injection::FaultManifest::from_path(&manifest)?;
+            let modes = shadow_run_modes(&mode)
+                .map_err(|err| format!("Unsupported mode '{mode}': {err}"))?;
+            let mut config = frankenlibc_harness::fault_injection::FaultRunConfig::new(out_dir);
+            config.report_path = report.clone();
+            config.log_path = log.clone();
+            config.artifact_index_path = artifact_index.clone();
+            config.run_id = manifest_doc.manifest_id.clone();
+            config.manifest_ref = Some(manifest.to_string_lossy().into_owned());
+
+            let fault_report =
+                frankenlibc_harness::fault_injection::run_manifest_with_default_executor(
+                    &manifest_doc,
+                    scenario.as_deref(),
+                    &modes,
+                    &config,
+                )?;
+            eprintln!(
+                "Fault injection complete: scenarios={}, total_cases={}, passed={}, failed={} -> {} (log: {}, artifacts: {})",
+                fault_report.summary.scenario_count,
+                fault_report.summary.total_cases,
+                fault_report.summary.passed,
+                fault_report.summary.failed,
+                report.display(),
+                log.display(),
+                artifact_index.display()
+            );
+
+            if fail_on_mismatch && fault_report.summary.failed > 0 {
+                return Err(format!(
+                    "Fault injection mismatch: failed={}, false_negatives={}",
+                    fault_report.summary.failed, fault_report.summary.false_negatives
+                )
+                .into());
+            }
         }
         Command::ConformanceMatrix {
             fixture,
@@ -1166,6 +1455,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
+}
+
+fn shadow_run_modes(raw: &str) -> Result<Vec<String>, String> {
+    match raw.to_ascii_lowercase().as_str() {
+        "strict" => Ok(vec!["strict".to_string()]),
+        "hardened" => Ok(vec!["hardened".to_string()]),
+        "both" => Ok(vec!["strict".to_string(), "hardened".to_string()]),
+        other => Err(format!("expected strict|hardened|both, got {other}")),
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -2005,6 +2303,91 @@ mod tests {
         let prior = previous_pass_map(Some(&report));
         assert_eq!(prior.get("trace::1"), Some(&true));
         assert_eq!(prior.get("trace::2"), Some(&false));
+    }
+
+    #[test]
+    fn shadow_run_modes_expands_both() {
+        assert_eq!(
+            shadow_run_modes("both").expect("mode"),
+            vec!["strict".to_string(), "hardened".to_string()]
+        );
+        assert!(shadow_run_modes("invalid").is_err());
+    }
+
+    #[test]
+    fn shadow_run_cli_accepts_manifest_and_defaults() {
+        let cli = Cli::try_parse_from(["harness", "shadow-run", "--manifest", "shadow.json"])
+            .expect("cli parses");
+
+        match cli.command {
+            Command::ShadowRun {
+                manifest,
+                report,
+                log,
+                lib_path,
+                mode,
+                timeout_ms,
+                no_syscall_trace,
+                fail_on_mismatch,
+                ..
+            } => {
+                assert_eq!(manifest, PathBuf::from("shadow.json"));
+                assert_eq!(
+                    report,
+                    PathBuf::from("target/conformance/shadow_run.current.v1.json")
+                );
+                assert_eq!(
+                    log,
+                    PathBuf::from("target/conformance/shadow_run.log.jsonl")
+                );
+                assert_eq!(
+                    lib_path,
+                    PathBuf::from("target/release/libfrankenlibc_abi.so")
+                );
+                assert_eq!(mode, "both");
+                assert_eq!(timeout_ms, 5_000);
+                assert!(!no_syscall_trace);
+                assert!(!fail_on_mismatch);
+            }
+            other => panic!("unexpected command: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn fault_inject_cli_accepts_manifest_and_defaults() {
+        let cli = Cli::try_parse_from(["harness", "fault-inject", "--manifest", "fault.yaml"])
+            .expect("cli parses");
+
+        match cli.command {
+            Command::FaultInject {
+                manifest,
+                scenario,
+                report,
+                log,
+                artifact_index,
+                mode,
+                fail_on_mismatch,
+                ..
+            } => {
+                assert_eq!(manifest, PathBuf::from("fault.yaml"));
+                assert!(scenario.is_none());
+                assert_eq!(
+                    report,
+                    PathBuf::from("target/conformance/fault_injection.current.v1.json")
+                );
+                assert_eq!(
+                    log,
+                    PathBuf::from("target/conformance/fault_injection.log.jsonl")
+                );
+                assert_eq!(
+                    artifact_index,
+                    PathBuf::from("target/conformance/fault_injection.artifacts.v1.json")
+                );
+                assert_eq!(mode, "both");
+                assert!(!fail_on_mismatch);
+            }
+            other => panic!("unexpected command: {other:?}"),
+        }
     }
 
     #[test]

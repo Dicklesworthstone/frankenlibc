@@ -11,7 +11,9 @@
 //! Run: cargo test -p frankenlibc-harness --test perf_regression_gate_test
 
 use std::collections::{HashMap, HashSet};
+use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 fn workspace_root() -> PathBuf {
     let manifest = env!("CARGO_MANIFEST_DIR");
@@ -86,6 +88,25 @@ fn resolve_suspect_component(policy: &serde_json::Value, benchmark_id: &str) -> 
                 .map(str::to_owned)
         })
         .unwrap_or_else(|| "unknown_component".to_string())
+}
+
+fn temp_dir(label: &str) -> PathBuf {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!("frankenlibc-{label}-{nanos}"));
+    fs::create_dir_all(&path).expect("create temp dir");
+    path
+}
+
+#[cfg(unix)]
+fn set_executable(path: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let mut perms = fs::metadata(path).expect("metadata").permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(path, perms).expect("set permissions");
 }
 
 #[test]
@@ -367,5 +388,66 @@ fn full_gate_script_passes() {
     assert!(
         status.success(),
         "scripts/check_perf_regression_gate.sh should pass"
+    );
+}
+
+#[test]
+fn benchmark_gate_wrapper_invokes_rch_with_expected_contract() {
+    let root = workspace_root();
+    let temp = temp_dir("benchmark-gate-wrapper");
+    let fake_bin = temp.join("bin");
+    let rch_log = temp.join("rch.log");
+    fs::create_dir_all(&fake_bin).expect("create fake bin");
+
+    let fake_rch = fake_bin.join("rch");
+    fs::write(
+        &fake_rch,
+        r#"#!/usr/bin/env bash
+printf '%s\n' "$@" >"${RCH_LOG}"
+"#,
+    )
+    .expect("write fake rch");
+    #[cfg(unix)]
+    set_executable(&fake_rch);
+
+    let output = std::process::Command::new("bash")
+        .arg(root.join("scripts/check_benchmark_gate.sh"))
+        .current_dir(&root)
+        .env("PATH", format!("{}:/usr/bin:/bin", fake_bin.display()))
+        .env("RCH_LOG", &rch_log)
+        .env("FRANKENLIBC_PERF_MAX_REGRESSION_PCT", "17")
+        .env("FRANKENLIBC_PERF_ALLOW_TARGET_VIOLATION", "0")
+        .env("FRANKENLIBC_PERF_SKIP_OVERLOADED", "0")
+        .env("FRANKENLIBC_PERF_ENABLE_KERNEL_SUITE", "1")
+        .output()
+        .expect("run benchmark gate wrapper");
+
+    assert!(
+        output.status.success(),
+        "check_benchmark_gate.sh should pass with fake rch\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let logged = fs::read_to_string(&rch_log).expect("read fake rch log");
+    assert!(logged.contains("exec"), "rch wrapper should call exec");
+    assert!(
+        logged.contains("FRANKENLIBC_PERF_MAX_REGRESSION_PCT=17"),
+        "rch call should forward max regression override"
+    );
+    assert!(
+        logged.contains("FRANKENLIBC_PERF_ALLOW_TARGET_VIOLATION=0"),
+        "rch call should forward target-violation policy"
+    );
+    assert!(
+        logged.contains("FRANKENLIBC_PERF_SKIP_OVERLOADED=0"),
+        "rch call should forward overload policy"
+    );
+    assert!(
+        logged.contains("FRANKENLIBC_PERF_ENABLE_KERNEL_SUITE=1"),
+        "rch call should forward kernel-suite toggle"
+    );
+    assert!(
+        logged.contains("scripts/perf_gate.sh"),
+        "rch call should route through scripts/perf_gate.sh"
     );
 }
