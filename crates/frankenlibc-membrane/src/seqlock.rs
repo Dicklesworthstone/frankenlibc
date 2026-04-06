@@ -112,13 +112,19 @@ impl<T: Clone + Send + Sync> SeqLock<T> {
     /// Create a new `SeqLock` with the given initial value.
     #[must_use]
     pub fn new(initial: T) -> Self {
-        Self {
+        let lock = Self {
             version: AtomicU64::new(1),
             data: Mutex::new(Arc::new(initial)),
             writer_lock: Mutex::new(()),
             pending_writers: AtomicU64::new(0),
             diag: SeqLockDiagCounters::default(),
-        }
+        };
+        crate::alien_cs_metrics::emit_alien_cs_event(
+            crate::alien_cs_metrics::MetricEventKind::ConceptActivated,
+            1,
+            "seqlock",
+        );
+        lock
     }
 
     /// Get the current version counter.
@@ -255,8 +261,13 @@ impl<T: Clone + Send + Sync> SeqLock<T> {
     fn commit(&self, new_value: T) {
         let mut guard = self.data.lock();
         *guard = Arc::new(new_value);
-        self.version.fetch_add(1, Ordering::Release);
+        let new_version = self.version.fetch_add(1, Ordering::Release) + 1;
         self.diag.writes.fetch_add(1, Ordering::Relaxed);
+        crate::alien_cs_metrics::emit_alien_cs_event(
+            crate::alien_cs_metrics::MetricEventKind::SeqLockWriteCommit,
+            new_version,
+            "seqlock",
+        );
     }
 }
 
@@ -360,6 +371,11 @@ impl<'a, T: Clone + Send + Sync> SeqLockReader<'a, T> {
             None
         } else {
             self.lock.diag.cache_misses.fetch_add(1, Ordering::Relaxed);
+            crate::alien_cs_metrics::emit_alien_cs_event(
+                crate::alien_cs_metrics::MetricEventKind::SeqLockCacheMiss,
+                current_version,
+                "seqlock",
+            );
             let (new_version, snapshot) = self.lock.load_versioned();
             self.cached_snapshot = snapshot;
             self.cached_version = new_version;
@@ -378,6 +394,16 @@ impl<'a, T: Clone + Send + Sync> SeqLockReader<'a, T> {
     #[must_use]
     pub fn cached_version(&self) -> u64 {
         self.cached_version
+    }
+}
+
+impl<T: Clone + Send + Sync> Drop for SeqLock<T> {
+    fn drop(&mut self) {
+        crate::alien_cs_metrics::emit_alien_cs_event(
+            crate::alien_cs_metrics::MetricEventKind::ConceptDeactivated,
+            self.version.load(Ordering::Relaxed),
+            "seqlock",
+        );
     }
 }
 

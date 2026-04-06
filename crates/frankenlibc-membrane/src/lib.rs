@@ -45,6 +45,7 @@ pub mod hji_reachability;
 pub mod ids;
 pub mod large_deviations;
 pub mod lattice;
+pub mod left_right;
 pub mod mean_field_game;
 pub mod metrics;
 pub mod padic_valuation;
@@ -77,6 +78,7 @@ pub use evidence_ledger::{
 pub use heal::{HealingAction, HealingPolicy};
 pub use ids::{DecisionId, MEMBRANE_SCHEMA_VERSION, PolicyId, SchemaVersion, TraceId};
 pub use lattice::SafetyState;
+pub use left_right::{LeftRight, LeftRightDiagnostics, LeftRightReader};
 pub use metrics::MembraneMetrics;
 pub use pressure_sensor::{PressureSensor, PressureSignals, SystemRegime};
 pub use ptr_validator::{ValidationOutcome, ValidationPipeline, ValidationSecurityContext};

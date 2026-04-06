@@ -122,18 +122,32 @@ pub struct AlienCsContentionBreakdown {
 /// Metric event kinds for structured emission.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MetricEventKind {
+    /// Alien CS concept activated.
+    ConceptActivated,
+    /// Alien CS concept deactivated.
+    ConceptDeactivated,
     /// SeqLock cache miss (reader had to refresh).
     SeqLockCacheMiss,
     /// SeqLock write contention (writer waited for lock).
     SeqLockContention,
+    /// SeqLock write committed a new version.
+    SeqLockWriteCommit,
     /// EBR epoch advanced.
     EbrEpochAdvance,
     /// EBR items reclaimed.
     EbrReclaim,
     /// EBR grace period delayed (pinned threads blocking advance).
     EbrGracePeriodDelay,
+    /// EBR thread pinned at the current epoch.
+    EbrPin,
+    /// EBR thread unpinned after leaving the critical section.
+    EbrUnpin,
+    /// EBR invariant violation detected.
+    EbrInvariantViolation,
     /// Flat Combining pass executed.
     FcCombiningPass,
+    /// Flat Combining fell back to direct lock execution.
+    FcDirectFallback,
     /// RCU update applied.
     RcuUpdate,
     /// RCU reader refreshed.
@@ -143,12 +157,19 @@ pub enum MetricEventKind {
 impl MetricEventKind {
     const fn concept_event_name(self) -> &'static str {
         match self {
+            Self::ConceptActivated => "alien_cs_concept_activated",
+            Self::ConceptDeactivated => "alien_cs_concept_deactivated",
             Self::SeqLockCacheMiss => "alien_cs_seqlock_cache_miss",
             Self::SeqLockContention => "alien_cs_seqlock_contention",
+            Self::SeqLockWriteCommit => "alien_cs_seqlock_write_commit",
             Self::EbrEpochAdvance => "alien_cs_ebr_epoch_advance",
             Self::EbrReclaim => "alien_cs_ebr_reclaim",
             Self::EbrGracePeriodDelay => "alien_cs_ebr_grace_period_delay",
+            Self::EbrPin => "alien_cs_ebr_pin",
+            Self::EbrUnpin => "alien_cs_ebr_unpin",
+            Self::EbrInvariantViolation => "alien_cs_ebr_invariant_violation",
             Self::FcCombiningPass => "alien_cs_flat_combining_pass",
+            Self::FcDirectFallback => "alien_cs_flat_combining_direct_fallback",
             Self::RcuUpdate => "alien_cs_rcu_update",
             Self::RcuReaderRefresh => "alien_cs_rcu_reader_refresh",
         }
@@ -156,20 +177,36 @@ impl MetricEventKind {
 
     const fn level(self) -> &'static str {
         match self {
+            Self::ConceptActivated | Self::ConceptDeactivated => "info",
             Self::SeqLockContention | Self::EbrGracePeriodDelay => "warn",
-            Self::SeqLockCacheMiss | Self::FcCombiningPass | Self::RcuReaderRefresh => "debug",
-            Self::EbrEpochAdvance | Self::EbrReclaim | Self::RcuUpdate => "info",
+            Self::EbrInvariantViolation => "error",
+            Self::SeqLockCacheMiss | Self::EbrEpochAdvance => "debug",
+            Self::SeqLockWriteCommit
+            | Self::EbrReclaim
+            | Self::EbrPin
+            | Self::EbrUnpin
+            | Self::FcCombiningPass
+            | Self::FcDirectFallback
+            | Self::RcuUpdate
+            | Self::RcuReaderRefresh => "trace",
         }
     }
 
     const fn decision_path(self) -> &'static str {
         match self {
+            Self::ConceptActivated => "alien_cs::lifecycle::activate",
+            Self::ConceptDeactivated => "alien_cs::lifecycle::deactivate",
             Self::SeqLockCacheMiss => "alien_cs::seqlock::reader_refresh",
             Self::SeqLockContention => "alien_cs::seqlock::writer_wait",
+            Self::SeqLockWriteCommit => "alien_cs::seqlock::commit",
             Self::EbrEpochAdvance => "alien_cs::ebr::advance_epoch",
             Self::EbrReclaim => "alien_cs::ebr::reclaim",
             Self::EbrGracePeriodDelay => "alien_cs::ebr::grace_period_delay",
+            Self::EbrPin => "alien_cs::ebr::pin",
+            Self::EbrUnpin => "alien_cs::ebr::unpin",
+            Self::EbrInvariantViolation => "alien_cs::ebr::invariant_violation",
             Self::FcCombiningPass => "alien_cs::flat_combining::run_pass",
+            Self::FcDirectFallback => "alien_cs::flat_combining::direct_fallback",
             Self::RcuUpdate => "alien_cs::rcu::update",
             Self::RcuReaderRefresh => "alien_cs::rcu::reader_refresh",
         }
@@ -177,11 +214,18 @@ impl MetricEventKind {
 
     const fn outcome(self) -> &'static str {
         match self {
+            Self::ConceptActivated => "activated",
+            Self::ConceptDeactivated => "deactivated",
             Self::SeqLockContention | Self::EbrGracePeriodDelay => "contention_alert",
             Self::SeqLockCacheMiss | Self::RcuReaderRefresh => "reader_refresh",
+            Self::SeqLockWriteCommit => "writer_commit",
             Self::EbrEpochAdvance => "epoch_advance",
             Self::EbrReclaim => "reclaim",
+            Self::EbrPin => "pin",
+            Self::EbrUnpin => "unpin",
+            Self::EbrInvariantViolation => "invariant_violation",
             Self::FcCombiningPass => "combining_pass",
+            Self::FcDirectFallback => "direct_fallback",
             Self::RcuUpdate => "update",
         }
     }
@@ -1069,6 +1113,33 @@ mod tests {
     }
 
     #[test]
+    fn metric_ring_export_jsonl_uses_expected_logging_levels() {
+        let ring = MetricRing::new(8);
+        ring.emit(MetricEventKind::ConceptActivated, 1, "rcu");
+        ring.emit(MetricEventKind::EbrEpochAdvance, 2, "ebr");
+        ring.emit(MetricEventKind::SeqLockWriteCommit, 3, "seqlock");
+        ring.emit(MetricEventKind::SeqLockContention, 4, "seqlock");
+        ring.emit(MetricEventKind::EbrInvariantViolation, 5, "ebr");
+
+        let rows: Vec<serde_json::Value> = ring
+            .export_jsonl("bd-1sp.11", "levels")
+            .lines()
+            .map(|line| serde_json::from_str(line).expect("event export should parse"))
+            .collect();
+
+        assert_eq!(rows[0]["level"], "info");
+        assert_eq!(rows[0]["outcome"], "activated");
+        assert_eq!(rows[1]["level"], "debug");
+        assert_eq!(rows[1]["outcome"], "epoch_advance");
+        assert_eq!(rows[2]["level"], "trace");
+        assert_eq!(rows[2]["outcome"], "writer_commit");
+        assert_eq!(rows[3]["level"], "warn");
+        assert_eq!(rows[3]["outcome"], "contention_alert");
+        assert_eq!(rows[4]["level"], "error");
+        assert_eq!(rows[4]["outcome"], "invariant_violation");
+    }
+
+    #[test]
     fn snapshot_export_jsonl_contains_aggregate_diagnostics() {
         let snapshot = AlienCsSnapshot {
             captured_at_ns: 42,
@@ -1589,5 +1660,81 @@ mod tests {
         assert!(has_ebr, "should have EBR events");
         assert!(has_fc, "should have FlatCombiner events");
         assert!(has_seqlock, "should have SeqLock events");
+    }
+
+    #[test]
+    fn global_ring_captures_lifecycle_and_internal_transition_events() {
+        let ring = global_alien_cs_ring();
+        ring.drain();
+
+        {
+            let rcu = RcuCell::new(0u64);
+            let seqlock = SeqLock::new(0u64);
+            seqlock.write_with(|value| *value = 41);
+
+            let collector = EbrCollector::new();
+            let handle = collector.register();
+            {
+                let _guard = handle.pin();
+            }
+
+            let flat_combiner = FlatCombiner::new(0u64, 0);
+            flat_combiner.execute(1u64, |state, op| {
+                *state += op;
+                *state
+            });
+
+            drop(handle);
+            drop(collector);
+            drop(seqlock);
+            drop(rcu);
+            drop(flat_combiner);
+        }
+
+        let events = ring.snapshot();
+        assert!(events.iter().any(|event| {
+            event.kind == MetricEventKind::ConceptActivated && event.concept == "rcu"
+        }));
+        assert!(events.iter().any(|event| {
+            event.kind == MetricEventKind::ConceptActivated && event.concept == "seqlock"
+        }));
+        assert!(events.iter().any(|event| {
+            event.kind == MetricEventKind::ConceptActivated && event.concept == "ebr"
+        }));
+        assert!(events.iter().any(|event| {
+            event.kind == MetricEventKind::ConceptActivated && event.concept == "flat_combining"
+        }));
+        assert!(
+            events
+                .iter()
+                .any(|event| event.kind == MetricEventKind::SeqLockWriteCommit)
+        );
+        assert!(
+            events
+                .iter()
+                .any(|event| event.kind == MetricEventKind::EbrPin)
+        );
+        assert!(
+            events
+                .iter()
+                .any(|event| event.kind == MetricEventKind::EbrUnpin)
+        );
+        assert!(
+            events
+                .iter()
+                .any(|event| event.kind == MetricEventKind::FcDirectFallback)
+        );
+        assert!(events.iter().any(|event| {
+            event.kind == MetricEventKind::ConceptDeactivated && event.concept == "rcu"
+        }));
+        assert!(events.iter().any(|event| {
+            event.kind == MetricEventKind::ConceptDeactivated && event.concept == "seqlock"
+        }));
+        assert!(events.iter().any(|event| {
+            event.kind == MetricEventKind::ConceptDeactivated && event.concept == "ebr"
+        }));
+        assert!(events.iter().any(|event| {
+            event.kind == MetricEventKind::ConceptDeactivated && event.concept == "flat_combining"
+        }));
     }
 }

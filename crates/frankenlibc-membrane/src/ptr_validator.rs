@@ -1722,6 +1722,43 @@ impl ValidationPipeline {
         result
     }
 
+    /// Deterministically corrupt the trailing canary for a user allocation.
+    ///
+    /// This is a testing/tooling hook used by reusable fault-injection workflows
+    /// so the harness can exercise corruption paths without using `unsafe` code.
+    #[must_use]
+    pub fn inject_trailing_canary_corruption(
+        &self,
+        ptr: *mut u8,
+        user_size: usize,
+        fill_byte: u8,
+    ) -> bool {
+        if ptr.is_null() {
+            return false;
+        }
+
+        let addr = ptr as usize;
+        let Some(slot) = self.arena.lookup(addr) else {
+            return false;
+        };
+        if slot.user_base != addr || slot.user_size != user_size || !slot.state.is_live() {
+            return false;
+        }
+
+        // SAFETY: `lookup` returned a live slot for the exact user allocation, and the canary
+        // immediately follows the user region for this allocation by construction.
+        unsafe { Self::overwrite_trailing_canary(slot.user_base + slot.user_size, fill_byte) };
+        true
+    }
+
+    unsafe fn overwrite_trailing_canary(canary_addr: usize, fill_byte: u8) {
+        // SAFETY: caller guarantees `canary_addr..canary_addr+CANARY_SIZE` points to the live
+        // trailing canary bytes for a membrane-owned allocation.
+        unsafe {
+            std::ptr::write_bytes(canary_addr as *mut u8, fill_byte, CANARY_SIZE);
+        }
+    }
+
     /// Cheaply check if an address is likely owned by the membrane.
     ///
     /// This only queries the page oracle and does not perform full validation.
@@ -2060,18 +2097,13 @@ mod tests {
     }
 
     #[test]
-    #[allow(unsafe_code)]
     fn canary_corruption_detected_via_pipeline_free() {
         let pipeline = ValidationPipeline::new();
         let size = 32_usize;
         let ptr = pipeline.allocate(size).expect("alloc");
         let addr = ptr as usize;
 
-        // Corrupt trailing canary by writing past the user buffer.
-        // SAFETY: Intentional out-of-bounds write to verify canary detection.
-        unsafe {
-            std::ptr::write_bytes(ptr.add(size), 0xFF, CANARY_SIZE);
-        }
+        assert!(pipeline.inject_trailing_canary_corruption(ptr, size, 0xFF));
 
         let result = pipeline.free(ptr);
         assert_eq!(result, FreeResult::FreedWithCanaryCorruption);

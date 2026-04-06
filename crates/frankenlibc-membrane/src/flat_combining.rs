@@ -128,7 +128,7 @@ where
     #[must_use]
     pub fn new(initial_state: T, num_slots: usize) -> Self {
         let slots = (0..num_slots).map(|_| Mutex::new(Slot::new())).collect();
-        Self {
+        let combiner = Self {
             state: Mutex::new(initial_state),
             slots,
             combiner_lock: Mutex::new(()),
@@ -136,7 +136,13 @@ where
             total_ops: AtomicU64::new(0),
             total_passes: AtomicU64::new(0),
             max_batch_size: AtomicU64::new(0),
-        }
+        };
+        crate::alien_cs_metrics::emit_alien_cs_event(
+            crate::alien_cs_metrics::MetricEventKind::ConceptActivated,
+            num_slots as u64,
+            "flat_combining",
+        );
+        combiner
     }
 
     /// Reserve a slot for the calling thread.
@@ -193,6 +199,11 @@ where
         // Fallback: all slots busy, execute directly under lock.
         let mut state = self.state.lock();
         self.total_ops.fetch_add(1, Ordering::Relaxed);
+        crate::alien_cs_metrics::emit_alien_cs_event(
+            crate::alien_cs_metrics::MetricEventKind::FcDirectFallback,
+            self.total_ops.load(Ordering::Relaxed),
+            "flat_combining",
+        );
         f(&mut state, op)
     }
 
@@ -355,6 +366,16 @@ where
     {
         let state = self.state.lock();
         f(&state)
+    }
+}
+
+impl<T, Op: Send, R: Send> Drop for FlatCombiner<T, Op, R> {
+    fn drop(&mut self) {
+        crate::alien_cs_metrics::emit_alien_cs_event(
+            crate::alien_cs_metrics::MetricEventKind::ConceptDeactivated,
+            self.total_ops.load(Ordering::Relaxed),
+            "flat_combining",
+        );
     }
 }
 

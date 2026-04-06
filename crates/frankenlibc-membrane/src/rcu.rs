@@ -65,10 +65,16 @@ impl<T> RcuCell<T> {
     /// Create a new RCU cell with an initial value.
     #[must_use]
     pub fn new(initial: T) -> Self {
-        Self {
+        let cell = Self {
             epoch: AtomicU64::new(1),
             current: Mutex::new(Arc::new(initial)),
-        }
+        };
+        crate::alien_cs_metrics::emit_alien_cs_event(
+            crate::alien_cs_metrics::MetricEventKind::ConceptActivated,
+            1,
+            "rcu",
+        );
+        cell
     }
 
     /// Update the shared state atomically.
@@ -98,7 +104,12 @@ impl<T> RcuCell<T> {
         let mut guard = self.current.lock();
         let new_value = f(&guard);
         *guard = Arc::new(new_value);
-        self.epoch.fetch_add(1, Ordering::Release);
+        let new_epoch = self.epoch.fetch_add(1, Ordering::Release) + 1;
+        crate::alien_cs_metrics::emit_alien_cs_event(
+            crate::alien_cs_metrics::MetricEventKind::RcuUpdate,
+            new_epoch,
+            "rcu",
+        );
     }
 
     /// Get the current epoch.
@@ -196,12 +207,27 @@ impl<'a, T> RcuReader<'a, T> {
     pub fn refresh(&mut self) {
         self.cached_snapshot = self.cell.load();
         self.cached_epoch = self.cell.epoch();
+        crate::alien_cs_metrics::emit_alien_cs_event(
+            crate::alien_cs_metrics::MetricEventKind::RcuReaderRefresh,
+            self.cached_epoch,
+            "rcu",
+        );
     }
 
     /// Returns the epoch of the currently cached snapshot.
     #[must_use]
     pub fn cached_epoch(&self) -> u64 {
         self.cached_epoch
+    }
+}
+
+impl<T> Drop for RcuCell<T> {
+    fn drop(&mut self) {
+        crate::alien_cs_metrics::emit_alien_cs_event(
+            crate::alien_cs_metrics::MetricEventKind::ConceptDeactivated,
+            self.epoch.load(Ordering::Relaxed),
+            "rcu",
+        );
     }
 }
 

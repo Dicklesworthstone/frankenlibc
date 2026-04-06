@@ -68,7 +68,7 @@ impl EbrCollector {
     /// Create a new EBR collector.
     #[must_use]
     pub fn new() -> Self {
-        Self {
+        let collector = Self {
             global_epoch: AtomicU64::new(0),
             slots: Mutex::new(Vec::new()),
             garbage: [
@@ -78,7 +78,13 @@ impl EbrCollector {
             ],
             total_retired: AtomicU64::new(0),
             total_reclaimed: AtomicU64::new(0),
-        }
+        };
+        crate::alien_cs_metrics::emit_alien_cs_event(
+            crate::alien_cs_metrics::MetricEventKind::ConceptActivated,
+            0,
+            "ebr",
+        );
+        collector
     }
 
     /// Register a thread with the collector.
@@ -250,20 +256,48 @@ impl EbrCollector {
     /// Pin a thread at the current epoch.
     fn pin(&self, slot: &EbrSlot) -> u64 {
         let epoch = self.global_epoch.load(Ordering::Acquire);
+        if !slot.active.load(Ordering::Acquire) {
+            crate::alien_cs_metrics::emit_alien_cs_event(
+                crate::alien_cs_metrics::MetricEventKind::EbrInvariantViolation,
+                epoch,
+                "ebr",
+            );
+        }
         slot.observed_epoch.store(epoch, Ordering::Release);
         slot.pinned.store(true, Ordering::Release);
+        crate::alien_cs_metrics::emit_alien_cs_event(
+            crate::alien_cs_metrics::MetricEventKind::EbrPin,
+            epoch,
+            "ebr",
+        );
         epoch
     }
 
     /// Unpin a thread.
     fn unpin(&self, slot: &EbrSlot) {
+        let epoch = slot.observed_epoch.load(Ordering::Acquire);
         slot.pinned.store(false, Ordering::Release);
+        crate::alien_cs_metrics::emit_alien_cs_event(
+            crate::alien_cs_metrics::MetricEventKind::EbrUnpin,
+            epoch,
+            "ebr",
+        );
     }
 }
 
 impl Default for EbrCollector {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl Drop for EbrCollector {
+    fn drop(&mut self) {
+        crate::alien_cs_metrics::emit_alien_cs_event(
+            crate::alien_cs_metrics::MetricEventKind::ConceptDeactivated,
+            self.global_epoch.load(Ordering::Relaxed),
+            "ebr",
+        );
     }
 }
 

@@ -4602,9 +4602,11 @@ impl RuntimeMathKernel {
         );
 
         let snapshot_trace_id = runtime_scope_trace_id("runtime_math::snapshot", bead_id, run_id);
+        let arena_utilization_ppm =
+            depth_to_arena_utilization_ppm(snapshot.quarantine_depth.min(u32::MAX as usize) as u32);
         let _ = writeln!(
             &mut out,
-            "{{\"timestamp\":\"{timestamp}\",\"trace_id\":\"{}\",\"bead_id\":\"{bead}\",\"scenario_id\":\"{run}\",\"decision_id\":0,\"schema_version\":\"{}\",\"level\":\"info\",\"event\":\"runtime_snapshot\",\"controller_id\":\"runtime_math_kernel.v1\",\"mode\":\"{mode_label}\",\"api_family\":\"runtime_math\",\"symbol\":\"runtime_math::kernel\",\"decision_path\":\"snapshot::state\",\"healing_action\":null,\"errno\":0,\"latency_ns\":0,\"decisions\":{},\"consistency_faults\":{},\"pareto_cumulative_regret_milli\":{},\"pareto_cap_enforcements\":{},\"pareto_exhausted_families\":{},\"evidence_seqno\":{},\"artifact_refs\":[\"crates/frankenlibc-membrane/src/runtime_math/mod.rs\"]}}",
+            "{{\"timestamp\":\"{timestamp}\",\"trace_id\":\"{}\",\"bead_id\":\"{bead}\",\"scenario_id\":\"{run}\",\"decision_id\":0,\"schema_version\":\"{}\",\"level\":\"info\",\"event\":\"runtime_snapshot\",\"controller_id\":\"runtime_math_kernel.v1\",\"mode\":\"{mode_label}\",\"api_family\":\"runtime_math\",\"symbol\":\"runtime_math::kernel\",\"decision_path\":\"snapshot::state\",\"healing_action\":null,\"errno\":0,\"latency_ns\":0,\"decisions\":{},\"consistency_faults\":{},\"pareto_cumulative_regret_milli\":{},\"pareto_cap_enforcements\":{},\"pareto_exhausted_families\":{},\"quarantine_depth\":{},\"arena_utilization_ppm\":{},\"evidence_seqno\":{},\"artifact_refs\":[\"crates/frankenlibc-membrane/src/runtime_math/mod.rs\"]}}",
             snapshot_trace_id.as_str(),
             MEMBRANE_SCHEMA_VERSION,
             snapshot.decisions,
@@ -4612,6 +4614,8 @@ impl RuntimeMathKernel {
             snapshot.pareto_cumulative_regret_milli,
             snapshot.pareto_cap_enforcements,
             snapshot.pareto_exhausted_families,
+            snapshot.quarantine_depth,
+            arena_utilization_ppm,
             snapshot.evidence_seqno,
         );
 
@@ -6664,6 +6668,14 @@ mod tests {
         assert_eq!(
             snapshot_row["decision_path"].as_str(),
             Some("snapshot::state")
+        );
+        assert!(
+            snapshot_row["quarantine_depth"].as_u64().is_some(),
+            "runtime snapshot must export allocator quarantine depth"
+        );
+        assert!(
+            snapshot_row["arena_utilization_ppm"].as_u64().is_some(),
+            "runtime snapshot must export allocator arena utilization"
         );
         assert!(
             snapshot_row["trace_id"]
