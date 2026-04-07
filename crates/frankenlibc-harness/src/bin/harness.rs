@@ -181,6 +181,33 @@ enum Command {
         #[arg(long)]
         output: Option<PathBuf>,
     },
+    /// Build a trace-to-decision explainability workbench from structured logs.
+    ExplainabilityWorkbench {
+        /// Structured JSONL log path.
+        #[arg(long)]
+        log: PathBuf,
+        /// Optional artifact-index JSON path used for trace joins.
+        #[arg(long)]
+        artifact_index: Option<PathBuf>,
+        /// Optional trace id filter.
+        #[arg(long)]
+        trace_id: Option<String>,
+        /// Optional scenario id filter.
+        #[arg(long)]
+        scenario_id: Option<String>,
+        /// Output format: `json` (default), `plain`, or `ftui` (requires `frankentui-ui`).
+        #[arg(long, default_value = "json")]
+        format: String,
+        /// Output file path (if omitted, prints to stdout).
+        #[arg(long)]
+        output: Option<PathBuf>,
+        /// Emit ANSI color/styling (only when `frankentui-ui` is enabled and `--format ftui`).
+        #[arg(long)]
+        ansi: bool,
+        /// Render width for the UI table (only when `frankentui-ui` is enabled and `--format ftui`).
+        #[arg(long, default_value_t = 140)]
+        width: u16,
+    },
     /// Decode exported evidence symbol records and emit an explainable proof report.
     DecodeEvidence {
         /// Input path containing concatenated 256-byte `EvidenceSymbolRecord` blobs.
@@ -964,6 +991,58 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     report.violations.len()
                 )
                 .into());
+            }
+        }
+        Command::ExplainabilityWorkbench {
+            log,
+            artifact_index,
+            trace_id,
+            scenario_id,
+            format,
+            output,
+            ansi,
+            width,
+        } => {
+            let report = frankenlibc_harness::explainability_workbench::build_report(
+                &log,
+                artifact_index.as_deref(),
+                trace_id.as_deref(),
+                scenario_id.as_deref(),
+            )?;
+
+            let out = match format.to_ascii_lowercase().as_str() {
+                "json" => serde_json::to_string_pretty(&report)?,
+                "plain" => frankenlibc_harness::explainability_workbench::render_plain(&report),
+                "ftui" => {
+                    #[cfg(feature = "frankentui-ui")]
+                    {
+                        frankenlibc_harness::explainability_workbench::render_ftui(
+                            &report, ansi, width,
+                        )
+                    }
+
+                    #[cfg(not(feature = "frankentui-ui"))]
+                    {
+                        let _ = ansi;
+                        let _ = width;
+                        eprintln!("note: enable `frankentui-ui` feature for ftui rendering");
+                        frankenlibc_harness::explainability_workbench::render_plain(&report)
+                    }
+                }
+                other => {
+                    return Err(
+                        format!("Unsupported format '{other}', expected json|plain|ftui").into(),
+                    );
+                }
+            };
+
+            if let Some(path) = output {
+                if let Some(parent) = path.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                std::fs::write(&path, out)?;
+            } else {
+                print!("{out}");
             }
         }
         Command::DecodeEvidence {

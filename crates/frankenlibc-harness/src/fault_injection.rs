@@ -4,7 +4,9 @@
 //! integrations share one declarative scenario catalog with deterministic execution,
 //! structured logs, and replayable artifacts.
 
-use crate::structured_log::{ArtifactIndex, LogEmitter, LogEntry, LogLevel, Outcome, StreamKind};
+use crate::structured_log::{
+    ArtifactIndex, ArtifactJoinKeys, LogEmitter, LogEntry, LogLevel, Outcome, StreamKind,
+};
 use frankenlibc_membrane::arena::FreeResult;
 use frankenlibc_membrane::{ValidationOutcome, ValidationPipeline};
 use serde::{Deserialize, Serialize};
@@ -427,17 +429,31 @@ pub fn run_manifest<E: FaultExecutor>(
     };
     write_json_pretty(&config.report_path, &report)?;
 
+    let join_keys = artifact_join_keys(&report);
     let mut artifact_index = ArtifactIndex::new(config.run_id.clone(), config.bead_id.clone());
-    artifact_index.add(
+    artifact_index.add_with_join_keys(
         config.log_path.to_string_lossy().into_owned(),
         "log",
         sha256_path(&config.log_path)?,
+        join_keys.clone(),
     );
-    artifact_index.add(
+    artifact_index.add_with_join_keys(
         config.report_path.to_string_lossy().into_owned(),
         "report",
         sha256_path(&config.report_path)?,
+        join_keys.clone(),
     );
+    if let Some(manifest_ref) = &config.manifest_ref {
+        let manifest_path = Path::new(manifest_ref);
+        if manifest_path.exists() {
+            artifact_index.add_with_join_keys(
+                manifest_ref.clone(),
+                "manifest",
+                sha256_path(manifest_path)?,
+                join_keys,
+            );
+        }
+    }
     write_json_pretty(&config.artifact_index_path, &artifact_index)?;
 
     Ok(report)
@@ -708,6 +724,17 @@ fn default_expected_detection() -> bool {
 
 fn deterministic_trace_id(bead_id: &str, run_id: &str, seq: u64) -> String {
     format!("{bead_id}::{run_id}::{seq:03}")
+}
+
+fn artifact_join_keys(report: &FaultRunReport) -> ArtifactJoinKeys {
+    ArtifactJoinKeys {
+        trace_ids: report
+            .cases
+            .iter()
+            .map(|case| case.trace_id.clone())
+            .collect(),
+        ..ArtifactJoinKeys::default()
+    }
 }
 
 fn run_artifact_refs(config: &FaultRunConfig) -> Vec<String> {
