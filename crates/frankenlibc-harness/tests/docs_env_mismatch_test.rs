@@ -160,6 +160,44 @@ fn source_of_truth_map_covers_major_surfaces() {
 }
 
 #[test]
+fn readme_smoke_status_is_backed_by_canonical_smoke_artifact() {
+    let root = workspace_root();
+    let map = load_json(&root.join("tests/conformance/docs_source_of_truth_map.v1.json"));
+    let surfaces = map["surfaces"].as_array().expect("surfaces must be array");
+
+    let readme_surface = surfaces
+        .iter()
+        .find(|surface| surface["surface_id"].as_str() == Some("README"))
+        .expect("README surface must exist");
+    let sections = readme_surface["sections"]
+        .as_array()
+        .expect("README sections must be array");
+    let smoke_section = sections
+        .iter()
+        .find(|section| section["section_id"].as_str() == Some("smoke-status-and-claim-governance"))
+        .expect("README governance must include smoke-status-and-claim-governance");
+
+    assert!(
+        smoke_section["source_artifacts"]
+            .as_array()
+            .unwrap_or(&Vec::new())
+            .iter()
+            .any(|value| {
+                value.as_str() == Some("tests/conformance/ld_preload_smoke_summary.v1.json")
+            }),
+        "README smoke governance section must include the canonical smoke summary artifact"
+    );
+    assert!(
+        smoke_section["update_triggers"]
+            .as_array()
+            .unwrap_or(&Vec::new())
+            .iter()
+            .any(|value| value.as_str() == Some("scripts/check_claim_reconciliation.sh")),
+        "README smoke governance section must be guarded by check_claim_reconciliation.sh"
+    );
+}
+
+#[test]
 fn governed_sections_have_sources_owners_and_triggers() {
     let root = workspace_root();
     let map = load_json(&root.join("tests/conformance/docs_source_of_truth_map.v1.json"));

@@ -23,8 +23,8 @@ PROFILE_DEF="${ROOT}/tests/conformance/replacement_profile.json"
 SUPPORT_MATRIX="${ROOT}/support_matrix.json"
 MODE="${1:-interpose}"
 OUT_DIR="${ROOT}/target/conformance"
-LOG_PATH="${OUT_DIR}/replacement_guard.log.jsonl"
-REPORT_PATH="${OUT_DIR}/replacement_guard.report.json"
+LOG_PATH="${FRANKENLIBC_REPLACEMENT_GUARD_LOG:-${OUT_DIR}/replacement_guard.log.jsonl}"
+REPORT_PATH="${FRANKENLIBC_REPLACEMENT_GUARD_REPORT:-${OUT_DIR}/replacement_guard.report.json}"
 FIXTURE_PACK="${ROOT}/tests/conformance/replacement_zero_unapproved_fixtures.v1.json"
 
 failures=0
@@ -32,7 +32,7 @@ failures=0
 echo "=== Replacement Profile Guard (bd-130) ==="
 echo "mode=${MODE}"
 echo ""
-mkdir -p "${OUT_DIR}"
+mkdir -p "${OUT_DIR}" "$(dirname "${LOG_PATH}")" "$(dirname "${REPORT_PATH}")"
 
 # ---------------------------------------------------------------------------
 # Check 1: Profile definition exists
@@ -68,10 +68,12 @@ echo "--- Check 2: Call-through scan (mode=${MODE}) ---"
 
 scan_result=$(python3 -c "
 import json, re, os
+from collections import Counter, defaultdict
 from datetime import datetime, timezone
 
 abi_src = '${ABI_SRC}'
 profile_path = '${PROFILE_DEF}'
+support_path = '${SUPPORT_MATRIX}'
 mode = '${MODE}'
 root = '${ROOT}'
 log_path = '${LOG_PATH}'
@@ -79,9 +81,18 @@ report_path = '${REPORT_PATH}'
 
 with open(profile_path) as f:
     profile = json.load(f)
+with open(support_path) as f:
+    support_matrix = json.load(f)
 
 allowlist = set(profile['interpose_allowlist']['modules'])
 mutex_symbols = set(profile.get('replacement_forbidden', {}).get('mutex_symbols', []))
+support_rows = support_matrix.get('symbols', [])
+support_by_symbol = {}
+for row in support_rows:
+    symbol = str(row.get('symbol', ''))
+    module = str(row.get('module', ''))
+    if symbol:
+        support_by_symbol[(module, symbol)] = row
 
 call_through_re = re.compile(r'libc::([a-z_][a-z0-9_]*)\s*\(')
 host_pthread_re = re.compile(r'host_pthread_([a-z_][a-z0-9_]*)\s*\(')
@@ -89,6 +100,7 @@ host_pthread_re = re.compile(r'host_pthread_([a-z_][a-z0-9_]*)\s*\(')
 violations = []
 mutex_violations = []
 module_counts = {}
+symbol_counts = Counter()
 events = []
 timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace('+00:00', 'Z')
 
@@ -114,7 +126,7 @@ for fname in sorted(os.listdir(abi_src)):
                 'line': lineno,
                 'function': func_name,
                 'source': 'libc',
-                'context': stripped[:120]
+                'context': stripped[:120],
             })
         if 'fn host_pthread_' in stripped:
             continue
@@ -126,7 +138,7 @@ for fname in sorted(os.listdir(abi_src)):
                 'line': lineno,
                 'function': f'pthread_{wrapped}',
                 'source': 'host_pthread',
-                'context': stripped[:120]
+                'context': stripped[:120],
             })
 
     if module_calls:
@@ -155,18 +167,35 @@ for fname in sorted(os.listdir(abi_src)):
                     'context': call['context'],
                 })
         for call in module_calls:
+            symbol_counts[(module, call['function'], call['source'])] += 1
             allowed = (mode == 'interpose' and module in allowlist)
-            outcome = 'allowed' if allowed else 'forbidden'
+            policy_rule = (
+                'interpose_allowlist'
+                if allowed
+                else 'replacement_zero_callthrough'
+                if mode == 'replacement'
+                else 'interpose_non_allowlisted_module'
+            )
+            status = 'allowed' if allowed else 'forbidden'
+            verdict = 'allow' if allowed else 'fail'
+            symbol_meta = support_by_symbol.get((module, call['function']), {})
+            category = 'threading' if module == 'pthread_abi' else 'non_threading'
             events.append({
                 'timestamp': timestamp,
                 'trace_id': f'replacement-guard:{mode}:{module}:{call[\"line\"]}:{call[\"function\"]}',
+                'bead_id': 'bd-h5x.3',
+                'scenario_id': f'{module}:{call[\"function\"]}:{call[\"line\"]}',
                 'mode': mode,
                 'gate_name': 'replacement_guard',
+                'decision_path': 'source_scan>profile_policy>verdict',
                 'module': module,
                 'line': call['line'],
                 'symbol': call['function'],
                 'source_pattern': call['source'],
-                'status': outcome,
+                'status': status,
+                'verdict': verdict,
+                'callthrough_detected': True,
+                'policy_rule': policy_rule,
                 'reason': (
                     'module is allowlisted in interpose mode'
                     if allowed
@@ -175,10 +204,66 @@ for fname in sorted(os.listdir(abi_src)):
                     else 'module not in interpose allowlist'
                 ),
                 'artifact_ref': os.path.relpath(filepath, root),
+                'artifact_refs': [
+                    os.path.relpath(filepath, root),
+                    os.path.relpath(report_path, root),
+                ],
+                'classification': category,
+                'support_matrix_status': symbol_meta.get('status'),
+                'perf_class': symbol_meta.get('perf_class', 'coldpath'),
                 'context': call['context'],
             })
 
 total_ct = sum(module_counts.values())
+module_symbol_counts = defaultdict(Counter)
+for (module, symbol, _source), count in symbol_counts.items():
+    module_symbol_counts[module][symbol] += count
+
+module_rankings = []
+for rank, (module, count) in enumerate(
+    sorted(module_counts.items(), key=lambda item: (-item[1], item[0])),
+    start=1,
+):
+    top_symbols = [
+        {
+            'symbol': symbol,
+            'callthrough_count': symbol_count,
+        }
+        for symbol, symbol_count in sorted(
+            module_symbol_counts[module].items(),
+            key=lambda item: (-item[1], item[0]),
+        )
+    ]
+    module_rankings.append(
+        {
+            'rank': rank,
+            'module': module,
+            'classification': 'threading' if module == 'pthread_abi' else 'non_threading',
+            'callthrough_count': count,
+            'top_symbols': top_symbols[:10],
+        }
+    )
+
+symbol_rankings = []
+for rank, ((module, symbol, source), count) in enumerate(
+    sorted(symbol_counts.items(), key=lambda item: (-item[1], item[0][0], item[0][1], item[0][2])),
+    start=1,
+):
+    symbol_rankings.append(
+        {
+            'rank': rank,
+            'module': module,
+            'symbol': symbol,
+            'source_pattern': source,
+            'classification': 'threading' if module == 'pthread_abi' else 'non_threading',
+            'callthrough_count': count,
+        }
+    )
+
+non_threading_modules = [row for row in module_rankings if row['classification'] == 'non_threading']
+non_threading_symbols = [row for row in symbol_rankings if row['classification'] == 'non_threading']
+policy_rule_counts = Counter(event['policy_rule'] for event in events)
+verdict_counts = Counter(event['verdict'] for event in events)
 
 with open(log_path, 'w', encoding='utf-8') as f:
     for event in sorted(events, key=lambda e: (e['module'], e['line'], e['symbol'])):
@@ -186,6 +271,8 @@ with open(log_path, 'w', encoding='utf-8') as f:
         f.write('\n')
 
 report = {
+    'schema_version': 'v1',
+    'bead': 'bd-h5x.3',
     'ok': len(violations) == 0,
     'mode': mode,
     'total_call_throughs': total_ct,
@@ -193,6 +280,24 @@ report = {
     'violations': len(violations),
     'module_counts': dict(sorted(module_counts.items())),
     'log_jsonl': os.path.relpath(log_path, root),
+    'policy_summary': {
+        'policy_rule_counts': dict(sorted(policy_rule_counts.items())),
+        'verdict_counts': dict(sorted(verdict_counts.items())),
+        'non_threading_callthroughs': int(
+            sum(row['callthrough_count'] for row in non_threading_modules)
+        ),
+        'threading_callthroughs': int(
+            sum(row['callthrough_count'] for row in module_rankings if row['classification'] == 'threading')
+        ),
+    },
+    'module_rankings': module_rankings,
+    'symbol_rankings': symbol_rankings,
+    'non_threading_backlog': {
+        'module_count': len(non_threading_modules),
+        'callthrough_count': int(sum(row['callthrough_count'] for row in non_threading_modules)),
+        'top_modules': non_threading_modules[:10],
+        'top_symbols': non_threading_symbols[:20],
+    },
     'violations_detail': violations,
     'mutex_forbidden_symbols': sorted(mutex_symbols),
     'mutex_forbidden_count': len(mutex_violations),
@@ -206,6 +311,13 @@ print(f'TOTAL_CALL_THROUGHS={total_ct}')
 print(f'MODULES_WITH_CT={len(module_counts)}')
 print(f'VIOLATIONS={len(violations)}')
 print(f'MUTEX_FORBIDDEN={len(mutex_violations)}')
+print(
+    'NON_THREADING_TOP='
+    + ','.join(
+        f'{row[\"module\"]}:{row[\"callthrough_count\"]}'
+        for row in non_threading_modules[:5]
+    )
+)
 print(f'LOG_PATH={os.path.relpath(log_path, root)}')
 print(f'REPORT_PATH={os.path.relpath(report_path, root)}')
 
@@ -233,9 +345,13 @@ mutex_forbidden_count=$(echo "${scan_result}" | grep '^MUTEX_FORBIDDEN=' | cut -
 modules_ct=$(echo "${scan_result}" | grep '^MODULES_WITH_CT=' | cut -d= -f2)
 log_path_rel=$(echo "${scan_result}" | grep '^LOG_PATH=' | cut -d= -f2)
 report_path_rel=$(echo "${scan_result}" | grep '^REPORT_PATH=' | cut -d= -f2)
+non_threading_top=$(echo "${scan_result}" | grep '^NON_THREADING_TOP=' | cut -d= -f2)
 
 echo "Total call-throughs found: ${total_ct} across ${modules_ct} modules"
 echo "${scan_result}" | grep '  MODULE:'
+if [[ -n "${non_threading_top}" ]]; then
+    echo "Top non-threading backlog: ${non_threading_top}"
+fi
 echo ""
 
 if [[ "${violation_count}" -gt 0 ]]; then

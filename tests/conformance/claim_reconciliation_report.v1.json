@@ -7,6 +7,7 @@
     "support_matrix.json",
     "tests/conformance/reality_report.v1.json",
     "tests/conformance/replacement_levels.json",
+    "tests/conformance/ld_preload_smoke_summary.v1.json",
     "tests/conformance/hard_parts_truth_table.v1.json",
     "FEATURE_PARITY.md",
     "README.md"

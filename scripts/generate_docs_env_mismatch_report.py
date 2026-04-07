@@ -51,6 +51,26 @@ DOC_GOVERNANCE_SURFACES: tuple[dict[str, Any], ...] = (
                 ),
             },
             {
+                "section_id": "smoke-status-and-claim-governance",
+                "section_title": "Smoke status / checked artifact / claim reconciliation",
+                "backing_paths": ("README.md",),
+                "source_artifacts": (
+                    "tests/conformance/ld_preload_smoke_summary.v1.json",
+                    "tests/conformance/claim_reconciliation_report.v1.json",
+                    "tests/conformance/replacement_levels.json",
+                ),
+                "owner": "docs.release",
+                "review_policy": (
+                    "release-integrity review required when README smoke status, "
+                    "checked artifact counts, or replacement-level readiness "
+                    "claims change"
+                ),
+                "update_triggers": (
+                    "scripts/check_claim_reconciliation.sh",
+                    "scripts/ld_preload_smoke.sh",
+                ),
+            },
+            {
                 "section_id": "verification-and-troubleshooting",
                 "section_title": "Verification Model / Troubleshooting / Common Commands",
                 "backing_paths": ("README.md",),

@@ -59,6 +59,7 @@
     {
       "owner": "docs.release",
       "review_policies": [
+        "release-integrity review required when README smoke status, checked artifact counts, or replacement-level readiness claims change",
         "release-integrity review required when support taxonomy, replacement level, or packaging claims change"
       ],
       "surfaces": [
@@ -104,10 +105,10 @@
   ],
   "schema_version": "v1",
   "summary": {
-    "fresh_section_count": 11,
+    "fresh_section_count": 12,
     "missing_section_count": 0,
     "owner_count": 11,
-    "section_count": 11,
+    "section_count": 12,
     "surface_count": 6
   },
   "surfaces": [
@@ -137,6 +138,26 @@
             "scripts/check_support_matrix_drift.sh",
             "scripts/check_replacement_levels.sh",
             "scripts/check_packaging.sh"
+          ]
+        },
+        {
+          "backing_paths": [
+            "README.md"
+          ],
+          "freshness_status": "fresh",
+          "missing_inputs": [],
+          "owner": "docs.release",
+          "review_policy": "release-integrity review required when README smoke status, checked artifact counts, or replacement-level readiness claims change",
+          "section_id": "smoke-status-and-claim-governance",
+          "section_title": "Smoke status / checked artifact / claim reconciliation",
+          "source_artifacts": [
+            "tests/conformance/ld_preload_smoke_summary.v1.json",
+            "tests/conformance/claim_reconciliation_report.v1.json",
+            "tests/conformance/replacement_levels.json"
+          ],
+          "update_triggers": [
+            "scripts/check_claim_reconciliation.sh",
+            "scripts/ld_preload_smoke.sh"
           ]
         },
         {

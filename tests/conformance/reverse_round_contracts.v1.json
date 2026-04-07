@@ -1,8 +1,8 @@
 {
   "schema_version": "v1",
   "bead": "bd-2a2.5",
-  "generated_at": "2026-04-07T03:30:32Z",
-  "report_hash": "68ce4146e139fd3b",
+  "generated_at": "2026-04-07T17:27:12Z",
+  "report_hash": "f8ce7e400ae749b1",
   "summary": {
     "rounds_verified": 21,
     "total_math_families": 84,
@@ -15,7 +15,7 @@
     "verification_hooks_total": 63,
     "verification_hooks_specified": 62,
     "supporting_files_total": 173,
-    "supporting_files_found": 172,
+    "supporting_files_found": 173,
     "unique_math_classes": [
       "algebra",
       "algebraic-topology",
@@ -1076,8 +1076,8 @@
           "exists": true
         },
         {
-          "path": "crates/frankenlibc-membrane/src/runtime_math/persistence.rs",
-          "exists": false
+          "path": "crates/frankenlibc-membrane/src/persistence.rs",
+          "exists": true
         },
         {
           "path": "crates/frankenlibc-harness/tests/runtime_math_cohomology_cross_family_test.rs",
@@ -1132,7 +1132,7 @@
       },
       "family_count": 4,
       "modules_found": 4,
-      "supporting_files_found": 11,
+      "supporting_files_found": 12,
       "verification_hooks_found": 3,
       "branch_diversity": {
         "total_families": 4,
@@ -3538,7 +3538,7 @@
   },
   "golden_output": {
     "description": "Reproducible baseline for regression detection",
-    "hash": "68ce4146e139fd3b",
+    "hash": "f8ce7e400ae749b1",
     "round_hashes": {
       "R10": "7e84357ec964",
       "R11": "33bf75d138f7",

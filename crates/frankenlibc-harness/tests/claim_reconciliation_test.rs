@@ -252,7 +252,7 @@ fn claim_reconciliation_detects_readme_smoke_overclaim_and_routes_replacement_ow
     let mutated_readme = std::fs::read_to_string(&readme_src)
         .expect("README.md should exist")
         .replace(
-            "Broad paired strict+hardened preload smoke closure is still in progress; use the current smoke artifacts and gates rather than README prose for the latest readiness status.",
+            "The checked curated preload smoke battery is green in both strict and hardened modes, but broader production hardening and release-claim closure are still in progress; use the canonical smoke artifact and gates rather than paraphrased README prose when the exact status matters.",
             "The latest broad preload smoke run is **fully green** and both strict and hardened modes pass all workloads.",
         );
     std::fs::write(&mutated_readme_path, mutated_readme)
@@ -306,5 +306,90 @@ fn claim_reconciliation_detects_readme_smoke_overclaim_and_routes_replacement_ow
             .iter()
             .any(|value| value.as_str() == Some("tests/conformance/replacement_levels.json")),
         "replacement smoke contradiction should reference replacement_levels.json"
+    );
+}
+
+#[test]
+fn claim_reconciliation_detects_readme_smoke_summary_drift_and_routes_owner() {
+    let repo_root = workspace_root();
+    let script = repo_root.join("scripts/claim_reconciliation.py");
+    let readme_src = repo_root.join("README.md");
+    let mutated_readme_path = unique_temp_path("claim-reconciliation-readme-smoke-summary.md");
+
+    let canonical = "Canonical checked smoke artifact: `tests/conformance/ld_preload_smoke_summary.v1.json` (run `20260404T011731Z`, checked April 4, 2026) reports 58 passes / 0 fails / 6 skips overall, with strict 29/0/3 and hardened 29/0/3 across the curated preload smoke battery.";
+    let stale = "Canonical checked smoke artifact: `tests/conformance/ld_preload_smoke_summary.v1.json` (run `20260405T000000Z`, checked April 5, 2026) reports 57 passes / 1 fails / 6 skips overall, with strict 28/1/3 and hardened 29/0/3 across the curated preload smoke battery.";
+    let readme = std::fs::read_to_string(&readme_src).expect("README.md should exist");
+    assert!(
+        readme.contains(canonical),
+        "README.md must contain the canonical checked smoke summary line"
+    );
+
+    let mutated_readme = readme.replace(canonical, stale);
+    std::fs::write(&mutated_readme_path, mutated_readme)
+        .expect("failed to write mutated README smoke summary");
+
+    let output = Command::new("python3")
+        .arg(&script)
+        .current_dir(&repo_root)
+        .env("FLC_CLAIM_RECON_README", &mutated_readme_path)
+        .output()
+        .expect("failed to run claim_reconciliation.py with mutated README smoke summary");
+
+    assert!(
+        !output.status.success(),
+        "mutated README smoke summary should fail reconciliation\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let report: serde_json::Value = serde_json::from_str(&stdout).unwrap_or_else(|e| {
+        panic!(
+            "Failed to parse reconciliation report: {}\nstdout: {}\nstderr: {}",
+            e, stdout, stderr
+        );
+    });
+
+    assert_eq!(report["status"].as_str(), Some("fail"));
+    let findings = report["findings"]
+        .as_array()
+        .expect("findings must be an array");
+    assert!(
+        findings.iter().any(|finding| {
+            finding["category"].as_str() == Some("smoke_summary_claim_stale")
+                && finding["owner_bead"].as_str() == Some("bd-3rw.5.1")
+                && finding["field"].as_str() == Some("checked_date_display")
+        }),
+        "expected checked_date_display smoke-summary drift routed to bd-3rw.5.1"
+    );
+    assert!(
+        findings.iter().any(|finding| {
+            finding["category"].as_str() == Some("smoke_summary_claim_stale")
+                && finding["owner_bead"].as_str() == Some("bd-3rw.5.1")
+                && finding["field"].as_str() == Some("summary.passes")
+        }),
+        "expected overall smoke pass-count drift routed to bd-3rw.5.1"
+    );
+    assert!(
+        findings.iter().any(|finding| {
+            finding["category"].as_str() == Some("smoke_summary_claim_stale")
+                && finding["owner_bead"].as_str() == Some("bd-3rw.5.1")
+                && finding["field"].as_str() == Some("modes.strict.passes")
+        }),
+        "expected per-mode smoke drift routed to bd-3rw.5.1"
+    );
+    assert!(
+        findings.iter().all(|finding| {
+            finding["category"].as_str() != Some("smoke_summary_claim_stale")
+                || finding["artifact_refs"]
+                    .as_array()
+                    .unwrap_or(&Vec::new())
+                    .iter()
+                    .any(|value| {
+                        value.as_str() == Some("tests/conformance/ld_preload_smoke_summary.v1.json")
+                    })
+        }),
+        "smoke-summary drift findings should reference the canonical smoke artifact"
     );
 }

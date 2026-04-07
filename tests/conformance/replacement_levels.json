@@ -47,8 +47,143 @@
           "Hardened mode E2E validated"
         ]
       },
+      "objective_gate": {
+        "bead": "bd-gtf.4",
+        "status": "blocked",
+        "status_reason": "The evidence bundle is green, but FrankenLibC still claims L0 until current_level and release_tag_policy.current_release_level are promoted together under explicit claim-control.",
+        "required_log_fields": [
+          "trace_id",
+          "level",
+          "obligation_id",
+          "outcome",
+          "artifact_ref"
+        ],
+        "generated_report": {
+          "report_path": "target/conformance/replacement_levels_l1_gate.report.json",
+          "log_path": "target/conformance/replacement_levels_l1_gate.log.jsonl",
+          "gate_script": "scripts/check_replacement_levels.sh"
+        },
+        "obligations": [
+          {
+            "id": "stub_free_taxonomy",
+            "description": "Current assessment carries zero Stub symbols.",
+            "artifact_ref": "tests/conformance/replacement_levels.json",
+            "expected": {
+              "stub": 0
+            },
+            "actual": {
+              "stub": 0
+            },
+            "outcome": "pass"
+          },
+          {
+            "id": "callthrough_pct_within_l1_bound",
+            "description": "Current assessment keeps call-through percentage within the L1 ceiling.",
+            "artifact_ref": "tests/conformance/replacement_levels.json",
+            "expected": {
+              "max_callthrough_pct": 30
+            },
+            "actual": {
+              "callthrough_pct": 0
+            },
+            "outcome": "pass"
+          },
+          {
+            "id": "implemented_pct_meets_l1_floor",
+            "description": "Current assessment keeps implemented percentage above the L1 floor.",
+            "artifact_ref": "tests/conformance/replacement_levels.json",
+            "expected": {
+              "min_implemented_pct": 35
+            },
+            "actual": {
+              "implemented_pct": 90
+            },
+            "outcome": "pass"
+          },
+          {
+            "id": "hardened_smoke_battery",
+            "description": "The checked curated preload smoke battery is green in both strict and hardened modes with no perf or signature-guard failures.",
+            "artifact_ref": "tests/conformance/ld_preload_smoke_summary.v1.json",
+            "expected": {
+              "overall_failed": false,
+              "strict_status": "green",
+              "hardened_status": "green",
+              "perf_failures": 0,
+              "signature_guard_failures": 0
+            },
+            "actual": {
+              "run_id": "20260404T011731Z",
+              "overall_failed": false,
+              "strict_status": "green",
+              "hardened_status": "green",
+              "perf_failures": 0,
+              "signature_guard_failures": 0
+            },
+            "outcome": "pass"
+          },
+          {
+            "id": "claim_reconciliation_clean",
+            "description": "Canonical claim reconciliation reports zero errors before any L1 claim promotion.",
+            "artifact_ref": "tests/conformance/claim_reconciliation_report.v1.json",
+            "expected": {
+              "status": "pass",
+              "errors": 0
+            },
+            "actual": {
+              "status": "pass",
+              "errors": 0
+            },
+            "outcome": "pass"
+          },
+          {
+            "id": "perf_budget_alignment",
+            "description": "Performance-regression prevention artifacts remain aligned to the L1 strict/hardened latency ceilings.",
+            "artifact_ref": "tests/conformance/perf_regression_prevention.v1.json",
+            "expected": {
+              "strict_target_ns": 20,
+              "hardened_target_ns": 200,
+              "total_issues": 0
+            },
+            "actual": {
+              "strict_target_ns": 20,
+              "hardened_target_ns": 200,
+              "total_issues": 0
+            },
+            "outcome": "pass"
+          },
+          {
+            "id": "promotion_claim_control",
+            "description": "Do not claim L1 until current_level and release_tag_policy.current_release_level are promoted together.",
+            "artifact_ref": "tests/conformance/replacement_levels.json",
+            "expected": {
+              "current_level": "L1",
+              "release_tag_policy.current_release_level": "L1"
+            },
+            "actual": {
+              "current_level": "L0",
+              "release_tag_policy.current_release_level": "L0"
+            },
+            "outcome": "blocked"
+          }
+        ],
+        "evidence_bundle": {
+          "artifact_refs": [
+            "tests/conformance/replacement_levels.json",
+            "tests/conformance/ld_preload_smoke_summary.v1.json",
+            "tests/conformance/claim_reconciliation_report.v1.json",
+            "tests/conformance/perf_regression_prevention.v1.json",
+            "tests/conformance/replacement_zero_unapproved_fixtures.v1.json"
+          ],
+          "required_commands": [
+            "scripts/check_replacement_levels.sh",
+            "bash scripts/check_replacement_guard.sh interpose",
+            "scripts/check_claim_reconciliation.sh",
+            "scripts/check_perf_budget.sh"
+          ]
+        }
+      },
       "blockers": [
-        "Hardened-mode E2E smoke battery remains incomplete"
+        "L1 claim promotion remains blocked until current_level and release_tag_policy.current_release_level move from L0 to L1 together under the bd-gtf.4 objective gate."
       ],
       "status": "in_progress"
     },

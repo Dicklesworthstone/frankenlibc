@@ -203,14 +203,21 @@
   ],
   "required_log_fields": [
     "trace_id",
+    "bead_id",
+    "scenario_id",
     "mode",
     "gate_name",
+    "decision_path",
     "module",
     "line",
     "symbol",
+    "callthrough_detected",
+    "policy_rule",
+    "verdict",
     "status",
     "reason",
-    "artifact_ref"
+    "artifact_ref",
+    "artifact_refs"
   ],
   "summary": {
     "fixture_count": 24,

@@ -353,6 +353,37 @@ fn contracts_cross_round_integrations_are_complete() {
 }
 
 #[test]
+fn contracts_r32_uses_membrane_persistence_anchor() {
+    let root = repo_root();
+    let report_path = root.join("tests/conformance/reverse_round_contracts.v1.json");
+    let data = load_json(&report_path);
+
+    let r32 = data["round_results"]["R32"]
+        .as_object()
+        .expect("R32 round must exist");
+    let supporting_files = r32["supporting_files"]
+        .as_array()
+        .expect("R32 supporting_files must be an array");
+
+    let has_root_persistence = supporting_files.iter().any(|file| {
+        file["path"].as_str() == Some("crates/frankenlibc-membrane/src/persistence.rs")
+            && file["exists"].as_bool().unwrap_or(false)
+    });
+    assert!(
+        has_root_persistence,
+        "R32 must anchor the membrane persistence module at crates/frankenlibc-membrane/src/persistence.rs"
+    );
+
+    let has_runtime_math_persistence = supporting_files.iter().any(|file| {
+        file["path"].as_str() == Some("crates/frankenlibc-membrane/src/runtime_math/persistence.rs")
+    });
+    assert!(
+        !has_runtime_math_persistence,
+        "R32 must not reference the removed runtime_math/persistence.rs path"
+    );
+}
+
+#[test]
 fn contracts_milestone_branch_diversity_holds() {
     let root = repo_root();
     let report_path = root.join("tests/conformance/reverse_round_contracts.v1.json");

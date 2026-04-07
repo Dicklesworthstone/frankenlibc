@@ -1,0 +1,251 @@
+{
+  "schema_version": "v1",
+  "bead": "bd-249m.7",
+  "theorem": "Sheaf Global-Consistency",
+  "open_cover": [
+    {
+      "id": "U_allocator",
+      "subsystem": "allocator",
+      "symbol_families": ["malloc", "calloc", "realloc", "free"],
+      "local_predicates": [
+        "allocation_fingerprint_integrity",
+        "generation_monotonicity",
+        "quarantine_blocks_uaf"
+      ],
+      "source_refs": [
+        "crates/frankenlibc-core/src/malloc/allocator.rs",
+        "crates/frankenlibc-membrane/src/runtime_math/cohomology.rs"
+      ]
+    },
+    {
+      "id": "U_string",
+      "subsystem": "string",
+      "symbol_families": ["memcpy", "memmove", "memset", "strlen", "strcpy"],
+      "local_predicates": [
+        "pointer_bounds_consistency",
+        "null_termination_preservation",
+        "copy_length_admissibility"
+      ],
+      "source_refs": [
+        "crates/frankenlibc-core/src/string/mem.rs",
+        "crates/frankenlibc-abi/src/string_abi.rs"
+      ]
+    },
+    {
+      "id": "U_stdio",
+      "subsystem": "stdio",
+      "symbol_families": ["printf", "fprintf", "snprintf", "fwrite", "fflush"],
+      "local_predicates": [
+        "buffer_cursor_integrity",
+        "format_sequence_admissibility",
+        "flush_order_preservation"
+      ],
+      "source_refs": [
+        "crates/frankenlibc-core/src/stdio/printf.rs",
+        "crates/frankenlibc-abi/src/stdio_abi.rs"
+      ]
+    },
+    {
+      "id": "U_thread",
+      "subsystem": "thread",
+      "symbol_families": ["pthread_mutex_lock", "pthread_mutex_unlock", "pthread_create"],
+      "local_predicates": [
+        "mutex_state_consistency",
+        "tls_registration_integrity",
+        "thread_registry_progress"
+      ],
+      "source_refs": [
+        "crates/frankenlibc-core/src/pthread/mutex.rs",
+        "crates/frankenlibc-abi/src/pthread_abi.rs"
+      ]
+    },
+    {
+      "id": "U_math",
+      "subsystem": "math",
+      "symbol_families": ["sin", "cos", "exp", "fesetround"],
+      "local_predicates": [
+        "domain_guard_consistency",
+        "rounding_mode_visibility",
+        "errno_fenv_alignment"
+      ],
+      "source_refs": [
+        "crates/frankenlibc-core/src/math/trig.rs",
+        "crates/frankenlibc-abi/src/math_abi.rs"
+      ]
+    },
+    {
+      "id": "U_signal",
+      "subsystem": "signal",
+      "symbol_families": ["sigaction", "sigprocmask", "raise", "setjmp", "longjmp"],
+      "local_predicates": [
+        "signal_mask_consistency",
+        "handler_installation_ordering",
+        "non_local_control_transfer_validity"
+      ],
+      "source_refs": [
+        "crates/frankenlibc-core/src/signal/mod.rs",
+        "crates/frankenlibc-core/src/setjmp/mod.rs"
+      ]
+    },
+    {
+      "id": "U_resolver",
+      "subsystem": "resolver",
+      "symbol_families": ["getaddrinfo", "freeaddrinfo", "getnameinfo"],
+      "local_predicates": [
+        "resolver_cache_coherence",
+        "address_family_normalization",
+        "ownership_handoff_consistency"
+      ],
+      "source_refs": [
+        "crates/frankenlibc-core/src/resolv/mod.rs",
+        "crates/frankenlibc-abi/src/unistd_abi.rs"
+      ]
+    }
+  ],
+  "overlaps": [
+    {
+      "id": "allocator_string",
+      "left": "U_allocator",
+      "right": "U_string",
+      "intersection": "allocator-owned buffers consumed by mem*/str* entrypoints",
+      "compatibility_conditions": [
+        "pointer provenance must agree between allocator metadata and string bounds checks",
+        "quarantined buffers must never be reintroduced as valid string sections"
+      ],
+      "restriction_maps": ["rho_global_allocator", "rho_global_string"]
+    },
+    {
+      "id": "string_stdio",
+      "left": "U_string",
+      "right": "U_stdio",
+      "intersection": "format buffers and byte slices passed into stdio formatters",
+      "compatibility_conditions": [
+        "null-termination and length witnesses must agree across parser and formatter surfaces",
+        "format rewrites may only tighten admissible output sections"
+      ],
+      "restriction_maps": ["rho_global_string", "rho_global_stdio"]
+    },
+    {
+      "id": "allocator_stdio",
+      "left": "U_allocator",
+      "right": "U_stdio",
+      "intersection": "stdio-owned heap buffers and flush metadata",
+      "compatibility_conditions": [
+        "allocation generation and cursor ownership must stay synchronized",
+        "flush paths must not observe freed or quarantined backing stores"
+      ],
+      "restriction_maps": ["rho_global_allocator", "rho_global_stdio"]
+    },
+    {
+      "id": "thread_signal",
+      "left": "U_thread",
+      "right": "U_signal",
+      "intersection": "signal delivery over mutex/TLS critical sections",
+      "compatibility_conditions": [
+        "signal-mask state must refine thread registry state",
+        "non-local control transfer may only target initialized TLS sections"
+      ],
+      "restriction_maps": ["rho_global_thread", "rho_global_signal"]
+    },
+    {
+      "id": "resolver_thread",
+      "left": "U_resolver",
+      "right": "U_thread",
+      "intersection": "thread-local resolver caches and request ownership",
+      "compatibility_conditions": [
+        "request ownership must agree between resolver state and thread registry state",
+        "cache invalidation must only tighten admissible reuse"
+      ],
+      "restriction_maps": ["rho_global_resolver", "rho_global_thread"]
+    },
+    {
+      "id": "math_stdio",
+      "left": "U_math",
+      "right": "U_stdio",
+      "intersection": "formatted numeric conversions and errno/fenv reporting",
+      "compatibility_conditions": [
+        "numeric-domain repairs must agree with formatter-visible errno and rounding state",
+        "stdio formatting may only expose values permitted by math-domain witnesses"
+      ],
+      "restriction_maps": ["rho_global_math", "rho_global_stdio"]
+    }
+  ],
+  "restriction_maps": [
+    {
+      "id": "rho_global_allocator",
+      "domain": "U_global",
+      "codomain": "U_allocator",
+      "implemented_by": "crates/frankenlibc-harness/tests/runtime_math_cohomology_cross_family_test.rs::sheaf_global_consistency_artifact_declares_complete_open_cover",
+      "description": "Project global safety evidence onto allocator-local provenance and generation invariants."
+    },
+    {
+      "id": "rho_global_string",
+      "domain": "U_global",
+      "codomain": "U_string",
+      "implemented_by": "crates/frankenlibc-harness/tests/runtime_math_cohomology_cross_family_test.rs::sheaf_global_consistency_artifact_declares_complete_open_cover",
+      "description": "Project global safety evidence onto string-local bounds and null-termination invariants."
+    },
+    {
+      "id": "rho_global_stdio",
+      "domain": "U_global",
+      "codomain": "U_stdio",
+      "implemented_by": "crates/frankenlibc-harness/tests/runtime_math_cohomology_cross_family_test.rs::sheaf_global_consistency_artifact_declares_complete_open_cover",
+      "description": "Project global safety evidence onto stdio-local cursor and formatter invariants."
+    },
+    {
+      "id": "rho_global_thread",
+      "domain": "U_global",
+      "codomain": "U_thread",
+      "implemented_by": "crates/frankenlibc-harness/tests/runtime_math_cohomology_cross_family_test.rs::sheaf_global_consistency_artifact_declares_complete_open_cover",
+      "description": "Project global safety evidence onto thread/TLS registry invariants."
+    },
+    {
+      "id": "rho_global_math",
+      "domain": "U_global",
+      "codomain": "U_math",
+      "implemented_by": "crates/frankenlibc-harness/tests/runtime_math_cohomology_cross_family_test.rs::sheaf_global_consistency_artifact_declares_complete_open_cover",
+      "description": "Project global safety evidence onto math-domain and errno/fenv invariants."
+    },
+    {
+      "id": "rho_global_signal",
+      "domain": "U_global",
+      "codomain": "U_signal",
+      "implemented_by": "crates/frankenlibc-harness/tests/runtime_math_cohomology_cross_family_test.rs::sheaf_global_consistency_artifact_declares_complete_open_cover",
+      "description": "Project global safety evidence onto signal/non-local-control invariants."
+    },
+    {
+      "id": "rho_global_resolver",
+      "domain": "U_global",
+      "codomain": "U_resolver",
+      "implemented_by": "crates/frankenlibc-harness/tests/runtime_math_cohomology_cross_family_test.rs::sheaf_global_consistency_artifact_declares_complete_open_cover",
+      "description": "Project global safety evidence onto resolver request/cache invariants."
+    }
+  ],
+  "trivial_cocycles": [
+    {
+      "id": "allocator_string_stdio",
+      "triple": ["U_allocator", "U_string", "U_stdio"],
+      "meaning": "buffer provenance, bounds, and formatter cursor witnesses glue to a unique global byte-safety section"
+    },
+    {
+      "id": "thread_signal_resolver",
+      "triple": ["U_thread", "U_signal", "U_resolver"],
+      "meaning": "thread-local resolver state and signal-mask witnesses admit a unique global control-state section"
+    },
+    {
+      "id": "string_stdio_math",
+      "triple": ["U_string", "U_stdio", "U_math"],
+      "meaning": "formatted numeric strings glue to a unique global presentation witness"
+    }
+  ],
+  "cohomology": {
+    "model": "finite xor witness model induced by CohomologyMonitor section hashes",
+    "h0_reconstruction": "pairwise-compatible local sections reconstruct a unique global witness via deterministic xor overlaps",
+    "h1_zero": true,
+    "justification": [
+      "every pairwise overlap witness is computed as h_i xor h_j from declared local sections",
+      "every declared triple overlap satisfies w_ij xor w_jk xor w_ik = 0, so no obstruction class survives",
+      "compatibility checks only preserve or tighten admissible global sections, matching the monitor monotonicity contract"
+    ]
+  }
+}

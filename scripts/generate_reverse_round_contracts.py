@@ -629,7 +629,7 @@ REVERSE_ROUNDS.update(
                 "crates/frankenlibc-core/src/resolv/mod.rs",
                 "crates/frankenlibc-membrane/src/runtime_math/serre_spectral.rs",
                 "crates/frankenlibc-membrane/src/runtime_math/obstruction_detector.rs",
-                "crates/frankenlibc-membrane/src/runtime_math/persistence.rs",
+                "crates/frankenlibc-membrane/src/persistence.rs",
                 "crates/frankenlibc-harness/tests/runtime_math_cohomology_cross_family_test.rs",
                 "crates/frankenlibc-harness/tests/runtime_math_linkage_proofs_test.rs",
                 "crates/frankenlibc-harness/tests/hard_parts_dependency_matrix_test.rs",

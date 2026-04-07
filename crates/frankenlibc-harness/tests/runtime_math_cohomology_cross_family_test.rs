@@ -4,7 +4,11 @@
 //! 1. `scripts/check_runtime_math_cohomology_cross_family.sh` is executable.
 //! 2. Gate emits deterministic report + structured JSONL artifacts.
 //! 3. Strict+hardened scenarios are both present and passing.
+//! 4. The sheaf-consistency proof artifact declares a complete open cover with
+//!    trivial triple-overlap cocycles.
 
+use frankenlibc_membrane::runtime_math::cohomology::CohomologyMonitor;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Mutex, MutexGuard, OnceLock};
@@ -31,6 +35,19 @@ fn workspace_root() -> PathBuf {
 fn load_json(path: &Path) -> serde_json::Value {
     let content = std::fs::read_to_string(path).expect("json should be readable");
     serde_json::from_str(&content).expect("json should parse")
+}
+
+fn load_text(path: &Path) -> String {
+    std::fs::read_to_string(path).expect("text file should be readable")
+}
+
+fn stable_hash(input: &str) -> u64 {
+    const OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+    const PRIME: u64 = 0x0000_0100_0000_01b3;
+
+    input.as_bytes().iter().fold(OFFSET, |acc, byte| {
+        (acc ^ u64::from(*byte)).wrapping_mul(PRIME)
+    })
 }
 
 #[test]
@@ -157,4 +174,198 @@ fn gate_script_passes_and_emits_expected_artifacts() {
             "gate test output missing {test_name}"
         );
     }
+}
+
+#[test]
+fn sheaf_global_consistency_artifact_declares_complete_open_cover() {
+    let root = workspace_root();
+    let proof_path = root.join("docs/proofs/sheaf_global_consistency.md");
+    let artifact_path = root.join("tests/conformance/sheaf_coverage.v1.json");
+
+    let proof = load_text(&proof_path);
+    for required in [
+        "# Sheaf Global-Consistency Proof Note (bd-249m.7)",
+        "## Open Cover",
+        "## Statement",
+        "H^1(U, F) = 0",
+    ] {
+        assert!(
+            proof.contains(required),
+            "proof note must mention {required}"
+        );
+    }
+
+    let artifact = load_json(&artifact_path);
+    assert_eq!(artifact["schema_version"].as_str(), Some("v1"));
+    assert_eq!(artifact["bead"].as_str(), Some("bd-249m.7"));
+    assert_eq!(
+        artifact["cohomology"]["h1_zero"].as_bool(),
+        Some(true),
+        "artifact must declare H^1 = 0"
+    );
+
+    let open_cover = artifact["open_cover"]
+        .as_array()
+        .expect("open_cover must be an array");
+    assert_eq!(
+        open_cover.len(),
+        7,
+        "expected 7 declared subsystem sections"
+    );
+
+    let expected_ids: BTreeSet<&str> = [
+        "U_allocator",
+        "U_string",
+        "U_stdio",
+        "U_thread",
+        "U_math",
+        "U_signal",
+        "U_resolver",
+    ]
+    .into_iter()
+    .collect();
+    let mut actual_ids = BTreeSet::new();
+    for section in open_cover {
+        let id = section["id"].as_str().expect("section id must be a string");
+        actual_ids.insert(id);
+        assert!(
+            section["local_predicates"]
+                .as_array()
+                .is_some_and(|items| !items.is_empty()),
+            "section {id} must declare local predicates"
+        );
+        assert!(
+            section["source_refs"]
+                .as_array()
+                .is_some_and(|items| !items.is_empty()),
+            "section {id} must declare source refs"
+        );
+    }
+    assert_eq!(
+        actual_ids, expected_ids,
+        "open cover ids changed unexpectedly"
+    );
+
+    let restriction_maps = artifact["restriction_maps"]
+        .as_array()
+        .expect("restriction_maps must be an array");
+    assert_eq!(
+        restriction_maps.len(),
+        7,
+        "expected one restriction map per declared subsystem section"
+    );
+
+    let restriction_ids: BTreeSet<&str> = restriction_maps
+        .iter()
+        .map(|entry| entry["id"].as_str().expect("restriction id must exist"))
+        .collect();
+    for overlap in artifact["overlaps"]
+        .as_array()
+        .expect("overlaps must be an array")
+    {
+        let left = overlap["left"].as_str().expect("left section id required");
+        let right = overlap["right"]
+            .as_str()
+            .expect("right section id required");
+        assert!(expected_ids.contains(left), "unknown left cover id {left}");
+        assert!(
+            expected_ids.contains(right),
+            "unknown right cover id {right}"
+        );
+        assert!(
+            overlap["compatibility_conditions"]
+                .as_array()
+                .is_some_and(|items| !items.is_empty()),
+            "overlap {left}/{right} must declare compatibility conditions"
+        );
+        for restriction in overlap["restriction_maps"]
+            .as_array()
+            .expect("restriction map ids required")
+        {
+            let restriction = restriction
+                .as_str()
+                .expect("restriction id must be a string");
+            assert!(
+                restriction_ids.contains(restriction),
+                "overlap {left}/{right} references unknown restriction map {restriction}"
+            );
+        }
+    }
+}
+
+#[test]
+fn sheaf_global_consistency_triples_have_trivial_cocycles() {
+    let root = workspace_root();
+    let artifact = load_json(&root.join("tests/conformance/sheaf_coverage.v1.json"));
+
+    let open_cover = artifact["open_cover"]
+        .as_array()
+        .expect("open_cover must be an array");
+    let mut shard_by_id = BTreeMap::new();
+    let mut hash_by_id = BTreeMap::new();
+    let monitor = CohomologyMonitor::new();
+
+    for (index, section) in open_cover.iter().enumerate() {
+        let id = section["id"].as_str().expect("section id must exist");
+        let section_hash = stable_hash(id);
+        shard_by_id.insert(id.to_owned(), index);
+        hash_by_id.insert(id.to_owned(), section_hash);
+        monitor.set_section_hash(index, section_hash);
+    }
+
+    for overlap in artifact["overlaps"]
+        .as_array()
+        .expect("overlaps must be an array")
+    {
+        let left = overlap["left"].as_str().expect("left section id required");
+        let right = overlap["right"]
+            .as_str()
+            .expect("right section id required");
+        let left_hash = *hash_by_id.get(left).expect("left hash must exist");
+        let right_hash = *hash_by_id.get(right).expect("right hash must exist");
+        let witness = left_hash ^ right_hash;
+
+        assert!(
+            monitor.note_overlap(
+                *shard_by_id.get(left).expect("left shard must exist"),
+                *shard_by_id.get(right).expect("right shard must exist"),
+                witness
+            ),
+            "declared overlap {left}/{right} must accept its canonical witness"
+        );
+    }
+
+    for triple in artifact["trivial_cocycles"]
+        .as_array()
+        .expect("trivial_cocycles must be an array")
+    {
+        let triple_ids = triple["triple"]
+            .as_array()
+            .expect("triple ids must be an array");
+        assert_eq!(
+            triple_ids.len(),
+            3,
+            "triple must contain exactly 3 section ids"
+        );
+        let ids: Vec<&str> = triple_ids
+            .iter()
+            .map(|entry| entry.as_str().expect("triple id must be a string"))
+            .collect();
+        let h_ab = hash_by_id[ids[0]] ^ hash_by_id[ids[1]];
+        let h_bc = hash_by_id[ids[1]] ^ hash_by_id[ids[2]];
+        let h_ac = hash_by_id[ids[0]] ^ hash_by_id[ids[2]];
+
+        assert_eq!(
+            h_ab ^ h_bc ^ h_ac,
+            0,
+            "declared triple {:?} must have zero obstruction in the xor witness model",
+            ids
+        );
+    }
+
+    assert_eq!(
+        monitor.fault_count(),
+        0,
+        "declared cover should not accumulate overlap faults"
+    );
 }

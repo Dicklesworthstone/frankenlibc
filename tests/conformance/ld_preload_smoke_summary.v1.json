@@ -1,0 +1,46 @@
+{
+  "schema_version": "v1",
+  "bead": "bd-3rw.5.1",
+  "source_report_path": "target/ld_preload_smoke/20260404T011731Z/abi_compat_report.json",
+  "run_id": "20260404T011731Z",
+  "checked_at_utc": "2026-04-04T01:17:31Z",
+  "checked_date_display": "April 4, 2026",
+  "lib_path": "target/release/libfrankenlibc_abi.so",
+  "timeout_seconds": 10,
+  "stress_iters": 5,
+  "summary": {
+    "total_cases": 64,
+    "passes": 58,
+    "fails": 0,
+    "skips": 6,
+    "signature_guard_failures": 0,
+    "perf_failures": 0,
+    "valgrind_failures": 0,
+    "overall_failed": false
+  },
+  "modes": {
+    "strict": {
+      "total_cases": 32,
+      "passes": 29,
+      "fails": 0,
+      "skips": 3,
+      "status": "green"
+    },
+    "hardened": {
+      "total_cases": 32,
+      "passes": 29,
+      "fails": 0,
+      "skips": 3,
+      "status": "green"
+    }
+  },
+  "optional_skip_binaries": [
+    "sqlite3",
+    "redis-cli",
+    "nginx"
+  ],
+  "notes": [
+    "This checked-in summary is the canonical source for README smoke-status claims.",
+    "The six skips come from the three optional binary probes across strict and hardened modes."
+  ]
+}

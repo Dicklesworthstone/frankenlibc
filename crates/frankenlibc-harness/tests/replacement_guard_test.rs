@@ -139,6 +139,15 @@ fn unique_target_dir(prefix: &str) -> PathBuf {
     std::env::temp_dir().join(format!("{prefix}-{}-{nanos}", std::process::id()))
 }
 
+fn unique_report_paths(prefix: &str) -> (PathBuf, PathBuf) {
+    let dir = unique_target_dir(prefix);
+    std::fs::create_dir_all(&dir).expect("unique report dir should be created");
+    (
+        dir.join("replacement_guard.report.json"),
+        dir.join("replacement_guard.log.jsonl"),
+    )
+}
+
 #[test]
 fn profile_exists_and_valid() {
     let profile = load_profile();
@@ -583,8 +592,11 @@ fn fixture_pack_covers_all_callthrough_families_in_both_modes() {
 fn guard_emits_symbol_module_path_diagnostics() {
     let root = workspace_root();
     let script = root.join("scripts/check_replacement_guard.sh");
+    let (report_path, log_path) = unique_report_paths("replacement-guard-diagnostics");
     let output = Command::new(&script)
         .arg("interpose")
+        .env("FRANKENLIBC_REPLACEMENT_GUARD_REPORT", &report_path)
+        .env("FRANKENLIBC_REPLACEMENT_GUARD_LOG", &log_path)
         .current_dir(&root)
         .output()
         .expect("failed to run check_replacement_guard.sh");
@@ -594,9 +606,6 @@ fn guard_emits_symbol_module_path_diagnostics() {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-
-    let report_path = root.join("target/conformance/replacement_guard.report.json");
-    let log_path = root.join("target/conformance/replacement_guard.log.jsonl");
     assert!(report_path.exists(), "missing {}", report_path.display());
     assert!(log_path.exists(), "missing {}", log_path.display());
 
@@ -604,9 +613,48 @@ fn guard_emits_symbol_module_path_diagnostics() {
         &std::fs::read_to_string(&report_path).expect("report should be readable"),
     )
     .expect("report should parse");
+    assert_eq!(report["schema_version"].as_str(), Some("v1"));
+    assert_eq!(report["bead"].as_str(), Some("bd-h5x.3"));
     assert!(
         report["module_counts"].is_object(),
         "module_counts must be object"
+    );
+    assert!(
+        report["module_rankings"].is_array(),
+        "module_rankings must be array"
+    );
+    assert!(
+        report["symbol_rankings"].is_array(),
+        "symbol_rankings must be array"
+    );
+    assert!(
+        report["non_threading_backlog"].is_object(),
+        "non_threading_backlog must be object"
+    );
+    let top_modules = report["non_threading_backlog"]["top_modules"]
+        .as_array()
+        .expect("top_modules must be array");
+    assert!(
+        !top_modules.is_empty(),
+        "non_threading_backlog.top_modules must not be empty"
+    );
+    for window in top_modules.windows(2) {
+        let left = window[0]["callthrough_count"]
+            .as_u64()
+            .expect("top_modules.callthrough_count must be u64");
+        let right = window[1]["callthrough_count"]
+            .as_u64()
+            .expect("top_modules.callthrough_count must be u64");
+        assert!(
+            left >= right,
+            "non_threading top_modules must be sorted descending by callthrough_count"
+        );
+    }
+    assert!(
+        top_modules
+            .iter()
+            .all(|row| row["classification"].as_str() == Some("non_threading")),
+        "non_threading_backlog.top_modules must exclude pthread_abi"
     );
     assert!(
         report["violations_detail"].is_array(),
@@ -626,25 +674,45 @@ fn guard_emits_symbol_module_path_diagnostics() {
     let row: serde_json::Value = serde_json::from_str(&first_log).expect("log row should parse");
     for key in [
         "trace_id",
+        "bead_id",
+        "scenario_id",
         "mode",
         "gate_name",
+        "decision_path",
         "module",
         "line",
         "symbol",
+        "callthrough_detected",
+        "policy_rule",
+        "verdict",
         "status",
         "reason",
         "artifact_ref",
+        "artifact_refs",
     ] {
         assert!(row.get(key).is_some(), "structured log row missing {key}");
     }
+    assert_eq!(row["bead_id"].as_str(), Some("bd-h5x.3"));
+    assert_eq!(
+        row["callthrough_detected"].as_bool(),
+        Some(true),
+        "log row must record explicit callthrough detection"
+    );
+    assert!(
+        matches!(row["verdict"].as_str(), Some("allow") | Some("fail")),
+        "verdict must be allow or fail"
+    );
 }
 
 #[test]
 fn standalone_build_matches_replacement_guard_outcome() {
     let root = workspace_root();
     let script = root.join("scripts/check_replacement_guard.sh");
+    let (report_path, log_path) = unique_report_paths("replacement-guard-standalone");
     let guard_output = Command::new(&script)
         .arg("replacement")
+        .env("FRANKENLIBC_REPLACEMENT_GUARD_REPORT", &report_path)
+        .env("FRANKENLIBC_REPLACEMENT_GUARD_LOG", &log_path)
         .current_dir(&root)
         .output()
         .expect("failed to run replacement guard in replacement mode");

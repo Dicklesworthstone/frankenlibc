@@ -8,6 +8,7 @@ Canonical sources:
   - support_matrix.json            (symbol-level ground truth)
   - tests/conformance/reality_report.v1.json  (aggregate counts)
   - tests/conformance/replacement_levels.json (level claims + current_state)
+  - tests/conformance/ld_preload_smoke_summary.v1.json (checked smoke status claims)
   - tests/conformance/hard_parts_truth_table.v1.json (subsystem statuses)
   - FEATURE_PARITY.md              (human-readable parity dashboard)
   - README.md                      (public-facing claims)
@@ -38,6 +39,10 @@ REPLACEMENT_LEVELS = env_path(
     "FLC_CLAIM_RECON_REPLACEMENT_LEVELS",
     REPO_ROOT / "tests" / "conformance" / "replacement_levels.json",
 )
+SMOKE_SUMMARY = env_path(
+    "FLC_CLAIM_RECON_SMOKE_SUMMARY",
+    REPO_ROOT / "tests" / "conformance" / "ld_preload_smoke_summary.v1.json",
+)
 HARD_PARTS = env_path(
     "FLC_CLAIM_RECON_HARD_PARTS",
     REPO_ROOT / "tests" / "conformance" / "hard_parts_truth_table.v1.json",
@@ -53,6 +58,7 @@ SOURCE_OWNER_MAP = {
     "support_matrix.json": "bd-w2c3.10.1",
     "tests/conformance/reality_report.v1.json": "bd-w2c3.10.1",
     "replacement_levels.json": "bd-w2c3.2.3",
+    "tests/conformance/ld_preload_smoke_summary.v1.json": "bd-3rw.5.1",
     "FEATURE_PARITY.md": "bd-w2c3.10",
     "README.md": "bd-w2c3.10",
     "hard_parts_truth_table.v1.json": "bd-1j4.5",
@@ -63,12 +69,15 @@ CATEGORY_OWNER_MAP = {
     "hard_parts_symbol_missing": "bd-1j4.5",
     "hard_parts_symbol_status": "bd-1j4.5",
     "replacement_smoke_claim_contradiction": "bd-w2c3.2.3",
+    "smoke_summary_claim_malformed": "bd-3rw.5.1",
+    "smoke_summary_claim_stale": "bd-3rw.5.1",
 }
 
 SOURCE_REMEDIATION_MAP = {
     "support_matrix.json": "Regenerate or correct support-matrix-backed claim counts before release gating.",
     "tests/conformance/reality_report.v1.json": "Regenerate reality_report.v1.json from the current support matrix and fixture-backed evidence.",
     "replacement_levels.json": "Refresh replacement_levels.json current_state percentages and blocker lists from support_matrix.json.",
+    "tests/conformance/ld_preload_smoke_summary.v1.json": "Refresh the checked-in smoke summary from a known-good ld_preload_smoke run before updating README smoke claims.",
     "FEATURE_PARITY.md": "Update FEATURE_PARITY.md so every count and status claim matches machine-generated reports.",
     "README.md": "Refresh README.md public claims from canonical machine-generated artifacts.",
     "hard_parts_truth_table.v1.json": "Align hard-parts truth-table symbol expectations with support_matrix.json before claiming closure.",
@@ -77,6 +86,8 @@ SOURCE_REMEDIATION_MAP = {
 CATEGORY_REMEDIATION_MAP = {
     "done_without_fixture": "Capture fixture evidence for the claimed DONE family or downgrade the FEATURE_PARITY row.",
     "replacement_smoke_claim_contradiction": "Align README smoke-readiness prose with replacement_levels.json blockers and current smoke evidence before advancing the replacement-level claim.",
+    "smoke_summary_claim_malformed": "Keep the README smoke-status sentence in the canonical checked-artifact format so counts, date, and per-mode status remain machine-checkable.",
+    "smoke_summary_claim_stale": "Refresh the README checked-smoke sentence so its run id, absolute date, and per-mode pass/fail/skip counts match tests/conformance/ld_preload_smoke_summary.v1.json.",
 }
 
 CATEGORY_ARTIFACT_REFS = {
@@ -84,7 +95,27 @@ CATEGORY_ARTIFACT_REFS = {
         "tests/conformance/replacement_levels.json",
         "README.md",
     ],
+    "smoke_summary_claim_malformed": [
+        "tests/conformance/ld_preload_smoke_summary.v1.json",
+        "README.md",
+    ],
+    "smoke_summary_claim_stale": [
+        "tests/conformance/ld_preload_smoke_summary.v1.json",
+        "README.md",
+    ],
 }
+
+SMOKE_SUMMARY_CLAIM_RE = re.compile(
+    r"Canonical checked smoke artifact:\s*"
+    r"`tests/conformance/ld_preload_smoke_summary\.v1\.json`\s*"
+    r"\(run `(?P<run_id>[^`]+)`, checked (?P<checked_date>[^)]+)\)\s*"
+    r"reports (?P<overall_passes>\d+) passes / (?P<overall_fails>\d+) fails / "
+    r"(?P<overall_skips>\d+) skips overall, with strict "
+    r"(?P<strict_passes>\d+)/(?P<strict_fails>\d+)/(?P<strict_skips>\d+) and "
+    r"hardened (?P<hardened_passes>\d+)/(?P<hardened_fails>\d+)/"
+    r"(?P<hardened_skips>\d+) across the curated preload smoke battery\.",
+    re.MULTILINE,
+)
 
 
 def load_json(path):
@@ -106,6 +137,10 @@ def repo_relative(path):
 def normalize_source_name(source):
     if source.startswith("replacement_levels.json"):
         return "replacement_levels.json"
+    if source.startswith("tests/conformance/ld_preload_smoke_summary.v1.json"):
+        return "tests/conformance/ld_preload_smoke_summary.v1.json"
+    if source.startswith("ld_preload_smoke_summary.v1.json"):
+        return "tests/conformance/ld_preload_smoke_summary.v1.json"
     if source.startswith("hard_parts"):
         return "hard_parts_truth_table.v1.json"
     if source.startswith("FEATURE_PARITY.md"):
@@ -135,6 +170,8 @@ def enrich_findings(findings):
             artifact_refs.append("tests/conformance/reality_report.v1.json")
         elif source_key == "replacement_levels.json":
             artifact_refs.append("tests/conformance/replacement_levels.json")
+        elif source_key == "tests/conformance/ld_preload_smoke_summary.v1.json":
+            artifact_refs.append("tests/conformance/ld_preload_smoke_summary.v1.json")
         elif source_key == "FEATURE_PARITY.md":
             artifact_refs.append("FEATURE_PARITY.md")
         elif source_key == "README.md":
@@ -754,6 +791,74 @@ def check_readme_replacement_smoke_claims(findings, readme_text, replacement):
         })
 
 
+def check_readme_smoke_summary_claims(findings, readme_text, smoke_summary):
+    """Check that README checked-smoke claims match the canonical smoke summary artifact."""
+    if not readme_text or not smoke_summary:
+        return
+
+    match = SMOKE_SUMMARY_CLAIM_RE.search(readme_text)
+    if "Canonical checked smoke artifact:" in readme_text and not match:
+        findings.append({
+            "severity": "error",
+            "category": "smoke_summary_claim_malformed",
+            "source": "README.md",
+            "message": (
+                "README smoke status claim must use the canonical checked-artifact "
+                "format so run id, absolute date, and per-mode counts remain "
+                "machine-checkable."
+            ),
+        })
+        return
+
+    if not match:
+        return
+
+    expected = {
+        "run_id": smoke_summary.get("run_id"),
+        "checked_date_display": smoke_summary.get("checked_date_display"),
+        "summary.passes": smoke_summary.get("summary", {}).get("passes"),
+        "summary.fails": smoke_summary.get("summary", {}).get("fails"),
+        "summary.skips": smoke_summary.get("summary", {}).get("skips"),
+        "modes.strict.passes": smoke_summary.get("modes", {}).get("strict", {}).get("passes"),
+        "modes.strict.fails": smoke_summary.get("modes", {}).get("strict", {}).get("fails"),
+        "modes.strict.skips": smoke_summary.get("modes", {}).get("strict", {}).get("skips"),
+        "modes.hardened.passes": smoke_summary.get("modes", {}).get("hardened", {}).get("passes"),
+        "modes.hardened.fails": smoke_summary.get("modes", {}).get("hardened", {}).get("fails"),
+        "modes.hardened.skips": smoke_summary.get("modes", {}).get("hardened", {}).get("skips"),
+    }
+    actual = {
+        "run_id": match.group("run_id"),
+        "checked_date_display": match.group("checked_date"),
+        "summary.passes": int(match.group("overall_passes")),
+        "summary.fails": int(match.group("overall_fails")),
+        "summary.skips": int(match.group("overall_skips")),
+        "modes.strict.passes": int(match.group("strict_passes")),
+        "modes.strict.fails": int(match.group("strict_fails")),
+        "modes.strict.skips": int(match.group("strict_skips")),
+        "modes.hardened.passes": int(match.group("hardened_passes")),
+        "modes.hardened.fails": int(match.group("hardened_fails")),
+        "modes.hardened.skips": int(match.group("hardened_skips")),
+    }
+
+    for field, expected_value in expected.items():
+        actual_value = actual[field]
+        if expected_value != actual_value:
+            findings.append({
+                "severity": "error",
+                "category": "smoke_summary_claim_stale",
+                "source": "README.md",
+                "field": field,
+                "expected": expected_value,
+                "actual": actual_value,
+                "message": (
+                    "README checked smoke claim reports "
+                    f"{field}={actual_value} but "
+                    "tests/conformance/ld_preload_smoke_summary.v1.json has "
+                    f"{expected_value}"
+                ),
+            })
+
+
 def check_feature_parity_done_claims(findings, fp_text, matrix):
     """Verify that DONE claims in mode-specific matrix have fixture evidence."""
     if not fp_text or not matrix:
@@ -800,6 +905,7 @@ def main():
         repo_relative(SUPPORT_MATRIX),
         repo_relative(REALITY_REPORT),
         repo_relative(REPLACEMENT_LEVELS),
+        repo_relative(SMOKE_SUMMARY),
         repo_relative(HARD_PARTS),
         repo_relative(FEATURE_PARITY),
         repo_relative(README),
@@ -815,6 +921,9 @@ def main():
         missing.append("tests/conformance/reality_report.v1.json")
 
     replacement = load_json(REPLACEMENT_LEVELS)
+    smoke_summary = load_json(SMOKE_SUMMARY)
+    if not smoke_summary:
+        missing.append("tests/conformance/ld_preload_smoke_summary.v1.json")
     hard_parts = load_json(HARD_PARTS)
 
     fp_text = FEATURE_PARITY.read_text() if FEATURE_PARITY.exists() else ""
@@ -863,6 +972,7 @@ def main():
     check_timestamp_consistency(findings, reality, matrix, hard_parts, replacement)
     check_readme_claims(findings, readme_text, dict(matrix_counts))
     check_readme_replacement_smoke_claims(findings, readme_text, replacement)
+    check_readme_smoke_summary_claims(findings, readme_text, smoke_summary)
     check_feature_parity_done_claims(findings, fp_text, matrix)
     enrich_findings(findings)
 
