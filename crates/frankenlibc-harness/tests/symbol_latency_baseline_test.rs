@@ -222,6 +222,72 @@ fn scripts_exist_and_executable() {
 }
 
 #[test]
+fn perf_budget_report_is_emitted_with_policy_aware_summary() {
+    let root = workspace_root();
+    let script = root.join("scripts/check_symbol_latency_baseline.sh");
+    let report = root.join("target/conformance/test_symbol_latency_perf_gate.current.v1.json");
+    let log = root.join("target/conformance/test_symbol_latency_perf_gate.log.jsonl");
+
+    let output = Command::new(&script)
+        .current_dir(&root)
+        .env("FRANKENLIBC_SYMBOL_LATENCY_REPORT", &report)
+        .env("FRANKENLIBC_SYMBOL_LATENCY_EVENT_LOG", &log)
+        .output()
+        .expect("check_symbol_latency_baseline.sh should execute for perf gate report");
+
+    if !output.status.success() {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        panic!(
+            "perf budget report invocation failed\nstatus={:?}\nstdout:\n{}\nstderr:\n{}",
+            output.status, stdout, stderr
+        );
+    }
+
+    let report_body =
+        std::fs::read_to_string(&report).expect("symbol latency perf gate report should exist");
+    let report_json: serde_json::Value =
+        serde_json::from_str(&report_body).expect("perf gate report should parse");
+    assert_eq!(report_json["schema_version"].as_u64(), Some(1));
+    assert_eq!(report_json["bead"].as_str(), Some("bd-l93x.5"));
+    assert_eq!(report_json["source_bead"].as_str(), Some("bd-3h1u.1"));
+    assert_eq!(
+        report_json["policy_ref"].as_str(),
+        Some("tests/conformance/perf_budget_policy.json")
+    );
+    assert!(
+        report_json["summary"]["measured_symbol_count"]
+            .as_u64()
+            .unwrap_or(0)
+            >= 16,
+        "expected measured symbol coverage from canonical latency artifact"
+    );
+    assert!(
+        report_json["summary"]["strict_waived"]
+            .as_u64()
+            .unwrap_or(0)
+            > 0
+            || report_json["summary"]["hardened_waived"]
+                .as_u64()
+                .unwrap_or(0)
+                > 0,
+        "expected active perf policy waivers to surface in report"
+    );
+    assert_eq!(
+        report_json["summary"]["gate_passed"].as_bool(),
+        Some(true),
+        "active waiver policy should keep current known target violations non-fatal"
+    );
+
+    let log_body =
+        std::fs::read_to_string(&log).expect("symbol latency perf gate event log should exist");
+    assert!(
+        log_body.contains("\"event\":\"ci.symbol_latency_budget."),
+        "expected structured symbol latency budget events in log"
+    );
+}
+
+#[test]
 fn drift_gate_script_passes() {
     let root = workspace_root();
     let script = root.join("scripts/check_symbol_latency_baseline.sh");

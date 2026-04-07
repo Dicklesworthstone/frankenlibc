@@ -1,4 +1,4 @@
-//! Integration test: property-suite evidence gate (bd-2tq.3)
+//! Integration test: property-suite evidence gate (bd-1sp.8)
 //!
 //! Validates:
 //! 1. The property-suite gate script exists and is executable.
@@ -86,17 +86,17 @@ fn gate_script_smoke_passes_and_emits_artifacts() {
         "structured log validation errors:\n{:#?}",
         errors
     );
-    assert_eq!(line_count, 7, "expected one log row per property suite");
+    assert_eq!(line_count, 11, "expected one log row per property suite");
 
     let report = load_json(&report_path);
     assert_eq!(report["schema_version"].as_str(), Some("v1"));
-    assert_eq!(report["bead_id"].as_str(), Some("bd-2tq.3"));
+    assert_eq!(report["bead_id"].as_str(), Some("bd-1sp.8"));
     assert_eq!(report["gate"].as_str(), Some("check_property_suite"));
     assert_eq!(report["status"].as_str(), Some("pass"));
     assert_eq!(report["proptest_cases"].as_u64(), Some(64));
 
     let suites = report["tests"].as_array().expect("tests should be array");
-    assert_eq!(suites.len(), 7, "expected seven property suites");
+    assert_eq!(suites.len(), 11, "expected eleven property suites");
     for suite in suites {
         assert_eq!(suite["status"].as_str(), Some("pass"));
         let command = suite["command"].as_str().expect("command must be string");
@@ -118,8 +118,8 @@ fn gate_script_smoke_passes_and_emits_artifacts() {
         .collect();
     assert_eq!(
         log_entries.len(),
-        7,
-        "expected seven structured log entries"
+        11,
+        "expected eleven structured log entries"
     );
     for entry in &log_entries {
         assert_eq!(entry["event"].as_str(), Some("property_suite"));

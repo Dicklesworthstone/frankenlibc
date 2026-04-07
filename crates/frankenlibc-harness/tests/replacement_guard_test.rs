@@ -14,6 +14,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 fn workspace_root() -> PathBuf {
     let manifest = env!("CARGO_MANIFEST_DIR");
@@ -128,6 +129,14 @@ fn forbidden_mutex_symbols() -> HashSet<&'static str> {
         "pthread_mutex_trylock",
         "pthread_mutex_unlock",
     ])
+}
+
+fn unique_target_dir(prefix: &str) -> PathBuf {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock should be after Unix epoch")
+        .as_nanos();
+    std::env::temp_dir().join(format!("{prefix}-{}-{nanos}", std::process::id()))
 }
 
 #[test]
@@ -627,5 +636,55 @@ fn guard_emits_symbol_module_path_diagnostics() {
         "artifact_ref",
     ] {
         assert!(row.get(key).is_some(), "structured log row missing {key}");
+    }
+}
+
+#[test]
+fn standalone_build_matches_replacement_guard_outcome() {
+    let root = workspace_root();
+    let script = root.join("scripts/check_replacement_guard.sh");
+    let guard_output = Command::new(&script)
+        .arg("replacement")
+        .current_dir(&root)
+        .output()
+        .expect("failed to run replacement guard in replacement mode");
+
+    let cargo_output = Command::new("cargo")
+        .args(["check", "-p", "frankenlibc-abi", "--features", "standalone"])
+        .env(
+            "CARGO_TARGET_DIR",
+            unique_target_dir("frankenlibc-standalone-guard"),
+        )
+        .current_dir(&root)
+        .output()
+        .expect("failed to run cargo check for standalone feature");
+
+    let guard_passes = guard_output.status.success();
+    let cargo_passes = cargo_output.status.success();
+
+    assert_eq!(
+        cargo_passes,
+        guard_passes,
+        "standalone build result must match replacement guard result\nreplacement_guard_stdout=\n{}\nreplacement_guard_stderr=\n{}\nstandalone_stdout=\n{}\nstandalone_stderr=\n{}",
+        String::from_utf8_lossy(&guard_output.stdout),
+        String::from_utf8_lossy(&guard_output.stderr),
+        String::from_utf8_lossy(&cargo_output.stdout),
+        String::from_utf8_lossy(&cargo_output.stderr)
+    );
+
+    if !guard_passes {
+        let combined = format!(
+            "{}\n{}",
+            String::from_utf8_lossy(&cargo_output.stdout),
+            String::from_utf8_lossy(&cargo_output.stderr)
+        );
+        assert!(
+            combined.contains("standalone feature requires a replacement-clean ABI"),
+            "standalone build failure should explain the replacement-clean ABI guard\n{combined}"
+        );
+        assert!(
+            combined.contains("scripts/check_replacement_guard.sh replacement"),
+            "standalone build failure should point to the replacement guard script\n{combined}"
+        );
     }
 }
