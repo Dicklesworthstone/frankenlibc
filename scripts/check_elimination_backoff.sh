@@ -12,6 +12,7 @@ BENCH_OUT_DIR="${ROOT}/target/elimination_backoff"
 BENCH_JSON="${BENCH_OUT_DIR}/elimination_benchmark.json"
 RCH_CARGO_HOME="${RCH_CARGO_HOME:-}"
 RCH_TARGET_DIR="${RCH_TARGET_DIR:-/tmp/${ARTIFACT_BASENAME}_target}"
+FORCE_LOCAL_GATE="${FRANKENLIBC_FORCE_LOCAL_ELIMINATION_GATE:-0}"
 BEAD_ID="bd-29j3"
 
 mkdir -p "${OUT_DIR}"
@@ -27,10 +28,18 @@ PY
 
 run_remote() {
   local command="$1"
-  if [[ -n "${RCH_CARGO_HOME}" ]]; then
-    rch exec -- env CARGO_HOME="${RCH_CARGO_HOME}" CARGO_TARGET_DIR="${RCH_TARGET_DIR}" ${command}
+  if [[ "${FORCE_LOCAL_GATE}" != "1" ]] && command -v rch >/dev/null 2>&1; then
+    if [[ -n "${RCH_CARGO_HOME}" ]]; then
+      rch exec -- env CARGO_HOME="${RCH_CARGO_HOME}" CARGO_TARGET_DIR="${RCH_TARGET_DIR}" ${command}
+    else
+      rch exec -- env CARGO_TARGET_DIR="${RCH_TARGET_DIR}" ${command}
+    fi
   else
-    rch exec -- env CARGO_TARGET_DIR="${RCH_TARGET_DIR}" ${command}
+    if [[ -n "${RCH_CARGO_HOME}" ]]; then
+      env CARGO_HOME="${RCH_CARGO_HOME}" CARGO_TARGET_DIR="${RCH_TARGET_DIR}" bash -lc "${command}"
+    else
+      env CARGO_TARGET_DIR="${RCH_TARGET_DIR}" bash -lc "${command}"
+    fi
   fi
 }
 
@@ -68,8 +77,13 @@ run_check() {
   fi
   end_ns="$(date +%s%N)"
   latency_ns="$((end_ns - start_ns))"
-  printf '=== %s ===\ncommand: rch exec -- env%s CARGO_TARGET_DIR=%s %s\n%s\n\n' \
+  local command_prefix="rch exec -- env"
+  if [[ "${FORCE_LOCAL_GATE}" == "1" ]] || ! command -v rch >/dev/null 2>&1; then
+    command_prefix="env"
+  fi
+  printf '=== %s ===\ncommand: %s%s CARGO_TARGET_DIR=%s %s\n%s\n\n' \
     "${trace_suffix}" \
+    "${command_prefix}" \
     "${RCH_CARGO_HOME:+ CARGO_HOME=${RCH_CARGO_HOME}}" \
     "${RCH_TARGET_DIR}" \
     "${command}" \
@@ -80,6 +94,12 @@ run_check() {
     return 1
   fi
 }
+
+if [[ "${FORCE_LOCAL_GATE}" == "1" ]]; then
+  echo "WARN: FRANKENLIBC_FORCE_LOCAL_ELIMINATION_GATE=1; using local cargo fallback" >&2
+elif ! command -v rch >/dev/null 2>&1; then
+  echo "WARN: rch unavailable; using local cargo fallback" >&2
+fi
 
 run_check \
   "unit_tests" \

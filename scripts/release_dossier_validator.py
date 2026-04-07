@@ -186,6 +186,159 @@ def load_json(path: Path) -> Optional[Any]:
         return json.load(f)
 
 
+def repo_relative(path: Path, repo_root: Path) -> str:
+    try:
+        return path.resolve().relative_to(repo_root.resolve()).as_posix()
+    except ValueError:
+        return path.as_posix()
+
+
+def normalize_text(value: Any, limit: int = 240) -> str:
+    if not isinstance(value, str):
+        return ""
+    compact = " ".join(value.split())
+    if len(compact) <= limit:
+        return compact
+    return f"{compact[: limit - 1].rstrip()}…"
+
+
+def parse_release_notes_limit(raw_value: Optional[str], default: int = 8) -> tuple[int, Optional[str]]:
+    if raw_value is None:
+        return default, None
+
+    try:
+        limit = int(raw_value)
+    except ValueError:
+        return default, (
+            "Release-notes hook received invalid "
+            f"FLC_RELEASE_DOSSIER_RELEASE_NOTES_LIMIT={raw_value!r}; using default {default}"
+        )
+
+    if limit < 0:
+        return default, (
+            "Release-notes hook received negative "
+            f"FLC_RELEASE_DOSSIER_RELEASE_NOTES_LIMIT={raw_value!r}; using default {default}"
+        )
+
+    return limit, None
+
+
+def build_release_notes_hook(repo_root: Path) -> tuple[dict[str, Any], list[dict[str, str]]]:
+    issues_path = Path(
+        os.environ.get(
+            "FLC_RELEASE_DOSSIER_ISSUES_JSONL",
+            repo_root / ".beads" / "issues.jsonl",
+        )
+    )
+    limit, limit_warning = parse_release_notes_limit(
+        os.environ.get("FLC_RELEASE_DOSSIER_RELEASE_NOTES_LIMIT")
+    )
+
+    hook: dict[str, Any] = {
+        "source_path": repo_relative(issues_path, repo_root),
+        "selection_policy": {
+            "status": "closed",
+            "sort": "closed_at_desc_then_id_desc",
+            "limit": limit,
+        },
+        "entries": [],
+        "release_notes_markdown": "## Release Notes Candidates\n\n_No closed beads available._",
+        "summary": {
+            "closed_total": 0,
+            "selected": 0,
+            "invalid_rows": 0,
+        },
+    }
+    findings: list[dict[str, str]] = []
+
+    if limit_warning:
+        findings.append(
+            {
+                "severity": "warning",
+                "message": limit_warning,
+            }
+        )
+
+    if not issues_path.exists():
+        findings.append(
+            {
+                "severity": "warning",
+                "message": f"Release-notes hook source missing at {repo_relative(issues_path, repo_root)}",
+            }
+        )
+        return hook, findings
+
+    closed_entries: list[dict[str, Any]] = []
+    invalid_rows = 0
+    with issues_path.open(encoding="utf-8") as handle:
+        for raw_line in handle:
+            line = raw_line.strip()
+            if not line:
+                continue
+            try:
+                issue = json.loads(line)
+            except json.JSONDecodeError:
+                invalid_rows += 1
+                continue
+
+            if issue.get("status") != "closed":
+                continue
+
+            closed_at = issue.get("closed_at") or issue.get("updated_at") or issue.get("created_at") or ""
+            close_reason = normalize_text(issue.get("close_reason", ""), limit=200)
+            if not close_reason:
+                close_reason = normalize_text(issue.get("description", ""), limit=200)
+
+            closed_entries.append(
+                {
+                    "id": issue.get("id", "<unknown>"),
+                    "title": issue.get("title", ""),
+                    "issue_type": issue.get("issue_type", ""),
+                    "priority": issue.get("priority"),
+                    "closed_at": closed_at,
+                    "closed_by": issue.get("assignee") or issue.get("created_by") or "unknown",
+                    "labels": issue.get("labels", []),
+                    "close_reason": close_reason,
+                }
+            )
+
+    closed_entries.sort(
+        key=lambda issue: (issue["closed_at"], issue["id"]),
+        reverse=True,
+    )
+    selected = closed_entries if limit == 0 else closed_entries[:limit]
+
+    hook["entries"] = selected
+    hook["summary"] = {
+        "closed_total": len(closed_entries),
+        "selected": len(selected),
+        "invalid_rows": invalid_rows,
+    }
+
+    if invalid_rows > 0:
+        findings.append(
+            {
+                "severity": "warning",
+                "message": (
+                    f"Release-notes hook skipped {invalid_rows} invalid row(s) in "
+                    f"{repo_relative(issues_path, repo_root)}"
+                ),
+            }
+        )
+
+    if selected:
+        lines = ["## Release Notes Candidates", ""]
+        for entry in selected:
+            summary = entry["close_reason"] or "Closed without a recorded reason."
+            lines.append(
+                f"- `{entry['id']}` {entry['title']} ({entry['issue_type']}, closed {entry['closed_at']})"
+            )
+            lines.append(f"  {summary}")
+        hook["release_notes_markdown"] = "\n".join(lines)
+
+    return hook, findings
+
+
 def sha256_file(path: Path) -> str:
     h = hashlib.sha256()
     with path.open("rb") as f:
@@ -320,6 +473,9 @@ def main() -> int:
         for r in artifact_results
         if r["sha256"] is not None
     }
+    release_notes_hook, release_note_findings = build_release_notes_hook(repo_root)
+    all_findings.extend(release_note_findings)
+    warnings = sum(1 for f in all_findings if f["severity"] == "warning")
 
     report = {
         "schema_version": "v1",
@@ -335,6 +491,7 @@ def main() -> int:
             "critical_missing": critical_missing,
             "errors": errors,
             "warnings": warnings,
+            "release_note_candidates": len(release_notes_hook["entries"]),
         },
         "dossier_manifest_version": "v1",
         "compatibility_policy": {
@@ -344,6 +501,7 @@ def main() -> int:
         },
         "artifact_results": artifact_results,
         "integrity_index": integrity_index,
+        "release_notes_hook": release_notes_hook,
         "findings": all_findings,
     }
 

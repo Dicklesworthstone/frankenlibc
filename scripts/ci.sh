@@ -127,6 +127,11 @@ if [[ "${FRANKENLIBC_EXTENDED_GATES:-0}" == "1" ]]; then
     echo "PASS"
     echo ""
 
+    echo "--- elimination backoff gate ---"
+    scripts/check_elimination_backoff.sh
+    echo "PASS"
+    echo ""
+
     echo "--- ABI symbol taxonomy drift check ---"
     scripts/abi_audit.sh
     echo "PASS"
@@ -357,8 +362,18 @@ if [[ "${FRANKENLIBC_EXTENDED_GATES:-0}" == "1" ]]; then
     echo "PASS"
     echo ""
 
+    echo "--- bd-3aof.3 metadata read benchmark gate ---"
+    scripts/check_metadata_read_benchmark.sh
+    echo "PASS"
+    echo ""
+
     echo "--- optimization proof ledger gate ---"
     scripts/check_optimization_proof_ledger.sh
+    echo "PASS"
+    echo ""
+
+    echo "--- HTM fast-path evidence gate ---"
+    scripts/check_htm_fast_path.sh
     echo "PASS"
     echo ""
 

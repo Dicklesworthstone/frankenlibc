@@ -19,6 +19,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LEVELS="${ROOT}/tests/conformance/replacement_levels.json"
 MATRIX="${ROOT}/support_matrix.json"
 README="${ROOT}/README.md"
+DEFAULT_REPORT_PATH="${ROOT}/target/conformance/replacement_levels_l1_gate.report.json"
+DEFAULT_LOG_PATH="${ROOT}/target/conformance/replacement_levels_l1_gate.log.jsonl"
 
 failures=0
 
@@ -406,6 +408,443 @@ if [[ "${claim_errs}" -gt 0 ]]; then
 else
     echo "PASS: README and release-tag policy are aligned to current_level"
 fi
+echo ""
+
+# ---------------------------------------------------------------------------
+# Check 7: Structured L1 objective gate artifacts
+# ---------------------------------------------------------------------------
+echo "--- Check 7: Structured L1 objective gate artifacts ---"
+
+artifact_output=$(
+ROOT="${ROOT}" \
+LEVELS="${LEVELS}" \
+MATRIX="${MATRIX}" \
+README="${README}" \
+DEFAULT_REPORT_PATH="${DEFAULT_REPORT_PATH}" \
+DEFAULT_LOG_PATH="${DEFAULT_LOG_PATH}" \
+python3 <<'PY'
+import json
+import os
+import re
+from collections import Counter
+from datetime import datetime, timezone
+from pathlib import Path
+
+root = Path(os.environ["ROOT"])
+levels_path = Path(os.environ["LEVELS"])
+matrix_path = Path(os.environ["MATRIX"])
+readme_path = Path(os.environ["README"])
+default_report_path = Path(os.environ["DEFAULT_REPORT_PATH"])
+default_log_path = Path(os.environ["DEFAULT_LOG_PATH"])
+
+generated_at = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+def rel(path: Path) -> str:
+    return os.path.relpath(path, root)
+
+
+def level_for_outcome(outcome: str) -> str:
+    return {
+        "pass": "info",
+        "blocked": "warning",
+        "warn": "warning",
+        "warning": "warning",
+        "fail": "error",
+        "error": "error",
+    }.get(outcome, "info")
+
+
+def load_json(path: Path):
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+report_path = default_report_path
+log_path = default_log_path
+levels = None
+l1_entry = {}
+objective_gate = {}
+
+script_checks = []
+
+
+def add_check(check_id: str, name: str, artifact_ref: str, failures: list[str]) -> None:
+    script_checks.append(
+        {
+            "id": check_id,
+            "name": name,
+            "artifact_ref": artifact_ref,
+            "outcome": "pass" if not failures else "fail",
+            "failure_count": len(failures),
+            "details": failures,
+        }
+    )
+
+
+try:
+    if not levels_path.exists():
+        raise FileNotFoundError(f"{rel(levels_path)} not found")
+
+    levels = load_json(levels_path)
+    schema_version = levels.get("schema_version", 0)
+    level_entries = levels.get("levels", [])
+    assessment = levels.get("current_assessment", {})
+    initial_failures = []
+    if schema_version < 1:
+        initial_failures.append("schema_version < 1")
+    if not level_entries:
+        initial_failures.append("levels array is empty")
+    if not assessment:
+        initial_failures.append("current_assessment is empty")
+    add_check(
+        "levels_file_valid",
+        "Levels file exists and is valid",
+        rel(levels_path),
+        initial_failures,
+    )
+
+    level_map = {
+        entry.get("level"): entry
+        for entry in level_entries
+        if isinstance(entry, dict) and entry.get("level")
+    }
+    l1_entry = level_map.get("L1", {})
+    objective_gate = l1_entry.get("objective_gate", {}) if isinstance(l1_entry, dict) else {}
+    generated_report = objective_gate.get("generated_report", {})
+
+    report_env = os.environ.get("FLC_REPLACEMENT_LEVELS_REPORT_PATH")
+    log_env = os.environ.get("FLC_REPLACEMENT_LEVELS_LOG_PATH")
+    report_path = Path(report_env) if report_env else root / generated_report.get(
+        "report_path", rel(default_report_path)
+    )
+    log_path = Path(log_env) if log_env else root / generated_report.get(
+        "log_path", rel(default_log_path)
+    )
+    if not report_path.is_absolute():
+        report_path = root / report_path
+    if not log_path.is_absolute():
+        log_path = root / log_path
+
+    required_fields = [
+        "level",
+        "name",
+        "description",
+        "deployment",
+        "host_glibc_required",
+        "gate_criteria",
+        "status",
+    ]
+    expected_ids = ["L0", "L1", "L2", "L3"]
+    found_ids = []
+    definition_failures = []
+    for entry in level_entries:
+        lid = entry.get("level", "?")
+        found_ids.append(lid)
+        for field in required_fields:
+            if field not in entry:
+                definition_failures.append(f'{lid}: missing field "{field}"')
+        gc = entry.get("gate_criteria", {})
+        for field in [
+            "max_callthrough_pct",
+            "max_stub_pct",
+            "min_implemented_pct",
+            "e2e_smoke_required",
+        ]:
+            if field not in gc:
+                definition_failures.append(f'{lid}: gate_criteria missing "{field}"')
+    missing = [lid for lid in expected_ids if lid not in found_ids]
+    extra = [lid for lid in found_ids if lid not in expected_ids]
+    if missing:
+        definition_failures.append(f"Missing levels: {missing}")
+    if extra:
+        definition_failures.append(f"Unexpected levels: {extra}")
+    add_check(
+        "level_definitions",
+        "All four levels are defined with required fields",
+        rel(levels_path),
+        definition_failures,
+    )
+
+    assessment_failures = []
+    matrix = load_json(matrix_path)
+    symbols = matrix.get("symbols", [])
+    counts = Counter()
+    module_counts = Counter()
+    for sym in symbols:
+        status = sym.get("status", "Unknown")
+        module = sym.get("module", "unknown")
+        counts[status] += 1
+        module_counts[(status, module)] += 1
+
+    matrix_total = len(symbols)
+    claimed_total = assessment.get("total_symbols", 0)
+    if claimed_total != matrix_total:
+        assessment_failures.append(
+            f"total_symbols: claimed={claimed_total} matrix={matrix_total}"
+        )
+    for status_key, json_key in [
+        ("Implemented", "implemented"),
+        ("RawSyscall", "raw_syscall"),
+        ("GlibcCallThrough", "callthrough"),
+        ("Stub", "stub"),
+    ]:
+        actual = counts.get(status_key, 0)
+        claimed = assessment.get(json_key, 0)
+        if claimed != actual:
+            assessment_failures.append(f"{json_key}: claimed={claimed} matrix={actual}")
+    for module, claimed_count in assessment.get("callthrough_breakdown", {}).items():
+        actual = module_counts.get(("GlibcCallThrough", module), 0)
+        if claimed_count != actual:
+            assessment_failures.append(
+                f"callthrough_breakdown.{module}: claimed={claimed_count} matrix={actual}"
+            )
+    for module, claimed_count in assessment.get("stub_breakdown", {}).items():
+        actual = module_counts.get(("Stub", module), 0)
+        if claimed_count != actual:
+            assessment_failures.append(
+                f"stub_breakdown.{module}: claimed={claimed_count} matrix={actual}"
+            )
+    add_check(
+        "assessment_matches_support_matrix",
+        "Current assessment matches support_matrix.json",
+        rel(matrix_path),
+        assessment_failures,
+    )
+
+    status_failures = []
+    valid_statuses = ["achieved", "in_progress", "planned", "roadmap"]
+    status_order = {status: idx for idx, status in enumerate(valid_statuses)}
+    prev_order = -1
+    prev_level = None
+    for entry in level_entries:
+        lid = entry.get("level", "?")
+        status = entry.get("status", "unknown")
+        if status not in status_order:
+            status_failures.append(
+                f'{lid}: invalid status "{status}" (expected one of {valid_statuses})'
+            )
+            continue
+        order = status_order[status]
+        if order < prev_order:
+            status_failures.append(
+                f"{lid} ({status}) is less mature than {prev_level}"
+            )
+        prev_order = order
+        prev_level = lid
+    current = levels.get("current_level", "")
+    if current and level_map.get(current, {}).get("status") != "achieved":
+        status_failures.append(f'current_level={current} but its status is not "achieved"')
+    add_check(
+        "status_progression",
+        "Status progression is monotonically non-decreasing",
+        rel(levels_path),
+        status_failures,
+    )
+
+    monotonicity_failures = []
+    previous = {}
+    for entry in level_entries:
+        lid = entry.get("level", "?")
+        gate_criteria = entry.get("gate_criteria", {})
+        for field, direction in [
+            ("max_callthrough_pct", "decreasing"),
+            ("max_stub_pct", "decreasing"),
+            ("min_implemented_pct", "increasing"),
+        ]:
+            value = gate_criteria.get(field)
+            if value is None:
+                continue
+            if field in previous:
+                prev_lid, prev_value = previous[field]
+                if direction == "decreasing" and value > prev_value:
+                    monotonicity_failures.append(
+                        f"{field}: {lid}={value} > {prev_lid}={prev_value}"
+                    )
+                if direction == "increasing" and value < prev_value:
+                    monotonicity_failures.append(
+                        f"{field}: {lid}={value} < {prev_lid}={prev_value}"
+                    )
+            previous[field] = (lid, value)
+    add_check(
+        "gate_criteria_monotonicity",
+        "Gate criteria tighten across levels",
+        rel(levels_path),
+        monotonicity_failures,
+    )
+
+    claim_failures = []
+    readme = readme_path.read_text(encoding="utf-8")
+    current_entry = level_map.get(current, {})
+    current_name = current_entry.get("name", "")
+    expected_claim = f"Declared replacement level claim: **{current} — {current_name}**."
+    if expected_claim not in readme:
+        claim_failures.append("README replacement-level claim line is missing or stale")
+    claim_matches = re.findall(
+        r"Declared replacement level claim: \*\*(L[0-3]) — ([^*]+)\*\*\.", readme
+    )
+    if len(claim_matches) != 1:
+        claim_failures.append(
+            f"Expected exactly one replacement-level claim line in README, found {len(claim_matches)}"
+        )
+
+    policy = levels.get("release_tag_policy")
+    if not isinstance(policy, dict):
+        claim_failures.append("release_tag_policy missing or invalid")
+    else:
+        if not policy.get("tag_format"):
+            claim_failures.append("release_tag_policy.tag_format missing")
+        suffixes = policy.get("level_tag_suffix")
+        if not isinstance(suffixes, dict):
+            claim_failures.append("release_tag_policy.level_tag_suffix missing or invalid")
+        else:
+            for lid in ["L0", "L1", "L2", "L3"]:
+                expected_suffix = f"-{lid}"
+                actual_suffix = suffixes.get(lid)
+                if actual_suffix != expected_suffix:
+                    claim_failures.append(
+                        f"release_tag_policy.level_tag_suffix.{lid}={actual_suffix!r} expected {expected_suffix!r}"
+                    )
+        claimed_release_level = policy.get("current_release_level", "")
+        if claimed_release_level != current:
+            claim_failures.append(
+                f"release_tag_policy.current_release_level={claimed_release_level!r} must match current_level={current!r}"
+            )
+        example = policy.get("current_release_tag_example", "")
+        required_suffix = f"-{current}"
+        if not example:
+            claim_failures.append("release_tag_policy.current_release_tag_example missing")
+        elif not example.endswith(required_suffix):
+            claim_failures.append(
+                f"current_release_tag_example={example!r} must end with {required_suffix!r}"
+            )
+
+    blockers = " ".join(
+        blocker for blocker in l1_entry.get("blockers", []) if isinstance(blocker, str)
+    ).lower()
+    if "hardened-mode e2e smoke" in blockers and "incomplete" in blockers:
+        if re.search(r"latest broad preload smoke run is \*\*fully green\*\*", readme, re.IGNORECASE):
+            claim_failures.append(
+                "README must not claim broad preload smoke is fully green while L1 hardened smoke remains blocked"
+            )
+        if re.search(r"both strict and hardened modes pass all workloads", readme, re.IGNORECASE):
+            claim_failures.append(
+                "README must not claim paired strict+hardened smoke closure while L1 hardened smoke remains blocked"
+            )
+    add_check(
+        "claim_drift",
+        "README and release-tag policy are aligned to current_level",
+        rel(readme_path),
+        claim_failures,
+    )
+except Exception as exc:
+    if not script_checks:
+        add_check(
+            "levels_file_valid",
+            "Levels file exists and is valid",
+            rel(levels_path),
+            [str(exc)],
+        )
+
+objective_obligations = objective_gate.get("obligations", []) if isinstance(objective_gate, dict) else []
+required_log_fields = (
+    objective_gate.get("required_log_fields", [])
+    if isinstance(objective_gate, dict)
+    else []
+)
+evidence_bundle = (
+    objective_gate.get("evidence_bundle", {})
+    if isinstance(objective_gate, dict)
+    else {}
+)
+
+report_path.parent.mkdir(parents=True, exist_ok=True)
+log_path.parent.mkdir(parents=True, exist_ok=True)
+
+objective_outcomes = Counter(
+    obligation.get("outcome", "unknown") for obligation in objective_obligations
+)
+script_failure_count = sum(1 for check in script_checks if check["outcome"] != "pass")
+
+artifact_refs = [
+    rel(levels_path),
+    rel(matrix_path),
+    rel(readme_path),
+    rel(root / "scripts/check_replacement_levels.sh"),
+]
+for artifact in evidence_bundle.get("artifact_refs", []):
+    if artifact not in artifact_refs:
+        artifact_refs.append(artifact)
+
+report = {
+    "schema_version": 1,
+    "bead_id": "bd-gtf.4",
+    "gate_id": "replacement_levels_l1_gate",
+    "generated_at": generated_at,
+    "status": "pass" if script_failure_count == 0 else "fail",
+    "current_level": (levels or {}).get("current_level"),
+    "objective_gate_status": objective_gate.get("status"),
+    "objective_gate_status_reason": objective_gate.get("status_reason"),
+    "required_log_fields": required_log_fields,
+    "report_artifact_path": rel(report_path),
+    "log_artifact_path": rel(log_path),
+    "script_checks": script_checks,
+    "objective_gate": objective_gate,
+    "summary": {
+        "script_check_count": len(script_checks),
+        "script_failure_count": script_failure_count,
+        "objective_obligation_count": len(objective_obligations),
+        "objective_outcomes": dict(objective_outcomes),
+    },
+    "artifact_refs": artifact_refs,
+}
+
+log_rows = []
+for check in script_checks:
+    log_rows.append(
+        {
+            "timestamp": generated_at,
+            "trace_id": f"bd-gtf.4::replacement_levels::{check['id']}",
+            "level": level_for_outcome(check["outcome"]),
+            "obligation_id": check["id"],
+            "outcome": check["outcome"],
+            "artifact_ref": check["artifact_ref"],
+            "source": "script_check",
+            "bead_id": "bd-gtf.4",
+            "description": check["name"],
+            "details": check["details"],
+        }
+    )
+
+for obligation in objective_obligations:
+    outcome = obligation.get("outcome", "unknown")
+    log_rows.append(
+        {
+            "timestamp": generated_at,
+            "trace_id": f"bd-gtf.4::replacement_levels::{obligation.get('id', 'unknown')}",
+            "level": level_for_outcome(outcome),
+            "obligation_id": obligation.get("id"),
+            "outcome": outcome,
+            "artifact_ref": obligation.get("artifact_ref"),
+            "source": "objective_gate",
+            "bead_id": "bd-gtf.4",
+            "description": obligation.get("description"),
+            "expected": obligation.get("expected"),
+            "actual": obligation.get("actual"),
+        }
+    )
+
+report_path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+with log_path.open("w", encoding="utf-8") as handle:
+    for row in log_rows:
+        handle.write(json.dumps(row, sort_keys=True) + "\n")
+
+print(f"REPORT_PATH={rel(report_path)}")
+print(f"LOG_PATH={rel(log_path)}")
+PY
+)
+
+echo "${artifact_output}"
+echo "PASS: Structured L1 objective gate artifacts refreshed"
 echo ""
 
 # ---------------------------------------------------------------------------
