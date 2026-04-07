@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "lever_id": "condvar-fastpath-nochange-v1",
+  "bead_id": "bd-2nzx",
+  "functions": [
+    "pthread_cond_init",
+    "pthread_cond_destroy",
+    "pthread_cond_signal",
+    "pthread_cond_broadcast",
+    "pthread_cond_wait",
+    "pthread_cond_timedwait"
+  ],
+  "categories": ["side_effects", "memory_semantics"],
+  "golden_commands": [
+    "bash scripts/check_condvar_perf_validation.sh",
+    "bash scripts/check_mode_semantics.sh"
+  ],
+  "golden_artifacts": [
+    {
+      "path": "tests/conformance/condvar_perf_validation.v1.json",
+      "sha256": "sha256:a32f27a29bd07daa2f5c69a1b30b842dd78e87e6923db122ae5f42d1e6ffbdc6",
+      "role": "optimization-dossier"
+    }
+  ],
+  "golden_hash": "sha256:a32f27a29bd07daa2f5c69a1b30b842dd78e87e6923db122ae5f42d1e6ffbdc6",
+  "proof_status": "verified",
+  "rollback_instructions": {
+    "strategy": "git_revert_single_lever",
+    "command": "git revert <condvar-fastpath-single-lever-commit>",
+    "expected_revert_scope": "Only the condvar fast-path lever and regenerated proof/opportunity artifacts.",
+    "artifact_regeneration_commands": [
+      "bash scripts/check_one_lever_discipline.sh",
+      "bash scripts/check_isomorphism_proof.sh"
+    ]
+  },
+  "attribution_metadata": {
+    "opportunity_entry_id": "condvar-perf-validation-v1",
+    "opportunity_matrix_path": "tests/conformance/opportunity_matrix.json",
+    "baseline_artifacts": ["tests/conformance/condvar_perf_validation.v1.json"],
+    "profile_artifacts": ["tests/conformance/condvar_perf_validation.v1.json"],
+    "selected_by": "hot-path dossier with no-change justification",
+    "owner_surface": "pthread_abi"
+  },
+  "pre_optimization_baseline": "tests/conformance/condvar_perf_validation.v1.json",
+  "post_optimization_result": "tests/conformance/condvar_perf_validation.v1.json",
+  "reviewer": "protocol-bootstrap",
+  "notes": "No-change optimization wave proof: condvar fast paths stayed behaviorally identical because the dossier found no score>=2.0 lever worth landing."
+}

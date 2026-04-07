@@ -373,6 +373,131 @@ def check_replacement_levels(findings, matrix_counts, replacement):
             # We'll verify this in the module check below
 
 
+def lookup_replacement_module(text, module_statuses):
+    """Find the most specific module token mentioned in replacement-level text."""
+    lower = text.lower()
+    candidates = sorted(module_statuses.keys(), key=len, reverse=True)
+    for module in candidates:
+        if re.search(rf"\b{re.escape(module.lower())}\b", lower):
+            return module
+    return None
+
+
+def check_replacement_level_text_consistency(findings, replacement, matrix):
+    """Verify blocker and transition text do not contradict support-matrix reality."""
+    if not replacement or not matrix:
+        return
+
+    module_statuses = defaultdict(Counter)
+    for sym in matrix.get("symbols", []):
+        module = sym.get("module", "unknown")
+        status = sym.get("status", "unknown")
+        module_statuses[module][status] += 1
+
+    total_stub = sum(counter.get("Stub", 0) for counter in module_statuses.values())
+    total_callthrough = sum(
+        counter.get("GlibcCallThrough", 0) for counter in module_statuses.values()
+    )
+    outstanding_pattern = re.compile(
+        r"\b(need|needs|not yet|eliminate|elimination|migrate|migration|before|remain|requires?|pending)\b"
+    )
+
+    def append_count_drift(level_label, entry_kind, text, actual, claimed, metric, module=None):
+        source = f"replacement_levels.json ({level_label})"
+        module_suffix = f" for {module}" if module else ""
+        findings.append(
+            {
+                "severity": "error",
+                "category": f"replacement_level_{entry_kind}_stale",
+                "source": source,
+                "field": metric,
+                "expected": actual,
+                "actual": claimed,
+                "message": (
+                    f"{level_label} {entry_kind} text claims {metric}={claimed}{module_suffix} "
+                    f"but support_matrix.json says {actual}: {text}"
+                ),
+            }
+        )
+
+    def append_resolved_blocker(level_label, metric, text, module=None):
+        source = f"replacement_levels.json ({level_label})"
+        module_suffix = f" for {module}" if module else ""
+        findings.append(
+            {
+                "severity": "error",
+                "category": "replacement_level_blocker_resolved",
+                "source": source,
+                "field": metric,
+                "expected": 0,
+                "actual": 0,
+                "message": (
+                    f"{level_label} blocker still describes unresolved {metric}{module_suffix}, "
+                    f"but support_matrix.json already shows 0 remaining: {text}"
+                ),
+            }
+        )
+
+    def check_text(level_label, entry_kind, text):
+        lower = text.lower()
+        module = lookup_replacement_module(text, module_statuses)
+        module_stub = module_statuses[module].get("Stub", 0) if module else total_stub
+        module_callthrough = (
+            module_statuses[module].get("GlibcCallThrough", 0) if module else total_callthrough
+        )
+        matched_numeric_claim = False
+
+        for match in re.finditer(r"\b(\d+)\s+stub(?:\s+symbols?)?\b", lower):
+            claimed = int(match.group(1))
+            matched_numeric_claim = True
+            if claimed != module_stub:
+                append_count_drift(
+                    level_label,
+                    entry_kind,
+                    text,
+                    module_stub,
+                    claimed,
+                    "stub_count",
+                    module,
+                )
+
+        callthrough_patterns = [
+            r"\b(\d+)\s+call[- ]through(?:s|\s+symbols?)?\b",
+            r"call[- ]throughs?\s*\((\d+)\s+symbols?\)",
+        ]
+        for pattern in callthrough_patterns:
+            for match in re.finditer(pattern, lower):
+                claimed = int(match.group(1))
+                matched_numeric_claim = True
+                if claimed != module_callthrough:
+                    append_count_drift(
+                        level_label,
+                        entry_kind,
+                        text,
+                        module_callthrough,
+                        claimed,
+                        "callthrough_count",
+                        module,
+                    )
+
+        if entry_kind != "blocker" or matched_numeric_claim or not outstanding_pattern.search(lower):
+            return
+
+        if "stub" in lower and module_stub == 0:
+            append_resolved_blocker(level_label, "stub_count", text, module)
+        if ("call-through" in lower or "callthrough" in lower) and module_callthrough == 0:
+            append_resolved_blocker(level_label, "callthrough_count", text, module)
+
+    for level_obj in replacement.get("levels", []):
+        level = level_obj.get("level", "?")
+        for blocker in level_obj.get("blockers", []):
+            check_text(f"level {level}", "blocker", blocker)
+
+    for transition_name, requirements in replacement.get("transition_requirements", {}).items():
+        for requirement in requirements:
+            check_text(f"transition {transition_name}", "transition_requirement", requirement)
+
+
 def check_module_taxonomy(findings, matrix):
     """Verify module-level taxonomy claims in FEATURE_PARITY against support_matrix."""
     if not matrix:
@@ -663,6 +788,7 @@ def main():
     # Run all checks
     check_count_consistency(findings, dict(matrix_counts), reality, replacement, fp_counts, readme_counts)
     check_replacement_levels(findings, dict(matrix_counts), replacement)
+    check_replacement_level_text_consistency(findings, replacement, matrix)
     check_module_taxonomy(findings, matrix)
     check_hard_parts(findings, hard_parts, matrix)
     check_timestamp_consistency(findings, reality, matrix, hard_parts, replacement)

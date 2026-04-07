@@ -4,7 +4,7 @@
 # Validates that:
 #   1. Opportunity matrix JSON exists and is valid.
 #   2. Scoring dimensions and formula are defined.
-#   3. All entries have required fields and valid scores.
+#   3. All entries have required fields, replay metadata, and valid scores.
 #   4. Computed scores match the formula.
 #   5. Summary statistics are consistent.
 #
@@ -122,7 +122,20 @@ with open('${MATRIX}') as f:
 
 entries = mat.get('entries', [])
 errors = []
-required = ['id', 'title', 'impact', 'confidence', 'effort', 'score', 'rationale', 'status']
+required = [
+    'id',
+    'title',
+    'impact',
+    'confidence',
+    'effort',
+    'score',
+    'rationale',
+    'status',
+    'lever_category',
+    'golden_output_verification',
+    'rollback_instructions',
+    'attribution_metadata',
+]
 
 ids_seen = set()
 for entry in entries:
@@ -148,6 +161,32 @@ for entry in entries:
     status = entry.get('status', '')
     if status not in valid_statuses:
         errors.append(f'{eid}: invalid status \"{status}\"')
+
+    golden = entry.get('golden_output_verification', {})
+    if not golden.get('artifact_refs'):
+        errors.append(f'{eid}: golden_output_verification.artifact_refs must not be empty')
+    if not golden.get('verification_command'):
+        errors.append(f'{eid}: golden_output_verification.verification_command missing')
+    if not golden.get('invariants'):
+        errors.append(f'{eid}: golden_output_verification.invariants must not be empty')
+
+    rollback = entry.get('rollback_instructions', {})
+    if 'git revert' not in rollback.get('command', ''):
+        errors.append(f'{eid}: rollback command must contain git revert')
+    if not rollback.get('artifact_regeneration_commands'):
+        errors.append(f'{eid}: rollback_instructions.artifact_regeneration_commands must not be empty')
+    if not rollback.get('expected_revert_scope'):
+        errors.append(f'{eid}: rollback_instructions.expected_revert_scope missing')
+
+    attribution = entry.get('attribution_metadata', {})
+    if not attribution.get('opportunity_owner'):
+        errors.append(f'{eid}: attribution_metadata.opportunity_owner missing')
+    if not attribution.get('selection_basis'):
+        errors.append(f'{eid}: attribution_metadata.selection_basis missing')
+    if not attribution.get('baseline_artifacts'):
+        errors.append(f'{eid}: attribution_metadata.baseline_artifacts must not be empty')
+    if not attribution.get('profile_artifacts'):
+        errors.append(f'{eid}: attribution_metadata.profile_artifacts must not be empty')
 
     # Check unique ID
     if eid in ids_seen:
@@ -241,6 +280,10 @@ if summary.get('eligible', 0) != eligible:
     errors.append(f'eligible: claimed={summary.get(\"eligible\")} actual={eligible}')
 if summary.get('deferred', 0) != deferred_count:
     errors.append(f'deferred: claimed={summary.get(\"deferred\")} actual={deferred_count}')
+if summary.get('required_wave_metadata', 0) != 4:
+    errors.append(
+        f'required_wave_metadata: claimed={summary.get(\"required_wave_metadata\")} actual=4'
+    )
 
 claimed_avg = summary.get('average_score', 0)
 if abs(claimed_avg - avg_score) > 0.05:

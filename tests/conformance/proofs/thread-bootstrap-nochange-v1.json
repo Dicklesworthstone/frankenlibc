@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "lever_id": "thread-bootstrap-fastpath-nochange-v1",
+  "bead_id": "bd-18rq",
+  "functions": ["pthread_create", "pthread_join", "pthread_detach"],
+  "categories": ["side_effects", "memory_semantics"],
+  "golden_commands": [
+    "bash scripts/check_bd1f35_thread_stress.sh",
+    "cargo test -p frankenlibc-abi --test pthread_thread_lifecycle_test -- --nocapture --test-threads=1"
+  ],
+  "golden_artifacts": [
+    {
+      "path": "tests/conformance/thread_hotpath_optimization.v1.json",
+      "sha256": "sha256:2bf9fb52a76df9bbe7bccd0d2dfade12a03c7a8a904989a1ea5904516a9cd0ef",
+      "role": "optimization-dossier"
+    }
+  ],
+  "golden_hash": "sha256:2bf9fb52a76df9bbe7bccd0d2dfade12a03c7a8a904989a1ea5904516a9cd0ef",
+  "proof_status": "verified",
+  "rollback_instructions": {
+    "strategy": "git_revert_single_lever",
+    "command": "git revert <thread-bootstrap-single-lever-commit>",
+    "expected_revert_scope": "Only the thread bootstrap lever and regenerated proof/opportunity artifacts.",
+    "artifact_regeneration_commands": [
+      "bash scripts/check_one_lever_discipline.sh",
+      "bash scripts/check_isomorphism_proof.sh"
+    ]
+  },
+  "attribution_metadata": {
+    "opportunity_entry_id": "opp-005",
+    "opportunity_matrix_path": "tests/conformance/opportunity_matrix.json",
+    "baseline_artifacts": ["tests/conformance/thread_hotpath_optimization.v1.json"],
+    "profile_artifacts": ["tests/conformance/thread_hotpath_optimization.v1.json"],
+    "selected_by": "opportunity_score>=2.0",
+    "owner_surface": "pthread_abi"
+  },
+  "pre_optimization_baseline": "tests/conformance/thread_hotpath_optimization.v1.json",
+  "post_optimization_result": "tests/conformance/thread_hotpath_optimization.v1.json",
+  "reviewer": "protocol-bootstrap",
+  "notes": "No-change optimization wave proof: thread lifecycle semantics were replayed without code deltas while the hotspot remained under active investigation."
+}

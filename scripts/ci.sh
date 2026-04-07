@@ -240,6 +240,11 @@ if [[ "${FRANKENLIBC_EXTENDED_GATES:-0}" == "1" ]]; then
     echo "PASS"
     echo ""
 
+    echo "--- one-lever discipline gate ---"
+    scripts/check_one_lever_discipline.sh
+    echo "PASS"
+    echo ""
+
     echo "--- workload matrix gate ---"
     scripts/check_workload_matrix.sh
     echo "PASS"
@@ -411,6 +416,11 @@ if [[ "${FRANKENLIBC_EXTENDED_GATES:-0}" == "1" ]]; then
 
     echo "--- proof obligations binder gate (bd-5fw.4) ---"
     scripts/check_proof_binder.sh
+    echo "PASS"
+    echo ""
+
+    echo "--- proof-chain e2e gate (bd-34s.6) ---"
+    scripts/check_proof_chain_e2e.sh
     echo "PASS"
     echo ""
 

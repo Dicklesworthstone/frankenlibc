@@ -1,7 +1,7 @@
 {
-  "schema_version": 1,
-  "bead": "bd-1ik",
-  "description": "Opportunity matrix for frankenlibc optimization work. Scores hotspots on three dimensions (impact, confidence, effort) to produce a composite score. Only items scoring >= 2.0 proceed to implementation. Items below threshold remain deferred unless manually justified with a waiver.",
+  "schema_version": 2,
+  "bead": "bd-w2c3.8.2",
+  "description": "Opportunity matrix for FrankenLibC optimization waves. Scores hotspots on three dimensions (impact, confidence, effort) to produce a composite score. Each candidate now carries replayable golden-output verification, rollback instructions, and attribution metadata so every admitted lever stays one-change-at-a-time, proof-backed, and reversible.",
   "scoring": {
     "dimensions": {
       "impact": {
@@ -57,7 +57,27 @@
       "score": 3.3,
       "rationale": "Eliminates 2 stubs blocking L1 transition. C/POSIX locale is well-defined, implementation is bounded.",
       "status": "eligible",
-      "lever_category": "stub_elimination"
+      "lever_category": "stub_elimination",
+      "golden_output_verification": {
+        "artifact_refs": ["support_matrix.json", "tests/conformance/fixtures/locale_ops.json"],
+        "verification_command": "bash scripts/check_support_matrix_maintenance.sh",
+        "invariants": [
+          "Locale support classification remains synchronized with support_matrix.json",
+          "Locale fixture coverage remains replayable before and after the lever lands"
+        ]
+      },
+      "rollback_instructions": {
+        "strategy": "git_revert_single_lever",
+        "command": "git revert <locale-single-lever-commit>",
+        "expected_revert_scope": "Only locale_abi stub-elimination changes plus regenerated opportunity/proof artifacts.",
+        "artifact_regeneration_commands": ["bash scripts/check_one_lever_discipline.sh", "bash scripts/check_opportunity_matrix.sh"]
+      },
+      "attribution_metadata": {
+        "opportunity_owner": "bd-3pe",
+        "selection_basis": "opportunity_score_formula_v1",
+        "baseline_artifacts": ["support_matrix.json"],
+        "profile_artifacts": ["tests/conformance/fixtures/locale_ops.json"]
+      }
     },
     {
       "id": "opp-002",
@@ -70,7 +90,27 @@
       "score": 2.8,
       "rationale": "Eliminates 4 stubs blocking L1. Numeric-only backend is feasible but DNS requires significant work.",
       "status": "eligible",
-      "lever_category": "stub_elimination"
+      "lever_category": "stub_elimination",
+      "golden_output_verification": {
+        "artifact_refs": ["support_matrix.json", "tests/conformance/fixtures/resolver.json"],
+        "verification_command": "bash scripts/check_conformance_matrix.sh",
+        "invariants": [
+          "Resolver fixture results stay aligned with the declared support state",
+          "Strict and hardened resolver behaviors stay replayable through the conformance matrix"
+        ]
+      },
+      "rollback_instructions": {
+        "strategy": "git_revert_single_lever",
+        "command": "git revert <resolver-single-lever-commit>",
+        "expected_revert_scope": "Only the resolv_abi stub-elimination lever and regenerated wave artifacts.",
+        "artifact_regeneration_commands": ["bash scripts/check_one_lever_discipline.sh", "bash scripts/check_opportunity_matrix.sh"]
+      },
+      "attribution_metadata": {
+        "opportunity_owner": "bd-66s",
+        "selection_basis": "opportunity_score_formula_v1",
+        "baseline_artifacts": ["support_matrix.json"],
+        "profile_artifacts": ["tests/conformance/fixtures/resolver.json"]
+      }
     },
     {
       "id": "opp-003",
@@ -83,7 +123,27 @@
       "score": 2.8,
       "rationale": "Required for L2 transition. ELF relocation + symbol lookup is complex but well-documented.",
       "status": "eligible",
-      "lever_category": "callthrough_removal"
+      "lever_category": "callthrough_removal",
+      "golden_output_verification": {
+        "artifact_refs": ["support_matrix.json", "tests/conformance/dlfcn_boundary_policy.v1.json"],
+        "verification_command": "bash scripts/check_dlfcn_boundary_policy.sh",
+        "invariants": [
+          "dlfcn boundary policy remains synchronized with support matrix state",
+          "Dynamic-loading edge cases remain covered by the dlfcn policy artifact"
+        ]
+      },
+      "rollback_instructions": {
+        "strategy": "git_revert_single_lever",
+        "command": "git revert <dlfcn-single-lever-commit>",
+        "expected_revert_scope": "Only the dlfcn raw-syscall migration lever and regenerated proof artifacts.",
+        "artifact_regeneration_commands": ["bash scripts/check_one_lever_discipline.sh", "bash scripts/check_isomorphism_proof.sh"]
+      },
+      "attribution_metadata": {
+        "opportunity_owner": "bd-3rn",
+        "selection_basis": "opportunity_score_formula_v1",
+        "baseline_artifacts": ["support_matrix.json"],
+        "profile_artifacts": ["tests/conformance/dlfcn_boundary_policy.v1.json"]
+      }
     },
     {
       "id": "opp-004",
@@ -96,7 +156,27 @@
       "score": 3.6,
       "rationale": "Eliminates 5+ call-throughs from hotpath. Futex mutex is well-understood (musl, bionic precedent).",
       "status": "eligible",
-      "lever_category": "callthrough_removal"
+      "lever_category": "callthrough_removal",
+      "golden_output_verification": {
+        "artifact_refs": ["tests/conformance/mutex_hotpath_optimization.v1.json", "tests/cve_arena/results/bd-1qy/report.json"],
+        "verification_command": "bash scripts/check_bd1qy_mutex_fixture.sh",
+        "invariants": [
+          "Mutex strict and hardened fixture artifacts remain replayable",
+          "Per-wave mutex behavior remains inside the existing perf and semantics guards"
+        ]
+      },
+      "rollback_instructions": {
+        "strategy": "git_revert_single_lever",
+        "command": "git revert <mutex-single-lever-commit>",
+        "expected_revert_scope": "Only the mutex hot-path lever plus regenerated opportunity/proof artifacts.",
+        "artifact_regeneration_commands": ["bash scripts/check_one_lever_discipline.sh", "bash scripts/check_isomorphism_proof.sh"]
+      },
+      "attribution_metadata": {
+        "opportunity_owner": "bd-z84",
+        "selection_basis": "opportunity_score_formula_v1",
+        "baseline_artifacts": ["tests/conformance/mutex_hotpath_optimization.v1.json"],
+        "profile_artifacts": ["tests/cve_arena/results/bd-1qy/report.json"]
+      }
     },
     {
       "id": "opp-005",
@@ -109,7 +189,27 @@
       "score": 3.1,
       "rationale": "Eliminates 3 critical call-throughs. TLS handoff is the hard part.",
       "status": "eligible",
-      "lever_category": "callthrough_removal"
+      "lever_category": "callthrough_removal",
+      "golden_output_verification": {
+        "artifact_refs": ["tests/conformance/thread_hotpath_optimization.v1.json", "tests/cve_arena/results/bd-1f35/report.json"],
+        "verification_command": "bash scripts/check_bd1f35_thread_stress.sh",
+        "invariants": [
+          "Thread lifecycle stress evidence remains replayable in strict and hardened modes",
+          "Thread bootstrap lever retains the current lifecycle semantics and teardown guarantees"
+        ]
+      },
+      "rollback_instructions": {
+        "strategy": "git_revert_single_lever",
+        "command": "git revert <thread-bootstrap-single-lever-commit>",
+        "expected_revert_scope": "Only the thread bootstrap lever plus regenerated opportunity/proof artifacts.",
+        "artifact_regeneration_commands": ["bash scripts/check_one_lever_discipline.sh", "bash scripts/check_isomorphism_proof.sh"]
+      },
+      "attribution_metadata": {
+        "opportunity_owner": "bd-yos",
+        "selection_basis": "opportunity_score_formula_v1",
+        "baseline_artifacts": ["tests/conformance/thread_hotpath_optimization.v1.json"],
+        "profile_artifacts": ["tests/cve_arena/results/bd-1f35/report.json"]
+      }
     },
     {
       "id": "opp-006",
@@ -122,7 +222,27 @@
       "score": 3.0,
       "rationale": "Current Rust std implementations are already good. Marginal gain from explicit AVX2/AVX-512.",
       "status": "eligible",
-      "lever_category": "simd_acceleration"
+      "lever_category": "simd_acceleration",
+      "golden_output_verification": {
+        "artifact_refs": ["tests/conformance/fixtures/string_memory_full.json", "tests/conformance/fixtures/memcpy_strict.json"],
+        "verification_command": "bash scripts/check_mode_semantics.sh",
+        "invariants": [
+          "String-memory fixture outputs remain byte-for-byte stable",
+          "SIMD wave must preserve memcpy/memmove semantic boundaries before any merge"
+        ]
+      },
+      "rollback_instructions": {
+        "strategy": "git_revert_single_lever",
+        "command": "git revert <string-simd-single-lever-commit>",
+        "expected_revert_scope": "Only the SIMD string lever plus regenerated opportunity/proof artifacts.",
+        "artifact_regeneration_commands": ["bash scripts/check_one_lever_discipline.sh", "bash scripts/check_isomorphism_proof.sh"]
+      },
+      "attribution_metadata": {
+        "opportunity_owner": "unassigned",
+        "selection_basis": "opportunity_score_formula_v1",
+        "baseline_artifacts": ["tests/conformance/fixtures/string_memory_full.json"],
+        "profile_artifacts": ["tests/conformance/fixtures/memcpy_strict.json"]
+      }
     },
     {
       "id": "opp-007",
@@ -135,7 +255,27 @@
       "score": 3.1,
       "rationale": "Critical for L3 (full replacement) but very high effort. Assembly-level bootstrap required.",
       "status": "eligible",
-      "lever_category": "subsystem_implementation"
+      "lever_category": "subsystem_implementation",
+      "golden_output_verification": {
+        "artifact_refs": ["tests/conformance/fixtures/startup_ops.json", "tests/integration/fixture_startup.c"],
+        "verification_command": "bash scripts/check_setjmp_phase1_core.sh",
+        "invariants": [
+          "Startup fixture coverage remains replayable before the CRT lever changes",
+          "Bootstrap semantics stay attributable to a single subsystem-implementation wave"
+        ]
+      },
+      "rollback_instructions": {
+        "strategy": "git_revert_single_lever",
+        "command": "git revert <crt-bootstrap-single-lever-commit>",
+        "expected_revert_scope": "Only the CRT/bootstrap lever and regenerated wave artifacts.",
+        "artifact_regeneration_commands": ["bash scripts/check_one_lever_discipline.sh", "bash scripts/check_opportunity_matrix.sh"]
+      },
+      "attribution_metadata": {
+        "opportunity_owner": "bd-qwm",
+        "selection_basis": "opportunity_score_formula_v1",
+        "baseline_artifacts": ["tests/conformance/fixtures/startup_ops.json"],
+        "profile_artifacts": ["tests/integration/fixture_startup.c"]
+      }
     },
     {
       "id": "opp-008",
@@ -148,7 +288,27 @@
       "score": 2.8,
       "rationale": "Simple to implement but low call frequency. Nice L1 hygiene improvement.",
       "status": "eligible",
-      "lever_category": "stub_elimination"
+      "lever_category": "stub_elimination",
+      "golden_output_verification": {
+        "artifact_refs": ["support_matrix.json", "tests/conformance/conformance_matrix.v1.json"],
+        "verification_command": "bash scripts/check_conformance_matrix.sh",
+        "invariants": [
+          "Environment-function support claims remain synchronized with the conformance matrix",
+          "Wave attribution stays limited to stdlib environment semantics"
+        ]
+      },
+      "rollback_instructions": {
+        "strategy": "git_revert_single_lever",
+        "command": "git revert <env-single-lever-commit>",
+        "expected_revert_scope": "Only getenv/setenv/unsetenv lever changes and regenerated wave artifacts.",
+        "artifact_regeneration_commands": ["bash scripts/check_one_lever_discipline.sh", "bash scripts/check_opportunity_matrix.sh"]
+      },
+      "attribution_metadata": {
+        "opportunity_owner": "bd-747",
+        "selection_basis": "opportunity_score_formula_v1",
+        "baseline_artifacts": ["support_matrix.json"],
+        "profile_artifacts": ["tests/conformance/conformance_matrix.v1.json"]
+      }
     },
     {
       "id": "opp-009",
@@ -161,7 +321,27 @@
       "score": 2.3,
       "rationale": "Required for L3 but complex. File parsing + caching + thread safety.",
       "status": "eligible",
-      "lever_category": "subsystem_implementation"
+      "lever_category": "subsystem_implementation",
+      "golden_output_verification": {
+        "artifact_refs": ["tests/conformance/fixtures/pwd_ops.json", "tests/conformance/fixtures/grp_ops.json", "tests/integration/fixture_nss.c"],
+        "verification_command": "bash scripts/check_conformance_matrix.sh",
+        "invariants": [
+          "passwd/group/NSS fixture outputs remain replayable",
+          "NSS files lever remains attributable to one subsystem-implementation wave"
+        ]
+      },
+      "rollback_instructions": {
+        "strategy": "git_revert_single_lever",
+        "command": "git revert <nss-files-single-lever-commit>",
+        "expected_revert_scope": "Only the NSS files backend lever and regenerated proof/opportunity artifacts.",
+        "artifact_regeneration_commands": ["bash scripts/check_one_lever_discipline.sh", "bash scripts/check_opportunity_matrix.sh"]
+      },
+      "attribution_metadata": {
+        "opportunity_owner": "bd-1rf",
+        "selection_basis": "opportunity_score_formula_v1",
+        "baseline_artifacts": ["tests/conformance/fixtures/pwd_ops.json", "tests/conformance/fixtures/grp_ops.json"],
+        "profile_artifacts": ["tests/integration/fixture_nss.c"]
+      }
     },
     {
       "id": "opp-010",
@@ -174,7 +354,27 @@
       "score": 2.3,
       "rationale": "Required for L3. UDP DNS with timeout/retry is well-specified but needs careful implementation.",
       "status": "eligible",
-      "lever_category": "subsystem_implementation"
+      "lever_category": "subsystem_implementation",
+      "golden_output_verification": {
+        "artifact_refs": ["tests/conformance/fixtures/resolver.json", "tests/conformance/conformance_matrix.v1.json"],
+        "verification_command": "bash scripts/check_differential_glibc.sh",
+        "invariants": [
+          "Resolver fixture parity remains replayable across libc comparisons",
+          "UDP backend changes stay isolated to a single subsystem-implementation wave"
+        ]
+      },
+      "rollback_instructions": {
+        "strategy": "git_revert_single_lever",
+        "command": "git revert <resolver-udp-single-lever-commit>",
+        "expected_revert_scope": "Only the resolver UDP backend lever and regenerated wave artifacts.",
+        "artifact_regeneration_commands": ["bash scripts/check_one_lever_discipline.sh", "bash scripts/check_opportunity_matrix.sh"]
+      },
+      "attribution_metadata": {
+        "opportunity_owner": "bd-1y7",
+        "selection_basis": "opportunity_score_formula_v1",
+        "baseline_artifacts": ["tests/conformance/fixtures/resolver.json"],
+        "profile_artifacts": ["tests/conformance/conformance_matrix.v1.json"]
+      }
     },
     {
       "id": "opp-011",
@@ -187,7 +387,27 @@
       "score": 3.0,
       "rationale": "Already Implemented. 256-byte lookup table could improve branch prediction for ASCII classification.",
       "status": "eligible",
-      "lever_category": "cache_optimization"
+      "lever_category": "cache_optimization",
+      "golden_output_verification": {
+        "artifact_refs": ["tests/conformance/fixtures/ctype_ops.json", "support_matrix.json"],
+        "verification_command": "bash scripts/check_mode_semantics.sh",
+        "invariants": [
+          "ctype fixture answers remain stable across cache-layout experiments",
+          "ASCII classification semantics remain unchanged while cache behavior improves"
+        ]
+      },
+      "rollback_instructions": {
+        "strategy": "git_revert_single_lever",
+        "command": "git revert <ctype-cache-single-lever-commit>",
+        "expected_revert_scope": "Only the ctype cache-optimization lever and regenerated wave artifacts.",
+        "artifact_regeneration_commands": ["bash scripts/check_one_lever_discipline.sh", "bash scripts/check_isomorphism_proof.sh"]
+      },
+      "attribution_metadata": {
+        "opportunity_owner": "unassigned",
+        "selection_basis": "opportunity_score_formula_v1",
+        "baseline_artifacts": ["tests/conformance/fixtures/ctype_ops.json"],
+        "profile_artifacts": ["support_matrix.json"]
+      }
     },
     {
       "id": "opp-012",
@@ -200,7 +420,27 @@
       "score": 2.6,
       "rationale": "Required for L3. FILE* reimplementation is massive (30 symbols). Very high effort offsets high impact.",
       "status": "eligible",
-      "lever_category": "subsystem_implementation"
+      "lever_category": "subsystem_implementation",
+      "golden_output_verification": {
+        "artifact_refs": ["tests/conformance/fixtures/stdio_file_ops.json", "tests/integration/fixture_stdio.c"],
+        "verification_command": "bash scripts/check_stdio_native.sh",
+        "invariants": [
+          "stdio fixture outputs remain replayable for the declared FILE* surface",
+          "Native stdio stays attributable to one subsystem-implementation wave"
+        ]
+      },
+      "rollback_instructions": {
+        "strategy": "git_revert_single_lever",
+        "command": "git revert <stdio-single-lever-commit>",
+        "expected_revert_scope": "Only the stdio subsystem-implementation lever and regenerated wave artifacts.",
+        "artifact_regeneration_commands": ["bash scripts/check_one_lever_discipline.sh", "bash scripts/check_opportunity_matrix.sh"]
+      },
+      "attribution_metadata": {
+        "opportunity_owner": "unassigned",
+        "selection_basis": "opportunity_score_formula_v1",
+        "baseline_artifacts": ["tests/conformance/fixtures/stdio_file_ops.json"],
+        "profile_artifacts": ["tests/integration/fixture_stdio.c"]
+      }
     },
     {
       "id": "opp-013",
@@ -213,7 +453,27 @@
       "score": 3.9,
       "rationale": "Uses deterministic profile artifacts (target/profiles/20260213T083559Z strict+hardened hotspot_opportunity_matrix.v1.json) to seed high-score opportunities and unblock T7.2/T8.1 execution with repeatable evidence.",
       "status": "eligible",
-      "lever_category": "subsystem_implementation"
+      "lever_category": "subsystem_implementation",
+      "golden_output_verification": {
+        "artifact_refs": ["tests/conformance/symbol_latency_baseline.v1.json", "tests/conformance/workload_api_wave_plan.v1.json"],
+        "verification_command": "bash scripts/check_symbol_latency_baseline.sh",
+        "invariants": [
+          "Hotspot seeding remains grounded in deterministic baseline artifacts",
+          "Wave admission stays tied to replayable strict and hardened latency evidence"
+        ]
+      },
+      "rollback_instructions": {
+        "strategy": "git_revert_single_lever",
+        "command": "git revert <hotspot-seeding-single-lever-commit>",
+        "expected_revert_scope": "Only the hotspot-seeding lever and regenerated opportunity/proof artifacts.",
+        "artifact_regeneration_commands": ["bash scripts/check_one_lever_discipline.sh", "bash scripts/check_opportunity_matrix.sh"]
+      },
+      "attribution_metadata": {
+        "opportunity_owner": "bd-w2c3.8.1",
+        "selection_basis": "opportunity_score_formula_v1",
+        "baseline_artifacts": ["tests/conformance/symbol_latency_baseline.v1.json"],
+        "profile_artifacts": ["tests/conformance/workload_api_wave_plan.v1.json"]
+      }
     }
   ],
   "deferred": [],
@@ -222,6 +482,7 @@
     "eligible": 13,
     "deferred": 0,
     "average_score": 2.97,
+    "required_wave_metadata": 4,
     "highest_score": {
       "id": "opp-013",
       "score": 3.9,

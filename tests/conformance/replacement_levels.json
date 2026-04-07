@@ -48,14 +48,14 @@
         ]
       },
       "blockers": [
-        "E2E smoke harness needs hardened mode validation"
+        "Hardened-mode E2E smoke battery remains incomplete"
       ],
       "status": "in_progress"
     },
     {
       "level": "L2",
       "name": "Partial Replacement",
-      "description": "Standalone for core subsystems. stdio/dlfcn still delegate to host glibc but all other modules use raw syscalls or native Rust. Suitable for containers and minimal environments.",
+      "description": "Standalone for a declared core subset with no GlibcCallThrough symbols on that subset. Host-glibc-backed process environment and packaging evidence are still required before partial-replacement claims are credible.",
       "deployment": "Direct link or LD_PRELOAD (host glibc for stdio/dlfcn only)",
       "host_glibc_required": true,
       "gate_criteria": {
@@ -67,16 +67,13 @@
         "perf_budget_hardened_ns": 200,
         "test_gate": "Full test suite + C fixture suite + perf benchmarks",
         "additional": [
-          "dlfcn_abi migrated to raw syscall or eliminated",
-          "Replacement profile guard passes in interpose mode with zero violations outside stdio/pthread",
+          "Declared standalone subset has zero GlibcCallThrough symbols",
+          "Standalone dependency policy documents any remaining host-environment assumptions",
           "C compile/link/run fixtures pass"
         ]
       },
       "blockers": [
-        "dlfcn_abi call-throughs (4 symbols) need raw syscall migration",
-        "io_internal_abi call-throughs (63 symbols) need native replacement or redesign",
-        "rpc_abi call-throughs (38 symbols) need native replacement or explicit de-scope",
-        "glibc_internal_abi call-throughs (12 symbols) need elimination before standalone use",
+        "Standalone dependency policy gate (bd-w2c3.2.2) remains incomplete",
         "C fixture suite (bd-3jh) not yet built",
         "Perf benchmarks (bd-2r0) not yet enforced"
       ],
@@ -106,13 +103,11 @@
         ]
       },
       "blockers": [
-        "io_internal_abi: 63 call-throughs need native implementation or surface reduction",
-        "rpc_abi: 38 call-throughs need native implementation or removal from replacement target",
-        "glibc_internal_abi: 12 call-throughs need elimination",
         "CRT bootstrap (bd-qwm) not started",
         "rtld (bd-3rn) not started",
         "NSS backend (bd-1rf) not started",
-        "Resolver backend (bd-1y7) not started"
+        "Resolver backend (bd-1y7) not started",
+        "System-libc deployment battery and host-independence evidence are not yet complete"
       ],
       "status": "roadmap"
     }
@@ -145,18 +140,18 @@
   },
   "transition_requirements": {
     "L0_to_L1": [
-      "Eliminate all 6 Stub symbols",
+      "Maintain zero-stub taxonomy coverage in the replacement-level gate",
       "Validate hardened mode E2E",
       "Complete E2E smoke harness"
     ],
     "L1_to_L2": [
-      "Migrate dlfcn_abi to raw syscall or eliminate",
+      "Maintain zero GlibcCallThrough symbols for the declared standalone subset",
       "Build C compile/link/run fixture suite",
       "Enforce perf budgets in CI",
-      "Replacement profile guard passes with only stdio/pthread exceptions"
+      "Prove standalone dependency policy with compile-time and runtime guards"
     ],
     "L2_to_L3": [
-      "Implement native stdio (16 symbols)",
+      "Maintain zero GlibcCallThrough symbols across the full replacement surface",
       "Build custom CRT bootstrap",
       "Build minimal rtld",
       "Build NSS files backend",

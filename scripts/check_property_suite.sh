@@ -10,7 +10,10 @@ PROPTEST_CASES="${FRANKENLIBC_PROPTEST_CASES:-10000}"
 LOG_PATH="${OUT_DIR}/${ARTIFACT_BASENAME}.log.jsonl"
 REPORT_PATH="${OUT_DIR}/${ARTIFACT_BASENAME}.report.json"
 TEST_OUTPUT_PATH="${OUT_DIR}/${ARTIFACT_BASENAME}.test_output.log"
-RCH_CARGO_HOME="${RCH_CARGO_HOME:-/tmp/${ARTIFACT_BASENAME}_cargo_home}"
+# Leave CARGO_HOME unset by default so local `rch` fallback can reuse the
+# prewarmed workspace cache instead of creating an empty temp registry and
+# spuriously requiring network access.
+RCH_CARGO_HOME="${RCH_CARGO_HOME:-}"
 RCH_TARGET_DIR="${RCH_TARGET_DIR:-/tmp/${ARTIFACT_BASENAME}_target}"
 mkdir -p "${OUT_DIR}"
 
@@ -163,25 +166,25 @@ suite_failure_signature() {
 suite_command() {
     case "$1" in
         core_property_tests)
-            printf '%s' "cargo test -p frankenlibc-core --test property_tests -- --nocapture --test-threads=1"
+            printf '%s' "cargo test --locked -p frankenlibc-core --test property_tests -- --nocapture --test-threads=1"
             ;;
         membrane_lattice)
-            printf '%s' "cargo test -p frankenlibc-membrane lattice --lib -- --nocapture --test-threads=1"
+            printf '%s' "cargo test --locked -p frankenlibc-membrane lattice --lib -- --nocapture --test-threads=1"
             ;;
         membrane_ptr_validator)
-            printf '%s' "cargo test -p frankenlibc-membrane ptr_validator --lib -- --nocapture --test-threads=1"
+            printf '%s' "cargo test --locked -p frankenlibc-membrane ptr_validator --lib -- --nocapture --test-threads=1"
             ;;
         string_mem_local)
-            printf '%s' "cargo test -p frankenlibc-core prop_memcpy_matches_prefix_copy --lib -- --exact --nocapture --test-threads=1"
+            printf '%s' "cargo test --locked -p frankenlibc-core prop_memcpy_matches_prefix_copy --lib -- --exact --nocapture --test-threads=1"
             ;;
         string_str_local)
-            printf '%s' "cargo test -p frankenlibc-core prop_strlen_matches_first_nul_or_slice_len --lib -- --exact --nocapture --test-threads=1"
+            printf '%s' "cargo test --locked -p frankenlibc-core prop_strlen_matches_first_nul_or_slice_len --lib -- --exact --nocapture --test-threads=1"
             ;;
         string_wide_local)
-            printf '%s' "cargo test -p frankenlibc-core prop_wcslen_matches_first_nul_or_slice_len --lib -- --exact --nocapture --test-threads=1"
+            printf '%s' "cargo test --locked -p frankenlibc-core prop_wcslen_matches_first_nul_or_slice_len --lib -- --exact --nocapture --test-threads=1"
             ;;
         ctype_local)
-            printf '%s' "cargo test -p frankenlibc-core prop_core_classification_invariants --lib -- --exact --nocapture --test-threads=1"
+            printf '%s' "cargo test --locked -p frankenlibc-core prop_core_classification_invariants --lib -- --exact --nocapture --test-threads=1"
             ;;
         *)
             return 1
@@ -191,19 +194,40 @@ suite_command() {
 
 run_suite() {
     local suite="$1" api_family symbol decision_path command expected failure_signature
-    local start_ns end_ns latency_ns output status errno_value
+    local start_ns end_ns latency_ns output status errno_value command_banner cargo_home_banner
     api_family="$(suite_api_family "${suite}")"
     symbol="$(suite_symbol "${suite}")"
     decision_path="$(suite_decision_path "${suite}")"
     command="$(suite_command "${suite}")"
     expected="$(suite_expected "${suite}")"
     failure_signature="$(suite_failure_signature "${suite}")"
+    command_banner="FRANKENLIBC_PROPTEST_CASES=${PROPTEST_CASES} rch exec -- env"
+    if [[ -n "${RCH_CARGO_HOME}" ]]; then
+        cargo_home_banner=" CARGO_HOME=${RCH_CARGO_HOME}"
+    else
+        cargo_home_banner=""
+    fi
+    command_banner="${command_banner}${cargo_home_banner} CARGO_TARGET_DIR=${RCH_TARGET_DIR} ${command}"
 
     start_ns="$(date +%s%N)"
-    if output="$(
+    if [[ -n "${RCH_CARGO_HOME}" ]]; then
+        if output="$(
+            rch exec -- env \
+                FRANKENLIBC_PROPTEST_CASES="${PROPTEST_CASES}" \
+                CARGO_HOME="${RCH_CARGO_HOME}" \
+                CARGO_TARGET_DIR="${RCH_TARGET_DIR}" \
+                ${command} 2>&1
+        )"; then
+            status="pass"
+            errno_value=0
+        else
+            status="fail"
+            errno_value=1
+            FAILURES=$((FAILURES + 1))
+        fi
+    elif output="$(
         rch exec -- env \
             FRANKENLIBC_PROPTEST_CASES="${PROPTEST_CASES}" \
-            CARGO_HOME="${RCH_CARGO_HOME}" \
             CARGO_TARGET_DIR="${RCH_TARGET_DIR}" \
             ${command} 2>&1
     )"; then
@@ -218,14 +242,14 @@ run_suite() {
     latency_ns="$((end_ns - start_ns))"
 
     printf '=== %s ===\ncommand: FRANKENLIBC_PROPTEST_CASES=%s rch exec -- env CARGO_HOME=%s CARGO_TARGET_DIR=%s %s\n%s\n\n' \
-        "${suite}" "${PROPTEST_CASES}" "${RCH_CARGO_HOME}" "${RCH_TARGET_DIR}" "${command}" "${output}" >> "${TEST_OUTPUT_PATH}"
+        "${suite}" "${PROPTEST_CASES}" "${RCH_CARGO_HOME:-<default>}" "${RCH_TARGET_DIR}" "${command}" "${output}" >> "${TEST_OUTPUT_PATH}"
 
-    printf '{"timestamp":"%s","trace_id":"%s::property_suite::%s","level":"info","event":"property_suite","bead_id":"%s","mode":"property","api_family":"%s","symbol":"%s","decision_path":"%s","healing_action":"none","outcome":"%s","errno":%s,"latency_ns":%s,"artifact_refs":["scripts/check_property_suite.sh","crates/frankenlibc-core/tests/property_tests.rs","crates/frankenlibc-membrane/src/lattice.rs","crates/frankenlibc-membrane/src/ptr_validator.rs","crates/frankenlibc-core/src/string/mem.rs","crates/frankenlibc-core/src/string/str.rs","crates/frankenlibc-core/src/string/wide.rs","crates/frankenlibc-core/src/ctype/mod.rs","target/conformance/%s.report.json","target/conformance/%s.log.jsonl","target/conformance/%s.test_output.log"]}\n' \
+    printf '{"timestamp":"%s","trace_id":"%s::property_suite::%s","level":"info","event":"property_suite","bead_id":"%s","stream":"unit","gate":"check_property_suite","api_family":"%s","symbol":"%s","decision_path":"%s","healing_action":"none","outcome":"%s","errno":%s,"latency_ns":%s,"artifact_refs":["scripts/check_property_suite.sh","crates/frankenlibc-core/tests/property_tests.rs","crates/frankenlibc-membrane/src/lattice.rs","crates/frankenlibc-membrane/src/ptr_validator.rs","crates/frankenlibc-core/src/string/mem.rs","crates/frankenlibc-core/src/string/str.rs","crates/frankenlibc-core/src/string/wide.rs","crates/frankenlibc-core/src/ctype/mod.rs","target/conformance/%s.report.json","target/conformance/%s.log.jsonl","target/conformance/%s.test_output.log"]}\n' \
         "$(now_iso_ms)" "${BEAD_ID}" "${suite}" "${BEAD_ID}" "${api_family}" "${symbol}" "${decision_path}" "${status}" "${errno_value}" "${latency_ns}" "${ARTIFACT_BASENAME}" "${ARTIFACT_BASENAME}" "${ARTIFACT_BASENAME}" >> "${LOG_PATH}"
 
     SUITE_NAMES+=("${suite}")
     SUITE_STATUSES["${suite}"]="${status}"
-    SUITE_COMMANDS["${suite}"]="FRANKENLIBC_PROPTEST_CASES=${PROPTEST_CASES} rch exec -- env CARGO_HOME=${RCH_CARGO_HOME} CARGO_TARGET_DIR=${RCH_TARGET_DIR} ${command}"
+    SUITE_COMMANDS["${suite}"]="${command_banner}"
     SUITE_EXPECTED["${suite}"]="${expected}"
     SUITE_FAILURE_SIGNATURES["${suite}"]="${failure_signature}"
 }

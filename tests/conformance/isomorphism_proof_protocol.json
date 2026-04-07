@@ -1,7 +1,7 @@
 {
-  "schema_version": 1,
-  "bead": "bd-2bd",
-  "description": "Isomorphism proof protocol for frankenlibc optimizations. Defines a standardized checklist that must be completed before any optimization lever can be merged. Each proof artifact demonstrates that the optimized implementation is behaviorally isomorphic to the original.",
+  "schema_version": 2,
+  "bead": "bd-w2c3.8.2",
+  "description": "Isomorphism proof protocol for FrankenLibC optimization waves. Defines the standardized proof artifact each lever must carry before merge so behavior remains replayable, attributable, and reversible.",
   "proof_categories": {
     "ordering": {
       "description": "Sort stability, comparison transitivity, and element ordering guarantees. Applies to qsort, bsearch, and any function with ordering semantics.",
@@ -70,28 +70,56 @@
       "functions",
       "categories",
       "golden_commands",
+      "golden_artifacts",
       "golden_hash",
-      "proof_status"
+      "proof_status",
+      "rollback_instructions",
+      "attribution_metadata"
     ],
     "optional_fields": [
       "pre_optimization_baseline",
       "post_optimization_result",
       "reviewer",
       "ulp_tolerance",
-      "notes"
+      "notes",
+      "wave_id"
     ],
     "proof_statuses": ["pending", "verified", "failed", "waived"],
     "example": {
       "lever_id": "opt-memcpy-avx2",
-      "bead_id": "bd-example",
+      "bead_id": "bd-w2c3.8.2",
       "functions": ["memcpy"],
       "categories": ["memory_semantics", "side_effects"],
       "golden_commands": [
         "cargo test -p frankenlibc-harness --test memcpy_golden -- --exact",
         "scripts/run_golden_vectors.sh memcpy"
       ],
-      "golden_hash": "blake3:abc123...",
+      "golden_artifacts": [
+        {
+          "path": "tests/conformance/fixtures/string_memory_full.json",
+          "sha256": "sha256:8d07b7614a0fe0f70f7d754f4cb90f3a0c2511b9943da115ef7d98d0a6c6bb88",
+          "role": "memory-golden"
+        }
+      ],
+      "golden_hash": "sha256:8d07b7614a0fe0f70f7d754f4cb90f3a0c2511b9943da115ef7d98d0a6c6bb88",
       "proof_status": "verified",
+      "rollback_instructions": {
+        "strategy": "git_revert_single_lever",
+        "command": "git revert <single-lever-commit>",
+        "expected_revert_scope": "Only the single lever change and regenerated proof/opportunity artifacts.",
+        "artifact_regeneration_commands": [
+          "bash scripts/check_one_lever_discipline.sh",
+          "bash scripts/check_isomorphism_proof.sh"
+        ]
+      },
+      "attribution_metadata": {
+        "opportunity_entry_id": "opp-006",
+        "opportunity_matrix_path": "tests/conformance/opportunity_matrix.json",
+        "baseline_artifacts": ["tests/conformance/fixtures/string_memory_full.json"],
+        "profile_artifacts": ["tests/conformance/fixtures/string_ops.json"],
+        "selected_by": "opportunity_score>=2.0",
+        "owner_surface": "string_abi"
+      },
       "pre_optimization_baseline": "tests/golden/memcpy_baseline.json",
       "post_optimization_result": "tests/golden/memcpy_optimized.json",
       "reviewer": "CrimsonCove",
@@ -124,13 +152,32 @@
       {"module": "unistd_abi", "reason": "RawSyscall; proofs needed if argument marshaling optimized"}
     ]
   },
-  "existing_proofs": [],
+  "existing_proofs": [
+    {
+      "lever_id": "mutex-fastpath-nochange-v1",
+      "bead_id": "bd-300",
+      "proof_path": "tests/conformance/proofs/mutex-hotpath-nochange-v1.json",
+      "proof_status": "verified"
+    },
+    {
+      "lever_id": "thread-bootstrap-fastpath-nochange-v1",
+      "bead_id": "bd-18rq",
+      "proof_path": "tests/conformance/proofs/thread-bootstrap-nochange-v1.json",
+      "proof_status": "verified"
+    },
+    {
+      "lever_id": "condvar-fastpath-nochange-v1",
+      "bead_id": "bd-2nzx",
+      "proof_path": "tests/conformance/proofs/condvar-nochange-v1.json",
+      "proof_status": "verified"
+    }
+  ],
   "summary": {
     "total_categories": 6,
     "high_priority_modules": 6,
     "medium_priority_modules": 2,
     "low_priority_modules": 3,
-    "existing_proof_count": 0,
-    "enforcement_status": "protocol_defined"
+    "existing_proof_count": 3,
+    "enforcement_status": "artifacts_present"
   }
 }

@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "lever_id": "mutex-fastpath-nochange-v1",
+  "bead_id": "bd-300",
+  "functions": [
+    "pthread_mutex_lock",
+    "pthread_mutex_unlock",
+    "pthread_mutex_trylock",
+    "pthread_mutex_init",
+    "pthread_mutex_destroy"
+  ],
+  "categories": ["side_effects", "memory_semantics"],
+  "golden_commands": [
+    "bash scripts/check_bd1qy_mutex_fixture.sh",
+    "bash scripts/check_mode_semantics.sh",
+    "bash scripts/check_perf_budget.sh"
+  ],
+  "golden_artifacts": [
+    {
+      "path": "tests/conformance/mutex_hotpath_optimization.v1.json",
+      "sha256": "sha256:e5a2dd824e9252a90623607ac41f2bbc3265381478ad5dcff8229d5e0e7de66d",
+      "role": "optimization-dossier"
+    }
+  ],
+  "golden_hash": "sha256:e5a2dd824e9252a90623607ac41f2bbc3265381478ad5dcff8229d5e0e7de66d",
+  "proof_status": "verified",
+  "rollback_instructions": {
+    "strategy": "git_revert_single_lever",
+    "command": "git revert <mutex-hotpath-single-lever-commit>",
+    "expected_revert_scope": "Only the mutex hot-path lever and regenerated proof/opportunity artifacts.",
+    "artifact_regeneration_commands": [
+      "bash scripts/check_one_lever_discipline.sh",
+      "bash scripts/check_isomorphism_proof.sh"
+    ]
+  },
+  "attribution_metadata": {
+    "opportunity_entry_id": "opp-004",
+    "opportunity_matrix_path": "tests/conformance/opportunity_matrix.json",
+    "baseline_artifacts": ["tests/conformance/mutex_hotpath_optimization.v1.json"],
+    "profile_artifacts": ["tests/conformance/mutex_hotpath_optimization.v1.json"],
+    "selected_by": "opportunity_score>=2.0",
+    "owner_surface": "pthread_abi"
+  },
+  "pre_optimization_baseline": "tests/conformance/mutex_hotpath_optimization.v1.json",
+  "post_optimization_result": "tests/conformance/mutex_hotpath_optimization.v1.json",
+  "reviewer": "protocol-bootstrap",
+  "notes": "No-change optimization wave proof: the hot-path wave intentionally preserved code while replaying mutex behavior and budget guards."
+}

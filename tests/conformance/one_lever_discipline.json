@@ -1,7 +1,7 @@
 {
-  "schema_version": 1,
-  "bead": "bd-22p",
-  "description": "One-lever discipline guard for frankenlibc optimization work. Each optimization bead must reference exactly one lever category. Multi-lever submissions are flagged for split. This enforces the 'single optimization lever per iteration' rule from the extreme optimization loop (PROPOSED_ARCHITECTURE.md Section 6).",
+  "schema_version": 2,
+  "bead": "bd-w2c3.8.2",
+  "description": "One-lever discipline guard for FrankenLibC optimization waves. Each optimization bead must reference exactly one lever category and carry replayable golden-output, rollback, and attribution metadata so every wave stays attributable, reversible, and behavior-proofed.",
   "lever_categories": {
     "description": "Taxonomy of optimization levers. Each optimization opportunity must be classified under exactly one category.",
     "categories": {
@@ -39,19 +39,48 @@
       }
     }
   },
+  "entry_contract": {
+    "description": "Every optimization-wave opportunity must carry enough metadata to replay semantics, attribute the hotspot, and roll back the lever in isolation.",
+    "required_fields": [
+      "lever_category",
+      "golden_output_verification",
+      "rollback_instructions",
+      "attribution_metadata"
+    ],
+    "golden_output_verification_fields": [
+      "artifact_refs",
+      "verification_command",
+      "invariants"
+    ],
+    "rollback_instruction_fields": [
+      "strategy",
+      "command",
+      "expected_revert_scope",
+      "artifact_regeneration_commands"
+    ],
+    "attribution_metadata_fields": [
+      "opportunity_owner",
+      "selection_basis",
+      "baseline_artifacts",
+      "profile_artifacts"
+    ]
+  },
   "enforcement": {
     "description": "Rules for lever assignment and guard enforcement.",
     "rules": [
       "Every opportunity_matrix entry must have a lever_category field",
       "The lever_category value must be one of the defined categories",
       "Each optimization bead should address exactly one lever category",
-      "Multi-lever beads must be split or carry a justification_waiver"
+      "Multi-lever beads must be split or carry a justification_waiver",
+      "Every opportunity must declare replayable golden-output verification metadata",
+      "Every opportunity must declare a single-lever rollback plan and attribution metadata"
     ],
     "gate_script": "scripts/check_one_lever_discipline.sh",
     "integration_test": "cargo test -p frankenlibc-harness --test one_lever_discipline_test"
   },
   "summary": {
     "total_categories": 8,
+    "required_entry_fields": 4,
     "category_list": [
       "stub_elimination",
       "callthrough_removal",
