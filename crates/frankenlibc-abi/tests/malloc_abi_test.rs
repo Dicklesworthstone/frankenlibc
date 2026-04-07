@@ -457,7 +457,7 @@ fn test_malloc_stats_htm_fast_path_commits_when_forced() {
     htm_restore_test_mode_for_tests(previous_mode);
 
     assert!(
-        after.commits >= before.commits + 1,
+        after.commits > before.commits,
         "malloc/free stats path should commit via HTM before={before:?} after={after:?}"
     );
     assert_eq!(
@@ -488,11 +488,11 @@ fn test_malloc_stats_htm_abort_falls_back_without_breaking_alloc_free() {
     let _ = htm_swap_abort_code_for_tests(previous_code);
 
     assert!(
-        after.aborts >= before.aborts + 1,
+        after.aborts > before.aborts,
         "malloc/free stats path should record abort fallbacks before={before:?} after={after:?}"
     );
     assert!(
-        after.fallbacks >= before.fallbacks + 1,
+        after.fallbacks > before.fallbacks,
         "abort mode should route malloc/free bookkeeping through fallback before={before:?} after={after:?}"
     );
     assert_eq!(after.last_abort_code, 0xABCD);

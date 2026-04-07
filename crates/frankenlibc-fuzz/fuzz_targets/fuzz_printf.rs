@@ -14,10 +14,16 @@
 //! - format_str: empty, long, with precision truncation
 //! - format_char: all byte values
 //! - format_pointer: NULL and arbitrary addresses
+//! - ABI `snprintf`/`sprintf`/`asprintf`: truncation, `%n`, and typed-family consistency
 //!
 //! Bead: bd-1oz.3
 
+use std::ffi::{CString, c_char, c_int, c_void};
+use std::sync::Once;
+
 use arbitrary::Arbitrary;
+use frankenlibc_abi::malloc_abi::{free, malloc};
+use frankenlibc_abi::stdio_abi::{asprintf, snprintf, sprintf};
 use libfuzzer_sys::fuzz_target;
 
 use frankenlibc_core::stdio::printf::{
@@ -27,6 +33,10 @@ use frankenlibc_core::stdio::printf::{
 
 /// Maximum output buffer size to prevent OOM.
 const MAX_OUTPUT: usize = 65536;
+/// Maximum dynamic string size when crossing the ABI boundary.
+const MAX_ABI_STRING: usize = 2048;
+/// Large comparison buffer used to compute the non-truncated `snprintf` rendering.
+const ABI_COMPARE_BUF: usize = 4096;
 
 /// A structured fuzz input for the printf engine.
 #[derive(Debug, Arbitrary)]
@@ -108,12 +118,130 @@ fn make_spec(input: &PrintfFuzzInput) -> FormatSpec {
     }
 }
 
+fn init_hardened_printf_mode() {
+    static INIT: Once = Once::new();
+
+    INIT.call_once(|| {
+        // SAFETY: the fuzz target sets the process mode once, before the first ABI
+        // entrypoint is exercised, and never mutates it again.
+        unsafe {
+            std::env::set_var("FRANKENLIBC_MODE", "hardened");
+        }
+    });
+}
+
+fn sanitize_cstring(bytes: &[u8], limit: usize) -> CString {
+    let sanitized: Vec<u8> = bytes
+        .iter()
+        .copied()
+        .take(limit)
+        .map(|byte| if byte == 0 { b'?' } else { byte })
+        .collect();
+    CString::new(sanitized).expect("interior NUL bytes are replaced during sanitization")
+}
+
+fn width_arg(raw: u16) -> c_int {
+    let magnitude = (raw % 64) as c_int;
+    if raw & 1 == 0 { magnitude } else { -magnitude }
+}
+
+fn precision_arg(raw: u16) -> c_int {
+    let magnitude = (raw % 64) as c_int;
+    if raw & 1 == 0 { magnitude } else { -magnitude }
+}
+
+fn c_buffer_prefix(buf: &[c_char]) -> Vec<u8> {
+    let copied = buf.iter().position(|&ch| ch == 0).unwrap_or(buf.len());
+    buf.iter().take(copied).map(|&ch| ch as u8).collect()
+}
+
+unsafe extern "C" fn call_snprintf_signed(
+    buf: *mut c_char,
+    size: usize,
+    value: i64,
+) -> c_int {
+    unsafe { snprintf(buf, size, c"%lld".as_ptr(), value) }
+}
+
+unsafe extern "C" fn call_snprintf_unsigned(
+    buf: *mut c_char,
+    size: usize,
+    value: u64,
+) -> c_int {
+    unsafe { snprintf(buf, size, c"%#llx".as_ptr(), value) }
+}
+
+unsafe extern "C" fn call_snprintf_float(
+    buf: *mut c_char,
+    size: usize,
+    value: f64,
+) -> c_int {
+    unsafe { snprintf(buf, size, c"%.17g".as_ptr(), value) }
+}
+
+unsafe extern "C" fn call_snprintf_pointer(
+    buf: *mut c_char,
+    size: usize,
+    value: *const c_void,
+) -> c_int {
+    unsafe { snprintf(buf, size, c"%p".as_ptr(), value) }
+}
+
+unsafe extern "C" fn call_snprintf_width_precision_string(
+    buf: *mut c_char,
+    size: usize,
+    width: c_int,
+    precision: c_int,
+    value: *const c_char,
+) -> c_int {
+    unsafe { snprintf(buf, size, c"%*.*s".as_ptr(), width, precision, value) }
+}
+
+unsafe extern "C" fn call_snprintf_count(
+    buf: *mut c_char,
+    size: usize,
+    count: *mut c_int,
+    value: *const c_char,
+) -> c_int {
+    unsafe { snprintf(buf, size, c"abc%n:%s".as_ptr(), count, value) }
+}
+
+unsafe extern "C" fn call_snprintf_combo(
+    buf: *mut c_char,
+    size: usize,
+    signed: i64,
+    text: *const c_char,
+    unsigned: u64,
+) -> c_int {
+    unsafe { snprintf(buf, size, c"%lld:%s:%#llx".as_ptr(), signed, text, unsigned) }
+}
+
+unsafe extern "C" fn call_sprintf_combo(
+    buf: *mut c_char,
+    signed: i64,
+    text: *const c_char,
+    unsigned: u64,
+) -> c_int {
+    unsafe { sprintf(buf, c"%lld:%s:%#llx".as_ptr(), signed, text, unsigned) }
+}
+
+unsafe extern "C" fn call_asprintf_combo(
+    out: *mut *mut c_char,
+    signed: i64,
+    text: *const c_char,
+    unsigned: u64,
+) -> c_int {
+    unsafe { asprintf(out, c"%lld:%s:%#llx".as_ptr(), signed, text, unsigned) }
+}
+
 fuzz_target!(|input: PrintfFuzzInput| {
     if input.format_bytes.len() > MAX_OUTPUT || input.str_val.len() > MAX_OUTPUT {
         return;
     }
 
-    match input.op % 8 {
+    init_hardened_printf_mode();
+
+    match input.op % 12 {
         0 => fuzz_parse_spec(&input),
         1 => fuzz_parse_string(&input),
         2 => fuzz_format_signed(&input),
@@ -122,6 +250,10 @@ fuzz_target!(|input: PrintfFuzzInput| {
         5 => fuzz_format_str(&input),
         6 => fuzz_format_char(&input),
         7 => fuzz_format_pointer(&input),
+        8 => fuzz_snprintf_abi(&input),
+        9 => fuzz_sprintf_hardened_truncation(&input),
+        10 => fuzz_asprintf_matches_snprintf(&input),
+        11 => fuzz_percent_n_abi(&input),
         _ => unreachable!(),
     }
 });
@@ -265,4 +397,178 @@ fn fuzz_format_pointer(input: &PrintfFuzzInput) {
     // Max address
     buf.clear();
     format_pointer(usize::MAX, &spec, &mut buf);
+}
+
+/// Fuzz `snprintf` using well-typed ABI calls and compare truncated vs full renders.
+fn fuzz_snprintf_abi(input: &PrintfFuzzInput) {
+    let text = sanitize_cstring(&input.str_val, MAX_ABI_STRING);
+    let size = (input.width as usize) % 128;
+    let mut small = vec![0 as c_char; size.max(1)];
+    let mut full = vec![0 as c_char; ABI_COMPARE_BUF];
+
+    let width = width_arg(input.width);
+    let precision = precision_arg(input.precision);
+
+    let (small_rc, full_rc) = unsafe {
+        match input.conversion % 5 {
+            0 => (
+                call_snprintf_signed(small.as_mut_ptr(), size, input.signed_val),
+                call_snprintf_signed(full.as_mut_ptr(), full.len(), input.signed_val),
+            ),
+            1 => (
+                call_snprintf_unsigned(small.as_mut_ptr(), size, input.unsigned_val),
+                call_snprintf_unsigned(full.as_mut_ptr(), full.len(), input.unsigned_val),
+            ),
+            2 => (
+                call_snprintf_float(small.as_mut_ptr(), size, input.float_val),
+                call_snprintf_float(full.as_mut_ptr(), full.len(), input.float_val),
+            ),
+            3 => (
+                call_snprintf_pointer(small.as_mut_ptr(), size, input.ptr_val as *const c_void),
+                call_snprintf_pointer(
+                    full.as_mut_ptr(),
+                    full.len(),
+                    input.ptr_val as *const c_void,
+                ),
+            ),
+            _ => (
+                call_snprintf_width_precision_string(
+                    small.as_mut_ptr(),
+                    size,
+                    width,
+                    precision,
+                    text.as_ptr(),
+                ),
+                call_snprintf_width_precision_string(
+                    full.as_mut_ptr(),
+                    full.len(),
+                    width,
+                    precision,
+                    text.as_ptr(),
+                ),
+            ),
+        }
+    };
+
+    assert!(small_rc >= 0);
+    assert_eq!(small_rc, full_rc);
+
+    let full_len = full_rc as usize;
+    assert!(
+        full_len < full.len(),
+        "comparison buffer must hold the full render, got len={full_len}"
+    );
+
+    let full_bytes = c_buffer_prefix(&full);
+    assert_eq!(full_bytes.len(), full_len);
+
+    if size > 0 {
+        let small_bytes = c_buffer_prefix(&small);
+        let expected_copy = full_len.min(size - 1);
+        assert_eq!(small_bytes, full_bytes[..expected_copy]);
+        assert_eq!(small[expected_copy], 0);
+    }
+}
+
+/// Fuzz hardened `sprintf` with a tracked allocation so overflow attempts are truncated.
+fn fuzz_sprintf_hardened_truncation(input: &PrintfFuzzInput) {
+    let text = sanitize_cstring(&input.str_val, MAX_ABI_STRING);
+    let cap = ((input.width as usize) % 64).max(1);
+
+    let mut full_ptr: *mut c_char = std::ptr::null_mut();
+    let expected = unsafe {
+        call_asprintf_combo(&mut full_ptr, input.signed_val, text.as_ptr(), input.unsigned_val)
+    };
+    if expected < 0 {
+        return;
+    }
+    assert!(!full_ptr.is_null());
+
+    let full_len = expected as usize;
+    let full_bytes = unsafe { std::slice::from_raw_parts(full_ptr.cast::<u8>(), full_len + 1) };
+    assert_eq!(full_bytes[full_len], 0);
+
+    let tracked = unsafe { malloc(cap).cast::<c_char>() };
+    if tracked.is_null() {
+        unsafe { free(full_ptr.cast::<c_void>()) };
+        return;
+    }
+
+    unsafe {
+        std::ptr::write_bytes(tracked.cast::<u8>(), 0xA5, cap);
+    }
+    let rc = unsafe { call_sprintf_combo(tracked, input.signed_val, text.as_ptr(), input.unsigned_val) };
+    assert_eq!(rc, expected);
+
+    let tracked_bytes = unsafe { std::slice::from_raw_parts(tracked.cast::<u8>(), cap) };
+    let copied_len = tracked_bytes
+        .iter()
+        .position(|&byte| byte == 0)
+        .expect("hardened sprintf must NUL-terminate tracked buffers");
+    let expected_copy = full_len.min(cap.saturating_sub(1));
+    assert_eq!(copied_len, expected_copy);
+    assert_eq!(&tracked_bytes[..copied_len], &full_bytes[..copied_len]);
+
+    unsafe {
+        free(tracked.cast::<c_void>());
+        free(full_ptr.cast::<c_void>());
+    }
+}
+
+/// Fuzz `asprintf` and compare its result to the equivalent full `snprintf` render.
+fn fuzz_asprintf_matches_snprintf(input: &PrintfFuzzInput) {
+    let text = sanitize_cstring(&input.str_val, MAX_ABI_STRING);
+    let mut out: *mut c_char = std::ptr::null_mut();
+    let asprintf_rc =
+        unsafe { call_asprintf_combo(&mut out, input.signed_val, text.as_ptr(), input.unsigned_val) };
+    if asprintf_rc < 0 {
+        return;
+    }
+    assert!(!out.is_null());
+
+    let mut full = vec![0 as c_char; ABI_COMPARE_BUF];
+    let snprintf_rc = unsafe {
+        call_snprintf_combo(
+            full.as_mut_ptr(),
+            full.len(),
+            input.signed_val,
+            text.as_ptr(),
+            input.unsigned_val,
+        )
+    };
+    assert_eq!(snprintf_rc, asprintf_rc);
+
+    let full_len = snprintf_rc as usize;
+    assert!(
+        full_len < full.len(),
+        "comparison buffer must hold the full render, got len={full_len}"
+    );
+
+    let rendered = unsafe { std::slice::from_raw_parts(out.cast::<u8>(), full_len + 1) };
+    assert_eq!(rendered[full_len], 0);
+    assert_eq!(&rendered[..full_len], &c_buffer_prefix(&full));
+
+    unsafe {
+        free(out.cast::<c_void>());
+    }
+}
+
+/// Fuzz `%n` handling through `snprintf` with a valid count pointer.
+fn fuzz_percent_n_abi(input: &PrintfFuzzInput) {
+    let text = sanitize_cstring(&input.str_val, 128);
+    let size = (input.width as usize) % 64;
+    let mut buf = vec![0 as c_char; size.max(1)];
+    let mut count = -1_i32;
+
+    let rc = unsafe { call_snprintf_count(buf.as_mut_ptr(), size, &mut count, text.as_ptr()) };
+    assert!(rc >= 4);
+    assert_eq!(count, 3, "%n must record the byte count before the directive");
+
+    if size > 0 {
+        let expected = format!("abc:{}", text.to_string_lossy());
+        let copied = c_buffer_prefix(&buf);
+        let expected_copy = expected.len().min(size - 1);
+        assert_eq!(copied, expected.as_bytes()[..expected_copy]);
+        assert_eq!(buf[expected_copy], 0);
+    }
 }

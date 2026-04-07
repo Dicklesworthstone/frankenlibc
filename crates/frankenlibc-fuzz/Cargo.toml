@@ -12,6 +12,7 @@ libfuzzer-sys = { version = "0.4", features = ["arbitrary-derive"] }
 arbitrary = { version = "1", features = ["derive"] }
 frankenlibc-membrane = { path = "../frankenlibc-membrane" }
 frankenlibc-core = { path = "../frankenlibc-core" }
+frankenlibc-abi = { path = "../frankenlibc-abi" }
 
 [[bin]]
 name = "fuzz_string"

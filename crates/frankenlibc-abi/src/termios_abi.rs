@@ -4,15 +4,19 @@
 //! Pure-logic helpers (baud rate extraction, cfmakeraw) delegate
 //! to `frankenlibc_core::termios`.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::ffi::c_int;
+use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::sync::{LazyLock, Mutex};
+use std::time::Instant;
 
 use frankenlibc_core::errno;
 use frankenlibc_core::syscall;
 use frankenlibc_core::termios as termios_core;
+use frankenlibc_membrane::config::SafetyLevel;
 use frankenlibc_membrane::rough_path::{RoughPathMonitor, SignatureState as RoughPathState};
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
+use frankenlibc_membrane::util::now_utc_iso_like;
 
 use crate::errno_abi::set_abi_errno;
 use crate::runtime_policy;
@@ -34,12 +38,30 @@ impl TerminalModeClass {
             Self::NonCanonical => 1.0,
         }
     }
+
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Cooked => "cooked",
+            Self::Cbreak => "cbreak",
+            Self::Raw => "raw",
+            Self::NonCanonical => "noncanonical",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum SpeedCoupling {
     Coupled,
     Diverged,
+}
+
+impl SpeedCoupling {
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Coupled => "coupled",
+            Self::Diverged => "diverged",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -63,6 +85,14 @@ impl ApplyDisposition {
             Self::Immediate => 0.0,
             Self::Drain => 0.5,
             Self::Flush => 1.0,
+        }
+    }
+
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Immediate => "immediate",
+            Self::Drain => "drain",
+            Self::Flush => "flush",
         }
     }
 }
@@ -99,6 +129,18 @@ enum TerminalTransitionKind {
     EchoShift,
     SpeedShift,
     Composite,
+}
+
+impl TerminalTransitionKind {
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Stable => "stable",
+            Self::ModeShift => "mode_shift",
+            Self::EchoShift => "echo_shift",
+            Self::SpeedShift => "speed_shift",
+            Self::Composite => "composite",
+        }
+    }
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -206,6 +248,133 @@ static FD_SIGNATURE_TRACKERS: LazyLock<Mutex<HashMap<c_int, TerminalSignatureTra
     LazyLock::new(|| Mutex::new(HashMap::new()));
 static PTR_SIGNATURE_TRACKERS: LazyLock<Mutex<HashMap<usize, TerminalSignatureTracker>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
+const TERMINAL_SIGNATURE_LOG_CAPACITY: usize = 256;
+const TERMINAL_SIGNATURE_LOG_ARTIFACT: &str = "crates/frankenlibc-abi/src/termios_abi.rs";
+const TERMINAL_SIGNATURE_DECISION_PATH: &str = "termios->rough_path_signature";
+static TERMINAL_SIGNATURE_LOG_SEQ: AtomicU64 = AtomicU64::new(0);
+static TERMINAL_SIGNATURE_LOGS: LazyLock<Mutex<VecDeque<String>>> =
+    LazyLock::new(|| Mutex::new(VecDeque::new()));
+
+fn runtime_mode_label() -> &'static str {
+    match runtime_policy::mode() {
+        SafetyLevel::Strict => "strict",
+        SafetyLevel::Hardened => "hardened",
+        SafetyLevel::Off => "off",
+    }
+}
+
+fn push_terminal_signature_log(line: String) {
+    if let Ok(mut logs) = TERMINAL_SIGNATURE_LOGS.lock() {
+        if logs.len() >= TERMINAL_SIGNATURE_LOG_CAPACITY {
+            let _ = logs.pop_front();
+        }
+        logs.push_back(line);
+    }
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+#[must_use]
+pub(crate) fn export_terminal_signature_log_jsonl() -> String {
+    TERMINAL_SIGNATURE_LOGS
+        .lock()
+        .ok()
+        .map(|logs| logs.iter().cloned().collect::<Vec<_>>().join("\n"))
+        .unwrap_or_default()
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn clear_terminal_signature_log() {
+    if let Ok(mut logs) = TERMINAL_SIGNATURE_LOGS.lock() {
+        logs.clear();
+    }
+}
+
+fn log_terminal_signature_observation(
+    symbol: &'static str,
+    fd: Option<c_int>,
+    ptr_key: Option<usize>,
+    report: TerminalTransitionReport,
+    summary: TerminalTrackerSummary,
+    latency_ns: u64,
+) {
+    let decision_id = TERMINAL_SIGNATURE_LOG_SEQ.fetch_add(1, AtomicOrdering::Relaxed) + 1;
+    let trace_id = format!("terminal_signature::{decision_id:016x}");
+    let mode = runtime_mode_label();
+    let fd_field = fd
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "null".to_string());
+    let ptr_field = ptr_key
+        .map(|value| format!("\"0x{value:x}\""))
+        .unwrap_or_else(|| "null".to_string());
+    let timestamp = now_utc_iso_like();
+    let line = format!(
+        "{{\"timestamp\":\"{timestamp}\",\"trace_id\":\"{trace_id}\",\"mode\":\"{mode}\",\"api_family\":\"termios\",\"symbol\":\"{symbol}\",\"decision_path\":\"{TERMINAL_SIGNATURE_DECISION_PATH}\",\"healing_action\":null,\"errno\":0,\"latency_ns\":{latency_ns},\"artifact_refs\":[\"{TERMINAL_SIGNATURE_LOG_ARTIFACT}\"],\"fd\":{fd_field},\"ptr_key\":{ptr_field},\"transition\":\"{}\",\"previous_mode\":\"{}\",\"current_mode\":\"{}\",\"echo_enabled\":{},\"speed_coupling\":\"{}\",\"apply\":\"{}\",\"is_legal\":{},\"illegal_transition_count\":{},\"rough_path_state\":\"{:?}\",\"anomaly_score\":{:.6}}}",
+        report.kind.label(),
+        report.previous.mode.label(),
+        report.current.mode.label(),
+        report.current.echo_enabled,
+        report.current.speed_coupling.label(),
+        report.apply.label(),
+        summary.is_legal,
+        summary.illegal_transition_count,
+        summary.rough_path_state,
+        summary.anomaly_score,
+    );
+    push_terminal_signature_log(line);
+
+    let ptr_display = ptr_key
+        .map(|value| format!("0x{value:x}"))
+        .unwrap_or_default();
+    if summary.is_legal {
+        tracing::debug!(
+            target: "terminal_signature",
+            trace_id = %trace_id,
+            mode,
+            api_family = "termios",
+            symbol,
+            decision_path = TERMINAL_SIGNATURE_DECISION_PATH,
+            healing_action = "none",
+            errno = 0_i32,
+            latency_ns,
+            fd = fd.unwrap_or(-1),
+            ptr_key = %ptr_display,
+            transition = report.kind.label(),
+            previous_mode = report.previous.mode.label(),
+            current_mode = report.current.mode.label(),
+            echo_enabled = report.current.echo_enabled,
+            speed_coupling = report.current.speed_coupling.label(),
+            apply = report.apply.label(),
+            illegal_transition_count = summary.illegal_transition_count,
+            anomaly_score = summary.anomaly_score,
+            rough_path_state = ?summary.rough_path_state,
+            "terminal signature observation"
+        );
+    } else {
+        tracing::warn!(
+            target: "terminal_signature",
+            trace_id = %trace_id,
+            mode,
+            api_family = "termios",
+            symbol,
+            decision_path = TERMINAL_SIGNATURE_DECISION_PATH,
+            healing_action = "none",
+            errno = 0_i32,
+            latency_ns,
+            fd = fd.unwrap_or(-1),
+            ptr_key = %ptr_display,
+            transition = report.kind.label(),
+            previous_mode = report.previous.mode.label(),
+            current_mode = report.current.mode.label(),
+            echo_enabled = report.current.echo_enabled,
+            speed_coupling = report.current.speed_coupling.label(),
+            apply = report.apply.label(),
+            illegal_transition_count = summary.illegal_transition_count,
+            anomaly_score = summary.anomaly_score,
+            rough_path_state = ?summary.rough_path_state,
+            "illegal terminal signature transition detected"
+        );
+    }
+}
 
 fn apply_disposition(optional_actions: c_int) -> ApplyDisposition {
     match optional_actions {
@@ -325,35 +494,49 @@ fn rough_path_observation(report: TerminalTransitionReport) -> [f64; 4] {
 }
 
 fn observe_fd_transition(
+    symbol: &'static str,
     fd: c_int,
     before: &libc::termios,
     after: &libc::termios,
     optional_actions: c_int,
 ) -> TerminalTrackerSummary {
+    let started = Instant::now();
     let report = analyze_transition(before, after, optional_actions);
-    let mut trackers = FD_SIGNATURE_TRACKERS
-        .lock()
-        .expect("termios fd signature tracker mutex poisoned");
-    trackers
-        .entry(fd)
-        .or_insert_with(TerminalSignatureTracker::new)
-        .observe(report)
+    let summary = {
+        let mut trackers = FD_SIGNATURE_TRACKERS
+            .lock()
+            .expect("termios fd signature tracker mutex poisoned");
+        trackers
+            .entry(fd)
+            .or_insert_with(TerminalSignatureTracker::new)
+            .observe(report)
+    };
+    let latency_ns = started.elapsed().as_nanos().min(u128::from(u64::MAX)) as u64;
+    log_terminal_signature_observation(symbol, Some(fd), None, report, summary, latency_ns);
+    summary
 }
 
 fn observe_ptr_transition(
+    symbol: &'static str,
     ptr_key: usize,
     before: &libc::termios,
     after: &libc::termios,
     optional_actions: c_int,
 ) -> TerminalTrackerSummary {
+    let started = Instant::now();
     let report = analyze_transition(before, after, optional_actions);
-    let mut trackers = PTR_SIGNATURE_TRACKERS
-        .lock()
-        .expect("termios pointer signature tracker mutex poisoned");
-    trackers
-        .entry(ptr_key)
-        .or_insert_with(TerminalSignatureTracker::new)
-        .observe(report)
+    let summary = {
+        let mut trackers = PTR_SIGNATURE_TRACKERS
+            .lock()
+            .expect("termios pointer signature tracker mutex poisoned");
+        trackers
+            .entry(ptr_key)
+            .or_insert_with(TerminalSignatureTracker::new)
+            .observe(report)
+    };
+    let latency_ns = started.elapsed().as_nanos().min(u128::from(u64::MAX)) as u64;
+    log_terminal_signature_observation(symbol, None, Some(ptr_key), report, summary, latency_ns);
+    summary
 }
 
 // ---------------------------------------------------------------------------
@@ -444,9 +627,11 @@ pub unsafe extern "C" fn tcsetattr(
             -1
         }
     };
-    if rc == 0 && let Some(before) = previous_snapshot.as_ref() {
+    if rc == 0
+        && let Some(before) = previous_snapshot.as_ref()
+    {
         let after = unsafe { &*termios_p };
-        let _ = observe_fd_transition(fd, before, after, act);
+        let _ = observe_fd_transition("tcsetattr", fd, before, after, act);
     }
     let adverse = rc != 0;
     // libc sets errno on failure (EBADF, ENOTTY, EINTR, etc.) — do not overwrite.
@@ -497,7 +682,13 @@ pub unsafe extern "C" fn cfsetispeed(termios_p: *mut libc::termios, speed: u32) 
         (*termios_p).c_ispeed = speed as libc::speed_t;
     }
     let after = unsafe { std::ptr::read(termios_p) };
-    let _ = observe_ptr_transition(termios_p as usize, &before, &after, termios_core::TCSANOW);
+    let _ = observe_ptr_transition(
+        "cfsetispeed",
+        termios_p as usize,
+        &before,
+        &after,
+        termios_core::TCSANOW,
+    );
     0
 }
 
@@ -522,7 +713,13 @@ pub unsafe extern "C" fn cfsetospeed(termios_p: *mut libc::termios, speed: u32) 
         (*termios_p).c_ospeed = speed as libc::speed_t;
     }
     let after = unsafe { std::ptr::read(termios_p) };
-    let _ = observe_ptr_transition(termios_p as usize, &before, &after, termios_core::TCSANOW);
+    let _ = observe_ptr_transition(
+        "cfsetospeed",
+        termios_p as usize,
+        &before,
+        &after,
+        termios_core::TCSANOW,
+    );
     0
 }
 
@@ -658,6 +855,17 @@ pub unsafe extern "C" fn tcsendbreak(fd: c_int, duration: c_int) -> c_int {
 mod tests {
     use super::*;
 
+    fn clear_terminal_signature_trackers_for_tests() {
+        FD_SIGNATURE_TRACKERS
+            .lock()
+            .expect("termios fd tracker mutex poisoned")
+            .clear();
+        PTR_SIGNATURE_TRACKERS
+            .lock()
+            .expect("termios pointer tracker mutex poisoned")
+            .clear();
+    }
+
     fn cooked_termios() -> libc::termios {
         let mut termios = unsafe { std::mem::zeroed::<libc::termios>() };
         termios.c_iflag = (libc::ICRNL | libc::IXON) as libc::tcflag_t;
@@ -776,6 +984,8 @@ mod tests {
 
     #[test]
     fn cfsetospeed_tracks_struct_level_illegal_transition() {
+        clear_terminal_signature_trackers_for_tests();
+        clear_terminal_signature_log();
         let mut termios = cooked_termios();
         let ptr_key = (&termios as *const libc::termios) as usize;
 
@@ -794,7 +1004,9 @@ mod tests {
     }
 
     #[test]
-    fn pty_standard_sequences_stay_legal() {
+    fn pty_bash_vim_tmux_sequences_stay_legal() {
+        clear_terminal_signature_trackers_for_tests();
+        clear_terminal_signature_log();
         let Some((master, slave)) = pty_pair() else {
             return;
         };
@@ -803,10 +1015,14 @@ mod tests {
         let rc = unsafe { tcgetattr(slave, &mut original) };
         assert_eq!(rc, 0);
 
+        // bash/login shell baseline: canonical cooked mode from the PTY.
+        // vim-like setup: disable canonical processing and echo first.
         let mut cbreak = original;
         cbreak.c_lflag &= !(libc::ICANON as libc::tcflag_t);
         cbreak.c_lflag &= !(libc::ECHO as libc::tcflag_t);
 
+        // tmux/screen-like raw handoff: transition through a raw mode while
+        // preserving the original baud coupling from the live PTY.
         let mut raw = cbreak;
         unsafe { libc::cfmakeraw(&mut raw) };
         raw.c_cflag |= libc::CREAD as libc::tcflag_t;
@@ -831,5 +1047,37 @@ mod tests {
             libc::close(master);
             libc::close(slave);
         }
+    }
+
+    #[test]
+    fn terminal_signature_logs_include_required_fields() {
+        clear_terminal_signature_trackers_for_tests();
+        clear_terminal_signature_log();
+
+        let before = cooked_termios();
+        let mut after = cooked_termios();
+        after.c_ospeed = libc::B115200;
+        after.c_cflag = (after.c_cflag & !(termios_core::CBAUD as libc::tcflag_t)) | libc::B115200;
+
+        let _ = observe_ptr_transition(
+            "cfsetospeed",
+            0xfeed_cafe,
+            &before,
+            &after,
+            termios_core::TCSANOW,
+        );
+
+        let jsonl = export_terminal_signature_log_jsonl();
+        assert!(jsonl.contains("\"trace_id\""));
+        assert!(jsonl.contains("\"mode\""));
+        assert!(jsonl.contains("\"api_family\":\"termios\""));
+        assert!(jsonl.contains("\"symbol\":\"cfsetospeed\""));
+        assert!(jsonl.contains("\"decision_path\":\"termios->rough_path_signature\""));
+        assert!(jsonl.contains("\"healing_action\":null"));
+        assert!(jsonl.contains("\"errno\":0"));
+        assert!(jsonl.contains("\"latency_ns\":"));
+        assert!(
+            jsonl.contains("\"artifact_refs\":[\"crates/frankenlibc-abi/src/termios_abi.rs\"]")
+        );
     }
 }

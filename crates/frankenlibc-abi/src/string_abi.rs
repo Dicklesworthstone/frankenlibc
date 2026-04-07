@@ -7,9 +7,16 @@
 
 use std::cell::Cell;
 use std::ffi::{CStr, c_char, c_int, c_long, c_longlong, c_ulong, c_ulonglong, c_void};
+use std::sync::{
+    Once,
+    atomic::{AtomicU32, Ordering as AtomicOrdering},
+};
 
 use frankenlibc_membrane::check_oracle::CheckStage;
 use frankenlibc_membrane::heal::{HealingAction, global_healing_policy};
+use frankenlibc_membrane::runtime_math::clifford::{
+    SimdIsa, SimdStringOperation, certify_simd_string_operation,
+};
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
 use crate::htm_fast_path::{HtmSite, HtmSiteSnapshot};
@@ -22,6 +29,40 @@ thread_local! {
 
 const MEMCPY_HTM_MAX_BYTES: usize = 256;
 static MEMCPY_HTM_SITE: HtmSite = HtmSite::new("memcpy");
+const SIMD_FEATURE_SSE42: u32 = 1 << 0;
+const SIMD_FEATURE_AVX2: u32 = 1 << 1;
+const SIMD_FEATURE_NEON: u32 = 1 << 2;
+const SIMD_FEATURE_OVERRIDE_DISABLED: u32 = u32::MAX;
+const SIMD_ISOMORPHISM_AUDIT_JSON: &str =
+    include_str!(concat!(env!("OUT_DIR"), "/simd_isomorphism_audit.json"));
+
+static STRING_SIMD_FEATURE_OVERRIDE: AtomicU32 = AtomicU32::new(SIMD_FEATURE_OVERRIDE_DISABLED);
+static MEMCPY_SIMD_LOG_ONCE: Once = Once::new();
+static MEMCMP_SIMD_LOG_ONCE: Once = Once::new();
+static STRLEN_SIMD_LOG_ONCE: Once = Once::new();
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct StringSimdDispatch {
+    isa: SimdIsa,
+    label: &'static str,
+    lane_bytes: usize,
+}
+
+impl StringSimdDispatch {
+    const SCALAR: Self = Self {
+        isa: SimdIsa::Scalar,
+        label: "scalar",
+        lane_bytes: 1,
+    };
+
+    const fn from_isa(isa: SimdIsa) -> Self {
+        Self {
+            isa,
+            label: isa.label(),
+            lane_bytes: isa.lane_bytes(),
+        }
+    }
+}
 
 struct StringMembraneGuard;
 
@@ -55,6 +96,214 @@ fn enter_string_membrane_guard() -> Option<StringMembraneGuard> {
         .unwrap_or(None)
 }
 
+fn active_string_simd_feature_mask() -> u32 {
+    let override_mask = STRING_SIMD_FEATURE_OVERRIDE.load(AtomicOrdering::Relaxed);
+    if override_mask != SIMD_FEATURE_OVERRIDE_DISABLED {
+        return override_mask;
+    }
+
+    let mut mask = 0u32;
+    #[cfg(target_arch = "x86_64")]
+    {
+        if std::is_x86_feature_detected!("sse4.2") {
+            mask |= SIMD_FEATURE_SSE42;
+        }
+        if std::is_x86_feature_detected!("avx2") {
+            mask |= SIMD_FEATURE_AVX2;
+        }
+    }
+    #[cfg(target_arch = "aarch64")]
+    {
+        if std::arch::is_aarch64_feature_detected!("neon") {
+            mask |= SIMD_FEATURE_NEON;
+        }
+    }
+    mask
+}
+
+fn string_simd_feature_list(mask: u32) -> &'static str {
+    match (
+        mask & SIMD_FEATURE_AVX2 != 0,
+        mask & SIMD_FEATURE_SSE42 != 0,
+        mask & SIMD_FEATURE_NEON != 0,
+    ) {
+        (true, true, false) => "avx2,sse4.2",
+        (true, false, false) => "avx2",
+        (false, true, false) => "sse4.2",
+        (false, false, true) => "neon",
+        (true, false, true) => "avx2,neon",
+        (false, true, true) => "sse4.2,neon",
+        (true, true, true) => "avx2,sse4.2,neon",
+        (false, false, false) => "scalar-only",
+    }
+}
+
+fn log_string_simd_dispatch_once(function: &'static str, dispatch: StringSimdDispatch, mask: u32) {
+    let once = match function {
+        "memcpy" => &MEMCPY_SIMD_LOG_ONCE,
+        "memcmp" => &MEMCMP_SIMD_LOG_ONCE,
+        "strlen" => &STRLEN_SIMD_LOG_ONCE,
+        _ => return,
+    };
+    once.call_once(|| {
+        tracing::info!(
+            target: "simd_dispatch",
+            function,
+            selected_impl = dispatch.label,
+            cpu_features = string_simd_feature_list(mask),
+            lane_bytes = dispatch.lane_bytes
+        );
+    });
+}
+
+fn dispatch_threshold(operation: SimdStringOperation, isa: SimdIsa) -> usize {
+    match (operation, isa) {
+        (_, SimdIsa::Scalar) => usize::MAX,
+        (SimdStringOperation::Memcpy, SimdIsa::Avx2) => 128,
+        (SimdStringOperation::Memcpy, SimdIsa::Sse42 | SimdIsa::Neon) => 32,
+        (SimdStringOperation::Memcmp, SimdIsa::Avx2) => 64,
+        (SimdStringOperation::Memcmp, SimdIsa::Sse42 | SimdIsa::Neon) => 16,
+        (SimdStringOperation::Strlen, SimdIsa::Avx2) => 64,
+        (SimdStringOperation::Strlen, SimdIsa::Sse42 | SimdIsa::Neon) => 16,
+    }
+}
+
+fn regions_overlap(dst_addr: usize, src_addr: usize, len: usize) -> bool {
+    if len == 0 {
+        return false;
+    }
+    let dst_end = dst_addr.saturating_add(len);
+    let src_end = src_addr.saturating_add(len);
+    dst_addr < src_end && src_addr < dst_end
+}
+
+fn try_simd_dispatch_candidate(
+    operation: SimdStringOperation,
+    isa: SimdIsa,
+    src_addr: usize,
+    dst_addr: usize,
+    len_hint: usize,
+    overlap: bool,
+) -> Option<StringSimdDispatch> {
+    if len_hint < dispatch_threshold(operation, isa) {
+        return None;
+    }
+    let certificate =
+        certify_simd_string_operation(operation, isa, src_addr, dst_addr, len_hint, overlap);
+    certificate
+        .equivalent
+        .then(|| StringSimdDispatch::from_isa(isa))
+}
+
+fn select_string_simd_dispatch(
+    operation: SimdStringOperation,
+    src_addr: usize,
+    dst_addr: usize,
+    len_hint: usize,
+) -> StringSimdDispatch {
+    let mask = active_string_simd_feature_mask();
+    let overlap = matches!(operation, SimdStringOperation::Memcpy)
+        && regions_overlap(dst_addr, src_addr, len_hint);
+
+    let dispatch = if mask & SIMD_FEATURE_AVX2 != 0 {
+        try_simd_dispatch_candidate(
+            operation,
+            SimdIsa::Avx2,
+            src_addr,
+            dst_addr,
+            len_hint,
+            overlap,
+        )
+    } else {
+        None
+    }
+    .or_else(|| {
+        if mask & SIMD_FEATURE_SSE42 != 0 {
+            try_simd_dispatch_candidate(
+                operation,
+                SimdIsa::Sse42,
+                src_addr,
+                dst_addr,
+                len_hint,
+                overlap,
+            )
+        } else {
+            None
+        }
+    })
+    .or_else(|| {
+        if mask & SIMD_FEATURE_NEON != 0 {
+            try_simd_dispatch_candidate(
+                operation,
+                SimdIsa::Neon,
+                src_addr,
+                dst_addr,
+                len_hint,
+                overlap,
+            )
+        } else {
+            None
+        }
+    })
+    .unwrap_or(StringSimdDispatch::SCALAR);
+
+    log_string_simd_dispatch_once(operation.symbol(), dispatch, mask);
+    dispatch
+}
+
+#[doc(hidden)]
+pub fn string_simd_swap_feature_mask_for_tests(mask: Option<u32>) -> u32 {
+    STRING_SIMD_FEATURE_OVERRIDE.swap(
+        mask.unwrap_or(SIMD_FEATURE_OVERRIDE_DISABLED),
+        AtomicOrdering::SeqCst,
+    )
+}
+
+#[doc(hidden)]
+pub fn string_simd_restore_feature_mask_for_tests(previous: u32) {
+    STRING_SIMD_FEATURE_OVERRIDE.store(previous, AtomicOrdering::SeqCst);
+}
+
+#[doc(hidden)]
+pub const fn string_simd_feature_mask_sse42_for_tests() -> u32 {
+    SIMD_FEATURE_SSE42
+}
+
+#[doc(hidden)]
+pub const fn string_simd_feature_mask_avx2_for_tests() -> u32 {
+    SIMD_FEATURE_AVX2
+}
+
+#[doc(hidden)]
+pub const fn string_simd_feature_mask_neon_for_tests() -> u32 {
+    SIMD_FEATURE_NEON
+}
+
+#[doc(hidden)]
+pub const fn string_simd_feature_mask_avx2_sse42_for_tests() -> u32 {
+    SIMD_FEATURE_AVX2 | SIMD_FEATURE_SSE42
+}
+
+#[doc(hidden)]
+pub fn simd_isomorphism_audit_json_for_tests() -> &'static str {
+    SIMD_ISOMORPHISM_AUDIT_JSON
+}
+
+#[doc(hidden)]
+pub fn memcpy_dispatch_label_for_tests(dst_addr: usize, src_addr: usize, n: usize) -> &'static str {
+    select_string_simd_dispatch(SimdStringOperation::Memcpy, src_addr, dst_addr, n).label
+}
+
+#[doc(hidden)]
+pub fn memcmp_dispatch_label_for_tests(s1_addr: usize, s2_addr: usize, n: usize) -> &'static str {
+    select_string_simd_dispatch(SimdStringOperation::Memcmp, s1_addr, s2_addr, n).label
+}
+
+#[doc(hidden)]
+pub fn strlen_dispatch_label_for_tests(s_addr: usize, len_hint: usize) -> &'static str {
+    select_string_simd_dispatch(SimdStringOperation::Strlen, s_addr, s_addr, len_hint).label
+}
+
 #[inline(never)]
 unsafe fn raw_memcpy_bytes(dst: *mut u8, src: *const u8, n: usize) {
     // Byte-by-byte copy using volatile operations to prevent the compiler
@@ -66,6 +315,20 @@ unsafe fn raw_memcpy_bytes(dst: *mut u8, src: *const u8, n: usize) {
         while i < n {
             std::ptr::write_volatile(dst.add(i), std::ptr::read_volatile(src.add(i)));
             i += 1;
+        }
+    }
+}
+
+#[inline(never)]
+unsafe fn raw_dispatch_memcpy_bytes(dst: *mut u8, src: *const u8, n: usize) {
+    let dispatch =
+        select_string_simd_dispatch(SimdStringOperation::Memcpy, src as usize, dst as usize, n);
+    // SAFETY: caller guarantees memcpy preconditions for `n` bytes.
+    unsafe {
+        if dispatch.lane_bytes > 1 {
+            raw_lane_memcpy_bytes(dst, src, n, dispatch.lane_bytes);
+        } else {
+            raw_memcpy_bytes(dst, src, n);
         }
     }
 }
@@ -145,6 +408,179 @@ unsafe fn raw_memset_bytes(dst: *mut u8, value: u8, n: usize) {
             std::ptr::write_volatile(dst.add(i), value);
             i += 1;
         }
+    }
+}
+
+#[inline]
+unsafe fn copy_unaligned_16(dst: *mut u8, src: *const u8) {
+    // SAFETY: caller guarantees 16 readable/writable bytes.
+    unsafe {
+        let lane = std::ptr::read_unaligned(src.cast::<u128>());
+        std::ptr::write_unaligned(dst.cast::<u128>(), lane);
+    }
+}
+
+#[inline]
+unsafe fn copy_unaligned_32(dst: *mut u8, src: *const u8) {
+    // SAFETY: caller guarantees 32 readable/writable bytes.
+    unsafe {
+        copy_unaligned_16(dst, src);
+        copy_unaligned_16(dst.add(16), src.add(16));
+    }
+}
+
+#[inline(never)]
+unsafe fn raw_lane_memcpy_bytes(dst: *mut u8, src: *const u8, n: usize, lane_bytes: usize) {
+    // SAFETY: caller guarantees dst/src are valid for n bytes with memcpy semantics.
+    unsafe {
+        let mut i = 0usize;
+        if lane_bytes >= 32 {
+            while i + 32 <= n {
+                copy_unaligned_32(dst.add(i), src.add(i));
+                i += 32;
+            }
+        }
+        if lane_bytes >= 16 {
+            while i + 16 <= n {
+                copy_unaligned_16(dst.add(i), src.add(i));
+                i += 16;
+            }
+        }
+        while i < n {
+            std::ptr::write_volatile(dst.add(i), std::ptr::read_volatile(src.add(i)));
+            i += 1;
+        }
+    }
+}
+
+#[inline]
+unsafe fn chunk_equal_16(lhs: *const u8, rhs: *const u8) -> bool {
+    // SAFETY: caller guarantees 16 readable bytes from each pointer.
+    unsafe {
+        std::ptr::read_unaligned(lhs.cast::<u128>()) == std::ptr::read_unaligned(rhs.cast::<u128>())
+    }
+}
+
+#[inline]
+unsafe fn chunk_equal_32(lhs: *const u8, rhs: *const u8) -> bool {
+    // SAFETY: caller guarantees 32 readable bytes from each pointer.
+    unsafe { chunk_equal_16(lhs, rhs) && chunk_equal_16(lhs.add(16), rhs.add(16)) }
+}
+
+#[inline(never)]
+unsafe fn raw_lane_memcmp_bytes(
+    s1: *const u8,
+    s2: *const u8,
+    n: usize,
+    lane_bytes: usize,
+) -> c_int {
+    // SAFETY: caller guarantees both regions are readable for n bytes.
+    unsafe {
+        let mut i = 0usize;
+        if lane_bytes >= 32 {
+            while i + 32 <= n {
+                if !chunk_equal_32(s1.add(i), s2.add(i)) {
+                    let end = i + 32;
+                    while i < end {
+                        let av = *s1.add(i);
+                        let bv = *s2.add(i);
+                        if av != bv {
+                            return if av < bv { -1 } else { 1 };
+                        }
+                        i += 1;
+                    }
+                } else {
+                    i += 32;
+                }
+            }
+        }
+        if lane_bytes >= 16 {
+            while i + 16 <= n {
+                if !chunk_equal_16(s1.add(i), s2.add(i)) {
+                    let end = i + 16;
+                    while i < end {
+                        let av = *s1.add(i);
+                        let bv = *s2.add(i);
+                        if av != bv {
+                            return if av < bv { -1 } else { 1 };
+                        }
+                        i += 1;
+                    }
+                } else {
+                    i += 16;
+                }
+            }
+        }
+        while i < n {
+            let av = *s1.add(i);
+            let bv = *s2.add(i);
+            if av != bv {
+                return if av < bv { -1 } else { 1 };
+            }
+            i += 1;
+        }
+        0
+    }
+}
+
+#[inline(never)]
+unsafe fn raw_dispatch_memcmp_bytes(s1: *const u8, s2: *const u8, n: usize) -> c_int {
+    let dispatch =
+        select_string_simd_dispatch(SimdStringOperation::Memcmp, s1 as usize, s2 as usize, n);
+    // SAFETY: caller guarantees both regions are readable for `n` bytes.
+    unsafe {
+        if dispatch.lane_bytes > 1 {
+            raw_lane_memcmp_bytes(s1, s2, n, dispatch.lane_bytes)
+        } else {
+            let lhs = std::slice::from_raw_parts(s1, n);
+            let rhs = std::slice::from_raw_parts(s2, n);
+            match frankenlibc_core::string::mem::memcmp(lhs, rhs, n) {
+                std::cmp::Ordering::Equal => 0,
+                std::cmp::Ordering::Less => -1,
+                std::cmp::Ordering::Greater => 1,
+            }
+        }
+    }
+}
+
+#[inline(never)]
+unsafe fn raw_lane_strlen_bytes(s: *const c_char, lane_bytes: usize) -> usize {
+    let step = lane_bytes.max(1);
+    // SAFETY: caller guarantees a valid NUL-terminated string.
+    unsafe {
+        let mut len = 0usize;
+        loop {
+            let end = len + step;
+            let mut idx = len;
+            while idx < end {
+                if *s.add(idx) == 0 {
+                    return idx;
+                }
+                idx += 1;
+            }
+            len = end;
+        }
+    }
+}
+
+#[inline(never)]
+unsafe fn raw_lane_strnlen_bytes(s: *const c_char, max: usize, lane_bytes: usize) -> (usize, bool) {
+    let step = lane_bytes.max(1);
+    // SAFETY: caller guarantees `s` readable up to `max`.
+    unsafe {
+        let mut len = 0usize;
+        while len < max {
+            let end = (len + step).min(max);
+            let mut idx = len;
+            while idx < end {
+                if *s.add(idx) == 0 {
+                    return (idx, true);
+                }
+                idx += 1;
+            }
+            len = end;
+        }
+        (max, false)
     }
 }
 
@@ -301,13 +737,13 @@ pub unsafe extern "C" fn memcpy(dst: *mut c_void, src: *const c_void, n: usize) 
         if !(crate::htm_fast_path::htm_forced_mode_active_for_tests()
             && try_memcpy_htm(dst.cast::<u8>(), src.cast::<u8>(), n))
         {
-            unsafe { raw_memcpy_bytes(dst.cast::<u8>(), src.cast::<u8>(), n) };
+            unsafe { raw_dispatch_memcpy_bytes(dst.cast::<u8>(), src.cast::<u8>(), n) };
         }
         return dst;
     }
     if !runtime_policy::mode().heals_enabled() {
         if !try_memcpy_htm(dst.cast::<u8>(), src.cast::<u8>(), n) {
-            unsafe { raw_memcpy_bytes(dst.cast::<u8>(), src.cast::<u8>(), n) };
+            unsafe { raw_dispatch_memcpy_bytes(dst.cast::<u8>(), src.cast::<u8>(), n) };
         }
         return dst;
     }
@@ -315,7 +751,7 @@ pub unsafe extern "C" fn memcpy(dst: *mut c_void, src: *const c_void, n: usize) 
     let Some(_membrane_guard) = enter_string_membrane_guard() else {
         // SAFETY: reentrant fallback avoids runtime-policy recursion and mirrors memcpy semantics.
         unsafe {
-            raw_memcpy_bytes(dst.cast::<u8>(), src.cast::<u8>(), n);
+            raw_dispatch_memcpy_bytes(dst.cast::<u8>(), src.cast::<u8>(), n);
         }
         return dst;
     };
@@ -375,7 +811,7 @@ pub unsafe extern "C" fn memcpy(dst: *mut c_void, src: *const c_void, n: usize) 
     // SAFETY: `copy_len` is either original `n` (strict) or clamped to known bounds.
     if !try_memcpy_htm(dst.cast::<u8>(), src.cast::<u8>(), copy_len) {
         unsafe {
-            raw_memcpy_bytes(dst.cast::<u8>(), src.cast::<u8>(), copy_len);
+            raw_dispatch_memcpy_bytes(dst.cast::<u8>(), src.cast::<u8>(), copy_len);
         }
     }
     record_string_stage_outcome(&ordering, aligned, recent_page, None);
@@ -638,8 +1074,8 @@ pub unsafe extern "C" fn memcmp(s1: *const c_void, s2: *const c_void, n: usize) 
 
     let (cmp_len, _clamped) = maybe_clamp_copy_len(
         n,
-        Some(s1 as usize),
-        Some(s2 as usize),
+        known_remaining(s1 as usize),
+        known_remaining(s2 as usize),
         mode.heals_enabled() || matches!(decision.action, MembraneAction::Repair(_)),
     );
     if cmp_len == 0 {
@@ -659,15 +1095,7 @@ pub unsafe extern "C" fn memcmp(s1: *const c_void, s2: *const c_void, n: usize) 
     }
 
     // SAFETY: `cmp_len` is either original `n` or clamped by known safe bounds.
-    let out = unsafe {
-        let a = std::slice::from_raw_parts(s1.cast::<u8>(), cmp_len);
-        let b = std::slice::from_raw_parts(s2.cast::<u8>(), cmp_len);
-        match frankenlibc_core::string::mem::memcmp(a, b, cmp_len) {
-            std::cmp::Ordering::Equal => 0,
-            std::cmp::Ordering::Less => -1,
-            std::cmp::Ordering::Greater => 1,
-        }
-    };
+    let out = unsafe { raw_dispatch_memcmp_bytes(s1.cast::<u8>(), s2.cast::<u8>(), cmp_len) };
     record_string_stage_outcome(
         &ordering,
         aligned,
@@ -924,13 +1352,9 @@ pub unsafe extern "C" fn strlen(s: *const c_char) -> usize {
         }
     }
     if !runtime_policy::mode().heals_enabled() {
-        unsafe {
-            let mut len = 0usize;
-            while *s.add(len) != 0 {
-                len += 1;
-            }
-            return len;
-        }
+        let dispatch =
+            select_string_simd_dispatch(SimdStringOperation::Strlen, s as usize, s as usize, 64);
+        return unsafe { raw_lane_strlen_bytes(s, dispatch.lane_bytes) };
     }
 
     let rem = known_remaining(s as usize);
@@ -960,25 +1384,28 @@ pub unsafe extern "C" fn strlen(s: *const c_char) -> usize {
     if (mode.heals_enabled() || matches!(decision.action, MembraneAction::Repair(_)))
         && let Some(limit) = rem
     {
+        let dispatch = select_string_simd_dispatch(
+            SimdStringOperation::Strlen,
+            s as usize,
+            s as usize,
+            limit.max(1),
+        );
         // SAFETY: bounded scan within known allocation extent.
-        unsafe {
-            for i in 0..limit {
-                if *s.add(i) == 0 {
-                    record_string_stage_outcome(
-                        &ordering,
-                        aligned,
-                        recent_page,
-                        Some(stage_index(&ordering, CheckStage::Bounds)),
-                    );
-                    runtime_policy::observe(
-                        ApiFamily::StringMemory,
-                        decision.profile,
-                        runtime_policy::scaled_cost(7, i),
-                        false,
-                    );
-                    return i;
-                }
-            }
+        let (len, terminated) = unsafe { raw_lane_strnlen_bytes(s, limit, dispatch.lane_bytes) };
+        if terminated {
+            record_string_stage_outcome(
+                &ordering,
+                aligned,
+                recent_page,
+                Some(stage_index(&ordering, CheckStage::Bounds)),
+            );
+            runtime_policy::observe(
+                ApiFamily::StringMemory,
+                decision.profile,
+                runtime_policy::scaled_cost(7, len),
+                false,
+            );
+            return len;
         }
         let action = HealingAction::TruncateWithNull {
             requested: limit.saturating_add(1),
@@ -1001,11 +1428,10 @@ pub unsafe extern "C" fn strlen(s: *const c_char) -> usize {
     }
 
     // SAFETY: strict mode preserves libc-like raw scan semantics.
+    let dispatch =
+        select_string_simd_dispatch(SimdStringOperation::Strlen, s as usize, s as usize, 64);
     unsafe {
-        let mut len = 0usize;
-        while *s.add(len) != 0 {
-            len += 1;
-        }
+        let len = raw_lane_strlen_bytes(s, dispatch.lane_bytes);
         record_string_stage_outcome(
             &ordering,
             aligned,

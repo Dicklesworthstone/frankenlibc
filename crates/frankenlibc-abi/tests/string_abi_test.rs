@@ -2,14 +2,21 @@
 
 //! Integration tests for `<string.h>` ABI entrypoints.
 
-use std::ffi::{CStr, c_char, c_int, c_void};
-
 use frankenlibc_abi::htm_fast_path::{
     HtmTestMode, htm_restore_test_mode_for_tests, htm_swap_abort_code_for_tests,
     htm_swap_test_mode_for_tests,
 };
 use frankenlibc_abi::string_abi::*;
 use frankenlibc_abi::unistd_abi::strerror_l;
+use serde_json::Value;
+use std::ffi::{CStr, c_char, c_int, c_void};
+
+fn with_simd_mask<T>(mask: u32, f: impl FnOnce() -> T) -> T {
+    let previous = string_simd_swap_feature_mask_for_tests(Some(mask));
+    let outcome = f();
+    string_simd_restore_feature_mask_for_tests(previous);
+    outcome
+}
 
 // ===========================================================================
 // memcpy / memmove / memset / memcmp / memchr / memrchr
@@ -48,7 +55,7 @@ fn memcpy_htm_fast_path_commits_when_forced() {
     assert_eq!(ret, dst.as_mut_ptr().cast::<c_void>());
     assert_eq!(&dst[..src.len()], &src);
     assert!(
-        after.commits >= before.commits + 1,
+        after.commits > before.commits,
         "memcpy should record an HTM commit before={before:?} after={after:?}"
     );
     assert_eq!(after.fallbacks, before.fallbacks);
@@ -72,11 +79,11 @@ fn memcpy_htm_abort_falls_back_and_preserves_bytes() {
     assert_eq!(ret, dst.as_mut_ptr().cast::<c_void>());
     assert_eq!(&dst[..src.len()], &src);
     assert!(
-        after.aborts >= before.aborts + 1,
+        after.aborts > before.aborts,
         "memcpy should record an HTM abort before={before:?} after={after:?}"
     );
     assert!(
-        after.fallbacks >= before.fallbacks + 1,
+        after.fallbacks > before.fallbacks,
         "memcpy aborts should take the software fallback before={before:?} after={after:?}"
     );
     assert_eq!(after.last_abort_code, 0x55AA);
@@ -142,6 +149,105 @@ fn memcmp_greater_than() {
 }
 
 #[test]
+fn simd_audit_lists_memcpy_memcmp_and_strlen_certificates() {
+    let audit: Value = serde_json::from_str(simd_isomorphism_audit_json_for_tests())
+        .expect("simd audit JSON should parse");
+    let entries = audit["entries"]
+        .as_array()
+        .expect("entries must be an array");
+    for symbol in ["memcpy", "memcmp", "strlen"] {
+        assert!(
+            entries.iter().any(|entry| entry["function"] == symbol),
+            "missing audit row for {symbol}"
+        );
+    }
+}
+
+#[test]
+fn memcpy_dispatch_prefers_avx2_when_available() {
+    with_simd_mask(string_simd_feature_mask_avx2_sse42_for_tests(), || {
+        let src = [0u8; 256];
+        let mut dst = [0u8; 256];
+        assert_eq!(
+            memcpy_dispatch_label_for_tests(dst.as_mut_ptr() as usize, src.as_ptr() as usize, 256),
+            "avx2"
+        );
+    });
+}
+
+#[test]
+fn memcmp_dispatch_uses_neon_when_forced() {
+    with_simd_mask(string_simd_feature_mask_neon_for_tests(), || {
+        let a = [0u8; 64];
+        let b = [0u8; 64];
+        assert_eq!(
+            memcmp_dispatch_label_for_tests(a.as_ptr() as usize, b.as_ptr() as usize, 64),
+            "neon"
+        );
+    });
+}
+
+#[test]
+fn memcpy_forced_avx2_handles_all_16_alignments() {
+    with_simd_mask(string_simd_feature_mask_avx2_for_tests(), || {
+        let mut src = [0u8; 160];
+        for (i, byte) in src.iter_mut().enumerate() {
+            *byte = i as u8;
+        }
+
+        for src_offset in 0..16 {
+            for dst_offset in 0..16 {
+                let mut dst = [0u8; 160];
+                unsafe {
+                    memcpy(
+                        dst.as_mut_ptr().add(dst_offset).cast(),
+                        src.as_ptr().add(src_offset).cast(),
+                        64,
+                    );
+                }
+                assert_eq!(
+                    &dst[dst_offset..dst_offset + 64],
+                    &src[src_offset..src_offset + 64],
+                    "src_offset={src_offset} dst_offset={dst_offset}"
+                );
+            }
+        }
+    });
+}
+
+#[test]
+fn memcmp_forced_sse42_matches_reference_on_all_16_alignments() {
+    with_simd_mask(string_simd_feature_mask_sse42_for_tests(), || {
+        let mut lhs = [0u8; 160];
+        let mut rhs = [0u8; 160];
+        for (i, byte) in lhs.iter_mut().enumerate() {
+            *byte = i as u8;
+        }
+        for lhs_offset in 0..16 {
+            for rhs_offset in 0..16 {
+                rhs.fill(0xA5);
+                rhs[rhs_offset..rhs_offset + 32].copy_from_slice(&lhs[lhs_offset..lhs_offset + 32]);
+                assert_eq!(
+                    unsafe {
+                        memcmp(
+                            lhs.as_ptr().add(lhs_offset).cast(),
+                            rhs.as_ptr().add(rhs_offset).cast(),
+                            32,
+                        )
+                    },
+                    0,
+                    "lhs_offset={lhs_offset} rhs_offset={rhs_offset}"
+                );
+            }
+        }
+
+        rhs[63] = rhs[63].wrapping_add(1);
+        let cmp = unsafe { memcmp(lhs.as_ptr().add(1).cast(), rhs.as_ptr().add(1).cast(), 64) };
+        assert!(cmp < 0);
+    });
+}
+
+#[test]
 fn memchr_finds_byte() {
     let data = b"hello world";
     let ptr = unsafe { memchr(data.as_ptr().cast(), b'w' as c_int, data.len()) };
@@ -175,6 +281,32 @@ fn strlen_measures_correctly() {
     assert_eq!(unsafe { strlen(c"".as_ptr()) }, 0);
     assert_eq!(unsafe { strlen(c"hello".as_ptr()) }, 5);
     assert_eq!(unsafe { strlen(c"a".as_ptr()) }, 1);
+}
+
+#[test]
+fn strlen_dispatch_prefers_avx2_for_wide_strings() {
+    with_simd_mask(string_simd_feature_mask_avx2_for_tests(), || {
+        let buf = [b'x'; 96];
+        assert_eq!(
+            strlen_dispatch_label_for_tests(buf.as_ptr() as usize, buf.len()),
+            "avx2"
+        );
+    });
+}
+
+#[test]
+fn strlen_forced_neon_matches_scalar_reference_on_all_16_alignments() {
+    with_simd_mask(string_simd_feature_mask_neon_for_tests(), || {
+        for offset in 0..16 {
+            let mut buf = [0i8; 80];
+            for byte in &mut buf[offset..offset + 31] {
+                *byte = b'z' as i8;
+            }
+            buf[offset + 31] = 0;
+            let ptr = unsafe { buf.as_ptr().add(offset) };
+            assert_eq!(unsafe { strlen(ptr) }, 31, "offset={offset}");
+        }
+    });
 }
 
 #[test]

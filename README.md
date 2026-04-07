@@ -898,6 +898,7 @@ Keeping those categories separate helps when reading the repo.
 | fixture packs | capture and fixture tooling | harness verification | differential behavior checking |
 | smoke logs and JSONL evidence | smoke scripts and harness runs | humans and gates | operational evidence from real executions |
 | runtime-math goldens | snapshot tooling | snapshot and linkage gates | detect controller drift |
+| docs source-of-truth map + trace | `scripts/generate_docs_env_mismatch_report.py` | docs gate, review workflow | tie README/architecture/deployment/security/API/troubleshooting surfaces to owners and refresh triggers |
 | closure / release artifacts | closure and release scripts | release-oriented checks | keep product-level claims coherent |
 
 ## Evidence Lifecycle
@@ -921,6 +922,11 @@ release and closure reconciliation
 ```
 
 Without that loop, a project like this drifts into self-deception quickly.
+
+Documentation governance follows the same rule. `tests/conformance/docs_source_of_truth_map.v1.json`
+and `tests/conformance/docs_source_of_truth_trace.v1.jsonl` are the canonical map from major
+documentation surfaces to backing artifacts, owners, and refresh triggers. Run
+`bash scripts/check_docs_env_mismatch.sh` after changing either the prose or its evidence sources.
 
 ## Road To Standalone Replace
 

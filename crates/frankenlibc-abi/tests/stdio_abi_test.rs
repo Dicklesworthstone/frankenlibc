@@ -873,6 +873,27 @@ fn snprintf_supports_positional_width_and_precision() {
 }
 
 #[test]
+fn snprintf_percent_n_records_bytes_before_directive() {
+    let mut buf = [0_i8; 64];
+    let mut count = -1_i32;
+
+    let written = unsafe {
+        snprintf(
+            buf.as_mut_ptr(),
+            buf.len(),
+            c"abc%n:%s".as_ptr(),
+            std::ptr::addr_of_mut!(count),
+            c"tail".as_ptr(),
+        )
+    };
+    assert_eq!(written, 8);
+    assert_eq!(count, 3);
+
+    let out = unsafe { CStr::from_ptr(buf.as_ptr()) };
+    assert_eq!(out.to_bytes(), b"abc:tail");
+}
+
+#[test]
 fn sprintf_supports_reusing_positional_argument() {
     let mut buf = [0_i8; 64];
 

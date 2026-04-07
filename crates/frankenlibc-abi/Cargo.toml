@@ -12,6 +12,10 @@ crate-type = ["cdylib", "rlib"]
 [lints.rust]
 unsafe_code = "allow"
 
+[features]
+default = []
+standalone = []
+
 [dependencies]
 frankenlibc-membrane = { workspace = true }
 frankenlibc-core = { workspace = true }
@@ -21,4 +25,7 @@ md-5 = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
+serde_json = { workspace = true }
+
+[build-dependencies]
 serde_json = { workspace = true }

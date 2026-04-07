@@ -102,7 +102,7 @@ fn futex_mutex_htm_fast_path_commits_when_forced() {
     htm_restore_test_mode_for_tests(previous_mode);
 
     assert!(
-        after.commits >= before.commits + 1,
+        after.commits > before.commits,
         "pthread_mutex_lock should record an HTM commit before={before:?} after={after:?}"
     );
     assert_eq!(after.fallbacks, before.fallbacks);

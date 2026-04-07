@@ -25,6 +25,7 @@ thread_local! {
     static SLOT_HINT: Cell<usize> = const { Cell::new(0) };
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EliminationOp {
     Publish,
@@ -32,6 +33,7 @@ pub enum EliminationOp {
     Pop,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EliminationOutcome {
     Matched,
@@ -171,11 +173,11 @@ impl AdaptiveController {
         }
 
         if self.window_attempts >= ADAPTIVE_WINDOW {
-            let rate_ppm = if self.window_attempts == 0 {
-                0
-            } else {
-                self.window_successes.saturating_mul(1_000_000) / self.window_attempts
-            };
+            let rate_ppm = self
+                .window_successes
+                .saturating_mul(1_000_000)
+                .checked_div(self.window_attempts)
+                .unwrap_or(0);
             if rate_ppm < SUCCESS_THRESHOLD_PPM {
                 self.disabled_remaining = ADAPTIVE_DISABLE_WINDOW;
             }
@@ -218,6 +220,7 @@ impl<T: Send, const SLOTS: usize> EliminationArray<T, SLOTS> {
         }
     }
 
+    #[allow(dead_code)]
     pub fn publish(&self, value: T) -> Result<(), T> {
         let gate = self.begin_attempt();
         if !gate.allowed {
@@ -408,6 +411,7 @@ impl<T: Send, const SLOTS: usize> EliminationArray<T, SLOTS> {
     }
 
     #[must_use]
+    #[allow(dead_code)]
     pub fn pop(&self) -> Option<T> {
         let gate = self.begin_attempt();
         let consumer_thread = current_thread_tag();
@@ -708,7 +712,9 @@ impl<T: Send, const SLOTS: usize> Default for EliminationArray<T, SLOTS> {
 }
 
 fn lock_no_poison<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    mutex
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 fn wait_timeout_no_poison<'a, T, F>(

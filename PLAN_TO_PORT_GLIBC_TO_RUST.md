@@ -170,6 +170,16 @@ Artifact outputs:
 - relocation schedule envelopes,
 - scope-consistency diagnostics.
 
+Implementation plan:
+- compile the loader-facing math stack into deterministic resolver automata and relocation schedule envelopes that regular Rust code can consume as plain policy data.
+- anchor the round in `crates/frankenlibc-core/src/elf/loader.rs`, `crates/frankenlibc-core/src/elf/relocation.rs`, and `crates/frankenlibc-abi/version_scripts/libc.map` so link-map scope drift stays tied to real loader surfaces.
+- emit compatibility witness data through the reverse-round contract artifact so IFUNC/hwcaps policy drift is visible without reading the runtime-math modules directly.
+
+Verification strategy:
+- regenerate and validate `tests/conformance/reverse_round_contracts.v1.json` via `scripts/check_reverse_round_contracts.sh`.
+- keep `crates/frankenlibc-harness/tests/reverse_round_contracts_test.rs` asserting the loader round retains explicit implementation and verification hooks.
+- preserve the aggregate runtime-math closure reference from `scripts/check_runtime_math_epic_closure.sh` so loader-round drift blocks higher-level closure claims.
+
 ### Round R8: Allocator + Thread Runtime (`malloc`, `nptl`)
 
 Problem focus:
@@ -185,6 +195,16 @@ Artifact outputs:
 - per-core arena/tcache policy tables,
 - safety certificates compiled into runtime guards,
 - contention-control tuning schedules.
+
+Implementation plan:
+- compile contention-control, barrier-certificate, and rough-path kernels into allocator/tcache policy tables and admissibility guards that can be applied without hidden heuristics.
+- anchor the round in `crates/frankenlibc-core/src/malloc/allocator.rs`, `crates/frankenlibc-core/src/malloc/thread_cache.rs`, `crates/frankenlibc-core/src/pthread/mutex.rs`, and `crates/frankenlibc-core/src/pthread/thread.rs`.
+- keep the proof surface developer-transparent by emitting the selected allocator/thread-runtime witnesses through the reverse-round contract artifact.
+
+Verification strategy:
+- validate the round contract with `scripts/check_reverse_round_contracts.sh` and `crates/frankenlibc-harness/tests/reverse_round_contracts_test.rs`.
+- keep allocator/thread-runtime anchors exercised by harness coverage such as `crates/frankenlibc-harness/tests/thread_hotpath_optimization_test.rs` and `crates/frankenlibc-harness/tests/pressure_sensing_test.rs`.
+- require the runtime-math closure pack to continue referencing the reverse-round artifact before allocator/thread claims can be considered stable.
 
 ### Round R9: Format/Wide/Locale Engine (`stdio-common`, `wcsmbs`, `locale`)
 
@@ -202,6 +222,16 @@ Artifact outputs:
 - certified format action graphs,
 - strict/hardened divergence budgets for parser edge cases.
 
+Implementation plan:
+- compile parser, transducer, and locale-coherence math into deterministic format action graphs and divergence-budget tables that the stdio/locale stack can consume directly.
+- anchor the round in `crates/frankenlibc-core/src/stdio/printf.rs`, `crates/frankenlibc-core/src/stdio/scanf.rs`, `crates/frankenlibc-core/src/locale/mod.rs`, and `crates/frankenlibc-core/src/iconv/mod.rs`.
+- keep locale and codec drift machine-visible by routing the phase contract through the reverse-round report instead of leaving it as narrative-only design text.
+
+Verification strategy:
+- regenerate `tests/conformance/reverse_round_contracts.v1.json` with `scripts/check_reverse_round_contracts.sh`.
+- keep `crates/frankenlibc-harness/tests/stdio_phase_strategy_test.rs` and `crates/frankenlibc-harness/tests/iconv_codec_scope_ledger_test.rs` aligned with the declared round anchors.
+- enforce that `crates/frankenlibc-harness/tests/reverse_round_contracts_test.rs` sees non-empty implementation and verification sections for the format/locale round.
+
 ### Round R10: Identity + DNS Lookup (`nss`, `resolv`)
 
 Problem focus:
@@ -218,6 +248,16 @@ Artifact outputs:
 - cache/timeout regime transition policies,
 - poisoning/anomaly alert certificates.
 
+Implementation plan:
+- compile the orchestration, drift, and anomaly kernels into deterministic lookup DAGs and cache-policy transitions that can be inspected as ordinary data rather than hidden control flow.
+- anchor the round in `crates/frankenlibc-core/src/resolv/config.rs`, `crates/frankenlibc-core/src/resolv/dns.rs`, `crates/frankenlibc-core/src/resolv/mod.rs`, and `tests/integration/fixture_nss.c`.
+- route NSS/resolver proof obligations through the reverse-round artifact so cache-poisoning and retry-policy assumptions remain reviewable in one place.
+
+Verification strategy:
+- keep `scripts/check_reverse_round_contracts.sh` and `crates/frankenlibc-harness/tests/reverse_round_contracts_test.rs` validating the NSS/resolver mapping contract.
+- preserve resolver-facing regression hooks in `crates/frankenlibc-abi/tests/resolv_abi_test.rs` and `crates/frankenlibc-abi/tests/nss_cache_policy_test.rs`.
+- keep the reverse-round artifact linked into the runtime-math closure bundle so resolver drift surfaces alongside other cross-round regressions.
+
 ### Round R11: libm + Floating Environment (`math`, `soft-fp`, `sysdeps/ieee754`)
 
 Problem focus:
@@ -233,6 +273,16 @@ Artifact outputs:
 - per-function approximation certificates,
 - ULP/error budgets with proof traces,
 - exception-semantics conformance witnesses.
+
+Implementation plan:
+- compile the numeric-control stack into regime-indexed guard tables, certified fallback kernels, and approximation witnesses that core math code can consume directly.
+- anchor the round in `crates/frankenlibc-core/src/math/mod.rs`, `crates/frankenlibc-core/src/math/trig.rs`, `crates/frankenlibc-core/src/math/exp.rs`, and `crates/frankenlibc-core/src/math/float.rs`.
+- expose the approximation/error contract through the reverse-round artifact so fenv and ULP obligations remain reproducible instead of living only in prose.
+
+Verification strategy:
+- validate the round contract with `scripts/check_reverse_round_contracts.sh` and the expanded assertions in `crates/frankenlibc-harness/tests/reverse_round_contracts_test.rs`.
+- preserve math-family governance hooks through `crates/frankenlibc-harness/tests/math_production_set_policy_test.rs` and `crates/frankenlibc-harness/tests/math_governance_test.rs`.
+- keep the aggregate runtime-math closure gate referencing the reverse-round artifact before libm/fenv closure claims are allowed.
 
 ### Round R12: Cross-Architecture Gluing (`sysdeps` multi-ISA)
 
