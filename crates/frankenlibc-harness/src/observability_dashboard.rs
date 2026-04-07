@@ -13,12 +13,22 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
+use frankenlibc_abi::malloc_abi::{
+    export_alloc_stats_snapshot_jsonl, malloc_stats_record_alloc_for_harness,
+    malloc_stats_record_free_for_harness, malloc_stats_reset_for_harness,
+};
+use frankenlibc_membrane::config::SafetyLevel;
+use frankenlibc_membrane::metrics::{MembraneMetrics, global_metrics};
+use frankenlibc_membrane::runtime_math::{ApiFamily, RuntimeContext, RuntimeMathKernel};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 const OBSERVABILITY_BEAD_ID: &str = "bd-282v";
 const LATENCY_HISTOGRAM_BUCKETS_NS: [u64; 8] =
     [100, 500, 1_000, 5_000, 10_000, 50_000, 100_000, 500_000];
+const CAPTURE_ALLOCATOR_ALLOCS: [usize; 2] = [256, 128];
+const CAPTURE_ALLOCATOR_FREES: [usize; 1] = [128];
+const CAPTURE_RUNTIME_DECISIONS: usize = 1024;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ObservabilityDashboardReport {
@@ -35,6 +45,17 @@ pub struct ObservabilityDashboardReport {
     pub artifact_refs: Vec<String>,
     pub alerts: Vec<DashboardAlert>,
     pub alert_rules: Vec<DashboardAlertRule>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ObservabilityCaptureBundle {
+    pub input_paths: Vec<PathBuf>,
+    pub output: PathBuf,
+    pub prometheus_output: PathBuf,
+    pub statsd_output: PathBuf,
+    pub grafana_output: PathBuf,
+    pub alerts_output: PathBuf,
+    pub report: ObservabilityDashboardReport,
 }
 
 impl ObservabilityDashboardReport {
@@ -864,6 +885,176 @@ pub fn write_bundle(
     write_text_file(grafana_output, &report.to_grafana_dashboard_json())?;
     write_text_file(alerts_output, &report.to_alert_rules_yaml())?;
     Ok(report)
+}
+
+pub fn capture_bundle(
+    out_dir: &Path,
+    bead_id: &str,
+    run_id: &str,
+    mode: &str,
+    seed_sample: bool,
+) -> Result<ObservabilityCaptureBundle, String> {
+    let safety_level = parse_capture_mode(mode)?;
+    let mode_label = capture_mode_label(safety_level);
+    let inputs_dir = out_dir.join("inputs");
+    std::fs::create_dir_all(&inputs_dir)
+        .map_err(|err| format!("failed creating '{}': {err}", inputs_dir.display()))?;
+
+    let membrane_input = inputs_dir.join("membrane_metrics.jsonl");
+    let allocator_input = inputs_dir.join("allocator_metrics.jsonl");
+    let runtime_input = inputs_dir.join("runtime_math.jsonl");
+
+    write_text_file(
+        &membrane_input,
+        &build_membrane_export(bead_id, run_id, mode_label, seed_sample),
+    )?;
+    write_text_file(
+        &allocator_input,
+        &build_allocator_export(bead_id, run_id, mode_label, seed_sample),
+    )?;
+    write_text_file(
+        &runtime_input,
+        &build_runtime_export(bead_id, run_id, safety_level, seed_sample),
+    )?;
+
+    let output = out_dir.join("observability_dashboard.current.v1.json");
+    let prometheus_output = out_dir.join("observability_dashboard.prom");
+    let statsd_output = out_dir.join("observability_dashboard.statsd");
+    let grafana_output = out_dir.join("observability_dashboard.grafana.json");
+    let alerts_output = out_dir.join("observability_dashboard.alerts.yaml");
+    let input_paths = vec![membrane_input, allocator_input, runtime_input];
+    let report = write_bundle(
+        &input_paths,
+        &output,
+        &prometheus_output,
+        &statsd_output,
+        &grafana_output,
+        &alerts_output,
+    )?;
+
+    Ok(ObservabilityCaptureBundle {
+        input_paths,
+        output,
+        prometheus_output,
+        statsd_output,
+        grafana_output,
+        alerts_output,
+        report,
+    })
+}
+
+fn parse_capture_mode(mode: &str) -> Result<SafetyLevel, String> {
+    match mode.trim().to_ascii_lowercase().as_str() {
+        "strict" => Ok(SafetyLevel::Strict),
+        "hardened" => Ok(SafetyLevel::Hardened),
+        "off" => Ok(SafetyLevel::Off),
+        other => Err(format!(
+            "unsupported observability capture mode '{other}' (expected strict, hardened, or off)"
+        )),
+    }
+}
+
+fn capture_mode_label(mode: SafetyLevel) -> &'static str {
+    match mode {
+        SafetyLevel::Strict => "strict",
+        SafetyLevel::Hardened => "hardened",
+        SafetyLevel::Off => "off",
+    }
+}
+
+fn build_membrane_export(bead_id: &str, run_id: &str, mode: &str, seed_sample: bool) -> String {
+    if seed_sample {
+        let metrics = MembraneMetrics::new();
+        for _ in 0..7 {
+            MembraneMetrics::inc(&metrics.validations);
+        }
+        for _ in 0..5 {
+            MembraneMetrics::inc(&metrics.tls_cache_hits);
+            MembraneMetrics::inc(&metrics.bloom_hits);
+        }
+        for _ in 0..2 {
+            MembraneMetrics::inc(&metrics.tls_cache_misses);
+            MembraneMetrics::inc(&metrics.arena_lookups);
+            MembraneMetrics::inc(&metrics.fingerprint_passes);
+            MembraneMetrics::inc(&metrics.canary_passes);
+        }
+        MembraneMetrics::inc(&metrics.bloom_misses);
+        MembraneMetrics::inc(&metrics.heals);
+        MembraneMetrics::inc(&metrics.size_clamps);
+        metrics.export_snapshot_jsonl(
+            bead_id,
+            run_id,
+            mode,
+            "pointer_validation",
+            "membrane::ptr_validator::validate",
+        )
+    } else {
+        global_metrics().export_snapshot_jsonl(
+            bead_id,
+            run_id,
+            mode,
+            "pointer_validation",
+            "membrane::ptr_validator::validate",
+        )
+    }
+}
+
+fn build_allocator_export(bead_id: &str, run_id: &str, mode: &str, seed_sample: bool) -> String {
+    if seed_sample {
+        malloc_stats_reset_for_harness();
+        for size in CAPTURE_ALLOCATOR_ALLOCS {
+            malloc_stats_record_alloc_for_harness(size);
+        }
+        for size in CAPTURE_ALLOCATOR_FREES {
+            malloc_stats_record_free_for_harness(size);
+        }
+    }
+    export_alloc_stats_snapshot_jsonl(bead_id, run_id, mode)
+}
+
+fn build_runtime_export(
+    bead_id: &str,
+    run_id: &str,
+    mode: SafetyLevel,
+    seed_sample: bool,
+) -> String {
+    let kernel = RuntimeMathKernel::new_for_mode(mode);
+    if seed_sample {
+        let contexts = capture_runtime_contexts();
+        for idx in 0..CAPTURE_RUNTIME_DECISIONS {
+            let _ = kernel.decide(mode, contexts[idx % contexts.len()]);
+        }
+    }
+    kernel.export_runtime_math_log_jsonl(mode, bead_id, run_id)
+}
+
+fn capture_runtime_contexts() -> [RuntimeContext; 3] {
+    [
+        RuntimeContext {
+            family: ApiFamily::Allocator,
+            addr_hint: 0x1000,
+            requested_bytes: 256,
+            is_write: true,
+            contention_hint: 3,
+            bloom_negative: false,
+        },
+        RuntimeContext {
+            family: ApiFamily::StringMemory,
+            addr_hint: 0x2000,
+            requested_bytes: 96,
+            is_write: false,
+            contention_hint: 1,
+            bloom_negative: false,
+        },
+        RuntimeContext {
+            family: ApiFamily::PointerValidation,
+            addr_hint: 0x3000,
+            requested_bytes: 0,
+            is_write: false,
+            contention_hint: 0,
+            bloom_negative: true,
+        },
+    ]
 }
 
 impl AggregationState {
@@ -1870,5 +2061,37 @@ mod tests {
             alert_rules.contains("FrankenLibCAllocatorArenaPressure"),
             "alert rules yaml should include allocator pressure rule"
         );
+    }
+
+    #[test]
+    fn capture_bundle_seeds_real_exporters() {
+        let out_dir = std::env::temp_dir().join(format!(
+            "frankenlibc_observability_capture_unit_{}",
+            std::process::id()
+        ));
+        let bundle = capture_bundle(&out_dir, OBSERVABILITY_BEAD_ID, "seeded", "hardened", true)
+            .expect("capture bundle should succeed");
+
+        assert_eq!(bundle.input_paths.len(), 3);
+        assert_eq!(bundle.report.bead, OBSERVABILITY_BEAD_ID);
+        assert_eq!(bundle.report.summary.invalid_rows, 0);
+        assert_eq!(bundle.report.allocator.allocations_total, Some(2));
+        assert_eq!(bundle.report.allocator.frees_total, Some(1));
+        assert_eq!(bundle.report.allocator.active_allocations, Some(1));
+        assert_eq!(bundle.report.allocator.bytes_allocated, Some(256));
+        assert!(
+            bundle.report.validation.validations_total >= 7,
+            "seeded membrane snapshot should report deterministic validations"
+        );
+        assert!(
+            bundle.report.runtime_math.snapshot_decisions.unwrap_or(0)
+                >= CAPTURE_RUNTIME_DECISIONS as u64,
+            "seeded runtime export should include the snapshot decision count"
+        );
+        assert!(bundle.output.exists());
+        assert!(bundle.prometheus_output.exists());
+        assert!(bundle.statsd_output.exists());
+        assert!(bundle.grafana_output.exists());
+        assert!(bundle.alerts_output.exists());
     }
 }

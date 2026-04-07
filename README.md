@@ -193,7 +193,7 @@ In practice:
 - The current shipping artifact is the **interpose** shared library: `target/release/libfrankenlibc_abi.so`.
 - The future **replace** artifact (`libfrankenlibc_replace.so`) is still planned, not done.
 - The classified symbol surface no longer reports direct `GlibcCallThrough` symbols, but the current shipping artifact is still an interpose-first preload library rather than a full standalone libc replacement.
-- The latest broad preload smoke run is **fully green**. As of **April 1, 2026**, the checked smoke artifact recorded `58 passes / 0 fails / 6 skips` (skips are missing optional binaries: sqlite3, redis-cli, nginx). Both strict and hardened modes pass all workloads.
+- Recent local preload smoke artifacts under `target/ld_preload_smoke/` include green strict-mode runs. For example, the latest checked artifact on **April 4, 2026** recorded `58 passes / 0 fails / 6 skips` (skips are missing optional binaries: sqlite3, redis-cli, nginx). Broad paired strict+hardened smoke closure is still tracked separately.
 - The full smoke suite (echo, env, ls, sort, cat, head, tail, wc, cut, tr, sed, awk, grep, find, xargs, date, hostname, uname, id, whoami, stat, du, df, git, python3, busybox, ln, readlink, basename, dirname) passes in both strict and hardened modes. The interpose artifact is usable for a broad workload set, with broader production hardening still in progress.
 
 ## Threat Model
@@ -1065,7 +1065,7 @@ bash scripts/check_support_matrix_maintenance.sh
 
 - The current production artifact is the **interpose** shared library, not a full standalone libc replacement.
 - Host glibc is still part of the deployment story because the shipping artifact is still `LD_PRELOAD` interposition, not a standalone libc drop-in.
-- Broad preload smoke is still unstable; the latest checked March 23, 2026 run was not green.
+- Broad paired strict+hardened preload smoke closure is still in progress; use the current smoke artifacts and gates rather than README prose for the latest readiness status.
 - Hardened mode exists and has targeted validation/oracle coverage, but it is not yet broadly stable across the smoke workload set.
 - Performance is not yet a settled success story; strict-mode perf regressions still show up in smoke/perf gates and must be measured rather than assumed away.
 - The README can summarize current reality, but the canonical truth still lives in generated reports and gates.

@@ -8,6 +8,7 @@
 #   4. Level status progression is consistent (achieved < in_progress < planned < roadmap).
 #   5. Gate criteria thresholds are monotonically tightening.
 #   6. README claim and release-tag policy do not drift above current_level.
+#   7. README smoke-readiness prose does not overclaim beyond replacement-level blockers.
 #
 # Exit codes:
 #   0 — all checks pass
@@ -304,7 +305,7 @@ echo ""
 # ---------------------------------------------------------------------------
 # Check 6: README + release tag claim drift
 # ---------------------------------------------------------------------------
-echo "--- Check 6: Claim drift (README + release tags) ---"
+echo "--- Check 6: Claim drift (README + release tags + smoke readiness) ---"
 
 claim_check=$(python3 -c "
 import json
@@ -366,6 +367,30 @@ else:
         errors.append(
             f'current_release_tag_example={example!r} must end with {required_suffix!r}'
         )
+
+l1_entry = level_map.get('L1', {})
+l1_blockers = ' '.join(
+    blocker
+    for blocker in l1_entry.get('blockers', [])
+    if isinstance(blocker, str)
+).lower()
+hardened_smoke_incomplete = (
+    'hardened-mode e2e smoke' in l1_blockers and 'incomplete' in l1_blockers
+)
+if hardened_smoke_incomplete:
+    overclaim_patterns = [
+        (
+            r'latest broad preload smoke run is \\*\\*fully green\\*\\*',
+            'README must not claim broad preload smoke is fully green while L1 hardened smoke remains blocked'
+        ),
+        (
+            r'both strict and hardened modes pass all workloads',
+            'README must not claim paired strict+hardened smoke closure while L1 hardened smoke remains blocked'
+        ),
+    ]
+    for pattern, message in overclaim_patterns:
+        if re.search(pattern, readme, re.IGNORECASE):
+            errors.append(message)
 
 print(f'CLAIM_ERRORS={len(errors)}')
 for e in errors:

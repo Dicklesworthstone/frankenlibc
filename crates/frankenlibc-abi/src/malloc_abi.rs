@@ -344,6 +344,25 @@ pub fn malloc_stats_init_for_tests() {
 }
 
 #[doc(hidden)]
+pub fn malloc_stats_reset_for_harness() {
+    let stats = GLOBAL_ALLOC_STATS.get_or_init(FlatCombiningStats::new);
+    ALLOC_STATS_SLOT_INDEX.with(|slot| slot.set(None));
+    stats.reset();
+}
+
+#[doc(hidden)]
+pub fn malloc_stats_record_alloc_for_harness(size: usize) {
+    let _ = GLOBAL_ALLOC_STATS.get_or_init(FlatCombiningStats::new);
+    record_alloc_stats(size);
+}
+
+#[doc(hidden)]
+pub fn malloc_stats_record_free_for_harness(size: usize) {
+    let _ = GLOBAL_ALLOC_STATS.get_or_init(FlatCombiningStats::new);
+    record_free_stats(size);
+}
+
+#[doc(hidden)]
 pub fn malloc_htm_reset_for_tests() {
     MALLOC_STATS_HTM_SITE.reset_for_tests();
 }
@@ -832,6 +851,40 @@ impl FlatCombiningStats {
 
     fn snapshot(&self) -> MallocStatsSnapshot {
         self.apply_op(FC_OP_SNAPSHOT, 0, 0)
+    }
+
+    fn reset(&self) {
+        while self
+            .combiner_lock
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            std::hint::spin_loop();
+        }
+
+        // SAFETY: `combiner_lock` is held exclusively for this reset.
+        unsafe {
+            *self.state.get() = MallocStatsState::new();
+        }
+        self.next_slot.store(0, Ordering::Relaxed);
+        for slot in &self.slots {
+            slot.op.store(FC_OP_NONE, Ordering::Relaxed);
+            slot.request_id.store(0, Ordering::Relaxed);
+            slot.completed_id.store(0, Ordering::Relaxed);
+            slot.size.store(0, Ordering::Relaxed);
+            slot.bin.store(0, Ordering::Relaxed);
+            slot.active.store(false, Ordering::Relaxed);
+            slot.age.store(0, Ordering::Relaxed);
+            slot.result_allocation_events.store(0, Ordering::Relaxed);
+            slot.result_free_events.store(0, Ordering::Relaxed);
+            slot.result_total_allocated.store(0, Ordering::Relaxed);
+            slot.result_total_freed.store(0, Ordering::Relaxed);
+            slot.result_active_allocations.store(0, Ordering::Relaxed);
+            slot.result_live_bytes.store(0, Ordering::Relaxed);
+            slot.result_peak_usage.store(0, Ordering::Relaxed);
+        }
+
+        self.combiner_lock.store(false, Ordering::Release);
     }
 }
 
@@ -2372,5 +2425,33 @@ mod tests {
         assert_eq!(row["peak_usage_bytes"].as_u64(), Some(12_288));
         assert_eq!(row["bead_id"].as_str(), Some("bd-282v"));
         assert_eq!(row["scenario_id"].as_str(), Some("smoke"));
+    }
+
+    #[test]
+    fn malloc_stats_reset_for_harness_clears_exported_snapshot() {
+        malloc_stats_reset_for_harness();
+        malloc_stats_record_alloc_for_harness(256);
+        malloc_stats_record_alloc_for_harness(128);
+        malloc_stats_record_free_for_harness(128);
+
+        let seeded: serde_json::Value = serde_json::from_str(
+            export_alloc_stats_snapshot_jsonl("bd-282v", "seeded", "hardened").trim(),
+        )
+        .expect("seeded allocator snapshot should parse");
+        assert_eq!(seeded["allocations_total"].as_u64(), Some(2));
+        assert_eq!(seeded["frees_total"].as_u64(), Some(1));
+        assert_eq!(seeded["active_allocations"].as_u64(), Some(1));
+        assert_eq!(seeded["bytes_allocated"].as_u64(), Some(256));
+
+        malloc_stats_reset_for_harness();
+
+        let cleared: serde_json::Value = serde_json::from_str(
+            export_alloc_stats_snapshot_jsonl("bd-282v", "cleared", "hardened").trim(),
+        )
+        .expect("cleared allocator snapshot should parse");
+        assert_eq!(cleared["allocations_total"].as_u64(), Some(0));
+        assert_eq!(cleared["frees_total"].as_u64(), Some(0));
+        assert_eq!(cleared["active_allocations"].as_u64(), Some(0));
+        assert_eq!(cleared["bytes_allocated"].as_u64(), Some(0));
     }
 }

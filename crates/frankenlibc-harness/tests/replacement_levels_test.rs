@@ -10,6 +10,7 @@
 //! 7. The CI gate script exists and is executable.
 //! 8. README replacement-level claim matches current_level.
 //! 9. Release tag policy is aligned with current_level.
+//! 10. README smoke-readiness prose does not outrun replacement-level blockers.
 //!
 //! Run: cargo test -p frankenlibc-harness --test replacement_levels_test
 
@@ -410,6 +411,44 @@ fn claim_drift_guard_consistent_with_readme_and_release_policy() {
         example.ends_with(&format!("-{current}")),
         "current_release_tag_example must end with -{current}, got {example}"
     );
+}
+
+#[test]
+fn readme_smoke_claims_do_not_outrun_replacement_level_blockers() {
+    let lvl = load_levels();
+    let readme = load_readme().to_ascii_lowercase();
+
+    let levels = lvl["levels"].as_array().unwrap();
+    let l1 = levels
+        .iter()
+        .find(|entry| entry["level"].as_str() == Some("L1"))
+        .expect("L1 level must exist");
+
+    let blockers = l1["blockers"]
+        .as_array()
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|value| value.as_str())
+                .collect::<Vec<_>>()
+                .join(" ")
+                .to_ascii_lowercase()
+        })
+        .unwrap_or_default();
+
+    let hardened_smoke_incomplete =
+        blockers.contains("hardened-mode e2e smoke") && blockers.contains("incomplete");
+
+    if hardened_smoke_incomplete {
+        assert!(
+            !readme.contains("latest broad preload smoke run is **fully green**"),
+            "README must not claim broad preload smoke is fully green while L1 hardened smoke remains blocked"
+        );
+        assert!(
+            !readme.contains("both strict and hardened modes pass all workloads"),
+            "README must not claim paired strict+hardened smoke closure while L1 hardened smoke remains blocked"
+        );
+    }
 }
 
 #[test]

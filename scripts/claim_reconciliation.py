@@ -62,6 +62,7 @@ CATEGORY_OWNER_MAP = {
     "done_without_fixture": "bd-w2c3.9",
     "hard_parts_symbol_missing": "bd-1j4.5",
     "hard_parts_symbol_status": "bd-1j4.5",
+    "replacement_smoke_claim_contradiction": "bd-w2c3.2.3",
 }
 
 SOURCE_REMEDIATION_MAP = {
@@ -75,6 +76,14 @@ SOURCE_REMEDIATION_MAP = {
 
 CATEGORY_REMEDIATION_MAP = {
     "done_without_fixture": "Capture fixture evidence for the claimed DONE family or downgrade the FEATURE_PARITY row.",
+    "replacement_smoke_claim_contradiction": "Align README smoke-readiness prose with replacement_levels.json blockers and current smoke evidence before advancing the replacement-level claim.",
+}
+
+CATEGORY_ARTIFACT_REFS = {
+    "replacement_smoke_claim_contradiction": [
+        "tests/conformance/replacement_levels.json",
+        "README.md",
+    ],
 }
 
 
@@ -134,6 +143,7 @@ def enrich_findings(findings):
             artifact_refs.append("tests/conformance/hard_parts_truth_table.v1.json")
         else:
             artifact_refs.append(source_key)
+        artifact_refs.extend(CATEGORY_ARTIFACT_REFS.get(category, []))
 
         deduped_refs = []
         for ref in artifact_refs:
@@ -685,6 +695,65 @@ def check_readme_claims(findings, readme_text, matrix_counts):
                 })
 
 
+def check_readme_replacement_smoke_claims(findings, readme_text, replacement):
+    """Reject README smoke-readiness prose that outruns replacement-level evidence."""
+    if not readme_text or not replacement:
+        return
+
+    readme_lower = readme_text.lower()
+    levels = replacement.get("levels", [])
+    l1 = next((entry for entry in levels if entry.get("level") == "L1"), None)
+    if not l1:
+        return
+
+    blockers = " ".join(
+        blocker for blocker in l1.get("blockers", []) if isinstance(blocker, str)
+    ).lower()
+    hardened_smoke_incomplete = (
+        "hardened-mode e2e smoke" in blockers and "incomplete" in blockers
+    )
+
+    positive_hits = []
+    if "latest broad preload smoke run is **fully green**" in readme_lower:
+        positive_hits.append("broad smoke marked fully green")
+    if "both strict and hardened modes pass all workloads" in readme_lower:
+        positive_hits.append("paired strict+hardened smoke marked complete")
+
+    negative_hits = []
+    if "broad preload smoke is still unstable" in readme_lower:
+        negative_hits.append("broad smoke marked unstable")
+    if "run was not green" in readme_lower:
+        negative_hits.append("latest smoke described as not green")
+    if "paired strict+hardened preload smoke closure is still in progress" in readme_lower:
+        negative_hits.append("paired strict+hardened closure marked in progress")
+
+    if hardened_smoke_incomplete and positive_hits:
+        findings.append({
+            "severity": "error",
+            "category": "replacement_smoke_claim_contradiction",
+            "source": "README.md",
+            "message": (
+                "README overclaims hardened smoke readiness while "
+                "tests/conformance/replacement_levels.json still records the L1 blocker "
+                "\"Hardened-mode E2E smoke battery remains incomplete\": "
+                + ", ".join(positive_hits)
+            ),
+        })
+
+    if positive_hits and negative_hits:
+        findings.append({
+            "severity": "error",
+            "category": "replacement_smoke_claim_contradiction",
+            "source": "README.md",
+            "message": (
+                "README contains contradictory broad-smoke status claims: positive="
+                + ", ".join(positive_hits)
+                + "; negative="
+                + ", ".join(negative_hits)
+            ),
+        })
+
+
 def check_feature_parity_done_claims(findings, fp_text, matrix):
     """Verify that DONE claims in mode-specific matrix have fixture evidence."""
     if not fp_text or not matrix:
@@ -793,6 +862,7 @@ def main():
     check_hard_parts(findings, hard_parts, matrix)
     check_timestamp_consistency(findings, reality, matrix, hard_parts, replacement)
     check_readme_claims(findings, readme_text, dict(matrix_counts))
+    check_readme_replacement_smoke_claims(findings, readme_text, replacement)
     check_feature_parity_done_claims(findings, fp_text, matrix)
     enrich_findings(findings)
 

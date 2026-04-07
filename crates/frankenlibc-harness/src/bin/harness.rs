@@ -486,6 +486,25 @@ enum Command {
         )]
         alerts_output: PathBuf,
     },
+    /// Capture exporter-driven observability JSONL inputs and build the dashboard bundle.
+    ObservabilityCapture {
+        /// Output directory for raw JSONL inputs and rendered dashboard artifacts.
+        #[arg(long, default_value = "target/conformance/observability_capture")]
+        out_dir: PathBuf,
+        /// Bead id recorded in exported JSONL rows.
+        #[arg(long, default_value = "bd-282v")]
+        bead_id: String,
+        /// Scenario/run id recorded in exported JSONL rows.
+        #[arg(long, default_value = "capture")]
+        run_id: String,
+        /// Runtime mode to export (`strict`, `hardened`, or `off`).
+        #[arg(long, default_value = "hardened")]
+        mode: String,
+        /// Seed deterministic sample activity before exporting so bundle generation
+        /// can be verified end-to-end without hand-crafted JSON rows.
+        #[arg(long)]
+        seed_sample: bool,
+    },
     /// Execute manifest-driven shadow runs against host glibc vs FrankenLibC.
     ShadowRun {
         /// Shadow-run manifest JSON path.
@@ -1374,6 +1393,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 statsd_output.display(),
                 grafana_output.display(),
                 alerts_output.display()
+            );
+        }
+        Command::ObservabilityCapture {
+            out_dir,
+            bead_id,
+            run_id,
+            mode,
+            seed_sample,
+        } => {
+            let bundle = frankenlibc_harness::observability_dashboard::capture_bundle(
+                &out_dir,
+                &bead_id,
+                &run_id,
+                &mode,
+                seed_sample,
+            )
+            .map_err(std::io::Error::other)?;
+            eprintln!(
+                "Observability capture complete: inputs={} total_rows={} invalid_rows={} -> {} (prometheus: {}, statsd: {}, grafana: {}, alerts: {})",
+                bundle.input_paths.len(),
+                bundle.report.summary.total_rows,
+                bundle.report.summary.invalid_rows,
+                bundle.output.display(),
+                bundle.prometheus_output.display(),
+                bundle.statsd_output.display(),
+                bundle.grafana_output.display(),
+                bundle.alerts_output.display()
             );
         }
         Command::ShadowRun {

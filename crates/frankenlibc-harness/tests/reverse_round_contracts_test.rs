@@ -274,7 +274,11 @@ fn contracts_cross_round_integrations_are_complete() {
         .as_array()
         .expect("loader_time64_bridge rounds must be array")
         .iter()
-        .map(|value| value.as_str().expect("loader_time64_bridge round must be string"))
+        .map(|value| {
+            value
+                .as_str()
+                .expect("loader_time64_bridge round must be string")
+        })
         .collect();
     assert_eq!(temporal_bridge_rounds, vec!["R7", "R30"]);
 
@@ -387,10 +391,7 @@ fn contracts_milestone_branch_diversity_holds() {
                 .expect("loader_temporal_policy_surface round must be string")
         })
         .collect();
-    assert_eq!(
-        temporal_policy_rounds,
-        vec!["R7", "R28", "R30", "R37"]
-    );
+    assert_eq!(temporal_policy_rounds, vec!["R7", "R28", "R30", "R37"]);
 
     for (milestone_id, milestone) in milestones {
         let rounds = milestone["rounds"]

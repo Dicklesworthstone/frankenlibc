@@ -241,3 +241,70 @@ fn claim_reconciliation_detects_replacement_level_blocker_drift_and_routes_owner
         "replacement-level drift finding should reference replacement_levels.json"
     );
 }
+
+#[test]
+fn claim_reconciliation_detects_readme_smoke_overclaim_and_routes_replacement_owner() {
+    let repo_root = workspace_root();
+    let script = repo_root.join("scripts/claim_reconciliation.py");
+    let readme_src = repo_root.join("README.md");
+    let mutated_readme_path = unique_temp_path("claim-reconciliation-readme-smoke.md");
+
+    let mutated_readme = std::fs::read_to_string(&readme_src)
+        .expect("README.md should exist")
+        .replace(
+            "Broad paired strict+hardened preload smoke closure is still in progress; use the current smoke artifacts and gates rather than README prose for the latest readiness status.",
+            "The latest broad preload smoke run is **fully green** and both strict and hardened modes pass all workloads.",
+        );
+    std::fs::write(&mutated_readme_path, mutated_readme)
+        .expect("failed to write mutated README smoke overclaim");
+
+    let output = Command::new("python3")
+        .arg(&script)
+        .current_dir(&repo_root)
+        .env("FLC_CLAIM_RECON_README", &mutated_readme_path)
+        .output()
+        .expect("failed to run claim_reconciliation.py with mutated README smoke overclaim");
+
+    assert!(
+        !output.status.success(),
+        "mutated README smoke overclaim should fail reconciliation\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let report: serde_json::Value = serde_json::from_str(&stdout).unwrap_or_else(|e| {
+        panic!(
+            "Failed to parse reconciliation report: {}\nstdout: {}\nstderr: {}",
+            e, stdout, stderr
+        );
+    });
+
+    assert_eq!(report["status"].as_str(), Some("fail"));
+    let findings = report["findings"]
+        .as_array()
+        .expect("findings must be an array");
+    let smoke_claim = findings.iter().find(|finding| {
+        finding["category"].as_str() == Some("replacement_smoke_claim_contradiction")
+            && finding["owner_bead"].as_str() == Some("bd-w2c3.2.3")
+    });
+    let smoke_claim =
+        smoke_claim.expect("expected replacement smoke claim contradiction routed to bd-w2c3.2.3");
+    assert_eq!(smoke_claim["source"].as_str(), Some("README.md"));
+    assert!(
+        smoke_claim["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("Hardened-mode E2E smoke battery remains incomplete"),
+        "replacement smoke contradiction should explain the L1 blocker"
+    );
+    assert!(
+        smoke_claim["artifact_refs"]
+            .as_array()
+            .unwrap_or(&Vec::new())
+            .iter()
+            .any(|value| value.as_str() == Some("tests/conformance/replacement_levels.json")),
+        "replacement smoke contradiction should reference replacement_levels.json"
+    );
+}

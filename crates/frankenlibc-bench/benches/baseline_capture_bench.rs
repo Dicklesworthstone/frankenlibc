@@ -8,7 +8,7 @@ use std::cell::RefCell;
 use std::time::{Duration, Instant};
 
 use criterion::{
-    black_box, criterion_group, criterion_main, measurement::WallTime, BenchmarkId, Criterion,
+    BenchmarkId, Criterion, black_box, criterion_group, criterion_main, measurement::WallTime,
 };
 
 #[derive(Default)]
