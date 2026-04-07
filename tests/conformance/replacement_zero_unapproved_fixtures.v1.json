@@ -9,18 +9,18 @@
   },
   "fixtures": [
     {
-      "id": "interpose_allow_c11threads_abi___errno_location",
+      "id": "interpose_allow_termios_abi_cfmakeraw",
       "mode": "interpose",
-      "module": "c11threads_abi",
-      "symbol": "__errno_location",
+      "module": "termios_abi",
+      "symbol": "cfmakeraw",
       "expected_outcome": "allowed",
       "evidence_source": "replacement_guard_source_scan"
     },
     {
-      "id": "replacement_forbid_c11threads_abi___errno_location",
+      "id": "replacement_forbid_termios_abi_openpty",
       "mode": "replacement",
-      "module": "c11threads_abi",
-      "symbol": "__errno_location",
+      "module": "termios_abi",
+      "symbol": "openpty",
       "expected_outcome": "forbidden",
       "evidence_source": "replacement_guard_source_scan"
     },
@@ -57,10 +57,10 @@
       "evidence_source": "replacement_guard_source_scan"
     },
     {
-      "id": "interpose_allow_io_internal_abi_dlsym",
+      "id": "interpose_allow_io_internal_abi_open",
       "mode": "interpose",
       "module": "io_internal_abi",
-      "symbol": "dlsym",
+      "symbol": "open",
       "expected_outcome": "allowed",
       "evidence_source": "replacement_guard_source_scan"
     },
@@ -217,7 +217,6 @@
     "interpose_allowed_count": 12,
     "replacement_forbidden_count": 12,
     "covered_callthrough_modules": [
-      "c11threads_abi",
       "fortify_abi",
       "glibc_internal_abi",
       "io_internal_abi",
@@ -228,6 +227,7 @@
       "signal_abi",
       "stdio_abi",
       "stdlib_abi",
+      "termios_abi",
       "unistd_abi"
     ]
   }

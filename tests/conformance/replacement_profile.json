@@ -122,7 +122,6 @@
   "callthrough_families": {
     "source": "replacement_guard_source_scan",
     "modules": [
-      "c11threads_abi",
       "fortify_abi",
       "glibc_internal_abi",
       "io_internal_abi",
@@ -133,6 +132,7 @@
       "signal_abi",
       "stdio_abi",
       "stdlib_abi",
+      "termios_abi",
       "unistd_abi"
     ],
     "require_fixture_coverage": true
@@ -173,12 +173,6 @@
   "call_through_census": {
     "description": "Current census of direct host libc/host pthread escape hatches by ABI module, as scanned by scripts/check_replacement_guard.sh.",
     "modules": {
-      "c11threads_abi": {
-        "count": 1,
-        "functions": [
-          "__errno_location"
-        ]
-      },
       "fortify_abi": {
         "count": 14,
         "functions": [
@@ -197,7 +191,7 @@
         ]
       },
       "glibc_internal_abi": {
-        "count": 154,
+        "count": 158,
         "functions": [
           "sched_get_priority_max",
           "sched_get_priority_min",
@@ -250,9 +244,8 @@
         ]
       },
       "io_internal_abi": {
-        "count": 2,
+        "count": 1,
         "functions": [
-          "dlsym",
           "open"
         ]
       },
@@ -265,16 +258,18 @@
         ]
       },
       "process_abi": {
-        "count": 8,
+        "count": 9,
         "functions": [
           "sigemptyset",
           "sigaddset",
-          "sigismember"
+          "sigismember",
+          "sysconf"
         ]
       },
       "pthread_abi": {
-        "count": 64,
+        "count": 95,
         "functions": [
+          "pthread_self_raw",
           "dlsym",
           "dlopen",
           "pthread_self_fn",
@@ -336,8 +331,12 @@
         ]
       },
       "stdlib_abi": {
-        "count": 8,
+        "count": 16,
         "functions": [
+          "malloc",
+          "strlen",
+          "free",
+          "realloc",
           "fflush",
           "cfmakeraw",
           "cfsetispeed",
@@ -347,8 +346,16 @@
           "setitimer"
         ]
       },
+      "termios_abi": {
+        "count": 5,
+        "functions": [
+          "cfmakeraw",
+          "openpty",
+          "close"
+        ]
+      },
       "unistd_abi": {
-        "count": 66,
+        "count": 70,
         "functions": [
           "socket",
           "connect",
@@ -385,7 +392,7 @@
         "functions": []
       }
     },
-    "total_call_throughs": 337,
+    "total_call_throughs": 388,
     "note": "Census tracks direct host call-through scan patterns used by scripts/check_replacement_guard.sh."
   }
 }

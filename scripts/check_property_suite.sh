@@ -4,7 +4,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT_DIR="${ROOT}/target/conformance"
-BEAD_ID="${BEAD_ID:-bd-2tq.3}"
+BEAD_ID="${BEAD_ID:-bd-1sp.8}"
 ARTIFACT_BASENAME="${ARTIFACT_BASENAME:-property_suite}"
 PROPTEST_CASES="${FRANKENLIBC_PROPTEST_CASES:-10000}"
 LOG_PATH="${OUT_DIR}/${ARTIFACT_BASENAME}.log.jsonl"
@@ -41,6 +41,18 @@ suite_api_family() {
         ctype_local)
             printf '%s' "ctype"
             ;;
+        math_trig_local)
+            printf '%s' "math"
+            ;;
+        pthread_mutex_local)
+            printf '%s' "pthread"
+            ;;
+        stdio_buffer_local)
+            printf '%s' "stdio"
+            ;;
+        stdlib_conversion_local)
+            printf '%s' "stdlib"
+            ;;
         *)
             printf '%s' "property"
             ;;
@@ -69,6 +81,18 @@ suite_symbol() {
             ;;
         ctype_local)
             printf '%s' "isalnum"
+            ;;
+        math_trig_local)
+            printf '%s' "sin"
+            ;;
+        pthread_mutex_local)
+            printf '%s' "pthread_mutex_init"
+            ;;
+        stdio_buffer_local)
+            printf '%s' "setvbuf"
+            ;;
+        stdlib_conversion_local)
+            printf '%s' "strtol"
             ;;
         *)
             printf '%s' "$1"
@@ -99,6 +123,18 @@ suite_decision_path() {
         ctype_local)
             printf '%s' "property->ctype->local_env_config"
             ;;
+        math_trig_local)
+            printf '%s' "property->math->trig_local_env_config"
+            ;;
+        pthread_mutex_local)
+            printf '%s' "property->pthread->mutex_local_env_config"
+            ;;
+        stdio_buffer_local)
+            printf '%s' "property->stdio->buffer_local_env_config"
+            ;;
+        stdlib_conversion_local)
+            printf '%s' "property->stdlib->conversion_local_env_config"
+            ;;
         *)
             printf '%s' "property->unknown"
             ;;
@@ -127,6 +163,18 @@ suite_expected() {
             ;;
         ctype_local)
             printf '%s' "PASS; the local ctype property block honors FRANKENLIBC_PROPTEST_CASES at 10k cases."
+            ;;
+        math_trig_local)
+            printf '%s' "PASS; the local trig.rs proptest block honors FRANKENLIBC_PROPTEST_CASES at 10k cases."
+            ;;
+        pthread_mutex_local)
+            printf '%s' "PASS; the local pthread mutex proptest block honors FRANKENLIBC_PROPTEST_CASES at 10k cases."
+            ;;
+        stdio_buffer_local)
+            printf '%s' "PASS; the local stdio buffer proptest block honors FRANKENLIBC_PROPTEST_CASES at 10k cases."
+            ;;
+        stdlib_conversion_local)
+            printf '%s' "PASS; the local stdlib conversion proptest block honors FRANKENLIBC_PROPTEST_CASES at 10k cases."
             ;;
         *)
             printf '%s' "PASS"
@@ -157,6 +205,18 @@ suite_failure_signature() {
         ctype_local)
             printf '%s' "prop_core_classification_invariants must stay green at FRANKENLIBC_PROPTEST_CASES=10000"
             ;;
+        math_trig_local)
+            printf '%s' "prop_sin_is_odd must stay green at FRANKENLIBC_PROPTEST_CASES=10000"
+            ;;
+        pthread_mutex_local)
+            printf '%s' "prop_sanitize_always_returns_supported_kind must stay green at FRANKENLIBC_PROPTEST_CASES=10000"
+            ;;
+        stdio_buffer_local)
+            printf '%s' "prop_set_mode_before_io_resets_state must stay green at FRANKENLIBC_PROPTEST_CASES=10000"
+            ;;
+        stdlib_conversion_local)
+            printf '%s' "prop_strtol_round_trips_all_i64_values must stay green at FRANKENLIBC_PROPTEST_CASES=10000"
+            ;;
         *)
             printf '%s' "property suite failure"
             ;;
@@ -185,6 +245,18 @@ suite_command() {
             ;;
         ctype_local)
             printf '%s' "cargo test --locked -p frankenlibc-core prop_core_classification_invariants --lib -- --exact --nocapture --test-threads=1"
+            ;;
+        math_trig_local)
+            printf '%s' "cargo test --locked -p frankenlibc-core prop_sin_is_odd --lib -- --exact --nocapture --test-threads=1"
+            ;;
+        pthread_mutex_local)
+            printf '%s' "cargo test --locked -p frankenlibc-core prop_sanitize_always_returns_supported_kind --lib -- --exact --nocapture --test-threads=1"
+            ;;
+        stdio_buffer_local)
+            printf '%s' "cargo test --locked -p frankenlibc-core prop_set_mode_before_io_resets_state --lib -- --exact --nocapture --test-threads=1"
+            ;;
+        stdlib_conversion_local)
+            printf '%s' "cargo test --locked -p frankenlibc-core prop_strtol_round_trips_all_i64_values --lib -- --exact --nocapture --test-threads=1"
             ;;
         *)
             return 1
@@ -244,7 +316,7 @@ run_suite() {
     printf '=== %s ===\ncommand: FRANKENLIBC_PROPTEST_CASES=%s rch exec -- env CARGO_HOME=%s CARGO_TARGET_DIR=%s %s\n%s\n\n' \
         "${suite}" "${PROPTEST_CASES}" "${RCH_CARGO_HOME:-<default>}" "${RCH_TARGET_DIR}" "${command}" "${output}" >> "${TEST_OUTPUT_PATH}"
 
-    printf '{"timestamp":"%s","trace_id":"%s::property_suite::%s","level":"info","event":"property_suite","bead_id":"%s","stream":"unit","gate":"check_property_suite","api_family":"%s","symbol":"%s","decision_path":"%s","healing_action":"none","outcome":"%s","errno":%s,"latency_ns":%s,"artifact_refs":["scripts/check_property_suite.sh","crates/frankenlibc-core/tests/property_tests.rs","crates/frankenlibc-membrane/src/lattice.rs","crates/frankenlibc-membrane/src/ptr_validator.rs","crates/frankenlibc-core/src/string/mem.rs","crates/frankenlibc-core/src/string/str.rs","crates/frankenlibc-core/src/string/wide.rs","crates/frankenlibc-core/src/ctype/mod.rs","target/conformance/%s.report.json","target/conformance/%s.log.jsonl","target/conformance/%s.test_output.log"]}\n' \
+    printf '{"timestamp":"%s","trace_id":"%s::property_suite::%s","level":"info","event":"property_suite","bead_id":"%s","stream":"unit","gate":"check_property_suite","api_family":"%s","symbol":"%s","decision_path":"%s","healing_action":"none","outcome":"%s","errno":%s,"latency_ns":%s,"artifact_refs":["scripts/check_property_suite.sh","crates/frankenlibc-core/tests/property_tests.rs","crates/frankenlibc-membrane/src/lattice.rs","crates/frankenlibc-membrane/src/ptr_validator.rs","crates/frankenlibc-core/src/string/mem.rs","crates/frankenlibc-core/src/string/str.rs","crates/frankenlibc-core/src/string/wide.rs","crates/frankenlibc-core/src/ctype/mod.rs","crates/frankenlibc-core/src/math/trig.rs","crates/frankenlibc-core/src/pthread/mutex.rs","crates/frankenlibc-core/src/stdio/buffer.rs","crates/frankenlibc-core/src/stdlib/conversion.rs","target/conformance/%s.report.json","target/conformance/%s.log.jsonl","target/conformance/%s.test_output.log"]}\n' \
         "$(now_iso_ms)" "${BEAD_ID}" "${suite}" "${BEAD_ID}" "${api_family}" "${symbol}" "${decision_path}" "${status}" "${errno_value}" "${latency_ns}" "${ARTIFACT_BASENAME}" "${ARTIFACT_BASENAME}" "${ARTIFACT_BASENAME}" >> "${LOG_PATH}"
 
     SUITE_NAMES+=("${suite}")
@@ -273,6 +345,10 @@ SUITES=(
     string_str_local
     string_wide_local
     ctype_local
+    math_trig_local
+    pthread_mutex_local
+    stdio_buffer_local
+    stdlib_conversion_local
 )
 
 for suite in "${SUITES[@]}"; do
