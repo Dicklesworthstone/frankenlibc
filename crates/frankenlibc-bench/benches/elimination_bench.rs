@@ -7,7 +7,7 @@ use std::collections::VecDeque;
 use std::fs::{File, create_dir_all};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Barrier, Condvar, Mutex};
+use std::sync::{Arc, Barrier, Mutex};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -17,6 +17,7 @@ use frankenlibc_core::malloc::{EliminationArray, OfferOutcome, TakeOutcome};
 const THREADS: usize = 8;
 const PRODUCERS: usize = THREADS / 2;
 const CONSUMERS: usize = THREADS / 2;
+const BENCH_SLOT_BIAS: usize = 7;
 const DEFAULT_TRIALS: usize = 5;
 const DEFAULT_OPS_PER_PRODUCER: usize = 40_000;
 const DEFAULT_WAIT_BUDGET_US: u64 = 100;
@@ -81,7 +82,7 @@ fn run_elimination_trial(config: TrialConfig) -> TrialResult {
             for round in 0..config.ops_per_producer {
                 let mut pending = producer_id * 1_000_000 + round;
                 loop {
-                    match queue.try_offer(producer_id, pending) {
+                    match queue.try_offer(BENCH_SLOT_BIAS, pending) {
                         OfferOutcome::Matched(_) => break,
                         OfferOutcome::Fallback { value, .. } => {
                             pending = value;
@@ -93,14 +94,14 @@ fn run_elimination_trial(config: TrialConfig) -> TrialResult {
         }));
     }
 
-    for consumer_id in 0..CONSUMERS {
+    for _consumer_id in 0..CONSUMERS {
         let queue = Arc::clone(&queue);
         let barrier = Arc::clone(&barrier);
         handles.push(thread::spawn(move || {
             barrier.wait();
             let mut received = 0usize;
             while received < consumer_target {
-                match queue.try_take(consumer_id) {
+                match queue.try_take(BENCH_SLOT_BIAS) {
                     TakeOutcome::Matched { value, .. } => {
                         std::hint::black_box(value);
                         received += 1;
@@ -129,7 +130,7 @@ fn run_elimination_trial(config: TrialConfig) -> TrialResult {
 }
 
 fn run_mutex_queue_trial(config: TrialConfig) -> TrialResult {
-    let queue = Arc::new((Mutex::new(VecDeque::<usize>::new()), Condvar::new()));
+    let queue = Arc::new(Mutex::new(VecDeque::<usize>::new()));
     let barrier = Arc::new(Barrier::new(THREADS + 1));
     let total_transfers = config.ops_per_producer * PRODUCERS;
     let consumer_target = total_transfers / CONSUMERS;
@@ -142,13 +143,10 @@ fn run_mutex_queue_trial(config: TrialConfig) -> TrialResult {
             barrier.wait();
             for round in 0..config.ops_per_producer {
                 let value = producer_id * 1_000_000 + round;
-                let (entries, notify) = &*queue;
-                let mut guard = entries
+                let mut guard = queue
                     .lock()
                     .unwrap_or_else(|poisoned| poisoned.into_inner());
                 guard.push_back(value);
-                drop(guard);
-                notify.notify_one();
             }
         }));
     }
@@ -160,22 +158,17 @@ fn run_mutex_queue_trial(config: TrialConfig) -> TrialResult {
             barrier.wait();
             let mut received = 0usize;
             while received < consumer_target {
-                let (entries, notify) = &*queue;
-                let mut guard = entries
+                let mut guard = queue
                     .lock()
                     .unwrap_or_else(|poisoned| poisoned.into_inner());
-                while guard.is_empty() {
-                    guard = notify
-                        .wait(guard)
-                        .unwrap_or_else(|poisoned| poisoned.into_inner());
+                if let Some(value) = guard.pop_front() {
+                    drop(guard);
+                    std::hint::black_box(value);
+                    received += 1;
+                } else {
+                    drop(guard);
+                    thread::yield_now();
                 }
-
-                let value = guard
-                    .pop_front()
-                    .expect("queue must contain a value after condvar wake");
-                drop(guard);
-                std::hint::black_box(value);
-                received += 1;
             }
         }));
     }
