@@ -157,5 +157,22 @@ fn harness_cli_runs_single_fault_scenario() {
     assert_eq!(report["summary"]["scenario_count"].as_u64(), Some(1));
     assert_eq!(report["summary"]["total_cases"].as_u64(), Some(6));
 
+    let artifact_index: ArtifactIndex =
+        serde_json::from_str(&fs::read_to_string(&artifact_index_path).unwrap())
+            .expect("artifact index json");
+    let log_join_keys = artifact_index
+        .artifacts
+        .iter()
+        .find(|artifact| artifact.kind == "log")
+        .and_then(|artifact| artifact.join_keys.as_ref())
+        .expect("log artifact join keys");
+    assert_eq!(log_join_keys.trace_ids.len(), 6);
+    assert!(
+        artifact_index
+            .artifacts
+            .iter()
+            .any(|artifact| artifact.kind == "manifest")
+    );
+
     fs::remove_dir_all(&tmp).ok();
 }

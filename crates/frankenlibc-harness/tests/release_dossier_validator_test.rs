@@ -2,15 +2,30 @@
 // Verifies that the release dossier validator runs, produces a valid report,
 // and enforces integrity checking with SHA256 checksums.
 
+use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::{SystemTime, UNIX_EPOCH};
 
-#[test]
-fn dossier_validator_produces_valid_report() {
-    let repo_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+fn repo_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .unwrap()
         .parent()
-        .unwrap();
+        .unwrap()
+        .to_path_buf()
+}
+
+fn unique_temp_path(prefix: &str, suffix: &str) -> PathBuf {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock drifted before unix epoch")
+        .as_nanos();
+    std::env::temp_dir().join(format!("{prefix}-{}-{nanos}{suffix}", std::process::id()))
+}
+
+#[test]
+fn dossier_validator_produces_valid_report() {
+    let repo_root = repo_root();
 
     let script = repo_root.join("scripts/release_dossier_validator.py");
     assert!(
@@ -47,6 +62,7 @@ fn dossier_validator_produces_valid_report() {
         "findings",
         "compatibility_policy",
         "dossier_manifest_version",
+        "release_notes_hook",
     ];
     for key in required_keys {
         assert!(
@@ -63,6 +79,23 @@ fn dossier_validator_produces_valid_report() {
     assert!(summary["critical_missing"].as_u64().is_some());
     assert!(summary["errors"].as_u64().is_some());
     assert!(summary["warnings"].as_u64().is_some());
+    assert!(summary["release_note_candidates"].as_u64().is_some());
+
+    let release_notes_hook = report["release_notes_hook"]
+        .as_object()
+        .expect("release_notes_hook must be an object");
+    assert!(
+        release_notes_hook.contains_key("source_path"),
+        "release_notes_hook missing source_path"
+    );
+    assert!(
+        release_notes_hook.contains_key("entries"),
+        "release_notes_hook missing entries"
+    );
+    assert!(
+        release_notes_hook.contains_key("release_notes_markdown"),
+        "release_notes_hook missing release_notes_markdown"
+    );
 
     // Verdict must be a known value
     let verdict = report["verdict"].as_str().unwrap();
@@ -74,11 +107,7 @@ fn dossier_validator_produces_valid_report() {
 
 #[test]
 fn dossier_artifact_results_have_required_fields() {
-    let repo_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap();
+    let repo_root = repo_root();
 
     let report_path = repo_root.join("tests/release/dossier_validation_report.v1.json");
     assert!(
@@ -122,11 +151,7 @@ fn dossier_artifact_results_have_required_fields() {
 
 #[test]
 fn dossier_integrity_index_consistent() {
-    let repo_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap();
+    let repo_root = repo_root();
 
     let report_path = repo_root.join("tests/release/dossier_validation_report.v1.json");
     let content = std::fs::read_to_string(&report_path).expect("failed to read report");
@@ -165,11 +190,7 @@ fn dossier_integrity_index_consistent() {
 
 #[test]
 fn dossier_compatibility_policy_present() {
-    let repo_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap();
+    let repo_root = repo_root();
 
     let report_path = repo_root.join("tests/release/dossier_validation_report.v1.json");
     let content = std::fs::read_to_string(&report_path).expect("failed to read report");
@@ -185,5 +206,159 @@ fn dossier_compatibility_policy_present() {
     assert!(
         policy.contains_key("integrity"),
         "policy missing 'integrity'"
+    );
+}
+
+#[test]
+fn dossier_validator_release_notes_hook_tracks_closed_beads() {
+    let repo_root = repo_root();
+    let script = repo_root.join("scripts/release_dossier_validator.py");
+    let issues_path = unique_temp_path("release-dossier-issues", ".jsonl");
+
+    std::fs::write(
+        &issues_path,
+        concat!(
+            "{\"id\":\"bd-early\",\"title\":\"Older closure\",\"status\":\"closed\",\"issue_type\":\"task\",\"closed_at\":\"2026-04-01T00:00:00Z\",\"close_reason\":\"older result\"}\n",
+            "{\"id\":\"bd-open\",\"title\":\"Still open\",\"status\":\"open\",\"issue_type\":\"task\",\"updated_at\":\"2026-04-02T00:00:00Z\"}\n",
+            "not-json\n",
+            "{\"id\":\"bd-late\",\"title\":\"Latest closure\",\"status\":\"closed\",\"issue_type\":\"task\",\"closed_at\":\"2026-04-03T00:00:00Z\",\"description\":\"latest result from description fallback\"}\n"
+        ),
+    )
+    .expect("failed to write temporary issues.jsonl");
+
+    let output = Command::new("python3")
+        .arg(&script)
+        .env("FLC_RELEASE_DOSSIER_ISSUES_JSONL", &issues_path)
+        .env("FLC_RELEASE_DOSSIER_RELEASE_NOTES_LIMIT", "1")
+        .current_dir(&repo_root)
+        .output()
+        .expect("failed to run release_dossier_validator.py with temporary issues");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let report: serde_json::Value = serde_json::from_str(&stdout).unwrap_or_else(|e| {
+        panic!(
+            "Failed to parse dossier report with custom issues file: {}\nstdout: {}\nstderr: {}",
+            e, stdout, stderr
+        );
+    });
+
+    let hook = report["release_notes_hook"]
+        .as_object()
+        .expect("release_notes_hook must be an object");
+    assert_eq!(
+        hook["summary"]["closed_total"].as_u64(),
+        Some(2),
+        "hook should count only closed issues"
+    );
+    assert_eq!(
+        hook["summary"]["selected"].as_u64(),
+        Some(1),
+        "hook should respect FLC_RELEASE_DOSSIER_RELEASE_NOTES_LIMIT"
+    );
+    assert_eq!(
+        hook["summary"]["invalid_rows"].as_u64(),
+        Some(1),
+        "hook should report invalid JSONL rows"
+    );
+
+    let entries = hook["entries"]
+        .as_array()
+        .expect("entries must be an array");
+    assert_eq!(
+        entries.len(),
+        1,
+        "selection limit should keep one release-note entry"
+    );
+    let latest = &entries[0];
+    assert_eq!(latest["id"].as_str(), Some("bd-late"));
+    assert_eq!(
+        latest["close_reason"].as_str(),
+        Some("latest result from description fallback"),
+        "description should be used when close_reason is absent"
+    );
+
+    let markdown = hook["release_notes_markdown"]
+        .as_str()
+        .expect("release_notes_markdown must be a string");
+    assert!(
+        markdown.contains("bd-late"),
+        "release_notes_markdown should render the selected entry"
+    );
+
+    let findings = report["findings"]
+        .as_array()
+        .expect("findings must be an array");
+    assert!(
+        findings.iter().any(|finding| {
+            finding["message"]
+                .as_str()
+                .map(|message| message.contains("Release-notes hook skipped 1 invalid row(s)"))
+                .unwrap_or(false)
+        }),
+        "validator should emit a warning when the issues JSONL contains invalid rows"
+    );
+}
+
+#[test]
+fn dossier_validator_release_notes_hook_invalid_limit_falls_back_to_default() {
+    let repo_root = repo_root();
+    let script = repo_root.join("scripts/release_dossier_validator.py");
+    let issues_path = unique_temp_path("release-dossier-invalid-limit", ".jsonl");
+
+    std::fs::write(
+        &issues_path,
+        concat!(
+            "{\"id\":\"bd-1\",\"title\":\"First closure\",\"status\":\"closed\",\"issue_type\":\"task\",\"closed_at\":\"2026-04-01T00:00:00Z\",\"close_reason\":\"first result\"}\n",
+            "{\"id\":\"bd-2\",\"title\":\"Second closure\",\"status\":\"closed\",\"issue_type\":\"task\",\"closed_at\":\"2026-04-02T00:00:00Z\",\"close_reason\":\"second result\"}\n"
+        ),
+    )
+    .expect("failed to write temporary issues.jsonl");
+
+    let output = Command::new("python3")
+        .arg(&script)
+        .env("FLC_RELEASE_DOSSIER_ISSUES_JSONL", &issues_path)
+        .env("FLC_RELEASE_DOSSIER_RELEASE_NOTES_LIMIT", "not-a-number")
+        .current_dir(&repo_root)
+        .output()
+        .expect("failed to run release_dossier_validator.py with invalid limit");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let report: serde_json::Value = serde_json::from_str(&stdout).unwrap_or_else(|e| {
+        panic!(
+            "Failed to parse dossier report with invalid limit: {}\nstdout: {}\nstderr: {}",
+            e, stdout, stderr
+        );
+    });
+
+    let hook = report["release_notes_hook"]
+        .as_object()
+        .expect("release_notes_hook must be an object");
+    assert_eq!(
+        hook["selection_policy"]["limit"].as_u64(),
+        Some(8),
+        "invalid release-notes limit should fall back to the default"
+    );
+    assert_eq!(
+        hook["summary"]["selected"].as_u64(),
+        Some(2),
+        "fallback limit should still include the available closed beads"
+    );
+
+    let findings = report["findings"]
+        .as_array()
+        .expect("findings must be an array");
+    assert!(
+        findings.iter().any(|finding| {
+            finding["message"]
+                .as_str()
+                .map(|message| {
+                    message.contains("FLC_RELEASE_DOSSIER_RELEASE_NOTES_LIMIT")
+                        && message.contains("using default 8")
+                })
+                .unwrap_or(false)
+        }),
+        "validator should emit a warning when the release-notes limit is invalid"
     );
 }

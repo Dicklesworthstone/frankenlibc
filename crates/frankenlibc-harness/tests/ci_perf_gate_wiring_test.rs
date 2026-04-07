@@ -52,3 +52,21 @@ fn benchmark_gate_fallback_validates_local_contracts() {
         "ci.sh should expose a deterministic override for the local fallback path"
     );
 }
+
+#[test]
+fn ci_script_runs_elimination_backoff_gate() {
+    let script = ci_script();
+    assert!(
+        script.contains("scripts/check_elimination_backoff.sh"),
+        "ci.sh should run scripts/check_elimination_backoff.sh in the extended gate suite"
+    );
+}
+
+#[test]
+fn ci_script_runs_metadata_read_benchmark_gate() {
+    let script = ci_script();
+    assert!(
+        script.contains("scripts/check_metadata_read_benchmark.sh"),
+        "ci.sh should run scripts/check_metadata_read_benchmark.sh in the extended gate suite"
+    );
+}

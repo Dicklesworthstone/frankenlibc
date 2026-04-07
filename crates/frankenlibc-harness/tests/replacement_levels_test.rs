@@ -16,6 +16,8 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 fn workspace_root() -> PathBuf {
     let manifest = env!("CARGO_MANIFEST_DIR");
@@ -42,6 +44,14 @@ fn load_matrix() -> serde_json::Value {
 fn load_readme() -> String {
     let path = workspace_root().join("README.md");
     std::fs::read_to_string(&path).expect("README.md should exist")
+}
+
+fn unique_temp_path(prefix: &str, suffix: &str) -> PathBuf {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock drifted before unix epoch")
+        .as_nanos();
+    std::env::temp_dir().join(format!("{prefix}-{}-{nanos}{suffix}", std::process::id()))
 }
 
 #[test]
@@ -513,4 +523,99 @@ fn gate_script_exists_and_executable() {
             "check_replacement_levels.sh must be executable"
         );
     }
+}
+
+#[test]
+fn gate_script_refreshes_l1_objective_gate_artifacts() {
+    let root = workspace_root();
+    let script = root.join("scripts/check_replacement_levels.sh");
+    let report_path = unique_temp_path("replacement-levels-report", ".json");
+    let log_path = unique_temp_path("replacement-levels-log", ".jsonl");
+
+    let output = Command::new(&script)
+        .env("FLC_REPLACEMENT_LEVELS_REPORT_PATH", &report_path)
+        .env("FLC_REPLACEMENT_LEVELS_LOG_PATH", &log_path)
+        .current_dir(&root)
+        .output()
+        .expect("failed to run check_replacement_levels.sh");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "check_replacement_levels.sh should pass\nstdout={stdout}\nstderr={stderr}"
+    );
+    assert!(
+        stdout.contains("PASS: Structured L1 objective gate artifacts refreshed"),
+        "gate script should report refreshed L1 artifacts\nstdout={stdout}"
+    );
+    assert!(
+        report_path.exists(),
+        "replacement-level report was not written to {:?}",
+        report_path
+    );
+    assert!(
+        log_path.exists(),
+        "replacement-level log was not written to {:?}",
+        log_path
+    );
+
+    let report: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(&report_path).expect("failed to read replacement-level report"),
+    )
+    .expect("replacement-level report is not valid JSON");
+    assert_eq!(
+        report["bead_id"].as_str(),
+        Some("bd-gtf.4"),
+        "L1 gate report must be attributed to bd-gtf.4"
+    );
+    assert_eq!(
+        report["gate_id"].as_str(),
+        Some("replacement_levels_l1_gate"),
+        "unexpected gate_id in replacement-level report"
+    );
+    assert_eq!(
+        report["status"].as_str(),
+        Some("pass"),
+        "replacement-level gate report should succeed for the checked-in artifacts"
+    );
+    let script_checks = report["script_checks"]
+        .as_array()
+        .expect("report.script_checks must be an array");
+    assert_eq!(
+        script_checks.len(),
+        6,
+        "expected six script checks in report"
+    );
+    assert!(
+        script_checks
+            .iter()
+            .all(|check| check["outcome"].as_str() == Some("pass")),
+        "all script checks should pass for the checked-in replacement-level artifacts"
+    );
+
+    let log_lines =
+        std::fs::read_to_string(&log_path).expect("failed to read replacement-level log");
+    let rows: Vec<serde_json::Value> = log_lines
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("replacement-level log row is invalid JSON"))
+        .collect();
+    assert!(
+        !rows.is_empty(),
+        "replacement-level log should contain at least one structured row"
+    );
+    for row in rows {
+        assert_eq!(row["bead_id"].as_str(), Some("bd-gtf.4"));
+        assert!(
+            row["trace_id"].as_str().is_some(),
+            "log row missing trace_id"
+        );
+        assert!(
+            row["artifact_ref"].as_str().is_some(),
+            "log row missing artifact_ref"
+        );
+    }
+
+    let _ = std::fs::remove_file(report_path);
+    let _ = std::fs::remove_file(log_path);
 }
