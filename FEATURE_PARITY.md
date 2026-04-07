@@ -305,6 +305,7 @@ Current stubbed symbols (explicit deterministic contracts):
 30. Stein discrepancy monitor fixed — replaced mean-score-norm KSD (broken for deterministic inputs) with KL divergence D(current||reference) between live EWMA and calibration-frozen models; all 7 tests pass.
 31. Five additional runtime math monitors verified: Stein discrepancy (KSD goodness-of-fit), POMDP repair (belief-space policy), K-theory (contract drift), SOS invariant (Lyapunov synthesis). Total test count: 792.
 32. POSIX Batch 3: stdio file ops (27 ABI entrypoints wired via stream registry), process control (6 entrypoints under `ApiFamily::Process=17`: fork, _exit, execve, execvp, waitpid, wait), virtual memory (5 entrypoints under `ApiFamily::VirtualMemory=18`: mmap, munmap, mprotect, msync, madvise), pthread sync (15 entrypoints extending `ApiFamily::Threading`: mutex init/destroy/lock/trylock/unlock, cond init/destroy/wait/signal/broadcast, rwlock init/destroy/rdlock/wrlock/unlock), I/O multiplexing (4 entrypoints under `ApiFamily::Poll=19`: poll, ppoll, select, pselect). ApiFamily::COUNT expanded from 17 to 20. Total test count: 897.
+33. HTM fast path live — `memcpy`, `pthread_mutex_lock`, and the malloc stats combiner now route uncontended hot-path work through an RTM-backed optimistic path with deterministic abort/cooldown/fallback evidence enforced by `scripts/check_htm_fast_path.sh`.
 
 ## Update Policy
 

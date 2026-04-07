@@ -1,7 +1,7 @@
 {
   "schema_version": "v1",
   "bead": "bd-5fw.3",
-  "generated_at": "2026-03-25T19:36:51Z",
+  "generated_at": "2026-04-07T22:38:47Z",
   "status": "fail",
   "verdict": "FAIL",
   "summary": {
@@ -11,7 +11,8 @@
     "missing": 1,
     "critical_missing": 0,
     "errors": 1,
-    "warnings": 1
+    "warnings": 1,
+    "release_note_candidates": 8
   },
   "dossier_manifest_version": "v1",
   "compatibility_policy": {
@@ -67,8 +68,8 @@
       "kind": "report",
       "required": true,
       "critical": true,
-      "sha256": "f1c423bb9038aec7b81040767cb8d72e688f110b435fa64529cf303599f7e47d",
-      "size_bytes": 404,
+      "sha256": "7011b4fb887b67874df268f2509ff052669fa75b9979f217242a76f468ef4b07",
+      "size_bytes": 819,
       "status": "VALID",
       "schema_valid": true,
       "findings": []
@@ -91,8 +92,8 @@
       "kind": "report",
       "required": true,
       "critical": true,
-      "sha256": "cf3df654ee792884d974b5fefcf2380c886cbc8c9e9c2f793384850f8b4366dc",
-      "size_bytes": 6513,
+      "sha256": "6e406c7fe582f810a9a25f349367a6174ecf7d4306c21d108640bd341ab19350",
+      "size_bytes": 11583,
       "status": "VALID",
       "schema_valid": true,
       "findings": []
@@ -103,8 +104,8 @@
       "kind": "report",
       "required": true,
       "critical": false,
-      "sha256": "33602c6ae430cb8d0de683e6c3b4bc803ea610a366a0a64c98ce40efc34d9262",
-      "size_bytes": 8891,
+      "sha256": "ff551a3d876c79615aa348c56b0e6be8f5f5c12e678c744aea7e07d537cbd1bb",
+      "size_bytes": 23702,
       "status": "VALID",
       "schema_valid": true,
       "findings": []
@@ -127,7 +128,7 @@
       "kind": "report",
       "required": true,
       "critical": true,
-      "sha256": "2cfd2da48beca47cbbb692894c8c680c2b73127506cc55e1dc7855ed3d6fcfab",
+      "sha256": "c8d9e4ddb4f7c70de98281a68511f2efc0f022f07b021763ec72f8e08e014a9b",
       "size_bytes": 35306,
       "status": "VALID",
       "schema_valid": true,
@@ -139,7 +140,7 @@
       "kind": "report",
       "required": true,
       "critical": true,
-      "sha256": "a1f4be449bce44613b9c1a1825170773b192ba0ee9d3f9b689a6bf1523e66ad0",
+      "sha256": "9e42370744c96e6e10316d2aab92a470a4666fd4d72bcae437f5414823ec0855",
       "size_bytes": 23809,
       "status": "VALID",
       "schema_valid": true,
@@ -229,8 +230,8 @@
     },
     "claim_reconciliation": {
       "path": "tests/conformance/claim_reconciliation_report.v1.json",
-      "sha256": "f1c423bb9038aec7b81040767cb8d72e688f110b435fa64529cf303599f7e47d",
-      "size_bytes": 404
+      "sha256": "7011b4fb887b67874df268f2509ff052669fa75b9979f217242a76f468ef4b07",
+      "size_bytes": 819
     },
     "closure_sweep": {
       "path": "tests/conformance/closure_sweep_report.v1.json",
@@ -239,13 +240,13 @@
     },
     "replacement_levels": {
       "path": "tests/conformance/replacement_levels.json",
-      "sha256": "cf3df654ee792884d974b5fefcf2380c886cbc8c9e9c2f793384850f8b4366dc",
-      "size_bytes": 6513
+      "sha256": "6e406c7fe582f810a9a25f349367a6174ecf7d4306c21d108640bd341ab19350",
+      "size_bytes": 11583
     },
     "opportunity_matrix": {
       "path": "tests/conformance/opportunity_matrix.json",
-      "sha256": "33602c6ae430cb8d0de683e6c3b4bc803ea610a366a0a64c98ce40efc34d9262",
-      "size_bytes": 8891
+      "sha256": "ff551a3d876c79615aa348c56b0e6be8f5f5c12e678c744aea7e07d537cbd1bb",
+      "size_bytes": 23702
     },
     "math_governance": {
       "path": "tests/conformance/math_governance.json",
@@ -254,12 +255,12 @@
     },
     "controller_ablation": {
       "path": "tests/runtime_math/controller_ablation_report.v1.json",
-      "sha256": "2cfd2da48beca47cbbb692894c8c680c2b73127506cc55e1dc7855ed3d6fcfab",
+      "sha256": "c8d9e4ddb4f7c70de98281a68511f2efc0f022f07b021763ec72f8e08e014a9b",
       "size_bytes": 35306
     },
     "admission_gate": {
       "path": "tests/runtime_math/admission_gate_report.v1.json",
-      "sha256": "a1f4be449bce44613b9c1a1825170773b192ba0ee9d3f9b689a6bf1523e66ad0",
+      "sha256": "9e42370744c96e6e10316d2aab92a470a4666fd4d72bcae437f5414823ec0855",
       "size_bytes": 23809
     },
     "production_kernel_manifest": {
@@ -281,6 +282,123 @@
       "path": "tests/conformance/closure_contract.v1.json",
       "sha256": "b1001c17a5b3a1d97b0df41da454ccaf78b161fc8892a592fe078b823f4fdb82",
       "size_bytes": 12241
+    }
+  },
+  "release_notes_hook": {
+    "source_path": ".beads/issues.jsonl",
+    "selection_policy": {
+      "status": "closed",
+      "sort": "closed_at_desc_then_id_desc",
+      "limit": 8
+    },
+    "entries": [
+      {
+        "id": "bd-3aof.3.1",
+        "title": "RCU metadata benchmark matrix + artifact report wiring",
+        "issue_type": "task",
+        "priority": 2,
+        "closed_at": "2026-04-07T22:36:34.619308324Z",
+        "closed_by": "Codex",
+        "labels": [],
+        "close_reason": "Implemented metadata benchmark artifact/report plumbing across the bench crate, added the metadata benchmark gate and integration test coverage, reproduced a writer-side QSBR hang in metadata_read_be\u2026"
+      },
+      {
+        "id": "bd-gtf.6",
+        "title": "L3 full-replace claim-control gate tied to prerequisite completion",
+        "issue_type": "task",
+        "priority": 0,
+        "closed_at": "2026-04-07T22:16:38.698922589Z",
+        "closed_by": "Codex",
+        "labels": [
+          "l3",
+          "policy",
+          "replacement"
+        ],
+        "close_reason": "Implemented the L3 release-claim gate slice in the release dossier flow: added release_notes_hook output to the validator, hardened FLC_RELEASE_DOSSIER_RELEASE_NOTES_LIMIT parsing with warning+defaul\u2026"
+      },
+      {
+        "id": "bd-3rw.1",
+        "title": "DEPLOYMENT.md: production guide",
+        "issue_type": "task",
+        "priority": 1,
+        "closed_at": "2026-04-07T19:37:57.961229475Z",
+        "closed_by": "ubuntu",
+        "labels": [
+          "deployment",
+          "docs"
+        ],
+        "close_reason": "Materialized DEPLOYMENT.md as the deployment source of truth, linked README to it, updated docs governance to target DEPLOYMENT.md, regenerated docs governance artifacts, and added regression coverag\u2026"
+      },
+      {
+        "id": "bd-qwm",
+        "title": "CRT phase-0: _start/__libc_start_main bootstrap skeleton + acceptance fixtures",
+        "issue_type": "task",
+        "priority": 2,
+        "closed_at": "2026-04-07T19:27:25.598119230Z",
+        "closed_by": "SwiftLark",
+        "labels": [
+          "critique",
+          "crt",
+          "rtld"
+        ],
+        "close_reason": "Acceptance fixture now passes under LD_PRELOAD in strict+hardened modes; verification matrix and evidence artifacts refreshed."
+      },
+      {
+        "id": "bd-1sp.4",
+        "title": "Alien CS: EBR for lock-free data structures (section 14.10)",
+        "issue_type": "task",
+        "priority": 1,
+        "closed_at": "2026-04-07T19:01:08.160355842Z",
+        "closed_by": "Codex",
+        "labels": [
+          "alien-cs",
+          "concurrency",
+          "ebr",
+          "frankenlibc"
+        ],
+        "close_reason": "Revalidated EBR integration gate via rch exec: cargo test -p frankenlibc-membrane --test ebr_integration_test ebr_e2e_emits_structured_artifacts -- --nocapture, bash scripts/check_ebr_integration.sh,\u2026"
+      },
+      {
+        "id": "bd-249m.7",
+        "title": "Proof: Sheaf global-consistency",
+        "issue_type": "task",
+        "priority": 3,
+        "closed_at": "2026-04-07T18:45:17.951725563Z",
+        "closed_by": "ubuntu",
+        "labels": [],
+        "close_reason": "Added sheaf global-consistency proof note and machine-readable cover artifact, strengthened cohomology with a triple-overlap H^1=0 proof test, extended the cohomology harness test to validate open-co\u2026"
+      },
+      {
+        "id": "bd-h5x.3",
+        "title": "Non-threading call-through elimination + enforcement CI gate",
+        "issue_type": "task",
+        "priority": 1,
+        "closed_at": "2026-04-07T18:16:06.943344906Z",
+        "closed_by": "ubuntu",
+        "labels": [
+          "ci",
+          "dlfcn",
+          "stdio",
+          "syscall"
+        ],
+        "close_reason": "Added race-free replacement-guard artifact paths, explicit policy verdict/log fields, and ranked non-threading backlog reporting with passing guard/test verification."
+      },
+      {
+        "id": "bd-1wzq",
+        "title": "HTM fast-path for hot libc functions (section 4.2, Score 3.0)",
+        "issue_type": "task",
+        "priority": 3,
+        "closed_at": "2026-04-07T17:35:02.268971009Z",
+        "closed_by": "Codex",
+        "labels": [],
+        "close_reason": "Completed HTM fast-path verification slice: added missing pthread_mutex_lock abort/fallback regression so the three integrated HTM entrypoints now have explicit commit/abort coverage (malloc, memcpy,\u2026"
+      }
+    ],
+    "release_notes_markdown": "## Release Notes Candidates\n\n- `bd-3aof.3.1` RCU metadata benchmark matrix + artifact report wiring (task, closed 2026-04-07T22:36:34.619308324Z)\n  Implemented metadata benchmark artifact/report plumbing across the bench crate, added the metadata benchmark gate and integration test coverage, reproduced a writer-side QSBR hang in metadata_read_be\u2026\n- `bd-gtf.6` L3 full-replace claim-control gate tied to prerequisite completion (task, closed 2026-04-07T22:16:38.698922589Z)\n  Implemented the L3 release-claim gate slice in the release dossier flow: added release_notes_hook output to the validator, hardened FLC_RELEASE_DOSSIER_RELEASE_NOTES_LIMIT parsing with warning+defaul\u2026\n- `bd-3rw.1` DEPLOYMENT.md: production guide (task, closed 2026-04-07T19:37:57.961229475Z)\n  Materialized DEPLOYMENT.md as the deployment source of truth, linked README to it, updated docs governance to target DEPLOYMENT.md, regenerated docs governance artifacts, and added regression coverag\u2026\n- `bd-qwm` CRT phase-0: _start/__libc_start_main bootstrap skeleton + acceptance fixtures (task, closed 2026-04-07T19:27:25.598119230Z)\n  Acceptance fixture now passes under LD_PRELOAD in strict+hardened modes; verification matrix and evidence artifacts refreshed.\n- `bd-1sp.4` Alien CS: EBR for lock-free data structures (section 14.10) (task, closed 2026-04-07T19:01:08.160355842Z)\n  Revalidated EBR integration gate via rch exec: cargo test -p frankenlibc-membrane --test ebr_integration_test ebr_e2e_emits_structured_artifacts -- --nocapture, bash scripts/check_ebr_integration.sh,\u2026\n- `bd-249m.7` Proof: Sheaf global-consistency (task, closed 2026-04-07T18:45:17.951725563Z)\n  Added sheaf global-consistency proof note and machine-readable cover artifact, strengthened cohomology with a triple-overlap H^1=0 proof test, extended the cohomology harness test to validate open-co\u2026\n- `bd-h5x.3` Non-threading call-through elimination + enforcement CI gate (task, closed 2026-04-07T18:16:06.943344906Z)\n  Added race-free replacement-guard artifact paths, explicit policy verdict/log fields, and ranked non-threading backlog reporting with passing guard/test verification.\n- `bd-1wzq` HTM fast-path for hot libc functions (section 4.2, Score 3.0) (task, closed 2026-04-07T17:35:02.268971009Z)\n  Completed HTM fast-path verification slice: added missing pthread_mutex_lock abort/fallback regression so the three integrated HTM entrypoints now have explicit commit/abort coverage (malloc, memcpy,\u2026",
+    "summary": {
+      "closed_total": 458,
+      "selected": 8,
+      "invalid_rows": 0
     }
   },
   "findings": [
