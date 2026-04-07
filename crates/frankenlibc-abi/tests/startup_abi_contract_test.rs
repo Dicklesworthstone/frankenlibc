@@ -17,9 +17,12 @@ use frankenlibc_abi::startup_abi::{
     StartupPolicySnapshot, startup_policy_snapshot_for_tests,
 };
 use frankenlibc_abi::startup_helpers::{
-    AT_NULL, AT_SECURE, MAX_STARTUP_SCAN, SecureModeState, StartupCheckpoint,
+    AT_NULL, AT_SECURE, InitCapability, MAX_STARTUP_SCAN, SecureModeState, StartupCheckpoint,
+    allowed_startup_checkpoints, missing_startup_capabilities, startup_init_order_certificate_json,
+    verify_startup_path_capabilities,
 };
 use frankenlibc_abi::stdio_abi::{fflush, fwrite, stdout};
+use serde_json::Value;
 
 type MainFn = unsafe extern "C" fn(c_int, *mut *mut c_char, *mut *mut c_char) -> c_int;
 type HookFn = unsafe extern "C" fn();
@@ -162,6 +165,12 @@ fn startup_trace_log_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
         .join("target/conformance/bd-11nb_startup_phase0.log.jsonl")
+}
+
+fn startup_certificate_artifact_path() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join("target/conformance/bd-2gjs.4_startup_init_order_certificate.json")
 }
 
 fn append_startup_trace(scenario: &str, rc: c_int, errno: c_int, policy: StartupPolicySnapshot) {
@@ -715,4 +724,81 @@ fn libc_start_main_phase0_missing_main_does_not_fallback() {
     assert_eq!(policy.failure_reason, StartupFailureReason::MissingMain);
     assert_eq!(policy.last_phase, StartupCheckpoint::Deny);
     append_startup_trace("phase0-missing-main-no-fallback", rc, errno, policy);
+}
+
+#[test]
+fn startup_capability_lattice_detects_use_before_env_resolution() {
+    let _guard = acquire_test_lock();
+    let prefix = [
+        StartupCheckpoint::Entry,
+        StartupCheckpoint::MembraneGate,
+        StartupCheckpoint::ValidateMainPointer,
+        StartupCheckpoint::ValidateArgvPointer,
+        StartupCheckpoint::ScanArgvVector,
+        StartupCheckpoint::ValidateArgcBound,
+        StartupCheckpoint::ScanEnvpVector,
+        StartupCheckpoint::ScanAuxvVector,
+        StartupCheckpoint::ClassifySecureMode,
+        StartupCheckpoint::CaptureInvariants,
+    ];
+    let available = verify_startup_path_capabilities(&prefix)
+        .expect("prefix through invariant capture should be valid");
+    let missing = missing_startup_capabilities(StartupCheckpoint::BindProcessGlobals, available);
+
+    assert!(missing.contains(InitCapability::EnvpResolved));
+
+    let allowed = allowed_startup_checkpoints(available);
+    assert!(!allowed.contains(&StartupCheckpoint::BindProcessGlobals));
+    assert!(allowed.contains(&StartupCheckpoint::ResolveEnvp));
+}
+
+#[test]
+fn startup_init_order_certificate_is_embedded_and_persisted() {
+    let _guard = acquire_test_lock();
+    let certificate_json = startup_init_order_certificate_json();
+    let artifact_path = startup_certificate_artifact_path();
+    if let Some(parent) = artifact_path.parent() {
+        create_dir_all(parent).expect("startup certificate artifact parent should exist");
+    }
+    std::fs::write(&artifact_path, certificate_json)
+        .expect("startup certificate artifact should be writable");
+
+    let certificate: Value =
+        serde_json::from_str(certificate_json).expect("startup certificate should parse");
+    let checkpoint_graph = certificate
+        .pointer("/checkpoint_graph")
+        .and_then(Value::as_object)
+        .expect("checkpoint graph should exist");
+    let symbol_graph = certificate
+        .pointer("/self_hosting_symbol_graph")
+        .and_then(Value::as_object)
+        .expect("self-hosting symbol graph should exist");
+    let witness = certificate
+        .pointer("/witness_sha256")
+        .and_then(Value::as_str)
+        .expect("witness hash should exist");
+
+    assert_eq!(
+        checkpoint_graph.get("acyclic").and_then(Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        symbol_graph.get("acyclic").and_then(Value::as_bool),
+        Some(true)
+    );
+    assert!(
+        checkpoint_graph
+            .get("node_count")
+            .and_then(Value::as_u64)
+            .expect("checkpoint node count should exist")
+            >= 15
+    );
+    assert!(
+        symbol_graph
+            .get("node_count")
+            .and_then(Value::as_u64)
+            .expect("symbol node count should exist")
+            >= 15
+    );
+    assert_eq!(witness.len(), 64);
 }

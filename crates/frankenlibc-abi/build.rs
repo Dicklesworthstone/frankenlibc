@@ -1,5 +1,6 @@
 use serde_json::Value;
-use std::collections::BTreeSet;
+use sha2::{Digest, Sha256};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -11,12 +12,406 @@ struct CallThroughSite {
     source_kind: &'static str,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct StartupContractSpec {
+    checkpoint: &'static str,
+    requires: &'static [&'static str],
+    provides: &'static [&'static str],
+}
+
+#[derive(Debug, Clone, Copy)]
+struct StartupSymbolSpec {
+    symbol: &'static str,
+    depends_on: &'static [&'static str],
+}
+
+const STARTUP_CHECKPOINT_EDGES: &[(&str, &str)] = &[
+    ("Entry", "MembraneGate"),
+    ("MembraneGate", "ValidateMainPointer"),
+    ("ValidateMainPointer", "ValidateArgvPointer"),
+    ("ValidateArgvPointer", "ScanArgvVector"),
+    ("ScanArgvVector", "ValidateArgcBound"),
+    ("ValidateArgcBound", "ScanEnvpVector"),
+    ("ScanEnvpVector", "ScanAuxvVector"),
+    ("ScanAuxvVector", "ClassifySecureMode"),
+    ("ClassifySecureMode", "CaptureInvariants"),
+    ("CaptureInvariants", "ResolveEnvp"),
+    ("ResolveEnvp", "BindProcessGlobals"),
+    ("BindProcessGlobals", "BootstrapHostSymbols"),
+    ("BootstrapHostSymbols", "InitHostStdio"),
+    ("InitHostStdio", "BootstrapHostLibio"),
+    ("BootstrapHostLibio", "PrewarmThreadSymbols"),
+    ("PrewarmThreadSymbols", "PrewarmAllocatorSymbols"),
+    ("PrewarmAllocatorSymbols", "SignalRuntimeReady"),
+    ("SignalRuntimeReady", "CallInitHook"),
+    ("SignalRuntimeReady", "CallMain"),
+    ("CallInitHook", "CallMain"),
+    ("CallMain", "CallFiniHook"),
+    ("CallMain", "CallRtldFiniHook"),
+    ("CallMain", "Complete"),
+    ("CallFiniHook", "CallRtldFiniHook"),
+    ("CallFiniHook", "Complete"),
+    ("CallRtldFiniHook", "Complete"),
+    ("MembraneGate", "Deny"),
+    ("ValidateMainPointer", "Deny"),
+    ("ValidateArgvPointer", "Deny"),
+    ("ScanArgvVector", "Deny"),
+    ("ValidateArgcBound", "Deny"),
+    ("ScanEnvpVector", "Deny"),
+    ("ScanAuxvVector", "Deny"),
+    ("ClassifySecureMode", "Deny"),
+    ("CaptureInvariants", "Deny"),
+    ("Entry", "FallbackHost"),
+];
+
+const STARTUP_CONTRACT_SPECS: &[StartupContractSpec] = &[
+    StartupContractSpec {
+        checkpoint: "Entry",
+        requires: &[],
+        provides: &[],
+    },
+    StartupContractSpec {
+        checkpoint: "MembraneGate",
+        requires: &[],
+        provides: &["MembraneAdmission"],
+    },
+    StartupContractSpec {
+        checkpoint: "ValidateMainPointer",
+        requires: &["MembraneAdmission"],
+        provides: &["MainValidated"],
+    },
+    StartupContractSpec {
+        checkpoint: "ValidateArgvPointer",
+        requires: &["MainValidated"],
+        provides: &["ArgvValidated"],
+    },
+    StartupContractSpec {
+        checkpoint: "ScanArgvVector",
+        requires: &["ArgvValidated"],
+        provides: &["ArgvScanned"],
+    },
+    StartupContractSpec {
+        checkpoint: "ValidateArgcBound",
+        requires: &["ArgvScanned"],
+        provides: &["ArgcBounded"],
+    },
+    StartupContractSpec {
+        checkpoint: "ScanEnvpVector",
+        requires: &["ArgcBounded"],
+        provides: &["EnvpScanned"],
+    },
+    StartupContractSpec {
+        checkpoint: "ScanAuxvVector",
+        requires: &["EnvpScanned"],
+        provides: &["AuxvScanned"],
+    },
+    StartupContractSpec {
+        checkpoint: "ClassifySecureMode",
+        requires: &["AuxvScanned"],
+        provides: &["SecureModeKnown"],
+    },
+    StartupContractSpec {
+        checkpoint: "CaptureInvariants",
+        requires: &["SecureModeKnown"],
+        provides: &["InvariantsCaptured"],
+    },
+    StartupContractSpec {
+        checkpoint: "ResolveEnvp",
+        requires: &["InvariantsCaptured"],
+        provides: &["EnvpResolved"],
+    },
+    StartupContractSpec {
+        checkpoint: "BindProcessGlobals",
+        requires: &["EnvpResolved"],
+        provides: &["ProcessGlobalsBound"],
+    },
+    StartupContractSpec {
+        checkpoint: "BootstrapHostSymbols",
+        requires: &["ProcessGlobalsBound"],
+        provides: &["HostSymbolsReady"],
+    },
+    StartupContractSpec {
+        checkpoint: "InitHostStdio",
+        requires: &["HostSymbolsReady"],
+        provides: &["HostStdioReady"],
+    },
+    StartupContractSpec {
+        checkpoint: "BootstrapHostLibio",
+        requires: &["HostStdioReady"],
+        provides: &["HostLibioReady"],
+    },
+    StartupContractSpec {
+        checkpoint: "PrewarmThreadSymbols",
+        requires: &["HostLibioReady"],
+        provides: &["ThreadSymbolsReady"],
+    },
+    StartupContractSpec {
+        checkpoint: "PrewarmAllocatorSymbols",
+        requires: &["ThreadSymbolsReady"],
+        provides: &["AllocatorSymbolsReady"],
+    },
+    StartupContractSpec {
+        checkpoint: "SignalRuntimeReady",
+        requires: &["AllocatorSymbolsReady"],
+        provides: &["RuntimeReady"],
+    },
+    StartupContractSpec {
+        checkpoint: "CallInitHook",
+        requires: &["RuntimeReady"],
+        provides: &["InitHookObserved"],
+    },
+    StartupContractSpec {
+        checkpoint: "CallMain",
+        requires: &["RuntimeReady"],
+        provides: &["MainCompleted"],
+    },
+    StartupContractSpec {
+        checkpoint: "CallFiniHook",
+        requires: &["MainCompleted"],
+        provides: &["FiniObserved"],
+    },
+    StartupContractSpec {
+        checkpoint: "CallRtldFiniHook",
+        requires: &["MainCompleted"],
+        provides: &["RtldFiniObserved"],
+    },
+    StartupContractSpec {
+        checkpoint: "Complete",
+        requires: &["MainCompleted"],
+        provides: &[],
+    },
+    StartupContractSpec {
+        checkpoint: "Deny",
+        requires: &[],
+        provides: &[],
+    },
+    StartupContractSpec {
+        checkpoint: "FallbackHost",
+        requires: &[],
+        provides: &[],
+    },
+];
+
+const STARTUP_SYMBOL_SPECS: &[StartupSymbolSpec] = &[
+    StartupSymbolSpec {
+        symbol: "normalize_argc",
+        depends_on: &[],
+    },
+    StartupSymbolSpec {
+        symbol: "count_c_string_vector",
+        depends_on: &[],
+    },
+    StartupSymbolSpec {
+        symbol: "read_auxv_pairs",
+        depends_on: &[],
+    },
+    StartupSymbolSpec {
+        symbol: "classify_secure_mode",
+        depends_on: &["read_auxv_pairs"],
+    },
+    StartupSymbolSpec {
+        symbol: "build_invariants",
+        depends_on: &["normalize_argc", "classify_secure_mode"],
+    },
+    StartupSymbolSpec {
+        symbol: "resolve_startup_envp",
+        depends_on: &["normalize_argc"],
+    },
+    StartupSymbolSpec {
+        symbol: "init_program_name",
+        depends_on: &[],
+    },
+    StartupSymbolSpec {
+        symbol: "init_environment_globals",
+        depends_on: &["resolve_startup_envp"],
+    },
+    StartupSymbolSpec {
+        symbol: "init_process_globals",
+        depends_on: &["init_program_name", "init_environment_globals"],
+    },
+    StartupSymbolSpec {
+        symbol: "bootstrap_host_symbols",
+        depends_on: &["init_process_globals"],
+    },
+    StartupSymbolSpec {
+        symbol: "init_host_stdio_streams",
+        depends_on: &["bootstrap_host_symbols"],
+    },
+    StartupSymbolSpec {
+        symbol: "bootstrap_host_libio_exports",
+        depends_on: &["init_host_stdio_streams"],
+    },
+    StartupSymbolSpec {
+        symbol: "prewarm_host_thread_symbols",
+        depends_on: &["bootstrap_host_libio_exports"],
+    },
+    StartupSymbolSpec {
+        symbol: "prewarm_host_allocator_symbols",
+        depends_on: &["prewarm_host_thread_symbols"],
+    },
+    StartupSymbolSpec {
+        symbol: "signal_runtime_ready",
+        depends_on: &["prewarm_host_allocator_symbols"],
+    },
+    StartupSymbolSpec {
+        symbol: "record_phase0_outcome",
+        depends_on: &["build_invariants"],
+    },
+    StartupSymbolSpec {
+        symbol: "delegate_to_host_libc_start_main",
+        depends_on: &[
+            "resolve_startup_envp",
+            "init_process_globals",
+            "bootstrap_host_symbols",
+            "init_host_stdio_streams",
+            "bootstrap_host_libio_exports",
+        ],
+    },
+    StartupSymbolSpec {
+        symbol: "startup_phase0_impl",
+        depends_on: &[
+            "normalize_argc",
+            "count_c_string_vector",
+            "read_auxv_pairs",
+            "classify_secure_mode",
+            "build_invariants",
+            "resolve_startup_envp",
+            "init_process_globals",
+            "bootstrap_host_symbols",
+            "init_host_stdio_streams",
+            "bootstrap_host_libio_exports",
+            "prewarm_host_thread_symbols",
+            "prewarm_host_allocator_symbols",
+            "signal_runtime_ready",
+            "record_phase0_outcome",
+        ],
+    },
+];
+
 fn repo_root(manifest_dir: &str) -> PathBuf {
     Path::new(manifest_dir)
         .parent()
         .and_then(Path::parent)
         .expect("frankenlibc-abi must live under crates/<name>")
         .to_path_buf()
+}
+
+fn topological_order(
+    nodes: &[&'static str],
+    edges: &[(&'static str, &'static str)],
+) -> Vec<String> {
+    let mut indegree = BTreeMap::<&'static str, usize>::new();
+    let mut outgoing = BTreeMap::<&'static str, Vec<&'static str>>::new();
+
+    for &node in nodes {
+        indegree.entry(node).or_insert(0);
+        outgoing.entry(node).or_default();
+    }
+
+    for &(from, to) in edges {
+        *indegree.entry(to).or_insert(0) += 1;
+        outgoing.entry(from).or_default().push(to);
+        indegree.entry(from).or_insert(0);
+    }
+
+    let mut ready = indegree
+        .iter()
+        .filter_map(|(&node, &deg)| (deg == 0).then_some(node))
+        .collect::<Vec<_>>();
+    ready.sort();
+    let mut queue = VecDeque::from(ready);
+    let mut ordered = Vec::with_capacity(nodes.len());
+
+    while let Some(node) = queue.pop_front() {
+        ordered.push(node.to_owned());
+        let mut children = outgoing.get(node).cloned().unwrap_or_default();
+        children.sort();
+        for child in children {
+            let degree = indegree
+                .get_mut(child)
+                .unwrap_or_else(|| panic!("missing indegree entry for {child}"));
+            *degree -= 1;
+            if *degree == 0 {
+                queue.push_back(child);
+            }
+        }
+    }
+
+    assert_eq!(
+        ordered.len(),
+        indegree.len(),
+        "cycle detected while proving startup bootstrap graph"
+    );
+
+    ordered
+}
+
+fn emit_startup_init_order_certificate(out_dir: &Path) {
+    let checkpoint_nodes = STARTUP_CONTRACT_SPECS
+        .iter()
+        .map(|spec| spec.checkpoint)
+        .collect::<Vec<_>>();
+    let checkpoint_order = topological_order(&checkpoint_nodes, STARTUP_CHECKPOINT_EDGES);
+
+    let symbol_nodes = STARTUP_SYMBOL_SPECS
+        .iter()
+        .map(|spec| spec.symbol)
+        .collect::<Vec<_>>();
+    let symbol_edges = STARTUP_SYMBOL_SPECS
+        .iter()
+        .flat_map(|spec| {
+            spec.depends_on
+                .iter()
+                .map(|dependency| (*dependency, spec.symbol))
+        })
+        .collect::<Vec<_>>();
+    let symbol_order = topological_order(&symbol_nodes, &symbol_edges);
+
+    let mut certificate = serde_json::json!({
+        "schema_version": "v1",
+        "artifact": "startup_init_order_certificate",
+        "bead_id": "bd-2gjs.4",
+        "generated_by": "crates/frankenlibc-abi/build.rs",
+        "manual_proof_doc": "docs/init_capability_lattice.md",
+        "checkpoint_graph": {
+            "acyclic": true,
+            "node_count": checkpoint_nodes.len(),
+            "edge_count": STARTUP_CHECKPOINT_EDGES.len(),
+            "topological_order": checkpoint_order,
+            "contracts": STARTUP_CONTRACT_SPECS.iter().map(|spec| serde_json::json!({
+                "checkpoint": spec.checkpoint,
+                "requires": spec.requires,
+                "provides": spec.provides,
+            })).collect::<Vec<_>>(),
+            "edges": STARTUP_CHECKPOINT_EDGES.iter().map(|(from, to)| serde_json::json!({
+                "from": from,
+                "to": to,
+            })).collect::<Vec<_>>(),
+        },
+        "self_hosting_symbol_graph": {
+            "acyclic": true,
+            "node_count": symbol_nodes.len(),
+            "edge_count": symbol_edges.len(),
+            "topological_order": symbol_order,
+            "nodes": STARTUP_SYMBOL_SPECS.iter().map(|spec| serde_json::json!({
+                "symbol": spec.symbol,
+                "depends_on": spec.depends_on,
+            })).collect::<Vec<_>>(),
+        },
+        "witness_sha256": "",
+    });
+
+    let canonical =
+        serde_json::to_string_pretty(&certificate).expect("startup certificate should serialize");
+    let mut hasher = Sha256::new();
+    hasher.update(canonical.as_bytes());
+    let witness = format!("{:x}", hasher.finalize());
+    certificate["witness_sha256"] = Value::String(witness);
+
+    let body = serde_json::to_string_pretty(&certificate)
+        .expect("startup certificate with witness should serialize");
+    fs::write(out_dir.join("startup_init_order_certificate.json"), body)
+        .expect("failed to write startup init order certificate");
 }
 
 fn load_json(path: &Path) -> Value {
@@ -400,4 +795,5 @@ fn main() {
 "#;
     let audit_path = std::path::Path::new(&out_dir).join("simd_isomorphism_audit.json");
     std::fs::write(&audit_path, audit_json).expect("failed to write simd isomorphism audit");
+    emit_startup_init_order_certificate(std::path::Path::new(&out_dir));
 }

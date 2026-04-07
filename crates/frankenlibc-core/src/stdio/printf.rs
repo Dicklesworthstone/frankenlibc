@@ -10,6 +10,10 @@
 //! unboundedly from a single format specifier. Maximum expansion per
 //! specifier is `width + precision + 64` bytes (sign + prefix + digits).
 
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, OnceLock};
+
 // ---------------------------------------------------------------------------
 // Format spec types
 // ---------------------------------------------------------------------------
@@ -133,6 +137,113 @@ pub enum FormatSegment<'a> {
     Percent,
     /// A conversion specifier requiring an argument.
     Spec(FormatSpec),
+}
+
+/// Whether a format string uses implicit, explicit, or mixed argument numbering.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FormatPositionalMode {
+    None,
+    Implicit,
+    Explicit,
+    Mixed,
+}
+
+/// First-use validation artifact for a parsed printf format string.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FormatStringCertificate {
+    pub format_hash: u64,
+    pub positional_mode: FormatPositionalMode,
+    pub directive_count: usize,
+    pub malformed_directive_count: usize,
+    pub percent_escape_count: usize,
+    pub writeback_directive_count: usize,
+}
+
+impl FormatStringCertificate {
+    pub fn valid_for_render(self) -> bool {
+        self.malformed_directive_count == 0
+            && !matches!(self.positional_mode, FormatPositionalMode::Mixed)
+    }
+}
+
+/// Observable cache telemetry for first-use format validation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FormatStringCacheStats {
+    pub hits: u64,
+    pub misses: u64,
+    pub entries: usize,
+}
+
+#[expect(
+    dead_code,
+    reason = "format-string certificate caching is staged for follow-up integration into printf rendering"
+)]
+fn stable_format_hash(fmt: &[u8]) -> u64 {
+    const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+    const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
+
+    let mut hash = FNV_OFFSET;
+    for byte in fmt {
+        hash ^= *byte as u64;
+        hash = hash.wrapping_mul(FNV_PRIME);
+    }
+    hash
+}
+
+fn format_string_certificate_cache() -> &'static Mutex<HashMap<Vec<u8>, FormatStringCertificate>> {
+    static CACHE: OnceLock<Mutex<HashMap<Vec<u8>, FormatStringCertificate>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn format_string_cache_hits() -> &'static AtomicU64 {
+    static HITS: AtomicU64 = AtomicU64::new(0);
+    &HITS
+}
+
+fn format_string_cache_misses() -> &'static AtomicU64 {
+    static MISSES: AtomicU64 = AtomicU64::new(0);
+    &MISSES
+}
+
+#[expect(
+    dead_code,
+    reason = "format-string certificate caching is staged for follow-up integration into printf rendering"
+)]
+fn store_format_string_certificate(fmt: &[u8], certificate: FormatStringCertificate) {
+    let mut cache = format_string_certificate_cache()
+        .lock()
+        .expect("format-string certificate cache mutex poisoned");
+    if cache.contains_key(fmt) {
+        format_string_cache_hits().fetch_add(1, Ordering::Relaxed);
+    } else {
+        cache.insert(fmt.to_vec(), certificate);
+        format_string_cache_misses().fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+pub fn format_string_cache_stats() -> FormatStringCacheStats {
+    let cache = format_string_certificate_cache()
+        .lock()
+        .expect("format-string certificate cache mutex poisoned");
+    FormatStringCacheStats {
+        hits: format_string_cache_hits().load(Ordering::Relaxed),
+        misses: format_string_cache_misses().load(Ordering::Relaxed),
+        entries: cache.len(),
+    }
+}
+
+#[cfg(test)]
+#[expect(
+    dead_code,
+    reason = "test-only cache reset helper is kept for focused printf cache tests"
+)]
+fn reset_format_string_cache_for_tests() {
+    let mut cache = format_string_certificate_cache()
+        .lock()
+        .expect("format-string certificate cache mutex poisoned");
+    cache.clear();
+    format_string_cache_hits().store(0, Ordering::Relaxed);
+    format_string_cache_misses().store(0, Ordering::Relaxed);
 }
 
 // ---------------------------------------------------------------------------

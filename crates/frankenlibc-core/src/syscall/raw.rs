@@ -6,6 +6,26 @@
 
 use core::arch::asm;
 
+#[inline(always)]
+#[cfg(target_arch = "x86_64")]
+const fn current_clone_tail_args(
+    parent_tid: usize,
+    child_tid: usize,
+    tls: usize,
+) -> (usize, usize, usize) {
+    (parent_tid, child_tid, tls)
+}
+
+#[inline(always)]
+#[cfg(target_arch = "aarch64")]
+const fn current_clone_tail_args(
+    parent_tid: usize,
+    child_tid: usize,
+    tls: usize,
+) -> (usize, usize, usize) {
+    (parent_tid, tls, child_tid)
+}
+
 /// Issue a syscall with 0 arguments.
 ///
 /// # Safety
@@ -321,6 +341,8 @@ pub unsafe fn clone_thread_asm(
     tls: usize,
 ) -> usize {
     let ret: usize;
+    let (raw_parent_tid, raw_fourth_arg, raw_fifth_arg) =
+        current_clone_tail_args(parent_tid, child_tid, tls);
     // SAFETY: The caller guarantees that child_sp points to a valid stack with
     // fn_ptr at [sp] and arg at [sp+8]. The clone syscall creates a new thread
     // that starts executing at the instruction after `syscall`. The child path
@@ -354,9 +376,9 @@ pub unsafe fn clone_thread_asm(
             // rax = child TID (positive) or -errno (negative)
             in("rdi") flags,
             in("rsi") child_sp,
-            in("rdx") parent_tid,
-            in("r10") child_tid,
-            in("r8") tls,
+            in("rdx") raw_parent_tid,
+            in("r10") raw_fourth_arg,
+            in("r8") raw_fifth_arg,
             lateout("rax") ret,
             lateout("rcx") _,     // clobbered by syscall
             lateout("r11") _,     // clobbered by syscall
@@ -396,9 +418,17 @@ pub unsafe fn clone_thread_asm(
     tls: usize,
 ) -> usize {
     let ret: usize;
+    let (raw_parent_tid, raw_fourth_arg, raw_fifth_arg) =
+        current_clone_tail_args(parent_tid, child_tid, tls);
     // SAFETY: caller guarantees child_sp points to a valid child stack with
     // fn_ptr and arg words at the top. Parent receives child tid; child runs
     // trampoline and exits through SYS_exit.
+    //
+    // The raw aarch64 clone ABI uses:
+    //   clone(flags, stack, parent_tid, tls, child_tid)
+    // rather than the x86_64 order:
+    //   clone(flags, stack, parent_tid, child_tid, tls)
+    // so the final two arguments must be swapped before binding x3/x4.
     unsafe {
         asm!(
             "mov x8, {clone_nr}",
@@ -417,9 +447,9 @@ pub unsafe fn clone_thread_asm(
             exit_nr = const 93usize,
             in("x0") flags,
             in("x1") child_sp,
-            in("x2") parent_tid,
-            in("x3") child_tid,
-            in("x4") tls,
+            in("x2") raw_parent_tid,
+            in("x3") raw_fourth_arg,
+            in("x4") raw_fifth_arg,
             lateout("x0") ret,
             lateout("x8") _,
             lateout("x9") _,
@@ -463,6 +493,53 @@ pub unsafe fn syscall6(
         );
     }
     ret
+}
+
+#[cfg(test)]
+mod tests {
+    use super::current_clone_tail_args;
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum RawCloneTailAbi {
+        ParentChildTidTls,
+        ParentTlsChildTid,
+    }
+
+    const fn map_clone_tail_args(
+        abi: RawCloneTailAbi,
+        parent_tid: usize,
+        child_tid: usize,
+        tls: usize,
+    ) -> (usize, usize, usize) {
+        match abi {
+            RawCloneTailAbi::ParentChildTidTls => (parent_tid, child_tid, tls),
+            RawCloneTailAbi::ParentTlsChildTid => (parent_tid, tls, child_tid),
+        }
+    }
+
+    #[test]
+    fn raw_clone_tail_arg_mapping_matches_documented_arch_abis() {
+        assert_eq!(
+            map_clone_tail_args(RawCloneTailAbi::ParentChildTidTls, 11, 22, 33),
+            (11, 22, 33)
+        );
+        assert_eq!(
+            map_clone_tail_args(RawCloneTailAbi::ParentTlsChildTid, 11, 22, 33),
+            (11, 33, 22)
+        );
+    }
+
+    #[test]
+    #[cfg(target_arch = "x86_64")]
+    fn current_raw_clone_tail_abi_matches_x86_64_layout() {
+        assert_eq!(current_clone_tail_args(1, 2, 3), (1, 2, 3));
+    }
+
+    #[test]
+    #[cfg(target_arch = "aarch64")]
+    fn current_raw_clone_tail_abi_matches_aarch64_layout() {
+        assert_eq!(current_clone_tail_args(1, 2, 3), (1, 3, 2));
+    }
 }
 
 /// Issue a syscall with 6 arguments.
