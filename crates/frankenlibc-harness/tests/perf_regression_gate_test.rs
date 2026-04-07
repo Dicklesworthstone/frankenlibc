@@ -1,4 +1,4 @@
-//! Integration test: Perf regression attribution gate contract (bd-30o.3)
+//! Integration test: Perf regression attribution gate contract (bd-w2c3.8.3)
 //!
 //! Validates that:
 //! 1. Perf regression attribution policy JSON exists and is valid.
@@ -124,6 +124,10 @@ fn policy_exists_and_valid() {
     assert!(
         policy["logging_contract"].is_object(),
         "Missing logging_contract"
+    );
+    assert!(
+        policy["auto_throttle_policy"].is_object(),
+        "Missing auto_throttle_policy"
     );
     assert!(policy["triage_guide"].is_object(), "Missing triage_guide");
     assert!(
@@ -260,18 +264,77 @@ fn logging_contract_complete() {
     for field in [
         "timestamp",
         "trace_id",
+        "event",
         "mode",
         "benchmark_id",
         "threshold",
         "observed",
         "regression_class",
         "suspect_component",
+        "confidence",
+        "commit_window",
+        "host_state",
+        "throttle_action",
     ] {
         assert!(
             required_fields.contains(field),
             "logging_contract.required_fields missing {field}"
         );
     }
+}
+
+#[test]
+fn auto_throttle_contract_complete() {
+    let policy = load_policy();
+    let auto = &policy["auto_throttle_policy"];
+    let required_log_fields: HashSet<&str> = auto["required_log_fields"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|v| v.as_str())
+        .collect();
+    for field in [
+        "event",
+        "trace_id",
+        "host_state",
+        "throttle_action",
+        "load1",
+        "cpus",
+        "threshold",
+        "max_load_factor",
+        "load_source",
+    ] {
+        assert!(
+            required_log_fields.contains(field),
+            "auto_throttle_policy.required_log_fields missing {field}"
+        );
+    }
+
+    let required_report_fields: HashSet<&str> = auto["required_report_fields"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|v| v.as_str())
+        .collect();
+    for field in [
+        "status",
+        "host_state",
+        "throttle_action",
+        "host_context",
+        "summary",
+        "event_log_path",
+    ] {
+        assert!(
+            required_report_fields.contains(field),
+            "auto_throttle_policy.required_report_fields missing {field}"
+        );
+    }
+
+    assert_eq!(
+        auto["scenario"]["script"].as_str(),
+        Some("scripts/e2e_perf_regression_scenario.sh")
+    );
+    assert_eq!(auto["scenario"]["scenario"].as_str(), Some("overloaded"));
 }
 
 #[test]
@@ -330,12 +393,17 @@ fn summary_consistent() {
         .unwrap()
         .len();
     let playbooks = policy["triage_guide"].as_object().unwrap().len();
+    let auto_throttle_actions = policy["auto_throttle_policy"]["actions"]
+        .as_array()
+        .unwrap()
+        .len();
 
     let expected = HashMap::from([
         ("mapped_benchmarks", mapped),
         ("regression_classes", classes),
         ("required_log_fields", required_log_fields),
         ("triage_playbooks", playbooks),
+        ("auto_throttle_actions", auto_throttle_actions),
     ]);
 
     for (key, actual) in expected {
@@ -350,6 +418,7 @@ fn gate_scripts_exist_and_executable() {
     for script in [
         "scripts/check_perf_regression_gate.sh",
         "scripts/e2e_perf_regression_scenario.sh",
+        "scripts/check_benchmark_gate.sh",
     ] {
         let path = root.join(script);
         assert!(path.exists(), "{script} must exist");
@@ -368,12 +437,30 @@ fn e2e_intentional_regression_script_passes() {
     let root = workspace_root();
     let status = std::process::Command::new("bash")
         .arg(root.join("scripts/e2e_perf_regression_scenario.sh"))
+        .arg("--scenario")
+        .arg("regression")
         .current_dir(&root)
         .status()
         .expect("failed to run scripts/e2e_perf_regression_scenario.sh");
     assert!(
         status.success(),
         "scripts/e2e_perf_regression_scenario.sh should pass"
+    );
+}
+
+#[test]
+fn e2e_overloaded_host_script_passes() {
+    let root = workspace_root();
+    let status = std::process::Command::new("bash")
+        .arg(root.join("scripts/e2e_perf_regression_scenario.sh"))
+        .arg("--scenario")
+        .arg("overloaded")
+        .current_dir(&root)
+        .status()
+        .expect("failed to run overloaded auto-throttle scenario");
+    assert!(
+        status.success(),
+        "scripts/e2e_perf_regression_scenario.sh --scenario overloaded should pass"
     );
 }
 
@@ -419,6 +506,8 @@ printf '%s\n' "$@" >"${RCH_LOG}"
         .env("FRANKENLIBC_PERF_ALLOW_TARGET_VIOLATION", "0")
         .env("FRANKENLIBC_PERF_SKIP_OVERLOADED", "0")
         .env("FRANKENLIBC_PERF_ENABLE_KERNEL_SUITE", "1")
+        .env("FRANKENLIBC_PERF_REPORT", "target/conformance/perf_gate.wrapper.report.json")
+        .env("FRANKENLIBC_PERF_EVENT_LOG", "target/conformance/perf_gate.wrapper.log.jsonl")
         .output()
         .expect("run benchmark gate wrapper");
 
@@ -445,6 +534,14 @@ printf '%s\n' "$@" >"${RCH_LOG}"
     assert!(
         logged.contains("FRANKENLIBC_PERF_ENABLE_KERNEL_SUITE=1"),
         "rch call should forward kernel-suite toggle"
+    );
+    assert!(
+        logged.contains("FRANKENLIBC_PERF_REPORT=target/conformance/perf_gate.wrapper.report.json"),
+        "rch call should forward perf report path"
+    );
+    assert!(
+        logged.contains("FRANKENLIBC_PERF_EVENT_LOG=target/conformance/perf_gate.wrapper.log.jsonl"),
+        "rch call should forward perf event log path"
     );
     assert!(
         logged.contains("scripts/perf_gate.sh"),

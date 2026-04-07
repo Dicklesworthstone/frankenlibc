@@ -17,6 +17,8 @@ MAX_REGRESSION_PCT="${FRANKENLIBC_PERF_MAX_REGRESSION_PCT:-20}"
 ALLOW_TARGET_VIOLATION="${FRANKENLIBC_PERF_ALLOW_TARGET_VIOLATION:-1}"
 SKIP_OVERLOADED="${FRANKENLIBC_PERF_SKIP_OVERLOADED:-1}"
 ENABLE_KERNEL_SUITE="${FRANKENLIBC_PERF_ENABLE_KERNEL_SUITE:-0}"
+PERF_GATE_REPORT="${FRANKENLIBC_PERF_REPORT:-target/conformance/perf_gate.report.json}"
+PERF_EVENT_LOG="${FRANKENLIBC_PERF_EVENT_LOG:-target/conformance/perf_gate.log.jsonl}"
 SYMBOL_LATENCY_REPORT="${FRANKENLIBC_SYMBOL_LATENCY_REPORT:-target/conformance/symbol_latency_perf_gate.current.v1.json}"
 SYMBOL_LATENCY_EVENT_LOG="${FRANKENLIBC_SYMBOL_LATENCY_EVENT_LOG:-target/conformance/symbol_latency_perf_gate.log.jsonl}"
 
@@ -48,6 +50,8 @@ echo "max_regression_pct=${MAX_REGRESSION_PCT}"
 echo "allow_target_violation=${ALLOW_TARGET_VIOLATION}"
 echo "skip_overloaded=${SKIP_OVERLOADED}"
 echo "enable_kernel_suite=${ENABLE_KERNEL_SUITE}"
+echo "perf_gate_report=${PERF_GATE_REPORT}"
+echo "perf_event_log=${PERF_EVENT_LOG}"
 echo "symbol_latency_report=${SYMBOL_LATENCY_REPORT}"
 echo "symbol_latency_event_log=${SYMBOL_LATENCY_EVENT_LOG}"
 echo ""
@@ -68,6 +72,8 @@ rch exec -- env \
     FRANKENLIBC_PERF_ALLOW_TARGET_VIOLATION="${ALLOW_TARGET_VIOLATION}" \
     FRANKENLIBC_PERF_SKIP_OVERLOADED="${SKIP_OVERLOADED}" \
     FRANKENLIBC_PERF_ENABLE_KERNEL_SUITE="${ENABLE_KERNEL_SUITE}" \
+    FRANKENLIBC_PERF_REPORT="${PERF_GATE_REPORT}" \
+    FRANKENLIBC_PERF_EVENT_LOG="${PERF_EVENT_LOG}" \
     bash scripts/perf_gate.sh
 
 echo ""

@@ -1,7 +1,10 @@
 {
   "schema_version": 1,
-  "bead": "bd-30o.3",
-  "description": "Perf regression attribution policy for runtime_math/membrane perf gate. Defines threshold resolution, regression classes, suspect-component mapping, and deterministic triage contract.",
+  "bead": "bd-w2c3.8.3",
+  "supersedes": [
+    "bd-30o.3"
+  ],
+  "description": "Perf regression attribution policy for runtime_math/membrane perf gate. Defines threshold resolution, regression classes, suspect-component mapping, deterministic auto-throttle rules, and triage contract.",
   "warning_policy": {
     "default_warning_pct": 5.0,
     "per_mode_warning_pct": {
@@ -49,21 +52,65 @@
     "required_fields": [
       "timestamp",
       "trace_id",
+      "event",
       "mode",
       "benchmark_id",
       "threshold",
       "observed",
       "regression_class",
-      "suspect_component"
+      "suspect_component",
+      "confidence",
+      "commit_window",
+      "host_state",
+      "throttle_action"
     ],
     "optional_fields": [
       "baseline",
       "target",
       "threshold_pct",
       "delta_pct",
-      "verdict"
+      "verdict",
+      "warning_threshold",
+      "warning_pct"
     ],
     "log_format": "jsonl"
+  },
+  "auto_throttle_policy": {
+    "action": "skip_benchmarks",
+    "actions": [
+      "skip_benchmarks"
+    ],
+    "host_signal": "loadavg",
+    "max_load_factor_default": 0.85,
+    "forced_env_overrides": [
+      "FRANKENLIBC_PERF_FORCE_LOAD1",
+      "FRANKENLIBC_PERF_FORCE_CPUS",
+      "FRANKENLIBC_PERF_FORCE_TOP_PROCESSES"
+    ],
+    "required_log_fields": [
+      "timestamp",
+      "trace_id",
+      "event",
+      "host_state",
+      "throttle_action",
+      "load1",
+      "cpus",
+      "threshold",
+      "max_load_factor",
+      "load_source"
+    ],
+    "required_report_fields": [
+      "status",
+      "host_state",
+      "throttle_action",
+      "host_context",
+      "summary",
+      "event_log_path"
+    ],
+    "scenario": {
+      "script": "scripts/e2e_perf_regression_scenario.sh",
+      "scenario": "overloaded"
+    }
   },
   "triage_guide": {
     "baseline_regression": {
@@ -114,7 +161,8 @@
   },
   "intentional_regression_scenario": {
     "script": "scripts/e2e_perf_regression_scenario.sh",
-    "trace_id": "bd-30o.3::intentional-regression",
+    "scenario": "regression",
+    "trace_id": "bd-w2c3.8.3::intentional-regression",
     "expected_exit_code": 0,
     "expected_gate_outcome": "regression_detected",
     "required_detected_benchmark": "runtime_math/decide"
@@ -122,7 +170,8 @@
   "summary": {
     "mapped_benchmarks": 4,
     "regression_classes": 5,
-    "required_log_fields": 8,
-    "triage_playbooks": 4
+    "required_log_fields": 12,
+    "triage_playbooks": 4,
+    "auto_throttle_actions": 1
   }
 }

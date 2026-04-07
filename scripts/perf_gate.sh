@@ -5,6 +5,7 @@
 # - runs strict+hardened benchmark checks (or injected observations for tests),
 # - applies baseline regression thresholds with attribution policy overrides,
 # - emits structured attribution logs (jsonl),
+# - auto-throttles deterministically on overloaded hosts and emits a report,
 # - fails deterministically on baseline regressions (and optionally target breaches).
 set -euo pipefail
 
@@ -16,12 +17,26 @@ ALLOW_TARGET_VIOLATION="${FRANKENLIBC_PERF_ALLOW_TARGET_VIOLATION:-1}"
 SKIP_OVERLOADED="${FRANKENLIBC_PERF_SKIP_OVERLOADED:-1}"
 MAX_LOAD_FACTOR="${FRANKENLIBC_PERF_MAX_LOAD_FACTOR:-0.85}"
 ENABLE_KERNEL_SUITE="${FRANKENLIBC_PERF_ENABLE_KERNEL_SUITE:-0}"
+FORCE_LOAD1="${FRANKENLIBC_PERF_FORCE_LOAD1:-}"
+FORCE_CPUS="${FRANKENLIBC_PERF_FORCE_CPUS:-}"
+FORCE_TOP_PROCESSES="${FRANKENLIBC_PERF_FORCE_TOP_PROCESSES:-}"
+COMMIT_WINDOW="${FRANKENLIBC_PERF_COMMIT_WINDOW:-HEAD~1..HEAD}"
 
 # Optional deterministic inputs/logs for E2E and attribution replay.
 INJECT_RESULTS_FILE="${FRANKENLIBC_PERF_INJECT_RESULTS:-}"
 ATTRIBUTION_POLICY_FILE="${FRANKENLIBC_PERF_ATTRIBUTION_POLICY_FILE:-tests/conformance/perf_regression_attribution.v1.json}"
-EVENT_LOG_PATH="${FRANKENLIBC_PERF_EVENT_LOG:-}"
+EVENT_LOG_PATH="${FRANKENLIBC_PERF_EVENT_LOG:-target/conformance/perf_gate.log.jsonl}"
+REPORT_PATH="${FRANKENLIBC_PERF_REPORT:-target/conformance/perf_gate.report.json}"
 TRACE_ID="${FRANKENLIBC_PERF_TRACE_ID:-perf_gate::$(date -u +%Y%m%dT%H%M%SZ)}"
+BEAD_ID="bd-w2c3.8.3"
+
+HOST_STATE="nominal"
+THROTTLE_ACTION="none"
+HOST_LOAD1=""
+HOST_CPUS=""
+HOST_THRESHOLD=""
+LOAD_SOURCE="system"
+TOP_PROCESSES=""
 
 if [[ ! -f "${BASELINE_FILE}" ]]; then
     echo "perf_gate: missing baseline file: ${BASELINE_FILE}" >&2
@@ -38,10 +53,16 @@ if ! command -v jq >/dev/null 2>&1; then
     exit 2
 fi
 
-if [[ -n "${EVENT_LOG_PATH}" ]]; then
-    mkdir -p "$(dirname "${EVENT_LOG_PATH}")"
-    : >"${EVENT_LOG_PATH}"
-fi
+mkdir -p "$(dirname "${EVENT_LOG_PATH}")" "$(dirname "${REPORT_PATH}")"
+: >"${EVENT_LOG_PATH}"
+
+capture_top_processes() {
+    if [[ -n "${FORCE_TOP_PROCESSES}" ]]; then
+        printf "%s" "${FORCE_TOP_PROCESSES}"
+        return 0
+    fi
+    ps -eo pid,user,comm,%cpu,etime --sort=-%cpu | head -n 10 | tr '\n' ';' || true
+}
 
 should_skip_overloaded() {
     # Synthetic regression replays should never be skipped for host load.
@@ -56,12 +77,29 @@ should_skip_overloaded() {
     fi
 
     local load1 cpus threshold overloaded
-    load1="$(awk '{print $1}' /proc/loadavg)"
-    cpus="$(nproc)"
+    if [[ -n "${FORCE_LOAD1}" ]]; then
+        load1="${FORCE_LOAD1}"
+        LOAD_SOURCE="forced"
+    else
+        load1="$(awk '{print $1}' /proc/loadavg)"
+        LOAD_SOURCE="system"
+    fi
+    if [[ -n "${FORCE_CPUS}" ]]; then
+        cpus="${FORCE_CPUS}"
+        LOAD_SOURCE="forced"
+    else
+        cpus="$(nproc)"
+    fi
     threshold="$(awk -v c="${cpus}" -v f="${MAX_LOAD_FACTOR}" 'BEGIN { printf "%.2f", c*f }')"
     overloaded="$(awk -v l="${load1}" -v t="${threshold}" 'BEGIN { print (l > t) ? 1 : 0 }')"
 
     if [[ "${overloaded}" == "1" ]]; then
+        HOST_STATE="overloaded"
+        THROTTLE_ACTION="skip_benchmarks"
+        HOST_LOAD1="${load1}"
+        HOST_CPUS="${cpus}"
+        HOST_THRESHOLD="${threshold}"
+        TOP_PROCESSES="$(capture_top_processes)"
         echo "perf_gate: SKIP (system overloaded) load1=${load1} cpus=${cpus} threshold=${threshold}"
         echo "perf_gate: top CPU processes:"
         ps -eo pid,user,comm,%cpu,etime --sort=-%cpu | head -n 10 || true
@@ -139,21 +177,26 @@ resolve_suspect_component() {
     printf "%s" "${component}"
 }
 
-emit_event() {
+emit_regression_event() {
     local mode="$1" benchmark_id="$2" threshold="$3" observed="$4" regression_class="$5"
     local suspect_component="$6" baseline="$7" target="$8" threshold_pct="$9" delta_pct="${10}"
-    local verdict="${11}" warning_threshold="${12}" warning_pct="${13}"
+    local verdict="${11}" warning_threshold="${12}" warning_pct="${13}" confidence="${14}"
     local ts json
     ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     json="$(jq -cn \
         --arg timestamp "${ts}" \
         --arg trace_id "${TRACE_ID}" \
+        --arg event "benchmark_result" \
         --arg mode "${mode}" \
         --arg benchmark_id "${benchmark_id}" \
         --arg threshold "${threshold}" \
         --arg observed "${observed}" \
         --arg regression_class "${regression_class}" \
         --arg suspect_component "${suspect_component}" \
+        --arg confidence "${confidence}" \
+        --arg commit_window "${COMMIT_WINDOW}" \
+        --arg host_state "${HOST_STATE}" \
+        --arg throttle_action "${THROTTLE_ACTION}" \
         --arg baseline "${baseline}" \
         --arg target "${target}" \
         --arg threshold_pct "${threshold_pct}" \
@@ -164,12 +207,17 @@ emit_event() {
         '{
           timestamp: $timestamp,
           trace_id: $trace_id,
+          event: $event,
           mode: $mode,
           benchmark_id: $benchmark_id,
           threshold: $threshold,
           observed: $observed,
           regression_class: $regression_class,
           suspect_component: $suspect_component,
+          confidence: $confidence,
+          commit_window: $commit_window,
+          host_state: $host_state,
+          throttle_action: $throttle_action,
           baseline: $baseline,
           target: $target,
           threshold_pct: $threshold_pct,
@@ -183,10 +231,132 @@ emit_event() {
     fi
 }
 
+emit_throttle_event() {
+    local ts json
+    ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    json="$(jq -cn \
+        --arg timestamp "${ts}" \
+        --arg trace_id "${TRACE_ID}" \
+        --arg event "auto_throttle" \
+        --arg host_state "${HOST_STATE}" \
+        --arg throttle_action "${THROTTLE_ACTION}" \
+        --arg load1 "${HOST_LOAD1}" \
+        --arg cpus "${HOST_CPUS}" \
+        --arg threshold "${HOST_THRESHOLD}" \
+        --arg max_load_factor "${MAX_LOAD_FACTOR}" \
+        --arg load_source "${LOAD_SOURCE}" \
+        --arg commit_window "${COMMIT_WINDOW}" \
+        --arg top_processes "${TOP_PROCESSES}" \
+        '{
+          timestamp: $timestamp,
+          trace_id: $trace_id,
+          event: $event,
+          host_state: $host_state,
+          throttle_action: $throttle_action,
+          load1: $load1,
+          cpus: $cpus,
+          threshold: $threshold,
+          max_load_factor: $max_load_factor,
+          load_source: $load_source,
+          commit_window: $commit_window,
+          top_processes: $top_processes
+        }')"
+    echo "${json}" >>"${EVENT_LOG_PATH}"
+}
+
+write_report() {
+    local status="$1"
+    python3 - "${EVENT_LOG_PATH}" "${REPORT_PATH}" "${TRACE_ID}" "${status}" \
+        "${HOST_STATE}" "${THROTTLE_ACTION}" "${HOST_LOAD1}" "${HOST_CPUS}" \
+        "${HOST_THRESHOLD}" "${MAX_LOAD_FACTOR}" "${LOAD_SOURCE}" "${COMMIT_WINDOW}" \
+        "${BEAD_ID}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+(
+    event_log_path,
+    report_path,
+    trace_id,
+    status,
+    host_state,
+    throttle_action,
+    host_load1,
+    host_cpus,
+    host_threshold,
+    max_load_factor,
+    load_source,
+    commit_window,
+    bead_id,
+) = sys.argv[1:14]
+
+event_log = Path(event_log_path)
+rows = []
+if event_log.exists():
+    for line in event_log.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if line:
+            rows.append(json.loads(line))
+
+benchmark_rows = [row for row in rows if row.get("event") == "benchmark_result"]
+throttle_rows = [row for row in rows if row.get("event") == "auto_throttle"]
+regression_rows = [
+    row
+    for row in benchmark_rows
+    if row.get("regression_class")
+    in {
+        "baseline_regression",
+        "baseline_and_budget_violation",
+        "target_budget_violation",
+    }
+]
+
+def delta_key(row):
+    try:
+        return float(row.get("delta_pct", "-inf"))
+    except ValueError:
+        return float("-inf")
+
+top_regressions = sorted(regression_rows, key=delta_key, reverse=True)[:5]
+summary = {}
+for row in benchmark_rows:
+    key = row.get("regression_class", "unknown")
+    summary[key] = summary.get(key, 0) + 1
+
+report = {
+    "schema_version": 2,
+    "bead": bead_id,
+    "trace_id": trace_id,
+    "status": status,
+    "commit_window": commit_window,
+    "host_state": host_state,
+    "throttle_action": throttle_action,
+    "host_context": {
+        "load1": host_load1 or None,
+        "cpus": host_cpus or None,
+        "threshold": host_threshold or None,
+        "max_load_factor": max_load_factor,
+        "load_source": load_source,
+    },
+    "summary": {
+        "total_events": len(rows),
+        "benchmark_events": len(benchmark_rows),
+        "throttle_events": len(throttle_rows),
+        "regression_counts": summary,
+    },
+    "top_regressions": top_regressions,
+    "event_log_path": str(event_log),
+}
+
+report_path_obj = Path(report_path)
+report_path_obj.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+PY
+}
+
 check_metric() {
     local label="$1" mode="$2" bench="$3" baseline="$4" target="$5" current="$6"
     local benchmark_id threshold_pct warning_pct threshold warning_threshold delta_pct ok_reg ok_target warn_hit
-    local regression_class suspect verdict
+    local regression_class suspect verdict confidence
 
     benchmark_id="${label}/${bench}"
     threshold_pct="$(resolve_threshold_pct "${mode}" "${benchmark_id}")"
@@ -219,9 +389,14 @@ check_metric() {
     fi
 
     suspect="$(resolve_suspect_component "${benchmark_id}")"
-    emit_event "${mode}" "${benchmark_id}" "${threshold}" "${current}" "${regression_class}" \
+    if [[ "${suspect}" == "unknown_component" ]]; then
+        confidence="low"
+    else
+        confidence="mapped"
+    fi
+    emit_regression_event "${mode}" "${benchmark_id}" "${threshold}" "${current}" "${regression_class}" \
         "${suspect}" "${baseline}" "${target}" "${threshold_pct}" "${delta_pct}" "${verdict}" \
-        "${warning_threshold}" "${warning_pct}"
+        "${warning_threshold}" "${warning_pct}" "${confidence}"
 
     printf "%-18s %-8s %-16s baseline=%9.3f current=%9.3f delta=%7s%% target=%7.0f warn_pct=%5s threshold_pct=%5s suspect=%s " \
         "${label}" "${mode}" "${bench}" "${baseline}" "${current}" "${delta_pct}" "${target}" "${warning_pct}" "${threshold_pct}" "${suspect}"
@@ -376,14 +551,52 @@ echo "skip_overloaded=${SKIP_OVERLOADED} max_load_factor=${MAX_LOAD_FACTOR}"
 echo "enable_kernel_suite=${ENABLE_KERNEL_SUITE}"
 echo "inject_results=${INJECT_RESULTS_FILE:-<none>}"
 echo "attribution_policy=${ATTRIBUTION_POLICY_FILE}"
-echo "event_log=${EVENT_LOG_PATH:-<none>}"
+echo "event_log=${EVENT_LOG_PATH}"
+echo "report=${REPORT_PATH}"
+echo "commit_window=${COMMIT_WINDOW}"
 
 if should_skip_overloaded; then
+    emit_throttle_event
+    write_report "auto_throttled"
     exit 0
 fi
 
-run_mode strict
-run_mode hardened
+overall_rc=0
 
-echo ""
-echo "perf_gate: PASS"
+if ! run_mode strict; then
+    rc=$?
+    if [[ "${rc}" == "1" ]]; then
+        overall_rc=1
+    elif [[ "${overall_rc}" == "0" ]]; then
+        overall_rc=2
+    fi
+fi
+
+if ! run_mode hardened; then
+    rc=$?
+    if [[ "${rc}" == "1" ]]; then
+        overall_rc=1
+    elif [[ "${overall_rc}" == "0" ]]; then
+        overall_rc=2
+    fi
+fi
+
+case "${overall_rc}" in
+    0)
+        write_report "pass"
+        echo ""
+        echo "perf_gate: PASS"
+        ;;
+    1)
+        write_report "baseline_regression_detected"
+        echo ""
+        echo "perf_gate: FAIL (baseline regression detected)" >&2
+        ;;
+    *)
+        write_report "target_budget_violation"
+        echo ""
+        echo "perf_gate: FAIL (target budget violation)" >&2
+        ;;
+esac
+
+exit "${overall_rc}"

@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
-# check_perf_regression_gate.sh — CI gate for bd-30o.3
+# check_perf_regression_gate.sh — CI gate for bd-w2c3.8.3
 #
 # Validates that:
 #   1. Perf regression attribution policy exists and is valid.
 #   2. Threshold policy and benchmark attribution mapping are complete.
-#   3. Logging contract and triage playbooks are complete.
+#   3. Logging, auto-throttle contracts, and triage playbooks are complete.
 #   4. Intentional regression E2E scenario fails perf_gate and emits attribution logs.
-#   5. Summary counts are internally consistent.
+#   5. Overloaded-host E2E scenario auto-throttles and emits deterministic artifacts.
+#   6. Summary counts are internally consistent.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -15,7 +16,7 @@ BASELINE="${ROOT}/scripts/perf_baseline.json"
 
 failures=0
 
-echo "=== Perf Regression Attribution Gate (bd-30o.3) ==="
+echo "=== Perf Regression Attribution Gate (bd-w2c3.8.3) ==="
 echo ""
 
 # ---------------------------------------------------------------------------
@@ -43,6 +44,7 @@ try:
     threshold = doc.get("threshold_policy", {})
     attribution = doc.get("attribution", {})
     logging = doc.get("logging_contract", {})
+    auto_throttle = doc.get("auto_throttle_policy", {})
     if v < 1:
         print("INVALID: schema_version < 1")
     elif not warning:
@@ -53,6 +55,8 @@ try:
         print("INVALID: missing attribution")
     elif not logging:
         print("INVALID: missing logging_contract")
+    elif not auto_throttle:
+        print("INVALID: missing auto_throttle_policy")
     else:
         print(f"VALID version={v} mapped={len(attribution.get('suspect_component_map', {}))}")
 except Exception as exc:
@@ -178,9 +182,9 @@ fi
 echo ""
 
 # ---------------------------------------------------------------------------
-# Check 3: Logging + triage contracts
+# Check 3: Logging + auto-throttle + triage contracts
 # ---------------------------------------------------------------------------
-echo "--- Check 3: Logging and triage contracts ---"
+echo "--- Check 3: Logging, auto-throttle, and triage contracts ---"
 
 contract_check="$(python3 - "${POLICY}" <<'PY'
 import json
@@ -196,12 +200,17 @@ required_fields = set(logging.get("required_fields", []))
 for field in (
     "timestamp",
     "trace_id",
+    "event",
     "mode",
     "benchmark_id",
     "threshold",
     "observed",
     "regression_class",
     "suspect_component",
+    "confidence",
+    "commit_window",
+    "host_state",
+    "throttle_action",
 ):
     if field not in required_fields:
         errors.append(f"logging_contract.required_fields missing: {field}")
@@ -225,6 +234,21 @@ for cls in ("baseline_warning", "baseline_regression", "target_budget_violation"
 scenario = policy.get("intentional_regression_scenario", {})
 if scenario.get("script") != "scripts/e2e_perf_regression_scenario.sh":
     errors.append("intentional_regression_scenario.script must reference scripts/e2e_perf_regression_scenario.sh")
+if scenario.get("scenario") != "regression":
+    errors.append("intentional_regression_scenario.scenario must be regression")
+
+auto = policy.get("auto_throttle_policy", {})
+for field in ("event", "trace_id", "host_state", "throttle_action", "load1", "cpus", "threshold", "max_load_factor", "load_source"):
+    if field not in set(auto.get("required_log_fields", [])):
+        errors.append(f"auto_throttle_policy.required_log_fields missing: {field}")
+for field in ("status", "host_state", "throttle_action", "host_context", "summary", "event_log_path"):
+    if field not in set(auto.get("required_report_fields", [])):
+        errors.append(f"auto_throttle_policy.required_report_fields missing: {field}")
+scenario = auto.get("scenario", {})
+if scenario.get("script") != "scripts/e2e_perf_regression_scenario.sh":
+    errors.append("auto_throttle_policy.scenario.script must reference scripts/e2e_perf_regression_scenario.sh")
+if scenario.get("scenario") != "overloaded":
+    errors.append("auto_throttle_policy.scenario.scenario must be overloaded")
 
 print(f"CONTRACT_ERRORS={len(errors)}")
 for err in errors:
@@ -238,7 +262,7 @@ if [[ "${contract_errs}" -gt 0 ]]; then
     echo "${contract_check}" | grep '^  '
     failures=$((failures + 1))
 else
-    echo "PASS: Logging + triage contracts are complete"
+    echo "PASS: Logging + auto-throttle + triage contracts are complete"
 fi
 echo ""
 
@@ -247,7 +271,7 @@ echo ""
 # ---------------------------------------------------------------------------
 echo "--- Check 4: Intentional regression E2E scenario ---"
 
-if bash "${ROOT}/scripts/e2e_perf_regression_scenario.sh"; then
+if bash "${ROOT}/scripts/e2e_perf_regression_scenario.sh" --scenario regression; then
     echo "PASS: Intentional regression scenario validated attribution path"
 else
     echo "FAIL: Intentional regression scenario failed"
@@ -256,9 +280,22 @@ fi
 echo ""
 
 # ---------------------------------------------------------------------------
-# Check 5: Summary consistency
+# Check 5: Overloaded-host auto-throttle E2E scenario
 # ---------------------------------------------------------------------------
-echo "--- Check 5: Summary consistency ---"
+echo "--- Check 5: Overloaded-host auto-throttle E2E scenario ---"
+
+if bash "${ROOT}/scripts/e2e_perf_regression_scenario.sh" --scenario overloaded; then
+    echo "PASS: Overloaded-host scenario validated auto-throttle path"
+else
+    echo "FAIL: Overloaded-host scenario failed"
+    failures=$((failures + 1))
+fi
+echo ""
+
+# ---------------------------------------------------------------------------
+# Check 6: Summary consistency
+# ---------------------------------------------------------------------------
+echo "--- Check 6: Summary consistency ---"
 
 summary_check="$(python3 - "${POLICY}" <<'PY'
 import json
@@ -274,6 +311,7 @@ mapped = len(policy.get("attribution", {}).get("suspect_component_map", {}))
 classes = len(policy.get("attribution", {}).get("regression_classes", []))
 required_log_fields = len(policy.get("logging_contract", {}).get("required_fields", []))
 triage_playbooks = len(policy.get("triage_guide", {}))
+auto_throttle_actions = len(policy.get("auto_throttle_policy", {}).get("actions", []))
 
 if summary.get("mapped_benchmarks") != mapped:
     errors.append(f"mapped_benchmarks mismatch: claimed={summary.get('mapped_benchmarks')} actual={mapped}")
@@ -285,6 +323,8 @@ if summary.get("required_log_fields") != required_log_fields:
     )
 if summary.get("triage_playbooks") != triage_playbooks:
     errors.append(f"triage_playbooks mismatch: claimed={summary.get('triage_playbooks')} actual={triage_playbooks}")
+if summary.get("auto_throttle_actions") != auto_throttle_actions:
+    errors.append(f"auto_throttle_actions mismatch: claimed={summary.get('auto_throttle_actions')} actual={auto_throttle_actions}")
 
 print(f"SUMMARY_ERRORS={len(errors)}")
 for err in errors:
