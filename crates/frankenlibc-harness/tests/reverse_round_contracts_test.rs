@@ -1,4 +1,4 @@
-// reverse_round_contracts_test.rs — bd-2a2.4 / bd-2a2.5
+// reverse_round_contracts_test.rs — bd-2a2.4 / bd-2a2.5 / bd-3h1u.6
 // Integration tests for reverse-round contracts, cross-round composition,
 // and milestone branch-diversity verification.
 
@@ -267,6 +267,17 @@ fn contracts_cross_round_integrations_are_complete() {
         Some(integrations.len() as u64)
     );
 
+    let temporal_bridge = integrations
+        .get("loader_time64_bridge")
+        .expect("expected loader_time64_bridge integration entry");
+    let temporal_bridge_rounds: Vec<&str> = temporal_bridge["rounds"]
+        .as_array()
+        .expect("loader_time64_bridge rounds must be array")
+        .iter()
+        .map(|value| value.as_str().expect("loader_time64_bridge round must be string"))
+        .collect();
+    assert_eq!(temporal_bridge_rounds, vec!["R7", "R30"]);
+
     for (integration_id, integration) in integrations {
         let rounds = integration["rounds"]
             .as_array()
@@ -361,6 +372,24 @@ fn contracts_milestone_branch_diversity_holds() {
     assert_eq!(
         data["summary"]["all_milestones_diverse"].as_bool(),
         Some(true)
+    );
+
+    let temporal_policy_milestone = milestones
+        .get("loader_temporal_policy_surface")
+        .expect("expected loader_temporal_policy_surface milestone entry");
+    let temporal_policy_rounds: Vec<&str> = temporal_policy_milestone["rounds"]
+        .as_array()
+        .expect("loader_temporal_policy_surface rounds must be array")
+        .iter()
+        .map(|value| {
+            value
+                .as_str()
+                .expect("loader_temporal_policy_surface round must be string")
+        })
+        .collect();
+    assert_eq!(
+        temporal_policy_rounds,
+        vec!["R7", "R28", "R30", "R37"]
     );
 
     for (milestone_id, milestone) in milestones {
@@ -520,10 +549,24 @@ fn gate_script_emits_report_and_structured_log() {
     );
     assert!(
         log_entries.iter().any(|entry| {
+            entry["symbol"].as_str() == Some("integration:loader_time64_bridge")
+                && entry["event"].as_str() == Some("reverse_round.contracts.check")
+        }),
+        "structured log must include loader_time64_bridge integration evidence"
+    );
+    assert!(
+        log_entries.iter().any(|entry| {
             entry["symbol"].as_str() == Some("milestone:bootstrap_surface")
                 && entry["event"].as_str() == Some("reverse_round.contracts.check")
         }),
         "structured log must include bootstrap_surface milestone evidence"
+    );
+    assert!(
+        log_entries.iter().any(|entry| {
+            entry["symbol"].as_str() == Some("milestone:loader_temporal_policy_surface")
+                && entry["event"].as_str() == Some("reverse_round.contracts.check")
+        }),
+        "structured log must include loader_temporal_policy_surface milestone evidence"
     );
     assert!(
         log_entries

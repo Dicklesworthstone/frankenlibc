@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""generate_reverse_round_contracts.py — bd-2a2.3 / bd-2a2.4 / bd-2a2.5
+"""generate_reverse_round_contracts.py — bd-2a2.3 / bd-2a2.4 / bd-2a2.5 / bd-3h1u.6
 
 Reverse-Round per-round math-to-subsystem contract verification:
   1. Contract mapping — verify each math family has a legacy subsystem anchor.
@@ -1276,6 +1276,38 @@ CROSS_ROUND_INTEGRATIONS = {
             },
         ],
     },
+    "loader_time64_bridge": {
+        "name": "Loader/bootstrap compatibility and time64 bridge coherence",
+        "rounds": ["R7", "R30"],
+        "seam": "Loader symbol/version resolution and bootstrap ABI contracts must remain coherent with time64 and layout-bridge witnesses so early-process startup cannot split compatibility policy from temporal ABI translation.",
+        "legacy_surfaces": ["elf", "dl-*", "symbol versions", "time64", "ABI", "startup"],
+        "min_class_count": 5,
+        "supporting_files": [
+            "crates/frankenlibc-core/src/elf/loader.rs",
+            "crates/frankenlibc-abi/version_scripts/libc.map",
+            "crates/frankenlibc-core/src/time/mod.rs",
+            "crates/frankenlibc-abi/tests/startup_abi_contract_test.rs",
+            "crates/frankenlibc-abi/tests/time_abi_test.rs",
+        ],
+        "verification_strategy": [
+            {
+                "description": "scripts/check_reverse_round_contracts.sh keeps the loader/time64 bridge seam materialized in the checked-in reverse-round artifact.",
+                "path": "scripts/check_reverse_round_contracts.sh",
+            },
+            {
+                "description": "crates/frankenlibc-harness/tests/reverse_round_contracts_test.rs asserts the loader/time64 bridge remains represented in the artifact.",
+                "path": "crates/frankenlibc-harness/tests/reverse_round_contracts_test.rs",
+            },
+            {
+                "description": "crates/frankenlibc-abi/tests/startup_abi_contract_test.rs keeps bootstrap ABI bridge obligations visible.",
+                "path": "crates/frankenlibc-abi/tests/startup_abi_contract_test.rs",
+            },
+            {
+                "description": "crates/frankenlibc-abi/tests/time_abi_test.rs keeps time64 translation evidence tied to the seam.",
+                "path": "crates/frankenlibc-abi/tests/time_abi_test.rs",
+            },
+        ],
+    },
     "locale_numeric": {
         "name": "Numeric formatting and libm/fenv witness continuity",
         "rounds": ["R9", "R11"],
@@ -1326,6 +1358,43 @@ ROUND_MILESTONES = {
             {
                 "description": "crates/frankenlibc-harness/tests/reverse_round_contracts_test.rs asserts milestone diversity and artifact completeness.",
                 "path": "crates/frankenlibc-harness/tests/reverse_round_contracts_test.rs",
+            },
+        ],
+    },
+    "loader_temporal_policy_surface": {
+        "name": "Loader/temporal/mode-policy surface milestone",
+        "rounds": ["R7", "R28", "R30", "R37"],
+        "goal": "Loader policy, timing envelopes, bootstrap/time64 bridges, and mode admissibility must share enough mathematical diversity that early-runtime drift cannot hide across bootstrap and temporal policy surfaces.",
+        "min_class_count": 5,
+        "max_single_class_pct": 40.0,
+        "supporting_files": [
+            "crates/frankenlibc-core/src/elf/loader.rs",
+            "crates/frankenlibc-core/src/time/mod.rs",
+            "crates/frankenlibc-abi/tests/startup_abi_contract_test.rs",
+            "crates/frankenlibc-abi/tests/time_abi_test.rs",
+            "crates/frankenlibc-abi/src/runtime_policy.rs",
+            "crates/frankenlibc-harness/tests/mode_semantics_test.rs",
+        ],
+        "verification_strategy": [
+            {
+                "description": "scripts/check_reverse_round_contracts.sh validates milestone diversity and composition for loader, temporal, and mode-policy surfaces.",
+                "path": "scripts/check_reverse_round_contracts.sh",
+            },
+            {
+                "description": "crates/frankenlibc-harness/tests/reverse_round_contracts_test.rs asserts the milestone remains represented in the artifact and structured logs.",
+                "path": "crates/frankenlibc-harness/tests/reverse_round_contracts_test.rs",
+            },
+            {
+                "description": "crates/frankenlibc-abi/tests/startup_abi_contract_test.rs keeps bootstrap and layout-bridge anchors visible at the milestone boundary.",
+                "path": "crates/frankenlibc-abi/tests/startup_abi_contract_test.rs",
+            },
+            {
+                "description": "crates/frankenlibc-abi/tests/time_abi_test.rs keeps temporal translation evidence visible at the milestone boundary.",
+                "path": "crates/frankenlibc-abi/tests/time_abi_test.rs",
+            },
+            {
+                "description": "crates/frankenlibc-harness/tests/mode_semantics_test.rs keeps mode-policy admissibility tied to the milestone.",
+                "path": "crates/frankenlibc-harness/tests/mode_semantics_test.rs",
             },
         ],
     },
