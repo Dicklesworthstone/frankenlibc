@@ -56,3 +56,7 @@ harness = false
 [[bench]]
 name = "baseline_capture_bench"
 harness = false
+
+[[bench]]
+name = "elimination_bench"
+harness = false

@@ -7,15 +7,14 @@
 
 use std::array;
 use std::cell::Cell;
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Condvar, Mutex, MutexGuard, WaitTimeoutResult};
+use std::sync::{Condvar, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 pub const DEFAULT_ELIMINATION_SLOTS: usize = 8;
 
 const DEFAULT_WAIT_BUDGET: Duration = Duration::from_micros(100);
+const SPIN_LIMIT: u64 = 128;
 const ADAPTIVE_WINDOW: u64 = 1_000;
 const ADAPTIVE_DISABLE_WINDOW: u64 = 1_000;
 const SUCCESS_THRESHOLD_PPM: u64 = 100_000;
@@ -23,7 +22,10 @@ const SUMMARY_INTERVAL: u64 = 5_000;
 
 thread_local! {
     static SLOT_HINT: Cell<usize> = const { Cell::new(0) };
+    static THREAD_TAG: u64 = allocate_thread_tag();
 }
+
+static NEXT_THREAD_TAG: AtomicU64 = AtomicU64::new(1);
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -282,6 +284,17 @@ impl<T: Send, const SLOTS: usize> EliminationArray<T, SLOTS> {
     }
 
     pub fn offer(&self, value: T) -> Result<(), T> {
+        match self.offer_with_base(slot_hint::<SLOTS>(), value) {
+            Ok(_) => Ok(()),
+            Err((value, _meta)) => Err(value),
+        }
+    }
+
+    fn offer_with_base(
+        &self,
+        base: usize,
+        value: T,
+    ) -> Result<EliminationExchangeMeta, (T, EliminationExchangeMeta)> {
         let gate = self.begin_attempt();
         if !gate.allowed {
             self.record_skip(gate.should_log_summary);
@@ -292,101 +305,170 @@ impl<T: Send, const SLOTS: usize> EliminationArray<T, SLOTS> {
                 current_thread_tag(),
                 0,
             );
-            return Err(value);
+            return Err((value, EliminationExchangeMeta::default()));
         }
 
         let offer_id = self.next_offer_id();
         let producer_thread = current_thread_tag();
         let mut value = Some(value);
-        let base = slot_hint::<SLOTS>();
+        let base = base % SLOTS;
 
         for step in 0..SLOTS {
             let slot_index = (base + step) % SLOTS;
             let slot = &self.slots[slot_index];
             let mut state = lock_no_poison(&slot.state);
+            match &mut *state {
+                SlotState::Empty => {
+                    slot.publishes.fetch_add(1, Ordering::Relaxed);
+                    *state = SlotState::Offered {
+                        offer_id,
+                        producer_thread,
+                        wait_for_match: true,
+                        value: value.take().expect("offer must have a value"),
+                    };
+                    drop(state);
 
-            if matches!(*state, SlotState::Empty) {
-                slot.publishes.fetch_add(1, Ordering::Relaxed);
-                *state = SlotState::Offered {
-                    offer_id,
-                    producer_thread,
-                    wait_for_match: true,
-                    value: value.take().expect("offer must have a value"),
-                };
+                    let deadline = Instant::now() + self.wait_budget;
+                    let mut wait_cycles = (step + 1) as u64;
 
-                let (mut state, _) =
-                    wait_timeout_no_poison(&slot.condvar, state, self.wait_budget, |state| {
-                        matches!(
-                            state,
-                            SlotState::Offered {
-                                offer_id: current_offer,
-                                wait_for_match: true,
-                                ..
-                            } if *current_offer == offer_id
-                        )
-                    });
-
-                let outcome = std::mem::replace(&mut *state, SlotState::Empty);
-                drop(state);
-                remember_next_slot::<SLOTS>(slot_index + 1);
-
-                match outcome {
-                    SlotState::Taken { .. } => {
-                        self.record_attempt(true, gate.should_log_summary);
-                        self.log_event(
-                            EliminationOp::Push,
-                            EliminationOutcome::Matched,
-                            slot_index,
-                            producer_thread,
-                            (step + 1) as u64,
-                        );
-                        return Ok(());
-                    }
-                    SlotState::Offered {
-                        offer_id: current_offer,
-                        value,
-                        ..
-                    } if current_offer == offer_id => {
-                        slot.timeouts.fetch_add(1, Ordering::Relaxed);
-                        self.record_attempt(false, gate.should_log_summary);
-                        self.log_event(
-                            EliminationOp::Push,
-                            EliminationOutcome::Timeout,
-                            slot_index,
-                            producer_thread,
-                            (step + 1) as u64,
-                        );
-                        return Err(value);
-                    }
-                    SlotState::Empty => {
-                        self.record_attempt(true, gate.should_log_summary);
-                        self.log_event(
-                            EliminationOp::Push,
-                            EliminationOutcome::Matched,
-                            slot_index,
-                            producer_thread,
-                            (step + 1) as u64,
-                        );
-                        return Ok(());
-                    }
-                    other => {
-                        if let SlotState::Offered { value, .. } = other {
-                            self.record_attempt(false, gate.should_log_summary);
-                            self.log_event(
-                                EliminationOp::Push,
-                                EliminationOutcome::Collision,
-                                slot_index,
-                                producer_thread,
-                                (step + 1) as u64,
-                            );
-                            return Err(value);
+                    loop {
+                        if let Ok(mut state) = slot.state.try_lock() {
+                            match &*state {
+                                SlotState::Taken { consumer_thread } => {
+                                    let consumer_thread = *consumer_thread;
+                                    *state = SlotState::Empty;
+                                    remember_next_slot::<SLOTS>(slot_index + 1);
+                                    let meta = EliminationExchangeMeta {
+                                        slot_index: Some(slot_index),
+                                        wait_cycles,
+                                        partner_thread: Some(consumer_thread),
+                                    };
+                                    self.record_attempt(true, gate.should_log_summary);
+                                    self.log_event(
+                                        EliminationOp::Push,
+                                        EliminationOutcome::Matched,
+                                        slot_index,
+                                        consumer_thread,
+                                        meta.wait_cycles,
+                                    );
+                                    return Ok(meta);
+                                }
+                                SlotState::Offered {
+                                    offer_id: current_offer,
+                                    ..
+                                } if *current_offer == offer_id => {}
+                                SlotState::Empty => {
+                                    remember_next_slot::<SLOTS>(slot_index + 1);
+                                    let meta = EliminationExchangeMeta {
+                                        slot_index: Some(slot_index),
+                                        wait_cycles,
+                                        partner_thread: None,
+                                    };
+                                    self.record_attempt(true, gate.should_log_summary);
+                                    self.log_event(
+                                        EliminationOp::Push,
+                                        EliminationOutcome::Matched,
+                                        slot_index,
+                                        producer_thread,
+                                        meta.wait_cycles,
+                                    );
+                                    return Ok(meta);
+                                }
+                                _ => {}
+                            }
                         }
+
+                        if wait_cycles >= SPIN_LIMIT {
+                            if Instant::now() >= deadline {
+                                let mut state = lock_no_poison(&slot.state);
+                                match &*state {
+                                    SlotState::Taken { consumer_thread } => {
+                                        let consumer_thread = *consumer_thread;
+                                        *state = SlotState::Empty;
+                                        drop(state);
+                                        remember_next_slot::<SLOTS>(slot_index + 1);
+                                        let meta = EliminationExchangeMeta {
+                                            slot_index: Some(slot_index),
+                                            wait_cycles,
+                                            partner_thread: Some(consumer_thread),
+                                        };
+                                        self.record_attempt(true, gate.should_log_summary);
+                                        self.log_event(
+                                            EliminationOp::Push,
+                                            EliminationOutcome::Matched,
+                                            slot_index,
+                                            consumer_thread,
+                                            meta.wait_cycles,
+                                        );
+                                        return Ok(meta);
+                                    }
+                                    SlotState::Offered {
+                                        offer_id: current_offer,
+                                        ..
+                                    } if *current_offer == offer_id => {}
+                                    SlotState::Empty => {
+                                        drop(state);
+                                        remember_next_slot::<SLOTS>(slot_index + 1);
+                                        let meta = EliminationExchangeMeta {
+                                            slot_index: Some(slot_index),
+                                            wait_cycles,
+                                            partner_thread: None,
+                                        };
+                                        self.record_attempt(true, gate.should_log_summary);
+                                        self.log_event(
+                                            EliminationOp::Push,
+                                            EliminationOutcome::Matched,
+                                            slot_index,
+                                            producer_thread,
+                                            meta.wait_cycles,
+                                        );
+                                        return Ok(meta);
+                                    }
+                                    _ => {}
+                                }
+
+                                match std::mem::replace(&mut *state, SlotState::Empty) {
+                                    SlotState::Offered {
+                                        offer_id: current_offer,
+                                        value,
+                                        ..
+                                    } if current_offer == offer_id => {
+                                        drop(state);
+                                        remember_next_slot::<SLOTS>(slot_index + 1);
+                                        let meta = EliminationExchangeMeta {
+                                            slot_index: Some(slot_index),
+                                            wait_cycles,
+                                            partner_thread: None,
+                                        };
+                                        slot.timeouts.fetch_add(1, Ordering::Relaxed);
+                                        self.record_attempt(false, gate.should_log_summary);
+                                        self.log_event(
+                                            EliminationOp::Push,
+                                            EliminationOutcome::Timeout,
+                                            slot_index,
+                                            producer_thread,
+                                            meta.wait_cycles,
+                                        );
+                                        return Err((value, meta));
+                                    }
+                                    _ => {}
+                                }
+                            }
+
+                            std::thread::yield_now();
+                        } else {
+                            std::hint::spin_loop();
+                        }
+
+                        wait_cycles = wait_cycles.saturating_add(1);
                     }
                 }
+                _ => {
+                    drop(state);
+                    slot.collisions.fetch_add(1, Ordering::Relaxed);
+                    remember_next_slot::<SLOTS>(slot_index + 1);
+                }
             }
-
-            slot.collisions.fetch_add(1, Ordering::Relaxed);
-            remember_next_slot::<SLOTS>(slot_index + 1);
         }
 
         self.record_attempt(false, gate.should_log_summary);
@@ -397,16 +479,20 @@ impl<T: Send, const SLOTS: usize> EliminationArray<T, SLOTS> {
             producer_thread,
             SLOTS as u64,
         );
-        Err(value.expect("offer collision must return the original value"))
+        Err((
+            value.expect("offer collision must return the original value"),
+            EliminationExchangeMeta {
+                slot_index: None,
+                wait_cycles: SLOTS as u64,
+                partner_thread: None,
+            },
+        ))
     }
 
-    pub fn try_offer(&self, _slot_bias: usize, value: T) -> OfferOutcome<T> {
-        match self.offer(value) {
-            Ok(()) => OfferOutcome::Matched(EliminationExchangeMeta::default()),
-            Err(value) => OfferOutcome::Fallback {
-                value,
-                meta: EliminationExchangeMeta::default(),
-            },
+    pub fn try_offer(&self, slot_bias: usize, value: T) -> OfferOutcome<T> {
+        match self.offer_with_base(slot_base::<SLOTS>(slot_bias), value) {
+            Ok(meta) => OfferOutcome::Matched(meta),
+            Err((value, meta)) => OfferOutcome::Fallback { value, meta },
         }
     }
 
@@ -640,6 +726,10 @@ impl<T: Send, const SLOTS: usize> EliminationArray<T, SLOTS> {
         partner_thread: u64,
         wait_cycles: u64,
     ) {
+        if !tracing::enabled!(target: "elimination", tracing::Level::TRACE) {
+            return;
+        }
+
         let op_type = match op {
             EliminationOp::Publish => "publish",
             EliminationOp::Push => "push",
@@ -677,6 +767,10 @@ impl<T: Send, const SLOTS: usize> EliminationArray<T, SLOTS> {
     }
 
     fn log_summary(&self) {
+        if !tracing::enabled!(target: "elimination", tracing::Level::INFO) {
+            return;
+        }
+
         let stats = self.stats();
         let per_slot_utilization = stats
             .slots
@@ -717,24 +811,12 @@ fn lock_no_poison<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-fn wait_timeout_no_poison<'a, T, F>(
-    condvar: &Condvar,
-    guard: MutexGuard<'a, T>,
-    timeout: Duration,
-    condition: F,
-) -> (MutexGuard<'a, T>, WaitTimeoutResult)
-where
-    F: FnMut(&mut T) -> bool,
-{
-    condvar
-        .wait_timeout_while(guard, timeout, condition)
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
+fn current_thread_tag() -> u64 {
+    THREAD_TAG.with(|tag| *tag)
 }
 
-fn current_thread_tag() -> u64 {
-    let mut hasher = DefaultHasher::new();
-    std::thread::current().id().hash(&mut hasher);
-    hasher.finish()
+fn allocate_thread_tag() -> u64 {
+    NEXT_THREAD_TAG.fetch_add(1, Ordering::Relaxed)
 }
 
 fn slot_hint<const SLOTS: usize>() -> usize {
@@ -910,5 +992,43 @@ mod tests {
             stats.successes >= 20_000,
             "10K offer/pop cycles should succeed on both sides: {stats:?}"
         );
+    }
+
+    #[test]
+    fn try_offer_reports_slot_bias_and_partner_metadata() {
+        let array = Arc::new(EliminationArray::<usize, 4>::with_wait_budget(
+            Duration::from_millis(5),
+        ));
+        let consumer = Arc::clone(&array);
+        let barrier = Arc::new(Barrier::new(2));
+        let consumer_barrier = Arc::clone(&barrier);
+
+        let consumer_handle = std::thread::spawn(move || {
+            consumer_barrier.wait();
+            consumer.try_take(3)
+        });
+
+        barrier.wait();
+        let offer = array.try_offer(3, 0xC0FFEE);
+        let take = consumer_handle.join().expect("consumer thread joins");
+
+        match offer {
+            OfferOutcome::Matched(meta) => {
+                assert_eq!(meta.slot_index, Some(3));
+                assert!(meta.wait_cycles >= 1);
+                assert!(meta.partner_thread.is_some());
+            }
+            other => panic!("expected matched offer metadata, got {other:?}"),
+        }
+
+        match take {
+            TakeOutcome::Matched { value, meta } => {
+                assert_eq!(value, 0xC0FFEE);
+                assert_eq!(meta.slot_index, Some(3));
+                assert!(meta.wait_cycles >= 1);
+                assert!(meta.partner_thread.is_some());
+            }
+            other => panic!("expected matched take metadata, got {other:?}"),
+        }
     }
 }

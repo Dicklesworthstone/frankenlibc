@@ -8,7 +8,9 @@
 use std::ffi::{c_char, c_void};
 use std::ptr;
 
+use frankenlibc_abi::errno_abi::__errno_location;
 use frankenlibc_abi::iconv_abi::{iconv, iconv_close, iconv_open};
+use frankenlibc_core::iconv as core_iconv;
 
 const ICONV_ERROR: usize = usize::MAX;
 
@@ -598,6 +600,83 @@ fn iconv_empty_input() {
         let rc = iconv(cd, &mut in_ptr, &mut in_left, &mut out_ptr, &mut out_left);
         assert_eq!(rc, 0);
         assert_eq!(out_left, 8, "no bytes should be written");
+
+        assert_eq!(iconv_close(cd), 0);
+    }
+}
+
+#[test]
+fn iconv_invalid_utf8_reports_eilseq_and_preserves_progress() {
+    unsafe {
+        let cd = iconv_open(c_str(b"UTF-16LE\0"), c_str(b"UTF-8\0"));
+        assert_ne!(cd, iconv_error_handle());
+
+        let mut input = vec![0xC3u8, 0x28];
+        let mut in_ptr = input.as_mut_ptr().cast::<c_char>();
+        let in_start = in_ptr;
+        let mut in_left = input.len();
+
+        let mut output = [0u8; 8];
+        let mut out_ptr = output.as_mut_ptr().cast::<c_char>();
+        let out_start = out_ptr;
+        let mut out_left = output.len();
+
+        *__errno_location() = 0;
+        let rc = iconv(cd, &mut in_ptr, &mut in_left, &mut out_ptr, &mut out_left);
+        assert_eq!(rc, ICONV_ERROR);
+        assert_eq!(*__errno_location(), core_iconv::ICONV_EILSEQ);
+        assert_eq!(in_ptr, in_start, "invalid sequence must not advance input");
+        assert_eq!(
+            in_left,
+            input.len(),
+            "invalid sequence must preserve input length"
+        );
+        assert_eq!(out_ptr, out_start, "invalid sequence must not write output");
+        assert_eq!(
+            out_left,
+            output.len(),
+            "invalid sequence must preserve output length"
+        );
+
+        assert_eq!(iconv_close(cd), 0);
+    }
+}
+
+#[test]
+fn iconv_incomplete_utf8_reports_einval_and_preserves_progress() {
+    unsafe {
+        let cd = iconv_open(c_str(b"UTF-16LE\0"), c_str(b"UTF-8\0"));
+        assert_ne!(cd, iconv_error_handle());
+
+        let mut input = vec![0xE2u8, 0x82];
+        let mut in_ptr = input.as_mut_ptr().cast::<c_char>();
+        let in_start = in_ptr;
+        let mut in_left = input.len();
+
+        let mut output = [0u8; 8];
+        let mut out_ptr = output.as_mut_ptr().cast::<c_char>();
+        let out_start = out_ptr;
+        let mut out_left = output.len();
+
+        *__errno_location() = 0;
+        let rc = iconv(cd, &mut in_ptr, &mut in_left, &mut out_ptr, &mut out_left);
+        assert_eq!(rc, ICONV_ERROR);
+        assert_eq!(*__errno_location(), core_iconv::ICONV_EINVAL);
+        assert_eq!(
+            in_ptr, in_start,
+            "truncated multibyte sequence must not advance input"
+        );
+        assert_eq!(
+            in_left,
+            input.len(),
+            "truncated multibyte sequence must preserve input length"
+        );
+        assert_eq!(out_ptr, out_start, "truncated input must not write output");
+        assert_eq!(
+            out_left,
+            output.len(),
+            "truncated input must preserve output length"
+        );
 
         assert_eq!(iconv_close(cd), 0);
     }

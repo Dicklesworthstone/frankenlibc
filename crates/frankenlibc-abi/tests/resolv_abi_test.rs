@@ -9,12 +9,75 @@
 use std::ffi::{CStr, CString, c_char, c_int, c_void};
 use std::mem;
 use std::ptr;
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use frankenlibc_abi::inet_abi;
 use frankenlibc_abi::resolv_abi;
 
 const NO_RECOVERY_ERRNO: i32 = 3;
 const HOST_NOT_FOUND_ERRNO: i32 = 1;
+const HOSTS_PATH_ENV: &str = "FRANKENLIBC_HOSTS_PATH";
+const SERVICES_PATH_ENV: &str = "FRANKENLIBC_SERVICES_PATH";
+
+static RESOLVER_FIXTURE_SEQ: AtomicU64 = AtomicU64::new(0);
+static RESOLVER_ENV_LOCK: Mutex<()> = Mutex::new(());
+
+struct ResolverFixturePaths {
+    hosts: std::path::PathBuf,
+    services: std::path::PathBuf,
+}
+
+struct ResolverEnvGuard;
+
+impl Drop for ResolverEnvGuard {
+    fn drop(&mut self) {
+        // SAFETY: all resolver env var mutation is serialized by RESOLVER_ENV_LOCK.
+        unsafe {
+            std::env::remove_var(HOSTS_PATH_ENV);
+            std::env::remove_var(SERVICES_PATH_ENV);
+        }
+    }
+}
+
+fn temp_resolver_path(kind: &str) -> std::path::PathBuf {
+    let seq = RESOLVER_FIXTURE_SEQ.fetch_add(1, Ordering::Relaxed);
+    std::env::temp_dir().join(format!(
+        "frankenlibc-resolv-{kind}-{}-{seq}.txt",
+        std::process::id()
+    ))
+}
+
+fn with_resolver_lock<T>(f: impl FnOnce() -> T) -> T {
+    let _guard = RESOLVER_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    f()
+}
+
+fn with_resolver_backends<T>(
+    hosts: Option<&[u8]>,
+    services: Option<&[u8]>,
+    f: impl FnOnce(&ResolverFixturePaths) -> T,
+) -> T {
+    let _guard = RESOLVER_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let paths = ResolverFixturePaths {
+        hosts: temp_resolver_path("hosts"),
+        services: temp_resolver_path("services"),
+    };
+    let _env_guard = ResolverEnvGuard;
+
+    if let Some(content) = hosts {
+        std::fs::write(&paths.hosts, content).expect("write temp hosts fixture");
+        // SAFETY: serialized by RESOLVER_ENV_LOCK.
+        unsafe { std::env::set_var(HOSTS_PATH_ENV, &paths.hosts) };
+    }
+    if let Some(content) = services {
+        std::fs::write(&paths.services, content).expect("write temp services fixture");
+        // SAFETY: serialized by RESOLVER_ENV_LOCK.
+        unsafe { std::env::set_var(SERVICES_PATH_ENV, &paths.services) };
+    }
+
+    f(&paths)
+}
 
 fn services_alias_fixture() -> Option<(CString, CString, u16)> {
     let content = std::fs::read("/etc/services").ok()?;
@@ -62,24 +125,30 @@ fn gethostbyname_numeric_ipv4_returns_hostent() {
 
 #[test]
 fn gethostbyname_unknown_host_returns_null() {
-    let query = CString::new("missing.example.invalid").expect("query should be valid C string");
-    let ptr = unsafe { resolv_abi::gethostbyname(query.as_ptr()) };
-    assert!(ptr.is_null());
+    with_resolver_lock(|| {
+        let query =
+            CString::new("missing.example.invalid").expect("query should be valid C string");
+        let ptr = unsafe { resolv_abi::gethostbyname(query.as_ptr()) };
+        assert!(ptr.is_null());
+    });
 }
 
 #[test]
 fn gethostbyname_unknown_host_sets_thread_local_h_errno() {
-    let query = CString::new("missing.example.invalid").expect("query should be valid C string");
-    unsafe {
-        *resolv_abi::__h_errno_location() = 0;
-    }
+    with_resolver_lock(|| {
+        let query =
+            CString::new("missing.example.invalid").expect("query should be valid C string");
+        unsafe {
+            *resolv_abi::__h_errno_location() = 0;
+        }
 
-    let ptr = unsafe { resolv_abi::gethostbyname(query.as_ptr()) };
-    assert!(ptr.is_null());
-    assert_eq!(
-        unsafe { *resolv_abi::__h_errno_location() },
-        HOST_NOT_FOUND_ERRNO
-    );
+        let ptr = unsafe { resolv_abi::gethostbyname(query.as_ptr()) };
+        assert!(ptr.is_null());
+        assert_eq!(
+            unsafe { *resolv_abi::__h_errno_location() },
+            HOST_NOT_FOUND_ERRNO
+        );
+    });
 }
 
 // ===========================================================================
@@ -145,25 +214,28 @@ fn gethostbyname_r_small_buffer_returns_erange() {
 
 #[test]
 fn gethostbyname_r_unknown_host_returns_enoent() {
-    let query = CString::new("missing.example.invalid").expect("query should be valid C string");
-    let mut hostent: libc::hostent = unsafe { mem::zeroed() };
-    let mut scratch = [0i8; 256];
-    let mut result_ptr: *mut c_void = ptr::null_mut();
-    let mut h_errno = -1;
+    with_resolver_lock(|| {
+        let query =
+            CString::new("missing.example.invalid").expect("query should be valid C string");
+        let mut hostent: libc::hostent = unsafe { mem::zeroed() };
+        let mut scratch = [0i8; 256];
+        let mut result_ptr: *mut c_void = ptr::null_mut();
+        let mut h_errno = -1;
 
-    let rc = unsafe {
-        inet_abi::gethostbyname_r(
-            query.as_ptr(),
-            (&mut hostent as *mut libc::hostent).cast::<c_void>(),
-            scratch.as_mut_ptr(),
-            scratch.len(),
-            &mut result_ptr,
-            &mut h_errno,
-        )
-    };
-    assert_eq!(rc, libc::ENOENT);
-    assert!(result_ptr.is_null());
-    assert_eq!(h_errno, HOST_NOT_FOUND_ERRNO);
+        let rc = unsafe {
+            inet_abi::gethostbyname_r(
+                query.as_ptr(),
+                (&mut hostent as *mut libc::hostent).cast::<c_void>(),
+                scratch.as_mut_ptr(),
+                scratch.len(),
+                &mut result_ptr,
+                &mut h_errno,
+            )
+        };
+        assert_eq!(rc, libc::ENOENT);
+        assert!(result_ptr.is_null());
+        assert_eq!(h_errno, HOST_NOT_FOUND_ERRNO);
+    });
 }
 
 // ===========================================================================
@@ -302,18 +374,51 @@ fn getaddrinfo_null_result_returns_error() {
 
 #[test]
 fn getaddrinfo_nonexistent_host_returns_eai_noname() {
-    let node = CString::new("nonexistent.invalid.test").unwrap();
-    let mut res: *mut libc::addrinfo = ptr::null_mut();
+    with_resolver_lock(|| {
+        let node = CString::new("nonexistent.invalid.test").unwrap();
+        let mut res: *mut libc::addrinfo = ptr::null_mut();
 
-    let rc = unsafe { resolv_abi::getaddrinfo(node.as_ptr(), ptr::null(), ptr::null(), &mut res) };
-    assert_eq!(rc, libc::EAI_NONAME);
-    assert!(res.is_null());
+        let rc =
+            unsafe { resolv_abi::getaddrinfo(node.as_ptr(), ptr::null(), ptr::null(), &mut res) };
+        assert_eq!(rc, libc::EAI_NONAME);
+        assert!(res.is_null());
+    });
 }
 
 #[test]
 fn freeaddrinfo_null_is_noop() {
     // Should not crash
     unsafe { resolv_abi::freeaddrinfo(ptr::null_mut()) };
+}
+
+#[test]
+fn getaddrinfo_uses_overridden_hosts_backend() {
+    with_resolver_backends(
+        Some(
+            b"not-an-ip fixture-bad\n203.0.113.10 fixture-host fixture-alias\n198.51.100.5 other-host\n",
+        ),
+        None,
+        |paths| {
+            assert!(paths.hosts.exists());
+            let node = CString::new("FIXTURE-ALIAS").unwrap();
+            let service = CString::new("4242").unwrap();
+            let mut res: *mut libc::addrinfo = ptr::null_mut();
+
+            let rc = unsafe {
+                resolv_abi::getaddrinfo(node.as_ptr(), service.as_ptr(), ptr::null(), &mut res)
+            };
+            assert_eq!(rc, 0);
+            assert!(!res.is_null());
+
+            let ai = unsafe { &*res };
+            assert_eq!(ai.ai_family, libc::AF_INET);
+            let sin = unsafe { &*(ai.ai_addr as *const libc::sockaddr_in) };
+            assert_eq!(sin.sin_port, 4242u16.to_be());
+            assert_eq!(sin.sin_addr.s_addr, u32::from_ne_bytes([203, 0, 113, 10]));
+
+            unsafe { resolv_abi::freeaddrinfo(res) };
+        },
+    );
 }
 
 // ===========================================================================
@@ -433,16 +538,18 @@ fn getnameinfo_unsupported_family_returns_eai_family() {
 
 #[test]
 fn gethostbyaddr_localhost_may_resolve() {
-    let addr: [u8; 4] = [127, 0, 0, 1];
-    let ptr =
-        unsafe { resolv_abi::gethostbyaddr(addr.as_ptr().cast::<c_void>(), 4, libc::AF_INET) };
-    // /etc/hosts usually has 127.0.0.1 -> localhost
-    // But we don't fail the test if it doesn't
-    if !ptr.is_null() {
-        let hostent = unsafe { &*(ptr as *const libc::hostent) };
-        assert_eq!(hostent.h_addrtype, libc::AF_INET);
-        assert_eq!(hostent.h_length, 4);
-    }
+    with_resolver_lock(|| {
+        let addr: [u8; 4] = [127, 0, 0, 1];
+        let ptr =
+            unsafe { resolv_abi::gethostbyaddr(addr.as_ptr().cast::<c_void>(), 4, libc::AF_INET) };
+        // /etc/hosts usually has 127.0.0.1 -> localhost
+        // But we don't fail the test if it doesn't
+        if !ptr.is_null() {
+            let hostent = unsafe { &*(ptr as *const libc::hostent) };
+            assert_eq!(hostent.h_addrtype, libc::AF_INET);
+            assert_eq!(hostent.h_length, 4);
+        }
+    });
 }
 
 #[test]
@@ -493,32 +600,66 @@ fn gethostbyaddr_unsupported_af_sets_thread_local_h_errno() {
     );
 }
 
+#[test]
+fn gethostbyaddr_uses_overridden_hosts_backend() {
+    with_resolver_backends(
+        Some(b"203.0.113.7 fixture-host fixture-alias\n"),
+        None,
+        |_| {
+            let addr = libc::in_addr {
+                s_addr: u32::from_ne_bytes([203, 0, 113, 7]),
+            };
+            unsafe {
+                *resolv_abi::__h_errno_location() = HOST_NOT_FOUND_ERRNO;
+            }
+
+            let ptr = unsafe {
+                resolv_abi::gethostbyaddr(
+                    (&addr as *const libc::in_addr).cast::<c_void>(),
+                    mem::size_of::<libc::in_addr>() as libc::socklen_t,
+                    libc::AF_INET,
+                )
+            };
+            assert!(!ptr.is_null());
+
+            let hostent = unsafe { &*(ptr as *const libc::hostent) };
+            let host_name = unsafe { CStr::from_ptr(hostent.h_name) };
+            assert_eq!(host_name.to_bytes(), b"fixture-host");
+            assert_eq!(unsafe { *resolv_abi::__h_errno_location() }, 0);
+        },
+    );
+}
+
 // ===========================================================================
 // getservbyname
 // ===========================================================================
 
 #[test]
 fn getservbyname_ssh_resolves() {
-    let name = CString::new("ssh").unwrap();
-    let proto = CString::new("tcp").unwrap();
-    let ptr = unsafe { resolv_abi::getservbyname(name.as_ptr(), proto.as_ptr()) };
-    // /etc/services should have ssh/tcp = 22
-    if !ptr.is_null() {
-        let servent = unsafe { &*(ptr as *const libc::servent) };
-        assert_eq!(u16::from_be(servent.s_port as u16), 22);
-        assert!(!servent.s_name.is_null());
-    }
+    with_resolver_lock(|| {
+        let name = CString::new("ssh").unwrap();
+        let proto = CString::new("tcp").unwrap();
+        let ptr = unsafe { resolv_abi::getservbyname(name.as_ptr(), proto.as_ptr()) };
+        // /etc/services should have ssh/tcp = 22
+        if !ptr.is_null() {
+            let servent = unsafe { &*(ptr as *const libc::servent) };
+            assert_eq!(u16::from_be(servent.s_port as u16), 22);
+            assert!(!servent.s_name.is_null());
+        }
+    });
 }
 
 #[test]
 fn getservbyname_http_resolves() {
-    let name = CString::new("http").unwrap();
-    let proto = CString::new("tcp").unwrap();
-    let ptr = unsafe { resolv_abi::getservbyname(name.as_ptr(), proto.as_ptr()) };
-    if !ptr.is_null() {
-        let servent = unsafe { &*(ptr as *const libc::servent) };
-        assert_eq!(u16::from_be(servent.s_port as u16), 80);
-    }
+    with_resolver_lock(|| {
+        let name = CString::new("http").unwrap();
+        let proto = CString::new("tcp").unwrap();
+        let ptr = unsafe { resolv_abi::getservbyname(name.as_ptr(), proto.as_ptr()) };
+        if !ptr.is_null() {
+            let servent = unsafe { &*(ptr as *const libc::servent) };
+            assert_eq!(u16::from_be(servent.s_port as u16), 80);
+        }
+    });
 }
 
 #[test]
@@ -530,34 +671,59 @@ fn getservbyname_null_name_returns_null() {
 
 #[test]
 fn getservbyname_nonexistent_returns_null() {
-    let name = CString::new("nonexistent_service_zzz").unwrap();
-    let proto = CString::new("tcp").unwrap();
-    let ptr = unsafe { resolv_abi::getservbyname(name.as_ptr(), proto.as_ptr()) };
-    assert!(ptr.is_null());
+    with_resolver_lock(|| {
+        let name = CString::new("nonexistent_service_zzz").unwrap();
+        let proto = CString::new("tcp").unwrap();
+        let ptr = unsafe { resolv_abi::getservbyname(name.as_ptr(), proto.as_ptr()) };
+        assert!(ptr.is_null());
+    });
 }
 
 #[test]
 fn getservbyname_null_proto_resolves() {
-    let name = CString::new("ssh").unwrap();
-    let ptr = unsafe { resolv_abi::getservbyname(name.as_ptr(), ptr::null()) };
-    // Should still find ssh without protocol filter
-    if !ptr.is_null() {
-        let servent = unsafe { &*(ptr as *const libc::servent) };
-        assert_eq!(u16::from_be(servent.s_port as u16), 22);
-    }
+    with_resolver_lock(|| {
+        let name = CString::new("ssh").unwrap();
+        let ptr = unsafe { resolv_abi::getservbyname(name.as_ptr(), ptr::null()) };
+        // Should still find ssh without protocol filter
+        if !ptr.is_null() {
+            let servent = unsafe { &*(ptr as *const libc::servent) };
+            assert_eq!(u16::from_be(servent.s_port as u16), 22);
+        }
+    });
 }
 
 #[test]
 fn getservbyname_alias_resolves_to_canonical_entry() {
-    let Some((alias, proto, port)) = services_alias_fixture() else {
-        return;
-    };
-    let ptr = unsafe { resolv_abi::getservbyname(alias.as_ptr(), proto.as_ptr()) };
-    assert!(!ptr.is_null());
+    with_resolver_lock(|| {
+        let Some((alias, proto, port)) = services_alias_fixture() else {
+            return;
+        };
+        let ptr = unsafe { resolv_abi::getservbyname(alias.as_ptr(), proto.as_ptr()) };
+        assert!(!ptr.is_null());
 
-    let servent = unsafe { &*(ptr as *const libc::servent) };
-    assert_eq!(u16::from_be(servent.s_port as u16), port);
-    assert!(!servent.s_name.is_null());
+        let servent = unsafe { &*(ptr as *const libc::servent) };
+        assert_eq!(u16::from_be(servent.s_port as u16), port);
+        assert!(!servent.s_name.is_null());
+    });
+}
+
+#[test]
+fn getservbyname_uses_overridden_services_backend_and_ignores_malformed_lines() {
+    with_resolver_backends(
+        None,
+        Some(b"broken-service notaport/tcp alias\nfixture-svc 12345/tcp fixturealias\n"),
+        |_| {
+            let name = CString::new("FIXTUREALIAS").unwrap();
+            let proto = CString::new("TCP").unwrap();
+            let ptr = unsafe { resolv_abi::getservbyname(name.as_ptr(), proto.as_ptr()) };
+            assert!(!ptr.is_null());
+
+            let servent = unsafe { &*(ptr as *const libc::servent) };
+            assert_eq!(u16::from_be(servent.s_port as u16), 12345);
+            let proto_name = unsafe { CStr::from_ptr(servent.s_proto) };
+            assert!(proto_name.to_bytes().eq_ignore_ascii_case(b"tcp"));
+        },
+    );
 }
 
 // ===========================================================================
@@ -566,34 +732,66 @@ fn getservbyname_alias_resolves_to_canonical_entry() {
 
 #[test]
 fn getservbyport_22_resolves_ssh() {
-    let port_net = (22u16).to_be() as c_int;
-    let proto = CString::new("tcp").unwrap();
-    let ptr = unsafe { resolv_abi::getservbyport(port_net, proto.as_ptr()) };
-    if !ptr.is_null() {
-        let servent = unsafe { &*(ptr as *const libc::servent) };
-        let name = unsafe { CStr::from_ptr(servent.s_name) }.to_string_lossy();
-        assert_eq!(name, "ssh");
-    }
+    with_resolver_lock(|| {
+        let port_net = (22u16).to_be() as c_int;
+        let proto = CString::new("tcp").unwrap();
+        let ptr = unsafe { resolv_abi::getservbyport(port_net, proto.as_ptr()) };
+        if !ptr.is_null() {
+            let servent = unsafe { &*(ptr as *const libc::servent) };
+            let name = unsafe { CStr::from_ptr(servent.s_name) }.to_string_lossy();
+            assert_eq!(name, "ssh");
+        }
+    });
 }
 
 #[test]
 fn getservbyport_80_resolves_http() {
-    let port_net = (80u16).to_be() as c_int;
-    let proto = CString::new("tcp").unwrap();
-    let ptr = unsafe { resolv_abi::getservbyport(port_net, proto.as_ptr()) };
-    if !ptr.is_null() {
-        let servent = unsafe { &*(ptr as *const libc::servent) };
-        let name = unsafe { CStr::from_ptr(servent.s_name) }.to_string_lossy();
-        assert_eq!(name, "http");
-    }
+    with_resolver_lock(|| {
+        let port_net = (80u16).to_be() as c_int;
+        let proto = CString::new("tcp").unwrap();
+        let ptr = unsafe { resolv_abi::getservbyport(port_net, proto.as_ptr()) };
+        if !ptr.is_null() {
+            let servent = unsafe { &*(ptr as *const libc::servent) };
+            let name = unsafe { CStr::from_ptr(servent.s_name) }.to_string_lossy();
+            assert_eq!(name, "http");
+        }
+    });
 }
 
 #[test]
 fn getservbyport_nonexistent_returns_null() {
-    let port_net = (59999u16).to_be() as c_int;
-    let proto = CString::new("tcp").unwrap();
-    let ptr = unsafe { resolv_abi::getservbyport(port_net, proto.as_ptr()) };
-    assert!(ptr.is_null());
+    with_resolver_lock(|| {
+        let port_net = (59999u16).to_be() as c_int;
+        let proto = CString::new("tcp").unwrap();
+        let ptr = unsafe { resolv_abi::getservbyport(port_net, proto.as_ptr()) };
+        assert!(ptr.is_null());
+    });
+}
+
+#[test]
+fn getservbyport_reads_updated_overridden_services_backend() {
+    with_resolver_backends(None, Some(b"fixture-old 4242/tcp\n"), |paths| {
+        let port_net = (4242u16).to_be() as c_int;
+        let proto = CString::new("tcp").unwrap();
+
+        let first_ptr = unsafe { resolv_abi::getservbyport(port_net, proto.as_ptr()) };
+        assert!(!first_ptr.is_null());
+        let first = unsafe { &*(first_ptr as *const libc::servent) };
+        let first_name = unsafe { CStr::from_ptr(first.s_name) };
+        assert_eq!(first_name.to_bytes(), b"fixture-old");
+
+        std::fs::write(
+            &paths.services,
+            b"broken-service nope/tcp alias\nfixture-new 4242/tcp\n",
+        )
+        .expect("rewrite temp services fixture");
+
+        let second_ptr = unsafe { resolv_abi::getservbyport(port_net, proto.as_ptr()) };
+        assert!(!second_ptr.is_null());
+        let second = unsafe { &*(second_ptr as *const libc::servent) };
+        let second_name = unsafe { CStr::from_ptr(second.s_name) };
+        assert_eq!(second_name.to_bytes(), b"fixture-new");
+    });
 }
 
 // ===========================================================================

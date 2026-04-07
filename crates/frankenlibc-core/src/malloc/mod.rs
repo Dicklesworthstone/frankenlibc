@@ -11,6 +11,10 @@ pub mod size_class;
 pub mod thread_cache;
 
 pub use allocator::{AllocatorLogLevel, AllocatorLogRecord, MallocState};
+pub use elimination::{
+    DEFAULT_ELIMINATION_SLOTS, EliminationArray, EliminationExchangeMeta, EliminationOp,
+    EliminationOutcome, EliminationSlotStats, EliminationStats, OfferOutcome, TakeOutcome,
+};
 pub use large::{LargeAllocation, LargeAllocator};
 pub use size_class::SizeClass;
 pub use thread_cache::ThreadCache;

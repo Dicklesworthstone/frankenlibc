@@ -263,7 +263,9 @@ fn emit_rerun_directives(repo_root: &Path, manifest_dir: &str) {
     );
     println!(
         "cargo:rerun-if-changed={}",
-        repo_root.join("tests/conformance/packaging_spec.json").display()
+        repo_root
+            .join("tests/conformance/packaging_spec.json")
+            .display()
     );
     println!(
         "cargo:rerun-if-changed={}",
