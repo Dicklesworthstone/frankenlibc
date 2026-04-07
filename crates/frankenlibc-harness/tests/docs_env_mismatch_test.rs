@@ -44,6 +44,12 @@ fn docs_inventory_exists_and_has_expected_shape() {
         docs_inventory["summary"].is_object(),
         "summary must be object"
     );
+    assert!(
+        docs_inventory["docs_files"]
+            .as_array()
+            .is_some_and(|rows| rows.iter().any(|row| row.as_str() == Some("DEPLOYMENT.md"))),
+        "docs inventory must include DEPLOYMENT.md once the deployment surface is materialized"
+    );
 }
 
 #[test]
@@ -194,6 +200,44 @@ fn readme_smoke_status_is_backed_by_canonical_smoke_artifact() {
             .iter()
             .any(|value| value.as_str() == Some("scripts/check_claim_reconciliation.sh")),
         "README smoke governance section must be guarded by check_claim_reconciliation.sh"
+    );
+}
+
+#[test]
+fn deployment_surface_is_materialized_to_dedicated_doc() {
+    let root = workspace_root();
+    let map = load_json(&root.join("tests/conformance/docs_source_of_truth_map.v1.json"));
+    let surfaces = map["surfaces"].as_array().expect("surfaces must be array");
+
+    let deployment_surface = surfaces
+        .iter()
+        .find(|surface| surface["surface_id"].as_str() == Some("DEPLOYMENT"))
+        .expect("DEPLOYMENT surface must exist");
+
+    assert_eq!(
+        deployment_surface["target_path"].as_str(),
+        Some("DEPLOYMENT.md"),
+        "deployment surface target_path must be DEPLOYMENT.md"
+    );
+    assert_eq!(
+        deployment_surface["future_target_path"].as_str(),
+        Some("DEPLOYMENT.md"),
+        "deployment surface future_target_path must stay DEPLOYMENT.md"
+    );
+
+    let sections = deployment_surface["sections"]
+        .as_array()
+        .expect("DEPLOYMENT sections must be array");
+    let interpose = sections
+        .iter()
+        .find(|section| section["section_id"].as_str() == Some("interpose-workflows"))
+        .expect("DEPLOYMENT surface must include interpose-workflows");
+
+    assert!(
+        interpose["backing_paths"]
+            .as_array()
+            .is_some_and(|rows| rows.iter().any(|row| row.as_str() == Some("DEPLOYMENT.md"))),
+        "interpose-workflows backing_paths must include DEPLOYMENT.md"
     );
 }
 

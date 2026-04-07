@@ -1,39 +1,39 @@
 {
   "index_version": 1,
-  "run_id": "20260304T024556Z",
+  "run_id": "20260407T192033Z",
   "bead_id": "bd-qwm",
-  "generated_utc": "20260304T024556Z",
+  "generated_utc": "20260407T192033Z",
   "retention_policy": {
     "tier": "normal",
     "days": 30
   },
   "artifacts": [
     {
-      "path": "raw/20260304T024556Z/fixture_startup",
+      "path": "raw/20260407T192033Z/fixture_startup",
       "kind": "binary",
       "retention_tier": "normal",
-      "sha256": "07d0c82618885e421d1bcc50952baa867ecc2893f05d1a6ae1aa2bf32c8e932e"
+      "sha256": "cf478ce201da2a7ffe6b54584f5c7285121ac05015c01faaa936726319c95e6c"
     },
     {
-      "path": "raw/20260304T024556Z/strict.stdout.txt",
+      "path": "raw/20260407T192033Z/strict.stdout.txt",
+      "kind": "log",
+      "retention_tier": "normal",
+      "sha256": "831b438dfdbd8626d7346dd42b648162caf0f199732d41b12bd35cbdef229fd1"
+    },
+    {
+      "path": "raw/20260407T192033Z/strict.stderr.txt",
       "kind": "log",
       "retention_tier": "normal",
       "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     },
     {
-      "path": "raw/20260304T024556Z/strict.stderr.txt",
+      "path": "raw/20260407T192033Z/hardened.stdout.txt",
       "kind": "log",
       "retention_tier": "normal",
-      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      "sha256": "831b438dfdbd8626d7346dd42b648162caf0f199732d41b12bd35cbdef229fd1"
     },
     {
-      "path": "raw/20260304T024556Z/hardened.stdout.txt",
-      "kind": "log",
-      "retention_tier": "normal",
-      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-    },
-    {
-      "path": "raw/20260304T024556Z/hardened.stderr.txt",
+      "path": "raw/20260407T192033Z/hardened.stderr.txt",
       "kind": "log",
       "retention_tier": "normal",
       "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -42,7 +42,7 @@
       "path": "trace.jsonl",
       "kind": "trace",
       "retention_tier": "normal",
-      "sha256": "9e1a89058bae8887c468967127d1febde736b4da2f184c1bf1cd0a0ed2aa65ef"
+      "sha256": "bd2c79431d30098bbe091d004adb6dc67a3af700df6fffab9656bfb4df2c1b3b"
     }
   ]
 }

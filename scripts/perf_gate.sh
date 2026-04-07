@@ -563,7 +563,9 @@ fi
 
 overall_rc=0
 
-if ! run_mode strict; then
+if run_mode strict; then
+    :
+else
     rc=$?
     if [[ "${rc}" == "1" ]]; then
         overall_rc=1
@@ -572,7 +574,9 @@ if ! run_mode strict; then
     fi
 fi
 
-if ! run_mode hardened; then
+if run_mode hardened; then
+    :
+else
     rc=$?
     if [[ "${rc}" == "1" ]]; then
         overall_rc=1

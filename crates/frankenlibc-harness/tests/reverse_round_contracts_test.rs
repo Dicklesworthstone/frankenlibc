@@ -2,6 +2,7 @@
 // Integration tests for reverse-round contracts, cross-round composition,
 // and milestone branch-diversity verification.
 
+use std::collections::BTreeSet;
 use std::path::Path;
 use std::process::Command;
 
@@ -24,6 +25,42 @@ fn load_json(path: &Path) -> serde_json::Value {
 fn load_text(path: &Path) -> String {
     std::fs::read_to_string(path)
         .unwrap_or_else(|e| panic!("Failed to read {}: {}", path.display(), e))
+}
+
+fn collect_hook_path_entries(hook: &serde_json::Value) -> Vec<(String, bool)> {
+    let mut entries = Vec::new();
+    if let Some(path) = hook["path"].as_str() {
+        entries.push((
+            path.to_string(),
+            hook["path_exists"].as_bool().unwrap_or(false),
+        ));
+    }
+    if let Some(paths) = hook["paths"].as_array() {
+        for entry in paths {
+            if let Some(path) = entry["path"].as_str()
+                && entries.iter().all(|(existing, _)| existing != path)
+            {
+                entries.push((
+                    path.to_string(),
+                    entry["path_exists"].as_bool().unwrap_or(false),
+                ));
+            }
+        }
+    }
+    entries
+}
+
+fn collect_round_verification_paths(round_data: &serde_json::Value) -> BTreeSet<String> {
+    round_data["verification_strategy"]
+        .as_array()
+        .expect("verification_strategy must be an array")
+        .iter()
+        .flat_map(|hook| {
+            collect_hook_path_entries(hook)
+                .into_iter()
+                .map(|(path, _)| path)
+        })
+        .collect()
 }
 
 #[test]
@@ -218,10 +255,17 @@ fn contracts_rounds_include_problem_focus_execution_and_verification() {
                 hook["description"].is_string(),
                 "{round_id}: verification hook description missing"
             );
-            if let Some(path) = hook["path"].as_str() {
+            let hook_paths = collect_hook_path_entries(hook);
+            for (path, exists) in &hook_paths {
                 assert!(
-                    hook["path_exists"].as_bool().unwrap_or(false),
+                    *exists,
                     "{round_id}: verification hook path missing: {path}"
+                );
+            }
+            if hook.get("paths").is_some() {
+                assert!(
+                    !hook_paths.is_empty(),
+                    "{round_id}: paths entries must be non-empty when present"
                 );
             }
         }
@@ -240,6 +284,74 @@ fn contracts_rounds_include_problem_focus_execution_and_verification() {
             assert!(
                 file["exists"].as_bool().unwrap_or(false),
                 "{round_id}: supporting file missing: {path}"
+            );
+        }
+    }
+}
+
+#[test]
+fn contracts_r7_r11_verification_hooks_capture_all_declared_paths() {
+    let root = repo_root();
+    let report_path = root.join("tests/conformance/reverse_round_contracts.v1.json");
+    let data = load_json(&report_path);
+
+    let expected_paths: &[(&str, &[&str])] = &[
+        (
+            "R7",
+            &[
+                "scripts/check_reverse_round_contracts.sh",
+                "crates/frankenlibc-harness/tests/reverse_round_contracts_test.rs",
+                "scripts/check_runtime_math_epic_closure.sh",
+            ],
+        ),
+        (
+            "R8",
+            &[
+                "scripts/check_reverse_round_contracts.sh",
+                "crates/frankenlibc-harness/tests/reverse_round_contracts_test.rs",
+                "crates/frankenlibc-harness/tests/thread_hotpath_optimization_test.rs",
+                "crates/frankenlibc-harness/tests/pressure_sensing_test.rs",
+                "scripts/check_runtime_math_epic_closure.sh",
+            ],
+        ),
+        (
+            "R9",
+            &[
+                "scripts/check_reverse_round_contracts.sh",
+                "crates/frankenlibc-harness/tests/stdio_phase_strategy_test.rs",
+                "crates/frankenlibc-harness/tests/iconv_codec_scope_ledger_test.rs",
+                "crates/frankenlibc-harness/tests/reverse_round_contracts_test.rs",
+            ],
+        ),
+        (
+            "R10",
+            &[
+                "scripts/check_reverse_round_contracts.sh",
+                "crates/frankenlibc-harness/tests/reverse_round_contracts_test.rs",
+                "crates/frankenlibc-abi/tests/resolv_abi_test.rs",
+                "crates/frankenlibc-abi/tests/nss_cache_policy_test.rs",
+                "scripts/check_runtime_math_epic_closure.sh",
+            ],
+        ),
+        (
+            "R11",
+            &[
+                "scripts/check_reverse_round_contracts.sh",
+                "crates/frankenlibc-harness/tests/reverse_round_contracts_test.rs",
+                "crates/frankenlibc-harness/tests/math_production_set_policy_test.rs",
+                "crates/frankenlibc-harness/tests/math_governance_test.rs",
+                "scripts/check_runtime_math_epic_closure.sh",
+            ],
+        ),
+    ];
+
+    for (round_id, required_paths) in expected_paths {
+        let round_data = &data["round_results"][round_id];
+        let hook_paths = collect_round_verification_paths(round_data);
+        for required_path in *required_paths {
+            assert!(
+                hook_paths.contains(*required_path),
+                "{round_id}: verification hooks must preserve {required_path}"
             );
         }
     }

@@ -506,8 +506,14 @@ printf '%s\n' "$@" >"${RCH_LOG}"
         .env("FRANKENLIBC_PERF_ALLOW_TARGET_VIOLATION", "0")
         .env("FRANKENLIBC_PERF_SKIP_OVERLOADED", "0")
         .env("FRANKENLIBC_PERF_ENABLE_KERNEL_SUITE", "1")
-        .env("FRANKENLIBC_PERF_REPORT", "target/conformance/perf_gate.wrapper.report.json")
-        .env("FRANKENLIBC_PERF_EVENT_LOG", "target/conformance/perf_gate.wrapper.log.jsonl")
+        .env(
+            "FRANKENLIBC_PERF_REPORT",
+            "target/conformance/perf_gate.wrapper.report.json",
+        )
+        .env(
+            "FRANKENLIBC_PERF_EVENT_LOG",
+            "target/conformance/perf_gate.wrapper.log.jsonl",
+        )
         .output()
         .expect("run benchmark gate wrapper");
 
@@ -540,7 +546,8 @@ printf '%s\n' "$@" >"${RCH_LOG}"
         "rch call should forward perf report path"
     );
     assert!(
-        logged.contains("FRANKENLIBC_PERF_EVENT_LOG=target/conformance/perf_gate.wrapper.log.jsonl"),
+        logged
+            .contains("FRANKENLIBC_PERF_EVENT_LOG=target/conformance/perf_gate.wrapper.log.jsonl"),
         "rch call should forward perf event log path"
     );
     assert!(

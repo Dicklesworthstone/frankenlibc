@@ -11194,14 +11194,14 @@
       "coverage": {
         "unit_tests": {
           "status": "complete",
-          "artifacts": "rch exec -- cargo test -p frankenlibc-abi --test startup_abi_contract_test -- --nocapture (11/11 pass, 2026-03-04)"
+          "artifacts": "rch exec -- cargo test -p frankenlibc-abi --test startup_abi_contract_test -- --nocapture (12/12 pass, 2026-04-07)"
         },
         "e2e_scripts": {
           "status": "not_required"
         },
         "structured_logs": {
-          "status": "partial",
-          "artifacts": "target/conformance/bd-11nb_startup_phase0.log.jsonl + tests/cve_arena/results/bd-qwm/trace.jsonl"
+          "status": "complete",
+          "artifacts": "target/conformance/bd-11nb_startup_phase0.log.jsonl + tests/cve_arena/results/bd-qwm/trace.jsonl (20260407T192033Z strict+hardened pass)"
         },
         "perf_evidence": {
           "status": "not_required"
@@ -11210,21 +11210,21 @@
           "status": "not_required"
         },
         "golden_artifacts": {
-          "status": "partial",
-          "artifacts": "tests/conformance/fixtures/startup_ops.json + tests/cve_arena/results/bd-qwm/artifact_index.json"
+          "status": "complete",
+          "artifacts": "tests/conformance/fixtures/startup_ops.json + tests/cve_arena/results/bd-qwm/artifact_index.json (20260407T192033Z)"
         }
       },
       "coverage_summary": {
-        "overall": "partial",
+        "overall": "complete",
         "required": 3,
-        "complete": 1,
-        "partial": 2,
+        "complete": 3,
+        "partial": 0,
         "missing": 0
       },
       "row": {
         "bead_id": "bd-qwm",
         "stream": "syscall",
-        "status": "partial",
+        "status": "complete",
         "unit_cmds": [
           "rch exec -- cargo test -p frankenlibc-abi --test startup_abi_contract_test -- --nocapture"
         ],
@@ -11233,9 +11233,9 @@
           "timeout 6 env FRANKENLIBC_MODE=hardened FRANKENLIBC_STARTUP_PHASE0=1 LD_PRELOAD=target/release/libfrankenlibc_abi.so tests/cve_arena/results/bd-qwm/raw/<run_id>/fixture_startup"
         ],
         "expected_assertions": [
-          "startup phase-0 contract tests pass (11/11)",
-          "startup fixture logs deterministic strict+hardened outcomes with trace_id and artifact refs",
-          "fixture_startup remains blocked under LD_PRELOAD (current observed exit=124 timeout in both modes)"
+          "startup phase-0 contract tests pass (12/12)",
+          "startup fixture logs deterministic strict+hardened pass outcomes with trace_id and artifact refs",
+          "fixture_startup exits 0 and prints PASS in strict and hardened modes"
         ],
         "log_schema_refs": [
           "tests/conformance/log_schema.json"
@@ -11244,14 +11244,14 @@
           "target/conformance/bd-11nb_startup_phase0.log.jsonl",
           "tests/cve_arena/results/bd-qwm/trace.jsonl",
           "tests/cve_arena/results/bd-qwm/artifact_index.json",
-          "tests/cve_arena/results/bd-qwm/raw/20260304T024556Z/strict.stderr.txt",
-          "tests/cve_arena/results/bd-qwm/raw/20260304T024556Z/hardened.stderr.txt"
+          "tests/cve_arena/results/bd-qwm/raw/20260407T192033Z/strict.stdout.txt",
+          "tests/cve_arena/results/bd-qwm/raw/20260407T192033Z/strict.stderr.txt",
+          "tests/cve_arena/results/bd-qwm/raw/20260407T192033Z/hardened.stdout.txt",
+          "tests/cve_arena/results/bd-qwm/raw/20260407T192033Z/hardened.stderr.txt"
         ],
         "perf_proof_refs": [],
-        "close_blockers": [
-          "startup_fixture_ld_preload_timeout"
-        ],
-        "notes": "Phase-0 startup ABI skeleton and invariant pipeline are implemented and unit-covered. Remaining closure blocker: controlled fixture binary still times out under LD_PRELOAD in strict+hardened mode (2026-03-04 evidence run_id=20260304T024556Z)."
+        "close_blockers": [],
+        "notes": "Phase-0 startup ABI skeleton and invariant pipeline are implemented and unit-covered. The controlled fixture now passes under LD_PRELOAD in strict and hardened modes after aligning the synthetic startup vector with the argv/envp contract (2026-04-07 evidence run_id=20260407T192033Z)."
       }
     },
     {

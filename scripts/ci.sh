@@ -2,6 +2,18 @@
 # CI quality gates for frankenlibc.
 set -euo pipefail
 
+run_benchmark_gate() {
+    if [[ "${FRANKENLIBC_FORCE_LOCAL_BENCHMARK_GATE:-0}" == "1" ]] || ! command -v rch >/dev/null 2>&1; then
+        echo "WARN: rch unavailable; running local benchmark gate fallback"
+        scripts/check_perf_baseline.sh
+        scripts/check_symbol_latency_baseline.sh
+        scripts/perf_gate.sh
+        return 0
+    fi
+
+    scripts/check_benchmark_gate.sh
+}
+
 echo "=== frankenlibc CI ==="
 echo ""
 
@@ -110,8 +122,8 @@ if [[ "${FRANKENLIBC_EXTENDED_GATES:-0}" == "1" ]]; then
     echo "PASS"
     echo ""
 
-    echo "--- perf gate (runtime_math + membrane) ---"
-    scripts/perf_gate.sh
+    echo "--- benchmark gate (symbol latency + runtime_math/membrane perf) ---"
+    run_benchmark_gate
     echo "PASS"
     echo ""
 

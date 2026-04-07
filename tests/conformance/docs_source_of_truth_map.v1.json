@@ -248,6 +248,7 @@
       "sections": [
         {
           "backing_paths": [
+            "DEPLOYMENT.md",
             "README.md"
           ],
           "freshness_status": "fresh",
@@ -269,6 +270,7 @@
         },
         {
           "backing_paths": [
+            "DEPLOYMENT.md",
             "docs/gentoo/USER-GUIDE.md",
             "docs/gentoo/OPERATIONS.md",
             "docs/gentoo/VALIDATION-REPORT-TEMPLATE.md"
@@ -291,10 +293,10 @@
           ]
         }
       ],
-      "split_status": "backed_by_existing_docs_until_split",
+      "split_status": "materialized",
       "surface_id": "DEPLOYMENT",
       "surface_title": "Interpose and Gentoo deployment guidance",
-      "target_path": "README.md"
+      "target_path": "DEPLOYMENT.md"
     },
     {
       "freshness_status": "fresh",

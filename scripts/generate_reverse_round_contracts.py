@@ -92,9 +92,24 @@ REVERSE_ROUNDS = {
             "Keep the proof surface developer-transparent by emitting allocator and thread-runtime witnesses through the reverse-round contract artifact.",
         ],
         "verification_strategy": [
-            "scripts/check_reverse_round_contracts.sh and crates/frankenlibc-harness/tests/reverse_round_contracts_test.rs validate the R8 mapping contract.",
-            "crates/frankenlibc-harness/tests/thread_hotpath_optimization_test.rs and crates/frankenlibc-harness/tests/pressure_sensing_test.rs keep allocator and thread-runtime anchors exercised.",
-            "The aggregate runtime-math closure pack must continue to reference the reverse-round artifact before allocator and nptl claims are treated as stable.",
+            {
+                "description": "scripts/check_reverse_round_contracts.sh and crates/frankenlibc-harness/tests/reverse_round_contracts_test.rs validate the R8 mapping contract.",
+                "paths": [
+                    "scripts/check_reverse_round_contracts.sh",
+                    "crates/frankenlibc-harness/tests/reverse_round_contracts_test.rs",
+                ],
+            },
+            {
+                "description": "crates/frankenlibc-harness/tests/thread_hotpath_optimization_test.rs and crates/frankenlibc-harness/tests/pressure_sensing_test.rs keep allocator and thread-runtime anchors exercised.",
+                "paths": [
+                    "crates/frankenlibc-harness/tests/thread_hotpath_optimization_test.rs",
+                    "crates/frankenlibc-harness/tests/pressure_sensing_test.rs",
+                ],
+            },
+            {
+                "description": "scripts/check_runtime_math_epic_closure.sh must continue to reference the reverse-round artifact before allocator and nptl claims are treated as stable.",
+                "path": "scripts/check_runtime_math_epic_closure.sh",
+            },
         ],
         "supporting_files": [
             "PLAN_TO_PORT_GLIBC_TO_RUST.md",
@@ -145,7 +160,13 @@ REVERSE_ROUNDS = {
         ],
         "verification_strategy": [
             "scripts/check_reverse_round_contracts.sh regenerates tests/conformance/reverse_round_contracts.v1.json.",
-            "crates/frankenlibc-harness/tests/stdio_phase_strategy_test.rs and crates/frankenlibc-harness/tests/iconv_codec_scope_ledger_test.rs keep the declared anchors honest.",
+            {
+                "description": "crates/frankenlibc-harness/tests/stdio_phase_strategy_test.rs and crates/frankenlibc-harness/tests/iconv_codec_scope_ledger_test.rs keep the declared anchors honest.",
+                "paths": [
+                    "crates/frankenlibc-harness/tests/stdio_phase_strategy_test.rs",
+                    "crates/frankenlibc-harness/tests/iconv_codec_scope_ledger_test.rs",
+                ],
+            },
             "crates/frankenlibc-harness/tests/reverse_round_contracts_test.rs enforces non-empty implementation and verification sections for R9.",
         ],
         "supporting_files": [
@@ -196,9 +217,24 @@ REVERSE_ROUNDS = {
             "Route NSS and resolver proof obligations through the reverse-round artifact so poisoning and retry-policy assumptions remain reviewable in one place.",
         ],
         "verification_strategy": [
-            "scripts/check_reverse_round_contracts.sh and crates/frankenlibc-harness/tests/reverse_round_contracts_test.rs validate the R10 mapping contract.",
-            "crates/frankenlibc-abi/tests/resolv_abi_test.rs and crates/frankenlibc-abi/tests/nss_cache_policy_test.rs keep resolver-facing regressions visible.",
-            "scripts/check_runtime_math_epic_closure.sh must continue linking the reverse-round artifact into the runtime-math closure bundle.",
+            {
+                "description": "scripts/check_reverse_round_contracts.sh and crates/frankenlibc-harness/tests/reverse_round_contracts_test.rs validate the R10 mapping contract.",
+                "paths": [
+                    "scripts/check_reverse_round_contracts.sh",
+                    "crates/frankenlibc-harness/tests/reverse_round_contracts_test.rs",
+                ],
+            },
+            {
+                "description": "crates/frankenlibc-abi/tests/resolv_abi_test.rs and crates/frankenlibc-abi/tests/nss_cache_policy_test.rs keep resolver-facing regressions visible.",
+                "paths": [
+                    "crates/frankenlibc-abi/tests/resolv_abi_test.rs",
+                    "crates/frankenlibc-abi/tests/nss_cache_policy_test.rs",
+                ],
+            },
+            {
+                "description": "scripts/check_runtime_math_epic_closure.sh must continue linking the reverse-round artifact into the runtime-math closure bundle.",
+                "path": "scripts/check_runtime_math_epic_closure.sh",
+            },
         ],
         "supporting_files": [
             "PLAN_TO_PORT_GLIBC_TO_RUST.md",
@@ -248,9 +284,24 @@ REVERSE_ROUNDS = {
             "Expose the approximation and error contract through the reverse-round artifact so fenv and ULP obligations remain reproducible instead of living only in prose.",
         ],
         "verification_strategy": [
-            "scripts/check_reverse_round_contracts.sh and crates/frankenlibc-harness/tests/reverse_round_contracts_test.rs validate the R11 mapping contract.",
-            "crates/frankenlibc-harness/tests/math_production_set_policy_test.rs and crates/frankenlibc-harness/tests/math_governance_test.rs keep the libm and fenv anchors in the verification loop.",
-            "scripts/check_runtime_math_epic_closure.sh must keep referencing the reverse-round artifact before libm and fenv closure claims are allowed.",
+            {
+                "description": "scripts/check_reverse_round_contracts.sh and crates/frankenlibc-harness/tests/reverse_round_contracts_test.rs validate the R11 mapping contract.",
+                "paths": [
+                    "scripts/check_reverse_round_contracts.sh",
+                    "crates/frankenlibc-harness/tests/reverse_round_contracts_test.rs",
+                ],
+            },
+            {
+                "description": "crates/frankenlibc-harness/tests/math_production_set_policy_test.rs and crates/frankenlibc-harness/tests/math_governance_test.rs keep the libm and fenv anchors in the verification loop.",
+                "paths": [
+                    "crates/frankenlibc-harness/tests/math_production_set_policy_test.rs",
+                    "crates/frankenlibc-harness/tests/math_governance_test.rs",
+                ],
+            },
+            {
+                "description": "scripts/check_runtime_math_epic_closure.sh must keep referencing the reverse-round artifact before libm and fenv closure claims are allowed.",
+                "path": "scripts/check_runtime_math_epic_closure.sh",
+            },
         ],
         "supporting_files": [
             "PLAN_TO_PORT_GLIBC_TO_RUST.md",
@@ -1487,17 +1538,29 @@ def build_verification_hooks(root, items):
     for item in items:
         if isinstance(item, dict):
             description = item["description"]
-            path = item.get("path")
+            raw_paths = item.get("paths")
+            preserve_path_list = raw_paths is not None
+            if raw_paths is None:
+                path = item.get("path")
+                raw_paths = [path] if path else []
         else:
             description = item
             match = re.search(r"([A-Za-z0-9_./-]+\.(?:sh|rs|json))", item)
-            path = match.group(1) if match else None
+            raw_paths = [match.group(1)] if match else []
+            preserve_path_list = False
         hook = {"description": description}
-        if path:
-            verified_path, exists = verify_repo_path_exists(root, path)
-            hook["path"] = verified_path
-            hook["path_exists"] = exists
-            if exists:
+        path_entries = []
+        for raw_path in raw_paths:
+            if not raw_path:
+                continue
+            verified_path, exists = verify_repo_path_exists(root, raw_path)
+            path_entries.append({"path": verified_path, "path_exists": exists})
+        if path_entries:
+            hook["path"] = path_entries[0]["path"]
+            hook["path_exists"] = path_entries[0]["path_exists"]
+            if preserve_path_list or len(path_entries) > 1:
+                hook["paths"] = path_entries
+            if any(entry["path_exists"] for entry in path_entries):
                 found += 1
         else:
             hook["path"] = None

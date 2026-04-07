@@ -1,7 +1,7 @@
 {
   "schema_version": "v1",
   "bead": "bd-2a2.5",
-  "generated_at": "2026-04-07T17:27:12Z",
+  "generated_at": "2026-04-07T19:42:39Z",
   "report_hash": "f8ce7e400ae749b1",
   "summary": {
     "rounds_verified": 21,
@@ -13,7 +13,7 @@
     "invariants_total": 84,
     "implementation_steps_total": 63,
     "verification_hooks_total": 63,
-    "verification_hooks_specified": 62,
+    "verification_hooks_specified": 63,
     "supporting_files_total": 173,
     "supporting_files_found": 173,
     "unique_math_classes": [
@@ -57,12 +57,32 @@
         {
           "description": "scripts/check_reverse_round_contracts.sh and crates/frankenlibc-harness/tests/reverse_round_contracts_test.rs validate the R10 mapping contract.",
           "path": "scripts/check_reverse_round_contracts.sh",
-          "path_exists": true
+          "path_exists": true,
+          "paths": [
+            {
+              "path": "scripts/check_reverse_round_contracts.sh",
+              "path_exists": true
+            },
+            {
+              "path": "crates/frankenlibc-harness/tests/reverse_round_contracts_test.rs",
+              "path_exists": true
+            }
+          ]
         },
         {
           "description": "crates/frankenlibc-abi/tests/resolv_abi_test.rs and crates/frankenlibc-abi/tests/nss_cache_policy_test.rs keep resolver-facing regressions visible.",
           "path": "crates/frankenlibc-abi/tests/resolv_abi_test.rs",
-          "path_exists": true
+          "path_exists": true,
+          "paths": [
+            {
+              "path": "crates/frankenlibc-abi/tests/resolv_abi_test.rs",
+              "path_exists": true
+            },
+            {
+              "path": "crates/frankenlibc-abi/tests/nss_cache_policy_test.rs",
+              "path_exists": true
+            }
+          ]
         },
         {
           "description": "scripts/check_runtime_math_epic_closure.sh must continue linking the reverse-round artifact into the runtime-math closure bundle.",
@@ -178,12 +198,32 @@
         {
           "description": "scripts/check_reverse_round_contracts.sh and crates/frankenlibc-harness/tests/reverse_round_contracts_test.rs validate the R11 mapping contract.",
           "path": "scripts/check_reverse_round_contracts.sh",
-          "path_exists": true
+          "path_exists": true,
+          "paths": [
+            {
+              "path": "scripts/check_reverse_round_contracts.sh",
+              "path_exists": true
+            },
+            {
+              "path": "crates/frankenlibc-harness/tests/reverse_round_contracts_test.rs",
+              "path_exists": true
+            }
+          ]
         },
         {
           "description": "crates/frankenlibc-harness/tests/math_production_set_policy_test.rs and crates/frankenlibc-harness/tests/math_governance_test.rs keep the libm and fenv anchors in the verification loop.",
           "path": "crates/frankenlibc-harness/tests/math_production_set_policy_test.rs",
-          "path_exists": true
+          "path_exists": true,
+          "paths": [
+            {
+              "path": "crates/frankenlibc-harness/tests/math_production_set_policy_test.rs",
+              "path_exists": true
+            },
+            {
+              "path": "crates/frankenlibc-harness/tests/math_governance_test.rs",
+              "path_exists": true
+            }
+          ]
         },
         {
           "description": "scripts/check_runtime_math_epic_closure.sh must keep referencing the reverse-round artifact before libm and fenv closure claims are allowed.",
@@ -2467,17 +2507,37 @@
         {
           "description": "scripts/check_reverse_round_contracts.sh and crates/frankenlibc-harness/tests/reverse_round_contracts_test.rs validate the R8 mapping contract.",
           "path": "scripts/check_reverse_round_contracts.sh",
-          "path_exists": true
+          "path_exists": true,
+          "paths": [
+            {
+              "path": "scripts/check_reverse_round_contracts.sh",
+              "path_exists": true
+            },
+            {
+              "path": "crates/frankenlibc-harness/tests/reverse_round_contracts_test.rs",
+              "path_exists": true
+            }
+          ]
         },
         {
           "description": "crates/frankenlibc-harness/tests/thread_hotpath_optimization_test.rs and crates/frankenlibc-harness/tests/pressure_sensing_test.rs keep allocator and thread-runtime anchors exercised.",
           "path": "crates/frankenlibc-harness/tests/thread_hotpath_optimization_test.rs",
-          "path_exists": true
+          "path_exists": true,
+          "paths": [
+            {
+              "path": "crates/frankenlibc-harness/tests/thread_hotpath_optimization_test.rs",
+              "path_exists": true
+            },
+            {
+              "path": "crates/frankenlibc-harness/tests/pressure_sensing_test.rs",
+              "path_exists": true
+            }
+          ]
         },
         {
-          "description": "The aggregate runtime-math closure pack must continue to reference the reverse-round artifact before allocator and nptl claims are treated as stable.",
-          "path": null,
-          "path_exists": null
+          "description": "scripts/check_runtime_math_epic_closure.sh must continue to reference the reverse-round artifact before allocator and nptl claims are treated as stable.",
+          "path": "scripts/check_runtime_math_epic_closure.sh",
+          "path_exists": true
         }
       ],
       "supporting_files": [
@@ -2551,7 +2611,7 @@
       "family_count": 4,
       "modules_found": 4,
       "supporting_files_found": 7,
-      "verification_hooks_found": 2,
+      "verification_hooks_found": 3,
       "branch_diversity": {
         "total_families": 4,
         "unique_classes": [
@@ -2594,7 +2654,17 @@
         {
           "description": "crates/frankenlibc-harness/tests/stdio_phase_strategy_test.rs and crates/frankenlibc-harness/tests/iconv_codec_scope_ledger_test.rs keep the declared anchors honest.",
           "path": "crates/frankenlibc-harness/tests/stdio_phase_strategy_test.rs",
-          "path_exists": true
+          "path_exists": true,
+          "paths": [
+            {
+              "path": "crates/frankenlibc-harness/tests/stdio_phase_strategy_test.rs",
+              "path_exists": true
+            },
+            {
+              "path": "crates/frankenlibc-harness/tests/iconv_codec_scope_ledger_test.rs",
+              "path_exists": true
+            }
+          ]
         },
         {
           "description": "crates/frankenlibc-harness/tests/reverse_round_contracts_test.rs enforces non-empty implementation and verification sections for R9.",

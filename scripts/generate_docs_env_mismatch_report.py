@@ -14,6 +14,7 @@ KEY_RE = re.compile(r"\b(FRANKENLIBC_[A-Z0-9_]+)\b")
 
 DOC_FILES = (
     "README.md",
+    "DEPLOYMENT.md",
     "AGENTS.md",
     "FEATURE_PARITY.md",
     "PLAN_TO_PORT_GLIBC_TO_RUST.md",
@@ -146,14 +147,14 @@ DOC_GOVERNANCE_SURFACES: tuple[dict[str, Any], ...] = (
     {
         "surface_id": "DEPLOYMENT",
         "surface_title": "Interpose and Gentoo deployment guidance",
-        "target_path": "README.md",
+        "target_path": "DEPLOYMENT.md",
         "future_target_path": "DEPLOYMENT.md",
-        "split_status": "backed_by_existing_docs_until_split",
+        "split_status": "materialized",
         "sections": (
             {
                 "section_id": "interpose-workflows",
                 "section_title": "Interpose artifact build, install, and smoke workflows",
-                "backing_paths": ("README.md",),
+                "backing_paths": ("DEPLOYMENT.md", "README.md"),
                 "source_artifacts": (
                     "tests/conformance/packaging_spec.json",
                     "tests/conformance/replacement_levels.json",
@@ -174,6 +175,7 @@ DOC_GOVERNANCE_SURFACES: tuple[dict[str, Any], ...] = (
                 "section_id": "gentoo-operations",
                 "section_title": "Gentoo runner, Portage hook, and validation operations",
                 "backing_paths": (
+                    "DEPLOYMENT.md",
                     "docs/gentoo/USER-GUIDE.md",
                     "docs/gentoo/OPERATIONS.md",
                     "docs/gentoo/VALIDATION-REPORT-TEMPLATE.md",
