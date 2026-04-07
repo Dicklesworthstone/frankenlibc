@@ -1,10 +1,12 @@
-//! Integration test: docs env mismatch classification gate (bd-29b.2)
+//! Integration test: docs env mismatch + governance gate (bd-29b.2, bd-3rw.3)
 //!
 //! Validates that:
 //! 1. Docs inventory and mismatch report files exist and are valid JSON.
 //! 2. Every mismatch row is fully classified with remediation action.
 //! 3. unresolved_ambiguous list is empty.
-//! 4. Gate script exists, is executable, and passes.
+//! 4. Major documentation surfaces have explicit source-of-truth ownership.
+//! 5. Structured governance trace rows exist for every governed section.
+//! 6. Gate script exists, is executable, and passes.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -111,6 +113,181 @@ fn unresolved_ambiguous_is_empty() {
         unresolved.is_empty(),
         "unresolved_ambiguous must be empty, got: {unresolved:?}"
     );
+}
+
+#[test]
+fn source_of_truth_map_covers_major_surfaces() {
+    let root = workspace_root();
+    let map = load_json(&root.join("tests/conformance/docs_source_of_truth_map.v1.json"));
+
+    assert_eq!(
+        map["schema_version"].as_str(),
+        Some("v1"),
+        "source-of-truth map schema_version must be v1"
+    );
+    assert_eq!(
+        map["bead"].as_str(),
+        Some("bd-3rw.3"),
+        "source-of-truth map must be tied to bd-3rw.3"
+    );
+
+    let surfaces = map["surfaces"].as_array().expect("surfaces must be array");
+    let required = [
+        "README",
+        "ARCHITECTURE",
+        "DEPLOYMENT",
+        "SECURITY",
+        "API",
+        "TROUBLESHOOTING",
+    ];
+    for surface_id in required {
+        assert!(
+            surfaces
+                .iter()
+                .any(|row| row["surface_id"].as_str() == Some(surface_id)),
+            "surface {surface_id} must exist in governance map"
+        );
+    }
+
+    let summary = map["summary"].as_object().expect("summary must be object");
+    assert_eq!(
+        summary
+            .get("missing_section_count")
+            .and_then(|v| v.as_u64()),
+        Some(0),
+        "all governed sections should be fresh"
+    );
+}
+
+#[test]
+fn governed_sections_have_sources_owners_and_triggers() {
+    let root = workspace_root();
+    let map = load_json(&root.join("tests/conformance/docs_source_of_truth_map.v1.json"));
+    let surfaces = map["surfaces"].as_array().expect("surfaces must be array");
+
+    for surface in surfaces {
+        let surface_id = surface["surface_id"].as_str().unwrap_or("<unknown>");
+        assert!(
+            surface["target_path"]
+                .as_str()
+                .is_some_and(|v| !v.is_empty()),
+            "{surface_id}: target_path must be non-empty"
+        );
+        assert!(
+            surface["future_target_path"]
+                .as_str()
+                .is_some_and(|v| !v.is_empty()),
+            "{surface_id}: future_target_path must be non-empty"
+        );
+
+        let sections = surface["sections"]
+            .as_array()
+            .expect("sections must be array");
+        assert!(
+            !sections.is_empty(),
+            "{surface_id}: sections must be non-empty"
+        );
+
+        for section in sections {
+            let section_id = section["section_id"].as_str().unwrap_or("<unknown>");
+            assert!(
+                section["owner"].as_str().is_some_and(|v| !v.is_empty()),
+                "{surface_id}/{section_id}: owner must be non-empty"
+            );
+            assert!(
+                section["review_policy"]
+                    .as_str()
+                    .is_some_and(|v| !v.is_empty()),
+                "{surface_id}/{section_id}: review_policy must be non-empty"
+            );
+            assert_eq!(
+                section["freshness_status"].as_str(),
+                Some("fresh"),
+                "{surface_id}/{section_id}: freshness_status must be fresh"
+            );
+            assert!(
+                section["backing_paths"]
+                    .as_array()
+                    .is_some_and(|v| !v.is_empty()),
+                "{surface_id}/{section_id}: backing_paths must be non-empty"
+            );
+            assert!(
+                section["source_artifacts"]
+                    .as_array()
+                    .is_some_and(|v| !v.is_empty()),
+                "{surface_id}/{section_id}: source_artifacts must be non-empty"
+            );
+            assert!(
+                section["update_triggers"]
+                    .as_array()
+                    .is_some_and(|v| !v.is_empty()),
+                "{surface_id}/{section_id}: update_triggers must be non-empty"
+            );
+            assert!(
+                section["missing_inputs"]
+                    .as_array()
+                    .is_some_and(|v| v.is_empty()),
+                "{surface_id}/{section_id}: missing_inputs must be empty"
+            );
+        }
+    }
+}
+
+#[test]
+fn governance_trace_rows_cover_every_section() {
+    let root = workspace_root();
+    let map = load_json(&root.join("tests/conformance/docs_source_of_truth_map.v1.json"));
+    let sections: usize = map["surfaces"]
+        .as_array()
+        .expect("surfaces must be array")
+        .iter()
+        .map(|surface| {
+            surface["sections"]
+                .as_array()
+                .expect("sections must be array")
+                .len()
+        })
+        .sum();
+
+    let trace_path = root.join("tests/conformance/docs_source_of_truth_trace.v1.jsonl");
+    let trace = std::fs::read_to_string(&trace_path).expect("trace file should exist");
+    let rows: Vec<serde_json::Value> = trace
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| serde_json::from_str(line).expect("trace row must parse"))
+        .collect();
+
+    assert_eq!(
+        rows.len(),
+        sections,
+        "trace row count must match governed section count"
+    );
+
+    for row in &rows {
+        assert_eq!(row["bead_id"].as_str(), Some("bd-3rw.3"));
+        for key in [
+            "trace_id",
+            "doc_surface",
+            "doc_section",
+            "source_artifact",
+            "freshness_status",
+            "owner",
+            "review_policy",
+            "update_trigger",
+        ] {
+            assert!(
+                row[key].as_str().is_some_and(|v| !v.is_empty()),
+                "trace row missing non-empty {key}"
+            );
+        }
+        assert_eq!(row["freshness_status"].as_str(), Some("fresh"));
+        assert!(
+            row["artifact_refs"]
+                .as_array()
+                .is_some_and(|v| !v.is_empty()),
+            "trace row artifact_refs must be non-empty array"
+        );
+    }
 }
 
 #[test]

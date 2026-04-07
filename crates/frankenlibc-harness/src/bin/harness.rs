@@ -390,6 +390,30 @@ enum Command {
         )]
         report: PathBuf,
     },
+    /// Validate the proof-obligation binder, unit-test pack, and snapshot parity.
+    ProofBinderProofs {
+        /// Workspace root used for resolving canonical artifacts.
+        #[arg(long, default_value = ".")]
+        workspace_root: PathBuf,
+        /// Structured JSONL log output path.
+        #[arg(
+            long,
+            default_value = "target/conformance/proof_binder_proofs.log.jsonl"
+        )]
+        log: PathBuf,
+        /// JSON report output path.
+        #[arg(
+            long,
+            default_value = "target/conformance/proof_binder_proofs.report.json"
+        )]
+        report: PathBuf,
+        /// Fresh validator snapshot output path.
+        #[arg(
+            long,
+            default_value = "target/conformance/proof_binder_validation.current.v1.json"
+        )]
+        validator_report: PathBuf,
+    },
     /// Build an operator-facing observability dashboard bundle from JSONL metrics streams.
     ObservabilityDashboard {
         /// One or more JSONL metric/evidence inputs.
@@ -443,6 +467,12 @@ enum Command {
         /// Structured JSONL output path.
         #[arg(long, default_value = "target/conformance/shadow_run.log.jsonl")]
         log: PathBuf,
+        /// Artifact-index JSON output path.
+        #[arg(
+            long,
+            default_value = "target/conformance/shadow_run.artifacts.v1.json"
+        )]
+        artifact_index: PathBuf,
         /// FrankenLibC interpose library to preload for candidate runs.
         #[arg(long, default_value = "target/release/libfrankenlibc_abi.so")]
         lib_path: PathBuf,
@@ -1219,6 +1249,34 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 report.display()
             );
         }
+        Command::ProofBinderProofs {
+            workspace_root,
+            log,
+            report,
+            validator_report,
+        } => {
+            let rep = frankenlibc_harness::proof_binder_proofs::run_and_write(
+                &workspace_root,
+                &log,
+                &report,
+                &validator_report,
+            )?;
+            if rep.summary.failed != 0 {
+                return Err(std::io::Error::other(format!(
+                    "proof binder proofs FAILED: {} check(s) failed (report: {})",
+                    rep.summary.failed,
+                    report.display()
+                ))
+                .into());
+            }
+            eprintln!(
+                "OK: proof binder proofs passed for {} checks (log: {}, report: {}, validator: {})",
+                rep.summary.checks,
+                log.display(),
+                report.display(),
+                validator_report.display()
+            );
+        }
         Command::ObservabilityDashboard {
             input,
             output,
@@ -1253,6 +1311,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             out_dir,
             report,
             log,
+            artifact_index,
             lib_path,
             reference,
             mode,
@@ -1271,9 +1330,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             );
             config.report_path = Some(report.clone());
             config.log_path = Some(log.clone());
+            config.artifact_index_path = Some(artifact_index.clone());
             config.reference_label = reference;
             config.capture_syscall_traces = !no_syscall_trace;
             config.run_id = manifest_doc.manifest_id.clone();
+            config.manifest_ref = Some(manifest.to_string_lossy().into_owned());
 
             let shadow_report = frankenlibc_harness::shadow_run::run_shadow_manifest_with_executor(
                 &manifest_doc,
@@ -2324,6 +2385,7 @@ mod tests {
                 manifest,
                 report,
                 log,
+                artifact_index,
                 lib_path,
                 mode,
                 timeout_ms,
@@ -2339,6 +2401,10 @@ mod tests {
                 assert_eq!(
                     log,
                     PathBuf::from("target/conformance/shadow_run.log.jsonl")
+                );
+                assert_eq!(
+                    artifact_index,
+                    PathBuf::from("target/conformance/shadow_run.artifacts.v1.json")
                 );
                 assert_eq!(
                     lib_path,

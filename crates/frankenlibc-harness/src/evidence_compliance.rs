@@ -262,7 +262,7 @@ fn validate_artifact_index(
         }
     };
 
-    let idx: ArtifactIndex = match serde_json::from_str(&content) {
+    let mut idx: ArtifactIndex = match serde_json::from_str(&content) {
         Ok(v) => v,
         Err(err) => {
             report.push(EvidenceViolation {
@@ -298,6 +298,30 @@ fn validate_artifact_index(
             return None;
         }
     };
+
+    let compatibility = idx.normalize_legacy_defaults();
+    if compatibility.synthesized_run_id || compatibility.synthesized_generated_utc {
+        emit_proof_log(
+            emitter,
+            LogEntry::new(
+                "",
+                LogLevel::Warn,
+                "evidence_compliance.artifact_index_legacy_defaults",
+            )
+            .with_stream(StreamKind::Release)
+            .with_gate(PROOF_GATE)
+            .with_outcome(Outcome::Pass)
+            .with_controller_id("artifact_index")
+            .with_artifacts(vec![index_path.display().to_string()])
+            .with_details(serde_json::json!({
+                "run_id": idx.run_id,
+                "generated_utc": idx.generated_utc,
+                "synthesized_run_id": compatibility.synthesized_run_id,
+                "synthesized_generated_utc": compatibility.synthesized_generated_utc,
+                "decision_path": "proof->artifact_integrity->compat_defaults",
+            })),
+        );
+    }
 
     emit_proof_log(
         emitter,

@@ -9,7 +9,7 @@
 //! - [`validate_log_line`]: validates a single JSONL line against the schema.
 //! - [`validate_log_file`]: validates an entire JSONL file.
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::io::Write;
 use std::path::Path;
 
@@ -413,15 +413,40 @@ pub struct ArtifactEntry {
 /// Join metadata that lets one artifact be correlated with logs/evidence rows.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ArtifactJoinKeys {
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(
+        default,
+        skip_serializing_if = "Vec::is_empty",
+        alias = "trace_id",
+        deserialize_with = "deserialize_one_or_many"
+    )]
     pub trace_ids: Vec<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(
+        default,
+        skip_serializing_if = "Vec::is_empty",
+        alias = "span_id",
+        deserialize_with = "deserialize_one_or_many"
+    )]
     pub span_ids: Vec<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(
+        default,
+        skip_serializing_if = "Vec::is_empty",
+        alias = "decision_id",
+        deserialize_with = "deserialize_one_or_many"
+    )]
     pub decision_ids: Vec<u64>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(
+        default,
+        skip_serializing_if = "Vec::is_empty",
+        alias = "policy_id",
+        deserialize_with = "deserialize_one_or_many"
+    )]
     pub policy_ids: Vec<u32>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(
+        default,
+        skip_serializing_if = "Vec::is_empty",
+        alias = "evidence_seqno",
+        deserialize_with = "deserialize_one_or_many"
+    )]
     pub evidence_seqnos: Vec<u64>,
 }
 
@@ -436,12 +461,20 @@ impl ArtifactJoinKeys {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ArtifactIndexCompatibility {
+    pub synthesized_run_id: bool,
+    pub synthesized_generated_utc: bool,
+}
+
 /// Artifact index linking logs to verification artifacts.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ArtifactIndex {
     pub index_version: u32,
+    #[serde(default)]
     pub run_id: String,
     pub bead_id: String,
+    #[serde(default)]
     pub generated_utc: String,
     pub artifacts: Vec<ArtifactEntry>,
 }
@@ -457,6 +490,26 @@ impl ArtifactIndex {
             generated_utc: now_utc(),
             artifacts: Vec::new(),
         }
+    }
+
+    /// Fill deterministic defaults for legacy artifact indexes that predate `run_id`/timestamp.
+    #[must_use]
+    pub fn normalize_legacy_defaults(&mut self) -> ArtifactIndexCompatibility {
+        let mut compatibility = ArtifactIndexCompatibility::default();
+        if self.run_id.trim().is_empty() {
+            let bead_id = if self.bead_id.trim().is_empty() {
+                "unknown"
+            } else {
+                self.bead_id.trim()
+            };
+            self.run_id = format!("legacy::{bead_id}");
+            compatibility.synthesized_run_id = true;
+        }
+        if self.generated_utc.trim().is_empty() {
+            self.generated_utc = "1970-01-01T00:00:00.000Z".to_string();
+            compatibility.synthesized_generated_utc = true;
+        }
+        compatibility
     }
 
     /// Add an artifact entry.
@@ -500,6 +553,26 @@ impl ArtifactIndex {
     pub fn to_json(&self) -> Result<String, serde_json::Error> {
         serde_json::to_string_pretty(self)
     }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum OneOrMany<T> {
+    One(T),
+    Many(Vec<T>),
+}
+
+fn deserialize_one_or_many<'de, D, T>(deserializer: D) -> Result<Vec<T>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    let value = Option::<OneOrMany<T>>::deserialize(deserializer)?;
+    Ok(match value {
+        None => Vec::new(),
+        Some(OneOrMany::One(single)) => vec![single],
+        Some(OneOrMany::Many(items)) => items,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -1069,6 +1142,52 @@ mod tests {
         assert_eq!(join_keys["decision_ids"][0], 42);
         assert_eq!(join_keys["policy_ids"][0], 7);
         assert_eq!(join_keys["evidence_seqnos"][0], 11);
+    }
+
+    #[test]
+    fn artifact_index_deserializes_legacy_defaults_and_join_key_aliases() {
+        let legacy = serde_json::json!({
+            "index_version": 1,
+            "bead_id": "bd-144",
+            "artifacts": [
+                {
+                    "path": "logs/test.jsonl",
+                    "kind": "log",
+                    "sha256": "abc123",
+                    "join_keys": {
+                        "trace_id": "bd-144::run-001::003",
+                        "span_id": "abi::realloc::decision::000000000000002a",
+                        "decision_id": 42,
+                        "policy_id": 7,
+                        "evidence_seqno": 11
+                    }
+                }
+            ]
+        });
+
+        let mut parsed: ArtifactIndex = serde_json::from_value(legacy).expect("legacy index");
+        let compatibility = parsed.normalize_legacy_defaults();
+        assert!(compatibility.synthesized_run_id);
+        assert!(compatibility.synthesized_generated_utc);
+        assert_eq!(parsed.run_id, "legacy::bd-144");
+        assert_eq!(parsed.generated_utc, "1970-01-01T00:00:00.000Z");
+
+        let join_keys = parsed.artifacts[0]
+            .join_keys
+            .as_ref()
+            .expect("legacy join keys");
+        assert_eq!(join_keys.trace_ids, vec!["bd-144::run-001::003"]);
+        assert_eq!(
+            join_keys.span_ids,
+            vec!["abi::realloc::decision::000000000000002a"]
+        );
+        assert_eq!(join_keys.decision_ids, vec![42]);
+        assert_eq!(join_keys.policy_ids, vec![7]);
+        assert_eq!(join_keys.evidence_seqnos, vec![11]);
+
+        let serialized = parsed.to_json().expect("serialize normalized index");
+        assert!(serialized.contains("\"trace_ids\""));
+        assert!(!serialized.contains("\"trace_id\""));
     }
 
     #[test]

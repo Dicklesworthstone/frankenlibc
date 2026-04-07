@@ -1,5 +1,6 @@
-// reverse_round_contracts_test.rs — bd-2a2.4
-// Integration tests for reverse-round math-to-subsystem contract verification.
+// reverse_round_contracts_test.rs — bd-2a2.4 / bd-2a2.5
+// Integration tests for reverse-round contracts, cross-round composition,
+// and milestone branch-diversity verification.
 
 use std::path::Path;
 use std::process::Command;
@@ -18,6 +19,11 @@ fn load_json(path: &Path) -> serde_json::Value {
         .unwrap_or_else(|e| panic!("Failed to read {}: {}", path.display(), e));
     serde_json::from_str(&content)
         .unwrap_or_else(|e| panic!("Invalid JSON in {}: {}", path.display(), e))
+}
+
+fn load_text(path: &Path) -> String {
+    std::fs::read_to_string(path)
+        .unwrap_or_else(|e| panic!("Failed to read {}: {}", path.display(), e))
 }
 
 #[test]
@@ -50,7 +56,7 @@ fn contracts_schema_complete() {
     let data = load_json(&report_path);
 
     assert_eq!(data["schema_version"].as_str(), Some("v1"));
-    assert_eq!(data["bead"].as_str(), Some("bd-2a2.4"));
+    assert_eq!(data["bead"].as_str(), Some("bd-2a2.5"));
     assert!(data["report_hash"].is_string());
 
     let summary = &data["summary"];
@@ -61,10 +67,23 @@ fn contracts_schema_complete() {
         "invariants_specified",
         "math_class_count",
         "all_rounds_diverse",
+        "implementation_steps_total",
+        "verification_hooks_total",
+        "verification_hooks_specified",
+        "supporting_files_total",
+        "supporting_files_found",
+        "cross_round_checks_total",
+        "cross_round_checks_passing",
+        "milestones_verified",
+        "milestones_diverse",
+        "all_milestones_diverse",
+        "max_milestone_class_share_pct",
     ] {
         assert!(!summary[field].is_null(), "Missing summary field: {field}");
     }
     assert!(data["round_results"].is_object());
+    assert!(data["cross_round_integrations"].is_object());
+    assert!(data["milestone_branch_diversity"].is_object());
     assert!(data["branch_diversity_rule"].is_object());
     assert!(data["golden_output"].is_object());
 }
@@ -152,6 +171,366 @@ fn contracts_legacy_surfaces_anchored() {
             round_id
         );
     }
+}
+
+#[test]
+fn contracts_rounds_include_problem_focus_execution_and_verification() {
+    let root = repo_root();
+    let report_path = root.join("tests/conformance/reverse_round_contracts.v1.json");
+    let data = load_json(&report_path);
+
+    let rounds = data["round_results"].as_object().unwrap();
+    for (round_id, round_data) in rounds {
+        let problem_focus = round_data["problem_focus"]
+            .as_str()
+            .unwrap_or_else(|| panic!("{round_id}: missing problem_focus"));
+        assert!(
+            !problem_focus.trim().is_empty(),
+            "{round_id}: problem_focus must be non-empty"
+        );
+
+        let implementation_plan = round_data["implementation_plan"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{round_id}: implementation_plan must be array"));
+        assert!(
+            !implementation_plan.is_empty(),
+            "{round_id}: implementation_plan must be non-empty"
+        );
+        for step in implementation_plan {
+            let step_text = step
+                .as_str()
+                .unwrap_or_else(|| panic!("{round_id}: implementation steps must be strings"));
+            assert!(
+                !step_text.trim().is_empty(),
+                "{round_id}: implementation steps must be non-empty"
+            );
+        }
+
+        let verification_strategy = round_data["verification_strategy"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{round_id}: verification_strategy must be array"));
+        assert!(
+            !verification_strategy.is_empty(),
+            "{round_id}: verification_strategy must be non-empty"
+        );
+        for hook in verification_strategy {
+            assert!(
+                hook["description"].is_string(),
+                "{round_id}: verification hook description missing"
+            );
+            if let Some(path) = hook["path"].as_str() {
+                assert!(
+                    hook["path_exists"].as_bool().unwrap_or(false),
+                    "{round_id}: verification hook path missing: {path}"
+                );
+            }
+        }
+
+        let supporting_files = round_data["supporting_files"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{round_id}: supporting_files must be array"));
+        assert!(
+            !supporting_files.is_empty(),
+            "{round_id}: supporting_files must be non-empty"
+        );
+        for file in supporting_files {
+            let path = file["path"]
+                .as_str()
+                .unwrap_or_else(|| panic!("{round_id}: supporting file path missing"));
+            assert!(
+                file["exists"].as_bool().unwrap_or(false),
+                "{round_id}: supporting file missing: {path}"
+            );
+        }
+    }
+}
+
+#[test]
+fn contracts_cross_round_integrations_are_complete() {
+    let root = repo_root();
+    let report_path = root.join("tests/conformance/reverse_round_contracts.v1.json");
+    let data = load_json(&report_path);
+
+    let integrations = data["cross_round_integrations"]
+        .as_object()
+        .expect("cross_round_integrations must be an object");
+    assert!(
+        integrations.len() >= 5,
+        "expected at least 5 cross-round integrations"
+    );
+    assert_eq!(
+        data["summary"]["cross_round_checks_total"].as_u64(),
+        Some(integrations.len() as u64)
+    );
+    assert_eq!(
+        data["summary"]["cross_round_checks_passing"].as_u64(),
+        Some(integrations.len() as u64)
+    );
+
+    for (integration_id, integration) in integrations {
+        let rounds = integration["rounds"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{integration_id}: rounds must be an array"));
+        assert_eq!(
+            rounds.len(),
+            2,
+            "{integration_id}: expected exactly two rounds"
+        );
+        assert!(
+            integration["passes_integration"].as_bool().unwrap_or(false),
+            "{integration_id}: integration must pass"
+        );
+        assert!(
+            integration["legacy_surfaces"]
+                .as_array()
+                .is_some_and(|surfaces| !surfaces.is_empty()),
+            "{integration_id}: legacy surfaces must be non-empty"
+        );
+
+        let diversity = &integration["branch_diversity"];
+        assert!(
+            diversity["class_count"].as_u64().unwrap_or(0) >= 5,
+            "{integration_id}: expected at least 5 math classes"
+        );
+        assert!(
+            diversity["passes_diversity"].as_bool().unwrap_or(false),
+            "{integration_id}: diversity gate must pass"
+        );
+        assert!(
+            diversity["max_single_class_pct"].as_f64().unwrap_or(100.0) <= 40.0,
+            "{integration_id}: class concentration must stay <= 40%"
+        );
+
+        let supporting_files = integration["supporting_files"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{integration_id}: supporting_files must be array"));
+        assert!(
+            !supporting_files.is_empty(),
+            "{integration_id}: supporting_files must be non-empty"
+        );
+        for file in supporting_files {
+            let path = file["path"]
+                .as_str()
+                .unwrap_or_else(|| panic!("{integration_id}: supporting file path missing"));
+            assert!(
+                file["exists"].as_bool().unwrap_or(false),
+                "{integration_id}: supporting file missing: {path}"
+            );
+        }
+
+        let verification_strategy = integration["verification_strategy"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{integration_id}: verification_strategy must be array"));
+        assert!(
+            !verification_strategy.is_empty(),
+            "{integration_id}: verification_strategy must be non-empty"
+        );
+        for hook in verification_strategy {
+            let path = hook["path"]
+                .as_str()
+                .unwrap_or_else(|| panic!("{integration_id}: verification hook path missing"));
+            assert!(
+                hook["path_exists"].as_bool().unwrap_or(false),
+                "{integration_id}: verification hook missing: {path}"
+            );
+        }
+    }
+}
+
+#[test]
+fn contracts_milestone_branch_diversity_holds() {
+    let root = repo_root();
+    let report_path = root.join("tests/conformance/reverse_round_contracts.v1.json");
+    let data = load_json(&report_path);
+
+    let milestones = data["milestone_branch_diversity"]
+        .as_object()
+        .expect("milestone_branch_diversity must be an object");
+    assert!(
+        milestones.len() >= 3,
+        "expected at least 3 milestone diversity entries"
+    );
+    assert_eq!(
+        data["summary"]["milestones_verified"].as_u64(),
+        Some(milestones.len() as u64)
+    );
+    assert_eq!(
+        data["summary"]["milestones_diverse"].as_u64(),
+        Some(milestones.len() as u64)
+    );
+    assert_eq!(
+        data["summary"]["all_milestones_diverse"].as_bool(),
+        Some(true)
+    );
+
+    for (milestone_id, milestone) in milestones {
+        let rounds = milestone["rounds"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{milestone_id}: rounds must be array"));
+        assert!(
+            rounds.len() >= 3,
+            "{milestone_id}: expected at least three rounds"
+        );
+        assert!(
+            milestone["passes_milestone"].as_bool().unwrap_or(false),
+            "{milestone_id}: milestone must pass"
+        );
+
+        let diversity = &milestone["branch_diversity"];
+        assert!(
+            diversity["class_count"].as_u64().unwrap_or(0) >= 5,
+            "{milestone_id}: expected at least 5 classes"
+        );
+        assert!(
+            diversity["max_single_class_pct"].as_f64().unwrap_or(100.0) <= 40.0,
+            "{milestone_id}: class concentration must stay <= 40%"
+        );
+        assert!(
+            diversity["passes_diversity"].as_bool().unwrap_or(false),
+            "{milestone_id}: milestone diversity gate must pass"
+        );
+
+        let supporting_files = milestone["supporting_files"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{milestone_id}: supporting_files must be array"));
+        for file in supporting_files {
+            let path = file["path"]
+                .as_str()
+                .unwrap_or_else(|| panic!("{milestone_id}: supporting file path missing"));
+            assert!(
+                file["exists"].as_bool().unwrap_or(false),
+                "{milestone_id}: supporting file missing: {path}"
+            );
+        }
+    }
+}
+
+#[test]
+fn reverse_round_plan_doc_sections_include_execution_contracts() {
+    let root = repo_root();
+    let plan_text = load_text(&root.join("PLAN_TO_PORT_GLIBC_TO_RUST.md"));
+
+    for heading in &[
+        "### Round R7: Loader + Symbol Resolution (`elf`, `sysdeps/*/dl-*`)",
+        "### Round R8: Allocator + Thread Runtime (`malloc`, `nptl`)",
+        "### Round R9: Format/Wide/Locale Engine (`stdio-common`, `wcsmbs`, `locale`)",
+        "### Round R10: Identity + DNS Lookup (`nss`, `resolv`)",
+        "### Round R11: libm + Floating Environment (`math`, `soft-fp`, `sysdeps/ieee754`)",
+    ] {
+        let start = plan_text
+            .find(heading)
+            .unwrap_or_else(|| panic!("missing round heading: {heading}"));
+        let tail = &plan_text[start..];
+        let end = tail.find("\n### Round ").unwrap_or(tail.len());
+        let section = &tail[..end];
+        assert!(
+            section.contains("Implementation plan:"),
+            "{heading}: missing Implementation plan"
+        );
+        assert!(
+            section.contains("Verification strategy:"),
+            "{heading}: missing Verification strategy"
+        );
+    }
+}
+
+#[test]
+fn gate_script_exists_and_is_executable() {
+    let root = repo_root();
+    let script = root.join("scripts/check_reverse_round_contracts.sh");
+    assert!(
+        script.exists(),
+        "scripts/check_reverse_round_contracts.sh must exist"
+    );
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let perms = std::fs::metadata(&script).unwrap().permissions();
+        assert!(
+            perms.mode() & 0o111 != 0,
+            "check_reverse_round_contracts.sh must be executable"
+        );
+    }
+}
+
+#[test]
+fn gate_script_emits_report_and_structured_log() {
+    let root = repo_root();
+    let script = root.join("scripts/check_reverse_round_contracts.sh");
+
+    let output = Command::new(&script)
+        .current_dir(&root)
+        .output()
+        .expect("failed to run reverse-round gate");
+
+    assert!(
+        output.status.success(),
+        "gate script failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let log_path = root.join("target/conformance/reverse_round_contracts.log.jsonl");
+    let gate_report_path = root.join("target/conformance/reverse_round_contracts.report.json");
+
+    let (line_count, errors) = frankenlibc_harness::structured_log::validate_log_file(&log_path)
+        .expect("structured log should be readable");
+    assert!(
+        errors.is_empty(),
+        "structured log validation errors:\n{:#?}",
+        errors
+    );
+    assert!(
+        line_count >= 10,
+        "expected multiple log lines, got {line_count}"
+    );
+
+    let gate_report = load_json(&gate_report_path);
+    assert_eq!(gate_report["schema_version"].as_str(), Some("v1"));
+    assert_eq!(gate_report["bead"].as_str(), Some("bd-2a2.5"));
+    assert_eq!(gate_report["status"].as_str(), Some("pass"));
+    assert_eq!(gate_report["summary"]["failed_checks"].as_u64(), Some(0));
+    assert_eq!(
+        gate_report["summary"]["cross_round_checks_passing"].as_u64(),
+        gate_report["summary"]["cross_round_checks_total"].as_u64()
+    );
+    assert_eq!(
+        gate_report["summary"]["milestones_diverse"].as_u64(),
+        gate_report["summary"]["milestones_verified"].as_u64()
+    );
+    assert_eq!(
+        gate_report["summary"]["all_milestones_diverse"].as_bool(),
+        Some(true)
+    );
+
+    let log_body = std::fs::read_to_string(&log_path).expect("log file should exist");
+    let log_entries: Vec<serde_json::Value> = log_body
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| serde_json::from_str(line).expect("log line should parse"))
+        .collect();
+    assert_eq!(line_count, log_entries.len());
+    assert!(
+        log_entries.iter().any(|entry| {
+            entry["symbol"].as_str() == Some("integration:loader_allocator")
+                && entry["event"].as_str() == Some("reverse_round.contracts.check")
+        }),
+        "structured log must include loader_allocator integration evidence"
+    );
+    assert!(
+        log_entries.iter().any(|entry| {
+            entry["symbol"].as_str() == Some("milestone:bootstrap_surface")
+                && entry["event"].as_str() == Some("reverse_round.contracts.check")
+        }),
+        "structured log must include bootstrap_surface milestone evidence"
+    );
+    assert!(
+        log_entries
+            .iter()
+            .any(|entry| entry["event"].as_str() == Some("reverse_round.contracts.summary")),
+        "structured log must include summary event"
+    );
 }
 
 #[test]

@@ -359,5 +359,14 @@ fn diagnostics_consistent_after_mixed_workload() {
         d.total_reclaimed <= d.total_retired,
         "cannot reclaim more than retired"
     );
+    assert!(
+        d.global_epoch > 0,
+        "mixed workload should advance the global epoch"
+    );
+    assert_eq!(
+        d.pending_per_epoch.iter().sum::<usize>(),
+        0,
+        "cleanup should drain all pending reclamation buckets"
+    );
     assert_eq!(d.active_threads, 0);
 }

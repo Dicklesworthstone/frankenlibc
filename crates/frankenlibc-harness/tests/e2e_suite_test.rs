@@ -425,15 +425,28 @@ fn e2e_suite_supports_manifest_dry_run() {
 #[test]
 fn e2e_artifact_index_valid() {
     let root = workspace_root();
+    let script = root.join("scripts/e2e_suite.sh");
+    let seed = "902";
+    let _ = Command::new("bash")
+        .arg(&script)
+        .arg("fault")
+        .env("TIMEOUT_SECONDS", "1")
+        .env("FRANKENLIBC_E2E_SEED", seed)
+        .output()
+        .expect("e2e_suite.sh should execute for artifact index validation");
+
     let e2e_dir = root.join("target/e2e_suite");
     if !e2e_dir.exists() {
-        return; // No runs yet
+        return;
     }
 
     let mut runs: Vec<_> = std::fs::read_dir(&e2e_dir)
         .unwrap()
         .filter_map(|e| e.ok())
-        .filter(|e| e.file_name().to_string_lossy().starts_with("e2e-"))
+        .filter(|e| {
+            let name = e.file_name().to_string_lossy().to_string();
+            name.starts_with("e2e-") && name.ends_with(&format!("-s{seed}"))
+        })
         .collect();
     runs.sort_by_key(|e| e.file_name());
 
@@ -462,6 +475,8 @@ fn e2e_artifact_index_valid() {
             assert!(idx["artifacts"].is_array(), "Expected artifacts array");
 
             let artifacts = idx["artifacts"].as_array().unwrap();
+            let mut joined_artifacts = 0usize;
+            let mut trace_log_joined = false;
             for art in artifacts {
                 assert!(art["path"].is_string(), "Artifact missing path");
                 assert!(art["kind"].is_string(), "Artifact missing kind");
@@ -470,7 +485,36 @@ fn e2e_artifact_index_valid() {
                     "Artifact missing retention_tier"
                 );
                 assert!(art["sha256"].is_string(), "Artifact missing sha256");
+                if let Some(join_keys) = art.get("join_keys") {
+                    assert!(join_keys.is_object(), "join_keys must be an object");
+                    let trace_ids = join_keys["trace_ids"]
+                        .as_array()
+                        .expect("join_keys.trace_ids must be an array when present");
+                    if !trace_ids.is_empty() {
+                        joined_artifacts += 1;
+                        for trace_id in trace_ids {
+                            let trace_id = trace_id
+                                .as_str()
+                                .expect("trace_ids entries must be strings");
+                            assert!(
+                                trace_id.contains("::"),
+                                "artifact join trace_id should be canonical: {trace_id}"
+                            );
+                        }
+                        if art["path"].as_str() == Some("trace.jsonl") {
+                            trace_log_joined = true;
+                        }
+                    }
+                }
             }
+            assert!(
+                joined_artifacts > 0,
+                "artifact index should include at least one joined artifact entry"
+            );
+            assert!(
+                trace_log_joined,
+                "trace.jsonl entry should carry join_keys.trace_ids"
+            );
         }
     }
 }

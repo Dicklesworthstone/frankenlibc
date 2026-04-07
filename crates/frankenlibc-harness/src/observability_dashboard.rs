@@ -1311,7 +1311,7 @@ fn is_healing_row(obj: &serde_json::Map<String, Value>) -> bool {
         && obj.get("healing_action").and_then(Value::as_str).is_some()
 }
 
-fn extract_mode<'a>(obj: &'a serde_json::Map<String, Value>) -> Option<&'a str> {
+fn extract_mode(obj: &serde_json::Map<String, Value>) -> Option<&str> {
     obj.get("mode")
         .and_then(Value::as_str)
         .or_else(|| obj.get("runtime_mode").and_then(Value::as_str))

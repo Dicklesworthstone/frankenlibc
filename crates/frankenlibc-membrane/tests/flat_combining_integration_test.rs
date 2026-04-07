@@ -249,6 +249,19 @@ fn combining_effectiveness_scales_with_contention() {
     // Sanity: all ops accounted for.
     for (threads, diag) in &diagnostics_by_threads {
         assert_eq!(diag.total_ops, (*threads as u64) * 2000);
+        assert!(
+            diag.total_passes > 0,
+            "{threads}-thread run should execute at least one combining pass"
+        );
+        assert_eq!(
+            diag.active_slots, 0,
+            "{threads}-thread run should not leak reserved publication slots"
+        );
+        assert!(
+            diag.avg_batch_size >= 1.0,
+            "{threads}-thread run should maintain a valid average batch size, got {:.3}",
+            diag.avg_batch_size
+        );
     }
 
     // With 8 threads, we expect higher batching than 1 thread.
@@ -256,6 +269,10 @@ fn combining_effectiveness_scales_with_contention() {
     assert!(
         eight_avg >= single_avg * 0.5,
         "8-thread avg batch ({eight_avg:.1}) should not be significantly worse than 1-thread ({single_avg:.1})"
+    );
+    assert!(
+        diagnostics_by_threads[3].1.max_batch_size >= 2,
+        "8-thread run should observe a multi-op combining pass"
     );
 }
 

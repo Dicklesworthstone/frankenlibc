@@ -2,6 +2,7 @@ use frankenlibc_harness::shadow_run::{
     ShadowCommandExecutor, ShadowExecutionArtifacts, ShadowExecutionRequest, ShadowExecutionResult,
     ShadowRunConfig, ShadowRunError, ShadowRunManifest, run_shadow_manifest_with_executor,
 };
+use frankenlibc_harness::structured_log::ArtifactIndex;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -236,6 +237,7 @@ fn run_shadow_manifest_writes_report_log_and_replay_bundle() {
     let out_dir = root.join("out");
     let report_path = root.join("shadow_run.report.json");
     let log_path = root.join("shadow_run.log.jsonl");
+    let artifact_index_path = root.join("shadow_run.artifacts.json");
 
     let mut config = ShadowRunConfig::new(
         root.clone(),
@@ -245,6 +247,7 @@ fn run_shadow_manifest_writes_report_log_and_replay_bundle() {
     );
     config.report_path = Some(report_path.clone());
     config.log_path = Some(log_path.clone());
+    config.artifact_index_path = Some(artifact_index_path.clone());
     config.run_id = "shadow-run-test".to_string();
     config.bead_id = "bd-test-shadow".to_string();
 
@@ -262,8 +265,13 @@ fn run_shadow_manifest_writes_report_log_and_replay_bundle() {
     assert_eq!(report.summary.skipped, 0);
     assert!(report_path.exists(), "report should be written");
     assert!(log_path.exists(), "log should be written");
+    assert!(
+        artifact_index_path.exists(),
+        "artifact index should be written"
+    );
 
     let scenario = &report.scenarios[0];
+    assert_eq!(scenario.trace_id, "bd-test-shadow::shadow-run-test::001");
     assert_eq!(scenario.status, "diverged");
     assert!(scenario.diverged);
     assert_eq!(scenario.replay.mode, "strict");
@@ -319,6 +327,50 @@ fn run_shadow_manifest_writes_report_log_and_replay_bundle() {
     assert!(
         log_body.contains("\"event\":\"conformance.shadow_run_divergence\""),
         "log should include divergence event"
+    );
+    assert!(
+        log_body.contains("\"trace_id\":\"bd-test-shadow::shadow-run-test::001\""),
+        "log should carry the scenario trace id"
+    );
+
+    let artifact_index: ArtifactIndex = serde_json::from_str(
+        &fs::read_to_string(&artifact_index_path).expect("read artifact index"),
+    )
+    .expect("artifact index parses");
+    assert_eq!(artifact_index.run_id, "shadow-run-test");
+    assert!(
+        artifact_index
+            .artifacts
+            .iter()
+            .any(|artifact| artifact.kind == "log"),
+        "artifact index should include the structured log"
+    );
+    assert!(
+        artifact_index
+            .artifacts
+            .iter()
+            .any(|artifact| artifact.kind == "report"),
+        "artifact index should include the report"
+    );
+    assert!(
+        artifact_index.artifacts.iter().any(|artifact| {
+            artifact.kind == "replay_bundle"
+                && artifact
+                    .join_keys
+                    .as_ref()
+                    .is_some_and(|join| join.trace_ids == vec![scenario.trace_id.clone()])
+        }),
+        "replay bundle should join back to the canonical trace id"
+    );
+    assert!(
+        artifact_index.artifacts.iter().any(|artifact| {
+            artifact.kind == "divergence_report"
+                && artifact
+                    .join_keys
+                    .as_ref()
+                    .is_some_and(|join| join.trace_ids == vec![scenario.trace_id.clone()])
+        }),
+        "divergence report should join back to the canonical trace id"
     );
 }
 

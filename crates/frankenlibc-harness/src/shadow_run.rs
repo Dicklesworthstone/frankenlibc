@@ -12,7 +12,9 @@
 //! - argument minimization for divergent invocations
 
 use crate::diff;
-use crate::structured_log::{LogEmitter, LogEntry, LogLevel, Outcome, StreamKind};
+use crate::structured_log::{
+    ArtifactIndex, ArtifactJoinKeys, LogEmitter, LogEntry, LogLevel, Outcome, StreamKind,
+};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::backtrace::Backtrace;
@@ -184,6 +186,8 @@ pub struct ShadowExecutionSummary {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ShadowScenarioReport {
+    #[serde(default)]
+    pub trace_id: String,
     pub scenario_id: String,
     pub label: String,
     pub scenario_class: String,
@@ -225,6 +229,7 @@ pub struct ShadowRunConfig {
     pub out_dir: PathBuf,
     pub report_path: Option<PathBuf>,
     pub log_path: Option<PathBuf>,
+    pub artifact_index_path: Option<PathBuf>,
     pub lib_path: PathBuf,
     pub timeout: Duration,
     pub reference_label: String,
@@ -233,6 +238,7 @@ pub struct ShadowRunConfig {
     pub capture_syscall_traces: bool,
     pub bead_id: String,
     pub run_id: String,
+    pub manifest_ref: Option<String>,
 }
 
 impl ShadowRunConfig {
@@ -248,6 +254,7 @@ impl ShadowRunConfig {
             out_dir,
             report_path: None,
             log_path: None,
+            artifact_index_path: None,
             lib_path,
             timeout,
             reference_label: "glibc".to_string(),
@@ -259,6 +266,7 @@ impl ShadowRunConfig {
             capture_syscall_traces: true,
             bead_id: SHADOW_RUN_BEAD_ID.to_string(),
             run_id: "shadow-run".to_string(),
+            manifest_ref: None,
         }
     }
 }
@@ -450,14 +458,18 @@ pub fn run_shadow_manifest_with_executor<E: ShadowCommandExecutor>(
         .transpose()?;
 
     let mut reports = Vec::new();
+    let mut trace_seq = 0_u64;
     for scenario in manifest.shadow_scenarios() {
         for mode in modes {
+            trace_seq = trace_seq.saturating_add(1);
+            let trace_id = shadow_trace_id(&config.bead_id, &config.run_id, trace_seq);
             reports.push(run_shadow_scenario_with_executor(
                 scenario,
                 mode,
                 config,
                 executor,
                 emitter.as_mut(),
+                &trace_id,
             )?);
         }
     }
@@ -510,7 +522,14 @@ pub fn run_shadow_manifest_with_executor<E: ShadowCommandExecutor>(
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
-        fs::write(path, serde_json::to_string_pretty(&report)?)?;
+        write_json_pretty(path, &report)?;
+    }
+
+    if let Some(path) = &config.artifact_index_path {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        write_shadow_artifact_index(path, config, &report)?;
     }
 
     Ok(report)
@@ -522,6 +541,7 @@ pub fn run_shadow_scenario_with_executor<E: ShadowCommandExecutor>(
     config: &ShadowRunConfig,
     executor: &mut E,
     mut emitter: Option<&mut LogEmitter>,
+    trace_id: &str,
 ) -> Result<ShadowScenarioReport, ShadowRunError> {
     if scenario.command.is_empty() {
         return Err(ShadowRunError::MissingCommand(scenario.id.clone()));
@@ -570,7 +590,7 @@ pub fn run_shadow_scenario_with_executor<E: ShadowCommandExecutor>(
     {
         if scenario_is_optional_binary(scenario) {
             if let Some(log) = emitter.as_mut() {
-                emit_shadow_skip_log(log, scenario, mode, &replay, binary)?;
+                emit_shadow_skip_log(log, scenario, mode, &replay, binary, trace_id)?;
             }
             return Ok(skipped_shadow_report(
                 scenario,
@@ -578,6 +598,7 @@ pub fn run_shadow_scenario_with_executor<E: ShadowCommandExecutor>(
                 config,
                 replay,
                 format!("optional binary missing: {binary}"),
+                trace_id.to_string(),
             ));
         }
         return Err(ShadowRunError::MissingBinary(binary.to_string()));
@@ -715,11 +736,13 @@ pub fn run_shadow_scenario_with_executor<E: ShadowCommandExecutor>(
                 divergence: divergence.as_ref(),
                 artifact_refs: &artifact_refs,
                 replay: &replay,
+                trace_id,
             },
         )?;
     }
 
     Ok(ShadowScenarioReport {
+        trace_id: trace_id.to_string(),
         scenario_id: scenario.id.clone(),
         label: scenario.label.clone(),
         scenario_class: scenario.scenario_class.clone(),
@@ -854,6 +877,7 @@ struct ShadowLogContext<'a> {
     divergence: Option<&'a ShadowDivergenceDetail>,
     artifact_refs: &'a [String],
     replay: &'a ShadowReplayBundle,
+    trace_id: &'a str,
 }
 
 fn emit_shadow_log(
@@ -889,7 +913,7 @@ fn emit_shadow_log(
         .map(|detail| detail.mismatch_axes.clone())
         .unwrap_or_default();
     emitter.emit_entry(
-        LogEntry::new(String::new(), level, event)
+        LogEntry::new(context.trace_id, level, event)
             .with_stream(StreamKind::Conformance)
             .with_gate(SHADOW_RUN_EVENT_GATE)
             .with_mode(context.mode.to_string())
@@ -921,9 +945,10 @@ fn emit_shadow_skip_log(
     mode: &str,
     replay: &ShadowReplayBundle,
     required_binary: &str,
+    trace_id: &str,
 ) -> Result<(), ShadowRunError> {
     emitter.emit_entry(
-        LogEntry::new(String::new(), LogLevel::Warn, "conformance.shadow_run_skip")
+        LogEntry::new(trace_id, LogLevel::Warn, "conformance.shadow_run_skip")
             .with_stream(StreamKind::Conformance)
             .with_gate(SHADOW_RUN_EVENT_GATE)
             .with_mode(mode.to_string())
@@ -1004,8 +1029,10 @@ fn skipped_shadow_report(
     config: &ShadowRunConfig,
     replay: ShadowReplayBundle,
     reason: String,
+    trace_id: String,
 ) -> ShadowScenarioReport {
     ShadowScenarioReport {
+        trace_id,
         scenario_id: scenario.id.clone(),
         label: scenario.label.clone(),
         scenario_class: scenario.scenario_class.clone(),
@@ -1042,6 +1069,99 @@ fn skipped_shadow_report(
         }),
         artifact_refs: Vec::new(),
     }
+}
+
+fn write_shadow_artifact_index(
+    path: &Path,
+    config: &ShadowRunConfig,
+    report: &ShadowRunReport,
+) -> Result<(), ShadowRunError> {
+    let mut artifact_index = ArtifactIndex::new(config.run_id.clone(), config.bead_id.clone());
+    let mut seen_paths = BTreeSet::new();
+
+    if let Some(log_path) = &config.log_path {
+        let resolved = resolve_workspace_path(&config.workspace_root, log_path);
+        if resolved.exists() {
+            let recorded = path_string(log_path);
+            artifact_index.add(recorded.clone(), "log", sha256_path(&resolved)?);
+            seen_paths.insert(recorded);
+        }
+    }
+
+    if let Some(report_path) = &config.report_path {
+        let resolved = resolve_workspace_path(&config.workspace_root, report_path);
+        if resolved.exists() {
+            let recorded = path_string(report_path);
+            artifact_index.add(recorded.clone(), "report", sha256_path(&resolved)?);
+            seen_paths.insert(recorded);
+        }
+    }
+
+    if let Some(manifest_ref) = &config.manifest_ref {
+        let resolved = resolve_workspace_path(&config.workspace_root, Path::new(manifest_ref));
+        if resolved.exists() {
+            let recorded = manifest_ref.clone();
+            artifact_index.add(recorded.clone(), "manifest", sha256_path(&resolved)?);
+            seen_paths.insert(recorded);
+        }
+    }
+
+    for scenario in &report.scenarios {
+        let join_keys = ArtifactJoinKeys {
+            trace_ids: vec![scenario.trace_id.clone()],
+            ..ArtifactJoinKeys::default()
+        };
+        for artifact_ref in &scenario.artifact_refs {
+            if !seen_paths.insert(artifact_ref.clone()) {
+                continue;
+            }
+            let resolved = resolve_workspace_path(&config.workspace_root, Path::new(artifact_ref));
+            artifact_index.add_with_join_keys(
+                artifact_ref.clone(),
+                shadow_artifact_kind(&resolved),
+                sha256_path(&resolved)?,
+                join_keys.clone(),
+            );
+        }
+    }
+
+    write_json_pretty(path, &artifact_index)
+}
+
+fn resolve_workspace_path(workspace_root: &Path, path: &Path) -> PathBuf {
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        workspace_root.join(path)
+    }
+}
+
+fn shadow_artifact_kind(path: &Path) -> String {
+    match path.file_name().and_then(|name| name.to_str()) {
+        Some("baseline.stdout.txt") | Some("stdout.txt") => "stdout".to_string(),
+        Some("baseline.stderr.txt") | Some("stderr.txt") => "stderr".to_string(),
+        Some("baseline.exit_code") | Some("exit_code") => "exit_code".to_string(),
+        Some("baseline.syscall.txt") | Some("syscall.txt") => "syscall_trace".to_string(),
+        Some("shadow_replay_bundle.json") => "replay_bundle".to_string(),
+        Some("shadow_divergence_report.json") => "divergence_report".to_string(),
+        Some("shadow_minimized_replay.json") => "minimized_replay".to_string(),
+        Some("baseline.env.json") | Some("candidate.env.json") => "environment".to_string(),
+        _ => "artifact".to_string(),
+    }
+}
+
+fn shadow_trace_id(bead_id: &str, run_id: &str, seq: u64) -> String {
+    format!("{bead_id}::{run_id}::{seq:03}")
+}
+
+fn write_json_pretty<T: Serialize>(path: &Path, value: &T) -> Result<(), ShadowRunError> {
+    fs::write(path, serde_json::to_string_pretty(value)?)?;
+    Ok(())
+}
+
+fn sha256_path(path: &Path) -> Result<String, ShadowRunError> {
+    let bytes = fs::read(path)?;
+    Ok(format!("{:x}", Sha256::digest(&bytes)))
 }
 
 fn evaluate_pass_condition(

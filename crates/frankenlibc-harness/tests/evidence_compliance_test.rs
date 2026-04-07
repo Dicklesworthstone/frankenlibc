@@ -50,6 +50,37 @@ fn read_jsonl(path: &Path) -> Vec<serde_json::Value> {
         .collect()
 }
 
+fn write_legacy_index(run_dir: &Path, artifact_rel: &str, bead_id: &str) -> PathBuf {
+    let artifact_path = run_dir.join(artifact_rel);
+    std::fs::write(&artifact_path, "legacy-diagnostic-bytes").expect("write legacy artifact");
+    let sha = sha256_hex(&artifact_path);
+    let index_path = run_dir.join("artifact_index.json");
+    let legacy = serde_json::json!({
+        "index_version": 1,
+        "bead_id": bead_id,
+        "generated_utc": "2026-02-11T00:00:00.000Z",
+        "artifacts": [
+            {
+                "path": artifact_rel,
+                "kind": "diagnostic",
+                "sha256": sha,
+                "join_keys": {
+                    "trace_id": format!("{bead_id}::legacy-run::001"),
+                    "decision_id": 9,
+                    "policy_id": 3,
+                    "evidence_seqno": 77
+                }
+            }
+        ]
+    });
+    std::fs::write(
+        &index_path,
+        serde_json::to_string_pretty(&legacy).expect("serialize legacy index"),
+    )
+    .expect("write legacy index");
+    index_path
+}
+
 #[test]
 fn valid_bundle_passes() {
     let run_dir = unique_tmp_dir("evidence-compliance-valid");
@@ -70,6 +101,36 @@ fn valid_bundle_passes() {
     assert!(
         report.violations.is_empty(),
         "valid evidence bundle should have no violations"
+    );
+
+    let _ = std::fs::remove_dir_all(run_dir);
+}
+
+#[test]
+fn legacy_index_without_run_id_still_passes_and_emits_migration_warning() {
+    let run_dir = unique_tmp_dir("evidence-compliance-legacy-index");
+    let log_path = run_dir.join("log.jsonl");
+    let index_path = write_legacy_index(&run_dir, "diag.txt", "bd-33p.3");
+
+    let line = LogEntry::new("bd-33p.3::legacy-run::001", LogLevel::Info, "gate_result")
+        .with_stream(StreamKind::Release)
+        .with_gate("evidence_compliance")
+        .with_outcome(Outcome::Pass)
+        .with_artifacts(vec!["diag.txt".to_string()])
+        .to_jsonl()
+        .expect("serialize log entry");
+    std::fs::write(&log_path, format!("{line}\n")).expect("write log");
+
+    let report = validate_evidence_bundle(&run_dir, &log_path, &index_path);
+    assert!(report.ok, "legacy v1 index should still pass: {report:?}");
+
+    let proof_log_path = run_dir.join("evidence_compliance.proof.log.jsonl");
+    let events = read_jsonl(&proof_log_path);
+    assert!(
+        events.iter().any(|entry| entry["event"].as_str()
+            == Some("evidence_compliance.artifact_index_legacy_defaults")
+            && entry["level"].as_str() == Some("warn")),
+        "proof log should record legacy-index migration defaults"
     );
 
     let _ = std::fs::remove_dir_all(run_dir);

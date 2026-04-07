@@ -666,23 +666,18 @@ fn enumerate_policies() -> Vec<PolicyMetrics> {
 }
 
 fn solve_primal_lp(policies: &[PolicyMetrics], epsilon: f64) -> CpomdpPrimalSolution {
-    let mut best_throughput = f64::NEG_INFINITY;
-    let mut best_intervention_cost = f64::INFINITY;
-    let mut best_safety = f64::INFINITY;
-    let mut best_support: Vec<(usize, f64)> = Vec::new();
+    let mut best_candidate = LpCandidate::sentinel();
 
     for policy in policies {
         if policy.unsafe_allow_probability <= epsilon + 1e-12 {
-            let candidate_support = vec![(policy.encoded_id, 1.0)];
             update_best_lp_candidate(
-                &mut best_throughput,
-                &mut best_intervention_cost,
-                &mut best_safety,
-                &mut best_support,
-                policy.throughput,
-                policy.intervention_cost,
-                policy.unsafe_allow_probability,
-                &candidate_support,
+                &mut best_candidate,
+                LpCandidate {
+                    throughput: policy.throughput,
+                    intervention_cost: policy.intervention_cost,
+                    safety: policy.unsafe_allow_probability,
+                    support: vec![(policy.encoded_id, 1.0)],
+                },
             );
         }
     }
@@ -710,24 +705,23 @@ fn solve_primal_lp(policies: &[PolicyMetrics], epsilon: f64) -> CpomdpPrimalSolu
                 weight_lhs * lhs.unsafe_allow_probability
                     + weight_rhs * rhs.unsafe_allow_probability,
             );
-            let candidate_support = vec![
-                (lhs.encoded_id, round9(weight_lhs.clamp(0.0, 1.0))),
-                (rhs.encoded_id, round9(weight_rhs.clamp(0.0, 1.0))),
-            ];
             update_best_lp_candidate(
-                &mut best_throughput,
-                &mut best_intervention_cost,
-                &mut best_safety,
-                &mut best_support,
-                throughput,
-                intervention_cost,
-                safety,
-                &candidate_support,
+                &mut best_candidate,
+                LpCandidate {
+                    throughput,
+                    intervention_cost,
+                    safety,
+                    support: vec![
+                        (lhs.encoded_id, round9(weight_lhs.clamp(0.0, 1.0))),
+                        (rhs.encoded_id, round9(weight_rhs.clamp(0.0, 1.0))),
+                    ],
+                },
             );
         }
     }
 
-    let support = best_support
+    let support = best_candidate
+        .support
         .iter()
         .filter(|(_, weight)| *weight > 0.0)
         .map(|(policy_id, weight)| CpomdpMixedPolicyWeight {
@@ -737,10 +731,10 @@ fn solve_primal_lp(policies: &[PolicyMetrics], epsilon: f64) -> CpomdpPrimalSolu
         .collect::<Vec<_>>();
 
     CpomdpPrimalSolution {
-        objective: round9(best_throughput),
-        achieved_throughput: round9(best_throughput),
-        achieved_unsafe_allow_probability: round9(best_safety),
-        achieved_intervention_cost: round9(best_intervention_cost),
+        objective: round9(best_candidate.throughput),
+        achieved_throughput: round9(best_candidate.throughput),
+        achieved_unsafe_allow_probability: round9(best_candidate.safety),
+        achieved_intervention_cost: round9(best_candidate.intervention_cost),
         support,
     }
 }
@@ -794,29 +788,40 @@ fn solve_dual_lp(policies: &[PolicyMetrics], epsilon: f64) -> CpomdpDualSolution
     }
 }
 
-fn update_best_lp_candidate(
-    best_throughput: &mut f64,
-    best_intervention_cost: &mut f64,
-    best_safety: &mut f64,
-    best_support: &mut Vec<(usize, f64)>,
+#[derive(Debug, Clone)]
+struct LpCandidate {
     throughput: f64,
     intervention_cost: f64,
     safety: f64,
-    support: &[(usize, f64)],
-) {
-    let better_throughput = throughput > *best_throughput + 1e-12;
-    let same_throughput = (throughput - *best_throughput).abs() <= 1e-12;
-    let lower_intervention = intervention_cost < *best_intervention_cost - 1e-12;
-    let same_intervention = (intervention_cost - *best_intervention_cost).abs() <= 1e-12;
-    let lower_safety = safety < *best_safety - 1e-12;
+    support: Vec<(usize, f64)>,
+}
 
-    if better_throughput
-        || (same_throughput && (lower_intervention || (same_intervention && lower_safety)))
-    {
-        *best_throughput = throughput;
-        *best_intervention_cost = intervention_cost;
-        *best_safety = safety;
-        *best_support = support.to_vec();
+impl LpCandidate {
+    fn sentinel() -> Self {
+        Self {
+            throughput: f64::NEG_INFINITY,
+            intervention_cost: f64::INFINITY,
+            safety: f64::INFINITY,
+            support: Vec::new(),
+        }
+    }
+
+    fn outranks(&self, incumbent: &Self) -> bool {
+        let better_throughput = self.throughput > incumbent.throughput + 1e-12;
+        let same_throughput = (self.throughput - incumbent.throughput).abs() <= 1e-12;
+        let lower_intervention = self.intervention_cost < incumbent.intervention_cost - 1e-12;
+        let same_intervention =
+            (self.intervention_cost - incumbent.intervention_cost).abs() <= 1e-12;
+        let lower_safety = self.safety < incumbent.safety - 1e-12;
+
+        better_throughput
+            || (same_throughput && (lower_intervention || (same_intervention && lower_safety)))
+    }
+}
+
+fn update_best_lp_candidate(best_candidate: &mut LpCandidate, candidate: LpCandidate) {
+    if candidate.outranks(best_candidate) {
+        *best_candidate = candidate;
     }
 }
 

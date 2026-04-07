@@ -307,11 +307,13 @@ impl SimdCliffordProfile {
         if matches!(self.overlap_contract, OverlapContract::Forbid) && overlap {
             return false;
         }
-        match (reference.tail_contract, self.tail_contract) {
-            (TailContract::ExactSpan, TailContract::ExactSpan | TailContract::MaskedTail)
-            | (TailContract::TerminatorMask, TailContract::TerminatorMask) => true,
-            _ => false,
-        }
+        matches!(
+            (reference.tail_contract, self.tail_contract),
+            (
+                TailContract::ExactSpan,
+                TailContract::ExactSpan | TailContract::MaskedTail
+            ) | (TailContract::TerminatorMask, TailContract::TerminatorMask)
+        )
     }
 
     fn observation(
@@ -322,9 +324,8 @@ impl SimdCliffordProfile {
         overlap_fraction: f64,
     ) -> AlignmentObservation {
         let effective_len = len.max(self.lane_bytes);
-        let length_regime = sanitize_unit_interval(
-            effective_len as f64 / (self.lane_bytes.max(1) as f64 * 8.0),
-        );
+        let length_regime =
+            sanitize_unit_interval(effective_len as f64 / (self.lane_bytes.max(1) as f64 * 8.0));
         AlignmentObservation {
             src_alignment: AlignmentRegime::classify(src_addr),
             dst_alignment: AlignmentRegime::classify(dst_addr),
@@ -831,5 +832,61 @@ mod tests {
         assert!((0.0..=1.0).contains(&summary.grade0_energy));
         assert!((0.0..=1.0).contains(&summary.grade2_energy));
         assert!((0.0..=1.0).contains(&summary.parity_imbalance));
+    }
+
+    #[test]
+    fn simd_certificates_cover_memcpy_memcmp_and_strlen() {
+        for operation in [
+            SimdStringOperation::Memcpy,
+            SimdStringOperation::Memcmp,
+            SimdStringOperation::Strlen,
+        ] {
+            for isa in [SimdIsa::Sse42, SimdIsa::Avx2, SimdIsa::Neon] {
+                let cert =
+                    certify_simd_string_operation(operation, isa, 0x1000, 0x2000, 256, false);
+                assert!(
+                    cert.equivalent,
+                    "{} should certify {}: {:?}",
+                    operation.symbol(),
+                    isa.label(),
+                    cert
+                );
+                assert_eq!(cert.reference_isa, SimdIsa::Scalar);
+                assert_eq!(cert.candidate_isa, isa);
+            }
+        }
+    }
+
+    #[test]
+    fn memcpy_certificate_rejects_overlap() {
+        let cert = certify_simd_string_operation(
+            SimdStringOperation::Memcpy,
+            SimdIsa::Avx2,
+            0x1000,
+            0x1010,
+            128,
+            true,
+        );
+        assert!(!cert.equivalent);
+        assert!(cert.overlap_fraction > 0.0);
+    }
+
+    #[test]
+    fn strlen_certificate_keeps_zero_sentinel_contract() {
+        let cert = certify_simd_string_operation(
+            SimdStringOperation::Strlen,
+            SimdIsa::Neon,
+            0x2000,
+            0x2000,
+            96,
+            false,
+        );
+        assert!(cert.equivalent);
+        assert_eq!(cert.lane_bytes, 16);
+        assert!(
+            cert.rationale.contains("Clifford lane contract"),
+            "unexpected rationale: {}",
+            cert.rationale
+        );
     }
 }

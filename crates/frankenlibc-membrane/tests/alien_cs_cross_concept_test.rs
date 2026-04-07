@@ -467,11 +467,35 @@ fn full_tsm_pipeline_four_concepts() {
     assert_eq!(total_ops, 2000, "4 threads × 500 ops = 2000");
 
     // Verify diagnostics.
+    let metrics_diag = metrics.diagnostics();
+    assert_eq!(metrics_diag.total_ops, 2000);
+    assert!(metrics_diag.total_passes > 0);
+    assert_eq!(metrics_diag.active_slots, 0);
+    assert!(
+        metrics_diag.avg_batch_size >= 1.0,
+        "flat combining average batch size must remain valid"
+    );
+
     let ebr_diag = collector.diagnostics();
     assert_eq!(ebr_diag.total_retired, 20); // 4 threads × 5 retirements each
+    assert!(
+        ebr_diag.total_reclaimed <= ebr_diag.total_retired,
+        "EBR cannot reclaim more entries than were retired"
+    );
     assert_eq!(ebr_diag.active_threads, 0);
 
     let config_diag = config.diagnostics();
-    assert!(config_diag.reads > 0);
+    assert!(config_diag.reads >= 2000);
+    assert!(config_diag.cache_hits > config_diag.cache_misses);
+    assert!(
+        config_diag.hit_ratio > 0.5,
+        "SeqLock hit ratio should remain above 50% even with periodic reloads, got {:.3}",
+        config_diag.hit_ratio
+    );
     assert_eq!(config_diag.writes, 50);
+    assert_eq!(
+        state.reader_count(),
+        0,
+        "all RCU readers should release cached snapshots after the pipeline run"
+    );
 }

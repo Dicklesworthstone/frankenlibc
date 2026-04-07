@@ -268,6 +268,11 @@ fn cache_effectiveness_scales_with_read_write_ratio() {
     // With 10 writes and 20000+ reads, hit ratio should be high.
     assert!(d.reads > 0);
     assert!(d.cache_hits > d.cache_misses, "cache hits should dominate");
+    assert!(
+        d.hit_ratio > 0.95,
+        "hit ratio should stay above 95% under read-heavy load, got {:.3}",
+        d.hit_ratio
+    );
 }
 
 // ──────────────── Writer starvation resistance ────────────────

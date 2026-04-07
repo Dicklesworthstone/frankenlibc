@@ -93,6 +93,30 @@ fn schema_examples_validate() {
 }
 
 #[test]
+fn artifact_index_schema_example_roundtrips() {
+    let root = workspace_root();
+    let content = std::fs::read_to_string(root.join("tests/conformance/log_schema.json")).unwrap();
+    let schema: serde_json::Value = serde_json::from_str(&content).unwrap();
+
+    let example = schema["examples"]["artifact_index"].clone();
+    let parsed: ArtifactIndex = serde_json::from_value(example).expect("artifact index example");
+    assert_eq!(parsed.index_version, 1);
+    assert_eq!(parsed.run_id, "run-001");
+    assert_eq!(parsed.bead_id, "bd-144");
+    assert_eq!(parsed.artifacts.len(), 2);
+
+    let join_keys = parsed.artifacts[0]
+        .join_keys
+        .as_ref()
+        .expect("example should include join keys");
+    assert_eq!(join_keys.trace_ids, vec!["bd-144::run-001::003"]);
+    assert_eq!(join_keys.span_ids, vec!["abi::realloc::decision::000000000000002a"]);
+    assert_eq!(join_keys.decision_ids, vec![42]);
+    assert_eq!(join_keys.policy_ids, vec![7]);
+    assert_eq!(join_keys.evidence_seqnos, vec![11]);
+}
+
+#[test]
 fn emitter_writes_valid_jsonl() {
     let dir = std::env::temp_dir().join("frankenlibc_log_test");
     std::fs::create_dir_all(&dir).unwrap();
@@ -196,6 +220,42 @@ fn artifact_index_roundtrip() {
     assert_eq!(restored.artifacts.len(), 2);
     assert_eq!(restored.artifacts[0].kind, "log");
     assert_eq!(restored.artifacts[1].kind, "golden");
+}
+
+#[test]
+fn artifact_index_accepts_legacy_v1_shape() {
+    let legacy = serde_json::json!({
+        "index_version": 1,
+        "bead_id": "bd-legacy",
+        "artifacts": [
+            {
+                "path": "logs/test.jsonl",
+                "kind": "log",
+                "sha256": "abc123",
+                "join_keys": {
+                    "trace_id": "bd-legacy::run-001::007",
+                    "decision_id": 9,
+                    "policy_id": 3,
+                    "evidence_seqno": 77
+                }
+            }
+        ]
+    });
+
+    let mut parsed: ArtifactIndex = serde_json::from_value(legacy).expect("legacy index");
+    let compatibility = parsed.normalize_legacy_defaults();
+    assert!(compatibility.synthesized_run_id);
+    assert!(compatibility.synthesized_generated_utc);
+    assert_eq!(parsed.run_id, "legacy::bd-legacy");
+
+    let join_keys = parsed.artifacts[0]
+        .join_keys
+        .as_ref()
+        .expect("legacy join keys");
+    assert_eq!(join_keys.trace_ids, vec!["bd-legacy::run-001::007"]);
+    assert_eq!(join_keys.decision_ids, vec![9]);
+    assert_eq!(join_keys.policy_ids, vec![3]);
+    assert_eq!(join_keys.evidence_seqnos, vec![77]);
 }
 
 #[test]

@@ -25,6 +25,7 @@ pub mod kernel_snapshot;
 pub mod membrane_tests;
 pub mod minimizer;
 pub mod observability_dashboard;
+pub mod proof_binder_proofs;
 pub mod report;
 pub mod runner;
 pub mod runtime_math_cpomdp_feasibility_proofs;
