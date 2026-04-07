@@ -273,6 +273,21 @@ pub const fn sanitize_mutex_type(kind: i32) -> i32 {
 mod tests {
     use super::*;
     use proptest::prelude::*;
+    use proptest::test_runner::Config as ProptestConfig;
+
+    fn property_proptest_config(default_cases: u32) -> ProptestConfig {
+        let cases = std::env::var("FRANKENLIBC_PROPTEST_CASES")
+            .ok()
+            .and_then(|value| value.parse::<u32>().ok())
+            .filter(|&value| value > 0)
+            .unwrap_or(default_cases);
+
+        ProptestConfig {
+            cases,
+            failure_persistence: None,
+            ..ProptestConfig::default()
+        }
+    }
 
     #[test]
     fn mutex_type_constants() {
@@ -408,6 +423,8 @@ mod tests {
     }
 
     proptest! {
+        #![proptest_config(property_proptest_config(256))]
+
         #[test]
         fn prop_sanitize_always_returns_supported_kind(kind in any::<i32>()) {
             prop_assert!(valid_mutex_type(sanitize_mutex_type(kind)));

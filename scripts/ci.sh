@@ -220,6 +220,11 @@ if [[ "${FRANKENLIBC_EXTENDED_GATES:-0}" == "1" ]]; then
     echo "PASS"
     echo ""
 
+    echo "--- replacement guard (interpose policy) ---"
+    bash scripts/check_replacement_guard.sh interpose
+    echo "PASS"
+    echo ""
+
     echo "--- perf budget gate ---"
     scripts/check_perf_budget.sh
     echo "PASS"

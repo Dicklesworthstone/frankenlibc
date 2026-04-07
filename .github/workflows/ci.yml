@@ -92,6 +92,10 @@ jobs:
         run: |
           cargo build -p frankenlibc-abi --release 2>&1 | tee artifacts/ci/release-abi.log
 
+      - name: Check replacement guard (interpose policy)
+        run: |
+          bash scripts/check_replacement_guard.sh interpose 2>&1 | tee artifacts/ci/replacement-guard-interpose.log
+
       - name: Build standalone replacement artifact when feature exists
         run: |
           if grep -Eq '(^|[[:space:]])standalone([[:space:]]*=|[[:space:]])' crates/frankenlibc-abi/Cargo.toml; then
@@ -107,7 +111,10 @@ jobs:
           name: release-build-artifacts
           path: |
             artifacts/ci/release-*.log
+            artifacts/ci/replacement-guard-interpose.log
             target/release/libfrankenlibc_abi.so
+            target/conformance/replacement_guard.report.json
+            target/conformance/replacement_guard.log.jsonl
           if-no-files-found: warn
           retention-days: 14
 

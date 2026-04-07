@@ -4,58 +4,215 @@
 //! Complements existing benches (string_bench, malloc_bench, stdio_bench,
 //! mutex_bench, condvar_bench) to achieve coverage across all major families.
 
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use std::cell::RefCell;
+use std::time::{Duration, Instant};
+
+use criterion::{
+    black_box, criterion_group, criterion_main, measurement::WallTime, BenchmarkId, Criterion,
+};
+
+#[derive(Default)]
+struct BenchStats {
+    samples_ns_per_op: Vec<f64>,
+    total_iters: u64,
+    total_ns: u128,
+}
+
+impl BenchStats {
+    fn record(&mut self, iters: u64, dur: Duration) {
+        let ns = dur.as_nanos();
+        self.total_iters = self.total_iters.saturating_add(iters);
+        self.total_ns = self.total_ns.saturating_add(ns);
+        self.samples_ns_per_op.push(ns as f64 / iters as f64);
+    }
+
+    fn report(&self, mode_label: &str, bench_label: &str, symbol: &str) {
+        let mut samples = self.samples_ns_per_op.clone();
+        if samples.is_empty() {
+            return;
+        }
+        samples.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+
+        let p50 = percentile_sorted(&samples, 0.50);
+        let p95 = percentile_sorted(&samples, 0.95);
+        let p99 = percentile_sorted(&samples, 0.99);
+        let mean = samples.iter().sum::<f64>() / samples.len() as f64;
+        let throughput_ops_s = if self.total_ns == 0 {
+            0.0
+        } else {
+            (self.total_iters as f64) / (self.total_ns as f64 / 1e9)
+        };
+
+        println!(
+            "BASELINE_CAPTURE_BENCH mode={} bench={} symbol={} samples={} p50_ns_op={:.3} p95_ns_op={:.3} p99_ns_op={:.3} mean_ns_op={:.3} throughput_ops_s={:.3}",
+            mode_label,
+            bench_label,
+            symbol,
+            samples.len(),
+            p50,
+            p95,
+            p99,
+            mean,
+            throughput_ops_s
+        );
+    }
+}
+
+fn percentile_sorted(sorted: &[f64], p: f64) -> f64 {
+    debug_assert!((0.0..=1.0).contains(&p));
+    if sorted.is_empty() {
+        return 0.0;
+    }
+    let idx = ((sorted.len() - 1) as f64 * p).round() as usize;
+    sorted[idx.min(sorted.len() - 1)]
+}
+
+fn mode_label() -> &'static str {
+    match std::env::var("FRANKENLIBC_MODE").ok().as_deref() {
+        Some("hardened") => "hardened",
+        Some("strict") => "strict",
+        _ => "raw",
+    }
+}
+
+fn bench_symbol<F>(
+    group: &mut criterion::BenchmarkGroup<'_, WallTime>,
+    mode: &'static str,
+    bench_label: &str,
+    symbol: &str,
+    mut op: F,
+) where
+    F: FnMut(),
+{
+    let stats = RefCell::new(BenchStats::default());
+    group.bench_function(BenchmarkId::new(bench_label, mode), |b| {
+        b.iter_custom(|iters| {
+            let start = Instant::now();
+            for _ in 0..iters {
+                op();
+            }
+            let dur = start.elapsed().max(Duration::from_nanos(1));
+            stats.borrow_mut().record(iters, dur);
+            dur
+        });
+    });
+    stats.borrow().report(mode, bench_label, symbol);
+}
+
+#[inline]
+fn abi_isalpha(c: u8) -> i32 {
+    // SAFETY: ASCII byte values are valid inputs for the C ctype entrypoint.
+    unsafe { frankenlibc_abi::ctype_abi::isalpha(i32::from(c)) }
+}
+
+#[inline]
+fn abi_isdigit(c: u8) -> i32 {
+    // SAFETY: ASCII byte values are valid inputs for the C ctype entrypoint.
+    unsafe { frankenlibc_abi::ctype_abi::isdigit(i32::from(c)) }
+}
+
+#[inline]
+fn abi_isspace(c: u8) -> i32 {
+    // SAFETY: ASCII byte values are valid inputs for the C ctype entrypoint.
+    unsafe { frankenlibc_abi::ctype_abi::isspace(i32::from(c)) }
+}
+
+#[inline]
+fn abi_toupper(c: u8) -> i32 {
+    // SAFETY: ASCII byte values are valid inputs for the C ctype entrypoint.
+    unsafe { frankenlibc_abi::ctype_abi::toupper(i32::from(c)) }
+}
+
+#[inline]
+fn abi_atoi(input: &[u8]) -> i32 {
+    // SAFETY: benchmark inputs are static NUL-terminated byte strings.
+    unsafe { frankenlibc_abi::stdlib_abi::atoi(input.as_ptr().cast()) }
+}
+
+#[inline]
+fn abi_errno_location() -> *mut i32 {
+    // SAFETY: __errno_location returns the current thread's valid errno slot.
+    unsafe { frankenlibc_abi::errno_abi::__errno_location() }
+}
 
 // ═══════════════════════════════════════════════════════════════════
 // CTYPE FAMILY BENCHMARKS
 // ═══════════════════════════════════════════════════════════════════
 
 fn bench_ctype_isalpha(c: &mut Criterion) {
-    use frankenlibc_core::ctype::is_alpha;
+    let mode = mode_label();
+    let mut group = c.benchmark_group("ctype_isalpha");
 
-    c.bench_function("ctype/isalpha/ascii_letter", |b| {
-        b.iter(|| black_box(is_alpha(black_box(b'A'))))
+    for _ in 0..10_000 {
+        black_box(abi_isalpha(b'A'));
+        black_box(abi_isalpha(b'5'));
+    }
+
+    bench_symbol(&mut group, mode, "isalpha_ascii_letter", "isalpha", || {
+        black_box(abi_isalpha(black_box(b'A')));
+    });
+    bench_symbol(&mut group, mode, "isalpha_digit", "isalpha", || {
+        black_box(abi_isalpha(black_box(b'5')));
     });
 
-    c.bench_function("ctype/isalpha/digit", |b| {
-        b.iter(|| black_box(is_alpha(black_box(b'5'))))
-    });
+    group.finish();
 }
 
 fn bench_ctype_isdigit(c: &mut Criterion) {
-    use frankenlibc_core::ctype::is_digit;
+    let mode = mode_label();
+    let mut group = c.benchmark_group("ctype_isdigit");
 
-    c.bench_function("ctype/isdigit/digit", |b| {
-        b.iter(|| black_box(is_digit(black_box(b'7'))))
+    for _ in 0..10_000 {
+        black_box(abi_isdigit(b'7'));
+        black_box(abi_isdigit(b'z'));
+    }
+
+    bench_symbol(&mut group, mode, "isdigit_digit", "isdigit", || {
+        black_box(abi_isdigit(black_box(b'7')));
+    });
+    bench_symbol(&mut group, mode, "isdigit_letter", "isdigit", || {
+        black_box(abi_isdigit(black_box(b'z')));
     });
 
-    c.bench_function("ctype/isdigit/letter", |b| {
-        b.iter(|| black_box(is_digit(black_box(b'z'))))
-    });
+    group.finish();
 }
 
 fn bench_ctype_toupper(c: &mut Criterion) {
-    use frankenlibc_core::ctype::to_upper;
+    let mode = mode_label();
+    let mut group = c.benchmark_group("ctype_toupper");
 
-    c.bench_function("ctype/toupper/lowercase", |b| {
-        b.iter(|| black_box(to_upper(black_box(b'a'))))
+    for _ in 0..10_000 {
+        black_box(abi_toupper(b'a'));
+        black_box(abi_toupper(b'A'));
+    }
+
+    bench_symbol(&mut group, mode, "toupper_lowercase", "toupper", || {
+        black_box(abi_toupper(black_box(b'a')));
+    });
+    bench_symbol(&mut group, mode, "toupper_already_upper", "toupper", || {
+        black_box(abi_toupper(black_box(b'A')));
     });
 
-    c.bench_function("ctype/toupper/already_upper", |b| {
-        b.iter(|| black_box(to_upper(black_box(b'A'))))
-    });
+    group.finish();
 }
 
 fn bench_ctype_isspace(c: &mut Criterion) {
-    use frankenlibc_core::ctype::is_space;
+    let mode = mode_label();
+    let mut group = c.benchmark_group("ctype_isspace");
 
-    c.bench_function("ctype/isspace/space", |b| {
-        b.iter(|| black_box(is_space(black_box(b' '))))
+    for _ in 0..10_000 {
+        black_box(abi_isspace(b' '));
+        black_box(abi_isspace(b'x'));
+    }
+
+    bench_symbol(&mut group, mode, "isspace_space", "isspace", || {
+        black_box(abi_isspace(black_box(b' ')));
+    });
+    bench_symbol(&mut group, mode, "isspace_non_space", "isspace", || {
+        black_box(abi_isspace(black_box(b'x')));
     });
 
-    c.bench_function("ctype/isspace/non_space", |b| {
-        b.iter(|| black_box(is_space(black_box(b'x'))))
-    });
+    group.finish();
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -119,31 +276,45 @@ fn bench_math_pow(c: &mut Criterion) {
 // ═══════════════════════════════════════════════════════════════════
 
 fn bench_stdlib_atoi(c: &mut Criterion) {
-    use frankenlibc_core::stdlib::atoi;
+    let mode = mode_label();
+    let mut group = c.benchmark_group("stdlib_atoi");
 
-    c.bench_function("stdlib/atoi/small", |b| {
-        b.iter(|| black_box(atoi(black_box(b"42\0"))))
+    for _ in 0..10_000 {
+        black_box(abi_atoi(b"42\0"));
+        black_box(abi_atoi(b"2147483647\0"));
+        black_box(abi_atoi(b"-999\0"));
+    }
+
+    bench_symbol(&mut group, mode, "atoi_small", "atoi", || {
+        black_box(abi_atoi(black_box(b"42\0")));
+    });
+    bench_symbol(&mut group, mode, "atoi_large", "atoi", || {
+        black_box(abi_atoi(black_box(b"2147483647\0")));
+    });
+    bench_symbol(&mut group, mode, "atoi_negative", "atoi", || {
+        black_box(abi_atoi(black_box(b"-999\0")));
     });
 
-    c.bench_function("stdlib/atoi/large", |b| {
-        b.iter(|| black_box(atoi(black_box(b"2147483647\0"))))
-    });
-
-    c.bench_function("stdlib/atoi/negative", |b| {
-        b.iter(|| black_box(atoi(black_box(b"-999\0"))))
-    });
+    group.finish();
 }
 
 fn bench_stdlib_abs(c: &mut Criterion) {
-    use frankenlibc_core::stdlib::abs;
+    let mode = mode_label();
+    let mut group = c.benchmark_group("stdlib_abs");
 
-    c.bench_function("stdlib/abs/positive", |b| {
-        b.iter(|| black_box(abs(black_box(42))))
+    for _ in 0..10_000 {
+        black_box(frankenlibc_abi::stdlib_abi::abs(42));
+        black_box(frankenlibc_abi::stdlib_abi::abs(-42));
+    }
+
+    bench_symbol(&mut group, mode, "abs_positive", "abs", || {
+        black_box(frankenlibc_abi::stdlib_abi::abs(black_box(42)));
+    });
+    bench_symbol(&mut group, mode, "abs_negative", "abs", || {
+        black_box(frankenlibc_abi::stdlib_abi::abs(black_box(-42)));
     });
 
-    c.bench_function("stdlib/abs/negative", |b| {
-        b.iter(|| black_box(abs(black_box(-42))))
-    });
+    group.finish();
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -151,13 +322,26 @@ fn bench_stdlib_abs(c: &mut Criterion) {
 // ═══════════════════════════════════════════════════════════════════
 
 fn bench_errno_location(c: &mut Criterion) {
-    use frankenlibc_core::errno::{get_errno, set_errno};
+    let mode = mode_label();
+    let mut group = c.benchmark_group("errno_location");
 
-    set_errno(0);
+    // SAFETY: returned pointer is valid for the current thread.
+    unsafe { *abi_errno_location() = 0 };
+    for _ in 0..10_000 {
+        black_box(abi_errno_location());
+    }
 
-    c.bench_function("errno/__errno_location", |b| {
-        b.iter(|| black_box(get_errno()))
-    });
+    bench_symbol(
+        &mut group,
+        mode,
+        "errno_location",
+        "__errno_location",
+        || {
+            black_box(abi_errno_location());
+        },
+    );
+
+    group.finish();
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -210,29 +394,48 @@ fn bench_strcmp_varied(c: &mut Criterion) {
 }
 
 criterion_group!(
-    ctype_benches,
-    bench_ctype_isalpha,
-    bench_ctype_isdigit,
-    bench_ctype_toupper,
-    bench_ctype_isspace,
+    name = ctype_benches;
+    config = Criterion::default()
+        .warm_up_time(Duration::from_millis(1))
+        .measurement_time(Duration::from_millis(500))
+        .sample_size(50);
+    targets = bench_ctype_isalpha, bench_ctype_isdigit, bench_ctype_toupper, bench_ctype_isspace
 );
 
 criterion_group!(
-    math_benches,
-    bench_math_trig,
-    bench_math_exp_log,
-    bench_math_sqrt,
-    bench_math_pow,
+    name = math_benches;
+    config = Criterion::default()
+        .warm_up_time(Duration::from_millis(1))
+        .measurement_time(Duration::from_millis(500))
+        .sample_size(50);
+    targets = bench_math_trig, bench_math_exp_log, bench_math_sqrt, bench_math_pow
 );
 
-criterion_group!(stdlib_benches, bench_stdlib_atoi, bench_stdlib_abs,);
-
-criterion_group!(errno_benches, bench_errno_location,);
+criterion_group!(
+    name = stdlib_benches;
+    config = Criterion::default()
+        .warm_up_time(Duration::from_millis(1))
+        .measurement_time(Duration::from_millis(500))
+        .sample_size(50);
+    targets = bench_stdlib_atoi, bench_stdlib_abs
+);
 
 criterion_group!(
-    string_extended_benches,
-    bench_strlen_varied,
-    bench_strcmp_varied,
+    name = errno_benches;
+    config = Criterion::default()
+        .warm_up_time(Duration::from_millis(1))
+        .measurement_time(Duration::from_millis(500))
+        .sample_size(50);
+    targets = bench_errno_location
+);
+
+criterion_group!(
+    name = string_extended_benches;
+    config = Criterion::default()
+        .warm_up_time(Duration::from_millis(1))
+        .measurement_time(Duration::from_millis(500))
+        .sample_size(50);
+    targets = bench_strlen_varied, bench_strcmp_varied
 );
 
 criterion_main!(

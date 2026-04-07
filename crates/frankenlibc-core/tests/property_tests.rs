@@ -9,7 +9,7 @@
 //!
 //! Uses proptest for generative input with shrinking on failure.
 //!
-//! Bead: bd-2tq.3
+//! Bead: bd-1sp.8
 
 use proptest::prelude::*;
 use proptest::test_runner::Config as ProptestConfig;

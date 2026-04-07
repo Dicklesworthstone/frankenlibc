@@ -477,6 +477,21 @@ pub fn atof(s: &[u8]) -> f64 {
 mod tests {
     use super::*;
     use proptest::prelude::*;
+    use proptest::test_runner::Config as ProptestConfig;
+
+    fn property_proptest_config(default_cases: u32) -> ProptestConfig {
+        let cases = std::env::var("FRANKENLIBC_PROPTEST_CASES")
+            .ok()
+            .and_then(|value| value.parse::<u32>().ok())
+            .filter(|&value| value > 0)
+            .unwrap_or(default_cases);
+
+        ProptestConfig {
+            cases,
+            failure_persistence: None,
+            ..ProptestConfig::default()
+        }
+    }
 
     #[test]
     fn test_atoi_basic() {
@@ -775,6 +790,8 @@ mod tests {
     }
 
     proptest! {
+        #![proptest_config(property_proptest_config(256))]
+
         #[test]
         fn prop_strtol_round_trips_all_i64_values(value in any::<i64>()) {
             let text = value.to_string();
