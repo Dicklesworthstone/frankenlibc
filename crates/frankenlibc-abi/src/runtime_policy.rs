@@ -54,6 +54,7 @@ const KERNEL_EXPORT_RETRY_ATTEMPTS: usize = 5_000;
 const CONTROLLER_ID_RUNTIME_MODE: &str = "runtime_policy.mode.v1";
 const MODE_LOG_ARTIFACT: &str = "crates/frankenlibc-abi/src/runtime_policy.rs";
 const FFI_PCC_ARTIFACT: &str = "crates/frankenlibc-abi/src/runtime_policy.rs";
+const FFI_PCC_DOC_ARTIFACT: &str = "docs/pcc_proof_format.md";
 const FFI_PCC_STATE_UNVERIFIED: u8 = 0;
 const FFI_PCC_STATE_VERIFYING: u8 = 1;
 const FFI_PCC_STATE_VERIFIED: u8 = 2;
@@ -251,7 +252,14 @@ const FFI_PCC_READ_ONLY_FLAGS: FfiPccCertificateFlags = FfiPccCertificateFlags {
     skip_pointer_validation: true,
 };
 
-const FFI_PCC_CERTIFICATES: [FfiPccCertificate; 9] = [
+const FFI_PCC_COPY_FLAGS: FfiPccCertificateFlags = FfiPccCertificateFlags {
+    allow_write: true,
+    allow_bloom_negative: true,
+    skip_stage_ordering: true,
+    skip_pointer_validation: false,
+};
+
+const FFI_PCC_CERTIFICATES: [FfiPccCertificate; 12] = [
     FfiPccCertificate::new(
         "malloc",
         ApiFamily::Allocator,
@@ -314,6 +322,27 @@ const FFI_PCC_CERTIFICATES: [FfiPccCertificate; 9] = [
         9,
         usize::MAX,
         FFI_PCC_READ_ONLY_FLAGS,
+    ),
+    FfiPccCertificate::new(
+        "memcpy",
+        ApiFamily::StringMemory,
+        10,
+        usize::MAX,
+        FFI_PCC_COPY_FLAGS,
+    ),
+    FfiPccCertificate::new(
+        "snprintf",
+        ApiFamily::Stdio,
+        11,
+        usize::MAX,
+        FFI_PCC_ALLOCATOR_FLAGS,
+    ),
+    FfiPccCertificate::new(
+        "vsnprintf",
+        ApiFamily::Stdio,
+        12,
+        usize::MAX,
+        FFI_PCC_ALLOCATOR_FLAGS,
     ),
 ];
 
@@ -438,6 +467,16 @@ fn ffi_pcc_decision(cert: &FfiPccCertificate) -> RuntimeDecision {
 }
 
 #[must_use]
+pub(crate) fn proof_carried_fast_path_active(
+    family: ApiFamily,
+    requested_bytes: usize,
+    is_write: bool,
+    bloom_negative: bool,
+) -> bool {
+    lookup_active_ffi_pcc_certificate(family, requested_bytes, is_write, bloom_negative).is_some()
+}
+
+#[must_use]
 pub(crate) fn proof_carried_pointer_validation_active() -> bool {
     active_ffi_pcc_symbol_certificate().is_some_and(|row| row.skip_pointer_validation)
 }
@@ -468,7 +507,7 @@ pub(crate) fn export_ffi_pcc_manifest_json() -> String {
         .collect::<Vec<_>>()
         .join(",");
     format!(
-        "{{\"schema_version\":1,\"verification\":\"{verification}\",\"hash_prefix\":{},\"row_count\":{},\"artifact_refs\":[\"{FFI_PCC_ARTIFACT}\"],\"rows\":[{rows}]}}",
+        "{{\"schema_version\":1,\"verification\":\"{verification}\",\"hash_prefix\":{},\"row_count\":{},\"artifact_refs\":[\"{FFI_PCC_ARTIFACT}\",\"{FFI_PCC_DOC_ARTIFACT}\"],\"rows\":[{rows}]}}",
         FFI_PCC_HASH_PREFIX.load(AtomicOrdering::Relaxed),
         FFI_PCC_ROW_COUNT.load(AtomicOrdering::Relaxed),
     )
@@ -1602,6 +1641,13 @@ mod tests {
             .expect("env lock should not be poisoned")
     }
 
+    fn ffi_pcc_lock() -> MutexGuard<'static, ()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("ffi_pcc lock should not be poisoned")
+    }
+
     struct RuntimeReadyGuard {
         previous_ready: u8,
         previous_mode_log_ready: u8,
@@ -1967,14 +2013,19 @@ mod tests {
 
     #[test]
     fn ffi_pcc_manifest_exports_verified_rows() {
+        let _lock = ffi_pcc_lock();
         reset_ffi_pcc_state_for_tests();
         assert!(ensure_ffi_pcc_verified(), "ffi pcc table should verify");
 
         let manifest = export_ffi_pcc_manifest_json();
         assert!(manifest.contains("\"verification\":\"verified\""));
         assert!(manifest.contains("\"symbol\":\"malloc\""));
+        assert!(manifest.contains("\"symbol\":\"memcpy\""));
         assert!(manifest.contains("\"symbol\":\"memcmp\""));
+        assert!(manifest.contains("\"symbol\":\"snprintf\""));
+        assert!(manifest.contains("\"symbol\":\"vsnprintf\""));
         assert!(manifest.contains("\"skip_pointer_validation\":true"));
+        assert!(manifest.contains(FFI_PCC_DOC_ARTIFACT));
         assert!(
             FFI_PCC_HASH_PREFIX.load(AtomicOrdering::SeqCst) != 0,
             "verified manifest should publish a non-zero hash prefix"
@@ -1983,6 +2034,7 @@ mod tests {
 
     #[test]
     fn ffi_pcc_decide_uses_certificate_gate_for_malloc() {
+        let _lock = ffi_pcc_lock();
         reset_ffi_pcc_state_for_tests();
         reset_decision_contract_machine_for_tests();
         let _runtime_ready = enable_runtime_kernel_for_tests();
@@ -2000,7 +2052,46 @@ mod tests {
     }
 
     #[test]
+    fn ffi_pcc_decide_uses_certificate_gate_for_memcpy() {
+        let _lock = ffi_pcc_lock();
+        reset_ffi_pcc_state_for_tests();
+        reset_decision_contract_machine_for_tests();
+        let _runtime_ready = enable_runtime_kernel_for_tests();
+        let _mode = set_mode_state_for_tests(MODE_HARDENED);
+        let _scope = entrypoint_scope("memcpy");
+
+        let (_, decision) = decide(ApiFamily::StringMemory, 0x2000, 64, true, true, 0);
+        let explain = take_last_explainability().expect("explainability should be recorded");
+
+        assert_eq!(decision.policy_id, FFI_PCC_POLICY_BASE + 10);
+        assert_eq!(decision.profile, ValidationProfile::Fast);
+        assert_eq!(decision.action, MembraneAction::Allow);
+        assert_eq!(explain.decision_gate, DECISION_GATE_FFI_PCC);
+        assert_eq!(explain.policy_id, FFI_PCC_POLICY_BASE + 10);
+    }
+
+    #[test]
+    fn ffi_pcc_decide_uses_certificate_gate_for_snprintf() {
+        let _lock = ffi_pcc_lock();
+        reset_ffi_pcc_state_for_tests();
+        reset_decision_contract_machine_for_tests();
+        let _runtime_ready = enable_runtime_kernel_for_tests();
+        let _mode = set_mode_state_for_tests(MODE_HARDENED);
+        let _scope = entrypoint_scope("snprintf");
+
+        let (_, decision) = decide(ApiFamily::Stdio, 0x3000, 64, true, false, 0);
+        let explain = take_last_explainability().expect("explainability should be recorded");
+
+        assert_eq!(decision.policy_id, FFI_PCC_POLICY_BASE + 11);
+        assert_eq!(decision.profile, ValidationProfile::Fast);
+        assert_eq!(decision.action, MembraneAction::Allow);
+        assert_eq!(explain.decision_gate, DECISION_GATE_FFI_PCC);
+        assert_eq!(explain.policy_id, FFI_PCC_POLICY_BASE + 11);
+    }
+
+    #[test]
     fn ffi_pcc_pointer_validation_bypass_only_applies_to_certified_read_symbols() {
+        let _lock = ffi_pcc_lock();
         reset_ffi_pcc_state_for_tests();
         assert!(ensure_ffi_pcc_verified(), "ffi pcc table should verify");
 
@@ -2014,6 +2105,7 @@ mod tests {
 
     #[test]
     fn ffi_pcc_stage_ordering_bypasses_kernel_for_certified_symbols() {
+        let _lock = ffi_pcc_lock();
         reset_ffi_pcc_state_for_tests();
         assert!(ensure_ffi_pcc_verified(), "ffi pcc table should verify");
 

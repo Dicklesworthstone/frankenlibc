@@ -5,7 +5,8 @@ use std::sync::{Arc, Barrier};
 use std::time::Duration;
 
 use frankenlibc_abi::htm_fast_path::{
-    HtmTestMode, htm_restore_test_mode_for_tests, htm_swap_test_mode_for_tests,
+    HtmTestMode, htm_restore_test_mode_for_tests, htm_swap_abort_code_for_tests,
+    htm_swap_test_mode_for_tests,
 };
 use frankenlibc_abi::pthread_abi::{
     pthread_mutex_branch_counters_for_tests, pthread_mutex_destroy,
@@ -106,6 +107,39 @@ fn futex_mutex_htm_fast_path_commits_when_forced() {
         "pthread_mutex_lock should record an HTM commit before={before:?} after={after:?}"
     );
     assert_eq!(after.fallbacks, before.fallbacks);
+}
+
+#[test]
+fn futex_mutex_htm_abort_falls_back_and_still_roundtrips() {
+    let _guard = acquire_test_guard();
+    pthread_mutex_reset_state_for_tests();
+
+    let previous_mode = htm_swap_test_mode_for_tests(HtmTestMode::ForceAbort);
+    let previous_code = htm_swap_abort_code_for_tests(0xC0DE);
+    let before = pthread_mutex_htm_snapshot_for_tests();
+    let mutex = alloc_mutex_ptr();
+
+    unsafe {
+        assert_eq!(pthread_mutex_init(mutex, std::ptr::null()), 0);
+        assert_eq!(pthread_mutex_lock(mutex), 0);
+        assert_eq!(pthread_mutex_unlock(mutex), 0);
+        assert_eq!(pthread_mutex_destroy(mutex), 0);
+        free_mutex_ptr(mutex);
+    }
+
+    let after = pthread_mutex_htm_snapshot_for_tests();
+    htm_restore_test_mode_for_tests(previous_mode);
+    let _ = htm_swap_abort_code_for_tests(previous_code);
+
+    assert!(
+        after.aborts > before.aborts,
+        "pthread_mutex_lock should record an HTM abort before={before:?} after={after:?}"
+    );
+    assert!(
+        after.fallbacks > before.fallbacks,
+        "pthread_mutex_lock should fall back after HTM abort before={before:?} after={after:?}"
+    );
+    assert_eq!(after.last_abort_code, 0xC0DE);
 }
 
 #[test]

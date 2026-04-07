@@ -5,7 +5,7 @@
 //! layer managing allocation policy and metadata.
 
 use super::elimination::{DEFAULT_ELIMINATION_SLOTS, EliminationArray, OfferOutcome, TakeOutcome};
-use super::size_class::{self, NUM_SIZE_CLASSES};
+use super::size_class::{self, NUM_SIZE_CLASSES, SizeClassIndex};
 use super::thread_cache::ThreadCache;
 use frankenlibc_membrane::runtime_math::sos_barrier::evaluate_size_class_barrier;
 use std::sync::Arc;
@@ -165,15 +165,21 @@ impl MallocState {
         });
     }
 
+    fn central_bin(&self, index: SizeClassIndex) -> &Vec<usize> {
+        &self.central_bins[index.get()]
+    }
+
+    fn central_bin_mut(&mut self, index: SizeClassIndex) -> &mut Vec<usize> {
+        &mut self.central_bins[index.get()]
+    }
+
     /// Allocates `size` bytes of memory using the given backend.
     pub fn malloc<F>(&mut self, size: usize, mut alloc_fn: F) -> Option<usize>
     where
         F: FnMut(usize) -> Option<usize>,
     {
         let size = if size == 0 { 1 } else { size };
-        let bin = size_class::bin_index(size);
-
-        if bin >= NUM_SIZE_CLASSES {
+        let Some(bin) = size_class::small_bin_index(size) else {
             // Large allocation path
             let out = alloc_fn(size);
             if let Some(ptr) = out {
@@ -191,9 +197,10 @@ impl MallocState {
                 );
             }
             return out;
-        }
+        };
 
-        let class_size = size_class::bin_size(bin);
+        let bin_usize = bin.get();
+        let class_size = size_class::size_for_index(bin);
         let class_membership_valid = class_size >= size && class_size > 0;
         let size_class_cert_value =
             evaluate_size_class_barrier(size, class_size, class_membership_valid);
@@ -208,7 +215,7 @@ impl MallocState {
             "size_class_certificate",
             None,
             Some(size),
-            Some(bin),
+            Some(bin_usize),
             if size_class_cert_value >= 0 {
                 "certificate_pass"
             } else {
@@ -220,7 +227,7 @@ impl MallocState {
         );
 
         // Try thread cache first
-        if let Some(ptr) = self.thread_cache.alloc(bin) {
+        if let Some(ptr) = self.thread_cache.alloc(bin_usize) {
             self.thread_cache_hits += 1;
             self.total_allocated = self.total_allocated.saturating_add(size);
             self.active_count = self.active_count.saturating_add(1);
@@ -230,7 +237,7 @@ impl MallocState {
                 "alloc",
                 Some(ptr),
                 Some(size),
-                Some(bin),
+                Some(bin_usize),
                 "success",
                 "path=thread_cache",
             );
@@ -239,7 +246,7 @@ impl MallocState {
 
         self.thread_cache_misses += 1;
 
-        match self.elimination.try_take(bin) {
+        match self.elimination.try_take(bin_usize) {
             TakeOutcome::Matched { value: ptr, meta } => {
                 self.total_allocated = self.total_allocated.saturating_add(size);
                 self.active_count = self.active_count.saturating_add(1);
@@ -249,7 +256,7 @@ impl MallocState {
                     "alloc",
                     Some(ptr),
                     Some(size),
-                    Some(bin),
+                    Some(bin_usize),
                     "success",
                     format!(
                         "path=elimination;slot={};wait_cycles={};partner_thread={}",
@@ -264,7 +271,7 @@ impl MallocState {
         }
 
         // Try central bin
-        if let Some(ptr) = self.central_bins[bin].pop() {
+        if let Some(ptr) = self.central_bin_mut(bin).pop() {
             self.central_bin_hits += 1;
             self.total_allocated = self.total_allocated.saturating_add(size);
             self.active_count = self.active_count.saturating_add(1);
@@ -274,7 +281,7 @@ impl MallocState {
                 "alloc",
                 Some(ptr),
                 Some(size),
-                Some(bin),
+                Some(bin_usize),
                 "success",
                 "path=central_bin",
             );
@@ -291,7 +298,7 @@ impl MallocState {
                 "alloc",
                 Some(ptr),
                 Some(size),
-                Some(bin),
+                Some(bin_usize),
                 "success",
                 "path=backend_refill",
             );
@@ -304,7 +311,7 @@ impl MallocState {
             "alloc",
             None,
             Some(size),
-            Some(bin),
+            Some(bin_usize),
             "oom",
             "backend_refill_failed",
         );
@@ -321,8 +328,7 @@ impl MallocState {
         }
         let mut ptr = ptr;
 
-        let bin = size_class::bin_index(size);
-        if bin >= NUM_SIZE_CLASSES {
+        let Some(bin) = size_class::small_bin_index(size) else {
             self.total_allocated = self.total_allocated.saturating_sub(size);
             self.active_count = self.active_count.saturating_sub(1);
             free_fn(ptr);
@@ -337,12 +343,13 @@ impl MallocState {
                 "path=large_allocator",
             );
             return;
-        }
+        };
+        let bin_usize = bin.get();
 
         self.total_allocated = self.total_allocated.saturating_sub(size);
         self.active_count = self.active_count.saturating_sub(1);
 
-        match self.elimination.try_offer(bin, ptr) {
+        match self.elimination.try_offer(bin_usize, ptr) {
             OfferOutcome::Matched(meta) => {
                 self.record_lifecycle(
                     AllocatorLogLevel::Trace,
@@ -350,7 +357,7 @@ impl MallocState {
                     "free",
                     Some(ptr),
                     Some(size),
-                    Some(bin),
+                    Some(bin_usize),
                     "success",
                     format!(
                         "path=elimination;slot={};wait_cycles={};partner_thread={}",
@@ -366,29 +373,29 @@ impl MallocState {
             }
         }
 
-        if self.thread_cache.dealloc(bin, ptr) {
+        if self.thread_cache.dealloc(bin_usize, ptr) {
             self.record_lifecycle(
                 AllocatorLogLevel::Trace,
                 "free",
                 "free",
                 Some(ptr),
                 Some(size),
-                Some(bin),
+                Some(bin_usize),
                 "success",
                 "path=thread_cache",
             );
         } else {
             // Thread cache full, spill to central bin or backend
             self.spills_to_central += 1;
-            if self.central_bins[bin].len() < 1024 {
-                self.central_bins[bin].push(ptr);
+            if self.central_bin(bin).len() < 1024 {
+                self.central_bin_mut(bin).push(ptr);
                 self.record_lifecycle(
                     AllocatorLogLevel::Trace,
                     "free",
                     "free",
                     Some(ptr),
                     Some(size),
-                    Some(bin),
+                    Some(bin_usize),
                     "success",
                     "path=central_bin_spill",
                 );
@@ -400,7 +407,7 @@ impl MallocState {
                     "free",
                     Some(ptr),
                     Some(size),
-                    Some(bin),
+                    Some(bin_usize),
                     "success",
                     "path=backend_release",
                 );

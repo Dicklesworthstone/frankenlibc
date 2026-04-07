@@ -11,7 +11,8 @@ use frankenlibc_abi::malloc_abi::{
     malloc_htm_reset_for_tests, malloc_htm_snapshot_for_tests, malloc_info,
     malloc_restore_reentry_depth_for_tests, malloc_stats, malloc_stats_init_for_tests,
     malloc_swap_reentry_depth_for_tests, malloc_trim, malloc_usable_size, mallopt, memalign,
-    posix_memalign, pvalloc, realloc, valloc,
+    posix_memalign, pvalloc, realloc, signal_runtime_ready_for_tests,
+    take_last_decision_gate_for_tests, valloc,
 };
 use std::ffi::c_void;
 use std::ptr;
@@ -41,6 +42,22 @@ fn test_malloc_basic_alloc_and_free() {
             assert_eq!(*byte, (i & 0xFF) as u8);
         }
     }
+    unsafe { free(p) };
+}
+
+#[test]
+fn test_malloc_records_ffi_pcc_gate_when_runtime_ready() {
+    let _guard = test_lock().lock().expect("test lock poisoned");
+    signal_runtime_ready_for_tests();
+    let _ = take_last_decision_gate_for_tests();
+
+    let p = unsafe { malloc(256) };
+
+    assert!(!p.is_null(), "malloc(256) should succeed");
+    assert_eq!(
+        take_last_decision_gate_for_tests(),
+        Some("runtime_policy.ffi_pcc.decide")
+    );
     unsafe { free(p) };
 }
 

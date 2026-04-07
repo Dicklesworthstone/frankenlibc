@@ -1176,6 +1176,16 @@ pub fn malloc_restore_reentry_depth_for_tests(previous: u32) {
     let _ = ALLOCATOR_REENTRY_DEPTH.try_with(|depth| depth.set(previous));
 }
 
+#[doc(hidden)]
+pub fn signal_runtime_ready_for_tests() {
+    runtime_policy::signal_runtime_ready();
+}
+
+#[doc(hidden)]
+pub fn take_last_decision_gate_for_tests() -> Option<&'static str> {
+    runtime_policy::take_last_explainability().map(|explain| explain.decision_gate)
+}
+
 #[inline]
 fn strict_allocator_host_path_active() -> bool {
     !runtime_policy::mode().heals_enabled()
@@ -1265,7 +1275,34 @@ pub unsafe extern "C" fn malloc(size: usize) -> *mut c_void {
     };
 
     let req = size.max(1);
+    let _trace_scope = runtime_policy::entrypoint_scope("malloc");
     if strict_allocator_host_path_active() {
+        if cfg!(not(test))
+            && runtime_policy::is_runtime_ready()
+            && runtime_policy::proof_carried_fast_path_active(
+                ApiFamily::Allocator,
+                req,
+                true,
+                false,
+            )
+        {
+            let (_, decision) =
+                runtime_policy::decide(ApiFamily::Allocator, req, req, true, false, 0);
+            // SAFETY: strict-mode preload delegates allocator semantics to host libc
+            // to preserve compatibility while the PCC gate records explainability.
+            let out = unsafe { native_libc_malloc(req) };
+            fallback_insert(out);
+            if !out.is_null() {
+                record_alloc_stats(req);
+            }
+            runtime_policy::observe(
+                ApiFamily::Allocator,
+                decision.profile,
+                runtime_policy::scaled_cost(8, req),
+                out.is_null(),
+            );
+            return out;
+        }
         // SAFETY: strict-mode preload delegates allocator semantics to host libc
         // to preserve process compatibility while hardened mode exercises the
         // membrane allocator and repair pipeline.
@@ -1276,7 +1313,6 @@ pub unsafe extern "C" fn malloc(size: usize) -> *mut c_void {
         }
         return out;
     }
-    let _trace_scope = runtime_policy::entrypoint_scope("malloc");
     let _signal_guard =
         enter_signal_critical_section(SignalCriticalSectionKind::MallocArenaLockAcquire);
     let (aligned, recent_page, ordering) = allocator_stage_context(0);

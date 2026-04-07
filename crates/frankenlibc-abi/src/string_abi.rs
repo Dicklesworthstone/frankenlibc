@@ -610,6 +610,16 @@ pub fn memcpy_htm_snapshot_for_tests() -> HtmSiteSnapshot {
     MEMCPY_HTM_SITE.snapshot()
 }
 
+#[doc(hidden)]
+pub fn signal_runtime_ready_for_tests() {
+    runtime_policy::signal_runtime_ready();
+}
+
+#[doc(hidden)]
+pub fn take_last_decision_gate_for_tests() -> Option<&'static str> {
+    runtime_policy::take_last_explainability().map(|explain| explain.decision_gate)
+}
+
 fn maybe_clamp_copy_len(
     requested: usize,
     src_remaining: Option<usize>,
@@ -731,6 +741,7 @@ pub unsafe extern "C" fn memcpy(dst: *mut c_void, src: *const c_void, n: usize) 
     if dst.is_null() || src.is_null() {
         return std::ptr::null_mut();
     }
+    let _trace_scope = runtime_policy::entrypoint_scope("memcpy");
 
     // Fast path during early startup: skip membrane entirely.
     if runtime_policy::bootstrap_passthrough_active() {
@@ -742,6 +753,20 @@ pub unsafe extern "C" fn memcpy(dst: *mut c_void, src: *const c_void, n: usize) 
         return dst;
     }
     if !runtime_policy::mode().heals_enabled() {
+        if runtime_policy::proof_carried_fast_path_active(ApiFamily::StringMemory, n, true, true) {
+            let (_, decision) =
+                runtime_policy::decide(ApiFamily::StringMemory, dst as usize, n, true, true, 0);
+            if !try_memcpy_htm(dst.cast::<u8>(), src.cast::<u8>(), n) {
+                unsafe { raw_dispatch_memcpy_bytes(dst.cast::<u8>(), src.cast::<u8>(), n) };
+            }
+            runtime_policy::observe(
+                ApiFamily::StringMemory,
+                decision.profile,
+                runtime_policy::scaled_cost(7, n),
+                false,
+            );
+            return dst;
+        }
         if !try_memcpy_htm(dst.cast::<u8>(), src.cast::<u8>(), n) {
             unsafe { raw_dispatch_memcpy_bytes(dst.cast::<u8>(), src.cast::<u8>(), n) };
         }

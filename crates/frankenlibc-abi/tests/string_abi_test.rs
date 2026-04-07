@@ -32,6 +32,23 @@ fn memcpy_copies_bytes() {
 }
 
 #[test]
+fn memcpy_records_ffi_pcc_gate_when_runtime_ready() {
+    signal_runtime_ready_for_tests();
+    let _ = take_last_decision_gate_for_tests();
+
+    let src = b"pcc-fast-path";
+    let mut dst = [0u8; 16];
+    let ret = unsafe { memcpy(dst.as_mut_ptr().cast(), src.as_ptr().cast(), src.len()) };
+
+    assert_eq!(ret, dst.as_mut_ptr().cast::<c_void>());
+    assert_eq!(&dst[..src.len()], src);
+    assert_eq!(
+        take_last_decision_gate_for_tests(),
+        Some("runtime_policy.ffi_pcc.decide")
+    );
+}
+
+#[test]
 fn memcpy_zero_length_is_noop() {
     let src = b"data";
     let mut dst = [0u8; 8];

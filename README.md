@@ -193,8 +193,8 @@ In practice:
 - The current shipping artifact is the **interpose** shared library: `target/release/libfrankenlibc_abi.so`.
 - The future **replace** artifact (`libfrankenlibc_replace.so`) is still planned, not done.
 - The classified symbol surface no longer reports direct `GlibcCallThrough` symbols, but the current shipping artifact is still an interpose-first preload library rather than a full standalone libc replacement.
-- Recent local preload smoke artifacts under `target/ld_preload_smoke/` include green strict-mode runs. For example, the latest checked artifact on **April 4, 2026** recorded `58 passes / 0 fails / 6 skips` (skips are missing optional binaries: sqlite3, redis-cli, nginx). Broad paired strict+hardened smoke closure is still tracked separately.
-- The full smoke suite (echo, env, ls, sort, cat, head, tail, wc, cut, tr, sed, awk, grep, find, xargs, date, hostname, uname, id, whoami, stat, du, df, git, python3, busybox, ln, readlink, basename, dirname) passes in both strict and hardened modes. The interpose artifact is usable for a broad workload set, with broader production hardening still in progress.
+- Canonical checked smoke artifact: `tests/conformance/ld_preload_smoke_summary.v1.json` (run `20260404T011731Z`, checked April 4, 2026) reports 58 passes / 0 fails / 6 skips overall, with strict 29/0/3 and hardened 29/0/3 across the curated preload smoke battery.
+- The six skips are the optional `sqlite3`, `redis-cli`, and `nginx` probes across both modes. That checked curated battery is green; broader production hardening, release-claim closure, and non-curated workload stability are still tracked separately.
 
 ## Threat Model
 
@@ -1065,8 +1065,8 @@ bash scripts/check_support_matrix_maintenance.sh
 
 - The current production artifact is the **interpose** shared library, not a full standalone libc replacement.
 - Host glibc is still part of the deployment story because the shipping artifact is still `LD_PRELOAD` interposition, not a standalone libc drop-in.
-- Broad paired strict+hardened preload smoke closure is still in progress; use the current smoke artifacts and gates rather than README prose for the latest readiness status.
-- Hardened mode exists and has targeted validation/oracle coverage, but it is not yet broadly stable across the smoke workload set.
+- The checked curated preload smoke battery is green in both strict and hardened modes, but broader production hardening and release-claim closure are still in progress; use the canonical smoke artifact and gates rather than paraphrased README prose when the exact status matters.
+- Hardened mode exists, has targeted validation/oracle coverage, and has a checked green curated smoke run; that is still not a blanket production-readiness claim for arbitrary workloads.
 - Performance is not yet a settled success story; strict-mode perf regressions still show up in smoke/perf gates and must be measured rather than assumed away.
 - The README can summarize current reality, but the canonical truth still lives in generated reports and gates.
 - Linux is the real target. Multi-architecture and full replacement stories are still active work.

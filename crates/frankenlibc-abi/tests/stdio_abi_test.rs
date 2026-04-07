@@ -103,9 +103,11 @@ use frankenlibc_abi::stdio_abi::{
     setbuffer,
     setlinebuf,
     setvbuf,
+    signal_runtime_ready_for_tests,
     snprintf,
     sprintf,
     sscanf,
+    take_last_decision_gate_for_tests,
     tmpfile,
     tmpfile64,
     tmpnam,
@@ -831,6 +833,21 @@ fn snprintf_truncates_and_reports_full_length() {
     // SAFETY: snprintf guarantees NUL-termination when size > 0.
     let out = unsafe { CStr::from_ptr(buf.as_ptr()) };
     assert_eq!(out.to_bytes(), b"abcd");
+}
+
+#[test]
+fn snprintf_records_ffi_pcc_gate_when_runtime_ready() {
+    signal_runtime_ready_for_tests();
+    let _ = take_last_decision_gate_for_tests();
+
+    let mut buf = [0_i8; 16];
+    let written = unsafe { snprintf(buf.as_mut_ptr(), buf.len(), c"hello".as_ptr()) };
+
+    assert_eq!(written, 5);
+    assert_eq!(
+        take_last_decision_gate_for_tests(),
+        Some("runtime_policy.ffi_pcc.decide")
+    );
 }
 
 #[test]

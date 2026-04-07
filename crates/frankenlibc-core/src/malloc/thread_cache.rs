@@ -5,7 +5,7 @@
 //! design where batches of objects are moved between the thread cache and
 //! the central freelist.
 
-use super::size_class::NUM_SIZE_CLASSES;
+use super::size_class::{NUM_SIZE_CLASSES, SizeClassIndex, size_class_index};
 
 /// Maximum number of cached objects per size class per thread.
 pub const MAGAZINE_CAPACITY: usize = 64;
@@ -70,15 +70,23 @@ impl ThreadCache {
         Self::default()
     }
 
+    fn magazine(&self, index: SizeClassIndex) -> &Magazine {
+        &self.magazines[index.get()]
+    }
+
+    fn magazine_mut(&mut self, index: SizeClassIndex) -> &mut Magazine {
+        &mut self.magazines[index.get()]
+    }
+
     /// Attempts to allocate from the thread cache for the given size class.
     ///
     /// Returns an object offset from the magazine, or `None` if the magazine
     /// is empty (caller should fall back to central allocator).
-    pub fn alloc(&mut self, size_class_index: usize) -> Option<usize> {
-        if size_class_index >= NUM_SIZE_CLASSES {
+    pub fn alloc(&mut self, raw_size_class_index: usize) -> Option<usize> {
+        let Ok(index) = size_class_index(raw_size_class_index, "ThreadCache::alloc") else {
             return None;
-        }
-        let result = self.magazines[size_class_index].pop();
+        };
+        let result = self.magazine_mut(index).pop();
         if result.is_some() {
             self.total_cached -= 1;
         }
@@ -89,11 +97,11 @@ impl ThreadCache {
     ///
     /// Returns `true` if the object was cached. Returns `false` if the
     /// magazine is full (caller should return to central allocator instead).
-    pub fn dealloc(&mut self, size_class_index: usize, ptr: usize) -> bool {
-        if size_class_index >= NUM_SIZE_CLASSES {
+    pub fn dealloc(&mut self, raw_size_class_index: usize, ptr: usize) -> bool {
+        let Ok(index) = size_class_index(raw_size_class_index, "ThreadCache::dealloc") else {
             return false;
-        }
-        let cached = self.magazines[size_class_index].push(ptr);
+        };
+        let cached = self.magazine_mut(index).push(ptr);
         if cached {
             self.total_cached += 1;
         }
@@ -106,21 +114,22 @@ impl ThreadCache {
     }
 
     /// Drains a specific magazine, returning all cached objects.
-    pub fn drain_magazine(&mut self, size_class_index: usize) -> Vec<usize> {
-        if size_class_index >= NUM_SIZE_CLASSES {
+    pub fn drain_magazine(&mut self, raw_size_class_index: usize) -> Vec<usize> {
+        let Ok(index) = size_class_index(raw_size_class_index, "ThreadCache::drain_magazine")
+        else {
             return Vec::new();
-        }
-        let drained = self.magazines[size_class_index].drain();
+        };
+        let drained = self.magazine_mut(index).drain();
         self.total_cached -= drained.len();
         drained
     }
 
     /// Returns true if the magazine for the given size class is full.
-    pub fn is_full(&self, size_class_index: usize) -> bool {
-        if size_class_index >= NUM_SIZE_CLASSES {
+    pub fn is_full(&self, raw_size_class_index: usize) -> bool {
+        let Ok(index) = size_class_index(raw_size_class_index, "ThreadCache::is_full") else {
             return true;
-        }
-        self.magazines[size_class_index].is_full()
+        };
+        self.magazine(index).is_full()
     }
 }
 

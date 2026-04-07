@@ -2618,8 +2618,16 @@ pub unsafe extern "C" fn snprintf(
     if format.is_null() {
         return -1;
     }
+    let _trace_scope = runtime_policy::entrypoint_scope("snprintf");
 
-    let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, 0, size, false, false, 0);
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Stdio,
+        str_buf as usize,
+        size,
+        true,
+        str_buf.is_null() && size > 0,
+        0,
+    );
     if matches!(decision.action, MembraneAction::Deny) {
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
         return -1;
@@ -3146,6 +3154,7 @@ pub unsafe extern "C" fn vsnprintf(
     if format.is_null() {
         return -1;
     }
+    let _trace_scope = runtime_policy::entrypoint_scope("vsnprintf");
     let (_, decision) =
         runtime_policy::decide(ApiFamily::Stdio, str_buf as usize, size, true, false, 0);
     if matches!(decision.action, MembraneAction::Deny) {
@@ -3177,6 +3186,16 @@ pub unsafe extern "C" fn vsnprintf(
         false,
     );
     total_len as c_int
+}
+
+#[doc(hidden)]
+pub fn signal_runtime_ready_for_tests() {
+    runtime_policy::signal_runtime_ready();
+}
+
+#[doc(hidden)]
+pub fn take_last_decision_gate_for_tests() -> Option<&'static str> {
+    runtime_policy::take_last_explainability().map(|explain| explain.decision_gate)
 }
 
 /// POSIX `vsprintf` — format into buffer from va_list (no size limit).

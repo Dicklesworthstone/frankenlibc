@@ -46,6 +46,11 @@ const EPOCH_OFFLINE: u64 = 0;
 
 /// Cache-line size for padding to avoid false sharing.
 const CACHE_LINE: usize = 64;
+/// ReaderSlot metadata before explicit padding: tid (4) + alignment pad (4)
+/// + epoch (8).
+const READER_SLOT_METADATA_BYTES: usize = 16;
+/// Explicit padding needed to keep each reader slot isolated to one cache line.
+const READER_SLOT_PADDING_BYTES: usize = CACHE_LINE - READER_SLOT_METADATA_BYTES;
 const SEQLOCK_MAX_BYTES: usize = 64;
 const SEQLOCK_LANE_BYTES: usize = 8;
 const SEQLOCK_LANES: usize = SEQLOCK_MAX_BYTES / SEQLOCK_LANE_BYTES;
@@ -60,8 +65,8 @@ const SEQLOCK_LANES: usize = SEQLOCK_MAX_BYTES / SEQLOCK_LANE_BYTES;
 /// by the reader at quiescent points and read by writers during
 /// `synchronize_rcu()`.
 ///
-/// Layout: tid (4 bytes) + alignment padding (4 bytes) + epoch (8 bytes) = 16
-/// bytes of data before explicit padding. Total must equal CACHE_LINE (64).
+/// Layout: tid (4 bytes) + alignment padding (4 bytes) + epoch (8 bytes) =
+/// `READER_SLOT_METADATA_BYTES`. Total size must equal one cache line.
 #[repr(C, align(64))]
 struct ReaderSlot {
     /// Thread ID that owns this slot (0 = empty).
@@ -69,10 +74,8 @@ struct ReaderSlot {
     /// Reader's observed epoch. Set to `EPOCH_OFFLINE` when not in a
     /// read-side critical section or when the thread is unregistered.
     epoch: AtomicU64,
-    /// Padding to fill a cache line (64 bytes).
-    /// tid (4) + implicit alignment pad (4) + epoch (8) = 16 bytes;
-    /// need 48 bytes of explicit padding.
-    _pad: [u8; CACHE_LINE - 16],
+    /// Padding to fill the rest of the cache line and prevent false sharing.
+    _pad: [u8; READER_SLOT_PADDING_BYTES],
 }
 
 impl ReaderSlot {
@@ -80,7 +83,7 @@ impl ReaderSlot {
         Self {
             tid: AtomicU32::new(SLOT_EMPTY),
             epoch: AtomicU64::new(EPOCH_OFFLINE),
-            _pad: [0u8; CACHE_LINE - 16],
+            _pad: [0u8; READER_SLOT_PADDING_BYTES],
         }
     }
 }
@@ -140,6 +143,16 @@ static CB_READ_IDX: AtomicUsize = AtomicUsize::new(0);
 
 /// Guard flag to prevent concurrent callback processing (double-invoke).
 static CB_PROCESSING: AtomicBool = AtomicBool::new(false);
+
+#[inline(always)]
+fn callback_queue_is_full(write_idx: usize, read_idx: usize) -> bool {
+    write_idx.wrapping_sub(read_idx) >= CALLBACK_QUEUE_CAP
+}
+
+#[inline(always)]
+fn callback_queue_slot(counter: usize) -> usize {
+    counter % CALLBACK_QUEUE_CAP
+}
 
 // ---------------------------------------------------------------------------
 // Reader-side API
@@ -374,18 +387,33 @@ pub fn synchronize_rcu() {
 #[allow(unsafe_code)]
 pub unsafe fn call_rcu(func: fn(usize), arg: usize) -> Result<(), i32> {
     let epoch = GLOBAL_EPOCH.load(Ordering::Acquire);
+    let write_idx = loop {
+        let read_idx = CB_READ_IDX.load(Ordering::Acquire);
+        let write_idx = CB_WRITE_IDX.load(Ordering::Acquire);
 
-    // Atomically claim the next slot in the circular buffer.
-    let write_idx = CB_WRITE_IDX.fetch_add(1, Ordering::AcqRel) % CALLBACK_QUEUE_CAP;
-    let read_idx = CB_READ_IDX.load(Ordering::Acquire);
+        if callback_queue_is_full(write_idx, read_idx) {
+            // Queue is saturated. Try to free mature callbacks before
+            // admitting a new one, but never overwrite unread entries.
+            process_rcu_callbacks();
+            let read_after = CB_READ_IDX.load(Ordering::Acquire);
+            let write_after = CB_WRITE_IDX.load(Ordering::Acquire);
+            if callback_queue_is_full(write_after, read_after) {
+                return Err(crate::errno::EAGAIN);
+            }
+            spin_loop();
+            continue;
+        }
 
-    // Check for queue full (simple: if write catches up to read).
-    // In practice the queue is large enough that this shouldn't happen.
-    let next_write = (write_idx + 1) % CALLBACK_QUEUE_CAP;
-    if next_write == read_idx % CALLBACK_QUEUE_CAP {
-        // Queue is full — process pending callbacks synchronously.
-        process_rcu_callbacks();
-    }
+        match CB_WRITE_IDX.compare_exchange(
+            write_idx,
+            write_idx + 1,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        ) {
+            Ok(_) => break callback_queue_slot(write_idx),
+            Err(_) => spin_loop(),
+        }
+    };
 
     CALLBACK_QUEUE[write_idx]
         .func
@@ -1005,6 +1033,7 @@ pub(crate) fn reset_rcu_state() {
     }
     CB_WRITE_IDX.store(0, Ordering::Release);
     CB_READ_IDX.store(0, Ordering::Release);
+    CB_PROCESSING.store(false, Ordering::Release);
     for callback in CALLBACK_QUEUE.iter().take(CALLBACK_QUEUE_CAP) {
         callback.func.store(0, Ordering::Release);
         callback.arg.store(0, Ordering::Release);
@@ -1038,6 +1067,24 @@ mod tests {
         let idx = result.unwrap();
         assert_eq!(READER_SLOTS[idx].tid.load(Ordering::Acquire), 100);
         assert_eq!(REGISTERED_COUNT.load(Ordering::Acquire), 1);
+    }
+
+    #[test]
+    fn test_reader_slot_layout_matches_cache_line_contract() {
+        assert_eq!(
+            core::mem::size_of::<ReaderSlot>(),
+            CACHE_LINE,
+            "ReaderSlot must occupy exactly one cache line"
+        );
+        assert_eq!(
+            core::mem::align_of::<ReaderSlot>(),
+            CACHE_LINE,
+            "ReaderSlot alignment must match cache-line padding strategy"
+        );
+        assert_eq!(
+            READER_SLOT_METADATA_BYTES + READER_SLOT_PADDING_BYTES,
+            CACHE_LINE
+        );
     }
 
     #[test]
@@ -1360,6 +1407,41 @@ mod tests {
         assert_eq!(RECEIVED_ARG.load(Ordering::Acquire), 0xDEAD_BEEF);
     }
 
+    #[test]
+    fn test_call_rcu_full_queue_returns_eagain_without_overwrite() {
+        let _g = lock_and_reset();
+
+        fn noop(_arg: usize) {}
+
+        rcu_register_thread(1250).unwrap();
+        for arg in 0..CALLBACK_QUEUE_CAP {
+            unsafe {
+                call_rcu(noop, arg).expect("queue should accept up to full capacity");
+            }
+        }
+
+        assert_eq!(
+            CALLBACK_QUEUE[0].arg.load(Ordering::Acquire),
+            0,
+            "first queued callback should remain intact before wraparound"
+        );
+        assert_eq!(
+            CALLBACK_QUEUE[CALLBACK_QUEUE_CAP - 1]
+                .arg
+                .load(Ordering::Acquire),
+            CALLBACK_QUEUE_CAP - 1
+        );
+
+        let err = unsafe { call_rcu(noop, usize::MAX) }.unwrap_err();
+        assert_eq!(err, crate::errno::EAGAIN);
+        assert_eq!(
+            CALLBACK_QUEUE[0].arg.load(Ordering::Acquire),
+            0,
+            "overflow attempt must not overwrite the oldest unread callback"
+        );
+        assert_eq!(CB_WRITE_IDX.load(Ordering::Acquire), CALLBACK_QUEUE_CAP);
+    }
+
     // --- rcu_read_lock / rcu_read_unlock are no-ops ---
 
     #[test]
@@ -1389,8 +1471,8 @@ mod tests {
 
         // Advance global and update only one reader.
         GLOBAL_EPOCH.fetch_add(1, Ordering::AcqRel);
-        rcu_quiescent_state(1300); // Now at epoch 2.
-        // 1301 is still at epoch 1.
+        // 1300 reaches epoch 2 while 1301 is still parked at epoch 1.
+        rcu_quiescent_state(1300);
 
         assert_eq!(min_reader_epoch(), 1);
 

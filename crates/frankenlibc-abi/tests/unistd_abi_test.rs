@@ -28,12 +28,12 @@ use frankenlibc_abi::unistd_abi::{
     gethostname, getnetbyaddr_r, getnetbyname_r, getnetent_r, getnetgrent, getnetgrent_r, getpid,
     getppid, getprotobyname_r, getprotobynumber_r, getprotoent, getprotoent_r, getservent,
     getservent_r, getttyent, getttynam, getuid, getutent_r, getutid, getutid_r, getutline,
-    getutline_r, gsignal, isatty, link, logout, lseek, lstat, mkdir, mkfifo, msgrcv, msgsnd, open,
-    pathconf, process_madvise, process_mrelease, process_vm_readv, process_vm_writev, read,
-    readlink, rename, rmdir, semctl, semop, setfsent, sethostent, setnetent, setnetgrent,
-    setprotoent, setservent, setttyent, setutent, shmdt, sigpause, sigset, sigstack, sigvec,
-    ssignal, stat, strfmon, strfmon_l, symlink, sysconf, truncate, umask, uname, unlink, updwtmp,
-    updwtmpx, usleep, utmpname, write,
+    getutline_r, glob64, globfree64, gsignal, isatty, link, logout, lseek, lstat, mkdir, mkfifo,
+    msgrcv, msgsnd, open, pathconf, process_madvise, process_mrelease, process_vm_readv,
+    process_vm_writev, read, readlink, rename, rmdir, semctl, semop, setfsent, sethostent,
+    setnetent, setnetgrent, setprotoent, setservent, setttyent, setutent, shmdt, sigpause, sigset,
+    sigstack, sigvec, ssignal, stat, strfmon, strfmon_l, symlink, sysconf, truncate, umask, uname,
+    unlink, updwtmp, updwtmpx, usleep, utmpname, write,
 };
 
 static SIGNAL_HIT: AtomicI32 = AtomicI32::new(0);
@@ -129,27 +129,24 @@ fn isatty_regular_file_sets_enotty_like_host() {
 // glob64 / globfree64 tests
 // ---------------------------------------------------------------------------
 
-unsafe extern "C" {
-    fn glob64(
-        pattern: *const c_char,
-        flags: c_int,
-        errfunc: Option<unsafe extern "C" fn(*const c_char, c_int) -> c_int>,
-        pglob: *mut c_void,
-    ) -> c_int;
-    fn globfree64(pglob: *mut c_void);
-}
-
-/// Properly aligned glob_t-sized buffer (glob_t contains pointers, needs 8-byte alignment).
-#[repr(C, align(8))]
+/// Minimal view of the `glob_t` prefix used by our `glob64`/`globfree64`
+/// implementation on x86_64, where `glob_t` and `glob64_t` are layout-identical.
+#[repr(C)]
 struct GlobBuf {
-    data: [u8; 64],
+    gl_pathc: usize,
+    gl_pathv: *mut *mut c_char,
+    gl_offs: usize,
 }
 
 #[test]
 fn glob64_literal_path_exists() {
     // /tmp should exist on any Linux system.
     let pattern = b"/tmp\0";
-    let mut glob_buf = GlobBuf { data: [0u8; 64] };
+    let mut glob_buf = GlobBuf {
+        gl_pathc: 0,
+        gl_pathv: std::ptr::null_mut(),
+        gl_offs: 0,
+    };
 
     let rc = unsafe {
         glob64(
@@ -160,28 +157,34 @@ fn glob64_literal_path_exists() {
         )
     };
     assert_eq!(rc, 0, "glob64 should succeed for /tmp");
-
-    // gl_pathc is at offset 0, should be 1
-    let pathc = unsafe { *(glob_buf.data.as_ptr() as *const usize) };
-    assert_eq!(pathc, 1, "should find exactly 1 match for literal /tmp");
-
-    // gl_pathv is at offset 8
-    let pathv = unsafe { *(glob_buf.data.as_ptr().add(8) as *const *const *const c_char) };
-    assert!(!pathv.is_null());
+    assert_eq!(
+        glob_buf.gl_pathc, 1,
+        "should find exactly 1 match for literal /tmp"
+    );
+    assert!(!glob_buf.gl_pathv.is_null());
 
     // First path should be "/tmp"
-    let first = unsafe { *pathv };
+    let first = unsafe { *glob_buf.gl_pathv };
     assert!(!first.is_null());
     let first_str = unsafe { std::ffi::CStr::from_ptr(first) };
     assert_eq!(first_str.to_bytes(), b"/tmp");
 
     unsafe { globfree64(&mut glob_buf as *mut GlobBuf as *mut c_void) };
+    assert_eq!(glob_buf.gl_pathc, 0, "globfree64 should clear gl_pathc");
+    assert!(
+        glob_buf.gl_pathv.is_null(),
+        "globfree64 should clear gl_pathv"
+    );
 }
 
 #[test]
 fn glob64_nomatch_returns_error() {
     let pattern = b"/nonexistent_frankenlibc_glob_test_xyz_42\0";
-    let mut glob_buf = GlobBuf { data: [0u8; 64] };
+    let mut glob_buf = GlobBuf {
+        gl_pathc: 0,
+        gl_pathv: std::ptr::null_mut(),
+        gl_offs: 0,
+    };
 
     let rc = unsafe {
         glob64(

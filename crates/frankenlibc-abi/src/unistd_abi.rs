@@ -9446,90 +9446,16 @@ pub unsafe extern "C" fn glob64(
     _errfunc: Option<unsafe extern "C" fn(*const c_char, c_int) -> c_int>,
     pglob: *mut c_void,
 ) -> c_int {
-    // On x86_64, glob_t and glob64_t are identical (off_t == off64_t).
-    // Delegate to our native glob implementation.
-    use frankenlibc_core::string::glob as glob_core;
-
-    if pattern.is_null() || pglob.is_null() {
-        return glob_core::GLOB_NOMATCH;
-    }
-
-    let pat_bytes = {
-        let mut len = 0usize;
-        unsafe {
-            while *pattern.add(len) != 0 {
-                len += 1;
-            }
-        }
-        unsafe { std::slice::from_raw_parts(pattern as *const u8, len) }
-    };
-
-    let result = glob_core::glob_expand(pat_bytes, flags);
-
-    match result {
-        Ok(res) => {
-            let count = res.paths.len();
-            // Allocate pathv array (count + 1 for NULL sentinel).
-            let pathv = unsafe {
-                crate::malloc_abi::raw_alloc((count + 1) * std::mem::size_of::<*mut c_char>())
-                    as *mut *mut c_char
-            };
-            if pathv.is_null() {
-                return glob_core::GLOB_NOSPACE;
-            }
-            for (i, path) in res.paths.iter().enumerate() {
-                let dup = unsafe { crate::malloc_abi::raw_alloc(path.len() + 1) as *mut c_char };
-                if dup.is_null() {
-                    // Free already allocated.
-                    for j in 0..i {
-                        unsafe { crate::malloc_abi::raw_free(*pathv.add(j) as *mut c_void) };
-                    }
-                    unsafe { crate::malloc_abi::raw_free(pathv as *mut c_void) };
-                    return glob_core::GLOB_NOSPACE;
-                }
-                unsafe {
-                    std::ptr::copy_nonoverlapping(path.as_ptr(), dup as *mut u8, path.len());
-                    *dup.add(path.len()) = 0; // null terminate
-                    *pathv.add(i) = dup;
-                }
-            }
-            unsafe { *pathv.add(count) = std::ptr::null_mut() };
-
-            // Write glob_t fields: gl_pathc, gl_pathv, gl_offs.
-            unsafe {
-                *(pglob as *mut usize) = count; // gl_pathc
-                *((pglob as *mut u8).add(8) as *mut *mut *mut c_char) = pathv; // gl_pathv
-            }
-            0
-        }
-        Err(e) => e,
-    }
+    // On x86_64, glob_t and glob64_t are layout-identical, so delegate to the
+    // canonical implementation instead of maintaining a second raw-offset path.
+    unsafe { crate::string_abi::glob(pattern, flags, _errfunc, pglob) }
 }
 
 /// `globfree64` — on x86_64, identical to `globfree` (LFS transparent).
 /// Delegates to native globfree implementation in string_abi.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn globfree64(pglob: *mut c_void) {
-    if pglob.is_null() {
-        return;
-    }
-    let pathc = unsafe { *(pglob as *const usize) };
-    let pathv = unsafe { *((pglob as *const u8).add(8) as *const *mut *mut c_char) };
-    if !pathv.is_null() {
-        let offs = unsafe { *((pglob as *const u8).add(16) as *const usize) };
-        for i in offs..offs + pathc {
-            let p = unsafe { *pathv.add(i) };
-            if !p.is_null() {
-                unsafe { crate::malloc_abi::raw_free(p as *mut c_void) };
-            }
-        }
-        unsafe { crate::malloc_abi::raw_free(pathv as *mut c_void) };
-    }
-    // Zero out the glob_t.
-    unsafe {
-        *(pglob as *mut usize) = 0;
-        *((pglob as *mut u8).add(8) as *mut *mut *mut c_char) = std::ptr::null_mut();
-    }
+    unsafe { crate::string_abi::globfree(pglob) }
 }
 
 /// `nftw64` — on x86_64, identical to `nftw` (LFS transparent).

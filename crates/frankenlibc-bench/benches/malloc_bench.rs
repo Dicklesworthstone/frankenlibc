@@ -13,6 +13,7 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
+use frankenlibc_core::malloc::size_class::SizeClassIndex;
 
 const FLAT_SLOTS: usize = 128;
 const FC_OP_NONE: usize = 0;
@@ -308,6 +309,26 @@ fn bench_alloc_burst(c: &mut Criterion) {
             let allocs: Vec<Vec<u8>> = (0..1000).map(|_| vec![0u8; 64]).collect();
             criterion::black_box(allocs);
         });
+    });
+
+    group.finish();
+}
+
+fn bench_bounded_index_overhead(c: &mut Criterion) {
+    let buckets = [0usize; 32];
+    let index = 11usize;
+    let mut group = c.benchmark_group("bounded_index");
+
+    group.bench_function("raw_usize", |b| {
+        b.iter(|| criterion::black_box(buckets[criterion::black_box(index)]))
+    });
+
+    group.bench_function("bounded_try_from", |b| {
+        b.iter(|| {
+            let bounded = SizeClassIndex::try_from(criterion::black_box(index))
+                .expect("benchmark index should remain in range");
+            criterion::black_box(buckets[bounded.get()])
+        })
     });
 
     group.finish();
@@ -816,6 +837,7 @@ criterion_group!(
     benches,
     bench_alloc_free_cycle,
     bench_alloc_burst,
+    bench_bounded_index_overhead,
     bench_flat_combining_vs_lock_contention
 );
 criterion_main!(benches);

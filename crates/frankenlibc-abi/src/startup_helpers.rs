@@ -24,13 +24,54 @@ pub enum StartupCheckpoint {
     ScanAuxvVector = 7,
     ClassifySecureMode = 8,
     CaptureInvariants = 9,
-    CallInitHook = 10,
-    CallMain = 11,
-    CallFiniHook = 12,
-    CallRtldFiniHook = 13,
-    Complete = 14,
-    Deny = 15,
-    FallbackHost = 16,
+    ResolveEnvp = 10,
+    BindProcessGlobals = 11,
+    BootstrapHostSymbols = 12,
+    InitHostStdio = 13,
+    BootstrapHostLibio = 14,
+    PrewarmThreadSymbols = 15,
+    PrewarmAllocatorSymbols = 16,
+    SignalRuntimeReady = 17,
+    CallInitHook = 18,
+    CallMain = 19,
+    CallFiniHook = 20,
+    CallRtldFiniHook = 21,
+    Complete = 22,
+    Deny = 23,
+    FallbackHost = 24,
+}
+
+impl StartupCheckpoint {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Entry => "Entry",
+            Self::MembraneGate => "MembraneGate",
+            Self::ValidateMainPointer => "ValidateMainPointer",
+            Self::ValidateArgvPointer => "ValidateArgvPointer",
+            Self::ScanArgvVector => "ScanArgvVector",
+            Self::ValidateArgcBound => "ValidateArgcBound",
+            Self::ScanEnvpVector => "ScanEnvpVector",
+            Self::ScanAuxvVector => "ScanAuxvVector",
+            Self::ClassifySecureMode => "ClassifySecureMode",
+            Self::CaptureInvariants => "CaptureInvariants",
+            Self::ResolveEnvp => "ResolveEnvp",
+            Self::BindProcessGlobals => "BindProcessGlobals",
+            Self::BootstrapHostSymbols => "BootstrapHostSymbols",
+            Self::InitHostStdio => "InitHostStdio",
+            Self::BootstrapHostLibio => "BootstrapHostLibio",
+            Self::PrewarmThreadSymbols => "PrewarmThreadSymbols",
+            Self::PrewarmAllocatorSymbols => "PrewarmAllocatorSymbols",
+            Self::SignalRuntimeReady => "SignalRuntimeReady",
+            Self::CallInitHook => "CallInitHook",
+            Self::CallMain => "CallMain",
+            Self::CallFiniHook => "CallFiniHook",
+            Self::CallRtldFiniHook => "CallRtldFiniHook",
+            Self::Complete => "Complete",
+            Self::Deny => "Deny",
+            Self::FallbackHost => "FallbackHost",
+        }
+    }
 }
 
 /// Phase-0 dependency DAG over startup checkpoints.
@@ -70,10 +111,42 @@ pub const STARTUP_PHASE0_DAG_EDGES: &[(StartupCheckpoint, StartupCheckpoint)] = 
     ),
     (
         StartupCheckpoint::CaptureInvariants,
+        StartupCheckpoint::ResolveEnvp,
+    ),
+    (
+        StartupCheckpoint::ResolveEnvp,
+        StartupCheckpoint::BindProcessGlobals,
+    ),
+    (
+        StartupCheckpoint::BindProcessGlobals,
+        StartupCheckpoint::BootstrapHostSymbols,
+    ),
+    (
+        StartupCheckpoint::BootstrapHostSymbols,
+        StartupCheckpoint::InitHostStdio,
+    ),
+    (
+        StartupCheckpoint::InitHostStdio,
+        StartupCheckpoint::BootstrapHostLibio,
+    ),
+    (
+        StartupCheckpoint::BootstrapHostLibio,
+        StartupCheckpoint::PrewarmThreadSymbols,
+    ),
+    (
+        StartupCheckpoint::PrewarmThreadSymbols,
+        StartupCheckpoint::PrewarmAllocatorSymbols,
+    ),
+    (
+        StartupCheckpoint::PrewarmAllocatorSymbols,
+        StartupCheckpoint::SignalRuntimeReady,
+    ),
+    (
+        StartupCheckpoint::SignalRuntimeReady,
         StartupCheckpoint::CallInitHook,
     ),
     (
-        StartupCheckpoint::CaptureInvariants,
+        StartupCheckpoint::SignalRuntimeReady,
         StartupCheckpoint::CallMain,
     ),
     (StartupCheckpoint::CallInitHook, StartupCheckpoint::CallMain),
@@ -108,6 +181,14 @@ pub const STARTUP_PHASE0_DAG_EDGES: &[(StartupCheckpoint, StartupCheckpoint)] = 
     ),
     (StartupCheckpoint::ScanEnvpVector, StartupCheckpoint::Deny),
     (StartupCheckpoint::ScanAuxvVector, StartupCheckpoint::Deny),
+    (
+        StartupCheckpoint::ClassifySecureMode,
+        StartupCheckpoint::Deny,
+    ),
+    (
+        StartupCheckpoint::CaptureInvariants,
+        StartupCheckpoint::Deny,
+    ),
     (StartupCheckpoint::Entry, StartupCheckpoint::FallbackHost),
 ];
 

@@ -127,6 +127,11 @@ const PTHREAD_CANCEL_ASYNCHRONOUS_TYPE: c_int = 1;
 /// Sentinel value for "no owner" in owner_tid fields.
 const MUTEX_NO_OWNER: i32 = 0;
 const MANAGED_RWLOCK_MAGIC: u32 = 0x4752_5758; // "GRWX"
+const MUTEX_MAGIC_OFFSET: usize = std::mem::size_of::<AtomicI32>();
+const MUTEX_TYPE_OFFSET: usize = MUTEX_MAGIC_OFFSET + std::mem::size_of::<AtomicU32>();
+const MUTEX_OWNER_OFFSET: usize = MUTEX_TYPE_OFFSET + std::mem::size_of::<AtomicI32>();
+const MUTEX_LOCK_COUNT_OFFSET: usize = MUTEX_OWNER_OFFSET + std::mem::size_of::<AtomicI32>();
+const RWLOCK_MAGIC_OFFSET: usize = std::mem::size_of::<AtomicI32>();
 
 struct ManagedThreadRecord {
     handle_raw: usize,
@@ -738,9 +743,8 @@ fn mutex_magic_ptr(mutex: *mut libc::pthread_mutex_t) -> Option<*mut AtomicU32> 
         return None;
     }
     let base = mutex.cast::<u8>();
-    let offset = std::mem::size_of::<AtomicI32>();
     // SAFETY: `base` comes from non-null `mutex`; adding a small in-object offset.
-    let ptr = unsafe { base.add(offset) };
+    let ptr = unsafe { base.add(MUTEX_MAGIC_OFFSET) };
     let align = std::mem::align_of::<AtomicU32>();
     if !(ptr as usize).is_multiple_of(align) {
         return None;
@@ -767,15 +771,15 @@ fn is_managed_mutex(mutex: *mut libc::pthread_mutex_t) -> bool {
     magic.load(Ordering::Acquire) == MANAGED_MUTEX_MAGIC
 }
 
-/// Returns a pointer to the mutex type field at byte offset 8 within the
-/// `pthread_mutex_t` opaque storage. Layout: [lock_word(4)][magic(4)][type(4)]...
+/// Returns a pointer to the mutex type field within the managed metadata
+/// overlay. Layout: [lock_word][magic][type]...
 fn mutex_type_ptr(mutex: *mut libc::pthread_mutex_t) -> Option<*mut AtomicI32> {
     if mutex.is_null() {
         return None;
     }
     let base = mutex.cast::<u8>();
-    // offset 8: past lock_word (4 bytes) + magic (4 bytes)
-    let ptr = unsafe { base.add(8) };
+    // SAFETY: `base` comes from non-null `mutex`; adding a small in-object offset.
+    let ptr = unsafe { base.add(MUTEX_TYPE_OFFSET) };
     let align = std::mem::align_of::<AtomicI32>();
     if !(ptr as usize).is_multiple_of(align) {
         return None;
@@ -783,14 +787,15 @@ fn mutex_type_ptr(mutex: *mut libc::pthread_mutex_t) -> Option<*mut AtomicI32> {
     Some(ptr.cast::<AtomicI32>())
 }
 
-/// Returns a pointer to the owner tid field at byte offset 12.
-/// Layout: [lock_word(4)][magic(4)][type(4)][owner_tid(4)]...
+/// Returns a pointer to the owner tid field within the managed metadata
+/// overlay. Layout: [lock_word][magic][type][owner_tid]...
 fn mutex_owner_ptr(mutex: *mut libc::pthread_mutex_t) -> Option<*mut AtomicI32> {
     if mutex.is_null() {
         return None;
     }
     let base = mutex.cast::<u8>();
-    let ptr = unsafe { base.add(12) };
+    // SAFETY: `base` comes from non-null `mutex`; adding a small in-object offset.
+    let ptr = unsafe { base.add(MUTEX_OWNER_OFFSET) };
     let align = std::mem::align_of::<AtomicI32>();
     if !(ptr as usize).is_multiple_of(align) {
         return None;
@@ -798,14 +803,15 @@ fn mutex_owner_ptr(mutex: *mut libc::pthread_mutex_t) -> Option<*mut AtomicI32> 
     Some(ptr.cast::<AtomicI32>())
 }
 
-/// Returns a pointer to the lock count field at byte offset 16.
-/// Layout: [lock_word(4)][magic(4)][type(4)][owner_tid(4)][lock_count(4)]...
+/// Returns a pointer to the lock count field within the managed metadata
+/// overlay. Layout: [lock_word][magic][type][owner_tid][lock_count]...
 fn mutex_lock_count_ptr(mutex: *mut libc::pthread_mutex_t) -> Option<*mut AtomicU32> {
     if mutex.is_null() {
         return None;
     }
     let base = mutex.cast::<u8>();
-    let ptr = unsafe { base.add(16) };
+    // SAFETY: `base` comes from non-null `mutex`; adding a small in-object offset.
+    let ptr = unsafe { base.add(MUTEX_LOCK_COUNT_OFFSET) };
     let align = std::mem::align_of::<AtomicU32>();
     if !(ptr as usize).is_multiple_of(align) {
         return None;
@@ -813,7 +819,7 @@ fn mutex_lock_count_ptr(mutex: *mut libc::pthread_mutex_t) -> Option<*mut Atomic
     Some(ptr.cast::<AtomicU32>())
 }
 
-/// Read the mutex type stored at offset 8. Returns NORMAL (0) for unmanaged
+/// Read the mutex type stored in the managed metadata overlay. Returns NORMAL (0) for unmanaged
 /// or unrecognized mutexes.
 fn read_mutex_type(mutex: *mut libc::pthread_mutex_t) -> i32 {
     let Some(type_ptr) = mutex_type_ptr(mutex) else {
@@ -848,9 +854,8 @@ fn rwlock_magic_ptr(rwlock: *mut libc::pthread_rwlock_t) -> Option<*mut AtomicU3
         return None;
     }
     let base = rwlock.cast::<u8>();
-    let offset = std::mem::size_of::<AtomicI32>();
     // SAFETY: `base` comes from non-null `rwlock`; adding a small in-object offset.
-    let ptr = unsafe { base.add(offset) };
+    let ptr = unsafe { base.add(RWLOCK_MAGIC_OFFSET) };
     let align = std::mem::align_of::<AtomicU32>();
     if !(ptr as usize).is_multiple_of(align) {
         return None;
