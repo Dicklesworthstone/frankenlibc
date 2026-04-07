@@ -13,6 +13,7 @@ use std::cell::RefCell;
 use std::ffi::{CStr, c_char, c_int, c_void};
 use std::mem::{align_of, size_of};
 use std::net::{Ipv4Addr, Ipv6Addr};
+use std::path::PathBuf;
 use std::ptr;
 
 use frankenlibc_membrane::check_oracle::CheckStage;
@@ -25,6 +26,25 @@ use crate::runtime_policy;
 
 const HOST_NOT_FOUND_ERRNO: c_int = 1;
 const NO_RECOVERY_ERRNO: c_int = 3;
+const HOSTS_PATH: &str = "/etc/hosts";
+const SERVICES_PATH: &str = "/etc/services";
+const HOSTS_PATH_ENV: &str = "FRANKENLIBC_HOSTS_PATH";
+const SERVICES_PATH_ENV: &str = "FRANKENLIBC_SERVICES_PATH";
+
+fn configured_backend_path(default_path: &str, env_key: &str) -> PathBuf {
+    std::env::var_os(env_key)
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(default_path))
+}
+
+fn read_hosts_backend() -> std::io::Result<Vec<u8>> {
+    std::fs::read(configured_backend_path(HOSTS_PATH, HOSTS_PATH_ENV))
+}
+
+fn read_services_backend() -> std::io::Result<Vec<u8>> {
+    std::fs::read(configured_backend_path(SERVICES_PATH, SERVICES_PATH_ENV))
+}
 
 #[inline]
 fn repair_enabled(mode_heals: bool, action: MembraneAction) -> bool {
@@ -78,7 +98,7 @@ enum HostsAddress {
 fn resolve_hosts_subset(node: &str, family: c_int) -> Option<HostsAddress> {
     // Scope boundary: only deterministic files-backend lookup (`/etc/hosts`).
     // Network DNS/NSS backends are intentionally out-of-scope here.
-    let content = std::fs::read("/etc/hosts").ok()?;
+    let content = read_hosts_backend().ok()?;
     let candidates = frankenlibc_core::resolv::lookup_hosts(&content, node.as_bytes());
     for candidate in candidates {
         let Ok(text) = core::str::from_utf8(&candidate) else {
@@ -685,7 +705,7 @@ pub unsafe extern "C" fn getaddrinfo(
                 nodes.push(unsafe { build_addrinfo_v6(v6, port, hints_ref) });
             } else {
                 // Check /etc/hosts for all matches (subset only)
-                let content = std::fs::read("/etc/hosts").unwrap_or_default();
+                let content = read_hosts_backend().unwrap_or_default();
                 let candidates = frankenlibc_core::resolv::lookup_hosts(&content, text.as_bytes());
                 for candidate in candidates {
                     if let Ok(c_text) = core::str::from_utf8(&candidate) {
@@ -1193,7 +1213,7 @@ pub(crate) unsafe fn gethostbyaddr_r_impl(
     let ip = std::net::Ipv4Addr::new(octets[0], octets[1], octets[2], octets[3]);
     let ip_str = ip.to_string();
 
-    let content = match std::fs::read("/etc/hosts") {
+    let content = match read_hosts_backend() {
         Ok(c) => c,
         Err(_) => {
             unsafe { set_h_errnop(h_errnop, HOST_NOT_FOUND_ERRNO) };
@@ -1260,7 +1280,7 @@ pub unsafe extern "C" fn gethostbyaddr(
     let ip_str = ip.to_string();
 
     // Look up in /etc/hosts
-    let content = match std::fs::read("/etc/hosts") {
+    let content = match read_hosts_backend() {
         Ok(c) => c,
         Err(_) => {
             unsafe { set_h_errnop(ptr::null_mut(), HOST_NOT_FOUND_ERRNO) };
@@ -1308,7 +1328,7 @@ pub unsafe extern "C" fn getservbyname(name: *const c_char, proto: *const c_char
         Some(unsafe { CStr::from_ptr(proto) }.to_bytes())
     };
 
-    let content = match std::fs::read("/etc/services") {
+    let content = match read_services_backend() {
         Ok(c) => c,
         Err(_) => return ptr::null_mut(),
     };
@@ -1387,7 +1407,7 @@ pub unsafe extern "C" fn getservbyport(port: c_int, proto: *const c_char) -> *mu
         Some(unsafe { CStr::from_ptr(proto) }.to_bytes())
     };
 
-    let content = match std::fs::read("/etc/services") {
+    let content = match read_services_backend() {
         Ok(c) => c,
         Err(_) => return ptr::null_mut(),
     };
