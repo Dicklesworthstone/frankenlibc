@@ -1,7 +1,7 @@
 {
   "schema_version": "v1",
   "bead": "bd-5fw.3",
-  "generated_at": "2026-04-07T22:38:47Z",
+  "generated_at": "2026-04-07T22:48:24Z",
   "status": "fail",
   "verdict": "FAIL",
   "summary": {
@@ -128,7 +128,7 @@
       "kind": "report",
       "required": true,
       "critical": true,
-      "sha256": "c8d9e4ddb4f7c70de98281a68511f2efc0f022f07b021763ec72f8e08e014a9b",
+      "sha256": "691a5e4d2f454abf426c4ab779225a25c33775be1e30c3c11db12959ef83bfa8",
       "size_bytes": 35306,
       "status": "VALID",
       "schema_valid": true,
@@ -140,7 +140,7 @@
       "kind": "report",
       "required": true,
       "critical": true,
-      "sha256": "9e42370744c96e6e10316d2aab92a470a4666fd4d72bcae437f5414823ec0855",
+      "sha256": "a91bdc47790d0dceb41508b06f314109914a5956c911b7c9045033e764e44a56",
       "size_bytes": 23809,
       "status": "VALID",
       "schema_valid": true,
@@ -255,12 +255,12 @@
     },
     "controller_ablation": {
       "path": "tests/runtime_math/controller_ablation_report.v1.json",
-      "sha256": "c8d9e4ddb4f7c70de98281a68511f2efc0f022f07b021763ec72f8e08e014a9b",
+      "sha256": "691a5e4d2f454abf426c4ab779225a25c33775be1e30c3c11db12959ef83bfa8",
       "size_bytes": 35306
     },
     "admission_gate": {
       "path": "tests/runtime_math/admission_gate_report.v1.json",
-      "sha256": "9e42370744c96e6e10316d2aab92a470a4666fd4d72bcae437f5414823ec0855",
+      "sha256": "a91bdc47790d0dceb41508b06f314109914a5956c911b7c9045033e764e44a56",
       "size_bytes": 23809
     },
     "production_kernel_manifest": {
@@ -293,110 +293,122 @@
     },
     "entries": [
       {
-        "id": "bd-3aof.3.1",
-        "title": "RCU metadata benchmark matrix + artifact report wiring",
-        "issue_type": "task",
-        "priority": 2,
-        "closed_at": "2026-04-07T22:36:34.619308324Z",
-        "closed_by": "Codex",
-        "labels": [],
-        "close_reason": "Implemented metadata benchmark artifact/report plumbing across the bench crate, added the metadata benchmark gate and integration test coverage, reproduced a writer-side QSBR hang in metadata_read_be\u2026"
+        "id": "bd-34s",
+        "title": "Epic: Formal Proof Obligations (22 Theorems)",
+        "issue_type": "epic",
+        "priority": 1,
+        "closed_at": "2026-04-07T22:48:17.812315373Z",
+        "closed_by": "ubuntu",
+        "labels": [
+          "epic",
+          "formal",
+          "frankenlibc",
+          "proofs",
+          "verification"
+        ],
+        "close_reason": "All children closed. 22 formal proof obligations addressed with proof artifacts, binder, traceability checks, and e2e tests."
       },
       {
-        "id": "bd-gtf.6",
-        "title": "L3 full-replace claim-control gate tied to prerequisite completion",
+        "id": "bd-34s.6",
+        "title": "Proofs: E2E tests - proof chain integrity and cross-obligation consistency",
+        "issue_type": "task",
+        "priority": 1,
+        "closed_at": "2026-04-07T22:48:16.658610407Z",
+        "closed_by": "ubuntu",
+        "labels": [
+          "e2e-test",
+          "frankenlibc",
+          "proofs",
+          "test"
+        ],
+        "close_reason": "E2E proof chain tests: tests/gentoo/test_proof_binder.py, tests/conformance/proof_traceability_check.json, tests/conformance/proof_obligations_binder.v1.json. Written by swarm agents."
+      },
+      {
+        "id": "bd-34s.4",
+        "title": "Proofs: Sheaf consistency + CPOMDP feasibility + coupling bounds + spectral witnesses",
+        "issue_type": "task",
+        "priority": 2,
+        "closed_at": "2026-04-07T22:48:15.511158311Z",
+        "closed_by": "Codex",
+        "labels": [
+          "advanced",
+          "algebraic",
+          "frankenlibc",
+          "proofs"
+        ],
+        "close_reason": "Proof artifacts delivered: docs/proofs/sheaf_global_consistency.md, docs/proofs/cpomdp_feasibility.md, tests/conformance/proof_obligations_binder.v1.json, tests/conformance/math_value_proof.json. Wri\u2026"
+      },
+      {
+        "id": "bd-2a2",
+        "title": "Epic: Reverse-Round Methodology (R7-R41)",
+        "issue_type": "epic",
+        "priority": 0,
+        "closed_at": "2026-04-07T22:47:35.470129337Z",
+        "closed_by": "ubuntu",
+        "labels": [
+          "epic",
+          "frankenlibc",
+          "methodology",
+          "reverse-round"
+        ],
+        "close_reason": "All children closed. Reverse-round methodology implemented with 2876-line contract generator."
+      },
+      {
+        "id": "bd-2a2.3",
+        "title": "Reverse-Round: R26-R41 remaining subsystem mappings",
+        "issue_type": "task",
+        "priority": 2,
+        "closed_at": "2026-04-07T22:47:34.348028709Z",
+        "closed_by": "ubuntu",
+        "labels": [
+          "frankenlibc",
+          "remaining",
+          "reverse-round"
+        ],
+        "close_reason": "Implemented: same contract generator covers R26-R41 mappings. Written by Codex swarm."
+      },
+      {
+        "id": "bd-2a2.1",
+        "title": "Reverse-Round: R7-R11 core subsystem mappings (Loader, Allocator, Format, NSS, libm)",
         "issue_type": "task",
         "priority": 0,
-        "closed_at": "2026-04-07T22:16:38.698922589Z",
+        "closed_at": "2026-04-07T22:47:33.219359273Z",
         "closed_by": "Codex",
         "labels": [
-          "l3",
-          "policy",
-          "replacement"
+          "core",
+          "frankenlibc",
+          "reverse-round"
         ],
-        "close_reason": "Implemented the L3 release-claim gate slice in the release dossier flow: added release_notes_hook output to the validator, hardened FLC_RELEASE_DOSSIER_RELEASE_NOTES_LIMIT parsing with warning+defaul\u2026"
+        "close_reason": "Implemented: scripts/generate_reverse_round_contracts.py (2876 lines) covers R7-R11 core subsystem mappings. Written by Codex swarm."
       },
       {
-        "id": "bd-3rw.1",
-        "title": "DEPLOYMENT.md: production guide",
-        "issue_type": "task",
-        "priority": 1,
-        "closed_at": "2026-04-07T19:37:57.961229475Z",
-        "closed_by": "ubuntu",
-        "labels": [
-          "deployment",
-          "docs"
-        ],
-        "close_reason": "Materialized DEPLOYMENT.md as the deployment source of truth, linked README to it, updated docs governance to target DEPLOYMENT.md, regenerated docs governance artifacts, and added regression coverag\u2026"
-      },
-      {
-        "id": "bd-qwm",
-        "title": "CRT phase-0: _start/__libc_start_main bootstrap skeleton + acceptance fixtures",
+        "id": "bd-3aof.3",
+        "title": "Benchmark: RCU vs mutex for metadata read throughput",
         "issue_type": "task",
         "priority": 2,
-        "closed_at": "2026-04-07T19:27:25.598119230Z",
-        "closed_by": "SwiftLark",
+        "closed_at": "2026-04-07T22:43:21.554118290Z",
+        "closed_by": "Codex",
+        "labels": [],
+        "close_reason": "Added the metadata-read benchmark artifact gate slice (crates/frankenlibc-bench/benches/metadata_read_bench.rs, scripts/check_metadata_read_benchmark.sh, metadata_read_benchmark_test.rs, ci wiring in\u2026"
+      },
+      {
+        "id": "bd-1j4.1",
+        "title": "CRT phase-1 hardening: startup DAG + secure-mode invariants",
+        "issue_type": "task",
+        "priority": 1,
+        "closed_at": "2026-04-07T22:43:17.838339782Z",
+        "closed_by": "Codex",
         "labels": [
-          "critique",
           "crt",
-          "rtld"
+          "security",
+          "startup"
         ],
-        "close_reason": "Acceptance fixture now passes under LD_PRELOAD in strict+hardened modes; verification matrix and evidence artifacts refreshed."
-      },
-      {
-        "id": "bd-1sp.4",
-        "title": "Alien CS: EBR for lock-free data structures (section 14.10)",
-        "issue_type": "task",
-        "priority": 1,
-        "closed_at": "2026-04-07T19:01:08.160355842Z",
-        "closed_by": "Codex",
-        "labels": [
-          "alien-cs",
-          "concurrency",
-          "ebr",
-          "frankenlibc"
-        ],
-        "close_reason": "Revalidated EBR integration gate via rch exec: cargo test -p frankenlibc-membrane --test ebr_integration_test ebr_e2e_emits_structured_artifacts -- --nocapture, bash scripts/check_ebr_integration.sh,\u2026"
-      },
-      {
-        "id": "bd-249m.7",
-        "title": "Proof: Sheaf global-consistency",
-        "issue_type": "task",
-        "priority": 3,
-        "closed_at": "2026-04-07T18:45:17.951725563Z",
-        "closed_by": "ubuntu",
-        "labels": [],
-        "close_reason": "Added sheaf global-consistency proof note and machine-readable cover artifact, strengthened cohomology with a triple-overlap H^1=0 proof test, extended the cohomology harness test to validate open-co\u2026"
-      },
-      {
-        "id": "bd-h5x.3",
-        "title": "Non-threading call-through elimination + enforcement CI gate",
-        "issue_type": "task",
-        "priority": 1,
-        "closed_at": "2026-04-07T18:16:06.943344906Z",
-        "closed_by": "ubuntu",
-        "labels": [
-          "ci",
-          "dlfcn",
-          "stdio",
-          "syscall"
-        ],
-        "close_reason": "Added race-free replacement-guard artifact paths, explicit policy verdict/log fields, and ranked non-threading backlog reporting with passing guard/test verification."
-      },
-      {
-        "id": "bd-1wzq",
-        "title": "HTM fast-path for hot libc functions (section 4.2, Score 3.0)",
-        "issue_type": "task",
-        "priority": 3,
-        "closed_at": "2026-04-07T17:35:02.268971009Z",
-        "closed_by": "Codex",
-        "labels": [],
-        "close_reason": "Completed HTM fast-path verification slice: added missing pthread_mutex_lock abort/fallback regression so the three integrated HTM entrypoints now have explicit commit/abort coverage (malloc, memcpy,\u2026"
+        "close_reason": "Advanced the CRT/startup DAG slice with phase-0 capability-lattice docs and witness/certificate plumbing (startup_helpers.rs, build.rs, startup_abi_contract_test.rs, docs/init_capability_lattice.md)\u2026"
       }
     ],
-    "release_notes_markdown": "## Release Notes Candidates\n\n- `bd-3aof.3.1` RCU metadata benchmark matrix + artifact report wiring (task, closed 2026-04-07T22:36:34.619308324Z)\n  Implemented metadata benchmark artifact/report plumbing across the bench crate, added the metadata benchmark gate and integration test coverage, reproduced a writer-side QSBR hang in metadata_read_be\u2026\n- `bd-gtf.6` L3 full-replace claim-control gate tied to prerequisite completion (task, closed 2026-04-07T22:16:38.698922589Z)\n  Implemented the L3 release-claim gate slice in the release dossier flow: added release_notes_hook output to the validator, hardened FLC_RELEASE_DOSSIER_RELEASE_NOTES_LIMIT parsing with warning+defaul\u2026\n- `bd-3rw.1` DEPLOYMENT.md: production guide (task, closed 2026-04-07T19:37:57.961229475Z)\n  Materialized DEPLOYMENT.md as the deployment source of truth, linked README to it, updated docs governance to target DEPLOYMENT.md, regenerated docs governance artifacts, and added regression coverag\u2026\n- `bd-qwm` CRT phase-0: _start/__libc_start_main bootstrap skeleton + acceptance fixtures (task, closed 2026-04-07T19:27:25.598119230Z)\n  Acceptance fixture now passes under LD_PRELOAD in strict+hardened modes; verification matrix and evidence artifacts refreshed.\n- `bd-1sp.4` Alien CS: EBR for lock-free data structures (section 14.10) (task, closed 2026-04-07T19:01:08.160355842Z)\n  Revalidated EBR integration gate via rch exec: cargo test -p frankenlibc-membrane --test ebr_integration_test ebr_e2e_emits_structured_artifacts -- --nocapture, bash scripts/check_ebr_integration.sh,\u2026\n- `bd-249m.7` Proof: Sheaf global-consistency (task, closed 2026-04-07T18:45:17.951725563Z)\n  Added sheaf global-consistency proof note and machine-readable cover artifact, strengthened cohomology with a triple-overlap H^1=0 proof test, extended the cohomology harness test to validate open-co\u2026\n- `bd-h5x.3` Non-threading call-through elimination + enforcement CI gate (task, closed 2026-04-07T18:16:06.943344906Z)\n  Added race-free replacement-guard artifact paths, explicit policy verdict/log fields, and ranked non-threading backlog reporting with passing guard/test verification.\n- `bd-1wzq` HTM fast-path for hot libc functions (section 4.2, Score 3.0) (task, closed 2026-04-07T17:35:02.268971009Z)\n  Completed HTM fast-path verification slice: added missing pthread_mutex_lock abort/fallback regression so the three integrated HTM entrypoints now have explicit commit/abort coverage (malloc, memcpy,\u2026",
+    "release_notes_markdown": "## Release Notes Candidates\n\n- `bd-34s` Epic: Formal Proof Obligations (22 Theorems) (epic, closed 2026-04-07T22:48:17.812315373Z)\n  All children closed. 22 formal proof obligations addressed with proof artifacts, binder, traceability checks, and e2e tests.\n- `bd-34s.6` Proofs: E2E tests - proof chain integrity and cross-obligation consistency (task, closed 2026-04-07T22:48:16.658610407Z)\n  E2E proof chain tests: tests/gentoo/test_proof_binder.py, tests/conformance/proof_traceability_check.json, tests/conformance/proof_obligations_binder.v1.json. Written by swarm agents.\n- `bd-34s.4` Proofs: Sheaf consistency + CPOMDP feasibility + coupling bounds + spectral witnesses (task, closed 2026-04-07T22:48:15.511158311Z)\n  Proof artifacts delivered: docs/proofs/sheaf_global_consistency.md, docs/proofs/cpomdp_feasibility.md, tests/conformance/proof_obligations_binder.v1.json, tests/conformance/math_value_proof.json. Wri\u2026\n- `bd-2a2` Epic: Reverse-Round Methodology (R7-R41) (epic, closed 2026-04-07T22:47:35.470129337Z)\n  All children closed. Reverse-round methodology implemented with 2876-line contract generator.\n- `bd-2a2.3` Reverse-Round: R26-R41 remaining subsystem mappings (task, closed 2026-04-07T22:47:34.348028709Z)\n  Implemented: same contract generator covers R26-R41 mappings. Written by Codex swarm.\n- `bd-2a2.1` Reverse-Round: R7-R11 core subsystem mappings (Loader, Allocator, Format, NSS, libm) (task, closed 2026-04-07T22:47:33.219359273Z)\n  Implemented: scripts/generate_reverse_round_contracts.py (2876 lines) covers R7-R11 core subsystem mappings. Written by Codex swarm.\n- `bd-3aof.3` Benchmark: RCU vs mutex for metadata read throughput (task, closed 2026-04-07T22:43:21.554118290Z)\n  Added the metadata-read benchmark artifact gate slice (crates/frankenlibc-bench/benches/metadata_read_bench.rs, scripts/check_metadata_read_benchmark.sh, metadata_read_benchmark_test.rs, ci wiring in\u2026\n- `bd-1j4.1` CRT phase-1 hardening: startup DAG + secure-mode invariants (task, closed 2026-04-07T22:43:17.838339782Z)\n  Advanced the CRT/startup DAG slice with phase-0 capability-lattice docs and witness/certificate plumbing (startup_helpers.rs, build.rs, startup_abi_contract_test.rs, docs/init_capability_lattice.md)\u2026",
     "summary": {
-      "closed_total": 458,
+      "closed_total": 477,
       "selected": 8,
       "invalid_rows": 0
     }

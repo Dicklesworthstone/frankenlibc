@@ -1,21 +1,21 @@
 {
   "schema_version": "v1",
   "bead": "bd-2a2.5",
-  "generated_at": "2026-04-07T19:42:39Z",
-  "report_hash": "f8ce7e400ae749b1",
+  "generated_at": "2026-04-07T22:48:07Z",
+  "report_hash": "7374312f71246ce0",
   "summary": {
-    "rounds_verified": 21,
-    "total_math_families": 84,
-    "modules_found": 84,
+    "rounds_verified": 35,
+    "total_math_families": 140,
+    "modules_found": 140,
     "modules_missing": 0,
     "module_coverage_pct": 100.0,
-    "invariants_specified": 84,
-    "invariants_total": 84,
-    "implementation_steps_total": 63,
-    "verification_hooks_total": 63,
-    "verification_hooks_specified": 63,
-    "supporting_files_total": 173,
-    "supporting_files_found": 173,
+    "invariants_specified": 140,
+    "invariants_total": 140,
+    "implementation_steps_total": 105,
+    "verification_hooks_total": 91,
+    "verification_hooks_specified": 91,
+    "supporting_files_total": 267,
+    "supporting_files_found": 267,
     "unique_math_classes": [
       "algebra",
       "algebraic-topology",
@@ -24,10 +24,11 @@
       "experimental-design",
       "game-theory",
       "grothendieck-serre",
+      "information-theory",
       "optimal-transport",
       "stochastic-analysis"
     ],
-    "math_class_count": 9,
+    "math_class_count": 10,
     "all_rounds_diverse": true,
     "cross_round_checks_total": 6,
     "cross_round_checks_passing": 6,
@@ -314,6 +315,1982 @@
         "passes_diversity": true,
         "has_conformal": false,
         "has_topology": false,
+        "has_algebra": true,
+        "has_grothendieck": false
+      }
+    },
+    "R12": {
+      "name": "Cross-Architecture Gluing",
+      "problem_focus": "Maintaining one semantic contract across ISA-specialized implementations, syscall veneers, and multiarch kernels without silently changing ABI-visible behavior.",
+      "legacy_surfaces": [
+        "sysdeps",
+        "multiarch",
+        "unistd",
+        "time64",
+        "loader"
+      ],
+      "failure_class": "cross-ISA semantic drift",
+      "artifacts": "ISA witness bundles + cross-architecture glue proofs + coverage-optimal architecture campaigns",
+      "implementation_plan": [
+        "Compile cross-ISA gluing into deterministic witness bundles that tie memory-ordering, calling-convention, and syscall-surface assumptions to concrete repo anchors instead of prose-only notes.",
+        "Anchor the round in docs/memory_model_decisions.md, crates/frankenlibc-abi/src/unistd_abi.rs, and crates/frankenlibc-core/src/elf/loader.rs so x86_64 and aarch64 obligations stay connected to real ABI surfaces.",
+        "Expose architecture drift through the reverse-round contract artifact so future aarch64 bring-up work can reuse one canonical evidence surface."
+      ],
+      "verification_strategy": [
+        {
+          "description": "scripts/check_reverse_round_contracts.sh and crates/frankenlibc-harness/tests/reverse_round_contracts_test.rs validate the R12 mapping contract.",
+          "path": "scripts/check_reverse_round_contracts.sh",
+          "path_exists": true,
+          "paths": [
+            {
+              "path": "scripts/check_reverse_round_contracts.sh",
+              "path_exists": true
+            },
+            {
+              "path": "crates/frankenlibc-harness/tests/reverse_round_contracts_test.rs",
+              "path_exists": true
+            }
+          ]
+        },
+        {
+          "description": "docs/memory_model_decisions.md and crates/frankenlibc-abi/tests/unistd_abi_test.rs keep the architecture barrier map and ABI veneer anchored to existing evidence.",
+          "path": "docs/memory_model_decisions.md",
+          "path_exists": true,
+          "paths": [
+            {
+              "path": "docs/memory_model_decisions.md",
+              "path_exists": true
+            },
+            {
+              "path": "crates/frankenlibc-abi/tests/unistd_abi_test.rs",
+              "path_exists": true
+            }
+          ]
+        }
+      ],
+      "supporting_files": [
+        {
+          "path": "PLAN_TO_PORT_GLIBC_TO_RUST.md",
+          "exists": true
+        },
+        {
+          "path": "docs/memory_model_decisions.md",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-abi/src/unistd_abi.rs",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-core/src/elf/loader.rs",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-abi/tests/unistd_abi_test.rs",
+          "exists": true
+        }
+      ],
+      "math_families": {
+        "sheaf_glue": {
+          "module": "grothendieck_glue",
+          "module_path": "crates/frankenlibc-membrane/src/runtime_math/grothendieck_glue.rs",
+          "module_exists": true,
+          "description": "Sheaf-style gluing witnesses across ISA-local semantic charts",
+          "math_class": "grothendieck-serre",
+          "invariant": "descent data on overlapping ISA charts glue to one global ABI contract when cocycle compatibility holds.",
+          "invariant_specified": true
+        },
+        "feature_transport": {
+          "module": "ktheory",
+          "module_path": "crates/frankenlibc-membrane/src/runtime_math/ktheory.rs",
+          "module_exists": true,
+          "description": "K-theoretic transport for ABI witness migration across architecture families",
+          "math_class": "algebraic-topology",
+          "invariant": "transport classes remain stable under locally compatible chart transitions.",
+          "invariant_specified": true
+        },
+        "lane_geometry": {
+          "module": "clifford",
+          "module_path": "crates/frankenlibc-membrane/src/runtime_math/clifford.rs",
+          "module_exists": true,
+          "description": "Clifford-algebra constraints for lane, alignment, and register-shape coherence",
+          "math_class": "algebra",
+          "invariant": "graded products preserve alignment and lane composition constraints across ISA-specialized kernels.",
+          "invariant_specified": true
+        },
+        "campaign_design": {
+          "module": "covering_array",
+          "module_path": "crates/frankenlibc-membrane/src/runtime_math/covering_array.rs",
+          "module_exists": true,
+          "description": "Covering-array plans for ISA x mode x workload verification campaigns",
+          "math_class": "experimental-design",
+          "invariant": "strength-t covering arrays exercise every required ISA x mode interaction at least once.",
+          "invariant_specified": true
+        }
+      },
+      "family_count": 4,
+      "modules_found": 4,
+      "supporting_files_found": 5,
+      "verification_hooks_found": 2,
+      "branch_diversity": {
+        "total_families": 4,
+        "unique_classes": [
+          "algebra",
+          "algebraic-topology",
+          "experimental-design",
+          "grothendieck-serre"
+        ],
+        "class_count": 4,
+        "passes_diversity": true,
+        "has_conformal": false,
+        "has_topology": true,
+        "has_algebra": true,
+        "has_grothendieck": true
+      }
+    },
+    "R13": {
+      "name": "Stream / Syscall Surface",
+      "problem_focus": "Preserving POSIX-observable buffering, flush ordering, short I/O, and cancellation semantics while replacing unsafe stream and syscall failure paths with deterministic control.",
+      "legacy_surfaces": [
+        "libio",
+        "io",
+        "posix",
+        "stdio",
+        "unistd"
+      ],
+      "failure_class": "stream-state divergence and flush-latency blowup",
+      "artifacts": "stream automata + latency envelope certificates + lock/flush strategy tables",
+      "implementation_plan": [
+        "Compile buffering and flush behavior into deterministic state and latency witnesses that stdio and low-level I/O paths can consume without hidden policy branches.",
+        "Anchor the round in crates/frankenlibc-core/src/stdio/file.rs, crates/frankenlibc-core/src/stdio/buffer.rs, crates/frankenlibc-abi/src/stdio_abi.rs, and crates/frankenlibc-abi/src/io_abi.rs so the reverse-round contract stays tied to real stream surfaces.",
+        "Make cancellation-safe stream obligations machine-visible through the reverse-round artifact instead of leaving them as only the R13 prose summary."
+      ],
+      "verification_strategy": [
+        {
+          "description": "scripts/check_reverse_round_contracts.sh and crates/frankenlibc-harness/tests/reverse_round_contracts_test.rs validate the R13 mapping contract.",
+          "path": "scripts/check_reverse_round_contracts.sh",
+          "path_exists": true,
+          "paths": [
+            {
+              "path": "scripts/check_reverse_round_contracts.sh",
+              "path_exists": true
+            },
+            {
+              "path": "crates/frankenlibc-harness/tests/reverse_round_contracts_test.rs",
+              "path_exists": true
+            }
+          ]
+        },
+        {
+          "description": "scripts/check_stdio_phase_strategy.sh, crates/frankenlibc-harness/tests/stdio_phase_strategy_test.rs, and crates/frankenlibc-abi/tests/stdio_abi_test.rs keep the declared stream and syscall anchors exercised.",
+          "path": "scripts/check_stdio_phase_strategy.sh",
+          "path_exists": true,
+          "paths": [
+            {
+              "path": "scripts/check_stdio_phase_strategy.sh",
+              "path_exists": true
+            },
+            {
+              "path": "crates/frankenlibc-harness/tests/stdio_phase_strategy_test.rs",
+              "path_exists": true
+            },
+            {
+              "path": "crates/frankenlibc-abi/tests/stdio_abi_test.rs",
+              "path_exists": true
+            }
+          ]
+        }
+      ],
+      "supporting_files": [
+        {
+          "path": "PLAN_TO_PORT_GLIBC_TO_RUST.md",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-core/src/stdio/file.rs",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-core/src/stdio/buffer.rs",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-abi/src/stdio_abi.rs",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-abi/src/io_abi.rs",
+          "exists": true
+        },
+        {
+          "path": "tests/conformance/stdio_phase_strategy.v1.json",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-abi/tests/stdio_abi_test.rs",
+          "exists": true
+        }
+      ],
+      "math_families": {
+        "latency_envelope": {
+          "module": "tropical_latency",
+          "module_path": "crates/frankenlibc-membrane/src/tropical_latency.rs",
+          "module_exists": true,
+          "description": "Max-plus style flush and buffering envelope bounds",
+          "math_class": "algebra",
+          "invariant": "min-plus composition preserves monotone worst-case latency envelopes.",
+          "invariant_specified": true
+        },
+        "backpressure_control": {
+          "module": "control",
+          "module_path": "crates/frankenlibc-membrane/src/runtime_math/control.rs",
+          "module_exists": true,
+          "description": "Deterministic backpressure and contention controller for stream-state transitions",
+          "math_class": "decision-theory",
+          "invariant": "controller thresholds stay feasible under the declared latency budget.",
+          "invariant_specified": true
+        },
+        "fallback_game": {
+          "module": "approachability",
+          "module_path": "crates/frankenlibc-membrane/src/runtime_math/approachability.rs",
+          "module_exists": true,
+          "description": "Game-theoretic synthesis of cancellation-safe fallback strategies",
+          "math_class": "game-theory",
+          "invariant": "the chosen fallback policy keeps the violation vector inside the safe approachable set.",
+          "invariant_specified": true
+        },
+        "stream_consistency": {
+          "module": "cohomology",
+          "module_path": "crates/frankenlibc-membrane/src/runtime_math/cohomology.rs",
+          "module_exists": true,
+          "description": "Local-to-global consistency monitoring for stream-state witnesses",
+          "math_class": "algebraic-topology",
+          "invariant": "trivial overlap defects imply local stream-state witnesses extend to one global contract.",
+          "invariant_specified": true
+        }
+      },
+      "family_count": 4,
+      "modules_found": 4,
+      "supporting_files_found": 7,
+      "verification_hooks_found": 2,
+      "branch_diversity": {
+        "total_families": 4,
+        "unique_classes": [
+          "algebra",
+          "algebraic-topology",
+          "decision-theory",
+          "game-theory"
+        ],
+        "class_count": 4,
+        "passes_diversity": true,
+        "has_conformal": false,
+        "has_topology": true,
+        "has_algebra": true,
+        "has_grothendieck": false
+      }
+    },
+    "R14": {
+      "name": "Locale / Encoding / Transliteration",
+      "problem_focus": "Correctness and performance of multibyte conversion, transliteration, locale facets, and formatting surfaces under deterministic artifact and compatibility constraints.",
+      "legacy_surfaces": [
+        "localedata",
+        "locale",
+        "iconvdata",
+        "iconv",
+        "wcsmbs"
+      ],
+      "failure_class": "codec drift and locale-shard inconsistency",
+      "artifacts": "factorized codec automata + locale obstruction diagnostics + inverse-domain witnesses",
+      "implementation_plan": [
+        "Compile codec scope, shard consistency, and inversion-domain obligations into deterministic table-pack and ledger witnesses rather than leaving R14 as a narrative-only mapping.",
+        "Anchor the round in crates/frankenlibc-core/src/iconv/mod.rs, crates/frankenlibc-core/src/locale/mod.rs, tests/conformance/iconv_table_pack.v1.json, and tests/conformance/iconv_codec_scope_ledger.v1.json so locale and codec claims stay grounded in actual artifacts.",
+        "Expose compatibility intent and perturbation resilience through the reverse-round contract artifact so future iconv closure work can inherit one canonical mapping surface."
+      ],
+      "verification_strategy": [
+        {
+          "description": "scripts/check_reverse_round_contracts.sh and crates/frankenlibc-harness/tests/reverse_round_contracts_test.rs validate the R14 mapping contract.",
+          "path": "scripts/check_reverse_round_contracts.sh",
+          "path_exists": true,
+          "paths": [
+            {
+              "path": "scripts/check_reverse_round_contracts.sh",
+              "path_exists": true
+            },
+            {
+              "path": "crates/frankenlibc-harness/tests/reverse_round_contracts_test.rs",
+              "path_exists": true
+            }
+          ]
+        },
+        {
+          "description": "scripts/check_iconv_table_generation.sh, scripts/check_iconv_codec_scope_ledger.sh, crates/frankenlibc-harness/tests/iconv_table_generation_test.rs, and crates/frankenlibc-harness/tests/iconv_codec_scope_ledger_test.rs keep the declared locale/iconv artifacts exercised.",
+          "path": "scripts/check_iconv_table_generation.sh",
+          "path_exists": true,
+          "paths": [
+            {
+              "path": "scripts/check_iconv_table_generation.sh",
+              "path_exists": true
+            },
+            {
+              "path": "scripts/check_iconv_codec_scope_ledger.sh",
+              "path_exists": true
+            },
+            {
+              "path": "crates/frankenlibc-harness/tests/iconv_table_generation_test.rs",
+              "path_exists": true
+            },
+            {
+              "path": "crates/frankenlibc-harness/tests/iconv_codec_scope_ledger_test.rs",
+              "path_exists": true
+            }
+          ]
+        }
+      ],
+      "supporting_files": [
+        {
+          "path": "PLAN_TO_PORT_GLIBC_TO_RUST.md",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-core/src/iconv/mod.rs",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-core/src/locale/mod.rs",
+          "exists": true
+        },
+        {
+          "path": "tests/conformance/iconv_table_pack.v1.json",
+          "exists": true
+        },
+        {
+          "path": "tests/conformance/iconv_codec_scope_ledger.v1.json",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-abi/tests/iconv_abi_test.rs",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-abi/tests/locale_abi_test.rs",
+          "exists": true
+        }
+      ],
+      "math_families": {
+        "locale_descent": {
+          "module": "higher_topos",
+          "module_path": "crates/frankenlibc-membrane/src/runtime_math/higher_topos.rs",
+          "module_exists": true,
+          "description": "Higher-topos descent for locale shard compatibility",
+          "math_class": "grothendieck-serre",
+          "invariant": "compatible locale shards descend to one global facet assignment.",
+          "invariant_specified": true
+        },
+        "codec_normal_forms": {
+          "module": "grobner_normalizer",
+          "module_path": "crates/frankenlibc-membrane/src/runtime_math/grobner_normalizer.rs",
+          "module_exists": true,
+          "description": "Canonical normalization of codec and transliteration constraints",
+          "math_class": "algebra",
+          "invariant": "equivalent codec constraints reduce to one canonical normal form.",
+          "invariant_specified": true
+        },
+        "perturbation_guard": {
+          "module": "kernel_mmd",
+          "module_path": "crates/frankenlibc-membrane/src/runtime_math/kernel_mmd.rs",
+          "module_exists": true,
+          "description": "Kernel MMD guard for locale-table perturbation drift",
+          "math_class": "conformal-statistics",
+          "invariant": "MMD remains zero only when compared locale-induced trace distributions match.",
+          "invariant_specified": true
+        },
+        "inverse_domain_transport": {
+          "module": "ktheory",
+          "module_path": "crates/frankenlibc-membrane/src/runtime_math/ktheory.rs",
+          "module_exists": true,
+          "description": "Transport witnesses for left/right inverse codec domains",
+          "math_class": "algebraic-topology",
+          "invariant": "inverse-domain transport remains stable under locally compatible codec chart transitions.",
+          "invariant_specified": true
+        }
+      },
+      "family_count": 4,
+      "modules_found": 4,
+      "supporting_files_found": 7,
+      "verification_hooks_found": 2,
+      "branch_diversity": {
+        "total_families": 4,
+        "unique_classes": [
+          "algebra",
+          "algebraic-topology",
+          "conformal-statistics",
+          "grothendieck-serre"
+        ],
+        "class_count": 4,
+        "passes_diversity": true,
+        "has_conformal": true,
+        "has_topology": true,
+        "has_algebra": true,
+        "has_grothendieck": true
+      }
+    },
+    "R15": {
+      "name": "Temporal Semantics Engine",
+      "problem_focus": "DST transitions, leap-second edges, timezone drift, and wall-clock/UTC conversion semantics without hidden discontinuity bugs.",
+      "legacy_surfaces": [
+        "time",
+        "timezone",
+        "strftime",
+        "mktime",
+        "localtime"
+      ],
+      "failure_class": "temporal discontinuity and conversion drift",
+      "artifacts": "transition systems + DST/leap certificates + drift alarms",
+      "implementation_plan": [
+        "Compile temporal reachability, rule-drift, and transport obligations into deterministic transition witnesses that the time ABI can treat as reviewable artifact data.",
+        "Anchor the round in crates/frankenlibc-core/src/time/mod.rs, crates/frankenlibc-abi/src/time_abi.rs, and tests/conformance/fixtures/time_ops.json so discontinuity semantics remain tied to real conversions and fixtures.",
+        "Expose timezone-rule drift and regime-shift assumptions through the reverse-round contract artifact instead of leaving them trapped in the R15 prose description."
+      ],
+      "verification_strategy": [
+        {
+          "description": "scripts/check_reverse_round_contracts.sh and crates/frankenlibc-harness/tests/reverse_round_contracts_test.rs validate the R15 mapping contract.",
+          "path": "scripts/check_reverse_round_contracts.sh",
+          "path_exists": true,
+          "paths": [
+            {
+              "path": "scripts/check_reverse_round_contracts.sh",
+              "path_exists": true
+            },
+            {
+              "path": "crates/frankenlibc-harness/tests/reverse_round_contracts_test.rs",
+              "path_exists": true
+            }
+          ]
+        },
+        {
+          "description": "crates/frankenlibc-abi/tests/time_abi_test.rs, scripts/check_runtime_math_divergence_bounds.sh, and crates/frankenlibc-harness/tests/runtime_math_divergence_bounds_test.rs keep temporal drift and conversion anchors visible.",
+          "path": "crates/frankenlibc-abi/tests/time_abi_test.rs",
+          "path_exists": true,
+          "paths": [
+            {
+              "path": "crates/frankenlibc-abi/tests/time_abi_test.rs",
+              "path_exists": true
+            },
+            {
+              "path": "scripts/check_runtime_math_divergence_bounds.sh",
+              "path_exists": true
+            },
+            {
+              "path": "crates/frankenlibc-harness/tests/runtime_math_divergence_bounds_test.rs",
+              "path_exists": true
+            }
+          ]
+        }
+      ],
+      "supporting_files": [
+        {
+          "path": "PLAN_TO_PORT_GLIBC_TO_RUST.md",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-core/src/time/mod.rs",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-abi/src/time_abi.rs",
+          "exists": true
+        },
+        {
+          "path": "tests/conformance/fixtures/time_ops.json",
+          "exists": true
+        },
+        {
+          "path": "tests/runtime_math/runtime_math_divergence_bounds.v1.json",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-abi/tests/time_abi_test.rs",
+          "exists": true
+        }
+      ],
+      "math_families": {
+        "temporal_reachability": {
+          "module": "hji_reachability",
+          "module_path": "crates/frankenlibc-membrane/src/hji_reachability.rs",
+          "module_exists": true,
+          "description": "Hybrid reachability witnesses for discontinuous time transitions",
+          "math_class": "decision-theory",
+          "invariant": "the viability set is closed under admissible wall-clock/UTC transition rules.",
+          "invariant_specified": true
+        },
+        "rule_drift_topology": {
+          "module": "persistence",
+          "module_path": "crates/frankenlibc-membrane/src/persistence.rs",
+          "module_exists": true,
+          "description": "Persistent-homology tracking of timezone-rule evolution",
+          "math_class": "algebraic-topology",
+          "invariant": "stable homology classes capture rule changes without spurious topology creation under bounded perturbations.",
+          "invariant_specified": true
+        },
+        "regime_transport": {
+          "module": "schrodinger_bridge",
+          "module_path": "crates/frankenlibc-membrane/src/schrodinger_bridge.rs",
+          "module_exists": true,
+          "description": "Schrodinger-bridge transport between temporal workload regimes",
+          "math_class": "optimal-transport",
+          "invariant": "entropic transport minimizes the action required to move between calibrated temporal regimes.",
+          "invariant_specified": true
+        },
+        "discontinuity_alarm": {
+          "module": "changepoint",
+          "module_path": "crates/frankenlibc-membrane/src/runtime_math/changepoint.rs",
+          "module_exists": true,
+          "description": "Bayesian change-point alarms for timezone and leap-second drift",
+          "math_class": "conformal-statistics",
+          "invariant": "posterior run-length recursion detects structural temporal drift with explicit evidence updates.",
+          "invariant_specified": true
+        }
+      },
+      "family_count": 4,
+      "modules_found": 4,
+      "supporting_files_found": 6,
+      "verification_hooks_found": 2,
+      "branch_diversity": {
+        "total_families": 4,
+        "unique_classes": [
+          "algebraic-topology",
+          "conformal-statistics",
+          "decision-theory",
+          "optimal-transport"
+        ],
+        "class_count": 4,
+        "passes_diversity": true,
+        "has_conformal": true,
+        "has_topology": true,
+        "has_algebra": false,
+        "has_grothendieck": false
+      }
+    },
+    "R16": {
+      "name": "Cache-Coherent Identity / RPC",
+      "problem_focus": "Coherent positive and negative caching, retry idempotence, poisoning resistance, and RPC lookup consistency under concurrency.",
+      "legacy_surfaces": [
+        "nscd",
+        "sunrpc",
+        "nss",
+        "resolv"
+      ],
+      "failure_class": "cache-poisoning and retry-policy instability",
+      "artifacts": "security policy tables + tail-risk bounds + consistency witnesses",
+      "implementation_plan": [
+        "Compile retry, cache, and poisoning-resilience obligations into deterministic lookup and invalidation witnesses that the resolver and NSS stack can consume as normal data.",
+        "Anchor the round in crates/frankenlibc-core/src/resolv/config.rs, crates/frankenlibc-core/src/resolv/dns.rs, crates/frankenlibc-core/src/resolv/mod.rs, and tests/integration/fixture_nss.c so R16 stays grounded in concrete lookup surfaces.",
+        "Expose cache coherence and tail-risk budgets through the reverse-round contract artifact so future NSS hardening work can reuse one canonical evidence map."
+      ],
+      "verification_strategy": [
+        {
+          "description": "scripts/check_reverse_round_contracts.sh and crates/frankenlibc-harness/tests/reverse_round_contracts_test.rs validate the R16 mapping contract.",
+          "path": "scripts/check_reverse_round_contracts.sh",
+          "path_exists": true,
+          "paths": [
+            {
+              "path": "scripts/check_reverse_round_contracts.sh",
+              "path_exists": true
+            },
+            {
+              "path": "crates/frankenlibc-harness/tests/reverse_round_contracts_test.rs",
+              "path_exists": true
+            }
+          ]
+        },
+        {
+          "description": "crates/frankenlibc-abi/tests/resolv_abi_test.rs, crates/frankenlibc-abi/tests/nss_cache_policy_test.rs, and tests/conformance/fixtures/resolver.json keep resolver and cache-policy anchors exercised.",
+          "path": "crates/frankenlibc-abi/tests/resolv_abi_test.rs",
+          "path_exists": true,
+          "paths": [
+            {
+              "path": "crates/frankenlibc-abi/tests/resolv_abi_test.rs",
+              "path_exists": true
+            },
+            {
+              "path": "crates/frankenlibc-abi/tests/nss_cache_policy_test.rs",
+              "path_exists": true
+            },
+            {
+              "path": "tests/conformance/fixtures/resolver.json",
+              "path_exists": true
+            }
+          ]
+        }
+      ],
+      "supporting_files": [
+        {
+          "path": "PLAN_TO_PORT_GLIBC_TO_RUST.md",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-core/src/resolv/config.rs",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-core/src/resolv/dns.rs",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-core/src/resolv/mod.rs",
+          "exists": true
+        },
+        {
+          "path": "tests/integration/fixture_nss.c",
+          "exists": true
+        },
+        {
+          "path": "tests/conformance/fixtures/resolver.json",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-abi/tests/nss_cache_policy_test.rs",
+          "exists": true
+        }
+      ],
+      "math_families": {
+        "repair_policy": {
+          "module": "pomdp_repair",
+          "module_path": "crates/frankenlibc-membrane/src/runtime_math/pomdp_repair.rs",
+          "module_exists": true,
+          "description": "Constrained POMDP lookup and retry policy controller",
+          "math_class": "decision-theory",
+          "invariant": "Bellman-optimal repair actions minimize expected retry and poisoning loss under partial observability.",
+          "invariant_specified": true
+        },
+        "tail_risk": {
+          "module": "large_deviations",
+          "module_path": "crates/frankenlibc-membrane/src/large_deviations.rs",
+          "module_exists": true,
+          "description": "Large-deviation tail bounds for lookup and RPC latency",
+          "math_class": "stochastic-analysis",
+          "invariant": "rate-function bounds certify exponentially decaying lookup tail probabilities under the declared operating regime.",
+          "invariant_specified": true
+        },
+        "consistency_glue": {
+          "module": "grothendieck_glue",
+          "module_path": "crates/frankenlibc-membrane/src/runtime_math/grothendieck_glue.rs",
+          "module_exists": true,
+          "description": "Sheaf-style cache consistency witnesses across distributed key spaces",
+          "math_class": "grothendieck-serre",
+          "invariant": "compatible shard-level cache sections glue to one global lookup view.",
+          "invariant_specified": true
+        },
+        "invalidation_control": {
+          "module": "mean_field_game",
+          "module_path": "crates/frankenlibc-membrane/src/mean_field_game.rs",
+          "module_exists": true,
+          "description": "Mean-field invalidation controller for large cache populations",
+          "math_class": "game-theory",
+          "invariant": "the invalidation population converges to a Nash-consistent control field under bounded congestion.",
+          "invariant_specified": true
+        }
+      },
+      "family_count": 4,
+      "modules_found": 4,
+      "supporting_files_found": 7,
+      "verification_hooks_found": 2,
+      "branch_diversity": {
+        "total_families": 4,
+        "unique_classes": [
+          "decision-theory",
+          "game-theory",
+          "grothendieck-serre",
+          "stochastic-analysis"
+        ],
+        "class_count": 4,
+        "passes_diversity": true,
+        "has_conformal": false,
+        "has_topology": false,
+        "has_algebra": false,
+        "has_grothendieck": true
+      }
+    },
+    "R17": {
+      "name": "Regex / Parsing / Pattern Substrate",
+      "problem_focus": "Deterministic, memory-safe regex and parser behavior with bounded worst-case complexity and no catastrophic pattern explosions.",
+      "legacy_surfaces": [
+        "regex",
+        "glob",
+        "printf",
+        "scanf",
+        "parser-heavy posix"
+      ],
+      "failure_class": "pattern-state explosion and adversarial parse blowup",
+      "artifacts": "certified parser kernels + bounded-complexity certificates + adversarial fixture labels",
+      "implementation_plan": [
+        "Compile parser complexity and fallback obligations into deterministic witnesses shared by regex, glob, and format-string parsing instead of leaving R17 as a prose-only aspiration.",
+        "Anchor the round in crates/frankenlibc-core/src/string/regex.rs, crates/frankenlibc-core/src/string/glob.rs, crates/frankenlibc-core/src/stdio/printf.rs, and crates/frankenlibc-core/src/stdio/scanf.rs so all mappings stay tied to real parser surfaces.",
+        "Expose edge-heavy fixture expectations through the reverse-round contract artifact so parser hardening work has one canonical map of anchors and checks."
+      ],
+      "verification_strategy": [
+        {
+          "description": "scripts/check_reverse_round_contracts.sh and crates/frankenlibc-harness/tests/reverse_round_contracts_test.rs validate the R17 mapping contract.",
+          "path": "scripts/check_reverse_round_contracts.sh",
+          "path_exists": true,
+          "paths": [
+            {
+              "path": "scripts/check_reverse_round_contracts.sh",
+              "path_exists": true
+            },
+            {
+              "path": "crates/frankenlibc-harness/tests/reverse_round_contracts_test.rs",
+              "path_exists": true
+            }
+          ]
+        },
+        {
+          "description": "tests/conformance/fixtures/regex_glob_ops.json, crates/frankenlibc-abi/tests/stdio_abi_test.rs, and tests/integration/fixture_stdio_printf.c keep parser and pattern anchors visible.",
+          "path": "tests/conformance/fixtures/regex_glob_ops.json",
+          "path_exists": true,
+          "paths": [
+            {
+              "path": "tests/conformance/fixtures/regex_glob_ops.json",
+              "path_exists": true
+            },
+            {
+              "path": "crates/frankenlibc-abi/tests/stdio_abi_test.rs",
+              "path_exists": true
+            },
+            {
+              "path": "tests/integration/fixture_stdio_printf.c",
+              "path_exists": true
+            }
+          ]
+        }
+      ],
+      "supporting_files": [
+        {
+          "path": "PLAN_TO_PORT_GLIBC_TO_RUST.md",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-core/src/string/regex.rs",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-core/src/string/glob.rs",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-core/src/stdio/printf.rs",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-core/src/stdio/scanf.rs",
+          "exists": true
+        },
+        {
+          "path": "tests/conformance/fixtures/regex_glob_ops.json",
+          "exists": true
+        },
+        {
+          "path": "tests/integration/fixture_stdio_printf.c",
+          "exists": true
+        }
+      ],
+      "math_families": {
+        "complexity_barrier": {
+          "module": "sos_barrier",
+          "module_path": "crates/frankenlibc-membrane/src/runtime_math/sos_barrier.rs",
+          "module_exists": true,
+          "description": "Barrier-certificate guards for parser transition-cost growth",
+          "math_class": "algebra",
+          "invariant": "the barrier stays non-negative on the admissible parser-state region and decreases on unsafe cost trajectories.",
+          "invariant_specified": true
+        },
+        "fallback_game": {
+          "module": "approachability",
+          "module_path": "crates/frankenlibc-membrane/src/runtime_math/approachability.rs",
+          "module_exists": true,
+          "description": "Game-semantic synthesis of fallback strategies under adversarial patterns",
+          "math_class": "game-theory",
+          "invariant": "the fallback policy keeps adversarial parse trajectories inside the safe approachable set.",
+          "invariant_specified": true
+        },
+        "coverage_design": {
+          "module": "covering_array",
+          "module_path": "crates/frankenlibc-membrane/src/runtime_math/covering_array.rs",
+          "module_exists": true,
+          "description": "Covering-array stress design for parser and pattern interactions",
+          "math_class": "experimental-design",
+          "invariant": "strength-t arrays cover every required parser x pattern interaction at least once.",
+          "invariant_specified": true
+        },
+        "obstruction_witness": {
+          "module": "obstruction_detector",
+          "module_path": "crates/frankenlibc-membrane/src/runtime_math/obstruction_detector.rs",
+          "module_exists": true,
+          "description": "Obstruction witnesses for parser-state inconsistencies that cannot be repaired locally",
+          "math_class": "algebraic-topology",
+          "invariant": "non-trivial obstruction classes identify parse-state fragments that do not glue into one admissible execution.",
+          "invariant_specified": true
+        }
+      },
+      "family_count": 4,
+      "modules_found": 4,
+      "supporting_files_found": 7,
+      "verification_hooks_found": 2,
+      "branch_diversity": {
+        "total_families": 4,
+        "unique_classes": [
+          "algebra",
+          "algebraic-topology",
+          "experimental-design",
+          "game-theory"
+        ],
+        "class_count": 4,
+        "passes_diversity": true,
+        "has_conformal": false,
+        "has_topology": true,
+        "has_algebra": true,
+        "has_grothendieck": false
+      }
+    },
+    "R18": {
+      "name": "Bootstrap / Init / Observability Spine",
+      "problem_focus": "Startup ordering, initialization invariants, and diagnostic observability that do not perturb ABI behavior or hot-path overhead budgets.",
+      "legacy_surfaces": [
+        "csu",
+        "debug",
+        "support",
+        "startup",
+        "diagnostics"
+      ],
+      "failure_class": "startup-order drift and opaque failure surfaces",
+      "artifacts": "dependency proofs + minimally invasive probe sets + identifiability budgets",
+      "implementation_plan": [
+        "Compile startup dependency and probe-budget obligations into deterministic witnesses that the bootstrap path can treat as auditable artifact data.",
+        "Anchor the round in crates/frankenlibc-abi/src/startup_abi.rs, crates/frankenlibc-abi/src/startup_helpers.rs, and tests/conformance/runtime_env_inventory.v1.json so bootstrap and observability claims stay tied to real startup evidence.",
+        "Expose fault-identifiability and probe-budget assumptions through the reverse-round contract artifact so future startup work does not fork its own evidence format."
+      ],
+      "verification_strategy": [
+        {
+          "description": "scripts/check_reverse_round_contracts.sh and crates/frankenlibc-harness/tests/reverse_round_contracts_test.rs validate the R18 mapping contract.",
+          "path": "scripts/check_reverse_round_contracts.sh",
+          "path_exists": true,
+          "paths": [
+            {
+              "path": "scripts/check_reverse_round_contracts.sh",
+              "path_exists": true
+            },
+            {
+              "path": "crates/frankenlibc-harness/tests/reverse_round_contracts_test.rs",
+              "path_exists": true
+            }
+          ]
+        },
+        {
+          "description": "scripts/check_runtime_env_inventory.sh, crates/frankenlibc-harness/tests/runtime_env_inventory_test.rs, and crates/frankenlibc-abi/tests/startup_abi_contract_test.rs keep startup and observability anchors exercised.",
+          "path": "scripts/check_runtime_env_inventory.sh",
+          "path_exists": true,
+          "paths": [
+            {
+              "path": "scripts/check_runtime_env_inventory.sh",
+              "path_exists": true
+            },
+            {
+              "path": "crates/frankenlibc-harness/tests/runtime_env_inventory_test.rs",
+              "path_exists": true
+            },
+            {
+              "path": "crates/frankenlibc-abi/tests/startup_abi_contract_test.rs",
+              "path_exists": true
+            }
+          ]
+        }
+      ],
+      "supporting_files": [
+        {
+          "path": "PLAN_TO_PORT_GLIBC_TO_RUST.md",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-abi/src/startup_abi.rs",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-abi/src/startup_helpers.rs",
+          "exists": true
+        },
+        {
+          "path": "tests/conformance/runtime_env_inventory.v1.json",
+          "exists": true
+        },
+        {
+          "path": "tests/conformance/fixtures/startup_ops.json",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-harness/tests/runtime_env_inventory_test.rs",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-abi/tests/startup_abi_contract_test.rs",
+          "exists": true
+        }
+      ],
+      "math_families": {
+        "init_glue": {
+          "module": "grothendieck_glue",
+          "module_path": "crates/frankenlibc-membrane/src/runtime_math/grothendieck_glue.rs",
+          "module_exists": true,
+          "description": "Compositional initialization gluing over startup dependency charts",
+          "math_class": "grothendieck-serre",
+          "invariant": "compatible startup-local dependency sections glue to one deadlock-free initialization schedule.",
+          "invariant_specified": true
+        },
+        "probe_design": {
+          "module": "design",
+          "module_path": "crates/frankenlibc-membrane/src/runtime_math/design.rs",
+          "module_exists": true,
+          "description": "Optimal experiment design for low-overhead probe placement",
+          "math_class": "experimental-design",
+          "invariant": "D-optimal probe sets maximize identifiability under the declared overhead budget.",
+          "invariant_specified": true
+        },
+        "telemetry_information": {
+          "module": "provenance_info",
+          "module_path": "crates/frankenlibc-membrane/src/runtime_math/provenance_info.rs",
+          "module_exists": true,
+          "description": "Information-theoretic provenance accounting for startup telemetry",
+          "math_class": "information-theory",
+          "invariant": "provenance entropy remains above the minimum threshold required to distinguish declared startup fault classes.",
+          "invariant_specified": true
+        },
+        "budget_controller": {
+          "module": "control",
+          "module_path": "crates/frankenlibc-membrane/src/runtime_math/control.rs",
+          "module_exists": true,
+          "description": "Control-theoretic budget gate for startup diagnostics",
+          "math_class": "decision-theory",
+          "invariant": "probe budgets remain feasible under the controller's primal-dual constraints.",
+          "invariant_specified": true
+        }
+      },
+      "family_count": 4,
+      "modules_found": 4,
+      "supporting_files_found": 7,
+      "verification_hooks_found": 2,
+      "branch_diversity": {
+        "total_families": 4,
+        "unique_classes": [
+          "decision-theory",
+          "experimental-design",
+          "grothendieck-serre",
+          "information-theory"
+        ],
+        "class_count": 4,
+        "passes_diversity": true,
+        "has_conformal": false,
+        "has_topology": false,
+        "has_algebra": false,
+        "has_grothendieck": true
+      }
+    },
+    "R19": {
+      "name": "Dynamic Loader Security / Audit Surface",
+      "problem_focus": "Namespace integrity under dlopen/dlclose, audit-hook consistency, and tunables/hwcaps policy safety under concurrency and workload uncertainty.",
+      "legacy_surfaces": [
+        "elf",
+        "dl-audit",
+        "dl-cache",
+        "dl-lookup",
+        "dl-open",
+        "hwcaps",
+        "tunables"
+      ],
+      "failure_class": "namespace-policy and relocation-order drift",
+      "artifacts": "namespace automata + admissibility maps + relocation latency envelopes",
+      "implementation_plan": [
+        "Compile namespace, tunable, and relocation obligations into deterministic loader and audit witnesses rather than distributing them across unrelated docs and tests.",
+        "Anchor the round in crates/frankenlibc-core/src/elf/loader.rs, crates/frankenlibc-abi/src/dlfcn_abi.rs, tests/conformance/dlfcn_boundary_policy.v1.json, and tests/conformance/fixtures/loader_edges.json so R19 stays tied to real loader and audit surfaces.",
+        "Expose tunable admission and relocation-order assumptions through the reverse-round contract artifact so loader hardening work has one canonical contract ledger."
+      ],
+      "verification_strategy": [
+        {
+          "description": "scripts/check_reverse_round_contracts.sh and crates/frankenlibc-harness/tests/reverse_round_contracts_test.rs validate the R19 mapping contract.",
+          "path": "scripts/check_reverse_round_contracts.sh",
+          "path_exists": true,
+          "paths": [
+            {
+              "path": "scripts/check_reverse_round_contracts.sh",
+              "path_exists": true
+            },
+            {
+              "path": "crates/frankenlibc-harness/tests/reverse_round_contracts_test.rs",
+              "path_exists": true
+            }
+          ]
+        },
+        {
+          "description": "scripts/check_dlfcn_boundary_policy.sh, crates/frankenlibc-harness/tests/dlfcn_boundary_policy_test.rs, and crates/frankenlibc-abi/tests/dlfcn_abi_test.rs keep loader-boundary and audit anchors visible.",
+          "path": "scripts/check_dlfcn_boundary_policy.sh",
+          "path_exists": true,
+          "paths": [
+            {
+              "path": "scripts/check_dlfcn_boundary_policy.sh",
+              "path_exists": true
+            },
+            {
+              "path": "crates/frankenlibc-harness/tests/dlfcn_boundary_policy_test.rs",
+              "path_exists": true
+            },
+            {
+              "path": "crates/frankenlibc-abi/tests/dlfcn_abi_test.rs",
+              "path_exists": true
+            }
+          ]
+        }
+      ],
+      "supporting_files": [
+        {
+          "path": "PLAN_TO_PORT_GLIBC_TO_RUST.md",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-core/src/elf/loader.rs",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-abi/src/dlfcn_abi.rs",
+          "exists": true
+        },
+        {
+          "path": "tests/conformance/dlfcn_boundary_policy.v1.json",
+          "exists": true
+        },
+        {
+          "path": "tests/conformance/fixtures/loader_edges.json",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-harness/tests/dlfcn_boundary_policy_test.rs",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-abi/tests/dlfcn_abi_test.rs",
+          "exists": true
+        }
+      ],
+      "math_families": {
+        "namespace_game": {
+          "module": "approachability",
+          "module_path": "crates/frankenlibc-membrane/src/runtime_math/approachability.rs",
+          "module_exists": true,
+          "description": "Game-semantic namespace control for audit-hook and dlopen evolution",
+          "math_class": "game-theory",
+          "invariant": "the loader policy keeps namespace-observable drift inside the declared safe set.",
+          "invariant_specified": true
+        },
+        "scope_glue": {
+          "module": "grothendieck_glue",
+          "module_path": "crates/frankenlibc-membrane/src/runtime_math/grothendieck_glue.rs",
+          "module_exists": true,
+          "description": "Sheaf-style propagation of symbol-version scope constraints",
+          "math_class": "grothendieck-serre",
+          "invariant": "compatible local symbol-version scopes glue into one global namespace witness.",
+          "invariant_specified": true
+        },
+        "tunable_tail_risk": {
+          "module": "cvar",
+          "module_path": "crates/frankenlibc-membrane/src/runtime_math/cvar.rs",
+          "module_exists": true,
+          "description": "Tail-risk guard for tunable and hwcaps policy selection",
+          "math_class": "conformal-statistics",
+          "invariant": "CVaR budgets bound the worst-case tunable admission loss over the declared workload family.",
+          "invariant_specified": true
+        },
+        "lookup_envelope": {
+          "module": "tropical_latency",
+          "module_path": "crates/frankenlibc-membrane/src/tropical_latency.rs",
+          "module_exists": true,
+          "description": "Tropical latency envelope for relocation and lookup scheduling",
+          "math_class": "algebra",
+          "invariant": "min-plus composition yields a monotone upper bound on relocation and lookup latency.",
+          "invariant_specified": true
+        }
+      },
+      "family_count": 4,
+      "modules_found": 4,
+      "supporting_files_found": 7,
+      "verification_hooks_found": 2,
+      "branch_diversity": {
+        "total_families": 4,
+        "unique_classes": [
+          "algebra",
+          "conformal-statistics",
+          "game-theory",
+          "grothendieck-serre"
+        ],
+        "class_count": 4,
+        "passes_diversity": true,
+        "has_conformal": true,
+        "has_topology": false,
+        "has_algebra": true,
+        "has_grothendieck": true
+      }
+    },
+    "R20": {
+      "name": "Non-Local Control / Async Signal Semantics",
+      "problem_focus": "Sigaction, sigaltstack, setjmp/longjmp, and cancellation interactions that can violate stack, cleanup, or temporal invariants under adversarial delivery timing.",
+      "legacy_surfaces": [
+        "signal",
+        "setjmp",
+        "nptl",
+        "cancellation",
+        "sigaltstack"
+      ],
+      "failure_class": "non-local control corruption and re-entrancy deadlock",
+      "artifacts": "transition rules + continuation-safety witnesses + repair/deny tables",
+      "implementation_plan": [
+        "Compile signal-delivery, unwind, and non-local jump obligations into deterministic witnesses that the signal and setjmp ABI layers can consume without bespoke proof surfaces.",
+        "Anchor the round in crates/frankenlibc-abi/src/signal_abi.rs, crates/frankenlibc-abi/src/setjmp_abi.rs, docs/proofs/hji_viability_kernel.md, and tests/conformance/setjmp_semantics_contract.v1.json so async-signal and jump claims stay tied to live repo evidence.",
+        "Expose deferred-delivery and continuation-safety assumptions through the reverse-round contract artifact so signal/setjmp closure work can reuse one canonical map."
+      ],
+      "verification_strategy": [
+        {
+          "description": "scripts/check_reverse_round_contracts.sh and crates/frankenlibc-harness/tests/reverse_round_contracts_test.rs validate the R20 mapping contract.",
+          "path": "scripts/check_reverse_round_contracts.sh",
+          "path_exists": true,
+          "paths": [
+            {
+              "path": "scripts/check_reverse_round_contracts.sh",
+              "path_exists": true
+            },
+            {
+              "path": "crates/frankenlibc-harness/tests/reverse_round_contracts_test.rs",
+              "path_exists": true
+            }
+          ]
+        },
+        {
+          "description": "scripts/check_signal_native.sh, scripts/check_setjmp_semantics_contract.sh, scripts/check_runtime_math_hji_viability_proofs.sh, crates/frankenlibc-abi/tests/signal_abi_test.rs, and crates/frankenlibc-harness/tests/setjmp_semantics_contract_test.rs keep the declared signal and jump anchors exercised.",
+          "path": "scripts/check_signal_native.sh",
+          "path_exists": true,
+          "paths": [
+            {
+              "path": "scripts/check_signal_native.sh",
+              "path_exists": true
+            },
+            {
+              "path": "scripts/check_setjmp_semantics_contract.sh",
+              "path_exists": true
+            },
+            {
+              "path": "scripts/check_runtime_math_hji_viability_proofs.sh",
+              "path_exists": true
+            },
+            {
+              "path": "crates/frankenlibc-abi/tests/signal_abi_test.rs",
+              "path_exists": true
+            },
+            {
+              "path": "crates/frankenlibc-harness/tests/setjmp_semantics_contract_test.rs",
+              "path_exists": true
+            }
+          ]
+        }
+      ],
+      "supporting_files": [
+        {
+          "path": "PLAN_TO_PORT_GLIBC_TO_RUST.md",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-abi/src/signal_abi.rs",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-abi/src/setjmp_abi.rs",
+          "exists": true
+        },
+        {
+          "path": "docs/proofs/hji_viability_kernel.md",
+          "exists": true
+        },
+        {
+          "path": "tests/conformance/setjmp_semantics_contract.v1.json",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-abi/tests/signal_abi_test.rs",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-abi/tests/setjmp_abi_test.rs",
+          "exists": true
+        }
+      ],
+      "math_families": {
+        "signal_game": {
+          "module": "hji_reachability",
+          "module_path": "crates/frankenlibc-membrane/src/hji_reachability.rs",
+          "module_exists": true,
+          "description": "Hamilton-Jacobi-Isaacs reachability for adversarial signal timing",
+          "math_class": "game-theory",
+          "invariant": "the viability set contains exactly the states from which safe signal handling remains enforceable under the declared control policy.",
+          "invariant_specified": true
+        },
+        "trace_motifs": {
+          "module": "rough_path",
+          "module_path": "crates/frankenlibc-membrane/src/rough_path.rs",
+          "module_exists": true,
+          "description": "Rough-path signatures for unstable signal/unwind interleavings",
+          "math_class": "stochastic-analysis",
+          "invariant": "Chen's identity preserves composition of partial signal/unwind trace signatures.",
+          "invariant_specified": true
+        },
+        "continuation_obstruction": {
+          "module": "obstruction_detector",
+          "module_path": "crates/frankenlibc-membrane/src/runtime_math/obstruction_detector.rs",
+          "module_exists": true,
+          "description": "Obstruction witnesses for non-local continuation states that fail to glue back into one valid control path",
+          "math_class": "algebraic-topology",
+          "invariant": "a trivial obstruction class is required for a local unwind witness to extend to a global continuation-safe trace.",
+          "invariant_specified": true
+        },
+        "stack_tstructure": {
+          "module": "derived_tstructure",
+          "module_path": "crates/frankenlibc-membrane/src/runtime_math/derived_tstructure.rs",
+          "module_exists": true,
+          "description": "Derived-category ordering witnesses for stack and cleanup phase transitions",
+          "math_class": "grothendieck-serre",
+          "invariant": "t-structure truncation order preserves the declared before/after cleanup phase boundary.",
+          "invariant_specified": true
+        }
+      },
+      "family_count": 4,
+      "modules_found": 4,
+      "supporting_files_found": 7,
+      "verification_hooks_found": 2,
+      "branch_diversity": {
+        "total_families": 4,
+        "unique_classes": [
+          "algebraic-topology",
+          "game-theory",
+          "grothendieck-serre",
+          "stochastic-analysis"
+        ],
+        "class_count": 4,
+        "passes_diversity": true,
+        "has_conformal": false,
+        "has_topology": true,
+        "has_algebra": false,
+        "has_grothendieck": true
+      }
+    },
+    "R21": {
+      "name": "Terminal / Session / PTY Cohesion",
+      "problem_focus": "Termios, session, and PTY transitions with minimal tail overhead and no hidden ABI-visible legality drift.",
+      "legacy_surfaces": [
+        "termios",
+        "login",
+        "io",
+        "posix",
+        "pty"
+      ],
+      "failure_class": "terminal-mode divergence and PTY tail blowup",
+      "artifacts": "admissibility polytopes + PTY control policies + reversible state projections",
+      "implementation_plan": [
+        "Compile terminal-state legality and PTY/session control obligations into deterministic signatures and admissibility witnesses that termios code can consume directly.",
+        "Anchor the round in docs/terminal_signature_algebra.md, crates/frankenlibc-abi/src/termios_abi.rs, crates/frankenlibc-core/src/termios/mod.rs, and tests/conformance/fixtures/termios_ops.json so the mapping stays tied to actual PTY and termios evidence.",
+        "Expose terminal tail-risk and reversible-state assumptions through the reverse-round contract artifact instead of leaving them scattered across isolated notes."
+      ],
+      "verification_strategy": [
+        {
+          "description": "scripts/check_reverse_round_contracts.sh and crates/frankenlibc-harness/tests/reverse_round_contracts_test.rs validate the R21 mapping contract.",
+          "path": "scripts/check_reverse_round_contracts.sh",
+          "path_exists": true,
+          "paths": [
+            {
+              "path": "scripts/check_reverse_round_contracts.sh",
+              "path_exists": true
+            },
+            {
+              "path": "crates/frankenlibc-harness/tests/reverse_round_contracts_test.rs",
+              "path_exists": true
+            }
+          ]
+        },
+        {
+          "description": "docs/terminal_signature_algebra.md, crates/frankenlibc-abi/tests/termios_abi_test.rs, and tests/conformance/fixtures/termios_ops.json keep termios and PTY anchors visible.",
+          "path": "docs/terminal_signature_algebra.md",
+          "path_exists": true,
+          "paths": [
+            {
+              "path": "docs/terminal_signature_algebra.md",
+              "path_exists": true
+            },
+            {
+              "path": "crates/frankenlibc-abi/tests/termios_abi_test.rs",
+              "path_exists": true
+            },
+            {
+              "path": "tests/conformance/fixtures/termios_ops.json",
+              "path_exists": true
+            }
+          ]
+        }
+      ],
+      "supporting_files": [
+        {
+          "path": "PLAN_TO_PORT_GLIBC_TO_RUST.md",
+          "exists": true
+        },
+        {
+          "path": "docs/terminal_signature_algebra.md",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-abi/src/termios_abi.rs",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-core/src/termios/mod.rs",
+          "exists": true
+        },
+        {
+          "path": "tests/conformance/fixtures/termios_ops.json",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-abi/tests/termios_abi_test.rs",
+          "exists": true
+        }
+      ],
+      "math_families": {
+        "admissibility_guard": {
+          "module": "sos_barrier",
+          "module_path": "crates/frankenlibc-membrane/src/runtime_math/sos_barrier.rs",
+          "module_exists": true,
+          "description": "Admissibility guards for terminal-state transitions",
+          "math_class": "algebra",
+          "invariant": "terminal legality witnesses stay non-negative on the admissible state polytope.",
+          "invariant_specified": true
+        },
+        "session_controller": {
+          "module": "control",
+          "module_path": "crates/frankenlibc-membrane/src/runtime_math/control.rs",
+          "module_exists": true,
+          "description": "Control policy for PTY/session contention and flush behavior",
+          "math_class": "decision-theory",
+          "invariant": "controller thresholds remain feasible under the terminal tail-latency budget.",
+          "invariant_specified": true
+        },
+        "tail_guard": {
+          "module": "large_deviations",
+          "module_path": "crates/frankenlibc-membrane/src/large_deviations.rs",
+          "module_exists": true,
+          "description": "Large-deviation tail bounds for stall and flush events in PTY pipelines",
+          "math_class": "stochastic-analysis",
+          "invariant": "rate-function bounds certify exponentially decaying stall probabilities over the declared PTY workload class.",
+          "invariant_specified": true
+        },
+        "projection_transport": {
+          "module": "ktheory",
+          "module_path": "crates/frankenlibc-membrane/src/runtime_math/ktheory.rs",
+          "module_exists": true,
+          "description": "Transport witnesses for reversible terminal-state projections",
+          "math_class": "algebraic-topology",
+          "invariant": "projection transport classes stay stable under locally compatible terminal chart transitions.",
+          "invariant_specified": true
+        }
+      },
+      "family_count": 4,
+      "modules_found": 4,
+      "supporting_files_found": 6,
+      "verification_hooks_found": 2,
+      "branch_diversity": {
+        "total_families": 4,
+        "unique_classes": [
+          "algebra",
+          "algebraic-topology",
+          "decision-theory",
+          "stochastic-analysis"
+        ],
+        "class_count": 4,
+        "passes_diversity": true,
+        "has_conformal": false,
+        "has_topology": true,
+        "has_algebra": true,
+        "has_grothendieck": false
+      }
+    },
+    "R22": {
+      "name": "Process Creation / Path / Pattern Semantics",
+      "problem_focus": "Deterministic and safe spawn/exec/path/pattern semantics under edge-heavy inputs, environment mutation, and adversarial launch states.",
+      "legacy_surfaces": [
+        "spawn",
+        "exec",
+        "glob",
+        "fnmatch",
+        "regex",
+        "env",
+        "path"
+      ],
+      "failure_class": "launch-policy and path-complexity drift",
+      "artifacts": "launch DAGs + interaction-optimal fixture plans + anomaly guards",
+      "implementation_plan": [
+        "Compile launch, path, and pattern obligations into deterministic policy DAGs and interaction campaigns that the process and unistd surfaces can consume as ordinary data.",
+        "Anchor the round in crates/frankenlibc-abi/src/process_abi.rs, crates/frankenlibc-abi/src/unistd_abi.rs, crates/frankenlibc-core/src/string/glob.rs, and tests/conformance/fixtures/spawn_exec_ops.json so R22 stays grounded in real process and path surfaces.",
+        "Expose environment-mutation and launch anomaly assumptions through the reverse-round contract artifact so spawn/exec work does not fork its own contract language."
+      ],
+      "verification_strategy": [
+        {
+          "description": "scripts/check_reverse_round_contracts.sh and crates/frankenlibc-harness/tests/reverse_round_contracts_test.rs validate the R22 mapping contract.",
+          "path": "scripts/check_reverse_round_contracts.sh",
+          "path_exists": true,
+          "paths": [
+            {
+              "path": "scripts/check_reverse_round_contracts.sh",
+              "path_exists": true
+            },
+            {
+              "path": "crates/frankenlibc-harness/tests/reverse_round_contracts_test.rs",
+              "path_exists": true
+            }
+          ]
+        },
+        {
+          "description": "crates/frankenlibc-abi/tests/process_abi_test.rs, crates/frankenlibc-abi/tests/unistd_abi_test.rs, tests/conformance/fixtures/spawn_exec_ops.json, and tests/conformance/fixtures/regex_glob_ops.json keep launch and pattern anchors visible.",
+          "path": "crates/frankenlibc-abi/tests/process_abi_test.rs",
+          "path_exists": true,
+          "paths": [
+            {
+              "path": "crates/frankenlibc-abi/tests/process_abi_test.rs",
+              "path_exists": true
+            },
+            {
+              "path": "crates/frankenlibc-abi/tests/unistd_abi_test.rs",
+              "path_exists": true
+            },
+            {
+              "path": "tests/conformance/fixtures/spawn_exec_ops.json",
+              "path_exists": true
+            },
+            {
+              "path": "tests/conformance/fixtures/regex_glob_ops.json",
+              "path_exists": true
+            }
+          ]
+        }
+      ],
+      "supporting_files": [
+        {
+          "path": "PLAN_TO_PORT_GLIBC_TO_RUST.md",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-abi/src/process_abi.rs",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-abi/src/unistd_abi.rs",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-core/src/string/glob.rs",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-core/src/string/regex.rs",
+          "exists": true
+        },
+        {
+          "path": "tests/conformance/fixtures/spawn_exec_ops.json",
+          "exists": true
+        },
+        {
+          "path": "tests/conformance/fixtures/regex_glob_ops.json",
+          "exists": true
+        }
+      ],
+      "math_families": {
+        "launch_game": {
+          "module": "approachability",
+          "module_path": "crates/frankenlibc-membrane/src/runtime_math/approachability.rs",
+          "module_exists": true,
+          "description": "Grammar-constrained launch decision synthesis under adversarial environments",
+          "math_class": "game-theory",
+          "invariant": "the launch controller keeps observable failure vectors inside the declared safe approachable set.",
+          "invariant_specified": true
+        },
+        "interaction_design": {
+          "module": "covering_array",
+          "module_path": "crates/frankenlibc-membrane/src/runtime_math/covering_array.rs",
+          "module_exists": true,
+          "description": "Matroid-like interaction design for environment x path x flag campaigns",
+          "math_class": "experimental-design",
+          "invariant": "strength-t interaction plans cover every required launch/path interaction at least once.",
+          "invariant_specified": true
+        },
+        "runtime_alarm": {
+          "module": "eprocess",
+          "module_path": "crates/frankenlibc-membrane/src/runtime_math/eprocess.rs",
+          "module_exists": true,
+          "description": "Anytime-valid anomaly alarms for launch and pattern behavior",
+          "math_class": "conformal-statistics",
+          "invariant": "the anomaly e-process remains a nonnegative supermartingale under the null launch envelope.",
+          "invariant_specified": true
+        },
+        "path_normal_form": {
+          "module": "grobner_normalizer",
+          "module_path": "crates/frankenlibc-membrane/src/runtime_math/grobner_normalizer.rs",
+          "module_exists": true,
+          "description": "Canonical normalization of path and pattern constraint systems",
+          "math_class": "algebra",
+          "invariant": "equivalent launch/path constraints reduce to one canonical normal form.",
+          "invariant_specified": true
+        }
+      },
+      "family_count": 4,
+      "modules_found": 4,
+      "supporting_files_found": 7,
+      "verification_hooks_found": 2,
+      "branch_diversity": {
+        "total_families": 4,
+        "unique_classes": [
+          "algebra",
+          "conformal-statistics",
+          "experimental-design",
+          "game-theory"
+        ],
+        "class_count": 4,
+        "passes_diversity": true,
+        "has_conformal": true,
+        "has_topology": false,
+        "has_algebra": true,
+        "has_grothendieck": false
+      }
+    },
+    "R23": {
+      "name": "Filesystem Metadata / Directory Semantics",
+      "problem_focus": "Coherent metadata, directory iteration, descriptor capabilities, and race-prone file-state transitions across stat/fcntl/dirent surfaces.",
+      "legacy_surfaces": [
+        "io",
+        "dirent",
+        "posix",
+        "fcntl",
+        "stat",
+        "descriptor views"
+      ],
+      "failure_class": "metadata-view divergence and descriptor-state drift",
+      "artifacts": "descriptor automata + coherence diagnostics + regime-transition plans",
+      "implementation_plan": [
+        "Compile descriptor and metadata obligations into deterministic coherence witnesses instead of spreading the R23 contract across unrelated tests and fixtures.",
+        "Anchor the round in crates/frankenlibc-abi/src/dirent_abi.rs, crates/frankenlibc-abi/src/io_internal_abi.rs, crates/frankenlibc-core/src/dirent/mod.rs, and tests/conformance/fixtures/dirent_ops.json so directory and descriptor claims stay tied to real surfaces.",
+        "Expose metadata regime-shift and view-coherence assumptions through the reverse-round contract artifact so filesystem work has one canonical audit surface."
+      ],
+      "verification_strategy": [
+        {
+          "description": "scripts/check_reverse_round_contracts.sh and crates/frankenlibc-harness/tests/reverse_round_contracts_test.rs validate the R23 mapping contract.",
+          "path": "scripts/check_reverse_round_contracts.sh",
+          "path_exists": true,
+          "paths": [
+            {
+              "path": "scripts/check_reverse_round_contracts.sh",
+              "path_exists": true
+            },
+            {
+              "path": "crates/frankenlibc-harness/tests/reverse_round_contracts_test.rs",
+              "path_exists": true
+            }
+          ]
+        },
+        {
+          "description": "crates/frankenlibc-abi/tests/dirent_abi_test.rs, crates/frankenlibc-abi/tests/io_internal_native_file_test.rs, and tests/conformance/fixtures/dirent_ops.json keep descriptor and directory anchors exercised.",
+          "path": "crates/frankenlibc-abi/tests/dirent_abi_test.rs",
+          "path_exists": true,
+          "paths": [
+            {
+              "path": "crates/frankenlibc-abi/tests/dirent_abi_test.rs",
+              "path_exists": true
+            },
+            {
+              "path": "crates/frankenlibc-abi/tests/io_internal_native_file_test.rs",
+              "path_exists": true
+            },
+            {
+              "path": "tests/conformance/fixtures/dirent_ops.json",
+              "path_exists": true
+            }
+          ]
+        }
+      ],
+      "supporting_files": [
+        {
+          "path": "PLAN_TO_PORT_GLIBC_TO_RUST.md",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-abi/src/dirent_abi.rs",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-abi/src/io_internal_abi.rs",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-core/src/dirent/mod.rs",
+          "exists": true
+        },
+        {
+          "path": "tests/conformance/fixtures/dirent_ops.json",
+          "exists": true
+        },
+        {
+          "path": "tests/conformance/fixtures/io_internal_ops.json",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-abi/tests/dirent_abi_test.rs",
+          "exists": true
+        }
+      ],
+      "math_families": {
+        "view_obstruction": {
+          "module": "obstruction_detector",
+          "module_path": "crates/frankenlibc-membrane/src/runtime_math/obstruction_detector.rs",
+          "module_exists": true,
+          "description": "Obstruction witnesses for directory/descriptor views that fail to compose",
+          "math_class": "algebraic-topology",
+          "invariant": "non-trivial obstruction classes identify metadata views that cannot be glued into one coherent descriptor state.",
+          "invariant_specified": true
+        },
+        "queue_tail_risk": {
+          "module": "cvar",
+          "module_path": "crates/frankenlibc-membrane/src/runtime_math/cvar.rs",
+          "module_exists": true,
+          "description": "Tail-risk budgeting for metadata-heavy descriptor workloads",
+          "math_class": "conformal-statistics",
+          "invariant": "CVaR budgets cap worst-case metadata latency over the declared descriptor workload family.",
+          "invariant_specified": true
+        },
+        "regime_transport": {
+          "module": "schrodinger_bridge",
+          "module_path": "crates/frankenlibc-membrane/src/schrodinger_bridge.rs",
+          "module_exists": true,
+          "description": "Transport plans between metadata workload regimes",
+          "math_class": "optimal-transport",
+          "invariant": "entropic transport minimizes the action needed to shift between metadata regimes while preserving boundary constraints.",
+          "invariant_specified": true
+        },
+        "descriptor_glue": {
+          "module": "grothendieck_glue",
+          "module_path": "crates/frankenlibc-membrane/src/runtime_math/grothendieck_glue.rs",
+          "module_exists": true,
+          "description": "Sheaf-style local-to-global consistency checks across descriptor views",
+          "math_class": "grothendieck-serre",
+          "invariant": "compatible local descriptor sections glue to one global metadata witness.",
+          "invariant_specified": true
+        }
+      },
+      "family_count": 4,
+      "modules_found": 4,
+      "supporting_files_found": 7,
+      "verification_hooks_found": 2,
+      "branch_diversity": {
+        "total_families": 4,
+        "unique_classes": [
+          "algebraic-topology",
+          "conformal-statistics",
+          "grothendieck-serre",
+          "optimal-transport"
+        ],
+        "class_count": 4,
+        "passes_diversity": true,
+        "has_conformal": true,
+        "has_topology": true,
+        "has_algebra": false,
+        "has_grothendieck": true
+      }
+    },
+    "R24": {
+      "name": "Secure Bootstrap / Policy Noninterference",
+      "problem_focus": "Ensuring startup diagnostics, tunables, and secure-mode policy channels do not violate noninterference or mutate safety-critical behavior unexpectedly.",
+      "legacy_surfaces": [
+        "csu",
+        "elf",
+        "secure mode",
+        "tunables",
+        "diagnostics"
+      ],
+      "failure_class": "secure-mode policy leakage and false-admit drift",
+      "artifacts": "noninterference certificates + secure-mode gates + bounded false-admit/deny budgets",
+      "implementation_plan": [
+        "Compile secure-mode and diagnostic noninterference obligations into deterministic policy witnesses shared by startup and runtime-policy surfaces.",
+        "Anchor the round in crates/frankenlibc-abi/src/startup_abi.rs, crates/frankenlibc-abi/src/startup_helpers.rs, crates/frankenlibc-abi/src/runtime_policy.rs, and crates/frankenlibc-abi/src/host_resolve.rs so early-init policy claims stay tied to real bootstrap channels.",
+        "Expose false-admit and false-deny budgets through the reverse-round contract artifact so secure bootstrap work stays reviewable in one place."
+      ],
+      "verification_strategy": [
+        {
+          "description": "scripts/check_reverse_round_contracts.sh and crates/frankenlibc-harness/tests/reverse_round_contracts_test.rs validate the R24 mapping contract.",
+          "path": "scripts/check_reverse_round_contracts.sh",
+          "path_exists": true,
+          "paths": [
+            {
+              "path": "scripts/check_reverse_round_contracts.sh",
+              "path_exists": true
+            },
+            {
+              "path": "crates/frankenlibc-harness/tests/reverse_round_contracts_test.rs",
+              "path_exists": true
+            }
+          ]
+        },
+        {
+          "description": "crates/frankenlibc-abi/tests/startup_abi_contract_test.rs, crates/frankenlibc-harness/tests/runtime_env_inventory_test.rs, and crates/frankenlibc-harness/tests/dlfcn_boundary_policy_test.rs keep secure bootstrap and policy-boundary anchors visible.",
+          "path": "crates/frankenlibc-abi/tests/startup_abi_contract_test.rs",
+          "path_exists": true,
+          "paths": [
+            {
+              "path": "crates/frankenlibc-abi/tests/startup_abi_contract_test.rs",
+              "path_exists": true
+            },
+            {
+              "path": "crates/frankenlibc-harness/tests/runtime_env_inventory_test.rs",
+              "path_exists": true
+            },
+            {
+              "path": "crates/frankenlibc-harness/tests/dlfcn_boundary_policy_test.rs",
+              "path_exists": true
+            }
+          ]
+        }
+      ],
+      "supporting_files": [
+        {
+          "path": "PLAN_TO_PORT_GLIBC_TO_RUST.md",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-abi/src/startup_abi.rs",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-abi/src/startup_helpers.rs",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-abi/src/runtime_policy.rs",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-abi/src/host_resolve.rs",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-abi/tests/startup_abi_contract_test.rs",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-harness/tests/runtime_env_inventory_test.rs",
+          "exists": true
+        }
+      ],
+      "math_families": {
+        "provenance_entropy": {
+          "module": "provenance_info",
+          "module_path": "crates/frankenlibc-membrane/src/runtime_math/provenance_info.rs",
+          "module_exists": true,
+          "description": "Information-theoretic provenance guard for bootstrap diagnostics",
+          "math_class": "information-theory",
+          "invariant": "diagnostic provenance entropy remains bounded away from insecure collapse under the secure-mode policy.",
+          "invariant_specified": true
+        },
+        "policy_gate": {
+          "module": "loss_minimizer",
+          "module_path": "crates/frankenlibc-membrane/src/runtime_math/loss_minimizer.rs",
+          "module_exists": true,
+          "description": "Decision-theoretic secure-mode admission policy",
+          "math_class": "decision-theory",
+          "invariant": "proper loss minimization selects the calibrated secure-mode action for each bootstrap regime.",
+          "invariant_specified": true
+        },
+        "channel_normalizer": {
+          "module": "grobner_normalizer",
+          "module_path": "crates/frankenlibc-membrane/src/runtime_math/grobner_normalizer.rs",
+          "module_exists": true,
+          "description": "Canonical normalization of tunable and diagnostic channel constraints",
+          "math_class": "algebra",
+          "invariant": "equivalent channel constraints reduce to one canonical normal form.",
+          "invariant_specified": true
+        },
+        "adversarial_exposure": {
+          "module": "approachability",
+          "module_path": "crates/frankenlibc-membrane/src/runtime_math/approachability.rs",
+          "module_exists": true,
+          "description": "Mechanism-style exposure guard for adversarial tunable requests",
+          "math_class": "game-theory",
+          "invariant": "the exposure policy keeps tunable-induced leakage inside the declared safe payoff region.",
+          "invariant_specified": true
+        }
+      },
+      "family_count": 4,
+      "modules_found": 4,
+      "supporting_files_found": 7,
+      "verification_hooks_found": 2,
+      "branch_diversity": {
+        "total_families": 4,
+        "unique_classes": [
+          "algebra",
+          "decision-theory",
+          "game-theory",
+          "information-theory"
+        ],
+        "class_count": 4,
+        "passes_diversity": true,
+        "has_conformal": false,
+        "has_topology": false,
+        "has_algebra": true,
+        "has_grothendieck": false
+      }
+    },
+    "R25": {
+      "name": "Virtual Memory Transition Semantics",
+      "problem_focus": "Safe and ABI-faithful mmap, mprotect, mremap, brk, and mmap-backed stdio transitions under resize, remap, and permission churn.",
+      "legacy_surfaces": [
+        "mmap",
+        "munmap",
+        "mprotect",
+        "mremap",
+        "brk",
+        "sbrk",
+        "stdio"
+      ],
+      "failure_class": "region-transition and permission-churn instability",
+      "artifacts": "VM admissibility complexes + trajectory certificates + churn stabilization policies",
+      "implementation_plan": [
+        "Compile virtual-memory transition and permission-change obligations into deterministic witnesses that the mmap ABI and stdio backing paths can consume without hidden heuristics.",
+        "Anchor the round in crates/frankenlibc-core/src/mmap/mod.rs, crates/frankenlibc-abi/src/mmap_abi.rs, crates/frankenlibc-core/src/stdio/file.rs, and crates/frankenlibc-abi/tests/mmap_abi_test.rs so VM transition claims stay tied to concrete memory surfaces.",
+        "Expose map-churn tail-risk and admissibility assumptions through the reverse-round contract artifact so future VM work can reuse one canonical contract ledger."
+      ],
+      "verification_strategy": [
+        {
+          "description": "scripts/check_reverse_round_contracts.sh and crates/frankenlibc-harness/tests/reverse_round_contracts_test.rs validate the R25 mapping contract.",
+          "path": "scripts/check_reverse_round_contracts.sh",
+          "path_exists": true,
+          "paths": [
+            {
+              "path": "scripts/check_reverse_round_contracts.sh",
+              "path_exists": true
+            },
+            {
+              "path": "crates/frankenlibc-harness/tests/reverse_round_contracts_test.rs",
+              "path_exists": true
+            }
+          ]
+        },
+        {
+          "description": "crates/frankenlibc-abi/tests/mmap_abi_test.rs, crates/frankenlibc-abi/tests/io_internal_native_file_test.rs, and tests/integration/fixture_stdio.c keep VM and mmap-backed stdio anchors visible.",
+          "path": "crates/frankenlibc-abi/tests/mmap_abi_test.rs",
+          "path_exists": true,
+          "paths": [
+            {
+              "path": "crates/frankenlibc-abi/tests/mmap_abi_test.rs",
+              "path_exists": true
+            },
+            {
+              "path": "crates/frankenlibc-abi/tests/io_internal_native_file_test.rs",
+              "path_exists": true
+            },
+            {
+              "path": "tests/integration/fixture_stdio.c",
+              "path_exists": true
+            }
+          ]
+        }
+      ],
+      "supporting_files": [
+        {
+          "path": "PLAN_TO_PORT_GLIBC_TO_RUST.md",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-core/src/mmap/mod.rs",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-abi/src/mmap_abi.rs",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-core/src/stdio/file.rs",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-abi/tests/mmap_abi_test.rs",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-abi/tests/io_internal_native_file_test.rs",
+          "exists": true
+        },
+        {
+          "path": "tests/integration/fixture_stdio.c",
+          "exists": true
+        }
+      ],
+      "math_families": {
+        "region_obstruction": {
+          "module": "obstruction_detector",
+          "module_path": "crates/frankenlibc-membrane/src/runtime_math/obstruction_detector.rs",
+          "module_exists": true,
+          "description": "Directed-topology style obstruction witnesses for invalid region transitions",
+          "math_class": "algebraic-topology",
+          "invariant": "non-trivial obstruction classes identify local VM transitions that cannot extend to one admissible region evolution.",
+          "invariant_specified": true
+        },
+        "trajectory_game": {
+          "module": "hji_reachability",
+          "module_path": "crates/frankenlibc-membrane/src/hji_reachability.rs",
+          "module_exists": true,
+          "description": "Viability-kernel synthesis for permission and mapping trajectories",
+          "math_class": "game-theory",
+          "invariant": "the viability kernel contains precisely the admissible VM states under the declared control law.",
+          "invariant_specified": true
+        },
+        "tail_guard": {
+          "module": "cvar",
+          "module_path": "crates/frankenlibc-membrane/src/runtime_math/cvar.rs",
+          "module_exists": true,
+          "description": "Tail-risk guard for adversarial map churn and permission flips",
+          "math_class": "conformal-statistics",
+          "invariant": "CVaR budgets cap worst-case loss from map churn over the declared workload family.",
+          "invariant_specified": true
+        },
+        "permission_barrier": {
+          "module": "sos_barrier",
+          "module_path": "crates/frankenlibc-membrane/src/runtime_math/sos_barrier.rs",
+          "module_exists": true,
+          "description": "Barrier-certificate guard for permission-change admissibility",
+          "math_class": "algebra",
+          "invariant": "the barrier stays non-negative across every admissible permission transition and decreases on unsafe trajectories.",
+          "invariant_specified": true
+        }
+      },
+      "family_count": 4,
+      "modules_found": 4,
+      "supporting_files_found": 7,
+      "verification_hooks_found": 2,
+      "branch_diversity": {
+        "total_families": 4,
+        "unique_classes": [
+          "algebra",
+          "algebraic-topology",
+          "conformal-statistics",
+          "game-theory"
+        ],
+        "class_count": 4,
+        "passes_diversity": true,
+        "has_conformal": true,
+        "has_topology": true,
         "has_algebra": true,
         "has_grothendieck": false
       }
@@ -3608,10 +5585,24 @@
   },
   "golden_output": {
     "description": "Reproducible baseline for regression detection",
-    "hash": "f8ce7e400ae749b1",
+    "hash": "7374312f71246ce0",
     "round_hashes": {
       "R10": "7e84357ec964",
       "R11": "33bf75d138f7",
+      "R12": "d144d0e3353f",
+      "R13": "485641e5a3cb",
+      "R14": "952dda189671",
+      "R15": "7fcf3dd7cbec",
+      "R16": "385aa67846b2",
+      "R17": "b9015e8851c0",
+      "R18": "3fa91ea1f3d8",
+      "R19": "b020925ec359",
+      "R20": "4b3cac556849",
+      "R21": "23bb64bce24d",
+      "R22": "9877eb46287e",
+      "R23": "609e9efdc896",
+      "R24": "ca9956b52cc9",
+      "R25": "14e17a335bed",
       "R26": "2b41282f1aea",
       "R27": "a4c86a2b0694",
       "R28": "edab34decf0a",
