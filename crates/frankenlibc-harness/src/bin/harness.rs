@@ -414,6 +414,42 @@ enum Command {
         )]
         validator_report: PathBuf,
     },
+    /// Run the proof-chain E2E gate over binder integrity, dashboard totals, and contradictions.
+    ProofChainE2e {
+        /// Workspace root used for resolving canonical artifacts.
+        #[arg(long, default_value = ".")]
+        workspace_root: PathBuf,
+        /// Structured JSONL log output path.
+        #[arg(long, default_value = "target/conformance/proof_chain_e2e.log.jsonl")]
+        log: PathBuf,
+        /// JSON report output path.
+        #[arg(long, default_value = "target/conformance/proof_chain_e2e.report.json")]
+        report: PathBuf,
+        /// Nested proof-binder log output path.
+        #[arg(
+            long,
+            default_value = "target/conformance/proof_chain_e2e.proof_binder.log.jsonl"
+        )]
+        binder_log: PathBuf,
+        /// Nested proof-binder report output path.
+        #[arg(
+            long,
+            default_value = "target/conformance/proof_chain_e2e.proof_binder.report.json"
+        )]
+        binder_report: PathBuf,
+        /// Fresh validator snapshot output path.
+        #[arg(
+            long,
+            default_value = "target/conformance/proof_chain_e2e.validator.current.v1.json"
+        )]
+        validator_report: PathBuf,
+        /// Generated cross-report consistency output path.
+        #[arg(
+            long,
+            default_value = "target/conformance/proof_chain_e2e.cross_report.current.v1.json"
+        )]
+        cross_report: PathBuf,
+    },
     /// Build an operator-facing observability dashboard bundle from JSONL metrics streams.
     ObservabilityDashboard {
         /// One or more JSONL metric/evidence inputs.
@@ -1275,6 +1311,41 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 log.display(),
                 report.display(),
                 validator_report.display()
+            );
+        }
+        Command::ProofChainE2e {
+            workspace_root,
+            log,
+            report,
+            binder_log,
+            binder_report,
+            validator_report,
+            cross_report,
+        } => {
+            let rep = frankenlibc_harness::proof_chain_e2e::run_and_write(
+                &workspace_root,
+                &log,
+                &report,
+                &binder_log,
+                &binder_report,
+                &validator_report,
+                &cross_report,
+            )?;
+            if rep.summary.failed != 0 {
+                return Err(std::io::Error::other(format!(
+                    "proof chain e2e FAILED: {} check(s) failed (report: {})",
+                    rep.summary.failed,
+                    report.display()
+                ))
+                .into());
+            }
+            eprintln!(
+                "OK: proof chain e2e passed for {} checks (log: {}, report: {}, binder report: {}, cross report: {})",
+                rep.summary.checks,
+                log.display(),
+                report.display(),
+                binder_report.display(),
+                cross_report.display()
             );
         }
         Command::ObservabilityDashboard {

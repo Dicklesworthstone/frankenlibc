@@ -168,3 +168,76 @@ fn claim_reconciliation_detects_readme_drift_and_routes_owner() {
         "owner summary must include bd-w2c3.10"
     );
 }
+
+#[test]
+fn claim_reconciliation_detects_replacement_level_blocker_drift_and_routes_owner() {
+    let repo_root = workspace_root();
+    let script = repo_root.join("scripts/claim_reconciliation.py");
+    let levels_src = repo_root.join("tests/conformance/replacement_levels.json");
+    let mutated_levels_path = unique_temp_path("claim-reconciliation-replacement-levels.json");
+
+    let mutated_levels = std::fs::read_to_string(&levels_src)
+        .expect("replacement_levels.json should exist")
+        .replace(
+            "Hardened-mode E2E smoke battery remains incomplete",
+            "Eliminate all 6 Stub symbols",
+        );
+    std::fs::write(&mutated_levels_path, mutated_levels)
+        .expect("failed to write mutated replacement_levels.json");
+
+    let output = Command::new("python3")
+        .arg(&script)
+        .current_dir(&repo_root)
+        .env("FLC_CLAIM_RECON_REPLACEMENT_LEVELS", &mutated_levels_path)
+        .output()
+        .expect("failed to run claim_reconciliation.py with mutated replacement levels");
+
+    assert!(
+        !output.status.success(),
+        "mutated replacement level blocker should fail reconciliation\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let report: serde_json::Value = serde_json::from_str(&stdout).unwrap_or_else(|e| {
+        panic!(
+            "Failed to parse reconciliation report: {}\nstdout: {}\nstderr: {}",
+            e, stdout, stderr
+        );
+    });
+
+    assert_eq!(report["status"].as_str(), Some("fail"));
+    let findings = report["findings"]
+        .as_array()
+        .expect("findings must be an array");
+    let stale_blocker = findings.iter().find(|finding| {
+        finding["category"].as_str() == Some("replacement_level_blocker_stale")
+            && finding["owner_bead"].as_str() == Some("bd-w2c3.2.3")
+    });
+    let stale_blocker =
+        stale_blocker.expect("expected replacement-level blocker drift routed to bd-w2c3.2.3");
+    assert!(
+        stale_blocker["source"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("replacement_levels.json"),
+        "replacement-level drift finding should cite replacement_levels.json"
+    );
+    assert!(
+        stale_blocker["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("stub_count"),
+        "replacement-level drift finding should explain the stale blocker count"
+    );
+    assert!(
+        stale_blocker["artifact_refs"]
+            .as_array()
+            .unwrap_or(&Vec::new())
+            .iter()
+            .any(|value| value.as_str() == Some("tests/conformance/replacement_levels.json")),
+        "replacement-level drift finding should reference replacement_levels.json"
+    );
+}

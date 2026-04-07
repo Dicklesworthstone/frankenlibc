@@ -413,6 +413,50 @@ fn claim_drift_guard_consistent_with_readme_and_release_policy() {
 }
 
 #[test]
+fn blocker_text_does_not_reference_resolved_numeric_counts() {
+    let lvl = load_levels();
+    let assessment = &lvl["current_assessment"];
+    let stub_count = assessment["stub"].as_u64().unwrap_or(0);
+    let callthrough_count = assessment["callthrough"].as_u64().unwrap_or(0);
+
+    let mut texts = Vec::new();
+    for entry in lvl["levels"].as_array().unwrap() {
+        if let Some(blockers) = entry["blockers"].as_array() {
+            for blocker in blockers {
+                if let Some(text) = blocker.as_str() {
+                    texts.push(text.to_lowercase());
+                }
+            }
+        }
+    }
+    for (_, requirements) in lvl["transition_requirements"].as_object().unwrap() {
+        for requirement in requirements.as_array().unwrap() {
+            if let Some(text) = requirement.as_str() {
+                texts.push(text.to_lowercase());
+            }
+        }
+    }
+
+    if stub_count == 0 {
+        assert!(
+            texts.iter().all(|text| !text.contains("6 stub symbols")),
+            "replacement_levels.json must not keep stale stub-count blockers once stub=0"
+        );
+    }
+
+    if callthrough_count == 0 {
+        assert!(
+            texts.iter().all(|text| {
+                !text.contains("call-throughs (")
+                    && !text.contains("callthroughs (")
+                    && !text.contains(" call-through symbols")
+            }),
+            "replacement_levels.json must not keep stale non-zero call-through blockers once callthrough=0"
+        );
+    }
+}
+
+#[test]
 fn gate_script_exists_and_executable() {
     let root = workspace_root();
     let script = root.join("scripts/check_replacement_levels.sh");

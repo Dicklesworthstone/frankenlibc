@@ -236,6 +236,7 @@ fn run_shadow_manifest_writes_report_log_and_replay_bundle() {
     let root = temp_dir("report");
     let out_dir = root.join("out");
     let report_path = root.join("shadow_run.report.json");
+    let markdown_report_path = root.join("shadow_run.report.md");
     let log_path = root.join("shadow_run.log.jsonl");
     let artifact_index_path = root.join("shadow_run.artifacts.json");
 
@@ -264,6 +265,10 @@ fn run_shadow_manifest_writes_report_log_and_replay_bundle() {
     assert_eq!(report.summary.diverged, 1);
     assert_eq!(report.summary.skipped, 0);
     assert!(report_path.exists(), "report should be written");
+    assert!(
+        markdown_report_path.exists(),
+        "human-readable markdown report should be written"
+    );
     assert!(log_path.exists(), "log should be written");
     assert!(
         artifact_index_path.exists(),
@@ -333,6 +338,25 @@ fn run_shadow_manifest_writes_report_log_and_replay_bundle() {
         "log should carry the scenario trace id"
     );
 
+    let markdown_body =
+        fs::read_to_string(&markdown_report_path).expect("read markdown shadow report");
+    assert!(
+        markdown_body.contains("# Shadow Run Report"),
+        "markdown report should include the title"
+    );
+    assert!(
+        markdown_body.contains("`smoke.shadow_case`"),
+        "markdown report should include the scenario id"
+    );
+    assert!(
+        markdown_body.contains("stdout, stderr, syscall_trace"),
+        "markdown report should summarize mismatch axes"
+    );
+    assert!(
+        markdown_body.contains("Minimized replay command:"),
+        "markdown report should include minimized replay details"
+    );
+
     let artifact_index: ArtifactIndex = serde_json::from_str(
         &fs::read_to_string(&artifact_index_path).expect("read artifact index"),
     )
@@ -351,6 +375,13 @@ fn run_shadow_manifest_writes_report_log_and_replay_bundle() {
             .iter()
             .any(|artifact| artifact.kind == "report"),
         "artifact index should include the report"
+    );
+    assert!(
+        artifact_index
+            .artifacts
+            .iter()
+            .any(|artifact| artifact.kind == "report_human"),
+        "artifact index should include the human-readable report"
     );
     assert!(
         artifact_index.artifacts.iter().any(|artifact| {

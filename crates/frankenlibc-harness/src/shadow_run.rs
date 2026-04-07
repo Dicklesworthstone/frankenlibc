@@ -523,6 +523,7 @@ pub fn run_shadow_manifest_with_executor<E: ShadowCommandExecutor>(
             fs::create_dir_all(parent)?;
         }
         write_json_pretty(path, &report)?;
+        write_shadow_markdown_report(&companion_markdown_path(path), &report)?;
     }
 
     if let Some(path) = &config.artifact_index_path {
@@ -1095,6 +1096,18 @@ fn write_shadow_artifact_index(
             artifact_index.add(recorded.clone(), "report", sha256_path(&resolved)?);
             seen_paths.insert(recorded);
         }
+
+        let markdown_path = companion_markdown_path(report_path);
+        let resolved_markdown = resolve_workspace_path(&config.workspace_root, &markdown_path);
+        if resolved_markdown.exists() {
+            let recorded = path_string(&markdown_path);
+            artifact_index.add(
+                recorded.clone(),
+                "report_human",
+                sha256_path(&resolved_markdown)?,
+            );
+            seen_paths.insert(recorded);
+        }
     }
 
     if let Some(manifest_ref) = &config.manifest_ref {
@@ -1157,6 +1170,140 @@ fn shadow_trace_id(bead_id: &str, run_id: &str, seq: u64) -> String {
 fn write_json_pretty<T: Serialize>(path: &Path, value: &T) -> Result<(), ShadowRunError> {
     fs::write(path, serde_json::to_string_pretty(value)?)?;
     Ok(())
+}
+
+fn companion_markdown_path(path: &Path) -> PathBuf {
+    let mut markdown = path.to_path_buf();
+    if markdown.extension().is_some() {
+        markdown.set_extension("md");
+        markdown
+    } else {
+        let mut os = markdown.into_os_string();
+        os.push(".md");
+        PathBuf::from(os)
+    }
+}
+
+fn write_shadow_markdown_report(
+    path: &Path,
+    report: &ShadowRunReport,
+) -> Result<(), ShadowRunError> {
+    let mut body = String::new();
+    body.push_str("# Shadow Run Report\n\n");
+    body.push_str(&format!(
+        "- Generated: {}\n- Bead: `{}`\n- Manifest: `{}`\n- Reference: `{}`\n\n",
+        report.generated_at_utc, report.bead, report.manifest_id, report.reference
+    ));
+    body.push_str("## Summary\n\n");
+    body.push_str("| Total | Passed | Diverged | Skipped | Errors |\n");
+    body.push_str("| --- | --- | --- | --- | --- |\n");
+    body.push_str(&format!(
+        "| {} | {} | {} | {} | {} |\n\n",
+        report.summary.total_runs,
+        report.summary.passed,
+        report.summary.diverged,
+        report.summary.skipped,
+        report.summary.errors
+    ));
+
+    body.push_str("## Scenario Matrix\n\n");
+    body.push_str("| Scenario | Mode | Status | Baseline RC | Candidate RC | Mismatch Axes |\n");
+    body.push_str("| --- | --- | --- | --- | --- | --- |\n");
+    for scenario in &report.scenarios {
+        let mismatch_axes = scenario
+            .divergence
+            .as_ref()
+            .map(|detail| detail.mismatch_axes.join(", "))
+            .filter(|axes| !axes.is_empty())
+            .unwrap_or_else(|| "-".to_string());
+        body.push_str(&format!(
+            "| `{}` | `{}` | `{}` | `{}` | `{}` | {} |\n",
+            scenario.scenario_id,
+            scenario.mode,
+            scenario.status,
+            scenario.reference_run.exit_code,
+            scenario.candidate_run.exit_code,
+            mismatch_axes
+        ));
+    }
+
+    let divergent = report
+        .scenarios
+        .iter()
+        .filter(|scenario| scenario.status != "pass")
+        .collect::<Vec<_>>();
+    if divergent.is_empty() {
+        body.push_str("\n## Divergences\n\nNo scenario mismatches were recorded.\n");
+    } else {
+        body.push_str("\n## Divergences\n");
+        for scenario in divergent {
+            body.push_str(&format!(
+                "\n### `{}` `{}`\n\n- Status: `{}`\n- Trace: `{}`\n- Baseline exit: `{}`\n- Candidate exit: `{}`\n",
+                scenario.scenario_id,
+                scenario.mode,
+                scenario.status,
+                scenario.trace_id,
+                scenario.reference_run.exit_code,
+                scenario.candidate_run.exit_code
+            ));
+            if let Some(detail) = &scenario.divergence {
+                body.push_str(&format!(
+                    "- Mismatch axes: {}\n",
+                    if detail.mismatch_axes.is_empty() {
+                        "-".to_string()
+                    } else {
+                        detail.mismatch_axes.join(", ")
+                    }
+                ));
+                append_optional_markdown_block(
+                    &mut body,
+                    "stdout diff",
+                    detail.stdout_diff.as_deref(),
+                );
+                append_optional_markdown_block(
+                    &mut body,
+                    "stderr diff",
+                    detail.stderr_diff.as_deref(),
+                );
+                append_optional_markdown_block(
+                    &mut body,
+                    "syscall diff",
+                    detail.syscall_diff.as_deref(),
+                );
+                append_optional_markdown_block(
+                    &mut body,
+                    "analysis call stack",
+                    detail.analysis_call_stack.as_deref(),
+                );
+            }
+            if let Some(minimization) = &scenario.minimization {
+                body.push_str("\nMinimized replay command:\n\n```text\n");
+                body.push_str(&minimization.minimized_command.join(" "));
+                body.push_str("\n```\n");
+            }
+            if !scenario.artifact_refs.is_empty() {
+                body.push_str("\nArtifacts:\n");
+                for artifact in &scenario.artifact_refs {
+                    body.push_str(&format!("- `{artifact}`\n"));
+                }
+            }
+        }
+    }
+
+    fs::write(path, body)?;
+    Ok(())
+}
+
+fn append_optional_markdown_block(body: &mut String, title: &str, content: Option<&str>) {
+    if let Some(content) = content
+        && !content.trim().is_empty()
+    {
+        body.push_str(&format!(
+            "\n{}:\n\n```text\n{}\n```\n",
+            title,
+            content.trim_end()
+        ));
+    }
 }
 
 fn sha256_path(path: &Path) -> Result<String, ShadowRunError> {

@@ -4,12 +4,12 @@
 //! mixed read/write ratios, and sustained load. Tests linearizability,
 //! absence of torn reads, and correct reclamation under contention.
 
-use frankenlibc_membrane::alien_cs_metrics::{build_snapshot, AlienCsLogContext, RcuMetrics};
+use frankenlibc_membrane::alien_cs_metrics::{AlienCsLogContext, RcuMetrics, build_snapshot};
 use frankenlibc_membrane::ebr::EbrCollector;
 use frankenlibc_membrane::flat_combining::FlatCombiner;
 use frankenlibc_membrane::rcu::{RcuCell, RcuReader};
 use frankenlibc_membrane::seqlock::{SeqLock, SeqLockReader};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -167,10 +167,10 @@ fn run_composite_scenario(
                 let risk = *state_reader.read();
                 std::hint::black_box((cfg, risk));
 
-                if op_index % spec.write_every == 0 {
+                if op_index.is_multiple_of(spec.write_every) {
                     config.write_with(|c| {
                         c.0 = (op_index % 3) + 1;
-                        c.1 = op_index % 2 == 0;
+                        c.1 = op_index.is_multiple_of(2);
                     });
                     state.update((thread_seed << 32) | i);
                     config_writes.fetch_add(1, Ordering::Relaxed);

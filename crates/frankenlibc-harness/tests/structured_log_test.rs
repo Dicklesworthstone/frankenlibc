@@ -110,7 +110,10 @@ fn artifact_index_schema_example_roundtrips() {
         .as_ref()
         .expect("example should include join keys");
     assert_eq!(join_keys.trace_ids, vec!["bd-144::run-001::003"]);
-    assert_eq!(join_keys.span_ids, vec!["abi::realloc::decision::000000000000002a"]);
+    assert_eq!(
+        join_keys.span_ids,
+        vec!["abi::realloc::decision::000000000000002a"]
+    );
     assert_eq!(join_keys.decision_ids, vec![42]);
     assert_eq!(join_keys.policy_ids, vec![7]);
     assert_eq!(join_keys.evidence_seqnos, vec![11]);

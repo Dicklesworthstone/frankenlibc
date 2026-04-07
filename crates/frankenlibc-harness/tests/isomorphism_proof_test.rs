@@ -6,11 +6,13 @@
 //! 3. Proof template has required fields and valid statuses.
 //! 4. Example proof satisfies the template.
 //! 5. Applicable modules reference valid ABI modules.
-//! 6. Summary statistics are consistent.
-//! 7. The CI gate script exists and is executable.
+//! 6. Proof artifacts exist, are listed in the protocol, and validate their hashes.
+//! 7. Summary statistics are consistent.
+//! 8. The CI gate script exists and is executable.
 //!
 //! Run: cargo test -p frankenlibc-harness --test isomorphism_proof_test
 
+use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
@@ -29,6 +31,13 @@ fn load_protocol() -> serde_json::Value {
     let content =
         std::fs::read_to_string(&path).expect("isomorphism_proof_protocol.json should exist");
     serde_json::from_str(&content).expect("isomorphism_proof_protocol.json should be valid JSON")
+}
+
+fn sha256_hex(path: &Path) -> String {
+    let bytes = std::fs::read(path).unwrap_or_else(|_| panic!("failed reading {}", path.display()));
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    format!("{:x}", hasher.finalize())
 }
 
 fn load_matrix() -> serde_json::Value {
@@ -56,6 +65,10 @@ fn protocol_exists_and_valid() {
     assert!(
         proto["applicable_modules"].is_object(),
         "Missing applicable_modules"
+    );
+    assert!(
+        proto["existing_proofs"].is_array(),
+        "Missing existing_proofs"
     );
     assert!(proto["summary"].is_object(), "Missing summary");
 }
@@ -107,8 +120,11 @@ fn proof_template_complete() {
         "functions",
         "categories",
         "golden_commands",
+        "golden_artifacts",
         "golden_hash",
         "proof_status",
+        "rollback_instructions",
+        "attribution_metadata",
     ] {
         assert!(
             required_strs.contains(field),
@@ -173,6 +189,19 @@ fn example_satisfies_template() {
             "Example references undefined category: {cat_str}"
         );
     }
+
+    assert!(
+        example["golden_artifacts"].as_array().is_some(),
+        "Example must contain golden_artifacts"
+    );
+    assert!(
+        example["rollback_instructions"].is_object(),
+        "Example must contain rollback_instructions"
+    );
+    assert!(
+        example["attribution_metadata"].is_object(),
+        "Example must contain attribution_metadata"
+    );
 }
 
 #[test]
@@ -216,6 +245,158 @@ fn applicable_modules_valid() {
 }
 
 #[test]
+fn proof_directory_exists_and_records_validate() {
+    let root = workspace_root();
+    let proto = load_protocol();
+    let template = &proto["proof_template"];
+
+    let required: Vec<String> = template["required_fields"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|value| value.as_str().map(String::from))
+        .collect();
+    let valid_statuses: HashSet<&str> = template["proof_statuses"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|value| value.as_str())
+        .collect();
+    let valid_categories: HashSet<&str> = proto["proof_categories"]
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(|key| key.as_str())
+        .collect();
+
+    let proof_dir = root.join(proto["enforcement"]["proof_directory"].as_str().unwrap());
+    assert!(proof_dir.is_dir(), "proof directory must exist");
+
+    let listed_proofs = proto["existing_proofs"].as_array().unwrap();
+    assert!(
+        !listed_proofs.is_empty(),
+        "existing_proofs must not be empty"
+    );
+    let listed_paths: HashSet<String> = listed_proofs
+        .iter()
+        .map(|value| value["proof_path"].as_str().unwrap().to_string())
+        .collect();
+
+    let mut discovered_paths = HashSet::new();
+    for entry in std::fs::read_dir(&proof_dir).unwrap() {
+        let path = entry.unwrap().path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+            continue;
+        }
+        let relative = path
+            .strip_prefix(&root)
+            .unwrap()
+            .to_string_lossy()
+            .replace('\\', "/");
+        discovered_paths.insert(relative.clone());
+        assert!(
+            listed_paths.contains(&relative),
+            "proof file missing from existing_proofs: {relative}"
+        );
+
+        let content = std::fs::read_to_string(&path).unwrap();
+        let proof: serde_json::Value = serde_json::from_str(&content).unwrap();
+        for field in &required {
+            assert!(
+                !proof[field].is_null(),
+                "{} missing required field {}",
+                relative,
+                field
+            );
+        }
+
+        let proof_status = proof["proof_status"].as_str().unwrap();
+        assert!(
+            valid_statuses.contains(proof_status),
+            "{} invalid proof_status {}",
+            relative,
+            proof_status
+        );
+
+        let categories = proof["categories"].as_array().unwrap();
+        assert!(
+            !categories.is_empty(),
+            "{} categories must not be empty",
+            relative
+        );
+        for category in categories {
+            let category = category.as_str().unwrap();
+            assert!(
+                valid_categories.contains(category),
+                "{} references unknown category {}",
+                relative,
+                category
+            );
+        }
+
+        let golden_artifacts = proof["golden_artifacts"].as_array().unwrap();
+        assert!(
+            !golden_artifacts.is_empty(),
+            "{} golden_artifacts must not be empty",
+            relative
+        );
+        for artifact in golden_artifacts {
+            let artifact_path = artifact["path"].as_str().unwrap();
+            let expected_sha = artifact["sha256"].as_str().unwrap();
+            let full_path = root.join(artifact_path);
+            assert!(
+                full_path.exists(),
+                "{} references missing golden artifact {}",
+                relative,
+                artifact_path
+            );
+            let actual_sha = format!("sha256:{}", sha256_hex(&full_path));
+            assert_eq!(
+                actual_sha, expected_sha,
+                "{} hash mismatch for {}",
+                relative, artifact_path
+            );
+        }
+
+        let rollback = proof["rollback_instructions"].as_object().unwrap();
+        let rollback_command = rollback["command"].as_str().unwrap();
+        assert!(
+            rollback_command.contains("git revert"),
+            "{} rollback command must use git revert",
+            relative
+        );
+        let regeneration_commands = rollback["artifact_regeneration_commands"]
+            .as_array()
+            .unwrap();
+        assert!(
+            !regeneration_commands.is_empty(),
+            "{} artifact_regeneration_commands must not be empty",
+            relative
+        );
+
+        let attribution = proof["attribution_metadata"].as_object().unwrap();
+        for field in ["baseline_artifacts", "profile_artifacts"] {
+            let refs = attribution[field].as_array().unwrap();
+            assert!(!refs.is_empty(), "{} {} must not be empty", relative, field);
+            for artifact in refs {
+                let artifact = artifact.as_str().unwrap();
+                assert!(
+                    root.join(artifact).exists(),
+                    "{} references missing attribution artifact {}",
+                    relative,
+                    artifact
+                );
+            }
+        }
+    }
+
+    assert_eq!(
+        discovered_paths, listed_paths,
+        "existing_proofs must match proof directory contents"
+    );
+}
+
+#[test]
 fn summary_consistent() {
     let proto = load_protocol();
     let summary = &proto["summary"];
@@ -243,6 +424,11 @@ fn summary_consistent() {
         summary["existing_proof_count"].as_u64().unwrap() as usize,
         proofs.len(),
         "existing_proof_count mismatch"
+    );
+    assert_eq!(
+        summary["enforcement_status"].as_str().unwrap(),
+        "artifacts_present",
+        "enforcement_status must reflect proof artifact presence"
     );
 }
 
