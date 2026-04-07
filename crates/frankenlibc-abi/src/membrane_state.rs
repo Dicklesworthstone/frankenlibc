@@ -69,6 +69,12 @@ pub(crate) fn try_global_pipeline() -> Option<&'static ValidationPipeline> {
     Some(unsafe { &*ptr })
 }
 
+#[cfg_attr(test, allow(dead_code))]
+#[inline]
+pub(crate) fn pipeline_initialization_active() -> bool {
+    PIPELINE_STATE.load(Ordering::Acquire) == STATE_INITIALIZING
+}
+
 /// Global validation pipeline — panics if called during init.
 ///
 /// Use this from paths that cannot handle None (e.g., malloc where we

@@ -29,7 +29,7 @@
 //!
 //! TLS handoff is a separate bead (bd-rth1).
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 use crate::syscall;
 
 use core::sync::atomic::{AtomicI32, AtomicU32, Ordering};
@@ -204,7 +204,7 @@ unsafe extern "C" fn thread_trampoline(args_raw: usize) -> usize {
     handle.started.store(1, Ordering::Release);
 
     // Wake the parent waiting on started futex.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     {
         let futex_ptr = &handle.started as *const AtomicU32 as *const u32;
         // SAFETY: futex_ptr points to a valid, aligned u32 in the handle.
@@ -224,7 +224,7 @@ unsafe extern "C" fn thread_trampoline(args_raw: usize) -> usize {
     // SAFETY: handle_ptr is valid and exclusively owned by this thread for
     // the tls_values field. The pointer is stored in the TLS table and only
     // accessed by this thread via getspecific/setspecific.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     super::tls::register_thread_tls(handle.tid.load(Ordering::Acquire), unsafe {
         (*handle_ptr).tls_values.as_mut_ptr()
     });
@@ -277,7 +277,7 @@ unsafe fn unmapself_and_exit(stack_base: usize, stack_total_size: usize) -> ! {
     }
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[allow(unsafe_code)]
 unsafe fn detached_thread_self_cleanup_and_exit(handle_ptr: *mut ThreadHandle) -> ! {
     // SAFETY: caller guarantees `handle_ptr` is a live detached thread handle
@@ -315,7 +315,7 @@ unsafe fn detached_thread_self_cleanup_and_exit(handle_ptr: *mut ThreadHandle) -
 /// # Safety
 ///
 /// `handle_ptr` must be the current thread's live `ThreadHandle`.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[allow(unsafe_code)]
 pub unsafe fn exit_current_thread(handle_ptr: *mut ThreadHandle, retval: usize) -> ! {
     let tid = syscall::sys_gettid();
@@ -468,7 +468,7 @@ fn free_thread_stack(base: usize, total_size: usize) {
 ///
 /// * `start_routine` must be a valid function pointer with the C ABI.
 /// * `arg` must be valid for the lifetime of the new thread.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[allow(unsafe_code)]
 pub unsafe fn create_thread(
     start_routine: usize,
@@ -630,7 +630,7 @@ fn wait_for_startup(handle_ptr: *mut ThreadHandle) {
 ///
 /// `handle_ptr` must be a valid `*mut ThreadHandle` from `create_thread`.
 /// Must only be called once per handle (concurrent or repeated joins return EINVAL).
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[allow(unsafe_code)]
 pub unsafe fn join_thread(handle_ptr: *mut ThreadHandle) -> Result<usize, i32> {
     const EINVAL: i32 = 22;
@@ -803,7 +803,7 @@ pub unsafe fn join_thread(handle_ptr: *mut ThreadHandle) -> Result<usize, i32> {
 ///
 /// `handle_ptr` must be a valid `*mut ThreadHandle` from `create_thread`.
 /// After a successful detach, `handle_ptr` must not be used again.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[allow(unsafe_code)]
 pub unsafe fn detach_thread(handle_ptr: *mut ThreadHandle) -> Result<(), i32> {
     const EINVAL: i32 = 22;
@@ -894,7 +894,7 @@ pub unsafe fn detach_thread(handle_ptr: *mut ThreadHandle) -> Result<(), i32> {
 /// For threads created by `create_thread`, the `pthread_t` value is the
 /// `ThreadHandle` pointer. For the main thread (not created by us), we
 /// fall back to `gettid()`.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub fn self_tid() -> i32 {
     syscall::sys_gettid()
 }
@@ -903,7 +903,7 @@ pub fn self_tid() -> i32 {
 ///
 /// Uses the TLS registration table to find the handle associated with the TID.
 /// Returns `None` if the TID is not registered or the handle is invalid.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub fn handle_for_tid(tid: i32) -> Option<*mut ThreadHandle> {
     let values_ptr = super::tls::table_lookup(tid);
     if values_ptr.is_null() {

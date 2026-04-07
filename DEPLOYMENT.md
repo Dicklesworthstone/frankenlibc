@@ -1,78 +1,81 @@
-# FrankenLibC Deployment Guide
+# Deployment Guide
 
-This document describes how FrankenLibC is deployed today, what deployment modes are actually supported, and how to operate the current interpose-first artifact safely.
+FrankenLibC currently ships as an interposition-first artifact, not as a full standalone replacement for glibc.
 
-## Current Deployment Model
+Current deployment status:
 
-FrankenLibC is currently shipped as an interposition library, not as a full standalone libc replacement.
+- Shipping artifact: `target/release/libfrankenlibc_abi.so`
+- Current release claim: `L0` (`LD_PRELOAD` interpose on top of host glibc)
+- Hardened interpose evidence exists, but the explicit `L1` claim is still blocked by claim-control gates in [`tests/conformance/replacement_levels.json`](/data/projects/frankenlibc/tests/conformance/replacement_levels.json)
+- Planned standalone artifact: `libfrankenlibc_replace.so` is not shipped yet
 
-- Current artifact: `target/release/libfrankenlibc_abi.so`
-- Current deployment style: `LD_PRELOAD`
-- Current replacement-level claim: `L0` interpose
-- Planned but not shipped: `libfrankenlibc_replace.so`
+Canonical source artifacts for deployment claims:
 
-That distinction matters operationally. A clean classified symbol surface does not mean the project is already a drop-in standalone libc for arbitrary hosts and workloads.
+- [`tests/conformance/packaging_spec.json`](/data/projects/frankenlibc/tests/conformance/packaging_spec.json)
+- [`tests/conformance/replacement_levels.json`](/data/projects/frankenlibc/tests/conformance/replacement_levels.json)
+- [`tests/conformance/runtime_env_inventory.v1.json`](/data/projects/frankenlibc/tests/conformance/runtime_env_inventory.v1.json)
+- [`tests/conformance/ld_preload_smoke_summary.v1.json`](/data/projects/frankenlibc/tests/conformance/ld_preload_smoke_summary.v1.json)
+
+## Supported Deployment Model
+
+What works today:
+
+- Per-process interposition through `LD_PRELOAD`
+- Strict mode interposition (`FRANKENLIBC_MODE` unset or `strict`)
+- Hardened mode interposition (`FRANKENLIBC_MODE=hardened`)
+- Gentoo validation lanes and Portage-hook-based preload workflows
+
+What does not exist yet:
+
+- No standalone `libc.so.6` replacement flow
+- No curl installer
+- No distro package
+- No setuid/setgid preload support, because the loader ignores `LD_PRELOAD` there
 
 ## Prerequisites
 
-### Host Requirements
-
 - Linux host
-- Rust nightly toolchain for local builds
-- Cargo workspace build environment
-- For Gentoo validation lanes: Docker plus Python 3.11+
+- Nightly Rust toolchain
+- `cc` available for integration fixtures and smoke checks
+- `python3` for repo automation and E2E tooling
+- Optional: `rch` if you want to offload the build
 
-### Architecture Status
+Toolchain bootstrap:
 
-- `x86_64` is the practical deployment target today.
-- `aarch64` is an active bring-up area, not the default deployment story yet.
+```bash
+rustup toolchain install nightly
+rustup override set nightly
+```
 
-## Build And Artifact Paths
+## Build The Artifact
 
-Build the preload artifact:
+Local build:
 
 ```bash
 cargo build -p frankenlibc-abi --release
 ```
 
-Produced library:
+Remote-offloaded build:
+
+```bash
+rch exec -- cargo build -p frankenlibc-abi --release
+```
+
+Expected output:
 
 ```bash
 target/release/libfrankenlibc_abi.so
 ```
 
-Optional verification before deployment:
+## Install Options
+
+### Ephemeral repo-local run
 
 ```bash
-cargo check --workspace --all-targets
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace
-bash scripts/check_support_matrix_maintenance.sh
-TIMEOUT_SECONDS=10 bash scripts/ld_preload_smoke.sh
+LD_PRELOAD="$PWD/target/release/libfrankenlibc_abi.so" /bin/echo hello
 ```
 
-## Deployment Options
-
-### Per-Process Interposition
-
-This is the primary supported deployment path.
-
-Strict mode:
-
-```bash
-LD_PRELOAD="$PWD/target/release/libfrankenlibc_abi.so" /bin/ls
-```
-
-Hardened mode:
-
-```bash
-FRANKENLIBC_MODE=hardened \
-LD_PRELOAD="$PWD/target/release/libfrankenlibc_abi.so" /bin/ls
-```
-
-### Local Prefix Install
-
-Useful for repeatable operator experiments without touching system library paths.
+### Local user prefix
 
 ```bash
 install -d "$HOME/.local/lib/frankenlibc"
@@ -80,9 +83,7 @@ install -m 755 target/release/libfrankenlibc_abi.so "$HOME/.local/lib/frankenlib
 LD_PRELOAD="$HOME/.local/lib/frankenlibc/libfrankenlibc_abi.so" /bin/echo hello
 ```
 
-### System-Style Install For Experiments
-
-This is still an interpose deployment, not a system libc replacement.
+### System-style experimental prefix
 
 ```bash
 sudo install -d /usr/lib/frankenlibc
@@ -90,118 +91,134 @@ sudo install -m 755 target/release/libfrankenlibc_abi.so /usr/lib/frankenlibc/
 LD_PRELOAD=/usr/lib/frankenlibc/libfrankenlibc_abi.so /bin/echo hello
 ```
 
-### Container Deployment
+This is still interposition, not libc replacement. Do not repoint `/lib/.../libc.so.6` at FrankenLibC.
 
-Current container-oriented deployment is centered on the Gentoo validation workflow rather than a generic production image.
+## Runtime Modes
+
+`FRANKENLIBC_MODE` is process-wide and resolves once at startup.
+
+| Env value | Resolved mode | Meaning |
+|---|---|---|
+| unset, `strict`, or anything unrecognized | `strict` | compatibility-first behavior, no repair rewrites |
+| `hardened`, `repair`, `tsm`, `full` | `hardened` | repair/deny-capable membrane behavior |
+
+Example strict run:
 
 ```bash
-docker build -f docker/gentoo/Dockerfile.frankenlibc -t frankenlibc/gentoo-frankenlibc:latest .
-scripts/gentoo/fast-validate.sh --hardened
+LD_PRELOAD="$PWD/target/release/libfrankenlibc_abi.so" /bin/ls
 ```
 
-### What Does Not Exist Yet
+Example hardened run:
 
-- No packaged system-wide replacement libc install flow
-- No supported static-link deployment path today
-- No claim that arbitrary production workloads are ready for full replacement
+```bash
+FRANKENLIBC_MODE=hardened \
+LD_PRELOAD="$PWD/target/release/libfrankenlibc_abi.so" /bin/ls
+```
 
-## Runtime Configuration
+## Operator Configuration
 
-The main runtime knob is `FRANKENLIBC_MODE`.
+Primary deployment-facing variables:
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `FRANKENLIBC_MODE` | `strict` | Selects strict vs hardened mode |
+| `FRANKENLIBC_LOG` | unset | Structured runtime evidence log destination |
+| `FRANKENLIBC_LIB` | auto-detected `target/release/libfrankenlibc_abi.so` | Tooling override for preload library path |
+| `FRANKENLIBC_STARTUP_PHASE0` | `0` | Enables the phase-0 `__libc_start_main` startup path |
+| `FRANKENLIBC_E2E_SEED` | `42` | Deterministic replay seed for E2E tooling |
+| `FRANKENLIBC_E2E_STRESS_ITERS` | `5` | Stress-iteration control for E2E tooling |
+| `FRANKENLIBC_EXTENDED_GATES` | `0` | Enables heavier CI and verification gates |
+| `FRANKENLIBC_BENCH_PIN` | `0` | Benchmark-only CPU pinning control |
+
+Gentoo / Portage-specific variables:
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `FRANKENLIBC_PORTAGE_ENABLE` | `1` | Global kill-switch for Gentoo hooks |
+| `FRANKENLIBC_PHASE_ALLOWLIST` | `src_test pkg_test` | Limits which Portage phases activate preload |
+| `FRANKENLIBC_PACKAGE_BLOCKLIST` | `sys-libs/glibc sys-apps/shadow` | Prevents preload injection for sensitive packages |
+| `FRANKENLIBC_LOG_DIR` | `/var/log/frankenlibc/portage` | Root directory for hook-generated logs |
+| `FRANKENLIBC_PORTAGE_LOG` | `/tmp/frankenlibc-portage-hooks.log` | Hook decision log path |
+| `FRANKENLIBC_SKIP_STATIC` | `1` | Skips preload during static-only build phases |
+
+For the exhaustive machine-generated inventory, use [`tests/conformance/runtime_env_inventory.v1.json`](/data/projects/frankenlibc/tests/conformance/runtime_env_inventory.v1.json).
 
 Example shell setup:
 
 ```bash
 export FRANKENLIBC_MODE=hardened
-export FRANKENLIBC_LOG=/tmp/franken.jsonl
+export FRANKENLIBC_LOG=/tmp/frankenlibc.jsonl
 export FRANKENLIBC_LIB="$PWD/target/release/libfrankenlibc_abi.so"
 
 LD_PRELOAD="$FRANKENLIBC_LIB" /bin/echo configured
 ```
 
-### Common Environment Variables
+## Verification Before You Trust A Deployment
 
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `FRANKENLIBC_MODE` | `strict` | Process-wide immutable mode selection |
-| `FRANKENLIBC_LOG` | unset | Structured runtime log path |
-| `FRANKENLIBC_LIB` | unset | Tooling override for the built preload library |
-| `FRANKENLIBC_EXTENDED_GATES` | `0` | Enables heavier CI and verification gates |
-| `FRANKENLIBC_E2E_SEED` | `42` | Deterministic seed for E2E flows |
-| `FRANKENLIBC_E2E_STRESS_ITERS` | `5` | Stress-iteration count for E2E scripts |
-| `FRANKENLIBC_BENCH_PIN` | `0` | Benchmark-only CPU pinning control |
-| `FRANKENLIBC_LOG_DIR` | `/var/log/frankenlibc/portage` | Gentoo hook log root |
-| `FRANKENLIBC_LOG_FILE` | unset | Alias path exported into `FRANKENLIBC_LOG` |
-| `FRANKENLIBC_PHASE_ALLOWLIST` | `src_test pkg_test` | Gentoo phase allowlist |
-| `FRANKENLIBC_PACKAGE_BLOCKLIST` | `sys-libs/glibc sys-apps/shadow` | Gentoo package blocklist |
-| `FRANKENLIBC_PORTAGE_ENABLE` | `1` | Gentoo Portage hook kill-switch |
-| `FRANKENLIBC_PORTAGE_LOG` | `/tmp/frankenlibc-portage-hooks.log` | Gentoo hook decision log |
-| `FRANKENLIBC_SKIP_STATIC` | `1` | Skip preload during static-library Gentoo builds |
-| `FRANKENLIBC_STARTUP_PHASE0` | `0` | Startup gating knob for phase-0 `__libc_start_main` flow |
-| `FRANKENLIBC_TMPDIR` | unset | Tooling temp-root override |
-
-### Healing Policy Tuning
-
-There is no stable public operator-facing per-action healing-tuning interface today. The practical deployment choices are:
-
-- `strict` for compatibility-first behavior
-- `hardened` for repair-or-deny behavior
-
-Fine-grained healing policy remains defined by code and policy artifacts rather than a documented runtime control surface.
-
-## Monitoring And Evidence
-
-FrankenLibC favors structured artifacts over ad hoc operator intuition.
-
-### Runtime And Verification Signals
-
-- Structured runtime log: `FRANKENLIBC_LOG=/path/to/file.jsonl`
-- Gentoo hook log: `FRANKENLIBC_PORTAGE_LOG`
-- Gentoo log root: `FRANKENLIBC_LOG_DIR`
-- Reality report: `/tmp/frankenlibc-reality.json` or chosen output path
-- Membrane verification output: `/tmp/healing_oracle.json` or chosen output path
-
-### Useful Verification Commands
+Recommended gate order:
 
 ```bash
-cargo run -p frankenlibc-harness --bin harness -- reality-report \
-  --support-matrix support_matrix.json \
-  --output /tmp/frankenlibc-reality.json
-
-cargo run -p frankenlibc-harness --bin harness -- verify-membrane \
-  --mode both \
-  --output /tmp/healing_oracle.json
-
-bash scripts/check_support_matrix_maintenance.sh
+cargo check --workspace --all-targets
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+bash scripts/check_packaging.sh
+bash scripts/check_replacement_levels.sh
 TIMEOUT_SECONDS=10 bash scripts/ld_preload_smoke.sh
 ```
 
-### Gentoo Monitoring Artifacts
-
-- `artifacts/gentoo-builds/fast-validate/<timestamp>/summary.json`
-- `data/gentoo/perf-results/perf_benchmark_results.v1.json`
-- `data/gentoo/healing-analysis/summary.json`
-- `data/gentoo/quarantine.json`
-
-Dashboard generation:
+Useful supporting checks:
 
 ```bash
-python3 scripts/gentoo/validation_dashboard.py --format both --output artifacts/gentoo-dashboard.json
+bash scripts/check_support_matrix_maintenance.sh
+bash scripts/check_c_fixture_suite.sh
+bash scripts/e2e_suite.sh smoke
 ```
+
+Interpretation:
+
+- `check_packaging.sh` validates the declared interpose/replace artifact contracts
+- `check_replacement_levels.sh` validates the current maturity-level claim state
+- `ld_preload_smoke.sh` runs real dynamic programs in strict and hardened modes
+- `e2e_suite.sh` exercises broader replayable scenario packs
+
+## Monitoring And Evidence
+
+Runtime and deployment evidence lives in structured artifacts, not in prose alone.
+
+Useful outputs:
+
+- `FRANKENLIBC_LOG=/path/file.jsonl` for per-run structured runtime logs
+- `target/ld_preload_smoke/<run_id>/` for smoke transcripts, traces, and ABI-compat reports
+- `target/e2e_suite/<run_id>/` for E2E traces, pair reports, and flake-quarantine reports
+- [`tests/conformance/reality_report.v1.json`](/data/projects/frankenlibc/tests/conformance/reality_report.v1.json) for current symbol-state reality
+- [`tests/conformance/claim_reconciliation_report.v1.json`](/data/projects/frankenlibc/tests/conformance/claim_reconciliation_report.v1.json) for docs-vs-artifact claim consistency
+
+## Gentoo Deployment And Operations
+
+Gentoo validation is documented separately because it adds Portage hooks, runner configuration, and report generation beyond normal `LD_PRELOAD` use.
+
+Start here:
+
+- [`docs/gentoo/USER-GUIDE.md`](/data/projects/frankenlibc/docs/gentoo/USER-GUIDE.md)
+- [`docs/gentoo/OPERATIONS.md`](/data/projects/frankenlibc/docs/gentoo/OPERATIONS.md)
+- [`docs/gentoo/REFERENCE.md`](/data/projects/frankenlibc/docs/gentoo/REFERENCE.md)
 
 ## Troubleshooting
 
-### `LD_PRELOAD` Does Nothing
+### `LD_PRELOAD` appears to do nothing
 
-Check that the release library exists and that you are pointing to the right file:
+Verify the artifact exists and that the target process is dynamically linked:
 
 ```bash
 test -f target/release/libfrankenlibc_abi.so
+ldd /bin/echo
 ```
 
-### Hardened Mode Appears Silent
+`LD_PRELOAD` will not affect static binaries or setuid/setgid binaries.
 
-Set an explicit runtime log path:
+### Hardened mode is not emitting logs
+
+Set the log path explicitly:
 
 ```bash
 FRANKENLIBC_LOG=/tmp/franken.jsonl \
@@ -209,118 +226,33 @@ FRANKENLIBC_MODE=hardened \
 LD_PRELOAD="$PWD/target/release/libfrankenlibc_abi.so" /bin/echo test
 ```
 
-### Toolchain Mismatch
+### The toolchain is wrong
 
-This repository uses nightly Rust:
+This repo requires nightly:
 
 ```bash
 rustup toolchain install nightly
 rustup override set nightly
 ```
 
-### Smoke Or Drift Gate Fails
+### The startup path breaks very early
 
-Prefer the machine-generated artifacts over README prose. Start with:
+The phase-0 startup path is still gated behind `FRANKENLIBC_STARTUP_PHASE0=1`. Leave it at the default `0` unless you are explicitly testing startup work.
 
-```bash
-bash scripts/check_support_matrix_maintenance.sh
-TIMEOUT_SECONDS=10 bash scripts/ld_preload_smoke.sh
-```
+### A deployment claim and a report disagree
 
-### Docker Daemon Unavailable For Gentoo Validation
-
-- Start Docker and retry.
-- If you only need pipeline wiring, run `scripts/gentoo/fast-validate.sh --dry-run`.
-
-### Gentoo Hook Logs Missing
-
-- Verify `FRANKENLIBC_LOG_DIR` and `FRANKENLIBC_PORTAGE_LOG` are writable.
-- Re-run a minimal package and confirm JSONL emission.
-
-### Unexpected Gentoo Package Skips
-
-Check:
-
-- `FRANKENLIBC_PHASE_ALLOWLIST`
-- `FRANKENLIBC_PACKAGE_BLOCKLIST`
-- `configs/gentoo/exclusions.json`
-
-## Security Considerations
-
-- `LD_PRELOAD`-based deployment does not apply to setuid/setgid binaries because the loader ignores `LD_PRELOAD` there.
-- The shipping artifact is still interpose-first and still relies on the host deployment environment.
-- Security claims are strongest at the libc boundary for supported ABI paths, not for arbitrary whole-program behavior.
-- For the threat model, guarantees, healing actions, and formal safety claims, use [SECURITY.md](/data/projects/frankenlibc/SECURITY.md).
-
-## Performance Tuning
-
-### Mode Selection
-
-- Use `strict` when you want compatibility-first behavior and minimal repair.
-- Use `hardened` when you want repair-or-deny behavior and explicit evidence for suspicious inputs.
-
-### Bench And Perf Gates
-
-Benchmarking remains a verification activity, not a guarantee that every workload is already tuned:
+Trust the generated artifacts, then rerun the relevant gate:
 
 ```bash
-cargo bench -p frankenlibc-bench
+bash scripts/check_packaging.sh
+bash scripts/check_replacement_levels.sh
+bash scripts/check_claim_reconciliation.sh
 ```
 
-Perf-related environment knobs that exist today:
+## Security And Scope Boundaries
 
-- `FRANKENLIBC_BENCH_PIN`
-- `FRANKENLIBC_PERF_MAX_REGRESSION_PCT`
-- `FRANKENLIBC_PERF_ALLOW_TARGET_VIOLATION`
-- `FRANKENLIBC_PERF_SKIP_OVERLOADED`
-- `FRANKENLIBC_PERF_ENABLE_KERNEL_SUITE`
-- `FRANKENLIBC_PERF_MAX_LOAD_FACTOR`
-
-### Quarantine And TLS Cache
-
-Quarantine and TLS-cache behavior are part of the implementation and performance model, but there is not yet a documented stable operator-facing runtime tuning interface for them. Treat current quarantine depth and TLS-cache behavior as implementation details verified by benches and tests rather than deployment knobs.
-
-## Gentoo Validation Operations
-
-### Fast Lane
-
-```bash
-scripts/gentoo/fast-validate.sh --hardened
-```
-
-### Full Lane
-
-```bash
-python3 scripts/gentoo/build-runner.py --config configs/gentoo/build-config.toml
-python3 scripts/gentoo/test-runner.py --package-file data/gentoo/build-order.txt
-```
-
-Limit to selected packages:
-
-```bash
-python3 scripts/gentoo/build-runner.py \
-  --config configs/gentoo/build-config.toml \
-  --package sys-apps/coreutils \
-  --package net-misc/curl
-```
-
-### Documentation And Report Publishing
-
-```bash
-python3 scripts/gentoo/validate-docs.py --strict
-python3 scripts/gentoo/generate-report.py \
-  --franken-version 0.1.0 \
-  --gentoo-stage3 2026-02-01 \
-  --output docs/gentoo/VALIDATION-REPORT.md
-```
-
-### Preflight
-
-```bash
-python3 scripts/gentoo/validate-docs.py --strict
-python3 scripts/gentoo/validate_cache.py --cache-dir /var/cache/binpkgs --strict
-```
-
-## Deployment Summary
-
-If you need a practical deployment path today, use `libfrankenlibc_abi.so` through `LD_PRELOAD`, choose `strict` or `hardened` explicitly, run the smoke and maintenance gates, and treat Gentoo validation as the most developed containerized operations surface. Anything beyond that should be described as planned work, not shipped deployment capability.
+- The shipping deployment model still depends on host glibc
+- FrankenLibC is not yet a blanket production-readiness claim for arbitrary workloads
+- Hardened mode adds repair/deny behavior, but it does not turn unsafe applications into proven-safe programs
+- The current green smoke battery is a real checked artifact, but it is still a curated battery
+- Full standalone replacement remains planned work, not a completed deployment path

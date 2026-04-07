@@ -730,13 +730,21 @@ unsafe fn startup_phase0_impl(
     path.push(StartupCheckpoint::CaptureInvariants);
     store_invariants(inv);
 
+    path.push(StartupCheckpoint::ResolveEnvp);
     let resolved_envp = unsafe { resolve_startup_envp(argc, ubp_av, envp) };
+    path.push(StartupCheckpoint::BindProcessGlobals);
     init_process_globals(ubp_av, resolved_envp);
+    path.push(StartupCheckpoint::BootstrapHostSymbols);
     crate::host_resolve::bootstrap_host_symbols();
+    path.push(StartupCheckpoint::InitHostStdio);
     crate::stdio_abi::init_host_stdio_streams();
+    path.push(StartupCheckpoint::BootstrapHostLibio);
     unsafe { crate::io_internal_abi::bootstrap_host_libio_exports() };
+    path.push(StartupCheckpoint::PrewarmThreadSymbols);
     crate::pthread_abi::prewarm_host_thread_symbols();
+    path.push(StartupCheckpoint::PrewarmAllocatorSymbols);
     crate::malloc_abi::prewarm_host_allocator_symbols();
+    path.push(StartupCheckpoint::SignalRuntimeReady);
     crate::runtime_policy::signal_runtime_ready();
 
     if let Some(init_fn) = init {

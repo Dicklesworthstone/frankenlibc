@@ -27,7 +27,7 @@
 
 #![allow(unsafe_code)]
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 use crate::syscall;
 
 use crate::rcu;
@@ -227,7 +227,7 @@ fn table_remove(tid: i32) -> *mut u64 {
 // ---------------------------------------------------------------------------
 
 /// Get the calling thread's kernel TID.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 fn current_tid() -> i32 {
     syscall::sys_gettid()
 }
@@ -350,7 +350,7 @@ pub fn pthread_key_delete(key: PthreadKey) -> i32 {
 ///
 /// Equivalent to C `pthread_getspecific`. Returns the value, or 0 if
 /// no value has been set (or the key is invalid).
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub fn pthread_getspecific(key: PthreadKey) -> u64 {
     let id = key.id as usize;
     if id >= PTHREAD_KEYS_MAX {
@@ -364,7 +364,7 @@ pub fn pthread_getspecific(key: PthreadKey) -> u64 {
 ///
 /// Equivalent to C `pthread_setspecific`. Returns 0 on success, `EINVAL`
 /// if the key is invalid or deleted.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub fn pthread_setspecific(key: PthreadKey, value: u64) -> i32 {
     let id = key.id as usize;
     if id >= PTHREAD_KEYS_MAX {
@@ -404,7 +404,7 @@ pub fn pthread_setspecific(key: PthreadKey, value: u64) -> i32 {
 /// `tls_values` field in `ThreadHandle`.
 ///
 /// **Allocation-free** — safe to call from clone-based threads.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub(crate) fn register_thread_tls(tid: i32, values_ptr: *mut u64) {
     table_register(tid, values_ptr);
     // Register with RCU for lock-free KEY_REGISTRY reads.
@@ -423,7 +423,7 @@ pub(crate) fn register_thread_tls(tid: i32, values_ptr: *mut u64) {
 /// 3. If any destructor set new non-null values, repeat.
 ///
 /// After all iterations, the thread's table entry is removed.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub(crate) fn teardown_thread_tls(tid: i32) {
     let values_ptr = table_lookup(tid);
     if values_ptr.is_null() {

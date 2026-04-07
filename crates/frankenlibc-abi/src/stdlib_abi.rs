@@ -325,6 +325,15 @@ unsafe fn scan_c_string(ptr: *const c_char, bound: Option<usize>) -> (usize, boo
     }
 }
 
+#[inline]
+fn getenv_bootstrap_sensitive() -> bool {
+    runtime_policy::bootstrap_passthrough_active()
+        || crate::membrane_state::pipeline_initialization_active()
+        || crate::malloc_abi::in_allocator_reentry_context()
+        || crate::pthread_abi::in_threading_policy_context()
+        || frankenlibc_membrane::ptr_validator::in_validation_context()
+}
+
 // ---------------------------------------------------------------------------
 // atoi
 // ---------------------------------------------------------------------------
@@ -944,6 +953,22 @@ pub unsafe extern "C" fn bsearch(
 pub unsafe extern "C" fn getenv(name: *const c_char) -> *mut c_char {
     if name.is_null() {
         return ptr::null_mut();
+    }
+
+    // During early startup and membrane initialization, `std::env` inside the
+    // runtime may route here. In that window we must not recurse back into
+    // pointer validation or runtime-policy orchestration.
+    if getenv_bootstrap_sensitive() {
+        let (len, terminated) = unsafe { scan_c_string(name, None) };
+        if !terminated {
+            return ptr::null_mut();
+        }
+        let name_slice = unsafe { std::slice::from_raw_parts(name as *const u8, len) };
+        if !frankenlibc_core::stdlib::valid_env_name(name_slice) {
+            return ptr::null_mut();
+        }
+        // SAFETY: fast path performs a read-only walk of the active environ table.
+        return unsafe { native_getenv(name_slice) };
     }
 
     let (mode, decision) = runtime_policy::decide(

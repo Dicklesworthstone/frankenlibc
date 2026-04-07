@@ -11,7 +11,7 @@ use frankenlibc_abi::pthread_abi::{
     pthread_threading_force_native_for_tests,
 };
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 use frankenlibc_abi::pthread_abi::{pthread_getspecific, pthread_setspecific};
 
 static TEST_GUARD: Mutex<()> = Mutex::new(());
@@ -27,7 +27,7 @@ fn lock_and_force_native() -> std::sync::MutexGuard<'static, ()> {
     guard
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[repr(C)]
 struct ThreadTsdCtx {
     key: libc::pthread_key_t,
@@ -35,13 +35,13 @@ struct ThreadTsdCtx {
     observed_initial: usize,
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 const TSD_SET_FAILED: usize = usize::MAX;
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 static TSD_DESTRUCTOR_LAST: AtomicUsize = AtomicUsize::new(0);
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 unsafe extern "C" fn tsd_roundtrip_start(arg: *mut c_void) -> *mut c_void {
     if arg.is_null() {
         return TSD_SET_FAILED as *mut c_void;
@@ -56,7 +56,7 @@ unsafe extern "C" fn tsd_roundtrip_start(arg: *mut c_void) -> *mut c_void {
     unsafe { pthread_getspecific(ctx.key) }
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 unsafe extern "C" fn record_tsd_destructor(value: *mut c_void) {
     TSD_DESTRUCTOR_LAST.store(value as usize, Ordering::Release);
 }
@@ -87,7 +87,7 @@ fn key_create_delete_roundtrip_uses_default_native_routing() {
     assert_eq!(create_rc, 0, "pthread_key_create failed rc={create_rc}");
 
     let sentinel: usize = 0xA11CE;
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     {
         let set_rc = unsafe { pthread_setspecific(key, sentinel as *const c_void) };
         assert_eq!(set_rc, 0, "pthread_setspecific failed rc={set_rc}");
@@ -121,7 +121,7 @@ fn multiple_keys_get_distinct_indices() {
     assert_eq!(unsafe { pthread_key_delete(key2) }, 0);
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[test]
 fn getspecific_returns_null_before_set() {
     let _guard = lock_and_force_native();
@@ -134,7 +134,7 @@ fn getspecific_returns_null_before_set() {
     assert_eq!(unsafe { pthread_key_delete(key) }, 0);
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[test]
 fn set_and_get_specific_roundtrip() {
     let _guard = lock_and_force_native();
@@ -154,7 +154,7 @@ fn set_and_get_specific_roundtrip() {
     assert_eq!(unsafe { pthread_key_delete(key) }, 0);
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[test]
 fn tsd_isolated_across_concurrent_threads() {
     let _guard = lock_and_force_native();
@@ -224,7 +224,7 @@ fn tsd_isolated_across_concurrent_threads() {
     assert_eq!(unsafe { pthread_key_delete(key) }, 0);
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[test]
 fn tsd_teardown_keeps_main_thread_clean() {
     let _guard = lock_and_force_native();
@@ -291,7 +291,7 @@ fn key_create_many_keys_are_unique() {
     }
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[test]
 fn tsd_destructor_runs_on_thread_exit() {
     let _guard = lock_and_force_native();
@@ -337,7 +337,7 @@ fn tsd_destructor_runs_on_thread_exit() {
     assert_eq!(unsafe { pthread_key_delete(key) }, 0);
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[test]
 fn setspecific_overwrite_returns_latest() {
     let _guard = lock_and_force_native();
@@ -360,7 +360,7 @@ fn setspecific_overwrite_returns_latest() {
     assert_eq!(unsafe { pthread_key_delete(key) }, 0);
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[test]
 fn setspecific_null_clears_value() {
     let _guard = lock_and_force_native();

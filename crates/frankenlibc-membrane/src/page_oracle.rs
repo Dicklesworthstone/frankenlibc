@@ -11,9 +11,10 @@
 //! the full arena.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
-use parking_lot::RwLock;
+use crate::bravo::BravoRwLock;
 
 /// Page size assumed for the oracle (4KB).
 const PAGE_SIZE: usize = 4096;
@@ -24,7 +25,7 @@ const PAGES_PER_L2: usize = 4096;
 /// Two-level page ownership bitmap.
 pub struct PageOracle {
     /// L2 bitmaps keyed by L1 index (chunk number).
-    l2_maps: RwLock<HashMap<usize, L2Bitmap>>,
+    l2_maps: BravoRwLock<HashMap<usize, Arc<L2Bitmap>>>,
 }
 
 /// A bitmap covering PAGES_PER_L2 pages.
@@ -77,7 +78,7 @@ impl PageOracle {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            l2_maps: RwLock::new(HashMap::new()),
+            l2_maps: BravoRwLock::new(HashMap::new()),
         }
     }
 
@@ -103,9 +104,12 @@ impl PageOracle {
             }
 
             // Slow path: create L2 bitmap
-            let mut maps = self.l2_maps.write();
-            let bitmap = maps.entry(l1_idx).or_insert_with(L2Bitmap::new);
-            bitmap.set(l2_page);
+            self.l2_maps.with_write(|maps| {
+                let bitmap = maps
+                    .entry(l1_idx)
+                    .or_insert_with(|| Arc::new(L2Bitmap::new()));
+                bitmap.set(l2_page);
+            });
         }
     }
 

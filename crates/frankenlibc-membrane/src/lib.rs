@@ -30,6 +30,7 @@ compile_error!(
 pub mod alien_cs_metrics;
 pub mod arena;
 pub mod bloom;
+pub mod bravo;
 pub mod check_oracle;
 pub mod config;
 pub mod decision_contract;
@@ -66,6 +67,7 @@ pub mod tls_cache;
 pub mod tropical_latency;
 pub mod util;
 
+pub use bravo::{BravoReadPath, BravoRwLock, BravoRwLockDiagnostics};
 pub use config::SafetyLevel;
 pub use decision_contract::{
     DecisionAction as DecisionContractAction, DecisionContractMachine,

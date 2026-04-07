@@ -20,7 +20,7 @@ use frankenlibc_core::pthread::tls::{
     PthreadKey, pthread_key_create as core_pthread_key_create,
     pthread_key_delete as core_pthread_key_delete,
 };
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 use frankenlibc_core::pthread::tls::{
     pthread_getspecific as core_pthread_getspecific,
     pthread_setspecific as core_pthread_setspecific,
@@ -60,9 +60,9 @@ type HostPthreadKeyCreateFn = unsafe extern "C" fn(
     Option<unsafe extern "C" fn(*mut c_void)>,
 ) -> c_int;
 type HostPthreadKeyDeleteFn = unsafe extern "C" fn(libc::pthread_key_t) -> c_int;
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 type HostPthreadGetspecificFn = unsafe extern "C" fn(libc::pthread_key_t) -> *mut c_void;
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 type HostPthreadSetspecificFn = unsafe extern "C" fn(libc::pthread_key_t, *const c_void) -> c_int;
 type HostPthreadMutexInitFn =
     unsafe extern "C" fn(*mut libc::pthread_mutex_t, *const libc::pthread_mutexattr_t) -> c_int;
@@ -166,9 +166,9 @@ static HOST_PTHREAD_EQUAL_PTR: std::sync::atomic::AtomicUsize =
     std::sync::atomic::AtomicUsize::new(0);
 static HOST_PTHREAD_KEY_CREATE_PTR: OnceLock<usize> = OnceLock::new();
 static HOST_PTHREAD_KEY_DELETE_PTR: OnceLock<usize> = OnceLock::new();
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 static HOST_PTHREAD_GETSPECIFIC_PTR: OnceLock<usize> = OnceLock::new();
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 static HOST_PTHREAD_SETSPECIFIC_PTR: OnceLock<usize> = OnceLock::new();
 
 thread_local! {
@@ -486,7 +486,7 @@ unsafe fn host_pthread_key_delete_fn() -> Option<HostPthreadKeyDeleteFn> {
     }
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 unsafe fn host_pthread_getspecific_fn() -> Option<HostPthreadGetspecificFn> {
     let ptr = *HOST_PTHREAD_GETSPECIFIC_PTR.get_or_init(|| unsafe {
         resolve_host_symbol_with_aliases(&[b"pthread_getspecific\0", b"__pthread_getspecific\0"])
@@ -500,7 +500,7 @@ unsafe fn host_pthread_getspecific_fn() -> Option<HostPthreadGetspecificFn> {
     }
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 unsafe fn host_pthread_setspecific_fn() -> Option<HostPthreadSetspecificFn> {
     let ptr = *HOST_PTHREAD_SETSPECIFIC_PTR.get_or_init(|| unsafe {
         resolve_host_symbol_with_aliases(&[b"pthread_setspecific\0", b"__pthread_setspecific\0"])
@@ -656,7 +656,7 @@ pub(crate) fn prewarm_host_thread_symbols() {
     unsafe {
         let _ = host_pthread_key_create_fn();
         let _ = host_pthread_key_delete_fn();
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         {
             let _ = host_pthread_getspecific_fn();
             let _ = host_pthread_setspecific_fn();
@@ -2920,7 +2920,7 @@ pub unsafe extern "C" fn pthread_key_delete(key: libc::pthread_key_t) -> c_int {
 }
 
 /// POSIX `pthread_getspecific`.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pthread_getspecific(key: libc::pthread_key_t) -> *mut c_void {
     if current_threading_backend() == THREAD_BACKEND_HOST
@@ -2945,7 +2945,7 @@ pub unsafe extern "C" fn pthread_getspecific(key: libc::pthread_key_t) -> *mut c
 }
 
 /// POSIX `pthread_setspecific`.
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pthread_setspecific(
     key: libc::pthread_key_t,

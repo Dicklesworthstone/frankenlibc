@@ -24,6 +24,8 @@ cargo build -p frankenlibc-abi --release
 LD_PRELOAD="$PWD/target/release/libfrankenlibc_abi.so" /bin/echo "hello from FrankenLibC"
 ```
 
+Deployment details, runtime knobs, and Gentoo/Portage operations are collected in [`DEPLOYMENT.md`](/data/projects/frankenlibc/DEPLOYMENT.md).
+
 ## TL;DR
 
 ### The Problem

@@ -4,10 +4,13 @@
 //! at varying thread counts. Establishes performance budgets and tracks regressions.
 
 use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
+use frankenlibc_membrane::bravo::BravoRwLock;
 use frankenlibc_membrane::ebr::EbrCollector;
 use frankenlibc_membrane::flat_combining::FlatCombiner;
+use frankenlibc_membrane::left_right::LeftRight;
 use frankenlibc_membrane::rcu::{RcuCell, RcuReader};
 use frankenlibc_membrane::seqlock::{SeqLock, SeqLockReader};
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Barrier};
 use std::thread;
@@ -81,6 +84,61 @@ fn bench_rcu_update(c: &mut Criterion) {
             cell.update(black_box(val));
         });
     });
+    group.finish();
+}
+
+// ──────────────── BRAVO read hot path ────────────────
+
+fn bench_bravo_read(c: &mut Criterion) {
+    let mut group = c.benchmark_group("bravo_read");
+
+    group.throughput(Throughput::Elements(1));
+    group.bench_function("single_thread", |b| {
+        let lock = BravoRwLock::new(42_u64);
+        b.iter(|| {
+            let guard = lock.read();
+            black_box(*guard);
+        });
+    });
+
+    for n_threads in [2, 4, 8] {
+        group.bench_with_input(
+            BenchmarkId::new("concurrent_readers", n_threads),
+            &n_threads,
+            |b, &n| {
+                let lock = Arc::new(BravoRwLock::new(42_u64));
+                let barrier = Arc::new(Barrier::new(n + 1));
+                let done = Arc::new(AtomicBool::new(false));
+
+                let handles: Vec<_> = (0..n)
+                    .map(|_| {
+                        let lock = Arc::clone(&lock);
+                        let barrier = Arc::clone(&barrier);
+                        let done = Arc::clone(&done);
+                        thread::spawn(move || {
+                            barrier.wait();
+                            while !done.load(Ordering::Relaxed) {
+                                let guard = lock.read();
+                                black_box(*guard);
+                            }
+                        })
+                    })
+                    .collect();
+
+                barrier.wait();
+                b.iter(|| {
+                    let guard = lock.read();
+                    black_box(*guard);
+                });
+                done.store(true, Ordering::Relaxed);
+
+                for handle in handles {
+                    handle.join().unwrap();
+                }
+            },
+        );
+    }
+
     group.finish();
 }
 
@@ -297,6 +355,60 @@ fn bench_flat_combining(c: &mut Criterion) {
     group.finish();
 }
 
+// ──────────────── Metadata comparison ────────────────
+
+fn bench_metadata_comparison(c: &mut Criterion) {
+    let mut group = c.benchmark_group("metadata_read_comparison");
+    group.throughput(Throughput::Elements(1));
+
+    let seeded = seed_metadata();
+    let keys: Vec<_> = (0..1024).map(|idx| idx & 255).collect();
+
+    group.bench_function("bravo", |b| {
+        let lock = BravoRwLock::new(seeded.clone());
+        let mut idx = 0usize;
+        b.iter(|| {
+            let guard = lock.read();
+            black_box(guard.get(&keys[idx & 1023]).copied().unwrap_or_default());
+            idx = idx.wrapping_add(1);
+        });
+    });
+
+    group.bench_function("rcu", |b| {
+        let cell = RcuCell::new(seeded.clone());
+        let mut reader = RcuReader::new(&cell);
+        let mut idx = 0usize;
+        b.iter(|| {
+            black_box(
+                reader
+                    .read()
+                    .get(&keys[idx & 1023])
+                    .copied()
+                    .unwrap_or_default(),
+            );
+            idx = idx.wrapping_add(1);
+        });
+    });
+
+    group.bench_function("left_right", |b| {
+        let lock = LeftRight::new(seeded.clone());
+        let mut reader = lock.reader();
+        let mut idx = 0usize;
+        b.iter(|| {
+            black_box(
+                reader
+                    .read()
+                    .get(&keys[idx & 1023])
+                    .copied()
+                    .unwrap_or_default(),
+            );
+            idx = idx.wrapping_add(1);
+        });
+    });
+
+    group.finish();
+}
+
 // ──────────────── Composite pipeline ────────────────
 
 fn bench_composite_pipeline(c: &mut Criterion) {
@@ -349,15 +461,21 @@ fn bench_composite_pipeline(c: &mut Criterion) {
     group.finish();
 }
 
+fn seed_metadata() -> HashMap<usize, u64> {
+    (0..256).map(|idx| (idx, idx as u64)).collect()
+}
+
 criterion_group!(
     benches,
     bench_rcu_read,
     bench_rcu_update,
+    bench_bravo_read,
     bench_seqlock_read,
     bench_seqlock_write,
     bench_ebr_pin,
     bench_ebr_retire,
     bench_flat_combining,
+    bench_metadata_comparison,
     bench_composite_pipeline,
 );
 criterion_main!(benches);

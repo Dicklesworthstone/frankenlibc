@@ -19,6 +19,7 @@ use frankenlibc_abi::startup_abi::{
 use frankenlibc_abi::startup_helpers::{
     AT_NULL, AT_SECURE, MAX_STARTUP_SCAN, SecureModeState, StartupCheckpoint,
 };
+use frankenlibc_abi::stdio_abi::{fflush, fwrite, stdout};
 
 type MainFn = unsafe extern "C" fn(c_int, *mut *mut c_char, *mut *mut c_char) -> c_int;
 type HookFn = unsafe extern "C" fn();
@@ -75,6 +76,26 @@ unsafe extern "C" fn test_main(
     MAIN_ARGC.store(if argc < 0 { 0 } else { argc as usize }, Ordering::Relaxed);
     MAIN_ENVP_NONNULL.store(u8::from(!envp.is_null()), Ordering::Relaxed);
     7
+}
+
+unsafe extern "C" fn test_main_writes_stdout(
+    argc: c_int,
+    _argv: *mut *mut c_char,
+    envp: *mut *mut c_char,
+) -> c_int {
+    MAIN_ARGC.store(if argc < 0 { 0 } else { argc as usize }, Ordering::Relaxed);
+    MAIN_ENVP_NONNULL.store(u8::from(!envp.is_null()), Ordering::Relaxed);
+
+    let msg = b"startup-stdio-regression\n";
+    // SAFETY: `stdout` is initialized by phase-0 before invoking the callback,
+    // and `msg` is valid for the duration of the call.
+    let written = unsafe { fwrite(msg.as_ptr().cast(), 1, msg.len(), stdout) };
+    if written != msg.len() {
+        return 109;
+    }
+    // SAFETY: flushing the initialized stdout stream is valid here.
+    let _ = unsafe { fflush(stdout) };
+    9
 }
 
 fn reset_test_counters() {
@@ -520,6 +541,45 @@ fn startup_phase0_negative_argc_normalizes_to_zero() {
     assert_eq!(policy.invariant_status, StartupInvariantStatus::Valid);
     assert_eq!(policy.failure_reason, StartupFailureReason::None);
     assert_eq!(policy.secure_mode_state, SecureModeState::NonSecure);
+    assert_eq!(policy.last_phase, StartupCheckpoint::Complete);
+    assert!(policy.dag_valid);
+}
+
+#[test]
+fn startup_phase0_main_can_use_stdio_without_bootstrap_crash() {
+    let _guard = acquire_test_lock();
+    reset_test_counters();
+    let arg0 = seeded_cstring("arg", 30);
+    let env0 = seeded_cstring("env", 30);
+    let mut argv_env = vec![
+        arg0.as_ptr().cast_mut(),
+        ptr::null_mut(),
+        env0.as_ptr().cast_mut(),
+        ptr::null_mut(),
+    ];
+    let mut auxv = vec![AT_NULL, 0usize];
+
+    // SAFETY: pointers remain valid for the duration of the startup callback.
+    let rc = unsafe {
+        __frankenlibc_startup_phase0(
+            Some(test_main_writes_stdout as MainFn),
+            1,
+            argv_env.as_mut_ptr(),
+            None,
+            None,
+            None,
+            auxv.as_mut_ptr().cast::<c_void>(),
+        )
+    };
+
+    assert_eq!(rc, 9);
+    assert_eq!(MAIN_ARGC.load(Ordering::Relaxed), 1);
+    assert_eq!(MAIN_ENVP_NONNULL.load(Ordering::Relaxed), 1);
+
+    let policy = startup_policy_snapshot_for_tests();
+    assert_eq!(policy.decision, StartupPolicyDecision::Allow);
+    assert_eq!(policy.invariant_status, StartupInvariantStatus::Valid);
+    assert_eq!(policy.failure_reason, StartupFailureReason::None);
     assert_eq!(policy.last_phase, StartupCheckpoint::Complete);
     assert!(policy.dag_valid);
 }

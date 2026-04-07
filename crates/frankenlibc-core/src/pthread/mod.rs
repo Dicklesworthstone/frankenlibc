@@ -26,10 +26,10 @@ pub use rwlock::{
 pub use thread::{
     THREAD_DETACHED, THREAD_FINISHED, THREAD_JOINED, THREAD_RUNNING, THREAD_STARTING, ThreadHandle,
 };
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub use thread::{
     create_thread, detach_thread, exit_current_thread, handle_for_tid, join_thread, self_tid,
 };
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub use tls::{pthread_getspecific, pthread_setspecific};
 pub use tls::{pthread_key_create, pthread_key_delete};

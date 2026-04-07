@@ -57,22 +57,21 @@ static int fake_main(int argc, char **argv, char **envp) {
 static int test_startup_happy_path(void) {
     char arg0[] = "fixture_startup";
     char arg1[] = "phase0";
-    char *argv[] = {arg0, arg1, NULL};
-
     char env0[] = "FOO=BAR";
-    char *envp[] = {env0, NULL};
+    /* Phase-0 fixtures mirror the initial process stack layout:
+     * argv entries, argv NULL terminator, envp entries, envp NULL terminator.
+     */
+    char *argv_env[] = {arg0, arg1, NULL, env0, NULL};
 
     /* phase-0 auxv-style key/value pairs: AT_SECURE=1, AT_NULL terminator */
     unsigned long auxv[] = {23UL, 1UL, 0UL, 0UL};
-
-    (void)envp;
 
     if (!__frankenlibc_startup_phase0) {
         fprintf(stderr, "FAIL: __frankenlibc_startup_phase0 not resolved (check LD_PRELOAD)\n");
         return 1;
     }
 
-    int rc = __frankenlibc_startup_phase0(fake_main, 2, argv, hook_init, hook_fini,
+    int rc = __frankenlibc_startup_phase0(fake_main, 2, argv_env, hook_init, hook_fini,
                                        hook_rtld_fini, (void *)auxv);
     if (rc != 37) {
         fprintf(stderr, "FAIL: __libc_start_main rc=%d expected=37\n", rc);
