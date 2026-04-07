@@ -447,6 +447,41 @@ class TestCounterexampleWitness(unittest.TestCase):
         )
         self.assertIn("proof_binder_validator.py", witness.reproduction_command)
 
+    def test_build_counterexample_for_invalid_source_ref(self) -> None:
+        obligation = {
+            "id": "PO-CE-SRC",
+            "statement": "Counterexample theorem",
+            "category": "core",
+            "evidence_artifacts": ["tests/conformance/proof_obligations_binder.v1.json"],
+            "gates": ["scripts/gentoo/proof_binder_validator.py"],
+            "join_keys": ["gate=test"],
+            "scope": {"modes": ["strict"]},
+            "source_refs": ["missing/file.rs:19"],
+        }
+        status = validate_obligation(obligation, REPO_ROOT, check_hashes=False)
+        witness = build_counterexample_witness(status, obligation, BINDER_PATH)
+        self.assertIsNotNone(witness)
+        assert witness is not None
+        self.assertEqual(witness.primary_violation_code, "SOURCE_REF_MISSING_FILE")
+        self.assertEqual(witness.minimized_inputs["source_refs"], ["missing/file.rs:19"])
+
+    def test_build_counterexample_for_missing_scope(self) -> None:
+        obligation = {
+            "id": "PO-CE-SCOPE",
+            "statement": "Counterexample theorem",
+            "category": "core",
+            "evidence_artifacts": ["tests/conformance/proof_obligations_binder.v1.json"],
+            "gates": ["scripts/gentoo/proof_binder_validator.py"],
+            "join_keys": ["gate=test"],
+            "scope": {},
+        }
+        status = validate_obligation(obligation, REPO_ROOT, check_hashes=False)
+        witness = build_counterexample_witness(status, obligation, BINDER_PATH)
+        self.assertIsNotNone(witness)
+        assert witness is not None
+        self.assertEqual(witness.primary_violation_code, "MISSING_SCOPE")
+        self.assertEqual(witness.minimized_inputs["scope"], [])
+
 
 class TestFileSha256(unittest.TestCase):
     def test_existing_file(self) -> None:

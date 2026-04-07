@@ -2,13 +2,22 @@
   "schema_version": "v1",
   "bead": "bd-w2c3.10.1",
   "status": "pass",
+  "report_artifact_path": "tests/conformance/claim_reconciliation_report.v1.json",
+  "input_artifacts": [
+    "support_matrix.json",
+    "tests/conformance/reality_report.v1.json",
+    "tests/conformance/replacement_levels.json",
+    "tests/conformance/hard_parts_truth_table.v1.json",
+    "FEATURE_PARITY.md",
+    "README.md"
+  ],
   "ground_truth": {
     "source": "support_matrix.json",
-    "generated_at": "2026-02-11T19:17:31Z",
-    "total": 250,
-    "Implemented": 118,
-    "RawSyscall": 83,
-    "GlibcCallThrough": 49,
+    "generated_at": "2026-02-18T04:49:26Z",
+    "total": 3980,
+    "Implemented": 3576,
+    "RawSyscall": 404,
+    "GlibcCallThrough": 0,
     "Stub": 0
   },
   "summary": {
@@ -17,5 +26,6 @@
     "warnings": 0,
     "total_findings": 0
   },
+  "owner_summary": [],
   "findings": []
 }

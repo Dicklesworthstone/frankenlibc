@@ -153,7 +153,7 @@
           "snippet": "| `FRANKENLIBC_LOG_FILE` | unset | Tooling alias path that is exported into `FRANKENLIBC_LOG` |"
         },
         {
-          "line": 1045,
+          "line": 1051,
           "path": "README.md",
           "snippet": "FRANKENLIBC_LOG=/tmp/franken.jsonl \\"
         }
@@ -231,22 +231,22 @@
           "snippet": "| `FRANKENLIBC_MODE` | `strict` | Process-wide immutable mode selection |"
         },
         {
-          "line": 973,
+          "line": 979,
           "path": "README.md",
           "snippet": "| hardened investigation | run suspicious workloads with `FRANKENLIBC_MODE=hardened` and collect evidence |"
         },
         {
-          "line": 1046,
+          "line": 1052,
           "path": "README.md",
           "snippet": "FRANKENLIBC_MODE=hardened \\"
         },
         {
-          "line": 1557,
+          "line": 1563,
           "path": "README.md",
           "snippet": "The process-wide mode is resolved exactly once from `FRANKENLIBC_MODE`:"
         },
         {
-          "line": 1733,
+          "line": 1739,
           "path": "README.md",
           "snippet": "Interpose deployment uses `LD_PRELOAD=target/release/libfrankenlibc_abi.so <program>`. Hardened interpose deployment uses `FRANKENLIBC_MODE=hardened LD_PRELOAD=target/release/libfrankenlibc_abi.so <program>`."
         }

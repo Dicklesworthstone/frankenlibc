@@ -219,6 +219,8 @@ if [[ -n "${latest_run}" && -f "${latest_run}/artifact_index.json" ]]; then
 import json
 idx = json.load(open("${latest_run}/artifact_index.json", "r", encoding="utf-8"))
 errors = []
+joined_artifacts = 0
+log_joined = 0
 for key in ("index_version", "run_id", "bead_id", "generated_utc", "retention_policy", "artifacts"):
     if key not in idx:
         errors.append(f"missing {key}")
@@ -233,21 +235,45 @@ for art in arts:
     for field in ("path", "kind", "retention_tier", "sha256"):
         if field not in art:
             errors.append(f"artifact missing {field}")
+    join_keys = art.get("join_keys")
+    if join_keys is not None:
+        if not isinstance(join_keys, dict):
+            errors.append(f"artifact {art.get('path')} join_keys must be object")
+            continue
+        trace_ids = join_keys.get("trace_ids", [])
+        if trace_ids:
+            if not isinstance(trace_ids, list):
+                errors.append(f"artifact {art.get('path')} join_keys.trace_ids must be array")
+            else:
+                joined_artifacts += 1
+                if art.get("path") == "trace.jsonl":
+                    log_joined += 1
+                for trace_id in trace_ids:
+                    if not isinstance(trace_id, str) or "::" not in trace_id:
+                        errors.append(
+                            f"artifact {art.get('path')} has malformed trace_id {trace_id!r}"
+                        )
+if joined_artifacts == 0:
+    errors.append("expected at least one artifact entry with join_keys.trace_ids")
+if log_joined == 0:
+    errors.append("expected trace.jsonl artifact entry with join_keys.trace_ids")
 if errors:
     for err in errors:
         print(f"INDEX_ERROR: {err}")
 print(f"ARTIFACTS={len(arts)}")
+print(f"JOINED_ARTIFACTS={joined_artifacts}")
 print(f"INDEX_ERRORS={len(errors)}")
 PY
 )"
     idx_errors="$(echo "${idx_check}" | awk -F= '/^INDEX_ERRORS=/{print $2}')"
     idx_artifacts="$(echo "${idx_check}" | awk -F= '/^ARTIFACTS=/{print $2}')"
+    idx_joined="$(echo "${idx_check}" | awk -F= '/^JOINED_ARTIFACTS=/{print $2}')"
     if [[ "${idx_errors}" -gt 0 ]]; then
         echo "FAIL: artifact index validation errors:"
         echo "${idx_check}" | grep '^INDEX_ERROR:'
         failures=$((failures + 1))
     else
-        echo "PASS: artifact index valid with ${idx_artifacts} entries"
+        echo "PASS: artifact index valid with ${idx_artifacts} entries (${idx_joined} joined)"
     fi
 else
     echo "FAIL: artifact_index.json not found"

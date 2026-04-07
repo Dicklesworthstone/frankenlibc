@@ -6,7 +6,9 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-REPORT_OUT="${1:-/tmp/claim_reconciliation_report.json}"
+CANONICAL_REPORT="${FLC_CLAIM_RECON_CANONICAL_REPORT:-$REPO_ROOT/tests/conformance/claim_reconciliation_report.v1.json}"
+REPORT_OUT="${1:-$CANONICAL_REPORT}"
+TMP_REPORT="$(mktemp "${TMPDIR:-/tmp}/claim_reconciliation_report.XXXXXX.json")"
 
 echo "=== Claim Reconciliation Gate (bd-w2c3.10.1) ==="
 echo "Repo root: $REPO_ROOT"
@@ -14,9 +16,11 @@ echo "Report output: $REPORT_OUT"
 echo ""
 
 cd "$REPO_ROOT"
+mkdir -p "$(dirname "$REPORT_OUT")"
 
 rc=0
-python3 scripts/claim_reconciliation.py > "$REPORT_OUT" || rc=$?
+python3 scripts/claim_reconciliation.py > "$TMP_REPORT" || rc=$?
+mv "$TMP_REPORT" "$REPORT_OUT"
 
 if [ "$rc" -eq 0 ]; then
     echo "PASS: No contradictions detected across canonical artifacts."
@@ -44,10 +48,19 @@ with open('$REPORT_OUT') as f:
     r = json.load(f)
 s = r.get('summary', {})
 print(f'Summary: {s.get(\"errors\", 0)} errors, {s.get(\"warnings\", 0)} warnings')
+owners = r.get('owner_summary', [])
+if owners:
+    print('Remediation owners:')
+    for row in owners:
+        print(
+            f'  - {row.get(\"owner_bead\", \"unknown\")}: '
+            f'{row.get(\"finding_count\", 0)} finding(s)'
+        )
 print()
 for f in r.get('findings', []):
     sev = f['severity'].upper()
-    print(f'[{sev}] {f[\"source\"]}: {f[\"message\"]}')
+    owner = f.get('owner_bead', 'unknown')
+    print(f'[{sev}] {f[\"source\"]} ({owner}): {f[\"message\"]}')
 "
     echo ""
     echo "Full report: $REPORT_OUT"

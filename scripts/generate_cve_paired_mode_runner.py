@@ -48,11 +48,26 @@ CWE_DETECTION_FLAGS = {
     "CWE-908": ["uninitialized_read", "memory_safety"],
 }
 
+EXPECTED_JOIN_KEYS = ["dossier_id", "cve_id", "test_name"]
+
 
 def compute_dossier_id(cve_id, test_name):
     """Compute a deterministic dossier ID for evidence joinability."""
     raw = f"{cve_id}|{test_name}"
     return f"dossier-{hashlib.sha256(raw.encode()).hexdigest()[:12]}"
+
+
+def expected_artifact_paths(dossier_id):
+    """Return the canonical paired-mode artifact bundle layout."""
+    return [
+        f"{dossier_id}/strict/stdout.log",
+        f"{dossier_id}/strict/stderr.log",
+        f"{dossier_id}/strict/metrics.json",
+        f"{dossier_id}/hardened/stdout.log",
+        f"{dossier_id}/hardened/stderr.log",
+        f"{dossier_id}/hardened/metrics.json",
+        f"{dossier_id}/paired_verdict.json",
+    ]
 
 
 def build_strict_detection(corpus_entry):
@@ -107,16 +122,8 @@ def build_paired_evidence(corpus_entry, hardened_assertion):
         },
         "evidence_bundle": {
             "dossier_ref": dossier_id,
-            "artifacts": [
-                f"{dossier_id}/strict/stdout.log",
-                f"{dossier_id}/strict/stderr.log",
-                f"{dossier_id}/strict/metrics.json",
-                f"{dossier_id}/hardened/stdout.log",
-                f"{dossier_id}/hardened/stderr.log",
-                f"{dossier_id}/hardened/metrics.json",
-                f"{dossier_id}/paired_verdict.json",
-            ],
-            "joinable_on": ["dossier_id", "cve_id", "test_name"],
+            "artifacts": expected_artifact_paths(dossier_id),
+            "joinable_on": EXPECTED_JOIN_KEYS,
         },
     }
 
@@ -127,6 +134,8 @@ def validate_paired_evidence(evidence_entries):
 
     for e in evidence_entries:
         cve_id = e["cve_id"]
+        dossier_id = e["dossier_id"]
+        bundle = e.get("evidence_bundle", {})
 
         # Strict must have detection flags
         if not e["strict_mode"]["detection_flags"]:
@@ -168,6 +177,29 @@ def validate_paired_evidence(evidence_entries):
                 "severity": "error",
             })
 
+        expected_artifacts = expected_artifact_paths(dossier_id)
+        actual_artifacts = bundle.get("artifacts")
+        if actual_artifacts != expected_artifacts:
+            issues.append({
+                "cve_id": cve_id,
+                "issue": "Artifact bundle layout drifted from canonical paired-mode structure",
+                "severity": "error",
+            })
+
+        if bundle.get("dossier_ref") != dossier_id:
+            issues.append({
+                "cve_id": cve_id,
+                "issue": "evidence_bundle.dossier_ref must match dossier_id",
+                "severity": "error",
+            })
+
+        if bundle.get("joinable_on") != EXPECTED_JOIN_KEYS:
+            issues.append({
+                "cve_id": cve_id,
+                "issue": "joinable_on keys must stay deterministic and complete",
+                "severity": "error",
+            })
+
     return issues
 
 
@@ -199,6 +231,7 @@ def main():
     evidence_entries = []
     all_detection_flags = set()
     all_dossier_ids = set()
+    all_artifact_paths = set()
 
     for entry in corpus_entries:
         cve_id = entry["cve_id"]
@@ -207,6 +240,7 @@ def main():
         evidence_entries.append(paired)
         all_detection_flags.update(paired["strict_mode"]["detection_flags"])
         all_dossier_ids.add(paired["dossier_id"])
+        all_artifact_paths.update(paired["evidence_bundle"]["artifacts"])
 
     validation_issues = validate_paired_evidence(evidence_entries)
     error_count = sum(1 for i in validation_issues if i["severity"] == "error")
@@ -219,6 +253,13 @@ def main():
                             if e["hardened_mode"]["verdict"] == "prevented")
     with_flags = sum(1 for e in evidence_entries
                      if e["strict_mode"]["detection_flags"])
+    complete_artifact_bundles = sum(
+        1
+        for e in evidence_entries
+        if e["evidence_bundle"]["dossier_ref"] == e["dossier_id"]
+        and e["evidence_bundle"]["artifacts"] == expected_artifact_paths(e["dossier_id"])
+        and e["evidence_bundle"]["joinable_on"] == EXPECTED_JOIN_KEYS
+    )
 
     report = {
         "schema_version": "v1",
@@ -231,6 +272,8 @@ def main():
             "with_detection_flags": with_flags,
             "unique_detection_flags": sorted(all_detection_flags),
             "unique_dossier_ids": len(all_dossier_ids),
+            "entries_with_complete_artifact_bundle": complete_artifact_bundles,
+            "unique_artifact_paths": len(all_artifact_paths),
             "validation_errors": error_count,
             "validation_warnings": warning_count,
         },

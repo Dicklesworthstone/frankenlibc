@@ -1,0 +1,441 @@
+{
+  "bead": "bd-3rw.3",
+  "generator": "scripts/generate_docs_env_mismatch_report.py",
+  "owner_roles": [
+    {
+      "owner": "docs.api",
+      "review_policies": [
+        "ABI support owner review required whenever symbol classification or parity narratives change"
+      ],
+      "surfaces": [
+        "API"
+      ]
+    },
+    {
+      "owner": "docs.architecture",
+      "review_policies": [
+        "membrane owner review required for boundary, mode, or validation-order changes"
+      ],
+      "surfaces": [
+        "ARCHITECTURE"
+      ]
+    },
+    {
+      "owner": "docs.conformance",
+      "review_policies": [
+        "conformance owner review required when fixture families or traceability coverage change"
+      ],
+      "surfaces": [
+        "API"
+      ]
+    },
+    {
+      "owner": "docs.deployment",
+      "review_policies": [
+        "release-packaging review required when install commands, artifact names, or preload flows change"
+      ],
+      "surfaces": [
+        "DEPLOYMENT"
+      ]
+    },
+    {
+      "owner": "docs.gentoo",
+      "review_policies": [
+        "Gentoo workflow owner reviews any change to Portage hooks, runner behavior, or validation report schema"
+      ],
+      "surfaces": [
+        "DEPLOYMENT"
+      ]
+    },
+    {
+      "owner": "docs.governance",
+      "review_policies": [
+        "docs-governance owner reviews mapping changes and confirms regenerated artifacts before merge"
+      ],
+      "surfaces": [
+        "TROUBLESHOOTING"
+      ]
+    },
+    {
+      "owner": "docs.release",
+      "review_policies": [
+        "release-integrity review required when support taxonomy, replacement level, or packaging claims change"
+      ],
+      "surfaces": [
+        "README"
+      ]
+    },
+    {
+      "owner": "docs.runtime_math",
+      "review_policies": [
+        "runtime-math owner review required for controller inventory, policy-table, or proof-linkage changes"
+      ],
+      "surfaces": [
+        "ARCHITECTURE"
+      ]
+    },
+    {
+      "owner": "docs.security",
+      "review_policies": [
+        "security owner review required for threat-model language, hardened actions, or CVE evidence changes"
+      ],
+      "surfaces": [
+        "SECURITY"
+      ]
+    },
+    {
+      "owner": "docs.triage",
+      "review_policies": [
+        "release-integrity owner reviews operator guidance when gate signatures or remediation steps change"
+      ],
+      "surfaces": [
+        "TROUBLESHOOTING"
+      ]
+    },
+    {
+      "owner": "docs.verification",
+      "review_policies": [
+        "harness owner reviews command examples and failure triage whenever gates or replay flows change"
+      ],
+      "surfaces": [
+        "README"
+      ]
+    }
+  ],
+  "schema_version": "v1",
+  "summary": {
+    "fresh_section_count": 11,
+    "missing_section_count": 0,
+    "owner_count": 11,
+    "section_count": 11,
+    "surface_count": 6
+  },
+  "surfaces": [
+    {
+      "freshness_status": "fresh",
+      "future_target_path": "README.md",
+      "missing_inputs": [],
+      "sections": [
+        {
+          "backing_paths": [
+            "README.md",
+            "FEATURE_PARITY.md"
+          ],
+          "freshness_status": "fresh",
+          "missing_inputs": [],
+          "owner": "docs.release",
+          "review_policy": "release-integrity review required when support taxonomy, replacement level, or packaging claims change",
+          "section_id": "status-and-quickstart",
+          "section_title": "Current State / Quick Start / Artifact Matrix",
+          "source_artifacts": [
+            "tests/conformance/reality_report.v1.json",
+            "tests/conformance/support_matrix_maintenance_report.v1.json",
+            "tests/conformance/replacement_levels.json",
+            "tests/conformance/packaging_spec.json"
+          ],
+          "update_triggers": [
+            "scripts/check_support_matrix_drift.sh",
+            "scripts/check_replacement_levels.sh",
+            "scripts/check_packaging.sh"
+          ]
+        },
+        {
+          "backing_paths": [
+            "README.md"
+          ],
+          "freshness_status": "fresh",
+          "missing_inputs": [],
+          "owner": "docs.verification",
+          "review_policy": "harness owner reviews command examples and failure triage whenever gates or replay flows change",
+          "section_id": "verification-and-troubleshooting",
+          "section_title": "Verification Model / Troubleshooting / Common Commands",
+          "source_artifacts": [
+            "tests/conformance/release_gate_dag.v1.json",
+            "tests/conformance/release_gate_runner_runbook.md",
+            "scripts/ci.sh",
+            "scripts/e2e_suite.sh"
+          ],
+          "update_triggers": [
+            "scripts/check_docs_env_mismatch.sh",
+            "scripts/check_e2e_suite.sh"
+          ]
+        }
+      ],
+      "split_status": "materialized",
+      "surface_id": "README",
+      "surface_title": "Public status, quickstart, and evidence narrative",
+      "target_path": "README.md"
+    },
+    {
+      "freshness_status": "fresh",
+      "future_target_path": "ARCHITECTURE.md",
+      "missing_inputs": [],
+      "sections": [
+        {
+          "backing_paths": [
+            "PROPOSED_ARCHITECTURE.md",
+            "AGENTS.md",
+            "README.md"
+          ],
+          "freshness_status": "fresh",
+          "missing_inputs": [],
+          "owner": "docs.architecture",
+          "review_policy": "membrane owner review required for boundary, mode, or validation-order changes",
+          "section_id": "tsm-and-runtime-modes",
+          "section_title": "TSM pipeline / runtime modes / ABI boundary",
+          "source_artifacts": [
+            "crates/frankenlibc-membrane/src/ptr_validator.rs",
+            "crates/frankenlibc-membrane/src/config.rs",
+            "tests/conformance/mode_semantics_matrix.json"
+          ],
+          "update_triggers": [
+            "scripts/check_mode_semantics.sh",
+            "scripts/check_mode_contract_lock.sh"
+          ]
+        },
+        {
+          "backing_paths": [
+            "PROPOSED_ARCHITECTURE.md",
+            "README.md"
+          ],
+          "freshness_status": "fresh",
+          "missing_inputs": [],
+          "owner": "docs.runtime_math",
+          "review_policy": "runtime-math owner review required for controller inventory, policy-table, or proof-linkage changes",
+          "section_id": "runtime-math-control-plane",
+          "section_title": "Runtime math controller set and production policy",
+          "source_artifacts": [
+            "crates/frankenlibc-membrane/src/runtime_math/mod.rs",
+            "tests/conformance/math_production_set_policy.v1.json",
+            "tests/conformance/math_value_proof.json"
+          ],
+          "update_triggers": [
+            "scripts/check_runtime_math_manifest.sh",
+            "scripts/check_runtime_math_linkage_proofs.sh"
+          ]
+        }
+      ],
+      "split_status": "backed_by_existing_docs_until_split",
+      "surface_id": "ARCHITECTURE",
+      "surface_title": "TSM, runtime-mode, and runtime-math design contract",
+      "target_path": "PROPOSED_ARCHITECTURE.md"
+    },
+    {
+      "freshness_status": "fresh",
+      "future_target_path": "DEPLOYMENT.md",
+      "missing_inputs": [],
+      "sections": [
+        {
+          "backing_paths": [
+            "README.md"
+          ],
+          "freshness_status": "fresh",
+          "missing_inputs": [],
+          "owner": "docs.deployment",
+          "review_policy": "release-packaging review required when install commands, artifact names, or preload flows change",
+          "section_id": "interpose-workflows",
+          "section_title": "Interpose artifact build, install, and smoke workflows",
+          "source_artifacts": [
+            "tests/conformance/packaging_spec.json",
+            "tests/conformance/replacement_levels.json",
+            "scripts/ld_preload_smoke.sh",
+            "scripts/e2e_suite.sh"
+          ],
+          "update_triggers": [
+            "scripts/check_packaging.sh",
+            "scripts/check_replacement_levels.sh"
+          ]
+        },
+        {
+          "backing_paths": [
+            "docs/gentoo/USER-GUIDE.md",
+            "docs/gentoo/OPERATIONS.md",
+            "docs/gentoo/VALIDATION-REPORT-TEMPLATE.md"
+          ],
+          "freshness_status": "fresh",
+          "missing_inputs": [],
+          "owner": "docs.gentoo",
+          "review_policy": "Gentoo workflow owner reviews any change to Portage hooks, runner behavior, or validation report schema",
+          "section_id": "gentoo-operations",
+          "section_title": "Gentoo runner, Portage hook, and validation operations",
+          "source_artifacts": [
+            "scripts/gentoo/build-runner.py",
+            "scripts/gentoo/frankenlibc-ebuild-hooks.sh",
+            "scripts/gentoo/validate-docs.py",
+            "tests/conformance/reality_report.v1.json"
+          ],
+          "update_triggers": [
+            "scripts/gentoo/validate-docs.py",
+            "scripts/check_structured_logs.sh"
+          ]
+        }
+      ],
+      "split_status": "backed_by_existing_docs_until_split",
+      "surface_id": "DEPLOYMENT",
+      "surface_title": "Interpose and Gentoo deployment guidance",
+      "target_path": "README.md"
+    },
+    {
+      "freshness_status": "fresh",
+      "future_target_path": "SECURITY.md",
+      "missing_inputs": [],
+      "sections": [
+        {
+          "backing_paths": [
+            "README.md",
+            "AGENTS.md",
+            "docs/proofs/hardened_mode_safety.md"
+          ],
+          "freshness_status": "fresh",
+          "missing_inputs": [],
+          "owner": "docs.security",
+          "review_policy": "security owner review required for threat-model language, hardened actions, or CVE evidence changes",
+          "section_id": "threat-model-and-healing",
+          "section_title": "Threat Model / Healing actions / Hardened guarantees",
+          "source_artifacts": [
+            "tests/conformance/hardened_repair_deny_matrix.v1.json",
+            "tests/cve_arena/results/paired_mode_evidence.v1.json",
+            "scripts/check_structured_logs.sh"
+          ],
+          "update_triggers": [
+            "scripts/check_cve_paired_mode_runner.sh",
+            "scripts/check_structured_logs.sh"
+          ]
+        }
+      ],
+      "split_status": "backed_by_existing_docs_until_split",
+      "surface_id": "SECURITY",
+      "surface_title": "Threat model, hardened-mode guarantees, and healing evidence",
+      "target_path": "README.md"
+    },
+    {
+      "freshness_status": "fresh",
+      "future_target_path": "API.md",
+      "missing_inputs": [],
+      "sections": [
+        {
+          "backing_paths": [
+            "FEATURE_PARITY.md",
+            "README.md"
+          ],
+          "freshness_status": "fresh",
+          "missing_inputs": [],
+          "owner": "docs.api",
+          "review_policy": "ABI support owner review required whenever symbol classification or parity narratives change",
+          "section_id": "classification-and-parity",
+          "section_title": "Support taxonomy / parity claims / implementation reality",
+          "source_artifacts": [
+            "tests/conformance/reality_report.v1.json",
+            "tests/conformance/verification_matrix.json",
+            "tests/conformance/support_matrix_maintenance_report.v1.json"
+          ],
+          "update_triggers": [
+            "scripts/check_support_matrix_drift.sh",
+            "scripts/check_conformance_coverage.sh"
+          ]
+        },
+        {
+          "backing_paths": [
+            "FEATURE_PARITY.md"
+          ],
+          "freshness_status": "fresh",
+          "missing_inputs": [],
+          "owner": "docs.conformance",
+          "review_policy": "conformance owner review required when fixture families or traceability coverage change",
+          "section_id": "fixture-and-traceability",
+          "section_title": "Fixture coverage / traceability / verification depth",
+          "source_artifacts": [
+            "tests/conformance/per_symbol_fixture_tests.v1.json",
+            "tests/conformance/symbol_fixture_coverage.v1.json",
+            "tests/conformance/fixtures/iconv_phase1.json"
+          ],
+          "update_triggers": [
+            "scripts/check_conformance_fixture_unit_tests.sh",
+            "scripts/check_conformance_coverage.sh"
+          ]
+        }
+      ],
+      "split_status": "backed_by_existing_docs_until_split",
+      "surface_id": "API",
+      "surface_title": "API support taxonomy, parity, and fixture coverage",
+      "target_path": "FEATURE_PARITY.md"
+    },
+    {
+      "freshness_status": "fresh",
+      "future_target_path": "TROUBLESHOOTING.md",
+      "missing_inputs": [],
+      "sections": [
+        {
+          "backing_paths": [
+            "README.md",
+            "tests/conformance/release_gate_runner_runbook.md"
+          ],
+          "freshness_status": "fresh",
+          "missing_inputs": [],
+          "owner": "docs.triage",
+          "review_policy": "release-integrity owner reviews operator guidance when gate signatures or remediation steps change",
+          "section_id": "common-failures",
+          "section_title": "Common failures / gate triage / operator runbooks",
+          "source_artifacts": [
+            "scripts/check_support_matrix_drift.sh",
+            "scripts/check_packaging.sh",
+            "tests/conformance/release_gate_dag.v1.json"
+          ],
+          "update_triggers": [
+            "scripts/check_feature_parity_drift.sh",
+            "scripts/check_release_gate.sh"
+          ]
+        },
+        {
+          "backing_paths": [
+            "README.md"
+          ],
+          "freshness_status": "fresh",
+          "missing_inputs": [],
+          "owner": "docs.governance",
+          "review_policy": "docs-governance owner reviews mapping changes and confirms regenerated artifacts before merge",
+          "section_id": "docs-governance",
+          "section_title": "Documentation drift and ownership workflow",
+          "source_artifacts": [
+            "tests/conformance/env_docs_code_mismatch_report.v1.json",
+            "tests/conformance/docs_env_inventory.v1.json",
+            "scripts/check_docs_env_mismatch.sh"
+          ],
+          "update_triggers": [
+            "scripts/check_docs_env_mismatch.sh",
+            "crates/frankenlibc-harness/tests/docs_env_mismatch_test.rs"
+          ]
+        }
+      ],
+      "split_status": "backed_by_existing_docs_until_split",
+      "surface_id": "TROUBLESHOOTING",
+      "surface_title": "Failure triage and operator guidance",
+      "target_path": "README.md"
+    }
+  ],
+  "workflow": {
+    "required_commands": [
+      "python3 scripts/generate_docs_env_mismatch_report.py --check",
+      "bash scripts/check_docs_env_mismatch.sh",
+      "cargo test -p frankenlibc-harness --test docs_env_mismatch_test"
+    ],
+    "steps": [
+      {
+        "description": "When a backing doc, source artifact, or gate script changes, the corresponding owner updates the mapped documentation surface before merge.",
+        "step_id": "detect_trigger"
+      },
+      {
+        "description": "Regenerate docs env inventory, mismatch report, source-of-truth map, and trace log in one command.",
+        "step_id": "regenerate"
+      },
+      {
+        "description": "The section owner reviews prose changes; docs.governance confirms cross-surface mapping completeness.",
+        "step_id": "review"
+      },
+      {
+        "description": "The gate script and harness test must both pass with fresh artifacts before merge.",
+        "step_id": "merge_gate"
+      }
+    ]
+  }
+}

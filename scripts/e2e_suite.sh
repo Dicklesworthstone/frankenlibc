@@ -118,38 +118,8 @@ LIB_CANDIDATES=(
     "${ROOT}/target/release/libfrankenlibc_abi.so"
     "/data/tmp/cargo-target/release/libfrankenlibc_abi.so"
 )
-
-LIB_PATH=""
-for candidate in "${LIB_CANDIDATES[@]}"; do
-    if [[ -f "${candidate}" ]]; then
-        LIB_PATH="${candidate}"
-        break
-    fi
-done
-
-if [[ -z "${LIB_PATH}" ]]; then
-    echo "e2e_suite: building frankenlibc-abi release artifact..."
-    if ! command -v rch >/dev/null 2>&1; then
-        echo "e2e_suite: rch is required for cargo build offload but was not found in PATH" >&2
-        exit 2
-    fi
-    rch exec -- cargo build -p frankenlibc-abi --release
-    for candidate in "${LIB_CANDIDATES[@]}"; do
-        if [[ -f "${candidate}" ]]; then
-            LIB_PATH="${candidate}"
-            break
-        fi
-    done
-fi
-
-if [[ -z "${LIB_PATH}" ]]; then
-    echo "e2e_suite: could not locate libfrankenlibc_abi.so" >&2
-    exit 2
-fi
-
-if ! command -v cc >/dev/null 2>&1; then
-    echo "e2e_suite: required compiler 'cc' not found" >&2
-    exit 2
+if [[ -n "${CARGO_TARGET_DIR:-}" ]]; then
+    LIB_CANDIDATES+=("${CARGO_TARGET_DIR}/release/libfrankenlibc_abi.so")
 fi
 
 if ! command -v python3 >/dev/null 2>&1; then
@@ -164,6 +134,61 @@ fi
 
 mkdir -p "${OUT_DIR}"
 : > "${QUARANTINE_TSV}"
+
+LIB_PATH="${FRANKENLIBC_E2E_LIB_PATH:-}"
+
+echo "=== E2E Suite v${SUITE_VERSION} ==="
+echo "run_id=${RUN_ID}"
+echo "lib=${LIB_PATH:-unresolved}"
+echo "seed=${E2E_SEED}"
+echo "scenario=${SCENARIO_CLASS}"
+echo "mode=${MODE_FILTER}"
+echo "timeout=${TIMEOUT_SECONDS}s"
+echo "manifest=${MANIFEST_PATH}"
+echo "dry_run_manifest=${DRY_RUN_MANIFEST}"
+echo "retry_max=${RETRY_MAX}"
+echo "retry_on_nonzero=${RETRY_ON_NONZERO}"
+echo "retryable_codes=${RETRYABLE_CODES}"
+echo "flake_quarantine_threshold=${FLAKE_QUARANTINE_THRESHOLD}"
+echo ""
+
+if [[ "${DRY_RUN_MANIFEST}" -eq 0 ]]; then
+    if [[ -z "${LIB_PATH}" ]]; then
+        for candidate in "${LIB_CANDIDATES[@]}"; do
+            if [[ -f "${candidate}" ]]; then
+                LIB_PATH="${candidate}"
+                break
+            fi
+        done
+    fi
+
+    if [[ -z "${LIB_PATH}" ]]; then
+        echo "e2e_suite: building frankenlibc-abi release artifact..."
+        if ! command -v rch >/dev/null 2>&1; then
+            echo "e2e_suite: rch is required for cargo build offload but was not found in PATH" >&2
+            exit 2
+        fi
+        rch exec -- cargo build -p frankenlibc-abi --release
+        for candidate in "${LIB_CANDIDATES[@]}"; do
+            if [[ -f "${candidate}" ]]; then
+                LIB_PATH="${candidate}"
+                break
+            fi
+        done
+    fi
+
+    if [[ -z "${LIB_PATH}" ]]; then
+        echo "e2e_suite: could not locate libfrankenlibc_abi.so" >&2
+        exit 2
+    fi
+
+    if ! command -v cc >/dev/null 2>&1; then
+        echo "e2e_suite: required compiler 'cc' not found" >&2
+        exit 2
+    fi
+else
+    LIB_PATH="${LIB_PATH:-dry-run-manifest}"
+fi
 
 # ---------------------------------------------------------------------------
 # JSONL structured log helpers
@@ -1108,21 +1133,6 @@ MANIFEST_SHA256="$(sha256sum "${MANIFEST_PATH}" | awk '{print $1}')"
 
 emit_log "info" "suite_start" "" "" "" "" "" "\"details\":{\"version\":\"${SUITE_VERSION}\",\"scenario_class\":\"${SCENARIO_CLASS}\",\"mode_filter\":\"${MODE_FILTER}\",\"seed\":\"${E2E_SEED}\",\"manifest\":\"${MANIFEST_PATH}\",\"dry_run_manifest\":${DRY_RUN_MANIFEST},\"retry_max\":${RETRY_MAX},\"retry_on_nonzero\":${RETRY_ON_NONZERO},\"retryable_codes\":\"${RETRYABLE_CODES}\",\"flake_quarantine_threshold\":${FLAKE_QUARANTINE_THRESHOLD}}"
 
-echo "=== E2E Suite v${SUITE_VERSION} ==="
-echo "run_id=${RUN_ID}"
-echo "lib=${LIB_PATH}"
-echo "seed=${E2E_SEED}"
-echo "scenario=${SCENARIO_CLASS}"
-echo "mode=${MODE_FILTER}"
-echo "timeout=${TIMEOUT_SECONDS}s"
-echo "manifest=${MANIFEST_PATH}"
-echo "dry_run_manifest=${DRY_RUN_MANIFEST}"
-echo "retry_max=${RETRY_MAX}"
-echo "retry_on_nonzero=${RETRY_ON_NONZERO}"
-echo "retryable_codes=${RETRYABLE_CODES}"
-echo "flake_quarantine_threshold=${FLAKE_QUARANTINE_THRESHOLD}"
-echo ""
-
 overall_failed=0
 
 if [[ "${DRY_RUN_MANIFEST}" -eq 1 ]]; then
@@ -1206,60 +1216,110 @@ emit_log "info" "suite_end" "" "" "" "" "" "\"details\":{\"passes\":${passes},\"
 # ---------------------------------------------------------------------------
 # Artifact index
 # ---------------------------------------------------------------------------
-python3 -c "
-import json, os, hashlib
+E2E_OUT_DIR="${OUT_DIR}" \
+E2E_INDEX_FILE="${INDEX_FILE}" \
+E2E_RUN_ID="${RUN_ID}" \
+E2E_GENERATED_UTC="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+E2E_PASSES="${passes}" \
+E2E_FAILS="${fails}" \
+E2E_SKIPS="${skips}" \
+python3 - <<'PY'
+import hashlib
+import json
+import os
+from collections import defaultdict
 from pathlib import Path
 
-out_dir = '${OUT_DIR}'
+out_dir = Path(os.environ["E2E_OUT_DIR"])
+index_path = Path(os.environ["E2E_INDEX_FILE"])
+trace_path = out_dir / "trace.jsonl"
+
+artifact_trace_ids: dict[str, set[str]] = defaultdict(set)
+all_trace_ids: list[str] = []
+seen_trace_ids: set[str] = set()
+
+if trace_path.exists():
+    for raw in trace_path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        obj = json.loads(line)
+        trace_id = obj.get("trace_id")
+        if isinstance(trace_id, str) and trace_id:
+            if trace_id not in seen_trace_ids:
+                all_trace_ids.append(trace_id)
+                seen_trace_ids.add(trace_id)
+            for artifact_ref in obj.get("artifact_refs", []):
+                if isinstance(artifact_ref, str) and artifact_ref:
+                    artifact_trace_ids[artifact_ref].add(trace_id)
+
 artifacts = []
 
 for root, dirs, files in sorted(os.walk(out_dir)):
-    for f in sorted(files):
-        fpath = os.path.join(root, f)
-        rel = os.path.relpath(fpath, out_dir)
-        size = os.path.getsize(fpath)
-        sha = hashlib.sha256(open(fpath, 'rb').read()).hexdigest()
-        if f.endswith('.jsonl'):
-            kind = 'log'
-            retention_tier = 'release'
-        elif f in {'artifact_index.json', 'mode_pair_report.json', 'scenario_pack_report.json', 'flake_quarantine_report.json'}:
-            kind = 'report'
-            retention_tier = 'release'
+    dirs.sort()
+    files.sort()
+    for file_name in files:
+        file_path = Path(root) / file_name
+        rel_path = file_path.relative_to(out_dir).as_posix()
+        size_bytes = file_path.stat().st_size
+        sha256 = hashlib.sha256(file_path.read_bytes()).hexdigest()
+        if file_name.endswith(".jsonl"):
+            kind = "log"
+            retention_tier = "release"
+        elif file_name in {
+            "artifact_index.json",
+            "mode_pair_report.json",
+            "scenario_pack_report.json",
+            "flake_quarantine_report.json",
+        }:
+            kind = "report"
+            retention_tier = "release"
+        elif file_name.endswith(".diff"):
+            kind = "diff"
+            retention_tier = "debug"
         else:
-            kind = 'diagnostic'
-            retention_tier = 'debug'
-        artifacts.append({
-            'path': rel,
-            'kind': kind,
-            'retention_tier': retention_tier,
-            'sha256': sha,
-            'size_bytes': size,
-        })
+            kind = "diagnostic"
+            retention_tier = "debug"
+
+        trace_ids = []
+        if rel_path == "trace.jsonl":
+            trace_ids = list(all_trace_ids)
+        elif rel_path in artifact_trace_ids:
+            trace_ids = sorted(artifact_trace_ids[rel_path])
+
+        entry = {
+            "path": rel_path,
+            "kind": kind,
+            "retention_tier": retention_tier,
+            "sha256": sha256,
+            "size_bytes": size_bytes,
+        }
+        if trace_ids:
+            entry["join_keys"] = {"trace_ids": trace_ids}
+        artifacts.append(entry)
 
 index = {
-    'index_version': 1,
-    'run_id': '${RUN_ID}',
-    'bead_id': 'bd-2ez',
-    'generated_utc': '$(date -u +%Y-%m-%dT%H:%M:%SZ)',
-    'summary': {
-        'passes': ${passes},
-        'fails': ${fails},
-        'skips': ${skips},
+    "index_version": 1,
+    "run_id": os.environ["E2E_RUN_ID"],
+    "bead_id": "bd-2ez",
+    "generated_utc": os.environ["E2E_GENERATED_UTC"],
+    "summary": {
+        "passes": int(os.environ["E2E_PASSES"]),
+        "fails": int(os.environ["E2E_FAILS"]),
+        "skips": int(os.environ["E2E_SKIPS"]),
     },
-    'retention_policy': {
-        'policy_version': 'v1',
-        'tier_days': {
-            'release': 90,
-            'debug': 14,
+    "retention_policy": {
+        "policy_version": "v1",
+        "tier_days": {
+            "release": 90,
+            "debug": 14,
         },
     },
-    'artifacts': artifacts,
+    "artifacts": artifacts,
 }
 
-with open('${INDEX_FILE}', 'w') as f:
-    json.dump(index, f, indent=2)
-    f.write('\n')
-"
+index_path.write_text(json.dumps(index, indent=2) + "\n", encoding="utf-8")
+PY
 
 # ---------------------------------------------------------------------------
 # Summary

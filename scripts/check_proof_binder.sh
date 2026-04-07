@@ -1,91 +1,27 @@
 #!/usr/bin/env bash
-# CI gate: Proof obligations binder integrity (bd-5fw.4, bd-w2c3.6).
+# CI gate: Proof obligations binder integrity + regression proofing.
 #
-# Checks:
-# 1. Binder JSON exists with correct schema and planned-obligation ownership metadata.
-# 2. Validator script has valid syntax
-# 3. Validator produces valid output
-# 4. Python unit tests pass
-#
-# Exit 0 on PASS, 1 on FAIL.
+# Emits:
+# - structured JSONL logs
+# - a machine-readable gate report
+# - a fresh validator snapshot for replay/drift review
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-BINDER="${ROOT}/tests/conformance/proof_obligations_binder.v1.json"
-VALIDATOR="${ROOT}/scripts/gentoo/proof_binder_validator.py"
-TEST_FILE="${ROOT}/tests/gentoo/test_proof_binder.py"
+OUT_DIR="${ROOT}/target/conformance"
+LOG_PATH="${OUT_DIR}/proof_binder_proofs.log.jsonl"
+REPORT_PATH="${OUT_DIR}/proof_binder_proofs.report.json"
+VALIDATOR_REPORT_PATH="${OUT_DIR}/proof_binder_validation.current.v1.json"
 
-echo "=== Proof Obligations Binder Gate (bd-5fw.4) ==="
+mkdir -p "${OUT_DIR}"
 
-fail() { echo "FAIL: $1"; exit 1; }
+cargo run -p frankenlibc-harness --bin harness -- proof-binder-proofs \
+  --workspace-root "${ROOT}" \
+  --log "${LOG_PATH}" \
+  --report "${REPORT_PATH}" \
+  --validator-report "${VALIDATOR_REPORT_PATH}"
 
-# 1. Binder exists with correct schema
-[[ -f "${BINDER}" ]] || fail "proof_obligations_binder.v1.json not found"
-python3 -c "
-import json, sys
-data = json.load(open('${BINDER}'))
-if data.get('schema_version') != 'v1':
-    sys.exit(1)
-if data.get('bead') != 'bd-5fw.4':
-    sys.exit(1)
-obs = data.get('obligations', [])
-if len(obs) < 10:
-    print(f'Too few obligations: {len(obs)}'); sys.exit(1)
-ids = [o['id'] for o in obs]
-if len(ids) != len(set(ids)):
-    print('Duplicate obligation IDs'); sys.exit(1)
-for o in obs:
-    if 'evidence_artifacts' not in o:
-        print(f'Missing evidence_artifacts in {o[\"id\"]}'); sys.exit(1)
-    if 'gates' not in o:
-        print(f'Missing gates in {o[\"id\"]}'); sys.exit(1)
-    status = str(o.get('status', 'planned')).strip().lower()
-    if status == 'planned':
-        for field in ('owner', 'artifact_schema', 'verification_command'):
-            value = o.get(field, '')
-            if not isinstance(value, str) or not value.strip():
-                print(f'Missing {field} in planned obligation {o[\"id\"]}')
-                sys.exit(1)
-" || fail "binder schema invalid"
-echo "PASS: binder schema valid"
-
-# 2. Validator script has valid syntax
-[[ -f "${VALIDATOR}" ]] || fail "proof_binder_validator.py not found"
-python3 -c "import py_compile; py_compile.compile('${VALIDATOR}', doraise=True)" \
-  || fail "proof_binder_validator.py has syntax errors"
-echo "PASS: validator syntax valid"
-
-# 3. Validator produces valid output
-TMPDIR=$(mktemp -d)
-trap "rm -rf ${TMPDIR}" EXIT
-
-RC=0
-python3 "${VALIDATOR}" --dry-run --format json --no-hashes \
-  --output "${TMPDIR}/report.json" > /dev/null 2>&1 || RC=$?
-
-[[ -f "${TMPDIR}/report.json" ]] || fail "no JSON output produced"
-
-python3 -c "
-import json, sys
-data = json.load(open('${TMPDIR}/report.json'))
-if data.get('schema_version') != 'v1':
-    print('bad schema_version'); sys.exit(1)
-if data.get('bead') != 'bd-5fw.4':
-    print('bad bead'); sys.exit(1)
-if not isinstance(data.get('obligations'), list):
-    print('missing obligations'); sys.exit(1)
-if not isinstance(data.get('counterexamples'), list):
-    print('missing counterexamples'); sys.exit(1)
-if 'binder_valid' not in data:
-    print('missing binder_valid'); sys.exit(1)
-" || fail "validator output schema invalid"
-echo "PASS: validator output valid"
-
-# 4. Python tests pass
-if [[ -f "${TEST_FILE}" ]] && command -v python3 >/dev/null 2>&1; then
-  python3 -m pytest "${TEST_FILE}" -q --tb=short 2>&1 | tail -5
-  echo "PASS: test_proof_binder.py tests passed"
-fi
-
-echo ""
-echo "PASS: Proof Obligations Binder gate (bd-5fw.4) all checks passed"
+echo "OK: proof binder proofs emitted:"
+echo "- ${LOG_PATH}"
+echo "- ${REPORT_PATH}"
+echo "- ${VALIDATOR_REPORT_PATH}"

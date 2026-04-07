@@ -20,25 +20,168 @@ import json
 import os
 import re
 import sys
-from collections import Counter
+from collections import Counter, defaultdict
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-SUPPORT_MATRIX = REPO_ROOT / "support_matrix.json"
-REALITY_REPORT = REPO_ROOT / "tests" / "conformance" / "reality_report.v1.json"
-REPLACEMENT_LEVELS = REPO_ROOT / "tests" / "conformance" / "replacement_levels.json"
-HARD_PARTS = REPO_ROOT / "tests" / "conformance" / "hard_parts_truth_table.v1.json"
-FEATURE_PARITY = REPO_ROOT / "FEATURE_PARITY.md"
-README = REPO_ROOT / "README.md"
+def env_path(env_name, default):
+    return Path(os.environ.get(env_name, str(default)))
+
+
+SUPPORT_MATRIX = env_path("FLC_CLAIM_RECON_SUPPORT_MATRIX", REPO_ROOT / "support_matrix.json")
+REALITY_REPORT = env_path(
+    "FLC_CLAIM_RECON_REALITY_REPORT",
+    REPO_ROOT / "tests" / "conformance" / "reality_report.v1.json",
+)
+REPLACEMENT_LEVELS = env_path(
+    "FLC_CLAIM_RECON_REPLACEMENT_LEVELS",
+    REPO_ROOT / "tests" / "conformance" / "replacement_levels.json",
+)
+HARD_PARTS = env_path(
+    "FLC_CLAIM_RECON_HARD_PARTS",
+    REPO_ROOT / "tests" / "conformance" / "hard_parts_truth_table.v1.json",
+)
+FEATURE_PARITY = env_path("FLC_CLAIM_RECON_FEATURE_PARITY", REPO_ROOT / "FEATURE_PARITY.md")
+README = env_path("FLC_CLAIM_RECON_README", REPO_ROOT / "README.md")
+REPORT_ARTIFACT = env_path(
+    "FLC_CLAIM_RECON_CANONICAL_REPORT",
+    REPO_ROOT / "tests" / "conformance" / "claim_reconciliation_report.v1.json",
+)
+
+SOURCE_OWNER_MAP = {
+    "support_matrix.json": "bd-w2c3.10.1",
+    "tests/conformance/reality_report.v1.json": "bd-w2c3.10.1",
+    "replacement_levels.json": "bd-w2c3.2.3",
+    "FEATURE_PARITY.md": "bd-w2c3.10",
+    "README.md": "bd-w2c3.10",
+    "hard_parts_truth_table.v1.json": "bd-1j4.5",
+}
+
+CATEGORY_OWNER_MAP = {
+    "done_without_fixture": "bd-w2c3.9",
+    "hard_parts_symbol_missing": "bd-1j4.5",
+    "hard_parts_symbol_status": "bd-1j4.5",
+}
+
+SOURCE_REMEDIATION_MAP = {
+    "support_matrix.json": "Regenerate or correct support-matrix-backed claim counts before release gating.",
+    "tests/conformance/reality_report.v1.json": "Regenerate reality_report.v1.json from the current support matrix and fixture-backed evidence.",
+    "replacement_levels.json": "Refresh replacement_levels.json current_state percentages and blocker lists from support_matrix.json.",
+    "FEATURE_PARITY.md": "Update FEATURE_PARITY.md so every count and status claim matches machine-generated reports.",
+    "README.md": "Refresh README.md public claims from canonical machine-generated artifacts.",
+    "hard_parts_truth_table.v1.json": "Align hard-parts truth-table symbol expectations with support_matrix.json before claiming closure.",
+}
+
+CATEGORY_REMEDIATION_MAP = {
+    "done_without_fixture": "Capture fixture evidence for the claimed DONE family or downgrade the FEATURE_PARITY row.",
+}
 
 
 def load_json(path):
     """Load JSON file, returning None if missing."""
     if not path.exists():
         return None
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         return json.load(f)
+
+
+def repo_relative(path):
+    """Render a stable repo-relative path when possible."""
+    try:
+        return str(path.relative_to(REPO_ROOT))
+    except ValueError:
+        return str(path)
+
+
+def normalize_source_name(source):
+    if source.startswith("replacement_levels.json"):
+        return "replacement_levels.json"
+    if source.startswith("hard_parts"):
+        return "hard_parts_truth_table.v1.json"
+    if source.startswith("FEATURE_PARITY.md"):
+        return "FEATURE_PARITY.md"
+    if source.startswith("README.md"):
+        return "README.md"
+    if source.startswith("support_matrix.json"):
+        return "support_matrix.json"
+    if source.startswith("reality_report"):
+        return "tests/conformance/reality_report.v1.json"
+    return source
+
+
+def enrich_findings(findings):
+    """Attach deterministic remediation ownership metadata to every finding."""
+    for finding in findings:
+        source_key = normalize_source_name(finding.get("source", "unknown"))
+        category = finding.get("category", "unknown")
+        owner_bead = CATEGORY_OWNER_MAP.get(category, SOURCE_OWNER_MAP.get(source_key, "bd-w2c3.10.1"))
+        remediation = CATEGORY_REMEDIATION_MAP.get(
+            category,
+            SOURCE_REMEDIATION_MAP.get(source_key, "Investigate the contradictory claim and regenerate the canonical artifact."),
+        )
+
+        artifact_refs = ["support_matrix.json"]
+        if source_key == "tests/conformance/reality_report.v1.json":
+            artifact_refs.append("tests/conformance/reality_report.v1.json")
+        elif source_key == "replacement_levels.json":
+            artifact_refs.append("tests/conformance/replacement_levels.json")
+        elif source_key == "FEATURE_PARITY.md":
+            artifact_refs.append("FEATURE_PARITY.md")
+        elif source_key == "README.md":
+            artifact_refs.append("README.md")
+        elif source_key == "hard_parts_truth_table.v1.json":
+            artifact_refs.append("tests/conformance/hard_parts_truth_table.v1.json")
+        else:
+            artifact_refs.append(source_key)
+
+        deduped_refs = []
+        for ref in artifact_refs:
+            if ref not in deduped_refs:
+                deduped_refs.append(ref)
+
+        finding["owner_bead"] = owner_bead
+        finding["remediation"] = remediation
+        finding["artifact_refs"] = deduped_refs
+
+    return findings
+
+
+def build_owner_summary(findings):
+    """Summarize remediation ownership for deterministic triage."""
+    owners = defaultdict(lambda: {
+        "owner_bead": "",
+        "finding_count": 0,
+        "error_count": 0,
+        "warning_count": 0,
+        "critical_count": 0,
+        "categories": set(),
+        "sources": set(),
+    })
+
+    for finding in findings:
+        owner_bead = finding.get("owner_bead", "bd-w2c3.10.1")
+        row = owners[owner_bead]
+        row["owner_bead"] = owner_bead
+        row["finding_count"] += 1
+        severity = finding.get("severity", "")
+        if severity == "error":
+            row["error_count"] += 1
+        elif severity == "warning":
+            row["warning_count"] += 1
+        elif severity == "critical":
+            row["critical_count"] += 1
+        row["categories"].add(finding.get("category", "unknown"))
+        row["sources"].add(finding.get("source", "unknown"))
+
+    return [
+        {
+            **row,
+            "categories": sorted(row["categories"]),
+            "sources": sorted(row["sources"]),
+        }
+        for _, row in sorted(owners.items())
+    ]
 
 
 def extract_md_counts(text, label):
@@ -459,6 +602,14 @@ def check_feature_parity_done_claims(findings, fp_text, matrix):
 def main():
     findings = []
     missing = []
+    input_artifacts = [
+        repo_relative(SUPPORT_MATRIX),
+        repo_relative(REALITY_REPORT),
+        repo_relative(REPLACEMENT_LEVELS),
+        repo_relative(HARD_PARTS),
+        repo_relative(FEATURE_PARITY),
+        repo_relative(README),
+    ]
 
     # Load all artifacts
     matrix = load_json(SUPPORT_MATRIX)
@@ -484,10 +635,14 @@ def main():
                 "message": f"Critical artifact missing: {m}",
             })
         # Can't continue without ground truth
+        enrich_findings(findings)
         report = {
             "schema_version": "v1",
             "bead": "bd-w2c3.10.1",
             "status": "error",
+            "report_artifact_path": repo_relative(REPORT_ARTIFACT),
+            "input_artifacts": input_artifacts,
+            "owner_summary": build_owner_summary(findings),
             "findings": findings,
             "summary": {"errors": len(findings), "warnings": 0},
         }
@@ -513,6 +668,7 @@ def main():
     check_timestamp_consistency(findings, reality, matrix, hard_parts, replacement)
     check_readme_claims(findings, readme_text, dict(matrix_counts))
     check_feature_parity_done_claims(findings, fp_text, matrix)
+    enrich_findings(findings)
 
     errors = sum(1 for f in findings if f["severity"] == "error")
     warnings = sum(1 for f in findings if f["severity"] == "warning")
@@ -522,6 +678,8 @@ def main():
         "schema_version": "v1",
         "bead": "bd-w2c3.10.1",
         "status": "pass" if errors == 0 and critical == 0 else "fail",
+        "report_artifact_path": repo_relative(REPORT_ARTIFACT),
+        "input_artifacts": input_artifacts,
         "ground_truth": {
             "source": "support_matrix.json",
             "generated_at": matrix.get("generated_at_utc", "unknown"),
@@ -537,6 +695,7 @@ def main():
             "warnings": warnings,
             "total_findings": len(findings),
         },
+        "owner_summary": build_owner_summary(findings),
         "findings": findings,
     }
 

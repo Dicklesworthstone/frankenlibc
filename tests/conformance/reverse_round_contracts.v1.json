@@ -1,8 +1,8 @@
 {
   "schema_version": "v1",
-  "bead": "bd-2a2.4",
-  "generated_at": "2026-04-06T17:34:55Z",
-  "report_hash": "4ea167ea89c7c503",
+  "bead": "bd-2a2.5",
+  "generated_at": "2026-04-06T23:24:38Z",
+  "report_hash": "c112f760648fd84a",
   "summary": {
     "rounds_verified": 5,
     "total_math_families": 20,
@@ -11,6 +11,11 @@
     "module_coverage_pct": 100.0,
     "invariants_specified": 20,
     "invariants_total": 20,
+    "implementation_steps_total": 15,
+    "verification_hooks_total": 15,
+    "verification_hooks_specified": 14,
+    "supporting_files_total": 34,
+    "supporting_files_found": 34,
     "unique_math_classes": [
       "algebra",
       "algebraic-topology",
@@ -23,11 +28,18 @@
       "stochastic-analysis"
     ],
     "math_class_count": 9,
-    "all_rounds_diverse": true
+    "all_rounds_diverse": true,
+    "cross_round_checks_total": 5,
+    "cross_round_checks_passing": 5,
+    "milestones_verified": 3,
+    "milestones_diverse": 3,
+    "all_milestones_diverse": true,
+    "max_milestone_class_share_pct": 33.3
   },
   "round_results": {
     "R10": {
       "name": "NSS / resolv",
+      "problem_focus": "Multi-source lookup orchestration, retries and timeouts, negative caching, and poisoning or collision resilience.",
       "legacy_surfaces": [
         "nss",
         "resolv",
@@ -36,6 +48,58 @@
       ],
       "failure_class": "poisoning/retry/cache instability",
       "artifacts": "deterministic lookup DAGs + calibrated thresholds",
+      "implementation_plan": [
+        "Compile orchestration, drift, and anomaly kernels into deterministic lookup DAGs and cache-policy transitions that can be inspected as ordinary data.",
+        "Anchor the round in crates/frankenlibc-core/src/resolv/config.rs, crates/frankenlibc-core/src/resolv/dns.rs, crates/frankenlibc-core/src/resolv/mod.rs, and tests/integration/fixture_nss.c.",
+        "Route NSS and resolver proof obligations through the reverse-round artifact so poisoning and retry-policy assumptions remain reviewable in one place."
+      ],
+      "verification_strategy": [
+        {
+          "description": "scripts/check_reverse_round_contracts.sh and crates/frankenlibc-harness/tests/reverse_round_contracts_test.rs validate the R10 mapping contract.",
+          "path": "scripts/check_reverse_round_contracts.sh",
+          "path_exists": true
+        },
+        {
+          "description": "crates/frankenlibc-abi/tests/resolv_abi_test.rs and crates/frankenlibc-abi/tests/nss_cache_policy_test.rs keep resolver-facing regressions visible.",
+          "path": "crates/frankenlibc-abi/tests/resolv_abi_test.rs",
+          "path_exists": true
+        },
+        {
+          "description": "scripts/check_runtime_math_epic_closure.sh must continue linking the reverse-round artifact into the runtime-math closure bundle.",
+          "path": "scripts/check_runtime_math_epic_closure.sh",
+          "path_exists": true
+        }
+      ],
+      "supporting_files": [
+        {
+          "path": "PLAN_TO_PORT_GLIBC_TO_RUST.md",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-core/src/resolv/config.rs",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-core/src/resolv/dns.rs",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-core/src/resolv/mod.rs",
+          "exists": true
+        },
+        {
+          "path": "tests/integration/fixture_nss.c",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-abi/tests/resolv_abi_test.rs",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-abi/tests/nss_cache_policy_test.rs",
+          "exists": true
+        }
+      ],
       "math_families": {
         "pomdp": {
           "module": "pomdp_repair",
@@ -76,6 +140,8 @@
       },
       "family_count": 4,
       "modules_found": 4,
+      "supporting_files_found": 7,
+      "verification_hooks_found": 3,
       "branch_diversity": {
         "total_families": 4,
         "unique_classes": [
@@ -94,6 +160,7 @@
     },
     "R11": {
       "name": "libm / fenv",
+      "problem_focus": "Correct rounding, IEEE exception behavior, consistent fenv semantics, and ULP guarantees.",
       "legacy_surfaces": [
         "math",
         "soft-fp",
@@ -102,6 +169,58 @@
       ],
       "failure_class": "denormal/NaN/payload drift across regimes",
       "artifacts": "regime-indexed numeric guard tables + certified fallback kernels",
+      "implementation_plan": [
+        "Compile the numeric-control stack into regime-indexed guard tables, certified fallback kernels, and approximation witnesses that core math code can consume directly.",
+        "Anchor the round in crates/frankenlibc-core/src/math/mod.rs, crates/frankenlibc-core/src/math/trig.rs, crates/frankenlibc-core/src/math/exp.rs, and crates/frankenlibc-core/src/math/float.rs.",
+        "Expose the approximation and error contract through the reverse-round artifact so fenv and ULP obligations remain reproducible instead of living only in prose."
+      ],
+      "verification_strategy": [
+        {
+          "description": "scripts/check_reverse_round_contracts.sh and crates/frankenlibc-harness/tests/reverse_round_contracts_test.rs validate the R11 mapping contract.",
+          "path": "scripts/check_reverse_round_contracts.sh",
+          "path_exists": true
+        },
+        {
+          "description": "crates/frankenlibc-harness/tests/math_production_set_policy_test.rs and crates/frankenlibc-harness/tests/math_governance_test.rs keep the libm and fenv anchors in the verification loop.",
+          "path": "crates/frankenlibc-harness/tests/math_production_set_policy_test.rs",
+          "path_exists": true
+        },
+        {
+          "description": "scripts/check_runtime_math_epic_closure.sh must keep referencing the reverse-round artifact before libm and fenv closure claims are allowed.",
+          "path": "scripts/check_runtime_math_epic_closure.sh",
+          "path_exists": true
+        }
+      ],
+      "supporting_files": [
+        {
+          "path": "PLAN_TO_PORT_GLIBC_TO_RUST.md",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-core/src/math/mod.rs",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-core/src/math/trig.rs",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-core/src/math/exp.rs",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-core/src/math/float.rs",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-harness/tests/math_production_set_policy_test.rs",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-harness/tests/math_governance_test.rs",
+          "exists": true
+        }
+      ],
       "math_families": {
         "padic": {
           "module": "padic_valuation",
@@ -142,6 +261,8 @@
       },
       "family_count": 4,
       "modules_found": 4,
+      "supporting_files_found": 7,
+      "verification_hooks_found": 3,
       "branch_diversity": {
         "total_families": 4,
         "unique_classes": [
@@ -159,6 +280,7 @@
     },
     "R7": {
       "name": "Loader / Symbol / IFUNC",
+      "problem_focus": "Versioned symbol lookup under dlopen/dlclose, IFUNC, hwcaps, and relocation dependencies.",
       "legacy_surfaces": [
         "elf",
         "dl-*",
@@ -168,6 +290,54 @@
       ],
       "failure_class": "global compatibility drift",
       "artifacts": "resolver automata + compatibility witness ledgers",
+      "implementation_plan": [
+        "Compile the loader-facing math stack into deterministic resolver automata and relocation schedule envelopes that ordinary Rust modules can consume as policy data.",
+        "Anchor the round in crates/frankenlibc-core/src/elf/loader.rs, crates/frankenlibc-core/src/elf/relocation.rs, and crates/frankenlibc-abi/version_scripts/libc.map so scope drift remains tied to real loader surfaces.",
+        "Emit compatibility witness data through tests/conformance/reverse_round_contracts.v1.json so IFUNC and hwcaps policy drift is visible without reading runtime-math internals directly."
+      ],
+      "verification_strategy": [
+        {
+          "description": "scripts/check_reverse_round_contracts.sh regenerates and validates the reverse-round contract report.",
+          "path": "scripts/check_reverse_round_contracts.sh",
+          "path_exists": true
+        },
+        {
+          "description": "crates/frankenlibc-harness/tests/reverse_round_contracts_test.rs asserts that R7 retains explicit implementation and verification hooks.",
+          "path": "crates/frankenlibc-harness/tests/reverse_round_contracts_test.rs",
+          "path_exists": true
+        },
+        {
+          "description": "scripts/check_runtime_math_epic_closure.sh must continue to reference tests/conformance/reverse_round_contracts.v1.json in the aggregate runtime-math closure pack.",
+          "path": "scripts/check_runtime_math_epic_closure.sh",
+          "path_exists": true
+        }
+      ],
+      "supporting_files": [
+        {
+          "path": "PLAN_TO_PORT_GLIBC_TO_RUST.md",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-core/src/elf/loader.rs",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-core/src/elf/relocation.rs",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-abi/version_scripts/libc.map",
+          "exists": true
+        },
+        {
+          "path": "scripts/check_reverse_round_contracts.sh",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-harness/tests/reverse_round_contracts_test.rs",
+          "exists": true
+        }
+      ],
       "math_families": {
         "tropical": {
           "module": "tropical_latency",
@@ -208,6 +378,8 @@
       },
       "family_count": 4,
       "modules_found": 4,
+      "supporting_files_found": 6,
+      "verification_hooks_found": 3,
       "branch_diversity": {
         "total_families": 4,
         "unique_classes": [
@@ -226,6 +398,7 @@
     },
     "R8": {
       "name": "Allocator / nptl",
+      "problem_focus": "Arena contention, tcache poisoning classes, cancellation/futex races, and TLS lifecycle edges.",
       "legacy_surfaces": [
         "malloc",
         "nptl",
@@ -234,6 +407,58 @@
       ],
       "failure_class": "temporal/provenance corruption",
       "artifacts": "allocator policy tables + admissibility guards",
+      "implementation_plan": [
+        "Compile contention-control, barrier-certificate, and rough-path kernels into allocator and tcache policy tables plus admissibility guards with no hidden heuristics.",
+        "Anchor the round in crates/frankenlibc-core/src/malloc/allocator.rs, crates/frankenlibc-core/src/malloc/thread_cache.rs, crates/frankenlibc-core/src/pthread/mutex.rs, and crates/frankenlibc-core/src/pthread/thread.rs.",
+        "Keep the proof surface developer-transparent by emitting allocator and thread-runtime witnesses through the reverse-round contract artifact."
+      ],
+      "verification_strategy": [
+        {
+          "description": "scripts/check_reverse_round_contracts.sh and crates/frankenlibc-harness/tests/reverse_round_contracts_test.rs validate the R8 mapping contract.",
+          "path": "scripts/check_reverse_round_contracts.sh",
+          "path_exists": true
+        },
+        {
+          "description": "crates/frankenlibc-harness/tests/thread_hotpath_optimization_test.rs and crates/frankenlibc-harness/tests/pressure_sensing_test.rs keep allocator and thread-runtime anchors exercised.",
+          "path": "crates/frankenlibc-harness/tests/thread_hotpath_optimization_test.rs",
+          "path_exists": true
+        },
+        {
+          "description": "The aggregate runtime-math closure pack must continue to reference the reverse-round artifact before allocator and nptl claims are treated as stable.",
+          "path": null,
+          "path_exists": null
+        }
+      ],
+      "supporting_files": [
+        {
+          "path": "PLAN_TO_PORT_GLIBC_TO_RUST.md",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-core/src/malloc/allocator.rs",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-core/src/malloc/thread_cache.rs",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-core/src/pthread/mutex.rs",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-core/src/pthread/thread.rs",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-harness/tests/thread_hotpath_optimization_test.rs",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-harness/tests/pressure_sensing_test.rs",
+          "exists": true
+        }
+      ],
       "math_families": {
         "mean_field_game": {
           "module": "mean_field_game",
@@ -274,6 +499,8 @@
       },
       "family_count": 4,
       "modules_found": 4,
+      "supporting_files_found": 7,
+      "verification_hooks_found": 2,
       "branch_diversity": {
         "total_families": 4,
         "unique_classes": [
@@ -292,6 +519,7 @@
     },
     "R9": {
       "name": "Format / Locale",
+      "problem_focus": "Format parser complexity, locale-sensitive behavior, and wide-char boundary correctness under bounded overhead.",
       "legacy_surfaces": [
         "stdio-common",
         "libio",
@@ -301,6 +529,58 @@
       ],
       "failure_class": "parser-state explosion and locale drift",
       "artifacts": "parser/transducer tables + consistency certs",
+      "implementation_plan": [
+        "Compile parser, transducer, and locale-coherence math into deterministic format action graphs and divergence-budget tables consumed directly by the stdio and locale stack.",
+        "Anchor the round in crates/frankenlibc-core/src/stdio/printf.rs, crates/frankenlibc-core/src/stdio/scanf.rs, crates/frankenlibc-core/src/locale/mod.rs, and crates/frankenlibc-core/src/iconv/mod.rs.",
+        "Keep locale and codec drift machine-visible by routing the phase contract through the reverse-round report instead of leaving it as narrative-only design text."
+      ],
+      "verification_strategy": [
+        {
+          "description": "scripts/check_reverse_round_contracts.sh regenerates tests/conformance/reverse_round_contracts.v1.json.",
+          "path": "scripts/check_reverse_round_contracts.sh",
+          "path_exists": true
+        },
+        {
+          "description": "crates/frankenlibc-harness/tests/stdio_phase_strategy_test.rs and crates/frankenlibc-harness/tests/iconv_codec_scope_ledger_test.rs keep the declared anchors honest.",
+          "path": "crates/frankenlibc-harness/tests/stdio_phase_strategy_test.rs",
+          "path_exists": true
+        },
+        {
+          "description": "crates/frankenlibc-harness/tests/reverse_round_contracts_test.rs enforces non-empty implementation and verification sections for R9.",
+          "path": "crates/frankenlibc-harness/tests/reverse_round_contracts_test.rs",
+          "path_exists": true
+        }
+      ],
+      "supporting_files": [
+        {
+          "path": "PLAN_TO_PORT_GLIBC_TO_RUST.md",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-core/src/stdio/printf.rs",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-core/src/stdio/scanf.rs",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-core/src/locale/mod.rs",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-core/src/iconv/mod.rs",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-harness/tests/stdio_phase_strategy_test.rs",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-harness/tests/iconv_codec_scope_ledger_test.rs",
+          "exists": true
+        }
+      ],
       "math_families": {
         "conformal": {
           "module": "conformal",
@@ -341,6 +621,8 @@
       },
       "family_count": 4,
       "modules_found": 4,
+      "supporting_files_found": 7,
+      "verification_hooks_found": 3,
       "branch_diversity": {
         "total_families": 4,
         "unique_classes": [
@@ -357,8 +639,653 @@
       }
     }
   },
+  "cross_round_integrations": {
+    "allocator_locale": {
+      "name": "Allocator-backed format and locale staging",
+      "rounds": [
+        "R8",
+        "R9"
+      ],
+      "seam": "Transient printf/scanf, locale, and iconv staging buffers must inherit allocator quotas, quarantine semantics, and TLS ownership rules without losing parser-state determinism.",
+      "legacy_surfaces": [
+        "malloc",
+        "nptl",
+        "stdio-common",
+        "locale",
+        "iconv",
+        "wcsmbs"
+      ],
+      "round_hashes": {
+        "R8": "fd21d6709ab1",
+        "R9": "1c8f487e1ef1"
+      },
+      "shared_classes": [
+        "algebra",
+        "conformal-statistics"
+      ],
+      "min_class_count": 5,
+      "supporting_files": [
+        {
+          "path": "crates/frankenlibc-core/src/malloc/thread_cache.rs",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-core/src/stdio/printf.rs",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-core/src/locale/mod.rs",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-core/src/iconv/mod.rs",
+          "exists": true
+        }
+      ],
+      "supporting_files_found": 4,
+      "verification_strategy": [
+        {
+          "description": "crates/frankenlibc-harness/tests/thread_hotpath_optimization_test.rs exercises allocator-side evidence for staging buffers.",
+          "path": "crates/frankenlibc-harness/tests/thread_hotpath_optimization_test.rs",
+          "path_exists": true
+        },
+        {
+          "description": "crates/frankenlibc-harness/tests/stdio_phase_strategy_test.rs keeps format-phase routing visible.",
+          "path": "crates/frankenlibc-harness/tests/stdio_phase_strategy_test.rs",
+          "path_exists": true
+        },
+        {
+          "description": "crates/frankenlibc-harness/tests/iconv_codec_scope_ledger_test.rs preserves locale and codec scope boundaries.",
+          "path": "crates/frankenlibc-harness/tests/iconv_codec_scope_ledger_test.rs",
+          "path_exists": true
+        }
+      ],
+      "verification_hooks_found": 3,
+      "branch_diversity": {
+        "total_families": 8,
+        "class_counts": {
+          "algebra": 2,
+          "conformal-statistics": 3,
+          "game-theory": 1,
+          "grothendieck-serre": 1,
+          "stochastic-analysis": 1
+        },
+        "unique_classes": [
+          "algebra",
+          "conformal-statistics",
+          "game-theory",
+          "grothendieck-serre",
+          "stochastic-analysis"
+        ],
+        "class_count": 5,
+        "max_single_class_pct": 37.5,
+        "passes_diversity": true
+      },
+      "passes_integration": true
+    },
+    "loader_allocator": {
+      "name": "Loader relocation scratch allocation discipline",
+      "rounds": [
+        "R7",
+        "R8"
+      ],
+      "seam": "IFUNC resolution, relocation scratch buffers, and TLS materialization must flow through allocator and thread-runtime guardrails instead of bypassing quarantine, provenance, or cancellation boundaries.",
+      "legacy_surfaces": [
+        "elf",
+        "dl-*",
+        "malloc",
+        "nptl",
+        "pthread"
+      ],
+      "round_hashes": {
+        "R7": "aac99f84f6dc",
+        "R8": "fd21d6709ab1"
+      },
+      "shared_classes": [
+        "algebra"
+      ],
+      "min_class_count": 5,
+      "supporting_files": [
+        {
+          "path": "crates/frankenlibc-core/src/elf/loader.rs",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-core/src/elf/relocation.rs",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-core/src/malloc/allocator.rs",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-core/src/pthread/thread.rs",
+          "exists": true
+        }
+      ],
+      "supporting_files_found": 4,
+      "verification_strategy": [
+        {
+          "description": "scripts/check_reverse_round_contracts.sh replays the loader/allocator seam inside the checked-in reverse-round artifact.",
+          "path": "scripts/check_reverse_round_contracts.sh",
+          "path_exists": true
+        },
+        {
+          "description": "crates/frankenlibc-harness/tests/reverse_round_contracts_test.rs asserts the seam remains represented in the artifact.",
+          "path": "crates/frankenlibc-harness/tests/reverse_round_contracts_test.rs",
+          "path_exists": true
+        },
+        {
+          "description": "crates/frankenlibc-harness/tests/thread_hotpath_optimization_test.rs keeps allocator and pthread hot paths tied to the seam.",
+          "path": "crates/frankenlibc-harness/tests/thread_hotpath_optimization_test.rs",
+          "path_exists": true
+        }
+      ],
+      "verification_hooks_found": 3,
+      "branch_diversity": {
+        "total_families": 8,
+        "class_counts": {
+          "algebra": 2,
+          "algebraic-topology": 1,
+          "conformal-statistics": 1,
+          "decision-theory": 1,
+          "game-theory": 1,
+          "grothendieck-serre": 1,
+          "stochastic-analysis": 1
+        },
+        "unique_classes": [
+          "algebra",
+          "algebraic-topology",
+          "conformal-statistics",
+          "decision-theory",
+          "game-theory",
+          "grothendieck-serre",
+          "stochastic-analysis"
+        ],
+        "class_count": 7,
+        "max_single_class_pct": 25.0,
+        "passes_diversity": true
+      },
+      "passes_integration": true
+    },
+    "loader_resolver": {
+      "name": "Dynamic loader and NSS backend composition",
+      "rounds": [
+        "R7",
+        "R10"
+      ],
+      "seam": "Loader policy, hwcaps selection, and versioned symbol resolution must compose with NSS backend loading so service lookup plugins stay inside deterministic compatibility envelopes.",
+      "legacy_surfaces": [
+        "elf",
+        "dl-*",
+        "hwcaps",
+        "nss",
+        "resolv"
+      ],
+      "round_hashes": {
+        "R7": "aac99f84f6dc",
+        "R10": "7e84357ec964"
+      },
+      "shared_classes": [
+        "algebraic-topology",
+        "decision-theory"
+      ],
+      "min_class_count": 5,
+      "supporting_files": [
+        {
+          "path": "crates/frankenlibc-core/src/elf/loader.rs",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-abi/version_scripts/libc.map",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-core/src/resolv/mod.rs",
+          "exists": true
+        },
+        {
+          "path": "tests/integration/fixture_nss.c",
+          "exists": true
+        }
+      ],
+      "supporting_files_found": 4,
+      "verification_strategy": [
+        {
+          "description": "scripts/check_runtime_math_epic_closure.sh keeps the reverse-round artifact wired into the aggregate closure pack.",
+          "path": "scripts/check_runtime_math_epic_closure.sh",
+          "path_exists": true
+        },
+        {
+          "description": "crates/frankenlibc-harness/tests/reverse_round_contracts_test.rs verifies this cross-round seam remains materialized.",
+          "path": "crates/frankenlibc-harness/tests/reverse_round_contracts_test.rs",
+          "path_exists": true
+        },
+        {
+          "description": "crates/frankenlibc-abi/tests/resolv_abi_test.rs keeps resolver loading behavior visible at the ABI edge.",
+          "path": "crates/frankenlibc-abi/tests/resolv_abi_test.rs",
+          "path_exists": true
+        }
+      ],
+      "verification_hooks_found": 3,
+      "branch_diversity": {
+        "total_families": 8,
+        "class_counts": {
+          "algebra": 1,
+          "algebraic-topology": 2,
+          "conformal-statistics": 1,
+          "decision-theory": 2,
+          "grothendieck-serre": 1,
+          "optimal-transport": 1
+        },
+        "unique_classes": [
+          "algebra",
+          "algebraic-topology",
+          "conformal-statistics",
+          "decision-theory",
+          "grothendieck-serre",
+          "optimal-transport"
+        ],
+        "class_count": 6,
+        "max_single_class_pct": 25.0,
+        "passes_diversity": true
+      },
+      "passes_integration": true
+    },
+    "locale_numeric": {
+      "name": "Numeric formatting and libm/fenv witness continuity",
+      "rounds": [
+        "R9",
+        "R11"
+      ],
+      "seam": "Printf/scanf numeric formatting, locale rules, and libm/fenv witnesses must agree on rounding, NaN handling, and representational stability across presentation boundaries.",
+      "legacy_surfaces": [
+        "stdio-common",
+        "locale",
+        "wcsmbs",
+        "math",
+        "soft-fp",
+        "ieee754",
+        "fenv"
+      ],
+      "round_hashes": {
+        "R9": "1c8f487e1ef1",
+        "R11": "33bf75d138f7"
+      },
+      "shared_classes": [
+        "algebra"
+      ],
+      "min_class_count": 5,
+      "supporting_files": [
+        {
+          "path": "crates/frankenlibc-core/src/stdio/printf.rs",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-core/src/stdio/scanf.rs",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-core/src/math/float.rs",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-harness/tests/math_governance_test.rs",
+          "exists": true
+        }
+      ],
+      "supporting_files_found": 4,
+      "verification_strategy": [
+        {
+          "description": "crates/frankenlibc-harness/tests/stdio_phase_strategy_test.rs keeps numeric presentation phases deterministic.",
+          "path": "crates/frankenlibc-harness/tests/stdio_phase_strategy_test.rs",
+          "path_exists": true
+        },
+        {
+          "description": "crates/frankenlibc-harness/tests/math_production_set_policy_test.rs validates production libm policy anchors.",
+          "path": "crates/frankenlibc-harness/tests/math_production_set_policy_test.rs",
+          "path_exists": true
+        },
+        {
+          "description": "crates/frankenlibc-harness/tests/math_governance_test.rs protects fenv and rounding governance.",
+          "path": "crates/frankenlibc-harness/tests/math_governance_test.rs",
+          "path_exists": true
+        }
+      ],
+      "verification_hooks_found": 3,
+      "branch_diversity": {
+        "total_families": 8,
+        "class_counts": {
+          "algebra": 3,
+          "conformal-statistics": 2,
+          "decision-theory": 1,
+          "experimental-design": 1,
+          "grothendieck-serre": 1
+        },
+        "unique_classes": [
+          "algebra",
+          "conformal-statistics",
+          "decision-theory",
+          "experimental-design",
+          "grothendieck-serre"
+        ],
+        "class_count": 5,
+        "max_single_class_pct": 37.5,
+        "passes_diversity": true
+      },
+      "passes_integration": true
+    },
+    "locale_resolver": {
+      "name": "Locale and resolver payload normalization",
+      "rounds": [
+        "R9",
+        "R10"
+      ],
+      "seam": "Resolver payload parsing, NSS answer decoding, and locale-sensitive formatting must share one normalization contract so codec and lookup policy drift are caught together.",
+      "legacy_surfaces": [
+        "stdio-common",
+        "locale",
+        "iconv",
+        "nss",
+        "resolv",
+        "sunrpc"
+      ],
+      "round_hashes": {
+        "R9": "1c8f487e1ef1",
+        "R10": "7e84357ec964"
+      },
+      "shared_classes": [
+        "conformal-statistics"
+      ],
+      "min_class_count": 5,
+      "supporting_files": [
+        {
+          "path": "crates/frankenlibc-core/src/locale/mod.rs",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-core/src/iconv/mod.rs",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-core/src/resolv/dns.rs",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-abi/tests/nss_cache_policy_test.rs",
+          "exists": true
+        }
+      ],
+      "supporting_files_found": 4,
+      "verification_strategy": [
+        {
+          "description": "crates/frankenlibc-harness/tests/iconv_codec_scope_ledger_test.rs keeps codec boundaries explicit when resolver payloads cross locale surfaces.",
+          "path": "crates/frankenlibc-harness/tests/iconv_codec_scope_ledger_test.rs",
+          "path_exists": true
+        },
+        {
+          "description": "crates/frankenlibc-abi/tests/resolv_abi_test.rs exercises resolver-facing ABI behavior tied to the seam.",
+          "path": "crates/frankenlibc-abi/tests/resolv_abi_test.rs",
+          "path_exists": true
+        },
+        {
+          "description": "crates/frankenlibc-abi/tests/nss_cache_policy_test.rs keeps retry and cache policy behavior visible.",
+          "path": "crates/frankenlibc-abi/tests/nss_cache_policy_test.rs",
+          "path_exists": true
+        }
+      ],
+      "verification_hooks_found": 3,
+      "branch_diversity": {
+        "total_families": 8,
+        "class_counts": {
+          "algebra": 1,
+          "algebraic-topology": 1,
+          "conformal-statistics": 3,
+          "decision-theory": 1,
+          "grothendieck-serre": 1,
+          "optimal-transport": 1
+        },
+        "unique_classes": [
+          "algebra",
+          "algebraic-topology",
+          "conformal-statistics",
+          "decision-theory",
+          "grothendieck-serre",
+          "optimal-transport"
+        ],
+        "class_count": 6,
+        "max_single_class_pct": 37.5,
+        "passes_diversity": true
+      },
+      "passes_integration": true
+    }
+  },
+  "milestone_branch_diversity": {
+    "bootstrap_surface": {
+      "name": "Bootstrap surface milestone",
+      "rounds": [
+        "R7",
+        "R8",
+        "R9"
+      ],
+      "goal": "Loader, allocator, and locale/format surfaces must share enough mathematical diversity that bootstrap-time policy drift cannot hide inside one family.",
+      "round_hashes": {
+        "R7": "aac99f84f6dc",
+        "R8": "fd21d6709ab1",
+        "R9": "1c8f487e1ef1"
+      },
+      "min_class_count": 5,
+      "max_single_class_pct": 40.0,
+      "supporting_files": [
+        {
+          "path": "crates/frankenlibc-core/src/elf/loader.rs",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-core/src/malloc/allocator.rs",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-core/src/stdio/printf.rs",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-core/src/locale/mod.rs",
+          "exists": true
+        }
+      ],
+      "supporting_files_found": 4,
+      "verification_strategy": [
+        {
+          "description": "scripts/check_reverse_round_contracts.sh validates milestone diversity and composition.",
+          "path": "scripts/check_reverse_round_contracts.sh",
+          "path_exists": true
+        },
+        {
+          "description": "crates/frankenlibc-harness/tests/reverse_round_contracts_test.rs asserts milestone diversity and artifact completeness.",
+          "path": "crates/frankenlibc-harness/tests/reverse_round_contracts_test.rs",
+          "path_exists": true
+        }
+      ],
+      "verification_hooks_found": 2,
+      "branch_diversity": {
+        "total_families": 12,
+        "class_counts": {
+          "algebra": 3,
+          "algebraic-topology": 1,
+          "conformal-statistics": 3,
+          "decision-theory": 1,
+          "game-theory": 1,
+          "grothendieck-serre": 2,
+          "stochastic-analysis": 1
+        },
+        "unique_classes": [
+          "algebra",
+          "algebraic-topology",
+          "conformal-statistics",
+          "decision-theory",
+          "game-theory",
+          "grothendieck-serre",
+          "stochastic-analysis"
+        ],
+        "class_count": 7,
+        "max_single_class_pct": 25.0,
+        "passes_diversity": true
+      },
+      "passes_milestone": true
+    },
+    "numeric_observability_surface": {
+      "name": "Numeric observability milestone",
+      "rounds": [
+        "R9",
+        "R10",
+        "R11"
+      ],
+      "goal": "Format, resolver, and libm/fenv surfaces must remain branch-diverse enough that numeric and lookup regressions cannot collapse onto one controller family.",
+      "round_hashes": {
+        "R9": "1c8f487e1ef1",
+        "R10": "7e84357ec964",
+        "R11": "33bf75d138f7"
+      },
+      "min_class_count": 5,
+      "max_single_class_pct": 40.0,
+      "supporting_files": [
+        {
+          "path": "crates/frankenlibc-core/src/stdio/scanf.rs",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-core/src/resolv/mod.rs",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-core/src/math/float.rs",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-harness/tests/math_governance_test.rs",
+          "exists": true
+        }
+      ],
+      "supporting_files_found": 4,
+      "verification_strategy": [
+        {
+          "description": "crates/frankenlibc-harness/tests/stdio_phase_strategy_test.rs keeps numeric presentation visible at the milestone boundary.",
+          "path": "crates/frankenlibc-harness/tests/stdio_phase_strategy_test.rs",
+          "path_exists": true
+        },
+        {
+          "description": "crates/frankenlibc-harness/tests/math_governance_test.rs preserves libm/fenv policy continuity for the milestone.",
+          "path": "crates/frankenlibc-harness/tests/math_governance_test.rs",
+          "path_exists": true
+        }
+      ],
+      "verification_hooks_found": 2,
+      "branch_diversity": {
+        "total_families": 12,
+        "class_counts": {
+          "algebra": 3,
+          "algebraic-topology": 1,
+          "conformal-statistics": 3,
+          "decision-theory": 2,
+          "experimental-design": 1,
+          "grothendieck-serre": 1,
+          "optimal-transport": 1
+        },
+        "unique_classes": [
+          "algebra",
+          "algebraic-topology",
+          "conformal-statistics",
+          "decision-theory",
+          "experimental-design",
+          "grothendieck-serre",
+          "optimal-transport"
+        ],
+        "class_count": 7,
+        "max_single_class_pct": 25.0,
+        "passes_diversity": true
+      },
+      "passes_milestone": true
+    },
+    "service_lookup_surface": {
+      "name": "Service lookup surface milestone",
+      "rounds": [
+        "R8",
+        "R9",
+        "R10"
+      ],
+      "goal": "Allocator, locale, and resolver surfaces must hold a balanced class mix while service lookup state crosses parser, cache, and retry boundaries.",
+      "round_hashes": {
+        "R8": "fd21d6709ab1",
+        "R9": "1c8f487e1ef1",
+        "R10": "7e84357ec964"
+      },
+      "min_class_count": 5,
+      "max_single_class_pct": 40.0,
+      "supporting_files": [
+        {
+          "path": "crates/frankenlibc-core/src/malloc/thread_cache.rs",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-core/src/iconv/mod.rs",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-core/src/resolv/dns.rs",
+          "exists": true
+        },
+        {
+          "path": "crates/frankenlibc-abi/tests/nss_cache_policy_test.rs",
+          "exists": true
+        }
+      ],
+      "supporting_files_found": 4,
+      "verification_strategy": [
+        {
+          "description": "crates/frankenlibc-harness/tests/iconv_codec_scope_ledger_test.rs keeps locale/resolver seams explicit inside the milestone.",
+          "path": "crates/frankenlibc-harness/tests/iconv_codec_scope_ledger_test.rs",
+          "path_exists": true
+        },
+        {
+          "description": "crates/frankenlibc-abi/tests/nss_cache_policy_test.rs anchors the service-lookup milestone in ABI-visible behavior.",
+          "path": "crates/frankenlibc-abi/tests/nss_cache_policy_test.rs",
+          "path_exists": true
+        }
+      ],
+      "verification_hooks_found": 2,
+      "branch_diversity": {
+        "total_families": 12,
+        "class_counts": {
+          "algebra": 2,
+          "algebraic-topology": 1,
+          "conformal-statistics": 4,
+          "decision-theory": 1,
+          "game-theory": 1,
+          "grothendieck-serre": 1,
+          "optimal-transport": 1,
+          "stochastic-analysis": 1
+        },
+        "unique_classes": [
+          "algebra",
+          "algebraic-topology",
+          "conformal-statistics",
+          "decision-theory",
+          "game-theory",
+          "grothendieck-serre",
+          "optimal-transport",
+          "stochastic-analysis"
+        ],
+        "class_count": 8,
+        "max_single_class_pct": 33.3,
+        "passes_diversity": true
+      },
+      "passes_milestone": true
+    }
+  },
   "branch_diversity_rule": {
     "requirement": ">=3 distinct math families per round",
+    "milestone_requirement": ">=5 distinct math classes across each milestone",
     "mandatory_classes": [
       "conformal-statistics",
       "algebraic-topology",
@@ -369,13 +1296,25 @@
   },
   "golden_output": {
     "description": "Reproducible baseline for regression detection",
-    "hash": "4ea167ea89c7c503",
+    "hash": "c112f760648fd84a",
     "round_hashes": {
       "R10": "7e84357ec964",
       "R11": "33bf75d138f7",
       "R7": "aac99f84f6dc",
       "R8": "fd21d6709ab1",
       "R9": "1c8f487e1ef1"
+    },
+    "integration_hashes": {
+      "allocator_locale": "e59c4de1fa0e",
+      "loader_allocator": "8d5a3d7cf212",
+      "loader_resolver": "49a72dae8711",
+      "locale_numeric": "10e4400bf48a",
+      "locale_resolver": "4257ca941eaf"
+    },
+    "milestone_hashes": {
+      "bootstrap_surface": "4da8aa62d1b8",
+      "numeric_observability_surface": "4f9788a7da4b",
+      "service_lookup_surface": "791b08d7f9b6"
     }
   }
 }
