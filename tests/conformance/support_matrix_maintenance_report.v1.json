@@ -1,17 +1,17 @@
 {
   "schema_version": "v1",
   "bead": "bd-3g4p",
-  "generated_at": "2026-04-01T17:55:36Z",
+  "generated_at": "2026-04-08T19:15:22Z",
   "summary": {
     "total_symbols": 3980,
-    "status_validated": 3976,
-    "status_invalid": 4,
+    "status_validated": 3980,
+    "status_invalid": 0,
     "status_skipped": 0,
-    "status_valid_pct": 99.9,
+    "status_valid_pct": 100.0,
     "fixture_linked": 230,
     "fixture_unlinked": 3750,
     "fixture_coverage_pct": 5.8,
-    "total_warnings": 4
+    "total_warnings": 0
   },
   "coverage_dashboard": {
     "total_symbols": 3980,
@@ -4581,15 +4581,6 @@
       ]
     },
     {
-      "symbol": "if_indextoname",
-      "status": "Implemented",
-      "module": "inet_abi",
-      "valid": false,
-      "findings": [
-        "Implemented but calls libc::{if_nameindex}"
-      ]
-    },
-    {
       "symbol": "iswalnum",
       "status": "Implemented",
       "module": "unistd_abi",
@@ -4887,24 +4878,6 @@
       ]
     },
     {
-      "symbol": "pthread_attr_setsigmask_np",
-      "status": "Implemented",
-      "module": "pthread_abi",
-      "valid": false,
-      "findings": [
-        "Implemented but calls libc::{pthread_attr_destroy}"
-      ]
-    },
-    {
-      "symbol": "pthread_getattr_np",
-      "status": "Implemented",
-      "module": "pthread_abi",
-      "valid": false,
-      "findings": [
-        "Implemented but calls libc::{pthread_attr_destroy}"
-      ]
-    },
-    {
       "symbol": "putw",
       "status": "Implemented",
       "module": "unistd_abi",
@@ -4965,15 +4938,6 @@
       "valid": true,
       "findings": [
         "function body not found (may use alternate pattern)"
-      ]
-    },
-    {
-      "symbol": "sigqueue",
-      "status": "RawSyscall",
-      "module": "unistd_abi",
-      "valid": false,
-      "findings": [
-        "RawSyscall but calls glibc::{sigval}"
       ]
     },
     {

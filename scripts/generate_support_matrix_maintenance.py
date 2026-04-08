@@ -33,6 +33,10 @@ SYSCALL_PATTERN = re.compile(
     r'(?:crate::syscall::|super::syscall::|syscall!|syscall_raw|'
     r'libc::syscall\b|libc::SYS_|__NR_)'
 )
+NEXT_FN_PATTERN = re.compile(
+    r'\n\s*(?:(?:#\[[^\n]*\])\s*\n\s*)*'
+    r'(?:pub\s+)?(?:unsafe\s+)?(?:extern\s+"C"\s+)?fn\s+\w+\s*\('
+)
 # Patterns indicating stub/unimplemented (explicit Rust stub macros only;
 # `return -1` is a normal POSIX error return, not a stub indicator).
 STUB_PATTERNS = [
@@ -149,20 +153,27 @@ def extract_function_body(source, fn_name):
     This is approximate but sufficient for pattern matching.
     """
     pattern = re.compile(rf'\bfn\s+{re.escape(fn_name)}\s*\(')
-    match = pattern.search(source)
-    if not match:
-        return None
+    for match in pattern.finditer(source):
+        signature_tail = source[match.end():]
+        open_brace = signature_tail.find("{")
+        statement_end = signature_tail.find(";")
 
-    start = match.start()
-    # Find next function definition or end of file
-    next_fn = re.search(r'\n\s*(?:pub\s+)?(?:unsafe\s+)?(?:extern\s+"C"\s+)?fn\s+\w+\s*\(',
-                        source[match.end():])
-    if next_fn:
-        end = match.end() + next_fn.start()
-    else:
-        end = len(source)
+        # Skip forward declarations inside extern blocks; we only want actual
+        # function definitions with bodies.
+        if open_brace == -1:
+            continue
+        if statement_end != -1 and statement_end < open_brace:
+            continue
 
-    return source[start:end]
+        start = match.start()
+        next_fn = NEXT_FN_PATTERN.search(signature_tail)
+        if next_fn:
+            end = match.end() + next_fn.start()
+        else:
+            end = len(source)
+        return source[start:end]
+
+    return None
 
 
 def is_type_or_constant(name):
@@ -188,7 +199,7 @@ def is_type_or_constant(name):
         "stat", "dirent", "dirent64", "passwd", "group", "spwd",
         "termios", "winsize", "addrinfo", "hostent", "servent",
         "protoent", "linger", "timezone", "tm", "iovec", "msghdr",
-        "epoll_event", "pollfd", "glob_t",
+        "epoll_event", "pollfd", "glob_t", "if_nameindex", "sigval",
     }
     return name in lowercase_types
 
@@ -315,6 +326,9 @@ def validate_status(symbol, status, module, source):
             "pthread_cond_signal", "pthread_cond_broadcast",
             "pthread_cond_wait", "pthread_cond_timedwait",
             "pthread_condattr_getclock",
+            "pthread_attr_init", "pthread_attr_destroy",
+            "pthread_condattr_init", "pthread_condattr_destroy",
+            "pthread_condattr_setclock",
             "pthread_setschedparam", "pthread_getschedparam",
             # Spawn
             "posix_spawn", "posix_spawnp",

@@ -2,7 +2,7 @@
   "index_version": 1,
   "run_id": "bd1f35-thread-stress-v1",
   "bead_id": "bd-1f35",
-  "generated_utc": "2026-04-08T03:22:46.687Z",
+  "generated_utc": "2026-04-08T22:03:05.015Z",
   "artifacts": [
     {
       "path": "tests/conformance/pthread_thread_stress_scenarios.v1.json",
@@ -63,8 +63,8 @@
     {
       "path": "tests/cve_arena/results/bd-1f35/hardened/mixed_detach_join/stderr.txt",
       "kind": "report",
-      "sha256": "8ef414b3c114999d5e598d2da50e91ba8f84439e053fde4efb375681de0dd922",
-      "size_bytes": 1342,
+      "sha256": "4aceca44c03682d416425e3b869b65f457583887197f4f12b1fab2b2559f51b6",
+      "size_bytes": 430,
       "description": "bd-1f35 pthread stress artifact"
     },
     {
@@ -77,8 +77,8 @@
     {
       "path": "tests/cve_arena/results/bd-1f35/report.json",
       "kind": "report",
-      "sha256": "874ebe3b5a223646d92d1ac441c10d08818ab154a3d20d299abecc86989bc45a",
-      "size_bytes": 3764,
+      "sha256": "4466d8c4afbc1e3d0a917332ac88dd3317f9f8b99cb3f7013ce8052310b33a7d",
+      "size_bytes": 3728,
       "description": "bd-1f35 pthread stress artifact"
     },
     {
@@ -112,7 +112,7 @@
     {
       "path": "tests/cve_arena/results/bd-1f35/strict/fanout_fanin_single/stderr.txt",
       "kind": "report",
-      "sha256": "0bcc43b1ef0d004c22900ecf50f9204291ba4d4108a28512aa4876edfeb27513",
+      "sha256": "d5a11b5c203b8178b5fa2f9e30f90b2604032384f156a7d49b88f9a301b6d78f",
       "size_bytes": 215,
       "description": "bd-1f35 pthread stress artifact"
     },
@@ -126,8 +126,8 @@
     {
       "path": "tests/cve_arena/results/bd-1f35/strict/mixed_detach_join/stderr.txt",
       "kind": "report",
-      "sha256": "5a2e4f17b5e48c84d4b6728ffad4250fbd4a41f6ab4e7b15f5bf5ab8fe8a2ef7",
-      "size_bytes": 1186,
+      "sha256": "4aceca44c03682d416425e3b869b65f457583887197f4f12b1fab2b2559f51b6",
+      "size_bytes": 430,
       "description": "bd-1f35 pthread stress artifact"
     },
     {
@@ -140,8 +140,8 @@
     {
       "path": "tests/cve_arena/results/bd-1f35/trace.jsonl",
       "kind": "log",
-      "sha256": "65629c52c27629edf544121e0b2447bf1b302fda93946add3a0f9b7b0f2c11d2",
-      "size_bytes": 13582,
+      "sha256": "6e714e06e9d82e173c650a951f1c61f7acdf88a01256f7f7da7c9f157dddbb6c",
+      "size_bytes": 13544,
       "description": "bd-1f35 pthread stress artifact"
     }
   ]

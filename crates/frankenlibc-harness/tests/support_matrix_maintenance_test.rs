@@ -265,6 +265,32 @@ fn maintenance_status_validation_above_threshold() {
 }
 
 #[test]
+fn maintenance_report_has_no_invalid_status_rows() {
+    let report_path = canonical_report_path();
+    let data = load_json(&report_path);
+
+    let invalid = data["summary"]["status_invalid"]
+        .as_u64()
+        .expect("summary.status_invalid must be a u64");
+    assert_eq!(
+        invalid, 0,
+        "support matrix maintenance report should not carry invalid status rows"
+    );
+
+    let issues = data["status_validation_issues"]
+        .as_array()
+        .expect("status_validation_issues should be an array");
+    let invalid_issues: Vec<&serde_json::Value> = issues
+        .iter()
+        .filter(|issue| issue["valid"].as_bool() == Some(false))
+        .collect();
+    assert!(
+        invalid_issues.is_empty(),
+        "unexpected invalid status issues remain: {invalid_issues:?}"
+    );
+}
+
+#[test]
 fn maintenance_module_coverage_consistent() {
     let root = repo_root();
     let report_path = root.join("tests/conformance/support_matrix_maintenance_report.v1.json");
