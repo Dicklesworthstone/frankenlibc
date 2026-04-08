@@ -32,6 +32,11 @@ fn canonical_reality_report_schema_is_valid() {
     let report: serde_json::Value =
         serde_json::from_str(&body).expect("report should be valid JSON");
 
+    assert_eq!(
+        report["schema_version"].as_str(),
+        Some("v1"),
+        "schema_version must be 'v1'"
+    );
     assert!(
         report["generated_at_utc"].is_string(),
         "generated_at_utc must be a string"

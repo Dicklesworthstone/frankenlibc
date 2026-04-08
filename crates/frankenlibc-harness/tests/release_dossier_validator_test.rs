@@ -49,6 +49,12 @@ fn dossier_validator_produces_valid_report() {
             e, stdout, stderr
         );
     });
+    assert!(
+        output.status.success(),
+        "release_dossier_validator.py should succeed for the checked-in repo state\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr
+    );
 
     // Required report fields
     let required_keys = [
@@ -80,6 +86,26 @@ fn dossier_validator_produces_valid_report() {
     assert!(summary["errors"].as_u64().is_some());
     assert!(summary["warnings"].as_u64().is_some());
     assert!(summary["release_note_candidates"].as_u64().is_some());
+    assert_eq!(
+        report["status"].as_str(),
+        Some("pass"),
+        "checked-in repo state should produce a passing release dossier"
+    );
+    assert_eq!(
+        report["verdict"].as_str(),
+        Some("PASS"),
+        "checked-in repo state should produce a PASS dossier verdict"
+    );
+    assert_eq!(
+        summary["errors"].as_u64(),
+        Some(0),
+        "checked-in repo state should not emit dossier validation errors"
+    );
+    assert_eq!(
+        summary["critical_missing"].as_u64(),
+        Some(0),
+        "checked-in repo state should not have critical dossier gaps"
+    );
 
     let release_notes_hook = report["release_notes_hook"]
         .as_object()
@@ -102,6 +128,25 @@ fn dossier_validator_produces_valid_report() {
     assert!(
         ["PASS", "FAIL", "FAIL_CRITICAL"].contains(&verdict),
         "Unknown verdict: {verdict}"
+    );
+
+    let reality_report = report["artifact_results"]
+        .as_array()
+        .and_then(|results| {
+            results
+                .iter()
+                .find(|entry| entry["id"].as_str() == Some("reality_report"))
+        })
+        .expect("dossier should contain a reality_report artifact result");
+    assert_eq!(
+        reality_report["status"].as_str(),
+        Some("VALID"),
+        "reality_report artifact should validate cleanly"
+    );
+    assert_eq!(
+        reality_report["schema_valid"].as_bool(),
+        Some(true),
+        "reality_report artifact should satisfy schema validation"
     );
 }
 

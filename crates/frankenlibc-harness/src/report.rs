@@ -216,9 +216,12 @@ pub struct RealityCounts {
     pub stub: u64,
 }
 
+const REALITY_REPORT_SCHEMA_VERSION: &str = "v1";
+
 /// Machine-readable single source-of-truth report for docs reality tables.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RealityReport {
+    pub schema_version: String,
     pub generated_at_utc: String,
     pub total_exported: u64,
     pub counts: RealityCounts,
@@ -285,6 +288,7 @@ impl RealityReport {
         }
 
         Ok(Self {
+            schema_version: REALITY_REPORT_SCHEMA_VERSION.to_string(),
             generated_at_utc,
             total_exported,
             counts: RealityCounts {
@@ -1979,6 +1983,7 @@ mod tests {
         );
         let report = RealityReport::from_support_matrix_json_str(&json).unwrap();
 
+        assert_eq!(report.schema_version, "v1");
         assert_eq!(report.generated_at_utc, "2026-02-11T03:14:20Z");
         assert_eq!(report.total_exported, 5);
         assert_eq!(
