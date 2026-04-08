@@ -1545,3 +1545,5 @@ std::thread_local! {
 pub unsafe extern "C" fn __h_errno_location() -> *mut c_int {
     H_ERRNO_TLS.with(|cell| cell.as_ptr())
 }
+
+// gai_cancel/gai_error/gai_suspend are defined in unistd_abi.rs

@@ -32,6 +32,12 @@ fn last_host_errno(default_errno: c_int) -> c_int {
         .unwrap_or(default_errno)
 }
 
+#[inline]
+fn current_abi_errno() -> c_int {
+    // SAFETY: __errno_location returns valid thread-local errno storage.
+    unsafe { std::ptr::read_volatile(crate::errno_abi::__errno_location()) }
+}
+
 /// Query the system page size via AT_PAGESZ from /proc/self/auxv, cached.
 /// Falls back to 4096 (x86_64 default) if the query fails.
 fn runtime_page_size() -> usize {
@@ -3984,7 +3990,7 @@ pub unsafe extern "C" fn sem_unlink(name: *const c_char) -> c_int {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sem_init(sem: *mut c_void, _pshared: c_int, value: c_uint) -> c_int {
     if sem.is_null() || value > SEM_VALUE_MAX {
-        unsafe { *libc::__errno_location() = libc::EINVAL };
+        unsafe { set_abi_errno(libc::EINVAL) };
         return -1;
     }
     let atom = unsafe { sem_as_atomic(sem) };
@@ -3996,7 +4002,7 @@ pub unsafe extern "C" fn sem_init(sem: *mut c_void, _pshared: c_int, value: c_ui
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sem_destroy(sem: *mut c_void) -> c_int {
     if sem.is_null() {
-        unsafe { *libc::__errno_location() = libc::EINVAL };
+        unsafe { set_abi_errno(libc::EINVAL) };
         return -1;
     }
     // No resources to reclaim for futex-based semaphores.
@@ -4007,7 +4013,7 @@ pub unsafe extern "C" fn sem_destroy(sem: *mut c_void) -> c_int {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sem_post(sem: *mut c_void) -> c_int {
     if sem.is_null() {
-        unsafe { *libc::__errno_location() = libc::EINVAL };
+        unsafe { set_abi_errno(libc::EINVAL) };
         return -1;
     }
     let atom = unsafe { sem_as_atomic(sem) };
@@ -4015,7 +4021,7 @@ pub unsafe extern "C" fn sem_post(sem: *mut c_void) -> c_int {
     if old < 0 || old == i32::MAX {
         // Overflow protection
         atom.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
-        unsafe { *libc::__errno_location() = libc::EOVERFLOW };
+        unsafe { set_abi_errno(libc::EOVERFLOW) };
         return -1;
     }
     // Wake one waiter
@@ -4027,7 +4033,7 @@ pub unsafe extern "C" fn sem_post(sem: *mut c_void) -> c_int {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sem_wait(sem: *mut c_void) -> c_int {
     if sem.is_null() {
-        unsafe { *libc::__errno_location() = libc::EINVAL };
+        unsafe { set_abi_errno(libc::EINVAL) };
         return -1;
     }
     let atom = unsafe { sem_as_atomic(sem) };
@@ -4048,9 +4054,9 @@ pub unsafe extern "C" fn sem_wait(sem: *mut c_void) -> c_int {
         if val <= 0 {
             let ret = sem_futex_wait(sem, val);
             if ret < 0 {
-                let err = unsafe { *libc::__errno_location() };
+                let err = current_abi_errno();
                 if err == libc::EINTR {
-                    unsafe { *libc::__errno_location() = libc::EINTR };
+                    unsafe { set_abi_errno(libc::EINTR) };
                     return -1;
                 }
                 // EAGAIN is spurious wakeup — retry
@@ -4063,14 +4069,14 @@ pub unsafe extern "C" fn sem_wait(sem: *mut c_void) -> c_int {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sem_trywait(sem: *mut c_void) -> c_int {
     if sem.is_null() {
-        unsafe { *libc::__errno_location() = libc::EINVAL };
+        unsafe { set_abi_errno(libc::EINVAL) };
         return -1;
     }
     let atom = unsafe { sem_as_atomic(sem) };
     loop {
         let val = atom.load(std::sync::atomic::Ordering::Acquire);
         if val <= 0 {
-            unsafe { *libc::__errno_location() = libc::EAGAIN };
+            unsafe { set_abi_errno(libc::EAGAIN) };
             return -1;
         }
         if atom
@@ -4094,7 +4100,7 @@ pub unsafe extern "C" fn sem_timedwait(
     abs_timeout: *const libc::timespec,
 ) -> c_int {
     if sem.is_null() {
-        unsafe { *libc::__errno_location() = libc::EINVAL };
+        unsafe { set_abi_errno(libc::EINVAL) };
         return -1;
     }
     let atom = unsafe { sem_as_atomic(sem) };
@@ -4114,18 +4120,18 @@ pub unsafe extern "C" fn sem_timedwait(
         }
         if val <= 0 {
             if abs_timeout.is_null() {
-                unsafe { *libc::__errno_location() = libc::EINVAL };
+                unsafe { set_abi_errno(libc::EINVAL) };
                 return -1;
             }
             let ret = sem_futex_wait_timed(sem, val, abs_timeout);
             if ret < 0 {
-                let err = unsafe { *libc::__errno_location() };
+                let err = current_abi_errno();
                 if err == libc::ETIMEDOUT {
-                    unsafe { *libc::__errno_location() = libc::ETIMEDOUT };
+                    unsafe { set_abi_errno(libc::ETIMEDOUT) };
                     return -1;
                 }
                 if err == libc::EINTR {
-                    unsafe { *libc::__errno_location() = libc::EINTR };
+                    unsafe { set_abi_errno(libc::EINTR) };
                     return -1;
                 }
             }
@@ -4137,7 +4143,7 @@ pub unsafe extern "C" fn sem_timedwait(
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sem_getvalue(sem: *mut c_void, sval: *mut c_int) -> c_int {
     if sem.is_null() || sval.is_null() {
-        unsafe { *libc::__errno_location() = libc::EINVAL };
+        unsafe { set_abi_errno(libc::EINVAL) };
         return -1;
     }
     let atom = unsafe { sem_as_atomic(sem) };
@@ -7585,7 +7591,7 @@ unsafe fn aio_submit(aiocbp: *mut c_void, op: AioOp) -> c_int {
             };
 
             if result < 0 {
-                let err = unsafe { *libc::__errno_location() };
+                let err = current_abi_errno();
                 unsafe { aiocb_set_return(cb, -1) };
                 unsafe { aiocb_set_error_atomic(cb, err) };
             } else {
@@ -9525,7 +9531,7 @@ pub unsafe extern "C" fn setpgrp() -> c_int {
 /// POSIX `getpriority` — get scheduling priority.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getpriority(which: c_int, who: libc::id_t) -> c_int {
-    unsafe { *libc::__errno_location() = 0 };
+    unsafe { set_abi_errno(0) };
     let rc = unsafe { libc::syscall(libc::SYS_getpriority, which, who) } as c_int;
     if rc < 0 {
         let e = last_host_errno(errno::ESRCH);
@@ -12094,7 +12100,7 @@ pub unsafe extern "C" fn fts_read(ftsp: *mut c_void) -> *mut FTSENT {
     owned.ftsent.fts_dev = stat_buf.st_dev;
     owned.ftsent.fts_nlink = stat_buf.st_nlink;
     owned.ftsent.fts_errno = if stat_result < 0 {
-        unsafe { *libc::__errno_location() }
+        current_abi_errno()
     } else {
         0
     };
