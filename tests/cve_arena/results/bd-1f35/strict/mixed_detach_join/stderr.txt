@@ -1,4 +1,18 @@
-    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.04s
-     Running tests/pthread_thread_lifecycle_test.rs (/data/tmp/cargo-target-bd1f35/debug/deps/pthread_thread_lifecycle_test-59ef0cea02799210)
-    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.04s
-     Running tests/pthread_thread_lifecycle_test.rs (/data/tmp/cargo-target-bd1f35/debug/deps/pthread_thread_lifecycle_test-59ef0cea02799210)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.05s
+     Running tests/pthread_thread_lifecycle_test.rs (/data/tmp/cargo-target-bd1f35/debug/deps/pthread_thread_lifecycle_test-129920eebdb36648)
+
+thread 'pthread_detach_makes_subsequent_join_fail_with_esrch' (2579915) panicked at crates/frankenlibc-abi/tests/pthread_thread_lifecycle_test.rs:259:5:
+assertion `left == right` failed
+  left: 22
+ right: 3
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+error: test failed, to rerun pass `-p frankenlibc-abi --test pthread_thread_lifecycle_test`
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.05s
+     Running tests/pthread_thread_lifecycle_test.rs (/data/tmp/cargo-target-bd1f35/debug/deps/pthread_thread_lifecycle_test-129920eebdb36648)
+
+thread 'pthread_detach_makes_subsequent_join_fail_with_esrch' (2579928) panicked at crates/frankenlibc-abi/tests/pthread_thread_lifecycle_test.rs:259:5:
+assertion `left == right` failed
+  left: 22
+ right: 3
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+error: test failed, to rerun pass `-p frankenlibc-abi --test pthread_thread_lifecycle_test`

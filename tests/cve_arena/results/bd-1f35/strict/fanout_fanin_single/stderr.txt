@@ -1,2 +1,2 @@
-    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.04s
-     Running tests/pthread_thread_lifecycle_test.rs (/data/tmp/cargo-target-bd1f35/debug/deps/pthread_thread_lifecycle_test-59ef0cea02799210)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.05s
+     Running tests/pthread_thread_lifecycle_test.rs (/data/tmp/cargo-target-bd1f35/debug/deps/pthread_thread_lifecycle_test-129920eebdb36648)
