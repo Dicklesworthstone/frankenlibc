@@ -1085,3 +1085,110 @@ fn strfromf_and_strfroml_delegate_to_shared_formatter() {
         b"3.250e0"
     );
 }
+
+#[repr(C)]
+struct LegacyRegexBuffer {
+    allocated: usize,
+    used: usize,
+    syntax: u64,
+    fastmap: *mut c_char,
+    translate: *mut c_char,
+    re_nsub: usize,
+    can_be_null: u8,
+    regs_allocated: u8,
+    fastmap_accurate: u8,
+    no_sub: u8,
+    not_bol: u8,
+    not_eol: u8,
+    newline_anchor: u8,
+    pad: [u8; 1],
+    buffer: *mut c_void,
+    startp: *mut *mut c_char,
+    endp: *mut *mut c_char,
+}
+
+#[test]
+fn re_compile_pattern_accepts_non_utf8_bytes() {
+    let pattern = [b'a' as c_char, -1_i8 as c_char, b'b' as c_char];
+    let mut buffer = LegacyRegexBuffer {
+        allocated: 0,
+        used: 0,
+        syntax: 0,
+        fastmap: std::ptr::null_mut(),
+        translate: std::ptr::null_mut(),
+        re_nsub: 0,
+        can_be_null: 0,
+        regs_allocated: 0,
+        fastmap_accurate: 0,
+        no_sub: 0,
+        not_bol: 0,
+        not_eol: 0,
+        newline_anchor: 0,
+        pad: [0],
+        buffer: std::ptr::null_mut(),
+        startp: std::ptr::null_mut(),
+        endp: std::ptr::null_mut(),
+    };
+
+    let err = unsafe {
+        re_compile_pattern(
+            pattern.as_ptr(),
+            pattern.len(),
+            (&mut buffer as *mut LegacyRegexBuffer).cast(),
+        )
+    };
+    assert!(err.is_null(), "expected non-UTF8 byte patterns to compile");
+
+    unsafe {
+        regfree((&mut buffer as *mut LegacyRegexBuffer).cast());
+    }
+}
+
+#[test]
+fn re_search_scans_backwards_for_negative_range() {
+    let mut buffer = LegacyRegexBuffer {
+        allocated: 0,
+        used: 0,
+        syntax: 0,
+        fastmap: std::ptr::null_mut(),
+        translate: std::ptr::null_mut(),
+        re_nsub: 0,
+        can_be_null: 0,
+        regs_allocated: 0,
+        fastmap_accurate: 0,
+        no_sub: 0,
+        not_bol: 0,
+        not_eol: 0,
+        newline_anchor: 0,
+        pad: [0],
+        buffer: std::ptr::null_mut(),
+        startp: std::ptr::null_mut(),
+        endp: std::ptr::null_mut(),
+    };
+
+    let err = unsafe {
+        re_compile_pattern(
+            b"abc".as_ptr().cast(),
+            3,
+            (&mut buffer as *mut LegacyRegexBuffer).cast(),
+        )
+    };
+    assert!(err.is_null());
+
+    let haystack = b"abcabc";
+    let pos = unsafe {
+        re_search(
+            (&buffer as *const LegacyRegexBuffer).cast(),
+            haystack.as_ptr().cast(),
+            haystack.len() as c_int,
+            5,
+            -5,
+            std::ptr::null_mut(),
+        )
+    };
+    assert_eq!(pos, 3);
+
+    unsafe {
+        regfree((&mut buffer as *mut LegacyRegexBuffer).cast());
+    }
+}

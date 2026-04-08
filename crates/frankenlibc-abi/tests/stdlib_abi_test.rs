@@ -2585,7 +2585,7 @@ fn getsubopt_parses_suboptions() {
         ptr::null_mut(),
     ];
 
-    let input = CString::new("rw,size=1024").unwrap();
+    let input = CString::new("rw,size=1024,ro").unwrap();
     let mut buf: Vec<u8> = input.into_bytes_with_nul();
     let mut opt_ptr = buf.as_mut_ptr() as *mut libc::c_char;
     let mut valuep: *mut libc::c_char = ptr::null_mut();
@@ -2600,6 +2600,10 @@ fn getsubopt_parses_suboptions() {
         assert!(!valuep.is_null());
         let val = std::ffi::CStr::from_ptr(valuep);
         assert_eq!(val.to_str().unwrap(), "1024");
+
+        let idx = getsubopt(&mut opt_ptr, tokens_raw.as_ptr(), &mut valuep);
+        assert_eq!(idx, 0, "expected 'ro' at index 0");
+        assert!(valuep.is_null(), "'ro' should have no value");
     }
 }
 
@@ -2616,6 +2620,25 @@ fn getsubopt_unknown_token_returns_minus_one() {
     unsafe {
         let idx = getsubopt(&mut opt_ptr, tokens_raw.as_ptr(), &mut valuep);
         assert_eq!(idx, -1);
+        assert_eq!(std::ffi::CStr::from_ptr(valuep).to_bytes(), b"bar");
+    }
+}
+
+#[test]
+fn getsubopt_unknown_value_returns_entire_suboption() {
+    let tok_foo = CString::new("foo").unwrap();
+    let tokens_raw: [*mut libc::c_char; 2] =
+        [tok_foo.as_ptr() as *mut libc::c_char, ptr::null_mut()];
+    let input = CString::new("bar=baz,foo").unwrap();
+    let mut buf: Vec<u8> = input.into_bytes_with_nul();
+    let mut opt_ptr = buf.as_mut_ptr() as *mut libc::c_char;
+    let mut valuep: *mut libc::c_char = ptr::null_mut();
+
+    unsafe {
+        let idx = getsubopt(&mut opt_ptr, tokens_raw.as_ptr(), &mut valuep);
+        assert_eq!(idx, -1);
+        assert_eq!(std::ffi::CStr::from_ptr(valuep).to_bytes(), b"bar=baz");
+        assert_eq!(std::ffi::CStr::from_ptr(opt_ptr).to_bytes(), b"foo");
     }
 }
 

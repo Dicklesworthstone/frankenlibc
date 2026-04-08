@@ -2384,17 +2384,17 @@ pub unsafe extern "C" fn getsubopt(
 
     let name_end = if has_eq { eq } else { end };
 
-    // Set valuep.
-    unsafe {
-        if has_eq {
-            *valuep = eq.add(1);
-        } else {
-            *valuep = ptr::null_mut();
-        }
-    }
+    let value_ptr = if has_eq {
+        unsafe { eq.add(1) }
+    } else {
+        ptr::null_mut()
+    };
 
     // Capture whether end is a comma BEFORE NUL-terminating (name_end may alias end).
     let at_comma = unsafe { *end == b',' as c_char };
+    if at_comma {
+        unsafe { *end = 0 };
+    }
 
     // NUL-terminate the name portion temporarily if needed, then match.
     let saved = unsafe { *name_end };
@@ -2416,6 +2416,7 @@ pub unsafe extern "C" fn getsubopt(
         while !(*tok_ptr).is_null() {
             if crate::string_abi::strcmp(opt_ptr, *tok_ptr) == 0 {
                 *name_end = saved;
+                *valuep = value_ptr;
                 runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 8, false);
                 return idx;
             }
@@ -2426,6 +2427,7 @@ pub unsafe extern "C" fn getsubopt(
 
     // Restore original char.
     unsafe { *name_end = saved };
+    unsafe { *valuep = opt_ptr };
     runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 8, false);
     -1
 }

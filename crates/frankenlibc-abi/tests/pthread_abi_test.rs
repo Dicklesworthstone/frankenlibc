@@ -211,7 +211,7 @@ fn thread_detach_managed_thread_after_restoring_host_mode() {
 }
 
 #[test]
-fn detach_on_detached_managed_thread_after_restoring_host_mode_returns_einval() {
+fn detach_on_detached_managed_thread_after_restoring_host_mode_returns_esrch() {
     unsafe {
         let thr: libc::pthread_t;
         {
@@ -231,14 +231,20 @@ fn detach_on_detached_managed_thread_after_restoring_host_mode_returns_einval() 
             thr = created;
         }
 
+        // After a successful pthread_detach, the managed handle has been
+        // consumed: it is removed from THREAD_HANDLE_REGISTRY and a tombstone
+        // recorded. A second detach therefore refers to no live thread, so
+        // ESRCH is the consistent answer used project-wide for consumed
+        // handles (matching pthread_thread_lifecycle_test::pthread_detach_twice_is_esrch).
+        // POSIX leaves double-detach undefined, so this is permissible.
         assert_eq!(pthread_detach(thr), 0);
-        assert_eq!(pthread_detach(thr), libc::EINVAL);
+        assert_eq!(pthread_detach(thr), libc::ESRCH);
         std::thread::sleep(std::time::Duration::from_millis(250));
     }
 }
 
 #[test]
-fn join_on_detached_managed_thread_after_restoring_host_mode_returns_einval() {
+fn join_on_detached_managed_thread_after_restoring_host_mode_returns_esrch() {
     unsafe {
         let thr: libc::pthread_t;
         {
@@ -258,8 +264,11 @@ fn join_on_detached_managed_thread_after_restoring_host_mode_returns_einval() {
             thr = created;
         }
 
+        // pthread_join on a consumed (detached) handle returns ESRCH for the
+        // same reason as the double-detach case above. See
+        // pthread_thread_lifecycle_test::pthread_detach_makes_subsequent_join_fail_with_esrch.
         assert_eq!(pthread_detach(thr), 0);
-        assert_eq!(pthread_join(thr, ptr::null_mut()), libc::EINVAL);
+        assert_eq!(pthread_join(thr, ptr::null_mut()), libc::ESRCH);
         std::thread::sleep(std::time::Duration::from_millis(250));
     }
 }

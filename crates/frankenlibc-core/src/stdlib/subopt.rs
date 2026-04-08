@@ -10,7 +10,8 @@
 ///
 /// Returns `(token_index, value)` where:
 /// - `token_index` is the index into `tokens` of the matched token, or -1 if unrecognized.
-/// - `value` is the part after '=' if present, or empty.
+/// - `value` is the part after '=' for recognized tokens, empty when absent,
+///   or the full `name[=value]` slice when the token is unrecognized.
 /// - `optionp` is advanced past the consumed suboption (and its trailing comma).
 pub fn getsubopt<'a>(optionp: &mut &'a [u8], tokens: &[&[u8]]) -> (i32, &'a [u8]) {
     if optionp.is_empty() || optionp[0] == 0 {
@@ -24,6 +25,7 @@ pub fn getsubopt<'a>(optionp: &mut &'a [u8], tokens: &[&[u8]]) -> (i32, &'a [u8]
         .unwrap_or(optionp.len());
 
     let suboption = &optionp[..end];
+    let unknown_suboption = suboption;
 
     // Find '=' separator for value.
     let eq_pos = suboption.iter().position(|&c| c == b'=');
@@ -46,7 +48,7 @@ pub fn getsubopt<'a>(optionp: &mut &'a [u8], tokens: &[&[u8]]) -> (i32, &'a [u8]
         }
     }
 
-    (-1, value)
+    (-1, unknown_suboption)
 }
 
 #[cfg(test)]
@@ -76,8 +78,19 @@ mod tests {
     fn test_getsubopt_unknown() {
         let tokens: &[&[u8]] = &[b"foo", b"bar"];
         let mut remaining: &[u8] = b"baz";
-        let (idx, _) = getsubopt(&mut remaining, tokens);
+        let (idx, value) = getsubopt(&mut remaining, tokens);
         assert_eq!(idx, -1);
+        assert_eq!(value, b"baz");
+    }
+
+    #[test]
+    fn test_getsubopt_unknown_with_value_returns_full_suboption() {
+        let tokens: &[&[u8]] = &[b"foo", b"bar"];
+        let mut remaining: &[u8] = b"baz=qux,foo";
+        let (idx, value) = getsubopt(&mut remaining, tokens);
+        assert_eq!(idx, -1);
+        assert_eq!(value, b"baz=qux");
+        assert_eq!(remaining, b"foo");
     }
 
     #[test]

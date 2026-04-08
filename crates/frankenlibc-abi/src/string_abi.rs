@@ -6414,12 +6414,8 @@ pub unsafe extern "C" fn re_compile_pattern(
     }
 
     let pat_slice = unsafe { core::slice::from_raw_parts(pattern as *const u8, length) };
-    let pat_str = match core::str::from_utf8(pat_slice) {
-        Ok(s) => s,
-        Err(_) => return c"Invalid multibyte sequence".as_ptr(),
-    };
 
-    match regex::regex_compile(pat_str.as_bytes(), 0) {
+    match regex::regex_compile(pat_slice, 0) {
         Ok(compiled) => {
             let buf_u8 = buffer as *mut u8;
             // Store magic + pointer in the regex_t buffer
@@ -6504,22 +6500,31 @@ pub unsafe extern "C" fn re_search_2(
     let haystack = unsafe { core::slice::from_raw_parts(string2 as *const u8, size2 as usize) };
 
     let search_start = startpos.max(0) as usize;
-    let search_end = if range >= 0 {
-        (search_start + range as usize).min(haystack.len())
-    } else {
-        search_start
-    };
+    if search_start > haystack.len() {
+        return -1;
+    }
 
-    // Search from startpos forward (or backward if range < 0)
-    for pos in search_start..=search_end {
-        if pos > haystack.len() {
-            break;
+    if range >= 0 {
+        let search_end = search_start
+            .saturating_add(range as usize)
+            .min(haystack.len());
+        for pos in search_start..=search_end {
+            let sub = &haystack[pos..];
+            let mut match_slot = [regex::RegMatch::default(); 1];
+            if regex::regex_exec(compiled, sub, &mut match_slot, 0) == 0 {
+                let rel = match_slot[0].rm_so.max(0) as usize;
+                return (pos + rel) as c_int;
+            }
         }
-        let sub = &haystack[pos..];
-        let mut match_slot = [regex::RegMatch::default(); 1];
-        if regex::regex_exec(compiled, sub, &mut match_slot, 0) == 0 {
-            let rel = match_slot[0].rm_so.max(0) as usize;
-            return (pos + rel) as c_int;
+    } else {
+        let search_end = search_start.saturating_sub(range.unsigned_abs() as usize);
+        for pos in (search_end..=search_start).rev() {
+            let sub = &haystack[pos..];
+            let mut match_slot = [regex::RegMatch::default(); 1];
+            if regex::regex_exec(compiled, sub, &mut match_slot, 0) == 0 {
+                let rel = match_slot[0].rm_so.max(0) as usize;
+                return (pos + rel) as c_int;
+            }
         }
     }
     -1

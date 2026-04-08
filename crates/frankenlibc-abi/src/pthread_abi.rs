@@ -1443,8 +1443,14 @@ unsafe fn native_pthread_join(thread: libc::pthread_t, retval: *mut *mut c_void)
         return libc::EDEADLK;
     }
 
+    // After a successful pthread_detach, the handle has been consumed: it has
+    // been removed from THREAD_HANDLE_REGISTRY and a tombstone recorded. A
+    // subsequent pthread_join on that handle therefore refers to no joinable
+    // thread, and the correct error is ESRCH (not EINVAL). POSIX says joining
+    // a detached thread is undefined; we choose the same convention used for
+    // joining an already-joined handle so callers see consistent behavior.
     if is_detached_thread_handle(thread) {
-        return libc::EINVAL;
+        return libc::ESRCH;
     }
 
     // Verify this is a valid managed thread handle that we know about.
@@ -1495,13 +1501,21 @@ unsafe fn native_pthread_join(thread: libc::pthread_t, retval: *mut *mut c_void)
 unsafe fn native_pthread_detach(thread: libc::pthread_t) -> c_int {
     let thread_key = thread as usize;
     let handle_ptr = thread as *mut ThreadHandle;
-    let detached_tid_snapshot = detached_thread_tid_snapshot(handle_ptr);
 
+    // After a successful pthread_detach, the handle is consumed (removed from
+    // THREAD_HANDLE_REGISTRY with a tombstone). A second detach on that handle
+    // therefore refers to no live thread; ESRCH is the consistent answer
+    // (matching the analogous post-join cases). POSIX leaves double-detach
+    // undefined, so this is a permissible choice and matches the project's
+    // existing test contract for consumed handles.
     if is_detached_thread_handle(thread) {
-        return libc::EINVAL;
+        return libc::ESRCH;
     }
 
-    // Verify this is a valid managed thread handle that we know about.
+    // Verify this is a valid managed thread handle that we know about
+    // BEFORE dereferencing it. Callers may pass arbitrary `pthread_t`
+    // values (including garbage from buggy code or test fuzzers); we must
+    // not dereference until the registry confirms the handle is live.
     let is_managed = {
         let registry = THREAD_HANDLE_REGISTRY
             .lock()
@@ -1512,6 +1526,10 @@ unsafe fn native_pthread_detach(thread: libc::pthread_t) -> c_int {
     if !is_managed {
         return libc::ESRCH;
     }
+
+    // Now safe to dereference: registry membership proves the handle is a
+    // live, properly aligned ThreadHandle owned by the runtime.
+    let detached_tid_snapshot = detached_thread_tid_snapshot(handle_ptr);
 
     match unsafe { core_detach_thread(handle_ptr) } {
         Ok(()) => {
