@@ -4793,8 +4793,196 @@ pub unsafe extern "C" fn rindex(s: *const c_char, c: c_int) -> *mut c_char {
 /// Magic value to identify our regex_t vs a glibc-compiled one.
 const FRANKEN_REGEX_MAGIC: u64 = 0x4652_4B4E_5245_4758; // "FRKNREGX"
 
-/// Layout of our regex_t: [magic: u64, ptr: *mut CompiledRegex, last_err: i32, pad...]
-/// Total must be <= 64 bytes (sizeof(regex_t) on glibc x86_64).
+const RE_BK_PLUS_QM: u64 = 1 << 1;
+const RE_LIMITED_OPS: u64 = 1 << 10;
+const RE_NO_BK_BRACES: u64 = 1 << 12;
+const RE_NO_BK_PARENS: u64 = 1 << 13;
+const RE_NO_BK_VBAR: u64 = 1 << 15;
+const RE_ICASE: u64 = 1 << 22;
+const RE_NO_SUB: u64 = 1 << 25;
+const REGS_ALLOCATED_SHIFT: u8 = 1;
+const REGS_ALLOCATED_MASK: u8 = 0b11 << REGS_ALLOCATED_SHIFT;
+const REGS_UNALLOCATED: u8 = 0;
+const REGS_FIXED: u8 = 2;
+const REGEX_FLAG_FASTMAP_ACCURATE: u8 = 1 << 3;
+const REGEX_FLAG_NO_SUB: u8 = 1 << 4;
+
+#[repr(C)]
+struct RegexHandle {
+    magic: u64,
+    compiled: *mut frankenlibc_core::string::regex::CompiledRegex,
+}
+
+#[repr(C)]
+struct RegexBufferLayout {
+    buffer: *mut c_void,
+    allocated: libc::c_long,
+    used: libc::c_long,
+    syntax: u64,
+    fastmap: *mut c_char,
+    translate: *mut u8,
+    re_nsub: usize,
+    flags: u8,
+    reserved: [u8; 7],
+}
+
+#[repr(C)]
+struct LegacyReRegisters {
+    num_regs: usize,
+    start: *mut c_int,
+    end: *mut c_int,
+}
+
+fn legacy_regex_syntax_to_cflags(syntax: u64) -> c_int {
+    use frankenlibc_core::string::regex;
+
+    let mut cflags = 0;
+    let uses_extended_syntax = syntax & (RE_NO_BK_BRACES | RE_NO_BK_PARENS | RE_NO_BK_VBAR) != 0
+        && syntax & RE_BK_PLUS_QM == 0
+        && syntax & RE_LIMITED_OPS == 0;
+    if uses_extended_syntax {
+        cflags |= regex::REG_EXTENDED;
+    }
+    if syntax & RE_ICASE != 0 {
+        cflags |= regex::REG_ICASE;
+    }
+    if syntax & RE_NO_SUB != 0 {
+        cflags |= regex::REG_NOSUB;
+    }
+    cflags
+}
+
+unsafe fn regex_buffer_layout(buffer: *mut c_void) -> Option<&'static mut RegexBufferLayout> {
+    if buffer.is_null() {
+        return None;
+    }
+    Some(unsafe { &mut *(buffer as *mut RegexBufferLayout) })
+}
+
+unsafe fn regex_compiled_from_buffer(
+    buffer: *const c_void,
+) -> Option<&'static frankenlibc_core::string::regex::CompiledRegex> {
+    if buffer.is_null() {
+        return None;
+    }
+    let layout = unsafe { &*(buffer as *const RegexBufferLayout) };
+    let handle = layout.buffer as *const RegexHandle;
+    if handle.is_null() {
+        return None;
+    }
+    let handle = unsafe { &*handle };
+    if handle.magic != FRANKEN_REGEX_MAGIC || handle.compiled.is_null() {
+        return None;
+    }
+    Some(unsafe { &*handle.compiled })
+}
+
+unsafe fn regex_release_buffer(layout: &mut RegexBufferLayout) {
+    let handle_ptr = layout.buffer as *mut RegexHandle;
+    if !handle_ptr.is_null() {
+        // SAFETY: handle_ptr was allocated via Box::into_raw in regcomp/re_compile_pattern.
+        let handle = unsafe { Box::from_raw(handle_ptr) };
+        if !handle.compiled.is_null() {
+            // SAFETY: compiled was allocated via Box::into_raw during compilation.
+            let _ = unsafe { Box::from_raw(handle.compiled) };
+        }
+    }
+
+    layout.buffer = core::ptr::null_mut();
+    layout.allocated = 0;
+    layout.used = 0;
+    layout.syntax = 0;
+    layout.fastmap = core::ptr::null_mut();
+    layout.translate = core::ptr::null_mut();
+    layout.re_nsub = 0;
+    layout.flags = 0;
+    layout.reserved = [0; 7];
+}
+
+fn regex_set_regs_allocated(flags: &mut u8, value: u8) {
+    *flags =
+        (*flags & !REGS_ALLOCATED_MASK) | ((value << REGS_ALLOCATED_SHIFT) & REGS_ALLOCATED_MASK);
+}
+
+fn legacy_regex_concat(
+    string1: *const c_char,
+    size1: c_int,
+    string2: *const c_char,
+    size2: c_int,
+) -> Result<Vec<u8>, c_int> {
+    if size1 < 0 || size2 < 0 {
+        return Err(-2);
+    }
+
+    let size1 = size1 as usize;
+    let size2 = size2 as usize;
+    if size1 > 0 && string1.is_null() {
+        return Err(-2);
+    }
+    if size2 > 0 && string2.is_null() {
+        return Err(-2);
+    }
+
+    let mut haystack = Vec::with_capacity(size1 + size2);
+    if size1 > 0 {
+        // SAFETY: validated non-null above, length provided by caller contract.
+        haystack
+            .extend_from_slice(unsafe { core::slice::from_raw_parts(string1 as *const u8, size1) });
+    }
+    if size2 > 0 {
+        // SAFETY: validated non-null above, length provided by caller contract.
+        haystack
+            .extend_from_slice(unsafe { core::slice::from_raw_parts(string2 as *const u8, size2) });
+    }
+    Ok(haystack)
+}
+
+unsafe fn legacy_regex_write_regs(
+    regs: *mut c_void,
+    matches: &[frankenlibc_core::string::regex::RegMatch],
+    offset: c_int,
+) {
+    if regs.is_null() {
+        return;
+    }
+
+    let regs = unsafe { &mut *(regs as *mut LegacyReRegisters) };
+    let needed = matches.len().max(2);
+    if regs.num_regs == 0 || regs.start.is_null() || regs.end.is_null() {
+        // SAFETY: libc allocation returns suitably aligned storage for c_int arrays.
+        let starts = unsafe { libc::calloc(needed, core::mem::size_of::<c_int>()) } as *mut c_int;
+        // SAFETY: libc allocation returns suitably aligned storage for c_int arrays.
+        let ends = unsafe { libc::calloc(needed, core::mem::size_of::<c_int>()) } as *mut c_int;
+        if starts.is_null() || ends.is_null() {
+            if !starts.is_null() {
+                unsafe { libc::free(starts.cast()) };
+            }
+            if !ends.is_null() {
+                unsafe { libc::free(ends.cast()) };
+            }
+            return;
+        }
+        regs.num_regs = needed;
+        regs.start = starts;
+        regs.end = ends;
+    }
+
+    for idx in 0..regs.num_regs {
+        unsafe {
+            *regs.start.add(idx) = -1;
+            *regs.end.add(idx) = -1;
+        }
+    }
+
+    for (idx, m) in matches.iter().enumerate().take(regs.num_regs) {
+        if m.rm_so >= 0 {
+            unsafe { *regs.start.add(idx) = offset.saturating_add(m.rm_so) };
+        }
+        if m.rm_eo >= 0 {
+            unsafe { *regs.end.add(idx) = offset.saturating_add(m.rm_eo) };
+        }
+    }
+}
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn regcomp(
     preg: *mut c_void,
@@ -4807,29 +4995,40 @@ pub unsafe extern "C" fn regcomp(
         return regex::REG_BADPAT;
     }
 
+    let Some(layout) = (unsafe { regex_buffer_layout(preg) }) else {
+        return regex::REG_BADPAT;
+    };
+    unsafe { regex_release_buffer(layout) };
+
     // Read pattern as byte slice
     let pat = unsafe { std::ffi::CStr::from_ptr(pattern) };
     let pat_bytes = pat.to_bytes_with_nul();
 
     match regex::regex_compile(pat_bytes, cflags) {
         Ok(compiled) => {
+            let re_nsub = compiled.num_regs().saturating_sub(1);
             let raw_ptr = Box::into_raw(compiled);
-            let preg_u8 = preg as *mut u8;
-            // Zero the entire 64-byte region first
-            unsafe {
-                core::ptr::write_bytes(preg_u8, 0, 64);
+            let handle = Box::new(RegexHandle {
+                magic: FRANKEN_REGEX_MAGIC,
+                compiled: raw_ptr,
+            });
+
+            layout.buffer = Box::into_raw(handle).cast();
+            layout.allocated = core::mem::size_of::<RegexHandle>() as libc::c_long;
+            layout.used = layout.allocated;
+            layout.syntax = if cflags & regex::REG_EXTENDED != 0 {
+                RE_NO_BK_BRACES | RE_NO_BK_PARENS | RE_NO_BK_VBAR
+            } else {
+                0
+            };
+            layout.fastmap = core::ptr::null_mut();
+            layout.translate = core::ptr::null_mut();
+            layout.re_nsub = re_nsub;
+            layout.flags = 0;
+            if cflags & regex::REG_NOSUB != 0 {
+                layout.flags |= REGEX_FLAG_NO_SUB;
             }
-            // Write magic at offset 0
-            unsafe {
-                core::ptr::write_unaligned(preg_u8 as *mut u64, FRANKEN_REGEX_MAGIC);
-            }
-            // Write CompiledRegex pointer at offset 8
-            unsafe {
-                core::ptr::write_unaligned(
-                    preg_u8.add(8) as *mut *mut regex::CompiledRegex,
-                    raw_ptr,
-                );
-            }
+            regex_set_regs_allocated(&mut layout.flags, REGS_UNALLOCATED);
             0
         }
         Err(code) => code,
@@ -4849,20 +5048,9 @@ pub unsafe extern "C" fn regexec(
     if preg.is_null() || string.is_null() {
         return regex::REG_NOMATCH;
     }
-
-    let preg_u8 = preg as *const u8;
-    let magic = unsafe { core::ptr::read_unaligned(preg_u8 as *const u64) };
-    if magic != FRANKEN_REGEX_MAGIC {
+    let Some(compiled) = (unsafe { regex_compiled_from_buffer(preg) }) else {
         return regex::REG_BADPAT;
-    }
-
-    let compiled_ptr =
-        unsafe { core::ptr::read_unaligned(preg_u8.add(8) as *const *const regex::CompiledRegex) };
-    if compiled_ptr.is_null() {
-        return regex::REG_BADPAT;
-    }
-
-    let compiled = unsafe { &*compiled_ptr };
+    };
     let input = unsafe { std::ffi::CStr::from_ptr(string) };
     let input_bytes = input.to_bytes_with_nul();
 
@@ -4880,29 +5068,13 @@ pub unsafe extern "C" fn regexec(
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn regfree(preg: *mut c_void) {
-    use frankenlibc_core::string::regex;
-
     if preg.is_null() {
         return;
     }
-
-    let preg_u8 = preg as *mut u8;
-    let magic = unsafe { core::ptr::read_unaligned(preg_u8 as *const u64) };
-    if magic != FRANKEN_REGEX_MAGIC {
+    let Some(layout) = (unsafe { regex_buffer_layout(preg) }) else {
         return;
-    }
-
-    let compiled_ptr =
-        unsafe { core::ptr::read_unaligned(preg_u8.add(8) as *const *mut regex::CompiledRegex) };
-    if !compiled_ptr.is_null() {
-        // SAFETY: We created this via Box::into_raw in regcomp.
-        let _ = unsafe { Box::from_raw(compiled_ptr) };
-    }
-
-    // Clear the magic to prevent double-free
-    unsafe {
-        core::ptr::write_unaligned(preg_u8 as *mut u64, 0);
-    }
+    };
+    unsafe { regex_release_buffer(layout) };
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -5485,10 +5657,10 @@ pub unsafe extern "C" fn strverscmp(s1: *const c_char, s2: *const c_char) -> c_i
                         break;
                     }
                     if !is_d1 {
-                        return -1;
+                        return 1;
                     }
                     if !is_d2 {
-                        return 1;
+                        return -1;
                     }
                     if d1 != d2 {
                         return (d1 as c_int) - (d2 as c_int);
@@ -5885,23 +6057,30 @@ pub unsafe extern "C" fn argz_create_sep(
     let s = unsafe { CStr::from_ptr(string) };
     let s_bytes = s.to_bytes();
     let sep_byte = sep as u8;
+    let entries = argz_sep_entries(s_bytes, sep_byte);
 
-    // Replace separator with NUL
-    let mut buf: Vec<u8> = s_bytes.to_vec();
-    buf.push(0); // trailing NUL
-    for b in &mut buf[..s_bytes.len()] {
-        if *b == sep_byte {
-            *b = 0;
+    if entries.is_empty() {
+        unsafe {
+            *argz = std::ptr::null_mut();
+            *argz_len = 0;
         }
+        return 0;
     }
 
-    let len = buf.len();
+    let len: usize = entries.iter().map(|entry| entry.len() + 1).sum();
     let ptr = unsafe { crate::malloc_abi::raw_alloc(len) as *mut c_char };
     if ptr.is_null() {
         return libc::ENOMEM;
     }
+    let mut offset = 0usize;
+    for entry in entries {
+        unsafe {
+            std::ptr::copy_nonoverlapping(entry.as_ptr(), ptr.add(offset) as *mut u8, entry.len());
+            *ptr.add(offset + entry.len()) = 0;
+        }
+        offset += entry.len() + 1;
+    }
     unsafe {
-        std::ptr::copy_nonoverlapping(buf.as_ptr(), ptr as *mut u8, len);
         *argz = ptr;
         *argz_len = len;
     }
@@ -5932,7 +6111,16 @@ pub unsafe extern "C" fn argz_next(
         return argz as *mut c_char;
     }
     // Find end of current entry (next NUL) then advance past it
-    let entry_offset = unsafe { entry.offset_from(argz) } as usize;
+    let base = argz as usize;
+    let ptr = entry as usize;
+    let end = match base.checked_add(argz_len) {
+        Some(end) => end,
+        None => return std::ptr::null_mut(),
+    };
+    if ptr < base || ptr >= end {
+        return std::ptr::null_mut();
+    }
+    let entry_offset = ptr - base;
     let remaining =
         &unsafe { std::slice::from_raw_parts(argz as *const u8, argz_len) }[entry_offset..];
     if let Some(nul_pos) = remaining.iter().position(|&b| b == 0) {
@@ -5942,6 +6130,78 @@ pub unsafe extern "C" fn argz_next(
         }
     }
     std::ptr::null_mut()
+}
+
+fn argz_sep_entries(bytes: &[u8], sep: u8) -> Vec<&[u8]> {
+    let mut entries = Vec::new();
+    let mut pos = 0usize;
+
+    while pos < bytes.len() {
+        while pos < bytes.len() && bytes[pos] == sep {
+            pos += 1;
+        }
+        if pos == bytes.len() {
+            break;
+        }
+
+        let mut end = pos;
+        while end < bytes.len() && bytes[end] != sep {
+            end += 1;
+        }
+        entries.push(&bytes[pos..end]);
+        pos = end;
+    }
+
+    if !bytes.is_empty() && bytes[bytes.len() - 1] == sep {
+        entries.push(&[]);
+    }
+
+    entries
+}
+
+unsafe fn replace_owned_argz_buffer(
+    argz: *mut *mut c_char,
+    argz_len: *mut usize,
+    new_buf: *mut c_char,
+    new_len: usize,
+) {
+    let old_buf = unsafe { *argz };
+    let old_len = unsafe { *argz_len };
+    if !old_buf.is_null() && old_len > 0 {
+        unsafe { crate::malloc_abi::raw_free(old_buf.cast()) };
+    }
+    unsafe {
+        *argz = if new_len == 0 {
+            std::ptr::null_mut()
+        } else {
+            new_buf
+        };
+        *argz_len = new_len;
+    }
+}
+
+unsafe fn argz_entry_offset(
+    argz: *const c_char,
+    argz_len: usize,
+    entry: *const c_char,
+) -> Option<usize> {
+    if argz.is_null() || entry.is_null() || argz_len == 0 {
+        return None;
+    }
+    let base = argz as usize;
+    let ptr = entry as usize;
+    let end = base.checked_add(argz_len)?;
+    if ptr < base || ptr >= end {
+        return None;
+    }
+    let offset = ptr - base;
+    if offset > 0 {
+        let previous = unsafe { *(argz as *const u8).add(offset - 1) };
+        if previous != 0 {
+            return None;
+        }
+    }
+    Some(offset)
 }
 
 /// `argz_add` — append a string to an argz vector.
@@ -5966,8 +6226,7 @@ pub unsafe extern "C" fn argz_add(
             std::ptr::copy_nonoverlapping(*argz as *const u8, new_buf as *mut u8, old_len);
         }
         std::ptr::copy_nonoverlapping(str_ as *const u8, new_buf.add(old_len) as *mut u8, slen + 1);
-        *argz = new_buf;
-        *argz_len = new_len;
+        replace_owned_argz_buffer(argz, argz_len, new_buf, new_len);
     }
     0
 }
@@ -5985,7 +6244,7 @@ pub unsafe extern "C" fn argz_add_sep(
     }
     let s = unsafe { CStr::from_ptr(string) };
     let sep_byte = sep as u8;
-    for part in s.to_bytes().split(|&b| b == sep_byte) {
+    for part in argz_sep_entries(s.to_bytes(), sep_byte) {
         let part_str = std::ffi::CString::new(part).unwrap_or_default();
         let rc = unsafe { argz_add(argz, argz_len, part_str.as_ptr()) };
         if rc != 0 {
@@ -6020,8 +6279,7 @@ pub unsafe extern "C" fn argz_append(
             std::ptr::copy_nonoverlapping(*argz as *const u8, new_buf as *mut u8, old_len);
         }
         std::ptr::copy_nonoverlapping(buf as *const u8, new_buf.add(old_len) as *mut u8, buf_len);
-        *argz = new_buf;
-        *argz_len = new_len;
+        replace_owned_argz_buffer(argz, argz_len, new_buf, new_len);
     }
     0
 }
@@ -6038,10 +6296,9 @@ pub unsafe extern "C" fn argz_delete(
     }
     let az = unsafe { *argz };
     let len = unsafe { *argz_len };
-    let entry_offset = unsafe { entry.offset_from(az) } as usize;
-    if entry_offset >= len {
+    let Some(entry_offset) = (unsafe { argz_entry_offset(az, len, entry) }) else {
         return;
-    }
+    };
     let entry_len = unsafe { crate::string_abi::strlen(entry) } + 1; // include NUL
     let remaining = len - entry_offset - entry_len;
     if remaining > 0 {
@@ -6053,7 +6310,16 @@ pub unsafe extern "C" fn argz_delete(
             );
         }
     }
-    unsafe { *argz_len = len - entry_len };
+    let new_len = len - entry_len;
+    if new_len == 0 {
+        unsafe {
+            crate::malloc_abi::raw_free(az.cast());
+            *argz = std::ptr::null_mut();
+            *argz_len = 0;
+        }
+    } else {
+        unsafe { *argz_len = new_len };
+    }
 }
 
 /// `argz_extract` — extract argz entries into an argv array.
@@ -6096,9 +6362,11 @@ pub unsafe extern "C" fn argz_insert(
     }
     let slen = unsafe { crate::string_abi::strlen(entry) } + 1;
     let old_len = unsafe { *argz_len };
-    let new_len = old_len + slen;
     let az = unsafe { *argz };
-    let before_offset = unsafe { before.offset_from(az) } as usize;
+    let Some(before_offset) = (unsafe { argz_entry_offset(az, old_len, before) }) else {
+        return libc::EINVAL;
+    };
+    let new_len = old_len + slen;
 
     let new_buf = unsafe { crate::malloc_abi::raw_alloc(new_len) as *mut c_char };
     if new_buf.is_null() {
@@ -6122,8 +6390,7 @@ pub unsafe extern "C" fn argz_insert(
                 tail_len,
             );
         }
-        *argz = new_buf;
-        *argz_len = new_len;
+        replace_owned_argz_buffer(argz, argz_len, new_buf, new_len);
     }
     0
 }
@@ -6135,46 +6402,45 @@ pub unsafe extern "C" fn argz_replace(
     argz_len: *mut usize,
     str_: *const c_char,
     with: *const c_char,
+    replace_count: *mut libc::c_uint,
 ) -> c_int {
-    if argz.is_null() || argz_len.is_null() || str_.is_null() {
+    if argz.is_null() || argz_len.is_null() || str_.is_null() || with.is_null() {
         return libc::EINVAL;
     }
     let find_str = unsafe { CStr::from_ptr(str_) };
-    let replace_cstr = if with.is_null() {
-        None
-    } else {
-        Some(unsafe { CStr::from_ptr(with) })
-    };
+    let replace_cstr = unsafe { CStr::from_ptr(with) };
 
     // Rebuild the argz with replacements
     let az = unsafe { *argz };
     let len = unsafe { *argz_len };
+    if az.is_null() || len == 0 {
+        return 0;
+    }
     let mut entries: Vec<Vec<u8>> = Vec::new();
+    let mut replacements = 0_u32;
     let mut pos = 0usize;
     while pos < len {
         let entry = unsafe { CStr::from_ptr(az.add(pos)) };
         let entry_bytes = entry.to_bytes();
         if entry.to_bytes() == find_str.to_bytes() {
-            if let Some(r) = replace_cstr {
-                entries.push(r.to_bytes().to_vec());
-            }
-            // else: delete
+            replacements = replacements.wrapping_add(1);
+            entries.push(replace_cstr.to_bytes().to_vec());
         } else {
             entries.push(entry_bytes.to_vec());
         }
         pos += entry_bytes.len() + 1;
     }
+    if !replace_count.is_null() {
+        unsafe {
+            *replace_count = (*replace_count).wrapping_add(replacements);
+        }
+    }
+    if replacements == 0 {
+        return 0;
+    }
 
     // Compute new length
     let new_len: usize = entries.iter().map(|e| e.len() + 1).sum();
-    if new_len == 0 {
-        unsafe {
-            crate::malloc_abi::raw_free((*argz) as *mut c_void);
-            *argz = std::ptr::null_mut();
-            *argz_len = 0;
-        }
-        return 0;
-    }
 
     let new_buf = unsafe { crate::malloc_abi::raw_alloc(new_len) as *mut c_char };
     if new_buf.is_null() {
@@ -6188,10 +6454,7 @@ pub unsafe extern "C" fn argz_replace(
         }
         offset += e.len() + 1;
     }
-    unsafe {
-        *argz = new_buf;
-        *argz_len = new_len;
-    }
+    unsafe { replace_owned_argz_buffer(argz, argz_len, new_buf, new_len) };
     0
 }
 
@@ -6390,7 +6653,7 @@ pub unsafe extern "C" fn envz_strip(envz: *mut *mut c_char, envz_len: *mut usize
 // Many legacy programs and GNU utilities use this API instead of the newer
 // POSIX regcomp/regexec interface. We implement using our existing regex core.
 
-/// Default syntax bits for GNU regex. `RE_SYNTAX_POSIX_EXTENDED` equivalent.
+/// Default syntax bits for the old GNU regex API.
 static RE_SYNTAX: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// `re_set_syntax` — set default syntax options for regex compilation.
@@ -6412,20 +6675,36 @@ pub unsafe extern "C" fn re_compile_pattern(
     if pattern.is_null() || buffer.is_null() {
         return c"Invalid argument".as_ptr();
     }
+    let Some(layout) = (unsafe { regex_buffer_layout(buffer) }) else {
+        return c"Invalid argument".as_ptr();
+    };
+    unsafe { regex_release_buffer(layout) };
 
     let pat_slice = unsafe { core::slice::from_raw_parts(pattern as *const u8, length) };
+    let syntax = RE_SYNTAX.load(std::sync::atomic::Ordering::Relaxed);
+    let cflags = legacy_regex_syntax_to_cflags(syntax);
 
-    match regex::regex_compile(pat_slice, 0) {
+    match regex::regex_compile_bytes(pat_slice, cflags) {
         Ok(compiled) => {
-            let buf_u8 = buffer as *mut u8;
-            // Store magic + pointer in the regex_t buffer
-            unsafe {
-                core::ptr::write_unaligned(buf_u8 as *mut u64, FRANKEN_REGEX_MAGIC);
-                core::ptr::write_unaligned(
-                    buf_u8.add(8) as *mut *mut regex::CompiledRegex,
-                    Box::into_raw(compiled),
-                );
+            let re_nsub = compiled.num_regs().saturating_sub(1);
+            let raw_ptr = Box::into_raw(compiled);
+            let handle = Box::new(RegexHandle {
+                magic: FRANKEN_REGEX_MAGIC,
+                compiled: raw_ptr,
+            });
+
+            layout.buffer = Box::into_raw(handle).cast();
+            layout.allocated = core::mem::size_of::<RegexHandle>() as libc::c_long;
+            layout.used = layout.allocated;
+            layout.syntax = syntax;
+            layout.fastmap = core::ptr::null_mut();
+            layout.translate = core::ptr::null_mut();
+            layout.re_nsub = re_nsub;
+            layout.flags = 0;
+            if cflags & regex::REG_NOSUB != 0 {
+                layout.flags |= REGEX_FLAG_NO_SUB;
             }
+            regex_set_regs_allocated(&mut layout.flags, REGS_UNALLOCATED);
             core::ptr::null()
         }
         Err(_) => c"Invalid regular expression".as_ptr(),
@@ -6435,7 +6714,14 @@ pub unsafe extern "C" fn re_compile_pattern(
 /// `re_compile_fastmap` — compute fastmap for compiled pattern.
 /// Returns 0 on success, -2 on error. We no-op since our engine doesn't use fastmaps.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn re_compile_fastmap(_buffer: *mut c_void) -> c_int {
+pub unsafe extern "C" fn re_compile_fastmap(buffer: *mut c_void) -> c_int {
+    let Some(layout) = (unsafe { regex_buffer_layout(buffer) }) else {
+        return -2;
+    };
+    if unsafe { regex_compiled_from_buffer(buffer) }.is_none() {
+        return -2;
+    }
+    layout.flags |= REGEX_FLAG_FASTMAP_ACCURATE;
     0 // success — our engine doesn't need a fastmap
 }
 
@@ -6469,40 +6755,36 @@ pub unsafe extern "C" fn re_search(
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn re_search_2(
     buffer: *const c_void,
-    _string1: *const c_char,
-    _size1: c_int,
+    string1: *const c_char,
+    size1: c_int,
     string2: *const c_char,
     size2: c_int,
     startpos: c_int,
     range: c_int,
-    _regs: *mut c_void,
-    _stop: c_int,
+    regs: *mut c_void,
+    stop: c_int,
 ) -> c_int {
     use frankenlibc_core::string::regex;
 
-    if buffer.is_null() || string2.is_null() {
+    if buffer.is_null() {
         return -2;
     }
-
-    let buf_u8 = buffer as *const u8;
-    let magic = unsafe { core::ptr::read_unaligned(buf_u8 as *const u64) };
-    if magic != FRANKEN_REGEX_MAGIC {
+    let Some(compiled) = (unsafe { regex_compiled_from_buffer(buffer) }) else {
         return -2;
-    }
+    };
 
-    let compiled_ptr =
-        unsafe { core::ptr::read_unaligned(buf_u8.add(8) as *const *const regex::CompiledRegex) };
-    if compiled_ptr.is_null() {
-        return -2;
-    }
-    let compiled = unsafe { &*compiled_ptr };
-
-    let haystack = unsafe { core::slice::from_raw_parts(string2 as *const u8, size2 as usize) };
+    let haystack = match legacy_regex_concat(string1, size1, string2, size2) {
+        Ok(haystack) => haystack,
+        Err(code) => return code,
+    };
 
     let search_start = startpos.max(0) as usize;
     if search_start > haystack.len() {
         return -1;
     }
+    let stop_bound = (stop.max(0) as usize).min(haystack.len());
+    let nosub = compiled.nosub();
+    let reg_count = compiled.num_regs().max(2);
 
     if range >= 0 {
         let search_end = search_start
@@ -6510,20 +6792,52 @@ pub unsafe extern "C" fn re_search_2(
             .min(haystack.len());
         for pos in search_start..=search_end {
             let sub = &haystack[pos..];
-            let mut match_slot = [regex::RegMatch::default(); 1];
-            if regex::regex_exec(compiled, sub, &mut match_slot, 0) == 0 {
-                let rel = match_slot[0].rm_so.max(0) as usize;
-                return (pos + rel) as c_int;
+            if nosub {
+                if let Some((rm_so, rm_eo)) = regex::regex_match_bounds_bytes(compiled, sub, 0) {
+                    let rel = rm_so.max(0) as usize;
+                    let end = rm_eo.max(0) as usize;
+                    if pos + end > stop_bound {
+                        continue;
+                    }
+                    return (pos + rel) as c_int;
+                }
+            } else {
+                let mut match_slots = vec![regex::RegMatch::default(); reg_count];
+                if regex::regex_exec_bytes(compiled, sub, &mut match_slots, 0) == 0 {
+                    let rel = match_slots[0].rm_so.max(0) as usize;
+                    let end = match_slots[0].rm_eo.max(0) as usize;
+                    if pos + end > stop_bound {
+                        continue;
+                    }
+                    unsafe { legacy_regex_write_regs(regs, &match_slots, pos as c_int) };
+                    return (pos + rel) as c_int;
+                }
             }
         }
     } else {
         let search_end = search_start.saturating_sub(range.unsigned_abs() as usize);
         for pos in (search_end..=search_start).rev() {
             let sub = &haystack[pos..];
-            let mut match_slot = [regex::RegMatch::default(); 1];
-            if regex::regex_exec(compiled, sub, &mut match_slot, 0) == 0 {
-                let rel = match_slot[0].rm_so.max(0) as usize;
-                return (pos + rel) as c_int;
+            if nosub {
+                if let Some((rm_so, rm_eo)) = regex::regex_match_bounds_bytes(compiled, sub, 0) {
+                    let rel = rm_so.max(0) as usize;
+                    let end = rm_eo.max(0) as usize;
+                    if pos + end > stop_bound {
+                        continue;
+                    }
+                    return (pos + rel) as c_int;
+                }
+            } else {
+                let mut match_slots = vec![regex::RegMatch::default(); reg_count];
+                if regex::regex_exec_bytes(compiled, sub, &mut match_slots, 0) == 0 {
+                    let rel = match_slots[0].rm_so.max(0) as usize;
+                    let end = match_slots[0].rm_eo.max(0) as usize;
+                    if pos + end > stop_bound {
+                        continue;
+                    }
+                    unsafe { legacy_regex_write_regs(regs, &match_slots, pos as c_int) };
+                    return (pos + rel) as c_int;
+                }
             }
         }
     }
@@ -6558,60 +6872,89 @@ pub unsafe extern "C" fn re_match(
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn re_match_2(
     buffer: *const c_void,
-    _string1: *const c_char,
-    _size1: c_int,
+    string1: *const c_char,
+    size1: c_int,
     string2: *const c_char,
     size2: c_int,
     start: c_int,
-    _regs: *mut c_void,
-    _stop: c_int,
+    regs: *mut c_void,
+    stop: c_int,
 ) -> c_int {
     use frankenlibc_core::string::regex;
 
-    if buffer.is_null() || string2.is_null() {
+    if buffer.is_null() {
         return -2;
     }
-
-    let buf_u8 = buffer as *const u8;
-    let magic = unsafe { core::ptr::read_unaligned(buf_u8 as *const u64) };
-    if magic != FRANKEN_REGEX_MAGIC {
+    let Some(compiled) = (unsafe { regex_compiled_from_buffer(buffer) }) else {
         return -2;
-    }
+    };
 
-    let compiled_ptr =
-        unsafe { core::ptr::read_unaligned(buf_u8.add(8) as *const *const regex::CompiledRegex) };
-    if compiled_ptr.is_null() {
-        return -2;
-    }
-    let compiled = unsafe { &*compiled_ptr };
-
-    let haystack = unsafe { core::slice::from_raw_parts(string2 as *const u8, size2 as usize) };
+    let haystack = match legacy_regex_concat(string1, size1, string2, size2) {
+        Ok(haystack) => haystack,
+        Err(code) => return code,
+    };
     let start_pos = start.max(0) as usize;
     if start_pos > haystack.len() {
         return -1;
     }
+    let stop_bound = (stop.max(0) as usize).min(haystack.len());
+    let nosub = compiled.nosub();
 
     let sub = &haystack[start_pos..];
-    let mut match_slot = [regex::RegMatch::default(); 1];
-    if regex::regex_exec(compiled, sub, &mut match_slot, 0) != 0 {
+    if nosub {
+        let Some((rm_so, rm_eo)) = regex::regex_match_bounds_bytes(compiled, sub, 0) else {
+            return -1;
+        };
+        if rm_so != 0 {
+            return -1;
+        }
+        if start_pos + rm_eo.max(0) as usize > stop_bound {
+            return -1;
+        }
+        return rm_eo;
+    }
+
+    let mut match_slots = vec![regex::RegMatch::default(); compiled.num_regs().max(2)];
+    if regex::regex_exec_bytes(compiled, sub, &mut match_slots, 0) != 0 {
         return -1;
     }
-    if match_slot[0].rm_so != 0 {
+    if match_slots[0].rm_so != 0 {
         return -1;
     }
-    match_slot[0].rm_eo
+    if start_pos + match_slots[0].rm_eo.max(0) as usize > stop_bound {
+        return -1;
+    }
+    unsafe { legacy_regex_write_regs(regs, &match_slots, start_pos as c_int) };
+    match_slots[0].rm_eo
 }
 
-/// `re_set_registers` — set register info in pattern buffer. No-op in our implementation.
+/// `re_set_registers` — attach caller-managed register storage to a compiled pattern.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn re_set_registers(
-    _buffer: *mut c_void,
-    _regs: *mut c_void,
-    _num_regs: u32,
-    _starts: *mut c_int,
-    _ends: *mut c_int,
+    buffer: *mut c_void,
+    regs: *mut c_void,
+    num_regs: u32,
+    starts: *mut c_int,
+    ends: *mut c_int,
 ) {
-    // No-op: our regex engine manages its own match state
+    if regs.is_null() {
+        return;
+    }
+    let regs = unsafe { &mut *(regs as *mut LegacyReRegisters) };
+    regs.num_regs = num_regs as usize;
+    regs.start = starts;
+    regs.end = ends;
+
+    if let Some(layout) = unsafe { regex_buffer_layout(buffer) } {
+        regex_set_regs_allocated(
+            &mut layout.flags,
+            if starts.is_null() || ends.is_null() {
+                REGS_UNALLOCATED
+            } else {
+                REGS_FIXED
+            },
+        );
+    }
 }
 
 // ===========================================================================

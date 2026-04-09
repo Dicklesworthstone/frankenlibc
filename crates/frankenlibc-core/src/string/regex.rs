@@ -409,6 +409,14 @@ impl CompiledRegex {
         (self.num_groups + 1) * 2
     }
 
+    pub fn num_regs(&self) -> usize {
+        self.num_groups + 1
+    }
+
+    pub fn nosub(&self) -> bool {
+        self.nosub
+    }
+
     pub fn complexity_certificate(&self) -> RegexComplexityCertificate {
         self.complexity_certificate
     }
@@ -1265,8 +1273,14 @@ pub fn regex_compile(pattern: &[u8], cflags: i32) -> Result<Box<CompiledRegex>, 
         .iter()
         .position(|&b| b == 0)
         .unwrap_or(pattern.len());
-    let pat = &pattern[..pat_len];
+    regex_compile_bytes(&pattern[..pat_len], cflags)
+}
 
+/// Compile a regex pattern from an exact byte slice without truncating at the
+/// first embedded NUL. The old GNU regex APIs use explicit pattern lengths and
+/// therefore must remain binary-safe.
+pub fn regex_compile_bytes(pattern: &[u8], cflags: i32) -> Result<Box<CompiledRegex>, i32> {
+    let pat = pattern;
     let mut parser = Parser::new(pat, cflags);
     let ast = parser.parse()?;
     let num_groups = parser.group_count;
@@ -1299,14 +1313,7 @@ pub fn regex_exec(
     matches: &mut [RegMatch],
     eflags: i32,
 ) -> i32 {
-    // Find null-terminated length
-    let input_len = input.iter().position(|&b| b == 0).unwrap_or(input.len());
-    let input = &input[..input_len];
-
-    let num_slots = compiled.num_slots();
-    let vm = PikeVm::new(&compiled.nfa, input, num_slots, eflags);
-
-    match vm.execute() {
+    match regex_exec_cstring_slots(compiled, input, eflags) {
         None => REG_NOMATCH,
         Some(slots) => {
             if !compiled.nosub && !matches.is_empty() {
@@ -1325,6 +1332,75 @@ pub fn regex_exec(
             0
         }
     }
+}
+
+/// Execute a compiled regex against an exact byte slice without truncating at
+/// the first embedded NUL. The old GNU regex APIs use explicit lengths and
+/// therefore must remain binary-safe.
+pub fn regex_exec_bytes(
+    compiled: &CompiledRegex,
+    input: &[u8],
+    matches: &mut [RegMatch],
+    eflags: i32,
+) -> i32 {
+    match regex_exec_byte_slots(compiled, input, eflags) {
+        None => REG_NOMATCH,
+        Some(slots) => {
+            if !compiled.nosub && !matches.is_empty() {
+                for (i, m) in matches.iter_mut().enumerate() {
+                    let so_idx = i * 2;
+                    let eo_idx = i * 2 + 1;
+                    if so_idx < slots.len() && eo_idx < slots.len() {
+                        m.rm_so = slots[so_idx];
+                        m.rm_eo = slots[eo_idx];
+                    } else {
+                        m.rm_so = -1;
+                        m.rm_eo = -1;
+                    }
+                }
+            }
+            0
+        }
+    }
+}
+
+/// Execute a compiled regex and return the whole-match offsets even when
+/// REG_NOSUB suppresses submatch materialization.
+pub fn regex_match_bounds(
+    compiled: &CompiledRegex,
+    input: &[u8],
+    eflags: i32,
+) -> Option<(i32, i32)> {
+    let slots = regex_exec_cstring_slots(compiled, input, eflags)?;
+    Some((*slots.first().unwrap_or(&-1), *slots.get(1).unwrap_or(&-1)))
+}
+
+/// Execute a compiled regex and return whole-match offsets for an exact byte
+/// slice, preserving embedded NULs.
+pub fn regex_match_bounds_bytes(
+    compiled: &CompiledRegex,
+    input: &[u8],
+    eflags: i32,
+) -> Option<(i32, i32)> {
+    let slots = regex_exec_byte_slots(compiled, input, eflags)?;
+    Some((*slots.first().unwrap_or(&-1), *slots.get(1).unwrap_or(&-1)))
+}
+
+fn regex_exec_cstring_slots(
+    compiled: &CompiledRegex,
+    input: &[u8],
+    eflags: i32,
+) -> Option<Vec<i32>> {
+    // Find null-terminated length
+    let input_len = input.iter().position(|&b| b == 0).unwrap_or(input.len());
+    regex_exec_byte_slots(compiled, &input[..input_len], eflags)
+}
+
+fn regex_exec_byte_slots(compiled: &CompiledRegex, input: &[u8], eflags: i32) -> Option<Vec<i32>> {
+    let num_slots = compiled.num_slots();
+    let vm = PikeVm::new(&compiled.nfa, input, num_slots, eflags);
+
+    vm.execute()
 }
 
 /// Map an error code to a human-readable message.
@@ -1368,6 +1444,52 @@ mod tests {
         let result = regex_exec(&compiled, input.as_bytes(), &mut matches, 0);
         let subs: Vec<(i32, i32)> = matches.iter().map(|m| (m.rm_so, m.rm_eo)).collect();
         (result == 0, subs)
+    }
+
+    #[test]
+    fn cstring_exec_stops_at_embedded_nul() {
+        let compiled = regex_compile(b"c", REG_EXTENDED).unwrap();
+        let mut matches = [RegMatch::default(); 2];
+        assert_eq!(
+            regex_exec(&compiled, b"ab\0c", &mut matches, 0),
+            REG_NOMATCH
+        );
+        assert_eq!(regex_match_bounds(&compiled, b"ab\0c", 0), None);
+    }
+
+    #[test]
+    fn byte_exec_preserves_embedded_nul_bytes() {
+        let compiled = regex_compile(b"c", REG_EXTENDED).unwrap();
+        let mut matches = [RegMatch::default(); 2];
+        assert_eq!(regex_exec_bytes(&compiled, b"ab\0c", &mut matches, 0), 0);
+        assert_eq!(matches[0].rm_so, 3);
+        assert_eq!(matches[0].rm_eo, 4);
+        assert_eq!(
+            regex_match_bounds_bytes(&compiled, b"ab\0c", 0),
+            Some((3, 4))
+        );
+    }
+
+    #[test]
+    fn cstring_compile_truncates_pattern_at_embedded_nul() {
+        let compiled = regex_compile(b"c\0d", REG_EXTENDED).unwrap();
+        assert_eq!(
+            regex_match_bounds_bytes(&compiled, b"xc\0dy", 0),
+            Some((1, 2))
+        );
+    }
+
+    #[test]
+    fn byte_compile_preserves_embedded_nul_bytes() {
+        let compiled = regex_compile_bytes(b"c\0d", REG_EXTENDED).unwrap();
+        let mut matches = [RegMatch::default(); 2];
+        assert_eq!(regex_exec_bytes(&compiled, b"xc\0dy", &mut matches, 0), 0);
+        assert_eq!(matches[0].rm_so, 1);
+        assert_eq!(matches[0].rm_eo, 4);
+        assert_eq!(
+            regex_match_bounds_bytes(&compiled, b"xc\0dy", 0),
+            Some((1, 4))
+        );
     }
 
     #[test]

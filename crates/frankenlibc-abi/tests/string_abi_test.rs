@@ -9,13 +9,22 @@ use frankenlibc_abi::htm_fast_path::{
 use frankenlibc_abi::string_abi::*;
 use frankenlibc_abi::unistd_abi::strerror_l;
 use serde_json::Value;
-use std::ffi::{CStr, c_char, c_int, c_void};
+use std::ffi::{CStr, CString, c_char, c_int, c_void};
+use std::sync::{Mutex, MutexGuard};
 
 fn with_simd_mask<T>(mask: u32, f: impl FnOnce() -> T) -> T {
     let previous = string_simd_swap_feature_mask_for_tests(Some(mask));
     let outcome = f();
     string_simd_restore_feature_mask_for_tests(previous);
     outcome
+}
+
+static LEGACY_REGEX_TEST_MUTEX: Mutex<()> = Mutex::new(());
+
+fn legacy_regex_test_guard() -> MutexGuard<'static, ()> {
+    LEGACY_REGEX_TEST_MUTEX
+        .lock()
+        .unwrap_or_else(|err| err.into_inner())
 }
 
 // ===========================================================================
@@ -816,6 +825,16 @@ fn strverscmp_plain_strings() {
     assert_eq!(unsafe { strverscmp(c"abc".as_ptr(), c"abc".as_ptr()) }, 0);
 }
 
+#[test]
+fn strverscmp_leading_zero_prefix_ordering() {
+    assert!(unsafe { strverscmp(c"000".as_ptr(), c"00".as_ptr()) } < 0);
+    assert!(unsafe { strverscmp(c"00".as_ptr(), c"000".as_ptr()) } > 0);
+    assert!(unsafe { strverscmp(c"001".as_ptr(), c"01".as_ptr()) } < 0);
+    assert!(unsafe { strverscmp(c"01".as_ptr(), c"001".as_ptr()) } > 0);
+    assert!(unsafe { strverscmp(c"009".as_ptr(), c"0009".as_ptr()) } > 0);
+    assert!(unsafe { strverscmp(c"0009".as_ptr(), c"009".as_ptr()) } < 0);
+}
+
 // ===========================================================================
 // swab
 // ===========================================================================
@@ -1086,91 +1105,305 @@ fn strfromf_and_strfroml_delegate_to_shared_formatter() {
     );
 }
 
-#[repr(C)]
-struct LegacyRegexBuffer {
-    allocated: usize,
-    used: usize,
-    syntax: u64,
-    fastmap: *mut c_char,
-    translate: *mut c_char,
-    re_nsub: usize,
-    can_be_null: u8,
-    regs_allocated: u8,
-    fastmap_accurate: u8,
-    no_sub: u8,
-    not_bol: u8,
-    not_eol: u8,
-    newline_anchor: u8,
-    pad: [u8; 1],
-    buffer: *mut c_void,
-    startp: *mut *mut c_char,
-    endp: *mut *mut c_char,
+fn collect_argz_entries(argz: *mut c_char, argz_len: usize) -> Vec<Vec<u8>> {
+    let mut entries = Vec::new();
+    let mut entry = unsafe { argz_next(argz, argz_len, std::ptr::null()) };
+    while !entry.is_null() {
+        entries.push(unsafe { CStr::from_ptr(entry) }.to_bytes().to_vec());
+        entry = unsafe { argz_next(argz, argz_len, entry) };
+    }
+    entries
 }
 
 #[test]
-fn re_compile_pattern_accepts_non_utf8_bytes() {
-    let pattern = [b'a' as c_char, -1_i8 as c_char, b'b' as c_char];
-    let mut buffer = LegacyRegexBuffer {
-        allocated: 0,
-        used: 0,
-        syntax: 0,
-        fastmap: std::ptr::null_mut(),
-        translate: std::ptr::null_mut(),
-        re_nsub: 0,
-        can_be_null: 0,
-        regs_allocated: 0,
-        fastmap_accurate: 0,
-        no_sub: 0,
-        not_bol: 0,
-        not_eol: 0,
-        newline_anchor: 0,
-        pad: [0],
-        buffer: std::ptr::null_mut(),
-        startp: std::ptr::null_mut(),
-        endp: std::ptr::null_mut(),
+fn argz_replace_updates_replace_count_and_contents() {
+    let mut argz = std::ptr::null_mut();
+    let mut argz_len = 0usize;
+    let mut replace_count: libc::c_uint = 7;
+
+    assert_eq!(
+        unsafe { argz_add(&mut argz, &mut argz_len, c"aa".as_ptr()) },
+        0
+    );
+    assert_eq!(
+        unsafe { argz_add(&mut argz, &mut argz_len, c"bb".as_ptr()) },
+        0
+    );
+    assert_eq!(
+        unsafe { argz_add(&mut argz, &mut argz_len, c"aa".as_ptr()) },
+        0
+    );
+
+    let rc = unsafe {
+        argz_replace(
+            &mut argz,
+            &mut argz_len,
+            c"aa".as_ptr(),
+            c"xyz".as_ptr(),
+            &mut replace_count,
+        )
     };
+    assert_eq!(rc, 0);
+    assert_eq!(replace_count, 9);
+    assert_eq!(
+        collect_argz_entries(argz, argz_len),
+        vec![b"xyz".to_vec(), b"bb".to_vec(), b"xyz".to_vec()]
+    );
+
+    let rc = unsafe {
+        argz_replace(
+            &mut argz,
+            &mut argz_len,
+            c"nomatch".as_ptr(),
+            c"z".as_ptr(),
+            &mut replace_count,
+        )
+    };
+    assert_eq!(rc, 0);
+    assert_eq!(replace_count, 9);
+    assert_eq!(
+        collect_argz_entries(argz, argz_len),
+        vec![b"xyz".to_vec(), b"bb".to_vec(), b"xyz".to_vec()]
+    );
+
+    unsafe {
+        libc::free(argz.cast());
+    }
+}
+
+#[test]
+fn argz_delete_last_entry_clears_pointer_and_length() {
+    let mut argz = std::ptr::null_mut();
+    let mut argz_len = 0usize;
+
+    assert_eq!(
+        unsafe { argz_add(&mut argz, &mut argz_len, c"one".as_ptr()) },
+        0
+    );
+    assert!(!argz.is_null());
+
+    unsafe {
+        argz_delete(&mut argz, &mut argz_len, argz);
+    }
+
+    assert!(argz.is_null());
+    assert_eq!(argz_len, 0);
+}
+
+#[test]
+fn argz_create_sep_discards_empty_segments_like_glibc() {
+    let cases: &[(&str, &[&[u8]])] = &[
+        ("", &[]),
+        (":", &[b""]),
+        ("::", &[b""]),
+        (":a", &[b"a"]),
+        ("a:", &[b"a", b""]),
+        (":a:", &[b"a", b""]),
+        ("a::b", &[b"a", b"b"]),
+        (":a::b:", &[b"a", b"b", b""]),
+    ];
+
+    for (input, expected) in cases {
+        let input_cstr = CString::new(*input).unwrap();
+        let mut argz = std::ptr::null_mut();
+        let mut argz_len = usize::MAX;
+
+        let rc = unsafe {
+            argz_create_sep(input_cstr.as_ptr(), b':' as c_int, &mut argz, &mut argz_len)
+        };
+        assert_eq!(rc, 0, "input={input:?}");
+
+        let expected_entries: Vec<Vec<u8>> = expected.iter().map(|entry| entry.to_vec()).collect();
+        assert_eq!(
+            collect_argz_entries(argz, argz_len),
+            expected_entries,
+            "input={input:?}"
+        );
+
+        if expected.is_empty() {
+            assert!(argz.is_null(), "input={input:?}");
+            assert_eq!(argz_len, 0, "input={input:?}");
+        } else {
+            assert!(!argz.is_null(), "input={input:?}");
+            assert_eq!(
+                argz_len,
+                expected.iter().map(|entry| entry.len() + 1).sum::<usize>(),
+                "input={input:?}"
+            );
+            unsafe {
+                libc::free(argz.cast());
+            }
+        }
+    }
+}
+
+#[test]
+fn argz_add_sep_discards_empty_segments_and_keeps_terminal_empty() {
+    let input_cstr = CString::new(":a::b:").unwrap();
+    let mut argz = std::ptr::null_mut();
+    let mut argz_len = 0usize;
+
+    assert_eq!(
+        unsafe {
+            argz_add_sep(
+                &mut argz,
+                &mut argz_len,
+                CString::new("").unwrap().as_ptr(),
+                b':' as c_int,
+            )
+        },
+        0
+    );
+    assert!(argz.is_null());
+    assert_eq!(argz_len, 0);
+
+    assert_eq!(
+        unsafe { argz_add(&mut argz, &mut argz_len, c"head".as_ptr()) },
+        0
+    );
+    assert_eq!(
+        unsafe { argz_add_sep(&mut argz, &mut argz_len, input_cstr.as_ptr(), b':' as c_int) },
+        0
+    );
+    assert_eq!(
+        collect_argz_entries(argz, argz_len),
+        vec![b"head".to_vec(), b"a".to_vec(), b"b".to_vec(), b"".to_vec()]
+    );
+    assert_eq!(argz_len, 10);
+
+    unsafe {
+        libc::free(argz.cast());
+    }
+}
+
+#[test]
+fn argz_next_matches_glibc_for_interior_and_foreign_pointers() {
+    let mut argz = std::ptr::null_mut();
+    let mut argz_len = 0usize;
+
+    assert_eq!(
+        unsafe { argz_add(&mut argz, &mut argz_len, c"one".as_ptr()) },
+        0
+    );
+    assert_eq!(
+        unsafe { argz_add(&mut argz, &mut argz_len, c"two".as_ptr()) },
+        0
+    );
+
+    let interior_next = unsafe { argz_next(argz, argz_len, argz.add(1)) };
+    assert!(!interior_next.is_null());
+    assert_eq!(unsafe { CStr::from_ptr(interior_next) }.to_bytes(), b"two");
+
+    let foreign_next = unsafe { argz_next(argz, argz_len, c"zzz".as_ptr()) };
+    assert!(foreign_next.is_null());
+
+    unsafe {
+        libc::free(argz.cast());
+    }
+}
+
+#[repr(C)]
+struct PublicRegexBuffer {
+    buffer: *mut c_void,
+    allocated: libc::c_long,
+    used: libc::c_long,
+    syntax: u64,
+    fastmap: *mut c_char,
+    translate: *mut u8,
+    re_nsub: usize,
+    flags: u8,
+    reserved: [u8; 7],
+}
+
+#[repr(C)]
+struct LegacyReRegisters {
+    num_regs: usize,
+    start: *mut c_int,
+    end: *mut c_int,
+}
+
+impl Default for PublicRegexBuffer {
+    fn default() -> Self {
+        Self {
+            buffer: std::ptr::null_mut(),
+            allocated: 0,
+            used: 0,
+            syntax: 0,
+            fastmap: std::ptr::null_mut(),
+            translate: std::ptr::null_mut(),
+            re_nsub: 0,
+            flags: 0,
+            reserved: [0; 7],
+        }
+    }
+}
+
+#[test]
+fn public_regex_buffer_matches_glibc_size() {
+    assert_eq!(std::mem::size_of::<PublicRegexBuffer>(), 64);
+}
+
+const RE_BACKSLASH_ESCAPE_IN_LISTS: u64 = 1;
+const RE_CHAR_CLASSES: u64 = RE_BACKSLASH_ESCAPE_IN_LISTS << 2;
+const RE_CONTEXT_INDEP_ANCHORS: u64 = RE_CHAR_CLASSES << 1;
+const RE_CONTEXT_INDEP_OPS: u64 = RE_CONTEXT_INDEP_ANCHORS << 1;
+const RE_CONTEXT_INVALID_OPS: u64 = RE_CONTEXT_INDEP_OPS << 1;
+const RE_DOT_NEWLINE: u64 = RE_CONTEXT_INVALID_OPS << 1;
+const RE_DOT_NOT_NULL: u64 = RE_DOT_NEWLINE << 1;
+const RE_INTERVALS: u64 = RE_DOT_NOT_NULL << 2;
+const RE_NO_BK_BRACES: u64 = RE_INTERVALS << 3;
+const RE_NO_BK_PARENS: u64 = RE_NO_BK_BRACES << 1;
+const RE_NO_BK_VBAR: u64 = RE_NO_BK_PARENS << 2;
+const RE_NO_EMPTY_RANGES: u64 = RE_NO_BK_VBAR << 1;
+const RE_NO_SUB: u64 = 1 << 25;
+const RE_UNMATCHED_RIGHT_PAREN_ORD: u64 = RE_NO_EMPTY_RANGES << 1;
+const RE_SYNTAX_POSIX_EXTENDED: u64 = RE_CHAR_CLASSES
+    | RE_DOT_NEWLINE
+    | RE_DOT_NOT_NULL
+    | RE_INTERVALS
+    | RE_NO_EMPTY_RANGES
+    | RE_CONTEXT_INDEP_ANCHORS
+    | RE_CONTEXT_INDEP_OPS
+    | RE_CONTEXT_INVALID_OPS
+    | RE_NO_BK_BRACES
+    | RE_NO_BK_PARENS
+    | RE_NO_BK_VBAR
+    | RE_UNMATCHED_RIGHT_PAREN_ORD;
+
+#[test]
+fn re_compile_pattern_accepts_non_utf8_bytes() {
+    let _guard = legacy_regex_test_guard();
+    let pattern = [b'a' as c_char, -1_i8 as c_char, b'b' as c_char];
+    let mut buffer = PublicRegexBuffer::default();
 
     let err = unsafe {
         re_compile_pattern(
             pattern.as_ptr(),
             pattern.len(),
-            (&mut buffer as *mut LegacyRegexBuffer).cast(),
+            (&mut buffer as *mut PublicRegexBuffer).cast(),
         )
     };
     assert!(err.is_null(), "expected non-UTF8 byte patterns to compile");
+    assert!(
+        !buffer.buffer.is_null(),
+        "compiled regex handle should be stored in the public buffer field"
+    );
 
     unsafe {
-        regfree((&mut buffer as *mut LegacyRegexBuffer).cast());
+        regfree((&mut buffer as *mut PublicRegexBuffer).cast());
     }
 }
 
 #[test]
 fn re_search_scans_backwards_for_negative_range() {
-    let mut buffer = LegacyRegexBuffer {
-        allocated: 0,
-        used: 0,
-        syntax: 0,
-        fastmap: std::ptr::null_mut(),
-        translate: std::ptr::null_mut(),
-        re_nsub: 0,
-        can_be_null: 0,
-        regs_allocated: 0,
-        fastmap_accurate: 0,
-        no_sub: 0,
-        not_bol: 0,
-        not_eol: 0,
-        newline_anchor: 0,
-        pad: [0],
-        buffer: std::ptr::null_mut(),
-        startp: std::ptr::null_mut(),
-        endp: std::ptr::null_mut(),
-    };
+    let _guard = legacy_regex_test_guard();
+    let mut buffer = PublicRegexBuffer::default();
 
     let err = unsafe {
         re_compile_pattern(
             b"abc".as_ptr().cast(),
             3,
-            (&mut buffer as *mut LegacyRegexBuffer).cast(),
+            (&mut buffer as *mut PublicRegexBuffer).cast(),
         )
     };
     assert!(err.is_null());
@@ -1178,7 +1411,7 @@ fn re_search_scans_backwards_for_negative_range() {
     let haystack = b"abcabc";
     let pos = unsafe {
         re_search(
-            (&buffer as *const LegacyRegexBuffer).cast(),
+            (&buffer as *const PublicRegexBuffer).cast(),
             haystack.as_ptr().cast(),
             haystack.len() as c_int,
             5,
@@ -1189,6 +1422,494 @@ fn re_search_scans_backwards_for_negative_range() {
     assert_eq!(pos, 3);
 
     unsafe {
-        regfree((&mut buffer as *mut LegacyRegexBuffer).cast());
+        regfree((&mut buffer as *mut PublicRegexBuffer).cast());
+    }
+}
+
+#[test]
+fn re_search_2_matches_across_split_boundary_and_reports_regs() {
+    let _guard = legacy_regex_test_guard();
+    let mut buffer = PublicRegexBuffer::default();
+    let mut regs = LegacyReRegisters {
+        num_regs: 0,
+        start: std::ptr::null_mut(),
+        end: std::ptr::null_mut(),
+    };
+
+    let err = unsafe {
+        re_compile_pattern(
+            b"abc".as_ptr().cast(),
+            3,
+            (&mut buffer as *mut PublicRegexBuffer).cast(),
+        )
+    };
+    assert!(err.is_null());
+
+    let pos = unsafe {
+        re_search_2(
+            (&buffer as *const PublicRegexBuffer).cast(),
+            b"ab".as_ptr().cast(),
+            2,
+            b"cxxabc".as_ptr().cast(),
+            6,
+            0,
+            8,
+            (&mut regs as *mut LegacyReRegisters).cast(),
+            8,
+        )
+    };
+    assert_eq!(pos, 0);
+    assert!(regs.num_regs >= 2);
+    assert!(!regs.start.is_null());
+    assert!(!regs.end.is_null());
+    unsafe {
+        assert_eq!(*regs.start.add(0), 0);
+        assert_eq!(*regs.end.add(0), 3);
+        libc::free(regs.start.cast());
+        libc::free(regs.end.cast());
+        regfree((&mut buffer as *mut PublicRegexBuffer).cast());
+    }
+}
+
+#[test]
+fn re_search_2_honors_absolute_stop_limit() {
+    let _guard = legacy_regex_test_guard();
+    let mut buffer = PublicRegexBuffer::default();
+
+    let err = unsafe {
+        re_compile_pattern(
+            b"abc".as_ptr().cast(),
+            3,
+            (&mut buffer as *mut PublicRegexBuffer).cast(),
+        )
+    };
+    assert!(err.is_null());
+
+    let blocked = unsafe {
+        re_search_2(
+            (&buffer as *const PublicRegexBuffer).cast(),
+            b"ab".as_ptr().cast(),
+            2,
+            b"cxxabc".as_ptr().cast(),
+            6,
+            0,
+            8,
+            std::ptr::null_mut(),
+            2,
+        )
+    };
+    assert_eq!(blocked, -1);
+
+    let matched = unsafe {
+        re_search_2(
+            (&buffer as *const PublicRegexBuffer).cast(),
+            b"ab".as_ptr().cast(),
+            2,
+            b"cxxabc".as_ptr().cast(),
+            6,
+            0,
+            8,
+            std::ptr::null_mut(),
+            3,
+        )
+    };
+    assert_eq!(matched, 0);
+
+    unsafe {
+        regfree((&mut buffer as *mut PublicRegexBuffer).cast());
+    }
+}
+
+#[test]
+fn re_search_honors_explicit_length_past_embedded_nul() {
+    let _guard = legacy_regex_test_guard();
+    let mut buffer = PublicRegexBuffer::default();
+    let haystack = [b'a', b'b', 0, b'c'];
+
+    let err = unsafe {
+        re_compile_pattern(
+            b"c".as_ptr().cast(),
+            1,
+            (&mut buffer as *mut PublicRegexBuffer).cast(),
+        )
+    };
+    assert!(err.is_null());
+
+    let pos = unsafe {
+        re_search(
+            (&buffer as *const PublicRegexBuffer).cast(),
+            haystack.as_ptr().cast(),
+            haystack.len() as c_int,
+            0,
+            haystack.len() as c_int,
+            std::ptr::null_mut(),
+        )
+    };
+    assert_eq!(pos, 3);
+
+    unsafe {
+        regfree((&mut buffer as *mut PublicRegexBuffer).cast());
+    }
+}
+
+#[test]
+fn re_compile_pattern_honors_explicit_pattern_length_past_embedded_nul() {
+    let _guard = legacy_regex_test_guard();
+    let mut buffer = PublicRegexBuffer::default();
+    let pattern = [b'c', 0, b'd'];
+    let haystack = [b'x', b'c', 0, b'd', b'y'];
+
+    let err = unsafe {
+        re_compile_pattern(
+            pattern.as_ptr().cast(),
+            pattern.len(),
+            (&mut buffer as *mut PublicRegexBuffer).cast(),
+        )
+    };
+    assert!(err.is_null());
+
+    let pos = unsafe {
+        re_search(
+            (&buffer as *const PublicRegexBuffer).cast(),
+            haystack.as_ptr().cast(),
+            haystack.len() as c_int,
+            0,
+            haystack.len() as c_int,
+            std::ptr::null_mut(),
+        )
+    };
+    assert_eq!(pos, 1);
+
+    let matched = unsafe {
+        re_match(
+            (&buffer as *const PublicRegexBuffer).cast(),
+            haystack.as_ptr().cast(),
+            haystack.len() as c_int,
+            1,
+            std::ptr::null_mut(),
+        )
+    };
+    assert_eq!(matched, 3);
+
+    unsafe {
+        regfree((&mut buffer as *mut PublicRegexBuffer).cast());
+    }
+}
+
+#[test]
+fn re_search_2_backward_search_respects_absolute_stop_limit() {
+    let _guard = legacy_regex_test_guard();
+    let mut buffer = PublicRegexBuffer::default();
+
+    let err = unsafe {
+        re_compile_pattern(
+            b"abc".as_ptr().cast(),
+            3,
+            (&mut buffer as *mut PublicRegexBuffer).cast(),
+        )
+    };
+    assert!(err.is_null());
+
+    let early = unsafe {
+        re_search_2(
+            (&buffer as *const PublicRegexBuffer).cast(),
+            std::ptr::null(),
+            0,
+            b"abcabc".as_ptr().cast(),
+            6,
+            5,
+            -5,
+            std::ptr::null_mut(),
+            3,
+        )
+    };
+    assert_eq!(early, 0);
+
+    let late = unsafe {
+        re_search_2(
+            (&buffer as *const PublicRegexBuffer).cast(),
+            std::ptr::null(),
+            0,
+            b"abcabc".as_ptr().cast(),
+            6,
+            5,
+            -5,
+            std::ptr::null_mut(),
+            6,
+        )
+    };
+    assert_eq!(late, 3);
+
+    unsafe {
+        regfree((&mut buffer as *mut PublicRegexBuffer).cast());
+    }
+}
+
+#[test]
+fn re_match_honors_explicit_length_past_embedded_nul() {
+    let _guard = legacy_regex_test_guard();
+    let mut buffer = PublicRegexBuffer::default();
+    let haystack = [b'a', b'b', 0, b'c'];
+
+    let err = unsafe {
+        re_compile_pattern(
+            b"c".as_ptr().cast(),
+            1,
+            (&mut buffer as *mut PublicRegexBuffer).cast(),
+        )
+    };
+    assert!(err.is_null());
+
+    let matched = unsafe {
+        re_match(
+            (&buffer as *const PublicRegexBuffer).cast(),
+            haystack.as_ptr().cast(),
+            haystack.len() as c_int,
+            3,
+            std::ptr::null_mut(),
+        )
+    };
+    assert_eq!(matched, 1);
+
+    unsafe {
+        regfree((&mut buffer as *mut PublicRegexBuffer).cast());
+    }
+}
+
+#[test]
+fn re_match_2_honors_split_boundary_and_absolute_stop_limit() {
+    let _guard = legacy_regex_test_guard();
+    let mut buffer = PublicRegexBuffer::default();
+
+    let err = unsafe {
+        re_compile_pattern(
+            b"abc".as_ptr().cast(),
+            3,
+            (&mut buffer as *mut PublicRegexBuffer).cast(),
+        )
+    };
+    assert!(err.is_null());
+
+    let matched = unsafe {
+        re_match_2(
+            (&buffer as *const PublicRegexBuffer).cast(),
+            b"xxab".as_ptr().cast(),
+            4,
+            b"cxx".as_ptr().cast(),
+            3,
+            2,
+            std::ptr::null_mut(),
+            5,
+        )
+    };
+    assert_eq!(matched, 3);
+
+    let blocked = unsafe {
+        re_match_2(
+            (&buffer as *const PublicRegexBuffer).cast(),
+            b"xxab".as_ptr().cast(),
+            4,
+            b"cxx".as_ptr().cast(),
+            3,
+            2,
+            std::ptr::null_mut(),
+            4,
+        )
+    };
+    assert_eq!(blocked, -1);
+
+    unsafe {
+        regfree((&mut buffer as *mut PublicRegexBuffer).cast());
+    }
+}
+
+#[test]
+fn re_search_returns_position_under_re_no_sub_without_touching_registers() {
+    let _guard = legacy_regex_test_guard();
+    let previous = unsafe { re_set_syntax(RE_NO_SUB) };
+    let mut buffer = PublicRegexBuffer::default();
+    let mut starts = [111, 222];
+    let mut ends = [333, 444];
+    let mut regs = LegacyReRegisters {
+        num_regs: starts.len(),
+        start: starts.as_mut_ptr(),
+        end: ends.as_mut_ptr(),
+    };
+
+    let err = unsafe {
+        re_compile_pattern(
+            b"abc".as_ptr().cast(),
+            b"abc".len(),
+            (&mut buffer as *mut PublicRegexBuffer).cast(),
+        )
+    };
+    unsafe {
+        re_set_syntax(previous);
+    }
+    assert!(err.is_null());
+
+    let pos = unsafe {
+        re_search(
+            (&buffer as *const PublicRegexBuffer).cast(),
+            b"zzabc".as_ptr().cast(),
+            5,
+            0,
+            5,
+            (&mut regs as *mut LegacyReRegisters).cast(),
+        )
+    };
+    assert_eq!(pos, 2);
+    assert_eq!(regs.num_regs, 2);
+    assert_eq!(starts, [111, 222]);
+    assert_eq!(ends, [333, 444]);
+
+    unsafe {
+        regfree((&mut buffer as *mut PublicRegexBuffer).cast());
+    }
+}
+
+#[test]
+fn re_match_returns_length_under_re_no_sub_without_touching_registers() {
+    let _guard = legacy_regex_test_guard();
+    let previous = unsafe { re_set_syntax(RE_NO_SUB) };
+    let mut buffer = PublicRegexBuffer::default();
+    let mut starts = [111, 222];
+    let mut ends = [333, 444];
+    let mut regs = LegacyReRegisters {
+        num_regs: starts.len(),
+        start: starts.as_mut_ptr(),
+        end: ends.as_mut_ptr(),
+    };
+
+    let err = unsafe {
+        re_compile_pattern(
+            b"abc".as_ptr().cast(),
+            b"abc".len(),
+            (&mut buffer as *mut PublicRegexBuffer).cast(),
+        )
+    };
+    unsafe {
+        re_set_syntax(previous);
+    }
+    assert!(err.is_null());
+
+    let matched = unsafe {
+        re_match(
+            (&buffer as *const PublicRegexBuffer).cast(),
+            b"zzabc".as_ptr().cast(),
+            5,
+            2,
+            (&mut regs as *mut LegacyReRegisters).cast(),
+        )
+    };
+    assert_eq!(matched, 3);
+    assert_eq!(regs.num_regs, 2);
+    assert_eq!(starts, [111, 222]);
+    assert_eq!(ends, [333, 444]);
+
+    unsafe {
+        regfree((&mut buffer as *mut PublicRegexBuffer).cast());
+    }
+}
+
+#[test]
+fn re_compile_pattern_honors_re_set_syntax_extended() {
+    let _guard = legacy_regex_test_guard();
+    let previous = unsafe { re_set_syntax(RE_SYNTAX_POSIX_EXTENDED) };
+    let mut buffer = PublicRegexBuffer::default();
+    let mut regs = LegacyReRegisters {
+        num_regs: 0,
+        start: std::ptr::null_mut(),
+        end: std::ptr::null_mut(),
+    };
+
+    let err = unsafe {
+        re_compile_pattern(
+            b"(ab)(c)".as_ptr().cast(),
+            b"(ab)(c)".len(),
+            (&mut buffer as *mut PublicRegexBuffer).cast(),
+        )
+    };
+    unsafe {
+        re_set_syntax(previous);
+    }
+    assert!(err.is_null());
+    assert_eq!(buffer.syntax, RE_SYNTAX_POSIX_EXTENDED);
+    assert_eq!(buffer.re_nsub, 2);
+
+    let pos = unsafe {
+        re_search(
+            (&buffer as *const PublicRegexBuffer).cast(),
+            b"zzabc".as_ptr().cast(),
+            5,
+            0,
+            5,
+            (&mut regs as *mut LegacyReRegisters).cast(),
+        )
+    };
+    assert_eq!(pos, 2);
+    unsafe {
+        assert_eq!(*regs.start.add(0), 2);
+        assert_eq!(*regs.end.add(0), 5);
+        assert_eq!(*regs.start.add(1), 2);
+        assert_eq!(*regs.end.add(1), 4);
+        assert_eq!(*regs.start.add(2), 4);
+        assert_eq!(*regs.end.add(2), 5);
+        libc::free(regs.start.cast());
+        libc::free(regs.end.cast());
+        regfree((&mut buffer as *mut PublicRegexBuffer).cast());
+    }
+}
+
+#[test]
+fn re_set_registers_binds_caller_arrays_for_search() {
+    let _guard = legacy_regex_test_guard();
+    let mut buffer = PublicRegexBuffer::default();
+    let mut regs = LegacyReRegisters {
+        num_regs: 0,
+        start: std::ptr::null_mut(),
+        end: std::ptr::null_mut(),
+    };
+    let mut starts = [111, 222, 333, 444];
+    let mut ends = [555, 666, 777, 888];
+
+    let err = unsafe {
+        re_compile_pattern(
+            b"\\(ab\\)\\(c\\)".as_ptr().cast(),
+            b"\\(ab\\)\\(c\\)".len(),
+            (&mut buffer as *mut PublicRegexBuffer).cast(),
+        )
+    };
+    assert!(err.is_null());
+
+    unsafe {
+        re_set_registers(
+            (&mut buffer as *mut PublicRegexBuffer).cast(),
+            (&mut regs as *mut LegacyReRegisters).cast(),
+            starts.len() as u32,
+            starts.as_mut_ptr(),
+            ends.as_mut_ptr(),
+        );
+    }
+    assert_eq!(regs.num_regs, starts.len());
+    assert_eq!(regs.start, starts.as_mut_ptr());
+    assert_eq!(regs.end, ends.as_mut_ptr());
+
+    let pos = unsafe {
+        re_search(
+            (&buffer as *const PublicRegexBuffer).cast(),
+            b"zzabc".as_ptr().cast(),
+            5,
+            0,
+            5,
+            (&mut regs as *mut LegacyReRegisters).cast(),
+        )
+    };
+    assert_eq!(pos, 2);
+    assert_eq!(starts, [2, 2, 4, -1]);
+    assert_eq!(ends, [5, 4, 5, -1]);
+
+    unsafe {
+        regfree((&mut buffer as *mut PublicRegexBuffer).cast());
     }
 }
