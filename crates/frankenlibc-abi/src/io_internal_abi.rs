@@ -16,8 +16,8 @@ use std::ffi::{c_char, c_int, c_void};
 use std::ptr;
 use std::sync::atomic::{AtomicI8, Ordering};
 
-use parking_lot::ReentrantMutex;
 use crate::stdio_abi;
+use parking_lot::ReentrantMutex;
 
 // ---------------------------------------------------------------------------
 // Native FILE struct (bd-zh1y.3.1)
@@ -156,7 +156,10 @@ mod layout_tests {
 
     #[test]
     fn io_file_layout_matches_glibc_234_x86_64_offsets() {
-        assert_eq!(std::mem::size_of::<_IO_FILE_Layout>(), GLIBC_234_IO_FILE_SIZE);
+        assert_eq!(
+            std::mem::size_of::<_IO_FILE_Layout>(),
+            GLIBC_234_IO_FILE_SIZE
+        );
         assert_eq!(std::mem::offset_of!(_IO_FILE_Layout, _flags), 0);
         assert_eq!(std::mem::offset_of!(_IO_FILE_Layout, _IO_read_ptr), 8);
         assert_eq!(std::mem::offset_of!(_IO_FILE_Layout, _IO_read_end), 16);
@@ -273,16 +276,23 @@ impl NativeFileLocked {
 }
 
 struct NativeFileState {
-    locked: ReentrantMutex<RefCell<NativeFileLocked>>,
+    locked: Box<ReentrantMutex<RefCell<NativeFileLocked>>>,
     orientation: AtomicI8,
 }
 
 impl NativeFileState {
     fn new(fd: c_int, open_flags: u32, buf_mode: NativeFileBufMode) -> Self {
         Self {
-            locked: ReentrantMutex::new(RefCell::new(NativeFileLocked::new(fd, open_flags, buf_mode))),
+            locked: Box::new(ReentrantMutex::new(RefCell::new(NativeFileLocked::new(
+                fd, open_flags, buf_mode,
+            )))),
             orientation: AtomicI8::new(0),
         }
+    }
+
+    fn lock_ptr(&self) -> *mut c_void {
+        (self.locked.as_ref() as *const ReentrantMutex<RefCell<NativeFileLocked>>).cast::<c_void>()
+            as *mut c_void
     }
 }
 
@@ -318,11 +328,13 @@ const _: () = assert!(
 impl NativeFile {
     /// Create a new `NativeFile` for the given file descriptor and flags.
     pub fn new(fd: i32, flags: u32, buf_mode: NativeFileBufMode) -> Self {
-        Self {
+        let mut file = Self {
             _io_file: _IO_FILE_Layout::new(fd),
             vtable: ptr::null_mut(),
             _frankenlibc_state: NativeFileState::new(fd, flags, buf_mode),
-        }
+        };
+        file.sync_lock_ptr();
+        file
     }
 
     fn with_locked<R>(&self, f: impl FnOnce(&NativeFileLocked) -> R) -> R {
@@ -351,6 +363,10 @@ impl NativeFile {
         self._io_file._IO_write_end = end;
     }
 
+    fn sync_lock_ptr(&mut self) {
+        self._io_file._lock = self._frankenlibc_state.lock_ptr();
+    }
+
     pub fn invalidate(&mut self) {
         self.with_locked_mut(|state| {
             state.magic = 0;
@@ -369,8 +385,11 @@ impl NativeFile {
         });
         self._io_file = _IO_FILE_Layout::new(-1);
         self._io_file._flags = 0;
+        self.sync_lock_ptr();
         self.vtable = ptr::null_mut();
-        self._frankenlibc_state.orientation.store(0, Ordering::Relaxed);
+        self._frankenlibc_state
+            .orientation
+            .store(0, Ordering::Relaxed);
     }
 
     #[inline]
@@ -464,6 +483,18 @@ impl NativeFile {
     #[inline]
     pub fn lock_ptr(&self) -> *mut c_void {
         self._io_file._lock
+    }
+
+    /// Get the `_chain` pointer for linked-list traversal.
+    #[inline]
+    pub fn chain(&self) -> *mut NativeFile {
+        self._io_file._chain.cast::<NativeFile>()
+    }
+
+    /// Set the `_chain` pointer for linked-list maintenance.
+    #[inline]
+    pub fn set_chain(&mut self, next: *mut NativeFile) {
+        self._io_file._chain = next.cast::<_IO_FILE_Layout>();
     }
 
     /// Returns `true` if this struct has the correct magic value.
@@ -801,16 +832,49 @@ impl NativeStreamRegistry {
                 file
             },
         };
+        // Note: Chain linking is deferred to ensure_stdio_chain_linked() because
+        // the registry is moved after new() returns, invalidating any pointers.
         registry
     }
 
+    /// Initialize the stdio chain links after the registry is in its final location.
+    ///
+    /// Must be called after the registry is placed in its final static location.
+    /// This links stdin/stdout/stderr via _chain and sets _IO_list_all.
+    fn ensure_stdio_chain_linked(&mut self) {
+        // Get stable pointers to the stdio streams now that registry is in its final location.
+        let stdin_ptr: *mut NativeFile = &mut self.slots[0].file;
+        let stdout_ptr: *mut NativeFile = &mut self.slots[1].file;
+        let stderr_ptr: *mut NativeFile = &mut self.slots[2].file;
+
+        // Link stdio streams: stderr -> stdout -> stdin -> NULL
+        self.slots[0].file.set_chain(ptr::null_mut()); // stdin: end of chain
+        self.slots[1].file.set_chain(stdin_ptr);       // stdout -> stdin
+        self.slots[2].file.set_chain(stdout_ptr);      // stderr -> stdout
+
+        // SAFETY: _IO_list_all is only accessed within the registry mutex.
+        unsafe {
+            _IO_list_all = stderr_ptr.cast::<c_void>();
+        }
+    }
+
     /// Register a new stream. Returns the slot index, or `None` if full.
+    ///
+    /// The new file is prepended to the `_IO_list_all` linked list.
     pub fn register(&mut self, file: NativeFile) -> Option<usize> {
         // Start from slot 3 (0/1/2 are reserved for stdin/stdout/stderr).
         for i in 3..STREAM_REGISTRY_CAPACITY {
             if self.slots[i].state == SLOT_FREE {
                 self.slots[i].state = SLOT_OCCUPIED;
                 self.slots[i].file = file;
+                // Link into _chain list: new file becomes the head.
+                // SAFETY: _IO_list_all is protected by the registry mutex.
+                let new_file_ptr: *mut NativeFile = &mut self.slots[i].file;
+                unsafe {
+                    let old_head = _IO_list_all.cast::<NativeFile>();
+                    self.slots[i].file.set_chain(old_head);
+                    _IO_list_all = new_file_ptr.cast::<c_void>();
+                }
                 return Some(i);
             }
         }
@@ -818,9 +882,33 @@ impl NativeStreamRegistry {
     }
 
     /// Unregister a stream by slot index. Returns `true` if the slot was occupied.
+    ///
+    /// The file is unlinked from the `_IO_list_all` linked list.
     pub fn unregister(&mut self, index: usize) -> bool {
         if index >= STREAM_REGISTRY_CAPACITY || self.slots[index].state != SLOT_OCCUPIED {
             return false;
+        }
+        // Unlink from _chain list.
+        let file_ptr: *mut NativeFile = &mut self.slots[index].file;
+        // SAFETY: _IO_list_all is protected by the registry mutex.
+        unsafe {
+            let mut prev: *mut NativeFile = ptr::null_mut();
+            let mut curr = _IO_list_all.cast::<NativeFile>();
+            while !curr.is_null() {
+                if curr == file_ptr {
+                    // Found it. Unlink.
+                    let next = (*curr).chain();
+                    if prev.is_null() {
+                        // Unlinking the head.
+                        _IO_list_all = next.cast::<c_void>();
+                    } else {
+                        (*prev).set_chain(next);
+                    }
+                    break;
+                }
+                prev = curr;
+                curr = (*curr).chain();
+            }
         }
         self.slots[index] = StreamSlot::empty();
         true
@@ -897,11 +985,25 @@ unsafe impl Sync for NativeStreamRegistry {}
 static NATIVE_STREAM_REGISTRY: std::sync::LazyLock<Mutex<NativeStreamRegistry>> =
     std::sync::LazyLock::new(|| Mutex::new(NativeStreamRegistry::new()));
 
+/// Flag to track if stdio chain has been initialized.
+static STDIO_CHAIN_INITIALIZED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
 /// Access the global stream registry.
+///
+/// On first access, initializes the stdio chain links.
 pub fn native_stream_registry() -> std::sync::MutexGuard<'static, NativeStreamRegistry> {
-    NATIVE_STREAM_REGISTRY
+    let mut guard = NATIVE_STREAM_REGISTRY
         .lock()
-        .unwrap_or_else(|e| e.into_inner())
+        .unwrap_or_else(|e| e.into_inner());
+
+    // Initialize stdio chain links on first access (after registry is in final location).
+    if !STDIO_CHAIN_INITIALIZED.load(std::sync::atomic::Ordering::Acquire) {
+        guard.ensure_stdio_chain_linked();
+        STDIO_CHAIN_INITIALIZED.store(true, std::sync::atomic::Ordering::Release);
+    }
+
+    guard
 }
 
 pub fn native_stdio_stream_ptr(fd: c_int) -> *mut c_void {

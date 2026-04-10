@@ -89,7 +89,7 @@ fn native_file_construct_for_fd() {
     assert_eq!(f.buffer_size(), 0);
     assert_eq!(f.offset(), 0);
     assert!(f.vtable.is_null());
-    assert!(f.lock_ptr().is_null());
+    assert!(!f.lock_ptr().is_null());
     assert_eq!(f.ungetc_value(), -1);
 }
 
@@ -187,7 +187,11 @@ fn native_file_glibc_prefix_cast_tracks_file_fields() {
     assert_eq!(projected.file._IO_write_ptr, pos.cast::<c_char>());
     assert_eq!(projected.file._IO_buf_end, end.cast::<c_char>());
     assert_eq!(projected.file._offset, 91);
-    assert_ne!(projected.file._flags & 0x0010, 0, "EOF bit should be visible");
+    assert_ne!(
+        projected.file._flags & 0x0010,
+        0,
+        "EOF bit should be visible"
+    );
     assert!(projected.vtable.is_null());
 }
 
@@ -773,4 +777,176 @@ fn iter_traversal_after_unregister() {
 
     let mut reg = native_stream_registry();
     reg.unregister(s2);
+}
+
+// ===========================================================================
+// _chain linked list tests (bd-9chy.50)
+// ===========================================================================
+
+#[test]
+fn chain_stdio_streams_are_linked() {
+    let _guard = REGISTRY_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let reg = native_stream_registry();
+
+    // stderr -> stdout -> stdin -> NULL
+    let stderr = reg.get(2).expect("stderr");
+    let stdout = reg.get(1).expect("stdout");
+    let stdin = reg.get(0).expect("stdin");
+
+    // stderr._chain should point to stdout
+    let stderr_chain = stderr.chain();
+    assert!(
+        !stderr_chain.is_null(),
+        "stderr._chain should not be null"
+    );
+    // stdout._chain should point to stdin
+    let stdout_chain = stdout.chain();
+    assert!(
+        !stdout_chain.is_null(),
+        "stdout._chain should not be null"
+    );
+    // stdin._chain should be null (end of list)
+    let stdin_chain = stdin.chain();
+    assert!(
+        stdin_chain.is_null(),
+        "stdin._chain should be null (end of list)"
+    );
+}
+
+#[test]
+fn chain_new_file_becomes_head() {
+    let _guard = REGISTRY_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let mut reg = native_stream_registry();
+
+    // Register a new file - it should become the new head
+    let f = NativeFile::new(42, file_flags::READ, NativeFileBufMode::Full);
+    let slot = reg.register(f).expect("should register");
+
+    // The new file's chain should NOT be null (it links to something)
+    let new_file = reg.get(slot).expect("new file");
+    let new_chain = new_file.chain();
+    assert!(
+        !new_chain.is_null(),
+        "new file._chain should not be null after prepend"
+    );
+
+    // Verify we can walk the chain without crashing
+    let mut count = 0;
+    let mut curr = new_file as *const NativeFile as *mut NativeFile;
+    while !curr.is_null() {
+        count += 1;
+        curr = unsafe { (*curr).chain() };
+        assert!(count <= 100, "infinite loop guard");
+    }
+    // Should have at least 4 items: new file + stderr + stdout + stdin
+    assert!(count >= 4, "chain should have at least 4 elements (new + stdio)");
+
+    reg.unregister(slot);
+}
+
+#[test]
+fn chain_unregister_unlinks_from_list() {
+    let _guard = REGISTRY_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let mut reg = native_stream_registry();
+
+    // Register two files
+    let f1 = NativeFile::new(100, file_flags::READ, NativeFileBufMode::Full);
+    let f2 = NativeFile::new(101, file_flags::READ, NativeFileBufMode::Full);
+    let s1 = reg.register(f1).expect("register f1");
+    let s2 = reg.register(f2).expect("register f2");
+
+    // Count chain length starting from f2 (the newest/head)
+    let count_before = {
+        let f2 = reg.get(s2).expect("f2");
+        let mut count = 0;
+        let mut curr = f2 as *const NativeFile as *mut NativeFile;
+        while !curr.is_null() {
+            count += 1;
+            curr = unsafe { (*curr).chain() };
+            if count > 100 { break; }
+        }
+        count
+    };
+
+    // Unregister f2 (the head)
+    reg.unregister(s2);
+
+    // f1 should still exist and be reachable
+    let f1 = reg.get(s1).expect("f1");
+    assert_eq!(f1.fd(), 100, "f1 should still exist");
+
+    // Count chain length starting from f1 (now the newest)
+    // Should be count_before - 1 (f2 was removed)
+    let count_after = {
+        let mut count = 0;
+        let mut curr = f1 as *const NativeFile as *mut NativeFile;
+        while !curr.is_null() {
+            count += 1;
+            curr = unsafe { (*curr).chain() };
+            if count > 100 { break; }
+        }
+        count
+    };
+    assert_eq!(count_after, count_before - 1, "chain should have one fewer element after unregister");
+
+    reg.unregister(s1);
+}
+
+#[test]
+fn chain_walk_visits_all_streams() {
+    let _guard = REGISTRY_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let mut reg = native_stream_registry();
+
+    // Register 3 additional files
+    let mut slots = Vec::new();
+    for i in 0..3 {
+        let f = NativeFile::new(200 + i, file_flags::READ, NativeFileBufMode::Full);
+        slots.push(reg.register(f).expect("register"));
+    }
+
+    // Walk the chain manually via _chain pointers starting from newest
+    let newest_slot = *slots.last().unwrap();
+    let head: *mut NativeFile = reg.get_mut(newest_slot).expect("head") as *mut NativeFile;
+
+    let mut count = 0;
+    let mut curr = head;
+    while !curr.is_null() {
+        count += 1;
+        // SAFETY: we're walking NativeFile pointers within the registry
+        curr = unsafe { (*curr).chain() };
+        assert!(count <= 100, "infinite loop guard");
+    }
+
+    // Should have at least: 3 new files + 3 stdio = 6
+    assert!(count >= 6, "chain walk should visit at least 6 streams (3 new + stdio)");
+
+    // Cleanup
+    for slot in slots {
+        reg.unregister(slot);
+    }
+}
+
+#[test]
+fn chain_io_file_layout_lock_ptr_is_valid() {
+    let _guard = REGISTRY_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let reg = native_stream_registry();
+
+    // Access stdout through the _IO_FILE layout
+    let stdout = reg.get(1).expect("stdout");
+    let file_ptr = (stdout as *const NativeFile).cast::<libc::FILE>();
+
+    // Read the _lock field via the _IO_FILE layout projection
+    let projected = unsafe { &*(file_ptr.cast::<IoFilePlusProjection>()) };
+
+    // The _lock pointer should be non-null and valid
+    assert!(
+        !projected.file._lock.is_null(),
+        "_lock pointer should be initialized"
+    );
+
+    // The _lock pointer should equal what NativeFile reports
+    assert_eq!(
+        projected.file._lock, stdout.lock_ptr(),
+        "_lock via layout should match lock_ptr()"
+    );
 }
