@@ -11,9 +11,12 @@
 
 #![allow(non_snake_case, non_upper_case_globals)]
 
+use std::cell::RefCell;
 use std::ffi::{c_char, c_int, c_void};
 use std::ptr;
+use std::sync::atomic::{AtomicI8, Ordering};
 
+use parking_lot::ReentrantMutex;
 use crate::stdio_abi;
 
 // ---------------------------------------------------------------------------
@@ -31,6 +34,13 @@ pub enum NativeFileBufMode {
     /// `_IONBF` — unbuffered (no buffering).
     None = 2,
 }
+
+const GLIBC_IO_MAGIC: i32 = 0xFBAD_0000u32 as i32;
+const GLIBC_IO_EOF_SEEN: i32 = 0x0010;
+const GLIBC_IO_ERR_SEEN: i32 = 0x0020;
+const GLIBC_234_IO_FILE_SIZE: usize = 216;
+const GLIBC_234_IO_FILE_PLUS_VTABLE_OFFSET: usize = GLIBC_234_IO_FILE_SIZE;
+const IO_JUMPS_EXPORT_SIZE: usize = 168;
 
 /// Bitflags for [`NativeFile::flags`].
 pub mod file_flags {
@@ -52,68 +62,240 @@ pub mod file_flags {
     pub const OWN_BUFFER: u32 = 1 << 7;
 }
 
+#[allow(non_camel_case_types)]
+#[repr(C)]
+struct _IO_FILE_Layout {
+    _flags: c_int,
+    _padding0: c_int,
+    _IO_read_ptr: *mut c_char,
+    _IO_read_end: *mut c_char,
+    _IO_read_base: *mut c_char,
+    _IO_write_base: *mut c_char,
+    _IO_write_ptr: *mut c_char,
+    _IO_write_end: *mut c_char,
+    _IO_buf_base: *mut c_char,
+    _IO_buf_end: *mut c_char,
+    _IO_save_base: *mut c_char,
+    _IO_backup_base: *mut c_char,
+    _IO_save_end: *mut c_char,
+    _markers: *mut c_void,
+    _chain: *mut _IO_FILE_Layout,
+    _fileno: c_int,
+    _flags2: c_int,
+    _old_offset: libc::off_t,
+    _cur_column: u16,
+    _vtable_offset: i8,
+    _shortbuf: [c_char; 1],
+    _padding1: [u8; 4],
+    _lock: *mut c_void,
+    _offset: libc::off64_t,
+    _codecvt: *mut c_void,
+    _wide_data: *mut c_void,
+    _freeres_list: *mut _IO_FILE_Layout,
+    _freeres_buf: *mut c_void,
+    _pad5: usize,
+    _mode: c_int,
+    _unused2: [u8; 20],
+}
+
+impl _IO_FILE_Layout {
+    fn new(fd: c_int) -> Self {
+        Self {
+            _flags: GLIBC_IO_MAGIC,
+            _padding0: 0,
+            _IO_read_ptr: ptr::null_mut(),
+            _IO_read_end: ptr::null_mut(),
+            _IO_read_base: ptr::null_mut(),
+            _IO_write_base: ptr::null_mut(),
+            _IO_write_ptr: ptr::null_mut(),
+            _IO_write_end: ptr::null_mut(),
+            _IO_buf_base: ptr::null_mut(),
+            _IO_buf_end: ptr::null_mut(),
+            _IO_save_base: ptr::null_mut(),
+            _IO_backup_base: ptr::null_mut(),
+            _IO_save_end: ptr::null_mut(),
+            _markers: ptr::null_mut(),
+            _chain: ptr::null_mut(),
+            _fileno: fd,
+            _flags2: 0,
+            _old_offset: 0,
+            _cur_column: 0,
+            _vtable_offset: 0,
+            _shortbuf: [0],
+            _padding1: [0; 4],
+            _lock: ptr::null_mut(),
+            _offset: 0,
+            _codecvt: ptr::null_mut(),
+            _wide_data: ptr::null_mut(),
+            _freeres_list: ptr::null_mut(),
+            _freeres_buf: ptr::null_mut(),
+            _pad5: 0,
+            _mode: 0,
+            _unused2: [0; 20],
+        }
+    }
+}
+
+#[allow(non_camel_case_types)]
+#[repr(C, align(16))]
+pub struct _IO_jump_t {
+    bytes: [u8; IO_JUMPS_EXPORT_SIZE],
+}
+
+impl _IO_jump_t {
+    const fn zeroed() -> Self {
+        Self {
+            bytes: [0; IO_JUMPS_EXPORT_SIZE],
+        }
+    }
+}
+
+#[cfg(test)]
+mod layout_tests {
+    use super::*;
+
+    #[test]
+    fn io_file_layout_matches_glibc_234_x86_64_offsets() {
+        assert_eq!(std::mem::size_of::<_IO_FILE_Layout>(), GLIBC_234_IO_FILE_SIZE);
+        assert_eq!(std::mem::offset_of!(_IO_FILE_Layout, _flags), 0);
+        assert_eq!(std::mem::offset_of!(_IO_FILE_Layout, _IO_read_ptr), 8);
+        assert_eq!(std::mem::offset_of!(_IO_FILE_Layout, _IO_read_end), 16);
+        assert_eq!(std::mem::offset_of!(_IO_FILE_Layout, _IO_read_base), 24);
+        assert_eq!(std::mem::offset_of!(_IO_FILE_Layout, _IO_write_base), 32);
+        assert_eq!(std::mem::offset_of!(_IO_FILE_Layout, _IO_write_ptr), 40);
+        assert_eq!(std::mem::offset_of!(_IO_FILE_Layout, _IO_write_end), 48);
+        assert_eq!(std::mem::offset_of!(_IO_FILE_Layout, _IO_buf_base), 56);
+        assert_eq!(std::mem::offset_of!(_IO_FILE_Layout, _IO_buf_end), 64);
+        assert_eq!(std::mem::offset_of!(_IO_FILE_Layout, _IO_save_base), 72);
+        assert_eq!(std::mem::offset_of!(_IO_FILE_Layout, _IO_backup_base), 80);
+        assert_eq!(std::mem::offset_of!(_IO_FILE_Layout, _IO_save_end), 88);
+        assert_eq!(std::mem::offset_of!(_IO_FILE_Layout, _markers), 96);
+        assert_eq!(std::mem::offset_of!(_IO_FILE_Layout, _chain), 104);
+        assert_eq!(std::mem::offset_of!(_IO_FILE_Layout, _fileno), 112);
+        assert_eq!(std::mem::offset_of!(_IO_FILE_Layout, _flags2), 116);
+        assert_eq!(std::mem::offset_of!(_IO_FILE_Layout, _old_offset), 120);
+        assert_eq!(std::mem::offset_of!(_IO_FILE_Layout, _cur_column), 128);
+        assert_eq!(std::mem::offset_of!(_IO_FILE_Layout, _vtable_offset), 130);
+        assert_eq!(std::mem::offset_of!(_IO_FILE_Layout, _shortbuf), 131);
+        assert_eq!(std::mem::offset_of!(_IO_FILE_Layout, _lock), 136);
+        assert_eq!(std::mem::offset_of!(_IO_FILE_Layout, _offset), 144);
+        assert_eq!(std::mem::offset_of!(_IO_FILE_Layout, _codecvt), 152);
+        assert_eq!(std::mem::offset_of!(_IO_FILE_Layout, _wide_data), 160);
+        assert_eq!(std::mem::offset_of!(_IO_FILE_Layout, _freeres_list), 168);
+        assert_eq!(std::mem::offset_of!(_IO_FILE_Layout, _freeres_buf), 176);
+        assert_eq!(std::mem::offset_of!(_IO_FILE_Layout, _pad5), 184);
+        assert_eq!(std::mem::offset_of!(_IO_FILE_Layout, _mode), 192);
+        assert_eq!(std::mem::offset_of!(_IO_FILE_Layout, _unused2), 196);
+    }
+
+    #[test]
+    fn native_file_is_a_real_io_file_plus_shape() {
+        assert_eq!(
+            std::mem::offset_of!(NativeFile, vtable),
+            GLIBC_234_IO_FILE_PLUS_VTABLE_OFFSET
+        );
+        assert!(
+            std::mem::size_of::<NativeFile>() > std::mem::size_of::<_IO_FILE_Layout>(),
+            "NativeFile must carry private state beyond the glibc _IO_FILE prefix"
+        );
+        assert!(
+            std::mem::size_of::<NativeFile>() <= 4096,
+            "NativeFile must remain slab-friendly"
+        );
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct NativeFileRuntimeMathHooks {
+    last_policy_id: u32,
+    last_action: u32,
+    last_latency_ns: u64,
+    last_sequence: u64,
+}
+
+impl NativeFileRuntimeMathHooks {
+    const fn new() -> Self {
+        Self {
+            last_policy_id: 0,
+            last_action: 0,
+            last_latency_ns: 0,
+            last_sequence: 0,
+        }
+    }
+}
+
+#[derive(Debug)]
+struct NativeFileLocked {
+    magic: u32,
+    buffer_base: *mut u8,
+    buffer_pos: *mut u8,
+    buffer_end: *mut u8,
+    buffer_capacity: usize,
+    buf_mode: NativeFileBufMode,
+    eof: bool,
+    error: bool,
+    ungetc: Option<u8>,
+    generation: u64,
+    healing_budget: u32,
+    _mbstate: libc::mbstate_t,
+    open_flags: u32,
+    fingerprint: [u8; 16],
+    runtime_math_hooks: NativeFileRuntimeMathHooks,
+}
+
+impl NativeFileLocked {
+    fn new(fd: c_int, open_flags: u32, buf_mode: NativeFileBufMode) -> Self {
+        let mut fingerprint = [0u8; 16];
+        fingerprint[..4].copy_from_slice(&NATIVE_FILE_MAGIC.to_le_bytes());
+        fingerprint[4..8].copy_from_slice(&fd.to_le_bytes());
+        fingerprint[8..12].copy_from_slice(&open_flags.to_le_bytes());
+        fingerprint[12..16].copy_from_slice(&(NATIVE_FILE_MAGIC ^ open_flags).to_le_bytes());
+
+        Self {
+            magic: NATIVE_FILE_MAGIC,
+            buffer_base: ptr::null_mut(),
+            buffer_pos: ptr::null_mut(),
+            buffer_end: ptr::null_mut(),
+            buffer_capacity: 0,
+            buf_mode,
+            eof: false,
+            error: false,
+            ungetc: None,
+            generation: 0,
+            healing_budget: 0,
+            // SAFETY: glibc's mbstate_t is a plain old data state carrier.
+            _mbstate: unsafe { std::mem::zeroed() },
+            open_flags,
+            fingerprint,
+            runtime_math_hooks: NativeFileRuntimeMathHooks::new(),
+        }
+    }
+}
+
+struct NativeFileState {
+    locked: ReentrantMutex<RefCell<NativeFileLocked>>,
+    orientation: AtomicI8,
+}
+
+impl NativeFileState {
+    fn new(fd: c_int, open_flags: u32, buf_mode: NativeFileBufMode) -> Self {
+        Self {
+            locked: ReentrantMutex::new(RefCell::new(NativeFileLocked::new(fd, open_flags, buf_mode))),
+            orientation: AtomicI8::new(0),
+        }
+    }
+}
+
 /// FrankenLibC-owned FILE structure.
 ///
-/// Programs interact with `FILE*` as an opaque pointer, so this struct does NOT
-/// need to replicate glibc's internal `_IO_FILE` field layout. However, its
-/// `size_of` must be **at least** 216 bytes (glibc `sizeof(FILE)` on x86_64) so
-/// that allocations returned by `fopen` / `fdopen` are safe for callers that
-/// store extra data adjacent to the FILE (e.g., glibc's `_IO_FILE_plus`).
-///
-/// This struct is the foundation for replacing the current stream-registry
-/// approach with direct `FILE*` pointers that FrankenLibC fully owns.
+/// The first 216 bytes exactly match glibc 2.34's `_IO_FILE` layout on
+/// x86_64. A `_IO_jump_t` pointer then makes this a true `_IO_FILE_plus`,
+/// and FrankenLibC-specific state lives behind that ABI-visible prefix.
 #[repr(C)]
 pub struct NativeFile {
-    /// Magic sentinel: `0x464b_4c43` ("FKLC") marks this as a FrankenLibC FILE.
-    pub magic: u32,
-
-    /// Underlying file descriptor (-1 = closed, -2 = memory-backed).
-    pub fd: i32,
-
-    /// Base address of the I/O buffer (null if unbuffered or not yet allocated).
-    pub buffer_base: *mut u8,
-
-    /// Current read/write position within the buffer.
-    pub buffer_pos: *mut u8,
-
-    /// One past the last valid byte in the buffer (read) or buffer capacity limit (write).
-    pub buffer_end: *mut u8,
-
-    /// Total allocated buffer size in bytes.
-    pub buffer_size: usize,
-
-    /// Bitfield of `file_flags::*` constants.
-    pub flags: u32,
-
-    /// Buffering mode.
-    pub buf_mode: NativeFileBufMode,
-
-    /// Padding for alignment after buf_mode (u8).
-    _pad0: [u8; 3],
-
-    /// One-byte pushback buffer for `ungetc`. 0xFF = empty, otherwise the byte.
-    pub ungetc_buf: i16,
-
-    /// Padding for alignment.
-    _pad1: [u8; 6],
-
-    /// Logical byte offset in the underlying file.
-    pub offset: i64,
-
-    /// Pointer to the stream vtable (read/write/seek/close/flush callbacks).
-    /// Null means use default fd-based I/O.
-    pub vtable: *const c_void,
-
-    /// Per-stream mutex for thread safety (futex-based, 0 = unlocked).
-    pub lock: i32,
-
-    /// Padding for alignment after lock.
-    _pad2: [u8; 4],
-
-    /// Reserved space to ensure sizeof(NativeFile) >= 216 bytes (glibc FILE size)
-    /// and to accommodate future fields (wide orientation state, cookie data,
-    /// _IO_list chain pointer, etc.).
-    _reserved: [u8; 136],
+    _io_file: _IO_FILE_Layout,
+    pub vtable: *mut _IO_jump_t,
+    _frankenlibc_state: NativeFileState,
 }
 
 /// Magic value identifying a [`NativeFile`] struct: "FKLC".
@@ -121,79 +303,228 @@ pub const NATIVE_FILE_MAGIC: u32 = 0x464b_4c43;
 
 // Compile-time assertions: NativeFile must be at least as large as glibc FILE (216 bytes).
 const _: () = assert!(
-    std::mem::size_of::<NativeFile>() >= 216,
-    "NativeFile must be >= 216 bytes (glibc FILE size)"
+    std::mem::size_of::<_IO_FILE_Layout>() == GLIBC_234_IO_FILE_SIZE,
+    "_IO_FILE_Layout must match glibc 2.34 FILE size"
+);
+const _: () = assert!(
+    std::mem::offset_of!(NativeFile, vtable) == GLIBC_234_IO_FILE_PLUS_VTABLE_OFFSET,
+    "NativeFile.vtable must sit immediately after the glibc _IO_FILE prefix"
+);
+const _: () = assert!(
+    std::mem::size_of::<NativeFile>() <= 4096,
+    "NativeFile must remain slab-friendly (<= 4096 bytes)"
 );
 
 impl NativeFile {
     /// Create a new `NativeFile` for the given file descriptor and flags.
     pub fn new(fd: i32, flags: u32, buf_mode: NativeFileBufMode) -> Self {
         Self {
-            magic: NATIVE_FILE_MAGIC,
-            fd,
-            buffer_base: ptr::null_mut(),
-            buffer_pos: ptr::null_mut(),
-            buffer_end: ptr::null_mut(),
-            buffer_size: 0,
-            flags,
-            buf_mode,
-            _pad0: [0; 3],
-            ungetc_buf: -1, // empty
-            _pad1: [0; 6],
-            offset: 0,
-            vtable: ptr::null(),
-            lock: 0,
-            _pad2: [0; 4],
-            _reserved: [0; 136],
+            _io_file: _IO_FILE_Layout::new(fd),
+            vtable: ptr::null_mut(),
+            _frankenlibc_state: NativeFileState::new(fd, flags, buf_mode),
         }
+    }
+
+    fn with_locked<R>(&self, f: impl FnOnce(&NativeFileLocked) -> R) -> R {
+        let guard = self._frankenlibc_state.locked.lock();
+        let state = guard.borrow();
+        f(&state)
+    }
+
+    fn with_locked_mut<R>(&self, f: impl FnOnce(&mut NativeFileLocked) -> R) -> R {
+        let guard = self._frankenlibc_state.locked.lock();
+        let mut state = guard.borrow_mut();
+        f(&mut state)
+    }
+
+    fn sync_glibc_buffer_head(&mut self, base: *mut u8, pos: *mut u8, end: *mut u8) {
+        let base = base.cast::<c_char>();
+        let pos = pos.cast::<c_char>();
+        let end = end.cast::<c_char>();
+        self._io_file._IO_buf_base = base;
+        self._io_file._IO_buf_end = end;
+        self._io_file._IO_read_base = base;
+        self._io_file._IO_read_ptr = pos;
+        self._io_file._IO_read_end = end;
+        self._io_file._IO_write_base = base;
+        self._io_file._IO_write_ptr = pos;
+        self._io_file._IO_write_end = end;
+    }
+
+    pub fn invalidate(&mut self) {
+        self.with_locked_mut(|state| {
+            state.magic = 0;
+            state.buffer_base = ptr::null_mut();
+            state.buffer_pos = ptr::null_mut();
+            state.buffer_end = ptr::null_mut();
+            state.buffer_capacity = 0;
+            state.eof = false;
+            state.error = false;
+            state.ungetc = None;
+            state.open_flags = 0;
+            state.generation = state.generation.saturating_add(1);
+            state.healing_budget = 0;
+            state.fingerprint = [0; 16];
+            state.runtime_math_hooks = NativeFileRuntimeMathHooks::new();
+        });
+        self._io_file = _IO_FILE_Layout::new(-1);
+        self._io_file._flags = 0;
+        self.vtable = ptr::null_mut();
+        self._frankenlibc_state.orientation.store(0, Ordering::Relaxed);
+    }
+
+    #[inline]
+    pub fn magic(&self) -> u32 {
+        self.with_locked(|state| state.magic)
+    }
+
+    #[inline]
+    pub fn fd(&self) -> i32 {
+        self._io_file._fileno
+    }
+
+    #[inline]
+    pub fn set_fd(&mut self, fd: i32) {
+        self._io_file._fileno = fd;
+    }
+
+    #[inline]
+    pub fn offset(&self) -> i64 {
+        self._io_file._offset
+    }
+
+    #[inline]
+    pub fn set_offset(&mut self, offset: i64) {
+        self._io_file._offset = offset;
+        self._io_file._old_offset = offset as libc::off_t;
+    }
+
+    #[inline]
+    pub fn buf_mode(&self) -> NativeFileBufMode {
+        self.with_locked(|state| state.buf_mode)
+    }
+
+    #[inline]
+    pub fn flags(&self) -> u32 {
+        self.with_locked(|state| {
+            let mut flags = state.open_flags;
+            if state.eof {
+                flags |= file_flags::EOF;
+            }
+            if state.error {
+                flags |= file_flags::ERROR;
+            }
+            flags
+        })
+    }
+
+    #[inline]
+    pub fn buffer_base(&self) -> *mut u8 {
+        self._io_file._IO_buf_base.cast::<u8>()
+    }
+
+    #[inline]
+    pub fn buffer_pos(&self) -> *mut u8 {
+        self._io_file._IO_write_ptr.cast::<u8>()
+    }
+
+    #[inline]
+    pub fn buffer_end(&self) -> *mut u8 {
+        self._io_file._IO_buf_end.cast::<u8>()
+    }
+
+    #[inline]
+    pub fn buffer_size(&self) -> usize {
+        self.with_locked(|state| state.buffer_capacity)
+    }
+
+    #[inline]
+    pub fn set_buffer_state(&mut self, base: *mut u8, pos: *mut u8, end: *mut u8, size: usize) {
+        self.with_locked_mut(|state| {
+            state.buffer_base = base;
+            state.buffer_pos = pos;
+            state.buffer_end = end;
+            state.buffer_capacity = size;
+        });
+        self.sync_glibc_buffer_head(base, pos, end);
+    }
+
+    #[inline]
+    pub fn ungetc_value(&self) -> i16 {
+        self.with_locked(|state| state.ungetc.map_or(-1, i16::from))
+    }
+
+    #[inline]
+    pub fn set_ungetc_value(&mut self, value: i16) {
+        self.with_locked_mut(|state| {
+            state.ungetc = u8::try_from(value).ok();
+        });
+    }
+
+    #[inline]
+    pub fn lock_ptr(&self) -> *mut c_void {
+        self._io_file._lock
     }
 
     /// Returns `true` if this struct has the correct magic value.
     #[inline]
     pub fn is_valid(&self) -> bool {
-        self.magic == NATIVE_FILE_MAGIC
+        self.magic() == NATIVE_FILE_MAGIC
     }
 
     /// Returns `true` if the EOF flag is set.
     #[inline]
     pub fn is_eof(&self) -> bool {
-        self.flags & file_flags::EOF != 0
+        self._io_file._flags & GLIBC_IO_EOF_SEEN != 0
     }
 
     /// Returns `true` if the error flag is set.
     #[inline]
     pub fn is_error(&self) -> bool {
-        self.flags & file_flags::ERROR != 0
+        self._io_file._flags & GLIBC_IO_ERR_SEEN != 0
     }
 
     /// Set the EOF flag.
     #[inline]
     pub fn set_eof(&mut self) {
-        self.flags |= file_flags::EOF;
+        self._io_file._flags |= GLIBC_IO_EOF_SEEN;
+        self.with_locked_mut(|state| state.eof = true);
     }
 
     /// Set the error flag.
     #[inline]
     pub fn set_error(&mut self) {
-        self.flags |= file_flags::ERROR;
+        self._io_file._flags |= GLIBC_IO_ERR_SEEN;
+        self.with_locked_mut(|state| state.error = true);
     }
 
     /// Clear both EOF and error flags (for `clearerr`).
     #[inline]
     pub fn clear_errors(&mut self) {
-        self.flags &= !(file_flags::EOF | file_flags::ERROR);
+        self._io_file._flags &= !(GLIBC_IO_EOF_SEEN | GLIBC_IO_ERR_SEEN);
+        self.with_locked_mut(|state| {
+            state.eof = false;
+            state.error = false;
+        });
+    }
+
+    /// Clear only the EOF flag without disturbing the error bit.
+    #[inline]
+    pub fn clear_eof(&mut self) {
+        self._io_file._flags &= !GLIBC_IO_EOF_SEEN;
+        self.with_locked_mut(|state| state.eof = false);
     }
 
     /// Returns `true` if the stream is readable.
     #[inline]
     pub fn is_readable(&self) -> bool {
-        self.flags & file_flags::READ != 0
+        self.with_locked(|state| state.open_flags & file_flags::READ != 0)
     }
 
     /// Returns `true` if the stream is writable.
     #[inline]
     pub fn is_writable(&self) -> bool {
-        self.flags & file_flags::WRITE != 0
+        self.with_locked(|state| state.open_flags & file_flags::WRITE != 0)
     }
 
     /// Update the exported buffering metadata for externally visible FILE* globals.
@@ -205,29 +536,35 @@ impl NativeFile {
         user_buf: *mut u8,
         size: usize,
     ) {
-        self.buf_mode = mode;
-        self.buffer_size = size;
+        self.with_locked_mut(|state| {
+            state.buf_mode = mode;
+            state.buffer_capacity = size;
+            if matches!(mode, NativeFileBufMode::None) || size == 0 || user_buf.is_null() {
+                state.buffer_base = ptr::null_mut();
+                state.buffer_pos = ptr::null_mut();
+                state.buffer_end = ptr::null_mut();
+                state.open_flags &= !file_flags::OWN_BUFFER;
+            } else {
+                state.buffer_base = user_buf;
+                state.buffer_pos = user_buf;
+                // SAFETY: caller provided a buffer pointer with `size` bytes of storage.
+                state.buffer_end = unsafe { user_buf.add(size) };
+                state.open_flags &= !file_flags::OWN_BUFFER;
+            }
+        });
         if matches!(mode, NativeFileBufMode::None) || size == 0 {
-            self.buffer_base = ptr::null_mut();
-            self.buffer_pos = ptr::null_mut();
-            self.buffer_end = ptr::null_mut();
-            self.flags &= !file_flags::OWN_BUFFER;
+            self.sync_glibc_buffer_head(ptr::null_mut(), ptr::null_mut(), ptr::null_mut());
             return;
         }
 
         if user_buf.is_null() {
-            self.buffer_base = ptr::null_mut();
-            self.buffer_pos = ptr::null_mut();
-            self.buffer_end = ptr::null_mut();
-            self.flags &= !file_flags::OWN_BUFFER;
+            self.sync_glibc_buffer_head(ptr::null_mut(), ptr::null_mut(), ptr::null_mut());
             return;
         }
 
-        self.buffer_base = user_buf;
-        self.buffer_pos = user_buf;
         // SAFETY: caller provided a buffer pointer with `size` bytes of storage.
-        self.buffer_end = unsafe { user_buf.add(size) };
-        self.flags &= !file_flags::OWN_BUFFER;
+        let end = unsafe { user_buf.add(size) };
+        self.sync_glibc_buffer_head(user_buf, user_buf, end);
     }
 }
 
@@ -266,7 +603,7 @@ pub static DEFAULT_FD_VTABLE: NativeFileVtable = NativeFileVtable {
 /// `file` must be a valid `NativeFile` pointer with a valid fd.
 /// `buf` must be writable for `count` bytes.
 unsafe fn vtable_fd_read(file: *mut NativeFile, buf: *mut u8, count: usize) -> isize {
-    let fd = unsafe { (*file).fd };
+    let fd = unsafe { (*file).fd() };
     if fd < 0 {
         return -1;
     }
@@ -280,7 +617,10 @@ unsafe fn vtable_fd_read(file: *mut NativeFile, buf: *mut u8, count: usize) -> i
     }
     let n = ret as isize;
     // Advance the logical offset.
-    unsafe { (*file).offset += n as i64 };
+    unsafe {
+        let next = (*file).offset().saturating_add(n as i64);
+        (*file).set_offset(next);
+    }
     n
 }
 
@@ -290,7 +630,7 @@ unsafe fn vtable_fd_read(file: *mut NativeFile, buf: *mut u8, count: usize) -> i
 /// `file` must be a valid `NativeFile` pointer with a valid fd.
 /// `buf` must be readable for `count` bytes.
 unsafe fn vtable_fd_write(file: *mut NativeFile, buf: *const u8, count: usize) -> isize {
-    let fd = unsafe { (*file).fd };
+    let fd = unsafe { (*file).fd() };
     if fd < 0 {
         return -1;
     }
@@ -300,7 +640,10 @@ unsafe fn vtable_fd_write(file: *mut NativeFile, buf: *const u8, count: usize) -
         return -1;
     }
     let n = ret as isize;
-    unsafe { (*file).offset += n as i64 };
+    unsafe {
+        let next = (*file).offset().saturating_add(n as i64);
+        (*file).set_offset(next);
+    }
     n
 }
 
@@ -309,7 +652,7 @@ unsafe fn vtable_fd_write(file: *mut NativeFile, buf: *const u8, count: usize) -
 /// # Safety
 /// `file` must be a valid `NativeFile` pointer with a valid fd.
 unsafe fn vtable_fd_seek(file: *mut NativeFile, offset: i64, whence: c_int) -> i64 {
-    let fd = unsafe { (*file).fd };
+    let fd = unsafe { (*file).fd() };
     if fd < 0 {
         return -1;
     }
@@ -319,9 +662,13 @@ unsafe fn vtable_fd_seek(file: *mut NativeFile, offset: i64, whence: c_int) -> i
         return -1;
     }
     let new_offset = ret as i64;
-    unsafe { (*file).offset = new_offset };
+    unsafe { (*file).set_offset(new_offset) };
     // Clear EOF on successful seek.
-    unsafe { (*file).flags &= !file_flags::EOF };
+    unsafe {
+        if (*file).is_eof() {
+            (*file).clear_eof();
+        }
+    }
     new_offset
 }
 
@@ -332,12 +679,12 @@ unsafe fn vtable_fd_seek(file: *mut NativeFile, offset: i64, whence: c_int) -> i
 unsafe fn vtable_fd_close(file: *mut NativeFile) -> c_int {
     // Flush any pending writes first.
     let flush_rc = unsafe { vtable_fd_flush(file) };
-    let fd = unsafe { (*file).fd };
+    let fd = unsafe { (*file).fd() };
     if fd < 0 {
         return if flush_rc != 0 { -1 } else { 0 };
     }
     let ret = unsafe { libc::syscall(libc::SYS_close, fd) };
-    unsafe { (*file).fd = -1 };
+    unsafe { (*file).set_fd(-1) };
     if ret < 0 || flush_rc != 0 { -1 } else { 0 }
 }
 
@@ -349,16 +696,16 @@ unsafe fn vtable_fd_close(file: *mut NativeFile) -> c_int {
 /// # Safety
 /// `file` must be a valid `NativeFile` pointer.
 unsafe fn vtable_fd_flush(file: *mut NativeFile) -> c_int {
-    let base = unsafe { (*file).buffer_base };
-    let pos = unsafe { (*file).buffer_pos };
+    let base = unsafe { (*file).buffer_base() };
+    let pos = unsafe { (*file).buffer_pos() };
     if base.is_null() || pos <= base {
         return 0; // Nothing to flush.
     }
     // Only flush if the stream is writable (buffered write data exists).
-    if unsafe { (*file).flags } & file_flags::WRITE == 0 {
+    if !unsafe { (*file).is_writable() } {
         return 0;
     }
-    let fd = unsafe { (*file).fd };
+    let fd = unsafe { (*file).fd() };
     if fd < 0 {
         return -1;
     }
@@ -374,7 +721,8 @@ unsafe fn vtable_fd_flush(file: *mut NativeFile) -> c_int {
         written += ret as usize;
     }
     // Reset buffer position after flush.
-    unsafe { (*file).buffer_pos = base };
+    let size = unsafe { (*file).buffer_size() };
+    unsafe { (*file).set_buffer_state(base, base, (*file).buffer_end(), size) };
     0
 }
 
@@ -399,27 +747,12 @@ struct StreamSlot {
 }
 
 impl StreamSlot {
-    const fn empty() -> Self {
+    fn empty() -> Self {
+        let mut file = NativeFile::new(-1, 0, NativeFileBufMode::None);
+        file.invalidate();
         Self {
             state: SLOT_FREE,
-            file: NativeFile {
-                magic: 0,
-                fd: -1,
-                buffer_base: ptr::null_mut(),
-                buffer_pos: ptr::null_mut(),
-                buffer_end: ptr::null_mut(),
-                buffer_size: 0,
-                flags: 0,
-                buf_mode: NativeFileBufMode::None,
-                _pad0: [0; 3],
-                ungetc_buf: -1,
-                _pad1: [0; 6],
-                offset: 0,
-                vtable: ptr::null(),
-                lock: 0,
-                _pad2: [0; 4],
-                _reserved: [0; 136],
-            },
+            file,
         }
     }
 }
@@ -441,19 +774,14 @@ impl NativeStreamRegistry {
     /// Create a new registry with stdin/stdout/stderr pre-registered.
     fn new() -> Self {
         let mut registry = Self {
-            slots: {
-                // Initialize all slots as empty.
-                // SAFETY: StreamSlot has no non-trivial drop and all-zeros is valid.
-                const EMPTY: StreamSlot = StreamSlot::empty();
-                [EMPTY; STREAM_REGISTRY_CAPACITY]
-            },
+            slots: std::array::from_fn(|_| StreamSlot::empty()),
         };
         // Pre-register stdin (fd 0), stdout (fd 1), stderr (fd 2).
         registry.slots[0] = StreamSlot {
             state: SLOT_OCCUPIED,
             file: {
                 let mut file = NativeFile::new(0, file_flags::READ, NativeFileBufMode::Full);
-                file.vtable = &DEFAULT_FD_VTABLE as *const _ as *const c_void;
+                file.vtable = ptr::addr_of_mut!(_IO_file_jumps);
                 file
             },
         };
@@ -461,7 +789,7 @@ impl NativeStreamRegistry {
             state: SLOT_OCCUPIED,
             file: {
                 let mut file = NativeFile::new(1, file_flags::WRITE, NativeFileBufMode::Line);
-                file.vtable = &DEFAULT_FD_VTABLE as *const _ as *const c_void;
+                file.vtable = ptr::addr_of_mut!(_IO_file_jumps);
                 file
             },
         };
@@ -469,7 +797,7 @@ impl NativeStreamRegistry {
             state: SLOT_OCCUPIED,
             file: {
                 let mut file = NativeFile::new(2, file_flags::WRITE, NativeFileBufMode::None);
-                file.vtable = &DEFAULT_FD_VTABLE as *const _ as *const c_void;
+                file.vtable = ptr::addr_of_mut!(_IO_file_jumps);
                 file
             },
         };
@@ -494,9 +822,7 @@ impl NativeStreamRegistry {
         if index >= STREAM_REGISTRY_CAPACITY || self.slots[index].state != SLOT_OCCUPIED {
             return false;
         }
-        self.slots[index].state = SLOT_FREE;
-        self.slots[index].file.magic = 0;
-        self.slots[index].file.fd = -1;
+        self.slots[index] = StreamSlot::empty();
         true
     }
 
@@ -524,9 +850,7 @@ impl NativeStreamRegistry {
     pub fn flush_all(&mut self) -> usize {
         let mut errors = 0;
         for i in 0..STREAM_REGISTRY_CAPACITY {
-            if self.slots[i].state == SLOT_OCCUPIED
-                && self.slots[i].file.flags & file_flags::WRITE != 0
-            {
+            if self.slots[i].state == SLOT_OCCUPIED && self.slots[i].file.is_writable() {
                 let file_ptr: *mut NativeFile = &mut self.slots[i].file;
                 // SAFETY: file_ptr is a valid pointer to our registry-owned NativeFile.
                 let rc = unsafe { vtable_fd_flush(file_ptr) };
@@ -621,21 +945,6 @@ pub unsafe fn configure_native_stdio_stream(
 // Global variable symbols
 // ---------------------------------------------------------------------------
 
-const IO_JUMPS_EXPORT_SIZE: usize = 168;
-
-#[repr(C, align(16))]
-pub struct IoJumpsExport {
-    bytes: [u8; IO_JUMPS_EXPORT_SIZE],
-}
-
-impl IoJumpsExport {
-    const fn zeroed() -> Self {
-        Self {
-            bytes: [0; IO_JUMPS_EXPORT_SIZE],
-        }
-    }
-}
-
 /// `_IO_list_all` — head of the linked list of all open FILE streams.
 /// Native-owned: always points to our own list (null until streams are opened).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -644,12 +953,12 @@ pub static mut _IO_list_all: *mut c_void = std::ptr::null_mut();
 /// `_IO_file_jumps` — default FILE vtable for regular files.
 /// Native-owned: zeroed vtable (our stdio layer uses its own vtable dispatch).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub static mut _IO_file_jumps: IoJumpsExport = IoJumpsExport::zeroed();
+pub static mut _IO_file_jumps: _IO_jump_t = _IO_jump_t::zeroed();
 
 /// `_IO_wfile_jumps` — default FILE vtable for wide-oriented files.
 /// Native-owned: zeroed vtable (our stdio layer uses its own vtable dispatch).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub static mut _IO_wfile_jumps: IoJumpsExport = IoJumpsExport::zeroed();
+pub static mut _IO_wfile_jumps: _IO_jump_t = _IO_jump_t::zeroed();
 
 /// Legacy bootstrap hook — now a no-op (bd-zh1y.3.4).
 ///

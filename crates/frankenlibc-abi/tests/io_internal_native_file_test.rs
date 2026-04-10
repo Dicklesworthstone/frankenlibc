@@ -1,14 +1,56 @@
 #![cfg(target_os = "linux")]
 
-//! Integration tests for `NativeFile` struct and vtable (bd-zh1y.3.1, bd-zh1y.3.2).
+//! Integration tests for the native `_IO_FILE_plus`-shaped stdio substrate.
 
-use std::ffi::c_int;
+use std::ffi::{c_char, c_int, c_void};
 
 use frankenlibc_abi::io_internal_abi::{
     _IO_iter_begin, _IO_iter_end, _IO_iter_file, _IO_iter_next, DEFAULT_FD_VTABLE,
     NATIVE_FILE_MAGIC, NativeFile, NativeFileBufMode, NativeFileVtable, file_flags,
     native_stream_registry,
 };
+
+#[allow(non_snake_case)]
+#[repr(C)]
+struct IoFileProjection {
+    _flags: c_int,
+    _padding0: c_int,
+    _IO_read_ptr: *mut c_char,
+    _IO_read_end: *mut c_char,
+    _IO_read_base: *mut c_char,
+    _IO_write_base: *mut c_char,
+    _IO_write_ptr: *mut c_char,
+    _IO_write_end: *mut c_char,
+    _IO_buf_base: *mut c_char,
+    _IO_buf_end: *mut c_char,
+    _IO_save_base: *mut c_char,
+    _IO_backup_base: *mut c_char,
+    _IO_save_end: *mut c_char,
+    _markers: *mut c_void,
+    _chain: *mut IoFileProjection,
+    _fileno: c_int,
+    _flags2: c_int,
+    _old_offset: libc::off_t,
+    _cur_column: u16,
+    _vtable_offset: i8,
+    _shortbuf: [c_char; 1],
+    _padding1: [u8; 4],
+    _lock: *mut c_void,
+    _offset: libc::off64_t,
+    _codecvt: *mut c_void,
+    _wide_data: *mut c_void,
+    _freeres_list: *mut IoFileProjection,
+    _freeres_buf: *mut c_void,
+    _pad5: usize,
+    _mode: c_int,
+    _unused2: [u8; 20],
+}
+
+#[repr(C)]
+struct IoFilePlusProjection {
+    file: IoFileProjection,
+    vtable: *mut c_void,
+}
 
 // ---------------------------------------------------------------------------
 // Size and layout
@@ -25,7 +67,6 @@ fn native_file_size_at_least_glibc() {
 
 #[test]
 fn native_file_is_repr_c() {
-    // Verify the struct has C layout by checking alignment.
     assert!(std::mem::align_of::<NativeFile>() >= 4);
 }
 
@@ -37,19 +78,19 @@ fn native_file_is_repr_c() {
 fn native_file_construct_for_fd() {
     let f = NativeFile::new(3, file_flags::READ, NativeFileBufMode::Full);
     assert!(f.is_valid());
-    assert_eq!(f.magic, NATIVE_FILE_MAGIC);
-    assert_eq!(f.fd, 3);
+    assert_eq!(f.magic(), NATIVE_FILE_MAGIC);
+    assert_eq!(f.fd(), 3);
     assert!(f.is_readable());
     assert!(!f.is_writable());
     assert!(!f.is_eof());
     assert!(!f.is_error());
-    assert_eq!(f.buf_mode, NativeFileBufMode::Full);
-    assert!(f.buffer_base.is_null());
-    assert_eq!(f.buffer_size, 0);
-    assert_eq!(f.offset, 0);
+    assert_eq!(f.buf_mode(), NativeFileBufMode::Full);
+    assert!(f.buffer_base().is_null());
+    assert_eq!(f.buffer_size(), 0);
+    assert_eq!(f.offset(), 0);
     assert!(f.vtable.is_null());
-    assert_eq!(f.lock, 0);
-    assert_eq!(f.ungetc_buf, -1);
+    assert!(f.lock_ptr().is_null());
+    assert_eq!(f.ungetc_value(), -1);
 }
 
 // ---------------------------------------------------------------------------
@@ -65,8 +106,8 @@ fn native_file_write_flags() {
     );
     assert!(f.is_writable());
     assert!(!f.is_readable());
-    assert_eq!(f.flags & file_flags::APPEND, file_flags::APPEND);
-    assert_eq!(f.buf_mode, NativeFileBufMode::Line);
+    assert_eq!(f.flags() & file_flags::APPEND, file_flags::APPEND);
+    assert_eq!(f.buf_mode(), NativeFileBufMode::Line);
 }
 
 #[test]
@@ -106,19 +147,48 @@ fn native_file_eof_and_error_flags() {
 #[test]
 fn native_file_buffer_state() {
     let mut f = NativeFile::new(5, file_flags::READ, NativeFileBufMode::Full);
-    assert!(f.buffer_base.is_null());
-    assert_eq!(f.buffer_size, 0);
+    assert!(f.buffer_base().is_null());
+    assert_eq!(f.buffer_size(), 0);
 
-    // Simulate assigning a buffer.
     let mut buf = [0u8; 4096];
-    f.buffer_base = buf.as_mut_ptr();
-    f.buffer_pos = f.buffer_base;
-    f.buffer_end = unsafe { f.buffer_base.add(4096) };
-    f.buffer_size = 4096;
+    let base = buf.as_mut_ptr();
+    let end = unsafe { base.add(buf.len()) };
+    f.set_buffer_state(base, base, end, buf.len());
 
-    assert!(!f.buffer_base.is_null());
-    assert_eq!(f.buffer_size, 4096);
-    assert_eq!(f.buffer_pos, f.buffer_base);
+    assert!(!f.buffer_base().is_null());
+    assert_eq!(f.buffer_size(), 4096);
+    assert_eq!(f.buffer_pos(), f.buffer_base());
+    assert_eq!(f.buffer_end(), end);
+}
+
+#[test]
+fn native_file_glibc_prefix_cast_tracks_file_fields() {
+    assert_eq!(std::mem::size_of::<IoFileProjection>(), 216);
+    assert_eq!(std::mem::offset_of!(IoFilePlusProjection, vtable), 216);
+
+    let mut f = NativeFile::new(
+        7,
+        file_flags::READ | file_flags::WRITE,
+        NativeFileBufMode::Full,
+    );
+    let mut buf = [0u8; 64];
+    let base = buf.as_mut_ptr();
+    let pos = unsafe { base.add(11) };
+    let end = unsafe { base.add(buf.len()) };
+    f.set_buffer_state(base, pos, end, buf.len());
+    f.set_offset(91);
+    f.set_eof();
+
+    let file_ptr = (&mut f as *mut NativeFile).cast::<libc::FILE>();
+    let projected = unsafe { &*(file_ptr.cast::<IoFilePlusProjection>()) };
+
+    assert_eq!(projected.file._fileno, 7);
+    assert_eq!(projected.file._IO_buf_base, base.cast::<c_char>());
+    assert_eq!(projected.file._IO_write_ptr, pos.cast::<c_char>());
+    assert_eq!(projected.file._IO_buf_end, end.cast::<c_char>());
+    assert_eq!(projected.file._offset, 91);
+    assert_ne!(projected.file._flags & 0x0010, 0, "EOF bit should be visible");
+    assert!(projected.vtable.is_null());
 }
 
 // ---------------------------------------------------------------------------
@@ -129,7 +199,7 @@ fn native_file_buffer_state() {
 fn native_file_closed_fd() {
     let f = NativeFile::new(-1, 0, NativeFileBufMode::None);
     assert!(f.is_valid());
-    assert_eq!(f.fd, -1);
+    assert_eq!(f.fd(), -1);
     assert!(!f.is_readable());
     assert!(!f.is_writable());
 }
@@ -142,7 +212,7 @@ fn native_file_memory_backed_fd() {
         NativeFileBufMode::Full,
     );
     assert!(f.is_valid());
-    assert_eq!(f.fd, -2);
+    assert_eq!(f.fd(), -2);
     assert!(f.is_readable());
     assert!(f.is_writable());
 }
@@ -155,7 +225,7 @@ fn native_file_memory_backed_fd() {
 fn native_file_invalid_magic() {
     let mut f = NativeFile::new(0, 0, NativeFileBufMode::None);
     assert!(f.is_valid());
-    f.magic = 0;
+    f.invalidate();
     assert!(!f.is_valid());
 }
 
@@ -166,13 +236,13 @@ fn native_file_invalid_magic() {
 #[test]
 fn native_file_unbuffered_mode() {
     let f = NativeFile::new(2, file_flags::WRITE, NativeFileBufMode::None);
-    assert_eq!(f.buf_mode, NativeFileBufMode::None);
+    assert_eq!(f.buf_mode(), NativeFileBufMode::None);
 }
 
 #[test]
 fn native_file_line_buffered_mode() {
     let f = NativeFile::new(1, file_flags::WRITE, NativeFileBufMode::Line);
-    assert_eq!(f.buf_mode, NativeFileBufMode::Line);
+    assert_eq!(f.buf_mode(), NativeFileBufMode::Line);
 }
 
 // ---------------------------------------------------------------------------
@@ -182,21 +252,20 @@ fn native_file_line_buffered_mode() {
 #[test]
 fn native_file_ungetc_buf_initially_empty() {
     let f = NativeFile::new(0, file_flags::READ, NativeFileBufMode::Full);
-    assert_eq!(f.ungetc_buf, -1); // -1 = empty
+    assert_eq!(f.ungetc_value(), -1);
 }
 
 #[test]
 fn native_file_ungetc_buf_stores_byte() {
     let mut f = NativeFile::new(0, file_flags::READ, NativeFileBufMode::Full);
-    f.ungetc_buf = b'A' as i16;
-    assert_eq!(f.ungetc_buf, 65);
+    f.set_ungetc_value(b'A' as i16);
+    assert_eq!(f.ungetc_value(), 65);
 }
 
 // ===========================================================================
-// NativeFileVtable tests (bd-zh1y.3.2)
+// NativeFileVtable tests
 // ===========================================================================
 
-/// Helper: create a temp file fd via memfd_create syscall.
 fn temp_memfd() -> c_int {
     let name = b"vtable_test\0";
     let fd = unsafe { libc::syscall(libc::SYS_memfd_create, name.as_ptr(), 0) } as c_int;
@@ -206,7 +275,6 @@ fn temp_memfd() -> c_int {
 
 #[test]
 fn vtable_default_has_all_fields() {
-    // Smoke test: DEFAULT_FD_VTABLE is a static with all 5 function pointers.
     let _read = DEFAULT_FD_VTABLE.read;
     let _write = DEFAULT_FD_VTABLE.write;
     let _seek = DEFAULT_FD_VTABLE.seek;
@@ -216,7 +284,6 @@ fn vtable_default_has_all_fields() {
 
 #[test]
 fn vtable_struct_size() {
-    // 5 function pointers at 8 bytes each on x86_64.
     assert_eq!(
         std::mem::size_of::<NativeFileVtable>(),
         5 * std::mem::size_of::<usize>()
@@ -233,7 +300,6 @@ fn vtable_write_and_read_roundtrip() {
     );
     let vtable = &DEFAULT_FD_VTABLE;
 
-    // Write data.
     let data = b"Hello, vtable!";
     let written = unsafe { (vtable.write)(&mut f, data.as_ptr(), data.len()) };
     assert_eq!(
@@ -241,25 +307,22 @@ fn vtable_write_and_read_roundtrip() {
         data.len() as isize,
         "write should return bytes written"
     );
-    assert_eq!(f.offset, data.len() as i64, "offset should advance");
+    assert_eq!(f.offset(), data.len() as i64, "offset should advance");
     assert!(!f.is_error());
 
-    // Seek back to beginning.
     let pos = unsafe { (vtable.seek)(&mut f, 0, libc::SEEK_SET) };
     assert_eq!(pos, 0, "seek to beginning should return 0");
-    assert_eq!(f.offset, 0);
+    assert_eq!(f.offset(), 0);
 
-    // Read data back.
     let mut buf = [0u8; 64];
     let read = unsafe { (vtable.read)(&mut f, buf.as_mut_ptr(), buf.len()) };
     assert_eq!(read, data.len() as isize, "read should return same bytes");
     assert_eq!(&buf[..data.len()], data);
-    assert_eq!(f.offset, data.len() as i64);
+    assert_eq!(f.offset(), data.len() as i64);
 
-    // Close.
     let rc = unsafe { (vtable.close)(&mut f) };
     assert_eq!(rc, 0, "close should succeed");
-    assert_eq!(f.fd, -1, "fd should be -1 after close");
+    assert_eq!(f.fd(), -1, "fd should be -1 after close");
 }
 
 #[test]
@@ -268,7 +331,6 @@ fn vtable_read_eof() {
     let mut f = NativeFile::new(fd, file_flags::READ, NativeFileBufMode::None);
     let vtable = &DEFAULT_FD_VTABLE;
 
-    // Read from empty memfd => EOF.
     let mut buf = [0u8; 16];
     let read = unsafe { (vtable.read)(&mut f, buf.as_mut_ptr(), buf.len()) };
     assert_eq!(read, 0, "reading empty fd should return 0");
@@ -287,15 +349,12 @@ fn vtable_seek_end() {
     );
     let vtable = &DEFAULT_FD_VTABLE;
 
-    // Write some data.
     let data = b"0123456789";
     unsafe { (vtable.write)(&mut f, data.as_ptr(), data.len()) };
 
-    // Seek to end.
     let pos = unsafe { (vtable.seek)(&mut f, 0, libc::SEEK_END) };
     assert_eq!(pos, 10, "SEEK_END should be at byte 10");
 
-    // Seek relative.
     let pos = unsafe { (vtable.seek)(&mut f, -5, libc::SEEK_CUR) };
     assert_eq!(pos, 5, "SEEK_CUR -5 from 10 should be 5");
 
@@ -308,12 +367,10 @@ fn vtable_seek_clears_eof() {
     let mut f = NativeFile::new(fd, file_flags::READ, NativeFileBufMode::None);
     let vtable = &DEFAULT_FD_VTABLE;
 
-    // Trigger EOF.
     let mut buf = [0u8; 1];
     unsafe { (vtable.read)(&mut f, buf.as_mut_ptr(), 1) };
     assert!(f.is_eof());
 
-    // Seek clears EOF.
     unsafe { (vtable.seek)(&mut f, 0, libc::SEEK_SET) };
     assert!(!f.is_eof(), "seek should clear EOF");
 
@@ -330,25 +387,23 @@ fn vtable_flush_writes_buffer() {
     );
     let vtable = &DEFAULT_FD_VTABLE;
 
-    // Set up a buffer and simulate buffered writes.
     let mut buf = [0u8; 128];
     let data = b"buffered data";
     buf[..data.len()].copy_from_slice(data);
-    f.buffer_base = buf.as_mut_ptr();
-    f.buffer_pos = unsafe { buf.as_mut_ptr().add(data.len()) };
-    f.buffer_end = unsafe { buf.as_mut_ptr().add(128) };
-    f.buffer_size = 128;
+    let base = buf.as_mut_ptr();
+    let pos = unsafe { base.add(data.len()) };
+    let end = unsafe { base.add(buf.len()) };
+    f.set_buffer_state(base, pos, end, buf.len());
 
-    // Flush should write the buffered data to fd.
     let rc = unsafe { (vtable.flush)(&mut f) };
     assert_eq!(rc, 0, "flush should succeed");
     assert_eq!(
-        f.buffer_pos, f.buffer_base,
+        f.buffer_pos(),
+        f.buffer_base(),
         "buffer_pos should reset after flush"
     );
     assert!(!f.is_error());
 
-    // Verify data was written by seeking back and reading.
     let seek_pos = unsafe { libc::syscall(libc::SYS_lseek, fd, 0i64, libc::SEEK_SET) };
     assert_eq!(seek_pos, 0);
 
@@ -357,9 +412,7 @@ fn vtable_flush_writes_buffer() {
     assert_eq!(n, data.len() as i64);
     assert_eq!(&read_buf[..data.len()], data);
 
-    // Clean up: close fd (buffer is on the stack and will be dropped with `f`).
     unsafe { libc::syscall(libc::SYS_close, fd) };
-    let _ = f;
 }
 
 #[test]
@@ -368,28 +421,23 @@ fn vtable_close_flushes_before_closing() {
     let mut f = NativeFile::new(fd, file_flags::WRITE, NativeFileBufMode::Full);
     let vtable = &DEFAULT_FD_VTABLE;
 
-    // Simulate a heap-allocated buffer with pending data.
     let layout = std::alloc::Layout::from_size_align(256, 8).unwrap();
     let heap_buf = unsafe { std::alloc::alloc(layout) };
     assert!(!heap_buf.is_null());
 
     let data = b"close-flush test";
     unsafe { std::ptr::copy_nonoverlapping(data.as_ptr(), heap_buf, data.len()) };
-    f.buffer_base = heap_buf;
-    f.buffer_pos = unsafe { heap_buf.add(data.len()) };
-    f.buffer_end = unsafe { heap_buf.add(256) };
-    f.buffer_size = 256;
+    let pos = unsafe { heap_buf.add(data.len()) };
+    let end = unsafe { heap_buf.add(256) };
+    f.set_buffer_state(heap_buf, pos, end, 256);
 
-    // Dup the fd to verify data after close.
     let verify_fd = unsafe { libc::syscall(libc::SYS_dup, fd) } as c_int;
     assert!(verify_fd >= 0);
 
-    // Close should flush + close fd.
     let rc = unsafe { (vtable.close)(&mut f) };
     assert_eq!(rc, 0);
-    assert_eq!(f.fd, -1);
+    assert_eq!(f.fd(), -1);
 
-    // Verify data via the dup'd fd.
     unsafe { libc::syscall(libc::SYS_lseek, verify_fd, 0i64, libc::SEEK_SET) };
     let mut read_buf = [0u8; 64];
     let n = unsafe { libc::syscall(libc::SYS_read, verify_fd, read_buf.as_mut_ptr(), 64) };
@@ -397,8 +445,6 @@ fn vtable_close_flushes_before_closing() {
     assert_eq!(&read_buf[..data.len()], data);
 
     unsafe { libc::syscall(libc::SYS_close, verify_fd) };
-    // Clean up heap buffer (f no longer owns it since fd is already closed).
-    let _ = f;
     unsafe { std::alloc::dealloc(heap_buf, layout) };
 }
 
@@ -423,11 +469,9 @@ fn vtable_write_invalid_fd_returns_error() {
 }
 
 // ===========================================================================
-// NativeStreamRegistry tests (bd-zh1y.3.3)
+// NativeStreamRegistry tests
 // ===========================================================================
 
-// NOTE: The global registry is shared across all tests in this process.
-// Tests that mutate the registry use a static mutex to serialize access.
 static REGISTRY_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[test]
@@ -435,19 +479,16 @@ fn registry_pre_registers_stdio() {
     let _guard = REGISTRY_TEST_LOCK.lock().unwrap();
     let reg = native_stream_registry();
 
-    // Slot 0 = stdin (read, fd 0)
     let stdin = reg.get(0).expect("stdin should be pre-registered");
-    assert_eq!(stdin.fd, 0);
+    assert_eq!(stdin.fd(), 0);
     assert!(stdin.is_readable());
 
-    // Slot 1 = stdout (write, fd 1)
     let stdout = reg.get(1).expect("stdout should be pre-registered");
-    assert_eq!(stdout.fd, 1);
+    assert_eq!(stdout.fd(), 1);
     assert!(stdout.is_writable());
 
-    // Slot 2 = stderr (write, fd 2)
     let stderr = reg.get(2).expect("stderr should be pre-registered");
-    assert_eq!(stderr.fd, 2);
+    assert_eq!(stderr.fd(), 2);
     assert!(stderr.is_writable());
 }
 
@@ -461,10 +502,9 @@ fn registry_register_and_get() {
     assert!(slot >= 3, "slot should be >= 3 (0/1/2 are stdio)");
 
     let stream = reg.get(slot).expect("should find registered stream");
-    assert_eq!(stream.fd, 42);
+    assert_eq!(stream.fd(), 42);
     assert!(stream.is_valid());
 
-    // Cleanup.
     reg.unregister(slot);
 }
 
@@ -479,8 +519,6 @@ fn registry_unregister() {
     assert!(reg.get(slot).is_some());
     assert!(reg.unregister(slot));
     assert!(reg.get(slot).is_none());
-
-    // Double unregister returns false.
     assert!(!reg.unregister(slot));
 }
 
@@ -503,17 +541,14 @@ fn registry_register_multiple_and_count() {
 
     assert_eq!(reg.open_count(), initial_count + 10);
 
-    // All slots are distinct.
     let unique: std::collections::HashSet<_> = slots.iter().collect();
     assert_eq!(unique.len(), 10);
 
-    // Each stream has the correct fd.
     for (i, &slot) in slots.iter().enumerate() {
         let stream = reg.get(slot).unwrap();
-        assert_eq!(stream.fd, 100 + i as i32);
+        assert_eq!(stream.fd(), 100 + i as i32);
     }
 
-    // Cleanup.
     for slot in slots {
         reg.unregister(slot);
     }
@@ -530,12 +565,12 @@ fn registry_get_mut_modifies_stream() {
     {
         let stream = reg.get_mut(slot).unwrap();
         stream.set_eof();
-        stream.offset = 12345;
+        stream.set_offset(12345);
     }
 
     let stream = reg.get(slot).unwrap();
     assert!(stream.is_eof());
-    assert_eq!(stream.offset, 12345);
+    assert_eq!(stream.offset(), 12345);
 
     reg.unregister(slot);
 }
@@ -549,14 +584,12 @@ fn registry_slot_reuse_after_unregister() {
     let slot1 = reg.register(f1).expect("should register");
     reg.unregister(slot1);
 
-    // The freed slot should be reusable.
     let f2 = NativeFile::new(71, file_flags::WRITE, NativeFileBufMode::Line);
     let slot2 = reg.register(f2).expect("should register");
-    // Slot2 should be <= slot1 (reuse).
     assert!(slot2 <= slot1, "freed slot should be reused");
 
     let stream = reg.get(slot2).unwrap();
-    assert_eq!(stream.fd, 71);
+    assert_eq!(stream.fd(), 71);
 
     reg.unregister(slot2);
 }
@@ -575,38 +608,36 @@ fn registry_flush_all_flushes_writable_streams() {
     let _guard = REGISTRY_TEST_LOCK.lock().unwrap();
     let mut reg = native_stream_registry();
 
-    // Create a memfd-backed writable stream with buffered data.
     let fd = temp_memfd();
     let mut f = NativeFile::new(fd, file_flags::WRITE, NativeFileBufMode::Full);
 
-    // We need a heap buffer that outlives the registry call.
     let layout = std::alloc::Layout::from_size_align(128, 8).unwrap();
     let heap_buf = unsafe { std::alloc::alloc(layout) };
     assert!(!heap_buf.is_null());
     let data = b"flush_all test";
     unsafe { std::ptr::copy_nonoverlapping(data.as_ptr(), heap_buf, data.len()) };
-    f.buffer_base = heap_buf;
-    f.buffer_pos = unsafe { heap_buf.add(data.len()) };
-    f.buffer_end = unsafe { heap_buf.add(128) };
-    f.buffer_size = 128;
+    let pos = unsafe { heap_buf.add(data.len()) };
+    let end = unsafe { heap_buf.add(128) };
+    f.set_buffer_state(heap_buf, pos, end, 128);
 
     let slot = reg.register(f).expect("should register");
 
-    // flush_all should flush our writable stream.
     let errors = reg.flush_all();
     assert_eq!(errors, 0, "flush_all should succeed");
 
-    // Verify data was written to the fd.
     unsafe { libc::syscall(libc::SYS_lseek, fd, 0i64, libc::SEEK_SET) };
     let mut read_buf = [0u8; 64];
     let n = unsafe { libc::syscall(libc::SYS_read, fd, read_buf.as_mut_ptr(), 64) };
     assert_eq!(n, data.len() as i64);
     assert_eq!(&read_buf[..data.len()], data);
 
-    // Cleanup: detach buffer before unregistering.
     if let Some(stream) = reg.get_mut(slot) {
-        stream.buffer_base = std::ptr::null_mut();
-        stream.buffer_pos = std::ptr::null_mut();
+        stream.set_buffer_state(
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            0,
+        );
     }
     reg.unregister(slot);
     unsafe { libc::syscall(libc::SYS_close, fd) };
@@ -614,13 +645,12 @@ fn registry_flush_all_flushes_writable_streams() {
 }
 
 // ===========================================================================
-// _IO_iter_* stream iterator tests (bd-di5w)
+// _IO_iter_* stream iterator tests
 // ===========================================================================
 
 #[test]
 fn iter_begin_returns_first_stream() {
     let _guard = REGISTRY_TEST_LOCK.lock().unwrap();
-    // Registry has stdin/stdout/stderr pre-registered at slots 0/1/2.
     let begin = unsafe { _IO_iter_begin() };
     let end = unsafe { _IO_iter_end() };
     assert_ne!(
@@ -672,7 +702,6 @@ fn iter_file_on_null_returns_null() {
 fn iter_next_advances_past_end() {
     let _guard = REGISTRY_TEST_LOCK.lock().unwrap();
     let end = unsafe { _IO_iter_end() };
-    // Advancing past end should stay at end.
     let next = unsafe { _IO_iter_next(end) };
     assert_eq!(next, end, "next on end should return end");
 }
@@ -683,7 +712,6 @@ fn iter_full_traversal_visits_all_streams() {
     let mut reg = native_stream_registry();
     let initial_count = reg.open_count();
 
-    // Register 3 extra streams.
     let mut slots = Vec::new();
     for i in 0..3 {
         let f = NativeFile::new(
@@ -696,7 +724,6 @@ fn iter_full_traversal_visits_all_streams() {
     let expected_count = initial_count + 3;
     drop(reg);
 
-    // Iterate and count.
     let end = unsafe { _IO_iter_end() };
     let mut it = unsafe { _IO_iter_begin() };
     let mut count = 0;
@@ -715,7 +742,6 @@ fn iter_full_traversal_visits_all_streams() {
         "traversal count should match open_count"
     );
 
-    // Cleanup.
     let mut reg = native_stream_registry();
     for slot in slots {
         reg.unregister(slot);
@@ -727,7 +753,6 @@ fn iter_traversal_after_unregister() {
     let _guard = REGISTRY_TEST_LOCK.lock().unwrap();
     let mut reg = native_stream_registry();
 
-    // Register 2 streams, unregister 1.
     let f1 = NativeFile::new(200, file_flags::READ, NativeFileBufMode::Full);
     let f2 = NativeFile::new(201, file_flags::READ, NativeFileBufMode::Full);
     let s1 = reg.register(f1).expect("register 1");
