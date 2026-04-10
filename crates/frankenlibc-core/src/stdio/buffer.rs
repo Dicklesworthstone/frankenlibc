@@ -143,6 +143,7 @@ impl StreamBuffer {
                     buffered: 0,
                     flush_needed: true,
                     flush_data: data.to_vec(),
+                    flushed_from_buffer: 0,
                 }
             }
             BufMode::Full => self.write_full(data),
@@ -234,9 +235,11 @@ impl StreamBuffer {
                 buffered: data.len(),
                 flush_needed: false,
                 flush_data: Vec::new(),
+                flushed_from_buffer: 0,
             }
         } else {
             // Buffer is full — flush existing + overflow.
+            let flushed_from_buffer = self.write_len;
             let mut flush = Vec::with_capacity(self.write_len + data.len());
             flush.extend_from_slice(&self.data[..self.write_len]);
             flush.extend_from_slice(data);
@@ -245,6 +248,7 @@ impl StreamBuffer {
                 buffered: 0,
                 flush_needed: true,
                 flush_data: flush,
+                flushed_from_buffer,
             }
         }
     }
@@ -265,6 +269,7 @@ impl StreamBuffer {
                 }
 
                 // Flush everything up to and including the last newline.
+                let flushed_from_buffer = self.write_len;
                 let mut flush = Vec::with_capacity(self.write_len + flush_end);
                 flush.extend_from_slice(&self.data[..self.write_len]);
                 flush.extend_from_slice(&data[..flush_end]);
@@ -278,6 +283,7 @@ impl StreamBuffer {
                     buffered: remainder.len(),
                     flush_needed: true,
                     flush_data: flush,
+                    flushed_from_buffer,
                 }
             }
             None => {
@@ -297,6 +303,8 @@ pub struct WriteResult {
     pub flush_needed: bool,
     /// Bytes that must be flushed to the fd.
     pub flush_data: Vec<u8>,
+    /// Bytes in `flush_data` that came from previous buffered writes.
+    pub flushed_from_buffer: usize,
 }
 
 // ---------------------------------------------------------------------------

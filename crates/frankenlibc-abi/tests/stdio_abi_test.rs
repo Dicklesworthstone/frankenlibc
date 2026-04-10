@@ -1972,6 +1972,20 @@ fn fmemopen_write_creates_stream() {
     }
 }
 
+#[test]
+fn fmemopen_writes_update_caller_buffer() {
+    let mut buf = [0u8; 16];
+    let stream = unsafe { fmemopen(buf.as_mut_ptr().cast(), buf.len(), c"w+".as_ptr()) };
+    if stream.is_null() {
+        return;
+    }
+    let payload = b"fmem";
+    let wrote = unsafe { fwrite(payload.as_ptr().cast(), 1, payload.len(), stream) };
+    assert_eq!(wrote, payload.len());
+    assert_eq!(&buf[..payload.len()], payload);
+    assert_eq!(unsafe { fclose(stream) }, 0);
+}
+
 // ===========================================================================
 // open_memstream
 // ===========================================================================

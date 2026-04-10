@@ -9,7 +9,7 @@
 //! The ABI layer wraps these in a registry and hands out opaque
 //! pointers to C callers. No raw FILE* from glibc is used internally.
 
-use super::buffer::{BUFSIZ, BufMode, StreamBuffer};
+use super::buffer::{BUFSIZ, BufMode, StreamBuffer, WriteResult};
 
 // ---------------------------------------------------------------------------
 // Stream flags
@@ -485,22 +485,18 @@ impl StdioStream {
     // Write operations
     // -----------------------------------------------------------------------
 
-    /// Buffer a write. Returns bytes that need to be flushed to the fd.
+    /// Buffer a write and return the buffering outcome.
     ///
-    /// Caller is responsible for actually writing `flush_data` to fd.
-    pub fn buffer_write(&mut self, data: &[u8]) -> Vec<u8> {
+    /// Caller is responsible for flushing `flush_data` and advancing the
+    /// logical offset by the number of bytes accepted for this call.
+    pub fn buffer_write(&mut self, data: &[u8]) -> Option<WriteResult> {
         if !self.open_flags.writable {
             self.flags.error = true;
-            return Vec::new();
+            return None;
         }
         self.flags.io_started = true;
-        let result = self.buffer.write(data);
-        self.advance_offset(data.len());
-        if result.flush_needed {
-            result.flush_data
-        } else {
-            Vec::new()
-        }
+        self.flags.eof = false;
+        Some(self.buffer.write(data))
     }
 
     /// Get any pending write data that needs flushing.
@@ -638,6 +634,7 @@ impl StdioStream {
             return 0;
         }
         self.flags.io_started = true;
+        self.flags.eof = false;
         if let Some(ref mut backing) = self.mem_backing {
             let n = backing.write(data);
             self.offset = backing.position() as i64;
@@ -667,13 +664,18 @@ impl StdioStream {
             result.push(b);
             remaining -= 1;
             if remaining == 0 {
+                if let Some(ref backing) = self.mem_backing {
+                    self.offset = backing.position() as i64;
+                } else {
+                    self.advance_offset(1);
+                }
                 return result;
             }
         }
 
         if let Some(ref mut backing) = self.mem_backing {
             let data = backing.read(remaining);
-            if data.is_empty() && result.is_empty() {
+            if data.len() < remaining {
                 self.flags.eof = true;
             }
             result.extend(data);
@@ -770,8 +772,9 @@ mod tests {
             ..Default::default()
         };
         let mut s = StdioStream::new(3, flags);
-        let flush = s.buffer_write(b"hello");
-        assert!(flush.is_empty()); // fully buffered, not full yet
+        let result = s.buffer_write(b"hello").expect("write ok");
+        assert!(!result.flush_needed);
+        assert!(result.flush_data.is_empty()); // fully buffered, not full yet
         assert_eq!(s.pending_flush(), b"hello");
     }
 
@@ -796,9 +799,13 @@ mod tests {
         };
         let mut writer = StdioStream::new(3, write_flags);
         assert_eq!(writer.offset(), 0);
-        let _ = writer.buffer_write(b"hello");
+        let first = writer.buffer_write(b"hello").expect("write ok");
+        assert!(!first.flush_needed);
+        writer.set_offset(writer.offset().saturating_add(first.buffered as i64));
         assert_eq!(writer.offset(), 5);
-        let _ = writer.buffer_write(b" world");
+        let second = writer.buffer_write(b" world").expect("write ok");
+        assert!(!second.flush_needed);
+        writer.set_offset(writer.offset().saturating_add(second.buffered as i64));
         assert_eq!(writer.offset(), 11);
 
         let read_flags = OpenFlags {
@@ -859,8 +866,8 @@ mod tests {
             ..Default::default()
         };
         let mut s = StdioStream::new(3, flags);
-        let flush = s.buffer_write(b"buffered");
-        assert!(flush.is_empty());
+        let result = s.buffer_write(b"buffered").expect("write ok");
+        assert!(!result.flush_needed);
         assert_eq!(s.pending_flush(), b"buffered");
 
         assert!(s.ungetc(b'w'));
@@ -977,6 +984,35 @@ mod tests {
         assert_eq!(b.write(b" world"), 6);
         assert_eq!(b.data(), b"hello world");
         assert_eq!(b.position(), 11);
+    }
+
+    #[test]
+    fn test_mem_read_short_sets_eof() {
+        let flags = OpenFlags {
+            readable: true,
+            ..Default::default()
+        };
+        let mut s = StdioStream::new_mem_fixed(b"hi".to_vec(), 2, flags);
+        let data = s.mem_read(4);
+        assert_eq!(&data, b"hi");
+        assert!(s.is_eof(), "EOF should be set after short mem_read");
+    }
+
+    #[test]
+    fn test_mem_read_ungetc_updates_offset() {
+        let flags = OpenFlags {
+            readable: true,
+            ..Default::default()
+        };
+        let mut s = StdioStream::new_mem_fixed(b"ab".to_vec(), 2, flags);
+        let first = s.mem_read(1);
+        assert_eq!(&first, b"a");
+        assert_eq!(s.offset(), 1);
+        assert!(s.ungetc(b'a'));
+        assert_eq!(s.offset(), 0);
+        let replay = s.mem_read(1);
+        assert_eq!(&replay, b"a");
+        assert_eq!(s.offset(), 1);
     }
 
     #[test]

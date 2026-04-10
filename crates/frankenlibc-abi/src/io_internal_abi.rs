@@ -849,8 +849,8 @@ impl NativeStreamRegistry {
 
         // Link stdio streams: stderr -> stdout -> stdin -> NULL
         self.slots[0].file.set_chain(ptr::null_mut()); // stdin: end of chain
-        self.slots[1].file.set_chain(stdin_ptr);       // stdout -> stdin
-        self.slots[2].file.set_chain(stdout_ptr);      // stderr -> stdout
+        self.slots[1].file.set_chain(stdin_ptr); // stdout -> stdin
+        self.slots[2].file.set_chain(stdout_ptr); // stderr -> stdout
 
         // SAFETY: _IO_list_all is only accessed within the registry mutex.
         unsafe {
