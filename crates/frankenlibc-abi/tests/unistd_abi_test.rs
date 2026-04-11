@@ -1403,6 +1403,14 @@ fn gai_stub_family_sets_errno_for_eai_system() {
     unsafe {
         *__errno_location() = 0;
     }
+    let mut dummy = 0u8;
+    let dummy_ptr = &mut dummy as *mut _ as *mut c_void;
+    assert_eq!(unsafe { gai_error(dummy_ptr) }, libc::EAI_SYSTEM);
+    assert_eq!(errno_value(), libc::ENOSYS);
+
+    unsafe {
+        *__errno_location() = 0;
+    }
     assert_eq!(
         unsafe { gai_suspend(std::ptr::null(), 0, std::ptr::null()) },
         libc::EAI_SYSTEM

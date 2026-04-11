@@ -9475,7 +9475,7 @@ pub unsafe extern "C" fn nftw64(
     // On x86_64, stat == stat64, so nftw64 == nftw. Delegate to native nftw.
     let func: Option<
         unsafe extern "C" fn(*const c_char, *const libc::stat, c_int, *mut c_void) -> c_int,
-    > = unsafe { std::mem::transmute(fn_) };
+    > = unsafe { std::mem::transmute(fn_) }; // ubs:ignore — nftw64 callback ABI matches nftw on x86_64
     unsafe { nftw(dirpath, func, nopenfd, flags) }
 }
 
@@ -17381,16 +17381,14 @@ pub unsafe extern "C" fn gai_cancel(req: *mut c_void) -> c_int {
 
 /// `gai_error` — query status of an asynchronous name resolution request (bd-9dq5).
 ///
-/// Since all resolution is synchronous, a non-NULL request is always "completed"
-/// (return 0). NULL is an invalid request (return `EAI_SYSTEM` with `ENOSYS`).
+/// Since all resolution is synchronous and `getaddrinfo_a` is unimplemented,
+/// every request handle is treated as unsupported. Returns `EAI_SYSTEM` with
+/// `ENOSYS` for both NULL and non-NULL requests.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn gai_error(req: *mut c_void) -> c_int {
-    if req.is_null() {
-        unsafe { set_abi_errno(libc::ENOSYS) };
-        return libc::EAI_SYSTEM;
-    }
-    // Synchronous resolver: every gaicb is already resolved.
-    0
+    let _ = req;
+    unsafe { set_abi_errno(libc::ENOSYS) };
+    libc::EAI_SYSTEM
 }
 
 /// `gai_suspend` — wait for async name resolution requests to complete (bd-9dq5).

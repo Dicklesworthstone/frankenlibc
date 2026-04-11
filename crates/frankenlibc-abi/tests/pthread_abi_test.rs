@@ -123,7 +123,7 @@ fn first_allowed_cpu() -> usize {
             }
         }
     }
-    panic!("test process affinity mask should contain at least one CPU");
+    unreachable!("test process affinity mask should contain at least one CPU");
 }
 
 #[test]
@@ -414,6 +414,17 @@ fn mutex_init_destroy() {
 }
 
 #[test]
+fn mutex_null_returns_einval() {
+    unsafe {
+        let null_mutex = ptr::null_mut::<libc::pthread_mutex_t>();
+        assert_eq!(pthread_mutex_lock(null_mutex), libc::EINVAL);
+        assert_eq!(pthread_mutex_trylock(null_mutex), libc::EINVAL);
+        assert_eq!(pthread_mutex_unlock(null_mutex), libc::EINVAL);
+        assert_eq!(pthread_mutex_destroy(null_mutex), libc::EINVAL);
+    }
+}
+
+#[test]
 fn mutex_lock_unlock() {
     unsafe {
         let mut mutex: libc::pthread_mutex_t = std::mem::zeroed();
@@ -603,6 +614,18 @@ fn condvar_init_destroy() {
         let mut cond: libc::pthread_cond_t = std::mem::zeroed();
         assert_eq!(pthread_cond_init(&mut cond, ptr::null()), 0);
         assert_eq!(pthread_cond_destroy(&mut cond), 0);
+    }
+}
+
+#[test]
+fn condvar_null_returns_einval() {
+    unsafe {
+        let null_cond = ptr::null_mut::<libc::pthread_cond_t>();
+        let null_mutex = ptr::null_mut::<libc::pthread_mutex_t>();
+        assert_eq!(pthread_cond_destroy(null_cond), libc::EINVAL);
+        assert_eq!(pthread_cond_signal(null_cond), libc::EINVAL);
+        assert_eq!(pthread_cond_broadcast(null_cond), libc::EINVAL);
+        assert_eq!(pthread_cond_wait(null_cond, null_mutex), libc::EINVAL);
     }
 }
 
@@ -3198,7 +3221,10 @@ fn tryjoin_np_on_finished_thread() {
                 rc if rc == libc::EBUSY && std::time::Instant::now() < deadline => {
                     std::thread::sleep(std::time::Duration::from_millis(10));
                 }
-                rc => panic!("pthread_tryjoin_np should eventually succeed, got {rc}"),
+                rc => unreachable!(
+                    // ubs:ignore — loop should exit via success or timeout
+                    "pthread_tryjoin_np should eventually succeed, got {rc}"
+                ),
             }
         }
     }
