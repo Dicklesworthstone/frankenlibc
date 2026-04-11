@@ -5141,23 +5141,27 @@ pub unsafe extern "C" fn openpty(
 
     // Get slave path via internal helper
     let mut slave_name = [0u8; 64];
-    if unsafe { resolve_ptsname_into(master, slave_name.as_mut_ptr().cast::<c_char>(), 64) }
-        .is_err()
+    if let Err(err) =
+        unsafe { resolve_ptsname_into(master, slave_name.as_mut_ptr().cast::<c_char>(), 64) }
     {
+        unsafe { set_abi_errno(err) };
         unsafe { libc::syscall(libc::SYS_close, master as i64) };
         return -1;
     }
 
     // Open slave
     let slave = unsafe {
-        libc::syscall(
-            libc::SYS_openat,
-            libc::AT_FDCWD,
-            slave_name.as_ptr().cast::<c_char>(),
-            libc::O_RDWR | libc::O_NOCTTY,
-            0,
+        syscall_ret_int(
+            libc::syscall(
+                libc::SYS_openat,
+                libc::AT_FDCWD,
+                slave_name.as_ptr().cast::<c_char>(),
+                libc::O_RDWR | libc::O_NOCTTY,
+                0,
+            ),
+            errno::ENOENT,
         )
-    } as c_int;
+    };
     if slave < 0 {
         unsafe { libc::syscall(libc::SYS_close, master as i64) };
         return -1;
@@ -5165,13 +5169,30 @@ pub unsafe extern "C" fn openpty(
 
     // Apply terminal attributes if provided
     if !termp.is_null() {
-        unsafe { libc::syscall(libc::SYS_ioctl, slave as i64, libc::TCSETS as i64, termp) };
+        let rc =
+            unsafe { libc::syscall(libc::SYS_ioctl, slave as i64, libc::TCSETS as i64, termp) };
+        if rc < 0 {
+            unsafe { set_abi_errno(last_host_errno(errno::EBADF)) };
+            unsafe {
+                libc::syscall(libc::SYS_close, master as i64);
+                libc::syscall(libc::SYS_close, slave as i64);
+            };
+            return -1;
+        }
     }
 
     // Apply window size if provided
     const TIOCSWINSZ: i64 = 0x5414;
     if !winp.is_null() {
-        unsafe { libc::syscall(libc::SYS_ioctl, slave as i64, TIOCSWINSZ, winp) };
+        let rc = unsafe { libc::syscall(libc::SYS_ioctl, slave as i64, TIOCSWINSZ, winp) };
+        if rc < 0 {
+            unsafe { set_abi_errno(last_host_errno(errno::EBADF)) };
+            unsafe {
+                libc::syscall(libc::SYS_close, master as i64);
+                libc::syscall(libc::SYS_close, slave as i64);
+            };
+            return -1;
+        }
     }
 
     // Copy slave name if buffer provided
@@ -5199,20 +5220,31 @@ pub unsafe extern "C" fn openpty(
 pub unsafe extern "C" fn login_tty(fd: c_int) -> c_int {
     // Create new session
     if unsafe { libc::syscall(libc::SYS_setsid) } < 0 {
+        unsafe { set_abi_errno(last_host_errno(errno::EPERM)) };
         return -1;
     }
 
     // Set controlling terminal (TIOCSCTTY = 0x540E on Linux)
     const TIOCSCTTY: u64 = 0x540E;
     if unsafe { libc::syscall(libc::SYS_ioctl, fd as i64, TIOCSCTTY as i64, 0i64) } < 0 {
+        unsafe { set_abi_errno(last_host_errno(errno::ENOTTY)) };
         return -1;
     }
 
     // Dup fd to stdin/stdout/stderr
     unsafe {
-        libc::syscall(libc::SYS_dup2, fd as i64, 0i64);
-        libc::syscall(libc::SYS_dup2, fd as i64, 1i64);
-        libc::syscall(libc::SYS_dup2, fd as i64, 2i64);
+        if libc::syscall(libc::SYS_dup2, fd as i64, 0i64) < 0 {
+            set_abi_errno(last_host_errno(errno::EBADF));
+            return -1;
+        }
+        if libc::syscall(libc::SYS_dup2, fd as i64, 1i64) < 0 {
+            set_abi_errno(last_host_errno(errno::EBADF));
+            return -1;
+        }
+        if libc::syscall(libc::SYS_dup2, fd as i64, 2i64) < 0 {
+            set_abi_errno(last_host_errno(errno::EBADF));
+            return -1;
+        }
     };
 
     if fd > 2 {
