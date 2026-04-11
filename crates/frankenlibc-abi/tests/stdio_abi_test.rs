@@ -1784,6 +1784,23 @@ fn popen_write_mode() {
     assert!(status >= 0);
 }
 
+#[test]
+fn popen_rejects_invalid_modes() {
+    let cmd = CString::new("echo hello").unwrap();
+    let bad_modes = ["", "r+", "w+", "rw", "x", "rr", "we+", "re+"];
+    for mode in bad_modes {
+        let mode = CString::new(mode).unwrap();
+        // SAFETY: use FrankenLibC errno to match the ABI under test.
+        unsafe {
+            *frankenlibc_abi::errno_abi::__errno_location() = 0;
+        }
+        let stream = unsafe { popen(cmd.as_ptr(), mode.as_ptr()) };
+        assert!(stream.is_null(), "mode '{mode:?}' should be rejected");
+        let err = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+        assert_eq!(err, libc::EINVAL, "mode '{mode:?}' should set EINVAL");
+    }
+}
+
 // ---------------------------------------------------------------------------
 // perror
 // ---------------------------------------------------------------------------

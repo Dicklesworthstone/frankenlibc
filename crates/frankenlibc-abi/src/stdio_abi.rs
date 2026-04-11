@@ -5141,17 +5141,35 @@ pub unsafe extern "C" fn popen(command: *const c_char, typ: *const c_char) -> *m
         return std::ptr::null_mut();
     }
 
-    let mode = unsafe { *typ as u8 };
+    let mode_bytes = unsafe { std::ffi::CStr::from_ptr(typ) }.to_bytes();
+    if mode_bytes.is_empty() {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 50, true);
+        return std::ptr::null_mut();
+    }
+    let mode = mode_bytes[0];
     let reading = mode == b'r';
     if mode != b'r' && mode != b'w' {
         unsafe { set_abi_errno(errno::EINVAL) };
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 50, true);
         return std::ptr::null_mut();
     }
+    let mut close_on_exec = false;
+    for &flag in &mode_bytes[1..] {
+        if flag == b'e' && !close_on_exec {
+            close_on_exec = true;
+        } else {
+            unsafe { set_abi_errno(errno::EINVAL) };
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 50, true);
+            return std::ptr::null_mut();
+        }
+    }
 
     // Create pipe: pipe_fds[0] = read end, pipe_fds[1] = write end.
     let mut pipe_fds = [0i32; 2];
-    let ret = unsafe { libc::syscall(libc::SYS_pipe2 as c_long, pipe_fds.as_mut_ptr(), 0) };
+    let pipe_flags = if close_on_exec { libc::O_CLOEXEC } else { 0 };
+    let ret =
+        unsafe { libc::syscall(libc::SYS_pipe2 as c_long, pipe_fds.as_mut_ptr(), pipe_flags) };
     if ret < 0 {
         let e = std::io::Error::last_os_error()
             .raw_os_error()
@@ -5188,19 +5206,43 @@ pub unsafe extern "C" fn popen(command: *const c_char, typ: *const c_char) -> *m
 
     if pid == 0 {
         // Child process.
+        let child_exit = || -> ! {
+            unsafe { libc::syscall(libc::SYS_exit_group as c_long, 127 as c_long) };
+            loop {
+                unsafe { libc::syscall(libc::SYS_exit as c_long, 127 as c_long) };
+            }
+        };
+
         if reading {
             // Parent reads from child's stdout: dup write end to stdout.
-            unsafe {
-                libc::syscall(libc::SYS_close as c_long, pipe_fds[0]);
-                libc::syscall(libc::SYS_dup2 as c_long, pipe_fds[1], libc::STDOUT_FILENO);
-                libc::syscall(libc::SYS_close as c_long, pipe_fds[1]);
+            let rc = unsafe { libc::syscall(libc::SYS_close as c_long, pipe_fds[0]) };
+            if rc < 0 {
+                child_exit();
+            }
+            let rc = unsafe {
+                libc::syscall(libc::SYS_dup2 as c_long, pipe_fds[1], libc::STDOUT_FILENO)
+            };
+            if rc < 0 {
+                child_exit();
+            }
+            let rc = unsafe { libc::syscall(libc::SYS_close as c_long, pipe_fds[1]) };
+            if rc < 0 {
+                child_exit();
             }
         } else {
             // Parent writes to child's stdin: dup read end to stdin.
-            unsafe {
-                libc::syscall(libc::SYS_close as c_long, pipe_fds[1]);
-                libc::syscall(libc::SYS_dup2 as c_long, pipe_fds[0], libc::STDIN_FILENO);
-                libc::syscall(libc::SYS_close as c_long, pipe_fds[0]);
+            let rc = unsafe { libc::syscall(libc::SYS_close as c_long, pipe_fds[1]) };
+            if rc < 0 {
+                child_exit();
+            }
+            let rc =
+                unsafe { libc::syscall(libc::SYS_dup2 as c_long, pipe_fds[0], libc::STDIN_FILENO) };
+            if rc < 0 {
+                child_exit();
+            }
+            let rc = unsafe { libc::syscall(libc::SYS_close as c_long, pipe_fds[0]) };
+            if rc < 0 {
+                child_exit();
             }
         }
 
@@ -5213,12 +5255,8 @@ pub unsafe extern "C" fn popen(command: *const c_char, typ: *const c_char) -> *m
         }
         unsafe {
             libc::syscall(libc::SYS_execve as c_long, sh, argv.as_ptr(), environ);
-            libc::syscall(libc::SYS_exit_group as c_long, 127 as c_long);
         }
-        // If execve/exit_group returns, keep attempting SYS_exit to avoid UB in child context.
-        loop {
-            unsafe { libc::syscall(libc::SYS_exit as c_long, 127 as c_long) };
-        }
+        child_exit();
     }
 
     // Parent: close unused end and wrap the other in a FILE stream.
