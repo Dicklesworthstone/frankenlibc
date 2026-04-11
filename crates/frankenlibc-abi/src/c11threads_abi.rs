@@ -49,6 +49,7 @@ fn pthread_rc_to_thrd(rc: c_int) -> c_int {
         0 => THRD_SUCCESS,
         libc::ETIMEDOUT => THRD_TIMEDOUT,
         libc::EBUSY => THRD_BUSY,
+        libc::EAGAIN => THRD_NOMEM,
         libc::ENOMEM => THRD_NOMEM,
         _ => THRD_ERROR,
     }
@@ -71,9 +72,13 @@ pub unsafe extern "C" fn thrd_create(
     func: Option<ThrdStartT>,
     arg: *mut c_void,
 ) -> c_int {
-    if thr.is_null() || func.is_none() {
+    if thr.is_null() {
         return THRD_ERROR;
     }
+    let func = match func {
+        Some(func) => func,
+        None => return THRD_ERROR,
+    };
 
     // We need to wrap the C11 start function (returns int) into a pthread
     // start function (returns void*). We heap-allocate a trampoline context.
@@ -90,10 +95,7 @@ pub unsafe extern "C" fn thrd_create(
         rc as usize as *mut c_void
     }
 
-    let ctx = Box::new(TrampolineCtx {
-        func: func.unwrap(),
-        arg,
-    });
+    let ctx = Box::new(TrampolineCtx { func, arg });
     let ctx_ptr = Box::into_raw(ctx) as *mut c_void;
 
     let rc = unsafe {
@@ -201,15 +203,25 @@ pub unsafe extern "C" fn mtx_init(mtx: *mut MtxT, typ: c_int) -> c_int {
     if mtx.is_null() {
         return THRD_ERROR;
     }
+    if typ & !(MTX_TIMED | MTX_RECURSIVE) != 0 {
+        return THRD_ERROR;
+    }
 
     let mut attr: libc::pthread_mutexattr_t = unsafe { std::mem::zeroed() };
-    unsafe { crate::pthread_abi::pthread_mutexattr_init(&mut attr) };
+    let rc = unsafe { crate::pthread_abi::pthread_mutexattr_init(&mut attr) };
+    if rc != 0 {
+        return pthread_rc_to_thrd(rc);
+    }
 
     // C11 MTX_RECURSIVE flag means recursive mutex.
     if typ & MTX_RECURSIVE != 0 {
-        unsafe {
+        let rc = unsafe {
             crate::pthread_abi::pthread_mutexattr_settype(&mut attr, libc::PTHREAD_MUTEX_RECURSIVE)
         };
+        if rc != 0 {
+            unsafe { crate::pthread_abi::pthread_mutexattr_destroy(&mut attr) };
+            return pthread_rc_to_thrd(rc);
+        }
     }
 
     let rc = unsafe { crate::pthread_abi::pthread_mutex_init(mtx, &attr) };
@@ -430,6 +442,7 @@ mod tests {
         assert_eq!(pthread_rc_to_thrd(0), THRD_SUCCESS);
         assert_eq!(pthread_rc_to_thrd(libc::ETIMEDOUT), THRD_TIMEDOUT);
         assert_eq!(pthread_rc_to_thrd(libc::EBUSY), THRD_BUSY);
+        assert_eq!(pthread_rc_to_thrd(libc::EAGAIN), THRD_NOMEM);
         assert_eq!(pthread_rc_to_thrd(libc::ENOMEM), THRD_NOMEM);
         assert_eq!(pthread_rc_to_thrd(libc::EINVAL), THRD_ERROR);
     }
@@ -455,5 +468,12 @@ mod tests {
     fn thrd_equal_same_thread() {
         let tid = thrd_current();
         assert_ne!(thrd_equal(tid, tid), 0);
+    }
+
+    #[test]
+    fn mtx_init_rejects_invalid_flags() {
+        let mut mtx: MtxT = unsafe { std::mem::zeroed() };
+        let rc = unsafe { mtx_init(&mut mtx as *mut MtxT, 0x4) };
+        assert_eq!(rc, THRD_ERROR);
     }
 }

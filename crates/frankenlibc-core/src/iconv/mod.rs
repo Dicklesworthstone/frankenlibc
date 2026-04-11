@@ -161,6 +161,14 @@ pub struct IconvDescriptor {
     from: Encoding,
     to: Encoding,
     emit_bom: bool,
+    dispatch: IconvDispatchMetadata,
+}
+
+impl IconvDescriptor {
+    #[must_use]
+    pub const fn dispatch_metadata(&self) -> IconvDispatchMetadata {
+        self.dispatch
+    }
 }
 
 /// Conversion progress/result.
@@ -475,6 +483,7 @@ pub fn iconv_open_detailed(
             from,
             to,
             emit_bom: matches!(to, Encoding::Utf32),
+            dispatch,
         },
         dispatch,
     ))
@@ -648,7 +657,9 @@ mod tests {
 
     #[test]
     fn iconv_open_detailed_reports_alias_dispatch() {
-        let (_, meta) = iconv_open_detailed(b"utf-8", b"latin1").expect("alias path should open");
+        let (desc, meta) =
+            iconv_open_detailed(b"utf-8", b"latin1").expect("alias path should open");
+        assert_eq!(desc.dispatch_metadata(), meta);
         assert_eq!(meta.to_codec, "UTF-8");
         assert_eq!(meta.from_codec, "ISO-8859-1");
         assert_eq!(meta.to_dispatch_path, CodecDispatchPath::IncludedCanonical);

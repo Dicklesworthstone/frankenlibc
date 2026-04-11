@@ -118,17 +118,21 @@ pub unsafe extern "C" fn iconv_open(tocode: *const c_char, fromcode: *const c_ch
     // SAFETY: non-null pointers are treated as C strings by iconv contract.
     let from = unsafe { CStr::from_ptr(fromcode) }.to_bytes();
 
-    match iconv::iconv_open(to, from) {
-        Some(desc) => {
+    match iconv::iconv_open_detailed(to, from) {
+        Ok((desc, _dispatch)) => {
             let raw = Box::into_raw(Box::new(desc)).cast::<c_void>();
             register_handle(raw);
             runtime_policy::observe(ApiFamily::Locale, decision.profile, 12, false);
             raw
         }
-        None => {
+        Err(err) => {
             runtime_policy::observe(ApiFamily::Locale, decision.profile, 12, true);
+            let errno_code = match err.policy {
+                iconv::IconvFallbackPolicy::ExcludedCodecFamily => errno::EINVAL,
+                iconv::IconvFallbackPolicy::UnsupportedCodec => errno::EINVAL,
+            };
             // SAFETY: sets thread-local errno.
-            unsafe { set_abi_errno(errno::EINVAL) };
+            unsafe { set_abi_errno(errno_code) };
             iconv_error_handle()
         }
     }
