@@ -239,12 +239,15 @@ impl MemBacking {
 
         let new_pos = new_pos as usize;
         // For Fixed, clamp to buffer size; for Dynamic, allow within data length
-        let max = match self {
-            MemBacking::Fixed { data, .. } => data.len(),
-            MemBacking::Dynamic { data, .. } => data.len(),
-        };
-        if new_pos > max {
-            return None;
+        match self {
+            MemBacking::Fixed { data, .. } => {
+                if new_pos > data.len() {
+                    return None;
+                }
+            }
+            MemBacking::Dynamic { .. } => {
+                // Allow seeking beyond end; open_memstream semantics grow on write.
+            }
         }
 
         match self {
@@ -1026,6 +1029,19 @@ mod tests {
         assert_eq!(b.seek(5, 0), Some(5));
         b.write(b"_RUST");
         assert_eq!(b.data(), b"hello_RUSTd");
+    }
+
+    #[test]
+    fn test_mem_backing_dynamic_seek_past_end_grows_on_write() {
+        let mut b = MemBacking::Dynamic {
+            data: Vec::new(),
+            pos: 0,
+        };
+        b.write(b"hi");
+        // Seek past end and write; gap should be zero-filled.
+        assert_eq!(b.seek(5, 0), Some(5));
+        b.write(b"!");
+        assert_eq!(b.data(), b"hi\0\0\0!");
     }
 
     #[test]
