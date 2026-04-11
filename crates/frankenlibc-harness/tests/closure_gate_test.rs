@@ -3,14 +3,19 @@
 //! Validates that:
 //! 1. The closure evidence schema exists and is valid JSON.
 //! 2. Every required evidence field is defined in the schema.
-//! 3. Legacy-exempt list covers only closed critique beads.
+//! 3. Legacy-exempt list is well-formed (and, when using beads, only covers closed critique beads).
 //! 4. Non-exempt closed critique beads have matrix entries with evidence.
 //! 5. The CI gate script exists and is executable.
 //! 6. Matrix rows have the evidence fields the schema requires.
 //!
+//! Source selection:
+//! - FRANKENLIBC_CLOSURE_GATE_SOURCE=beads uses .beads/issues.jsonl for closed-critique detection.
+//! - Default (matrix) uses tests/conformance/verification_matrix.json to avoid stale beads in rch.
+//!
 //! Run: cargo test -p frankenlibc-harness --test closure_gate_test
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::env;
 use std::path::{Path, PathBuf};
 
 fn workspace_root() -> PathBuf {
@@ -23,27 +28,100 @@ fn workspace_root() -> PathBuf {
         .to_path_buf()
 }
 
+fn schema_path() -> PathBuf {
+    workspace_root().join("tests/conformance/closure_evidence_schema.json")
+}
+
+fn matrix_path() -> PathBuf {
+    workspace_root().join("tests/conformance/verification_matrix.json")
+}
+
+fn beads_path() -> PathBuf {
+    workspace_root().join(".beads/issues.jsonl")
+}
+
 fn load_schema() -> serde_json::Value {
-    let path = workspace_root().join("tests/conformance/closure_evidence_schema.json");
+    let path = schema_path();
     let content =
         std::fs::read_to_string(&path).expect("closure_evidence_schema.json should exist");
     serde_json::from_str(&content).expect("closure_evidence_schema.json should be valid JSON")
 }
 
 fn load_matrix() -> serde_json::Value {
-    let path = workspace_root().join("tests/conformance/verification_matrix.json");
+    let path = matrix_path();
     let content = std::fs::read_to_string(&path).expect("verification_matrix.json should exist");
     serde_json::from_str(&content).expect("verification_matrix.json should be valid JSON")
 }
 
-fn load_beads() -> Vec<serde_json::Value> {
-    let path = workspace_root().join(".beads/issues.jsonl");
+fn load_beads_latest() -> HashMap<String, serde_json::Value> {
+    let path = beads_path();
     let content = std::fs::read_to_string(&path).expect(".beads/issues.jsonl should exist");
-    content
-        .lines()
-        .filter(|l| !l.trim().is_empty())
-        .map(|l| serde_json::from_str(l).expect("each bead line should be valid JSON"))
+    let mut beads = HashMap::new();
+    for line in content.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let bead: serde_json::Value =
+            serde_json::from_str(line).expect("each bead line should be valid JSON");
+        if let Some(id) = bead["id"].as_str() {
+            beads.insert(id.to_string(), bead);
+        }
+    }
+    beads
+}
+
+fn has_label(value: &serde_json::Value, label: &str) -> bool {
+    value
+        .as_array()
+        .is_some_and(|labels| labels.iter().any(|v| v.as_str() == Some(label)))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ClosureGateSource {
+    Matrix,
+    Beads,
+}
+
+fn closure_gate_source() -> ClosureGateSource {
+    match env::var("FRANKENLIBC_CLOSURE_GATE_SOURCE")
+        .unwrap_or_else(|_| "matrix".to_string())
+        .to_lowercase()
+        .as_str()
+    {
+        "matrix" => ClosureGateSource::Matrix,
+        "beads" => ClosureGateSource::Beads,
+        other => {
+            panic!("invalid FRANKENLIBC_CLOSURE_GATE_SOURCE={other} (expected 'matrix' or 'beads')")
+        }
+    }
+}
+
+fn closed_critique_from_beads(beads: &HashMap<String, serde_json::Value>) -> HashSet<String> {
+    beads
+        .values()
+        .filter(|b| b["status"].as_str() == Some("closed") && has_label(&b["labels"], "critique"))
+        .filter_map(|b| b["id"].as_str().map(String::from))
         .collect()
+}
+
+fn closed_critique_from_matrix(matrix: &serde_json::Value) -> HashSet<String> {
+    matrix["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|entry| {
+            entry["status"].as_str() == Some("closed") && has_label(&entry["labels"], "critique")
+        })
+        .filter_map(|entry| entry["bead_id"].as_str().map(String::from))
+        .collect()
+}
+
+fn closed_critique_bead_ids() -> HashSet<String> {
+    match closure_gate_source() {
+        ClosureGateSource::Matrix => closed_critique_from_matrix(&load_matrix()),
+        ClosureGateSource::Beads => closed_critique_from_beads(&load_beads_latest()),
+    }
 }
 
 #[test]
@@ -95,25 +173,24 @@ fn schema_has_required_evidence_fields() {
 #[test]
 fn legacy_exempt_only_contains_closed_critique_beads() {
     let schema = load_schema();
-    let beads = load_beads();
-
-    let exempt: HashSet<String> = schema["legacy_exempt"]
+    let exempt_list = schema["legacy_exempt"]
         .as_array()
         .unwrap()
         .iter()
-        .filter_map(|v| v.as_str().map(String::from))
-        .collect();
+        .filter_map(|v| v.as_str())
+        .collect::<Vec<_>>();
+    let exempt: HashSet<String> = exempt_list.iter().map(|v| (*v).to_string()).collect();
 
-    let closed_critique: HashSet<String> = beads
-        .iter()
-        .filter(|b| {
-            b["status"].as_str() == Some("closed")
-                && b["labels"]
-                    .as_array()
-                    .is_some_and(|l| l.iter().any(|v| v.as_str() == Some("critique")))
-        })
-        .filter_map(|b| b["id"].as_str().map(String::from))
-        .collect();
+    if closure_gate_source() == ClosureGateSource::Matrix {
+        assert_eq!(
+            exempt.len(),
+            exempt_list.len(),
+            "legacy_exempt contains duplicate entries"
+        );
+        return;
+    }
+
+    let closed_critique = closed_critique_bead_ids();
 
     let invalid: Vec<_> = exempt.difference(&closed_critique).collect();
     assert!(
@@ -125,8 +202,11 @@ fn legacy_exempt_only_contains_closed_critique_beads() {
 
 #[test]
 fn non_exempt_closed_beads_have_matrix_entries() {
+    if closure_gate_source() == ClosureGateSource::Matrix {
+        return;
+    }
+
     let schema = load_schema();
-    let beads = load_beads();
     let matrix = load_matrix();
 
     let exempt: HashSet<String> = schema["legacy_exempt"]
@@ -144,18 +224,10 @@ fn non_exempt_closed_beads_have_matrix_entries() {
         .collect();
 
     let mut missing = Vec::new();
-    for b in &beads {
-        if b["status"].as_str() != Some("closed") {
-            continue;
-        }
-        let labels = b["labels"].as_array();
-        let is_critique = labels.is_some_and(|l| l.iter().any(|v| v.as_str() == Some("critique")));
-        if !is_critique {
-            continue;
-        }
-        let bid = b["id"].as_str().unwrap_or("");
-        if !exempt.contains(bid) && !matrix_ids.contains(bid) {
-            missing.push(bid.to_string());
+    let closed_critique = closed_critique_bead_ids();
+    for bid in closed_critique {
+        if !exempt.contains(&bid) && !matrix_ids.contains(&bid) {
+            missing.push(bid);
         }
     }
 
@@ -217,7 +289,6 @@ fn matrix_rows_have_evidence_fields() {
 #[test]
 fn non_exempt_closed_beads_have_evidence() {
     let schema = load_schema();
-    let beads = load_beads();
     let matrix = load_matrix();
 
     let exempt: HashSet<String> = schema["legacy_exempt"]
@@ -235,21 +306,12 @@ fn non_exempt_closed_beads_have_evidence() {
         .collect();
 
     let mut violations = Vec::new();
-    for b in &beads {
-        if b["status"].as_str() != Some("closed") {
+    let closed_critique = closed_critique_bead_ids();
+    for bid in closed_critique {
+        if exempt.contains(&bid) {
             continue;
         }
-        let labels = b["labels"].as_array();
-        let is_critique = labels.is_some_and(|l| l.iter().any(|v| v.as_str() == Some("critique")));
-        if !is_critique {
-            continue;
-        }
-        let bid = b["id"].as_str().unwrap_or("");
-        if exempt.contains(bid) {
-            continue;
-        }
-
-        if let Some(entry) = matrix_map.get(bid) {
+        if let Some(entry) = matrix_map.get(&bid) {
             let row = &entry["row"];
             let cs = &entry["coverage_summary"];
 

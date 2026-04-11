@@ -10,6 +10,10 @@
 #
 # Legacy-exempt beads (closed before gate establishment) produce warnings.
 #
+# Source selection:
+# - FRANKENLIBC_CLOSURE_GATE_SOURCE=beads uses .beads/issues.jsonl
+# - default (matrix) uses verification_matrix.json to avoid stale beads in rch
+#
 # Exit codes:
 #   0 — all non-exempt beads pass evidence checks
 #   1 — one or more non-exempt beads fail evidence checks
@@ -19,6 +23,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SCHEMA="${ROOT}/tests/conformance/closure_evidence_schema.json"
 MATRIX="${ROOT}/tests/conformance/verification_matrix.json"
 BEADS="${ROOT}/.beads/issues.jsonl"
+SOURCE="${FRANKENLIBC_CLOSURE_GATE_SOURCE:-matrix}"
 
 failures=0
 
@@ -68,33 +73,51 @@ echo ""
 # Check 2: Evidence audit for closed critique beads
 # ---------------------------------------------------------------------------
 echo "--- Check 2: Closed critique bead evidence audit ---"
+echo "Source: ${SOURCE}"
 
 audit_result=$(python3 -c "
 import json
+import os
 
 with open('${SCHEMA}') as f:
     schema = json.load(f)
 with open('${MATRIX}') as f:
     matrix = json.load(f)
-with open('${BEADS}') as f:
-    bead_lines = f.readlines()
+
+source = os.environ.get('FRANKENLIBC_CLOSURE_GATE_SOURCE', 'matrix').lower()
+if source not in ('matrix', 'beads'):
+    print(f'INVALID: unknown source {source}')
+    raise SystemExit(1)
+
+bead_lines = []
+if source == 'beads':
+    with open('${BEADS}') as f:
+        bead_lines = f.readlines()
 
 legacy_exempt = set(schema.get('legacy_exempt', []))
 
-# Parse beads
+# Parse beads (optional)
 beads = {}
-for line in bead_lines:
-    line = line.strip()
-    if not line:
-        continue
-    b = json.loads(line)
-    beads[b['id']] = b
+if bead_lines:
+    for line in bead_lines:
+        line = line.strip()
+        if not line:
+            continue
+        b = json.loads(line)
+        beads[b['id']] = b
 
 # Find closed critique beads
 closed_critique = {}
-for bid, b in beads.items():
-    if b.get('status') == 'closed' and 'critique' in b.get('labels', []):
-        closed_critique[bid] = b
+if source == 'beads':
+    for bid, b in beads.items():
+        if b.get('status') == 'closed' and 'critique' in b.get('labels', []):
+            closed_critique[bid] = b
+else:
+    for entry in matrix.get('entries', []):
+        if entry.get('status') == 'closed' and 'critique' in entry.get('labels', []):
+            bid = entry.get('bead_id')
+            if bid:
+                closed_critique[bid] = entry
 
 # Build matrix lookup
 matrix_map = {}
@@ -256,29 +279,42 @@ echo "--- Check 4: Coverage debt summary ---"
 
 python3 -c "
 import json
+import os
 
 with open('${SCHEMA}') as f:
     schema = json.load(f)
 with open('${MATRIX}') as f:
     matrix = json.load(f)
-with open('${BEADS}') as f:
-    bead_lines = f.readlines()
+
+source = os.environ.get('FRANKENLIBC_CLOSURE_GATE_SOURCE', 'matrix').lower()
+bead_lines = []
+if source == 'beads':
+    with open('${BEADS}') as f:
+        bead_lines = f.readlines()
 
 legacy_exempt = set(schema.get('legacy_exempt', []))
 
 beads = {}
-for line in bead_lines:
-    line = line.strip()
-    if not line:
-        continue
-    b = json.loads(line)
-    beads[b['id']] = b
+if bead_lines:
+    for line in bead_lines:
+        line = line.strip()
+        if not line:
+            continue
+        b = json.loads(line)
+        beads[b['id']] = b
 
 # Count beads in each state
 closed_critique = set()
-for bid, b in beads.items():
-    if b.get('status') == 'closed' and 'critique' in b.get('labels', []):
-        closed_critique.add(bid)
+if source == 'beads':
+    for bid, b in beads.items():
+        if b.get('status') == 'closed' and 'critique' in b.get('labels', []):
+            closed_critique.add(bid)
+else:
+    for entry in matrix.get('entries', []):
+        if entry.get('status') == 'closed' and 'critique' in entry.get('labels', []):
+            bid = entry.get('bead_id')
+            if bid:
+                closed_critique.add(bid)
 
 matrix_map = {}
 for e in matrix.get('entries', []):
