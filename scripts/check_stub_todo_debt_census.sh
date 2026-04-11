@@ -85,7 +85,7 @@ if not isinstance(summary, dict):
 symbols = support.get("symbols", [])
 derived = Counter(str(row.get("status", "")) for row in symbols)
 derived_summary = exported.get("derived_summary", {})
-for status in ["Implemented", "RawSyscall", "GlibcCallThrough", "Stub", "DefaultStub"]:
+for status in ["Implemented", "RawSyscall", "WrapsHostLibc", "GlibcCallThrough", "Stub", "DefaultStub"]:
     if int(derived_summary.get(status, 0)) != int(derived.get(status, 0)):
         raise SystemExit(
             f"FAIL: exported_taxonomy_view.derived_summary mismatch for {status} "
@@ -112,7 +112,7 @@ expected_actual_ct_modules = sorted(
     {
         str(row.get("module", ""))
         for row in symbols
-        if row.get("status") == "GlibcCallThrough"
+        if row.get("status") in {"GlibcCallThrough", "WrapsHostLibc"}
     }
 )
 if sorted(replacement_view.get("actual_callthrough_modules", [])) != expected_actual_ct_modules:
@@ -122,7 +122,7 @@ expected_blockers = []
 expected_unapproved_ct = []
 for row in symbols:
     status = str(row.get("status", ""))
-    if status not in {"Stub", "GlibcCallThrough"}:
+    if status not in {"Stub", "GlibcCallThrough", "WrapsHostLibc"}:
         continue
     module = str(row.get("module", ""))
     item = {
@@ -134,7 +134,7 @@ for row in symbols:
         "interpose_allowlisted": module in set(interpose_allowlist),
     }
     expected_blockers.append(item)
-    if status == "GlibcCallThrough" and module not in set(interpose_allowlist):
+    if status in {"GlibcCallThrough", "WrapsHostLibc"} and module not in set(interpose_allowlist):
         expected_unapproved_ct.append(item)
 
 expected_blockers.sort(key=lambda row: (row["status"], row["module"], row["symbol"]))

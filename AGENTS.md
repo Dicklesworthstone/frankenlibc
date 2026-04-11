@@ -300,6 +300,15 @@ FrankenLibC/
 | `frankenlibc-harness` | `src/verify.rs` | Output comparison |
 | `frankenlibc-harness` | `src/healing_oracle.rs` | Intentional unsafe trigger + healing verification |
 
+### Support Taxonomy (support_matrix.json)
+
+Status meanings used throughout the repo:
+- `Implemented`: Native Rust behavior; no host libc dependency.
+- `RawSyscall`: ABI path marshals directly to Linux syscalls.
+- `WrapsHostLibc`: Native wrapper that still calls host libc symbols internally.
+- `GlibcCallThrough`: Delegates to host glibc after membrane validation.
+- `Stub`: Deterministic fallback/error contract.
+
 ### Feature Flags
 
 ```toml

@@ -48,7 +48,13 @@ fn canonical_reality_report_schema_is_valid() {
     assert!(report["counts"].is_object(), "counts must be an object");
     assert!(report["stubs"].is_array(), "stubs must be an array");
 
-    for key in ["implemented", "raw_syscall", "glibc_call_through", "stub"] {
+    for key in [
+        "implemented",
+        "raw_syscall",
+        "wraps_host_libc",
+        "glibc_call_through",
+        "stub",
+    ] {
         assert!(
             report["counts"][key].is_u64(),
             "counts.{key} must be an unsigned integer"
@@ -68,14 +74,13 @@ fn support_matrix_docs_drift_guard_passes() {
         .output()
         .expect("check_support_matrix_drift.sh should execute");
 
-    if !output.status.success() {
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        panic!(
-            "support matrix/docs drift guard failed\nstatus: {:?}\nstdout:\n{}\nstderr:\n{}",
-            output.status.code(),
-            stdout,
-            stderr
-        );
-    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "support matrix/docs drift guard failed\nstatus: {:?}\nstdout:\n{}\nstderr:\n{}",
+        output.status.code(),
+        stdout,
+        stderr
+    );
 }

@@ -15,9 +15,9 @@ fn repo_root() -> std::path::PathBuf {
 
 fn load_json(path: &Path) -> serde_json::Value {
     let content = std::fs::read_to_string(path)
-        .unwrap_or_else(|e| panic!("Failed to read {}: {}", path.display(), e));
+        .unwrap_or_else(|e| panic!("Failed to read {}: {}", path.display(), e)); // ubs:ignore — test helper must fail fast on missing fixtures
     serde_json::from_str(&content)
-        .unwrap_or_else(|e| panic!("Invalid JSON in {}: {}", path.display(), e))
+        .unwrap_or_else(|e| panic!("Invalid JSON in {}: {}", path.display(), e)) // ubs:ignore — test helper must fail fast on invalid fixtures
 }
 
 fn load_conformance_coverage_baseline() -> serde_json::Value {
@@ -114,7 +114,13 @@ fn per_symbol_all_have_valid_status() {
     let data = load_json(&report_path);
 
     let symbols = data["per_symbol_report"].as_array().unwrap();
-    let valid_statuses = ["Implemented", "RawSyscall", "GlibcCallThrough", "Stub"];
+    let valid_statuses = [
+        "Implemented",
+        "RawSyscall",
+        "WrapsHostLibc",
+        "GlibcCallThrough",
+        "Stub",
+    ];
 
     for s in symbols {
         let name = s["symbol"].as_str().unwrap_or("?");

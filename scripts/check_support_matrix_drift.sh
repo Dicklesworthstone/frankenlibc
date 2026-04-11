@@ -133,6 +133,7 @@ errors = []
 status_map = [
     ("Implemented", "implemented"),
     ("RawSyscall", "raw_syscall"),
+    ("WrapsHostLibc", "wraps_host_libc"),
     ("GlibcCallThrough", "glibc_call_through"),
     ("Stub", "stub"),
 ]
@@ -143,8 +144,8 @@ if readme_source not in readme:
 
 readme_snapshot = (
     f"Reality snapshot: total_exported={total}, implemented={counts['implemented']}, "
-    f"raw_syscall={counts['raw_syscall']}, glibc_call_through={counts['glibc_call_through']}, "
-    f"stub={counts['stub']}."
+    f"raw_syscall={counts['raw_syscall']}, wraps_host_libc={counts['wraps_host_libc']}, "
+    f"glibc_call_through={counts['glibc_call_through']}, stub={counts['stub']}."
 )
 if readme_snapshot not in readme:
     errors.append("README missing exact reality snapshot line")

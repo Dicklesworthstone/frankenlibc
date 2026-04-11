@@ -16,6 +16,7 @@ cargo run -p frankenlibc-harness --bin harness -- reality-report \
 Current exported ABI surface is **3980 symbols**, classified as:
 - `Implemented`: 3576
 - `RawSyscall`: 404
+- `WrapsHostLibc`: 0
 - `GlibcCallThrough`: 0
 - `Stub`: 0
 
@@ -24,6 +25,7 @@ This means the current artifact is a **hybrid interposition profile** (mixed Rus
 Legend:
 - `Implemented`: Native Rust behavior, no host glibc dependency for that symbol
 - `RawSyscall`: Direct Linux syscall veneer, no host glibc dependency for that symbol
+- `WrapsHostLibc`: Native wrapper that still calls host libc symbols internally
 - `GlibcCallThrough`: Host glibc delegation with membrane pre/post checks
 - `Stub`: Deterministic fallback/error contract (documented and testable)
 - `DONE` / `IN_PROGRESS` / `PLANNED`: roadmap status for broader subsystem goals
@@ -33,7 +35,7 @@ Legend:
 | Area | Target | Status |
 |---|---|---|
 | Exported symbol classification | 100% of current exports explicitly classified in support taxonomy | DONE |
-| POSIX/GNU replacement completeness | Remove `GlibcCallThrough` + `Stub` classes from critical surfaces | IN_PROGRESS |
+| POSIX/GNU replacement completeness | Remove `WrapsHostLibc` + `GlibcCallThrough` + `Stub` classes from critical surfaces | IN_PROGRESS |
 | ABI symbol/version fidelity | Preserve exported ABI and classify each exported symbol state | IN_PROGRESS |
 | Strict mode conformance | Differential parity on supported symbol set | IN_PROGRESS |
 | Hardened mode safety | Deterministic repair/deny coverage on membrane-gated paths | IN_PROGRESS |
@@ -54,6 +56,7 @@ Legend:
 |---|---|
 | `Implemented` | `string_abi`, `wchar_abi`, `math_abi`, `stdlib_abi`, `malloc_abi`, `ctype_abi`, `inet_abi`, `errno_abi`, `resolv_abi`, `locale_abi`, `iconv_abi` |
 | `RawSyscall` | `unistd_abi`, `socket_abi`, `termios_abi`, `time_abi`, `dirent_abi`, `process_abi`, `poll_abi`, `io_abi`, `mmap_abi`, `resource_abi`, `signal_abi` |
+| `WrapsHostLibc` | none in current support matrix snapshot |
 | `GlibcCallThrough` | none in current support matrix snapshot |
 | `Stub` | none (current exported surface) |
 

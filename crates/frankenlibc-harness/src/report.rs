@@ -212,6 +212,7 @@ impl DecisionTraceReport {
 pub struct RealityCounts {
     pub implemented: u64,
     pub raw_syscall: u64,
+    pub wraps_host_libc: u64,
     pub glibc_call_through: u64,
     pub stub: u64,
 }
@@ -256,6 +257,7 @@ impl RealityReport {
         let mut stubs = Vec::new();
         let mut implemented = 0u64;
         let mut raw_syscall = 0u64;
+        let mut wraps_host_libc = 0u64;
         let mut glibc_call_through = 0u64;
         let mut stub = 0u64;
 
@@ -265,6 +267,7 @@ impl RealityReport {
             match status {
                 "Implemented" => implemented += 1,
                 "RawSyscall" => raw_syscall += 1,
+                "WrapsHostLibc" => wraps_host_libc += 1,
                 "GlibcCallThrough" => glibc_call_through += 1,
                 "Stub" => {
                     stub += 1;
@@ -280,7 +283,8 @@ impl RealityReport {
 
         stubs.sort();
 
-        let computed_total = implemented + raw_syscall + glibc_call_through + stub;
+        let computed_total =
+            implemented + raw_syscall + wraps_host_libc + glibc_call_through + stub;
         if computed_total != total_exported {
             return Err(format!(
                 "support matrix status totals ({computed_total}) do not match total_exported ({total_exported})"
@@ -294,6 +298,7 @@ impl RealityReport {
             counts: RealityCounts {
                 implemented,
                 raw_syscall,
+                wraps_host_libc,
                 glibc_call_through,
                 stub,
             },
@@ -1427,6 +1432,7 @@ impl ErrnoEdgeCaseReport {
                         })
                         .saturating_add(match support_status.as_str() {
                             "RawSyscall" => 10,
+                            "WrapsHostLibc" => 5,
                             "GlibcCallThrough" => 5,
                             _ => 0,
                         });
@@ -1544,7 +1550,10 @@ fn classify_obligation_coverage_state(execution: &PosixExecutionCounts) -> &'sta
 }
 
 fn status_tracks_posix_obligations(status: &str) -> bool {
-    matches!(status, "Implemented" | "RawSyscall" | "GlibcCallThrough")
+    matches!(
+        status,
+        "Implemented" | "RawSyscall" | "WrapsHostLibc" | "GlibcCallThrough"
+    )
 }
 
 fn derive_family_from_module(module: &str) -> String {
@@ -1978,19 +1987,21 @@ mod tests {
     { "symbol": "alpha", "status": "Implemented" },
     { "symbol": "beta", "status": "RawSyscall" },
     { "symbol": "gamma", "status": "GlibcCallThrough" },
+    { "symbol": "delta", "status": "WrapsHostLibc" },
     { "symbol": "eta", "status": "Stub" }"#,
-            5,
+            6,
         );
         let report = RealityReport::from_support_matrix_json_str(&json).unwrap();
 
         assert_eq!(report.schema_version, "v1");
         assert_eq!(report.generated_at_utc, "2026-02-11T03:14:20Z");
-        assert_eq!(report.total_exported, 5);
+        assert_eq!(report.total_exported, 6);
         assert_eq!(
             report.counts,
             RealityCounts {
                 implemented: 1,
                 raw_syscall: 1,
+                wraps_host_libc: 1,
                 glibc_call_through: 1,
                 stub: 2
             }

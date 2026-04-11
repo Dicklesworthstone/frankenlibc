@@ -103,6 +103,22 @@
             "tests/conformance/reality_report.v1.json"
           ],
           "failure_message": "Reality report missing; closure cannot be evaluated deterministically."
+        },
+        {
+          "invariant_id": "l0.wraps_host_libc_zero",
+          "description": "WrapsHostLibc count must be zero for L0 closure.",
+          "predicate": {
+            "type": "json_eq",
+            "file": "tests/conformance/reality_report.v1.json",
+            "query": "counts.wraps_host_libc",
+            "expected": 0
+          },
+          "check_cmd": "scripts/check_support_matrix_drift.sh",
+          "artifact_paths": [
+            "tests/conformance/reality_report.v1.json",
+            "scripts/check_support_matrix_drift.sh"
+          ],
+          "failure_message": "WrapsHostLibc count is non-zero; L0 closure requires zero host-wrapping symbols."
         }
       ]
     },

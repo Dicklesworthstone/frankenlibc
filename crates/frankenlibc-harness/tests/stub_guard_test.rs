@@ -175,7 +175,14 @@ fn support_matrix_exists_and_valid() {
 
         let status = sym["status"].as_str().unwrap();
         assert!(
-            ["Implemented", "RawSyscall", "GlibcCallThrough", "Stub"].contains(&status),
+            [
+                "Implemented",
+                "RawSyscall",
+                "WrapsHostLibc",
+                "GlibcCallThrough",
+                "Stub",
+            ]
+            .contains(&status),
             "symbol '{}' has invalid status: '{}'",
             name,
             status

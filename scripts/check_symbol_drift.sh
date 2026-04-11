@@ -212,7 +212,13 @@ for entry in symbols:
     by_status[status] = by_status.get(status, 0) + 1
     by_module[module] = by_module.get(module, 0) + 1
 
-valid_statuses = {'Implemented', 'RawSyscall', 'GlibcCallThrough', 'Stub'}
+valid_statuses = {
+    'Implemented',
+    'RawSyscall',
+    'WrapsHostLibc',
+    'GlibcCallThrough',
+    'Stub',
+}
 
 print(f'Total symbols: {len(symbols)}')
 print('By status:')

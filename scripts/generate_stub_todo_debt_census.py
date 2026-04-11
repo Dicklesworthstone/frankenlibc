@@ -27,7 +27,14 @@ PENDING_PANIC_RE = re.compile(r"\bpanic!\s*\(")
 FN_RE = re.compile(r"\bfn\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(")
 MSG_RE = re.compile(r"(?:todo|unimplemented|panic)!\s*\(\s*\"([^\"]*)\"")
 
-STATUS_ORDER = ["Implemented", "RawSyscall", "GlibcCallThrough", "Stub", "DefaultStub"]
+STATUS_ORDER = [
+    "Implemented",
+    "RawSyscall",
+    "WrapsHostLibc",
+    "GlibcCallThrough",
+    "Stub",
+    "DefaultStub",
+]
 
 FAMILY_WEIGHTS = {
     "threading": 42,
@@ -41,6 +48,7 @@ FAMILY_WEIGHTS = {
 
 STATUS_WEIGHTS = {
     "Stub": 38,
+    "WrapsHostLibc": 32,
     "GlibcCallThrough": 32,
     "RawSyscall": 26,
     "Implemented": 20,
@@ -270,7 +278,9 @@ def build_risk_ranking(
         agg["interpose_allowlisted"] = bool(blocker["interpose_allowlisted"])
         agg["interpose_policy_violation"] = not bool(blocker["interpose_allowlisted"])
         policy_base = STATUS_WEIGHTS.get(status, STATUS_WEIGHTS[None])
-        replacement_blocking_bonus = 24 if status == "GlibcCallThrough" else 32
+        replacement_blocking_bonus = (
+            24 if status in {"GlibcCallThrough", "WrapsHostLibc"} else 32
+        )
         interpose_violation_bonus = 18 if agg["interpose_policy_violation"] else 0
         agg["policy_risk"] = max(
             int(agg["policy_risk"]),
@@ -384,7 +394,7 @@ def build_exported_view(matrix: dict[str, Any]) -> dict[str, Any]:
             "priority": int(row.get("priority", 0)),
         }
         for row in symbols
-        if row.get("status") in {"Stub", "GlibcCallThrough"}
+        if row.get("status") in {"Stub", "GlibcCallThrough", "WrapsHostLibc"}
     ]
     non_implemented_rows.sort(
         key=lambda row: (row["status"], row["module"], row["symbol"])
@@ -418,14 +428,14 @@ def build_replacement_view(
     actual_callthrough_modules = set(
         str(row.get("module", ""))
         for row in symbols
-        if row.get("status") == "GlibcCallThrough"
+        if row.get("status") in {"GlibcCallThrough", "WrapsHostLibc"}
     )
 
     replacement_blockers = []
     interpose_unapproved_callthroughs = []
     for row in symbols:
         status = str(row.get("status", ""))
-        if status not in {"Stub", "GlibcCallThrough"}:
+        if status not in {"Stub", "GlibcCallThrough", "WrapsHostLibc"}:
             continue
         symbol = str(row.get("symbol", ""))
         module = str(row.get("module", ""))
@@ -438,7 +448,7 @@ def build_replacement_view(
             "interpose_allowlisted": module in interpose_allowlist,
         }
         replacement_blockers.append(blocker)
-        if status == "GlibcCallThrough" and module not in interpose_allowlist:
+        if status in {"GlibcCallThrough", "WrapsHostLibc"} and module not in interpose_allowlist:
             interpose_unapproved_callthroughs.append(blocker)
 
     replacement_blockers.sort(key=lambda row: (row["status"], row["module"], row["symbol"]))

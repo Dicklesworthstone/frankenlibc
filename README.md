@@ -103,7 +103,7 @@ Why it helps:
 
 ### Case study 2: documentation drift after a symbol promotion
 
-You convert a symbol from `GlibcCallThrough` to `Implemented`, but you need to know whether reports still agree:
+You convert a symbol from `WrapsHostLibc` or `GlibcCallThrough` to `Implemented`, but you need to know whether reports still agree:
 
 ```bash
 bash scripts/check_support_matrix_maintenance.sh
@@ -135,7 +135,7 @@ Unsafe C inputs are not trusted. The TSM sits at the libc boundary and classifie
 
 ### 3. Native replacement by pressure, not by vanity
 
-The project does not pretend the whole world is already reimplemented. Each exported symbol is explicitly classified as `Implemented`, `RawSyscall`, or `GlibcCallThrough`, and the matrix is machine-checked.
+The project does not pretend the whole world is already reimplemented. Each exported symbol is explicitly classified as `Implemented`, `RawSyscall`, `WrapsHostLibc`, `GlibcCallThrough`, or `Stub`, and the matrix is machine-checked.
 
 ### 4. Clean-room over translation
 
@@ -180,6 +180,7 @@ Declared replacement level claim: **L0 — Interpose**.
 |---|---:|---:|---|
 | `Implemented` | 3576 | 90% | Native ABI-backed Rust-owned behavior |
 | `RawSyscall` | 404 | 10% | ABI path delegates directly to Linux syscalls |
+| `WrapsHostLibc` | 0 | 0% | Native wrapper that still calls host libc symbols internally |
 | `GlibcCallThrough` | 0 | 0% | No direct host-glibc symbol call-through remains in the current classified surface |
 | `Stub` | 0 | 0% | No exported stubs in the current classified surface |
 
@@ -188,13 +189,13 @@ Current native coverage (`Implemented + RawSyscall`): **100.0%**.
 
 Source of truth: `tests/conformance/reality_report.v1.json` (generated `2026-02-18T04:49:26Z`).
 
-Reality snapshot: total_exported=3980, implemented=3576, raw_syscall=404, glibc_call_through=0, stub=0.
+Reality snapshot: total_exported=3980, implemented=3576, raw_syscall=404, wraps_host_libc=0, glibc_call_through=0, stub=0.
 
 In practice:
 
 - The current shipping artifact is the **interpose** shared library: `target/release/libfrankenlibc_abi.so`.
 - The future **replace** artifact (`libfrankenlibc_replace.so`) is still planned, not done.
-- The classified symbol surface no longer reports direct `GlibcCallThrough` symbols, but the current shipping artifact is still an interpose-first preload library rather than a full standalone libc replacement.
+- The classified symbol surface no longer reports direct `GlibcCallThrough` or `WrapsHostLibc` symbols, but the current shipping artifact is still an interpose-first preload library rather than a full standalone libc replacement.
 - Canonical checked smoke artifact: `tests/conformance/ld_preload_smoke_summary.v1.json` (run `20260404T011731Z`, checked April 4, 2026) reports 58 passes / 0 fails / 6 skips overall, with strict 29/0/3 and hardened 29/0/3 across the curated preload smoke battery.
 - The six skips are the optional `sqlite3`, `redis-cli`, and `nginx` probes across both modes. That checked curated battery is green; broader production hardening, release-claim closure, and non-curated workload stability are still tracked separately.
 
@@ -225,6 +226,7 @@ The status taxonomy is the control system for the project’s staged migration.
 |---|---|---|
 | `Implemented` | FrankenLibC owns the symbol behavior natively | valid for interpose and eventual replace |
 | `RawSyscall` | FrankenLibC owns the ABI path and goes straight to Linux syscalls | valid for interpose and eventual replace |
+| `WrapsHostLibc` | native wrapper that still calls host libc symbols internally | valid for interpose only |
 | `GlibcCallThrough` | symbol still depends on host glibc | valid for interpose only |
 | `Stub` | deterministic fallback contract without full implementation | currently absent from the exported surface |
 
@@ -699,7 +701,7 @@ FrankenLibC is deliberately staged.
 | Stage | Meaning |
 |---|---|
 | Interpose now | Replace selected behavior behind `LD_PRELOAD`, while allowing explicit host call-throughs where still necessary |
-| Expand native ownership | Convert more `GlibcCallThrough` symbols into `Implemented` or `RawSyscall` |
+| Expand native ownership | Convert more `WrapsHostLibc` / `GlibcCallThrough` symbols into `Implemented` or `RawSyscall` |
 | Enforce artifact contracts | Use maintenance and replacement gates so interpose vs replace claims do not drift |
 | Standalone replace later | Eliminate host-glibc dependencies for the replacement artifact |
 
@@ -953,7 +955,7 @@ The replace artifact matters later because it raises the bar from “interpose s
 ### Today
 
 - interpose shared library exists
-- host glibc is still part of the deployment story because the shipping artifact is interpose-first, even though the current symbol matrix no longer reports `GlibcCallThrough` rows
+- host glibc is still part of the deployment story because the shipping artifact is interpose-first, even though the current symbol matrix no longer reports `GlibcCallThrough` or `WrapsHostLibc` rows
 - support taxonomy is machine-checked
 - hardened mode and verification flows are already live
 
@@ -1081,6 +1083,7 @@ bash scripts/check_support_matrix_maintenance.sh
 | TSM | Transparent Safety Membrane |
 | `Implemented` | Symbol path is natively owned in FrankenLibC |
 | `RawSyscall` | Symbol path goes directly to Linux syscalls rather than host glibc |
+| `WrapsHostLibc` | Native wrapper that still calls host libc symbols internally |
 | `GlibcCallThrough` | Symbol still depends on host glibc for behavior |
 | `strict` | Compatibility-first runtime mode |
 | `hardened` | Repair/deny-capable runtime mode |
@@ -1741,7 +1744,7 @@ The release interpose artifact is built with `cargo build -p frankenlibc-abi --r
 Interpose deployment uses `LD_PRELOAD=target/release/libfrankenlibc_abi.so <program>`. Hardened interpose deployment uses `FRANKENLIBC_MODE=hardened LD_PRELOAD=target/release/libfrankenlibc_abi.so <program>`.
 
 `Implemented` + `RawSyscall` symbols apply to both artifacts.
-`GlibcCallThrough` + `Stub` symbols apply to `Interpose` only.
+`WrapsHostLibc` + `GlibcCallThrough` + `Stub` symbols apply to `Interpose` only.
 
 ### Programs Tested
 
@@ -1782,6 +1785,7 @@ The `support_matrix.json` file is the machine-readable source of truth for the p
   "taxonomy": {
     "Implemented": "Native Rust, no host libc dependency",
     "RawSyscall": "Direct syscall marshaling",
+    "WrapsHostLibc": "Native wrapper that still calls host libc symbols internally",
     "GlibcCallThrough": "Delegates to host glibc",
     "Stub": "Deterministic failure contract"
   },

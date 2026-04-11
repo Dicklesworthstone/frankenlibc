@@ -4,7 +4,7 @@
 //! 1. The packaging spec JSON exists and is valid.
 //! 2. Both artifacts (interpose/replace) are defined with correct contracts.
 //! 3. Assessment counts match support_matrix.json.
-//! 4. Replace blockers match actual GlibcCallThrough+Stub symbols.
+//! 4. Replace blockers match actual WrapsHostLibc+GlibcCallThrough+Stub symbols.
 //! 5. Feature gates are documented.
 //! 6. Matrix applicability rule is correct.
 //! 7. The CI gate script exists and is executable.
@@ -102,7 +102,13 @@ fn both_artifacts_defined_with_correct_contracts() {
         .iter()
         .filter_map(|v| v.as_str().map(String::from))
         .collect();
-    for status in ["Implemented", "RawSyscall", "GlibcCallThrough", "Stub"] {
+    for status in [
+        "Implemented",
+        "RawSyscall",
+        "WrapsHostLibc",
+        "GlibcCallThrough",
+        "Stub",
+    ] {
         assert!(
             interpose_allowed.contains(status),
             "interpose: allowed_statuses missing {status}"
@@ -121,6 +127,10 @@ fn both_artifacts_defined_with_correct_contracts() {
         .iter()
         .filter_map(|v| v.as_str().map(String::from))
         .collect();
+    assert!(
+        !replace_allowed.contains("WrapsHostLibc"),
+        "replace: allowed_statuses must not include WrapsHostLibc"
+    );
     assert!(
         !replace_allowed.contains("GlibcCallThrough"),
         "replace: allowed_statuses must not include GlibcCallThrough"
@@ -184,9 +194,10 @@ fn assessment_matches_matrix() {
         "replace_ready: spec={replace_ready} expected={impl_count}"
     );
 
-    // replace_blocked = GlibcCallThrough + Stub
-    let blocked_count =
-        counts.get("GlibcCallThrough").unwrap_or(&0) + counts.get("Stub").unwrap_or(&0);
+    // replace_blocked = WrapsHostLibc + GlibcCallThrough + Stub
+    let blocked_count = counts.get("WrapsHostLibc").unwrap_or(&0)
+        + counts.get("GlibcCallThrough").unwrap_or(&0)
+        + counts.get("Stub").unwrap_or(&0);
     let replace_blocked = assessment["replace_blocked"].as_u64().unwrap() as usize;
     assert_eq!(
         replace_blocked, blocked_count,
@@ -202,7 +213,7 @@ fn replace_blockers_match_matrix() {
     let symbols = matrix["symbols"].as_array().unwrap();
     let blockers = &spec["artifacts"]["replace"]["blockers"];
 
-    // Count GlibcCallThrough by module from matrix
+    // Count WrapsHostLibc + GlibcCallThrough by module from matrix
     let mut ct_by_mod: HashMap<String, usize> = HashMap::new();
     let mut stub_by_mod: HashMap<String, usize> = HashMap::new();
 
@@ -210,6 +221,9 @@ fn replace_blockers_match_matrix() {
         let status = sym["status"].as_str().unwrap_or("");
         let module = sym["module"].as_str().unwrap_or("unknown");
         match status {
+            "WrapsHostLibc" => {
+                *ct_by_mod.entry(module.to_string()).or_default() += 1;
+            }
             "GlibcCallThrough" => {
                 *ct_by_mod.entry(module.to_string()).or_default() += 1;
             }
@@ -218,6 +232,17 @@ fn replace_blockers_match_matrix() {
             }
             _ => {}
         }
+    }
+
+    // Verify WrapsHostLibc breakdown
+    let wraps_claimed = blockers["WrapsHostLibc_remaining"].as_object().unwrap();
+    for (m, claimed_val) in wraps_claimed {
+        let claimed = claimed_val.as_u64().unwrap() as usize;
+        let actual = *ct_by_mod.get(m.as_str()).unwrap_or(&0);
+        assert_eq!(
+            claimed, actual,
+            "WrapsHostLibc_remaining.{m}: spec={claimed} matrix={actual}"
+        );
     }
 
     // Verify CallThrough breakdown
@@ -408,7 +433,7 @@ fn readme_aligns_with_packaging_spec() {
 
     for rule_fragment in [
         "`Implemented` + `RawSyscall` symbols apply to both artifacts.",
-        "`GlibcCallThrough` + `Stub` symbols apply to `Interpose` only.",
+        "`WrapsHostLibc` + `GlibcCallThrough` + `Stub` symbols apply to `Interpose` only.",
     ] {
         assert!(
             readme.contains(rule_fragment),

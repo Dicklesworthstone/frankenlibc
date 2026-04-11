@@ -28,13 +28,23 @@ CONFORMANCE_MATRIX_PATH = REPO_ROOT / "tests" / "conformance" / "conformance_mat
 
 # Patterns indicating host glibc calls
 LIBC_CALL_PATTERN = re.compile(r'\blibc::(\w+)\b')
+# Patterns indicating explicit host delegation inside ABI bodies.
+WRAPS_HOST_LIBC_PATTERN = re.compile(
+    r'(host_\w+_fn\s*\(|host_resolve::resolve_host_symbol_|'
+    r'crate::host_resolve::resolve_host_symbol_)'
+)
+# Patterns indicating stdio/malloc libc delegation (explicit list per bd-9chy.2).
+WRAPS_LIBC_CALL_PATTERN = re.compile(
+    r'\blibc::(?:fopen|fclose|fread|fwrite|fseek|ftell|fflush|setvbuf|ungetc|'
+    r'feof|ferror|clearerr|fileno|getline|getdelim|printf|malloc|free|realloc)\b'
+)
 # Patterns indicating raw syscall usage
 SYSCALL_PATTERN = re.compile(
     r'(?:crate::syscall::|super::syscall::|syscall!|syscall_raw|'
     r'libc::syscall\b|libc::SYS_|__NR_)'
 )
 NEXT_FN_PATTERN = re.compile(
-    r'\n\s*(?:(?:#\[[^\n]*\])\s*\n\s*)*'
+    r'\n\s*(?:(?:#\[[^\n]*\]|//[/!][^\n]*)\n\s*)*'
     r'(?:pub\s+)?(?:unsafe\s+)?(?:extern\s+"C"\s+)?fn\s+\w+\s*\('
 )
 # Patterns indicating stub/unimplemented (explicit Rust stub macros only;
@@ -138,6 +148,8 @@ def count_statuses_from_map(status_map):
     return counts
 
 
+
+
 def read_module_source(module_name):
     """Read ABI module source file content."""
     src_path = ABI_SRC / f"{module_name}.rs"
@@ -207,18 +219,24 @@ def is_type_or_constant(name):
 def validate_status(symbol, status, module, source):
     """Validate that a symbol's code matches its declared status.
 
-    Returns (is_valid, findings: list of str).
+    Returns (is_valid, findings: list of str, warnings: list of str).
     """
     if symbol in DATA_SYMBOLS:
-        return True, []
+        return True, [], []
 
     body = extract_function_body(source, symbol)
     if body is None:
-        return True, [f"function body not found (may use alternate pattern)"]
+        return True, [f"function body not found (may use alternate pattern)"], []
 
     findings = []
+    warnings = []
+    wraps_host_libc = bool(
+        WRAPS_HOST_LIBC_PATTERN.search(body) or WRAPS_LIBC_CALL_PATTERN.search(body)
+    )
 
     if status == "Implemented":
+        if wraps_host_libc:
+            warnings.append("WrapsHostLibc candidate (host delegation detected)")
         # Should NOT have libc:: host calls (except libc type references
         # and common utility functions).
         libc_calls = LIBC_CALL_PATTERN.findall(body)
@@ -373,6 +391,8 @@ def validate_status(symbol, status, module, source):
                 findings.append(f"Implemented but contains stub pattern: {pat.pattern}")
 
     elif status == "RawSyscall":
+        if wraps_host_libc:
+            warnings.append("WrapsHostLibc candidate (host delegation detected)")
         # RawSyscall functions use libc::syscall() and libc::SYS_* constants
         # which IS the raw syscall path (not glibc function calls).
         # We check that they don't call actual glibc library functions.
@@ -448,6 +468,10 @@ def validate_status(symbol, status, module, source):
             calls_str = ", ".join(unique_calls[:5])
             findings.append("RawSyscall but calls glibc::{" + calls_str + "}")
 
+    elif status == "WrapsHostLibc":
+        if not wraps_host_libc:
+            findings.append("WrapsHostLibc but no host delegation detected")
+
     elif status == "GlibcCallThrough":
         # Should have libc:: references or macro-based delegation patterns.
         # Many GCT symbols delegate via macros (io_resolve!, rpc_delegate!,
@@ -478,7 +502,7 @@ def validate_status(symbol, status, module, source):
             findings.append("Stub but no stub/unimplemented/todo pattern found")
 
     is_valid = len(findings) == 0
-    return is_valid, findings
+    return is_valid, findings, warnings
 
 
 def main():
@@ -541,12 +565,12 @@ def main():
             })
             continue
 
-        is_valid, findings = validate_status(sym, st, module, source)
+        is_valid, findings, warn_list = validate_status(sym, st, module, source)
+        warnings += len(warn_list)
         if is_valid:
             status_valid += 1
         else:
             status_invalid += 1
-            warnings += len(findings)
 
         status_results.append({
             "symbol": sym,
@@ -554,6 +578,7 @@ def main():
             "module": module,
             "valid": is_valid,
             "findings": findings,
+            "warnings": warn_list,
         })
 
     # --- Pass 2: Conformance Linkage ---
@@ -610,6 +635,7 @@ def main():
 
     implemented_count = by_status.get("Implemented", 0)
     raw_syscall_count = by_status.get("RawSyscall", 0)
+    wraps_host_libc_count = by_status.get("WrapsHostLibc", 0)
     callthrough_count = by_status.get("GlibcCallThrough", 0)
     stub_count = by_status.get("Stub", 0)
     native_count = implemented_count + raw_syscall_count
@@ -736,12 +762,16 @@ def main():
             "status_counts": {
                 "Implemented": implemented_count,
                 "RawSyscall": raw_syscall_count,
+                "WrapsHostLibc": wraps_host_libc_count,
                 "GlibcCallThrough": callthrough_count,
                 "Stub": stub_count,
             },
             "status_share_pct": {
                 "Implemented": round((implemented_count / total_symbols * 100.0), 1) if total_symbols else 0.0,
                 "RawSyscall": round((raw_syscall_count / total_symbols * 100.0), 1) if total_symbols else 0.0,
+                "WrapsHostLibc": round((wraps_host_libc_count / total_symbols * 100.0), 1)
+                if total_symbols
+                else 0.0,
                 "GlibcCallThrough": round((callthrough_count / total_symbols * 100.0), 1) if total_symbols else 0.0,
                 "Stub": round((stub_count / total_symbols * 100.0), 1) if total_symbols else 0.0,
             },
@@ -793,7 +823,7 @@ def main():
         "symbol_status_map": dict(sorted(symbol_status_map.items())),
         "reclassified_symbols": reclassified_symbols,
         "status_validation_issues": [
-            r for r in status_results if r.get("findings")
+            r for r in status_results if r.get("findings") or r.get("warnings")
         ],
         "unlinked_symbols": [
             r["symbol"] for r in linkage_results if not r["has_fixture"]

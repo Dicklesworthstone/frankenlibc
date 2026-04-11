@@ -328,7 +328,13 @@ def check_claim_alignment(support_matrix, replacement_profile, stub_census):
 def check_no_unknown_symbols(support_matrix):
     """Rule 5: No symbols with unknown/ambiguous status in declared tiers."""
     findings = []
-    valid_statuses = {"Implemented", "RawSyscall", "GlibcCallThrough", "Stub"}
+    valid_statuses = {
+        "Implemented",
+        "RawSyscall",
+        "WrapsHostLibc",
+        "GlibcCallThrough",
+        "Stub",
+    }
 
     unknown_symbols = []
     for sym in support_matrix.get("symbols", []):

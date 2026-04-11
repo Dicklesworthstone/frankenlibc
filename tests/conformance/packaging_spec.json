@@ -18,6 +18,7 @@
       "allowed_statuses": [
         "Implemented",
         "RawSyscall",
+        "WrapsHostLibc",
         "GlibcCallThrough",
         "Stub"
       ],
@@ -61,6 +62,7 @@
       "status": "matrix_ready_artifact_pending",
       "blockers": {
         "total_symbols_to_migrate": 0,
+        "WrapsHostLibc_remaining": {},
         "GlibcCallThrough_remaining": {},
         "Stub_remaining": {},
         "milestone_beads": [
@@ -111,6 +113,7 @@
     "symbol_distribution": {
       "Implemented": 3576,
       "RawSyscall": 404,
+      "WrapsHostLibc": 0,
       "GlibcCallThrough": 0,
       "Stub": 0
     },

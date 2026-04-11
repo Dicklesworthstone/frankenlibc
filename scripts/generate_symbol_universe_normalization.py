@@ -64,7 +64,7 @@ MODULE_TO_FAMILY = {
 }
 
 # Valid support states
-VALID_STATUSES = {"Implemented", "RawSyscall", "GlibcCallThrough"}
+VALID_STATUSES = {"Implemented", "RawSyscall", "WrapsHostLibc", "GlibcCallThrough", "Stub"}
 
 # Valid perf classes
 VALID_PERF_CLASSES = {"strict_hotpath", "coldpath", "hardened_hotpath"}
@@ -81,7 +81,17 @@ CONFIDENCE_RULES = {
         "coldpath": "medium",
         "hardened_hotpath": "medium",
     },
+    "WrapsHostLibc": {
+        "strict_hotpath": "low",
+        "coldpath": "low",
+        "hardened_hotpath": "low",
+    },
     "GlibcCallThrough": {
+        "strict_hotpath": "low",
+        "coldpath": "low",
+        "hardened_hotpath": "low",
+    },
+    "Stub": {
         "strict_hotpath": "low",
         "coldpath": "low",
         "hardened_hotpath": "low",
@@ -169,8 +179,12 @@ def normalize_symbol(sym_entry):
         classification = "native"
     elif status == "RawSyscall":
         classification = "syscall-passthrough"
+    elif status == "WrapsHostLibc":
+        classification = "host-wrapped"
     elif status == "GlibcCallThrough":
         classification = "host-delegated"
+    elif status == "Stub":
+        classification = "stub"
     else:
         classification = "unknown"
 

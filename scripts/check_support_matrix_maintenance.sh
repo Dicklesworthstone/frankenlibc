@@ -176,6 +176,7 @@ if coverage_dashboard:
     print(
         f"  Implemented={status_counts.get('Implemented', 0)} "
         f"RawSyscall={status_counts.get('RawSyscall', 0)} "
+        f"WrapsHostLibc={status_counts.get('WrapsHostLibc', 0)} "
         f"GlibcCallThrough={status_counts.get('GlibcCallThrough', 0)} "
         f"Stub={status_counts.get('Stub', 0)}"
     )
@@ -189,6 +190,7 @@ if coverage_dashboard:
         {
             "implemented": status_counts.get("Implemented", 0),
             "raw_syscall": status_counts.get("RawSyscall", 0),
+            "wraps_host_libc": status_counts.get("WrapsHostLibc", 0),
             "glibc_call_through": status_counts.get("GlibcCallThrough", 0),
             "stub": status_counts.get("Stub", 0),
             "native_coverage_pct": native_pct,
@@ -236,10 +238,12 @@ issues = report.get("status_validation_issues", [])
 if issues:
     print(f"\nStatus validation findings ({len(issues)}):")
     for iss in issues[:15]:
-        findings_str = "; ".join(iss.get("findings", []))
+        findings = iss.get("findings", []) or []
+        warnings = iss.get("warnings", []) or []
+        findings_str = "; ".join([*findings, *warnings])
         print(f"  {iss['symbol']:30s} ({iss['status']}) {findings_str}")
     for iss in issues:
-        level = "warn" if iss.get("status") == "GlibcCallThrough" else "debug"
+        level = "warn" if iss.get("status") in ("GlibcCallThrough", "WrapsHostLibc") else "debug"
         emit(
             level,
             "status_validation_issue",
@@ -250,6 +254,7 @@ if issues:
                 "status": iss.get("status"),
                 "module": iss.get("module"),
                 "findings": iss.get("findings", []),
+                "warnings": iss.get("warnings", []),
             },
         )
 

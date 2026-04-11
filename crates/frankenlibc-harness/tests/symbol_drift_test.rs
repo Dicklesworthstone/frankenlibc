@@ -163,9 +163,15 @@ fn no_duplicate_symbols() {
 fn all_statuses_valid() {
     let matrix = load_matrix();
     let symbols = matrix["symbols"].as_array().unwrap();
-    let valid: HashSet<&str> = ["Implemented", "RawSyscall", "GlibcCallThrough", "Stub"]
-        .into_iter()
-        .collect();
+    let valid: HashSet<&str> = [
+        "Implemented",
+        "RawSyscall",
+        "WrapsHostLibc",
+        "GlibcCallThrough",
+        "Stub",
+    ]
+    .into_iter()
+    .collect();
 
     let mut invalid = Vec::new();
     for entry in symbols {

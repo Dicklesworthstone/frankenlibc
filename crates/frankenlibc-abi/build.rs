@@ -329,7 +329,7 @@ fn topological_order(
         for child in children {
             let degree = indegree
                 .get_mut(child)
-                .unwrap_or_else(|| panic!("missing indegree entry for {child}"));
+                .unwrap_or_else(|| panic!("missing indegree entry for {child}")); // ubs:ignore — build.rs must hard-fail on invalid graph
             *degree -= 1;
             if *degree == 0 {
                 queue.push_back(child);
@@ -416,9 +416,9 @@ fn emit_startup_init_order_certificate(out_dir: &Path) {
 
 fn load_json(path: &Path) -> Value {
     let body = fs::read_to_string(path)
-        .unwrap_or_else(|err| panic!("failed to read {}: {err}", path.display()));
+        .unwrap_or_else(|err| panic!("failed to read {}: {err}", path.display())); // ubs:ignore — build.rs must hard-fail on missing inputs
     serde_json::from_str(&body)
-        .unwrap_or_else(|err| panic!("failed to parse {}: {err}", path.display()))
+        .unwrap_or_else(|err| panic!("failed to parse {}: {err}", path.display())) // ubs:ignore — build.rs must hard-fail on invalid inputs
 }
 
 fn extract_libc_call(fragment: &str) -> Option<&str> {
@@ -445,7 +445,7 @@ fn extract_libc_call(fragment: &str) -> Option<&str> {
 
 fn scan_call_throughs(abi_src: &Path) -> Vec<CallThroughSite> {
     let mut modules = fs::read_dir(abi_src)
-        .unwrap_or_else(|err| panic!("failed to read {}: {err}", abi_src.display()))
+        .unwrap_or_else(|err| panic!("failed to read {}: {err}", abi_src.display())) // ubs:ignore — build.rs must hard-fail on missing ABI sources
         .filter_map(Result::ok)
         .map(|entry| entry.path())
         .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("rs"))
@@ -460,7 +460,7 @@ fn scan_call_throughs(abi_src: &Path) -> Vec<CallThroughSite> {
             .unwrap_or_default()
             .to_owned();
         let content = fs::read_to_string(&module_path)
-            .unwrap_or_else(|err| panic!("failed to read {}: {err}", module_path.display()));
+            .unwrap_or_else(|err| panic!("failed to read {}: {err}", module_path.display())); // ubs:ignore — build.rs must hard-fail on unreadable ABI sources
 
         for (lineno, line) in content.lines().enumerate() {
             let trimmed = line.trim();
@@ -567,7 +567,8 @@ fn standalone_policy_diagnostics(root: &Path) -> Vec<String> {
         .iter()
         .filter_map(Value::as_str)
         .collect::<BTreeSet<_>>();
-    if replace_allowed_set.contains("GlibcCallThrough")
+    if replace_allowed_set.contains("WrapsHostLibc")
+        || replace_allowed_set.contains("GlibcCallThrough")
         || replace_allowed_set.contains("Stub")
         || !replace_allowed_set.contains("Implemented")
         || !replace_allowed_set.contains("RawSyscall")
@@ -585,7 +586,7 @@ fn standalone_policy_diagnostics(root: &Path) -> Vec<String> {
         .flatten()
         .filter_map(|row| {
             let status = row.get("status").and_then(Value::as_str)?;
-            if status == "GlibcCallThrough" || status == "Stub" {
+            if status == "WrapsHostLibc" || status == "GlibcCallThrough" || status == "Stub" {
                 Some(
                     row.get("symbol")
                         .and_then(Value::as_str)
@@ -643,10 +644,11 @@ fn enforce_standalone_policy(root: &Path) {
         return;
     }
 
-    panic!(
+    eprintln!(
         "standalone feature requires a replacement-clean ABI.\n{}\nRun `bash scripts/check_replacement_guard.sh replacement` for the full report.",
         diagnostics.join("\n")
     );
+    std::process::exit(1);
 }
 
 fn emit_rerun_directives(repo_root: &Path, manifest_dir: &str) {
@@ -677,7 +679,7 @@ fn emit_rerun_directives(repo_root: &Path, manifest_dir: &str) {
 
     let abi_src = repo_root.join("crates/frankenlibc-abi/src");
     let mut abi_files = fs::read_dir(&abi_src)
-        .unwrap_or_else(|err| panic!("failed to read {}: {err}", abi_src.display()))
+        .unwrap_or_else(|err| panic!("failed to read {}: {err}", abi_src.display())) // ubs:ignore — build.rs must hard-fail on missing ABI sources
         .filter_map(Result::ok)
         .map(|entry| entry.path())
         .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("rs"))

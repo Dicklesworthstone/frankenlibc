@@ -5,6 +5,7 @@
   "counts": {
     "implemented": 3576,
     "raw_syscall": 404,
+    "wraps_host_libc": 0,
     "glibc_call_through": 0,
     "stub": 0
   },

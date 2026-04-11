@@ -5,7 +5,7 @@
 #   1. Packaging spec JSON exists and is valid.
 #   2. Both artifacts (interpose/replace) are defined with required fields.
 #   3. Assessment counts match support_matrix.json.
-#   4. Replace blockers match actual GlibcCallThrough+Stub symbols.
+#   4. Replace blockers match actual WrapsHostLibc+GlibcCallThrough+Stub symbols.
 #   5. Interpose artifact build command succeeds (cdylib exists).
 #
 # Exit codes:
@@ -93,7 +93,7 @@ for artifact_id in ['interpose', 'replace']:
     # Interpose must allow all statuses
     if artifact_id == 'interpose':
         allowed = set(art.get('allowed_statuses', []))
-        required = {'Implemented', 'RawSyscall', 'GlibcCallThrough', 'Stub'}
+        required = {'Implemented', 'RawSyscall', 'WrapsHostLibc', 'GlibcCallThrough', 'Stub'}
         missing = required - allowed
         if missing:
             errors.append(f'interpose: allowed_statuses missing {missing}')
@@ -103,7 +103,7 @@ for artifact_id in ['interpose', 'replace']:
     # Replace must only allow standalone statuses
     if artifact_id == 'replace':
         allowed = set(art.get('allowed_statuses', []))
-        forbidden = allowed & {'GlibcCallThrough', 'Stub'}
+        forbidden = allowed & {'WrapsHostLibc', 'GlibcCallThrough', 'Stub'}
         if forbidden:
             errors.append(f'replace: allowed_statuses should not include {forbidden}')
         if art.get('host_glibc_required', True):
@@ -253,7 +253,7 @@ echo "${assess_check}" | grep -E '^(Interpose|Replace)' || true
 echo ""
 
 # ---------------------------------------------------------------------------
-# Check 5: Replace blockers match actual CallThrough+Stub
+# Check 5: Replace blockers match actual WrapsHostLibc+CallThrough+Stub
 # ---------------------------------------------------------------------------
 echo "--- Check 5: Replace blockers ---"
 
@@ -269,10 +269,11 @@ errors = []
 replace = spec.get('artifacts', {}).get('replace', {})
 blockers = replace.get('blockers', {})
 
-# Count actual GlibcCallThrough by module
+# Count actual WrapsHostLibc + GlibcCallThrough by module
 ct_by_mod = {}
 for sym in matrix.get('symbols', []):
-    if sym.get('status') == 'GlibcCallThrough':
+    status = sym.get('status')
+    if status in ('WrapsHostLibc', 'GlibcCallThrough'):
         m = sym.get('module', 'unknown')
         ct_by_mod[m] = ct_by_mod.get(m, 0) + 1
 
@@ -282,6 +283,17 @@ for sym in matrix.get('symbols', []):
     if sym.get('status') == 'Stub':
         m = sym.get('module', 'unknown')
         stub_by_mod[m] = stub_by_mod.get(m, 0) + 1
+
+# Check WrapsHostLibc breakdown
+wraps_claimed = blockers.get('WrapsHostLibc_remaining', {})
+for m, claimed in wraps_claimed.items():
+    actual = ct_by_mod.get(m, 0)
+    if claimed != actual:
+        errors.append(f'WrapsHostLibc_remaining.{m}: spec={claimed} matrix={actual}')
+
+for m, actual in ct_by_mod.items():
+    if m not in wraps_claimed:
+        errors.append(f'WrapsHostLibc_remaining missing {m} ({actual} symbols)')
 
 # Check callthrough breakdown
 ct_claimed = blockers.get('GlibcCallThrough_remaining', {})
@@ -323,7 +335,7 @@ if [[ "${blocker_errs}" -gt 0 ]]; then
     echo "${blocker_check}" | grep '  '
     failures=$((failures + 1))
 else
-    echo "PASS: Replace blockers match actual GlibcCallThrough+Stub symbols"
+    echo "PASS: Replace blockers match actual WrapsHostLibc+GlibcCallThrough+Stub symbols"
 fi
 echo ""
 
@@ -394,7 +406,7 @@ if hardened_deploy.startswith('FRANKENLIBC_MODE=hardened'):
     if hardened_prefix not in readme:
         errors.append(f'Missing README hardened prefix: {hardened_prefix}')
 
-for status_token in ['Implemented', 'RawSyscall', 'GlibcCallThrough', 'Stub']:
+for status_token in ['Implemented', 'RawSyscall', 'WrapsHostLibc', 'GlibcCallThrough', 'Stub']:
     if status_token not in readme:
         errors.append(f'Missing README status token for applicability guidance: {status_token}')
 

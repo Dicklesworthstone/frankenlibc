@@ -6,6 +6,7 @@
   "taxonomy": {
     "Implemented": "Native Rust code owns the entire operation. No host libc dependency. Full test coverage required.",
     "RawSyscall": "ABI entrypoint marshals arguments directly to Linux syscall instruction. No glibc call-through.",
+    "WrapsHostLibc": "Native wrapper that still calls host libc symbols internally. Requires host libc at runtime.",
     "GlibcCallThrough": "Delegates to host glibc after membrane pre/post validation. Requires host libc at runtime.",
     "Stub": "Deterministic failure contract. Returns stable errno/error code. Documented in support policy.",
     "perf_classes": {
@@ -22,6 +23,7 @@
       "Interpose": [
         "Implemented",
         "RawSyscall",
+        "WrapsHostLibc",
         "GlibcCallThrough",
         "Stub"
       ],
@@ -29,7 +31,7 @@
         "Implemented",
         "RawSyscall"
       ],
-      "rule": "Implemented+RawSyscall apply to both artifacts; GlibcCallThrough+Stub are Interpose-only."
+      "rule": "Implemented+RawSyscall apply to both artifacts; WrapsHostLibc+GlibcCallThrough+Stub are Interpose-only."
     }
   },
   "symbols": [
@@ -31750,6 +31752,7 @@
     "total": 3980,
     "implemented": 3576,
     "raw_syscall": 404,
+    "wraps_host_libc": 0,
     "glibc_call_through": 0,
     "stub": 0
   },

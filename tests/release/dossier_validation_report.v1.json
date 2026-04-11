@@ -27,8 +27,8 @@
       "kind": "report",
       "required": true,
       "critical": true,
-      "sha256": "ed0deb8c8200bb5937ea4c14fa84fdb3654b49d852ad94aab8372a6bcf07e372",
-      "size_bytes": 940077,
+      "sha256": "c1373d9a4106d619aa3c10e1d47f0bd09d282c1fec3d55486db666a340012b37",
+      "size_bytes": 940259,
       "status": "VALID",
       "schema_valid": true,
       "findings": []
@@ -39,8 +39,8 @@
       "kind": "report",
       "required": true,
       "critical": true,
-      "sha256": "a60a201e2a6c7e4b0c9a5440d7f3a707e057e60853fbd641350ee8d02f17b929",
-      "size_bytes": 227,
+      "sha256": "5532d7279e1bd86923c3dd5a5742b74dfb93f7fda364fc08715cd957e7937ce3",
+      "size_bytes": 253,
       "status": "VALID",
       "schema_valid": true,
       "findings": []
@@ -210,13 +210,13 @@
   "integrity_index": {
     "support_matrix": {
       "path": "support_matrix.json",
-      "sha256": "ed0deb8c8200bb5937ea4c14fa84fdb3654b49d852ad94aab8372a6bcf07e372",
-      "size_bytes": 940077
+      "sha256": "c1373d9a4106d619aa3c10e1d47f0bd09d282c1fec3d55486db666a340012b37",
+      "size_bytes": 940259
     },
     "reality_report": {
       "path": "tests/conformance/reality_report.v1.json",
-      "sha256": "a60a201e2a6c7e4b0c9a5440d7f3a707e057e60853fbd641350ee8d02f17b929",
-      "size_bytes": 227
+      "sha256": "5532d7279e1bd86923c3dd5a5742b74dfb93f7fda364fc08715cd957e7937ce3",
+      "size_bytes": 253
     },
     "conformance_coverage": {
       "path": "tests/conformance/conformance_coverage_baseline.v1.json",
