@@ -99,6 +99,11 @@ storage.recovered.sqlite3
 .beads/*.pre_recovery_*
 .beads/*.recover*.sql
 .beads/*.orphan_*
+.beads/.br_recovery/
+.beads/beads.db.bad_*
+.beads/beads.db-wal.bad_*
+.beads/beads.db.rebuild_*
+.beads/beads.db.stale_*
 
 # Ephemeral scratch files
 baseline_decisions
@@ -136,3 +141,12 @@ storage.sqlite3.bak
 storage.sqlite3.corrupt-*
 storage.sqlite3-shm.corrupt-*
 storage.sqlite3-wal.corrupt-*
+
+# NTM session state
+.ntm/
+
+# Codex CLI cache
+.codex
+
+# csplit scratch output at repo root
+/xx[0-9][0-9]
