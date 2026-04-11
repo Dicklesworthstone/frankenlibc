@@ -2947,7 +2947,7 @@ pub unsafe extern "C" fn daemon(nochdir: c_int, noclose: c_int) -> c_int {
     if pid > 0 {
         // Parent: exit immediately
         unsafe { libc::syscall(libc::SYS_exit_group, 0i64) };
-        unreachable!();
+        return 0;
     }
 
     // Child: create new session
@@ -7057,6 +7057,12 @@ fn parse_netlink_addrs(
             let effective_addr = local_addr.or(addr);
 
             if let Some(addr_bytes) = effective_addr {
+                // Name
+                let name_cstr = match CString::new(if_name.as_str()) {
+                    Ok(name) => name,
+                    Err(_) => continue,
+                };
+
                 // Allocate an ifaddrs node
                 let node = unsafe {
                     crate::malloc_abi::raw_alloc(std::mem::size_of::<Ifaddrs>()) as *mut Ifaddrs
@@ -7064,10 +7070,6 @@ fn parse_netlink_addrs(
                 if node.is_null() {
                     continue;
                 }
-
-                // Name
-                let name_cstr =
-                    CString::new(if_name.as_str()).unwrap_or_else(|_| CString::new("?").unwrap());
                 let name_ptr = unsafe {
                     crate::malloc_abi::raw_alloc(name_cstr.as_bytes_with_nul().len()) as *mut c_char
                 };
@@ -12358,7 +12360,11 @@ pub unsafe extern "C" fn ether_ntohost(hostname: *mut c_char, addr: *const c_voi
         }
         // NUL-terminate for ether_line
         if line_buf.last() == Some(&b'\n') {
-            *line_buf.last_mut().unwrap() = 0;
+            if let Some(last) = line_buf.last_mut() {
+                *last = 0;
+            } else {
+                line_buf.push(0);
+            }
         } else {
             line_buf.push(0);
         }
@@ -12411,7 +12417,11 @@ pub unsafe extern "C" fn ether_hostton(hostname: *const c_char, addr: *mut c_voi
             Ok(_) => {}
         }
         if line_buf.last() == Some(&b'\n') {
-            *line_buf.last_mut().unwrap() = 0;
+            if let Some(last) = line_buf.last_mut() {
+                *last = 0;
+            } else {
+                line_buf.push(0);
+            }
         } else {
             line_buf.push(0);
         }
@@ -13650,7 +13660,10 @@ pub unsafe extern "C" fn getaliasent_r(
                 Err(_) => return libc::ENOENT,
             }
         }
-        let reader = state.reader.as_mut().unwrap();
+        let reader = match state.reader.as_mut() {
+            Some(reader) => reader,
+            None => return libc::ENOENT,
+        };
         loop {
             state.line_buf.clear();
             match reader.read_until(b'\n', &mut state.line_buf) {
@@ -16633,7 +16646,10 @@ pub unsafe extern "C" fn gethostent_r(
                 Err(_) => return libc::ENOENT,
             }
         }
-        let reader = state.reader.as_mut().unwrap();
+        let reader = match state.reader.as_mut() {
+            Some(reader) => reader,
+            None => return libc::ENOENT,
+        };
 
         loop {
             state.line_buf.clear();
@@ -16844,7 +16860,10 @@ pub unsafe extern "C" fn getnetent_r(
                 Err(_) => return libc::ENOENT,
             }
         }
-        let reader = state.reader.as_mut().unwrap();
+        let reader = match state.reader.as_mut() {
+            Some(reader) => reader,
+            None => return libc::ENOENT,
+        };
         loop {
             state.line_buf.clear();
             match reader.read_until(b'\n', &mut state.line_buf) {
@@ -17040,7 +17059,10 @@ pub unsafe extern "C" fn getprotoent_r(
                 Err(_) => return libc::ENOENT,
             }
         }
-        let reader = state.reader.as_mut().unwrap();
+        let reader = match state.reader.as_mut() {
+            Some(reader) => reader,
+            None => return libc::ENOENT,
+        };
 
         loop {
             state.line_buf.clear();
@@ -17104,7 +17126,10 @@ pub unsafe extern "C" fn getservent_r(
                 Err(_) => return libc::ENOENT,
             }
         }
-        let reader = state.reader.as_mut().unwrap();
+        let reader = match state.reader.as_mut() {
+            Some(reader) => reader,
+            None => return libc::ENOENT,
+        };
 
         loop {
             state.line_buf.clear();
