@@ -20,10 +20,18 @@ if [[ -z "${TARGET_DIR}" ]]; then
   echo "FAIL: cargo metadata did not return a target_directory" >&2
   exit 1
 fi
+BUILD_TARGET_DIR="${ROOT}/target"
 LIB="${TARGET_DIR}/release/libfrankenlibc_abi.so"
+BUILD_LIB="${BUILD_TARGET_DIR}/release/libfrankenlibc_abi.so"
 
 echo "[setjmp-native] building release ABI library via rch" >"${TEST_LOG}"
-rch exec -- cargo build -p frankenlibc-abi --release >>"${TEST_LOG}" 2>&1
+rch exec -- env CARGO_TARGET_DIR="${BUILD_TARGET_DIR}" cargo build -p frankenlibc-abi --release \
+  >>"${TEST_LOG}" 2>&1
+
+if [[ ! -f "${LIB}" && -f "${BUILD_LIB}" ]]; then
+  mkdir -p "$(dirname "${LIB}")"
+  cp "${BUILD_LIB}" "${LIB}"
+fi
 
 if [[ ! -f "${LIB}" ]]; then
   echo "FAIL: expected release library missing at ${LIB}" >&2
