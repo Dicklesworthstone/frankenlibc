@@ -5168,15 +5168,69 @@ pub unsafe extern "C" fn popen(command: *const c_char, typ: *const c_char) -> *m
     // Create pipe: pipe_fds[0] = read end, pipe_fds[1] = write end.
     let mut pipe_fds = [0i32; 2];
     let pipe_flags = if close_on_exec { libc::O_CLOEXEC } else { 0 };
-    let ret =
+    let mut ret =
         unsafe { libc::syscall(libc::SYS_pipe2 as c_long, pipe_fds.as_mut_ptr(), pipe_flags) };
     if ret < 0 {
         let e = std::io::Error::last_os_error()
             .raw_os_error()
             .unwrap_or(errno::EIO);
-        unsafe { set_abi_errno(e) };
-        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 50, true);
-        return std::ptr::null_mut();
+        if e != libc::ENOSYS {
+            unsafe { set_abi_errno(e) };
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 50, true);
+            return std::ptr::null_mut();
+        }
+        // Fallback for kernels without pipe2: use pipe + fcntl(FD_CLOEXEC) if requested.
+        ret = unsafe { libc::syscall(libc::SYS_pipe as c_long, pipe_fds.as_mut_ptr()) };
+        if ret < 0 {
+            let e = std::io::Error::last_os_error()
+                .raw_os_error()
+                .unwrap_or(errno::EIO);
+            unsafe { set_abi_errno(e) };
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 50, true);
+            return std::ptr::null_mut();
+        }
+        if close_on_exec {
+            let rc = unsafe {
+                libc::syscall(
+                    libc::SYS_fcntl as c_long,
+                    pipe_fds[0],
+                    libc::F_SETFD,
+                    libc::FD_CLOEXEC,
+                )
+            };
+            if rc < 0 {
+                let e = std::io::Error::last_os_error()
+                    .raw_os_error()
+                    .unwrap_or(errno::EIO);
+                unsafe {
+                    libc::syscall(libc::SYS_close as c_long, pipe_fds[0]);
+                    libc::syscall(libc::SYS_close as c_long, pipe_fds[1]);
+                    set_abi_errno(e);
+                }
+                runtime_policy::observe(ApiFamily::Stdio, decision.profile, 50, true);
+                return std::ptr::null_mut();
+            }
+            let rc = unsafe {
+                libc::syscall(
+                    libc::SYS_fcntl as c_long,
+                    pipe_fds[1],
+                    libc::F_SETFD,
+                    libc::FD_CLOEXEC,
+                )
+            };
+            if rc < 0 {
+                let e = std::io::Error::last_os_error()
+                    .raw_os_error()
+                    .unwrap_or(errno::EIO);
+                unsafe {
+                    libc::syscall(libc::SYS_close as c_long, pipe_fds[0]);
+                    libc::syscall(libc::SYS_close as c_long, pipe_fds[1]);
+                    set_abi_errno(e);
+                }
+                runtime_policy::observe(ApiFamily::Stdio, decision.profile, 50, true);
+                return std::ptr::null_mut();
+            }
+        }
     }
 
     // Fork via clone(SIGCHLD).
