@@ -165,6 +165,17 @@ fn dlsym_rtld_default_finds_known_symbol() {
 }
 
 #[test]
+fn dlsym_rtld_next_finds_known_symbol() {
+    let _guard = TEST_GUARD.lock().unwrap();
+    let sym_name = CString::new("malloc").unwrap();
+    let sym = unsafe { dlsym(libc::RTLD_NEXT, sym_name.as_ptr()) };
+    assert!(
+        !sym.is_null(),
+        "dlsym should resolve 'malloc' through RTLD_NEXT"
+    );
+}
+
+#[test]
 fn dlsym_unknown_symbol_returns_null() {
     let _guard = TEST_GUARD.lock().unwrap();
     let handle = unsafe { dlopen(std::ptr::null(), libc::RTLD_NOW) };
@@ -310,6 +321,34 @@ fn dlvsym_supported_version_resolves_native_symbol() {
         !sym.is_null(),
         "dlvsym should resolve known symbols for supported versions"
     );
+}
+
+#[test]
+fn dlvsym_rtld_next_resolves_symbol() {
+    let _guard = TEST_GUARD.lock().unwrap();
+    let sym_name = CString::new("malloc").unwrap();
+    let version = CString::new("GLIBC_2.2.5").unwrap();
+    let sym = unsafe { dlvsym(libc::RTLD_NEXT, sym_name.as_ptr(), version.as_ptr()) };
+    assert!(
+        !sym.is_null(),
+        "dlvsym should resolve symbols through RTLD_NEXT"
+    );
+}
+
+#[test]
+fn dlvsym_host_handle_resolves_symbol() {
+    let _guard = TEST_GUARD.lock().unwrap();
+    let lib_name = CString::new("libc.so.6").unwrap();
+    let handle = unsafe { dlopen(lib_name.as_ptr(), libc::RTLD_NOW) };
+    assert!(!handle.is_null(), "dlopen libc should succeed");
+    let sym_name = CString::new("malloc").unwrap();
+    let version = CString::new("GLIBC_2.2.5").unwrap();
+    let sym = unsafe { dlvsym(handle, sym_name.as_ptr(), version.as_ptr()) };
+    assert!(
+        !sym.is_null(),
+        "dlvsym should resolve symbols on host handles"
+    );
+    unsafe { dlclose(handle) };
 }
 
 #[test]

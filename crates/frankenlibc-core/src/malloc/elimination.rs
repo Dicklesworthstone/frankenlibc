@@ -869,15 +869,21 @@ mod tests {
     #[test]
     fn offer_matches_pop_across_threads() {
         let array = Arc::new(EliminationArray::<usize, 4>::with_wait_budget(
-            Duration::from_millis(5),
+            Duration::from_millis(20),
         ));
+        let ready = Arc::new(Barrier::new(2));
         let producer = Arc::clone(&array);
+        let producer_ready = Arc::clone(&ready);
 
-        let handle = std::thread::spawn(move || producer.offer(0xDEAD_BEEF));
-        std::thread::sleep(Duration::from_millis(1));
+        let handle = std::thread::spawn(move || {
+            producer_ready.wait();
+            producer.offer(0xDEAD_BEEF)
+        });
+        ready.wait();
 
         let mut observed = None;
-        for _ in 0..64 {
+        let deadline = Instant::now() + Duration::from_millis(50);
+        while Instant::now() < deadline {
             if let Some(value) = array.pop() {
                 observed = Some(value);
                 break;

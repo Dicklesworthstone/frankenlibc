@@ -44,6 +44,9 @@ pub(crate) unsafe fn host_dlvsym_next_raw(
     symbol: *const c_char,
     version: *const c_char,
 ) -> *mut c_void {
+    if HOST_DLVSYM.load(Ordering::Acquire) == 0 {
+        ensure_host_dlvsym();
+    }
     // Use the ELF-resolved host dlvsym to avoid calling our interposed dlvsym,
     // which during bootstrap passthrough resolves from our export table instead
     // of delegating to the real host dynamic linker.

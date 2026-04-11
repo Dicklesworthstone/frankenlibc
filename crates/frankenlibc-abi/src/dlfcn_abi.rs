@@ -64,10 +64,16 @@ fn is_main_program_handle(handle: *mut c_void) -> bool {
     handle == main_program_handle()
 }
 
-fn is_native_handle(handle: *mut c_void) -> bool {
+fn is_rtld_default(handle: *mut c_void) -> bool {
     handle as usize == dlfcn_core::RTLD_DEFAULT
-        || handle as usize == dlfcn_core::RTLD_NEXT
-        || is_main_program_handle(handle)
+}
+
+fn is_rtld_next(handle: *mut c_void) -> bool {
+    handle as usize == dlfcn_core::RTLD_NEXT
+}
+
+fn is_native_handle(handle: *mut c_void) -> bool {
+    is_rtld_default(handle) || is_rtld_next(handle) || is_main_program_handle(handle)
 }
 
 fn library_alias_matches(name: &[u8]) -> bool {
@@ -123,6 +129,26 @@ fn resolve_exported_symbol(symbol: &[u8]) -> *mut c_void {
     }
 }
 
+unsafe fn host_dlsym(handle: *mut c_void, symbol: *const c_char) -> Option<*mut c_void> {
+    type DlsymFn = unsafe extern "C" fn(*mut c_void, *const c_char) -> *mut c_void;
+    let addr = crate::host_resolve::resolve_host_symbol_raw("dlsym")?;
+    // SAFETY: resolved symbol address is the host dlsym with the expected ABI.
+    let host_dlsym: DlsymFn = unsafe { core::mem::transmute(addr) }; // ubs:ignore — host symbol ABI resolved, pointer cast is deliberate
+    Some(unsafe { host_dlsym(handle, symbol) })
+}
+
+unsafe fn host_dlvsym(
+    handle: *mut c_void,
+    symbol: *const c_char,
+    version: *const c_char,
+) -> Option<*mut c_void> {
+    type DlvsymFn = unsafe extern "C" fn(*mut c_void, *const c_char, *const c_char) -> *mut c_void;
+    let addr = crate::host_resolve::resolve_host_symbol_raw("dlvsym")?;
+    // SAFETY: resolved symbol address is the host dlvsym with the expected ABI.
+    let host_dlvsym: DlvsymFn = unsafe { core::mem::transmute(addr) }; // ubs:ignore — host symbol ABI resolved, pointer cast is deliberate
+    Some(unsafe { host_dlvsym(handle, symbol, version) })
+}
+
 fn open_main_program_handle() -> *mut c_void {
     MAIN_PROGRAM_REFS.fetch_add(1, Ordering::Relaxed);
     main_program_handle()
@@ -167,7 +193,7 @@ pub unsafe extern "C" fn dlopen(filename: *const c_char, flags: c_int) -> *mut c
         // During bootstrap, delegate to host dlopen for actual .so loading.
         type DlopenFn = unsafe extern "C" fn(*const c_char, c_int) -> *mut c_void;
         if let Some(addr) = crate::host_resolve::resolve_host_symbol_raw("dlopen") {
-            let host_dlopen: DlopenFn = unsafe { core::mem::transmute(addr) };
+            let host_dlopen: DlopenFn = unsafe { core::mem::transmute(addr) }; // ubs:ignore — host symbol ABI resolved, pointer cast is deliberate
             let handle = unsafe { host_dlopen(filename, flags) };
             if handle.is_null() {
                 set_dlerror(dlfcn_core::ERR_NOT_FOUND);
@@ -227,7 +253,7 @@ pub unsafe extern "C" fn dlopen(filename: *const c_char, flags: c_int) -> *mut c
             // linker handles symbol resolution, relocations, and dependency loading.
             type DlopenFn = unsafe extern "C" fn(*const c_char, c_int) -> *mut c_void;
             if let Some(addr) = crate::host_resolve::resolve_host_symbol_raw("dlopen") {
-                let host_dlopen: DlopenFn = unsafe { core::mem::transmute(addr) };
+                let host_dlopen: DlopenFn = unsafe { core::mem::transmute(addr) }; // ubs:ignore — host symbol ABI resolved, pointer cast is deliberate
                 let handle = unsafe { host_dlopen(filename, flags) };
                 if handle.is_null() {
                     set_dlerror(dlfcn_core::ERR_NOT_FOUND);
@@ -260,9 +286,25 @@ pub unsafe extern "C" fn dlopen(filename: *const c_char, flags: c_int) -> *mut c
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *mut c_void {
     if runtime_policy::bootstrap_passthrough_active() {
-        if symbol.is_null() || !is_native_handle(handle) {
-            set_dlerror(dlfcn_core::ERR_INVALID_HANDLE);
+        if symbol.is_null() {
+            set_dlerror(dlfcn_core::ERR_SYMBOL_NOT_FOUND);
             return std::ptr::null_mut();
+        }
+        if !is_main_program_handle(handle) {
+            let host_handle = if is_rtld_default(handle) {
+                libc::RTLD_DEFAULT
+            } else if is_rtld_next(handle) {
+                libc::RTLD_NEXT
+            } else {
+                handle
+            };
+            let sym = unsafe { host_dlsym(host_handle, symbol) }.unwrap_or(std::ptr::null_mut());
+            if sym.is_null() {
+                set_dlerror(dlfcn_core::ERR_SYMBOL_NOT_FOUND);
+            } else {
+                clear_dlerror();
+            }
+            return sym;
         }
         let symbol_name = unsafe { CStr::from_ptr(symbol) }.to_bytes();
         let sym = resolve_exported_symbol(symbol_name);
@@ -288,11 +330,38 @@ pub unsafe extern "C" fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *m
         return std::ptr::null_mut();
     }
 
+    // SAFETY: symbol was checked for null above and is expected to be a NUL-terminated C string.
+    let symbol_name = unsafe { CStr::from_ptr(symbol) }.to_bytes();
+
+    if is_rtld_next(handle) || is_rtld_default(handle) {
+        let host_handle = if is_rtld_default(handle) {
+            libc::RTLD_DEFAULT
+        } else {
+            libc::RTLD_NEXT
+        };
+        let sym = unsafe { host_dlsym(host_handle, symbol) }.unwrap_or_else(|| {
+            if is_rtld_default(handle) {
+                resolve_exported_symbol(symbol_name)
+            } else {
+                std::ptr::null_mut()
+            }
+        });
+        let adverse = sym.is_null();
+        if adverse {
+            set_dlerror(dlfcn_core::ERR_SYMBOL_NOT_FOUND);
+        } else {
+            clear_dlerror();
+        }
+        runtime_policy::observe(ApiFamily::Loader, decision.profile, 8, adverse);
+        return sym;
+    }
+
     if !is_native_handle(handle) {
         // Handle is from host dlopen — delegate to host dlsym.
         type DlsymFn = unsafe extern "C" fn(*mut c_void, *const c_char) -> *mut c_void;
         if let Some(addr) = crate::host_resolve::resolve_host_symbol_raw("dlsym") {
-            let host_dlsym: DlsymFn = unsafe { core::mem::transmute(addr) };
+            // SAFETY: resolved symbol address is the host dlsym with the expected ABI.
+            let host_dlsym: DlsymFn = unsafe { core::mem::transmute(addr) }; // ubs:ignore — host symbol ABI resolved, pointer cast is deliberate
             let sym = unsafe { host_dlsym(handle, symbol) };
             let adverse = sym.is_null();
             if adverse {
@@ -308,8 +377,6 @@ pub unsafe extern "C" fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *m
         return std::ptr::null_mut();
     }
 
-    // SAFETY: symbol was checked for null above and is expected to be a NUL-terminated C string.
-    let symbol_name = unsafe { CStr::from_ptr(symbol) }.to_bytes();
     clear_dlerror();
 
     let sym = resolve_exported_symbol(symbol_name);
@@ -330,9 +397,26 @@ pub unsafe extern "C" fn dlvsym(
     version: *const c_char,
 ) -> *mut c_void {
     if runtime_policy::bootstrap_passthrough_active() {
-        if symbol.is_null() || version.is_null() || !is_native_handle(handle) {
-            set_dlerror(dlfcn_core::ERR_INVALID_HANDLE);
+        if symbol.is_null() || version.is_null() {
+            set_dlerror(dlfcn_core::ERR_SYMBOL_NOT_FOUND);
             return std::ptr::null_mut();
+        }
+        if !is_main_program_handle(handle) {
+            let host_handle = if is_rtld_default(handle) {
+                libc::RTLD_DEFAULT
+            } else if is_rtld_next(handle) {
+                libc::RTLD_NEXT
+            } else {
+                handle
+            };
+            let sym = unsafe { host_dlvsym(host_handle, symbol, version) }
+                .unwrap_or(std::ptr::null_mut());
+            if sym.is_null() {
+                set_dlerror(dlfcn_core::ERR_SYMBOL_NOT_FOUND);
+            } else {
+                clear_dlerror();
+            }
+            return sym;
         }
         let symbol_name = unsafe { CStr::from_ptr(symbol) }.to_bytes();
         let version_name = unsafe { CStr::from_ptr(version) }.to_bytes();
@@ -364,16 +448,47 @@ pub unsafe extern "C" fn dlvsym(
         return std::ptr::null_mut();
     }
 
-    if !is_native_handle(handle) {
-        set_dlerror(dlfcn_core::ERR_INVALID_HANDLE);
-        runtime_policy::observe(ApiFamily::Loader, decision.profile, 5, true);
-        return std::ptr::null_mut();
-    }
-
     // SAFETY: symbol/version were checked for null above and are expected to be NUL-terminated C strings.
     let symbol_name = unsafe { CStr::from_ptr(symbol) }.to_bytes();
     // SAFETY: symbol/version were checked for null above and are expected to be NUL-terminated C strings.
     let version_name = unsafe { CStr::from_ptr(version) }.to_bytes();
+
+    if is_rtld_next(handle) || is_rtld_default(handle) {
+        let host_handle = if is_rtld_default(handle) {
+            libc::RTLD_DEFAULT
+        } else {
+            libc::RTLD_NEXT
+        };
+        let sym = unsafe { host_dlvsym(host_handle, symbol, version) }.unwrap_or_else(|| {
+            if is_rtld_default(handle) && version_supported(version_name) {
+                resolve_exported_symbol(symbol_name)
+            } else {
+                std::ptr::null_mut()
+            }
+        });
+        let adverse = sym.is_null();
+        if adverse {
+            set_dlerror(dlfcn_core::ERR_SYMBOL_NOT_FOUND);
+        } else {
+            clear_dlerror();
+        }
+        runtime_policy::observe(ApiFamily::Loader, decision.profile, 8, adverse);
+        return sym;
+    }
+
+    if !is_native_handle(handle) {
+        // Handle is from host dlopen — delegate to host dlvsym.
+        let sym = unsafe { host_dlvsym(handle, symbol, version) }.unwrap_or(std::ptr::null_mut());
+        let adverse = sym.is_null();
+        if adverse {
+            set_dlerror(dlfcn_core::ERR_SYMBOL_NOT_FOUND);
+        } else {
+            clear_dlerror();
+        }
+        runtime_policy::observe(ApiFamily::Loader, decision.profile, 8, adverse);
+        return sym;
+    }
+
     clear_dlerror();
     let sym = if version_supported(version_name) {
         resolve_exported_symbol(symbol_name)
@@ -433,7 +548,7 @@ pub unsafe extern "C" fn dlclose(handle: *mut c_void) -> c_int {
         // Handle from host dlopen — delegate to host dlclose.
         type DlcloseFn = unsafe extern "C" fn(*mut c_void) -> c_int;
         if let Some(addr) = crate::host_resolve::resolve_host_symbol_raw("dlclose") {
-            let host_dlclose: DlcloseFn = unsafe { core::mem::transmute(addr) };
+            let host_dlclose: DlcloseFn = unsafe { core::mem::transmute(addr) }; // ubs:ignore — host symbol ABI resolved, pointer cast is deliberate
             let rc = unsafe { host_dlclose(handle) };
             runtime_policy::observe(ApiFamily::Loader, decision.profile, 8, rc != 0);
             return rc;
@@ -500,7 +615,7 @@ pub unsafe extern "C" fn dl_iterate_phdr(
         crate::host_resolve::host_dl_iterate_phdr_cached()
     });
     if let Some(addr) = host_addr {
-        let host_fn: DlIteratePhdrFn = unsafe { core::mem::transmute(addr) };
+        let host_fn: DlIteratePhdrFn = unsafe { core::mem::transmute(addr) }; // ubs:ignore — host symbol ABI resolved, pointer cast is deliberate
         return unsafe { host_fn(callback, data) };
     }
     // During early bootstrap before symbols are resolved, return 0 (no entries).
@@ -518,7 +633,7 @@ pub unsafe extern "C" fn dladdr(addr: *const c_void, info: *mut c_void) -> c_int
     }
     type DladdrFn = unsafe extern "C" fn(*const c_void, *mut c_void) -> c_int;
     if let Some(host_addr) = crate::host_resolve::host_dladdr_cached() {
-        let host_fn: DladdrFn = unsafe { core::mem::transmute(host_addr) };
+        let host_fn: DladdrFn = unsafe { core::mem::transmute(host_addr) }; // ubs:ignore — host symbol ABI resolved, pointer cast is deliberate
         let rc = unsafe { host_fn(addr, info) };
         if rc != 0 {
             clear_dlerror();

@@ -208,24 +208,23 @@ pub unsafe extern "C" fn select(
     };
     #[cfg(not(target_arch = "x86_64"))]
     let rc = {
-        // Convert timeval to timespec for pselect6.
-        let (ts_ptr, ts_storage);
-        if timeout.is_null() {
-            ts_storage = libc::timespec {
-                tv_sec: 0,
-                tv_nsec: 0,
-            };
-            let _ = &ts_storage;
-            ts_ptr = std::ptr::null::<libc::timespec>();
+        // Convert timeval to timespec for pselect6 and mirror the remaining
+        // timeout back into the caller's timeval (select() semantics).
+        let mut ts_storage = libc::timespec {
+            tv_sec: 0,
+            tv_nsec: 0,
+        };
+        let ts_ptr = if timeout.is_null() {
+            std::ptr::null_mut::<libc::timespec>()
         } else {
             let tv = unsafe { &*timeout };
             ts_storage = libc::timespec {
                 tv_sec: tv.tv_sec,
                 tv_nsec: tv.tv_usec * 1000,
             };
-            ts_ptr = &ts_storage as *const libc::timespec;
-        }
-        unsafe {
+            &mut ts_storage as *mut libc::timespec
+        };
+        let rc = unsafe {
             libc::syscall(
                 libc::SYS_pselect6 as c_long,
                 actual_nfds,
@@ -235,7 +234,13 @@ pub unsafe extern "C" fn select(
                 ts_ptr,
                 std::ptr::null::<[usize; 2]>(),
             ) as c_int
+        };
+        if !timeout.is_null() {
+            let tv = unsafe { &mut *timeout };
+            tv.tv_sec = ts_storage.tv_sec;
+            tv.tv_usec = (ts_storage.tv_nsec / 1000) as libc::suseconds_t;
         }
+        rc
     };
     let adverse = rc < 0;
     if adverse {

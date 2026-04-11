@@ -2328,6 +2328,9 @@ fn mutexattr_protocol_pshared_and_robust_roundtrip_independent() {
 #[test]
 fn mutexattr_gettype_after_destroy_is_rejected() {
     unsafe {
+        let _guard = MutexForceNativeGuard {
+            previous: pthread_mutex_swap_force_native_for_tests(),
+        };
         let mut attr: libc::pthread_mutexattr_t = std::mem::zeroed();
         pthread_mutexattr_init(&mut attr);
         assert_eq!(pthread_mutexattr_destroy(&mut attr), 0);
@@ -2340,6 +2343,9 @@ fn mutexattr_gettype_after_destroy_is_rejected() {
 #[test]
 fn mutex_init_rejects_destroyed_attr() {
     unsafe {
+        let _guard = MutexForceNativeGuard {
+            previous: pthread_mutex_swap_force_native_for_tests(),
+        };
         let mut attr: libc::pthread_mutexattr_t = std::mem::zeroed();
         let mut mutex: libc::pthread_mutex_t = std::mem::zeroed();
         assert_eq!(pthread_mutexattr_init(&mut attr), 0);
@@ -3977,6 +3983,9 @@ fn mutex_consistent_does_not_crash() {
 #[test]
 fn mutex_init_rejects_unsupported_extension_attributes() {
     unsafe {
+        let _guard = MutexForceNativeGuard {
+            previous: pthread_mutex_swap_force_native_for_tests(),
+        };
         let mut attr: libc::pthread_mutexattr_t = std::mem::zeroed();
         let mut mutex: libc::pthread_mutex_t = std::mem::zeroed();
         pthread_mutexattr_init(&mut attr);
