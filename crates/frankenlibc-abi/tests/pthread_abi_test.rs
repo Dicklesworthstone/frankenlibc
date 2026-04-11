@@ -417,6 +417,7 @@ fn mutex_init_destroy() {
 fn mutex_null_returns_einval() {
     unsafe {
         let null_mutex = ptr::null_mut::<libc::pthread_mutex_t>();
+        assert_eq!(pthread_mutex_init(null_mutex, ptr::null()), libc::EINVAL);
         assert_eq!(pthread_mutex_lock(null_mutex), libc::EINVAL);
         assert_eq!(pthread_mutex_trylock(null_mutex), libc::EINVAL);
         assert_eq!(pthread_mutex_unlock(null_mutex), libc::EINVAL);
@@ -622,6 +623,7 @@ fn condvar_null_returns_einval() {
     unsafe {
         let null_cond = ptr::null_mut::<libc::pthread_cond_t>();
         let null_mutex = ptr::null_mut::<libc::pthread_mutex_t>();
+        assert_eq!(pthread_cond_init(null_cond, ptr::null()), libc::EINVAL);
         assert_eq!(pthread_cond_destroy(null_cond), libc::EINVAL);
         assert_eq!(pthread_cond_signal(null_cond), libc::EINVAL);
         assert_eq!(pthread_cond_broadcast(null_cond), libc::EINVAL);

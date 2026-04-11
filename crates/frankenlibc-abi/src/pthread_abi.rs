@@ -2075,6 +2075,10 @@ pub unsafe extern "C" fn pthread_mutex_init(
     mutex: *mut libc::pthread_mutex_t,
     attr: *const libc::pthread_mutexattr_t,
 ) -> c_int {
+    if mutex.is_null() {
+        return libc::EINVAL;
+    }
+
     // Always prefer host delegation — see CRITICAL comment in pthread_cond_init.
     // Mutex and condvar init must use the same implementation (host or native).
     if !FORCE_NATIVE_MUTEX.load(Ordering::Acquire)
@@ -2113,10 +2117,6 @@ pub unsafe extern "C" fn pthread_mutex_init(
             }
         }
         return unsafe { host_init(mutex, attr) };
-    }
-
-    if mutex.is_null() {
-        return libc::EINVAL;
     }
 
     // Read the mutex type from the attr if provided.
@@ -2174,7 +2174,6 @@ pub unsafe extern "C" fn pthread_mutex_destroy(mutex: *mut libc::pthread_mutex_t
     }
 
     let Some(word_ptr) = mutex_word_ptr(mutex) else {
-        clear_managed_mutex(mutex);
         return libc::EINVAL;
     };
 
@@ -2471,6 +2470,10 @@ pub unsafe extern "C" fn pthread_cond_init(
     cond: *mut libc::pthread_cond_t,
     attr: *const libc::pthread_condattr_t,
 ) -> c_int {
+    if cond.is_null() {
+        return libc::EINVAL;
+    }
+
     // ╔══════════════════════════════════════════════════════════════════╗
     // ║ CRITICAL: Always delegate to host regardless of attr.          ║
     // ║                                                                ║
