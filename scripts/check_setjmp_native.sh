@@ -12,7 +12,14 @@ RUN_ID="setjmp-native-$(date -u +%Y%m%dT%H%M%SZ)-$$"
 
 mkdir -p "${OUT_DIR}" "${BIN_DIR}"
 
-TARGET_DIR="$(cargo metadata --format-version 1 --no-deps | jq -r '.target_directory')"
+TARGET_DIR="$(
+  cargo metadata --format-version 1 --no-deps \
+    | python3 -c 'import json,sys;print(json.load(sys.stdin)["target_directory"])'
+)"
+if [[ -z "${TARGET_DIR}" ]]; then
+  echo "FAIL: cargo metadata did not return a target_directory" >&2
+  exit 1
+fi
 LIB="${TARGET_DIR}/release/libfrankenlibc_abi.so"
 
 echo "[setjmp-native] building release ABI library via rch" >"${TEST_LOG}"
