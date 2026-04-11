@@ -84,6 +84,8 @@ type HostPthreadCondTimedwaitFn = unsafe extern "C" fn(
     *mut libc::pthread_mutex_t,
     *const libc::timespec,
 ) -> c_int;
+type HostPthreadCondattrGetclockFn =
+    unsafe extern "C" fn(*const libc::pthread_condattr_t, *mut libc::clockid_t) -> c_int;
 // Host attr type aliases removed — attr/mutexattr/condattr/rwlockattr are native.
 
 // ---------------------------------------------------------------------------
@@ -163,6 +165,8 @@ static HOST_PTHREAD_DETACH_PTR: std::sync::atomic::AtomicUsize =
 static HOST_PTHREAD_SELF_PTR: std::sync::atomic::AtomicUsize =
     std::sync::atomic::AtomicUsize::new(0);
 static HOST_PTHREAD_EQUAL_PTR: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+static HOST_PTHREAD_CONDATTR_GETCLOCK_PTR: std::sync::atomic::AtomicUsize =
     std::sync::atomic::AtomicUsize::new(0);
 static HOST_PTHREAD_KEY_CREATE_PTR: OnceLock<usize> = OnceLock::new();
 static HOST_PTHREAD_KEY_DELETE_PTR: OnceLock<usize> = OnceLock::new();
@@ -632,6 +636,18 @@ unsafe fn host_pthread_cond_timedwait_fn() -> Option<HostPthreadCondTimedwaitFn>
         // SAFETY: resolved symbol has pthread_cond_timedwait ABI.
         Some(unsafe { std::mem::transmute::<*mut c_void, HostPthreadCondTimedwaitFn>(ptr) })
     }
+}
+
+unsafe fn host_pthread_condattr_getclock_fn() -> Option<HostPthreadCondattrGetclockFn> {
+    let ptr = unsafe {
+        resolve_cached_host_thread_symbol(
+            &HOST_PTHREAD_CONDATTR_GETCLOCK_PTR,
+            "pthread_condattr_getclock",
+            b"pthread_condattr_getclock\0",
+        )
+    }?;
+    // SAFETY: resolved symbol has pthread_condattr_getclock ABI.
+    Some(unsafe { std::mem::transmute::<usize, HostPthreadCondattrGetclockFn>(ptr) })
 }
 
 pub(crate) fn prewarm_host_thread_lifecycle_symbols() {
@@ -2120,38 +2136,34 @@ pub unsafe extern "C" fn pthread_mutex_init(
         decode_mutexattr_type(word)
     };
 
-    if let Some(word_ptr) = mutex_word_ptr(mutex) {
-        // SAFETY: `word_ptr` is alignment-checked and points to caller-owned
-        // mutex storage.
-        let word = unsafe { &*word_ptr };
-        word.store(0, Ordering::Release);
-        let _ = mark_managed_mutex(mutex);
+    let Some(word_ptr) = mutex_word_ptr(mutex) else {
+        return libc::EINVAL;
+    };
+    let Some(type_ptr) = mutex_type_ptr(mutex) else {
+        return libc::EINVAL;
+    };
+    let Some(owner_ptr) = mutex_owner_ptr(mutex) else {
+        return libc::EINVAL;
+    };
+    let Some(count_ptr) = mutex_lock_count_ptr(mutex) else {
+        return libc::EINVAL;
+    };
 
-        // Store the mutex type at offset 8.
-        if let Some(type_ptr) = mutex_type_ptr(mutex) {
-            // SAFETY: alignment checked; within pthread_mutex_t storage.
-            let mtype = unsafe { &*type_ptr };
-            mtype.store(mutex_type, Ordering::Release);
-        }
-
-        // Initialize owner_tid to "no owner" at offset 12.
-        if let Some(owner_ptr) = mutex_owner_ptr(mutex) {
-            // SAFETY: alignment checked; within pthread_mutex_t storage.
-            let owner = unsafe { &*owner_ptr };
-            owner.store(MUTEX_NO_OWNER, Ordering::Release);
-        }
-
-        // Initialize lock_count to 0 at offset 16.
-        if let Some(count_ptr) = mutex_lock_count_ptr(mutex) {
-            // SAFETY: alignment checked; within pthread_mutex_t storage.
-            let count = unsafe { &*count_ptr };
-            count.store(0, Ordering::Release);
-        }
-
-        return 0;
+    if !mark_managed_mutex(mutex) {
+        return libc::EINVAL;
     }
-    clear_managed_mutex(mutex);
-    libc::EINVAL
+
+    // SAFETY: pointers are alignment-checked and point to caller-owned mutex storage.
+    let word = unsafe { &*word_ptr };
+    let mtype = unsafe { &*type_ptr };
+    let owner = unsafe { &*owner_ptr };
+    let count = unsafe { &*count_ptr };
+
+    word.store(0, Ordering::Release);
+    mtype.store(mutex_type, Ordering::Release);
+    owner.store(MUTEX_NO_OWNER, Ordering::Release);
+    count.store(0, Ordering::Release);
+    0
 }
 
 /// POSIX `pthread_mutex_destroy`.
@@ -2203,12 +2215,16 @@ pub unsafe extern "C" fn pthread_mutex_destroy(mutex: *mut libc::pthread_mutex_t
 /// POSIX `pthread_mutex_lock`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pthread_mutex_lock(mutex: *mut libc::pthread_mutex_t) -> c_int {
-    if !is_managed_mutex(mutex) && !FORCE_NATIVE_MUTEX.load(Ordering::Acquire) {
-        // SAFETY: host symbol lookup/transmute guarantees ABI if present.
-        if let Some(host_lock) = unsafe { host_pthread_mutex_lock_fn() } {
-            // SAFETY: direct call through resolved host symbol.
-            return unsafe { host_lock(mutex) };
+    let force_native = FORCE_NATIVE_MUTEX.load(Ordering::Acquire);
+    if !is_managed_mutex(mutex) {
+        if !force_native {
+            // SAFETY: host symbol lookup/transmute guarantees ABI if present.
+            if let Some(host_lock) = unsafe { host_pthread_mutex_lock_fn() } {
+                // SAFETY: direct call through resolved host symbol.
+                return unsafe { host_lock(mutex) };
+            }
         }
+        return libc::EINVAL;
     }
 
     if mutex.is_null() {
@@ -2293,12 +2309,16 @@ pub unsafe extern "C" fn pthread_mutex_lock(mutex: *mut libc::pthread_mutex_t) -
 /// POSIX `pthread_mutex_trylock`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pthread_mutex_trylock(mutex: *mut libc::pthread_mutex_t) -> c_int {
-    if !is_managed_mutex(mutex) && !FORCE_NATIVE_MUTEX.load(Ordering::Acquire) {
-        // SAFETY: host symbol lookup/transmute guarantees ABI if present.
-        if let Some(host_trylock) = unsafe { host_pthread_mutex_trylock_fn() } {
-            // SAFETY: direct call through resolved host symbol.
-            return unsafe { host_trylock(mutex) };
+    let force_native = FORCE_NATIVE_MUTEX.load(Ordering::Acquire);
+    if !is_managed_mutex(mutex) {
+        if !force_native {
+            // SAFETY: host symbol lookup/transmute guarantees ABI if present.
+            if let Some(host_trylock) = unsafe { host_pthread_mutex_trylock_fn() } {
+                // SAFETY: direct call through resolved host symbol.
+                return unsafe { host_trylock(mutex) };
+            }
         }
+        return libc::EINVAL;
     }
 
     if mutex.is_null() {
@@ -2382,12 +2402,16 @@ pub unsafe extern "C" fn pthread_mutex_trylock(mutex: *mut libc::pthread_mutex_t
 /// POSIX `pthread_mutex_unlock`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pthread_mutex_unlock(mutex: *mut libc::pthread_mutex_t) -> c_int {
-    if !is_managed_mutex(mutex) && !FORCE_NATIVE_MUTEX.load(Ordering::Acquire) {
-        // SAFETY: host symbol lookup/transmute guarantees ABI if present.
-        if let Some(host_unlock) = unsafe { host_pthread_mutex_unlock_fn() } {
-            // SAFETY: direct call through resolved host symbol.
-            return unsafe { host_unlock(mutex) };
+    let force_native = FORCE_NATIVE_MUTEX.load(Ordering::Acquire);
+    if !is_managed_mutex(mutex) {
+        if !force_native {
+            // SAFETY: host symbol lookup/transmute guarantees ABI if present.
+            if let Some(host_unlock) = unsafe { host_pthread_mutex_unlock_fn() } {
+                // SAFETY: direct call through resolved host symbol.
+                return unsafe { host_unlock(mutex) };
+            }
         }
+        return libc::EINVAL;
     }
 
     if mutex.is_null() {
@@ -2481,13 +2505,10 @@ pub unsafe extern "C" fn pthread_cond_init(
         // our bitfield layout differs from glibc's internal layout.
         if !attr.is_null() {
             let word = unsafe { *(attr.cast::<c_int>()) };
-            if word == 0 {
+            if word == CONDATTR_DESTROYED_SENTINEL {
                 return libc::EINVAL;
             }
-            if word & CONDATTR_VALID_BIT != 0 {
-                if !condattr_word_valid(word) {
-                    return libc::EINVAL;
-                }
+            if word & CONDATTR_VALID_BIT != 0 && condattr_word_valid(word) {
                 let clock = decode_condattr_clock(word);
                 let mut host_attr: libc::pthread_condattr_t = unsafe { std::mem::zeroed() };
                 unsafe { libc::pthread_condattr_init(&mut host_attr) };
@@ -3560,6 +3581,7 @@ pub unsafe extern "C" fn pthread_mutexattr_gettype(
 const CONDATTR_CLOCK_MONOTONIC_BIT: c_int = 1 << 0;
 const CONDATTR_PSHARED_BIT: c_int = 1 << 1;
 const CONDATTR_VALID_BIT: c_int = 1 << 2;
+const CONDATTR_DESTROYED_SENTINEL: c_int = 0x7fff_ffff;
 const CONDATTR_ALLOWED_MASK: c_int =
     CONDATTR_CLOCK_MONOTONIC_BIT | CONDATTR_PSHARED_BIT | CONDATTR_VALID_BIT;
 
@@ -3631,7 +3653,7 @@ pub unsafe extern "C" fn pthread_condattr_destroy(attr: *mut libc::pthread_conda
     }
     // SAFETY: attr is non-null; caller owns the memory.
     let word = unsafe { &mut *(attr.cast::<c_int>()) };
-    *word = 0;
+    *word = CONDATTR_DESTROYED_SENTINEL;
     0
 }
 
@@ -3664,11 +3686,17 @@ pub unsafe extern "C" fn pthread_condattr_getclock(
         return libc::EINVAL;
     }
     let word = unsafe { *(attr.cast::<c_int>()) };
-    if !condattr_word_valid(word) {
+    if word == CONDATTR_DESTROYED_SENTINEL {
         return libc::EINVAL;
     }
-    unsafe { *clock_id = decode_condattr_clock(word) };
-    0
+    if condattr_word_valid(word) {
+        unsafe { *clock_id = decode_condattr_clock(word) };
+        return 0;
+    }
+    if let Some(host_getclock) = unsafe { host_pthread_condattr_getclock_fn() } {
+        return unsafe { host_getclock(attr, clock_id) };
+    }
+    libc::EINVAL
 }
 
 // --- Rwlock attributes --- native implementation
@@ -5205,11 +5233,13 @@ pub unsafe extern "C" fn pthread_mutex_timedlock(
     if !absolute_timespec_valid(abstime) {
         return libc::EINVAL;
     }
-    if !is_managed_mutex(mutex)
-        && !FORCE_NATIVE_MUTEX.load(Ordering::Acquire)
-        && let Some(host_timedlock) = unsafe { host_pthread_mutex_timedlock_fn() }
-    {
-        return unsafe { host_timedlock(mutex, abstime) };
+    let force_native = FORCE_NATIVE_MUTEX.load(Ordering::Acquire);
+    if !is_managed_mutex(mutex) {
+        if !force_native && let Some(host_timedlock) = unsafe { host_pthread_mutex_timedlock_fn() }
+        {
+            return unsafe { host_timedlock(mutex, abstime) };
+        }
+        return libc::EINVAL;
     }
     let Some(word_ptr) = mutex_word_ptr(mutex) else {
         return libc::EINVAL;

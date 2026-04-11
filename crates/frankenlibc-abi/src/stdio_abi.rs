@@ -23,7 +23,7 @@ use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
 use crate::errno_abi::set_abi_errno;
 use crate::io_internal_abi::{self, NativeFileBufMode};
-use crate::malloc_abi::{known_remaining, malloc};
+use crate::malloc_abi::{free, known_remaining, malloc};
 use crate::runtime_policy;
 use crate::unistd_abi::{sys_read_fd, sys_write_fd};
 
@@ -48,6 +48,10 @@ type HostSetvbufFn = unsafe extern "C" fn(*mut c_void, *mut c_char, c_int, usize
 type HostGetdelimFn =
     unsafe extern "C" fn(*mut *mut c_char, *mut usize, c_int, *mut c_void) -> isize;
 type HostGetlineFn = unsafe extern "C" fn(*mut *mut c_char, *mut usize, *mut c_void) -> isize;
+type HostVfscanfFn = unsafe extern "C" fn(*mut c_void, *const c_char, *mut c_void) -> c_int;
+type HostFgetposFn = unsafe extern "C" fn(*mut c_void, *mut libc::fpos_t) -> c_int;
+type HostFsetposFn = unsafe extern "C" fn(*mut c_void, *const libc::fpos_t) -> c_int;
+type HostFreopenFn = unsafe extern "C" fn(*const c_char, *const c_char, *mut c_void) -> *mut c_void;
 
 static HOST_FOPEN_FN: OnceLock<usize> = OnceLock::new();
 static HOST_FDOPEN_FN: OnceLock<usize> = OnceLock::new();
@@ -69,6 +73,10 @@ static HOST_FFLUSH_FN: OnceLock<usize> = OnceLock::new();
 static HOST_SETVBUF_FN: OnceLock<usize> = OnceLock::new();
 static HOST_GETDELIM_FN: OnceLock<usize> = OnceLock::new();
 static HOST_GETLINE_FN: OnceLock<usize> = OnceLock::new();
+static HOST_VFSCANF_FN: OnceLock<usize> = OnceLock::new();
+static HOST_FGETPOS_FN: OnceLock<usize> = OnceLock::new();
+static HOST_FSETPOS_FN: OnceLock<usize> = OnceLock::new();
+static HOST_FREOPEN_FN: OnceLock<usize> = OnceLock::new();
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -338,6 +346,70 @@ fn registry_contains_stream(id: usize) -> bool {
     reg.streams.contains_key(&id)
 }
 
+#[derive(Clone, Copy, Debug)]
+struct HostStreamState {
+    io_started: bool,
+}
+
+fn host_stream_registry() -> &'static Mutex<HashMap<usize, HostStreamState>> {
+    static HOST_STREAMS: OnceLock<Mutex<HashMap<usize, HostStreamState>>> = OnceLock::new();
+    HOST_STREAMS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn register_host_stream(stream: *mut c_void) {
+    if stream.is_null() {
+        return;
+    }
+    let id = canonical_stream_id(stream);
+    if registry_contains_stream(id) {
+        return;
+    }
+    let mut guard = host_stream_registry()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    guard
+        .entry(id)
+        .or_insert(HostStreamState { io_started: false });
+}
+
+fn mark_host_io_started(stream: *mut c_void) {
+    if stream.is_null() {
+        return;
+    }
+    let id = canonical_stream_id(stream);
+    if registry_contains_stream(id) {
+        return;
+    }
+    let mut guard = host_stream_registry()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    guard
+        .entry(id)
+        .and_modify(|state| state.io_started = true)
+        .or_insert(HostStreamState { io_started: true });
+}
+
+fn host_stream_io_started(id: usize) -> bool {
+    let guard = host_stream_registry()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    guard
+        .get(&id)
+        .map(|state| state.io_started)
+        .unwrap_or(false)
+}
+
+fn unregister_host_stream(stream: *mut c_void) {
+    if stream.is_null() {
+        return;
+    }
+    let id = canonical_stream_id(stream);
+    let mut guard = host_stream_registry()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    guard.remove(&id);
+}
+
 #[inline]
 fn standard_stream_id(stream: *mut c_void) -> Option<usize> {
     if stream.is_null() {
@@ -518,6 +590,30 @@ unsafe fn host_setvbuf_fn() -> Option<HostSetvbufFn> {
         .map(|ptr| unsafe { std::mem::transmute(ptr) })
 }
 
+#[inline]
+unsafe fn host_vfscanf_fn() -> Option<HostVfscanfFn> {
+    unsafe { host_stdio_symbol(&HOST_VFSCANF_FN, "vfscanf") }
+        .map(|ptr| unsafe { std::mem::transmute(ptr) })
+}
+
+#[inline]
+unsafe fn host_fgetpos_fn() -> Option<HostFgetposFn> {
+    unsafe { host_stdio_symbol(&HOST_FGETPOS_FN, "fgetpos") }
+        .map(|ptr| unsafe { std::mem::transmute(ptr) })
+}
+
+#[inline]
+unsafe fn host_fsetpos_fn() -> Option<HostFsetposFn> {
+    unsafe { host_stdio_symbol(&HOST_FSETPOS_FN, "fsetpos") }
+        .map(|ptr| unsafe { std::mem::transmute(ptr) })
+}
+
+#[inline]
+unsafe fn host_freopen_fn() -> Option<HostFreopenFn> {
+    unsafe { host_stdio_symbol(&HOST_FREOPEN_FN, "freopen") }
+        .map(|ptr| unsafe { std::mem::transmute(ptr) })
+}
+
 fn alloc_stream_id() -> usize {
     let mut next = NEXT_STREAM_ID.lock().unwrap_or_else(|e| e.into_inner());
     let id = *next;
@@ -686,6 +782,8 @@ pub unsafe extern "C" fn fopen(pathname: *const c_char, mode: *const c_char) -> 
         let result = unsafe { host_fopen(pathname, mode) };
         if result.is_null() {
             unsafe { sync_host_errno(errno::ENOENT) };
+        } else {
+            register_host_stream(result);
         }
         return result;
     }
@@ -741,6 +839,8 @@ pub unsafe extern "C" fn fclose(stream: *mut c_void) -> c_int {
         let rc = unsafe { host_fclose(stream) };
         if rc != 0 {
             unsafe { sync_host_errno(errno::EBADF) };
+        } else {
+            unregister_host_stream(stream);
         }
         return rc;
     }
@@ -760,12 +860,22 @@ pub unsafe extern "C" fn fclose(stream: *mut c_void) -> c_int {
 
     // Memory-backed streams: sync data, then clean up.
     if s.is_mem_backed() {
-        unsafe { sync_memstream_to_caller(id, &s) };
+        unsafe {
+            sync_memstream_to_caller(id, &s);
+            sync_fmemopen_full(id, &s);
+        }
         // Remove sync metadata for open_memstream.
         let mut sync_guard = mem_sync_registry()
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         if let Some(ref mut map) = *sync_guard {
+            map.remove(&id);
+        }
+        // Remove sync metadata for fmemopen fixed buffers.
+        let mut fixed_guard = mem_fixed_registry()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if let Some(ref mut map) = *fixed_guard {
             map.remove(&id);
         }
         return 0;
@@ -846,6 +956,14 @@ pub unsafe extern "C" fn fflush(stream: *mut c_void) -> c_int {
 
     // NULL stream: flush all open streams.
     if stream.is_null() {
+        let mut host_fail = false;
+        if let Some(host_fflush) = unsafe { host_fflush_fn() } {
+            let rc = unsafe { host_fflush(std::ptr::null_mut()) };
+            if rc != 0 {
+                host_fail = true;
+                unsafe { sync_host_errno(errno::EBADF) };
+            }
+        }
         let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
         let mut any_fail = false;
         let ids: Vec<usize> = reg.streams.keys().copied().collect();
@@ -854,7 +972,10 @@ pub unsafe extern "C" fn fflush(stream: *mut c_void) -> c_int {
                 let ok = if is_cookie_stream(id) {
                     true
                 } else if s.is_mem_backed() {
-                    unsafe { sync_memstream_to_caller(id, s) };
+                    unsafe {
+                        sync_memstream_to_caller(id, s);
+                        sync_fmemopen_full(id, s);
+                    }
                     true
                 } else {
                     unsafe { flush_stream(s) }
@@ -864,8 +985,9 @@ pub unsafe extern "C" fn fflush(stream: *mut c_void) -> c_int {
                 }
             }
         }
-        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 20, any_fail);
-        return if any_fail { libc::EOF } else { 0 };
+        let failed = any_fail || host_fail;
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 20, failed);
+        return if failed { libc::EOF } else { 0 };
     }
 
     let id = canonical_stream_id(stream);
@@ -879,7 +1001,10 @@ pub unsafe extern "C" fn fflush(stream: *mut c_void) -> c_int {
     if let Some(s) = reg.streams.get_mut(&id) {
         // Memory-backed streams: sync data to C caller's pointers (open_memstream).
         if s.is_mem_backed() {
-            unsafe { sync_memstream_to_caller(id, s) };
+            unsafe {
+                sync_memstream_to_caller(id, s);
+                sync_fmemopen_full(id, s);
+            }
             runtime_policy::observe(ApiFamily::Stdio, decision.profile, 8, false);
             return 0;
         }
@@ -904,6 +1029,7 @@ pub unsafe extern "C" fn fgetc(stream: *mut c_void) -> c_int {
         && let Some(host_fgetc) = unsafe { host_fgetc_fn() }
     {
         let rc = unsafe { host_fgetc(stream) };
+        mark_host_io_started(stream);
         if rc == libc::EOF {
             unsafe { sync_host_errno(0) };
         }
@@ -1050,7 +1176,13 @@ pub unsafe extern "C" fn fputc(c: c_int, stream: *mut c_void) -> c_int {
         drop(reg);
         // Not in our registry — delegate to host libc fputc (real FILE*).
         if let Some(host_fputc) = unsafe { host_fputc_fn() } {
-            return unsafe { host_fputc(c, stream) };
+            let rc = unsafe { host_fputc(c, stream) };
+            if rc == libc::EOF {
+                unsafe { sync_host_errno(0) };
+            } else {
+                mark_host_io_started(stream);
+            }
+            return rc;
         }
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
         return libc::EOF;
@@ -1063,21 +1195,33 @@ pub unsafe extern "C" fn fputc(c: c_int, stream: *mut c_void) -> c_int {
             runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
             return libc::EOF;
         }
+        let start = s.offset().saturating_sub(n as i64);
+        if start >= 0 {
+            unsafe { sync_fmemopen_write(id, start as usize, &[byte][..n]) };
+        }
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, false);
         return c;
     }
 
-    let flush_data = s.buffer_write(&[byte]);
-    if !flush_data.is_empty() {
+    let write_result = match s.buffer_write(&[byte]) {
+        Some(result) => result,
+        None => {
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 8, true);
+            return libc::EOF;
+        }
+    };
+
+    let flushed_from_buffer = write_result.flushed_from_buffer;
+    let total_written = if write_result.flush_needed {
         let fd = s.fd();
         let mut written = 0usize;
         let mut success = true;
-        while written < flush_data.len() {
+        while written < write_result.flush_data.len() {
             let rc = unsafe {
                 sys_write_fd(
                     fd,
-                    flush_data[written..].as_ptr().cast(),
-                    flush_data.len() - written,
+                    write_result.flush_data[written..].as_ptr().cast(),
+                    write_result.flush_data.len() - written,
                 )
             };
             if rc < 0 {
@@ -1094,12 +1238,27 @@ pub unsafe extern "C" fn fputc(c: c_int, stream: *mut c_void) -> c_int {
             written += rc as usize;
         }
         if success {
-            // buffer_write already managed the internal buffer state.
+            let flushed_new = write_result
+                .flush_data
+                .len()
+                .saturating_sub(flushed_from_buffer);
+            write_result.buffered.saturating_add(flushed_new)
         } else {
             s.set_error();
+            s.mark_flushed();
+            let flushed_new = written.saturating_sub(flushed_from_buffer);
+            if flushed_new > 0 {
+                s.set_offset(s.offset().saturating_add(flushed_new as i64));
+            }
             runtime_policy::observe(ApiFamily::Stdio, decision.profile, 8, true);
             return libc::EOF;
         }
+    } else {
+        write_result.buffered
+    };
+
+    if total_written > 0 {
+        s.set_offset(s.offset().saturating_add(total_written as i64));
     }
 
     runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, false);
@@ -1127,6 +1286,8 @@ pub unsafe extern "C" fn fgets(buf: *mut c_char, size: c_int, stream: *mut c_voi
         let rc = unsafe { host_fgets(buf, size, stream) };
         if rc.is_null() {
             unsafe { sync_host_errno(0) };
+        } else {
+            mark_host_io_started(stream);
         }
         return rc;
     }
@@ -1373,23 +1534,62 @@ pub unsafe extern "C" fn fputs(s: *const c_char, stream: *mut c_void) -> c_int {
         drop(reg);
         // Not in our registry — delegate to host libc fputs (real FILE*).
         if let Some(host_fputs) = unsafe { host_fputs_fn() } {
-            return unsafe { host_fputs(s, stream) };
+            let rc = unsafe { host_fputs(s, stream) };
+            if rc == libc::EOF {
+                unsafe { sync_host_errno(0) };
+            } else {
+                mark_host_io_started(stream);
+            }
+            return if rc == libc::EOF { libc::EOF } else { 0 };
         }
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
         return libc::EOF;
     };
 
-    let flush_data = stream_obj.buffer_write(bytes);
-    if !flush_data.is_empty() {
+    if stream_obj.is_mem_backed() {
+        let written = stream_obj.mem_write(bytes);
+        if written > 0 {
+            let start = stream_obj.offset().saturating_sub(written as i64);
+            if start >= 0 {
+                unsafe { sync_fmemopen_write(id, start as usize, &bytes[..written]) };
+            }
+        }
+        let adverse = written < bytes.len();
+        if adverse {
+            stream_obj.set_error();
+        }
+        runtime_policy::observe(
+            ApiFamily::Stdio,
+            decision.profile,
+            runtime_policy::scaled_cost(10, len),
+            adverse,
+        );
+        return if adverse { libc::EOF } else { 0 };
+    }
+
+    let write_result = match stream_obj.buffer_write(bytes) {
+        Some(result) => result,
+        None => {
+            runtime_policy::observe(
+                ApiFamily::Stdio,
+                decision.profile,
+                runtime_policy::scaled_cost(10, len),
+                true,
+            );
+            return libc::EOF;
+        }
+    };
+    let flushed_from_buffer = write_result.flushed_from_buffer;
+    let total_written = if write_result.flush_needed {
         let fd = stream_obj.fd();
         let mut written = 0usize;
         let mut success = true;
-        while written < flush_data.len() {
+        while written < write_result.flush_data.len() {
             let rc = unsafe {
                 sys_write_fd(
                     fd,
-                    flush_data[written..].as_ptr().cast(),
-                    flush_data.len() - written,
+                    write_result.flush_data[written..].as_ptr().cast(),
+                    write_result.flush_data.len() - written,
                 )
             };
             if rc < 0 {
@@ -1406,9 +1606,18 @@ pub unsafe extern "C" fn fputs(s: *const c_char, stream: *mut c_void) -> c_int {
             written += rc as usize;
         }
         if success {
-            // buffer_write already managed the internal buffer state.
+            let flushed_new = write_result
+                .flush_data
+                .len()
+                .saturating_sub(flushed_from_buffer);
+            write_result.buffered.saturating_add(flushed_new)
         } else {
             stream_obj.set_error();
+            stream_obj.mark_flushed();
+            let flushed_new = written.saturating_sub(flushed_from_buffer);
+            if flushed_new > 0 {
+                stream_obj.set_offset(stream_obj.offset().saturating_add(flushed_new as i64));
+            }
             runtime_policy::observe(
                 ApiFamily::Stdio,
                 decision.profile,
@@ -1417,6 +1626,12 @@ pub unsafe extern "C" fn fputs(s: *const c_char, stream: *mut c_void) -> c_int {
             );
             return libc::EOF;
         }
+    } else {
+        write_result.buffered
+    };
+
+    if total_written > 0 {
+        stream_obj.set_offset(stream_obj.offset().saturating_add(total_written as i64));
     }
 
     runtime_policy::observe(
@@ -1453,10 +1668,21 @@ pub unsafe extern "C" fn fread(
         && let Some(host_fread) = unsafe { host_fread_fn() }
     {
         let rc = unsafe { host_fread(ptr, size, nmemb, stream) };
+        mark_host_io_started(stream);
         if rc == 0 {
             unsafe { sync_host_errno(0) };
         }
         return rc;
+    }
+    let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, id, total, true, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(
+            ApiFamily::Stdio,
+            decision.profile,
+            runtime_policy::scaled_cost(15, total),
+            true,
+        );
+        return 0;
     }
     let dst = unsafe { std::slice::from_raw_parts_mut(ptr as *mut u8, total) };
 
@@ -1533,6 +1759,12 @@ pub unsafe extern "C" fn fread(
         let data = s.mem_read(total);
         let n = data.len();
         dst[..n].copy_from_slice(&data);
+        runtime_policy::observe(
+            ApiFamily::Stdio,
+            decision.profile,
+            runtime_policy::scaled_cost(15, total),
+            n < total,
+        );
         return n.checked_div(size).unwrap_or(0);
     }
 
@@ -1655,7 +1887,13 @@ pub unsafe extern "C" fn fwrite(
         drop(reg);
         // Not in our registry — delegate to host libc fwrite (real FILE*).
         if let Some(host_fwrite) = unsafe { host_fwrite_fn() } {
-            return unsafe { host_fwrite(ptr, size, nmemb, stream) };
+            let rc = unsafe { host_fwrite(ptr, size, nmemb, stream) };
+            if rc == 0 {
+                unsafe { sync_host_errno(0) };
+            } else {
+                mark_host_io_started(stream);
+            }
+            return rc;
         }
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
         return 0;
@@ -1664,6 +1902,12 @@ pub unsafe extern "C" fn fwrite(
     // Memory-backed streams: write directly to the backing.
     if s.is_mem_backed() {
         let written = s.mem_write(src);
+        if written > 0 {
+            let start = s.offset().saturating_sub(written as i64);
+            if start >= 0 {
+                unsafe { sync_fmemopen_write(id, start as usize, &src[..written]) };
+            }
+        }
         let complete_items = written.checked_div(size).unwrap_or(0);
         runtime_policy::observe(
             ApiFamily::Stdio,
@@ -1674,17 +1918,30 @@ pub unsafe extern "C" fn fwrite(
         return complete_items;
     }
 
-    let flush_data = s.buffer_write(src);
-    if !flush_data.is_empty() {
+    let write_result = match s.buffer_write(src) {
+        Some(result) => result,
+        None => {
+            runtime_policy::observe(
+                ApiFamily::Stdio,
+                decision.profile,
+                runtime_policy::scaled_cost(15, total),
+                true,
+            );
+            return 0;
+        }
+    };
+
+    let flushed_from_buffer = write_result.flushed_from_buffer;
+    let total_written = if write_result.flush_needed {
         let fd = s.fd();
         let mut written = 0usize;
         let mut success = true;
-        while written < flush_data.len() {
+        while written < write_result.flush_data.len() {
             let rc = unsafe {
                 sys_write_fd(
                     fd,
-                    flush_data[written..].as_ptr().cast(),
-                    flush_data.len() - written,
+                    write_result.flush_data[written..].as_ptr().cast(),
+                    write_result.flush_data.len() - written,
                 )
             };
             let errno_val = if rc < 0 {
@@ -1707,17 +1964,32 @@ pub unsafe extern "C" fn fwrite(
             written += rc as usize;
         }
         if success {
-            // buffer_write already managed the internal buffer state.
+            let flushed_new = write_result
+                .flush_data
+                .len()
+                .saturating_sub(flushed_from_buffer);
+            write_result.buffered.saturating_add(flushed_new)
         } else {
             s.set_error();
+            s.mark_flushed();
+            let flushed_new = written.saturating_sub(flushed_from_buffer);
+            if flushed_new > 0 {
+                s.set_offset(s.offset().saturating_add(flushed_new as i64));
+            }
             runtime_policy::observe(
                 ApiFamily::Stdio,
                 decision.profile,
                 runtime_policy::scaled_cost(15, total),
                 true,
             );
-            return 0;
+            return flushed_new.checked_div(size).unwrap_or(0);
         }
+    } else {
+        write_result.buffered
+    };
+
+    if total_written > 0 {
+        s.set_offset(s.offset().saturating_add(total_written as i64));
     }
 
     runtime_policy::observe(
@@ -1726,7 +1998,7 @@ pub unsafe extern "C" fn fwrite(
         runtime_policy::scaled_cost(15, total),
         false,
     );
-    nmemb
+    total_written.checked_div(size).unwrap_or(0)
 }
 
 // ---------------------------------------------------------------------------
@@ -1999,6 +2271,8 @@ pub unsafe extern "C" fn ungetc(c: c_int, stream: *mut c_void) -> c_int {
         let rc = unsafe { host_ungetc(c, stream) };
         if rc == libc::EOF {
             unsafe { sync_host_errno(errno::EINVAL) };
+        } else {
+            mark_host_io_started(stream);
         }
         return rc;
     }
@@ -2064,6 +2338,10 @@ pub unsafe extern "C" fn setvbuf(
         }
     } else {
         drop(reg);
+        if host_stream_io_started(id) {
+            unsafe { set_abi_errno(errno::EINVAL) };
+            return -1;
+        }
         // Not in our registry — delegate to host libc setvbuf (real FILE*).
         if let Some(host_fn) = unsafe { host_setvbuf_fn() } {
             let rc = unsafe { host_fn(stream, _buf, mode, size) };
@@ -2746,17 +3024,50 @@ pub unsafe extern "C" fn fprintf(
 
     let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
     if let Some(s) = reg.streams.get_mut(&id) {
-        let flush_data = s.buffer_write(&rendered);
-        if !flush_data.is_empty() {
+        if s.is_mem_backed() {
+            let written = s.mem_write(&rendered);
+            if written > 0 {
+                let start = s.offset().saturating_sub(written as i64);
+                if start >= 0 {
+                    unsafe { sync_fmemopen_write(id, start as usize, &rendered[..written]) };
+                }
+            }
+            let adverse = written < total_len;
+            if adverse {
+                s.set_error();
+            }
+            runtime_policy::observe(
+                ApiFamily::Stdio,
+                decision.profile,
+                runtime_policy::scaled_cost(15, total_len),
+                adverse,
+            );
+            return if adverse { -1 } else { total_len as c_int };
+        }
+
+        let write_result = match s.buffer_write(&rendered) {
+            Some(result) => result,
+            None => {
+                runtime_policy::observe(
+                    ApiFamily::Stdio,
+                    decision.profile,
+                    runtime_policy::scaled_cost(15, total_len),
+                    true,
+                );
+                return -1;
+            }
+        };
+        let flushed_from_buffer = write_result.flushed_from_buffer;
+        if write_result.flush_needed {
             let fd = s.fd();
             let mut written = 0usize;
             let mut success = true;
-            while written < flush_data.len() {
+            while written < write_result.flush_data.len() {
                 let rc = unsafe {
                     sys_write_fd(
                         fd,
-                        flush_data[written..].as_ptr().cast(),
-                        flush_data.len() - written,
+                        write_result.flush_data[written..].as_ptr().cast(),
+                        write_result.flush_data.len() - written,
                     )
                 };
                 if rc <= 0 {
@@ -2766,9 +3077,21 @@ pub unsafe extern "C" fn fprintf(
                 written += rc as usize;
             }
             if success {
-                // buffer_write already managed the internal buffer state.
+                let flushed_new = write_result
+                    .flush_data
+                    .len()
+                    .saturating_sub(flushed_from_buffer);
+                let total_written = write_result.buffered.saturating_add(flushed_new);
+                if total_written > 0 {
+                    s.set_offset(s.offset().saturating_add(total_written as i64));
+                }
             } else {
                 s.set_error();
+                s.mark_flushed();
+                let flushed_new = written.saturating_sub(flushed_from_buffer);
+                if flushed_new > 0 {
+                    s.set_offset(s.offset().saturating_add(flushed_new as i64));
+                }
                 runtime_policy::observe(
                     ApiFamily::Stdio,
                     decision.profile,
@@ -2777,6 +3100,11 @@ pub unsafe extern "C" fn fprintf(
                 );
                 return -1;
             }
+        } else {
+            let total_written = write_result.buffered;
+            if total_written > 0 {
+                s.set_offset(s.offset().saturating_add(total_written as i64));
+            }
         }
     } else {
         drop(reg);
@@ -2784,6 +3112,9 @@ pub unsafe extern "C" fn fprintf(
         if let Some(host_fwrite) = unsafe { host_fwrite_fn() } {
             let written =
                 unsafe { host_fwrite(rendered.as_ptr().cast(), 1, rendered.len(), stream) };
+            if written > 0 {
+                mark_host_io_started(stream);
+            }
             runtime_policy::observe(
                 ApiFamily::Stdio,
                 decision.profile,
@@ -2838,17 +3169,50 @@ pub unsafe extern "C" fn printf(format: *const c_char, mut args: ...) -> c_int {
 
     let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
     if let Some(s) = reg.streams.get_mut(&id) {
-        let flush_data = s.buffer_write(&rendered);
-        if !flush_data.is_empty() {
+        if s.is_mem_backed() {
+            let written = s.mem_write(&rendered);
+            if written > 0 {
+                let start = s.offset().saturating_sub(written as i64);
+                if start >= 0 {
+                    unsafe { sync_fmemopen_write(id, start as usize, &rendered[..written]) };
+                }
+            }
+            let adverse = written < total_len;
+            if adverse {
+                s.set_error();
+            }
+            runtime_policy::observe(
+                ApiFamily::Stdio,
+                decision.profile,
+                runtime_policy::scaled_cost(15, total_len),
+                adverse,
+            );
+            return if adverse { -1 } else { total_len as c_int };
+        }
+
+        let write_result = match s.buffer_write(&rendered) {
+            Some(result) => result,
+            None => {
+                runtime_policy::observe(
+                    ApiFamily::Stdio,
+                    decision.profile,
+                    runtime_policy::scaled_cost(15, total_len),
+                    true,
+                );
+                return -1;
+            }
+        };
+        let flushed_from_buffer = write_result.flushed_from_buffer;
+        if write_result.flush_needed {
             let fd = s.fd();
             let mut written = 0usize;
             let mut success = true;
-            while written < flush_data.len() {
+            while written < write_result.flush_data.len() {
                 let rc = unsafe {
                     sys_write_fd(
                         fd,
-                        flush_data[written..].as_ptr().cast(),
-                        flush_data.len() - written,
+                        write_result.flush_data[written..].as_ptr().cast(),
+                        write_result.flush_data.len() - written,
                     )
                 };
                 if rc <= 0 {
@@ -2859,6 +3223,11 @@ pub unsafe extern "C" fn printf(format: *const c_char, mut args: ...) -> c_int {
             }
             if !success {
                 s.set_error();
+                s.mark_flushed();
+                let flushed_new = written.saturating_sub(flushed_from_buffer);
+                if flushed_new > 0 {
+                    s.set_offset(s.offset().saturating_add(flushed_new as i64));
+                }
                 runtime_policy::observe(
                     ApiFamily::Stdio,
                     decision.profile,
@@ -2867,12 +3236,28 @@ pub unsafe extern "C" fn printf(format: *const c_char, mut args: ...) -> c_int {
                 );
                 return -1;
             }
+            let flushed_new = write_result
+                .flush_data
+                .len()
+                .saturating_sub(flushed_from_buffer);
+            let total_written = write_result.buffered.saturating_add(flushed_new);
+            if total_written > 0 {
+                s.set_offset(s.offset().saturating_add(total_written as i64));
+            }
+        } else {
+            let total_written = write_result.buffered;
+            if total_written > 0 {
+                s.set_offset(s.offset().saturating_add(total_written as i64));
+            }
         }
     } else {
         drop(reg);
         if let Some(host_fwrite) = unsafe { host_fwrite_fn() } {
             let written =
                 unsafe { host_fwrite(rendered.as_ptr().cast(), 1, rendered.len(), stdout_ptr) };
+            if written > 0 {
+                mark_host_io_started(stdout_ptr);
+            }
             runtime_policy::observe(
                 ApiFamily::Stdio,
                 decision.profile,
@@ -2920,24 +3305,7 @@ pub unsafe extern "C" fn dprintf(fd: c_int, format: *const c_char, mut args: ...
     let rendered = unsafe { render_printf(fmt_bytes, arg_buf.as_ptr(), extract_count) };
     let total_len = rendered.len();
 
-    let mut written = 0usize;
-    let mut adverse = false;
-    while written < total_len {
-        let rc =
-            unsafe { sys_write_fd(fd, rendered[written..].as_ptr().cast(), total_len - written) };
-        if rc < 0 {
-            let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
-            if e == errno::EINTR {
-                continue;
-            }
-            adverse = true;
-            break;
-        } else if rc == 0 {
-            adverse = true;
-            break;
-        }
-        written += rc as usize;
-    }
+    let adverse = !write_all_fd(fd, &rendered);
     runtime_policy::observe(
         ApiFamily::Stdio,
         decision.profile,
@@ -3283,11 +3651,30 @@ pub unsafe extern "C" fn vfprintf(
 
     let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
     if let Some(s) = reg.streams.get_mut(&id) {
-        let flush_data = s.buffer_write(&rendered);
-        if !flush_data.is_empty() {
-            let fd = s.fd();
-            if !write_all_fd(fd, &flush_data) {
+        if s.is_mem_backed() {
+            let written = s.mem_write(&rendered);
+            if written > 0 {
+                let start = s.offset().saturating_sub(written as i64);
+                if start >= 0 {
+                    unsafe { sync_fmemopen_write(id, start as usize, &rendered[..written]) };
+                }
+            }
+            let adverse = written < total_len;
+            if adverse {
                 s.set_error();
+            }
+            runtime_policy::observe(
+                ApiFamily::Stdio,
+                decision.profile,
+                runtime_policy::scaled_cost(15, total_len),
+                adverse,
+            );
+            return if adverse { -1 } else { total_len as c_int };
+        }
+
+        let write_result = match s.buffer_write(&rendered) {
+            Some(result) => result,
+            None => {
                 runtime_policy::observe(
                     ApiFamily::Stdio,
                     decision.profile,
@@ -3296,6 +3683,54 @@ pub unsafe extern "C" fn vfprintf(
                 );
                 return -1;
             }
+        };
+        let flushed_from_buffer = write_result.flushed_from_buffer;
+        if write_result.flush_needed {
+            let fd = s.fd();
+            let mut written = 0usize;
+            let mut success = true;
+            while written < write_result.flush_data.len() {
+                let rc = unsafe {
+                    sys_write_fd(
+                        fd,
+                        write_result.flush_data[written..].as_ptr().cast(),
+                        write_result.flush_data.len() - written,
+                    )
+                };
+                if rc <= 0 {
+                    success = false;
+                    break;
+                }
+                written += rc as usize;
+            }
+            if !success {
+                s.set_error();
+                s.mark_flushed();
+                let flushed_new = written.saturating_sub(flushed_from_buffer);
+                if flushed_new > 0 {
+                    s.set_offset(s.offset().saturating_add(flushed_new as i64));
+                }
+                runtime_policy::observe(
+                    ApiFamily::Stdio,
+                    decision.profile,
+                    runtime_policy::scaled_cost(15, total_len),
+                    true,
+                );
+                return -1;
+            }
+            let flushed_new = write_result
+                .flush_data
+                .len()
+                .saturating_sub(flushed_from_buffer);
+            let total_written = write_result.buffered.saturating_add(flushed_new);
+            if total_written > 0 {
+                s.set_offset(s.offset().saturating_add(total_written as i64));
+            }
+        } else {
+            let total_written = write_result.buffered;
+            if total_written > 0 {
+                s.set_offset(s.offset().saturating_add(total_written as i64));
+            }
         }
     } else {
         drop(reg);
@@ -3303,6 +3738,9 @@ pub unsafe extern "C" fn vfprintf(
         if let Some(host_fwrite) = unsafe { host_fwrite_fn() } {
             let written =
                 unsafe { host_fwrite(rendered.as_ptr().cast(), 1, rendered.len(), stream) };
+            if written > 0 {
+                mark_host_io_started(stream);
+            }
             runtime_policy::observe(
                 ApiFamily::Stdio,
                 decision.profile,
@@ -3354,17 +3792,50 @@ pub unsafe extern "C" fn vprintf(format: *const c_char, ap: *mut c_void) -> c_in
 
     let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
     if let Some(s) = reg.streams.get_mut(&id) {
-        let flush_data = s.buffer_write(&rendered);
-        if !flush_data.is_empty() {
+        if s.is_mem_backed() {
+            let written = s.mem_write(&rendered);
+            if written > 0 {
+                let start = s.offset().saturating_sub(written as i64);
+                if start >= 0 {
+                    unsafe { sync_fmemopen_write(id, start as usize, &rendered[..written]) };
+                }
+            }
+            let adverse = written < total_len;
+            if adverse {
+                s.set_error();
+            }
+            runtime_policy::observe(
+                ApiFamily::Stdio,
+                decision.profile,
+                runtime_policy::scaled_cost(15, total_len),
+                adverse,
+            );
+            return if adverse { -1 } else { total_len as c_int };
+        }
+
+        let write_result = match s.buffer_write(&rendered) {
+            Some(result) => result,
+            None => {
+                runtime_policy::observe(
+                    ApiFamily::Stdio,
+                    decision.profile,
+                    runtime_policy::scaled_cost(15, total_len),
+                    true,
+                );
+                return -1;
+            }
+        };
+        let flushed_from_buffer = write_result.flushed_from_buffer;
+        if write_result.flush_needed {
             let fd = s.fd();
             let mut written = 0usize;
             let mut success = true;
-            while written < flush_data.len() {
+            while written < write_result.flush_data.len() {
                 let rc = unsafe {
                     sys_write_fd(
                         fd,
-                        flush_data[written..].as_ptr().cast(),
-                        flush_data.len() - written,
+                        write_result.flush_data[written..].as_ptr().cast(),
+                        write_result.flush_data.len() - written,
                     )
                 };
                 if rc <= 0 {
@@ -3375,6 +3846,11 @@ pub unsafe extern "C" fn vprintf(format: *const c_char, ap: *mut c_void) -> c_in
             }
             if !success {
                 s.set_error();
+                s.mark_flushed();
+                let flushed_new = written.saturating_sub(flushed_from_buffer);
+                if flushed_new > 0 {
+                    s.set_offset(s.offset().saturating_add(flushed_new as i64));
+                }
                 runtime_policy::observe(
                     ApiFamily::Stdio,
                     decision.profile,
@@ -3383,12 +3859,28 @@ pub unsafe extern "C" fn vprintf(format: *const c_char, ap: *mut c_void) -> c_in
                 );
                 return -1;
             }
+            let flushed_new = write_result
+                .flush_data
+                .len()
+                .saturating_sub(flushed_from_buffer);
+            let total_written = write_result.buffered.saturating_add(flushed_new);
+            if total_written > 0 {
+                s.set_offset(s.offset().saturating_add(total_written as i64));
+            }
+        } else {
+            let total_written = write_result.buffered;
+            if total_written > 0 {
+                s.set_offset(s.offset().saturating_add(total_written as i64));
+            }
         }
     } else {
         drop(reg);
         if let Some(host_fwrite) = unsafe { host_fwrite_fn() } {
             let written =
                 unsafe { host_fwrite(rendered.as_ptr().cast(), 1, rendered.len(), stdout_ptr) };
+            if written > 0 {
+                mark_host_io_started(stdout_ptr);
+            }
             runtime_policy::observe(
                 ApiFamily::Stdio,
                 decision.profile,
@@ -3819,6 +4311,16 @@ pub unsafe extern "C" fn vfscanf(
         return -1;
     }
     let id = canonical_stream_id(stream);
+    if !registry_contains_stream(id)
+        && let Some(host_vfscanf) = unsafe { host_vfscanf_fn() }
+    {
+        let rc = unsafe { host_vfscanf(stream, format, ap) };
+        mark_host_io_started(stream);
+        if rc < 0 {
+            unsafe { sync_host_errno(0) };
+        }
+        return rc;
+    }
     let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, id, 0, false, false, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
@@ -4010,6 +4512,17 @@ pub unsafe extern "C" fn fgetpos(stream: *mut c_void, pos: *mut libc::fpos_t) ->
         return -1;
     }
 
+    if !registry_contains_stream(id)
+        && let Some(host_fgetpos) = unsafe { host_fgetpos_fn() }
+    {
+        let rc = unsafe { host_fgetpos(stream, pos) };
+        if rc != 0 {
+            unsafe { sync_host_errno(errno::EINVAL) };
+        }
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, rc != 0);
+        return rc;
+    }
+
     let reg = registry().lock().unwrap_or_else(|e| e.into_inner());
     let Some(s) = reg.streams.get(&id) else {
         unsafe { set_abi_errno(errno::EBADF) };
@@ -4041,6 +4554,23 @@ pub unsafe extern "C" fn fsetpos(stream: *mut c_void, pos: *const libc::fpos_t) 
         return -1;
     }
 
+    let id = canonical_stream_id(stream);
+    if !registry_contains_stream(id)
+        && let Some(host_fsetpos) = unsafe { host_fsetpos_fn() }
+    {
+        let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, id, 0, false, false, 0);
+        if matches!(decision.action, MembraneAction::Deny) {
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
+            return -1;
+        }
+        let rc = unsafe { host_fsetpos(stream, pos) };
+        if rc != 0 {
+            unsafe { sync_host_errno(errno::EINVAL) };
+        }
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, rc != 0);
+        return rc;
+    }
+
     // Read the offset from the fpos_t (first 8 bytes = __pos field).
     let offset = unsafe { std::ptr::read(pos as *const i64) };
 
@@ -4070,6 +4600,8 @@ pub unsafe extern "C" fn fdopen(fd: c_int, mode: *const c_char) -> *mut c_void {
         let result = unsafe { host_fdopen(fd, mode) };
         if result.is_null() {
             unsafe { sync_host_errno(errno::EINVAL) };
+        } else {
+            register_host_stream(result);
         }
         return result;
     }
@@ -4130,11 +4662,42 @@ pub unsafe extern "C" fn freopen(
         return std::ptr::null_mut();
     };
 
+    if !registry_contains_stream(id)
+        && let Some(host_freopen) = unsafe { host_freopen_fn() }
+    {
+        unregister_host_stream(stream);
+        let result = unsafe { host_freopen(pathname, mode, stream) };
+        if result.is_null() {
+            unsafe { sync_host_errno(errno::EINVAL) };
+        } else {
+            register_host_stream(result);
+        }
+        return result;
+    }
+
     let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
 
     // Close the old stream.
     let mut target_fd = -1;
     if let Some(mut old) = reg.streams.remove(&id) {
+        if old.is_mem_backed() {
+            unsafe {
+                sync_memstream_to_caller(id, &old);
+                sync_fmemopen_full(id, &old);
+            }
+            let mut sync_guard = mem_sync_registry()
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            if let Some(ref mut map) = *sync_guard {
+                map.remove(&id);
+            }
+            let mut fixed_guard = mem_fixed_registry()
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            if let Some(ref mut map) = *fixed_guard {
+                map.remove(&id);
+            }
+        }
         let pending = old.prepare_close();
         let old_fd = old.fd();
         if !pending.is_empty() && old_fd >= 0 {
@@ -4287,6 +4850,8 @@ pub unsafe extern "C" fn getdelim(
         let rc = unsafe { host_getdelim(lineptr, n, delim, stream) };
         if rc < 0 {
             unsafe { sync_host_errno(0) };
+        } else {
+            mark_host_io_started(stream);
         }
         return rc;
     }
@@ -4377,6 +4942,8 @@ pub unsafe extern "C" fn getline(
         let rc = unsafe { host_getline(lineptr, n, stream) };
         if rc < 0 {
             unsafe { sync_host_errno(0) };
+        } else {
+            mark_host_io_started(stream);
         }
         return rc;
     }
@@ -4923,6 +5490,61 @@ fn mem_sync_registry() -> &'static Mutex<Option<HashMap<usize, MemStreamSync>>> 
     &MEM_STREAM_SYNC
 }
 
+/// Metadata for fmemopen with a caller-provided fixed buffer.
+struct MemFixedSync {
+    buf: *mut u8,
+    size: usize,
+}
+
+// SAFETY: MemFixedSync holds raw pointers provided by the caller.
+// The caller must keep the buffer valid for the lifetime of the stream.
+unsafe impl Send for MemFixedSync {}
+unsafe impl Sync for MemFixedSync {}
+
+/// Registry of fmemopen fixed-buffer metadata, keyed by stream sentinel ID.
+static MEM_FIXED_SYNC: Mutex<Option<HashMap<usize, MemFixedSync>>> = Mutex::new(None);
+
+fn mem_fixed_registry() -> &'static Mutex<Option<HashMap<usize, MemFixedSync>>> {
+    &MEM_FIXED_SYNC
+}
+
+/// Synchronize newly written bytes for fmemopen fixed buffers.
+unsafe fn sync_fmemopen_write(id: usize, start: usize, src: &[u8]) {
+    let guard = mem_fixed_registry()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    if let Some(ref map) = *guard
+        && let Some(info) = map.get(&id)
+        && start < info.size
+    {
+        let max = info.size - start;
+        let len = src.len().min(max);
+        if len > 0 {
+            unsafe {
+                std::ptr::copy_nonoverlapping(src.as_ptr(), info.buf.add(start), len);
+            }
+        }
+    }
+}
+
+/// Synchronize the full fmemopen fixed buffer contents to the caller.
+unsafe fn sync_fmemopen_full(id: usize, stream: &StdioStream) {
+    let guard = mem_fixed_registry()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    if let Some(ref map) = *guard
+        && let Some(info) = map.get(&id)
+        && let Some(data) = stream.mem_data()
+    {
+        let len = data.len().min(info.size);
+        if len > 0 {
+            unsafe {
+                std::ptr::copy_nonoverlapping(data.as_ptr(), info.buf, len);
+            }
+        }
+    }
+}
+
 /// Synchronize open_memstream data to the C caller's pointers.
 /// Called after fflush and fclose for open_memstream streams.
 unsafe fn sync_memstream_to_caller(id: usize, stream: &StdioStream) {
@@ -4934,6 +5556,7 @@ unsafe fn sync_memstream_to_caller(id: usize, stream: &StdioStream) {
         && let Some(data) = stream.mem_data()
     {
         let len = data.len();
+        let previous = unsafe { *info.ptr_loc };
         // Allocate a new buffer via malloc and copy data + NUL terminator.
         let buf = unsafe { malloc(len + 1) };
         if !buf.is_null() {
@@ -4942,6 +5565,9 @@ unsafe fn sync_memstream_to_caller(id: usize, stream: &StdioStream) {
                 *buf.cast::<u8>().add(len) = 0; // NUL-terminate
                 *info.ptr_loc = buf.cast::<c_char>();
                 *info.size_loc = len;
+                if !previous.is_null() {
+                    free(previous.cast::<c_void>());
+                }
             }
         }
     }
@@ -5024,24 +5650,24 @@ pub unsafe extern "C" fn fmemopen(
         (vec![0u8; size], 0)
     } else {
         // User-provided buffer: copy into our Vec so we own it safely.
-        // For read modes, content_len = size (entire buffer is readable).
-        // For write modes (non-append), content_len = 0 (starts empty for writing).
-        // For append mode, content_len = position of first NUL or size.
+        // For truncate modes ("w"/"w+"), content starts empty.
+        // For append modes, content_len = first NUL byte or size.
+        // For read-only and read/write (non-truncate) modes, content_len = size.
         let slice = unsafe { std::slice::from_raw_parts(buf.cast::<u8>(), size) };
         let mut v = vec![0u8; size];
-        v[..size].copy_from_slice(slice);
+        if !open_flags.truncate {
+            v[..size].copy_from_slice(slice);
+        }
 
-        let cl = if open_flags.readable && !open_flags.writable {
-            // "r" mode: entire buffer is valid content
-            size
+        let cl = if open_flags.truncate {
+            0
         } else if open_flags.append {
-            // "a"/"a+" mode: content_len = first NUL byte or size
             v.iter().position(|&b| b == 0).unwrap_or(size)
+        } else if open_flags.readable && !open_flags.writable {
+            size
         } else if open_flags.writable && !open_flags.readable {
-            // "w" mode: content starts empty
             0
         } else {
-            // "r+" or "w+" mode: entire buffer is valid content
             size
         };
         (v, cl)
@@ -5051,6 +5677,27 @@ pub unsafe extern "C" fn fmemopen(
     let id = alloc_stream_id();
     let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
     reg.streams.insert(id, stream);
+    drop(reg);
+
+    if !buf.is_null() {
+        let mut guard = mem_fixed_registry()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let map = guard.get_or_insert_with(HashMap::new);
+        map.insert(
+            id,
+            MemFixedSync {
+                buf: buf.cast::<u8>(),
+                size,
+            },
+        );
+        if open_flags.truncate {
+            unsafe {
+                std::ptr::write_bytes(buf.cast::<u8>(), 0, size);
+            }
+        }
+    }
+
     id as *mut c_void
 }
 

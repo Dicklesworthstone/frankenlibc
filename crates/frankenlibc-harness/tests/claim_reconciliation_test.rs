@@ -176,12 +176,15 @@ fn claim_reconciliation_detects_replacement_level_blocker_drift_and_routes_owner
     let levels_src = repo_root.join("tests/conformance/replacement_levels.json");
     let mutated_levels_path = unique_temp_path("claim-reconciliation-replacement-levels.json");
 
-    let mutated_levels = std::fs::read_to_string(&levels_src)
-        .expect("replacement_levels.json should exist")
-        .replace(
-            "Hardened-mode E2E smoke battery remains incomplete",
-            "Eliminate all 6 Stub symbols",
-        );
+    let canonical_blocker = "L1 claim promotion remains blocked until current_level and release_tag_policy.current_release_level move from L0 to L1 together under the bd-gtf.4 objective gate.";
+    let mutated_blocker = "Eliminate all 6 stub symbols before L1 claim promotion.";
+    let levels_text =
+        std::fs::read_to_string(&levels_src).expect("replacement_levels.json should exist");
+    assert!(
+        levels_text.contains(canonical_blocker),
+        "replacement_levels.json must contain the canonical L1 blocker line"
+    );
+    let mutated_levels = levels_text.replace(canonical_blocker, mutated_blocker);
     std::fs::write(&mutated_levels_path, mutated_levels)
         .expect("failed to write mutated replacement_levels.json");
 
@@ -296,8 +299,8 @@ fn claim_reconciliation_detects_readme_smoke_overclaim_and_routes_replacement_ow
         smoke_claim["message"]
             .as_str()
             .unwrap_or_default()
-            .contains("Hardened-mode E2E smoke battery remains incomplete"),
-        "replacement smoke contradiction should explain the L1 blocker"
+            .contains("ld_preload_smoke_summary.v1.json"),
+        "replacement smoke contradiction should cite the canonical smoke summary"
     );
     assert!(
         smoke_claim["artifact_refs"]
@@ -306,6 +309,16 @@ fn claim_reconciliation_detects_readme_smoke_overclaim_and_routes_replacement_ow
             .iter()
             .any(|value| value.as_str() == Some("tests/conformance/replacement_levels.json")),
         "replacement smoke contradiction should reference replacement_levels.json"
+    );
+    assert!(
+        smoke_claim["artifact_refs"]
+            .as_array()
+            .unwrap_or(&Vec::new())
+            .iter()
+            .any(|value| {
+                value.as_str() == Some("tests/conformance/ld_preload_smoke_summary.v1.json")
+            }),
+        "replacement smoke contradiction should reference ld_preload_smoke_summary.v1.json"
     );
 }
 

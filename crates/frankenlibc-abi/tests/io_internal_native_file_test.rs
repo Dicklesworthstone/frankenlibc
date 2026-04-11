@@ -795,16 +795,10 @@ fn chain_stdio_streams_are_linked() {
 
     // stderr._chain should point to stdout
     let stderr_chain = stderr.chain();
-    assert!(
-        !stderr_chain.is_null(),
-        "stderr._chain should not be null"
-    );
+    assert!(!stderr_chain.is_null(), "stderr._chain should not be null");
     // stdout._chain should point to stdin
     let stdout_chain = stdout.chain();
-    assert!(
-        !stdout_chain.is_null(),
-        "stdout._chain should not be null"
-    );
+    assert!(!stdout_chain.is_null(), "stdout._chain should not be null");
     // stdin._chain should be null (end of list)
     let stdin_chain = stdin.chain();
     assert!(
@@ -839,7 +833,10 @@ fn chain_new_file_becomes_head() {
         assert!(count <= 100, "infinite loop guard");
     }
     // Should have at least 4 items: new file + stderr + stdout + stdin
-    assert!(count >= 4, "chain should have at least 4 elements (new + stdio)");
+    assert!(
+        count >= 4,
+        "chain should have at least 4 elements (new + stdio)"
+    );
 
     reg.unregister(slot);
 }
@@ -863,7 +860,9 @@ fn chain_unregister_unlinks_from_list() {
         while !curr.is_null() {
             count += 1;
             curr = unsafe { (*curr).chain() };
-            if count > 100 { break; }
+            if count > 100 {
+                break;
+            }
         }
         count
     };
@@ -883,11 +882,17 @@ fn chain_unregister_unlinks_from_list() {
         while !curr.is_null() {
             count += 1;
             curr = unsafe { (*curr).chain() };
-            if count > 100 { break; }
+            if count > 100 {
+                break;
+            }
         }
         count
     };
-    assert_eq!(count_after, count_before - 1, "chain should have one fewer element after unregister");
+    assert_eq!(
+        count_after,
+        count_before - 1,
+        "chain should have one fewer element after unregister"
+    );
 
     reg.unregister(s1);
 }
@@ -918,7 +923,10 @@ fn chain_walk_visits_all_streams() {
     }
 
     // Should have at least: 3 new files + 3 stdio = 6
-    assert!(count >= 6, "chain walk should visit at least 6 streams (3 new + stdio)");
+    assert!(
+        count >= 6,
+        "chain walk should visit at least 6 streams (3 new + stdio)"
+    );
 
     // Cleanup
     for slot in slots {
@@ -946,7 +954,8 @@ fn chain_io_file_layout_lock_ptr_is_valid() {
 
     // The _lock pointer should equal what NativeFile reports
     assert_eq!(
-        projected.file._lock, stdout.lock_ptr(),
+        projected.file._lock,
+        stdout.lock_ptr(),
         "_lock via layout should match lock_ptr()"
     );
 }

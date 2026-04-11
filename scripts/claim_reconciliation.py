@@ -93,6 +93,7 @@ CATEGORY_REMEDIATION_MAP = {
 CATEGORY_ARTIFACT_REFS = {
     "replacement_smoke_claim_contradiction": [
         "tests/conformance/replacement_levels.json",
+        "tests/conformance/ld_preload_smoke_summary.v1.json",
         "README.md",
     ],
     "smoke_summary_claim_malformed": [
@@ -119,11 +120,15 @@ SMOKE_SUMMARY_CLAIM_RE = re.compile(
 
 
 def load_json(path):
-    """Load JSON file, returning None if missing."""
+    """Load JSON file, returning None if missing or unreadable."""
     if not path.exists():
         return None
-    with open(path, encoding="utf-8") as f:
-        return json.load(f)
+    try:
+        with path.open(encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"[claim_reconciliation] failed to parse {path}: {exc}", file=sys.stderr)
+        return None
 
 
 def repo_relative(path):
@@ -416,8 +421,8 @@ def check_replacement_levels(findings, matrix_counts, replacement):
 
         # Check callthrough_modules list against actual modules with call-through symbols
         if "callthrough_modules" in cs:
-            claimed = set(cs["callthrough_modules"])
             # We'll verify this in the module check below
+            _ = cs["callthrough_modules"]
 
 
 def lookup_replacement_module(text, module_statuses):
@@ -732,7 +737,7 @@ def check_readme_claims(findings, readme_text, matrix_counts):
                 })
 
 
-def check_readme_replacement_smoke_claims(findings, readme_text, replacement):
+def check_readme_replacement_smoke_claims(findings, readme_text, replacement, smoke_summary):
     """Reject README smoke-readiness prose that outruns replacement-level evidence."""
     if not readme_text or not replacement:
         return
@@ -776,6 +781,27 @@ def check_readme_replacement_smoke_claims(findings, readme_text, replacement):
                 + ", ".join(positive_hits)
             ),
         })
+
+    if positive_hits and smoke_summary:
+        summary = smoke_summary.get("summary", {})
+        total_cases = summary.get("total_cases", 0)
+        passes = summary.get("passes", 0)
+        fails = summary.get("fails", 0)
+        skips = summary.get("skips", 0)
+        fully_green = fails == 0 and skips == 0 and passes == total_cases
+        if not fully_green:
+            findings.append({
+                "severity": "error",
+                "category": "replacement_smoke_claim_contradiction",
+                "source": "README.md",
+                "message": (
+                    "README overclaims smoke readiness while "
+                    "tests/conformance/ld_preload_smoke_summary.v1.json reports "
+                    f"{passes} passes / {fails} fails / {skips} skips "
+                    f"(total_cases={total_cases}): "
+                    + ", ".join(positive_hits)
+                ),
+            })
 
     if positive_hits and negative_hits:
         findings.append({
@@ -926,8 +952,8 @@ def main():
         missing.append("tests/conformance/ld_preload_smoke_summary.v1.json")
     hard_parts = load_json(HARD_PARTS)
 
-    fp_text = FEATURE_PARITY.read_text() if FEATURE_PARITY.exists() else ""
-    readme_text = README.read_text() if README.exists() else ""
+    fp_text = FEATURE_PARITY.read_text(encoding="utf-8") if FEATURE_PARITY.exists() else ""
+    readme_text = README.read_text(encoding="utf-8") if README.exists() else ""
 
     if missing:
         for m in missing:
@@ -971,7 +997,7 @@ def main():
     check_hard_parts(findings, hard_parts, matrix)
     check_timestamp_consistency(findings, reality, matrix, hard_parts, replacement)
     check_readme_claims(findings, readme_text, dict(matrix_counts))
-    check_readme_replacement_smoke_claims(findings, readme_text, replacement)
+    check_readme_replacement_smoke_claims(findings, readme_text, replacement, smoke_summary)
     check_readme_smoke_summary_claims(findings, readme_text, smoke_summary)
     check_feature_parity_done_claims(findings, fp_text, matrix)
     enrich_findings(findings)
