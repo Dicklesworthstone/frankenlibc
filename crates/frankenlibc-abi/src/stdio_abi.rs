@@ -5215,7 +5215,10 @@ pub unsafe extern "C" fn popen(command: *const c_char, typ: *const c_char) -> *m
             libc::syscall(libc::SYS_execve as c_long, sh, argv.as_ptr(), environ);
             libc::syscall(libc::SYS_exit_group as c_long, 127 as c_long);
         }
-        unsafe { std::hint::unreachable_unchecked() }
+        // If execve/exit_group returns, keep attempting SYS_exit to avoid UB in child context.
+        loop {
+            unsafe { libc::syscall(libc::SYS_exit as c_long, 127 as c_long) };
+        }
     }
 
     // Parent: close unused end and wrap the other in a FILE stream.

@@ -186,8 +186,11 @@ pub unsafe extern "C" fn _exit(status: c_int) -> ! {
 
     runtime_policy::observe(ApiFamily::Process, decision.profile, 5, false);
     unsafe { libc::syscall(libc::SYS_exit_group as c_long, clamped) };
-    // SAFETY: `SYS_exit_group` does not return on Linux; `_exit` is a diverging API.
-    unsafe { core::hint::unreachable_unchecked() }
+    // If exit_group returns, fall back to SYS_exit and keep retrying.
+    unsafe { libc::syscall(libc::SYS_exit as c_long, clamped) };
+    loop {
+        unsafe { libc::syscall(libc::SYS_exit as c_long, clamped) };
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1191,7 +1194,10 @@ unsafe fn child_spawn_fail(err_fd: c_int, err: c_int) -> ! {
         written += rc as usize;
     }
     unsafe { libc::syscall(libc::SYS_exit_group as c_long, 127) };
-    unreachable!();
+    // If exit_group returns, keep attempting SYS_exit to avoid panicking in child context.
+    loop {
+        unsafe { libc::syscall(libc::SYS_exit as c_long, 127) };
+    }
 }
 
 /// Core posix_spawn implementation shared between posix_spawn and posix_spawnp.

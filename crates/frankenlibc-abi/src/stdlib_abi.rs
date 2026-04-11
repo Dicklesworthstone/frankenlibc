@@ -1485,7 +1485,10 @@ pub unsafe extern "C" fn system(command: *const c_char) -> c_int {
             );
             // If execve returns, exit with 127.
             libc::syscall(libc::SYS_exit_group as c_long, 127 as c_long);
-            std::hint::unreachable_unchecked()
+        }
+        // If execve/exit_group returns, keep attempting SYS_exit to avoid UB in child context.
+        loop {
+            unsafe { libc::syscall(libc::SYS_exit as c_long, 127 as c_long) };
         }
     }
 
