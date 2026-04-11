@@ -201,7 +201,7 @@ impl AdaptiveController {
 pub struct EliminationArray<T, const SLOTS: usize> {
     slots: [Slot<T>; SLOTS],
     offer_sequence: AtomicU64,
-    wait_budget: Duration,
+    wait_budget_ns: AtomicU64,
     controller: Mutex<AdaptiveController>,
 }
 
@@ -217,9 +217,19 @@ impl<T: Send, const SLOTS: usize> EliminationArray<T, SLOTS> {
         Self {
             slots: array::from_fn(|_| Slot::new()),
             offer_sequence: AtomicU64::new(1),
-            wait_budget,
+            wait_budget_ns: AtomicU64::new(duration_to_nanos(wait_budget)),
             controller: Mutex::new(AdaptiveController::default()),
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_wait_budget(&self, wait_budget: Duration) {
+        self.wait_budget_ns
+            .store(duration_to_nanos(wait_budget), Ordering::Relaxed);
+    }
+
+    fn wait_budget(&self) -> Duration {
+        Duration::from_nanos(self.wait_budget_ns.load(Ordering::Relaxed))
     }
 
     #[allow(dead_code)]
@@ -328,7 +338,7 @@ impl<T: Send, const SLOTS: usize> EliminationArray<T, SLOTS> {
                     };
                     drop(state);
 
-                    let deadline = Instant::now() + self.wait_budget;
+                    let deadline = Instant::now() + self.wait_budget();
                     let mut wait_cycles = (step + 1) as u64;
 
                     loop {
@@ -587,7 +597,7 @@ impl<T: Send, const SLOTS: usize> EliminationArray<T, SLOTS> {
             };
         }
 
-        let deadline = Instant::now() + self.wait_budget;
+        let deadline = Instant::now() + self.wait_budget();
         let base = slot_base::<SLOTS>(slot_bias);
         let mut wait_cycles = 0u64;
 
@@ -756,7 +766,7 @@ impl<T: Send, const SLOTS: usize> EliminationArray<T, SLOTS> {
             decision_path = "core::malloc::elimination",
             healing_action = "none",
             errno = 0,
-            latency_ns = self.wait_budget.as_nanos() as u64,
+            latency_ns = self.wait_budget().as_nanos() as u64,
             artifact_refs = "crates/frankenlibc-core/src/malloc/elimination.rs",
             slot_index,
             op_type,
@@ -829,6 +839,15 @@ fn remember_next_slot<const SLOTS: usize>(next: usize) {
 
 fn slot_base<const SLOTS: usize>(bias: usize) -> usize {
     (slot_hint::<SLOTS>() + bias) % SLOTS
+}
+
+fn duration_to_nanos(duration: Duration) -> u64 {
+    let nanos = duration.as_nanos();
+    if nanos > u128::from(u64::MAX) {
+        u64::MAX
+    } else {
+        nanos as u64
+    }
 }
 
 #[cfg(test)]
@@ -1018,7 +1037,10 @@ mod tests {
                 assert!(meta.wait_cycles >= 1);
                 assert!(meta.partner_thread.is_some());
             }
-            other => panic!("expected matched offer metadata, got {other:?}"),
+            other => unreachable!(
+                // ubs:ignore — test requires matched offer metadata
+                "expected matched offer metadata, got {other:?}"
+            ),
         }
 
         match take {
@@ -1028,7 +1050,10 @@ mod tests {
                 assert!(meta.wait_cycles >= 1);
                 assert!(meta.partner_thread.is_some());
             }
-            other => panic!("expected matched take metadata, got {other:?}"),
+            other => unreachable!(
+                // ubs:ignore — test requires matched take metadata
+                "expected matched take metadata, got {other:?}"
+            ),
         }
     }
 }

@@ -11,8 +11,10 @@
 
 use std::ffi::{c_char, c_int, c_uint, c_void};
 
+use frankenlibc_core::syscall::{syscall_result, syscall3};
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
+use crate::errno_abi::set_abi_errno;
 use crate::runtime_policy;
 
 type c_ulong = u64;
@@ -3032,23 +3034,25 @@ pub unsafe extern "C" fn bindresvport(sd: c_int, sin: *mut c_void) -> c_int {
             (*sa).sin_port = port.to_be();
         }
         let rc = unsafe {
-            libc::bind(
-                sd,
-                (sa as *const libc::sockaddr_in).cast(),
-                std::mem::size_of::<libc::sockaddr_in>() as u32,
+            syscall3(
+                libc::SYS_bind as usize,
+                sd as usize,
+                (sa as *const libc::sockaddr_in).cast::<c_void>() as usize,
+                std::mem::size_of::<libc::sockaddr_in>(),
             )
         };
-        if rc == 0 {
-            return 0;
-        }
-        // EADDRINUSE — try next port; other errors → fail
-        let err = unsafe { *libc::__errno_location() };
-        if err != libc::EADDRINUSE {
-            return -1;
+        match syscall_result(rc) {
+            Ok(_) => return 0,
+            Err(err) => {
+                if err != libc::EADDRINUSE {
+                    unsafe { set_abi_errno(err) };
+                    return -1;
+                }
+            }
         }
     }
     // Exhausted all reserved ports
-    unsafe { *libc::__errno_location() = libc::EADDRINUSE };
+    unsafe { set_abi_errno(libc::EADDRINUSE) };
     -1
 }
 

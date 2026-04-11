@@ -15,6 +15,8 @@
 
 use std::ffi::{c_char, c_int, c_void};
 
+use frankenlibc_core::syscall::{syscall_result, syscall6};
+
 type c_uint = u32;
 type c_long = i64;
 type c_ulong = u64;
@@ -1470,7 +1472,7 @@ pub unsafe extern "C" fn ns_name_ntop(
             // Root label. If name was empty (root zone), output is just ".".
             if first {
                 if oi + 1 >= out.len() {
-                    unsafe { *libc::__errno_location() = libc::EMSGSIZE };
+                    unsafe { *crate::errno_abi::__errno_location() = libc::EMSGSIZE };
                     return -1;
                 }
                 out[oi] = b'.';
@@ -1488,7 +1490,7 @@ pub unsafe extern "C" fn ns_name_ntop(
         // Dot separator before non-first labels.
         if !first {
             if oi >= out.len() - 1 {
-                unsafe { *libc::__errno_location() = libc::EMSGSIZE };
+                unsafe { *crate::errno_abi::__errno_location() = libc::EMSGSIZE };
                 return -1;
             }
             out[oi] = b'.';
@@ -1502,7 +1504,7 @@ pub unsafe extern "C" fn ns_name_ntop(
             if ch == b'.' || ch == b'\\' {
                 // Escape with backslash.
                 if oi + 2 >= out.len() {
-                    unsafe { *libc::__errno_location() = libc::EMSGSIZE };
+                    unsafe { *crate::errno_abi::__errno_location() = libc::EMSGSIZE };
                     return -1;
                 }
                 out[oi] = b'\\';
@@ -1512,7 +1514,7 @@ pub unsafe extern "C" fn ns_name_ntop(
             } else if !(0x20..0x7F).contains(&ch) {
                 // Escape non-printable as \DDD.
                 if oi + 4 >= out.len() {
-                    unsafe { *libc::__errno_location() = libc::EMSGSIZE };
+                    unsafe { *crate::errno_abi::__errno_location() = libc::EMSGSIZE };
                     return -1;
                 }
                 out[oi] = b'\\';
@@ -1522,7 +1524,7 @@ pub unsafe extern "C" fn ns_name_ntop(
                 oi += 4;
             } else {
                 if oi >= out.len() - 1 {
-                    unsafe { *libc::__errno_location() = libc::EMSGSIZE };
+                    unsafe { *crate::errno_abi::__errno_location() = libc::EMSGSIZE };
                     return -1;
                 }
                 out[oi] = ch;
@@ -1534,7 +1536,7 @@ pub unsafe extern "C" fn ns_name_ntop(
 
     // NUL-terminate.
     if oi >= out.len() {
-        unsafe { *libc::__errno_location() = libc::EMSGSIZE };
+        unsafe { *crate::errno_abi::__errno_location() = libc::EMSGSIZE };
         return -1;
     }
     out[oi] = 0;
@@ -1561,7 +1563,7 @@ pub unsafe extern "C" fn ns_name_pton(
     // Empty string or just "." → root.
     if name_bytes.is_empty() || (name_bytes.len() == 1 && name_bytes[0] == b'.') {
         if out.is_empty() {
-            unsafe { *libc::__errno_location() = libc::EMSGSIZE };
+            unsafe { *crate::errno_abi::__errno_location() = libc::EMSGSIZE };
             return -1;
         }
         out[0] = 0;
@@ -1574,7 +1576,7 @@ pub unsafe extern "C" fn ns_name_pton(
 
     // Reserve space for first label length byte.
     if oi >= out.len() {
-        unsafe { *libc::__errno_location() = libc::EMSGSIZE };
+        unsafe { *crate::errno_abi::__errno_location() = libc::EMSGSIZE };
         return -1;
     }
     label_start = oi;
@@ -1599,7 +1601,7 @@ pub unsafe extern "C" fn ns_name_pton(
             }
             // Start next label.
             if oi >= out.len() {
-                unsafe { *libc::__errno_location() = libc::EMSGSIZE };
+                unsafe { *crate::errno_abi::__errno_location() = libc::EMSGSIZE };
                 return -1;
             }
             label_start = oi;
@@ -1631,7 +1633,7 @@ pub unsafe extern "C" fn ns_name_pton(
         };
 
         if oi >= out.len() {
-            unsafe { *libc::__errno_location() = libc::EMSGSIZE };
+            unsafe { *crate::errno_abi::__errno_location() = libc::EMSGSIZE };
             return -1;
         }
         out[oi] = byte;
@@ -1650,7 +1652,7 @@ pub unsafe extern "C" fn ns_name_pton(
 
     // Root terminator.
     if oi >= out.len() {
-        unsafe { *libc::__errno_location() = libc::EMSGSIZE };
+        unsafe { *crate::errno_abi::__errno_location() = libc::EMSGSIZE };
         return -1;
     }
     out[oi] = 0;
@@ -2179,7 +2181,7 @@ pub unsafe extern "C" fn __obstack_printf_chk(
 ) -> c_int {
     // Variadic function — cannot forward args portably.
     // Applications should use obstack_printf macro which calls obstack_vprintf.
-    unsafe { *libc::__errno_location() = libc::ENOSYS };
+    unsafe { *crate::errno_abi::__errno_location() = libc::ENOSYS };
     -1
 }
 
@@ -2193,7 +2195,7 @@ pub unsafe extern "C" fn __obstack_vprintf_chk(
 ) -> c_int {
     // The va_list format is platform-specific. For now, return ENOSYS.
     // Applications rarely call this directly; they use obstack_printf macro.
-    unsafe { *libc::__errno_location() = libc::ENOSYS };
+    unsafe { *crate::errno_abi::__errno_location() = libc::ENOSYS };
     -1
 }
 
@@ -2916,7 +2918,7 @@ pub unsafe extern "C" fn __asprintf(
     if !strp.is_null() {
         unsafe { *strp = std::ptr::null_mut() };
     }
-    unsafe { *libc::__errno_location() = libc::ENOSYS };
+    unsafe { *crate::errno_abi::__errno_location() = libc::ENOSYS };
     -1
 }
 // __backtrace: native — forward to our backtrace
@@ -3261,7 +3263,7 @@ pub unsafe extern "C" fn __open64(pathname: *const c_char, flags: c_int) -> c_in
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __overflow(fp: *mut c_void, c: c_int) -> c_int {
     let _ = (fp, c);
-    unsafe { *libc::__errno_location() = libc::ENOSYS };
+    unsafe { *crate::errno_abi::__errno_location() = libc::ENOSYS };
     libc::EOF
 }
 // __pipe: native syscall
@@ -3491,7 +3493,7 @@ pub unsafe extern "C" fn __sysconf(name: c_int) -> c_long {
 // __sysctl: deprecated syscall (removed in Linux 5.5) — return ENOSYS
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __sysctl(_args: *mut c_void) -> c_int {
-    unsafe { *libc::__errno_location() = libc::ENOSYS };
+    unsafe { *crate::errno_abi::__errno_location() = libc::ENOSYS };
     -1
 }
 // __sysv_signal: native — System V signal semantics (one-shot)
@@ -4122,31 +4124,31 @@ pub unsafe extern "C" fn __fentry__() {}
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __uflow(fp: *mut c_void) -> c_int {
     let _ = fp;
-    unsafe { *libc::__errno_location() = libc::ENOSYS };
+    unsafe { *crate::errno_abi::__errno_location() = libc::ENOSYS };
     libc::EOF
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __underflow(fp: *mut c_void) -> c_int {
     let _ = fp;
-    unsafe { *libc::__errno_location() = libc::ENOSYS };
+    unsafe { *crate::errno_abi::__errno_location() = libc::ENOSYS };
     libc::EOF
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __woverflow(fp: *mut c_void, wc: WcharT) -> WcharT {
     let _ = (fp, wc);
-    unsafe { *libc::__errno_location() = libc::ENOSYS };
+    unsafe { *crate::errno_abi::__errno_location() = libc::ENOSYS };
     -1
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __wuflow(fp: *mut c_void) -> WcharT {
     let _ = fp;
-    unsafe { *libc::__errno_location() = libc::ENOSYS };
+    unsafe { *crate::errno_abi::__errno_location() = libc::ENOSYS };
     -1
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __wunderflow(fp: *mut c_void) -> WcharT {
     let _ = fp;
-    unsafe { *libc::__errno_location() = libc::ENOSYS };
+    unsafe { *crate::errno_abi::__errno_location() = libc::ENOSYS };
     -1
 }
 
@@ -4186,7 +4188,7 @@ pub unsafe extern "C" fn sprofil(
 ) -> c_int {
     let _ = (profp, profcnt, tvp, flags);
     unsafe {
-        *libc::__errno_location() = libc::ENOSYS;
+        *crate::errno_abi::__errno_location() = libc::ENOSYS;
     }
     -1
 }
@@ -4207,7 +4209,7 @@ pub unsafe extern "C" fn arch_prctl(code: c_int, addr: c_ulong) -> c_int {
 pub unsafe extern "C" fn bdflush(func: c_int, data: c_long) -> c_int {
     let _ = (func, data);
     unsafe {
-        *libc::__errno_location() = libc::ENOSYS;
+        *crate::errno_abi::__errno_location() = libc::ENOSYS;
     }
     -1
 }
@@ -4243,7 +4245,7 @@ pub unsafe extern "C" fn cfsetobaud(termios_p: *mut c_void, speed: c_uint) -> c_
 pub unsafe extern "C" fn chflags(path: *const c_char, flags: c_ulong) -> c_int {
     let _ = (path, flags);
     unsafe {
-        *libc::__errno_location() = libc::ENOSYS;
+        *crate::errno_abi::__errno_location() = libc::ENOSYS;
     }
     -1
 }
@@ -4257,7 +4259,7 @@ pub unsafe extern "C" fn copysignl(x: f64, y: f64) -> f64 {
 pub unsafe extern "C" fn create_module(name: *const c_char, size: SizeT) -> c_long {
     let _ = (name, size);
     unsafe {
-        *libc::__errno_location() = libc::ENOSYS;
+        *crate::errno_abi::__errno_location() = libc::ENOSYS;
     }
     -1
 }
@@ -4366,7 +4368,7 @@ fn self_link_map() -> *const LinkMap {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn dlinfo(handle: *mut c_void, request: c_int, info: *mut c_void) -> c_int {
     if info.is_null() {
-        unsafe { *libc::__errno_location() = libc::EINVAL };
+        unsafe { *crate::errno_abi::__errno_location() = libc::EINVAL };
         return -1;
     }
 
@@ -4378,7 +4380,7 @@ pub unsafe extern "C" fn dlinfo(handle: *mut c_void, request: c_int, info: *mut 
             if is_self {
                 let lm = self_link_map();
                 if lm.is_null() {
-                    unsafe { *libc::__errno_location() = libc::ENOENT };
+                    unsafe { *crate::errno_abi::__errno_location() = libc::ENOENT };
                     return -1;
                 }
                 // Write link_map* into info (info points to a link_map**).
@@ -4391,13 +4393,13 @@ pub unsafe extern "C" fn dlinfo(handle: *mut c_void, request: c_int, info: *mut 
                 let host_fn: HostDlinfoFn = unsafe { core::mem::transmute(host_addr) };
                 return unsafe { host_fn(handle, request, info) };
             }
-            unsafe { *libc::__errno_location() = libc::ENOSYS };
+            unsafe { *crate::errno_abi::__errno_location() = libc::ENOSYS };
             -1
         }
         RTLD_DI_ORIGIN => {
             if is_self {
                 let Some((_, ref path)) = *self_lib_info() else {
-                    unsafe { *libc::__errno_location() = libc::ENOENT };
+                    unsafe { *crate::errno_abi::__errno_location() = libc::ENOENT };
                     return -1;
                 };
                 // Extract dirname: "/usr/lib/libfoo.so" -> "/usr/lib"
@@ -4421,12 +4423,12 @@ pub unsafe extern "C" fn dlinfo(handle: *mut c_void, request: c_int, info: *mut 
                 let host_fn: HostDlinfoFn = unsafe { core::mem::transmute(host_addr) };
                 return unsafe { host_fn(handle, request, info) };
             }
-            unsafe { *libc::__errno_location() = libc::ENOSYS };
+            unsafe { *crate::errno_abi::__errno_location() = libc::ENOSYS };
             -1
         }
         _ => {
             // Unsupported request code.
-            unsafe { *libc::__errno_location() = libc::ENOSYS };
+            unsafe { *crate::errno_abi::__errno_location() = libc::ENOSYS };
             -1
         }
     }
@@ -4458,7 +4460,7 @@ pub unsafe extern "C" fn dysize(year: c_int) -> c_int {
 pub unsafe extern "C" fn fattach(fd: c_int, path: *const c_char) -> c_int {
     let _ = (fd, path);
     unsafe {
-        *libc::__errno_location() = libc::ENOSYS;
+        *crate::errno_abi::__errno_location() = libc::ENOSYS;
     }
     -1
 }
@@ -4467,7 +4469,7 @@ pub unsafe extern "C" fn fattach(fd: c_int, path: *const c_char) -> c_int {
 pub unsafe extern "C" fn fchflags(fd: c_int, flags: c_ulong) -> c_int {
     let _ = (fd, flags);
     unsafe {
-        *libc::__errno_location() = libc::ENOSYS;
+        *crate::errno_abi::__errno_location() = libc::ENOSYS;
     }
     -1
 }
@@ -4475,7 +4477,7 @@ pub unsafe extern "C" fn fchflags(fd: c_int, flags: c_ulong) -> c_int {
 pub unsafe extern "C" fn fdetach(path: *const c_char) -> c_int {
     let _ = path;
     unsafe {
-        *libc::__errno_location() = libc::ENOSYS;
+        *crate::errno_abi::__errno_location() = libc::ENOSYS;
     }
     -1
 }
@@ -4559,7 +4561,7 @@ pub unsafe extern "C" fn fwide(stream: *mut c_void, mode: c_int) -> c_int {
 pub unsafe extern "C" fn get_kernel_syms(table: *mut c_void) -> c_int {
     let _ = table;
     unsafe {
-        *libc::__errno_location() = libc::ENOSYS;
+        *crate::errno_abi::__errno_location() = libc::ENOSYS;
     }
     -1
 }
@@ -4659,7 +4661,7 @@ pub unsafe extern "C" fn getmsg(
 ) -> c_int {
     let _ = (fd, ctlptr, dataptr, flags);
     unsafe {
-        *libc::__errno_location() = libc::ENOSYS;
+        *crate::errno_abi::__errno_location() = libc::ENOSYS;
     }
     -1
 }
@@ -4673,7 +4675,7 @@ pub unsafe extern "C" fn getpmsg(
 ) -> c_int {
     let _ = (fd, ctlptr, dataptr, bandp, flags);
     unsafe {
-        *libc::__errno_location() = libc::ENOSYS;
+        *crate::errno_abi::__errno_location() = libc::ENOSYS;
     }
     -1
 }
@@ -4752,7 +4754,7 @@ pub unsafe extern "C" fn group_member(gid: c_uint) -> c_int {
 pub unsafe extern "C" fn gtty(fd: c_int, params: *mut c_void) -> c_int {
     let _ = (fd, params);
     unsafe {
-        *libc::__errno_location() = libc::ENOSYS;
+        *crate::errno_abi::__errno_location() = libc::ENOSYS;
     }
     -1
 }
@@ -5207,7 +5209,7 @@ pub unsafe extern "C" fn putmsg(
 ) -> c_int {
     let _ = (fd, ctlptr, dataptr, flags);
     unsafe {
-        *libc::__errno_location() = libc::ENOSYS;
+        *crate::errno_abi::__errno_location() = libc::ENOSYS;
     }
     -1
 }
@@ -5221,7 +5223,7 @@ pub unsafe extern "C" fn putpmsg(
 ) -> c_int {
     let _ = (fd, ctlptr, dataptr, band, flags);
     unsafe {
-        *libc::__errno_location() = libc::ENOSYS;
+        *crate::errno_abi::__errno_location() = libc::ENOSYS;
     }
     -1
 }
@@ -5289,7 +5291,7 @@ pub unsafe extern "C" fn query_module(
 ) -> c_int {
     let _ = (name, which, buf, bufsize, ret);
     unsafe {
-        *libc::__errno_location() = libc::ENOSYS;
+        *crate::errno_abi::__errno_location() = libc::ENOSYS;
     }
     -1
 }
@@ -5303,7 +5305,7 @@ pub unsafe extern "C" fn rcmd(
     _cmd: *const c_char,
     _fd2p: *mut c_int,
 ) -> c_int {
-    unsafe { *libc::__errno_location() = libc::ENOSYS };
+    unsafe { *crate::errno_abi::__errno_location() = libc::ENOSYS };
     -1
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -5316,7 +5318,7 @@ pub unsafe extern "C" fn rcmd_af(
     _fd2p: *mut c_int,
     _af: c_int,
 ) -> c_int {
-    unsafe { *libc::__errno_location() = libc::ENOSYS };
+    unsafe { *crate::errno_abi::__errno_location() = libc::ENOSYS };
     -1
 }
 // register_printf_function: GNU extension for custom printf formatters — not supported
@@ -5326,13 +5328,13 @@ pub unsafe extern "C" fn register_printf_function(
     _render: *mut c_void,
     _arginfo: *mut c_void,
 ) -> c_int {
-    unsafe { *libc::__errno_location() = libc::ENOSYS };
+    unsafe { *crate::errno_abi::__errno_location() = libc::ENOSYS };
     -1
 }
 // register_printf_modifier: GNU extension — not supported
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn register_printf_modifier(_str: *const WcharT) -> c_int {
-    unsafe { *libc::__errno_location() = libc::ENOSYS };
+    unsafe { *crate::errno_abi::__errno_location() = libc::ENOSYS };
     -1
 }
 // register_printf_specifier: GNU extension — not supported
@@ -5342,13 +5344,13 @@ pub unsafe extern "C" fn register_printf_specifier(
     _render: *mut c_void,
     _arginfo: *mut c_void,
 ) -> c_int {
-    unsafe { *libc::__errno_location() = libc::ENOSYS };
+    unsafe { *crate::errno_abi::__errno_location() = libc::ENOSYS };
     -1
 }
 // register_printf_type: GNU extension — not supported
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn register_printf_type(_fct: *mut c_void) -> c_int {
-    unsafe { *libc::__errno_location() = libc::ENOSYS };
+    unsafe { *crate::errno_abi::__errno_location() = libc::ENOSYS };
     -1
 }
 // revoke: BSD — not implemented on Linux
@@ -5356,7 +5358,7 @@ pub unsafe extern "C" fn register_printf_type(_fct: *mut c_void) -> c_int {
 pub unsafe extern "C" fn revoke(file: *const c_char) -> c_int {
     let _ = file;
     unsafe {
-        *libc::__errno_location() = libc::ENOSYS;
+        *crate::errno_abi::__errno_location() = libc::ENOSYS;
     }
     -1
 }
@@ -5370,7 +5372,7 @@ pub unsafe extern "C" fn rexec(
     _cmd: *const c_char,
     _fd2p: *mut c_int,
 ) -> c_int {
-    unsafe { *libc::__errno_location() = libc::ENOSYS };
+    unsafe { *crate::errno_abi::__errno_location() = libc::ENOSYS };
     -1
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -5383,7 +5385,7 @@ pub unsafe extern "C" fn rexec_af(
     _fd2p: *mut c_int,
     _af: c_int,
 ) -> c_int {
-    unsafe { *libc::__errno_location() = libc::ENOSYS };
+    unsafe { *crate::errno_abi::__errno_location() = libc::ENOSYS };
     -1
 }
 // rpmatch: native — match yes/no response (C locale)
@@ -5449,7 +5451,7 @@ pub unsafe extern "C" fn rresvport_af(port: *mut c_int, af: c_int) -> c_int {
             }
             _ => {
                 unsafe { libc::syscall(libc::SYS_close, fd) as c_int };
-                unsafe { *libc::__errno_location() = libc::EAFNOSUPPORT };
+                unsafe { *crate::errno_abi::__errno_location() = libc::EAFNOSUPPORT };
                 return -1;
             }
         };
@@ -5461,7 +5463,7 @@ pub unsafe extern "C" fn rresvport_af(port: *mut c_int, af: c_int) -> c_int {
         }
     }
     unsafe { libc::syscall(libc::SYS_close, fd) as c_int };
-    unsafe { *libc::__errno_location() = libc::EAGAIN };
+    unsafe { *crate::errno_abi::__errno_location() = libc::EAGAIN };
     -1
 }
 // ruserok/ruserok_af: .rhosts hostname-based auth — deny-all for security
@@ -5642,29 +5644,29 @@ pub unsafe extern "C" fn sem_clockwait(
         let _ = clock_flag;
         let ts = abstime as *const libc::timespec;
         let rc = unsafe {
-            libc::syscall(
-                libc::SYS_futex,
-                sem_val as *mut c_void,
-                libc::FUTEX_WAIT_BITSET
+            syscall6(
+                libc::SYS_futex as usize,
+                sem_val as *mut c_void as usize,
+                (libc::FUTEX_WAIT_BITSET
                     | (libc::FUTEX_CLOCK_REALTIME
                         * (if clockid == libc::CLOCK_REALTIME {
                             1
                         } else {
                             0
-                        })),
-                val,
-                ts,
-                std::ptr::null::<c_void>(),
-                !0u32, // FUTEX_BITSET_MATCH_ANY
+                        }))) as usize,
+                val as usize,
+                ts as usize,
+                std::ptr::null::<c_void>() as usize,
+                !0u32 as usize, // FUTEX_BITSET_MATCH_ANY
             )
         };
-        if rc == -1 {
-            let err = unsafe { *libc::__errno_location() };
+        if let Err(err) = syscall_result(rc) {
             if err == libc::ETIMEDOUT {
-                unsafe { *libc::__errno_location() = libc::ETIMEDOUT };
+                unsafe { crate::errno_abi::set_abi_errno(err) };
                 return -1;
             }
             if err != libc::EAGAIN && err != libc::EINTR {
+                unsafe { crate::errno_abi::set_abi_errno(err) };
                 return -1;
             }
         }
@@ -5733,7 +5735,7 @@ pub unsafe extern "C" fn setipv4sourcefilter(
 pub unsafe extern "C" fn setlogin(name: *const c_char) -> c_int {
     let _ = name;
     unsafe {
-        *libc::__errno_location() = libc::ENOSYS;
+        *crate::errno_abi::__errno_location() = libc::ENOSYS;
     }
     -1
 }
@@ -5965,7 +5967,7 @@ pub unsafe extern "C" fn stime(t: *const c_long) -> c_int {
 pub unsafe extern "C" fn stty(fd: c_int, params: *const c_void) -> c_int {
     let _ = (fd, params);
     unsafe {
-        *libc::__errno_location() = libc::ENOSYS;
+        *crate::errno_abi::__errno_location() = libc::ENOSYS;
     }
     -1
 }
@@ -6037,7 +6039,7 @@ pub unsafe extern "C" fn ulimit(cmd: c_int, newlimit: c_long) -> c_long {
         }
         _ => {
             unsafe {
-                *libc::__errno_location() = libc::EINVAL;
+                *crate::errno_abi::__errno_location() = libc::EINVAL;
             }
             -1
         }
@@ -6057,7 +6059,7 @@ pub unsafe extern "C" fn uselib(library: *const c_char) -> c_int {
 pub unsafe extern "C" fn ustat(dev: c_uint, ubuf: *mut c_void) -> c_int {
     let _ = (dev, ubuf);
     unsafe {
-        *libc::__errno_location() = libc::ENOSYS;
+        *crate::errno_abi::__errno_location() = libc::ENOSYS;
     }
     -1
 }
@@ -6081,7 +6083,7 @@ pub unsafe extern "C" fn vhangup() -> c_int {
 pub unsafe extern "C" fn vlimit(resource: c_int, value: c_int) -> c_int {
     let _ = (resource, value);
     unsafe {
-        *libc::__errno_location() = libc::ENOSYS;
+        *crate::errno_abi::__errno_location() = libc::ENOSYS;
     }
     -1
 }
@@ -6090,7 +6092,7 @@ pub unsafe extern "C" fn vlimit(resource: c_int, value: c_int) -> c_int {
 pub unsafe extern "C" fn vtimes(current: *mut c_void, child: *mut c_void) -> c_int {
     let _ = (current, child);
     unsafe {
-        *libc::__errno_location() = libc::ENOSYS;
+        *crate::errno_abi::__errno_location() = libc::ENOSYS;
     }
     -1
 }
@@ -6241,7 +6243,7 @@ pub unsafe extern "C" fn step(string: *const c_char, expbuf: *const c_char) -> c
 pub unsafe extern "C" fn sstk(increment: c_int) -> c_int {
     let _ = increment;
     unsafe {
-        *libc::__errno_location() = libc::ENOSYS;
+        *crate::errno_abi::__errno_location() = libc::ENOSYS;
     }
     -1
 }
@@ -6289,7 +6291,7 @@ pub unsafe extern "C" fn printf_size_info(
 pub unsafe extern "C" fn nfsservctl(cmd: c_int, argp: *mut c_void, resp: *mut c_void) -> c_int {
     let _ = (cmd, argp, resp);
     unsafe {
-        *libc::__errno_location() = libc::ENOSYS;
+        *crate::errno_abi::__errno_location() = libc::ENOSYS;
     }
     -1
 }
@@ -6478,14 +6480,14 @@ pub unsafe extern "C" fn __clock_gettime(clock_id: c_int, tp: *mut c_void) -> c_
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __mktemp(template: *mut c_char) -> *mut c_char {
     if template.is_null() {
-        unsafe { *libc::__errno_location() = libc::EINVAL };
+        unsafe { *crate::errno_abi::__errno_location() = libc::EINVAL };
         return template;
     }
     let len = unsafe { crate::string_abi::strlen(template) };
     if len < 6 {
         unsafe {
             *template = 0;
-            *libc::__errno_location() = libc::EINVAL;
+            *crate::errno_abi::__errno_location() = libc::EINVAL;
         }
         return template;
     }
@@ -6495,7 +6497,7 @@ pub unsafe extern "C" fn __mktemp(template: *mut c_char) -> *mut c_char {
         if unsafe { *template.add(suffix_start + offset) } as u8 != b'X' {
             unsafe {
                 *template = 0;
-                *libc::__errno_location() = libc::EINVAL;
+                *crate::errno_abi::__errno_location() = libc::EINVAL;
             }
             return template;
         }
@@ -6542,7 +6544,7 @@ pub unsafe extern "C" fn __mktemp(template: *mut c_char) -> *mut c_char {
         // File exists — set first byte to 0 and return error
         unsafe {
             *template = 0;
-            *libc::__errno_location() = libc::EEXIST;
+            *crate::errno_abi::__errno_location() = libc::EEXIST;
         }
     }
     template
@@ -7466,7 +7468,7 @@ const NS_CMPRSFLGS: u8 = 0xC0;
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __ns_name_ntop(src: *const u8, dst: *mut c_char, dstsiz: SizeT) -> c_int {
     if src.is_null() || dst.is_null() || dstsiz == 0 {
-        unsafe { *libc::__errno_location() = libc::EINVAL };
+        unsafe { *crate::errno_abi::__errno_location() = libc::EINVAL };
         return -1;
     }
     let mut sp = src;
@@ -7480,13 +7482,13 @@ pub unsafe extern "C" fn __ns_name_ntop(src: *const u8, dst: *mut c_char, dstsiz
             break;
         }
         if label_len > NS_MAXLABEL {
-            unsafe { *libc::__errno_location() = libc::EMSGSIZE };
+            unsafe { *crate::errno_abi::__errno_location() = libc::EMSGSIZE };
             return -1;
         }
         // Add dot separator between labels
         if !first {
             if dp >= dstsiz {
-                unsafe { *libc::__errno_location() = libc::EMSGSIZE };
+                unsafe { *crate::errno_abi::__errno_location() = libc::EMSGSIZE };
                 return -1;
             }
             unsafe { *dst.add(dp) = b'.' as c_char };
@@ -7500,7 +7502,7 @@ pub unsafe extern "C" fn __ns_name_ntop(src: *const u8, dst: *mut c_char, dstsiz
             if c == b'.' || c == b'\\' {
                 // Escape dots and backslashes
                 if dp + 2 > dstsiz {
-                    unsafe { *libc::__errno_location() = libc::EMSGSIZE };
+                    unsafe { *crate::errno_abi::__errno_location() = libc::EMSGSIZE };
                     return -1;
                 }
                 unsafe { *dst.add(dp) = b'\\' as c_char };
@@ -7510,7 +7512,7 @@ pub unsafe extern "C" fn __ns_name_ntop(src: *const u8, dst: *mut c_char, dstsiz
             } else if !(0x21..=0x7E).contains(&c) {
                 // Escape non-printable as \DDD
                 if dp + 4 > dstsiz {
-                    unsafe { *libc::__errno_location() = libc::EMSGSIZE };
+                    unsafe { *crate::errno_abi::__errno_location() = libc::EMSGSIZE };
                     return -1;
                 }
                 unsafe { *dst.add(dp) = b'\\' as c_char };
@@ -7523,7 +7525,7 @@ pub unsafe extern "C" fn __ns_name_ntop(src: *const u8, dst: *mut c_char, dstsiz
                 dp += 1;
             } else {
                 if dp >= dstsiz {
-                    unsafe { *libc::__errno_location() = libc::EMSGSIZE };
+                    unsafe { *crate::errno_abi::__errno_location() = libc::EMSGSIZE };
                     return -1;
                 }
                 unsafe { *dst.add(dp) = c as c_char };
@@ -7534,7 +7536,7 @@ pub unsafe extern "C" fn __ns_name_ntop(src: *const u8, dst: *mut c_char, dstsiz
     // Handle root domain (empty name)
     if first {
         if dp >= dstsiz {
-            unsafe { *libc::__errno_location() = libc::EMSGSIZE };
+            unsafe { *crate::errno_abi::__errno_location() = libc::EMSGSIZE };
             return -1;
         }
         unsafe { *dst.add(dp) = b'.' as c_char };
@@ -7542,7 +7544,7 @@ pub unsafe extern "C" fn __ns_name_ntop(src: *const u8, dst: *mut c_char, dstsiz
     }
     // NUL-terminate
     if dp >= dstsiz {
-        unsafe { *libc::__errno_location() = libc::EMSGSIZE };
+        unsafe { *crate::errno_abi::__errno_location() = libc::EMSGSIZE };
         return -1;
     }
     unsafe { *dst.add(dp) = 0 };
@@ -7556,7 +7558,7 @@ pub unsafe extern "C" fn __ns_name_ntop(src: *const u8, dst: *mut c_char, dstsiz
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __ns_name_pton(src: *const c_char, dst: *mut u8, dstsiz: SizeT) -> c_int {
     if src.is_null() || dst.is_null() || dstsiz == 0 {
-        unsafe { *libc::__errno_location() = libc::EINVAL };
+        unsafe { *crate::errno_abi::__errno_location() = libc::EINVAL };
         return -1;
     }
 
@@ -7568,7 +7570,7 @@ pub unsafe extern "C" fn __ns_name_pton(src: *const c_char, dst: *mut u8, dstsiz
 
     // Reserve space for first label length byte
     if dp >= dstsiz {
-        unsafe { *libc::__errno_location() = libc::EMSGSIZE };
+        unsafe { *crate::errno_abi::__errno_location() = libc::EMSGSIZE };
         return -1;
     }
     dp += 1; // skip label length byte, fill in later
@@ -7584,7 +7586,7 @@ pub unsafe extern "C" fn __ns_name_pton(src: *const c_char, dst: *mut u8, dstsiz
         if c == b'.' {
             // End of label
             if label_len == 0 || label_len > NS_MAXLABEL {
-                unsafe { *libc::__errno_location() = libc::EMSGSIZE };
+                unsafe { *crate::errno_abi::__errno_location() = libc::EMSGSIZE };
                 return -1;
             }
             // Write label length
@@ -7599,7 +7601,7 @@ pub unsafe extern "C" fn __ns_name_pton(src: *const c_char, dst: *mut u8, dstsiz
 
             // Start next label
             if dp >= dstsiz {
-                unsafe { *libc::__errno_location() = libc::EMSGSIZE };
+                unsafe { *crate::errno_abi::__errno_location() = libc::EMSGSIZE };
                 return -1;
             }
             label_start = dp;
@@ -7617,11 +7619,11 @@ pub unsafe extern "C" fn __ns_name_pton(src: *const c_char, dst: *mut u8, dstsiz
                 sp = unsafe { sp.add(1) };
                 let val = d1 * 100 + d2 * 10 + d3;
                 if val > 255 {
-                    unsafe { *libc::__errno_location() = libc::EMSGSIZE };
+                    unsafe { *crate::errno_abi::__errno_location() = libc::EMSGSIZE };
                     return -1;
                 }
                 if dp >= dstsiz {
-                    unsafe { *libc::__errno_location() = libc::EMSGSIZE };
+                    unsafe { *crate::errno_abi::__errno_location() = libc::EMSGSIZE };
                     return -1;
                 }
                 unsafe { *dst.add(dp) = val as u8 };
@@ -7630,7 +7632,7 @@ pub unsafe extern "C" fn __ns_name_pton(src: *const c_char, dst: *mut u8, dstsiz
             } else {
                 // \X literal escape
                 if dp >= dstsiz {
-                    unsafe { *libc::__errno_location() = libc::EMSGSIZE };
+                    unsafe { *crate::errno_abi::__errno_location() = libc::EMSGSIZE };
                     return -1;
                 }
                 unsafe { *dst.add(dp) = next };
@@ -7640,7 +7642,7 @@ pub unsafe extern "C" fn __ns_name_pton(src: *const c_char, dst: *mut u8, dstsiz
             }
         } else {
             if dp >= dstsiz {
-                unsafe { *libc::__errno_location() = libc::EMSGSIZE };
+                unsafe { *crate::errno_abi::__errno_location() = libc::EMSGSIZE };
                 return -1;
             }
             unsafe { *dst.add(dp) = c };
@@ -7652,7 +7654,7 @@ pub unsafe extern "C" fn __ns_name_pton(src: *const c_char, dst: *mut u8, dstsiz
     if !fully_qualified {
         // Write final label length for relative names
         if label_len > NS_MAXLABEL {
-            unsafe { *libc::__errno_location() = libc::EMSGSIZE };
+            unsafe { *crate::errno_abi::__errno_location() = libc::EMSGSIZE };
             return -1;
         }
         unsafe { *dst.add(label_start) = label_len as u8 };
@@ -7660,7 +7662,7 @@ pub unsafe extern "C" fn __ns_name_pton(src: *const c_char, dst: *mut u8, dstsiz
 
     // Append terminating zero-length label
     if dp >= dstsiz {
-        unsafe { *libc::__errno_location() = libc::EMSGSIZE };
+        unsafe { *crate::errno_abi::__errno_location() = libc::EMSGSIZE };
         return -1;
     }
     unsafe { *dst.add(dp) = 0 };
@@ -7682,7 +7684,7 @@ pub unsafe extern "C" fn __ns_name_unpack(
     dstsiz: SizeT,
 ) -> c_int {
     if msg.is_null() || eom.is_null() || src.is_null() || dst.is_null() {
-        unsafe { *libc::__errno_location() = libc::EINVAL };
+        unsafe { *crate::errno_abi::__errno_location() = libc::EINVAL };
         return -1;
     }
     let msg_len = unsafe { eom.offset_from(msg) } as usize;
@@ -7698,7 +7700,7 @@ pub unsafe extern "C" fn __ns_name_unpack(
 
     loop {
         if sp >= eom {
-            unsafe { *libc::__errno_location() = libc::EMSGSIZE };
+            unsafe { *crate::errno_abi::__errno_location() = libc::EMSGSIZE };
             return -1;
         }
         let label_type = unsafe { *sp };
@@ -7706,18 +7708,18 @@ pub unsafe extern "C" fn __ns_name_unpack(
         if (label_type & NS_CMPRSFLGS) == NS_CMPRSFLGS {
             // Compression pointer
             if unsafe { sp.add(1) } >= eom {
-                unsafe { *libc::__errno_location() = libc::EMSGSIZE };
+                unsafe { *crate::errno_abi::__errno_location() = libc::EMSGSIZE };
                 return -1;
             }
             let offset = ((label_type as usize & !NS_CMPRSFLGS as usize) << 8)
                 | unsafe { *sp.add(1) } as usize;
             if offset >= msg_len {
-                unsafe { *libc::__errno_location() = libc::EMSGSIZE };
+                unsafe { *crate::errno_abi::__errno_location() = libc::EMSGSIZE };
                 return -1;
             }
             checked += 2;
             if checked >= msg_len {
-                unsafe { *libc::__errno_location() = libc::EMSGSIZE };
+                unsafe { *crate::errno_abi::__errno_location() = libc::EMSGSIZE };
                 return -1;
             }
             if save_sp.is_null() {
@@ -7727,7 +7729,7 @@ pub unsafe extern "C" fn __ns_name_unpack(
         } else if label_type == 0 {
             // End of name
             if dp >= maxdst {
-                unsafe { *libc::__errno_location() = libc::EMSGSIZE };
+                unsafe { *crate::errno_abi::__errno_location() = libc::EMSGSIZE };
                 return -1;
             }
             unsafe { *dst.add(dp) = 0 };
@@ -7741,12 +7743,12 @@ pub unsafe extern "C" fn __ns_name_unpack(
             // Regular label
             let len = label_type as usize;
             if len > NS_MAXLABEL {
-                unsafe { *libc::__errno_location() = libc::EMSGSIZE };
+                unsafe { *crate::errno_abi::__errno_location() = libc::EMSGSIZE };
                 return -1;
             }
             sp = unsafe { sp.add(1) };
             if dp + len + 1 > maxdst || unsafe { sp.add(len) } > eom {
-                unsafe { *libc::__errno_location() = libc::EMSGSIZE };
+                unsafe { *crate::errno_abi::__errno_location() = libc::EMSGSIZE };
                 return -1;
             }
             // Write label: length byte + label bytes
@@ -7776,7 +7778,7 @@ pub unsafe extern "C" fn __ns_name_pack(
     _lastdnptr: *const *const u8,
 ) -> c_int {
     if src.is_null() || dst.is_null() || dstsiz < 0 {
-        unsafe { *libc::__errno_location() = libc::EINVAL };
+        unsafe { *crate::errno_abi::__errno_location() = libc::EINVAL };
         return -1;
     }
     // Simple implementation: copy the uncompressed name without compression.
@@ -7789,7 +7791,7 @@ pub unsafe extern "C" fn __ns_name_pack(
     loop {
         let label_len = unsafe { *sp } as usize;
         if dp >= dstsiz {
-            unsafe { *libc::__errno_location() = libc::EMSGSIZE };
+            unsafe { *crate::errno_abi::__errno_location() = libc::EMSGSIZE };
             return -1;
         }
         unsafe { *dst.add(dp) = label_len as u8 };
@@ -7798,12 +7800,12 @@ pub unsafe extern "C" fn __ns_name_pack(
             break;
         }
         if label_len > NS_MAXLABEL {
-            unsafe { *libc::__errno_location() = libc::EMSGSIZE };
+            unsafe { *crate::errno_abi::__errno_location() = libc::EMSGSIZE };
             return -1;
         }
         sp = unsafe { sp.add(1) };
         if dp + label_len > dstsiz {
-            unsafe { *libc::__errno_location() = libc::EMSGSIZE };
+            unsafe { *crate::errno_abi::__errno_location() = libc::EMSGSIZE };
             return -1;
         }
         unsafe { std::ptr::copy_nonoverlapping(sp, dst.add(dp), label_len) };
@@ -7863,14 +7865,14 @@ pub unsafe extern "C" fn __ns_name_compress(
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __ns_name_skip(ptrptr: *mut *const u8, eom: *const u8) -> c_int {
     if ptrptr.is_null() || eom.is_null() {
-        unsafe { *libc::__errno_location() = libc::EINVAL };
+        unsafe { *crate::errno_abi::__errno_location() = libc::EINVAL };
         return -1;
     }
     let mut cp = unsafe { *ptrptr };
 
     loop {
         if cp >= eom {
-            unsafe { *libc::__errno_location() = libc::EMSGSIZE };
+            unsafe { *crate::errno_abi::__errno_location() = libc::EMSGSIZE };
             return -1;
         }
         let label_type = unsafe { *cp };
@@ -7891,7 +7893,7 @@ pub unsafe extern "C" fn __ns_name_skip(ptrptr: *mut *const u8, eom: *const u8) 
     }
 
     if cp > eom {
-        unsafe { *libc::__errno_location() = libc::EMSGSIZE };
+        unsafe { *crate::errno_abi::__errno_location() = libc::EMSGSIZE };
         return -1;
     }
 
@@ -7938,7 +7940,7 @@ pub unsafe extern "C" fn __ns_name_uncompressed_p(
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __ns_samename(a: *const c_char, b: *const c_char) -> c_int {
     if a.is_null() || b.is_null() {
-        unsafe { *libc::__errno_location() = libc::EINVAL };
+        unsafe { *crate::errno_abi::__errno_location() = libc::EINVAL };
         return -1;
     }
     // Compare presentation-form DNS names case-insensitively,
@@ -8407,10 +8409,10 @@ pub unsafe extern "C" fn _IO_enable_locks() {
 
 /// `errno` — thread-local errno location (symbol, not function).
 /// Programs may reference `errno` as a global symbol. We point to the
-/// glibc thread-local errno via __errno_location().
+/// FrankenLibC thread-local errno via __errno_location().
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn errno() -> *mut c_int {
-    unsafe { libc::__errno_location() }
+    unsafe { crate::errno_abi::__errno_location() }
 }
 
 // xprt_register: SVC transport registration — no-op (RPC transport handled by rpc_abi)

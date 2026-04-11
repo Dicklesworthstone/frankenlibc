@@ -460,6 +460,7 @@ mod tests {
     use std::collections::HashMap;
     use std::sync::{Barrier, Mutex, OnceLock};
     use std::thread;
+    use std::time::Duration;
 
     fn test_alloc_registry() -> &'static Mutex<HashMap<usize, Box<[u8]>>> {
         static REGISTRY: OnceLock<Mutex<HashMap<usize, Box<[u8]>>>> = OnceLock::new();
@@ -532,7 +533,12 @@ mod tests {
 
         // Re-allocate - should reuse from thread cache (no new backend calls)
         let new_ptr = state
-            .malloc(size, |_| panic!("should not call backend"))
+            .malloc(size, |_| {
+                unreachable!(
+                    // ubs:ignore — test asserts cache reuse path
+                    "should not call backend"
+                )
+            })
             .unwrap();
         assert!(ptrs.contains(&new_ptr));
     }
@@ -543,6 +549,7 @@ mod tests {
         let size = 32;
         let ptr = state.malloc(size, test_alloc).unwrap();
         let elimination = state.elimination_handle();
+        elimination.set_wait_budget(Duration::from_millis(2));
         let barrier = Barrier::new(2);
 
         let consumer = thread::scope(|scope| {
@@ -563,7 +570,10 @@ mod tests {
 
         match consumer {
             TakeOutcome::Matched { value, .. } => assert_eq!(value, ptr),
-            other => panic!("expected elimination match, got {other:?}"),
+            other => unreachable!(
+                // ubs:ignore — test expects elimination handoff
+                "expected elimination match, got {other:?}"
+            ),
         }
         assert_eq!(state.active_count(), 0);
         assert_eq!(state.total_allocated(), 0);

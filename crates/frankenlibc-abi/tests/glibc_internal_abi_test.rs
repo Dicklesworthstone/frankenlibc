@@ -2,6 +2,7 @@
 
 //! Integration tests for glibc_internal_abi entrypoints.
 
+use frankenlibc_abi::errno_abi::__errno_location;
 use frankenlibc_abi::glibc_internal_abi::{
     __asprintf,
     __call_tls_dtors,
@@ -472,7 +473,7 @@ fn rcmd_returns_enosys() {
         )
     };
     assert_eq!(result, -1);
-    assert_eq!(unsafe { *libc::__errno_location() }, libc::ENOSYS);
+    assert_eq!(unsafe { *__errno_location() }, libc::ENOSYS);
 }
 
 #[test]
@@ -493,7 +494,7 @@ fn rcmd_af_returns_enosys() {
         )
     };
     assert_eq!(result, -1);
-    assert_eq!(unsafe { *libc::__errno_location() }, libc::ENOSYS);
+    assert_eq!(unsafe { *__errno_location() }, libc::ENOSYS);
 }
 
 #[test]
@@ -514,7 +515,7 @@ fn rexec_returns_enosys() {
         )
     };
     assert_eq!(result, -1);
-    assert_eq!(unsafe { *libc::__errno_location() }, libc::ENOSYS);
+    assert_eq!(unsafe { *__errno_location() }, libc::ENOSYS);
 }
 
 #[test]
@@ -536,7 +537,7 @@ fn rexec_af_returns_enosys() {
         )
     };
     assert_eq!(result, -1);
-    assert_eq!(unsafe { *libc::__errno_location() }, libc::ENOSYS);
+    assert_eq!(unsafe { *__errno_location() }, libc::ENOSYS);
 }
 
 #[test]
@@ -1446,30 +1447,30 @@ fn printf_fp_returns_negative() {
 fn overflow_family_returns_enosys_defaults() {
     let r = unsafe { __overflow(ptr::null_mut(), b'A' as i32) };
     assert_eq!(r, libc::EOF);
-    assert_eq!(unsafe { *libc::__errno_location() }, libc::ENOSYS);
+    assert_eq!(unsafe { *__errno_location() }, libc::ENOSYS);
 
     let r = unsafe { __uflow(ptr::null_mut()) };
     assert_eq!(r, libc::EOF);
-    assert_eq!(unsafe { *libc::__errno_location() }, libc::ENOSYS);
+    assert_eq!(unsafe { *__errno_location() }, libc::ENOSYS);
 
     let r = unsafe { __underflow(ptr::null_mut()) };
     assert_eq!(r, libc::EOF);
-    assert_eq!(unsafe { *libc::__errno_location() }, libc::ENOSYS);
+    assert_eq!(unsafe { *__errno_location() }, libc::ENOSYS);
 }
 
 #[test]
 fn wide_overflow_family_returns_wide_eof() {
     let r = unsafe { __woverflow(ptr::null_mut(), 'A' as i32) };
     assert_eq!(r, -1);
-    assert_eq!(unsafe { *libc::__errno_location() }, libc::ENOSYS);
+    assert_eq!(unsafe { *__errno_location() }, libc::ENOSYS);
 
     let r = unsafe { __wuflow(ptr::null_mut()) };
     assert_eq!(r, -1);
-    assert_eq!(unsafe { *libc::__errno_location() }, libc::ENOSYS);
+    assert_eq!(unsafe { *__errno_location() }, libc::ENOSYS);
 
     let r = unsafe { __wunderflow(ptr::null_mut()) };
     assert_eq!(r, -1);
-    assert_eq!(unsafe { *libc::__errno_location() }, libc::ENOSYS);
+    assert_eq!(unsafe { *__errno_location() }, libc::ENOSYS);
 }
 
 // ===========================================================================
