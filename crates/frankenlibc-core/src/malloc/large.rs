@@ -93,12 +93,25 @@ impl LargeAllocator {
     /// Creates a new allocation with the new size and removes the old one.
     /// Returns the new allocation metadata, or `None` on failure.
     pub fn realloc(&mut self, base: usize, new_size: usize) -> Option<LargeAllocation> {
-        // Remove old allocation
-        let _old = self.allocations.remove(&base)?;
-        self.total_mapped -= _old.mapped_size;
+        if new_size == 0 {
+            let old = self.allocations.remove(&base)?;
+            self.total_mapped -= old.mapped_size;
+            return None;
+        }
+
+        // Remove old allocation temporarily
+        let old = self.allocations.remove(&base)?;
+        self.total_mapped -= old.mapped_size;
 
         // Create new allocation
-        self.alloc(new_size)
+        if let Some(new_alloc) = self.alloc(new_size) {
+            Some(new_alloc)
+        } else {
+            // Restore old allocation on failure
+            self.allocations.insert(base, old.clone());
+            self.total_mapped += old.mapped_size;
+            None
+        }
     }
 
     /// Returns the total number of active large allocations.

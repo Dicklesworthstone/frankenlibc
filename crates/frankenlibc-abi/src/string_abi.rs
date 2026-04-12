@@ -3651,13 +3651,13 @@ pub unsafe extern "C" fn memmem(
 
     let (hay_scan, clamped_h) = maybe_clamp_copy_len(
         haystack_len,
-        Some(haystack as usize),
+        known_remaining(haystack as usize),
         None,
         repair_enabled(mode.heals_enabled(), decision.action),
     );
     let (needle_scan, _clamped_n) = maybe_clamp_copy_len(
         needle_len,
-        Some(needle as usize),
+        known_remaining(needle as usize),
         None,
         repair_enabled(mode.heals_enabled(), decision.action),
     );
@@ -4123,7 +4123,7 @@ pub unsafe extern "C" fn bzero(s: *mut c_void, n: usize) {
     let (set_len, clamped) = maybe_clamp_copy_len(
         n,
         None,
-        Some(s as usize),
+        known_remaining(s as usize),
         mode.heals_enabled() || matches!(decision.action, MembraneAction::Repair(_)),
     );
 

@@ -1118,26 +1118,48 @@ impl ValidationPipeline {
                             ApiFamily::PointerValidation,
                             ValidationProfile::Fast,
                             elapsed_ns,
-                            false,
-                        );
-                        self.emit_terminal_transition(
-                            &trace,
-                            mode,
-                            "arena_lookup",
-                            "pipeline::stage4::arena",
-                            "Allow",
-                            "Foreign",
-                            elapsed_ns,
-                            aligned,
                             recent_page,
-                            bloom_negative,
-                            false,
-                            0,
-                            0,
-                            0,
-                            false,
                         );
-                        return ValidationOutcome::Foreign(PointerAbstraction::unknown(addr));
+                        
+                        if recent_page {
+                            self.emit_terminal_transition(
+                                &trace,
+                                mode,
+                                "arena_lookup",
+                                "pipeline::stage4::arena",
+                                "Deny",
+                                "Invalid",
+                                elapsed_ns,
+                                aligned,
+                                recent_page,
+                                bloom_negative,
+                                false,
+                                0,
+                                0,
+                                0,
+                                false,
+                            );
+                            return ValidationOutcome::Invalid(PointerAbstraction::unknown(addr));
+                        } else {
+                            self.emit_terminal_transition(
+                                &trace,
+                                mode,
+                                "arena_lookup",
+                                "pipeline::stage4::arena",
+                                "Allow",
+                                "Foreign",
+                                elapsed_ns,
+                                aligned,
+                                recent_page,
+                                bloom_negative,
+                                false,
+                                0,
+                                0,
+                                0,
+                                false,
+                            );
+                            return ValidationOutcome::Foreign(PointerAbstraction::unknown(addr));
+                        }
                     };
                     if !found.state.is_live() {
                         let abs = self.abstraction_from_slot(addr, &found);

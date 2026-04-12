@@ -326,6 +326,7 @@ impl MallocState {
         if ptr == 0 {
             return;
         }
+        let size = if size == 0 { 1 } else { size };
         let mut ptr = ptr;
 
         let Some(bin) = size_class::small_bin_index(size) else {
