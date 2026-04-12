@@ -8,7 +8,7 @@
 use std::array;
 use std::cell::Cell;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Condvar, Mutex, MutexGuard};
+use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 pub const DEFAULT_ELIMINATION_SLOTS: usize = 8;
@@ -108,7 +108,6 @@ enum SlotState<T> {
 
 struct Slot<T> {
     state: Mutex<SlotState<T>>,
-    condvar: Condvar,
     publishes: AtomicU64,
     matches: AtomicU64,
     collisions: AtomicU64,
@@ -119,7 +118,6 @@ impl<T> Slot<T> {
     fn new() -> Self {
         Self {
             state: Mutex::new(SlotState::Empty),
-            condvar: Condvar::new(),
             publishes: AtomicU64::new(0),
             matches: AtomicU64::new(0),
             collisions: AtomicU64::new(0),
@@ -542,7 +540,6 @@ impl<T: Send, const SLOTS: usize> EliminationArray<T, SLOTS> {
                     slot.matches.fetch_add(1, Ordering::Relaxed);
                     if wait_for_match {
                         *state = SlotState::Taken { consumer_thread };
-                        slot.condvar.notify_all();
                     }
                     drop(state);
                     remember_next_slot::<SLOTS>(slot_index + 1);
@@ -618,7 +615,6 @@ impl<T: Send, const SLOTS: usize> EliminationArray<T, SLOTS> {
                         slot.matches.fetch_add(1, Ordering::Relaxed);
                         if wait_for_match {
                             *state = SlotState::Taken { consumer_thread };
-                            slot.condvar.notify_all();
                         }
                         drop(state);
                         remember_next_slot::<SLOTS>(slot_index + 1);

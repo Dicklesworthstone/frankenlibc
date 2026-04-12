@@ -611,23 +611,20 @@ pub fn evaluate_provenance_barrier(
 
     // Penalty: risk × bloom_fp × (1 - depth). High risk + bad bloom + fast path → bad.
     // Scale: r * b / 1e6 gives ppm product; * (1-v) / 1e6 gives triple product.
-    // We then multiply by BETA (milli-units) and divide by 1000 to get final penalty in ppm.
+    // BETA is in milli-units, so we multiply by 1000 to get final penalty in ppm.
     let rb = r * b / one;
-    let penalty_1_milli = i128::from(BETA_1) * rb * (one - v) / (one * one);
-    let penalty_1 = penalty_1_milli; // already ppm-normalized
+    let penalty_1 = i128::from(BETA_1 * 1000) * rb * (one - v) / (one * one);
 
     // Penalty: risk × arena_pressure × (1 - depth). High risk + full arena + fast → bad.
     let rp = r * p / one;
-    let penalty_2_milli = i128::from(BETA_2) * rp * (one - v) / (one * one);
-    let penalty_2 = penalty_2_milli;
+    let penalty_2 = i128::from(BETA_2 * 1000) * rp * (one - v) / (one * one);
 
     // Reward: validation_depth × (1 - bloom_fp). Full validation + good bloom → safe.
-    let reward_milli = i128::from(BETA_3) * v * (one - b) / (one * one);
-    let reward = reward_milli;
+    let reward = i128::from(BETA_3 * 1000) * v * (one - b) / (one * one);
 
     // Direct memory pressure penalty: if arena/headroom pressure is high,
     // force backpressure even when risk-only terms are mild.
-    // BETA_4 is in milli-units, so we multiply by (p/one) and normalize.
+    // BETA_4 is already in ppm, so we multiply by (p/one).
     let penalty_3 = i128::from(BETA_4) * p / one;
 
     let final_ppm = headroom - penalty_1 - penalty_2 - penalty_3 + reward;
