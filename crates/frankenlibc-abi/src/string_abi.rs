@@ -1188,7 +1188,7 @@ pub unsafe extern "C" fn memchr(s: *const c_void, c: c_int, n: usize) -> *mut c_
 
     let (scan_len, clamped) = maybe_clamp_copy_len(
         n,
-        Some(s as usize),
+        known_remaining(s as usize),
         None,
         mode.heals_enabled() || matches!(decision.action, MembraneAction::Repair(_)),
     );
@@ -1294,7 +1294,7 @@ pub unsafe extern "C" fn memrchr(s: *const c_void, c: c_int, n: usize) -> *mut c
 
     let (scan_len, clamped) = maybe_clamp_copy_len(
         n,
-        Some(s as usize),
+        known_remaining(s as usize),
         None,
         mode.heals_enabled() || matches!(decision.action, MembraneAction::Repair(_)),
     );
@@ -1962,8 +1962,8 @@ pub unsafe extern "C" fn strncpy(dst: *mut c_char, src: *const c_char, n: usize)
 
     let (copy_len, clamped) = maybe_clamp_copy_len(
         n,
-        Some(src as usize),
-        Some(dst as usize),
+        known_remaining(src as usize),
+        known_remaining(dst as usize),
         repair_enabled(mode.heals_enabled(), decision.action),
     );
     if copy_len == 0 {
@@ -3757,8 +3757,8 @@ pub unsafe extern "C" fn mempcpy(dst: *mut c_void, src: *const c_void, n: usize)
 
     let (copy_len, clamped) = maybe_clamp_copy_len(
         n,
-        Some(src as usize),
-        Some(dst as usize),
+        known_remaining(src as usize),
+        known_remaining(dst as usize),
         mode.heals_enabled() || matches!(decision.action, MembraneAction::Repair(_)),
     );
     if copy_len == 0 {
@@ -4035,8 +4035,8 @@ pub unsafe extern "C" fn memccpy(
 
     let (copy_len, clamped) = maybe_clamp_copy_len(
         n,
-        Some(src as usize),
-        Some(dst as usize),
+        known_remaining(src as usize),
+        known_remaining(dst as usize),
         mode.heals_enabled() || matches!(decision.action, MembraneAction::Repair(_)),
     );
 
@@ -4277,8 +4277,8 @@ pub unsafe extern "C" fn swab(src: *const c_void, dst: *mut c_void, isize_n: isi
 
     let (swap_len, clamped) = maybe_clamp_copy_len(
         n,
-        Some(src as usize),
-        Some(dst as usize),
+        known_remaining(src as usize),
+        known_remaining(dst as usize),
         mode.heals_enabled() || matches!(decision.action, MembraneAction::Repair(_)),
     );
 
