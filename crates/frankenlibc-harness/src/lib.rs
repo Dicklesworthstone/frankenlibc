@@ -41,6 +41,7 @@ pub mod snapshot_diff;
 pub mod structured_log;
 pub mod traceability;
 pub mod verify;
+pub mod verify_invariants;
 
 pub use fixtures::{FixtureCase, FixtureSet};
 pub use report::{
