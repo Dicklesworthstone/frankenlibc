@@ -393,9 +393,47 @@ impl NativeFileRuntimeMathHooks {
     }
 }
 
+/// Backing storage type for NativeFile streams.
+///
+/// Distinguishes between file-descriptor-backed streams (normal files/pipes)
+/// and memory-backed streams (fmemopen, open_memstream).
+#[derive(Debug)]
+enum NativeFileBacking {
+    /// File descriptor backed stream (fopen, fdopen, popen).
+    Fd(c_int),
+    /// Fixed-size memory buffer (fmemopen with caller buffer or internal allocation).
+    /// - `buf`: pointer to the memory buffer
+    /// - `size`: total buffer size
+    /// - `content_len`: current content length for append positioning
+    /// - `owns`: true if we allocated the buffer and must free it on close
+    MemoryFixed {
+        buf: *mut u8,
+        size: usize,
+        content_len: usize,
+        owns: bool,
+    },
+    /// Growing memory buffer (open_memstream, open_wmemstream).
+    /// - `buf_ptr`: caller's buffer pointer location (we write the current buffer here)
+    /// - `size_ptr`: caller's size location (we write the current size here)
+    /// - `capacity`: current allocated capacity
+    /// - `data`: our owned growing buffer
+    MemoryGrowing {
+        buf_ptr: *mut *mut c_char,
+        size_ptr: *mut usize,
+        capacity: usize,
+        data: Vec<u8>,
+    },
+}
+
+// SAFETY: The raw pointers in NativeFileBacking are only accessed while
+// holding the NativeFile's ReentrantMutex lock, and the memory they point
+// to must remain valid for the stream's lifetime per POSIX contract.
+unsafe impl Send for NativeFileBacking {}
+
 #[derive(Debug)]
 struct NativeFileLocked {
     magic: u32,
+    backing: NativeFileBacking,
     buffer_base: *mut u8,
     buffer_pos: *mut u8,
     buffer_end: *mut u8,
@@ -417,6 +455,19 @@ struct NativeFileLocked {
 
 impl NativeFileLocked {
     fn new(fd: c_int, open_flags: u32, buf_mode: NativeFileBufMode) -> Self {
+        Self::new_with_backing(NativeFileBacking::Fd(fd), open_flags, buf_mode)
+    }
+
+    fn new_with_backing(
+        backing: NativeFileBacking,
+        open_flags: u32,
+        buf_mode: NativeFileBufMode,
+    ) -> Self {
+        // Compute fd for fingerprint (use -1 for memory streams)
+        let fd = match &backing {
+            NativeFileBacking::Fd(fd) => *fd,
+            NativeFileBacking::MemoryFixed { .. } | NativeFileBacking::MemoryGrowing { .. } => -1,
+        };
         let mut fingerprint = [0u8; 16];
         fingerprint[..4].copy_from_slice(&NATIVE_FILE_MAGIC.to_le_bytes());
         fingerprint[4..8].copy_from_slice(&fd.to_le_bytes());
@@ -425,6 +476,7 @@ impl NativeFileLocked {
 
         Self {
             magic: NATIVE_FILE_MAGIC,
+            backing,
             buffer_base: ptr::null_mut(),
             buffer_pos: ptr::null_mut(),
             buffer_end: ptr::null_mut(),
@@ -441,6 +493,14 @@ impl NativeFileLocked {
             fingerprint,
             runtime_math_hooks: NativeFileRuntimeMathHooks::new(),
             popen_child_pid: None,
+        }
+    }
+
+    /// Get the file descriptor if this is an fd-backed stream.
+    fn fd(&self) -> Option<c_int> {
+        match &self.backing {
+            NativeFileBacking::Fd(fd) => Some(*fd),
+            _ => None,
         }
     }
 }
