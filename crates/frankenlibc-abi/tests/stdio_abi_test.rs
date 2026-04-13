@@ -806,7 +806,7 @@ fn fopen_returns_native_handle_usable_by_our_stdio() {
 
 #[test]
 #[ignore = "requires LD_PRELOAD: foreign stream handling needs adoption path"]
-fn fclose_accepts_only_native_streams() {
+fn fclose_accepts_host_streams() {
     let path = temp_path("host_fopen_our_fclose");
     let _ = fs::remove_file(&path);
     let path_c = path_cstring(&path);

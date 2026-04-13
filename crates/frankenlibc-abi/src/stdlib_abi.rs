@@ -1438,7 +1438,14 @@ pub unsafe extern "C" fn strtof(nptr: *const c_char, endptr: *mut *mut c_char) -
 /// Otherwise, forks and executes `/bin/sh -c command`, returning the exit status.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn system(command: *const c_char) -> c_int {
-    let (_, decision) = runtime_policy::decide(ApiFamily::Stdlib, 0, 0, false, false, 0);
+    let (mode, decision) = runtime_policy::decide(
+        ApiFamily::Stdlib,
+        command as usize,
+        0,
+        false,
+        known_remaining(command as usize).is_none(),
+        0,
+    );
     if matches!(decision.action, MembraneAction::Deny) {
         unsafe { set_abi_errno(libc::EPERM) };
         runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 50, true);
@@ -1448,6 +1455,20 @@ pub unsafe extern "C" fn system(command: *const c_char) -> c_int {
     if command.is_null() {
         runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 5, false);
         return 1; // shell is available
+    }
+
+    let repair = repair_enabled(mode.heals_enabled(), decision.action);
+    let bound = if repair {
+        known_remaining(command as usize)
+    } else {
+        None
+    };
+
+    let (_len, terminated) = unsafe { scan_c_string(command, bound) };
+    if !terminated {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 10, true);
+        return -1;
     }
 
     // SAFETY: fork via clone(SIGCHLD).

@@ -50,6 +50,9 @@ type HostVfscanfFn = unsafe extern "C" fn(*mut c_void, *const c_char, *mut c_voi
 type HostFgetposFn = unsafe extern "C" fn(*mut c_void, *mut libc::fpos_t) -> c_int;
 type HostFsetposFn = unsafe extern "C" fn(*mut c_void, *const libc::fpos_t) -> c_int;
 type HostFreopenFn = unsafe extern "C" fn(*const c_char, *const c_char, *mut c_void) -> *mut c_void;
+type HostFlockfileFn = unsafe extern "C" fn(*mut c_void);
+type HostFunlockfileFn = unsafe extern "C" fn(*mut c_void);
+type HostFtrylockfileFn = unsafe extern "C" fn(*mut c_void) -> c_int;
 
 static HOST_FCLOSE_FN: OnceLock<usize> = OnceLock::new();
 static HOST_FWRITE_FN: OnceLock<usize> = OnceLock::new();
@@ -73,6 +76,9 @@ static HOST_VFSCANF_FN: OnceLock<usize> = OnceLock::new();
 static HOST_FGETPOS_FN: OnceLock<usize> = OnceLock::new();
 static HOST_FSETPOS_FN: OnceLock<usize> = OnceLock::new();
 static HOST_FREOPEN_FN: OnceLock<usize> = OnceLock::new();
+static HOST_FLOCKFILE_FN: OnceLock<usize> = OnceLock::new();
+static HOST_FUNLOCKFILE_FN: OnceLock<usize> = OnceLock::new();
+static HOST_FTRYLOCKFILE_FN: OnceLock<usize> = OnceLock::new();
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -589,6 +595,24 @@ unsafe fn host_freopen_fn() -> Option<HostFreopenFn> {
         .map(|ptr| unsafe { std::mem::transmute(ptr) })
 }
 
+#[inline]
+unsafe fn host_flockfile_fn() -> Option<HostFlockfileFn> {
+    unsafe { host_stdio_symbol(&HOST_FLOCKFILE_FN, "flockfile") }
+        .map(|ptr| unsafe { std::mem::transmute(ptr) })
+}
+
+#[inline]
+unsafe fn host_funlockfile_fn() -> Option<HostFunlockfileFn> {
+    unsafe { host_stdio_symbol(&HOST_FUNLOCKFILE_FN, "funlockfile") }
+        .map(|ptr| unsafe { std::mem::transmute(ptr) })
+}
+
+#[inline]
+unsafe fn host_ftrylockfile_fn() -> Option<HostFtrylockfileFn> {
+    unsafe { host_stdio_symbol(&HOST_FTRYLOCKFILE_FN, "ftrylockfile") }
+        .map(|ptr| unsafe { std::mem::transmute(ptr) })
+}
+
 fn alloc_stream_id() -> usize {
     let mut next = NEXT_STREAM_ID.lock().unwrap_or_else(|e| e.into_inner());
     let id = *next;
@@ -699,6 +723,53 @@ pub static mut stdout: *mut c_void = STDOUT_SENTINEL as *mut c_void;
 #[allow(non_upper_case_globals)]
 pub static mut stderr: *mut c_void = STDERR_SENTINEL as *mut c_void;
 
+// glibc internal `_IO_2_1_{stdin,stdout,stderr}_` aliases.
+//
+// In glibc, `_IO_2_1_stdin_` is the actual FILE struct and `stdin` is defined as `&_IO_2_1_stdin_`.
+// Some binaries resolve these symbols directly via dlsym or link-time resolution.
+//
+// We use global_asm to define these as proper global symbols that can't be optimized away.
+// At runtime, init_host_stdio_streams() initializes these to point to the same NativeFile
+// storage as stdin/stdout/stderr.
+#[cfg(not(debug_assertions))]
+core::arch::global_asm!(
+    // Define symbols as global objects with proper ELF type
+    ".section .data.rel.ro,\"aw\",@progbits",
+    ".align 8",
+    ".global _IO_2_1_stdin_",
+    ".type _IO_2_1_stdin_, @object",
+    ".size _IO_2_1_stdin_, 8",
+    "_IO_2_1_stdin_:",
+    "    .quad 0",
+    ".global _IO_2_1_stdout_",
+    ".type _IO_2_1_stdout_, @object",
+    ".size _IO_2_1_stdout_, 8",
+    "_IO_2_1_stdout_:",
+    "    .quad 0",
+    ".global _IO_2_1_stderr_",
+    ".type _IO_2_1_stderr_, @object",
+    ".size _IO_2_1_stderr_, 8",
+    "_IO_2_1_stderr_:",
+    "    .quad 0",
+);
+
+// Rust-side declarations of the assembly-defined symbols so we can write to them.
+// These are only present in release builds where global_asm defines them.
+#[cfg(not(debug_assertions))]
+unsafe extern "C" {
+    static mut _IO_2_1_stdin_: *mut c_void;
+    static mut _IO_2_1_stdout_: *mut c_void;
+    static mut _IO_2_1_stderr_: *mut c_void;
+}
+
+// Debug build stubs (won't be exported, just prevents compile errors)
+#[cfg(debug_assertions)]
+static mut _IO_2_1_stdin_: *mut c_void = std::ptr::null_mut();
+#[cfg(debug_assertions)]
+static mut _IO_2_1_stdout_: *mut c_void = std::ptr::null_mut();
+#[cfg(debug_assertions)]
+static mut _IO_2_1_stderr_: *mut c_void = std::ptr::null_mut();
+
 static HOST_STDIO_BOOTSTRAPPED: AtomicBool = AtomicBool::new(false);
 
 /// Internal stream id for stdin-backed scanf helpers.
@@ -730,6 +801,12 @@ pub(crate) fn init_host_stdio_streams() {
             stdin = stdin_ptr;
             stdout = stdout_ptr;
             stderr = stderr_ptr;
+            // Initialize the _IO_2_1_* aliases to point to the same NativeFile storage.
+            // This ensures binaries that resolve these symbols directly see the same
+            // streams as those using stdin/stdout/stderr.
+            _IO_2_1_stdin_ = stdin_ptr;
+            _IO_2_1_stdout_ = stdout_ptr;
+            _IO_2_1_stderr_ = stderr_ptr;
         }
     }
     HOST_STDIO_BOOTSTRAPPED.store(true, Ordering::Release);
@@ -5817,11 +5894,13 @@ pub unsafe extern "C" fn flockfile(stream: *mut c_void) {
     if stream.is_null() {
         return;
     }
-    let native_file = stream as *mut io_internal_abi::NativeFile;
-    if !unsafe { (*native_file).is_valid() } {
+    let id = canonical_stream_id(stream);
+    if registry_contains_stream(id) {
         return;
     }
-    unsafe { (*native_file).explicit_lock() };
+    if let Some(host_flockfile) = unsafe { host_flockfile_fn() } {
+        unsafe { host_flockfile(stream) };
+    }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -5829,15 +5908,14 @@ pub unsafe extern "C" fn ftrylockfile(stream: *mut c_void) -> c_int {
     if stream.is_null() {
         return -1;
     }
-    let native_file = stream as *mut io_internal_abi::NativeFile;
-    if !unsafe { (*native_file).is_valid() } {
-        return -1;
+    let id = canonical_stream_id(stream);
+    if registry_contains_stream(id) {
+        return 0;
     }
-    if unsafe { (*native_file).try_explicit_lock() } {
-        0
-    } else {
-        -1
+    if let Some(host_ftrylockfile) = unsafe { host_ftrylockfile_fn() } {
+        return unsafe { host_ftrylockfile(stream) };
     }
+    -1
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -5845,12 +5923,13 @@ pub unsafe extern "C" fn funlockfile(stream: *mut c_void) {
     if stream.is_null() {
         return;
     }
-    let native_file = stream as *mut io_internal_abi::NativeFile;
-    if !unsafe { (*native_file).is_valid() } {
+    let id = canonical_stream_id(stream);
+    if registry_contains_stream(id) {
         return;
     }
-    // SAFETY: Caller must have previously called flockfile or ftrylockfile successfully.
-    unsafe { (*native_file).explicit_unlock() };
+    if let Some(host_funlockfile) = unsafe { host_funlockfile_fn() } {
+        unsafe { host_funlockfile(stream) };
+    }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
