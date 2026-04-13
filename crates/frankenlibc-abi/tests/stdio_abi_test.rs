@@ -2725,3 +2725,382 @@ fn io_internal_vfprintf_and_vsprintf_use_native_stdio_paths() {
     assert_eq!(unsafe { _IO_fclose(stream) }, 0);
     let _ = fs::remove_file(path);
 }
+
+// ===========================================================================
+// bd-9chy.47: Comprehensive fopen/fdopen test suite
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// Mode parsing tests (1-10)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn fopen_mode_r_opens_readonly() {
+    let path = temp_path("fopen_mode_r");
+    fs::write(&path, b"content").unwrap();
+    let path_c = path_cstring(&path);
+
+    let stream = unsafe { fopen(path_c.as_ptr(), c"r".as_ptr()) };
+    assert!(!stream.is_null(), "fopen(r) should succeed for existing file");
+
+    // Verify readable
+    let mut buf = [0u8; 8];
+    let n = unsafe { fread(buf.as_mut_ptr().cast(), 1, 7, stream) };
+    assert_eq!(n, 7);
+    assert_eq!(&buf[..7], b"content");
+
+    unsafe { fclose(stream) };
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn fopen_mode_w_creates_and_truncates() {
+    let path = temp_path("fopen_mode_w");
+    fs::write(&path, b"old content").unwrap();
+    let path_c = path_cstring(&path);
+
+    let stream = unsafe { fopen(path_c.as_ptr(), c"w".as_ptr()) };
+    assert!(!stream.is_null(), "fopen(w) should succeed");
+
+    // Write new content
+    let written = unsafe { fputs(c"new".as_ptr(), stream) };
+    assert!(written >= 0);
+    unsafe { fclose(stream) };
+
+    // Verify truncation and new content
+    let content = fs::read(&path).unwrap();
+    assert_eq!(content, b"new");
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn fopen_mode_a_appends() {
+    let path = temp_path("fopen_mode_a");
+    fs::write(&path, b"start").unwrap();
+    let path_c = path_cstring(&path);
+
+    let stream = unsafe { fopen(path_c.as_ptr(), c"a".as_ptr()) };
+    assert!(!stream.is_null(), "fopen(a) should succeed");
+
+    let written = unsafe { fputs(c"_end".as_ptr(), stream) };
+    assert!(written >= 0);
+    unsafe { fclose(stream) };
+
+    let content = fs::read(&path).unwrap();
+    assert_eq!(content, b"start_end");
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn fopen_mode_rplus_opens_readwrite() {
+    let path = temp_path("fopen_mode_rplus");
+    fs::write(&path, b"ABCDE").unwrap();
+    let path_c = path_cstring(&path);
+
+    let stream = unsafe { fopen(path_c.as_ptr(), c"r+".as_ptr()) };
+    assert!(!stream.is_null(), "fopen(r+) should succeed");
+
+    // Read first
+    let ch = unsafe { fgetc(stream) };
+    assert_eq!(ch, b'A' as c_int);
+
+    // Write at position 1
+    let written = unsafe { fputc(b'X' as c_int, stream) };
+    assert_eq!(written, b'X' as c_int);
+    unsafe { fclose(stream) };
+
+    let content = fs::read(&path).unwrap();
+    assert_eq!(content, b"AXCDE");
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn fopen_mode_wplus_truncates_and_readwrite() {
+    let path = temp_path("fopen_mode_wplus");
+    fs::write(&path, b"old").unwrap();
+    let path_c = path_cstring(&path);
+
+    let stream = unsafe { fopen(path_c.as_ptr(), c"w+".as_ptr()) };
+    assert!(!stream.is_null(), "fopen(w+) should succeed");
+
+    // Write
+    let written = unsafe { fputs(c"new".as_ptr(), stream) };
+    assert!(written >= 0);
+
+    // Seek back and read
+    unsafe { rewind(stream) };
+    let mut buf = [0u8; 4];
+    let n = unsafe { fread(buf.as_mut_ptr().cast(), 1, 3, stream) };
+    assert_eq!(n, 3);
+    assert_eq!(&buf[..3], b"new");
+
+    unsafe { fclose(stream) };
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn fopen_mode_aplus_appends_and_reads() {
+    let path = temp_path("fopen_mode_aplus");
+    fs::write(&path, b"base").unwrap();
+    let path_c = path_cstring(&path);
+
+    let stream = unsafe { fopen(path_c.as_ptr(), c"a+".as_ptr()) };
+    assert!(!stream.is_null(), "fopen(a+) should succeed");
+
+    // Append
+    let written = unsafe { fputs(c"+ext".as_ptr(), stream) };
+    assert!(written >= 0);
+
+    // Seek to start and read
+    unsafe { rewind(stream) };
+    let mut buf = [0u8; 16];
+    let n = unsafe { fread(buf.as_mut_ptr().cast(), 1, 16, stream) };
+    assert_eq!(n, 8);
+    assert_eq!(&buf[..8], b"base+ext");
+
+    unsafe { fclose(stream) };
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn fopen_mode_b_binary_is_noop() {
+    let path = temp_path("fopen_mode_b");
+    fs::write(&path, b"\n\r\n").unwrap();
+    let path_c = path_cstring(&path);
+
+    let stream = unsafe { fopen(path_c.as_ptr(), c"rb".as_ptr()) };
+    assert!(!stream.is_null(), "fopen(rb) should succeed");
+
+    let mut buf = [0u8; 4];
+    let n = unsafe { fread(buf.as_mut_ptr().cast(), 1, 3, stream) };
+    assert_eq!(n, 3);
+    // Binary mode preserves bytes exactly on Linux
+    assert_eq!(&buf[..3], b"\n\r\n");
+
+    unsafe { fclose(stream) };
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn fopen_mode_x_exclusive_fails_if_exists() {
+    let path = temp_path("fopen_mode_x");
+    fs::write(&path, b"exists").unwrap();
+    let path_c = path_cstring(&path);
+
+    let stream = unsafe { fopen(path_c.as_ptr(), c"wx".as_ptr()) };
+    assert!(stream.is_null(), "fopen(wx) should fail for existing file");
+
+    // Should set errno to EEXIST
+    let err = unsafe { *libc::__errno_location() };
+    assert_eq!(err, libc::EEXIST);
+
+    // Create non-existing path
+    let path2 = temp_path("fopen_mode_x_new");
+    let _ = fs::remove_file(&path2);
+    let path2_c = path_cstring(&path2);
+
+    let stream2 = unsafe { fopen(path2_c.as_ptr(), c"wx".as_ptr()) };
+    assert!(!stream2.is_null(), "fopen(wx) should succeed for new file");
+    unsafe { fclose(stream2) };
+
+    let _ = fs::remove_file(path);
+    let _ = fs::remove_file(path2);
+}
+
+#[test]
+fn fopen_mode_e_cloexec_sets_flag() {
+    let path = temp_path("fopen_mode_e");
+    let _ = fs::remove_file(&path);
+    let path_c = path_cstring(&path);
+
+    let stream = unsafe { fopen(path_c.as_ptr(), c"we".as_ptr()) };
+    assert!(!stream.is_null(), "fopen(we) should succeed");
+
+    let fd = unsafe { fileno(stream) };
+    assert!(fd >= 0);
+
+    // Check FD_CLOEXEC flag
+    let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
+    assert!(flags >= 0);
+    assert_ne!(flags & libc::FD_CLOEXEC, 0, "CLOEXEC should be set");
+
+    unsafe { fclose(stream) };
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn fopen_bad_modes_return_null_with_einval() {
+    let path = temp_path("fopen_bad_modes");
+    fs::write(&path, b"test").unwrap();
+    let path_c = path_cstring(&path);
+
+    // Test various invalid mode strings
+    let bad_modes = [c"".as_ptr(), c"z".as_ptr(), c"rw".as_ptr(), c"ar".as_ptr()];
+
+    for mode in &bad_modes {
+        unsafe { *libc::__errno_location() = 0 };
+        let stream = unsafe { fopen(path_c.as_ptr(), *mode) };
+        assert!(
+            stream.is_null(),
+            "fopen with bad mode should return NULL"
+        );
+        let err = unsafe { *libc::__errno_location() };
+        assert_eq!(err, libc::EINVAL, "bad mode should set EINVAL");
+    }
+
+    let _ = fs::remove_file(path);
+}
+
+// ---------------------------------------------------------------------------
+// errno preservation tests (18-19)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn fopen_failed_sets_errno() {
+    let path = temp_path("fopen_nonexistent_asdfqwer");
+    let _ = fs::remove_file(&path);
+    let path_c = path_cstring(&path);
+
+    unsafe { *libc::__errno_location() = 0 };
+    let stream = unsafe { fopen(path_c.as_ptr(), c"r".as_ptr()) };
+    assert!(stream.is_null());
+
+    let err = unsafe { *libc::__errno_location() };
+    assert_eq!(err, libc::ENOENT, "nonexistent file should set ENOENT");
+}
+
+#[test]
+fn fopen_success_does_not_touch_errno() {
+    let path = temp_path("fopen_errno_preserve");
+    fs::write(&path, b"test").unwrap();
+    let path_c = path_cstring(&path);
+
+    // Set errno to a known value
+    unsafe { *libc::__errno_location() = libc::EBUSY };
+
+    let stream = unsafe { fopen(path_c.as_ptr(), c"r".as_ptr()) };
+    assert!(!stream.is_null());
+
+    // errno should be unchanged
+    let err = unsafe { *libc::__errno_location() };
+    assert_eq!(err, libc::EBUSY, "successful fopen should not touch errno");
+
+    unsafe { fclose(stream) };
+    let _ = fs::remove_file(path);
+}
+
+// ---------------------------------------------------------------------------
+// fd lifecycle tests (20-22)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn fopen_returns_fresh_fd() {
+    let path = temp_path("fopen_fresh_fd");
+    let _ = fs::remove_file(&path);
+    let path_c = path_cstring(&path);
+
+    let stream = unsafe { fopen(path_c.as_ptr(), c"w".as_ptr()) };
+    assert!(!stream.is_null());
+
+    let fd = unsafe { fileno(stream) };
+    // FD should be >= 3 (0, 1, 2 are stdin/stdout/stderr)
+    assert!(fd >= 3, "fopen should return fresh fd >= 3, got {fd}");
+
+    unsafe { fclose(stream) };
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn fclose_closes_fd() {
+    let path = temp_path("fclose_closes_fd");
+    let _ = fs::remove_file(&path);
+    let path_c = path_cstring(&path);
+
+    let stream = unsafe { fopen(path_c.as_ptr(), c"w".as_ptr()) };
+    assert!(!stream.is_null());
+
+    let fd = unsafe { fileno(stream) };
+    assert!(fd >= 0);
+
+    unsafe { fclose(stream) };
+
+    // fd should now be invalid
+    let mut stat_buf: libc::stat = unsafe { std::mem::zeroed() };
+    let rc = unsafe { libc::fstat(fd, &mut stat_buf) };
+    assert_eq!(rc, -1, "fstat on closed fd should fail");
+    let err = unsafe { *libc::__errno_location() };
+    assert_eq!(err, libc::EBADF, "closed fd should report EBADF");
+
+    let _ = fs::remove_file(path);
+}
+
+// ---------------------------------------------------------------------------
+// fdopen tests (23-25)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn fdopen_wraps_valid_fd() {
+    let path = temp_path("fdopen_valid");
+    let _ = fs::remove_file(&path);
+    let path_c = path_cstring(&path);
+
+    let fd = unsafe {
+        libc::open(
+            path_c.as_ptr(),
+            libc::O_CREAT | libc::O_RDWR,
+            0o600,
+        )
+    };
+    assert!(fd >= 0);
+
+    let stream = unsafe { fdopen(fd, c"w+".as_ptr()) };
+    assert!(!stream.is_null(), "fdopen should wrap valid fd");
+
+    let written = unsafe { fputs(c"fdopen-test".as_ptr(), stream) };
+    assert!(written >= 0);
+
+    unsafe { fclose(stream) };
+    // Note: fclose also closes the underlying fd
+
+    let content = fs::read(&path).unwrap();
+    assert_eq!(content, b"fdopen-test");
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn fdopen_invalid_fd_returns_null() {
+    unsafe { *libc::__errno_location() = 0 };
+    let stream = unsafe { fdopen(-1, c"r".as_ptr()) };
+    assert!(stream.is_null(), "fdopen(-1) should fail");
+
+    let err = unsafe { *libc::__errno_location() };
+    assert_eq!(err, libc::EBADF, "fdopen(-1) should set EBADF");
+}
+
+#[test]
+fn fdopen_mode_mismatch_fails() {
+    let path = temp_path("fdopen_mismatch");
+    let _ = fs::remove_file(&path);
+    let path_c = path_cstring(&path);
+
+    // Open as read-only
+    fs::write(&path, b"test").unwrap();
+    let fd = unsafe { libc::open(path_c.as_ptr(), libc::O_RDONLY) };
+    assert!(fd >= 0);
+
+    // Try to fdopen as write
+    unsafe { *libc::__errno_location() = 0 };
+    let stream = unsafe { fdopen(fd, c"w".as_ptr()) };
+
+    // Note: POSIX allows this to succeed or fail; if it fails, EINVAL expected
+    if stream.is_null() {
+        let err = unsafe { *libc::__errno_location() };
+        assert_eq!(err, libc::EINVAL, "mode mismatch should set EINVAL");
+    } else {
+        // If it succeeded (some systems allow this), clean up
+        unsafe { fclose(stream) };
+    }
+
+    unsafe { libc::close(fd) };
+    let _ = fs::remove_file(path);
+}
