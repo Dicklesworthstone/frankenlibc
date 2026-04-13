@@ -656,3 +656,146 @@ fn putsgent_null_returns_error() {
     let rc = unsafe { putsgent(ptr::null(), ptr::null_mut()) };
     assert_eq!(rc, -1, "putsgent with null args should fail");
 }
+
+// ---------------------------------------------------------------------------
+// Strict/Hardened Mode Tests (bd-x2sq)
+// ---------------------------------------------------------------------------
+
+/// Static mutex for mode env var manipulation (process-global).
+static MODE_ENV_LOCK: Mutex<()> = Mutex::new(());
+
+fn with_mode(mode: &str, f: impl FnOnce()) {
+    let _guard = MODE_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    // SAFETY: Serialized by MODE_ENV_LOCK.
+    unsafe { std::env::set_var("FRANKENLIBC_MODE", mode) };
+    f();
+    // SAFETY: Same as above.
+    unsafe { std::env::remove_var("FRANKENLIBC_MODE") };
+}
+
+fn with_mode_and_passwd(mode: &str, passwd_content: &[u8], f: impl FnOnce()) {
+    let _mode_guard = MODE_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _passwd_guard = PASSWD_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
+    let path = temp_passwd_path();
+    std::fs::write(&path, passwd_content).expect("write temp passwd");
+
+    // SAFETY: Serialized by both locks.
+    unsafe {
+        std::env::set_var("FRANKENLIBC_MODE", mode);
+        std::env::set_var("FRANKENLIBC_PASSWD_PATH", &path);
+    }
+    f();
+    // SAFETY: Same as above.
+    unsafe {
+        std::env::remove_var("FRANKENLIBC_MODE");
+        std::env::remove_var("FRANKENLIBC_PASSWD_PATH");
+    }
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn strict_mode_getpwnam_returns_null_for_invalid() {
+    with_mode_and_passwd("strict", FIXTURE, || {
+        let name = CString::new("nonexistent_user_strict_test").unwrap();
+        let pw = unsafe { getpwnam(name.as_ptr()) };
+        assert!(
+            pw.is_null(),
+            "strict mode: getpwnam for nonexistent user should return null"
+        );
+    });
+}
+
+#[test]
+fn strict_mode_getpwuid_returns_null_for_invalid_uid() {
+    with_mode_and_passwd("strict", FIXTURE, || {
+        let pw = unsafe { getpwuid(99999) };
+        assert!(
+            pw.is_null(),
+            "strict mode: getpwuid for nonexistent uid should return null"
+        );
+    });
+}
+
+#[test]
+fn hardened_mode_getpwnam_returns_null_for_invalid() {
+    with_mode_and_passwd("hardened", FIXTURE, || {
+        let name = CString::new("nonexistent_user_hardened_test").unwrap();
+        let pw = unsafe { getpwnam(name.as_ptr()) };
+        // In hardened mode, invalid lookups still return null (no healing for missing entries).
+        assert!(
+            pw.is_null(),
+            "hardened mode: getpwnam for nonexistent user should return null"
+        );
+    });
+}
+
+#[test]
+fn hardened_mode_getpwuid_returns_null_for_invalid_uid() {
+    with_mode_and_passwd("hardened", FIXTURE, || {
+        let pw = unsafe { getpwuid(99999) };
+        // In hardened mode, invalid lookups still return null.
+        assert!(
+            pw.is_null(),
+            "hardened mode: getpwuid for nonexistent uid should return null"
+        );
+    });
+}
+
+#[test]
+fn strict_mode_getpwnam_null_input_returns_null() {
+    with_mode("strict", || {
+        let pw = unsafe { getpwnam(ptr::null()) };
+        assert!(
+            pw.is_null(),
+            "strict mode: getpwnam(null) should return null"
+        );
+    });
+}
+
+#[test]
+fn hardened_mode_getpwnam_null_input_returns_null() {
+    with_mode("hardened", || {
+        let pw = unsafe { getpwnam(ptr::null()) };
+        assert!(
+            pw.is_null(),
+            "hardened mode: getpwnam(null) should return null"
+        );
+    });
+}
+
+#[test]
+fn strict_mode_pwent_iteration_works() {
+    with_mode_and_passwd("strict", FIXTURE, || {
+        unsafe { setpwent() };
+        let mut count = 0;
+        loop {
+            let pw = unsafe { getpwent() };
+            if pw.is_null() {
+                break;
+            }
+            count += 1;
+            assert!(count <= 10, "strict mode: pwent iteration should not infinite loop");
+        }
+        unsafe { endpwent() };
+        assert_eq!(count, 3, "strict mode: fixture has 3 entries");
+    });
+}
+
+#[test]
+fn hardened_mode_pwent_iteration_works() {
+    with_mode_and_passwd("hardened", FIXTURE, || {
+        unsafe { setpwent() };
+        let mut count = 0;
+        loop {
+            let pw = unsafe { getpwent() };
+            if pw.is_null() {
+                break;
+            }
+            count += 1;
+            assert!(count <= 10, "hardened mode: pwent iteration should not infinite loop");
+        }
+        unsafe { endpwent() };
+        assert_eq!(count, 3, "hardened mode: fixture has 3 entries");
+    });
+}
