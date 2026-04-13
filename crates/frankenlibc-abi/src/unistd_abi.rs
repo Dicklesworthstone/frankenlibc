@@ -7437,12 +7437,34 @@ pub unsafe extern "C" fn timer_settime(
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn timer_gettime(timerid: *mut c_void, curr_value: *mut c_void) -> c_int {
-    unsafe {
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Time,
+        curr_value as usize,
+        0,
+        true,
+        curr_value.is_null(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
+        runtime_policy::observe(ApiFamily::Time, decision.profile, 5, true);
+        return -1;
+    }
+
+    if curr_value.is_null() {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        runtime_policy::observe(ApiFamily::Time, decision.profile, 5, true);
+        return -1;
+    }
+
+    let rc = unsafe {
         syscall_ret_int(
             libc::syscall(libc::SYS_timer_gettime, timerid, curr_value),
             errno::EINVAL,
         )
-    }
+    };
+    runtime_policy::observe(ApiFamily::Time, decision.profile, 5, rc < 0);
+    rc
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]

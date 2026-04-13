@@ -331,12 +331,22 @@ pub unsafe extern "C" fn mlockall(flags: c_int) -> c_int {
 /// POSIX `munlockall` — unlock all of the calling process's virtual memory.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn munlockall() -> c_int {
+    let (_, decision) = runtime_policy::decide(ApiFamily::VirtualMemory, 0, 0, false, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::VirtualMemory, decision.profile, 15, true);
+        unsafe { set_abi_errno(libc::EPERM) };
+        return -1;
+    }
+
     let rc = unsafe { libc::syscall(libc::SYS_munlockall as c_long) as c_int };
     if rc < 0 {
         let e = std::io::Error::last_os_error()
             .raw_os_error()
             .unwrap_or(errno::ENOMEM);
         unsafe { set_abi_errno(e) };
+        runtime_policy::observe(ApiFamily::VirtualMemory, decision.profile, 15, true);
+    } else {
+        runtime_policy::observe(ApiFamily::VirtualMemory, decision.profile, 15, false);
     }
     rc
 }

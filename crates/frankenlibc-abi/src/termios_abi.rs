@@ -657,10 +657,26 @@ pub unsafe extern "C" fn cfgetispeed(termios_p: *const libc::termios) -> u32 {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn cfgetospeed(termios_p: *const libc::termios) -> u32 {
-    if termios_p.is_null() {
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Termios,
+        termios_p as usize,
+        std::mem::size_of::<libc::termios>(),
+        false,
+        termios_p.is_null(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Termios, decision.profile, 5, true);
         return 0;
     }
-    unsafe { (*termios_p).c_ospeed }
+
+    if termios_p.is_null() {
+        runtime_policy::observe(ApiFamily::Termios, decision.profile, 5, true);
+        return 0;
+    }
+    let result = unsafe { (*termios_p).c_ospeed };
+    runtime_policy::observe(ApiFamily::Termios, decision.profile, 5, false);
+    result
 }
 
 // ---------------------------------------------------------------------------
@@ -698,12 +714,28 @@ pub unsafe extern "C" fn cfsetispeed(termios_p: *mut libc::termios, speed: u32) 
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn cfsetospeed(termios_p: *mut libc::termios, speed: u32) -> c_int {
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Termios,
+        termios_p as usize,
+        std::mem::size_of::<libc::termios>(),
+        true,
+        termios_p.is_null(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
+        runtime_policy::observe(ApiFamily::Termios, decision.profile, 5, true);
+        return -1;
+    }
+
     if termios_p.is_null() {
         unsafe { set_abi_errno(errno::EINVAL) };
+        runtime_policy::observe(ApiFamily::Termios, decision.profile, 5, true);
         return -1;
     }
     if !termios_core::valid_baud_rate(speed) {
         unsafe { set_abi_errno(errno::EINVAL) };
+        runtime_policy::observe(ApiFamily::Termios, decision.profile, 5, true);
         return -1;
     }
     let before = unsafe { std::ptr::read(termios_p) };
@@ -720,6 +752,7 @@ pub unsafe extern "C" fn cfsetospeed(termios_p: *mut libc::termios, speed: u32) 
         &after,
         termios_core::TCSANOW,
     );
+    runtime_policy::observe(ApiFamily::Termios, decision.profile, 5, false);
     0
 }
 

@@ -531,8 +531,23 @@ pub unsafe extern "C" fn timerfd_settime(
 /// Linux `timerfd_gettime` — get current setting of a timer file descriptor.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn timerfd_gettime(fd: c_int, curr_value: *mut libc::itimerspec) -> c_int {
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Time,
+        curr_value as usize,
+        std::mem::size_of::<libc::itimerspec>(),
+        true,
+        curr_value.is_null(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
+        runtime_policy::observe(ApiFamily::Time, decision.profile, 5, true);
+        return -1;
+    }
+
     if curr_value.is_null() {
         unsafe { set_abi_errno(errno::EFAULT) };
+        runtime_policy::observe(ApiFamily::Time, decision.profile, 5, true);
         return -1;
     }
     let rc = unsafe { libc::syscall(libc::SYS_timerfd_gettime as c_long, fd, curr_value) as c_int };
@@ -541,6 +556,9 @@ pub unsafe extern "C" fn timerfd_gettime(fd: c_int, curr_value: *mut libc::itime
             .raw_os_error()
             .unwrap_or(errno::EBADF);
         unsafe { set_abi_errno(e) };
+        runtime_policy::observe(ApiFamily::Time, decision.profile, 5, true);
+    } else {
+        runtime_policy::observe(ApiFamily::Time, decision.profile, 5, false);
     }
     rc
 }

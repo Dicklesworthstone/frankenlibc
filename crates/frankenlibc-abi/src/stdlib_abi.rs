@@ -1538,16 +1538,35 @@ pub unsafe extern "C" fn putenv(string: *mut c_char) -> c_int {
         return -1;
     }
 
-    let (_, decision) = runtime_policy::decide(ApiFamily::Stdlib, 0, 0, false, false, 0);
+    let (mode, decision) = runtime_policy::decide(
+        ApiFamily::Stdlib,
+        string as usize,
+        0,
+        false,
+        known_remaining(string as usize).is_none(),
+        0,
+    );
     if matches!(decision.action, MembraneAction::Deny) {
         unsafe { set_abi_errno(libc::EPERM) };
         runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 10, true);
         return -1;
     }
 
+    let repair = repair_enabled(mode.heals_enabled(), decision.action);
+    let bound = if repair {
+        known_remaining(string as usize)
+    } else {
+        None
+    };
+
     // Find '=' to split name and value.
-    let s = unsafe { std::ffi::CStr::from_ptr(string) };
-    let bytes = s.to_bytes();
+    let (len, terminated) = unsafe { scan_c_string(string, bound) };
+    if !terminated {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 10, true);
+        return -1;
+    }
+    let bytes = unsafe { std::slice::from_raw_parts(string as *const u8, len) };
     if bytes.iter().position(|&b| b == b'=').is_none() {
         // No '=': unset the variable (glibc behavior).
         return unsafe { super::stdlib_abi::unsetenv(string) };

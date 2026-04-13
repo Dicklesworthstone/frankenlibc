@@ -1696,14 +1696,8 @@ pub unsafe extern "C" fn _IO_do_write(fp: *mut c_void, buf: *const c_char, n: us
         return 0;
     }
 
-    let (_, decision) = runtime_policy::decide(
-        ApiFamily::Stdio,
-        buf as usize,
-        n,
-        false,
-        buf.is_null(),
-        0,
-    );
+    let (_, decision) =
+        runtime_policy::decide(ApiFamily::Stdio, buf as usize, n, false, buf.is_null(), 0);
     if matches!(decision.action, MembraneAction::Deny) {
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
         return -1;
@@ -1913,14 +1907,8 @@ pub unsafe extern "C" fn _IO_file_fopen(
         return std::ptr::null_mut();
     }
 
-    let (_, decision) = runtime_policy::decide(
-        ApiFamily::IoFd,
-        filename as usize,
-        0,
-        false,
-        false,
-        0,
-    );
+    let (_, decision) =
+        runtime_policy::decide(ApiFamily::IoFd, filename as usize, 0, false, false, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, true);
         return std::ptr::null_mut();
@@ -1957,27 +1945,15 @@ pub unsafe extern "C" fn _IO_file_open(
         return std::ptr::null_mut();
     }
 
-    let (_, decision) = runtime_policy::decide(
-        ApiFamily::IoFd,
-        filename as usize,
-        0,
-        false,
-        false,
-        0,
-    );
+    let (_, decision) =
+        runtime_policy::decide(ApiFamily::IoFd, filename as usize, 0, false, false, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, true);
         return std::ptr::null_mut();
     }
 
     let fd = unsafe {
-        libc::syscall(
-            libc::SYS_openat,
-            libc::AT_FDCWD,
-            filename,
-            posix_mode,
-            prot,
-        ) as c_int
+        libc::syscall(libc::SYS_openat, libc::AT_FDCWD, filename, posix_mode, prot) as c_int
     };
     if fd < 0 {
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, true);
