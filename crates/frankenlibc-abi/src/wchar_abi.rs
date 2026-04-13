@@ -1862,18 +1862,23 @@ pub unsafe extern "C" fn realpath(
         return std::ptr::null_mut();
     }
 
-    // SAFETY: `path` is non-null and must point to a NUL-terminated C string by ABI contract.
+    let (_path_len, terminated) = unsafe { scan_c_string(path, known_remaining(path as usize)) };
+    if !terminated {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, true);
+        return std::ptr::null_mut();
+    }
+
     // Resolve path using the raw readlink(/proc/self/fd/N) approach via open+readlink.
     // Cannot use std::fs::canonicalize because it calls libc realpath — which is
     // our own interposed symbol, causing infinite recursion.
-    let path_cstr = unsafe { std::ffi::CStr::from_ptr(path) };
 
     // Open the path with O_PATH (no actual I/O, just get an fd for the kernel path).
     let fd = unsafe {
         libc::syscall(
             libc::SYS_openat,
             libc::AT_FDCWD,
-            path_cstr.as_ptr(),
+            path,
             libc::O_PATH | libc::O_CLOEXEC,
             0,
         ) as i32

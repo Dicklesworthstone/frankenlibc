@@ -14,6 +14,7 @@ use std::ptr;
 use crate::errno_abi::set_abi_errno;
 use crate::malloc_abi::known_remaining;
 use crate::runtime_policy;
+use frankenlibc_core::errno;
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 use libc::{intmax_t, uintmax_t};
 
@@ -1609,14 +1610,42 @@ unsafe fn mkostemps_inner(template: *mut c_char, suffixlen: c_int, flags: c_int)
         return (-1, true);
     }
 
-    // SAFETY: `template` must be a writable, NUL-terminated byte string by ABI contract.
-    let template_bytes = unsafe { std::ffi::CStr::from_ptr(template) }.to_bytes();
-    let total_len = template_bytes.len();
-    let suffix_len = suffixlen as usize;
-    if total_len < MKTEMP_SUFFIX_LEN || suffix_len > total_len.saturating_sub(MKTEMP_SUFFIX_LEN) {
-        unsafe { set_abi_errno(libc::EINVAL) };
+    let (mode, decision) = runtime_policy::decide(
+        ApiFamily::Stdlib,
+        template as usize,
+        0,
+        true,
+        known_remaining(template as usize).is_none(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EACCES) };
+        runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 5, true);
         return (-1, true);
     }
+
+    let repair = repair_enabled(mode.heals_enabled(), decision.action);
+    let bound = if repair {
+        known_remaining(template as usize)
+    } else {
+        None
+    };
+
+    // SAFETY: `template` must be a writable, NUL-terminated byte string by ABI contract.
+    let (total_len, terminated) = unsafe { scan_c_string(template, bound) };
+    if !terminated {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 5, true);
+        return (-1, true);
+    }
+    let suffix_len = suffixlen as usize;
+    if total_len < MKTEMP_SUFFIX_LEN || suffix_len > total_len.saturating_sub(MKTEMP_SUFFIX_LEN) {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 5, true);
+        return (-1, true);
+    }
+
+    let template_bytes = unsafe { std::slice::from_raw_parts(template as *const u8, total_len) };
 
     let x_start = total_len - suffix_len - MKTEMP_SUFFIX_LEN;
     if !template_bytes[x_start..x_start + MKTEMP_SUFFIX_LEN]

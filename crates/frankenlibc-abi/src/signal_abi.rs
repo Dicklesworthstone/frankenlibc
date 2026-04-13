@@ -1416,8 +1416,23 @@ pub unsafe extern "C" fn sigorset(
     left: *const libc::sigset_t,
     right: *const libc::sigset_t,
 ) -> c_int {
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Signal,
+        dest as usize,
+        std::mem::size_of::<libc::sigset_t>(),
+        true,
+        dest.is_null() || left.is_null() || right.is_null(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
+        runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, true);
+        return -1;
+    }
+
     if dest.is_null() || left.is_null() || right.is_null() {
         unsafe { set_abi_errno(errno::EINVAL) };
+        runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, true);
         return -1;
     }
     // SAFETY: sigset_t on Linux is an array of unsigned longs.
@@ -1430,6 +1445,7 @@ pub unsafe extern "C" fn sigorset(
             *d.add(i) = *l.add(i) | *r.add(i);
         }
     }
+    runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, false);
     0
 }
 
