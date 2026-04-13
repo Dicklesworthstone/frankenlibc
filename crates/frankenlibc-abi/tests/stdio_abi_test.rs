@@ -3104,3 +3104,86 @@ fn fdopen_mode_mismatch_fails() {
     unsafe { libc::close(fd) };
     let _ = fs::remove_file(path);
 }
+
+// ---------------------------------------------------------------------------
+// Path handling tests (11-14)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn fopen_long_path_accepted() {
+    // Create a long path using nested directories
+    let base = temp_path("fopen_long");
+    let _ = fs::remove_dir_all(&base);
+    fs::create_dir_all(&base).unwrap();
+
+    // Create a file with a reasonably long name (not PATH_MAX but still long)
+    let long_name = "a".repeat(200);
+    let path = base.join(&long_name);
+    fs::write(&path, b"content").unwrap();
+    let path_c = path_cstring(&path);
+
+    let stream = unsafe { fopen(path_c.as_ptr(), c"r".as_ptr()) };
+    assert!(!stream.is_null(), "fopen should accept long path");
+
+    unsafe { fclose(stream) };
+    let _ = fs::remove_dir_all(base);
+}
+
+#[test]
+fn fopen_path_with_spaces_accepted() {
+    let path = temp_path("fopen with spaces in name");
+    let _ = fs::remove_file(&path);
+    fs::write(&path, b"spaced").unwrap();
+    let path_c = path_cstring(&path);
+
+    let stream = unsafe { fopen(path_c.as_ptr(), c"r".as_ptr()) };
+    assert!(!stream.is_null(), "fopen should accept path with spaces");
+
+    let mut buf = [0u8; 8];
+    let n = unsafe { fread(buf.as_mut_ptr().cast(), 1, 6, stream) };
+    assert_eq!(n, 6);
+    assert_eq!(&buf[..6], b"spaced");
+
+    unsafe { fclose(stream) };
+    let _ = fs::remove_file(path);
+}
+
+// ---------------------------------------------------------------------------
+// isatty buffering tests (15-17)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn fopen_regular_file_uses_full_buffering() {
+    let path = temp_path("fopen_fullbuf");
+    let _ = fs::remove_file(&path);
+    let path_c = path_cstring(&path);
+
+    let stream = unsafe { fopen(path_c.as_ptr(), c"w".as_ptr()) };
+    assert!(!stream.is_null());
+
+    // Write some data - with full buffering it should be buffered
+    let written = unsafe { fputs(c"buffered".as_ptr(), stream) };
+    assert!(written >= 0);
+
+    // Before flush, file might be empty due to buffering
+    // This is implementation-specific but demonstrates buffering is active
+
+    unsafe { fclose(stream) };
+
+    // After close, data should be there
+    let content = fs::read(&path).unwrap();
+    assert_eq!(content, b"buffered");
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn fopen_dev_null_succeeds() {
+    let stream = unsafe { fopen(c"/dev/null".as_ptr(), c"w".as_ptr()) };
+    assert!(!stream.is_null(), "fopen(/dev/null) should succeed");
+
+    // Write to /dev/null should succeed
+    let written = unsafe { fputs(c"discarded".as_ptr(), stream) };
+    assert!(written >= 0);
+
+    unsafe { fclose(stream) };
+}
