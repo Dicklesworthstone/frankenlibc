@@ -3815,25 +3815,35 @@ use frankenlibc_core::unistd::{basename_range, dirname_range};
 /// Static buffer for basename return value.
 static BASENAME_BUF: std::sync::Mutex<[u8; 4097]> = std::sync::Mutex::new([0u8; 4097]);
 
+/// Static "." fallback for basename (must be mutable storage per POSIX).
+static BASENAME_DOT: std::sync::Mutex<[u8; 2]> = std::sync::Mutex::new([b'.', 0]);
+
 /// POSIX `basename` — extract filename component from a path.
 ///
 /// Returns a pointer to a static buffer. Not thread-safe per POSIX spec,
 /// but we use a mutex internally for Rust safety.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn basename(path: *mut std::ffi::c_char) -> *mut std::ffi::c_char {
-    let dot = b".\0";
+    // Return mutable "." buffer for null/empty paths
+    let return_dot = || {
+        BASENAME_DOT
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_mut_ptr() as *mut std::ffi::c_char
+    };
+
     if path.is_null() {
-        return dot.as_ptr() as *mut std::ffi::c_char;
+        return return_dot();
     }
     let (len, _terminated) = unsafe { scan_c_string(path as *const std::ffi::c_char, None) };
     if len == 0 {
-        return dot.as_ptr() as *mut std::ffi::c_char;
+        return return_dot();
     }
     let slice = unsafe { std::slice::from_raw_parts(path as *const u8, len) };
     let (s, e) = basename_range(slice);
     let result_len = e - s;
     if result_len == 0 {
-        return dot.as_ptr() as *mut std::ffi::c_char;
+        return return_dot();
     }
     let mut buf = BASENAME_BUF.lock().unwrap_or_else(|e| e.into_inner());
     buf[..result_len].copy_from_slice(&slice[s..e]);
@@ -3844,25 +3854,35 @@ pub unsafe extern "C" fn basename(path: *mut std::ffi::c_char) -> *mut std::ffi:
 /// Static buffer for dirname return value.
 static DIRNAME_BUF: std::sync::Mutex<[u8; 4097]> = std::sync::Mutex::new([0u8; 4097]);
 
+/// Static "." fallback for dirname (must be mutable storage per POSIX).
+static DIRNAME_DOT: std::sync::Mutex<[u8; 2]> = std::sync::Mutex::new([b'.', 0]);
+
 /// POSIX `dirname` — extract directory component from a path.
 ///
 /// Returns a pointer to a static buffer. Not thread-safe per POSIX spec,
 /// but we use a mutex internally for Rust safety.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn dirname(path: *mut std::ffi::c_char) -> *mut std::ffi::c_char {
-    let dot = b".\0";
+    // Return mutable "." buffer for null/empty paths
+    let return_dot = || {
+        DIRNAME_DOT
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_mut_ptr() as *mut std::ffi::c_char
+    };
+
     if path.is_null() {
-        return dot.as_ptr() as *mut std::ffi::c_char;
+        return return_dot();
     }
     let (len, _terminated) = unsafe { scan_c_string(path as *const std::ffi::c_char, None) };
     if len == 0 {
-        return dot.as_ptr() as *mut std::ffi::c_char;
+        return return_dot();
     }
     let slice = unsafe { std::slice::from_raw_parts(path as *const u8, len) };
     let (s, e) = dirname_range(slice);
     let result_len = e - s;
     if result_len == 0 {
-        return dot.as_ptr() as *mut std::ffi::c_char;
+        return return_dot();
     }
     let mut buf = DIRNAME_BUF.lock().unwrap_or_else(|e| e.into_inner());
     buf[..result_len].copy_from_slice(&slice[s..e]);
