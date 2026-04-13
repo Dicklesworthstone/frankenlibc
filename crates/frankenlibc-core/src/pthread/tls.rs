@@ -62,17 +62,11 @@ pub struct PthreadKey {
 }
 
 /// A thread-local entry containing the generation sequence and the value.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[repr(C)]
 pub struct TlsEntry {
     pub seq: u32,
     pub value: u64,
-}
-
-impl Default for TlsEntry {
-    fn default() -> Self {
-        Self { seq: 0, value: 0 }
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -284,11 +278,19 @@ fn write_tls_value(tid: i32, key_id: usize, expected_seq: u32, value: u64) {
     if !ptr.is_null() {
         // SAFETY: ptr points to a valid `[TlsEntry; PTHREAD_KEYS_MAX]` owned by this
         // thread. Only the owning thread writes to its own values.
-        unsafe { *ptr.add(key_id) = TlsEntry { seq: expected_seq, value } };
+        unsafe {
+            *ptr.add(key_id) = TlsEntry {
+                seq: expected_seq,
+                value,
+            }
+        };
     } else {
         // Unregistered thread: use thread-local fallback storage.
         FALLBACK_TLS_VALUES.with(|values| {
-            values[key_id].set(TlsEntry { seq: expected_seq, value });
+            values[key_id].set(TlsEntry {
+                seq: expected_seq,
+                value,
+            });
         });
     }
 }
@@ -649,10 +651,13 @@ mod tests {
     fn key_delete_slot_reused() {
         let _g = lock_and_reset();
         let k1 = create_key(None);
-        let id1 = k1.id;
+        let slot1 = k1.id & 1023; // Extract slot index from lower 10 bits
         assert_eq!(pthread_key_delete(k1), 0);
         let k2 = create_key(None);
-        assert_eq!(k2.id, id1, "deleted slot should be reused");
+        let slot2 = k2.id & 1023;
+        assert_eq!(slot2, slot1, "deleted slot should be reused");
+        // Full ID differs because generation counter increments on create and delete
+        assert_ne!(k2.id, k1.id, "generation should differ after delete+create");
     }
 
     #[test]
@@ -856,12 +861,13 @@ mod tests {
         }
 
         let k1 = create_key(Some(dtor1));
-        let id = k1.id;
+        let slot1 = k1.id & 1023; // Extract slot index
         assert_eq!(pthread_key_delete(k1), 0);
 
         // Create with a different destructor — should reuse the same slot.
         let k2 = create_key(Some(dtor2));
-        assert_eq!(k2.id, id, "slot should be reused");
+        let slot2 = k2.id & 1023;
+        assert_eq!(slot2, slot1, "slot should be reused");
 
         // Set a value and tear down to verify the new destructor fires.
         let tid = current_tid();
@@ -886,13 +892,13 @@ mod tests {
     fn generation_counter_increments_on_create_and_delete() {
         let _g = lock_and_reset();
         let k = create_key(None);
-        let id = k.id as usize;
+        let slot = (k.id & 1023) as usize; // Extract slot index from lower 10 bits
 
         // Read initial seq via RCU.
         let seq_after_create = unsafe {
             KEY_REGISTRY_RCU
                 .read()
-                .map(|r| r.slots[id].seq)
+                .map(|r| r.slots[slot].seq)
                 .unwrap_or(0)
         };
         assert!(seq_after_create >= 1, "seq should be >= 1 after create");
@@ -901,7 +907,7 @@ mod tests {
         let seq_after_delete = unsafe {
             KEY_REGISTRY_RCU
                 .read()
-                .map(|r| r.slots[id].seq)
+                .map(|r| r.slots[slot].seq)
                 .unwrap_or(0)
         };
         assert_eq!(
@@ -1230,7 +1236,10 @@ mod tests {
 
         let tid = current_tid();
         let mut block = TestTlsBlock::new();
-        block.values[(key.id & 1023) as usize] = TlsEntry { seq: key.id >> 10, value: 777 };
+        block.values[(key.id & 1023) as usize] = TlsEntry {
+            seq: key.id >> 10,
+            value: 777,
+        };
         table_register(tid, block.as_mut_ptr());
 
         teardown_thread_tls(tid);
