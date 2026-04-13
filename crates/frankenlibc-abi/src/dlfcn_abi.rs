@@ -543,17 +543,33 @@ pub unsafe extern "C" fn dlvsym(
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn dlclose(handle: *mut c_void) -> c_int {
     if runtime_policy::bootstrap_passthrough_active() {
-        if handle.is_null() || !is_main_program_handle(handle) {
+        if handle.is_null() {
             set_dlerror(dlfcn_core::ERR_INVALID_HANDLE);
             return -1;
         }
-        let rc = close_main_program_handle();
-        if rc == 0 {
-            clear_dlerror();
-        } else {
-            set_dlerror(dlfcn_core::ERR_INVALID_HANDLE);
+        if is_main_program_handle(handle) {
+            let rc = close_main_program_handle();
+            if rc == 0 {
+                clear_dlerror();
+            } else {
+                set_dlerror(dlfcn_core::ERR_INVALID_HANDLE);
+            }
+            return rc;
         }
-        return rc;
+        // Non-main-program handle during bootstrap: delegate to host dlclose.
+        type DlcloseFn = unsafe extern "C" fn(*mut c_void) -> c_int;
+        if let Some(addr) = crate::host_resolve::resolve_host_symbol_raw("dlclose") {
+            let host_dlclose: DlcloseFn = unsafe { core::mem::transmute(addr) }; // ubs:ignore — host symbol ABI resolved, pointer cast is deliberate
+            let rc = unsafe { host_dlclose(handle) };
+            if rc == 0 {
+                clear_dlerror();
+            } else {
+                set_dlerror(dlfcn_core::ERR_INVALID_HANDLE);
+            }
+            return rc;
+        }
+        set_dlerror(dlfcn_core::ERR_INVALID_HANDLE);
+        return -1;
     }
 
     let (_, decision) =
