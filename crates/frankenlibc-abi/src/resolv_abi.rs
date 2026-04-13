@@ -1256,12 +1256,26 @@ pub(crate) unsafe fn gethostbyaddr_r_impl(
     result: *mut *mut c_void,
     h_errnop: *mut c_int,
 ) -> c_int {
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Resolver,
+        addr as usize,
+        len as usize,
+        true,
+        addr.is_null(),
+        0,
+    );
     if !result.is_null() {
         unsafe { *result = ptr::null_mut() };
+    }
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_h_errnop(h_errnop, NO_RECOVERY_ERRNO) };
+        runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
+        return libc::EACCES;
     }
 
     if addr.is_null() || af != libc::AF_INET || (len as usize) < 4 {
         unsafe { set_h_errnop(h_errnop, NO_RECOVERY_ERRNO) };
+        runtime_policy::observe(ApiFamily::Resolver, decision.profile, 5, true);
         return libc::EINVAL;
     }
 
@@ -1273,6 +1287,7 @@ pub(crate) unsafe fn gethostbyaddr_r_impl(
         Ok(c) => c,
         Err(_) => {
             unsafe { set_h_errnop(h_errnop, HOST_NOT_FOUND_ERRNO) };
+            runtime_policy::observe(ApiFamily::Resolver, decision.profile, 10, true);
             return libc::ENOENT;
         }
     };
@@ -1280,16 +1295,19 @@ pub(crate) unsafe fn gethostbyaddr_r_impl(
     let hostnames = frankenlibc_core::resolv::reverse_lookup_hosts(&content, ip_str.as_bytes());
     if hostnames.is_empty() {
         unsafe { set_h_errnop(h_errnop, HOST_NOT_FOUND_ERRNO) };
+        runtime_policy::observe(ApiFamily::Resolver, decision.profile, 10, true);
         return libc::ENOENT;
     }
 
     match unsafe { write_reentrant_hostent(&hostnames[0], ip, result_buf, buf, buflen, result) } {
         Ok(()) => {
             unsafe { set_h_errnop(h_errnop, 0) };
+            runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, false);
             0
         }
         Err(code) => {
             unsafe { set_h_errnop(h_errnop, NO_RECOVERY_ERRNO) };
+            runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
             code
         }
     }
@@ -1359,7 +1377,7 @@ pub unsafe extern "C" fn gethostbyaddr(
 /// POSIX `getservbyname` — look up a service by name in /etc/services.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getservbyname(name: *const c_char, proto: *const c_char) -> *mut c_void {
-    let (_, decision) = runtime_policy::decide(
+    let (safety_mode, decision) = runtime_policy::decide(
         ApiFamily::Resolver,
         name as usize,
         0,
@@ -1377,11 +1395,27 @@ pub unsafe extern "C" fn getservbyname(name: *const c_char, proto: *const c_char
         return ptr::null_mut();
     }
 
-    let name_cstr = unsafe { CStr::from_ptr(name) };
+    let repair = repair_enabled(safety_mode.heals_enabled(), decision.action);
+    let (name_len, name_terminated) = unsafe {
+        crate::util::scan_c_string(name, if repair { known_remaining(name as usize) } else { None })
+    };
+    if !name_terminated {
+        runtime_policy::observe(ApiFamily::Resolver, decision.profile, 5, true);
+        return ptr::null_mut();
+    }
+    let name_bytes = unsafe { std::slice::from_raw_parts(name as *const u8, name_len) };
+
     let proto_filter = if proto.is_null() {
         None
     } else {
-        Some(unsafe { CStr::from_ptr(proto) }.to_bytes())
+        let (proto_len, proto_terminated) = unsafe {
+            crate::util::scan_c_string(proto, if repair { known_remaining(proto as usize) } else { None })
+        };
+        if !proto_terminated {
+            runtime_policy::observe(ApiFamily::Resolver, decision.profile, 5, true);
+            return ptr::null_mut();
+        }
+        Some(unsafe { std::slice::from_raw_parts(proto as *const u8, proto_len) })
     };
 
     let content = match read_services_backend() {
@@ -1392,7 +1426,7 @@ pub unsafe extern "C" fn getservbyname(name: *const c_char, proto: *const c_char
     // Use core parser to find the service
     let port = match frankenlibc_core::resolv::lookup_service(
         &content,
-        name_cstr.to_bytes(),
+        name_bytes,
         proto_filter,
     ) {
         Some(p) => p,
@@ -1408,13 +1442,12 @@ pub unsafe extern "C" fn getservbyname(name: *const c_char, proto: *const c_char
             .split(|&b| b == b'\n')
             .find_map(|line| {
                 let entry = frankenlibc_core::resolv::parse_services_line(line)?;
-                let requested_name = name_cstr.to_bytes();
                 if entry.port == port
-                    && (entry.name.eq_ignore_ascii_case(requested_name)
+                    && (entry.name.eq_ignore_ascii_case(name_bytes)
                         || entry
                             .aliases
                             .iter()
-                            .any(|alias| alias.eq_ignore_ascii_case(requested_name)))
+                            .any(|alias| alias.eq_ignore_ascii_case(name_bytes)))
                 {
                     Some(entry.protocol)
                 } else {
@@ -1426,7 +1459,7 @@ pub unsafe extern "C" fn getservbyname(name: *const c_char, proto: *const c_char
 
     SERVENT_TLS.with(|cell| {
         let mut storage = cell.borrow_mut();
-        copy_to_cchar_buf(&mut storage.name, name_cstr.to_bytes());
+        copy_to_cchar_buf(&mut storage.name, name_bytes);
         copy_to_cchar_buf(&mut storage.proto, &proto_bytes);
         storage.aliases[0] = ptr::null_mut();
         storage.servent = libc::servent {
@@ -1503,7 +1536,7 @@ pub unsafe extern "C" fn getservbyport(port: c_int, proto: *const c_char) -> *mu
 /// POSIX `getprotobyname` — look up a protocol by name in /etc/protocols.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getprotobyname(name: *const c_char) -> *mut c_void {
-    let (_, decision) = runtime_policy::decide(
+    let (safety_mode, decision) = runtime_policy::decide(
         ApiFamily::Resolver,
         name as usize,
         0,
@@ -1521,8 +1554,15 @@ pub unsafe extern "C" fn getprotobyname(name: *const c_char) -> *mut c_void {
         return ptr::null_mut();
     }
 
-    let name_cstr = unsafe { CStr::from_ptr(name) };
-    let name_bytes = name_cstr.to_bytes();
+    let repair = repair_enabled(safety_mode.heals_enabled(), decision.action);
+    let (name_len, name_terminated) = unsafe {
+        crate::util::scan_c_string(name, if repair { known_remaining(name as usize) } else { None })
+    };
+    if !name_terminated {
+        runtime_policy::observe(ApiFamily::Resolver, decision.profile, 5, true);
+        return ptr::null_mut();
+    }
+    let name_bytes = unsafe { std::slice::from_raw_parts(name as *const u8, name_len) };
 
     let content = match std::fs::read("/etc/protocols") {
         Ok(c) => c,

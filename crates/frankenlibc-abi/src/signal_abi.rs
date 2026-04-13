@@ -828,14 +828,30 @@ pub unsafe extern "C" fn sigemptyset(set: *mut libc::sigset_t) -> c_int {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sigfillset(set: *mut libc::sigset_t) -> c_int {
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Signal,
+        set as usize,
+        std::mem::size_of::<libc::sigset_t>(),
+        true,
+        set.is_null(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
+        runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, true);
+        return -1;
+    }
+
     if set.is_null() {
         unsafe { set_abi_errno(errno::EINVAL) };
+        runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, true);
         return -1;
     }
     // Set all bits in the sigset_t structure.
     unsafe {
         std::ptr::write_bytes(set as *mut u8, 0xFF, std::mem::size_of::<libc::sigset_t>());
     }
+    runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, false);
     0
 }
 
@@ -845,8 +861,23 @@ pub unsafe extern "C" fn sigfillset(set: *mut libc::sigset_t) -> c_int {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sigaddset(set: *mut libc::sigset_t, signum: c_int) -> c_int {
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Signal,
+        set as usize,
+        std::mem::size_of::<libc::sigset_t>(),
+        true,
+        set.is_null(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
+        runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, true);
+        return -1;
+    }
+
     if set.is_null() || !signal_core::valid_signal(signum) {
         unsafe { set_abi_errno(errno::EINVAL) };
+        runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, true);
         return -1;
     }
     // sigset_t is an array of unsigned longs. Signal N maps to:
@@ -857,6 +888,7 @@ pub unsafe extern "C" fn sigaddset(set: *mut libc::sigset_t, signum: c_int) -> c
     let bit = idx % bits_per_word;
     let words = set as *mut libc::c_ulong;
     unsafe { *words.add(word) |= 1usize.wrapping_shl(bit as u32) as libc::c_ulong };
+    runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, false);
     0
 }
 
@@ -901,8 +933,23 @@ pub unsafe extern "C" fn sigdelset(set: *mut libc::sigset_t, signum: c_int) -> c
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sigismember(set: *const libc::sigset_t, signum: c_int) -> c_int {
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Signal,
+        set as usize,
+        std::mem::size_of::<libc::sigset_t>(),
+        false,
+        set.is_null(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
+        runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, true);
+        return -1;
+    }
+
     if set.is_null() || !signal_core::valid_signal(signum) {
         unsafe { set_abi_errno(errno::EINVAL) };
+        runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, true);
         return -1;
     }
     let idx = (signum - 1) as usize;
@@ -911,11 +958,13 @@ pub unsafe extern "C" fn sigismember(set: *const libc::sigset_t, signum: c_int) 
     let bit = idx % bits_per_word;
     let words = set as *const libc::c_ulong;
     let val = unsafe { *words.add(word) };
-    if (val & (1usize.wrapping_shl(bit as u32) as libc::c_ulong)) != 0 {
+    let result = if (val & (1usize.wrapping_shl(bit as u32) as libc::c_ulong)) != 0 {
         1
     } else {
         0
-    }
+    };
+    runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, false);
+    result
 }
 
 // ---------------------------------------------------------------------------
@@ -1000,25 +1049,23 @@ pub unsafe extern "C" fn sigaction(
     act: *const libc::sigaction,
     oldact: *mut libc::sigaction,
 ) -> c_int {
-    let mode = runtime_policy::mode();
-    let decision = if mode.heals_enabled() {
-        let (_, decision) =
-            runtime_policy::decide(ApiFamily::Signal, signum as usize, 0, false, true, 0);
-        if matches!(decision.action, MembraneAction::Deny) {
-            unsafe { set_abi_errno(errno::EINVAL) };
-            runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, true);
-            return -1;
-        }
-        Some(decision)
-    } else {
-        None
-    };
+    let (_mode, decision) = runtime_policy::decide(
+        ApiFamily::Signal,
+        signum as usize,
+        0,
+        false,
+        true,
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, true);
+        return -1;
+    }
 
     if !signal_core::catchable_signal(signum) {
         unsafe { set_abi_errno(errno::EINVAL) };
-        if let Some(decision) = decision {
-            runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, true);
-        }
+        runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, true);
         return -1;
     }
 
@@ -1094,9 +1141,7 @@ pub unsafe extern "C" fn sigaction(
             }
         }
     }
-    if let Some(decision) = decision {
-        runtime_policy::observe(ApiFamily::Signal, decision.profile, 10, adverse);
-    }
+    runtime_policy::observe(ApiFamily::Signal, decision.profile, 10, adverse);
     rc
 }
 
@@ -1392,8 +1437,23 @@ pub unsafe extern "C" fn sigandset(
     left: *const libc::sigset_t,
     right: *const libc::sigset_t,
 ) -> c_int {
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Signal,
+        dest as usize,
+        std::mem::size_of::<libc::sigset_t>(),
+        true,
+        dest.is_null() || left.is_null() || right.is_null(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
+        runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, true);
+        return -1;
+    }
+
     if dest.is_null() || left.is_null() || right.is_null() {
         unsafe { set_abi_errno(errno::EINVAL) };
+        runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, true);
         return -1;
     }
     // SAFETY: sigset_t on Linux is an array of unsigned longs.
@@ -1406,6 +1466,7 @@ pub unsafe extern "C" fn sigandset(
             *d.add(i) = *l.add(i) & *r.add(i);
         }
     }
+    runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, false);
     0
 }
 

@@ -417,6 +417,9 @@ GLIBC_2.2.5 {
         stdin;
         stdout;
         stderr;
+        _IO_2_1_stdin_;
+        _IO_2_1_stdout_;
+        _IO_2_1_stderr_;
         getc;
         putc;
         fgetpos;
@@ -2501,9 +2504,9 @@ GLIBC_2.2.5 {
         _IO_sgetn;
         _IO_seekoff;
         _IO_seekpos;
-        /* _IO_2_1_{stdin,stdout,stderr}_ intentionally NOT exported.
-           Shadowing glibc's real FILE structs breaks _IO_list chain management.
-           The host's versions remain visible for programs that reference them. */
+        /* _IO_2_1_{stdin,stdout,stderr}_ are now exported (bd-9chy.10).
+           They point to the same NativeFile storage as stdin/stdout/stderr.
+           With NativeFile managing the _IO_list chain (bd-9chy.50), these are safe. */
 
         /* GNU old regex API */
         re_set_syntax;
