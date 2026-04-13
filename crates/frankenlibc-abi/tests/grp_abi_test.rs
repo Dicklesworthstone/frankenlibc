@@ -652,3 +652,150 @@ fn getgrnam_r_large_buffer() {
         assert_eq!(grp.gr_gid, 0);
     });
 }
+
+// ===========================================================================
+// Strict/Hardened Mode Tests (bd-x2sq)
+// ===========================================================================
+
+/// Static mutex for mode env var manipulation (process-global).
+static MODE_ENV_LOCK: Mutex<()> = Mutex::new(());
+
+/// Test fixture for group entries (group_name:password:gid:members).
+const GROUP_FIXTURE: &[u8] =
+    b"root:x:0:root\nusers:x:100:alice,bob\nadmins:x:999:alice\n";
+
+fn with_mode(mode: &str, f: impl FnOnce()) {
+    let _guard = MODE_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    // SAFETY: Serialized by MODE_ENV_LOCK.
+    unsafe { std::env::set_var("FRANKENLIBC_MODE", mode) };
+    f();
+    // SAFETY: Same as above.
+    unsafe { std::env::remove_var("FRANKENLIBC_MODE") };
+}
+
+fn with_mode_and_group(mode: &str, group_content: &[u8], f: impl FnOnce()) {
+    let _mode_guard = MODE_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _group_guard = GROUP_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
+    let path = temp_group_path();
+    std::fs::write(&path, group_content).expect("write temp group");
+
+    // SAFETY: Serialized by both locks.
+    unsafe {
+        std::env::set_var("FRANKENLIBC_MODE", mode);
+        std::env::set_var("FRANKENLIBC_GROUP_PATH", &path);
+    }
+    f();
+    // SAFETY: Same as above.
+    unsafe {
+        std::env::remove_var("FRANKENLIBC_MODE");
+        std::env::remove_var("FRANKENLIBC_GROUP_PATH");
+    }
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn strict_mode_getgrnam_returns_null_for_invalid() {
+    with_mode_and_group("strict", GROUP_FIXTURE, || {
+        let name = CString::new("nonexistent_group_strict_test").unwrap();
+        let grp = unsafe { getgrnam(name.as_ptr()) };
+        assert!(
+            grp.is_null(),
+            "strict mode: getgrnam for nonexistent group should return null"
+        );
+    });
+}
+
+#[test]
+fn strict_mode_getgrgid_returns_null_for_invalid_gid() {
+    with_mode_and_group("strict", GROUP_FIXTURE, || {
+        let grp = unsafe { getgrgid(99999) };
+        assert!(
+            grp.is_null(),
+            "strict mode: getgrgid for nonexistent gid should return null"
+        );
+    });
+}
+
+#[test]
+fn hardened_mode_getgrnam_returns_null_for_invalid() {
+    with_mode_and_group("hardened", GROUP_FIXTURE, || {
+        let name = CString::new("nonexistent_group_hardened_test").unwrap();
+        let grp = unsafe { getgrnam(name.as_ptr()) };
+        // In hardened mode, invalid lookups still return null (no healing for missing entries).
+        assert!(
+            grp.is_null(),
+            "hardened mode: getgrnam for nonexistent group should return null"
+        );
+    });
+}
+
+#[test]
+fn hardened_mode_getgrgid_returns_null_for_invalid_gid() {
+    with_mode_and_group("hardened", GROUP_FIXTURE, || {
+        let grp = unsafe { getgrgid(99999) };
+        // In hardened mode, invalid lookups still return null.
+        assert!(
+            grp.is_null(),
+            "hardened mode: getgrgid for nonexistent gid should return null"
+        );
+    });
+}
+
+#[test]
+fn strict_mode_getgrnam_null_input_returns_null() {
+    with_mode("strict", || {
+        let grp = unsafe { getgrnam(std::ptr::null()) };
+        assert!(
+            grp.is_null(),
+            "strict mode: getgrnam(null) should return null"
+        );
+    });
+}
+
+#[test]
+fn hardened_mode_getgrnam_null_input_returns_null() {
+    with_mode("hardened", || {
+        let grp = unsafe { getgrnam(std::ptr::null()) };
+        assert!(
+            grp.is_null(),
+            "hardened mode: getgrnam(null) should return null"
+        );
+    });
+}
+
+#[test]
+fn strict_mode_grent_iteration_works() {
+    with_mode_and_group("strict", GROUP_FIXTURE, || {
+        unsafe { setgrent() };
+        let mut count = 0;
+        loop {
+            let grp = unsafe { getgrent() };
+            if grp.is_null() {
+                break;
+            }
+            count += 1;
+            assert!(count <= 10, "strict mode: grent iteration should not infinite loop");
+        }
+        unsafe { endgrent() };
+        assert_eq!(count, 3, "strict mode: fixture has 3 entries");
+    });
+}
+
+#[test]
+fn hardened_mode_grent_iteration_works() {
+    with_mode_and_group("hardened", GROUP_FIXTURE, || {
+        unsafe { setgrent() };
+        let mut count = 0;
+        loop {
+            let grp = unsafe { getgrent() };
+            if grp.is_null() {
+                break;
+            }
+            count += 1;
+            assert!(count <= 10, "hardened mode: grent iteration should not infinite loop");
+        }
+        unsafe { endgrent() };
+        assert_eq!(count, 3, "hardened mode: fixture has 3 entries");
+    });
+}
