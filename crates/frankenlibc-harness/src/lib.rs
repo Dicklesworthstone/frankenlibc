@@ -38,6 +38,7 @@ pub mod runtime_math_linkage_proofs;
 pub mod setjmp_contract;
 pub mod shadow_run;
 pub mod snapshot_diff;
+pub mod stdio_evidence;
 pub mod structured_log;
 pub mod traceability;
 pub mod verify;
