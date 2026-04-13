@@ -1420,7 +1420,10 @@ pub unsafe extern "C" fn getservbyname(name: *const c_char, proto: *const c_char
 
     let content = match read_services_backend() {
         Ok(c) => c,
-        Err(_) => return ptr::null_mut(),
+        Err(_) => {
+            runtime_policy::observe(ApiFamily::Resolver, decision.profile, 10, true);
+            return ptr::null_mut();
+        }
     };
 
     // Use core parser to find the service
@@ -1430,7 +1433,10 @@ pub unsafe extern "C" fn getservbyname(name: *const c_char, proto: *const c_char
         proto_filter,
     ) {
         Some(p) => p,
-        None => return ptr::null_mut(),
+        None => {
+            runtime_policy::observe(ApiFamily::Resolver, decision.profile, 15, true);
+            return ptr::null_mut();
+        }
     };
 
     // Find the protocol string for this entry
@@ -1457,6 +1463,7 @@ pub unsafe extern "C" fn getservbyname(name: *const c_char, proto: *const c_char
             .unwrap_or_else(|| b"tcp".to_vec())
     };
 
+    runtime_policy::observe(ApiFamily::Resolver, decision.profile, 20, false);
     SERVENT_TLS.with(|cell| {
         let mut storage = cell.borrow_mut();
         copy_to_cchar_buf(&mut storage.name, name_bytes);
@@ -1498,7 +1505,10 @@ pub unsafe extern "C" fn getservbyport(port: c_int, proto: *const c_char) -> *mu
 
     let content = match read_services_backend() {
         Ok(c) => c,
-        Err(_) => return ptr::null_mut(),
+        Err(_) => {
+            runtime_policy::observe(ApiFamily::Resolver, decision.profile, 10, true);
+            return ptr::null_mut();
+        }
     };
 
     // Find the service entry matching this port
@@ -1515,8 +1525,14 @@ pub unsafe extern "C" fn getservbyport(port: c_int, proto: *const c_char) -> *mu
         Some((entry.name, entry.protocol))
     }) {
         Some(entry) => entry,
-        None => return ptr::null_mut(),
+        None => {
+            runtime_policy::observe(ApiFamily::Resolver, decision.profile, 15, true);
+            return ptr::null_mut();
+        }
     };
+
+    // Success path: record service lookup completed
+    runtime_policy::observe(ApiFamily::Resolver, decision.profile, 20, false);
 
     SERVENT_TLS.with(|cell| {
         let mut storage = cell.borrow_mut();
@@ -1566,7 +1582,10 @@ pub unsafe extern "C" fn getprotobyname(name: *const c_char) -> *mut c_void {
 
     let content = match std::fs::read("/etc/protocols") {
         Ok(c) => c,
-        Err(_) => return ptr::null_mut(),
+        Err(_) => {
+            runtime_policy::observe(ApiFamily::Resolver, decision.profile, 10, true);
+            return ptr::null_mut();
+        }
     };
 
     let (proto_name, proto_num) = match content.split(|&b| b == b'\n').find_map(|line| {
@@ -1578,8 +1597,14 @@ pub unsafe extern "C" fn getprotobyname(name: *const c_char) -> *mut c_void {
         }
     }) {
         Some(entry) => entry,
-        None => return ptr::null_mut(),
+        None => {
+            runtime_policy::observe(ApiFamily::Resolver, decision.profile, 15, true);
+            return ptr::null_mut();
+        }
     };
+
+    // Success path: record protocol lookup completed
+    runtime_policy::observe(ApiFamily::Resolver, decision.profile, 20, false);
 
     PROTOENT_TLS.with(|cell| {
         let mut storage = cell.borrow_mut();
@@ -1597,9 +1622,21 @@ pub unsafe extern "C" fn getprotobyname(name: *const c_char) -> *mut c_void {
 /// POSIX `getprotobynumber` — look up a protocol by number in /etc/protocols.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getprotobynumber(proto: c_int) -> *mut c_void {
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Resolver,
+        0,     // no pointer argument
+        0,
+        false, // read-only lookup
+        true,  // no pointer to validate
+        0,
+    );
+
     let content = match std::fs::read("/etc/protocols") {
         Ok(c) => c,
-        Err(_) => return ptr::null_mut(),
+        Err(_) => {
+            runtime_policy::observe(ApiFamily::Resolver, decision.profile, 10, true);
+            return ptr::null_mut();
+        }
     };
 
     let (proto_name, proto_num) = match content.split(|&b| b == b'\n').find_map(|line| {
@@ -1611,8 +1648,14 @@ pub unsafe extern "C" fn getprotobynumber(proto: c_int) -> *mut c_void {
         }
     }) {
         Some(entry) => entry,
-        None => return ptr::null_mut(),
+        None => {
+            runtime_policy::observe(ApiFamily::Resolver, decision.profile, 15, true);
+            return ptr::null_mut();
+        }
     };
+
+    // Success path: record protocol lookup completed
+    runtime_policy::observe(ApiFamily::Resolver, decision.profile, 20, false);
 
     PROTOENT_TLS.with(|cell| {
         let mut storage = cell.borrow_mut();
