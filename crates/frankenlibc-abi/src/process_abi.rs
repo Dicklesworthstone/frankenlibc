@@ -431,7 +431,14 @@ pub unsafe extern "C" fn execvpe(
         return -1;
     }
 
-    let file_bytes = unsafe { std::ffi::CStr::from_ptr(file) }.to_bytes();
+    let (file_len, terminated) = unsafe {
+        crate::util::scan_c_string(file, crate::malloc_abi::known_remaining(file as usize))
+    };
+    if !terminated {
+        unsafe { set_abi_errno(libc::EFAULT) };
+        return -1;
+    }
+    let file_bytes = unsafe { std::slice::from_raw_parts(file as *const u8, file_len) };
     if file_bytes.is_empty() {
         unsafe { set_abi_errno(libc::ENOENT) };
         return -1;
@@ -1215,14 +1222,27 @@ unsafe fn posix_spawn_impl(
         return libc::EINVAL;
     }
 
+    let (path_len, terminated) = unsafe {
+        crate::util::scan_c_string(path, crate::malloc_abi::known_remaining(path as usize))
+    };
+    if !terminated {
+        return libc::EFAULT;
+    }
+    let path_slice = unsafe { std::slice::from_raw_parts(path as *const u8, path_len) };
+    let file_cstr = unsafe {
+        std::ffi::CStr::from_bytes_with_nul_unchecked(std::slice::from_raw_parts(
+            path as *const u8,
+            path_len + 1,
+        ))
+    };
+
     // Prepare candidate paths in the parent process to avoid allocations in the
     // child process after fork, which is not async-signal safe and can deadlock
     // if another thread held an allocator lock during clone().
     let mut candidate_paths: Vec<std::ffi::CString> = Vec::new();
 
     if search_path {
-        let file_cstr = unsafe { std::ffi::CStr::from_ptr(path) };
-        let file_bytes = file_cstr.to_bytes();
+        let file_bytes = path_slice;
 
         if file_bytes.contains(&b'/') {
             candidate_paths.push(std::ffi::CString::from(file_cstr));
@@ -1464,12 +1484,18 @@ pub unsafe extern "C" fn posix_spawn_file_actions_addopen(
     let Some(fa) = (unsafe { read_file_actions_mut(file_actions) }) else {
         return libc::EINVAL;
     };
-    let path_cstr = unsafe { std::ffi::CStr::from_ptr(path) };
-    let mut path_bytes = path_cstr.to_bytes().to_vec();
-    path_bytes.push(0); // NUL terminate for later syscall
+    let (path_len, terminated) = unsafe {
+        crate::util::scan_c_string(path, crate::malloc_abi::known_remaining(path as usize))
+    };
+    if !terminated {
+        return libc::EINVAL;
+    }
+    let path_bytes = unsafe { std::slice::from_raw_parts(path as *const u8, path_len) };
+    let mut vec_bytes = path_bytes.to_vec();
+    vec_bytes.push(0); // NUL terminate for later syscall
     fa.actions.push(SpawnFileAction::Open {
         fd,
-        path: path_bytes,
+        path: vec_bytes,
         oflag,
         mode,
     });
@@ -1492,10 +1518,16 @@ pub unsafe extern "C" fn posix_spawn_file_actions_addchdir_np(
     let Some(fa) = (unsafe { read_file_actions_mut(file_actions) }) else {
         return libc::EINVAL;
     };
-    let path_cstr = unsafe { std::ffi::CStr::from_ptr(path) };
-    let mut path_bytes = path_cstr.to_bytes().to_vec();
-    path_bytes.push(0); // NUL terminate
-    fa.actions.push(SpawnFileAction::Chdir { path: path_bytes });
+    let (path_len, terminated) = unsafe {
+        crate::util::scan_c_string(path, crate::malloc_abi::known_remaining(path as usize))
+    };
+    if !terminated {
+        return libc::EINVAL;
+    }
+    let path_bytes = unsafe { std::slice::from_raw_parts(path as *const u8, path_len) };
+    let mut vec_bytes = path_bytes.to_vec();
+    vec_bytes.push(0); // NUL terminate
+    fa.actions.push(SpawnFileAction::Chdir { path: vec_bytes });
     0
 }
 

@@ -213,8 +213,12 @@ pub unsafe extern "C" fn dlopen(filename: *const c_char, flags: c_int) -> *mut c
         runtime_policy::observe(ApiFamily::Loader, decision.profile, 5, true);
         return std::ptr::null_mut();
     }
-    let (name_len, terminated) =
-        unsafe { crate::util::scan_c_string(filename, crate::malloc_abi::known_remaining(filename as usize)) };
+    let (name_len, terminated) = unsafe {
+        crate::util::scan_c_string(
+            filename,
+            crate::malloc_abi::known_remaining(filename as usize),
+        )
+    };
     if !terminated && mode.heals_enabled() {
         set_dlerror(dlfcn_core::ERR_NOT_FOUND);
         runtime_policy::observe(ApiFamily::Loader, decision.profile, 5, true);
@@ -336,8 +340,9 @@ pub unsafe extern "C" fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *m
         return std::ptr::null_mut();
     }
 
-    let (symbol_len, terminated) =
-        unsafe { crate::util::scan_c_string(symbol, crate::malloc_abi::known_remaining(symbol as usize)) };
+    let (symbol_len, terminated) = unsafe {
+        crate::util::scan_c_string(symbol, crate::malloc_abi::known_remaining(symbol as usize))
+    };
     if !terminated && mode.heals_enabled() {
         set_dlerror(dlfcn_core::ERR_SYMBOL_NOT_FOUND);
         runtime_policy::observe(ApiFamily::Loader, decision.profile, 5, true);
@@ -446,7 +451,7 @@ pub unsafe extern "C" fn dlvsym(
         };
     }
 
-    let (_, decision) =
+    let (mode, decision) =
         runtime_policy::decide(ApiFamily::Loader, handle as usize, 0, false, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         set_dlerror(dlfcn_core::ERR_SYMBOL_NOT_FOUND);
@@ -460,10 +465,23 @@ pub unsafe extern "C" fn dlvsym(
         return std::ptr::null_mut();
     }
 
-    // SAFETY: symbol/version were checked for null above and are expected to be NUL-terminated C strings.
-    let symbol_name = unsafe { CStr::from_ptr(symbol) }.to_bytes();
-    // SAFETY: symbol/version were checked for null above and are expected to be NUL-terminated C strings.
-    let version_name = unsafe { CStr::from_ptr(version) }.to_bytes();
+    let (symbol_len, symbol_terminated) = unsafe {
+        crate::util::scan_c_string(symbol, crate::malloc_abi::known_remaining(symbol as usize))
+    };
+    let (version_len, version_terminated) = unsafe {
+        crate::util::scan_c_string(
+            version,
+            crate::malloc_abi::known_remaining(version as usize),
+        )
+    };
+    if (!symbol_terminated || !version_terminated) && mode.heals_enabled() {
+        set_dlerror(dlfcn_core::ERR_SYMBOL_NOT_FOUND);
+        runtime_policy::observe(ApiFamily::Loader, decision.profile, 5, true);
+        return std::ptr::null_mut();
+    }
+
+    let symbol_name = unsafe { std::slice::from_raw_parts(symbol as *const u8, symbol_len) };
+    let version_name = unsafe { std::slice::from_raw_parts(version as *const u8, version_len) };
 
     if is_rtld_next(handle) || is_rtld_default(handle) {
         let host_handle = if is_rtld_default(handle) {
