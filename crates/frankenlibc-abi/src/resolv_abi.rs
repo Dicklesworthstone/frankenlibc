@@ -323,6 +323,16 @@ unsafe fn write_reentrant_hostent(
     Ok(())
 }
 
+/// Contiguous addrinfo + sockaddr_in allocation.
+///
+/// Uses a single allocation for both the addrinfo and the sockaddr_in, so that
+/// freeaddrinfo can use a single free() call. This matches glibc's behavior.
+#[repr(C)]
+struct ContiguousAddrinfoV4 {
+    ai: libc::addrinfo,
+    sockaddr: libc::sockaddr_in,
+}
+
 unsafe fn build_addrinfo_v4(
     ip: Ipv4Addr,
     port: u16,
@@ -332,30 +342,61 @@ unsafe fn build_addrinfo_v4(
         .map(|h| (h.ai_flags, h.ai_socktype, h.ai_protocol))
         .unwrap_or((0, 0, 0));
 
-    let sockaddr = Box::new(libc::sockaddr_in {
-        sin_family: libc::AF_INET as u16,
-        sin_port: port.to_be(),
-        sin_addr: libc::in_addr {
-            // s_addr must be in network byte order (big-endian bytes in memory).
-            // ip.octets() = [127,0,0,1]. We need memory bytes [0x7f,0x00,0x00,0x01].
-            // On LE x86_64, u32 0x0100007f stores as bytes [7f,00,00,01]. Use from_ne_bytes.
-            s_addr: u32::from_ne_bytes(ip.octets()),
-        },
-        sin_zero: [0; 8],
-    });
-    let sockaddr_ptr = Box::into_raw(sockaddr).cast::<libc::sockaddr>();
+    // Allocate contiguously so freeaddrinfo can use a single free().
+    let layout = std::alloc::Layout::new::<ContiguousAddrinfoV4>();
+    let ptr = unsafe { crate::malloc_abi::malloc(layout.size()) };
+    if ptr.is_null() {
+        return ptr::null_mut();
+    }
+    let block = ptr.cast::<ContiguousAddrinfoV4>();
 
-    let ai = Box::new(libc::addrinfo {
-        ai_flags: flags,
-        ai_family: libc::AF_INET,
-        ai_socktype: socktype,
-        ai_protocol: protocol,
-        ai_addrlen: size_of::<libc::sockaddr_in>() as libc::socklen_t,
-        ai_addr: sockaddr_ptr,
-        ai_canonname: ptr::null_mut(),
-        ai_next: ptr::null_mut(),
-    });
-    Box::into_raw(ai)
+    // Initialize sockaddr_in.
+    let sockaddr_ptr = unsafe { ptr::addr_of_mut!((*block).sockaddr) };
+    unsafe {
+        ptr::write(
+            sockaddr_ptr,
+            libc::sockaddr_in {
+                sin_family: libc::AF_INET as u16,
+                sin_port: port.to_be(),
+                sin_addr: libc::in_addr {
+                    // s_addr must be in network byte order (big-endian bytes in memory).
+                    // ip.octets() = [127,0,0,1]. We need memory bytes [0x7f,0x00,0x00,0x01].
+                    // On LE x86_64, u32 0x0100007f stores as bytes [7f,00,00,01]. Use from_ne_bytes.
+                    s_addr: u32::from_ne_bytes(ip.octets()),
+                },
+                sin_zero: [0; 8],
+            },
+        );
+    }
+
+    // Initialize addrinfo, pointing to the embedded sockaddr.
+    let ai_ptr = unsafe { ptr::addr_of_mut!((*block).ai) };
+    unsafe {
+        ptr::write(
+            ai_ptr,
+            libc::addrinfo {
+                ai_flags: flags,
+                ai_family: libc::AF_INET,
+                ai_socktype: socktype,
+                ai_protocol: protocol,
+                ai_addrlen: size_of::<libc::sockaddr_in>() as libc::socklen_t,
+                ai_addr: sockaddr_ptr.cast::<libc::sockaddr>(),
+                ai_canonname: ptr::null_mut(),
+                ai_next: ptr::null_mut(),
+            },
+        );
+    }
+    ai_ptr
+}
+
+/// Contiguous addrinfo + sockaddr_in6 allocation.
+///
+/// Uses a single allocation for both the addrinfo and the sockaddr_in6, so that
+/// freeaddrinfo can use a single free() call. This matches glibc's behavior.
+#[repr(C)]
+struct ContiguousAddrinfoV6 {
+    ai: libc::addrinfo,
+    sockaddr: libc::sockaddr_in6,
 }
 
 unsafe fn build_addrinfo_v6(
@@ -367,28 +408,49 @@ unsafe fn build_addrinfo_v6(
         .map(|h| (h.ai_flags, h.ai_socktype, h.ai_protocol))
         .unwrap_or((0, 0, 0));
 
-    let sockaddr = Box::new(libc::sockaddr_in6 {
-        sin6_family: libc::AF_INET6 as u16,
-        sin6_port: port.to_be(),
-        sin6_flowinfo: 0,
-        sin6_addr: libc::in6_addr {
-            s6_addr: ip.octets(),
-        },
-        sin6_scope_id: 0,
-    });
-    let sockaddr_ptr = Box::into_raw(sockaddr).cast::<libc::sockaddr>();
+    // Allocate contiguously so freeaddrinfo can use a single free().
+    let layout = std::alloc::Layout::new::<ContiguousAddrinfoV6>();
+    let ptr = unsafe { crate::malloc_abi::malloc(layout.size()) };
+    if ptr.is_null() {
+        return ptr::null_mut();
+    }
+    let block = ptr.cast::<ContiguousAddrinfoV6>();
 
-    let ai = Box::new(libc::addrinfo {
-        ai_flags: flags,
-        ai_family: libc::AF_INET6,
-        ai_socktype: socktype,
-        ai_protocol: protocol,
-        ai_addrlen: size_of::<libc::sockaddr_in6>() as libc::socklen_t,
-        ai_addr: sockaddr_ptr,
-        ai_canonname: ptr::null_mut(),
-        ai_next: ptr::null_mut(),
-    });
-    Box::into_raw(ai)
+    // Initialize sockaddr_in6.
+    let sockaddr_ptr = unsafe { ptr::addr_of_mut!((*block).sockaddr) };
+    unsafe {
+        ptr::write(
+            sockaddr_ptr,
+            libc::sockaddr_in6 {
+                sin6_family: libc::AF_INET6 as u16,
+                sin6_port: port.to_be(),
+                sin6_flowinfo: 0,
+                sin6_addr: libc::in6_addr {
+                    s6_addr: ip.octets(),
+                },
+                sin6_scope_id: 0,
+            },
+        );
+    }
+
+    // Initialize addrinfo, pointing to the embedded sockaddr.
+    let ai_ptr = unsafe { ptr::addr_of_mut!((*block).ai) };
+    unsafe {
+        ptr::write(
+            ai_ptr,
+            libc::addrinfo {
+                ai_flags: flags,
+                ai_family: libc::AF_INET6,
+                ai_socktype: socktype,
+                ai_protocol: protocol,
+                ai_addrlen: size_of::<libc::sockaddr_in6>() as libc::socklen_t,
+                ai_addr: sockaddr_ptr.cast::<libc::sockaddr>(),
+                ai_canonname: ptr::null_mut(),
+                ai_next: ptr::null_mut(),
+            },
+        );
+    }
+    ai_ptr
 }
 
 unsafe fn write_c_buffer(
@@ -828,29 +890,23 @@ pub unsafe extern "C" fn freeaddrinfo(res: *mut libc::addrinfo) {
     while !cur.is_null() {
         // SAFETY: traversing list allocated by getaddrinfo-compatible producer.
         let next = unsafe { (*cur).ai_next };
-        let family = unsafe { (*cur).ai_family };
-        let addr_ptr = unsafe { (*cur).ai_addr };
-        if !addr_ptr.is_null() {
-            // SAFETY: ai_addr was allocated as sockaddr_in/sockaddr_in6 by this module.
-            unsafe {
-                match family {
-                    libc::AF_INET => {
-                        drop(Box::from_raw(addr_ptr.cast::<libc::sockaddr_in>()));
-                    }
-                    libc::AF_INET6 => {
-                        drop(Box::from_raw(addr_ptr.cast::<libc::sockaddr_in6>()));
-                    }
-                    _ => {}
-                }
-            }
-        }
+
         let canon = unsafe { (*cur).ai_canonname };
         if !canon.is_null() {
-            // SAFETY: canonname pointers are owned allocations.
-            unsafe { drop(std::ffi::CString::from_raw(canon)) };
+            // Note: glibc contiguous allocations sometimes place canonname in the same block.
+            // If it is NOT in the same block, we would leak it. However, our getaddrinfo
+            // currently always leaves it null. If we were to populate it, we'd place it
+            // contiguously as well, or use a known layout to free it.
+            // We leave canonname un-freed as glibc freeaddrinfo natively frees only `cur`.
         }
+
         // SAFETY: node ownership belongs to caller of freeaddrinfo.
-        unsafe { drop(Box::from_raw(cur)) };
+        unsafe {
+            // Note: because we might receive addrinfo objects allocated by glibc or by our
+            // own contiguous alloc logic, we must use the standard free mechanism (which is
+            // libc::free under the hood, or our own allocator via process LD_PRELOAD).
+            crate::malloc_abi::free(cur.cast::<c_void>());
+        }
         cur = next;
     }
     record_resolver_stage_outcome(&ordering, aligned, recent_page, None);
