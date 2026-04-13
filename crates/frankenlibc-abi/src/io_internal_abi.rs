@@ -720,6 +720,65 @@ impl NativeFile {
         self.with_locked_mut(|state| state.eof = false);
     }
 
+    /// Explicitly acquire the stream lock for flockfile().
+    ///
+    /// This increments the lock count. The caller must call `explicit_unlock()`
+    /// for each `explicit_lock()` call to release the lock.
+    ///
+    /// # Safety
+    /// The caller must ensure that `explicit_unlock()` is eventually called
+    /// the same number of times to release the lock.
+    #[inline]
+    pub fn explicit_lock(&self) {
+        let guard = self._frankenlibc_state.locked.lock();
+        // Forget the guard to keep the lock held.
+        std::mem::forget(guard);
+    }
+
+    /// Try to explicitly acquire the stream lock for ftrylockfile().
+    ///
+    /// Returns `true` if the lock was acquired, `false` if it would block.
+    /// If successful, the caller must call `explicit_unlock()` to release.
+    #[inline]
+    pub fn try_explicit_lock(&self) -> bool {
+        if let Some(guard) = self._frankenlibc_state.locked.try_lock() {
+            std::mem::forget(guard);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Release an explicit lock acquired via `explicit_lock()` or `try_explicit_lock()`.
+    ///
+    /// # Safety
+    /// The caller must have previously acquired the lock via `explicit_lock()` or
+    /// a successful `try_explicit_lock()` call.
+    #[inline]
+    pub unsafe fn explicit_unlock(&self) {
+        // parking_lot's ReentrantMutex doesn't expose a raw unlock, so we
+        // acquire the lock (incrementing count) and drop two guards (decrementing twice).
+        // This works because the mutex is reentrant and we already hold it.
+        let guard1 = self._frankenlibc_state.locked.lock();
+        // Now drop both guards - the one we just acquired and effectively "one more"
+        // by creating a second reference to decrement.
+        // Actually, we need a different approach: use force_unlock_fair.
+        drop(guard1);
+        // The above just decrements once. We need to decrement the forgotten guard.
+        // Since parking_lot doesn't expose raw unlock for ReentrantMutex,
+        // we use the fact that lock() on an already-held reentrant mutex succeeds
+        // and creates a new guard. Dropping it decrements the count.
+        // So we need to acquire again and drop to get back to the original state
+        // minus one lock.
+        // This is a no-op since we just acquired and dropped.
+        // The correct approach requires unsafe raw access.
+        // For now, use parking_lot::lock_api's unsafe force_unlock.
+        unsafe {
+            use parking_lot::lock_api::RawMutex;
+            self._frankenlibc_state.locked.raw().unlock();
+        }
+    }
+
     /// Returns `true` if the stream is readable.
     #[inline]
     pub fn is_readable(&self) -> bool {

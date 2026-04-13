@@ -22,9 +22,7 @@ use frankenlibc_membrane::heal::{HealingAction, global_healing_policy};
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
 use crate::errno_abi::set_abi_errno;
-use crate::io_internal_abi::{
-    self, NativeFile, NativeFileBufMode, file_flags, native_stream_registry,
-};
+use crate::io_internal_abi::{self, NativeFileBufMode};
 use crate::malloc_abi::{free, known_remaining, malloc};
 use crate::runtime_policy;
 use crate::unistd_abi::{sys_read_fd, sys_write_fd};
@@ -743,8 +741,8 @@ pub(crate) fn init_host_stdio_streams() {
 
 /// POSIX `fopen`.
 ///
-/// Opens a file and returns a native `NativeFile*` (compatible with glibc
-/// `_IO_FILE_plus` layout). Uses raw syscalls exclusively - no host delegation.
+/// Opens a file and returns an opaque stream handle managed by the ABI registry.
+/// Uses raw syscalls exclusively - no host delegation.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fopen(pathname: *const c_char, mode: *const c_char) -> *mut c_void {
     if pathname.is_null() || mode.is_null() {
@@ -824,7 +822,7 @@ pub unsafe extern "C" fn fopen(pathname: *const c_char, mode: *const c_char) -> 
         return std::ptr::null_mut();
     }
 
-    // Create native FILE via fdopen_native_impl.
+    // Create stream via fdopen_native_impl.
     let fp = fdopen_native_impl(fd, &open_flags);
     if fp.is_null() {
         // fdopen_native_impl failed (registry full) - close the fd we opened.
@@ -836,54 +834,42 @@ pub unsafe extern "C" fn fopen(pathname: *const c_char, mode: *const c_char) -> 
     fp
 }
 
-/// Internal: create a NativeFile for an already-open fd.
+/// Internal: create a `StdioStream` for an already-open fd.
 ///
-/// Returns null on failure (registry full, etc.). Does NOT close the fd on
-/// failure - the caller is responsible for deciding whether to close it.
+/// Returns an opaque stream pointer. The fd remains owned by the caller on
+/// failure; this function never closes it.
 fn fdopen_native_impl(fd: c_int, open_flags: &OpenFlags) -> *mut c_void {
-    // Build file_flags from OpenFlags.
-    let mut flags: u32 = 0;
-    if open_flags.readable {
-        flags |= file_flags::READ;
-    }
-    if open_flags.writable {
-        flags |= file_flags::WRITE;
-    }
-    if open_flags.append {
-        flags |= file_flags::APPEND;
-    }
-
     // Determine buffering mode via raw isatty check (TIOCGWINSZ ioctl).
-    let buf_mode = if raw_isatty(fd) {
-        NativeFileBufMode::Line // Line-buffered for terminals.
+    let buf_mode = if fd == libc::STDERR_FILENO {
+        BufMode::None
+    } else if raw_isatty(fd) {
+        BufMode::Line
     } else {
-        NativeFileBufMode::Full // Fully buffered for files.
+        BufMode::Full
     };
 
-    // Create NativeFile and set initial offset for append mode.
-    let mut native_file = NativeFile::new(fd, flags, buf_mode);
+    // Create StdioStream and set initial offset for append mode.
+    let mut stream = StdioStream::with_mode(fd, *open_flags, buf_mode);
     if open_flags.append {
         let end_off = unsafe { libc::syscall(libc::SYS_lseek, fd, 0i64, libc::SEEK_END) };
         if end_off >= 0 {
-            native_file.set_offset(end_off as i64);
+            stream.set_offset(end_off as i64);
         }
     }
 
-    // Register in the native stream registry.
-    let mut reg = native_stream_registry();
-    match reg.register(native_file) {
-        Some(slot_idx) => {
-            // Return pointer to the NativeFile in the registry.
-            reg.get_mut(slot_idx)
-                .map(|f| f as *mut NativeFile as *mut c_void)
-                .unwrap_or(std::ptr::null_mut())
-        }
-        None => {
-            // Registry full. Don't close fd - caller decides.
+    // Register in the StdioStream registry.
+    let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
+    let mut id = alloc_stream_id();
+    let start = id;
+    while reg.streams.contains_key(&id) {
+        id = alloc_stream_id();
+        if id == start {
             unsafe { set_abi_errno(errno::EMFILE) };
-            std::ptr::null_mut()
+            return std::ptr::null_mut();
         }
     }
+    reg.streams.insert(id, stream);
+    id as *mut c_void
 }
 
 /// Raw isatty check using TIOCGWINSZ ioctl syscall.
@@ -4686,7 +4672,7 @@ pub unsafe extern "C" fn fsetpos(stream: *mut c_void, pos: *const libc::fpos_t) 
 ///
 /// The mode string must be compatible with the fd's open mode.
 /// The fd is NOT duplicated — the stream takes ownership for buffering/close.
-/// Returns a native `NativeFile*` (compatible with glibc `_IO_FILE_plus` layout).
+/// Returns an opaque stream handle managed by the ABI registry.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fdopen(fd: c_int, mode: *const c_char) -> *mut c_void {
     if mode.is_null() {
@@ -4723,7 +4709,7 @@ pub unsafe extern "C" fn fdopen(fd: c_int, mode: *const c_char) -> *mut c_void {
         unsafe { libc::fcntl(fd, libc::F_SETFD, existing | libc::FD_CLOEXEC) };
     }
 
-    // Create native FILE via fdopen_native_impl.
+    // Create stream via fdopen_native_impl.
     let fp = fdopen_native_impl(fd, &open_flags);
     if fp.is_null() {
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
@@ -5459,7 +5445,7 @@ pub unsafe extern "C" fn popen(command: *const c_char, typ: *const c_char) -> *m
         child_exit();
     }
 
-    // Parent: close unused end and wrap the other in a NativeFile stream.
+    // Parent: close unused end and wrap the other in a stdio stream.
     let our_fd = if reading {
         unsafe { libc::syscall(libc::SYS_close as c_long, pipe_fds[1]) };
         pipe_fds[0]
@@ -5475,7 +5461,7 @@ pub unsafe extern "C" fn popen(command: *const c_char, typ: *const c_char) -> *m
         ..Default::default()
     };
 
-    // Create NativeFile via fdopen_native_impl.
+    // Create stream via fdopen_native_impl.
     let fp = fdopen_native_impl(our_fd, &open_flags);
     if fp.is_null() {
         // fdopen failed (registry full) - close fd and waitpid to reap child.
@@ -5485,9 +5471,12 @@ pub unsafe extern "C" fn popen(command: *const c_char, typ: *const c_char) -> *m
         return std::ptr::null_mut();
     }
 
-    // Store the child PID in the NativeFile for pclose to retrieve.
-    let native_file = fp as *mut io_internal_abi::NativeFile;
-    unsafe { (*native_file).set_popen_child_pid(pid) };
+    let id = canonical_stream_id(fp);
+    {
+        let mut guard = POPEN_PIDS.lock().unwrap_or_else(|e| e.into_inner());
+        let map = guard.get_or_insert_with(HashMap::new);
+        map.insert(id, pid);
+    }
 
     runtime_policy::observe(ApiFamily::Stdio, decision.profile, 50, false);
     fp
@@ -5503,28 +5492,14 @@ pub unsafe extern "C" fn pclose(stream: *mut c_void) -> c_int {
         return -1;
     }
 
-    // Try to get the child PID from the NativeFile.
-    let native_file = stream as *mut io_internal_abi::NativeFile;
-    let child_pid = unsafe { (*native_file).take_popen_child_pid() };
-
-    // Fallback: check the legacy POPEN_PIDS HashMap for streams opened before
-    // the NativeFile migration.
-    let pid = match child_pid {
-        Some(p) => p,
-        None => {
-            let id = canonical_stream_id(stream);
-            let legacy_pid = {
-                let mut pids = POPEN_PIDS.lock().unwrap_or_else(|e| e.into_inner());
-                pids.as_mut().and_then(|m| m.remove(&id))
-            };
-            match legacy_pid {
-                Some(p) => p,
-                None => {
-                    unsafe { set_abi_errno(errno::EINVAL) };
-                    return -1;
-                }
-            }
-        }
+    let id = canonical_stream_id(stream);
+    let pid = {
+        let mut pids = POPEN_PIDS.lock().unwrap_or_else(|e| e.into_inner());
+        pids.as_mut().and_then(|m| m.remove(&id))
+    };
+    let Some(pid) = pid else {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return -1;
     };
 
     // Close the stream (flushes and closes fd).
@@ -5840,24 +5815,42 @@ pub unsafe extern "C" fn setlinebuf(stream: *mut c_void) {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn flockfile(stream: *mut c_void) {
     if stream.is_null() {
-        unsafe { set_abi_errno(errno::EINVAL) };
+        return;
     }
+    let native_file = stream as *mut io_internal_abi::NativeFile;
+    if !unsafe { (*native_file).is_valid() } {
+        return;
+    }
+    unsafe { (*native_file).explicit_lock() };
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn ftrylockfile(stream: *mut c_void) -> c_int {
     if stream.is_null() {
-        unsafe { set_abi_errno(errno::EINVAL) };
         return -1;
     }
-    0
+    let native_file = stream as *mut io_internal_abi::NativeFile;
+    if !unsafe { (*native_file).is_valid() } {
+        return -1;
+    }
+    if unsafe { (*native_file).try_explicit_lock() } {
+        0
+    } else {
+        -1
+    }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn funlockfile(stream: *mut c_void) {
     if stream.is_null() {
-        unsafe { set_abi_errno(errno::EINVAL) };
+        return;
     }
+    let native_file = stream as *mut io_internal_abi::NativeFile;
+    if !unsafe { (*native_file).is_valid() } {
+        return;
+    }
+    // SAFETY: Caller must have previously called flockfile or ftrylockfile successfully.
+    unsafe { (*native_file).explicit_unlock() };
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
