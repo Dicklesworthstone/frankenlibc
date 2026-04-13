@@ -752,14 +752,8 @@ pub unsafe extern "C" fn fopen(pathname: *const c_char, mode: *const c_char) -> 
         return std::ptr::null_mut();
     }
 
-    let (safety_mode, decision) = runtime_policy::decide(
-        ApiFamily::Stdio,
-        pathname as usize,
-        0,
-        false,
-        false,
-        0,
-    );
+    let (safety_mode, decision) =
+        runtime_policy::decide(ApiFamily::Stdio, pathname as usize, 0, false, false, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         unsafe { set_abi_errno(errno::EPERM) };
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
@@ -4769,7 +4763,16 @@ pub unsafe extern "C" fn freopen(
 
     // Validate pathname if provided.
     if !pathname.is_null() {
-        let (_path_len, path_terminated) = unsafe { scan_c_str_len(pathname, if repair { known_remaining(pathname as usize) } else { None }) };
+        let (_path_len, path_terminated) = unsafe {
+            scan_c_str_len(
+                pathname,
+                if repair {
+                    known_remaining(pathname as usize)
+                } else {
+                    None
+                },
+            )
+        };
         if !path_terminated && repair {
             unsafe { set_abi_errno(errno::ENAMETOOLONG) };
             runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
@@ -4778,7 +4781,16 @@ pub unsafe extern "C" fn freopen(
     }
 
     // Validate mode string.
-    let (mode_len, mode_terminated) = unsafe { scan_c_str_len(mode, if repair { known_remaining(mode as usize) } else { None }) };
+    let (mode_len, mode_terminated) = unsafe {
+        scan_c_str_len(
+            mode,
+            if repair {
+                known_remaining(mode as usize)
+            } else {
+                None
+            },
+        )
+    };
     if !mode_terminated {
         unsafe { set_abi_errno(errno::EINVAL) };
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
@@ -5136,12 +5148,14 @@ pub unsafe extern "C" fn tmpfile() -> *mut c_void {
             writable: true,
             ..Default::default()
         };
-        let stream = StdioStream::new(fd2, open_flags);
-        let id = alloc_stream_id();
-        let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
-        reg.streams.insert(id, stream);
+        let fp = fdopen_native_impl(fd2, &open_flags);
+        if fp.is_null() {
+            unsafe { libc::syscall(libc::SYS_close as c_long, fd2) };
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 20, true);
+            return std::ptr::null_mut();
+        }
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 20, false);
-        return id as *mut c_void;
+        return fp;
     }
 
     let open_flags = OpenFlags {
@@ -5149,13 +5163,15 @@ pub unsafe extern "C" fn tmpfile() -> *mut c_void {
         writable: true,
         ..Default::default()
     };
-    let stream = StdioStream::new(fd, open_flags);
-    let id = alloc_stream_id();
-    let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
-    reg.streams.insert(id, stream);
+    let fp = fdopen_native_impl(fd, &open_flags);
+    if fp.is_null() {
+        unsafe { libc::syscall(libc::SYS_close as c_long, fd) };
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 20, true);
+        return std::ptr::null_mut();
+    }
 
     runtime_policy::observe(ApiFamily::Stdio, decision.profile, 20, false);
-    id as *mut c_void
+    fp
 }
 
 /// Thread-local counter for tmpnam uniqueness.
