@@ -681,3 +681,167 @@ fn iconv_incomplete_utf8_reports_einval_and_preserves_progress() {
         assert_eq!(iconv_close(cd), 0);
     }
 }
+
+// ---------------------------------------------------------------------------
+// Strict/Hardened Mode Tests (bd-z7gt)
+// ---------------------------------------------------------------------------
+
+use std::sync::Mutex;
+
+/// Mutex for mode env var manipulation (process-global).
+static MODE_ENV_LOCK: Mutex<()> = Mutex::new(());
+
+fn with_mode(mode: &str, f: impl FnOnce()) {
+    let _guard = MODE_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    // SAFETY: Serialized by MODE_ENV_LOCK.
+    unsafe { std::env::set_var("FRANKENLIBC_MODE", mode) };
+    f();
+    // SAFETY: Same as above.
+    unsafe { std::env::remove_var("FRANKENLIBC_MODE") };
+}
+
+#[test]
+fn strict_mode_iconv_open_unsupported_returns_error() {
+    with_mode("strict", || {
+        let cd = unsafe { iconv_open(c_str(b"EBCDIC\0"), c_str(b"UTF-8\0")) };
+        assert_eq!(
+            cd,
+            iconv_error_handle(),
+            "strict mode: unsupported encoding should return error"
+        );
+    });
+}
+
+#[test]
+fn strict_mode_iconv_open_null_returns_error() {
+    with_mode("strict", || {
+        let cd = unsafe { iconv_open(ptr::null(), c_str(b"UTF-8\0")) };
+        assert_eq!(
+            cd,
+            iconv_error_handle(),
+            "strict mode: null tocode should return error"
+        );
+    });
+}
+
+#[test]
+fn strict_mode_iconv_utf8_to_utf16le_succeeds() {
+    with_mode("strict", || unsafe {
+        let cd = iconv_open(c_str(b"UTF-16LE\0"), c_str(b"UTF-8\0"));
+        assert_ne!(cd, iconv_error_handle());
+
+        let mut input = b"Test".to_vec();
+        let mut in_ptr = input.as_mut_ptr().cast::<c_char>();
+        let mut in_left = input.len();
+
+        let mut output = [0u8; 16];
+        let mut out_ptr = output.as_mut_ptr().cast::<c_char>();
+        let mut out_left = output.len();
+
+        let rc = iconv(cd, &mut in_ptr, &mut in_left, &mut out_ptr, &mut out_left);
+        assert_eq!(rc, 0, "strict mode: valid conversion should succeed");
+        assert_eq!(in_left, 0, "strict mode: all input should be consumed");
+
+        assert_eq!(iconv_close(cd), 0);
+    });
+}
+
+#[test]
+fn hardened_mode_iconv_open_unsupported_returns_error() {
+    with_mode("hardened", || {
+        let cd = unsafe { iconv_open(c_str(b"EBCDIC\0"), c_str(b"UTF-8\0")) };
+        // In hardened mode, unsupported encodings still fail (no healing for invalid codecs).
+        assert_eq!(
+            cd,
+            iconv_error_handle(),
+            "hardened mode: unsupported encoding should return error"
+        );
+    });
+}
+
+#[test]
+fn hardened_mode_iconv_open_null_returns_error() {
+    with_mode("hardened", || {
+        let cd = unsafe { iconv_open(ptr::null(), c_str(b"UTF-8\0")) };
+        // In hardened mode, null inputs still fail.
+        assert_eq!(
+            cd,
+            iconv_error_handle(),
+            "hardened mode: null tocode should return error"
+        );
+    });
+}
+
+#[test]
+fn hardened_mode_iconv_utf8_to_utf16le_succeeds() {
+    with_mode("hardened", || unsafe {
+        let cd = iconv_open(c_str(b"UTF-16LE\0"), c_str(b"UTF-8\0"));
+        assert_ne!(cd, iconv_error_handle());
+
+        let mut input = b"Hardened".to_vec();
+        let mut in_ptr = input.as_mut_ptr().cast::<c_char>();
+        let mut in_left = input.len();
+
+        let mut output = [0u8; 32];
+        let mut out_ptr = output.as_mut_ptr().cast::<c_char>();
+        let mut out_left = output.len();
+
+        let rc = iconv(cd, &mut in_ptr, &mut in_left, &mut out_ptr, &mut out_left);
+        assert_eq!(rc, 0, "hardened mode: valid conversion should succeed");
+        assert_eq!(in_left, 0, "hardened mode: all input should be consumed");
+
+        assert_eq!(iconv_close(cd), 0);
+    });
+}
+
+#[test]
+fn strict_mode_iconv_invalid_utf8_reports_eilseq() {
+    with_mode("strict", || unsafe {
+        let cd = iconv_open(c_str(b"UTF-16LE\0"), c_str(b"UTF-8\0"));
+        assert_ne!(cd, iconv_error_handle());
+
+        // Invalid UTF-8 sequence
+        let mut input = vec![0xC3u8, 0x28];
+        let mut in_ptr = input.as_mut_ptr().cast::<c_char>();
+        let mut in_left = input.len();
+
+        let mut output = [0u8; 8];
+        let mut out_ptr = output.as_mut_ptr().cast::<c_char>();
+        let mut out_left = output.len();
+
+        *__errno_location() = 0;
+        let rc = iconv(cd, &mut in_ptr, &mut in_left, &mut out_ptr, &mut out_left);
+        assert_eq!(rc, ICONV_ERROR, "strict mode: invalid UTF-8 should fail");
+        assert_eq!(*__errno_location(), core_iconv::ICONV_EILSEQ);
+
+        assert_eq!(iconv_close(cd), 0);
+    });
+}
+
+#[test]
+fn hardened_mode_iconv_invalid_utf8_reports_eilseq() {
+    with_mode("hardened", || unsafe {
+        let cd = iconv_open(c_str(b"UTF-16LE\0"), c_str(b"UTF-8\0"));
+        assert_ne!(cd, iconv_error_handle());
+
+        // Invalid UTF-8 sequence
+        let mut input = vec![0xC3u8, 0x28];
+        let mut in_ptr = input.as_mut_ptr().cast::<c_char>();
+        let mut in_left = input.len();
+
+        let mut output = [0u8; 8];
+        let mut out_ptr = output.as_mut_ptr().cast::<c_char>();
+        let mut out_left = output.len();
+
+        *__errno_location() = 0;
+        let rc = iconv(cd, &mut in_ptr, &mut in_left, &mut out_ptr, &mut out_left);
+        // Hardened mode: invalid sequences still fail (conversion errors aren't healed)
+        assert_eq!(
+            rc, ICONV_ERROR,
+            "hardened mode: invalid UTF-8 should fail"
+        );
+        assert_eq!(*__errno_location(), core_iconv::ICONV_EILSEQ);
+
+        assert_eq!(iconv_close(cd), 0);
+    });
+}
