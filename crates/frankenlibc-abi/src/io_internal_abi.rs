@@ -136,19 +136,116 @@ impl _IO_FILE_Layout {
     }
 }
 
+// ---------------------------------------------------------------------------
+// _IO_jump_t vtable (bd-9chy.15)
+// ---------------------------------------------------------------------------
+
+/// Function pointer types for glibc `_IO_jump_t` vtable slots.
+///
+/// These match the signatures in glibc's `libio/libioP.h`. The `fp` parameter
+/// is always `*mut c_void` (really `*mut _IO_FILE`) to maintain ABI compat.
 #[allow(non_camel_case_types)]
-#[repr(C, align(16))]
-pub struct _IO_jump_t {
-    bytes: [u8; IO_JUMPS_EXPORT_SIZE],
+pub mod io_jump_fns {
+    use std::ffi::{c_int, c_void};
+
+    /// `__finish`: finalize stream (called by fclose after flush).
+    pub type finish_t = unsafe extern "C" fn(fp: *mut c_void, dummy: c_int);
+    /// `__overflow`: handle write buffer full / put single char.
+    pub type overflow_t = unsafe extern "C" fn(fp: *mut c_void, ch: c_int) -> c_int;
+    /// `__underflow`: refill read buffer, don't advance (peek).
+    pub type underflow_t = unsafe extern "C" fn(fp: *mut c_void) -> c_int;
+    /// `__uflow`: refill read buffer and return next char (advance).
+    pub type uflow_t = unsafe extern "C" fn(fp: *mut c_void) -> c_int;
+    /// `__pbackfail`: push back a character when buffer full.
+    pub type pbackfail_t = unsafe extern "C" fn(fp: *mut c_void, ch: c_int) -> c_int;
+    /// `__xsputn`: write multiple bytes.
+    pub type xsputn_t = unsafe extern "C" fn(fp: *mut c_void, buf: *const c_void, n: usize) -> usize;
+    /// `__xsgetn`: read multiple bytes.
+    pub type xsgetn_t = unsafe extern "C" fn(fp: *mut c_void, buf: *mut c_void, n: usize) -> usize;
+    /// `__seekoff`: seek relative to whence.
+    pub type seekoff_t = unsafe extern "C" fn(fp: *mut c_void, offset: i64, dir: c_int, mode: c_int) -> i64;
+    /// `__seekpos`: seek to absolute position.
+    pub type seekpos_t = unsafe extern "C" fn(fp: *mut c_void, pos: i64, mode: c_int) -> i64;
+    /// `__setbuf`: set stream buffer.
+    pub type setbuf_t =
+        unsafe extern "C" fn(fp: *mut c_void, buf: *mut c_void, size: isize) -> *mut c_void;
+    /// `__sync`: synchronize buffer with underlying fd.
+    pub type sync_t = unsafe extern "C" fn(fp: *mut c_void) -> c_int;
+    /// `__doallocate`: allocate internal buffer.
+    pub type doallocate_t = unsafe extern "C" fn(fp: *mut c_void) -> c_int;
+    /// `__read`: low-level read from fd.
+    pub type read_t = unsafe extern "C" fn(fp: *mut c_void, buf: *mut c_void, n: isize) -> isize;
+    /// `__write`: low-level write to fd.
+    pub type write_t = unsafe extern "C" fn(fp: *mut c_void, buf: *const c_void, n: isize) -> isize;
+    /// `__seek`: low-level lseek on fd.
+    pub type seek_t = unsafe extern "C" fn(fp: *mut c_void, offset: i64, dir: c_int) -> i64;
+    /// `__close`: close underlying fd.
+    pub type close_t = unsafe extern "C" fn(fp: *mut c_void) -> c_int;
+    /// `__stat`: fstat underlying fd.
+    pub type stat_t = unsafe extern "C" fn(fp: *mut c_void, st: *mut c_void) -> c_int;
+    /// `__showmanyc`: return lower bound of available chars (rarely used).
+    pub type showmanyc_t = unsafe extern "C" fn(fp: *mut c_void) -> c_int;
+    /// `__imbue`: set locale for stream (rarely used).
+    pub type imbue_t = unsafe extern "C" fn(fp: *mut c_void, locale: *mut c_void);
 }
 
-impl _IO_jump_t {
-    const fn zeroed() -> Self {
-        Self {
-            bytes: [0; IO_JUMPS_EXPORT_SIZE],
-        }
-    }
+/// glibc `_IO_jump_t` vtable structure with 21 function pointer slots.
+///
+/// Layout matches glibc 2.34 x86_64. Total size: 168 bytes (21 × 8).
+/// The first two slots (`__dummy`, `__dummy2`) are size_t values used by
+/// glibc for vtable validation; we set them to magic values.
+#[allow(non_camel_case_types)]
+#[repr(C)]
+pub struct _IO_jump_t {
+    /// Magic marker for vtable validation (glibc sets this to 0).
+    pub __dummy: usize,
+    /// Second magic marker.
+    pub __dummy2: usize,
+    /// Finalize stream.
+    pub __finish: io_jump_fns::finish_t,
+    /// Handle write buffer overflow.
+    pub __overflow: io_jump_fns::overflow_t,
+    /// Peek at next input char (refill buffer, don't advance).
+    pub __underflow: io_jump_fns::underflow_t,
+    /// Get next input char (refill buffer, advance).
+    pub __uflow: io_jump_fns::uflow_t,
+    /// Push back a character.
+    pub __pbackfail: io_jump_fns::pbackfail_t,
+    /// Write multiple bytes.
+    pub __xsputn: io_jump_fns::xsputn_t,
+    /// Read multiple bytes.
+    pub __xsgetn: io_jump_fns::xsgetn_t,
+    /// Seek relative to whence.
+    pub __seekoff: io_jump_fns::seekoff_t,
+    /// Seek to absolute position.
+    pub __seekpos: io_jump_fns::seekpos_t,
+    /// Set stream buffer.
+    pub __setbuf: io_jump_fns::setbuf_t,
+    /// Synchronize buffer with fd.
+    pub __sync: io_jump_fns::sync_t,
+    /// Allocate internal buffer.
+    pub __doallocate: io_jump_fns::doallocate_t,
+    /// Low-level read.
+    pub __read: io_jump_fns::read_t,
+    /// Low-level write.
+    pub __write: io_jump_fns::write_t,
+    /// Low-level seek.
+    pub __seek: io_jump_fns::seek_t,
+    /// Close fd.
+    pub __close: io_jump_fns::close_t,
+    /// Stat fd.
+    pub __stat: io_jump_fns::stat_t,
+    /// Return available chars (rarely used).
+    pub __showmanyc: io_jump_fns::showmanyc_t,
+    /// Set locale (rarely used).
+    pub __imbue: io_jump_fns::imbue_t,
 }
+
+// Compile-time assertion: _IO_jump_t must be exactly 168 bytes.
+const _: () = assert!(
+    std::mem::size_of::<_IO_jump_t>() == IO_JUMPS_EXPORT_SIZE,
+    "_IO_jump_t must be exactly 168 bytes (21 slots × 8 bytes)"
+);
 
 #[cfg(test)]
 mod layout_tests {
@@ -204,6 +301,71 @@ mod layout_tests {
         assert!(
             std::mem::size_of::<NativeFile>() <= 4096,
             "NativeFile must remain slab-friendly"
+        );
+    }
+
+    #[test]
+    fn io_jump_t_layout_is_correct() {
+        // _IO_jump_t must be exactly 168 bytes (21 slots × 8 bytes).
+        assert_eq!(std::mem::size_of::<_IO_jump_t>(), 168);
+
+        // Verify offsets of key slots (8-byte alignment).
+        assert_eq!(std::mem::offset_of!(_IO_jump_t, __dummy), 0);
+        assert_eq!(std::mem::offset_of!(_IO_jump_t, __dummy2), 8);
+        assert_eq!(std::mem::offset_of!(_IO_jump_t, __finish), 16);
+        assert_eq!(std::mem::offset_of!(_IO_jump_t, __overflow), 24);
+        assert_eq!(std::mem::offset_of!(_IO_jump_t, __underflow), 32);
+        assert_eq!(std::mem::offset_of!(_IO_jump_t, __uflow), 40);
+        assert_eq!(std::mem::offset_of!(_IO_jump_t, __pbackfail), 48);
+        assert_eq!(std::mem::offset_of!(_IO_jump_t, __xsputn), 56);
+        assert_eq!(std::mem::offset_of!(_IO_jump_t, __xsgetn), 64);
+        assert_eq!(std::mem::offset_of!(_IO_jump_t, __seekoff), 72);
+        assert_eq!(std::mem::offset_of!(_IO_jump_t, __seekpos), 80);
+        assert_eq!(std::mem::offset_of!(_IO_jump_t, __setbuf), 88);
+        assert_eq!(std::mem::offset_of!(_IO_jump_t, __sync), 96);
+        assert_eq!(std::mem::offset_of!(_IO_jump_t, __doallocate), 104);
+        assert_eq!(std::mem::offset_of!(_IO_jump_t, __read), 112);
+        assert_eq!(std::mem::offset_of!(_IO_jump_t, __write), 120);
+        assert_eq!(std::mem::offset_of!(_IO_jump_t, __seek), 128);
+        assert_eq!(std::mem::offset_of!(_IO_jump_t, __close), 136);
+        assert_eq!(std::mem::offset_of!(_IO_jump_t, __stat), 144);
+        assert_eq!(std::mem::offset_of!(_IO_jump_t, __showmanyc), 152);
+        assert_eq!(std::mem::offset_of!(_IO_jump_t, __imbue), 160);
+    }
+
+    #[test]
+    fn native_io_jump_t_is_initialized() {
+        // Verify that NATIVE_IO_JUMP_T has non-null function pointers.
+        assert!(NATIVE_IO_JUMP_T.__finish as usize != 0);
+        assert!(NATIVE_IO_JUMP_T.__overflow as usize != 0);
+        assert!(NATIVE_IO_JUMP_T.__underflow as usize != 0);
+        assert!(NATIVE_IO_JUMP_T.__uflow as usize != 0);
+        assert!(NATIVE_IO_JUMP_T.__pbackfail as usize != 0);
+        assert!(NATIVE_IO_JUMP_T.__xsputn as usize != 0);
+        assert!(NATIVE_IO_JUMP_T.__xsgetn as usize != 0);
+        assert!(NATIVE_IO_JUMP_T.__seekoff as usize != 0);
+        assert!(NATIVE_IO_JUMP_T.__seekpos as usize != 0);
+        assert!(NATIVE_IO_JUMP_T.__setbuf as usize != 0);
+        assert!(NATIVE_IO_JUMP_T.__sync as usize != 0);
+        assert!(NATIVE_IO_JUMP_T.__doallocate as usize != 0);
+        assert!(NATIVE_IO_JUMP_T.__read as usize != 0);
+        assert!(NATIVE_IO_JUMP_T.__write as usize != 0);
+        assert!(NATIVE_IO_JUMP_T.__seek as usize != 0);
+        assert!(NATIVE_IO_JUMP_T.__close as usize != 0);
+        assert!(NATIVE_IO_JUMP_T.__stat as usize != 0);
+        assert!(NATIVE_IO_JUMP_T.__showmanyc as usize != 0);
+        assert!(NATIVE_IO_JUMP_T.__imbue as usize != 0);
+    }
+
+    #[test]
+    fn native_file_has_vtable_set() {
+        // Creating a NativeFile should automatically set the vtable.
+        let file = NativeFile::new(42, file_flags::READ, NativeFileBufMode::Full);
+        assert!(!file.vtable.is_null());
+        // The vtable should point to NATIVE_IO_JUMP_T.
+        assert_eq!(
+            file.vtable as *const _IO_jump_t,
+            ptr::addr_of!(NATIVE_IO_JUMP_T)
         );
     }
 }
@@ -327,10 +489,14 @@ const _: () = assert!(
 
 impl NativeFile {
     /// Create a new `NativeFile` for the given file descriptor and flags.
+    ///
+    /// The vtable is automatically set to `NATIVE_IO_JUMP_T` for proper
+    /// indirect dispatch support (e.g., for `-fno-plt` binaries).
     pub fn new(fd: i32, flags: u32, buf_mode: NativeFileBufMode) -> Self {
         let mut file = Self {
             _io_file: _IO_FILE_Layout::new(fd),
-            vtable: ptr::null_mut(),
+            // Set vtable to our native trampolines for indirect vtable dispatch.
+            vtable: ptr::addr_of!(NATIVE_IO_JUMP_T) as *mut _IO_jump_t,
             _frankenlibc_state: NativeFileState::new(fd, flags, buf_mode),
         };
         file.sync_lock_ptr();
@@ -1044,6 +1210,185 @@ pub unsafe fn configure_native_stdio_stream(
 }
 
 // ---------------------------------------------------------------------------
+// _IO_jump_t trampolines (bd-9chy.15)
+// ---------------------------------------------------------------------------
+//
+// These extern "C" trampolines dispatch glibc vtable calls to our native
+// stdio implementation. Each takes a FILE* (as *mut c_void), and calls the
+// corresponding native stdio function.
+
+/// Trampoline for `__finish`: finalize stream.
+unsafe extern "C" fn trampoline_finish(fp: *mut c_void, _dummy: c_int) {
+    // Called after fclose has flushed; we don't need to do anything extra.
+    // The actual cleanup happens in fclose itself.
+    let _ = fp;
+}
+
+/// Trampoline for `__overflow`: write buffer overflow or single char put.
+unsafe extern "C" fn trampoline_overflow(fp: *mut c_void, ch: c_int) -> c_int {
+    // Flush the buffer and then write the character if not EOF.
+    if unsafe { stdio_abi::fflush(fp) } != 0 {
+        return libc::EOF;
+    }
+    if ch == libc::EOF {
+        return 0; // Just a flush request
+    }
+    // Write the single character
+    unsafe { stdio_abi::fputc(ch, fp) }
+}
+
+/// Trampoline for `__underflow`: peek at next char (refill buffer, don't advance).
+unsafe extern "C" fn trampoline_underflow(fp: *mut c_void) -> c_int {
+    // Read a char and push it back
+    let ch = unsafe { stdio_abi::fgetc(fp) };
+    if ch != libc::EOF {
+        let _ = unsafe { stdio_abi::ungetc(ch, fp) };
+    }
+    ch
+}
+
+/// Trampoline for `__uflow`: get next char (refill buffer, advance).
+unsafe extern "C" fn trampoline_uflow(fp: *mut c_void) -> c_int {
+    unsafe { stdio_abi::fgetc(fp) }
+}
+
+/// Trampoline for `__pbackfail`: push back a character.
+unsafe extern "C" fn trampoline_pbackfail(fp: *mut c_void, ch: c_int) -> c_int {
+    if ch == libc::EOF {
+        return libc::EOF;
+    }
+    unsafe { stdio_abi::ungetc(ch, fp) }
+}
+
+/// Trampoline for `__xsputn`: write multiple bytes.
+unsafe extern "C" fn trampoline_xsputn(fp: *mut c_void, buf: *const c_void, n: usize) -> usize {
+    unsafe { stdio_abi::fwrite(buf, 1, n, fp) }
+}
+
+/// Trampoline for `__xsgetn`: read multiple bytes.
+unsafe extern "C" fn trampoline_xsgetn(fp: *mut c_void, buf: *mut c_void, n: usize) -> usize {
+    unsafe { stdio_abi::fread(buf, 1, n, fp) }
+}
+
+/// Trampoline for `__seekoff`: seek relative to whence.
+unsafe extern "C" fn trampoline_seekoff(fp: *mut c_void, offset: i64, dir: c_int, _mode: c_int) -> i64 {
+    if unsafe { stdio_abi::fseeko(fp, offset, dir) } != 0 {
+        return -1;
+    }
+    unsafe { stdio_abi::ftello(fp) }
+}
+
+/// Trampoline for `__seekpos`: seek to absolute position.
+unsafe extern "C" fn trampoline_seekpos(fp: *mut c_void, pos: i64, _mode: c_int) -> i64 {
+    if unsafe { stdio_abi::fseeko(fp, pos, libc::SEEK_SET) } != 0 {
+        return -1;
+    }
+    unsafe { stdio_abi::ftello(fp) }
+}
+
+/// Trampoline for `__setbuf`: set stream buffer.
+unsafe extern "C" fn trampoline_setbuf(
+    fp: *mut c_void,
+    buf: *mut c_void,
+    size: isize,
+) -> *mut c_void {
+    if size < 0 {
+        return ptr::null_mut();
+    }
+    unsafe { stdio_abi::setbuffer(fp, buf.cast::<c_char>(), size as usize) };
+    fp
+}
+
+/// Trampoline for `__sync`: synchronize buffer with fd.
+unsafe extern "C" fn trampoline_sync(fp: *mut c_void) -> c_int {
+    unsafe { stdio_abi::fflush(fp) }
+}
+
+/// Trampoline for `__doallocate`: allocate internal buffer.
+unsafe extern "C" fn trampoline_doallocate(_fp: *mut c_void) -> c_int {
+    // Our stdio layer handles buffer allocation lazily on first I/O.
+    0 // success
+}
+
+/// Trampoline for `__read`: low-level read from fd.
+unsafe extern "C" fn trampoline_read(fp: *mut c_void, buf: *mut c_void, n: isize) -> isize {
+    if n < 0 {
+        return -1;
+    }
+    unsafe { stdio_abi::fread(buf, 1, n as usize, fp) as isize }
+}
+
+/// Trampoline for `__write`: low-level write to fd.
+unsafe extern "C" fn trampoline_write(fp: *mut c_void, buf: *const c_void, n: isize) -> isize {
+    if n < 0 {
+        return -1;
+    }
+    unsafe { stdio_abi::fwrite(buf, 1, n as usize, fp) as isize }
+}
+
+/// Trampoline for `__seek`: low-level lseek on fd.
+unsafe extern "C" fn trampoline_seek(fp: *mut c_void, offset: i64, dir: c_int) -> i64 {
+    if unsafe { stdio_abi::fseeko(fp, offset, dir) } != 0 {
+        return -1;
+    }
+    unsafe { stdio_abi::ftello(fp) }
+}
+
+/// Trampoline for `__close`: close underlying fd.
+unsafe extern "C" fn trampoline_close(fp: *mut c_void) -> c_int {
+    unsafe { stdio_abi::fclose(fp) }
+}
+
+/// Trampoline for `__stat`: fstat underlying fd.
+unsafe extern "C" fn trampoline_stat(fp: *mut c_void, st: *mut c_void) -> c_int {
+    let fd = unsafe { stdio_abi::fileno(fp) };
+    if fd < 0 {
+        return -1;
+    }
+    unsafe { crate::unistd_abi::fstat(fd, st.cast::<libc::stat>()) }
+}
+
+/// Trampoline for `__showmanyc`: return available chars (rarely used).
+unsafe extern "C" fn trampoline_showmanyc(_fp: *mut c_void) -> c_int {
+    // Return -1 to indicate "unknown" (glibc default behavior).
+    -1
+}
+
+/// Trampoline for `__imbue`: set locale (rarely used).
+unsafe extern "C" fn trampoline_imbue(_fp: *mut c_void, _locale: *mut c_void) {
+    // No-op: we don't track per-stream locale state.
+}
+
+/// The native `_IO_jump_t` vtable with all trampolines wired up.
+///
+/// This is the vtable that every `NativeFile` uses. It dispatches all
+/// indirect vtable calls (e.g., from `-fno-plt` binaries) to our native
+/// stdio implementation.
+pub static NATIVE_IO_JUMP_T: _IO_jump_t = _IO_jump_t {
+    __dummy: 0,
+    __dummy2: 0,
+    __finish: trampoline_finish,
+    __overflow: trampoline_overflow,
+    __underflow: trampoline_underflow,
+    __uflow: trampoline_uflow,
+    __pbackfail: trampoline_pbackfail,
+    __xsputn: trampoline_xsputn,
+    __xsgetn: trampoline_xsgetn,
+    __seekoff: trampoline_seekoff,
+    __seekpos: trampoline_seekpos,
+    __setbuf: trampoline_setbuf,
+    __sync: trampoline_sync,
+    __doallocate: trampoline_doallocate,
+    __read: trampoline_read,
+    __write: trampoline_write,
+    __seek: trampoline_seek,
+    __close: trampoline_close,
+    __stat: trampoline_stat,
+    __showmanyc: trampoline_showmanyc,
+    __imbue: trampoline_imbue,
+};
+
+// ---------------------------------------------------------------------------
 // Global variable symbols
 // ---------------------------------------------------------------------------
 
@@ -1053,14 +1398,58 @@ pub unsafe fn configure_native_stdio_stream(
 pub static mut _IO_list_all: *mut c_void = std::ptr::null_mut();
 
 /// `_IO_file_jumps` — default FILE vtable for regular files.
-/// Native-owned: zeroed vtable (our stdio layer uses its own vtable dispatch).
+/// Native-owned: initialized with our native trampolines for full vtable dispatch.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub static mut _IO_file_jumps: _IO_jump_t = _IO_jump_t::zeroed();
+pub static mut _IO_file_jumps: _IO_jump_t = _IO_jump_t {
+    __dummy: 0,
+    __dummy2: 0,
+    __finish: trampoline_finish,
+    __overflow: trampoline_overflow,
+    __underflow: trampoline_underflow,
+    __uflow: trampoline_uflow,
+    __pbackfail: trampoline_pbackfail,
+    __xsputn: trampoline_xsputn,
+    __xsgetn: trampoline_xsgetn,
+    __seekoff: trampoline_seekoff,
+    __seekpos: trampoline_seekpos,
+    __setbuf: trampoline_setbuf,
+    __sync: trampoline_sync,
+    __doallocate: trampoline_doallocate,
+    __read: trampoline_read,
+    __write: trampoline_write,
+    __seek: trampoline_seek,
+    __close: trampoline_close,
+    __stat: trampoline_stat,
+    __showmanyc: trampoline_showmanyc,
+    __imbue: trampoline_imbue,
+};
 
 /// `_IO_wfile_jumps` — default FILE vtable for wide-oriented files.
-/// Native-owned: zeroed vtable (our stdio layer uses its own vtable dispatch).
+/// Native-owned: same trampolines as `_IO_file_jumps` (wide dispatch is TODO).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub static mut _IO_wfile_jumps: _IO_jump_t = _IO_jump_t::zeroed();
+pub static mut _IO_wfile_jumps: _IO_jump_t = _IO_jump_t {
+    __dummy: 0,
+    __dummy2: 0,
+    __finish: trampoline_finish,
+    __overflow: trampoline_overflow,
+    __underflow: trampoline_underflow,
+    __uflow: trampoline_uflow,
+    __pbackfail: trampoline_pbackfail,
+    __xsputn: trampoline_xsputn,
+    __xsgetn: trampoline_xsgetn,
+    __seekoff: trampoline_seekoff,
+    __seekpos: trampoline_seekpos,
+    __setbuf: trampoline_setbuf,
+    __sync: trampoline_sync,
+    __doallocate: trampoline_doallocate,
+    __read: trampoline_read,
+    __write: trampoline_write,
+    __seek: trampoline_seek,
+    __close: trampoline_close,
+    __stat: trampoline_stat,
+    __showmanyc: trampoline_showmanyc,
+    __imbue: trampoline_imbue,
+};
 
 /// Legacy bootstrap hook — now a no-op (bd-zh1y.3.4).
 ///

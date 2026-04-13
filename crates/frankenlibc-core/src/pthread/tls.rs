@@ -192,9 +192,9 @@ fn table_register(tid: i32, values_ptr: *mut TlsEntry) {
 
 /// Look up the TLS values pointer for a given TID.
 ///
-/// Returns a raw pointer to `[u64; PTHREAD_KEYS_MAX]`, or null if not found.
+/// Returns a raw pointer to `[TlsEntry; PTHREAD_KEYS_MAX]`, or null if not found.
 /// **Allocation-free.**
-pub(crate) fn table_lookup(tid: i32) -> *mut u64 {
+pub(crate) fn table_lookup(tid: i32) -> *mut TlsEntry {
     if tid <= 0 {
         return core::ptr::null_mut();
     }
@@ -204,7 +204,7 @@ pub(crate) fn table_lookup(tid: i32) -> *mut u64 {
         let stored_tid = TLS_TIDS[idx].load(Ordering::Acquire);
         if stored_tid == tid {
             let ptr = TLS_PTRS[idx].load(Ordering::Acquire);
-            return ptr as *mut u64;
+            return ptr as *mut TlsEntry;
         }
         if stored_tid == TLS_SLOT_EMPTY {
             return core::ptr::null_mut();
@@ -227,7 +227,7 @@ fn table_remove(tid: i32) -> *mut TlsEntry {
         if stored_tid == tid {
             let ptr = TLS_PTRS[idx].swap(0, Ordering::AcqRel);
             TLS_TIDS[idx].store(TLS_SLOT_TOMBSTONE, Ordering::Release);
-            return ptr as *mut u64;
+            return ptr as *mut TlsEntry;
         }
         if stored_tid == TLS_SLOT_EMPTY {
             return core::ptr::null_mut();
@@ -1226,4 +1226,6 @@ mod tests {
 
         let vals = OBSERVED_VALUES.lock().unwrap();
         assert_eq!(vals.len(), 1);
-        assert_eq!(vals[0], 777, "destructor should                                       
+        assert_eq!(vals[0], 777, "destructor should receive the original value");
+    }
+}
