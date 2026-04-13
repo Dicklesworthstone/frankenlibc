@@ -14,9 +14,15 @@ use std::ptr;
 use crate::errno_abi::set_abi_errno;
 use crate::malloc_abi::known_remaining;
 use crate::runtime_policy;
+use crate::util::scan_c_string;
 use frankenlibc_core::errno;
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 use libc::{intmax_t, uintmax_t};
+
+#[inline]
+fn repair_enabled(heals_enabled: bool, action: MembraneAction) -> bool {
+    heals_enabled || matches!(action, MembraneAction::Repair(_))
+}
 
 unsafe extern "C" {
     #[link_name = "__environ"]
@@ -296,33 +302,6 @@ unsafe fn remove_from_environ(name: *const c_char) -> c_int {
         }
         *write = std::ptr::null_mut();
         0
-    }
-}
-
-// Helper: Check if repair is enabled for this decision
-#[inline]
-fn repair_enabled(heals_enabled: bool, action: MembraneAction) -> bool {
-    heals_enabled || matches!(action, MembraneAction::Repair(_))
-}
-
-/// Scan a C string with an optional hard bound.
-unsafe fn scan_c_string(ptr: *const c_char, bound: Option<usize>) -> (usize, bool) {
-    match bound {
-        Some(limit) => {
-            for i in 0..limit {
-                if unsafe { *ptr.add(i) } == 0 {
-                    return (i, true);
-                }
-            }
-            (limit, false)
-        }
-        None => {
-            let mut i = 0usize;
-            while unsafe { *ptr.add(i) } != 0 {
-                i += 1;
-            }
-            (i, true)
-        }
     }
 }
 
@@ -2638,13 +2617,18 @@ pub unsafe extern "C" fn error(status: c_int, errnum: c_int, fmt: *const c_char,
 
     let mut stderr = std::io::stderr().lock();
 
-    // Try to get program name
-    let progname = unsafe {
+    let progname = {
         let p = get_program_short_name();
-        if !p.is_null() {
-            CStr::from_ptr(p).to_str().unwrap_or("unknown")
-        } else {
+        if p.is_null() {
             "unknown"
+        } else {
+            let (len, terminated) = unsafe { scan_c_string(p, known_remaining(p as usize)) };
+            if !terminated {
+                "unknown"
+            } else {
+                let bytes = unsafe { std::slice::from_raw_parts(p as *const u8, len) };
+                std::str::from_utf8(bytes).unwrap_or("unknown")
+            }
         }
     };
 
@@ -2652,27 +2636,34 @@ pub unsafe extern "C" fn error(status: c_int, errnum: c_int, fmt: *const c_char,
 
     // Format the message
     if !fmt.is_null() {
-        let fmt_str = unsafe { CStr::from_ptr(fmt) };
-        if let Ok(f) = fmt_str.to_str() {
-            // Simple format: just print as-is for common case.
-            // For full printf compatibility, delegate to our printf engine.
-            let msg = unsafe {
-                crate::stdio_abi::vprintf_extract_and_render(
-                    f,
-                    (&mut args) as *mut _ as *mut c_void,
-                )
-            };
-            let _ = write!(stderr, "{msg}");
+        let (fmt_len, terminated) = unsafe { scan_c_string(fmt, known_remaining(fmt as usize)) };
+        if terminated {
+            let fmt_bytes = unsafe { std::slice::from_raw_parts(fmt as *const u8, fmt_len) };
+            if let Ok(f) = std::str::from_utf8(fmt_bytes) {
+                // Simple format: just print as-is for common case.
+                // For full printf compatibility, delegate to our printf engine.
+                let msg = unsafe {
+                    crate::stdio_abi::vprintf_extract_and_render(
+                        f,
+                        (&mut args) as *mut _ as *mut c_void,
+                    )
+                };
+                let _ = write!(stderr, "{msg}");
+            }
         }
     }
 
     if errnum != 0 {
-        let err_msg = unsafe {
-            let p = crate::string_abi::strerror(errnum);
-            if !p.is_null() {
-                CStr::from_ptr(p).to_str().unwrap_or("Unknown error")
-            } else {
+        let err_ptr = unsafe { crate::string_abi::strerror(errnum) };
+        let err_msg = if err_ptr.is_null() {
+            "Unknown error"
+        } else {
+            let (len, terminated) = unsafe { scan_c_string(err_ptr, known_remaining(err_ptr as usize)) };
+            if !terminated {
                 "Unknown error"
+            } else {
+                let bytes = unsafe { std::slice::from_raw_parts(err_ptr as *const u8, len) };
+                std::str::from_utf8(bytes).unwrap_or("Unknown error")
             }
         };
         let _ = write!(stderr, ": {err_msg}");
@@ -3172,26 +3163,41 @@ pub unsafe extern "C" fn __assert_fail(
     function: *const c_char,
 ) -> ! {
     let a = if assertion.is_null() {
-        c"??"
+        "??".to_string()
     } else {
-        unsafe { core::ffi::CStr::from_ptr(assertion) }
+        let (len, terminated) = unsafe { scan_c_string(assertion, known_remaining(assertion as usize)) };
+        if !terminated {
+            "??".to_string()
+        } else {
+            let bytes = unsafe { std::slice::from_raw_parts(assertion as *const u8, len) };
+            String::from_utf8_lossy(bytes).into_owned()
+        }
     };
     let f = if file.is_null() {
-        c"??"
+        "??".to_string()
     } else {
-        unsafe { core::ffi::CStr::from_ptr(file) }
+        let (len, terminated) = unsafe { scan_c_string(file, known_remaining(file as usize)) };
+        if !terminated {
+            "??".to_string()
+        } else {
+            let bytes = unsafe { std::slice::from_raw_parts(file as *const u8, len) };
+            String::from_utf8_lossy(bytes).into_owned()
+        }
     };
     let func = if function.is_null() {
-        c"??"
+        "??".to_string()
     } else {
-        unsafe { core::ffi::CStr::from_ptr(function) }
+        let (len, terminated) = unsafe { scan_c_string(function, known_remaining(function as usize)) };
+        if !terminated {
+            "??".to_string()
+        } else {
+            let bytes = unsafe { std::slice::from_raw_parts(function as *const u8, len) };
+            String::from_utf8_lossy(bytes).into_owned()
+        }
     };
     let msg = format!(
         "{}: {}: {}: Assertion `{}' failed.\n",
-        f.to_str().unwrap_or("??"),
-        line,
-        func.to_str().unwrap_or("??"),
-        a.to_str().unwrap_or("??")
+        f, line, func, a
     );
     unsafe {
         crate::unistd_abi::sys_write_fd(libc::STDERR_FILENO, msg.as_ptr().cast(), msg.len());
@@ -3798,4 +3804,205 @@ pub unsafe extern "C" fn ualarm(usecs: c_uint, interval: c_uint) -> c_uint {
         return 0;
     }
     (old_val.it_value.tv_sec as c_uint) * 1_000_000 + old_val.it_value.tv_usec as c_uint
+}
+
+// ---------------------------------------------------------------------------
+// basename / dirname — POSIX libgen.h
+// ---------------------------------------------------------------------------
+
+use frankenlibc_core::unistd::{basename_range, dirname_range};
+
+/// Static buffer for basename return value.
+static BASENAME_BUF: std::sync::Mutex<[u8; 4097]> = std::sync::Mutex::new([0u8; 4097]);
+
+/// POSIX `basename` — extract filename component from a path.
+///
+/// Returns a pointer to a static buffer. Not thread-safe per POSIX spec,
+/// but we use a mutex internally for Rust safety.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn basename(path: *mut std::ffi::c_char) -> *mut std::ffi::c_char {
+    let dot = b".\0";
+    if path.is_null() {
+        return dot.as_ptr() as *mut std::ffi::c_char;
+    }
+    let (len, _terminated) = unsafe { scan_c_string(path as *const std::ffi::c_char, None) };
+    if len == 0 {
+        return dot.as_ptr() as *mut std::ffi::c_char;
+    }
+    let slice = unsafe { std::slice::from_raw_parts(path as *const u8, len) };
+    let (s, e) = basename_range(slice);
+    let result_len = e - s;
+    if result_len == 0 {
+        return dot.as_ptr() as *mut std::ffi::c_char;
+    }
+    let mut buf = BASENAME_BUF.lock().unwrap_or_else(|e| e.into_inner());
+    buf[..result_len].copy_from_slice(&slice[s..e]);
+    buf[result_len] = 0;
+    buf.as_mut_ptr() as *mut std::ffi::c_char
+}
+
+/// Static buffer for dirname return value.
+static DIRNAME_BUF: std::sync::Mutex<[u8; 4097]> = std::sync::Mutex::new([0u8; 4097]);
+
+/// POSIX `dirname` — extract directory component from a path.
+///
+/// Returns a pointer to a static buffer. Not thread-safe per POSIX spec,
+/// but we use a mutex internally for Rust safety.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn dirname(path: *mut std::ffi::c_char) -> *mut std::ffi::c_char {
+    let dot = b".\0";
+    if path.is_null() {
+        return dot.as_ptr() as *mut std::ffi::c_char;
+    }
+    let (len, _terminated) = unsafe { scan_c_string(path as *const std::ffi::c_char, None) };
+    if len == 0 {
+        return dot.as_ptr() as *mut std::ffi::c_char;
+    }
+    let slice = unsafe { std::slice::from_raw_parts(path as *const u8, len) };
+    let (s, e) = dirname_range(slice);
+    let result_len = e - s;
+    if result_len == 0 {
+        return dot.as_ptr() as *mut std::ffi::c_char;
+    }
+    let mut buf = DIRNAME_BUF.lock().unwrap_or_else(|e| e.into_inner());
+    buf[..result_len].copy_from_slice(&slice[s..e]);
+    buf[result_len] = 0;
+    buf.as_mut_ptr() as *mut std::ffi::c_char
+}
+
+// ---------------------------------------------------------------------------
+// realpath — via SYS_readlink iteration
+// ---------------------------------------------------------------------------
+
+/// POSIX `realpath` — resolve a pathname to an absolute path.
+///
+/// Small integer to ASCII in a fixed buffer. Returns number of bytes written.
+fn itoa_small(mut n: u32, buf: &mut [u8]) -> usize {
+    if n == 0 {
+        buf[0] = b'0';
+        return 1;
+    }
+    let mut tmp = [0u8; 10];
+    let mut i = 0;
+    while n > 0 {
+        tmp[i] = b'0' + (n % 10) as u8;
+        n /= 10;
+        i += 1;
+    }
+    for j in 0..i {
+        buf[j] = tmp[i - 1 - j];
+    }
+    i
+}
+
+/// If `resolved_path` is null, allocates a buffer via malloc.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn realpath(
+    path: *const std::ffi::c_char,
+    resolved_path: *mut std::ffi::c_char,
+) -> *mut std::ffi::c_char {
+    if path.is_null() {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return std::ptr::null_mut();
+    }
+
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::IoFd,
+        path as usize,
+        0,
+        false,
+        known_remaining(path as usize).is_none(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, true);
+        return std::ptr::null_mut();
+    }
+
+    let (_path_len, terminated) = unsafe { scan_c_string(path, known_remaining(path as usize)) };
+    if !terminated {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, true);
+        return std::ptr::null_mut();
+    }
+
+    // Resolve path using the raw readlink(/proc/self/fd/N) approach via open+readlink.
+    // Cannot use std::fs::canonicalize because it calls libc realpath — which is
+    // our own interposed symbol, causing infinite recursion.
+
+    // Open the path with O_PATH (no actual I/O, just get an fd for the kernel path).
+    let fd = unsafe {
+        libc::syscall(
+            libc::SYS_openat,
+            libc::AT_FDCWD,
+            path,
+            libc::O_PATH | libc::O_CLOEXEC,
+            0,
+        ) as i32
+    };
+    if fd < 0 {
+        unsafe { set_abi_errno(errno::ENOENT) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 16, true);
+        return std::ptr::null_mut();
+    }
+
+    // Read the kernel-resolved canonical path via /proc/self/fd/N.
+    let mut proc_path = [0u8; 64];
+    let prefix = b"/proc/self/fd/";
+    proc_path[..prefix.len()].copy_from_slice(prefix);
+    let fd_str = itoa_small(fd as u32, &mut proc_path[prefix.len()..]);
+    let proc_len = prefix.len() + fd_str;
+    proc_path[proc_len] = 0;
+
+    let mut buf = [0u8; libc::PATH_MAX as usize];
+    let n = unsafe {
+        libc::syscall(
+            libc::SYS_readlinkat,
+            libc::AT_FDCWD,
+            proc_path.as_ptr(),
+            buf.as_mut_ptr(),
+            buf.len() - 1,
+        ) as isize
+    };
+    unsafe { libc::syscall(libc::SYS_close, fd) };
+
+    if n <= 0 {
+        unsafe { set_abi_errno(errno::ENOENT) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 16, true);
+        return std::ptr::null_mut();
+    }
+
+    let out = &buf[..n as usize];
+    if out.contains(&0) {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 16, true);
+        return std::ptr::null_mut();
+    }
+
+    let dst = if resolved_path.is_null() {
+        // SAFETY: allocates writable C-compatible storage for the canonical path plus terminator.
+        let alloc = unsafe { crate::malloc_abi::raw_alloc(out.len() + 1) as *mut std::ffi::c_char };
+        if alloc.is_null() {
+            unsafe { set_abi_errno(errno::ENOMEM) };
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 16, true);
+            return std::ptr::null_mut();
+        }
+        alloc
+    } else {
+        resolved_path
+    };
+
+    // SAFETY: caller guarantees destination capacity when `resolved_path` is non-null.
+    unsafe {
+        std::ptr::copy_nonoverlapping(out.as_ptr() as *const std::ffi::c_char, dst, out.len());
+        *dst.add(out.len()) = 0;
+    }
+    runtime_policy::observe(
+        ApiFamily::IoFd,
+        decision.profile,
+        runtime_policy::scaled_cost(18, out.len().max(1)),
+        false,
+    );
+    dst
 }

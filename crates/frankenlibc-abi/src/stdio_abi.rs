@@ -728,47 +728,23 @@ pub static mut stderr: *mut c_void = STDERR_SENTINEL as *mut c_void;
 // In glibc, `_IO_2_1_stdin_` is the actual FILE struct and `stdin` is defined as `&_IO_2_1_stdin_`.
 // Some binaries resolve these symbols directly via dlsym or link-time resolution.
 //
-// We use global_asm to define these as proper global symbols that can't be optimized away.
-// At runtime, init_host_stdio_streams() initializes these to point to the same NativeFile
-// storage as stdin/stdout/stderr.
-#[cfg(not(debug_assertions))]
-core::arch::global_asm!(
-    // Define symbols as global objects with proper ELF type
-    ".section .data.rel.ro,\"aw\",@progbits",
-    ".align 8",
-    ".global _IO_2_1_stdin_",
-    ".type _IO_2_1_stdin_, @object",
-    ".size _IO_2_1_stdin_, 8",
-    "_IO_2_1_stdin_:",
-    "    .quad 0",
-    ".global _IO_2_1_stdout_",
-    ".type _IO_2_1_stdout_, @object",
-    ".size _IO_2_1_stdout_, 8",
-    "_IO_2_1_stdout_:",
-    "    .quad 0",
-    ".global _IO_2_1_stderr_",
-    ".type _IO_2_1_stderr_, @object",
-    ".size _IO_2_1_stderr_, 8",
-    "_IO_2_1_stderr_:",
-    "    .quad 0",
-);
+// These must point to the same NativeFile storage as stdin/stdout/stderr to avoid
+// mismatched flushes and double-closes.
+//
+// We use AtomicPtr with explicit export_name to ensure linker visibility.
+use std::sync::atomic::AtomicPtr;
 
-// Rust-side declarations of the assembly-defined symbols so we can write to them.
-// These are only present in release builds where global_asm defines them.
-#[cfg(not(debug_assertions))]
-unsafe extern "C" {
-    static mut _IO_2_1_stdin_: *mut c_void;
-    static mut _IO_2_1_stdout_: *mut c_void;
-    static mut _IO_2_1_stderr_: *mut c_void;
-}
+#[unsafe(export_name = "_IO_2_1_stdin_")]
+#[allow(non_upper_case_globals)]
+pub static IO_2_1_STDIN: AtomicPtr<c_void> = AtomicPtr::new(STDIN_SENTINEL as *mut c_void);
 
-// Debug build stubs (won't be exported, just prevents compile errors)
-#[cfg(debug_assertions)]
-static mut _IO_2_1_stdin_: *mut c_void = std::ptr::null_mut();
-#[cfg(debug_assertions)]
-static mut _IO_2_1_stdout_: *mut c_void = std::ptr::null_mut();
-#[cfg(debug_assertions)]
-static mut _IO_2_1_stderr_: *mut c_void = std::ptr::null_mut();
+#[unsafe(export_name = "_IO_2_1_stdout_")]
+#[allow(non_upper_case_globals)]
+pub static IO_2_1_STDOUT: AtomicPtr<c_void> = AtomicPtr::new(STDOUT_SENTINEL as *mut c_void);
+
+#[unsafe(export_name = "_IO_2_1_stderr_")]
+#[allow(non_upper_case_globals)]
+pub static IO_2_1_STDERR: AtomicPtr<c_void> = AtomicPtr::new(STDERR_SENTINEL as *mut c_void);
 
 static HOST_STDIO_BOOTSTRAPPED: AtomicBool = AtomicBool::new(false);
 
@@ -804,9 +780,9 @@ pub(crate) fn init_host_stdio_streams() {
             // Initialize the _IO_2_1_* aliases to point to the same NativeFile storage.
             // This ensures binaries that resolve these symbols directly see the same
             // streams as those using stdin/stdout/stderr.
-            _IO_2_1_stdin_ = stdin_ptr;
-            _IO_2_1_stdout_ = stdout_ptr;
-            _IO_2_1_stderr_ = stderr_ptr;
+            IO_2_1_STDIN.store(stdin_ptr, Ordering::Release);
+            IO_2_1_STDOUT.store(stdout_ptr, Ordering::Release);
+            IO_2_1_STDERR.store(stderr_ptr, Ordering::Release);
         }
     }
     HOST_STDIO_BOOTSTRAPPED.store(true, Ordering::Release);

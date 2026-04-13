@@ -16,6 +16,7 @@
 use std::ffi::{c_char, c_int, c_void};
 
 use frankenlibc_core::syscall::{syscall_result, syscall6};
+use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
 type c_uint = u32;
 type c_long = i64;
@@ -82,6 +83,21 @@ pub unsafe extern "C" fn _pthread_cleanup_push(
     if buf.is_null() {
         return;
     }
+    // Buffer layout: { void (*routine)(void*); void *arg; int canceltype; prev *; }
+    // Size is approx 32 bytes on x86_64.
+    let (_, decision) = crate::runtime_policy::decide(
+        ApiFamily::Threading,
+        buf as usize,
+        32,
+        true,
+        false,
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        crate::runtime_policy::observe(ApiFamily::Threading, decision.profile, 5, true);
+        return;
+    }
+
     unsafe {
         let buf_ptr = buf as *mut u8;
         // Store routine and arg
@@ -93,6 +109,7 @@ pub unsafe extern "C" fn _pthread_cleanup_push(
         // Set as new head
         PTHREAD_CLEANUP_HEAD.set(buf);
     }
+    crate::runtime_policy::observe(ApiFamily::Threading, decision.profile, 5, false);
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -100,6 +117,19 @@ pub unsafe extern "C" fn _pthread_cleanup_pop(buf: *mut c_void, execute: c_int) 
     if buf.is_null() {
         return;
     }
+    let (_, decision) = crate::runtime_policy::decide(
+        ApiFamily::Threading,
+        buf as usize,
+        32,
+        false,
+        false,
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        crate::runtime_policy::observe(ApiFamily::Threading, decision.profile, 5, true);
+        return;
+    }
+
     unsafe {
         let buf_ptr = buf as *mut u8;
         // Restore previous head
@@ -113,6 +143,7 @@ pub unsafe extern "C" fn _pthread_cleanup_pop(buf: *mut c_void, execute: c_int) 
             routine(arg);
         }
     }
+    crate::runtime_policy::observe(ApiFamily::Threading, decision.profile, 5, false);
 }
 
 // _pthread_cleanup_push_defer: like push but also saves/sets canceltype to DEFERRED

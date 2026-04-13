@@ -4641,9 +4641,11 @@ pub unsafe extern "C" fn pthread_setname_np(
     if name.is_null() {
         return libc::EINVAL;
     }
-    // Check name length: Linux limits thread name to 16 bytes including NUL.
-    let name_cstr = unsafe { CStr::from_ptr(name) };
-    if name_cstr.to_bytes().len() > 15 {
+    let (len, terminated) = unsafe { crate::util::scan_c_string(name, crate::malloc_abi::known_remaining(name as usize)) };
+    if !terminated {
+        return libc::EFAULT;
+    }
+    if len > 15 {
         return libc::ERANGE;
     }
     if _thread != native_pthread_self() {
@@ -4656,6 +4658,8 @@ pub unsafe extern "C" fn pthread_setname_np(
         let Some(tid) = resolve_thread_tid(_thread) else {
             return libc::ESRCH;
         };
+        // SAFETY: We already validated name is terminated (line 4644-4647).
+        let name_cstr = unsafe { std::ffi::CStr::from_ptr(name) };
         return set_other_thread_name_via_procfs(tid, name_cstr);
     }
     // SAFETY: prctl(PR_SET_NAME) sets the calling thread's name.
