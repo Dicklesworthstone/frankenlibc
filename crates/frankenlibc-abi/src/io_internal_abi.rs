@@ -756,25 +756,10 @@ impl NativeFile {
     /// a successful `try_explicit_lock()` call.
     #[inline]
     pub unsafe fn explicit_unlock(&self) {
-        // parking_lot's ReentrantMutex doesn't expose a raw unlock, so we
-        // acquire the lock (incrementing count) and drop two guards (decrementing twice).
-        // This works because the mutex is reentrant and we already hold it.
-        let guard1 = self._frankenlibc_state.locked.lock();
-        // Now drop both guards - the one we just acquired and effectively "one more"
-        // by creating a second reference to decrement.
-        // Actually, we need a different approach: use force_unlock_fair.
-        drop(guard1);
-        // The above just decrements once. We need to decrement the forgotten guard.
-        // Since parking_lot doesn't expose raw unlock for ReentrantMutex,
-        // we use the fact that lock() on an already-held reentrant mutex succeeds
-        // and creates a new guard. Dropping it decrements the count.
-        // So we need to acquire again and drop to get back to the original state
-        // minus one lock.
-        // This is a no-op since we just acquired and dropped.
-        // The correct approach requires unsafe raw access.
-        // For now, use parking_lot::lock_api's unsafe force_unlock.
+        // Use parking_lot's lock_api trait to directly decrement the lock count.
+        // The caller is responsible for ensuring the lock was previously acquired.
+        use parking_lot::lock_api::RawMutex;
         unsafe {
-            use parking_lot::lock_api::RawMutex;
             self._frankenlibc_state.locked.raw().unlock();
         }
     }
