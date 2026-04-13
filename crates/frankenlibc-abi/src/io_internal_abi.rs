@@ -520,6 +520,19 @@ impl NativeFileState {
         }
     }
 
+    fn new_with_backing(
+        backing: NativeFileBacking,
+        open_flags: u32,
+        buf_mode: NativeFileBufMode,
+    ) -> Self {
+        Self {
+            locked: Box::new(ReentrantMutex::new(RefCell::new(
+                NativeFileLocked::new_with_backing(backing, open_flags, buf_mode),
+            ))),
+            orientation: AtomicI8::new(0),
+        }
+    }
+
     fn lock_ptr(&self) -> *mut c_void {
         (self.locked.as_ref() as *const ReentrantMutex<RefCell<NativeFileLocked>>).cast::<c_void>()
             as *mut c_void
@@ -566,6 +579,23 @@ impl NativeFile {
             // Set vtable to our native trampolines for indirect vtable dispatch.
             vtable: ptr::addr_of!(NATIVE_IO_JUMP_T) as *mut _IO_jump_t,
             _frankenlibc_state: NativeFileState::new(fd, flags, buf_mode),
+        };
+        file.sync_lock_ptr();
+        file
+    }
+
+    /// Create a new `NativeFile` with custom backing storage.
+    ///
+    /// Used for memory-backed streams (fmemopen, open_memstream).
+    pub fn new_with_backing(
+        backing: NativeFileBacking,
+        flags: u32,
+        buf_mode: NativeFileBufMode,
+    ) -> Self {
+        let mut file = Self {
+            _io_file: _IO_FILE_Layout::new(-1), // Memory streams have no fd
+            vtable: ptr::addr_of!(NATIVE_IO_JUMP_T) as *mut _IO_jump_t,
+            _frankenlibc_state: NativeFileState::new_with_backing(backing, flags, buf_mode),
         };
         file.sync_lock_ptr();
         file
