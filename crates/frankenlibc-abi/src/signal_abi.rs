@@ -866,8 +866,23 @@ pub unsafe extern "C" fn sigaddset(set: *mut libc::sigset_t, signum: c_int) -> c
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sigdelset(set: *mut libc::sigset_t, signum: c_int) -> c_int {
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Signal,
+        set as usize,
+        std::mem::size_of::<libc::sigset_t>(),
+        true,
+        set.is_null(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
+        runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, true);
+        return -1;
+    }
+
     if set.is_null() || !signal_core::valid_signal(signum) {
         unsafe { set_abi_errno(errno::EINVAL) };
+        runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, true);
         return -1;
     }
     let idx = (signum - 1) as usize;
@@ -876,6 +891,7 @@ pub unsafe extern "C" fn sigdelset(set: *mut libc::sigset_t, signum: c_int) -> c
     let bit = idx % bits_per_word;
     let words = set as *mut libc::c_ulong;
     unsafe { *words.add(word) &= !(1usize.wrapping_shl(bit as u32) as libc::c_ulong) };
+    runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, false);
     0
 }
 
@@ -1233,7 +1249,21 @@ pub unsafe extern "C" fn sigignore(sig: c_int) -> c_int {
 /// `psiginfo` — print signal info to stderr.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn psiginfo(info: *const libc::siginfo_t, msg: *const std::ffi::c_char) {
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Signal,
+        info as usize,
+        std::mem::size_of::<libc::siginfo_t>(),
+        false,
+        info.is_null(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, true);
+        return;
+    }
+
     if info.is_null() {
+        runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, true);
         return;
     }
     let sig = unsafe { (*info).si_signo };
@@ -1246,17 +1276,26 @@ pub unsafe extern "C" fn psiginfo(info: *const libc::siginfo_t, msg: *const std:
             .unwrap_or("Unknown signal")
     };
     if !msg.is_null() {
-        let c_msg = unsafe { std::ffi::CStr::from_ptr(msg) };
-        if let Ok(s) = c_msg.to_str() {
+        let (msg_len, terminated) = unsafe {
+            crate::util::scan_c_string(msg, crate::malloc_abi::known_remaining(msg as usize))
+        };
+        if !terminated {
+            runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, true);
+            return;
+        }
+        let msg_bytes = unsafe { std::slice::from_raw_parts(msg as *const u8, msg_len) };
+        if let Ok(s) = std::str::from_utf8(msg_bytes) {
             let out = format!("{s}: SIG{desc}\n");
             unsafe {
                 crate::unistd_abi::sys_write_fd(libc::STDERR_FILENO, out.as_ptr().cast(), out.len())
             };
+            runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, false);
             return;
         }
     }
     let out = format!("SIG{desc}\n");
     unsafe { crate::unistd_abi::sys_write_fd(libc::STDERR_FILENO, out.as_ptr().cast(), out.len()) };
+    runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, false);
 }
 
 /// `sigabbrev_np` — return abbreviated signal name (GNU extension).
@@ -1397,8 +1436,23 @@ pub unsafe extern "C" fn sigorset(
 /// `sigisemptyset` — test if signal set is empty (GNU).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sigisemptyset(set: *const libc::sigset_t) -> c_int {
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Signal,
+        set as usize,
+        std::mem::size_of::<libc::sigset_t>(),
+        false,
+        set.is_null(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
+        runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, true);
+        return -1;
+    }
+
     if set.is_null() {
         unsafe { set_abi_errno(errno::EINVAL) };
+        runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, true);
         return -1;
     }
     // SAFETY: sigset_t on Linux is an array of unsigned longs.
@@ -1407,10 +1461,12 @@ pub unsafe extern "C" fn sigisemptyset(set: *const libc::sigset_t) -> c_int {
         let n = std::mem::size_of::<libc::sigset_t>() / 8;
         for i in 0..n {
             if *s.add(i) != 0 {
+                runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, false);
                 return 0; // Not empty
             }
         }
     }
+    runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, false);
     1 // Empty
 }
 

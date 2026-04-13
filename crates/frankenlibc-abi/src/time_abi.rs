@@ -8,8 +8,11 @@ use std::os::raw::c_long;
 
 use frankenlibc_core::errno;
 use frankenlibc_core::time as time_core;
+use frankenlibc_membrane::MembraneAction;
+use frankenlibc_membrane::runtime_math::ApiFamily;
 
 use crate::errno_abi::set_abi_errno;
+use crate::runtime_policy;
 use crate::util::scan_c_string;
 
 #[inline]
@@ -170,8 +173,23 @@ pub unsafe extern "C" fn gmtime_r(timer: *const i64, result: *mut libc::tm) -> *
 /// Normalizes the `tm` structure fields and fills in `tm_wday` and `tm_yday`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn mktime(tm: *mut libc::tm) -> i64 {
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Time,
+        tm as usize,
+        std::mem::size_of::<libc::tm>(),
+        true,
+        tm.is_null(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
+        runtime_policy::observe(ApiFamily::Time, decision.profile, 8, true);
+        return -1;
+    }
+
     if tm.is_null() {
         unsafe { set_abi_errno(errno::EFAULT) };
+        runtime_policy::observe(ApiFamily::Time, decision.profile, 8, true);
         return -1;
     }
 
@@ -181,6 +199,7 @@ pub unsafe extern "C" fn mktime(tm: *mut libc::tm) -> i64 {
     // Normalize: re-derive the full broken-down time and write back.
     let normalized = time_core::epoch_to_broken_down(epoch);
     unsafe { write_tm(tm, &normalized) };
+    runtime_policy::observe(ApiFamily::Time, decision.profile, 8, false);
     epoch
 }
 
@@ -289,11 +308,26 @@ pub unsafe extern "C" fn clock_nanosleep(
     req: *const libc::timespec,
     rem: *mut libc::timespec,
 ) -> c_int {
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Time,
+        req as usize,
+        std::mem::size_of::<libc::timespec>(),
+        false,
+        req.is_null(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Time, decision.profile, 6, true);
+        return errno::EPERM;
+    }
+
     if req.is_null() {
+        runtime_policy::observe(ApiFamily::Time, decision.profile, 6, true);
         return errno::EFAULT;
     }
 
     if !time_core::valid_clock_id(clock_id) && !time_core::valid_clock_id_extended(clock_id) {
+        runtime_policy::observe(ApiFamily::Time, decision.profile, 6, true);
         return errno::EINVAL;
     }
 
@@ -308,13 +342,15 @@ pub unsafe extern "C" fn clock_nanosleep(
     };
     // clock_nanosleep returns the error number directly (not via errno).
     // libc::syscall returns -1 on error and sets errno, so convert.
-    if rc < 0 {
+    let result = if rc < 0 {
         std::io::Error::last_os_error()
             .raw_os_error()
             .unwrap_or(errno::EINVAL)
     } else {
         0
-    }
+    };
+    runtime_policy::observe(ApiFamily::Time, decision.profile, 6, result != 0);
+    result
 }
 
 // ---------------------------------------------------------------------------
@@ -385,7 +421,21 @@ pub unsafe extern "C" fn strftime(
     format: *const std::ffi::c_char,
     tm: *const libc::tm,
 ) -> usize {
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Time,
+        s as usize,
+        maxsize,
+        true,
+        s.is_null() || format.is_null() || tm.is_null() || maxsize == 0,
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Time, decision.profile, 6, true);
+        return 0;
+    }
+
     if s.is_null() || format.is_null() || tm.is_null() || maxsize == 0 {
+        runtime_policy::observe(ApiFamily::Time, decision.profile, 6, true);
         return 0;
     }
 
@@ -398,7 +448,9 @@ pub unsafe extern "C" fn strftime(
 
     // Format into the output buffer.
     let buf = unsafe { std::slice::from_raw_parts_mut(s as *mut u8, maxsize) };
-    time_core::format_strftime(fmt, &bd, buf)
+    let result = time_core::format_strftime(fmt, &bd, buf);
+    runtime_policy::observe(ApiFamily::Time, decision.profile, 6, result == 0);
+    result
 }
 
 // ---------------------------------------------------------------------------
@@ -875,15 +927,32 @@ pub unsafe extern "C" fn timespec_get(ts: *mut libc::timespec, base: c_int) -> c
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn timespec_getres(ts: *mut libc::timespec, base: c_int) -> c_int {
     const TIME_UTC: c_int = 1;
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Time,
+        ts as usize,
+        std::mem::size_of::<libc::timespec>(),
+        true,
+        false, // null is allowed here
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Time, decision.profile, 5, true);
+        return 0;
+    }
+
     if base != TIME_UTC {
+        runtime_policy::observe(ApiFamily::Time, decision.profile, 5, true);
         return 0;
     }
     if ts.is_null() {
         // Per spec, null ts is allowed — just verifies base is supported.
+        runtime_policy::observe(ApiFamily::Time, decision.profile, 5, false);
         return base;
     }
     let rc = unsafe { libc::syscall(libc::SYS_clock_getres, libc::CLOCK_REALTIME, ts) };
-    if rc == 0 { base } else { 0 }
+    let result = if rc == 0 { base } else { 0 };
+    runtime_policy::observe(ApiFamily::Time, decision.profile, 5, result == 0);
+    result
 }
 
 // Tests for time_abi are in crates/frankenlibc-abi/tests/time_abi_test.rs
