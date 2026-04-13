@@ -4092,6 +4092,32 @@ impl RuntimeMathKernel {
             .note_overlap(left_shard, right_shard, witness_hash)
     }
 
+    /// Report a size-class mapping event to the SOS barrier certificate controller.
+    pub fn observe_size_class_mapping(
+        &self,
+        requested_size: usize,
+        mapped_class_size: usize,
+        class_membership_valid: bool,
+    ) {
+        if !RUNTIME_MATH_PRODUCTION_ENABLED {
+            return;
+        }
+        let mut barrier = self.sos_barrier.lock();
+        barrier.evaluate_size_class(
+            requested_size,
+            mapped_class_size,
+            class_membership_valid,
+        );
+        let barrier_code = match barrier.state() {
+            SosBarrierState::Calibrating => 0u8,
+            SosBarrierState::Safe => 1u8,
+            SosBarrierState::Warning => 2u8,
+            SosBarrierState::Violated => 3u8,
+        };
+        self.cached_sos_barrier_state
+            .store(barrier_code, Ordering::Relaxed);
+    }
+
     /// Publish the current section hash for a cohomology shard.
     ///
     /// Callers use this to keep overlap witnesses grounded in latest stage
@@ -4286,12 +4312,18 @@ impl RuntimeMathKernel {
                 + sos_barrier_summary.quarantine_violations
                 + sos_barrier_summary.fragmentation_violations
                 + sos_barrier_summary.thread_safety_violations
+                + sos_barrier_summary.size_class_violations
                 + if sos_barrier_summary.fragmentation_hash_valid {
                     0
                 } else {
                     1
                 }
                 + if sos_barrier_summary.thread_safety_hash_valid {
+                    0
+                } else {
+                    1
+                }
+                + if sos_barrier_summary.size_class_hash_valid {
                     0
                 } else {
                     1

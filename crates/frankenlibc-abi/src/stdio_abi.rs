@@ -29,8 +29,6 @@ use crate::malloc_abi::{free, known_remaining, malloc};
 use crate::runtime_policy;
 use crate::unistd_abi::{sys_read_fd, sys_write_fd};
 
-type HostFopenFn = unsafe extern "C" fn(*const c_char, *const c_char) -> *mut c_void;
-type HostFdopenFn = unsafe extern "C" fn(c_int, *const c_char) -> *mut c_void;
 type HostFcloseFn = unsafe extern "C" fn(*mut c_void) -> c_int;
 type HostFwriteFn = unsafe extern "C" fn(*const c_void, usize, usize, *mut c_void) -> usize;
 type HostFputsFn = unsafe extern "C" fn(*const c_char, *mut c_void) -> c_int;
@@ -55,8 +53,6 @@ type HostFgetposFn = unsafe extern "C" fn(*mut c_void, *mut libc::fpos_t) -> c_i
 type HostFsetposFn = unsafe extern "C" fn(*mut c_void, *const libc::fpos_t) -> c_int;
 type HostFreopenFn = unsafe extern "C" fn(*const c_char, *const c_char, *mut c_void) -> *mut c_void;
 
-static HOST_FOPEN_FN: OnceLock<usize> = OnceLock::new();
-static HOST_FDOPEN_FN: OnceLock<usize> = OnceLock::new();
 static HOST_FCLOSE_FN: OnceLock<usize> = OnceLock::new();
 static HOST_FWRITE_FN: OnceLock<usize> = OnceLock::new();
 static HOST_FPUTS_FN: OnceLock<usize> = OnceLock::new();
@@ -95,15 +91,6 @@ fn native_file_buf_mode(mode: BufMode) -> NativeFileBufMode {
         BufMode::Line => NativeFileBufMode::Line,
         BufMode::None => NativeFileBufMode::None,
     }
-}
-
-#[inline]
-fn prefer_host_stdio_streams() -> bool {
-    if HOST_STDIO_BOOTSTRAPPED.load(Ordering::Acquire) {
-        return true;
-    }
-    init_host_stdio_streams();
-    HOST_STDIO_BOOTSTRAPPED.load(Ordering::Acquire)
 }
 
 unsafe fn scan_c_str_len(ptr: *const c_char, bound: Option<usize>) -> (usize, bool) {
@@ -473,18 +460,6 @@ unsafe fn sync_host_errno(default_errno: c_int) {
 }
 
 #[inline]
-unsafe fn host_fopen_fn() -> Option<HostFopenFn> {
-    unsafe { host_stdio_symbol(&HOST_FOPEN_FN, "fopen") }
-        .map(|ptr| unsafe { std::mem::transmute(ptr) })
-}
-
-#[inline]
-unsafe fn host_fdopen_fn() -> Option<HostFdopenFn> {
-    unsafe { host_stdio_symbol(&HOST_FDOPEN_FN, "fdopen") }
-        .map(|ptr| unsafe { std::mem::transmute(ptr) })
-}
-
-#[inline]
 unsafe fn host_fwrite_fn() -> Option<HostFwriteFn> {
     unsafe { host_stdio_symbol(&HOST_FWRITE_FN, "fwrite") }
         .map(|ptr| unsafe { std::mem::transmute(ptr) })
@@ -807,7 +782,7 @@ pub unsafe extern "C" fn fopen(pathname: *const c_char, mode: *const c_char) -> 
     // Create native FILE via fdopen_native_impl.
     let fp = fdopen_native_impl(fd, &open_flags);
     if fp.is_null() {
-        // fdopen failed - close the fd we opened.
+        // fdopen_native_impl failed (registry full) - close the fd we opened.
         unsafe { libc::syscall(libc::SYS_close, fd) };
     }
     fp
@@ -815,7 +790,8 @@ pub unsafe extern "C" fn fopen(pathname: *const c_char, mode: *const c_char) -> 
 
 /// Internal: create a NativeFile for an already-open fd.
 ///
-/// Returns null on failure (registry full, etc.).
+/// Returns null on failure (registry full, etc.). Does NOT close the fd on
+/// failure - the caller is responsible for deciding whether to close it.
 fn fdopen_native_impl(fd: c_int, open_flags: &OpenFlags) -> *mut c_void {
     // Build file_flags from OpenFlags.
     let mut flags: u32 = 0;
@@ -855,11 +831,8 @@ fn fdopen_native_impl(fd: c_int, open_flags: &OpenFlags) -> *mut c_void {
                 .unwrap_or(std::ptr::null_mut())
         }
         None => {
-            // Registry full - close fd and return error.
-            unsafe {
-                libc::syscall(libc::SYS_close, fd);
-                set_abi_errno(errno::EMFILE);
-            }
+            // Registry full. Don't close fd - caller decides.
+            unsafe { set_abi_errno(errno::EMFILE) };
             std::ptr::null_mut()
         }
     }

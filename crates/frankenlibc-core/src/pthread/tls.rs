@@ -548,7 +548,7 @@ pub(crate) fn reset_tls_state() {
     // Clear fallback values for the current thread.
     FALLBACK_TLS_VALUES.with(|values| {
         for slot in values.iter() {
-            slot.store(0, Ordering::Release);
+            slot.set(TlsEntry::default());
         }
     });
 }
@@ -594,6 +594,18 @@ mod tests {
         fn as_mut_ptr(&mut self) -> *mut TlsEntry {
             self.values.as_mut_ptr()
         }
+
+        /// Set a value for a key, encoding the correct sequence.
+        fn set(&mut self, key: &PthreadKey, value: u64) {
+            let idx = (key.id & 1023) as usize;
+            let seq = key.id >> 10;
+            self.values[idx] = TlsEntry { seq, value };
+        }
+    }
+
+    /// Helper: extract key's slot index and sequence.
+    fn key_parts(key: &PthreadKey) -> (usize, u32) {
+        ((key.id & 1023) as usize, key.id >> 10)
     }
 
     #[test]
@@ -731,7 +743,7 @@ mod tests {
         let tid = current_tid();
 
         let mut block = TestTlsBlock::new();
-        block.values[key.id as usize] = 42;
+        block.set(&key, 42);
         let ptr = block.as_mut_ptr();
         table_register(tid, ptr);
 
@@ -762,7 +774,7 @@ mod tests {
 
         let tid = current_tid();
         let mut block = TestTlsBlock::new();
-        block.values[key.id as usize] = 1;
+        block.set(&key, 1);
         let ptr = block.as_mut_ptr();
         table_register(tid, ptr);
 
@@ -775,19 +787,20 @@ mod tests {
     fn teardown_removes_table_entry() {
         let _g = lock_and_reset();
         let key = create_key(None);
+        let (idx, seq) = key_parts(&key);
         let tid = current_tid();
 
         let mut block = TestTlsBlock::new();
         let ptr = block.as_mut_ptr();
         table_register(tid, ptr);
 
-        write_tls_value(tid, key.id as usize, 99);
-        assert_eq!(read_tls_value(tid, key.id as usize), 99);
+        write_tls_value(tid, idx, seq, 99);
+        assert_eq!(read_tls_value(tid, idx, seq), 99);
 
         teardown_thread_tls(tid);
 
         // After teardown, table entry removed — falls back to main block.
-        assert_eq!(read_tls_value(tid, key.id as usize), 0);
+        assert_eq!(read_tls_value(tid, idx, seq), 0);
     }
 
     #[test]
@@ -797,7 +810,7 @@ mod tests {
         let tid = current_tid();
 
         let mut block = TestTlsBlock::new();
-        block.values[key.id as usize] = 42;
+        block.set(&key, 42);
         let ptr = block.as_mut_ptr();
         table_register(tid, ptr);
 
@@ -853,9 +866,7 @@ mod tests {
         // Set a value and tear down to verify the new destructor fires.
         let tid = current_tid();
         let mut block = TestTlsBlock::new();
-        let idx = (key.id & 1023) as usize;
-        let seq = key.id >> 10;
-        block.values[idx] = TlsEntry { seq, value: 99 };
+        block.set(&k2, 99);
         table_register(tid, block.as_mut_ptr());
         teardown_thread_tls(tid);
 
@@ -906,15 +917,15 @@ mod tests {
         let tid = current_tid();
 
         let mut block1 = TestTlsBlock::new();
-        block1.values[0] = 111;
+        block1.values[0] = TlsEntry { seq: 0, value: 111 };
         table_register(tid, block1.as_mut_ptr());
-        assert_eq!(read_tls_value(tid, 0), 111);
+        assert_eq!(read_tls_value(tid, 0, 0), 111);
 
         // Re-register with a different block.
         let mut block2 = TestTlsBlock::new();
-        block2.values[0] = 222;
+        block2.values[0] = TlsEntry { seq: 0, value: 222 };
         table_register(tid, block2.as_mut_ptr());
-        assert_eq!(read_tls_value(tid, 0), 222);
+        assert_eq!(read_tls_value(tid, 0, 0), 222);
 
         table_remove(tid);
     }
@@ -953,8 +964,8 @@ mod tests {
 
         let mut block_a = TestTlsBlock::new();
         let mut block_b = TestTlsBlock::new();
-        block_a.values[0] = 111;
-        block_b.values[0] = 222;
+        block_a.values[0] = TlsEntry { seq: 0, value: 111 };
+        block_b.values[0] = TlsEntry { seq: 0, value: 222 };
 
         table_register(tid_a, block_a.as_mut_ptr());
         table_register(tid_b, block_b.as_mut_ptr());
@@ -971,7 +982,7 @@ mod tests {
             "collision-chain lookup broke after removing earlier slot"
         );
         // SAFETY: ptr_b points to block_b values for key index 0.
-        assert_eq!(unsafe { *ptr_b }, 222);
+        assert_eq!(unsafe { (*ptr_b).value }, 222);
     }
 
     #[test]
@@ -984,9 +995,9 @@ mod tests {
         let mut block_a = TestTlsBlock::new();
         let mut block_b = TestTlsBlock::new();
         let mut block_c = TestTlsBlock::new();
-        block_a.values[0] = 11;
-        block_b.values[0] = 22;
-        block_c.values[0] = 33;
+        block_a.values[0] = TlsEntry { seq: 0, value: 11 };
+        block_b.values[0] = TlsEntry { seq: 0, value: 22 };
+        block_c.values[0] = TlsEntry { seq: 0, value: 33 };
 
         table_register(tid_a, block_a.as_mut_ptr());
         table_register(tid_b, block_b.as_mut_ptr());
@@ -1005,9 +1016,9 @@ mod tests {
             "new collider should be inserted successfully"
         );
         // SAFETY: ptr_b/ptr_c point to valid test blocks for key index 0.
-        assert_eq!(unsafe { *ptr_b }, 22);
+        assert_eq!(unsafe { (*ptr_b).value }, 22);
         // SAFETY: ptr_b/ptr_c point to valid test blocks for key index 0.
-        assert_eq!(unsafe { *ptr_c }, 33);
+        assert_eq!(unsafe { (*ptr_c).value }, 33);
     }
 
     #[test]
@@ -1093,7 +1104,7 @@ mod tests {
         let tid = current_tid();
         let mut block = TestTlsBlock::new();
         for (i, k) in keys.iter().enumerate() {
-            block.values[k.id as usize] = (i + 1) as u64;
+            block.set(k, (i + 1) as u64);
         }
         table_register(tid, block.as_mut_ptr());
         teardown_thread_tls(tid);
@@ -1124,7 +1135,7 @@ mod tests {
 
         let tid = current_tid();
         let mut block = TestTlsBlock::new();
-        block.values[key.id as usize] = 1;
+        block.set(&key, 1);
         table_register(tid, block.as_mut_ptr());
 
         teardown_thread_tls(tid);
@@ -1159,10 +1170,10 @@ mod tests {
 
         let tid = current_tid();
         let mut block = TestTlsBlock::new();
-        block.values[k_with_1.id as usize] = 10;
-        block.values[k_without_1.id as usize] = 20;
-        block.values[k_with_2.id as usize] = 30;
-        block.values[k_without_2.id as usize] = 40;
+        block.set(&k_with_1, 10);
+        block.set(&k_without_1, 20);
+        block.set(&k_with_2, 30);
+        block.set(&k_without_2, 40);
         table_register(tid, block.as_mut_ptr());
 
         teardown_thread_tls(tid);
@@ -1183,7 +1194,7 @@ mod tests {
         let key = create_key(Some(dtor));
         let tid = current_tid();
         let mut block = TestTlsBlock::new();
-        block.values[key.id as usize] = 0xCAFE_BABE;
+        block.set(&key, 0xCAFE_BABE);
         table_register(tid, block.as_mut_ptr());
 
         teardown_thread_tls(tid);

@@ -865,6 +865,8 @@ pub struct SosBarrierSummary {
     pub fragmentation_value: i64,
     /// Most recent thread-safety barrier value in milli-units.
     pub thread_safety_value: i64,
+    /// Most recent size-class barrier value in milli-units.
+    pub size_class_value: i64,
     /// Total observations.
     pub total_observations: u64,
     /// Count of provenance barrier violations.
@@ -875,10 +877,14 @@ pub struct SosBarrierSummary {
     pub fragmentation_violations: u64,
     /// Count of thread-safety barrier violations.
     pub thread_safety_violations: u64,
+    /// Count of size-class barrier violations.
+    pub size_class_violations: u64,
     /// Whether certificate hash verification passed at controller init.
     pub fragmentation_hash_valid: bool,
     /// Whether thread-safety certificate hash verification passed at init.
     pub thread_safety_hash_valid: bool,
+    /// Whether size-class certificate hash verification passed at init.
+    pub size_class_hash_valid: bool,
 }
 
 /// SOS Barrier Certificate Runtime Controller.
@@ -896,12 +902,15 @@ pub struct SosBarrierController {
     last_quarantine_value: i64,
     last_fragmentation_value: i64,
     last_thread_safety_value: i64,
+    last_size_class_value: i64,
     provenance_violations: u64,
     quarantine_violations: u64,
     fragmentation_violations: u64,
     thread_safety_violations: u64,
+    size_class_violations: u64,
     fragmentation_hash_valid: bool,
     thread_safety_hash_valid: bool,
+    size_class_hash_valid: bool,
 }
 
 impl Default for SosBarrierController {
@@ -922,12 +931,15 @@ impl SosBarrierController {
             last_quarantine_value: 200,                        // starts at baseline safe
             last_fragmentation_value: FRAGMENTATION_BARRIER_BUDGET_MILLI,
             last_thread_safety_value: THREAD_SAFETY_BARRIER_BUDGET_MILLI,
+            last_size_class_value: SIZE_CLASS_BARRIER_BUDGET_MILLI,
             provenance_violations: 0,
             quarantine_violations: 0,
             fragmentation_violations: 0,
             thread_safety_violations: 0,
+            size_class_violations: 0,
             fragmentation_hash_valid: FRAGMENTATION_CERTIFICATE.verify_integrity(),
             thread_safety_hash_valid: THREAD_SAFETY_CERTIFICATE.verify_integrity(),
+            size_class_hash_valid: SIZE_CLASS_CERTIFICATE.verify_integrity(),
         }
     }
 
@@ -1065,6 +1077,31 @@ impl SosBarrierController {
         }
     }
 
+    /// Evaluate size-class SOS certificate.
+    ///
+    /// Returns true when the barrier certifies safety.
+    pub fn evaluate_size_class(
+        &mut self,
+        requested_size: usize,
+        mapped_class_size: usize,
+        class_membership_valid: bool,
+    ) -> bool {
+        if !self.size_class_hash_valid {
+            self.last_size_class_value = -SIZE_CLASS_BARRIER_BUDGET_MILLI;
+            self.size_class_violations = self.size_class_violations.saturating_add(1);
+            return false;
+        }
+
+        let val = evaluate_size_class_barrier(requested_size, mapped_class_size, class_membership_valid);
+        self.last_size_class_value = val;
+        if val < 0 {
+            self.size_class_violations = self.size_class_violations.saturating_add(1);
+            false
+        } else {
+            true
+        }
+    }
+
     /// Whether this observation is on the Invariant A cadence.
     #[must_use]
     pub fn is_quarantine_cadence(&self) -> bool {
@@ -1078,7 +1115,7 @@ impl SosBarrierController {
             return SosBarrierState::Calibrating;
         }
 
-        if !self.fragmentation_hash_valid || !self.thread_safety_hash_valid {
+        if !self.fragmentation_hash_valid || !self.thread_safety_hash_valid || !self.size_class_hash_valid {
             return SosBarrierState::Violated;
         }
 
@@ -1087,6 +1124,7 @@ impl SosBarrierController {
             || self.last_quarantine_value < 0
             || self.last_fragmentation_value < 0
             || self.last_thread_safety_value < 0
+            || self.last_size_class_value < 0
         {
             return SosBarrierState::Violated;
         }
@@ -1099,11 +1137,13 @@ impl SosBarrierController {
         let quar_warning = 40; // 20% of baseline 200
         let frag_warning = FRAGMENTATION_BARRIER_BUDGET_MILLI / 5;
         let thread_warning = THREAD_SAFETY_BARRIER_BUDGET_MILLI / 5;
+        let size_class_warning = SIZE_CLASS_BARRIER_BUDGET_MILLI / 5;
 
         if prov_headroom < prov_warning
             || quar_headroom < quar_warning
             || frag_headroom < frag_warning
             || self.last_thread_safety_value < thread_warning
+            || self.last_size_class_value < size_class_warning
         {
             return SosBarrierState::Warning;
         }
@@ -1120,13 +1160,16 @@ impl SosBarrierController {
             quarantine_value: self.last_quarantine_value,
             fragmentation_value: self.last_fragmentation_value,
             thread_safety_value: self.last_thread_safety_value,
+            size_class_value: self.last_size_class_value,
             total_observations: self.observations,
             provenance_violations: self.provenance_violations,
             quarantine_violations: self.quarantine_violations,
             fragmentation_violations: self.fragmentation_violations,
             thread_safety_violations: self.thread_safety_violations,
+            size_class_violations: self.size_class_violations,
             fragmentation_hash_valid: self.fragmentation_hash_valid,
             thread_safety_hash_valid: self.thread_safety_hash_valid,
+            size_class_hash_valid: self.size_class_hash_valid,
         }
     }
 
@@ -1134,11 +1177,13 @@ impl SosBarrierController {
     #[must_use]
     pub fn total_violations(&self) -> u64 {
         let hash_invalid = (if self.fragmentation_hash_valid { 0 } else { 1 })
-            + (if self.thread_safety_hash_valid { 0 } else { 1 });
+            + (if self.thread_safety_hash_valid { 0 } else { 1 })
+            + (if self.size_class_hash_valid { 0 } else { 1 });
         self.provenance_violations
             .saturating_add(self.quarantine_violations)
             .saturating_add(self.fragmentation_violations)
             .saturating_add(self.thread_safety_violations)
+            .saturating_add(self.size_class_violations)
             .saturating_add(hash_invalid)
     }
 }
