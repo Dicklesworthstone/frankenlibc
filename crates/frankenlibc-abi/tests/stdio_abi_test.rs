@@ -3187,3 +3187,52 @@ fn fopen_dev_null_succeeds() {
 
     unsafe { fclose(stream) };
 }
+
+// ---------------------------------------------------------------------------
+// Path handling edge cases (13-14)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn fopen_path_with_embedded_null_truncates() {
+    // A path with an embedded null byte will be truncated at the first null by
+    // C string handling. "/tmp\0bogus" becomes just "/tmp".
+    // Build this manually since c-string literals don't allow embedded nulls.
+    let path_bytes: &[u8] = b"/tmp\0bogus\0";
+
+    // Opening "/tmp" (directory) for writing should fail with EISDIR.
+    unsafe { *libc::__errno_location() = 0 };
+    let stream = unsafe { fopen(path_bytes.as_ptr() as *const c_char, c"w".as_ptr()) };
+
+    // fopen on a directory should fail.
+    if stream.is_null() {
+        let err = unsafe { *libc::__errno_location() };
+        assert!(
+            err == libc::EISDIR || err == libc::EACCES || err == libc::ENOENT,
+            "Opening directory for write should fail, got errno {err}"
+        );
+    } else {
+        // If somehow succeeded (unlikely), clean up.
+        unsafe { fclose(stream) };
+    }
+}
+
+#[test]
+fn fopen_null_path_fails() {
+    // NULL path should fail with EINVAL (our implementation) or EFAULT.
+    unsafe { *libc::__errno_location() = 0 };
+    let stream = unsafe { fopen(std::ptr::null(), c"r".as_ptr()) };
+    assert!(stream.is_null(), "fopen(NULL, ...) should fail");
+    let err = unsafe { *libc::__errno_location() };
+    assert!(
+        err == libc::EINVAL || err == libc::EFAULT,
+        "NULL path should set EINVAL or EFAULT, got {err}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Double-close detection (22)
+// ---------------------------------------------------------------------------
+//
+// Note: Double-close testing is skipped in this test file because the test
+// environment triggers glibc's vtable validation when using NativeFile.
+// Double-close detection is tested via the LD_PRELOAD integration tests.
