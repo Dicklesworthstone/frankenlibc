@@ -398,7 +398,8 @@ impl NativeFileRuntimeMathHooks {
 /// Distinguishes between file-descriptor-backed streams (normal files/pipes)
 /// and memory-backed streams (fmemopen, open_memstream).
 #[derive(Debug)]
-enum NativeFileBacking {
+#[allow(dead_code)] // Memory stream variants are WIP - used when native fmemopen is wired
+pub(crate) enum NativeFileBacking {
     /// File descriptor backed stream (fopen, fdopen, popen).
     Fd(c_int),
     /// Fixed-size memory buffer (fmemopen with caller buffer or internal allocation).
@@ -433,6 +434,7 @@ unsafe impl Send for NativeFileBacking {}
 #[derive(Debug)]
 struct NativeFileLocked {
     magic: u32,
+    #[allow(dead_code)] // WIP: used when native fmemopen is wired
     backing: NativeFileBacking,
     buffer_base: *mut u8,
     buffer_pos: *mut u8,
@@ -497,6 +499,7 @@ impl NativeFileLocked {
     }
 
     /// Get the file descriptor if this is an fd-backed stream.
+    #[allow(dead_code)] // WIP: used when native fmemopen is wired
     fn fd(&self) -> Option<c_int> {
         match &self.backing {
             NativeFileBacking::Fd(fd) => Some(*fd),
@@ -587,7 +590,8 @@ impl NativeFile {
     /// Create a new `NativeFile` with custom backing storage.
     ///
     /// Used for memory-backed streams (fmemopen, open_memstream).
-    pub fn new_with_backing(
+    #[allow(dead_code)] // WIP: used when native fmemopen is wired
+    pub(crate) fn new_with_backing(
         backing: NativeFileBacking,
         flags: u32,
         buf_mode: NativeFileBufMode,
