@@ -55,10 +55,24 @@ const EAGAIN: i32 = 11;
 const EINVAL: i32 = 22;
 
 /// Thread-local storage key.
+/// Contains the index in the lower 10 bits and the generation sequence in the upper 22 bits.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct PthreadKey {
-    /// Key index into the global registry (0..PTHREAD_KEYS_MAX-1).
     pub id: u32,
+}
+
+/// A thread-local entry containing the generation sequence and the value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(C)]
+pub struct TlsEntry {
+    pub seq: u32,
+    pub value: u64,
+}
+
+impl Default for TlsEntry {
+    fn default() -> Self {
+        Self { seq: 0, value: 0 }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -105,7 +119,7 @@ static KEY_WRITE_LOCK: Mutex<()> = Mutex::new(());
 ///   not terminate lookups.
 static TLS_TIDS: [AtomicI32; TLS_TABLE_SLOTS] = [const { AtomicI32::new(0) }; TLS_TABLE_SLOTS];
 
-/// Pointer array (paired with TLS_TIDS). Stores `*mut [u64; PTHREAD_KEYS_MAX]`
+/// Pointer array (paired with TLS_TIDS). Stores `*mut [TlsEntry; PTHREAD_KEYS_MAX]`
 /// cast to usize. 0 = no pointer.
 static TLS_PTRS: [AtomicUsize; TLS_TABLE_SLOTS] = [const { AtomicUsize::new(0) }; TLS_TABLE_SLOTS];
 
@@ -115,14 +129,14 @@ static TLS_PTRS: [AtomicUsize; TLS_TABLE_SLOTS] = [const { AtomicUsize::new(0) }
 // This preserves per-thread isolation for host-created threads while remaining
 // allocation-free for clone-based threads (which are expected to register).
 std::thread_local! {
-    static FALLBACK_TLS_VALUES: [AtomicUsize; PTHREAD_KEYS_MAX] =
-        const { [const { AtomicUsize::new(0) }; PTHREAD_KEYS_MAX] };
+    static FALLBACK_TLS_VALUES: [core::cell::Cell<TlsEntry>; PTHREAD_KEYS_MAX] =
+        const { [const { core::cell::Cell::new(TlsEntry { seq: 0, value: 0 }) }; PTHREAD_KEYS_MAX] };
 }
 
 /// Register a TID → values-pointer mapping in the global table.
 ///
 /// This function is **allocation-free** and safe to call from clone-based threads.
-fn table_register(tid: i32, values_ptr: *mut u64) {
+fn table_register(tid: i32, values_ptr: *mut TlsEntry) {
     if tid <= 0 {
         return;
     }
@@ -202,7 +216,7 @@ pub(crate) fn table_lookup(tid: i32) -> *mut u64 {
 /// Remove a TID from the table and return its values pointer.
 ///
 /// **Allocation-free.**
-fn table_remove(tid: i32) -> *mut u64 {
+fn table_remove(tid: i32) -> *mut TlsEntry {
     if tid <= 0 {
         return core::ptr::null_mut();
     }
@@ -238,31 +252,43 @@ fn current_tid() -> i32 {
 
 /// Read a TLS value for the given TID and key index.
 /// Falls back to thread-local storage if the TID is not in the table.
-fn read_tls_value(tid: i32, key_id: usize) -> u64 {
+fn read_tls_value(tid: i32, key_id: usize, expected_seq: u32) -> u64 {
     let ptr = table_lookup(tid);
     if !ptr.is_null() {
-        // SAFETY: ptr points to a valid `[u64; PTHREAD_KEYS_MAX]` that is either
+        // SAFETY: ptr points to a valid `[TlsEntry; PTHREAD_KEYS_MAX]` that is either
         // embedded in a ThreadHandle (alive while the thread runs) or in a
         // test-allocated block. key_id < PTHREAD_KEYS_MAX checked by caller.
-        unsafe { *ptr.add(key_id) }
+        let entry = unsafe { *ptr.add(key_id) };
+        if entry.seq == expected_seq {
+            entry.value
+        } else {
+            0
+        }
     } else {
         // Unregistered thread: use thread-local fallback storage.
-        FALLBACK_TLS_VALUES.with(|values| values[key_id].load(Ordering::Acquire) as u64)
+        FALLBACK_TLS_VALUES.with(|values| {
+            let entry = values[key_id].get();
+            if entry.seq == expected_seq {
+                entry.value
+            } else {
+                0
+            }
+        })
     }
 }
 
 /// Write a TLS value for the given TID and key index.
 /// Falls back to thread-local storage if the TID is not in the table.
-fn write_tls_value(tid: i32, key_id: usize, value: u64) {
+fn write_tls_value(tid: i32, key_id: usize, expected_seq: u32, value: u64) {
     let ptr = table_lookup(tid);
     if !ptr.is_null() {
-        // SAFETY: ptr points to a valid `[u64; PTHREAD_KEYS_MAX]` owned by this
+        // SAFETY: ptr points to a valid `[TlsEntry; PTHREAD_KEYS_MAX]` owned by this
         // thread. Only the owning thread writes to its own values.
-        unsafe { *ptr.add(key_id) = value };
+        unsafe { *ptr.add(key_id) = TlsEntry { seq: expected_seq, value } };
     } else {
         // Unregistered thread: use thread-local fallback storage.
         FALLBACK_TLS_VALUES.with(|values| {
-            values[key_id].store(value as usize, Ordering::Release);
+            values[key_id].set(TlsEntry { seq: expected_seq, value });
         });
     }
 }
@@ -298,7 +324,8 @@ pub fn pthread_key_create(
             new_reg.slots[i].in_use = true;
             new_reg.slots[i].destructor = destructor;
             new_reg.slots[i].seq = new_reg.slots[i].seq.wrapping_add(1);
-            key.id = i as u32;
+            let seq = new_reg.slots[i].seq;
+            key.id = (seq << 10) | (i as u32);
 
             // Publish new version via RCU.
             let new_ptr = Box::into_raw(Box::new(new_reg));
@@ -318,7 +345,8 @@ pub fn pthread_key_create(
 ///
 /// Returns 0 on success, `EINVAL` if the key is invalid.
 pub fn pthread_key_delete(key: PthreadKey) -> i32 {
-    let id = key.id as usize;
+    let id = (key.id & 1023) as usize;
+    let expected_seq = key.id >> 10;
     if id >= PTHREAD_KEYS_MAX {
         return EINVAL;
     }
@@ -332,7 +360,7 @@ pub fn pthread_key_delete(key: PthreadKey) -> i32 {
         }
     };
 
-    if !new_reg.slots[id].in_use {
+    if !new_reg.slots[id].in_use || new_reg.slots[id].seq != expected_seq {
         return EINVAL;
     }
     new_reg.slots[id].in_use = false;
@@ -352,12 +380,13 @@ pub fn pthread_key_delete(key: PthreadKey) -> i32 {
 /// no value has been set (or the key is invalid).
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub fn pthread_getspecific(key: PthreadKey) -> u64 {
-    let id = key.id as usize;
+    let id = (key.id & 1023) as usize;
+    let expected_seq = key.id >> 10;
     if id >= PTHREAD_KEYS_MAX {
         return 0;
     }
     let tid = current_tid();
-    read_tls_value(tid, id)
+    read_tls_value(tid, id, expected_seq)
 }
 
 /// Sets the value associated with the TLS key for the calling thread.
@@ -366,7 +395,8 @@ pub fn pthread_getspecific(key: PthreadKey) -> u64 {
 /// if the key is invalid or deleted.
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub fn pthread_setspecific(key: PthreadKey, value: u64) -> i32 {
-    let id = key.id as usize;
+    let id = (key.id & 1023) as usize;
+    let expected_seq = key.id >> 10;
     if id >= PTHREAD_KEYS_MAX {
         return EINVAL;
     }
@@ -379,7 +409,7 @@ pub fn pthread_setspecific(key: PthreadKey, value: u64) -> i32 {
     rcu::rcu_read_lock();
     let in_use = unsafe {
         match KEY_REGISTRY_RCU.read() {
-            Some(reg) => reg.slots[id].in_use,
+            Some(reg) => reg.slots[id].in_use && reg.slots[id].seq == expected_seq,
             None => false,
         }
     };
@@ -389,7 +419,7 @@ pub fn pthread_setspecific(key: PthreadKey, value: u64) -> i32 {
     if !in_use {
         return EINVAL;
     }
-    write_tls_value(tid, id, value);
+    write_tls_value(tid, id, expected_seq, value);
     0
 }
 
@@ -405,7 +435,7 @@ pub fn pthread_setspecific(key: PthreadKey, value: u64) -> i32 {
 ///
 /// **Allocation-free** — safe to call from clone-based threads.
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-pub(crate) fn register_thread_tls(tid: i32, values_ptr: *mut u64) {
+pub(crate) fn register_thread_tls(tid: i32, values_ptr: *mut TlsEntry) {
     table_register(tid, values_ptr);
     // Register with RCU for lock-free KEY_REGISTRY reads.
     let _ = rcu::rcu_register_thread(tid as u32);
@@ -451,13 +481,13 @@ pub(crate) fn teardown_thread_tls(tid: i32) {
                         break;
                     }
                     if reg.slots[i].in_use {
-                        // SAFETY: values_ptr points to a valid [u64; PTHREAD_KEYS_MAX].
-                        let value = *values_ptr.add(i);
-                        if value != 0 {
+                        // SAFETY: values_ptr points to a valid [TlsEntry; PTHREAD_KEYS_MAX].
+                        let entry = *values_ptr.add(i);
+                        if entry.seq == reg.slots[i].seq && entry.value != 0 {
                             // Clear the value before calling destructor.
-                            *values_ptr.add(i) = 0;
+                            (*values_ptr.add(i)).value = 0;
                             if let Some(dtor) = reg.slots[i].destructor {
-                                calls[call_count] = (value, dtor);
+                                calls[call_count] = (entry.value, dtor);
                                 call_count += 1;
                             }
                         }
@@ -551,17 +581,17 @@ mod tests {
 
     /// Per-thread values block for tests (heap-allocated, registered in table).
     struct TestTlsBlock {
-        values: [u64; PTHREAD_KEYS_MAX],
+        values: [TlsEntry; PTHREAD_KEYS_MAX],
     }
 
     impl TestTlsBlock {
         fn new() -> Box<Self> {
             Box::new(Self {
-                values: [0; PTHREAD_KEYS_MAX],
+                values: [TlsEntry::default(); PTHREAD_KEYS_MAX],
             })
         }
 
-        fn as_mut_ptr(&mut self) -> *mut u64 {
+        fn as_mut_ptr(&mut self) -> *mut TlsEntry {
             self.values.as_mut_ptr()
         }
     }
@@ -823,7 +853,9 @@ mod tests {
         // Set a value and tear down to verify the new destructor fires.
         let tid = current_tid();
         let mut block = TestTlsBlock::new();
-        block.values[k2.id as usize] = 99;
+        let idx = (key.id & 1023) as usize;
+        let seq = key.id >> 10;
+        block.values[idx] = TlsEntry { seq, value: 99 };
         table_register(tid, block.as_mut_ptr());
         teardown_thread_tls(tid);
 
@@ -1187,13 +1219,11 @@ mod tests {
 
         let tid = current_tid();
         let mut block = TestTlsBlock::new();
-        block.values[key.id as usize] = 777;
+        block.values[(key.id & 1023) as usize] = TlsEntry { seq: key.id >> 10, value: 777 };
         table_register(tid, block.as_mut_ptr());
 
         teardown_thread_tls(tid);
 
         let vals = OBSERVED_VALUES.lock().unwrap();
         assert_eq!(vals.len(), 1);
-        assert_eq!(vals[0], 777, "destructor should receive the original value");
-    }
-}
+        assert_eq!(vals[0], 777, "destructor should                                       

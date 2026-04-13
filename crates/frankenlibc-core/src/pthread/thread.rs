@@ -136,7 +136,7 @@ pub struct ThreadHandle {
 
     /// Per-thread TLS value storage (bd-rth1). Allocation-free: lives in the
     /// heap-allocated ThreadHandle so clone-based threads never need malloc.
-    pub tls_values: [u64; super::tls::PTHREAD_KEYS_MAX],
+    pub tls_values: [super::tls::TlsEntry; super::tls::PTHREAD_KEYS_MAX],
 }
 
 // SAFETY: ThreadHandle is designed for cross-thread sharing via atomic fields.
@@ -494,7 +494,7 @@ pub unsafe fn create_thread(
         retval: core::cell::UnsafeCell::new(0),
         stack_base,
         stack_total_size,
-        tls_values: [0u64; super::tls::PTHREAD_KEYS_MAX],
+        tls_values: [super::tls::TlsEntry::default(); super::tls::PTHREAD_KEYS_MAX],
     });
     let handle_ptr = Box::into_raw(handle);
 

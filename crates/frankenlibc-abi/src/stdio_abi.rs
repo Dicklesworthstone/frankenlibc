@@ -2966,24 +2966,36 @@ pub unsafe extern "C" fn sprintf(
 
     let mut copy_len = total_len;
     let mut adverse = false;
+    let mut has_room = true;
 
     if repair_enabled(mode.heals_enabled(), decision.action)
         && let Some(bound) = known_remaining(str_buf as usize)
     {
-        let max_payload = bound.saturating_sub(1);
-        if copy_len > max_payload {
-            copy_len = max_payload;
+        if bound == 0 {
+            has_room = false;
             adverse = true;
-            global_healing_policy().record(&HealingAction::TruncateWithNull {
-                requested: total_len.saturating_add(1),
-                truncated: copy_len,
+            global_healing_policy().record(&HealingAction::ClampSize {
+                requested: total_len,
+                clamped: 0,
             });
+        } else {
+            let max_payload = bound.saturating_sub(1);
+            if copy_len > max_payload {
+                copy_len = max_payload;
+                adverse = true;
+                global_healing_policy().record(&HealingAction::TruncateWithNull {
+                    requested: total_len.saturating_add(1),
+                    truncated: copy_len,
+                });
+            }
         }
     }
 
-    unsafe {
-        std::ptr::copy_nonoverlapping(rendered.as_ptr(), str_buf as *mut u8, copy_len);
-        *str_buf.add(copy_len) = 0;
+    if has_room {
+        unsafe {
+            std::ptr::copy_nonoverlapping(rendered.as_ptr(), str_buf as *mut u8, copy_len);
+            *str_buf.add(copy_len) = 0;
+        }
     }
 
     runtime_policy::observe(
@@ -3594,24 +3606,36 @@ pub unsafe extern "C" fn vsprintf(
 
     let mut copy_len = total_len;
     let mut adverse = false;
+    let mut has_room = true;
 
     if repair_enabled(mode.heals_enabled(), decision.action)
         && let Some(bound) = known_remaining(str_buf as usize)
     {
-        let max_payload = bound.saturating_sub(1);
-        if copy_len > max_payload {
-            copy_len = max_payload;
+        if bound == 0 {
+            has_room = false;
             adverse = true;
-            global_healing_policy().record(&HealingAction::TruncateWithNull {
-                requested: total_len.saturating_add(1),
-                truncated: copy_len,
+            global_healing_policy().record(&HealingAction::ClampSize {
+                requested: total_len,
+                clamped: 0,
             });
+        } else {
+            let max_payload = bound.saturating_sub(1);
+            if copy_len > max_payload {
+                copy_len = max_payload;
+                adverse = true;
+                global_healing_policy().record(&HealingAction::TruncateWithNull {
+                    requested: total_len.saturating_add(1),
+                    truncated: copy_len,
+                });
+            }
         }
     }
 
-    unsafe {
-        std::ptr::copy_nonoverlapping(rendered.as_ptr(), str_buf as *mut u8, copy_len);
-        *str_buf.add(copy_len) = 0;
+    if has_room {
+        unsafe {
+            std::ptr::copy_nonoverlapping(rendered.as_ptr(), str_buf as *mut u8, copy_len);
+            *str_buf.add(copy_len) = 0;
+        }
     }
 
     runtime_policy::observe(
