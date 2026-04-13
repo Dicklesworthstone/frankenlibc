@@ -752,10 +752,60 @@ pub unsafe extern "C" fn fopen(pathname: *const c_char, mode: *const c_char) -> 
         return std::ptr::null_mut();
     }
 
-    // Parse mode string into open flags.
-    let mode_bytes = unsafe { CStr::from_ptr(mode) }.to_bytes();
+    let (safety_mode, decision) = runtime_policy::decide(
+        ApiFamily::Stdio,
+        pathname as usize,
+        0,
+        false,
+        false,
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
+        return std::ptr::null_mut();
+    }
+
+    let repair = repair_enabled(safety_mode.heals_enabled(), decision.action);
+
+    // Validate pathname string.
+    let (_path_len, path_terminated) = unsafe {
+        scan_c_str_len(
+            pathname,
+            if repair {
+                known_remaining(pathname as usize)
+            } else {
+                None
+            },
+        )
+    };
+    if !path_terminated && repair {
+        unsafe { set_abi_errno(errno::ENAMETOOLONG) };
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
+        return std::ptr::null_mut();
+    }
+
+    // Validate mode string.
+    let (mode_len, mode_terminated) = unsafe {
+        scan_c_str_len(
+            mode,
+            if repair {
+                known_remaining(mode as usize)
+            } else {
+                None
+            },
+        )
+    };
+    if !mode_terminated {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
+        return std::ptr::null_mut();
+    }
+
+    let mode_bytes = unsafe { std::slice::from_raw_parts(mode as *const u8, mode_len) };
     let Some(open_flags) = parse_mode(mode_bytes) else {
         unsafe { set_abi_errno(errno::EINVAL) };
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
         return std::ptr::null_mut();
     };
 
@@ -776,6 +826,7 @@ pub unsafe extern "C" fn fopen(pathname: *const c_char, mode: *const c_char) -> 
             .raw_os_error()
             .unwrap_or(errno::ENOENT);
         unsafe { set_abi_errno(e) };
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
         return std::ptr::null_mut();
     }
 
@@ -784,6 +835,9 @@ pub unsafe extern "C" fn fopen(pathname: *const c_char, mode: *const c_char) -> 
     if fp.is_null() {
         // fdopen_native_impl failed (registry full) - close the fd we opened.
         unsafe { libc::syscall(libc::SYS_close, fd) };
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+    } else {
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, false);
     }
     fp
 }
@@ -845,7 +899,11 @@ fn fdopen_native_impl(fd: c_int, open_flags: &OpenFlags) -> *mut c_void {
 fn raw_isatty(fd: c_int) -> bool {
     let mut ws = std::mem::MaybeUninit::<libc::winsize>::zeroed();
     let rc = unsafe {
-        frankenlibc_core::syscall::sys_ioctl(fd, libc::TIOCGWINSZ as usize, ws.as_mut_ptr() as usize)
+        frankenlibc_core::syscall::sys_ioctl(
+            fd,
+            libc::TIOCGWINSZ as usize,
+            ws.as_mut_ptr() as usize,
+        )
     };
     rc.is_ok()
 }
@@ -4637,8 +4695,12 @@ pub unsafe extern "C" fn fsetpos(stream: *mut c_void, pos: *const libc::fpos_t) 
 /// Returns a native `NativeFile*` (compatible with glibc `_IO_FILE_plus` layout).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fdopen(fd: c_int, mode: *const c_char) -> *mut c_void {
-    if fd < 0 || mode.is_null() {
+    if mode.is_null() {
         unsafe { set_abi_errno(errno::EINVAL) };
+        return std::ptr::null_mut();
+    }
+    if fd < 0 {
+        unsafe { set_abi_errno(errno::EBADF) };
         return std::ptr::null_mut();
     }
 
@@ -4656,6 +4718,16 @@ pub unsafe extern "C" fn fdopen(fd: c_int, mode: *const c_char) -> *mut c_void {
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
         return std::ptr::null_mut();
     };
+
+    if open_flags.cloexec {
+        let existing = unsafe { libc::fcntl(fd, libc::F_GETFD) };
+        if existing < 0 {
+            unsafe { set_abi_errno(errno::EBADF) };
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
+            return std::ptr::null_mut();
+        }
+        unsafe { libc::fcntl(fd, libc::F_SETFD, existing | libc::FD_CLOEXEC) };
+    }
 
     // Create native FILE via fdopen_native_impl.
     let fp = fdopen_native_impl(fd, &open_flags);
@@ -4686,14 +4758,34 @@ pub unsafe extern "C" fn freopen(
     }
 
     let id = canonical_stream_id(stream);
-    let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, id, 0, true, false, 0);
+    let (safety_mode, decision) = runtime_policy::decide(ApiFamily::Stdio, id, 0, true, false, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         unsafe { set_abi_errno(errno::EACCES) };
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
         return std::ptr::null_mut();
     }
 
-    let mode_bytes = unsafe { CStr::from_ptr(mode) }.to_bytes();
+    let repair = repair_enabled(safety_mode.heals_enabled(), decision.action);
+
+    // Validate pathname if provided.
+    if !pathname.is_null() {
+        let (_path_len, path_terminated) = unsafe { scan_c_str_len(pathname, if repair { known_remaining(pathname as usize) } else { None }) };
+        if !path_terminated && repair {
+            unsafe { set_abi_errno(errno::ENAMETOOLONG) };
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
+            return std::ptr::null_mut();
+        }
+    }
+
+    // Validate mode string.
+    let (mode_len, mode_terminated) = unsafe { scan_c_str_len(mode, if repair { known_remaining(mode as usize) } else { None }) };
+    if !mode_terminated {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
+        return std::ptr::null_mut();
+    }
+
+    let mode_bytes = unsafe { std::slice::from_raw_parts(mode as *const u8, mode_len) };
     let Some(open_flags) = parse_mode(mode_bytes) else {
         unsafe { set_abi_errno(errno::EINVAL) };
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
@@ -5351,7 +5443,7 @@ pub unsafe extern "C" fn popen(command: *const c_char, typ: *const c_char) -> *m
         child_exit();
     }
 
-    // Parent: close unused end and wrap the other in a FILE stream.
+    // Parent: close unused end and wrap the other in a NativeFile stream.
     let our_fd = if reading {
         unsafe { libc::syscall(libc::SYS_close as c_long, pipe_fds[1]) };
         pipe_fds[0]
@@ -5363,20 +5455,26 @@ pub unsafe extern "C" fn popen(command: *const c_char, typ: *const c_char) -> *m
     let open_flags = OpenFlags {
         readable: reading,
         writable: !reading,
+        cloexec: close_on_exec,
         ..Default::default()
     };
-    let stream = StdioStream::new(our_fd, open_flags);
-    let id = alloc_stream_id();
-    let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
-    reg.streams.insert(id, stream);
-    drop(reg);
 
-    // Record the child PID so pclose can wait for it.
-    let mut pids = POPEN_PIDS.lock().unwrap_or_else(|e| e.into_inner());
-    pids.get_or_insert_with(HashMap::new).insert(id, pid);
+    // Create NativeFile via fdopen_native_impl.
+    let fp = fdopen_native_impl(our_fd, &open_flags);
+    if fp.is_null() {
+        // fdopen failed (registry full) - close fd and waitpid to reap child.
+        unsafe { libc::syscall(libc::SYS_close as c_long, our_fd) };
+        unsafe { libc::waitpid(pid, std::ptr::null_mut(), 0) };
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 50, true);
+        return std::ptr::null_mut();
+    }
+
+    // Store the child PID in the NativeFile for pclose to retrieve.
+    let native_file = fp as *mut io_internal_abi::NativeFile;
+    unsafe { (*native_file).set_popen_child_pid(pid) };
 
     runtime_policy::observe(ApiFamily::Stdio, decision.profile, 50, false);
-    id as *mut c_void
+    fp
 }
 
 /// POSIX `pclose` — close a stream opened by popen and wait for the child.
@@ -5389,17 +5487,28 @@ pub unsafe extern "C" fn pclose(stream: *mut c_void) -> c_int {
         return -1;
     }
 
-    let id = canonical_stream_id(stream);
+    // Try to get the child PID from the NativeFile.
+    let native_file = stream as *mut io_internal_abi::NativeFile;
+    let child_pid = unsafe { (*native_file).take_popen_child_pid() };
 
-    // Look up and remove the child PID.
-    let child_pid = {
-        let mut pids = POPEN_PIDS.lock().unwrap_or_else(|e| e.into_inner());
-        pids.as_mut().and_then(|m| m.remove(&id))
-    };
-
-    let Some(pid) = child_pid else {
-        unsafe { set_abi_errno(errno::EINVAL) };
-        return -1;
+    // Fallback: check the legacy POPEN_PIDS HashMap for streams opened before
+    // the NativeFile migration.
+    let pid = match child_pid {
+        Some(p) => p,
+        None => {
+            let id = canonical_stream_id(stream);
+            let legacy_pid = {
+                let mut pids = POPEN_PIDS.lock().unwrap_or_else(|e| e.into_inner());
+                pids.as_mut().and_then(|m| m.remove(&id))
+            };
+            match legacy_pid {
+                Some(p) => p,
+                None => {
+                    unsafe { set_abi_errno(errno::EINVAL) };
+                    return -1;
+                }
+            }
+        }
     };
 
     // Close the stream (flushes and closes fd).

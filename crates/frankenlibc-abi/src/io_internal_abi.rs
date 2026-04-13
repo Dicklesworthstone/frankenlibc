@@ -16,7 +16,9 @@ use std::ffi::{c_char, c_int, c_void};
 use std::ptr;
 use std::sync::atomic::{AtomicI8, Ordering};
 
+use crate::runtime_policy;
 use crate::stdio_abi;
+use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 use parking_lot::ReentrantMutex;
 
 // ---------------------------------------------------------------------------
@@ -408,6 +410,9 @@ struct NativeFileLocked {
     open_flags: u32,
     fingerprint: [u8; 16],
     runtime_math_hooks: NativeFileRuntimeMathHooks,
+    /// Child PID for streams opened via popen. Set to Some(pid) during popen,
+    /// read and cleared by pclose to waitpid on the child.
+    popen_child_pid: Option<i32>,
 }
 
 impl NativeFileLocked {
@@ -435,6 +440,7 @@ impl NativeFileLocked {
             open_flags,
             fingerprint,
             runtime_math_hooks: NativeFileRuntimeMathHooks::new(),
+            popen_child_pid: None,
         }
     }
 }
@@ -764,6 +770,26 @@ impl NativeFile {
         // SAFETY: caller provided a buffer pointer with `size` bytes of storage.
         let end = unsafe { user_buf.add(size) };
         self.sync_glibc_buffer_head(user_buf, user_buf, end);
+    }
+
+    /// Set the child PID for streams opened via `popen`.
+    #[inline]
+    pub fn set_popen_child_pid(&mut self, pid: i32) {
+        self.with_locked_mut(|state| state.popen_child_pid = Some(pid));
+    }
+
+    /// Get and clear the popen child PID (used by `pclose`).
+    ///
+    /// Returns `Some(pid)` if this stream was opened via `popen`, `None` otherwise.
+    #[inline]
+    pub fn take_popen_child_pid(&mut self) -> Option<i32> {
+        self.with_locked_mut(|state| state.popen_child_pid.take())
+    }
+
+    /// Returns true if this stream was opened via `popen`.
+    #[inline]
+    pub fn is_popen(&self) -> bool {
+        self.with_locked(|state| state.popen_child_pid.is_some())
     }
 }
 
@@ -1536,6 +1562,20 @@ pub unsafe extern "C" fn _IO_adjust_column(col: c_int, line: *const c_char, coun
     if line.is_null() || count <= 0 {
         return col;
     }
+
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Stdio,
+        line as usize,
+        count as usize,
+        false,
+        false,
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
+        return col;
+    }
+
     let mut c = col as u32;
     for i in 0..count as usize {
         let byte = unsafe { *line.add(i) } as u8;
@@ -1545,6 +1585,7 @@ pub unsafe extern "C" fn _IO_adjust_column(col: c_int, line: *const c_char, coun
             _ => c += 1,
         }
     }
+    runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, false);
     c as c_int
 }
 
@@ -1561,6 +1602,20 @@ pub unsafe extern "C" fn _IO_adjust_wcolumn(
     if line.is_null() || count <= 0 {
         return col;
     }
+
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Stdio,
+        line as usize,
+        (count as usize).saturating_mul(4), // wchar_t is 4 bytes
+        false,
+        false,
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
+        return col;
+    }
+
     let wchars = line as *const i32;
     let mut c = col as u32;
     for i in 0..count as usize {
@@ -1571,6 +1626,7 @@ pub unsafe extern "C" fn _IO_adjust_wcolumn(
             _ => c += 1,
         }
     }
+    runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, false);
     c as c_int
 }
 
@@ -1639,8 +1695,24 @@ pub unsafe extern "C" fn _IO_do_write(fp: *mut c_void, buf: *const c_char, n: us
     if n == 0 {
         return 0;
     }
+
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Stdio,
+        buf as usize,
+        n,
+        false,
+        buf.is_null(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
+        return -1;
+    }
+
     let written = unsafe { stdio_abi::fwrite(buf as *const c_void, 1, n, fp) };
-    if written < n { -1 } else { 0 }
+    let failed = written < n;
+    runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, failed);
+    if failed { -1 } else { 0 }
 }
 
 /// `_IO_doallocbuf` — allocate FILE internal buffer.
@@ -1837,7 +1909,26 @@ pub unsafe extern "C" fn _IO_file_fopen(
     mode: *const c_char,
     _is32not64: c_int,
 ) -> *mut c_void {
-    unsafe { stdio_abi::fopen(filename, mode) }
+    if filename.is_null() || mode.is_null() {
+        return std::ptr::null_mut();
+    }
+
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::IoFd,
+        filename as usize,
+        0,
+        false,
+        false,
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, true);
+        return std::ptr::null_mut();
+    }
+
+    let fp = unsafe { stdio_abi::fopen(filename, mode) };
+    runtime_policy::observe(ApiFamily::IoFd, decision.profile, 15, fp.is_null());
+    fp
 }
 
 /// `_IO_file_init` — initialize FILE structure.
@@ -1862,8 +1953,34 @@ pub unsafe extern "C" fn _IO_file_open(
     _read_write: c_int,
     _is32not64: c_int,
 ) -> *mut c_void {
-    let fd = unsafe { libc::open(filename, posix_mode, prot) };
+    if filename.is_null() {
+        return std::ptr::null_mut();
+    }
+
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::IoFd,
+        filename as usize,
+        0,
+        false,
+        false,
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, true);
+        return std::ptr::null_mut();
+    }
+
+    let fd = unsafe {
+        libc::syscall(
+            libc::SYS_openat,
+            libc::AT_FDCWD,
+            filename,
+            posix_mode,
+            prot,
+        ) as c_int
+    };
     if fd < 0 {
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, true);
         return std::ptr::null_mut();
     }
     // Determine mode string from posix_mode flags
@@ -1877,6 +1994,9 @@ pub unsafe extern "C" fn _IO_file_open(
     let fp = unsafe { stdio_abi::fdopen(fd, mode.as_ptr()) };
     if fp.is_null() {
         unsafe { libc::syscall(libc::SYS_close, fd) as c_int };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 15, true);
+    } else {
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 15, false);
     }
     fp
 }
