@@ -1092,7 +1092,8 @@ impl SosBarrierController {
             return false;
         }
 
-        let val = evaluate_size_class_barrier(requested_size, mapped_class_size, class_membership_valid);
+        let val =
+            evaluate_size_class_barrier(requested_size, mapped_class_size, class_membership_valid);
         self.last_size_class_value = val;
         if val < 0 {
             self.size_class_violations = self.size_class_violations.saturating_add(1);
@@ -1115,7 +1116,10 @@ impl SosBarrierController {
             return SosBarrierState::Calibrating;
         }
 
-        if !self.fragmentation_hash_valid || !self.thread_safety_hash_valid || !self.size_class_hash_valid {
+        if !self.fragmentation_hash_valid
+            || !self.thread_safety_hash_valid
+            || !self.size_class_hash_valid
+        {
             return SosBarrierState::Violated;
         }
 
@@ -2349,13 +2353,13 @@ mod tests {
         let val = evaluate_provenance_barrier(50_000, 0, 100_000, 200_000);
         // Recompute: headroom = 100_000 - 50_000 = 50_000
         // rb = 50_000 * 100_000 / 1_000_000 = 5_000
-        // penalty_1 = 800 * 5_000 * 1_000_000 / (1e6 * 1e6) = 800*5000/1e6 = 4
+        // penalty_1 = 800_000 * 5_000 * 1_000_000 / (1e6 * 1e6) = 4_000
         // rp = 50_000 * 200_000 / 1_000_000 = 10_000
-        // penalty_2 = 600 * 10_000 * 1_000_000 / (1e6 * 1e6) = 600*10000/1e6 = 6
+        // penalty_2 = 600_000 * 10_000 * 1_000_000 / (1e6 * 1e6) = 6_000
         // penalty_3 = 95_000 * 200_000 / 1_000_000 = 19_000
         // reward = 400 * 0 * 900_000 / (1e6 * 1e6) = 0
-        // total = 50_000 - 4 - 6 - 19_000 + 0 = 30_990
-        assert_eq!(val, 30_990, "Golden value changed: {val}");
+        // total = 50_000 - 4_000 - 6_000 - 19_000 + 0 = 21_000
+        assert_eq!(val, 21_000, "Golden value changed: {val}");
     }
 
     // ═══════════════════════════════════════════════════════════════

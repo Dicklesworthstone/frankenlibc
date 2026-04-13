@@ -199,14 +199,23 @@ where
     F: FnOnce(&mut TlsValidationCache) -> R,
 {
     let mut maybe_f = Some(f);
-    match TLS_CACHE.try_with(|cache| {
-        let action = maybe_f
-            .take()
-            .expect("with_tls_cache closure must be consumed exactly once");
-        action(&mut cache.borrow_mut())
-    }) {
-        Ok(value) => value,
-        Err(_) => {
+    let result = TLS_CACHE.try_with(|cache| {
+        match cache.try_borrow_mut() {
+            Ok(mut borrowed) => {
+                let action = maybe_f
+                    .take()
+                    .expect("with_tls_cache closure must be consumed exactly once");
+                Some(action(&mut borrowed))
+            }
+            Err(_) => None, // Re-entrant borrow
+        }
+    });
+
+    match result {
+        Ok(Some(value)) => value,
+        _ => {
+            // Either thread-local is destroyed OR re-entrant borrow occurred.
+            // Execute with a fresh temporary cache.
             let mut fallback = TlsValidationCache::new();
             let action = maybe_f
                 .take()

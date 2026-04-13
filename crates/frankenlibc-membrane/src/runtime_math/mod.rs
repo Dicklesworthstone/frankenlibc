@@ -4103,11 +4103,7 @@ impl RuntimeMathKernel {
             return;
         }
         let mut barrier = self.sos_barrier.lock();
-        barrier.evaluate_size_class(
-            requested_size,
-            mapped_class_size,
-            class_membership_valid,
-        );
+        barrier.evaluate_size_class(requested_size, mapped_class_size, class_membership_valid);
         let barrier_code = match barrier.state() {
             SosBarrierState::Calibrating => 0u8,
             SosBarrierState::Safe => 1u8,
