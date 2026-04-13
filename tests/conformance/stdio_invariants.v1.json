@@ -1,259 +1,233 @@
 {
   "version": "v1",
   "schema": "stdio_invariants",
-  "captured_at": "2026-04-13T00:00:00Z",
-  "description": "Machine-checkable invariants for stdio entrypoints per Plan v4 §1.5. Each invariant specifies pre-conditions, post-conditions, and SafetyState lattice transitions.",
+  "captured_at": "2026-04-13T23:30:00Z",
+  "description": "Machine-checkable per-entrypoint invariants for stdio family, per Plan v4 section 1.5. Each invariant specifies pre-conditions, post-conditions, and lattice transitions.",
   "dsl": {
-    "description": "Simple expression DSL for invariant conditions",
+    "description": "Boolean expressions over input parameters, return values, errno, and FILE state. Predicates: in_registry(fp), is_null(ptr), is_valid_mode(mode), errno_set, errno_clear. State refs: fp.fd, fp.eof, fp.err, fp.ungetc, fp.orient, fp.gen.",
     "operators": {
-      "fp.in_registry": "FILE pointer is registered in native stream registry",
-      "fp.fd >= 0": "FILE has valid non-negative file descriptor",
-      "fp.eof": "FILE has EOF flag set",
-      "fp.error": "FILE has error flag set",
-      "fp.readable": "FILE was opened for reading",
-      "fp.writable": "FILE was opened for writing",
-      "fp.orientation == X": "FILE orientation is X (unset/wide/byte)",
-      "return == X": "Function return value equals X",
-      "return >= 0": "Function return value is non-negative",
-      "return <= n": "Function return value <= requested count n",
-      "errno == X": "errno is set to value X",
-      "errno unchanged": "errno was not modified by the call",
-      "not(expr)": "Logical negation",
-      "and(a, b)": "Logical conjunction",
-      "or(a, b)": "Logical disjunction",
-      "implies(a, b)": "If a then b (a → b)"
+      "&&": "logical AND",
+      "||": "logical OR",
+      "!": "logical NOT",
+      "==": "equality",
+      "!=": "inequality",
+      "<=": "less than or equal",
+      ">=": "greater than or equal",
+      "in": "membership test"
     }
+  },
+  "lattice_states": {
+    "Undecided": "Stream opened but orientation not yet determined",
+    "Byte": "Byte-oriented stream",
+    "Wide": "Wide-character oriented stream",
+    "Open": "Stream is open and operational",
+    "Eof": "End-of-file indicator set",
+    "Err": "Error indicator set",
+    "Closed": "Stream has been closed"
   },
   "invariants": [
     {
       "function": "fopen",
-      "spec_section": "C11 7.21.5.3, POSIX.1-2024 fopen",
-      "description": "Open a file and associate a stream with it",
+      "spec_section": "C11 7.21.5.3",
+      "description": "Opens a file and returns a stream pointer, or NULL on failure with errno set",
       "pre_conditions": [
-        "pathname != NULL",
-        "mode != NULL",
-        "mode is valid (r|w|a with optional +,b,x,e modifiers)"
+        "path != NULL",
+        "mode in {r, w, a, r+, w+, a+, rb, wb, ab, r+b, rb+, w+b, wb+, a+b, ab+}"
       ],
       "post_conditions": [
-        "implies(return != NULL, return.in_registry)",
-        "implies(return != NULL, return.fd >= 0)",
-        "implies(return != NULL, errno unchanged)",
-        "implies(return == NULL, errno in {ENOENT, EACCES, EEXIST, EINVAL, EMFILE, ENOMEM})"
+        "(return == NULL && errno != 0) || (return != NULL && in_registry(return))",
+        "return != NULL => return.fd >= 0",
+        "return != NULL => return.gen == fresh_generation",
+        "return != NULL => return.orient == Undecided",
+        "return != NULL => return.eof == false && return.err == false"
       ],
       "lattice_transition": {
-        "on_success": "OpenedValid",
-        "on_failure": "NotOpen"
+        "success": "bot -> Open(Undecided)",
+        "failure": "bot -> bot"
       }
     },
     {
       "function": "fread",
-      "spec_section": "C11 7.21.8.1, POSIX.1-2024 fread",
-      "description": "Read elements from a stream into an array",
+      "spec_section": "C11 7.21.8.1",
+      "description": "Reads nmemb elements of size bytes each from stream into buf",
       "pre_conditions": [
-        "fp.in_registry",
-        "fp.readable",
-        "ptr != NULL",
-        "not(fp.error)"
+        "in_registry(fp)",
+        "buf != NULL",
+        "size * nmemb <= SSIZE_MAX"
       ],
       "post_conditions": [
         "return <= nmemb",
-        "implies(return < nmemb, or(fp.eof, fp.error))",
-        "implies(return == nmemb, not(fp.eof))",
-        "implies(fp.error, errno != 0)"
+        "return < nmemb => (fp.eof || fp.err)",
+        "buf[0..return*size] filled from stream"
       ],
       "lattice_transition": {
-        "on_success": "ReadingValid",
-        "on_short_read": "ReachedEOF",
-        "on_error": "ErrorState"
+        "success": "Open -> Open",
+        "eof": "Open -> Eof",
+        "error": "Open -> Err"
       }
     },
     {
       "function": "fwrite",
-      "spec_section": "C11 7.21.8.2, POSIX.1-2024 fwrite",
-      "description": "Write elements from an array to a stream",
+      "spec_section": "C11 7.21.8.2",
+      "description": "Writes nmemb elements of size bytes each from buf to stream",
       "pre_conditions": [
-        "fp.in_registry",
-        "fp.writable",
-        "ptr != NULL",
-        "not(fp.error)"
+        "in_registry(fp)",
+        "buf != NULL",
+        "size * nmemb <= SSIZE_MAX",
+        "fp opened for writing"
       ],
       "post_conditions": [
         "return <= nmemb",
-        "implies(return < nmemb, fp.error)",
-        "implies(fp.error, errno != 0)"
+        "return < nmemb => fp.err",
+        "buf[0..return*size] committed to stream"
       ],
       "lattice_transition": {
-        "on_success": "WritingValid",
-        "on_error": "ErrorState"
+        "success": "Open -> Open",
+        "error": "Open -> Err"
       }
     },
     {
       "function": "fseek",
-      "spec_section": "C11 7.21.9.2, POSIX.1-2024 fseek",
-      "description": "Set file position indicator",
+      "spec_section": "C11 7.21.9.2",
+      "description": "Sets file position indicator; clears EOF and ungetc on success",
       "pre_conditions": [
-        "fp.in_registry",
+        "in_registry(fp)",
         "whence in {SEEK_SET, SEEK_CUR, SEEK_END}"
       ],
       "post_conditions": [
-        "implies(return == 0, not(fp.eof))",
-        "implies(return == 0, not(fp.error))",
-        "implies(return != 0, fp.error)"
+        "(return == 0 && fp.eof == false && fp.ungetc == None) || (return == -1 && errno != 0)"
       ],
       "lattice_transition": {
-        "on_success": "PositionValid",
-        "on_error": "ErrorState"
+        "success": "Open|Eof -> Open",
+        "failure": "* -> *"
       }
     },
     {
       "function": "ftell",
-      "spec_section": "C11 7.21.9.4, POSIX.1-2024 ftell",
-      "description": "Get current file position",
+      "spec_section": "C11 7.21.9.4",
+      "description": "Returns current file position or -1 on error",
       "pre_conditions": [
-        "fp.in_registry"
+        "in_registry(fp)"
       ],
       "post_conditions": [
-        "implies(return >= 0, not(fp.error))",
-        "implies(return == -1, fp.error)",
-        "implies(return == -1, errno != 0)"
+        "(return >= 0) || (return == -1 && errno != 0)",
+        "return >= 0 => return == lseek(fp.fd, 0, SEEK_CUR) - buffered_unread + ungetc_adjustment"
       ],
       "lattice_transition": {
-        "on_success": "PositionValid",
-        "on_error": "ErrorState"
+        "any": "* -> * (no state change)"
       }
     },
     {
       "function": "fclose",
-      "spec_section": "C11 7.21.5.1, POSIX.1-2024 fclose",
-      "description": "Close a stream and flush pending output",
+      "spec_section": "C11 7.21.5.1",
+      "description": "Flushes and closes stream; removes from registry",
       "pre_conditions": [
-        "fp.in_registry"
+        "in_registry(fp)"
       ],
       "post_conditions": [
-        "implies(return == 0, not(fp.in_registry))",
-        "implies(return == EOF, errno != 0)"
+        "!in_registry(fp)",
+        "fp.fd closed (if not stdin/stdout/stderr)",
+        "return == 0 || (return == EOF && errno != 0)",
+        "dirty data flushed if !fp.err"
       ],
       "lattice_transition": {
-        "on_success": "Closed",
-        "on_error": "Closed"
-      },
-      "notes": "Stream is always removed from registry, even on error"
+        "any": "Open|Eof|Err -> Closed"
+      }
     },
     {
       "function": "ungetc",
-      "spec_section": "C11 7.21.7.10, POSIX.1-2024 ungetc",
-      "description": "Push a character back onto a stream",
+      "spec_section": "C11 7.21.7.10",
+      "description": "Pushes character back onto stream; clears EOF",
       "pre_conditions": [
-        "fp.in_registry",
-        "fp.readable",
-        "c != EOF or c in [0, 255]"
+        "in_registry(fp)"
       ],
       "post_conditions": [
-        "implies(return != EOF, return == c)",
-        "implies(return != EOF, not(fp.eof))",
-        "implies(c == EOF, return == EOF)"
+        "(return == c && c != EOF && fp.ungetc == Some(c) && fp.eof == false) || (return == EOF)"
       ],
       "lattice_transition": {
-        "on_success": "ReadingValid",
-        "on_failure": "ReadingValid"
-      },
-      "notes": "POSIX guarantees at least one pushback; failure returns EOF but does not set error flag"
+        "success": "Open|Eof -> Open",
+        "failure": "* -> *"
+      }
     },
     {
       "function": "fflush",
-      "spec_section": "C11 7.21.5.2, POSIX.1-2024 fflush",
-      "description": "Flush pending output or discard pending input",
+      "spec_section": "C11 7.21.5.2",
+      "description": "Flushes output buffer(s); clears ungetc on non-NULL stream",
       "pre_conditions": [
-        "or(fp == NULL, fp.in_registry)"
+        "fp == NULL || in_registry(fp)"
       ],
       "post_conditions": [
-        "implies(return == 0, not(fp.error))",
-        "implies(return == EOF, fp.error)",
-        "implies(return == EOF, errno != 0)"
+        "fp == NULL => all writable streams flushed",
+        "fp != NULL && return == 0 => dirty bytes committed && fp.ungetc == None",
+        "return == EOF => errno != 0"
       ],
       "lattice_transition": {
-        "on_success": "FlushedValid",
-        "on_error": "ErrorState"
-      },
-      "notes": "fp == NULL flushes all output streams"
+        "success": "Open -> Open",
+        "error": "Open -> Err"
+      }
     },
     {
       "function": "fileno",
-      "spec_section": "POSIX.1-2024 fileno",
-      "description": "Get file descriptor from stream",
+      "spec_section": "POSIX.1-2017",
+      "description": "Returns underlying file descriptor or -1 for memory streams",
       "pre_conditions": [
-        "fp.in_registry"
+        "in_registry(fp)"
       ],
       "post_conditions": [
-        "implies(return >= 0, return == fp.fd)",
-        "implies(return == -1, errno == EBADF)"
+        "fp.fd >= 0 => return == fp.fd",
+        "fp.fd == -1 => return == -1 && errno == EBADF"
       ],
       "lattice_transition": {
-        "on_success": "StateUnchanged",
-        "on_error": "StateUnchanged"
+        "any": "* -> * (no state change)"
       }
     },
     {
       "function": "feof",
-      "spec_section": "C11 7.21.10.2, POSIX.1-2024 feof",
-      "description": "Test end-of-file indicator",
+      "spec_section": "C11 7.21.10.1",
+      "description": "Tests EOF indicator; no side effects",
       "pre_conditions": [
-        "fp.in_registry"
+        "in_registry(fp)"
       ],
       "post_conditions": [
-        "implies(return != 0, fp.eof)",
-        "implies(return == 0, not(fp.eof))",
-        "errno unchanged"
+        "return == (fp.eof ? nonzero : 0)"
       ],
       "lattice_transition": {
-        "on_any": "StateUnchanged"
+        "any": "* -> * (no state change)"
       }
     },
     {
       "function": "ferror",
-      "spec_section": "C11 7.21.10.3, POSIX.1-2024 ferror",
-      "description": "Test error indicator",
+      "spec_section": "C11 7.21.10.3",
+      "description": "Tests error indicator; no side effects",
       "pre_conditions": [
-        "fp.in_registry"
+        "in_registry(fp)"
       ],
       "post_conditions": [
-        "implies(return != 0, fp.error)",
-        "implies(return == 0, not(fp.error))",
-        "errno unchanged"
+        "return == (fp.err ? nonzero : 0)"
       ],
       "lattice_transition": {
-        "on_any": "StateUnchanged"
+        "any": "* -> * (no state change)"
       }
     },
     {
       "function": "clearerr",
-      "spec_section": "C11 7.21.10.1, POSIX.1-2024 clearerr",
-      "description": "Clear end-of-file and error indicators",
+      "spec_section": "C11 7.21.10.1",
+      "description": "Clears both EOF and error indicators",
       "pre_conditions": [
-        "fp.in_registry"
+        "in_registry(fp)"
       ],
       "post_conditions": [
-        "not(fp.eof)",
-        "not(fp.error)",
-        "errno unchanged"
+        "fp.eof == false",
+        "fp.err == false"
       ],
       "lattice_transition": {
-        "on_any": "ClearedIndicators"
-      },
-      "notes": "Always succeeds for valid streams"
+        "any": "Eof|Err -> Open"
+      }
     }
   ],
-  "lattice_states": {
-    "NotOpen": "Stream does not exist or was never opened",
-    "OpenedValid": "Stream opened successfully, no I/O yet",
-    "ReadingValid": "Stream in valid reading state",
-    "WritingValid": "Stream in valid writing state",
-    "PositionValid": "Position indicator is valid",
-    "FlushedValid": "Stream was flushed, pending data written",
-    "ReachedEOF": "End-of-file condition reached",
-    "ErrorState": "Error flag is set",
-    "ClearedIndicators": "Error and EOF indicators were cleared",
-    "Closed": "Stream was closed and removed from registry",
-    "StateUnchanged": "Stream state not modified by the operation"
+  "verification_hooks": {
+    "fixture_binding": "tests/conformance/fixtures/stdio_file_ops.json",
+    "verifier_module": "crates/frankenlibc-harness/src/verify_invariants.rs",
+    "gate_script": "scripts/check_conformance_fixture_pipeline.sh"
   }
 }
