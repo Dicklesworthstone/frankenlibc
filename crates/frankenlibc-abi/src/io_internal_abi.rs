@@ -159,11 +159,13 @@ pub mod io_jump_fns {
     /// `__pbackfail`: push back a character when buffer full.
     pub type pbackfail_t = unsafe extern "C" fn(fp: *mut c_void, ch: c_int) -> c_int;
     /// `__xsputn`: write multiple bytes.
-    pub type xsputn_t = unsafe extern "C" fn(fp: *mut c_void, buf: *const c_void, n: usize) -> usize;
+    pub type xsputn_t =
+        unsafe extern "C" fn(fp: *mut c_void, buf: *const c_void, n: usize) -> usize;
     /// `__xsgetn`: read multiple bytes.
     pub type xsgetn_t = unsafe extern "C" fn(fp: *mut c_void, buf: *mut c_void, n: usize) -> usize;
     /// `__seekoff`: seek relative to whence.
-    pub type seekoff_t = unsafe extern "C" fn(fp: *mut c_void, offset: i64, dir: c_int, mode: c_int) -> i64;
+    pub type seekoff_t =
+        unsafe extern "C" fn(fp: *mut c_void, offset: i64, dir: c_int, mode: c_int) -> i64;
     /// `__seekpos`: seek to absolute position.
     pub type seekpos_t = unsafe extern "C" fn(fp: *mut c_void, pos: i64, mode: c_int) -> i64;
     /// `__setbuf`: set stream buffer.
@@ -1271,7 +1273,12 @@ unsafe extern "C" fn trampoline_xsgetn(fp: *mut c_void, buf: *mut c_void, n: usi
 }
 
 /// Trampoline for `__seekoff`: seek relative to whence.
-unsafe extern "C" fn trampoline_seekoff(fp: *mut c_void, offset: i64, dir: c_int, _mode: c_int) -> i64 {
+unsafe extern "C" fn trampoline_seekoff(
+    fp: *mut c_void,
+    offset: i64,
+    dir: c_int,
+    _mode: c_int,
+) -> i64 {
     if unsafe { stdio_abi::fseeko(fp, offset, dir) } != 0 {
         return -1;
     }
@@ -1311,32 +1318,63 @@ unsafe extern "C" fn trampoline_doallocate(_fp: *mut c_void) -> c_int {
 }
 
 /// Trampoline for `__read`: low-level read from fd.
+///
+/// This is a low-level vtable method called BY the buffered stdio layer
+/// to perform raw I/O. It MUST use raw syscalls, not buffered stdio
+/// (fread/fwrite), or infinite recursion would occur.
 unsafe extern "C" fn trampoline_read(fp: *mut c_void, buf: *mut c_void, n: isize) -> isize {
     if n < 0 {
         return -1;
     }
-    unsafe { stdio_abi::fread(buf, 1, n as usize, fp) as isize }
+    let fd = unsafe { stdio_abi::fileno(fp) };
+    if fd < 0 {
+        return -1;
+    }
+    // Use raw read() syscall, not buffered fread
+    unsafe { libc::read(fd, buf, n as usize) }
 }
 
 /// Trampoline for `__write`: low-level write to fd.
+///
+/// This is a low-level vtable method called BY the buffered stdio layer
+/// to perform raw I/O. It MUST use raw syscalls, not buffered stdio,
+/// or infinite recursion would occur.
 unsafe extern "C" fn trampoline_write(fp: *mut c_void, buf: *const c_void, n: isize) -> isize {
     if n < 0 {
         return -1;
     }
-    unsafe { stdio_abi::fwrite(buf, 1, n as usize, fp) as isize }
+    let fd = unsafe { stdio_abi::fileno(fp) };
+    if fd < 0 {
+        return -1;
+    }
+    // Use raw write() syscall, not buffered fwrite
+    unsafe { libc::write(fd, buf, n as usize) }
 }
 
 /// Trampoline for `__seek`: low-level lseek on fd.
+///
+/// This is a low-level vtable method. Use raw lseek syscall directly.
 unsafe extern "C" fn trampoline_seek(fp: *mut c_void, offset: i64, dir: c_int) -> i64 {
-    if unsafe { stdio_abi::fseeko(fp, offset, dir) } != 0 {
+    let fd = unsafe { stdio_abi::fileno(fp) };
+    if fd < 0 {
         return -1;
     }
-    unsafe { stdio_abi::ftello(fp) }
+    // Use raw lseek() syscall, not buffered fseeko
+    unsafe { libc::lseek(fd, offset, dir) }
 }
 
 /// Trampoline for `__close`: close underlying fd.
+///
+/// CRITICAL: This is called BY fclose() to close the fd. We MUST NOT call
+/// fclose() here or we'd cause infinite recursion / double-close.
+/// Only close the raw fd.
 unsafe extern "C" fn trampoline_close(fp: *mut c_void) -> c_int {
-    unsafe { stdio_abi::fclose(fp) }
+    let fd = unsafe { stdio_abi::fileno(fp) };
+    if fd < 0 {
+        return -1;
+    }
+    // Use raw close() syscall, not fclose
+    unsafe { libc::close(fd) }
 }
 
 /// Trampoline for `__stat`: fstat underlying fd.

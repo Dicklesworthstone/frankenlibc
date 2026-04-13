@@ -25,6 +25,7 @@ pub struct OpenFlags {
     pub create: bool,
     pub binary: bool,
     pub exclusive: bool,
+    pub cloexec: bool,
 }
 
 /// Runtime stream state flags.
@@ -71,8 +72,8 @@ pub fn parse_mode(mode: &[u8]) -> Option<OpenFlags> {
     pos += 1;
 
     // Modifiers: '+', 'b', 'x', 'e', 'm', 'c' in any order.
-    // We ignore unrecognized extensions (like 'e' for O_CLOEXEC) for glibc compatibility
-    // instead of failing the open.
+    // glibc accepts 'e' (O_CLOEXEC), 'm' (mmap), 'c' (cancel-safe), 'x' (exclusive).
+    // Reject invalid modifiers like 'r', 'w', 'a' in non-primary position.
     while pos < mode.len() {
         match mode[pos] {
             b'+' => {
@@ -81,7 +82,11 @@ pub fn parse_mode(mode: &[u8]) -> Option<OpenFlags> {
             }
             b'b' => flags.binary = true,
             b'x' => flags.exclusive = true,
-            _ => {} // Ignore unrecognized modifiers like 'e', 'm', 'c'
+            b'e' => flags.cloexec = true,
+            b'm' | b'c' => {} // Accepted but no-op on Linux
+            // Reject 'r', 'w', 'a' in modifier position (e.g., "rw", "ar").
+            // Also reject any other unknown characters.
+            _ => return None,
         }
         pos += 1;
     }
@@ -111,6 +116,9 @@ pub fn flags_to_oflags(flags: &OpenFlags) -> i32 {
     }
     if flags.exclusive {
         oflags |= 0o200; // O_EXCL
+    }
+    if flags.cloexec {
+        oflags |= 0o2000000; // O_CLOEXEC
     }
 
     oflags

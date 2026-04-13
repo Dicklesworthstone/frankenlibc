@@ -213,8 +213,14 @@ pub unsafe extern "C" fn dlopen(filename: *const c_char, flags: c_int) -> *mut c
         runtime_policy::observe(ApiFamily::Loader, decision.profile, 5, true);
         return std::ptr::null_mut();
     }
-
-    // Validate flags via core.
+    let (name_len, terminated) =
+        unsafe { crate::util::scan_c_string(filename, crate::malloc_abi::known_remaining(filename as usize)) };
+    if !terminated && mode.heals_enabled() {
+        set_dlerror(dlfcn_core::ERR_NOT_FOUND);
+        runtime_policy::observe(ApiFamily::Loader, decision.profile, 5, true);
+        return std::ptr::null_mut();
+    }
+    let _name = unsafe { std::slice::from_raw_parts(filename as *const u8, name_len) };
     if !dlfcn_core::valid_flags(flags) {
         if mode.heals_enabled() {
             // Hardened mode: default to RTLD_NOW | RTLD_LOCAL.
@@ -316,7 +322,7 @@ pub unsafe extern "C" fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *m
         return sym;
     }
 
-    let (_, decision) =
+    let (mode, decision) =
         runtime_policy::decide(ApiFamily::Loader, handle as usize, 0, false, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         set_dlerror(dlfcn_core::ERR_SYMBOL_NOT_FOUND);
@@ -330,8 +336,14 @@ pub unsafe extern "C" fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *m
         return std::ptr::null_mut();
     }
 
-    // SAFETY: symbol was checked for null above and is expected to be a NUL-terminated C string.
-    let symbol_name = unsafe { CStr::from_ptr(symbol) }.to_bytes();
+    let (symbol_len, terminated) =
+        unsafe { crate::util::scan_c_string(symbol, crate::malloc_abi::known_remaining(symbol as usize)) };
+    if !terminated && mode.heals_enabled() {
+        set_dlerror(dlfcn_core::ERR_SYMBOL_NOT_FOUND);
+        runtime_policy::observe(ApiFamily::Loader, decision.profile, 5, true);
+        return std::ptr::null_mut();
+    }
+    let symbol_name = unsafe { std::slice::from_raw_parts(symbol as *const u8, symbol_len) };
 
     if is_rtld_next(handle) || is_rtld_default(handle) {
         let host_handle = if is_rtld_default(handle) {
