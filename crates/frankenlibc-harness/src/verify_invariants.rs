@@ -150,8 +150,7 @@ impl InvariantVerificationSummary {
 pub fn load_invariants(path: &Path) -> Result<InvariantsFile, String> {
     let content = std::fs::read_to_string(path)
         .map_err(|e| format!("Failed to read invariants file: {e}"))?;
-    serde_json::from_str(&content)
-        .map_err(|e| format!("Failed to parse invariants JSON: {e}"))
+    serde_json::from_str(&content).map_err(|e| format!("Failed to parse invariants JSON: {e}"))
 }
 
 /// Load invariants from the default location.
@@ -178,7 +177,10 @@ pub fn get_invariant_for_function<'a>(
     invariants: &'a InvariantsFile,
     function: &str,
 ) -> Option<&'a Invariant> {
-    invariants.invariants.iter().find(|i| i.function == function)
+    invariants
+        .invariants
+        .iter()
+        .find(|i| i.function == function)
 }
 
 #[cfg(test)]
@@ -195,7 +197,11 @@ mod tests {
             assert!(!invariants.invariants.is_empty());
 
             // Verify we have the expected functions.
-            let functions: Vec<&str> = invariants.invariants.iter().map(|i| i.function.as_str()).collect();
+            let functions: Vec<&str> = invariants
+                .invariants
+                .iter()
+                .map(|i| i.function.as_str())
+                .collect();
             assert!(functions.contains(&"fopen"));
             assert!(functions.contains(&"fread"));
             assert!(functions.contains(&"fwrite"));

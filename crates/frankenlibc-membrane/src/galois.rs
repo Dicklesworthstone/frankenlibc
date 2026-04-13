@@ -39,6 +39,18 @@ impl PointerAbstraction {
         }
     }
 
+    /// Create an abstraction for a known-invalid wild pointer within membrane space.
+    #[must_use]
+    pub fn invalid(addr: usize) -> Self {
+        Self {
+            addr,
+            state: SafetyState::Invalid,
+            alloc_base: None,
+            remaining: Some(0),
+            generation: None,
+        }
+    }
+
     /// Create an abstraction for a null pointer.
     #[must_use]
     pub const fn null() -> Self {

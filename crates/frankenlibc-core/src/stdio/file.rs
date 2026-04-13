@@ -774,6 +774,8 @@ mod tests {
     fn test_parse_mode_invalid() {
         assert!(parse_mode(b"").is_none());
         assert!(parse_mode(b"z").is_none());
+        assert!(parse_mode(b"rw").is_none());
+        assert!(parse_mode(b"ar").is_none());
     }
 
     #[test]

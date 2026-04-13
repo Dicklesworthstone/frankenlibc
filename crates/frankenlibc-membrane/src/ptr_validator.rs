@@ -680,13 +680,7 @@ impl ValidationPipeline {
                 0,
                 false, // invariant_violation = false (policy decision, not corruption)
             );
-            return ValidationOutcome::Denied(PointerAbstraction {
-                addr,
-                state: crate::lattice::SafetyState::Invalid,
-                alloc_base: None,
-                remaining: None,
-                generation: None,
-            });
+            return ValidationOutcome::Denied(PointerAbstraction::invalid(addr));
         }
 
         // Stage 0: Safety level check
@@ -1120,7 +1114,7 @@ impl ValidationPipeline {
                             elapsed_ns,
                             recent_page,
                         );
-                        
+
                         if recent_page {
                             self.emit_terminal_transition(
                                 &trace,
@@ -1139,7 +1133,7 @@ impl ValidationPipeline {
                                 0,
                                 false,
                             );
-                            return ValidationOutcome::Invalid(PointerAbstraction::unknown(addr));
+                            return ValidationOutcome::Invalid(PointerAbstraction::invalid(addr));
                         } else {
                             self.emit_terminal_transition(
                                 &trace,

@@ -781,7 +781,7 @@ fn fgets_rejects_invalid_destination_or_size() {
 }
 
 #[test]
-fn fopen_returns_host_file_handle_usable_by_libc_and_our_fclose() {
+fn fopen_returns_native_handle_usable_by_our_stdio() {
     let path = temp_path("fopen_host_interop");
     let _ = fs::remove_file(&path);
     let path_c = path_cstring(&path);
@@ -789,12 +789,8 @@ fn fopen_returns_host_file_handle_usable_by_libc_and_our_fclose() {
     let stream = unsafe { fopen(path_c.as_ptr(), c"w+".as_ptr()) };
     assert!(!stream.is_null());
 
-    let host_stream = stream.cast::<libc::FILE>();
-    assert!(unsafe { libc::fileno(host_stream) } >= 0);
-    assert_ne!(
-        unsafe { libc::fputs(c"host-write".as_ptr(), host_stream) },
-        libc::EOF
-    );
+    assert!(unsafe { fileno(stream) } >= 0);
+    assert_eq!(unsafe { fputs(c"host-write".as_ptr(), stream) }, 0);
     assert_eq!(unsafe { fclose(stream) }, 0);
 
     let bytes = fs::read(&path).expect("host-written fopen file should exist");
@@ -803,7 +799,7 @@ fn fopen_returns_host_file_handle_usable_by_libc_and_our_fclose() {
 }
 
 #[test]
-fn host_fopen_handle_is_accepted_by_our_fclose() {
+fn fclose_accepts_only_native_streams() {
     let path = temp_path("host_fopen_our_fclose");
     let _ = fs::remove_file(&path);
     let path_c = path_cstring(&path);
@@ -815,8 +811,12 @@ fn host_fopen_handle_is_accepted_by_our_fclose() {
         libc::EOF
     );
 
-    assert_eq!(unsafe { fclose(host_stream.cast::<c_void>()) }, 0);
+    let rc = unsafe { fclose(host_stream.cast::<c_void>()) };
+    assert_eq!(rc, libc::EOF);
+    let err = unsafe { *libc::__errno_location() };
+    assert_eq!(err, libc::EBADF);
 
+    unsafe { libc::fclose(host_stream) };
     let bytes = fs::read(&path).expect("host fopen output should exist");
     assert_eq!(bytes, b"mixed-close");
     let _ = fs::remove_file(path);
@@ -965,44 +965,41 @@ fn fprintf_formats_and_persists_to_stream() {
 }
 
 #[test]
-fn fprintf_writes_to_host_tmpfile_handle() {
-    let stream = unsafe { libc::tmpfile() };
+fn fprintf_writes_to_native_tmpfile_handle() {
+    let stream = unsafe { tmpfile() };
     assert!(!stream.is_null());
-    let stream_void = stream.cast::<c_void>();
 
-    let written = unsafe { fprintf(stream_void, c"host=%d:%s".as_ptr(), 11_i32, c"ok".as_ptr()) };
+    let written = unsafe { fprintf(stream, c"host=%d:%s".as_ptr(), 11_i32, c"ok".as_ptr()) };
     assert_eq!(written, 10);
-    assert_eq!(unsafe { fflush(stream_void) }, 0);
+    assert_eq!(unsafe { fflush(stream) }, 0);
 
-    unsafe { libc::rewind(stream) };
+    unsafe { rewind(stream) };
     let mut buf = [0 as c_char; 32];
-    let out = unsafe { libc::fgets(buf.as_mut_ptr(), buf.len() as c_int, stream) };
+    let out = unsafe { fgets(buf.as_mut_ptr(), buf.len() as c_int, stream) };
     assert_eq!(out, buf.as_mut_ptr());
     let rendered = unsafe { CStr::from_ptr(buf.as_ptr()) };
     assert_eq!(rendered.to_bytes(), b"host=11:ok");
 
-    assert_eq!(unsafe { fclose(stream_void) }, 0);
+    assert_eq!(unsafe { fclose(stream) }, 0);
 }
 
 #[test]
-fn vfprintf_writes_to_host_tmpfile_handle() {
-    let stream = unsafe { libc::tmpfile() };
+fn vfprintf_writes_to_native_tmpfile_handle() {
+    let stream = unsafe { tmpfile() };
     assert!(!stream.is_null());
-    let stream_void = stream.cast::<c_void>();
 
-    let written =
-        unsafe { call_vfprintf(stream_void, c"%s=%d".as_ptr(), c"host".as_ptr(), 21_i32) };
+    let written = unsafe { call_vfprintf(stream, c"%s=%d".as_ptr(), c"host".as_ptr(), 21_i32) };
     assert_eq!(written, 7);
-    assert_eq!(unsafe { fflush(stream_void) }, 0);
+    assert_eq!(unsafe { fflush(stream) }, 0);
 
-    unsafe { libc::rewind(stream) };
+    unsafe { rewind(stream) };
     let mut buf = [0 as c_char; 32];
-    let out = unsafe { libc::fgets(buf.as_mut_ptr(), buf.len() as c_int, stream) };
+    let out = unsafe { fgets(buf.as_mut_ptr(), buf.len() as c_int, stream) };
     assert_eq!(out, buf.as_mut_ptr());
     let rendered = unsafe { CStr::from_ptr(buf.as_ptr()) };
     assert_eq!(rendered.to_bytes(), b"host=21");
 
-    assert_eq!(unsafe { fclose(stream_void) }, 0);
+    assert_eq!(unsafe { fclose(stream) }, 0);
 }
 
 #[test]

@@ -3,11 +3,12 @@
 //! Integration tests for the native `_IO_FILE_plus`-shaped stdio substrate.
 
 use std::ffi::{c_char, c_int, c_void};
+use std::ptr;
 
 use frankenlibc_abi::io_internal_abi::{
     _IO_iter_begin, _IO_iter_end, _IO_iter_file, _IO_iter_next, DEFAULT_FD_VTABLE,
-    NATIVE_FILE_MAGIC, NativeFile, NativeFileBufMode, NativeFileVtable, file_flags,
-    native_stream_registry,
+    NATIVE_FILE_MAGIC, NATIVE_IO_JUMP_T, NativeFile, NativeFileBufMode, NativeFileVtable,
+    file_flags, native_stream_registry,
 };
 
 #[allow(non_snake_case)]
@@ -88,7 +89,11 @@ fn native_file_construct_for_fd() {
     assert!(f.buffer_base().is_null());
     assert_eq!(f.buffer_size(), 0);
     assert_eq!(f.offset(), 0);
-    assert!(f.vtable.is_null());
+    assert!(!f.vtable.is_null());
+    assert_eq!(
+        f.vtable as *const c_void,
+        ptr::addr_of!(NATIVE_IO_JUMP_T) as *const c_void
+    );
     assert!(!f.lock_ptr().is_null());
     assert_eq!(f.ungetc_value(), -1);
 }
@@ -192,7 +197,10 @@ fn native_file_glibc_prefix_cast_tracks_file_fields() {
         0,
         "EOF bit should be visible"
     );
-    assert!(projected.vtable.is_null());
+    assert_eq!(
+        projected.vtable as *const c_void,
+        ptr::addr_of!(NATIVE_IO_JUMP_T) as *const c_void
+    );
 }
 
 // ---------------------------------------------------------------------------
