@@ -2738,16 +2738,23 @@ pub unsafe extern "C" fn pthread_cond_wait(
         return libc::EINVAL;
     };
     let managed_condvar = is_managed_condvar(cond);
-    if !managed_condvar && !FORCE_NATIVE_MUTEX.load(Ordering::Acquire) {
+    let managed_mutex = is_managed_mutex(mutex);
+    if !managed_condvar && !managed_mutex && !FORCE_NATIVE_MUTEX.load(Ordering::Acquire) {
+        // Both condvar and mutex are host-owned: delegate to host pthread_cond_wait.
         // SAFETY: host symbol lookup/transmute guarantees ABI if present.
         if let Some(host_wait) = unsafe { host_pthread_cond_wait_fn() } {
             // SAFETY: direct call through resolved host symbol.
             return unsafe { host_wait(cond, mutex) };
         }
     }
-    if managed_condvar && !is_managed_mutex(mutex) {
+    // Guard: managed condvar requires managed mutex (can't mix managed condvar with host mutex).
+    if managed_condvar && !managed_mutex {
         return libc::EINVAL;
     }
+    // Guard: managed mutex must not be passed to host condvar (bd-79va).
+    // If condvar is host-managed but mutex is our managed overlay, we must use native wait
+    // since the host would misinterpret our mutex overlay format and potentially assert.
+    // Fall through to native implementation below.
     // Require caller-held mutex semantics while allowing foreign/default mutex layouts.
     // For both managed and host-default mutexes on Linux, a held lock is non-zero.
     // SAFETY: `word_ptr` is alignment-checked by `mutex_word_ptr`.
