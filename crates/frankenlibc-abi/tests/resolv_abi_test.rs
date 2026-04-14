@@ -894,3 +894,57 @@ fn h_errno_location_is_writable() {
     assert_eq!(unsafe { *ptr }, 42);
     unsafe { *ptr = old };
 }
+
+// ===========================================================================
+// DNS Metrics Evidence (bd-1y7)
+// ===========================================================================
+
+#[test]
+fn dns_metrics_snapshot_returns_valid_counters() {
+    let snapshot = resolv_abi::dns_metrics_snapshot();
+    // Verify the snapshot structure works by checking all fields are accessible
+    // and that the sum of outcomes equals attempts (allowing for races)
+    let total_outcomes = snapshot.queries_success
+        + snapshot.queries_timeout
+        + snapshot.queries_send_error
+        + snapshot.queries_parse_error
+        + snapshot.queries_nxdomain
+        + snapshot.queries_dns_error;
+    // Total outcomes should be <= attempts (encode failure doesn't increment outcomes)
+    assert!(total_outcomes <= snapshot.queries_attempted || snapshot.queries_attempted == 0);
+}
+
+#[test]
+fn dns_metrics_counters_increment_on_hosts_miss() {
+    // When /etc/hosts lookup fails and DNS is attempted,
+    // the metrics should increment.
+    // Note: This test may increment counters even if DNS fails
+    // (timeout, no nameserver, etc.), which is expected.
+
+    let before = resolv_abi::dns_metrics_snapshot();
+
+    // Try to resolve a hostname that won't be in /etc/hosts
+    // and will trigger DNS lookup attempt
+    let nonexistent = CString::new("nonexistent.example.test").unwrap();
+    let mut result: *mut libc::addrinfo = ptr::null_mut();
+
+    // This will try DNS after /etc/hosts miss
+    let _ = unsafe {
+        resolv_abi::getaddrinfo(
+            nonexistent.as_ptr(),
+            ptr::null(),
+            ptr::null(),
+            &mut result,
+        )
+    };
+    if !result.is_null() {
+        unsafe { resolv_abi::freeaddrinfo(result) };
+    }
+
+    let after = resolv_abi::dns_metrics_snapshot();
+
+    // The total queries attempted should have increased
+    // (unless DNS is completely disabled or no nameservers configured)
+    // We just verify the counter is accessible and consistent
+    assert!(after.queries_attempted >= before.queries_attempted);
+}

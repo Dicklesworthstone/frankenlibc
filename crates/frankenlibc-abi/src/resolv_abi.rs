@@ -24,10 +24,82 @@ use crate::errno_abi::set_abi_errno;
 use crate::malloc_abi::known_remaining;
 use crate::runtime_policy;
 
+use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
+
 const HOST_NOT_FOUND_ERRNO: c_int = 1;
 const NO_RECOVERY_ERRNO: c_int = 3;
 const HOSTS_PATH: &str = "/etc/hosts";
 const SERVICES_PATH: &str = "/etc/services";
+
+// ---------------------------------------------------------------------------
+// DNS Evidence Metrics (bd-1y7)
+// ---------------------------------------------------------------------------
+
+/// Counters for DNS stub resolver evidence logging.
+/// Tracks query outcomes for timeout/fallback/parse failure analysis.
+pub struct DnsMetrics {
+    /// Total UDP DNS queries attempted.
+    pub queries_attempted: AtomicU64,
+    /// Queries that succeeded with valid response.
+    pub queries_success: AtomicU64,
+    /// Queries that timed out (recvfrom returned <= 0).
+    pub queries_timeout: AtomicU64,
+    /// Queries that failed to send (socket or sendto error).
+    pub queries_send_error: AtomicU64,
+    /// Queries where response parsing failed.
+    pub queries_parse_error: AtomicU64,
+    /// Queries that returned NXDOMAIN.
+    pub queries_nxdomain: AtomicU64,
+    /// Queries that returned other DNS errors (SERVFAIL, etc).
+    pub queries_dns_error: AtomicU64,
+}
+
+impl DnsMetrics {
+    const fn new() -> Self {
+        Self {
+            queries_attempted: AtomicU64::new(0),
+            queries_success: AtomicU64::new(0),
+            queries_timeout: AtomicU64::new(0),
+            queries_send_error: AtomicU64::new(0),
+            queries_parse_error: AtomicU64::new(0),
+            queries_nxdomain: AtomicU64::new(0),
+            queries_dns_error: AtomicU64::new(0),
+        }
+    }
+
+    /// Snapshot all counters as a tuple for testing/evidence.
+    pub fn snapshot(&self) -> DnsMetricsSnapshot {
+        DnsMetricsSnapshot {
+            queries_attempted: self.queries_attempted.load(AtomicOrdering::Relaxed),
+            queries_success: self.queries_success.load(AtomicOrdering::Relaxed),
+            queries_timeout: self.queries_timeout.load(AtomicOrdering::Relaxed),
+            queries_send_error: self.queries_send_error.load(AtomicOrdering::Relaxed),
+            queries_parse_error: self.queries_parse_error.load(AtomicOrdering::Relaxed),
+            queries_nxdomain: self.queries_nxdomain.load(AtomicOrdering::Relaxed),
+            queries_dns_error: self.queries_dns_error.load(AtomicOrdering::Relaxed),
+        }
+    }
+}
+
+/// Snapshot of DNS metrics at a point in time.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct DnsMetricsSnapshot {
+    pub queries_attempted: u64,
+    pub queries_success: u64,
+    pub queries_timeout: u64,
+    pub queries_send_error: u64,
+    pub queries_parse_error: u64,
+    pub queries_nxdomain: u64,
+    pub queries_dns_error: u64,
+}
+
+/// Global DNS metrics instance.
+static DNS_METRICS: DnsMetrics = DnsMetrics::new();
+
+/// Get a snapshot of the current DNS metrics.
+pub fn dns_metrics_snapshot() -> DnsMetricsSnapshot {
+    DNS_METRICS.snapshot()
+}
 const HOSTS_PATH_ENV: &str = "FRANKENLIBC_HOSTS_PATH";
 const SERVICES_PATH_ENV: &str = "FRANKENLIBC_SERVICES_PATH";
 
@@ -498,6 +570,7 @@ unsafe fn write_c_buffer(
 
 /// Perform a single UDP DNS query to a nameserver.
 /// Returns parsed answer records on success, None on network/timeout/parse error.
+/// Records evidence metrics for each query outcome (bd-1y7).
 fn udp_dns_query(
     hostname: &[u8],
     qtype_val: u16,
@@ -505,9 +578,11 @@ fn udp_dns_query(
     timeout_secs: u32,
 ) -> Option<Vec<frankenlibc_core::resolv::dns::DnsRecord>> {
     use frankenlibc_core::resolv::dns::{
-        DNS_HEADER_SIZE, DNS_MAX_UDP_SIZE, DnsMessage, parse_dns_response,
+        DNS_HEADER_SIZE, DNS_MAX_UDP_SIZE, DnsMessage, parse_dns_response, rcode,
     };
     use std::ffi::c_void;
+
+    DNS_METRICS.queries_attempted.fetch_add(1, AtomicOrdering::Relaxed);
 
     // Generate transaction ID
     let id = {
@@ -526,7 +601,10 @@ fn udp_dns_query(
     // Encode query
     let msg = DnsMessage::new_query(id, hostname, qtype_val);
     let mut send_buf = [0u8; DNS_MAX_UDP_SIZE];
-    let send_len = msg.encode(&mut send_buf)?;
+    let Some(send_len) = msg.encode(&mut send_buf) else {
+        DNS_METRICS.queries_parse_error.fetch_add(1, AtomicOrdering::Relaxed);
+        return None;
+    };
 
     // Create UDP socket via raw syscall
     let af = if nameserver.is_ipv4() {
@@ -543,6 +621,7 @@ fn udp_dns_query(
         ) as i32
     };
     if fd < 0 {
+        DNS_METRICS.queries_send_error.fetch_add(1, AtomicOrdering::Relaxed);
         return None;
     }
 
@@ -611,6 +690,7 @@ fn udp_dns_query(
 
     if sent < 0 {
         unsafe { libc::syscall(libc::SYS_close, fd) };
+        DNS_METRICS.queries_send_error.fetch_add(1, AtomicOrdering::Relaxed);
         return None;
     }
 
@@ -630,10 +710,39 @@ fn udp_dns_query(
     unsafe { libc::syscall(libc::SYS_close, fd) };
 
     if received < DNS_HEADER_SIZE as i64 {
+        DNS_METRICS.queries_timeout.fetch_add(1, AtomicOrdering::Relaxed);
         return None;
     }
 
-    parse_dns_response(&recv_buf[..received as usize], id)
+    // Parse response and record outcome metrics
+    let result = parse_dns_response(&recv_buf[..received as usize], id);
+    match &result {
+        Some(records) if records.is_empty() => {
+            // Empty records typically means NXDOMAIN
+            DNS_METRICS.queries_nxdomain.fetch_add(1, AtomicOrdering::Relaxed);
+        }
+        Some(_) => {
+            DNS_METRICS.queries_success.fetch_add(1, AtomicOrdering::Relaxed);
+        }
+        None => {
+            // Check if we got a DNS error code vs parse failure
+            if received >= DNS_HEADER_SIZE as i64 {
+                let header = frankenlibc_core::resolv::dns::DnsHeader::decode(&recv_buf);
+                if let Some(h) = header {
+                    if h.rcode() != rcode::NOERROR {
+                        DNS_METRICS.queries_dns_error.fetch_add(1, AtomicOrdering::Relaxed);
+                    } else {
+                        DNS_METRICS.queries_parse_error.fetch_add(1, AtomicOrdering::Relaxed);
+                    }
+                } else {
+                    DNS_METRICS.queries_parse_error.fetch_add(1, AtomicOrdering::Relaxed);
+                }
+            } else {
+                DNS_METRICS.queries_parse_error.fetch_add(1, AtomicOrdering::Relaxed);
+            }
+        }
+    }
+    result
 }
 
 /// Resolve hostname via DNS stub resolver. Returns resolved addresses.
