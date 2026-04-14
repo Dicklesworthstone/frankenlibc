@@ -16,6 +16,7 @@ fn repo_root() -> PathBuf {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)] // Fields are part of complete schema; metadata used for documentation
 struct FixtureFile {
     version: String,
     family: String,
@@ -27,6 +28,7 @@ struct FixtureFile {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)] // Fields are part of complete schema; will be used by runtime execution tests
 struct FixtureCase {
     name: String,
     function: String,
