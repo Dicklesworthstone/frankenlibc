@@ -95,6 +95,43 @@
     { "name": "sprintf_f_neg_inf", "function": "sprintf", "spec_section": "C11 7.21.6.1 %f -infinity", "inputs": { "format": "%f", "args": ["-inf"] }, "expected_output": "-inf", "expected_errno": 0, "mode": "strict" },
     { "name": "sprintf_f_nan", "function": "sprintf", "spec_section": "C11 7.21.6.1 %f NaN", "inputs": { "format": "%f", "args": ["nan"] }, "expected_output": "nan", "expected_errno": 0, "mode": "strict" },
     { "name": "sprintf_F_inf", "function": "sprintf", "spec_section": "C11 7.21.6.1 %F infinity", "inputs": { "format": "%F", "args": ["inf"] }, "expected_output": "INF", "expected_errno": 0, "mode": "strict" },
-    { "name": "sprintf_F_nan", "function": "sprintf", "spec_section": "C11 7.21.6.1 %F NaN", "inputs": { "format": "%F", "args": ["nan"] }, "expected_output": "NAN", "expected_errno": 0, "mode": "strict" }
+    { "name": "sprintf_F_nan", "function": "sprintf", "spec_section": "C11 7.21.6.1 %F NaN", "inputs": { "format": "%F", "args": ["nan"] }, "expected_output": "NAN", "expected_errno": 0, "mode": "strict" },
+
+    { "name": "sprintf_j_d", "function": "sprintf", "spec_section": "C11 7.21.6.1 %jd intmax_t", "inputs": { "format": "%jd", "args": [9223372036854775807] }, "expected_output": "9223372036854775807", "expected_errno": 0, "mode": "strict" },
+    { "name": "sprintf_t_d", "function": "sprintf", "spec_section": "C11 7.21.6.1 %td ptrdiff_t", "inputs": { "format": "%td", "args": [-12345] }, "expected_output": "-12345", "expected_errno": 0, "mode": "strict" },
+
+    { "name": "sprintf_width_precision_d", "function": "sprintf", "spec_section": "C11 7.21.6.1 width+precision", "inputs": { "format": "%10.5d", "args": [42] }, "expected_output": "     00042", "expected_errno": 0, "mode": "strict" },
+    { "name": "sprintf_width_precision_neg_d", "function": "sprintf", "spec_section": "C11 7.21.6.1 width+precision negative", "inputs": { "format": "%10.5d", "args": [-42] }, "expected_output": "    -00042", "expected_errno": 0, "mode": "strict" },
+    { "name": "sprintf_precision_greater_width", "function": "sprintf", "spec_section": "C11 7.21.6.1 precision > width", "inputs": { "format": "%3.5d", "args": [42] }, "expected_output": "00042", "expected_errno": 0, "mode": "strict" },
+    { "name": "sprintf_zero_flag_ignored_with_precision", "function": "sprintf", "spec_section": "C11 7.21.6.1 0 flag ignored with precision", "inputs": { "format": "%05.3d", "args": [7] }, "expected_output": "  007", "expected_errno": 0, "mode": "strict" },
+
+    { "name": "sprintf_d_max_int", "function": "sprintf", "spec_section": "C11 7.21.6.1 INT_MAX", "inputs": { "format": "%d", "args": [2147483647] }, "expected_output": "2147483647", "expected_errno": 0, "mode": "strict" },
+    { "name": "sprintf_d_min_int", "function": "sprintf", "spec_section": "C11 7.21.6.1 INT_MIN", "inputs": { "format": "%d", "args": [-2147483648] }, "expected_output": "-2147483648", "expected_errno": 0, "mode": "strict" },
+
+    { "name": "sprintf_u_max", "function": "sprintf", "spec_section": "C11 7.21.6.1 UINT_MAX", "inputs": { "format": "%u", "args": [4294967295] }, "expected_output": "4294967295", "expected_errno": 0, "mode": "strict" },
+    { "name": "sprintf_llu_max", "function": "sprintf", "spec_section": "C11 7.21.6.1 ULLONG_MAX", "inputs": { "format": "%llu", "args": [18446744073709551615] }, "expected_output": "18446744073709551615", "expected_errno": 0, "mode": "strict" },
+
+    { "name": "sprintf_x_uppercase_alt", "function": "sprintf", "spec_section": "C11 7.21.6.1 %#08X", "inputs": { "format": "%#08X", "args": [255] }, "expected_output": "0X0000FF", "expected_errno": 0, "mode": "strict" },
+    { "name": "sprintf_x_width_left_alt", "function": "sprintf", "spec_section": "C11 7.21.6.1 %-#8x", "inputs": { "format": "%-#8x", "args": [255] }, "expected_output": "0xff    ", "expected_errno": 0, "mode": "strict" },
+
+    { "name": "sprintf_s_precision_exceeds_len", "function": "sprintf", "spec_section": "C11 7.21.6.1 %s precision > len", "inputs": { "format": "%.10s", "args": ["hi"] }, "expected_output": "hi", "expected_errno": 0, "mode": "strict" },
+    { "name": "sprintf_s_width_precision", "function": "sprintf", "spec_section": "C11 7.21.6.1 %s width+precision", "inputs": { "format": "%10.3s", "args": ["hello"] }, "expected_output": "       hel", "expected_errno": 0, "mode": "strict" },
+
+    { "name": "sprintf_f_very_large", "function": "sprintf", "spec_section": "C11 7.21.6.1 %f large", "inputs": { "format": "%.2f", "args": [1234567890.12] }, "expected_output": "1234567890.12", "expected_errno": 0, "mode": "strict" },
+    { "name": "sprintf_f_very_small", "function": "sprintf", "spec_section": "C11 7.21.6.1 %f small", "inputs": { "format": "%.10f", "args": [0.0000000001] }, "expected_output": "0.0000000001", "expected_errno": 0, "mode": "strict" },
+
+    { "name": "sprintf_e_neg_exp", "function": "sprintf", "spec_section": "C11 7.21.6.1 %e negative exponent", "inputs": { "format": "%e", "args": [0.00123] }, "expected_output": "1.230000e-03", "expected_errno": 0, "mode": "strict" },
+    { "name": "sprintf_e_width_precision", "function": "sprintf", "spec_section": "C11 7.21.6.1 %e width+precision", "inputs": { "format": "%15.3e", "args": [12345.0] }, "expected_output": "      1.234e+04", "expected_errno": 0, "mode": "strict" },
+
+    { "name": "sprintf_consecutive_percents", "function": "sprintf", "spec_section": "C11 7.21.6.1 consecutive %%", "inputs": { "format": "100%% -> 200%%" }, "expected_output": "100% -> 200%", "expected_errno": 0, "mode": "strict" },
+
+    { "name": "sprintf_plus_space_interaction", "function": "sprintf", "spec_section": "C11 7.21.6.1 + overrides space", "inputs": { "format": "% +d", "args": [42] }, "expected_output": "+42", "expected_errno": 0, "mode": "strict" },
+    { "name": "sprintf_plus_zero", "function": "sprintf", "spec_section": "C11 7.21.6.1 + with zero", "inputs": { "format": "%+d", "args": [0] }, "expected_output": "+0", "expected_errno": 0, "mode": "strict" },
+
+    { "name": "sprintf_hh_overflow", "function": "sprintf", "spec_section": "C11 7.21.6.1 %hhd overflow", "inputs": { "format": "%hhd", "args": [128] }, "expected_output": "-128", "expected_errno": 0, "mode": "strict" },
+    { "name": "sprintf_h_overflow", "function": "sprintf", "spec_section": "C11 7.21.6.1 %hd overflow", "inputs": { "format": "%hd", "args": [32768] }, "expected_output": "-32768", "expected_errno": 0, "mode": "strict" },
+
+    { "name": "snprintf_truncates_mid_conversion", "function": "snprintf", "spec_section": "C11 7.21.6.5 mid-conversion truncate", "inputs": { "size": 3, "format": "%d", "args": [12345] }, "expected_return": 5, "expected_output": "12", "expected_errno": 0, "mode": "strict" },
+    { "name": "snprintf_just_null", "function": "snprintf", "spec_section": "C11 7.21.6.5 size=1", "inputs": { "size": 1, "format": "hello" }, "expected_return": 5, "expected_output": "", "expected_errno": 0, "mode": "strict" }
   ]
 }

@@ -176,6 +176,8 @@ fn printf_conformance_covers_length_modifiers() {
         ("l_", "l"),
         ("ll_", "ll"),
         ("z_", "z"),
+        ("j_", "j"),
+        ("t_", "t"),
     ];
 
     for (pattern, desc) in lengths {
@@ -311,8 +313,8 @@ fn printf_fixture_case_count_stable() {
     let fixture = load_fixture("printf_conformance");
     // Freeze the case count to detect accidental deletions
     assert!(
-        fixture.cases.len() >= 60,
-        "printf_conformance must have at least 60 cases, found {}",
+        fixture.cases.len() >= 90,
+        "printf_conformance must have at least 90 cases, found {}",
         fixture.cases.len()
     );
 }
@@ -375,20 +377,9 @@ fn scanf_fixture_has_strict_mode_cases() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 use frankenlibc_core::stdio::{
-    FormatFlags, FormatSpec, LengthMod, Precision, Width, format_signed, format_unsigned,
-    format_float, format_str as render_str, format_char, format_pointer, parse_format_string, FormatSegment,
+    Precision, Width, format_signed, format_unsigned,
+    format_float, format_str as render_str, format_char, parse_format_string, FormatSegment,
 };
-
-/// Extract format specifier from a format string like "%d" or "%-10.2f".
-fn extract_spec(format: &str) -> Option<FormatSpec> {
-    let segments = parse_format_string(format.as_bytes());
-    for seg in segments {
-        if let FormatSegment::Spec(spec) = seg {
-            return Some(spec);
-        }
-    }
-    None
-}
 
 /// Run a printf conformance test case and compare output.
 fn run_printf_case(case: &FixtureCase) -> Result<(), String> {
@@ -636,4 +627,279 @@ fn printf_conformance_runtime_flags_and_width() {
         passed, failed, skipped
     );
     assert_eq!(failed, 0, "{} flag/width tests failed", failed);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Scanf runtime execution tests
+// ─────────────────────────────────────────────────────────────────────────────
+
+use frankenlibc_core::stdio::{parse_scanf_format, scan_input, ScanValue};
+
+/// Run a scanf conformance test case and compare output.
+fn run_scanf_case(case: &FixtureCase) -> Result<(), String> {
+    let inputs = &case.inputs;
+    let input = inputs.get("input").and_then(|v| v.as_str())
+        .ok_or("missing input in inputs")?;
+    let format = inputs.get("format").and_then(|v| v.as_str())
+        .ok_or("missing format in inputs")?;
+
+    let directives = parse_scanf_format(format.as_bytes());
+    let result = scan_input(input.as_bytes(), &directives);
+
+    // Check return value (number of conversions)
+    if let Some(expected_return) = case.expected_return {
+        let actual_return = result.values.len() as i64;
+        if actual_return != expected_return {
+            return Err(format!(
+                "return value mismatch: expected {}, got {}",
+                expected_return, actual_return
+            ));
+        }
+    }
+
+    // Check expected values if provided
+    if let Some(expected_values) = &case.expected_values {
+        for (i, (actual, expected)) in result.values.iter().zip(expected_values.iter()).enumerate() {
+            match actual {
+                ScanValue::SignedInt(v) => {
+                    if let Some(e) = expected.as_i64() {
+                        if *v != e {
+                            return Err(format!(
+                                "value {} mismatch: expected {}, got {}",
+                                i, e, v
+                            ));
+                        }
+                    }
+                }
+                ScanValue::UnsignedInt(v) => {
+                    if let Some(e) = expected.as_u64() {
+                        if *v != e {
+                            return Err(format!(
+                                "value {} mismatch: expected {}, got {}",
+                                i, e, v
+                            ));
+                        }
+                    } else if let Some(e) = expected.as_i64() {
+                        if *v != e as u64 {
+                            return Err(format!(
+                                "value {} mismatch: expected {}, got {}",
+                                i, e, v
+                            ));
+                        }
+                    }
+                }
+                ScanValue::Float(v) => {
+                    if let Some(e) = expected.as_f64() {
+                        // Allow some floating point tolerance
+                        let diff = (v - e).abs();
+                        let rel = diff / e.abs().max(1e-10);
+                        if rel > 1e-9 && diff > 1e-15 {
+                            return Err(format!(
+                                "value {} mismatch: expected {}, got {}",
+                                i, e, v
+                            ));
+                        }
+                    }
+                }
+                ScanValue::String(v) => {
+                    if let Some(e) = expected.as_str() {
+                        let actual_str = String::from_utf8_lossy(v);
+                        if actual_str != e {
+                            return Err(format!(
+                                "value {} mismatch: expected {:?}, got {:?}",
+                                i, e, actual_str
+                            ));
+                        }
+                    }
+                }
+                ScanValue::Char(v) => {
+                    if let Some(e) = expected.as_u64() {
+                        // Single char as int
+                        if v.len() == 1 && v[0] as u64 != e {
+                            return Err(format!(
+                                "value {} mismatch: expected {}, got {}",
+                                i, e, v[0]
+                            ));
+                        }
+                    } else if let Some(e) = expected.as_str() {
+                        // Multi-char %Nc
+                        let actual_str = String::from_utf8_lossy(v);
+                        if actual_str != e {
+                            return Err(format!(
+                                "value {} mismatch: expected {:?}, got {:?}",
+                                i, e, actual_str
+                            ));
+                        }
+                    }
+                }
+                ScanValue::CharsConsumed(v) => {
+                    if let Some(e) = expected.as_u64() {
+                        if *v != e as usize {
+                            return Err(format!(
+                                "value {} (%n) mismatch: expected {}, got {}",
+                                i, e, v
+                            ));
+                        }
+                    }
+                }
+                ScanValue::Pointer(_) => {
+                    // Skip pointer comparisons - implementation-defined
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+#[test]
+fn scanf_conformance_runtime_integer_specifiers() {
+    let fixture = load_fixture("scanf_conformance");
+    let mut passed = 0;
+    let mut failed = 0;
+    let mut skipped = 0;
+
+    for case in &fixture.cases {
+        // Only test integer specifiers
+        if !case.name.contains("_d_") && !case.name.contains("_d ") &&
+           !case.name.contains("_i_") && !case.name.contains("_u_") &&
+           !case.name.contains("_o_") && !case.name.contains("_x_") &&
+           !case.name.contains("_X_") && !case.name.starts_with("sscanf_d") &&
+           !case.name.starts_with("sscanf_i") && !case.name.starts_with("sscanf_u") &&
+           !case.name.starts_with("sscanf_o") && !case.name.starts_with("sscanf_x") &&
+           !case.name.starts_with("sscanf_X") {
+            skipped += 1;
+            continue;
+        }
+
+        match run_scanf_case(case) {
+            Ok(()) => passed += 1,
+            Err(e) => {
+                eprintln!("FAIL {}: {}", case.name, e);
+                failed += 1;
+            }
+        }
+    }
+
+    eprintln!(
+        "scanf integer specifiers: {} passed, {} failed, {} skipped",
+        passed, failed, skipped
+    );
+    assert_eq!(failed, 0, "{} integer specifier tests failed", failed);
+}
+
+#[test]
+fn scanf_conformance_runtime_string_specifiers() {
+    let fixture = load_fixture("scanf_conformance");
+    let mut passed = 0;
+    let mut failed = 0;
+    let mut skipped = 0;
+
+    for case in &fixture.cases {
+        if !case.name.starts_with("sscanf_s") && !case.name.starts_with("sscanf_c") {
+            skipped += 1;
+            continue;
+        }
+
+        match run_scanf_case(case) {
+            Ok(()) => passed += 1,
+            Err(e) => {
+                eprintln!("FAIL {}: {}", case.name, e);
+                failed += 1;
+            }
+        }
+    }
+
+    eprintln!(
+        "scanf string/char specifiers: {} passed, {} failed, {} skipped",
+        passed, failed, skipped
+    );
+    assert_eq!(failed, 0, "{} string specifier tests failed", failed);
+}
+
+#[test]
+fn scanf_conformance_runtime_float_specifiers() {
+    let fixture = load_fixture("scanf_conformance");
+    let mut passed = 0;
+    let mut failed = 0;
+    let mut skipped = 0;
+
+    for case in &fixture.cases {
+        if !case.name.starts_with("sscanf_f") && !case.name.starts_with("sscanf_lf") {
+            skipped += 1;
+            continue;
+        }
+
+        match run_scanf_case(case) {
+            Ok(()) => passed += 1,
+            Err(e) => {
+                eprintln!("FAIL {}: {}", case.name, e);
+                failed += 1;
+            }
+        }
+    }
+
+    eprintln!(
+        "scanf float specifiers: {} passed, {} failed, {} skipped",
+        passed, failed, skipped
+    );
+    assert_eq!(failed, 0, "{} float specifier tests failed", failed);
+}
+
+#[test]
+fn scanf_conformance_runtime_scansets() {
+    let fixture = load_fixture("scanf_conformance");
+    let mut passed = 0;
+    let mut failed = 0;
+    let mut skipped = 0;
+
+    for case in &fixture.cases {
+        if !case.name.contains("scanset") {
+            skipped += 1;
+            continue;
+        }
+
+        match run_scanf_case(case) {
+            Ok(()) => passed += 1,
+            Err(e) => {
+                eprintln!("FAIL {}: {}", case.name, e);
+                failed += 1;
+            }
+        }
+    }
+
+    eprintln!(
+        "scanf scansets: {} passed, {} failed, {} skipped",
+        passed, failed, skipped
+    );
+    assert_eq!(failed, 0, "{} scanset tests failed", failed);
+}
+
+#[test]
+fn scanf_conformance_runtime_suppression() {
+    let fixture = load_fixture("scanf_conformance");
+    let mut passed = 0;
+    let mut failed = 0;
+    let mut skipped = 0;
+
+    for case in &fixture.cases {
+        if !case.name.contains("suppress") {
+            skipped += 1;
+            continue;
+        }
+
+        match run_scanf_case(case) {
+            Ok(()) => passed += 1,
+            Err(e) => {
+                eprintln!("FAIL {}: {}", case.name, e);
+                failed += 1;
+            }
+        }
+    }
+
+    eprintln!(
+        "scanf suppression: {} passed, {} failed, {} skipped",
+        passed, failed, skipped
+    );
+    assert_eq!(failed, 0, "{} suppression tests failed", failed);
 }
