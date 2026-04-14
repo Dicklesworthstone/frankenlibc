@@ -206,7 +206,7 @@ pub fn generate_printf_table(grammar: &PrintfGrammar) -> [PrintfRoute; 256] {
             | PrintfHandler::FloatExp
             | PrintfHandler::FloatGeneral
             | PrintfHandler::FloatHex => {
-                0b1000_0000 // L (long double)
+                0b1000_0100 // L (long double) and l (has no effect but is allowed per POSIX)
             }
             PrintfHandler::Character => {
                 0b0000_0100 // l for wint_t
