@@ -36,6 +36,7 @@ ftui-style = { version = "0.2.1", optional = true }
 ftui-widgets = { version = "0.2.1", optional = true }
 frankenlibc-membrane = { workspace = true }
 frankenlibc-abi = { workspace = true }
+frankenlibc-core = { workspace = true }
 frankenlibc-fixture-exec = { workspace = true }
 
 [[bin]]
