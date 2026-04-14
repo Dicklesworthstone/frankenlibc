@@ -2751,10 +2751,12 @@ pub unsafe extern "C" fn pthread_cond_wait(
     if managed_condvar && !managed_mutex {
         return libc::EINVAL;
     }
-    // Guard: managed mutex must not be passed to host condvar (bd-79va).
-    // If condvar is host-managed but mutex is our managed overlay, we must use native wait
-    // since the host would misinterpret our mutex overlay format and potentially assert.
-    // Fall through to native implementation below.
+    // Guard: host condvar with managed mutex is unsupported (bd-79va).
+    // We can't pass managed mutex to host (host would misinterpret overlay format),
+    // and we can't use native condvar implementation on host condvar (different layout).
+    if !managed_condvar && managed_mutex {
+        return libc::EINVAL;
+    }
     // Require caller-held mutex semantics while allowing foreign/default mutex layouts.
     // For both managed and host-default mutexes on Linux, a held lock is non-zero.
     // SAFETY: `word_ptr` is alignment-checked by `mutex_word_ptr`.
@@ -2989,7 +2991,9 @@ pub unsafe extern "C" fn pthread_cond_timedwait(
         return libc::EINVAL;
     }
     let managed_condvar = is_managed_condvar(cond);
-    if !managed_condvar && !FORCE_NATIVE_MUTEX.load(Ordering::Acquire) {
+    let managed_mutex = is_managed_mutex(mutex);
+    if !managed_condvar && !managed_mutex && !FORCE_NATIVE_MUTEX.load(Ordering::Acquire) {
+        // Both condvar and mutex are host-owned: delegate to host pthread_cond_timedwait.
         // SAFETY: host symbol lookup/transmute guarantees ABI if present.
         if let Some(host_timedwait) = unsafe { host_pthread_cond_timedwait_fn() } {
             // SAFETY: direct call through resolved host symbol.
@@ -3002,7 +3006,14 @@ pub unsafe extern "C" fn pthread_cond_timedwait(
     let Some(word_ptr) = mutex_word_ptr(mutex) else {
         return libc::EINVAL;
     };
-    if managed_condvar && !is_managed_mutex(mutex) {
+    // Guard: managed condvar requires managed mutex (can't mix managed condvar with host mutex).
+    if managed_condvar && !managed_mutex {
+        return libc::EINVAL;
+    }
+    // Guard: host condvar with managed mutex is unsupported (bd-79va).
+    // We can't pass managed mutex to host (host would misinterpret overlay format),
+    // and we can't use native condvar implementation on host condvar (different layout).
+    if !managed_condvar && managed_mutex {
         return libc::EINVAL;
     }
     // Require caller-held mutex semantics while allowing foreign/default mutex layouts.
@@ -5749,7 +5760,9 @@ pub unsafe extern "C" fn pthread_cond_clockwait(
         return libc::EINVAL;
     }
     let managed_condvar = is_managed_condvar(cond);
-    if !managed_condvar && !FORCE_NATIVE_MUTEX.load(Ordering::Acquire) {
+    let managed_mutex = is_managed_mutex(mutex);
+    if !managed_condvar && !managed_mutex && !FORCE_NATIVE_MUTEX.load(Ordering::Acquire) {
+        // Both condvar and mutex are host-owned: delegate to host pthread_cond_clockwait.
         if let Some(host_addr) =
             crate::host_resolve::resolve_host_symbol_raw("pthread_cond_clockwait")
         {
@@ -5762,8 +5775,17 @@ pub unsafe extern "C" fn pthread_cond_clockwait(
             return unsafe { host_clockwait(cond, mutex, clockid, abstime) };
         }
         if clockid == libc::CLOCK_REALTIME {
+            // Still host-owned: pthread_cond_timedwait will also delegate to host.
             return unsafe { pthread_cond_timedwait(cond, mutex, abstime) };
         }
+    }
+    // Guard: if condvar is host-managed but mutex is managed, we need native implementation.
+    // We cannot delegate to host because it would misinterpret our mutex overlay (bd-79va).
+    if !managed_condvar && managed_mutex {
+        // Fall through to error - can't use native condvar impl with host condvar.
+        // This case requires the host condvar but we can't pass managed mutex to it.
+        // Return EINVAL since we can't satisfy the request.
+        return libc::EINVAL;
     }
     if !managed_condvar {
         return libc::EINVAL;
