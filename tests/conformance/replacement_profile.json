@@ -92,6 +92,7 @@
     "description": "Modules permitted to call through to host glibc in interpose (LD_PRELOAD) mode. These modules have not yet been fully reimplemented.",
     "modules": [
       "c11threads_abi",
+      "errno_abi",
       "fortify_abi",
       "glibc_internal_abi",
       "io_internal_abi",
@@ -122,6 +123,7 @@
   "callthrough_families": {
     "source": "replacement_guard_source_scan",
     "modules": [
+      "errno_abi",
       "fortify_abi",
       "glibc_internal_abi",
       "io_internal_abi",
@@ -132,6 +134,7 @@
       "signal_abi",
       "stdio_abi",
       "stdlib_abi",
+      "string_abi",
       "termios_abi",
       "unistd_abi"
     ],
@@ -173,6 +176,13 @@
   "call_through_census": {
     "description": "Current census of direct host libc/host pthread escape hatches by ABI module, as scanned by scripts/check_replacement_guard.sh.",
     "modules": {
+      "errno_abi": {
+        "count": 1,
+        "functions": [
+          "__errno_location"
+        ],
+        "note": "Intentional host errno sync in interpose mode; cfg-guarded out in standalone/replacement builds."
+      },
       "fortify_abi": {
         "count": 14,
         "functions": [
@@ -390,9 +400,16 @@
       "dlfcn_abi": {
         "count": 0,
         "functions": []
+      },
+      "string_abi": {
+        "count": 4,
+        "functions": [
+          "calloc",
+          "free"
+        ]
       }
     },
-    "total_call_throughs": 388,
+    "total_call_throughs": 293,
     "note": "Census tracks direct host call-through scan patterns used by scripts/check_replacement_guard.sh."
   }
 }

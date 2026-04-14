@@ -33,16 +33,25 @@ pub unsafe extern "C" fn __errno_location() -> *mut c_int {
 
 /// Set the thread-local errno value.
 ///
-/// Sets BOTH our internal errno and the host libc's errno to ensure the value
-/// is visible regardless of which `__errno_location` the caller reads from.
+/// In interpose mode, sets BOTH our internal errno and the host libc's errno
+/// to ensure the value is visible regardless of which `__errno_location` the
+/// caller reads from. In standalone mode, we are the only libc, so only our
+/// internal errno is updated.
+///
 /// Uses volatile write to prevent the LTO optimizer from eliminating the store.
 #[inline]
 pub unsafe fn set_abi_errno(val: c_int) {
     // Set our internal errno.
     let p = unsafe { __errno_location() };
     unsafe { std::ptr::write_volatile(p, val) };
-    // Also set libc's errno so callers using libc::__errno_location see it.
-    unsafe { std::ptr::write_volatile(libc::__errno_location(), val) };
+
+    // In interpose mode, also set libc's errno so callers using
+    // libc::__errno_location see the same value. In standalone mode,
+    // we are the sole libc implementation, so this is unnecessary.
+    #[cfg(not(feature = "standalone"))]
+    unsafe {
+        std::ptr::write_volatile(libc::__errno_location(), val)
+    };
 }
 
 #[cfg(test)]

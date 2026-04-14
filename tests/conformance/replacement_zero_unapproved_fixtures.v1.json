@@ -9,6 +9,40 @@
   },
   "fixtures": [
     {
+      "id": "interpose_allow_errno_abi___errno_location",
+      "mode": "interpose",
+      "module": "errno_abi",
+      "symbol": "__errno_location",
+      "expected_outcome": "allowed",
+      "evidence_source": "replacement_guard_source_scan",
+      "note": "Intentional host errno sync in interpose mode; cfg-guarded out in standalone/replacement builds"
+    },
+    {
+      "id": "replacement_forbid_errno_abi___errno_location",
+      "mode": "replacement",
+      "module": "errno_abi",
+      "symbol": "__errno_location",
+      "expected_outcome": "forbidden",
+      "evidence_source": "replacement_guard_source_scan",
+      "note": "In standalone/replacement builds, libc::__errno_location call is cfg-guarded out"
+    },
+    {
+      "id": "interpose_allow_string_abi_calloc",
+      "mode": "interpose",
+      "module": "string_abi",
+      "symbol": "calloc",
+      "expected_outcome": "allowed",
+      "evidence_source": "replacement_guard_source_scan"
+    },
+    {
+      "id": "replacement_forbid_string_abi_free",
+      "mode": "replacement",
+      "module": "string_abi",
+      "symbol": "free",
+      "expected_outcome": "forbidden",
+      "evidence_source": "replacement_guard_source_scan"
+    },
+    {
       "id": "interpose_allow_termios_abi_cfmakeraw",
       "mode": "interpose",
       "module": "termios_abi",
@@ -57,18 +91,18 @@
       "evidence_source": "replacement_guard_source_scan"
     },
     {
-      "id": "interpose_allow_io_internal_abi_open",
+      "id": "interpose_allow_io_internal_abi_read",
       "mode": "interpose",
       "module": "io_internal_abi",
-      "symbol": "open",
+      "symbol": "read",
       "expected_outcome": "allowed",
       "evidence_source": "replacement_guard_source_scan"
     },
     {
-      "id": "replacement_forbid_io_internal_abi_open",
+      "id": "replacement_forbid_io_internal_abi_close",
       "mode": "replacement",
       "module": "io_internal_abi",
-      "symbol": "open",
+      "symbol": "close",
       "expected_outcome": "forbidden",
       "evidence_source": "replacement_guard_source_scan"
     },
@@ -220,10 +254,11 @@
     "artifact_refs"
   ],
   "summary": {
-    "fixture_count": 24,
-    "interpose_allowed_count": 12,
-    "replacement_forbidden_count": 12,
+    "fixture_count": 28,
+    "interpose_allowed_count": 14,
+    "replacement_forbidden_count": 14,
     "covered_callthrough_modules": [
+      "errno_abi",
       "fortify_abi",
       "glibc_internal_abi",
       "io_internal_abi",
@@ -234,6 +269,7 @@
       "signal_abi",
       "stdio_abi",
       "stdlib_abi",
+      "string_abi",
       "termios_abi",
       "unistd_abi"
     ]
