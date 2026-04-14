@@ -1402,7 +1402,7 @@ If any source file has fewer atomic sites than expected, the build fails. This p
 
 ### ABI Build Script
 
-The ABI crate's `build.rs` links the GNU ld version script (`libc.map`) via `-Wl,--version-script`, but only in release builds. Debug builds skip version-script linking to avoid symbol conflicts with the host libc during development.
+The ABI crate's `build.rs` can link the GNU ld version script (`libc.map`) via `-Wl,--version-script` when `FRANKENLIBC_LD_VERSION_SCRIPT=1` is set. Release builds otherwise skip version-script linking to avoid conflicts with rustc's export list; the versioned `libc.so` is produced by linking the `staticlib` with `cc` using `libc.map` (see `scripts/check_setjmp_native.sh`).
 
 ## Harness CLI Reference
 

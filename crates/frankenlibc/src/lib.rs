@@ -163,7 +163,8 @@ pub unsafe extern "C" fn frankenlibc_realloc_preview(
     // If we don't know the size, we can't safely realloc with Rust allocator API
     // because `realloc` requires old layout.
     // We rely on old_size_hint if metadata is missing/partial.
-    let old_size = if let Some(meta) = registry.lookup_containing(ptr) {
+    let old_meta = registry.lookup_containing(ptr);
+    let old_size = if let Some(meta) = old_meta {
         meta.len
     } else {
         old_size_hint
@@ -181,8 +182,10 @@ pub unsafe extern "C" fn frankenlibc_realloc_preview(
         unsafe { std::alloc::realloc(ptr.cast::<u8>(), old_layout, new_size) }.cast::<c_void>();
 
     if !new_ptr.is_null() {
+        // Get the generation from the old allocation, or start at 1 if unknown
+        let new_generation = old_meta.map_or(1, |m| m.generation.saturating_add(1));
         registry.mark_freed(ptr); // Mark old as freed (even if same addr, conceptually new generation)
-        registry.register_allocation(new_ptr, new_size, 2);
+        registry.register_allocation(new_ptr, new_size, new_generation);
     }
 
     new_ptr
@@ -225,5 +228,27 @@ mod tests {
         };
 
         assert_eq!(dst, src);
+    }
+
+    #[test]
+    fn realloc_preview_increments_generation() {
+        // SAFETY: testing TSM preview functions with controlled allocations
+        let ptr = unsafe { frankenlibc_malloc_preview(16) };
+        assert!(!ptr.is_null());
+
+        // Check initial generation
+        let meta1 = global_registry().lookup_containing(ptr).unwrap();
+        assert_eq!(meta1.generation, 1);
+
+        // Realloc should increment generation
+        let new_ptr = unsafe { frankenlibc_realloc_preview(ptr, 32, 16) };
+        assert!(!new_ptr.is_null());
+
+        let meta2 = global_registry().lookup_containing(new_ptr).unwrap();
+        assert_eq!(meta2.generation, 2);
+        assert_eq!(meta2.len, 32);
+
+        // Clean up
+        unsafe { frankenlibc_free_preview(new_ptr, 32) };
     }
 }

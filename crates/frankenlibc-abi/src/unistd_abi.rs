@@ -2404,7 +2404,7 @@ static SYSLOG_STATE: std::sync::Mutex<SyslogState> = std::sync::Mutex::new(Syslo
 });
 
 fn syslog_connect() -> c_int {
-    let fd = unsafe { libc::socket(1, 2, 0) };
+    let fd = unsafe { libc::syscall(libc::SYS_socket, libc::AF_UNIX, libc::SOCK_DGRAM, 0) as c_int };
     if fd < 0 {
         return -1;
     }
@@ -2413,11 +2413,12 @@ fn syslog_connect() -> c_int {
     let path = b"/dev/log";
     addr[2..2 + path.len()].copy_from_slice(path);
     let rc = unsafe {
-        libc::connect(
+        libc::syscall(
+            libc::SYS_connect,
             fd,
             addr.as_ptr() as *const libc::sockaddr,
             (2 + path.len() + 1) as u32,
-        )
+        ) as c_int
     };
     if rc < 0 {
         unsafe { libc::syscall(libc::SYS_close, fd) as c_int };
@@ -2494,11 +2495,14 @@ fn syslog_send(priority: c_int, message: &[u8]) {
     let mut sent = false;
     if state.sock_fd >= 0 {
         let rc = unsafe {
-            libc::send(
+            libc::syscall(
+                libc::SYS_sendto,
                 state.sock_fd,
                 packet_bytes.as_ptr() as *const c_void,
                 packet_bytes.len(),
                 libc::MSG_NOSIGNAL,
+                std::ptr::null::<libc::sockaddr>(),
+                0u32,
             )
         };
         sent = rc >= 0;
@@ -2507,11 +2511,14 @@ fn syslog_send(priority: c_int, message: &[u8]) {
             state.sock_fd = syslog_connect();
             if state.sock_fd >= 0 {
                 let rc2 = unsafe {
-                    libc::send(
+                    libc::syscall(
+                        libc::SYS_sendto,
                         state.sock_fd,
                         packet_bytes.as_ptr() as *const c_void,
                         packet_bytes.len(),
                         libc::MSG_NOSIGNAL,
+                        std::ptr::null::<libc::sockaddr>(),
+                        0u32,
                     )
                 };
                 sent = rc2 >= 0;
@@ -2691,7 +2698,7 @@ unsafe fn resolve_ttyname_into(fd: c_int, dst: *mut c_char, cap: usize) -> Resul
     }
 
     // Validate descriptor first so callers can distinguish EBADF from ENOTTY.
-    let fcntl_rc = unsafe { libc::fcntl(fd, libc::F_GETFD) };
+    let fcntl_rc = unsafe { libc::syscall(libc::SYS_fcntl, fd, libc::F_GETFD) as c_int };
     if fcntl_rc < 0 {
         return Err(last_host_errno(errno::EBADF));
     }
@@ -2732,7 +2739,7 @@ unsafe fn resolve_ptsname_into(fd: c_int, dst: *mut c_char, cap: usize) -> Resul
 
     let mut pty_num: c_int = 0;
     // SAFETY: ioctl writes PTY slave index into `pty_num` on success.
-    let rc = unsafe { libc::ioctl(fd, libc::TIOCGPTN, &mut pty_num) };
+    let rc = unsafe { libc::syscall(libc::SYS_ioctl, fd, libc::TIOCGPTN as i64, &mut pty_num) as c_int };
     if rc < 0 {
         return Err(last_host_errno(errno::EBADF));
     }
@@ -2812,7 +2819,7 @@ unsafe fn mkdtemp_inner(template: *mut c_char) -> (*mut c_char, bool) {
         }
 
         // SAFETY: `template` points to a valid candidate pathname.
-        let rc = unsafe { libc::mkdir(template as *const c_char, 0o700) };
+        let rc = unsafe { libc::syscall(libc::SYS_mkdirat, libc::AT_FDCWD, template as *const c_char, 0o700) as c_int };
         if rc == 0 {
             return (template, false);
         }
@@ -5317,7 +5324,7 @@ pub unsafe extern "C" fn forkpty(
 pub unsafe extern "C" fn grantpt(fd: c_int) -> c_int {
     let mut pty_num: c_int = 0;
     // SAFETY: ioctl validates `fd` as PTY master and writes index on success.
-    let rc = unsafe { libc::ioctl(fd, libc::TIOCGPTN, &mut pty_num) } as c_int;
+    let rc = unsafe { libc::syscall(libc::SYS_ioctl, fd, libc::TIOCGPTN as i64, &mut pty_num) as c_int };
     if rc < 0 {
         unsafe { set_abi_errno(last_host_errno(errno::EBADF)) };
         return -1;
@@ -5329,7 +5336,7 @@ pub unsafe extern "C" fn grantpt(fd: c_int) -> c_int {
 pub unsafe extern "C" fn unlockpt(fd: c_int) -> c_int {
     let mut unlock: c_int = 0;
     // SAFETY: ioctl reads lock toggle value from `unlock`.
-    let rc = unsafe { libc::ioctl(fd, libc::TIOCSPTLCK, &mut unlock) } as c_int;
+    let rc = unsafe { libc::syscall(libc::SYS_ioctl, fd, libc::TIOCSPTLCK as i64, &mut unlock) as c_int };
     if rc < 0 {
         unsafe { set_abi_errno(last_host_errno(errno::EBADF)) };
         return -1;
@@ -11869,7 +11876,7 @@ pub unsafe extern "C" fn fallocate64(fd: c_int, mode: c_int, offset: i64, len: i
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fcntl64(fd: c_int, cmd: c_int, mut args: ...) -> c_int {
     let arg: c_long = unsafe { (&mut args as *mut _ as *mut c_long).read() };
-    unsafe { libc::fcntl(fd, cmd, arg) }
+    unsafe { libc::syscall(libc::SYS_fcntl, fd, cmd, arg) as c_int }
 }
 
 /// `preadv64` — LFS alias for `preadv`.
@@ -17566,7 +17573,7 @@ pub unsafe extern "C" fn __sched_setparam(
     pid: libc::pid_t,
     param: *const libc::sched_param,
 ) -> c_int {
-    unsafe { libc::sched_setparam(pid, param) }
+    unsafe { libc::syscall(libc::SYS_sched_setparam, pid, param) as c_int }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -17574,7 +17581,7 @@ pub unsafe extern "C" fn __sched_rr_get_interval(
     pid: libc::pid_t,
     tp: *mut libc::timespec,
 ) -> c_int {
-    unsafe { libc::sched_rr_get_interval(pid, tp) }
+    unsafe { libc::syscall(libc::SYS_sched_rr_get_interval, pid, tp) as c_int }
 }
 
 // ── __sig* aliases ──────────────────────────────────────────────────────────

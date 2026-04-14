@@ -74,6 +74,81 @@
     { "name": "sscanf_f_inf", "function": "sscanf", "spec_section": "C11 7.21.6.2 %f infinity", "inputs": { "input": "inf", "format": "%f" }, "expected_return": 1, "expected_values": ["inf"], "expected_errno": 0, "mode": "strict" },
     { "name": "sscanf_f_neg_inf", "function": "sscanf", "spec_section": "C11 7.21.6.2 %f -infinity", "inputs": { "input": "-inf", "format": "%f" }, "expected_return": 1, "expected_values": ["-inf"], "expected_errno": 0, "mode": "strict" },
     { "name": "sscanf_f_nan", "function": "sscanf", "spec_section": "C11 7.21.6.2 %f NaN", "inputs": { "input": "nan", "format": "%f" }, "expected_return": 1, "expected_values": ["nan"], "expected_errno": 0, "mode": "strict" },
-    { "name": "sscanf_f_infinity_full", "function": "sscanf", "spec_section": "C11 7.21.6.2 %f INFINITY", "inputs": { "input": "INFINITY", "format": "%f" }, "expected_return": 1, "expected_values": ["inf"], "expected_errno": 0, "mode": "strict" }
+    { "name": "sscanf_f_infinity_full", "function": "sscanf", "spec_section": "C11 7.21.6.2 %f INFINITY", "inputs": { "input": "INFINITY", "format": "%f" }, "expected_return": 1, "expected_values": ["inf"], "expected_errno": 0, "mode": "strict" },
+
+    { "name": "sscanf_d_overflow", "function": "sscanf", "spec_section": "C11 7.21.6.2 %d overflow", "inputs": { "input": "2147483648", "format": "%d" }, "expected_return": 1, "expected_values": [-2147483648], "expected_errno": 0, "mode": "strict" },
+    { "name": "sscanf_d_underflow", "function": "sscanf", "spec_section": "C11 7.21.6.2 %d underflow", "inputs": { "input": "-2147483649", "format": "%d" }, "expected_return": 1, "expected_values": [2147483647], "expected_errno": 0, "mode": "strict" },
+
+    { "name": "sscanf_u_max", "function": "sscanf", "spec_section": "C11 7.21.6.2 %u UINT_MAX", "inputs": { "input": "4294967295", "format": "%u" }, "expected_return": 1, "expected_values": [4294967295], "expected_errno": 0, "mode": "strict" },
+    { "name": "sscanf_llu_max", "function": "sscanf", "spec_section": "C11 7.21.6.2 %llu ULLONG_MAX", "inputs": { "input": "18446744073709551615", "format": "%llu" }, "expected_return": 1, "expected_values": [18446744073709551615], "expected_errno": 0, "mode": "strict" },
+
+    { "name": "sscanf_x_large", "function": "sscanf", "spec_section": "C11 7.21.6.2 %x large", "inputs": { "input": "ffffffff", "format": "%x" }, "expected_return": 1, "expected_values": [4294967295], "expected_errno": 0, "mode": "strict" },
+    { "name": "sscanf_llx_large", "function": "sscanf", "spec_section": "C11 7.21.6.2 %llx large", "inputs": { "input": "ffffffffffffffff", "format": "%llx" }, "expected_return": 1, "expected_values": [18446744073709551615], "expected_errno": 0, "mode": "strict" },
+
+    { "name": "sscanf_o_large", "function": "sscanf", "spec_section": "C11 7.21.6.2 %o large", "inputs": { "input": "37777777777", "format": "%o" }, "expected_return": 1, "expected_values": [4294967295], "expected_errno": 0, "mode": "strict" },
+
+    { "name": "sscanf_d_width", "function": "sscanf", "spec_section": "C11 7.21.6.2 %d with width", "inputs": { "input": "12345", "format": "%3d" }, "expected_return": 1, "expected_values": [123], "expected_errno": 0, "mode": "strict" },
+    { "name": "sscanf_x_width", "function": "sscanf", "spec_section": "C11 7.21.6.2 %x with width", "inputs": { "input": "abcdef", "format": "%3x" }, "expected_return": 1, "expected_values": [2748], "expected_errno": 0, "mode": "strict" },
+
+    { "name": "sscanf_f_width", "function": "sscanf", "spec_section": "C11 7.21.6.2 %f with width", "inputs": { "input": "123.456", "format": "%5f" }, "expected_return": 1, "expected_values": [123.4], "expected_errno": 0, "mode": "strict" },
+
+    { "name": "sscanf_ws_in_format", "function": "sscanf", "spec_section": "C11 7.21.6.2 format whitespace", "inputs": { "input": "42   99", "format": "%d %d" }, "expected_return": 2, "expected_values": [42, 99], "expected_errno": 0, "mode": "strict" },
+    { "name": "sscanf_multi_ws_format", "function": "sscanf", "spec_section": "C11 7.21.6.2 multiple format ws", "inputs": { "input": "42\t\n  99", "format": "%d %d" }, "expected_return": 2, "expected_values": [42, 99], "expected_errno": 0, "mode": "strict" },
+
+    { "name": "sscanf_scanset_digits", "function": "sscanf", "spec_section": "C11 7.21.6.2 %[] digits only", "inputs": { "input": "123abc", "format": "%[0-9]" }, "expected_return": 1, "expected_values": ["123"], "expected_errno": 0, "mode": "strict" },
+    { "name": "sscanf_scanset_alpha", "function": "sscanf", "spec_section": "C11 7.21.6.2 %[] alpha only", "inputs": { "input": "abc123", "format": "%[a-zA-Z]" }, "expected_return": 1, "expected_values": ["abc"], "expected_errno": 0, "mode": "strict" },
+    { "name": "sscanf_scanset_not_newline", "function": "sscanf", "spec_section": "C11 7.21.6.2 %[^\\n]", "inputs": { "input": "hello world\nmore", "format": "%[^\n]" }, "expected_return": 1, "expected_values": ["hello world"], "expected_errno": 0, "mode": "strict" },
+
+    { "name": "sscanf_e_basic", "function": "sscanf", "spec_section": "C11 7.21.6.2 %e specifier", "inputs": { "input": "1.23e+04", "format": "%e" }, "expected_return": 1, "expected_values": [12300.0], "expected_errno": 0, "mode": "strict" },
+    { "name": "sscanf_g_basic", "function": "sscanf", "spec_section": "C11 7.21.6.2 %g specifier", "inputs": { "input": "3.14", "format": "%g" }, "expected_return": 1, "expected_values": [3.14], "expected_errno": 0, "mode": "strict" },
+    { "name": "sscanf_a_basic", "function": "sscanf", "spec_section": "C11 7.21.6.2 %a specifier", "inputs": { "input": "0x1.8p+1", "format": "%a" }, "expected_return": 1, "expected_values": [3.0], "expected_errno": 0, "mode": "strict" },
+
+    { "name": "sscanf_partial_conversion", "function": "sscanf", "spec_section": "C11 7.21.6.2 partial match", "inputs": { "input": "42 abc", "format": "%d %d" }, "expected_return": 1, "expected_values": [42], "expected_errno": 0, "mode": "strict" },
+
+    { "name": "sscanf_suppress_multiple", "function": "sscanf", "spec_section": "C11 7.21.6.2 multiple suppress", "inputs": { "input": "1 2 3 4", "format": "%*d %*d %d %d" }, "expected_return": 2, "expected_values": [3, 4], "expected_errno": 0, "mode": "strict" },
+
+    { "name": "sscanf_z_u", "function": "sscanf", "spec_section": "C11 7.21.6.2 %zu size_t", "inputs": { "input": "12345", "format": "%zu" }, "expected_return": 1, "expected_values": [12345], "expected_errno": 0, "mode": "strict" },
+    { "name": "sscanf_t_d", "function": "sscanf", "spec_section": "C11 7.21.6.2 %td ptrdiff_t", "inputs": { "input": "-12345", "format": "%td" }, "expected_return": 1, "expected_values": [-12345], "expected_errno": 0, "mode": "strict" },
+    { "name": "sscanf_j_d", "function": "sscanf", "spec_section": "C11 7.21.6.2 %jd intmax_t", "inputs": { "input": "9223372036854775807", "format": "%jd" }, "expected_return": 1, "expected_values": [9223372036854775807], "expected_errno": 0, "mode": "strict" },
+
+    { "name": "sscanf_f_hex", "function": "sscanf", "spec_section": "C11 7.21.6.2 %f hex float", "inputs": { "input": "0x1.fp+2", "format": "%f" }, "expected_return": 1, "expected_values": [7.75], "expected_errno": 0, "mode": "strict" },
+
+    { "name": "sscanf_d_trailing_text", "function": "sscanf", "spec_section": "C11 7.21.6.2 %d stops at non-digit", "inputs": { "input": "42abc", "format": "%d" }, "expected_return": 1, "expected_values": [42], "expected_errno": 0, "mode": "strict" },
+
+    { "name": "sscanf_f_positive_exp", "function": "sscanf", "spec_section": "C11 7.21.6.2 %f +exponent", "inputs": { "input": "1e+10", "format": "%f" }, "expected_return": 1, "expected_values": [1e10], "expected_errno": 0, "mode": "strict" },
+    { "name": "sscanf_f_E_exponent", "function": "sscanf", "spec_section": "C11 7.21.6.2 %f E exponent", "inputs": { "input": "1E10", "format": "%f" }, "expected_return": 1, "expected_values": [1e10], "expected_errno": 0, "mode": "strict" },
+
+    { "name": "sscanf_complex_format", "function": "sscanf", "spec_section": "C11 7.21.6.2 complex format", "inputs": { "input": "name=test value=42", "format": "name=%s value=%d" }, "expected_return": 2, "expected_values": ["test", 42], "expected_errno": 0, "mode": "strict" },
+
+    { "name": "sscanf_Lf_basic", "function": "sscanf", "spec_section": "C11 7.21.6.2 %Lf long double", "inputs": { "input": "3.14159", "format": "%Lf" }, "expected_return": 1, "expected_values": [3.14159], "expected_errno": 0, "mode": "strict" },
+
+    { "name": "sscanf_a_hex_basic", "function": "sscanf", "spec_section": "C11 7.21.6.2 %a hex float", "inputs": { "input": "0x1.8p+2", "format": "%a" }, "expected_return": 1, "expected_values": [6.0], "expected_errno": 0, "mode": "strict" },
+    { "name": "sscanf_a_hex_negative", "function": "sscanf", "spec_section": "C11 7.21.6.2 %a negative hex float", "inputs": { "input": "-0x1p0", "format": "%a" }, "expected_return": 1, "expected_values": [-1.0], "expected_errno": 0, "mode": "strict" },
+    { "name": "sscanf_a_hex_neg_exp", "function": "sscanf", "spec_section": "C11 7.21.6.2 %a negative exponent", "inputs": { "input": "0x1p-1", "format": "%a" }, "expected_return": 1, "expected_values": [0.5], "expected_errno": 0, "mode": "strict" },
+    { "name": "sscanf_A_hex_upper", "function": "sscanf", "spec_section": "C11 7.21.6.2 %A uppercase hex float", "inputs": { "input": "0X1.FP+2", "format": "%A" }, "expected_return": 1, "expected_values": [7.75], "expected_errno": 0, "mode": "strict" },
+    { "name": "sscanf_a_hex_large", "function": "sscanf", "spec_section": "C11 7.21.6.2 %a large hex float", "inputs": { "input": "0x1p10", "format": "%a" }, "expected_return": 1, "expected_values": [1024.0], "expected_errno": 0, "mode": "strict" },
+    { "name": "sscanf_a_hex_zero", "function": "sscanf", "spec_section": "C11 7.21.6.2 %a zero", "inputs": { "input": "0x0p0", "format": "%a" }, "expected_return": 1, "expected_values": [0.0], "expected_errno": 0, "mode": "strict" },
+    { "name": "sscanf_a_hex_frac_only", "function": "sscanf", "spec_section": "C11 7.21.6.2 %a fraction only", "inputs": { "input": "0x.8p0", "format": "%a" }, "expected_return": 1, "expected_values": [0.5], "expected_errno": 0, "mode": "strict" },
+
+    { "name": "sscanf_f_zero", "function": "sscanf", "spec_section": "C11 7.21.6.2 %f zero", "inputs": { "input": "0.0", "format": "%f" }, "expected_return": 1, "expected_values": [0.0], "expected_errno": 0, "mode": "strict" },
+    { "name": "sscanf_f_neg_zero", "function": "sscanf", "spec_section": "C11 7.21.6.2 %f negative zero", "inputs": { "input": "-0.0", "format": "%f" }, "expected_return": 1, "expected_values": [0.0], "expected_errno": 0, "mode": "strict" },
+    { "name": "sscanf_f_small", "function": "sscanf", "spec_section": "C11 7.21.6.2 %f small value", "inputs": { "input": "0.000001", "format": "%f" }, "expected_return": 1, "expected_values": [0.000001], "expected_errno": 0, "mode": "strict" },
+
+    { "name": "sscanf_scanset_hyphen_literal", "function": "sscanf", "spec_section": "C11 7.21.6.2 %[] hyphen at start", "inputs": { "input": "-abc", "format": "%[-a-z]" }, "expected_return": 1, "expected_values": ["-abc"], "expected_errno": 0, "mode": "strict" },
+    { "name": "sscanf_scanset_empty_match", "function": "sscanf", "spec_section": "C11 7.21.6.2 %[] no match", "inputs": { "input": "123", "format": "%[a-z]" }, "expected_return": 0, "expected_values": [], "expected_errno": 0, "mode": "strict" },
+
+    { "name": "sscanf_hd_overflow", "function": "sscanf", "spec_section": "C11 7.21.6.2 %hd overflow", "inputs": { "input": "32768", "format": "%hd" }, "expected_return": 1, "expected_values": [-32768], "expected_errno": 0, "mode": "strict" },
+    { "name": "sscanf_hd_underflow", "function": "sscanf", "spec_section": "C11 7.21.6.2 %hd underflow", "inputs": { "input": "-32769", "format": "%hd" }, "expected_return": 1, "expected_values": [32767], "expected_errno": 0, "mode": "strict" },
+    { "name": "sscanf_hhd_overflow", "function": "sscanf", "spec_section": "C11 7.21.6.2 %hhd overflow", "inputs": { "input": "128", "format": "%hhd" }, "expected_return": 1, "expected_values": [-128], "expected_errno": 0, "mode": "strict" },
+    { "name": "sscanf_hhd_underflow", "function": "sscanf", "spec_section": "C11 7.21.6.2 %hhd underflow", "inputs": { "input": "-129", "format": "%hhd" }, "expected_return": 1, "expected_values": [127], "expected_errno": 0, "mode": "strict" },
+    { "name": "sscanf_u_overflow", "function": "sscanf", "spec_section": "C11 7.21.6.2 %u overflow wraps", "inputs": { "input": "4294967296", "format": "%u" }, "expected_return": 1, "expected_values": [0], "expected_errno": 0, "mode": "strict" },
+    { "name": "sscanf_hu_overflow", "function": "sscanf", "spec_section": "C11 7.21.6.2 %hu overflow wraps", "inputs": { "input": "65536", "format": "%hu" }, "expected_return": 1, "expected_values": [0], "expected_errno": 0, "mode": "strict" },
+    { "name": "sscanf_lld_no_wrap", "function": "sscanf", "spec_section": "C11 7.21.6.2 %lld no wrap", "inputs": { "input": "2147483648", "format": "%lld" }, "expected_return": 1, "expected_values": [2147483648], "expected_errno": 0, "mode": "strict" },
+
+    { "name": "sscanf_i_auto_hex", "function": "sscanf", "spec_section": "C11 7.21.6.2 %i auto hex", "inputs": { "input": "0x1a", "format": "%i" }, "expected_return": 1, "expected_values": [26], "expected_errno": 0, "mode": "strict" },
+    { "name": "sscanf_i_auto_octal", "function": "sscanf", "spec_section": "C11 7.21.6.2 %i auto octal", "inputs": { "input": "010", "format": "%i" }, "expected_return": 1, "expected_values": [8], "expected_errno": 0, "mode": "strict" },
+    { "name": "sscanf_i_auto_decimal", "function": "sscanf", "spec_section": "C11 7.21.6.2 %i auto decimal", "inputs": { "input": "10", "format": "%i" }, "expected_return": 1, "expected_values": [10], "expected_errno": 0, "mode": "strict" },
+    { "name": "sscanf_i_negative", "function": "sscanf", "spec_section": "C11 7.21.6.2 %i negative", "inputs": { "input": "-10", "format": "%i" }, "expected_return": 1, "expected_values": [-10], "expected_errno": 0, "mode": "strict" },
+    { "name": "sscanf_i_overflow", "function": "sscanf", "spec_section": "C11 7.21.6.2 %i overflow wraps", "inputs": { "input": "2147483648", "format": "%i" }, "expected_return": 1, "expected_values": [-2147483648], "expected_errno": 0, "mode": "strict" }
   ]
 }

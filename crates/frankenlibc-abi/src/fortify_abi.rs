@@ -539,7 +539,7 @@ pub unsafe extern "C" fn __realpath_chk(
     resolved: *mut c_char,
     _resolvedlen: usize,
 ) -> *mut c_char {
-    unsafe { libc::realpath(path, resolved) }
+    unsafe { crate::stdlib_abi::realpath(path, resolved) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -595,7 +595,7 @@ pub unsafe extern "C" fn __getdomainname_chk(buf: *mut c_char, len: usize, bufle
     if buflen != usize::MAX && len > buflen {
         unsafe { __chk_fail() }
     }
-    unsafe { libc::getdomainname(buf, len) }
+    unsafe { crate::unistd_abi::getdomainname(buf, len) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -616,7 +616,7 @@ pub unsafe extern "C" fn __ttyname_r_chk(
     if nreal != usize::MAX && buflen > nreal {
         unsafe { __chk_fail() }
     }
-    unsafe { libc::ttyname_r(fd, buf, buflen) }
+    unsafe { crate::unistd_abi::ttyname_r(fd, buf, buflen) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -629,7 +629,7 @@ pub unsafe extern "C" fn __confstr_chk(
     if buflen != usize::MAX && len > buflen {
         unsafe { __chk_fail() }
     }
-    unsafe { libc::confstr(name, buf, len) }
+    unsafe { crate::stdlib_abi::confstr(name, buf, len) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -637,7 +637,7 @@ pub unsafe extern "C" fn __getgroups_chk(size: c_int, list: *mut u32, listlen: u
     if size > 0 && (size as usize) * 4 > listlen {
         unsafe { __chk_fail() }
     }
-    unsafe { libc::getgroups(size, list) }
+    unsafe { crate::unistd_abi::getgroups(size, list.cast::<libc::gid_t>()) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -647,7 +647,7 @@ pub unsafe extern "C" fn __ptsname_r_chk(
     buflen: usize,
     _nreal: usize,
 ) -> c_int {
-    unsafe { libc::ptsname_r(fd, buf, buflen) }
+    unsafe { crate::unistd_abi::ptsname_r(fd, buf, buflen) }
 }
 
 // ── Wide string operations ─────────────────────────────────────────────────

@@ -404,9 +404,25 @@ fn scan_int(
 
     let value = if signed {
         let signed_val = if negative { -(val as i64) } else { val as i64 };
-        ScanValue::SignedInt(signed_val)
+        // Apply overflow wrapping based on length modifier per glibc behavior.
+        let wrapped = match spec.length {
+            LengthMod::Hh => (signed_val as i8) as i64,
+            LengthMod::H => (signed_val as i16) as i64,
+            LengthMod::Ll | LengthMod::J => signed_val, // Full i64, no wrap
+            LengthMod::Z | LengthMod::T => signed_val,  // Platform isize, assume 64-bit
+            _ => (signed_val as i32) as i64,            // Default: int (32-bit)
+        };
+        ScanValue::SignedInt(wrapped)
     } else {
-        ScanValue::UnsignedInt(val)
+        // Apply overflow wrapping for unsigned types.
+        let wrapped = match spec.length {
+            LengthMod::Hh => (val as u8) as u64,
+            LengthMod::H => (val as u16) as u64,
+            LengthMod::Ll | LengthMod::J => val, // Full u64, no wrap
+            LengthMod::Z | LengthMod::T => val,  // Platform usize, assume 64-bit
+            _ => (val as u32) as u64,            // Default: unsigned int (32-bit)
+        };
+        ScanValue::UnsignedInt(wrapped)
     };
 
     Some((Some(value), i))
@@ -481,8 +497,16 @@ fn scan_int_auto(input: &[u8], pos: usize, spec: &ScanSpec) -> Option<(Option<Sc
     }
 
     let signed_val = if negative { -(val as i64) } else { val as i64 };
+    // Apply overflow wrapping based on length modifier per glibc behavior.
+    let wrapped = match spec.length {
+        LengthMod::Hh => (signed_val as i8) as i64,
+        LengthMod::H => (signed_val as i16) as i64,
+        LengthMod::Ll | LengthMod::J => signed_val, // Full i64, no wrap
+        LengthMod::Z | LengthMod::T => signed_val,  // Platform isize, assume 64-bit
+        _ => (signed_val as i32) as i64,            // Default: int (32-bit)
+    };
 
-    Some((Some(ScanValue::SignedInt(signed_val)), i))
+    Some((Some(ScanValue::SignedInt(wrapped)), i))
 }
 
 /// Convert a byte to a digit in the given base, or None.
@@ -506,20 +530,21 @@ fn scan_float(input: &[u8], pos: usize, spec: &ScanSpec) -> Option<(Option<ScanV
     let max_chars = effective_width(spec, usize::MAX);
     let mut i = pos;
     let mut chars_read = 0usize;
-    let mut buf = Vec::with_capacity(64);
+    let negative;
 
     // Sign.
     if i < input.len() && chars_read < max_chars && (input[i] == b'+' || input[i] == b'-') {
-        buf.push(input[i]);
+        negative = input[i] == b'-';
         i += 1;
         chars_read += 1;
+    } else {
+        negative = false;
     }
 
     // Check for inf/infinity/nan.
     let remaining = &input[i..];
     if chars_read + 3 <= max_chars {
         if remaining.len() >= 3 && remaining[..3].eq_ignore_ascii_case(b"inf") {
-            buf.extend_from_slice(b"inf");
             i += 3;
             chars_read += 3;
             if remaining.len() >= 8
@@ -528,11 +553,7 @@ fn scan_float(input: &[u8], pos: usize, spec: &ScanSpec) -> Option<(Option<ScanV
             {
                 i += 5;
             }
-            let val: f64 = if buf.starts_with(b"-") {
-                f64::NEG_INFINITY
-            } else {
-                f64::INFINITY
-            };
+            let val: f64 = if negative { f64::NEG_INFINITY } else { f64::INFINITY };
             return Some((Some(ScanValue::Float(val)), i));
         }
         if remaining.len() >= 3 && remaining[..3].eq_ignore_ascii_case(b"nan") {
@@ -541,7 +562,26 @@ fn scan_float(input: &[u8], pos: usize, spec: &ScanSpec) -> Option<(Option<ScanV
         }
     }
 
-    // Digits, decimal point, exponent.
+    // Check for hex float (0x prefix).
+    // Per C11/strtod, if we see "0x" but hex parsing fails (e.g., "0xyz" has no
+    // hex digits after 0x), we fall back to decimal parsing which will parse "0".
+    if chars_read + 2 <= max_chars
+        && i + 1 < input.len()
+        && input[i] == b'0'
+        && (input[i + 1] == b'x' || input[i + 1] == b'X')
+    {
+        if let Some(result) = scan_hex_float(input, pos, i, chars_read, negative, max_chars) {
+            return Some(result);
+        }
+        // Hex parsing failed - fall through to decimal parsing.
+        // This handles cases like "0xyz" where we should parse "0" as decimal.
+    }
+
+    // Decimal float: digits, decimal point, exponent.
+    let mut buf = Vec::with_capacity(64);
+    if negative {
+        buf.push(b'-');
+    }
     let mut any_digit = false;
     while i < input.len() && chars_read < max_chars {
         let c = input[i];
@@ -581,6 +621,121 @@ fn scan_float(input: &[u8], pos: usize, spec: &ScanSpec) -> Option<(Option<ScanV
     // Parse the collected float string.
     let s = core::str::from_utf8(&buf).ok()?;
     let val: f64 = s.parse().ok()?;
+
+    Some((Some(ScanValue::Float(val)), i))
+}
+
+/// Scan a hex float (0x[h...h][.h...h][pN]) per C11 7.21.6.2.
+/// Called after the optional sign and 0x prefix have been detected.
+fn scan_hex_float(
+    input: &[u8],
+    _start_pos: usize,
+    mut i: usize,
+    mut chars_read: usize,
+    negative: bool,
+    max_chars: usize,
+) -> Option<(Option<ScanValue>, usize)> {
+    // Skip 0x/0X prefix.
+    i += 2;
+    chars_read += 2;
+
+    // Parse hex significand: integer part, optional '.', fractional part.
+    let mut significand: u64 = 0;
+    let mut frac_digits: i32 = 0;
+    let mut any_hex_digit = false;
+    let mut in_fraction = false;
+
+    while i < input.len() && chars_read < max_chars {
+        let c = input[i];
+        if c == b'.' && !in_fraction {
+            in_fraction = true;
+            i += 1;
+            chars_read += 1;
+            continue;
+        }
+        let digit_val = match c {
+            b'0'..=b'9' => (c - b'0') as u64,
+            b'a'..=b'f' => (c - b'a' + 10) as u64,
+            b'A'..=b'F' => (c - b'A' + 10) as u64,
+            _ => break,
+        };
+        any_hex_digit = true;
+        // Each hex digit is 4 bits. Guard against overflow by checking high bits.
+        if significand < (1u64 << 60) {
+            significand = (significand << 4) | digit_val;
+            if in_fraction {
+                frac_digits += 1;
+            }
+        } else if !in_fraction {
+            // Overflow in integer part - this is a very large number.
+            // Keep consuming digits but don't shift anymore.
+        }
+        i += 1;
+        chars_read += 1;
+    }
+
+    if !any_hex_digit {
+        // No hex digits after 0x - "0" itself is valid, reparse from start.
+        // Back up to just after sign (or start) and let decimal parser handle "0".
+        return None;
+    }
+
+    // Parse binary exponent (p/P followed by optional sign and decimal digits).
+    let mut bin_exp: i32 = 0;
+    if i < input.len() && chars_read < max_chars && (input[i] == b'p' || input[i] == b'P') {
+        let saved_i = i;
+        let saved_chars_read = chars_read;
+        i += 1;
+        chars_read += 1;
+
+        let exp_negative;
+        if i < input.len() && chars_read < max_chars {
+            if input[i] == b'-' {
+                exp_negative = true;
+                i += 1;
+                chars_read += 1;
+            } else if input[i] == b'+' {
+                exp_negative = false;
+                i += 1;
+                chars_read += 1;
+            } else {
+                exp_negative = false;
+            }
+        } else {
+            exp_negative = false;
+        }
+
+        let mut any_exp_digit = false;
+        while i < input.len() && chars_read < max_chars && input[i].is_ascii_digit() {
+            any_exp_digit = true;
+            let d = (input[i] - b'0') as i32;
+            bin_exp = bin_exp.saturating_mul(10).saturating_add(d);
+            i += 1;
+            chars_read += 1;
+        }
+
+        if !any_exp_digit {
+            // 'p' without exponent digits - back up past 'p' and sign.
+            // Per C11, if 'p' is present, exponent digits are required.
+            // Restore position and treat as if we never saw the 'p'.
+            i = saved_i;
+            chars_read = saved_chars_read;
+        } else if exp_negative {
+            bin_exp = -bin_exp;
+        }
+    }
+
+    // Convert to f64:
+    // value = significand * 2^(bin_exp - 4*frac_digits)
+    // Each hex fractional digit shifts the binary point 4 bits.
+    let total_exp = bin_exp - (frac_digits * 4);
+    let mut val = significand as f64;
+    if total_exp != 0 {
+        val *= 2_f64.powi(total_exp);
+    }
+    if negative {
+        val = -val;
+    }
 
     Some((Some(ScanValue::Float(val)), i))
 }
@@ -816,6 +971,51 @@ mod tests {
     }
 
     #[test]
+    fn test_scan_int_overflow_wraps_to_int32() {
+        // 2147483648 (INT_MAX + 1) should wrap to -2147483648 (INT_MIN)
+        let dirs = parse_scanf_format(b"%d");
+        let result = scan_input(b"2147483648", &dirs);
+        assert_eq!(result.count, 1);
+        assert!(matches!(result.values[0], ScanValue::SignedInt(-2147483648)));
+    }
+
+    #[test]
+    fn test_scan_int_underflow_wraps_to_int32() {
+        // -2147483649 (INT_MIN - 1) should wrap to 2147483647 (INT_MAX)
+        let dirs = parse_scanf_format(b"%d");
+        let result = scan_input(b"-2147483649", &dirs);
+        assert_eq!(result.count, 1);
+        assert!(matches!(result.values[0], ScanValue::SignedInt(2147483647)));
+    }
+
+    #[test]
+    fn test_scan_lld_no_overflow_wrap() {
+        // %lld should not wrap since it's a full i64
+        let dirs = parse_scanf_format(b"%lld");
+        let result = scan_input(b"2147483648", &dirs);
+        assert_eq!(result.count, 1);
+        assert!(matches!(result.values[0], ScanValue::SignedInt(2147483648)));
+    }
+
+    #[test]
+    fn test_scan_hd_overflow_wraps_to_int16() {
+        // 32768 (SHRT_MAX + 1) should wrap to -32768 (SHRT_MIN)
+        let dirs = parse_scanf_format(b"%hd");
+        let result = scan_input(b"32768", &dirs);
+        assert_eq!(result.count, 1);
+        assert!(matches!(result.values[0], ScanValue::SignedInt(-32768)));
+    }
+
+    #[test]
+    fn test_scan_u_overflow_wraps_to_uint32() {
+        // Values > UINT_MAX should wrap
+        let dirs = parse_scanf_format(b"%u");
+        let result = scan_input(b"4294967296", &dirs);
+        assert_eq!(result.count, 1);
+        assert!(matches!(result.values[0], ScanValue::UnsignedInt(0)));
+    }
+
+    #[test]
     fn test_scan_auto_int_hex() {
         let dirs = parse_scanf_format(b"%i");
         let result = scan_input(b"0x1a", &dirs);
@@ -888,6 +1088,182 @@ mod tests {
             assert!((v - 150.0).abs() < 1e-10);
         } else {
             panic!("expected Float");
+        }
+    }
+
+    #[test]
+    fn test_scan_hex_float_basic() {
+        // 0x1.fp+2 = 1.9375 * 4 = 7.75
+        let dirs = parse_scanf_format(b"%a");
+        let result = scan_input(b"0x1.fp+2", &dirs);
+        assert_eq!(result.count, 1);
+        if let ScanValue::Float(v) = result.values[0] {
+            assert!((v - 7.75).abs() < 1e-10, "expected 7.75, got {}", v);
+        } else {
+            panic!("expected Float");
+        }
+    }
+
+    #[test]
+    fn test_scan_hex_float_integer() {
+        // 0x1p10 = 1 * 2^10 = 1024
+        let dirs = parse_scanf_format(b"%a");
+        let result = scan_input(b"0x1p10", &dirs);
+        assert_eq!(result.count, 1);
+        if let ScanValue::Float(v) = result.values[0] {
+            assert!((v - 1024.0).abs() < 1e-10, "expected 1024, got {}", v);
+        } else {
+            panic!("expected Float");
+        }
+    }
+
+    #[test]
+    fn test_scan_hex_float_negative() {
+        // -0x1p0 = -1.0
+        let dirs = parse_scanf_format(b"%a");
+        let result = scan_input(b"-0x1p0", &dirs);
+        assert_eq!(result.count, 1);
+        if let ScanValue::Float(v) = result.values[0] {
+            assert!((v - (-1.0)).abs() < 1e-10, "expected -1.0, got {}", v);
+        } else {
+            panic!("expected Float");
+        }
+    }
+
+    #[test]
+    fn test_scan_hex_float_negative_exponent() {
+        // 0x1p-1 = 1 * 2^-1 = 0.5
+        let dirs = parse_scanf_format(b"%a");
+        let result = scan_input(b"0x1p-1", &dirs);
+        assert_eq!(result.count, 1);
+        if let ScanValue::Float(v) = result.values[0] {
+            assert!((v - 0.5).abs() < 1e-10, "expected 0.5, got {}", v);
+        } else {
+            panic!("expected Float");
+        }
+    }
+
+    #[test]
+    fn test_scan_hex_float_uppercase() {
+        // 0X1.8P+2 = 1.5 * 4 = 6.0
+        let dirs = parse_scanf_format(b"%A");
+        let result = scan_input(b"0X1.8P+2", &dirs);
+        assert_eq!(result.count, 1);
+        if let ScanValue::Float(v) = result.values[0] {
+            assert!((v - 6.0).abs() < 1e-10, "expected 6.0, got {}", v);
+        } else {
+            panic!("expected Float");
+        }
+    }
+
+    #[test]
+    fn test_scan_hex_float_leading_dot() {
+        // 0x.8p0 = 0.5 (8/16)
+        let dirs = parse_scanf_format(b"%a");
+        let result = scan_input(b"0x.8p0", &dirs);
+        assert_eq!(result.count, 1);
+        if let ScanValue::Float(v) = result.values[0] {
+            assert!((v - 0.5).abs() < 1e-10, "expected 0.5, got {}", v);
+        } else {
+            panic!("expected Float");
+        }
+    }
+
+    #[test]
+    fn test_scan_hex_float_zero() {
+        // 0x0p0 = 0.0
+        let dirs = parse_scanf_format(b"%a");
+        let result = scan_input(b"0x0p0", &dirs);
+        assert_eq!(result.count, 1);
+        if let ScanValue::Float(v) = result.values[0] {
+            assert!(v == 0.0, "expected 0.0, got {}", v);
+        } else {
+            panic!("expected Float");
+        }
+    }
+
+    #[test]
+    fn test_scan_hex_float_no_exponent() {
+        // 0x10 = 16 (no p exponent means p0)
+        let dirs = parse_scanf_format(b"%a");
+        let result = scan_input(b"0x10", &dirs);
+        assert_eq!(result.count, 1);
+        if let ScanValue::Float(v) = result.values[0] {
+            assert!((v - 16.0).abs() < 1e-10, "expected 16.0, got {}", v);
+        } else {
+            panic!("expected Float");
+        }
+    }
+
+    #[test]
+    fn test_scan_hex_float_trailing_zeros() {
+        // 0x1.00p0 = 1.0
+        let dirs = parse_scanf_format(b"%a");
+        let result = scan_input(b"0x1.00p0", &dirs);
+        assert_eq!(result.count, 1);
+        if let ScanValue::Float(v) = result.values[0] {
+            assert!((v - 1.0).abs() < 1e-10, "expected 1.0, got {}", v);
+        } else {
+            panic!("expected Float");
+        }
+    }
+
+    #[test]
+    fn test_scan_hex_float_invalid_fallback() {
+        // "0xyz" should parse "0" as decimal (hex parsing fails, falls back)
+        let dirs = parse_scanf_format(b"%a");
+        let result = scan_input(b"0xyz", &dirs);
+        assert_eq!(result.count, 1);
+        if let ScanValue::Float(v) = result.values[0] {
+            assert!(v == 0.0, "expected 0.0, got {}", v);
+        } else {
+            panic!("expected Float");
+        }
+    }
+
+    #[test]
+    fn test_scan_hex_float_p_without_digits() {
+        // "0x1.0p" should parse "0x1.0" (= 1.0) and leave 'p' unconsumed.
+        // Per C11, 'p' without following digits is not a valid exponent.
+        let dirs = parse_scanf_format(b"%a");
+        let result = scan_input(b"0x1.0p", &dirs);
+        assert_eq!(result.count, 1);
+        if let ScanValue::Float(v) = result.values[0] {
+            assert!((v - 1.0).abs() < 1e-10, "expected 1.0, got {}", v);
+        } else {
+            panic!("expected Float");
+        }
+    }
+
+    #[test]
+    fn test_scan_hex_float_p_sign_without_digits() {
+        // "0x1.0p-" should parse "0x1.0" (= 1.0) and leave "p-" unconsumed.
+        let dirs = parse_scanf_format(b"%a");
+        let result = scan_input(b"0x1.0p-", &dirs);
+        assert_eq!(result.count, 1);
+        if let ScanValue::Float(v) = result.values[0] {
+            assert!((v - 1.0).abs() < 1e-10, "expected 1.0, got {}", v);
+        } else {
+            panic!("expected Float");
+        }
+    }
+
+    #[test]
+    fn test_scan_hex_float_p_sign_then_text() {
+        // "0x2p-foo" should parse "0x2" (= 2.0) leaving "p-foo" unconsumed.
+        let dirs = parse_scanf_format(b"%a%s");
+        let result = scan_input(b"0x2p-foo", &dirs);
+        assert_eq!(result.count, 2, "should parse float then string");
+        if let ScanValue::Float(v) = result.values[0] {
+            assert!((v - 2.0).abs() < 1e-10, "expected 2.0, got {}", v);
+        } else {
+            panic!("expected Float");
+        }
+        // The remaining "p-foo" should be captured by %s
+        if let ScanValue::String(ref s) = result.values[1] {
+            assert_eq!(s.as_slice(), b"p-foo", "expected 'p-foo', got {:?}", s);
+        } else {
+            panic!("expected String for second value");
         }
     }
 

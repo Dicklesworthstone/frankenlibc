@@ -3050,12 +3050,27 @@ pub unsafe extern "C" fn tmpnam_r(s: *mut c_char) -> *mut c_char {
 // ===========================================================================
 
 /// `cfmakeraw` — set terminal attributes for raw mode.
+/// Sets flags per glibc cfmakeraw: disable input/output processing,
+/// disable signals, 8-bit chars, VMIN=1, VTIME=0.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn cfmakeraw(termios: *mut libc::termios) {
     if termios.is_null() {
         return;
     }
-    unsafe { libc::cfmakeraw(termios) };
+    let t = unsafe { &mut *termios };
+    // Clear input flags: no break handling, parity, strip, newline translation, XON/XOFF
+    t.c_iflag &= !(libc::IGNBRK | libc::BRKINT | libc::PARMRK | libc::ISTRIP
+        | libc::INLCR | libc::IGNCR | libc::ICRNL | libc::IXON) as libc::tcflag_t;
+    // Clear output flag: no output processing
+    t.c_oflag &= !(libc::OPOST) as libc::tcflag_t;
+    // Clear local flags: no echo, no canonical mode, no signals, no extended processing
+    t.c_lflag &= !(libc::ECHO | libc::ECHONL | libc::ICANON | libc::ISIG | libc::IEXTEN) as libc::tcflag_t;
+    // Set char size to 8 bits, no parity
+    t.c_cflag &= !(libc::CSIZE | libc::PARENB) as libc::tcflag_t;
+    t.c_cflag |= libc::CS8 as libc::tcflag_t;
+    // Set VMIN=1 (minimum chars), VTIME=0 (no timeout)
+    t.c_cc[libc::VMIN] = 1;
+    t.c_cc[libc::VTIME] = 0;
 }
 
 /// `cfsetspeed` — set both input and output baud rate.
@@ -3064,8 +3079,8 @@ pub unsafe extern "C" fn cfsetspeed(termios: *mut libc::termios, speed: libc::sp
     if termios.is_null() {
         return -1;
     }
-    let r1 = unsafe { libc::cfsetispeed(termios, speed) };
-    let r2 = unsafe { libc::cfsetospeed(termios, speed) };
+    let r1 = unsafe { crate::termios_abi::cfsetispeed(termios, speed as u32) };
+    let r2 = unsafe { crate::termios_abi::cfsetospeed(termios, speed as u32) };
     if r1 < 0 || r2 < 0 { -1 } else { 0 }
 }
 

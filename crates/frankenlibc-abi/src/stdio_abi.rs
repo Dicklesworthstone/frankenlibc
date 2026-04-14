@@ -4753,13 +4753,13 @@ pub unsafe extern "C" fn fdopen(fd: c_int, mode: *const c_char) -> *mut c_void {
     };
 
     if open_flags.cloexec {
-        let existing = unsafe { libc::fcntl(fd, libc::F_GETFD) };
+        let existing = unsafe { libc::syscall(libc::SYS_fcntl, fd, libc::F_GETFD) as c_int };
         if existing < 0 {
             unsafe { set_abi_errno(errno::EBADF) };
             runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
             return std::ptr::null_mut();
         }
-        unsafe { libc::fcntl(fd, libc::F_SETFD, existing | libc::FD_CLOEXEC) };
+        unsafe { libc::syscall(libc::SYS_fcntl, fd, libc::F_SETFD, existing | libc::FD_CLOEXEC) };
     }
 
     // Create stream via fdopen_native_impl.

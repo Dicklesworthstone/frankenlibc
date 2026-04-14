@@ -1238,8 +1238,8 @@ pub unsafe extern "C" fn siginterrupt(sig: c_int, flag: c_int) -> c_int {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sighold(sig: c_int) -> c_int {
     let mut set: libc::sigset_t = unsafe { std::mem::zeroed() };
-    unsafe { libc::sigemptyset(&mut set) };
-    unsafe { libc::sigaddset(&mut set, sig) };
+    unsafe { sigemptyset(&mut set) };
+    unsafe { sigaddset(&mut set, sig) };
     let kernel_sigset_size = std::mem::size_of::<libc::c_ulong>();
     let rc = unsafe {
         libc::syscall(
@@ -1257,8 +1257,8 @@ pub unsafe extern "C" fn sighold(sig: c_int) -> c_int {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sigrelse(sig: c_int) -> c_int {
     let mut set: libc::sigset_t = unsafe { std::mem::zeroed() };
-    unsafe { libc::sigemptyset(&mut set) };
-    unsafe { libc::sigaddset(&mut set, sig) };
+    unsafe { sigemptyset(&mut set) };
+    unsafe { sigaddset(&mut set, sig) };
     let kernel_sigset_size = std::mem::size_of::<libc::c_ulong>();
     let rc = unsafe {
         libc::syscall(
@@ -1278,7 +1278,7 @@ pub unsafe extern "C" fn sigignore(sig: c_int) -> c_int {
     let mut sa: libc::sigaction = unsafe { std::mem::zeroed() };
     sa.sa_sigaction = libc::SIG_IGN;
     sa.sa_flags = 0;
-    unsafe { libc::sigemptyset(&mut sa.sa_mask) };
+    unsafe { sigemptyset(&mut sa.sa_mask) };
     let rc = unsafe {
         libc::syscall(
             libc::SYS_rt_sigaction,

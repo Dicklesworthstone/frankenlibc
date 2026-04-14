@@ -3118,10 +3118,10 @@ pub unsafe extern "C" fn __flbf(fp: *mut c_void) -> c_int {
     let _ = fp;
     0 // not line-buffered by default
 }
-// __fork: native — forward to libc::fork
+// __fork: native — forward to raw syscall
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __fork() -> c_int {
-    unsafe { libc::fork() }
+    unsafe { libc::syscall(libc::SYS_clone, libc::SIGCHLD, 0, 0, 0, 0) as c_int }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __fpending(fp: *mut c_void) -> SizeT {
@@ -3452,14 +3452,14 @@ pub unsafe extern "C" fn __setmntent(filename: *const c_char, typ: *const c_char
 pub unsafe extern "C" fn __setpgid(pid: c_int, pgid: c_int) -> c_int {
     unsafe { libc::syscall(libc::SYS_setpgid, pid, pgid) as c_int }
 }
-// __sigaction: native syscall (uses rt_sigaction)
+// __sigaction: native via signal_abi
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __sigaction(
     signum: c_int,
     act: *const c_void,
     oldact: *mut c_void,
 ) -> c_int {
-    unsafe { libc::sigaction(signum, act.cast(), oldact.cast()) }
+    unsafe { crate::signal_abi::sigaction(signum, act.cast(), oldact.cast()) }
 }
 // __sigaddset/__sigdelset/__sigismember: native bit manipulation on sigset_t
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -3506,10 +3506,10 @@ pub unsafe extern "C" fn __sigpause(sig_or_mask: c_int) -> c_int {
 pub unsafe extern "C" fn __sigsetjmp(env: *mut c_void, savesigs: c_int) -> c_int {
     unsafe { super::setjmp_abi::sigsetjmp(env, savesigs) }
 }
-// __sigsuspend: native — forward to libc
+// __sigsuspend: native via signal_abi
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __sigsuspend(set: *const c_void) -> c_int {
-    unsafe { libc::sigsuspend(set.cast()) }
+    unsafe { crate::signal_abi::sigsuspend(set.cast()) }
 }
 // __statfs: native syscall
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -3620,9 +3620,9 @@ pub unsafe extern "C" fn __xmknodat(
 pub unsafe extern "C" fn __xpg_sigpause(sig: c_int) -> c_int {
     unsafe {
         let mut mask: libc::sigset_t = std::mem::zeroed();
-        libc::sigprocmask(libc::SIG_BLOCK, std::ptr::null(), &mut mask);
-        libc::sigdelset(&mut mask, sig);
-        libc::sigsuspend(&mask)
+        crate::signal_abi::sigprocmask(libc::SIG_BLOCK, std::ptr::null(), &mut mask);
+        crate::signal_abi::sigdelset(&mut mask, sig);
+        crate::signal_abi::sigsuspend(&mask)
     }
 }
 // --- Native math: long-double classification (long double = f64 in this ABI) ---
@@ -4245,32 +4245,31 @@ pub unsafe extern "C" fn bdflush(func: c_int, data: c_long) -> c_int {
     }
     -1
 }
-// cfget/cfset speed: forward to libc
+// cfget/cfset speed: native implementation via termios_abi
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn cfgetibaud(termios_p: *const c_void) -> c_uint {
-    unsafe { libc::cfgetispeed(termios_p.cast()) as c_uint }
+    unsafe { crate::termios_abi::cfgetispeed(termios_p.cast()) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn cfgetobaud(termios_p: *const c_void) -> c_uint {
-    unsafe { libc::cfgetospeed(termios_p.cast()) as c_uint }
+    unsafe { crate::termios_abi::cfgetospeed(termios_p.cast()) }
 }
 // cfsetbaud: set both input and output baud
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn cfsetbaud(termios_p: *mut c_void, ibaud: c_uint, obaud: c_uint) -> c_int {
-    let tp = termios_p.cast::<libc::termios>();
-    let r1 = unsafe { libc::cfsetispeed(tp, ibaud as libc::speed_t) };
+    let r1 = unsafe { crate::termios_abi::cfsetispeed(termios_p.cast(), ibaud) };
     if r1 != 0 {
         return r1;
     }
-    unsafe { libc::cfsetospeed(tp, obaud as libc::speed_t) }
+    unsafe { crate::termios_abi::cfsetospeed(termios_p.cast(), obaud) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn cfsetibaud(termios_p: *mut c_void, speed: c_uint) -> c_int {
-    unsafe { libc::cfsetispeed(termios_p.cast(), speed as libc::speed_t) }
+    unsafe { crate::termios_abi::cfsetispeed(termios_p.cast(), speed) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn cfsetobaud(termios_p: *mut c_void, speed: c_uint) -> c_int {
-    unsafe { libc::cfsetospeed(termios_p.cast(), speed as libc::speed_t) }
+    unsafe { crate::termios_abi::cfsetospeed(termios_p.cast(), speed) }
 }
 // chflags: BSD — not supported on Linux, return ENOSYS
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -4859,11 +4858,11 @@ pub unsafe extern "C" fn isastream(fd: c_int) -> c_int {
 pub unsafe extern "C" fn isctype(c: c_int, mask: c_int) -> c_int {
     unsafe { __isctype(c, mask) }
 }
-// isfdtype: native — check file descriptor type via fstat
+// isfdtype: native — check file descriptor type via fstat syscall
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn isfdtype(fd: c_int, fdtype: c_int) -> c_int {
     let mut stat: libc::stat = unsafe { std::mem::zeroed() };
-    if unsafe { libc::fstat(fd, &mut stat) } < 0 {
+    if unsafe { libc::syscall(libc::SYS_fstat, fd, &mut stat) as c_int } < 0 {
         return -1;
     }
     ((stat.st_mode & libc::S_IFMT) == fdtype as u32) as c_int
@@ -5443,7 +5442,7 @@ pub unsafe extern "C" fn rresvport(port: *mut c_int) -> c_int {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn rresvport_af(port: *mut c_int, af: c_int) -> c_int {
     let sock_type = libc::SOCK_STREAM;
-    let fd = unsafe { libc::socket(af, sock_type, 0) };
+    let fd = unsafe { libc::syscall(libc::SYS_socket, af, sock_type, 0) as c_int };
     if fd < 0 {
         return -1;
     }

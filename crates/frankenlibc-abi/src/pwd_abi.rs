@@ -242,10 +242,6 @@ impl PwdStorage {
         &mut self.pw as *mut libc::passwd
     }
 
-    #[cfg(test)]
-    fn cache_metrics(&self) -> CacheMetrics {
-        self.cache_metrics
-    }
 }
 
 thread_local! {
@@ -1013,18 +1009,23 @@ unsafe fn pack_gshadow_into_buf(entry: &Gshadow, buf: *mut u8, buflen: usize) ->
     };
 
     // Calculate total space needed.
+    // Pointer arrays need alignment, so account for worst-case padding.
+    let ptr_align = core::mem::align_of::<*mut c_char>();
     let name_len = entry.sg_namp.len() + 1;
     let passwd_len = entry.sg_passwd.len() + 1;
     let adm_ptrs_size = (adm_list.len() + 1) * core::mem::size_of::<*mut c_char>();
     let mem_ptrs_size = (mem_list.len() + 1) * core::mem::size_of::<*mut c_char>();
     let adm_strs_size: usize = adm_list.iter().map(|s| s.len() + 1).sum();
     let mem_strs_size: usize = mem_list.iter().map(|s| s.len() + 1).sum();
+    // Add worst-case alignment padding (ptr_align - 1 bytes) before each pointer array
     let total = sgrp_size
         + name_len
         + passwd_len
+        + (ptr_align - 1) // padding before admin pointer array
         + adm_ptrs_size
-        + mem_ptrs_size
         + adm_strs_size
+        + (ptr_align - 1) // padding before member pointer array
+        + mem_ptrs_size
         + mem_strs_size;
 
     if total > effective_buflen {
@@ -1050,6 +1051,11 @@ unsafe fn pack_gshadow_into_buf(entry: &Gshadow, buf: *mut u8, buflen: usize) ->
         cursor = cursor.add(passwd_len);
     }
 
+    // Align cursor for pointer arrays.
+    let cursor_addr = cursor as usize;
+    let ptr_align_padding = cursor_addr.wrapping_neg() & (ptr_align - 1);
+    cursor = unsafe { cursor.add(ptr_align_padding) };
+
     // Write admin pointer array.
     let adm_ptrs = cursor as *mut *mut c_char;
     unsafe { cursor = cursor.add(adm_ptrs_size) };
@@ -1063,6 +1069,11 @@ unsafe fn pack_gshadow_into_buf(entry: &Gshadow, buf: *mut u8, buflen: usize) ->
         }
     }
     unsafe { *(adm_ptrs.add(adm_list.len())) = ptr::null_mut() };
+
+    // Align cursor for member pointer array.
+    let cursor_addr = cursor as usize;
+    let ptr_align_padding = cursor_addr.wrapping_neg() & (ptr_align - 1);
+    cursor = unsafe { cursor.add(ptr_align_padding) };
 
     // Write member pointer array.
     let mem_ptrs = cursor as *mut *mut c_char;
@@ -1300,104 +1311,6 @@ pub unsafe extern "C" fn ulckpwdf() -> c_int {
     0
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::fs;
-    use std::sync::atomic::{AtomicU64, Ordering};
-
-    static TEST_SEQ: AtomicU64 = AtomicU64::new(0);
-
-    fn temp_path(prefix: &str) -> PathBuf {
-        let seq = TEST_SEQ.fetch_add(1, Ordering::Relaxed);
-        std::env::temp_dir().join(format!(
-            "frankenlibc-{prefix}-{}-{seq}.txt",
-            std::process::id()
-        ))
-    }
-
-    fn write_file(path: &Path, content: &[u8]) {
-        fs::write(path, content).expect("temporary passwd file should be writable");
-    }
-
-    #[test]
-    fn pwd_cache_refresh_tracks_hits_and_reloads() {
-        let path = temp_path("pwd-cache");
-        write_file(
-            &path,
-            b"root:x:0:0:root:/root:/bin/bash\nalice:x:1000:1000::/home/alice:/bin/sh\n",
-        );
-
-        let mut storage = PwdStorage::new_with_path(&path);
-        storage.refresh_cache();
-        let metrics = storage.cache_metrics();
-        assert_eq!(metrics.misses, 1);
-        assert_eq!(metrics.hits, 0);
-        assert_eq!(metrics.reloads, 1);
-        assert_eq!(metrics.invalidations, 0);
-
-        storage.refresh_cache();
-        let metrics = storage.cache_metrics();
-        assert_eq!(metrics.hits, 1);
-        assert_eq!(metrics.misses, 1);
-        assert_eq!(metrics.reloads, 1);
-
-        write_file(
-            &path,
-            b"root:x:0:0:root:/root:/bin/bash\nalice:x:1001:1001::/home/alice:/bin/sh\n",
-        );
-        storage.refresh_cache();
-        let metrics = storage.cache_metrics();
-        assert_eq!(metrics.misses, 2);
-        assert_eq!(metrics.reloads, 2);
-        assert_eq!(metrics.invalidations, 1);
-        assert_eq!(storage.iter_idx, 0);
-        assert!(
-            frankenlibc_core::pwd::lookup_by_uid(storage.current_content(), 1001).is_some(),
-            "cache reload should expose updated passwd content"
-        );
-
-        let _ = fs::remove_file(&path);
-    }
-
-    #[test]
-    fn pwd_rebuild_entries_records_parse_stats_after_invalidation() {
-        let path = temp_path("pwd-parse-stats");
-        write_file(
-            &path,
-            b"root:x:0:0:root:/root:/bin/bash\nbad_line\n#comment\n",
-        );
-
-        let mut storage = PwdStorage::new_with_path(&path);
-        storage.refresh_cache();
-        storage.rebuild_entries();
-
-        assert_eq!(storage.entries.len(), 1);
-        assert_eq!(storage.last_parse_stats.parsed_entries, 1);
-        assert_eq!(storage.last_parse_stats.malformed_lines, 1);
-        assert_eq!(storage.last_parse_stats.skipped_lines, 1);
-        assert_eq!(storage.entries_generation, storage.cache_generation);
-
-        storage.iter_idx = 1;
-        write_file(
-            &path,
-            b"root:x:0:0:root:/root:/bin/bash\nalice:x:1000:1000::/home/alice:/bin/sh\n",
-        );
-        storage.refresh_cache();
-
-        assert!(
-            storage.entries.is_empty(),
-            "cache invalidation should clear iteration entries"
-        );
-        assert_eq!(storage.iter_idx, 0);
-        assert_eq!(storage.entries_generation, 0);
-
-        storage.rebuild_entries();
-        assert_eq!(storage.entries.len(), 2);
-        assert_eq!(storage.last_parse_stats.parsed_entries, 2);
-        assert_eq!(storage.last_parse_stats.malformed_lines, 0);
-        assert_eq!(storage.entries_generation, storage.cache_generation);
-
-        let _ = fs::remove_file(&path);
-    }
-}
+// Unit tests for this module are in tests/pwd_abi_test.rs.
+// This module is compiled with #[cfg(not(test))] in lib.rs, so internal
+// tests here would never run. The integration tests cover the public API.

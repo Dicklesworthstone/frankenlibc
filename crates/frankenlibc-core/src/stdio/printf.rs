@@ -535,10 +535,17 @@ pub fn format_unsigned(value: u64, spec: &FormatSpec, buf: &mut Vec<u8>) {
     };
     let zero_prefix_count = precision.saturating_sub(digit_count);
 
-    let prefix = if value != 0 {
-        alt_prefix(spec)
+    // For octal with # flag: only add "0" prefix if precision doesn't already
+    // ensure a leading zero. Per C11 7.21.6.1: "For o conversion, it increases
+    // the precision, if and only if necessary, to force the first digit to be zero"
+    let prefix: &[u8] = if value == 0 {
+        b""
+    } else if spec.flags.alt_form && spec.conversion == b'o' {
+        // Octal: only add '0' if first digit wouldn't already be 0
+        let first_digit_is_zero = zero_prefix_count > 0 || (digit_count > 0 && digit_slice[0] == b'0');
+        if first_digit_is_zero { b"" } else { b"0" }
     } else {
-        b"" as &[u8]
+        alt_prefix(spec)
     };
 
     let content_len = prefix.len() + zero_prefix_count + digit_count;
@@ -842,7 +849,9 @@ fn format_f(value: f64, precision: usize, alt_form: bool) -> String {
     if precision == 0 {
         // Use Rust's Display to format the integer part rather than casting to u64,
         // which would saturate for values > u64::MAX (~1.8e19).
-        let rounded = value.round();
+        // round_ties_even implements IEEE 754 round-half-to-even (banker's rounding)
+        // per POSIX conformance requirements.
+        let rounded = value.round_ties_even();
         if alt_form {
             alloc::format!("{rounded:.0}.")
         } else {
@@ -891,8 +900,9 @@ fn format_e(value: f64, precision: usize, uppercase: bool, alt_form: bool) -> St
         exp -= 1;
     }
     // Handle rounding carry: rounding the formatted mantissa may push it to 10.
+    // Use round_ties_even for IEEE 754 banker's rounding compliance.
     let scale = 10_f64.powi(precision as i32);
-    let rounded_mantissa = (mantissa * scale).round() / scale;
+    let rounded_mantissa = (mantissa * scale).round_ties_even() / scale;
     if rounded_mantissa >= 10.0 {
         mantissa = rounded_mantissa / 10.0;
         exp += 1;
@@ -900,7 +910,7 @@ fn format_e(value: f64, precision: usize, uppercase: bool, alt_form: bool) -> St
     let sign = if exp < 0 { '-' } else { '+' };
     let abs_exp = exp.unsigned_abs();
     if precision == 0 {
-        let digit = mantissa.round() as u64;
+        let digit = mantissa.round_ties_even() as u64;
         let dot = if alt_form { "." } else { "" };
         alloc::format!("{digit}{dot}{e_char}{sign}{abs_exp:02}")
     } else {
@@ -1394,6 +1404,49 @@ mod tests {
         let mut buf = Vec::new();
         format_float(f64::INFINITY, &spec, &mut buf);
         assert_eq!(&buf, b"inf");
+    }
+
+    #[test]
+    fn test_format_float_bankers_rounding() {
+        // IEEE 754 round-half-to-even (banker's rounding) test.
+        // 2.5 -> 2 (nearest even), 3.5 -> 4 (nearest even), 1.5 -> 2 (nearest even)
+        let spec = FormatSpec {
+            flags: FormatFlags::default(),
+            width: Width::None,
+            precision: Precision::Fixed(0),
+            length: LengthMod::None,
+            conversion: b'f',
+            value_position: None,
+        };
+
+        let mut buf = Vec::new();
+        format_float(2.5, &spec, &mut buf);
+        assert_eq!(&buf, b"2", "2.5 should round to 2 (nearest even)");
+
+        buf.clear();
+        format_float(3.5, &spec, &mut buf);
+        assert_eq!(&buf, b"4", "3.5 should round to 4 (nearest even)");
+
+        buf.clear();
+        format_float(1.5, &spec, &mut buf);
+        assert_eq!(&buf, b"2", "1.5 should round to 2 (nearest even)");
+
+        buf.clear();
+        format_float(-2.5, &spec, &mut buf);
+        assert_eq!(&buf, b"-2", "-2.5 should round to -2 (nearest even)");
+
+        buf.clear();
+        format_float(-3.5, &spec, &mut buf);
+        assert_eq!(&buf, b"-4", "-3.5 should round to -4 (nearest even)");
+
+        // Confirm non-half values round normally
+        buf.clear();
+        format_float(2.4, &spec, &mut buf);
+        assert_eq!(&buf, b"2", "2.4 rounds to 2");
+
+        buf.clear();
+        format_float(2.6, &spec, &mut buf);
+        assert_eq!(&buf, b"3", "2.6 rounds to 3");
     }
 
     #[test]
