@@ -282,11 +282,11 @@ pub unsafe extern "C" fn pthread_setschedprio(thread: c_ulong, prio: c_int) -> c
 // __sched_*: native syscalls
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __sched_get_priority_max(policy: c_int) -> c_int {
-    unsafe { libc::sched_get_priority_max(policy) }
+    unsafe { libc::syscall(libc::SYS_sched_get_priority_max, policy) as c_int }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __sched_get_priority_min(policy: c_int) -> c_int {
-    unsafe { libc::sched_get_priority_min(policy) }
+    unsafe { libc::syscall(libc::SYS_sched_get_priority_min, policy) as c_int }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __sched_getparam(pid: c_int, param: *mut c_void) -> c_int {
@@ -2974,10 +2974,10 @@ pub unsafe extern "C" fn __backtrace_symbols_fd(
 ) {
     unsafe { super::unistd_abi::backtrace_symbols_fd(buffer, size, fd) }
 }
-// __bsd_getpgrp: native — getpgid alias
+// __bsd_getpgrp: native — getpgid alias (raw syscall)
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __bsd_getpgrp(pid: c_int) -> c_int {
-    unsafe { libc::getpgid(pid) }
+    unsafe { libc::syscall(libc::SYS_getpgid, pid) as c_int }
 }
 // __check_rhosts_file is a global variable, defined below as a static
 // __clone: glibc-compatible clone wrapper (must be asm — child runs on different stack).
@@ -3906,14 +3906,15 @@ pub unsafe extern "C" fn __wmempcpy_chk(
 // Note: This is variadic in glibc but the passthrough only captures fmt
 // Keep as dlsym since we can't forward variadic args to our variadic syslog
 // __syslog_chk: now exported from fortify_abi.rs (native, variadic)
-// __mq_open_2: fortified mq_open — aborts if O_CREAT set without mode/attr
+// __mq_open_2: fortified mq_open — aborts if O_CREAT set without mode/attr (raw syscall)
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __mq_open_2(name: *const c_char, oflag: c_int) -> c_int {
     if oflag & libc::O_CREAT != 0 {
         // O_CREAT requires mode and attr args — missing is a bug
         unsafe { crate::stdlib_abi::abort() };
     }
-    unsafe { libc::mq_open(name, oflag) as c_int }
+    // mq_open without O_CREAT: mode/attr are ignored, pass 0/null
+    unsafe { libc::syscall(libc::SYS_mq_open, name, oflag, 0, std::ptr::null::<c_void>()) as c_int }
 }
 
 // ==========================================================================

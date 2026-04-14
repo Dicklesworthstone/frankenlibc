@@ -473,7 +473,7 @@ pub unsafe extern "C" fn __pread_chk(
     if buflen != usize::MAX && nbytes > buflen {
         unsafe { __chk_fail() }
     }
-    unsafe { libc::pread(fd, buf, nbytes, offset) }
+    unsafe { libc::syscall(libc::SYS_pread64, fd, buf, nbytes, offset) as isize }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -487,7 +487,7 @@ pub unsafe extern "C" fn __pread64_chk(
     if buflen != usize::MAX && nbytes > buflen {
         unsafe { __chk_fail() }
     }
-    unsafe { libc::pread64(fd, buf, nbytes, offset) }
+    unsafe { libc::syscall(libc::SYS_pread64, fd, buf, nbytes, offset) as isize }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -501,7 +501,18 @@ pub unsafe extern "C" fn __recv_chk(
     if buflen != usize::MAX && len > buflen {
         unsafe { __chk_fail() }
     }
-    unsafe { libc::recv(fd, buf, len, flags) }
+    // recv is recvfrom with null src_addr/addrlen
+    unsafe {
+        libc::syscall(
+            libc::SYS_recvfrom,
+            fd,
+            buf,
+            len,
+            flags,
+            std::ptr::null::<c_void>(),
+            std::ptr::null::<u32>(),
+        ) as isize
+    }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -517,7 +528,7 @@ pub unsafe extern "C" fn __recvfrom_chk(
     if buflen != usize::MAX && len > buflen {
         unsafe { __chk_fail() }
     }
-    unsafe { libc::recvfrom(fd, buf, len, flags, addr.cast(), addrlen) }
+    unsafe { libc::syscall(libc::SYS_recvfrom, fd, buf, len, flags, addr, addrlen) as isize }
 }
 
 // ── Path/name operations ───────────────────────────────────────────────────
@@ -1027,24 +1038,25 @@ pub unsafe extern "C" fn __vsyslog_chk(
     unsafe { vsyslog(priority, fmt, ap) }
 }
 
-// ── open _2 variants ───────────────────────────────────────────────────────
+// ── open _2 variants (raw syscalls) ────────────────────────────────────────
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __open_2(path: *const c_char, oflag: c_int) -> c_int {
-    unsafe { libc::open(path, oflag) }
+    // _2 variants: O_CREAT not set, so mode=0 is ignored
+    unsafe { libc::syscall(libc::SYS_open, path, oflag, 0) as c_int }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __open64_2(path: *const c_char, oflag: c_int) -> c_int {
-    unsafe { libc::open(path, oflag | libc::O_LARGEFILE) }
+    unsafe { libc::syscall(libc::SYS_open, path, oflag | libc::O_LARGEFILE, 0) as c_int }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __openat_2(dirfd: c_int, path: *const c_char, oflag: c_int) -> c_int {
-    unsafe { libc::openat(dirfd, path, oflag) }
+    unsafe { libc::syscall(libc::SYS_openat, dirfd, path, oflag, 0) as c_int }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __openat64_2(dirfd: c_int, path: *const c_char, oflag: c_int) -> c_int {
-    unsafe { libc::openat(dirfd, path, oflag | libc::O_LARGEFILE) }
+    unsafe { libc::syscall(libc::SYS_openat, dirfd, path, oflag | libc::O_LARGEFILE, 0) as c_int }
 }

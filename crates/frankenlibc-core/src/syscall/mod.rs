@@ -105,6 +105,10 @@ pub const SYS_FUTEX: usize = 202;
 pub const SYS_SET_TID_ADDRESS: usize = 218;
 #[cfg(target_arch = "x86_64")]
 pub const SYS_GETTID: usize = 186;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_SCHED_GET_PRIORITY_MAX: usize = 146;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_SCHED_GET_PRIORITY_MIN: usize = 147;
 
 #[cfg(target_arch = "aarch64")]
 pub const SYS_READ: usize = 63;
@@ -177,6 +181,10 @@ pub const SYS_FUTEX: usize = 98;
 pub const SYS_SET_TID_ADDRESS: usize = 96;
 #[cfg(target_arch = "aarch64")]
 pub const SYS_GETTID: usize = 178;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_SCHED_GET_PRIORITY_MAX: usize = 125;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_SCHED_GET_PRIORITY_MIN: usize = 126;
 #[cfg(target_arch = "aarch64")]
 const SYS_DUP3: usize = 24;
 
