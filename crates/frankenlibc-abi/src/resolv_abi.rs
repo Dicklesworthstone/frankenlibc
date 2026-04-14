@@ -1630,6 +1630,10 @@ pub unsafe extern "C" fn getprotobynumber(proto: c_int) -> *mut c_void {
         true,  // no pointer to validate
         0,
     );
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Resolver, decision.profile, 15, true);
+        return ptr::null_mut();
+    }
 
     let content = match std::fs::read("/etc/protocols") {
         Ok(c) => c,
