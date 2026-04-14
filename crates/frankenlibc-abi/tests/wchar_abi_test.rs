@@ -4,6 +4,7 @@
 
 use std::ffi::{CStr, c_char, c_int, c_void};
 
+use frankenlibc_abi::stdlib_abi::{basename, dirname, realpath};
 use frankenlibc_abi::wchar_abi::*;
 
 fn errno_value() -> i32 {
