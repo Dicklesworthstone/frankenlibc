@@ -1,0 +1,127 @@
+{
+  "$schema": "printf_grammar.schema.json",
+  "version": 1,
+  "description": "POSIX printf format language as typed regular tree: flag set x width x precision x length x conversion",
+  "spec_reference": "POSIX.1-2024 fprintf() / IEEE Std 1003.1-2024",
+
+  "format_syntax": {
+    "pattern": "%[flags][width][.precision][length]conversion",
+    "indexed_variant": "%<n>$[flags][width][.precision][length]conversion"
+  },
+
+  "flag_set": {
+    "description": "Zero or more flags in any order. Duplicates allowed but have no additional effect.",
+    "members": {
+      "-": {
+        "name": "left_justify",
+        "description": "Left-justify within field width"
+      },
+      "+": {
+        "name": "sign_always",
+        "description": "Always include sign for signed conversions"
+      },
+      " ": {
+        "name": "sign_space",
+        "description": "Space before positive signed values (overridden by +)"
+      },
+      "#": {
+        "name": "alternate_form",
+        "description": "Alternate form for o/x/X/e/E/f/F/g/G/a/A"
+      },
+      "0": {
+        "name": "zero_pad",
+        "description": "Pad with zeros instead of spaces (overridden by -)"
+      }
+    }
+  },
+
+  "width": {
+    "description": "Minimum field width. If value is shorter, padded according to flags.",
+    "variants": [
+      { "type": "literal", "pattern": "[1-9][0-9]*" },
+      { "type": "argument", "pattern": "*" },
+      { "type": "indexed_argument", "pattern": "*<n>$" }
+    ],
+    "default": null
+  },
+
+  "precision": {
+    "description": "Preceded by '.'. Meaning depends on conversion.",
+    "variants": [
+      { "type": "literal", "pattern": ".[0-9]*" },
+      { "type": "argument", "pattern": ".*" },
+      { "type": "indexed_argument", "pattern": ".*<n>$" }
+    ],
+    "default": null,
+    "semantics_by_conversion": {
+      "d,i,o,u,x,X": "minimum digits (default 1)",
+      "e,E,f,F": "digits after decimal point (default 6)",
+      "g,G": "maximum significant digits (default 6)",
+      "s": "maximum bytes to output",
+      "a,A": "digits after decimal point"
+    }
+  },
+
+  "length_modifier": {
+    "description": "Size specifier for the corresponding argument type",
+    "members": {
+      "hh": { "int_type": "signed char / unsigned char" },
+      "h": { "int_type": "short / unsigned short" },
+      "l": { "int_type": "long / unsigned long", "char_type": "wint_t", "string_type": "wchar_t*" },
+      "ll": { "int_type": "long long / unsigned long long" },
+      "j": { "int_type": "intmax_t / uintmax_t" },
+      "z": { "int_type": "size_t / ssize_t" },
+      "t": { "int_type": "ptrdiff_t" },
+      "L": { "float_type": "long double" }
+    }
+  },
+
+  "conversion": {
+    "description": "Conversion specifier determines output format and argument type",
+    "members": {
+      "d": { "name": "signed_decimal", "argument": "int family", "output": "decimal" },
+      "i": { "name": "signed_decimal_alt", "argument": "int family", "output": "decimal", "note": "Same as d" },
+      "o": { "name": "unsigned_octal", "argument": "unsigned family", "output": "octal" },
+      "u": { "name": "unsigned_decimal", "argument": "unsigned family", "output": "decimal" },
+      "x": { "name": "unsigned_hex_lower", "argument": "unsigned family", "output": "hex lowercase" },
+      "X": { "name": "unsigned_hex_upper", "argument": "unsigned family", "output": "hex uppercase" },
+      "f": { "name": "float_fixed_lower", "argument": "double family", "output": "fixed point lowercase" },
+      "F": { "name": "float_fixed_upper", "argument": "double family", "output": "fixed point uppercase" },
+      "e": { "name": "float_exp_lower", "argument": "double family", "output": "scientific lowercase" },
+      "E": { "name": "float_exp_upper", "argument": "double family", "output": "scientific uppercase" },
+      "g": { "name": "float_general_lower", "argument": "double family", "output": "shortest of f or e" },
+      "G": { "name": "float_general_upper", "argument": "double family", "output": "shortest of F or E" },
+      "a": { "name": "float_hex_lower", "argument": "double family", "output": "hex float lowercase" },
+      "A": { "name": "float_hex_upper", "argument": "double family", "output": "hex float uppercase" },
+      "c": { "name": "character", "argument": "int (char) or wint_t", "output": "single character" },
+      "s": { "name": "string", "argument": "char* or wchar_t*", "output": "null-terminated string" },
+      "p": { "name": "pointer", "argument": "void*", "output": "implementation-defined" },
+      "n": { "name": "store_count", "argument": "int* family", "output": "none (stores count written)" },
+      "%": { "name": "literal_percent", "argument": "none", "output": "%" }
+    }
+  },
+
+  "interaction_matrix": {
+    "description": "Cross-product of valid flag+length+conversion combinations",
+    "note": "See covering_array.json for test coverage requirements",
+    "invalid_combinations": [
+      { "flags": ["+", " "], "conversions": ["o", "u", "x", "X", "c", "s", "p", "%"], "reason": "Sign flags not applicable to unsigned/char/string" },
+      { "flags": ["#"], "conversions": ["d", "i", "u", "c", "s", "p", "n", "%"], "reason": "Alternate form only for o/x/X/floating" },
+      { "length": ["L"], "conversions": ["d", "i", "o", "u", "x", "X", "c", "s", "p", "n", "%"], "reason": "L only for floating point" },
+      { "length": ["l"], "conversions": ["f", "F", "e", "E", "g", "G", "a", "A"], "reason": "l is redundant for floating (double is default)" }
+    ]
+  },
+
+  "dispatch_table_schema": {
+    "description": "Generated PRINTF_TABLE: [PrintfRoute; 256] indexed by conversion byte",
+    "entry_type": "PrintfRoute",
+    "entry_fields": {
+      "handler": "function pointer or enum variant",
+      "length_mask": "bitmask of valid length modifiers",
+      "flag_mask": "bitmask of valid flags",
+      "needs_precision": "bool",
+      "needs_width": "bool",
+      "argument_category": "integer|unsigned|float|pointer|string|store|none"
+    }
+  }
+}

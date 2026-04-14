@@ -1,0 +1,30 @@
+[package]
+name = "stdio-synth"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Offline synthesis pipeline for printf/scanf grammars + table compiler + SMT prover"
+
+# Keep this package OUT of the main workspace - it's a build tool, not a runtime dependency.
+[workspace]
+
+[[bin]]
+name = "printf-compile"
+path = "src/printf_compiler.rs"
+
+[[bin]]
+name = "scanf-compile"
+path = "src/scanf_compiler.rs"
+
+[[bin]]
+name = "smt-prove"
+path = "src/proof.rs"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha2 = "0.10"
+clap = { version = "4.0", features = ["derive"] }
+
+[dev-dependencies]
+proptest = "1.4"
