@@ -371,3 +371,69 @@ jobs:
             artifacts/ci/multiarch-*.log
           if-no-files-found: warn
           retention-days: 14
+
+  glibc-version-matrix:
+    name: glibc Version Matrix
+    needs: core-gates
+    if: >
+      github.event_name == 'schedule' ||
+      github.ref == 'refs/heads/main' ||
+      (github.event_name == 'workflow_dispatch' && inputs.run_extended)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - glibc: "2.31"
+            container: "ubuntu:20.04"
+            distro: "Ubuntu 20.04"
+          - glibc: "2.34"
+            container: "ubuntu:22.04"
+            distro: "Ubuntu 22.04 (baseline)"
+          - glibc: "2.38"
+            container: "ubuntu:24.04"
+            distro: "Ubuntu 24.04"
+
+    container:
+      image: ${{ matrix.container }}
+
+    steps:
+      - name: Install dependencies
+        run: |
+          apt-get update
+          apt-get install -y git curl build-essential jq
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run glibc offset compatibility check
+        id: glibc_check
+        run: |
+          mkdir -p artifacts/ci/glibc-matrix
+          scripts/glibc_offset_check/check_glibc_offsets.sh 2>&1 | \
+            tee "artifacts/ci/glibc-matrix/glibc-${{ matrix.glibc }}.log"
+          cp target/glibc_offset_check/glibc_offset_check.json \
+            "artifacts/ci/glibc-matrix/glibc-${{ matrix.glibc }}.json" || true
+
+      - name: Verify glibc version matches expected
+        run: |
+          expected="${{ matrix.glibc }}"
+          actual=$(cat target/glibc_offset_check/glibc_offset_check.json | jq -r '.glibc_version')
+          major_minor=$(echo "${actual}" | cut -d. -f1,2)
+          echo "Container glibc: ${actual} (major.minor: ${major_minor})"
+          echo "Expected: ${expected}"
+          if [[ "${major_minor}" != "${expected}" ]]; then
+            echo "WARNING: Container glibc ${major_minor} differs from expected ${expected}"
+          fi
+
+      - name: Upload glibc matrix artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: glibc-matrix-${{ matrix.glibc }}
+          path: |
+            artifacts/ci/glibc-matrix/**
+          if-no-files-found: warn
+          retention-days: 14
