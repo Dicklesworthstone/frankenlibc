@@ -66,6 +66,8 @@ pub const SYS_DUP2: usize = 33;
 #[cfg(target_arch = "x86_64")]
 pub const SYS_GETPID: usize = 39;
 #[cfg(target_arch = "x86_64")]
+pub const SYS_SOCKET: usize = 41;
+#[cfg(target_arch = "x86_64")]
 pub const SYS_GETEUID: usize = 107;
 #[cfg(target_arch = "x86_64")]
 pub const SYS_CLONE: usize = 56;
@@ -88,6 +90,18 @@ pub const SYS_PWRITE64: usize = 18;
 #[cfg(target_arch = "x86_64")]
 pub const SYS_MSYNC: usize = 26;
 #[cfg(target_arch = "x86_64")]
+pub const SYS_MREMAP: usize = 25;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_MLOCK: usize = 149;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_MLOCK2: usize = 325;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_MUNLOCK: usize = 150;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_MLOCKALL: usize = 151;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_MUNLOCKALL: usize = 152;
+#[cfg(target_arch = "x86_64")]
 pub const SYS_MADVISE: usize = 28;
 #[cfg(target_arch = "x86_64")]
 pub const SYS_FDATASYNC: usize = 75;
@@ -101,6 +115,12 @@ pub const SYS_EXIT_GROUP: usize = 231;
 pub const SYS_OPENAT: usize = 257;
 #[cfg(target_arch = "x86_64")]
 pub const SYS_PIPE2: usize = 293;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_PRLIMIT64: usize = 302;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_SCHED_YIELD: usize = 24;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_NANOSLEEP: usize = 35;
 #[cfg(target_arch = "x86_64")]
 pub const SYS_FUTEX: usize = 202;
 #[cfg(target_arch = "x86_64")]
@@ -146,6 +166,8 @@ pub const SYS_GETPID: usize = 172;
 #[cfg(target_arch = "aarch64")]
 pub const SYS_GETEUID: usize = 175;
 #[cfg(target_arch = "aarch64")]
+pub const SYS_SOCKET: usize = 198;
+#[cfg(target_arch = "aarch64")]
 pub const SYS_CLONE: usize = 220;
 #[cfg(target_arch = "aarch64")]
 pub const SYS_FORK: usize = SYS_CLONE;
@@ -166,6 +188,18 @@ pub const SYS_PWRITE64: usize = 68;
 #[cfg(target_arch = "aarch64")]
 pub const SYS_MSYNC: usize = 227;
 #[cfg(target_arch = "aarch64")]
+pub const SYS_MREMAP: usize = 216;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_MLOCK: usize = 228;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_MLOCK2: usize = 284;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_MUNLOCK: usize = 229;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_MLOCKALL: usize = 230;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_MUNLOCKALL: usize = 231;
+#[cfg(target_arch = "aarch64")]
 pub const SYS_MADVISE: usize = 233;
 #[cfg(target_arch = "aarch64")]
 pub const SYS_FDATASYNC: usize = 83;
@@ -179,6 +213,12 @@ pub const SYS_EXIT_GROUP: usize = 94;
 pub const SYS_OPENAT: usize = 56;
 #[cfg(target_arch = "aarch64")]
 pub const SYS_PIPE2: usize = 59;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_PRLIMIT64: usize = 261;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_SCHED_YIELD: usize = 124;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_NANOSLEEP: usize = 101;
 #[cfg(target_arch = "aarch64")]
 pub const SYS_FUTEX: usize = 98;
 #[cfg(target_arch = "aarch64")]
@@ -666,6 +706,144 @@ pub unsafe fn sys_pwrite64(
             buf as usize,
             count,
             offset as usize,
+        )
+    };
+    syscall_result(ret)
+}
+
+/// `socket(domain, type, protocol)` — create an endpoint for communication.
+///
+/// Returns the file descriptor on success, or negative errno on failure.
+#[inline]
+#[allow(unsafe_code)]
+pub fn sys_socket(domain: i32, socket_type: i32, protocol: i32) -> Result<i32, i32> {
+    // SAFETY: socket syscall is safe to call with any arguments.
+    let ret = unsafe {
+        raw::syscall3(
+            SYS_SOCKET,
+            domain as usize,
+            socket_type as usize,
+            protocol as usize,
+        )
+    };
+    syscall_result(ret).map(|v| v as i32)
+}
+
+/// `prlimit64(pid, resource, new_limit, old_limit)` — get/set resource limits.
+///
+/// # Safety
+///
+/// `new_limit` and `old_limit` must be valid pointers if non-null.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_prlimit64(
+    pid: i32,
+    resource: u32,
+    new_limit: *const u8,
+    old_limit: *mut u8,
+) -> Result<(), i32> {
+    // SAFETY: caller guarantees pointer validity.
+    let ret = unsafe {
+        raw::syscall4(
+            SYS_PRLIMIT64,
+            pid as usize,
+            resource as usize,
+            new_limit as usize,
+            old_limit as usize,
+        )
+    };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `sched_yield()` — yield the processor.
+#[inline]
+#[allow(unsafe_code)]
+pub fn sys_sched_yield() {
+    // SAFETY: sched_yield is always safe to call.
+    unsafe { raw::syscall0(SYS_SCHED_YIELD) };
+}
+
+/// `nanosleep(req, rem)` — high-resolution sleep.
+///
+/// # Safety
+///
+/// `req` must be a valid pointer to a timespec. `rem` may be null or valid.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_nanosleep(req: *const u8, rem: *mut u8) -> Result<(), i32> {
+    // SAFETY: caller guarantees pointer validity.
+    let ret = unsafe { raw::syscall2(SYS_NANOSLEEP, req as usize, rem as usize) };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `mlock(addr, len)` — lock a range of memory.
+#[inline]
+#[allow(unsafe_code)]
+pub fn sys_mlock(addr: usize, len: usize) -> Result<(), i32> {
+    // SAFETY: mlock is safe to call with any arguments.
+    let ret = unsafe { raw::syscall2(SYS_MLOCK, addr, len) };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `mlock2(addr, len, flags)` — lock a range of memory with flags.
+#[inline]
+#[allow(unsafe_code)]
+pub fn sys_mlock2(addr: usize, len: usize, flags: i32) -> Result<(), i32> {
+    // SAFETY: mlock2 is safe to call with any arguments.
+    let ret = unsafe { raw::syscall3(SYS_MLOCK2, addr, len, flags as usize) };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `munlock(addr, len)` — unlock a range of memory.
+#[inline]
+#[allow(unsafe_code)]
+pub fn sys_munlock(addr: usize, len: usize) -> Result<(), i32> {
+    // SAFETY: munlock is safe to call with any arguments.
+    let ret = unsafe { raw::syscall2(SYS_MUNLOCK, addr, len) };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `mlockall(flags)` — lock all of the calling process's virtual memory.
+#[inline]
+#[allow(unsafe_code)]
+pub fn sys_mlockall(flags: i32) -> Result<(), i32> {
+    // SAFETY: mlockall is safe to call with any flags.
+    let ret = unsafe { raw::syscall1(SYS_MLOCKALL, flags as usize) };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `munlockall()` — unlock all of the calling process's virtual memory.
+#[inline]
+#[allow(unsafe_code)]
+pub fn sys_munlockall() -> Result<(), i32> {
+    // SAFETY: munlockall is always safe to call.
+    let ret = unsafe { raw::syscall0(SYS_MUNLOCKALL) };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `mremap(old_address, old_size, new_size, flags, new_address)` — remap a virtual memory address.
+///
+/// # Safety
+///
+/// The caller must ensure the memory regions are valid.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_mremap(
+    old_address: usize,
+    old_size: usize,
+    new_size: usize,
+    flags: i32,
+    new_address: usize,
+) -> Result<usize, i32> {
+    // SAFETY: caller guarantees memory region validity.
+    let ret = unsafe {
+        raw::syscall5(
+            SYS_MREMAP,
+            old_address,
+            old_size,
+            new_size,
+            flags as usize,
+            new_address,
         )
     };
     syscall_result(ret)

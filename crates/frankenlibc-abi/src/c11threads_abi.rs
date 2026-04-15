@@ -6,6 +6,8 @@
 use std::ffi::c_int;
 use std::ffi::c_void;
 
+use frankenlibc_core::syscall as raw_syscall;
+
 // ---------------------------------------------------------------------------
 // C11 thread return codes
 // ---------------------------------------------------------------------------
@@ -172,12 +174,13 @@ pub unsafe extern "C" fn thrd_sleep(
     if duration.is_null() {
         return -2;
     }
-    let rc = unsafe { libc::syscall(libc::SYS_nanosleep, duration, remaining) as c_int };
-    if rc == 0 {
-        0
-    } else {
-        let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
-        if e == libc::EINTR { -1 } else { -2 }
+    match unsafe {
+        raw_syscall::sys_nanosleep(duration as *const u8, remaining as *mut u8)
+    } {
+        Ok(()) => 0,
+        Err(e) => {
+            if e == libc::EINTR { -1 } else { -2 }
+        }
     }
 }
 
@@ -187,7 +190,7 @@ pub unsafe extern "C" fn thrd_sleep(
 /// C11 `thrd_yield` — yield the processor.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub extern "C" fn thrd_yield() {
-    unsafe { libc::syscall(libc::SYS_sched_yield) as c_int };
+    raw_syscall::sys_sched_yield();
 }
 
 // ===========================================================================

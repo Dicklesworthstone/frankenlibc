@@ -5,11 +5,11 @@
 //! under `ApiFamily::VirtualMemory`.
 
 use std::ffi::{c_int, c_void};
-use std::os::raw::c_long;
 
 use frankenlibc_core::errno;
 use frankenlibc_core::mmap;
 use frankenlibc_core::syscall;
+use frankenlibc_core::syscall as raw_syscall;
 use frankenlibc_membrane::heal::{HealingAction, global_healing_policy};
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
@@ -279,53 +279,49 @@ pub unsafe extern "C" fn madvise(addr: *mut c_void, length: usize, advice: c_int
 /// POSIX `mlock` — lock a range of memory.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn mlock(addr: *const c_void, len: usize) -> c_int {
-    let rc = unsafe { libc::syscall(libc::SYS_mlock as c_long, addr, len) as c_int };
-    if rc < 0 {
-        let e = std::io::Error::last_os_error()
-            .raw_os_error()
-            .unwrap_or(errno::ENOMEM);
-        unsafe { set_abi_errno(e) };
+    match raw_syscall::sys_mlock(addr as usize, len) {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc
 }
 
 /// Linux `mlock2` — lock a range of memory with additional flags.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn mlock2(addr: *const c_void, len: usize, flags: c_int) -> c_int {
-    let rc = unsafe { libc::syscall(libc::SYS_mlock2 as c_long, addr, len, flags) as c_int };
-    if rc < 0 {
-        let e = std::io::Error::last_os_error()
-            .raw_os_error()
-            .unwrap_or(errno::ENOMEM);
-        unsafe { set_abi_errno(e) };
+    match raw_syscall::sys_mlock2(addr as usize, len, flags) {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc
 }
 
 /// POSIX `munlock` — unlock a range of memory.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn munlock(addr: *const c_void, len: usize) -> c_int {
-    let rc = unsafe { libc::syscall(libc::SYS_munlock as c_long, addr, len) as c_int };
-    if rc < 0 {
-        let e = std::io::Error::last_os_error()
-            .raw_os_error()
-            .unwrap_or(errno::ENOMEM);
-        unsafe { set_abi_errno(e) };
+    match raw_syscall::sys_munlock(addr as usize, len) {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc
 }
 
 /// POSIX `mlockall` — lock all of the calling process's virtual memory.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn mlockall(flags: c_int) -> c_int {
-    let rc = unsafe { libc::syscall(libc::SYS_mlockall as c_long, flags) as c_int };
-    if rc < 0 {
-        let e = std::io::Error::last_os_error()
-            .raw_os_error()
-            .unwrap_or(errno::ENOMEM);
-        unsafe { set_abi_errno(e) };
+    match raw_syscall::sys_mlockall(flags) {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc
 }
 
 /// POSIX `munlockall` — unlock all of the calling process's virtual memory.
@@ -338,17 +334,17 @@ pub unsafe extern "C" fn munlockall() -> c_int {
         return -1;
     }
 
-    let rc = unsafe { libc::syscall(libc::SYS_munlockall as c_long) as c_int };
-    if rc < 0 {
-        let e = std::io::Error::last_os_error()
-            .raw_os_error()
-            .unwrap_or(errno::ENOMEM);
-        unsafe { set_abi_errno(e) };
-        runtime_policy::observe(ApiFamily::VirtualMemory, decision.profile, 15, true);
-    } else {
-        runtime_policy::observe(ApiFamily::VirtualMemory, decision.profile, 15, false);
+    match raw_syscall::sys_munlockall() {
+        Ok(()) => {
+            runtime_policy::observe(ApiFamily::VirtualMemory, decision.profile, 15, false);
+            0
+        }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            runtime_policy::observe(ApiFamily::VirtualMemory, decision.profile, 15, true);
+            -1
+        }
     }
-    rc
 }
 
 // ---------------------------------------------------------------------------
@@ -381,25 +377,23 @@ pub unsafe extern "C" fn mremap(
         return libc::MAP_FAILED;
     }
 
-    let rc = unsafe {
-        libc::syscall(
-            libc::SYS_mremap as c_long,
-            old_address,
+    match unsafe {
+        raw_syscall::sys_mremap(
+            old_address as usize,
             old_size,
             new_size,
             flags,
-            new_address,
+            new_address as usize,
         )
-    };
-    if rc == libc::MAP_FAILED as c_long {
-        let e = std::io::Error::last_os_error()
-            .raw_os_error()
-            .unwrap_or(errno::ENOMEM);
-        unsafe { set_abi_errno(e) };
-        runtime_policy::observe(ApiFamily::VirtualMemory, decision.profile, 15, true);
-        libc::MAP_FAILED
-    } else {
-        runtime_policy::observe(ApiFamily::VirtualMemory, decision.profile, 15, false);
-        rc as *mut c_void
+    } {
+        Ok(addr) => {
+            runtime_policy::observe(ApiFamily::VirtualMemory, decision.profile, 15, false);
+            addr as *mut c_void
+        }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            runtime_policy::observe(ApiFamily::VirtualMemory, decision.profile, 15, true);
+            libc::MAP_FAILED
+        }
     }
 }

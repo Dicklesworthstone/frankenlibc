@@ -8,17 +8,17 @@ use std::ffi::{c_char, c_int, c_void};
 use frankenlibc_core::errno;
 use frankenlibc_core::inet as inet_core;
 use frankenlibc_core::socket::{AF_INET, AF_INET6};
+use frankenlibc_core::syscall as raw_syscall;
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
 use crate::errno_abi::set_abi_errno;
 use crate::runtime_policy;
 
-#[inline]
-fn last_host_errno(default: c_int) -> c_int {
-    std::io::Error::last_os_error()
-        .raw_os_error()
-        .unwrap_or(default)
-}
+// Socket constants for if_nametoindex/if_indextoname
+const SOCK_DGRAM: i32 = 2;
+const SOCK_CLOEXEC: i32 = 0x80000;
+const SIOCGIFINDEX: usize = 0x8933;
+const SIOCGIFNAME: usize = 0x8910;
 
 // ---------------------------------------------------------------------------
 // htons
@@ -253,7 +253,6 @@ pub unsafe extern "C" fn inet_addr(cp: *const c_char) -> u32 {
 // ---------------------------------------------------------------------------
 
 use std::ffi::CStr;
-use std::os::raw::c_long;
 
 /// Compact ifreq-compatible struct for SIOCGIFINDEX / SIOCGIFNAME ioctls.
 /// Layout: ifr_name[16] + ifr_ifindex(i32) + padding.
@@ -271,18 +270,13 @@ pub unsafe extern "C" fn if_nametoindex(ifname: *const c_char) -> libc::c_uint {
         unsafe { set_abi_errno(errno::EFAULT) };
         return 0;
     }
-    let sock = unsafe {
-        libc::syscall(
-            libc::SYS_socket as c_long,
-            libc::AF_INET,
-            libc::SOCK_DGRAM | libc::SOCK_CLOEXEC,
-            0,
-        ) as c_int
+    let sock = match raw_syscall::sys_socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0) {
+        Ok(fd) => fd,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            return 0;
+        }
     };
-    if sock < 0 {
-        unsafe { set_abi_errno(last_host_errno(errno::ENODEV)) };
-        return 0;
-    }
 
     let mut ifr: IfreqCompat = unsafe { std::mem::zeroed() };
     let name = unsafe { CStr::from_ptr(ifname) };
@@ -290,22 +284,14 @@ pub unsafe extern "C" fn if_nametoindex(ifname: *const c_char) -> libc::c_uint {
     let copy_len = name_bytes.len().min(15);
     ifr.ifr_name[..copy_len].copy_from_slice(&name_bytes[..copy_len]);
 
-    let rc = unsafe {
-        libc::syscall(
-            libc::SYS_ioctl as c_long,
-            sock,
-            libc::SIOCGIFINDEX as c_long,
-            &ifr,
-        ) as c_int
+    let rc = unsafe { raw_syscall::sys_ioctl(sock, SIOCGIFINDEX, &ifr as *const _ as usize) };
+    let failure_errno = match rc {
+        Ok(_) => None,
+        Err(err) => Some(err),
     };
-    let failure_errno = if rc < 0 {
-        Some(last_host_errno(errno::ENODEV))
-    } else {
-        None
-    };
-    unsafe { libc::syscall(libc::SYS_close as c_long, sock) };
+    let _ = raw_syscall::sys_close(sock);
 
-    if rc < 0 {
+    if failure_errno.is_some() {
         unsafe { set_abi_errno(failure_errno.unwrap_or(errno::ENODEV)) };
         0
     } else {
@@ -320,33 +306,21 @@ pub unsafe extern "C" fn if_indextoname(ifindex: libc::c_uint, ifname: *mut c_ch
         unsafe { set_abi_errno(errno::EFAULT) };
         return std::ptr::null_mut();
     }
-    let sock = unsafe {
-        libc::syscall(
-            libc::SYS_socket as c_long,
-            libc::AF_INET,
-            libc::SOCK_DGRAM | libc::SOCK_CLOEXEC,
-            0,
-        ) as c_int
+    let sock = match raw_syscall::sys_socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0) {
+        Ok(fd) => fd,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            return std::ptr::null_mut();
+        }
     };
-    if sock < 0 {
-        unsafe { set_abi_errno(last_host_errno(errno::ENXIO)) };
-        return std::ptr::null_mut();
-    }
 
     let mut ifr: IfreqCompat = unsafe { std::mem::zeroed() };
     ifr.ifr_ifindex = ifindex as i32;
 
-    let rc = unsafe {
-        libc::syscall(
-            libc::SYS_ioctl as c_long,
-            sock,
-            libc::SIOCGIFNAME as c_long,
-            &ifr,
-        ) as c_int
-    };
-    unsafe { libc::syscall(libc::SYS_close as c_long, sock) };
+    let rc = unsafe { raw_syscall::sys_ioctl(sock, SIOCGIFNAME, &ifr as *const _ as usize) };
+    let _ = raw_syscall::sys_close(sock);
 
-    if rc < 0 {
+    if rc.is_err() {
         unsafe { set_abi_errno(errno::ENXIO) };
         return std::ptr::null_mut();
     }
