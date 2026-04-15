@@ -340,3 +340,41 @@ fn pthread_gnu_extensions_case_count_stable() {
         fixture.cases.len()
     );
 }
+
+#[test]
+fn pthread_gnu_extensions_fixture_cases_match_execute_fixture_case() {
+    let fixture = load_fixture("pthread_gnu_extensions");
+
+    for case in fixture.cases {
+        let expected_output = case
+            .expected_output
+            .as_deref()
+            .unwrap_or_else(|| panic!("case {} missing expected_output", case.name));
+        let modes: &[&str] = if case.mode.eq_ignore_ascii_case("both") {
+            &["strict", "hardened"]
+        } else {
+            &[case.mode.as_str()]
+        };
+
+        for mode in modes {
+            let result = frankenlibc_fixture_exec::execute_fixture_case(
+                &case.function,
+                &case.inputs,
+                mode,
+            )
+            .unwrap_or_else(|err| {
+                panic!("fixture case {} ({mode}) failed to execute: {err}", case.name)
+            });
+            assert_eq!(
+                result.impl_output, expected_output,
+                "fixture expected_output mismatch for {} ({mode})",
+                case.name
+            );
+            assert!(
+                result.host_parity,
+                "executor reported parity failure for {} ({mode})",
+                case.name
+            );
+        }
+    }
+}

@@ -341,8 +341,13 @@ pub fn execute_fixture_case(
         "pthread_cond_destroy" => execute_pthread_cond_destroy_case(inputs, mode),
         "pthread_cond_wait" => execute_pthread_cond_wait_case(inputs, mode),
         "pthread_cond_timedwait" => execute_pthread_cond_timedwait_case(inputs, mode),
+        "pthread_cond_clockwait" => execute_pthread_cond_clockwait_case(inputs, mode),
         "pthread_cond_signal" => execute_pthread_cond_signal_case(inputs, mode),
         "pthread_cond_broadcast" => execute_pthread_cond_broadcast_case(inputs, mode),
+        "pthread_timedjoin_np" => execute_pthread_timedjoin_np_case(inputs, mode),
+        "pthread_tryjoin_np" => execute_pthread_tryjoin_np_case(inputs, mode),
+        "pthread_clockjoin_np" => execute_pthread_clockjoin_np_case(inputs, mode),
+        "pthread_getattr_np" => execute_pthread_getattr_np_case(inputs, mode),
         // pthread TLS keys
         "pthread_key_create" => execute_pthread_key_create_case(inputs, mode),
         "pthread_key_delete" => execute_pthread_key_delete_case(inputs, mode),
@@ -5846,8 +5851,10 @@ fn format_pthread_status(rc: i32) -> String {
         0 => String::from("0"),
         x if x == libc::EAGAIN => String::from("EAGAIN"),
         x if x == libc::EBUSY => String::from("EBUSY"),
+        x if x == libc::EDEADLK => String::from("EDEADLK"),
         x if x == libc::EINVAL => String::from("EINVAL"),
         x if x == libc::EPERM => String::from("EPERM"),
+        x if x == libc::ESRCH => String::from("ESRCH"),
         x if x == libc::ETIMEDOUT => String::from("ETIMEDOUT"),
         _ => rc.to_string(),
     }
@@ -5871,6 +5878,124 @@ unsafe fn free_pthread_mutex_ptr(ptr: *mut libc::pthread_mutex_t) {
 unsafe fn free_pthread_cond_ptr(ptr: *mut libc::pthread_cond_t) {
     // SAFETY: pointer was allocated via Box::into_raw in alloc_pthread_cond_ptr.
     unsafe { drop(Box::from_raw(ptr)) };
+}
+
+struct ThreadingForceNativeGuard {
+    previous: bool,
+}
+
+impl ThreadingForceNativeGuard {
+    fn new() -> Self {
+        Self {
+            previous: frankenlibc_abi::pthread_abi::pthread_threading_swap_force_native_for_tests(),
+        }
+    }
+}
+
+impl Drop for ThreadingForceNativeGuard {
+    fn drop(&mut self) {
+        frankenlibc_abi::pthread_abi::pthread_threading_restore_for_tests(self.previous);
+    }
+}
+
+unsafe extern "C" fn pthread_sleep_thread(arg: *mut c_void) -> *mut c_void {
+    let sleep_ms = arg as usize as u64;
+    if sleep_ms > 0 {
+        std::thread::sleep(std::time::Duration::from_millis(sleep_ms));
+    }
+    arg
+}
+
+fn create_managed_pthread(sleep_ms: usize) -> Result<libc::pthread_t, String> {
+    let mut thread = 0;
+    let rc = unsafe {
+        frankenlibc_abi::pthread_abi::pthread_create(
+            &mut thread as *mut libc::pthread_t,
+            std::ptr::null(),
+            Some(pthread_sleep_thread),
+            sleep_ms as *mut c_void,
+        )
+    };
+    if rc == 0 {
+        Ok(thread)
+    } else {
+        Err(format!(
+            "pthread_create failed: {}",
+            format_pthread_status(rc)
+        ))
+    }
+}
+
+fn join_managed_pthread(thread: libc::pthread_t) -> Result<(), String> {
+    let rc = unsafe { frankenlibc_abi::pthread_abi::pthread_join(thread, std::ptr::null_mut()) };
+    if rc == 0 {
+        Ok(())
+    } else {
+        Err(format!(
+            "pthread_join failed: {}",
+            format_pthread_status(rc)
+        ))
+    }
+}
+
+fn detach_managed_pthread(thread: libc::pthread_t) -> Result<(), String> {
+    let rc = unsafe { frankenlibc_abi::pthread_abi::pthread_detach(thread) };
+    if rc == 0 {
+        Ok(())
+    } else {
+        Err(format!(
+            "pthread_detach failed: {}",
+            format_pthread_status(rc)
+        ))
+    }
+}
+
+fn parse_clock_id_input(inputs: &serde_json::Value) -> Result<c_int, String> {
+    match inputs.get("clock_id") {
+        Some(serde_json::Value::String(value)) => match value.as_str() {
+            "CLOCK_REALTIME" => Ok(libc::CLOCK_REALTIME),
+            "CLOCK_MONOTONIC" => Ok(libc::CLOCK_MONOTONIC),
+            other => Err(format!("unsupported clock_id '{other}'")),
+        },
+        Some(serde_json::Value::Number(value)) => {
+            let raw = value
+                .as_i64()
+                .ok_or_else(|| String::from("clock_id number must fit in i64"))?;
+            i32::try_from(raw).map_err(|_| format!("clock_id out of range: {raw}"))
+        }
+        Some(_) => Err(String::from("clock_id must be string or integer")),
+        None => Ok(libc::CLOCK_REALTIME),
+    }
+}
+
+fn deadline_basis_clock(clock_id: c_int) -> libc::clockid_t {
+    if clock_id == libc::CLOCK_MONOTONIC {
+        libc::CLOCK_MONOTONIC
+    } else {
+        libc::CLOCK_REALTIME
+    }
+}
+
+fn build_timespec_from_fixture(
+    inputs: &serde_json::Value,
+    clock_id: c_int,
+    default_future_ms: i64,
+) -> Result<libc::timespec, String> {
+    if let Some(tv_nsec) = inputs.get("tv_nsec").and_then(serde_json::Value::as_i64) {
+        let tv_nsec =
+            c_long::try_from(tv_nsec).map_err(|_| format!("tv_nsec out of range: {tv_nsec}"))?;
+        return Ok(libc::timespec { tv_sec: 1, tv_nsec });
+    }
+
+    match parse_optional_string(inputs, "deadline")?.as_deref() {
+        Some("past") => Ok(libc::timespec {
+            tv_sec: 0,
+            tv_nsec: 0,
+        }),
+        Some("future_long") => clock_abstime_after(deadline_basis_clock(clock_id), 500),
+        Some("future") | None => clock_abstime_after(deadline_basis_clock(clock_id), default_future_ms),
+        Some(other) => Err(format!("unsupported deadline alias: {other}")),
+    }
 }
 
 fn clock_abstime_after(clock_id: libc::clockid_t, millis: i64) -> Result<libc::timespec, String> {
@@ -6686,6 +6811,477 @@ fn execute_pthread_cond_timedwait_case(
         output
     };
 
+    Ok(non_host_execution(impl_output))
+}
+
+fn execute_pthread_cond_clockwait_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    reset_pthread_cond_case_state();
+
+    let cond_alias =
+        parse_optional_string(inputs, "condvar")?.unwrap_or_else(|| String::from("initialized"));
+    let mutex_alias =
+        parse_optional_string(inputs, "mutex")?.unwrap_or_else(|| String::from("locked_by_caller"));
+    let abstime_alias = parse_optional_string(inputs, "abstime")?;
+    let clock_id = parse_clock_id_input(inputs)?;
+
+    let impl_output = if cond_alias == "NULL" {
+        let mutex = alloc_pthread_mutex_ptr();
+        init_pthread_mutex_for_case(mutex)?;
+        let output = unsafe {
+            let lock_rc = frankenlibc_abi::pthread_abi::pthread_mutex_lock(mutex);
+            let abstime = build_timespec_from_fixture(inputs, clock_id, 200)?;
+            let wait_rc = if lock_rc == 0 {
+                frankenlibc_abi::pthread_abi::pthread_cond_clockwait(
+                    std::ptr::null_mut(),
+                    mutex,
+                    clock_id,
+                    &abstime as *const libc::timespec,
+                )
+            } else {
+                lock_rc
+            };
+            let unlock_rc = if lock_rc == 0 {
+                frankenlibc_abi::pthread_abi::pthread_mutex_unlock(mutex)
+            } else {
+                0
+            };
+            if lock_rc == 0 && wait_rc == libc::EINVAL && unlock_rc == 0 {
+                String::from("EINVAL")
+            } else {
+                format!(
+                    "lock={};wait={};unlock={}",
+                    format_pthread_status(lock_rc),
+                    format_pthread_status(wait_rc),
+                    format_pthread_status(unlock_rc)
+                )
+            }
+        };
+        unsafe {
+            let _ = frankenlibc_abi::pthread_abi::pthread_mutex_destroy(mutex);
+            free_pthread_mutex_ptr(mutex);
+        }
+        output
+    } else if mutex_alias == "NULL" {
+        let cond = alloc_pthread_cond_ptr();
+        init_pthread_cond_for_case(cond, None)?;
+        let abstime = build_timespec_from_fixture(inputs, clock_id, 200)?;
+        let output = format_pthread_status(unsafe {
+            frankenlibc_abi::pthread_abi::pthread_cond_clockwait(
+                cond,
+                std::ptr::null_mut(),
+                clock_id,
+                &abstime as *const libc::timespec,
+            )
+        });
+        unsafe {
+            let _ = frankenlibc_abi::pthread_abi::pthread_cond_destroy(cond);
+            free_pthread_cond_ptr(cond);
+        }
+        output
+    } else {
+        let cond = alloc_pthread_cond_ptr();
+        let mutex = alloc_pthread_mutex_ptr();
+        init_pthread_mutex_for_case(mutex)?;
+        init_pthread_cond_for_case(cond, None)?;
+
+        let output = unsafe {
+            let lock_rc = frankenlibc_abi::pthread_abi::pthread_mutex_lock(mutex);
+            if lock_rc != 0 {
+                format!("lock_failed:{}", format_pthread_status(lock_rc))
+            } else {
+                let wait_rc = if abstime_alias.as_deref() == Some("NULL") {
+                    frankenlibc_abi::pthread_abi::pthread_cond_clockwait(
+                        cond,
+                        mutex,
+                        clock_id,
+                        std::ptr::null(),
+                    )
+                } else {
+                    let abstime = build_timespec_from_fixture(inputs, clock_id, 200)?;
+                    let notifier = if matches!(
+                        parse_optional_string(inputs, "deadline")?.as_deref(),
+                        Some("future") | Some("future_long")
+                    ) {
+                        Some(spawn_cond_notifier(cond as usize, 20, false))
+                    } else {
+                        None
+                    };
+                    let rc = frankenlibc_abi::pthread_abi::pthread_cond_clockwait(
+                        cond,
+                        mutex,
+                        clock_id,
+                        &abstime as *const libc::timespec,
+                    );
+                    let notify_rc = if let Some(handle) = notifier {
+                        handle
+                            .join()
+                            .map_err(|_| String::from("clockwait notifier thread panicked"))?
+                    } else {
+                        0
+                    };
+                    let unlock_rc = frankenlibc_abi::pthread_abi::pthread_mutex_unlock(mutex);
+                    if wait_rc == 0 && notify_rc == 0 && unlock_rc == 0 {
+                        return Ok(non_host_execution(String::from("0")));
+                    }
+                    if notify_rc == 0 && unlock_rc == 0 {
+                        return Ok(non_host_execution(format_pthread_status(wait_rc)));
+                    }
+                    return Ok(non_host_execution(format!(
+                        "wait={};notify={};unlock={}",
+                        format_pthread_status(wait_rc),
+                        format_pthread_status(notify_rc),
+                        format_pthread_status(unlock_rc)
+                    )));
+                };
+                let unlock_rc = frankenlibc_abi::pthread_abi::pthread_mutex_unlock(mutex);
+                if unlock_rc == 0 {
+                    format_pthread_status(wait_rc)
+                } else {
+                    format!(
+                        "wait={};unlock={}",
+                        format_pthread_status(wait_rc),
+                        format_pthread_status(unlock_rc)
+                    )
+                }
+            }
+        };
+
+        unsafe {
+            let _ = frankenlibc_abi::pthread_abi::pthread_cond_destroy(cond);
+            let _ = frankenlibc_abi::pthread_abi::pthread_mutex_destroy(mutex);
+            free_pthread_cond_ptr(cond);
+            free_pthread_mutex_ptr(mutex);
+        }
+        output
+    };
+
+    Ok(non_host_execution(impl_output))
+}
+
+fn execute_pthread_timedjoin_np_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let _guard = ThreadingForceNativeGuard::new();
+    let thread_alias = parse_string(inputs, "thread")?;
+    let abstime_alias = parse_optional_string(inputs, "abstime")?;
+
+    let impl_output = match thread_alias.as_str() {
+        "self" => {
+            let self_id = unsafe { frankenlibc_abi::pthread_abi::pthread_self() };
+            let abstime_storage;
+            let abstime_ptr = if abstime_alias.as_deref() == Some("NULL") {
+                std::ptr::null()
+            } else {
+                abstime_storage = build_timespec_from_fixture(inputs, libc::CLOCK_REALTIME, 500)?;
+                &abstime_storage as *const libc::timespec
+            };
+            let rc = unsafe {
+                frankenlibc_abi::pthread_abi::pthread_timedjoin_np(
+                    self_id,
+                    std::ptr::null_mut(),
+                    abstime_ptr,
+                )
+            };
+            format_pthread_status(rc)
+        }
+        "invalid_handle" => {
+            let thread = create_managed_pthread(0)?;
+            join_managed_pthread(thread)?;
+            let ts = build_timespec_from_fixture(inputs, libc::CLOCK_REALTIME, 500)?;
+            let rc = unsafe {
+                frankenlibc_abi::pthread_abi::pthread_timedjoin_np(
+                    thread,
+                    std::ptr::null_mut(),
+                    &ts as *const libc::timespec,
+                )
+            };
+            format_pthread_status(rc)
+        }
+        "detached" => {
+            let thread = create_managed_pthread(150)?;
+            detach_managed_pthread(thread)?;
+            let ts = build_timespec_from_fixture(inputs, libc::CLOCK_REALTIME, 500)?;
+            let rc = unsafe {
+                frankenlibc_abi::pthread_abi::pthread_timedjoin_np(
+                    thread,
+                    std::ptr::null_mut(),
+                    &ts as *const libc::timespec,
+                )
+            };
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            format_pthread_status(rc)
+        }
+        "running" | "running_long" => {
+            let sleep_ms = if thread_alias == "running_long" { 250 } else { 25 };
+            let thread = create_managed_pthread(sleep_ms)?;
+            let abstime_storage;
+            let abstime_ptr = if abstime_alias.as_deref() == Some("NULL") {
+                std::ptr::null()
+            } else {
+                abstime_storage = build_timespec_from_fixture(inputs, libc::CLOCK_REALTIME, 500)?;
+                &abstime_storage as *const libc::timespec
+            };
+            let rc = unsafe {
+                frankenlibc_abi::pthread_abi::pthread_timedjoin_np(
+                    thread,
+                    std::ptr::null_mut(),
+                    abstime_ptr,
+                )
+            };
+            if rc != 0 {
+                join_managed_pthread(thread)?;
+            }
+            format_pthread_status(rc)
+        }
+        other => return Err(format!("unsupported timedjoin thread alias: {other}")),
+    };
+
+    Ok(non_host_execution(impl_output))
+}
+
+fn execute_pthread_tryjoin_np_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let _guard = ThreadingForceNativeGuard::new();
+    let thread_alias = parse_string(inputs, "thread")?;
+
+    let impl_output = match thread_alias.as_str() {
+        "self" => {
+            let self_id = unsafe { frankenlibc_abi::pthread_abi::pthread_self() };
+            format_pthread_status(unsafe {
+                frankenlibc_abi::pthread_abi::pthread_tryjoin_np(self_id, std::ptr::null_mut())
+            })
+        }
+        "finished" => {
+            let thread = create_managed_pthread(0)?;
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+            loop {
+                let rc = unsafe {
+                    frankenlibc_abi::pthread_abi::pthread_tryjoin_np(thread, std::ptr::null_mut())
+                };
+                if rc == 0 {
+                    break String::from("0");
+                }
+                if rc != libc::EBUSY || std::time::Instant::now() >= deadline {
+                    break format_pthread_status(rc);
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+        }
+        "running" => {
+            let thread = create_managed_pthread(200)?;
+            let rc = unsafe {
+                frankenlibc_abi::pthread_abi::pthread_tryjoin_np(thread, std::ptr::null_mut())
+            };
+            join_managed_pthread(thread)?;
+            format_pthread_status(rc)
+        }
+        "detached" => {
+            let thread = create_managed_pthread(150)?;
+            detach_managed_pthread(thread)?;
+            let rc = unsafe {
+                frankenlibc_abi::pthread_abi::pthread_tryjoin_np(thread, std::ptr::null_mut())
+            };
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            format_pthread_status(rc)
+        }
+        "invalid_handle" => {
+            let thread = create_managed_pthread(0)?;
+            join_managed_pthread(thread)?;
+            format_pthread_status(unsafe {
+                frankenlibc_abi::pthread_abi::pthread_tryjoin_np(thread, std::ptr::null_mut())
+            })
+        }
+        other => return Err(format!("unsupported tryjoin thread alias: {other}")),
+    };
+
+    Ok(non_host_execution(impl_output))
+}
+
+fn execute_pthread_clockjoin_np_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let _guard = ThreadingForceNativeGuard::new();
+    let thread_alias = parse_string(inputs, "thread")?;
+    let clock_id = parse_clock_id_input(inputs)?;
+    let abstime_alias = parse_optional_string(inputs, "abstime")?;
+
+    let impl_output = match thread_alias.as_str() {
+        "self" => {
+            let self_id = unsafe { frankenlibc_abi::pthread_abi::pthread_self() };
+            let abstime_storage;
+            let abstime_ptr = if abstime_alias.as_deref() == Some("NULL") {
+                std::ptr::null()
+            } else {
+                abstime_storage = build_timespec_from_fixture(inputs, clock_id, 500)?;
+                &abstime_storage as *const libc::timespec
+            };
+            format_pthread_status(unsafe {
+                frankenlibc_abi::pthread_abi::pthread_clockjoin_np(
+                    self_id,
+                    std::ptr::null_mut(),
+                    clock_id,
+                    abstime_ptr,
+                )
+            })
+        }
+        "running" | "running_long" => {
+            let sleep_ms = if thread_alias == "running_long" { 250 } else { 25 };
+            let thread = create_managed_pthread(sleep_ms)?;
+            let abstime_storage;
+            let abstime_ptr = if abstime_alias.as_deref() == Some("NULL") {
+                std::ptr::null()
+            } else {
+                abstime_storage = build_timespec_from_fixture(inputs, clock_id, 500)?;
+                &abstime_storage as *const libc::timespec
+            };
+            let rc = unsafe {
+                frankenlibc_abi::pthread_abi::pthread_clockjoin_np(
+                    thread,
+                    std::ptr::null_mut(),
+                    clock_id,
+                    abstime_ptr,
+                )
+            };
+            if rc != 0 {
+                join_managed_pthread(thread)?;
+            }
+            format_pthread_status(rc)
+        }
+        "detached" => {
+            let thread = create_managed_pthread(150)?;
+            detach_managed_pthread(thread)?;
+            let ts = build_timespec_from_fixture(inputs, clock_id, 500)?;
+            let rc = unsafe {
+                frankenlibc_abi::pthread_abi::pthread_clockjoin_np(
+                    thread,
+                    std::ptr::null_mut(),
+                    clock_id,
+                    &ts as *const libc::timespec,
+                )
+            };
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            format_pthread_status(rc)
+        }
+        other => return Err(format!("unsupported clockjoin thread alias: {other}")),
+    };
+
+    Ok(non_host_execution(impl_output))
+}
+
+fn execute_pthread_getattr_np_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let _guard = ThreadingForceNativeGuard::new();
+    let thread_alias = parse_string(inputs, "thread")?;
+    let attr_alias = parse_optional_string(inputs, "attr")?;
+    let check = parse_optional_string(inputs, "check")?;
+
+    if attr_alias.as_deref() == Some("NULL") {
+        let self_id = unsafe { frankenlibc_abi::pthread_abi::pthread_self() };
+        let rc = unsafe {
+            frankenlibc_abi::pthread_abi::pthread_getattr_np(self_id, std::ptr::null_mut())
+        };
+        return Ok(non_host_execution(format_pthread_status(rc)));
+    }
+
+    let mut attr: libc::pthread_attr_t = unsafe { std::mem::zeroed() };
+    let impl_output = match thread_alias.as_str() {
+        "self" => {
+            let self_id = unsafe { frankenlibc_abi::pthread_abi::pthread_self() };
+            let rc = unsafe {
+                frankenlibc_abi::pthread_abi::pthread_getattr_np(
+                    self_id,
+                    &mut attr as *mut libc::pthread_attr_t,
+                )
+            };
+            if rc != 0 {
+                format_pthread_status(rc)
+            } else if check.as_deref() == Some("stack") {
+                let mut stack_addr = std::ptr::null_mut();
+                let mut stack_size = 0usize;
+                let stack_rc = unsafe {
+                    frankenlibc_abi::pthread_abi::pthread_attr_getstack(
+                        &attr as *const libc::pthread_attr_t,
+                        &mut stack_addr as *mut *mut c_void,
+                        &mut stack_size as *mut usize,
+                    )
+                };
+                if stack_rc == 0 && !stack_addr.is_null() && stack_size > 0 {
+                    String::from("valid_stack_info")
+                } else {
+                    format!(
+                        "getstack={};addr={:#x};size={}",
+                        format_pthread_status(stack_rc),
+                        stack_addr as usize,
+                        stack_size
+                    )
+                }
+            } else {
+                String::from("0")
+            }
+        }
+        "other_running" => {
+            let thread = create_managed_pthread(200)?;
+            let rc = unsafe {
+                frankenlibc_abi::pthread_abi::pthread_getattr_np(
+                    thread,
+                    &mut attr as *mut libc::pthread_attr_t,
+                )
+            };
+            join_managed_pthread(thread)?;
+            format_pthread_status(rc)
+        }
+        "detached" => {
+            let thread = create_managed_pthread(200)?;
+            detach_managed_pthread(thread)?;
+            let rc = unsafe {
+                frankenlibc_abi::pthread_abi::pthread_getattr_np(
+                    thread,
+                    &mut attr as *mut libc::pthread_attr_t,
+                )
+            };
+            let output = if rc != 0 {
+                format_pthread_status(rc)
+            } else if check.as_deref() == Some("detach_state") {
+                let mut detach_state = 0;
+                let state_rc = unsafe {
+                    frankenlibc_abi::pthread_abi::pthread_attr_getdetachstate(
+                        &attr as *const libc::pthread_attr_t,
+                        &mut detach_state as *mut c_int,
+                    )
+                };
+                if state_rc == 0 && detach_state == libc::PTHREAD_CREATE_DETACHED {
+                    String::from("PTHREAD_CREATE_DETACHED")
+                } else {
+                    format!(
+                        "getdetach={};state={}",
+                        format_pthread_status(state_rc),
+                        detach_state
+                    )
+                }
+            } else {
+                String::from("0")
+            };
+            std::thread::sleep(std::time::Duration::from_millis(250));
+            output
+        }
+        other => return Err(format!("unsupported getattr thread alias: {other}")),
+    };
+
+    let _ = unsafe { frankenlibc_abi::pthread_abi::pthread_attr_destroy(&mut attr) };
     Ok(non_host_execution(impl_output))
 }
 
