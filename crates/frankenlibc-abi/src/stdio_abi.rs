@@ -5884,24 +5884,30 @@ enum StreamType {
 }
 
 /// Classify a stream pointer for locking purposes.
+///
+/// Uses bloom filter pre-check (~10ns) for fast ownership detection.
 fn classify_stream_for_locking(stream: *mut c_void) -> StreamType {
     if stream.is_null() {
         return StreamType::Foreign;
     }
-    // Check for standard streams by sentinel or native pointer
-    let stdin_ptr = io_internal_abi::native_stdio_stream_ptr(libc::STDIN_FILENO);
-    let stdout_ptr = io_internal_abi::native_stdio_stream_ptr(libc::STDOUT_FILENO);
-    let stderr_ptr = io_internal_abi::native_stdio_stream_ptr(libc::STDERR_FILENO);
 
-    if stream == stdin_ptr || stream as usize == STDIN_SENTINEL {
-        return StreamType::NativeFile(0);
+    // Check for sentinels first (these are well-known addresses, not in bloom)
+    match stream as usize {
+        STDIN_SENTINEL => return StreamType::NativeFile(0),
+        STDOUT_SENTINEL => return StreamType::NativeFile(1),
+        STDERR_SENTINEL => return StreamType::NativeFile(2),
+        _ => {}
     }
-    if stream == stdout_ptr || stream as usize == STDOUT_SENTINEL {
-        return StreamType::NativeFile(1);
+
+    // Fast path: bloom filter pre-check (~10ns)
+    // If bloom says "definitely not ours", skip expensive lookups
+    if io_internal_abi::might_be_native_file(stream) {
+        // Bloom says "might be ours" - verify via registry lookup
+        if let Some(slot) = io_internal_abi::verify_native_file(stream) {
+            return StreamType::NativeFile(slot);
+        }
     }
-    if stream == stderr_ptr || stream as usize == STDERR_SENTINEL {
-        return StreamType::NativeFile(2);
-    }
+
     // Check if registered in our legacy StdioStream registry
     let id = canonical_stream_id(stream);
     if registry_contains_stream(id) {
@@ -5909,7 +5915,8 @@ fn classify_stream_for_locking(stream: *mut c_void) -> StreamType {
         // which doesn't have mutex support. Treat as no-op for locking.
         return StreamType::LegacyStdioStream;
     }
-    // Not our stream - must be a foreign glibc stream
+
+    // Not our stream - foreign glibc stream
     StreamType::Foreign
 }
 

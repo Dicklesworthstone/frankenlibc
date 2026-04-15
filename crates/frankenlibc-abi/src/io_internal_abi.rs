@@ -16,8 +16,11 @@ use std::ffi::{c_char, c_int, c_void};
 use std::ptr;
 use std::sync::atomic::{AtomicI8, Ordering};
 
+use std::collections::HashMap;
+
 use crate::runtime_policy;
 use crate::stdio_abi;
+use frankenlibc_membrane::bloom::PointerBloomFilter;
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 use parking_lot::ReentrantMutex;
 
@@ -1323,7 +1326,7 @@ static STDIO_CHAIN_INITIALIZED: std::sync::atomic::AtomicBool =
 
 /// Access the global stream registry.
 ///
-/// On first access, initializes the stdio chain links.
+/// On first access, initializes the stdio chain links and bloom filter.
 pub fn native_stream_registry() -> std::sync::MutexGuard<'static, NativeStreamRegistry> {
     let mut guard = NATIVE_STREAM_REGISTRY
         .lock()
@@ -1332,6 +1335,15 @@ pub fn native_stream_registry() -> std::sync::MutexGuard<'static, NativeStreamRe
     // Initialize stdio chain links on first access (after registry is in final location).
     if !STDIO_CHAIN_INITIALIZED.load(std::sync::atomic::Ordering::Acquire) {
         guard.ensure_stdio_chain_linked();
+
+        // Register stdin/stdout/stderr in the bloom filter for ownership tracking.
+        let stdin_ptr: *mut NativeFile = &mut guard.slots[0].file;
+        let stdout_ptr: *mut NativeFile = &mut guard.slots[1].file;
+        let stderr_ptr: *mut NativeFile = &mut guard.slots[2].file;
+        NATIVE_FILE_BLOOM.insert(stdin_ptr as usize);
+        NATIVE_FILE_BLOOM.insert(stdout_ptr as usize);
+        NATIVE_FILE_BLOOM.insert(stderr_ptr as usize);
+
         STDIO_CHAIN_INITIALIZED.store(true, std::sync::atomic::Ordering::Release);
     }
 
@@ -1373,6 +1385,199 @@ pub unsafe fn configure_native_stdio_stream(
     // SAFETY: caller guarantees `user_buf` (if non-null) has `size` bytes of storage.
     unsafe { file.configure_buffering(mode, user_buf, size) };
     true
+}
+
+// ---------------------------------------------------------------------------
+// Foreign FILE* adoption (bd-9chy.16)
+// ---------------------------------------------------------------------------
+
+/// Bloom filter for O(1) "is this FILE* ours?" pre-check.
+///
+/// All native FILE* pointers are inserted on creation. A `might_contain` returning
+/// false means the pointer is definitely foreign; true means it *might* be ours
+/// and requires a secondary lookup to confirm.
+static NATIVE_FILE_BLOOM: std::sync::LazyLock<PointerBloomFilter> =
+    std::sync::LazyLock::new(PointerBloomFilter::new);
+
+/// Maps foreign FILE* addresses to NativeFile slot indices after adoption.
+///
+/// When a foreign FILE* is adopted, we extract its fd, create a NativeFile,
+/// register it in NativeStreamRegistry, and record the mapping here so
+/// subsequent calls with the same foreign pointer find the adopted NativeFile.
+static FOREIGN_ADOPTION_MAP: std::sync::LazyLock<Mutex<HashMap<usize, usize>>> =
+    std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// Offset of `_fileno` field in glibc's `_IO_FILE` struct (glibc 2.34, x86_64).
+///
+/// This is the ONLY field we read from a foreign FILE* during adoption.
+/// Other fields may have different layouts across glibc versions.
+const GLIBC_FILENO_OFFSET: usize = 112; // 0x70
+
+/// Insert a native FILE* pointer into the bloom filter for ownership tracking.
+///
+/// Called when creating a new NativeFile (fopen, fdopen, etc.).
+pub fn register_native_file_ptr(ptr: *mut c_void) {
+    if !ptr.is_null() {
+        NATIVE_FILE_BLOOM.insert(ptr as usize);
+    }
+}
+
+/// Check if a FILE* might be ours (bloom filter pre-check).
+///
+/// Returns `false` if definitely foreign; `true` if possibly ours (verify further).
+/// Cost: ~10ns (well within strict-mode budget per bd-9chy.16).
+#[inline]
+pub fn might_be_native_file(ptr: *mut c_void) -> bool {
+    if ptr.is_null() {
+        return false;
+    }
+    NATIVE_FILE_BLOOM.might_contain(ptr as usize)
+}
+
+/// Look up a NativeFile slot index by foreign pointer (after adoption).
+///
+/// Returns `Some(slot_index)` if this foreign pointer was previously adopted.
+pub fn lookup_adopted_foreign(foreign_ptr: *mut c_void) -> Option<usize> {
+    if foreign_ptr.is_null() {
+        return None;
+    }
+    let map = FOREIGN_ADOPTION_MAP
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    map.get(&(foreign_ptr as usize)).copied()
+}
+
+/// Adopt a foreign FILE* into our native registry.
+///
+/// Extracts the fd from the foreign FILE* at offset 0x70 (_fileno), creates a
+/// NativeFile wrapper, registers it, and returns a pointer to the native file.
+///
+/// The foreign pointer is indexed so subsequent calls with the same pointer
+/// find the same NativeFile.
+///
+/// # Safety
+/// - `foreign_fp` must be a valid FILE* from host glibc (not ours, not null)
+/// - The FILE* must be open (have a valid fd at offset 0x70)
+pub unsafe fn adopt_foreign_file(foreign_fp: *mut c_void) -> *mut NativeFile {
+    if foreign_fp.is_null() {
+        return ptr::null_mut();
+    }
+
+    // Check if already adopted
+    if let Some(slot) = lookup_adopted_foreign(foreign_fp) {
+        let mut registry = native_stream_registry();
+        if let Some(file) = registry.get_mut(slot) {
+            return file as *mut NativeFile;
+        }
+        // Slot was freed, remove stale mapping
+        let mut map = FOREIGN_ADOPTION_MAP
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        map.remove(&(foreign_fp as usize));
+    }
+
+    // Extract fd from foreign FILE* at offset 0x70 (_fileno)
+    // SAFETY: Caller guarantees foreign_fp is a valid glibc FILE*.
+    let fd = unsafe {
+        let fileno_ptr = (foreign_fp as *const u8).add(GLIBC_FILENO_OFFSET) as *const c_int;
+        *fileno_ptr
+    };
+
+    if fd < 0 {
+        // Invalid fd - can't adopt
+        return ptr::null_mut();
+    }
+
+    // Determine buffering mode based on whether fd is a tty
+    // Use raw syscall to avoid recursion into our stdio layer
+    let buf_mode = {
+        let ret =
+            unsafe { libc::syscall(libc::SYS_ioctl, fd, libc::TCGETS, ptr::null::<c_void>()) };
+        if ret == 0 {
+            NativeFileBufMode::Line // TTY: line buffered
+        } else {
+            NativeFileBufMode::Full // Not TTY: fully buffered
+        }
+    };
+
+    // Create NativeFile with read+write flags (conservative; actual mode unknown)
+    let file = NativeFile::new(fd, file_flags::READ | file_flags::WRITE, buf_mode);
+
+    // Register in the native stream registry
+    let mut registry = native_stream_registry();
+    let slot = match registry.register(file) {
+        Some(s) => s,
+        None => return ptr::null_mut(), // Registry full
+    };
+
+    // Get pointer to the registered NativeFile
+    let native_ptr = match registry.get_mut(slot) {
+        Some(file) => file as *mut NativeFile,
+        None => return ptr::null_mut(),
+    };
+
+    // Register in bloom filter for ownership tracking
+    register_native_file_ptr(native_ptr as *mut c_void);
+
+    // Record the foreign -> native mapping
+    {
+        let mut map = FOREIGN_ADOPTION_MAP
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        map.insert(foreign_fp as usize, slot);
+    }
+
+    // TODO: Emit FOREIGN_FILE_ADOPTED evidence record (bd-9chy.4)
+    // evidence_ring::emit(EvidenceRecord::ForeignFileAdopted { foreign_fp, native_ptr, fd, slot });
+
+    native_ptr
+}
+
+/// Check if a FILE* is a native NativeFile (full verification).
+///
+/// Performs bloom filter pre-check, then verifies via registry lookup.
+/// Returns the slot index if native, None if foreign.
+pub fn verify_native_file(ptr: *mut c_void) -> Option<usize> {
+    if ptr.is_null() {
+        return None;
+    }
+
+    // Fast path: bloom filter says definitely not ours
+    if !might_be_native_file(ptr) {
+        return None;
+    }
+
+    // Check stdin/stdout/stderr first (slots 0/1/2)
+    let stdin_ptr = native_stdio_stream_ptr(libc::STDIN_FILENO);
+    let stdout_ptr = native_stdio_stream_ptr(libc::STDOUT_FILENO);
+    let stderr_ptr = native_stdio_stream_ptr(libc::STDERR_FILENO);
+
+    if ptr == stdin_ptr {
+        return Some(0);
+    }
+    if ptr == stdout_ptr {
+        return Some(1);
+    }
+    if ptr == stderr_ptr {
+        return Some(2);
+    }
+
+    // Check if it's an adopted foreign file
+    if let Some(slot) = lookup_adopted_foreign(ptr) {
+        return Some(slot);
+    }
+
+    // Check registry for dynamically opened files (slots 3+)
+    let registry = native_stream_registry();
+    for i in 3..STREAM_REGISTRY_CAPACITY {
+        if let Some(file) = registry.get(i)
+            && (file as *const NativeFile as *mut c_void) == ptr
+        {
+            return Some(i);
+        }
+    }
+
+    None
 }
 
 // ---------------------------------------------------------------------------
