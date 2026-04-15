@@ -16,6 +16,7 @@ use std::net::{Ipv4Addr, Ipv6Addr};
 use std::path::PathBuf;
 use std::ptr;
 
+use frankenlibc_core::syscall as raw_syscall;
 use frankenlibc_membrane::check_oracle::CheckStage;
 use frankenlibc_membrane::heal::{HealingAction, global_healing_policy};
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
@@ -596,7 +597,7 @@ fn udp_dns_query(
             tv_sec: 0,
             tv_nsec: 0,
         };
-        unsafe { libc::syscall(libc::SYS_clock_gettime, libc::CLOCK_MONOTONIC, &mut ts) };
+        let _ = unsafe { raw_syscall::sys_clock_gettime(libc::CLOCK_MONOTONIC, &mut ts as *mut _ as *mut u8) };
         h ^ (ts.tv_nsec as u16)
     };
 
@@ -616,36 +617,30 @@ fn udp_dns_query(
     } else {
         libc::AF_INET6
     };
-    let fd = unsafe {
-        libc::syscall(
-            libc::SYS_socket,
-            af,
-            libc::SOCK_DGRAM | libc::SOCK_CLOEXEC,
-            0,
-        ) as i32
+    let fd = match raw_syscall::sys_socket(af, libc::SOCK_DGRAM | libc::SOCK_CLOEXEC, 0) {
+        Ok(fd) => fd,
+        Err(_) => {
+            DNS_METRICS
+                .queries_send_error
+                .fetch_add(1, AtomicOrdering::Relaxed);
+            return None;
+        }
     };
-    if fd < 0 {
-        DNS_METRICS
-            .queries_send_error
-            .fetch_add(1, AtomicOrdering::Relaxed);
-        return None;
-    }
 
     // Set receive timeout
     let tv = libc::timeval {
         tv_sec: timeout_secs as i64,
         tv_usec: 0,
     };
-    unsafe {
-        libc::syscall(
-            libc::SYS_setsockopt,
+    let _ = unsafe {
+        raw_syscall::sys_setsockopt(
             fd,
             libc::SOL_SOCKET,
             libc::SO_RCVTIMEO,
-            &tv as *const libc::timeval,
+            &tv as *const libc::timeval as *const u8,
             core::mem::size_of::<libc::timeval>(),
-        );
-    }
+        )
+    };
 
     // Build destination sockaddr and send
     let sent = if nameserver.is_ipv4() {
@@ -662,16 +657,17 @@ fn udp_dns_query(
             sin_zero: [0; 8],
         };
         unsafe {
-            libc::syscall(
-                libc::SYS_sendto,
+            raw_syscall::sys_sendto(
                 fd,
                 send_buf.as_ptr(),
                 send_len,
-                0i32,
-                &sa as *const libc::sockaddr_in,
+                0,
+                &sa as *const libc::sockaddr_in as *const u8,
                 core::mem::size_of::<libc::sockaddr_in>(),
             )
         }
+        .map(|n| n as i64)
+        .unwrap_or(-1)
     } else {
         let octets = match nameserver {
             std::net::IpAddr::V6(v6) => v6.octets(),
@@ -682,20 +678,21 @@ fn udp_dns_query(
         sa.sin6_port = 53u16.to_be();
         sa.sin6_addr.s6_addr = octets;
         unsafe {
-            libc::syscall(
-                libc::SYS_sendto,
+            raw_syscall::sys_sendto(
                 fd,
                 send_buf.as_ptr(),
                 send_len,
-                0i32,
-                &sa as *const libc::sockaddr_in6,
+                0,
+                &sa as *const libc::sockaddr_in6 as *const u8,
                 core::mem::size_of::<libc::sockaddr_in6>(),
             )
         }
+        .map(|n| n as i64)
+        .unwrap_or(-1)
     };
 
     if sent < 0 {
-        unsafe { libc::syscall(libc::SYS_close, fd) };
+        let _ = raw_syscall::sys_close(fd);
         DNS_METRICS
             .queries_send_error
             .fetch_add(1, AtomicOrdering::Relaxed);
@@ -705,17 +702,18 @@ fn udp_dns_query(
     // Receive response
     let mut recv_buf = [0u8; DNS_MAX_UDP_SIZE];
     let received = unsafe {
-        libc::syscall(
-            libc::SYS_recvfrom,
+        raw_syscall::sys_recvfrom(
             fd,
             recv_buf.as_mut_ptr(),
             DNS_MAX_UDP_SIZE,
-            0i32,
-            core::ptr::null::<c_void>(),
-            core::ptr::null::<u32>(),
+            0,
+            core::ptr::null_mut(),
+            core::ptr::null_mut(),
         )
-    };
-    unsafe { libc::syscall(libc::SYS_close, fd) };
+    }
+    .map(|n| n as i64)
+    .unwrap_or(-1);
+    let _ = raw_syscall::sys_close(fd);
 
     if received < DNS_HEADER_SIZE as i64 {
         DNS_METRICS

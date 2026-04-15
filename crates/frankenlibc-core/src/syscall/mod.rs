@@ -130,7 +130,11 @@ pub const SYS_CLOCK_GETRES: usize = 229;
 #[cfg(target_arch = "x86_64")]
 pub const SYS_CLOCK_NANOSLEEP: usize = 230;
 #[cfg(target_arch = "x86_64")]
+pub const SYS_SENDTO: usize = 44;
+#[cfg(target_arch = "x86_64")]
 pub const SYS_RECVFROM: usize = 45;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_SETSOCKOPT: usize = 54;
 #[cfg(target_arch = "x86_64")]
 pub const SYS_FUTEX: usize = 202;
 #[cfg(target_arch = "x86_64")]
@@ -238,7 +242,11 @@ pub const SYS_CLOCK_GETRES: usize = 114;
 #[cfg(target_arch = "aarch64")]
 pub const SYS_CLOCK_NANOSLEEP: usize = 115;
 #[cfg(target_arch = "aarch64")]
+pub const SYS_SENDTO: usize = 206;
+#[cfg(target_arch = "aarch64")]
 pub const SYS_RECVFROM: usize = 207;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_SETSOCKOPT: usize = 208;
 #[cfg(target_arch = "aarch64")]
 pub const SYS_FUTEX: usize = 98;
 #[cfg(target_arch = "aarch64")]
@@ -889,6 +897,37 @@ pub unsafe fn sys_clock_nanosleep(
     syscall_result(ret).map(|_| ())
 }
 
+/// `sendto(fd, buf, len, flags, dest_addr, addrlen)` — send a message on a socket.
+///
+/// # Safety
+///
+/// `buf` must be a valid readable buffer of at least `len` bytes.
+/// `dest_addr` must be a valid pointer if `addrlen > 0`.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_sendto(
+    fd: i32,
+    buf: *const u8,
+    len: usize,
+    flags: i32,
+    dest_addr: *const u8,
+    addrlen: usize,
+) -> Result<isize, i32> {
+    // SAFETY: caller guarantees buffer and address validity.
+    let ret = unsafe {
+        raw::syscall6(
+            SYS_SENDTO,
+            fd as usize,
+            buf as usize,
+            len,
+            flags as usize,
+            dest_addr as usize,
+            addrlen,
+        )
+    };
+    syscall_result(ret).map(|v| v as isize)
+}
+
 /// `recvfrom(fd, buf, len, flags, src_addr, addrlen)` — receive a message from a socket.
 ///
 /// # Safety
@@ -918,6 +957,34 @@ pub unsafe fn sys_recvfrom(
         )
     };
     syscall_result(ret).map(|v| v as isize)
+}
+
+/// `setsockopt(fd, level, optname, optval, optlen)` — set socket options.
+///
+/// # Safety
+///
+/// `optval` must be a valid readable pointer of at least `optlen` bytes.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_setsockopt(
+    fd: i32,
+    level: i32,
+    optname: i32,
+    optval: *const u8,
+    optlen: usize,
+) -> Result<(), i32> {
+    // SAFETY: caller guarantees optval validity.
+    let ret = unsafe {
+        raw::syscall5(
+            SYS_SETSOCKOPT,
+            fd as usize,
+            level as usize,
+            optname as usize,
+            optval as usize,
+            optlen,
+        )
+    };
+    syscall_result(ret).map(|_| ())
 }
 
 /// `mlock(addr, len)` — lock a range of memory.
