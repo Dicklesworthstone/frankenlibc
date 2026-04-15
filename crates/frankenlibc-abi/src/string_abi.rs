@@ -22,6 +22,7 @@ use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 use crate::htm_fast_path::{HtmSite, HtmSiteSnapshot};
 use crate::malloc_abi::known_remaining;
 use crate::runtime_policy;
+use frankenlibc_core::syscall as raw_syscall;
 
 thread_local! {
     static STRING_MEMBRANE_DEPTH: Cell<u32> = const { Cell::new(0) };
@@ -5602,15 +5603,8 @@ pub unsafe extern "C" fn psignal(sig: c_int, s: *const c_char) {
     msg.extend_from_slice(name);
     msg.push(b'\n');
 
-    // Write to stderr via raw syscall
-    unsafe {
-        libc::syscall(
-            libc::SYS_write,
-            2i64, // STDERR_FILENO
-            msg.as_ptr() as i64,
-            msg.len() as i64,
-        );
-    }
+    // Write to stderr via native raw syscall (bd-h5x)
+    let _ = unsafe { raw_syscall::sys_write(2, msg.as_ptr(), msg.len()) };
 }
 
 // ---------------------------------------------------------------------------
