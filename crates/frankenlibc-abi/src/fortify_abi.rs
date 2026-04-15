@@ -4,7 +4,10 @@
 //! instead of the bare libc functions. Each wrapper checks that `destlen` is
 //! large enough, aborting via `__chk_fail` if not.
 
-use std::ffi::{c_char, c_int, c_long, c_void};
+use std::ffi::{c_char, c_int, c_void};
+use std::os::raw::c_long;
+
+use frankenlibc_core::syscall as raw_syscall;
 
 type WcharT = c_int; // wchar_t is int32 on Linux/x86_64
 type NfdsT = u64; // nfds_t on x86_64
@@ -473,7 +476,13 @@ pub unsafe extern "C" fn __pread_chk(
     if buflen != usize::MAX && nbytes > buflen {
         unsafe { __chk_fail() }
     }
-    unsafe { libc::syscall(libc::SYS_pread64, fd, buf, nbytes, offset) as isize }
+    match unsafe { raw_syscall::sys_pread64(fd, buf as *mut u8, nbytes, offset) } {
+        Ok(n) => n as isize,
+        Err(e) => {
+            unsafe { crate::errno_abi::set_abi_errno(e) };
+            -1
+        }
+    }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -487,7 +496,13 @@ pub unsafe extern "C" fn __pread64_chk(
     if buflen != usize::MAX && nbytes > buflen {
         unsafe { __chk_fail() }
     }
-    unsafe { libc::syscall(libc::SYS_pread64, fd, buf, nbytes, offset) as isize }
+    match unsafe { raw_syscall::sys_pread64(fd, buf as *mut u8, nbytes, offset) } {
+        Ok(n) => n as isize,
+        Err(e) => {
+            unsafe { crate::errno_abi::set_abi_errno(e) };
+            -1
+        }
+    }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -502,16 +517,21 @@ pub unsafe extern "C" fn __recv_chk(
         unsafe { __chk_fail() }
     }
     // recv is recvfrom with null src_addr/addrlen
-    unsafe {
-        libc::syscall(
-            libc::SYS_recvfrom,
+    match unsafe {
+        raw_syscall::sys_recvfrom(
             fd,
-            buf,
+            buf as *mut u8,
             len,
             flags,
-            std::ptr::null::<c_void>(),
-            std::ptr::null::<u32>(),
-        ) as isize
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        )
+    } {
+        Ok(n) => n,
+        Err(e) => {
+            unsafe { crate::errno_abi::set_abi_errno(e) };
+            -1
+        }
     }
 }
 
@@ -528,7 +548,15 @@ pub unsafe extern "C" fn __recvfrom_chk(
     if buflen != usize::MAX && len > buflen {
         unsafe { __chk_fail() }
     }
-    unsafe { libc::syscall(libc::SYS_recvfrom, fd, buf, len, flags, addr, addrlen) as isize }
+    match unsafe {
+        raw_syscall::sys_recvfrom(fd, buf as *mut u8, len, flags, addr as *mut u8, addrlen)
+    } {
+        Ok(n) => n,
+        Err(e) => {
+            unsafe { crate::errno_abi::set_abi_errno(e) };
+            -1
+        }
+    }
 }
 
 // ── Path/name operations ───────────────────────────────────────────────────
@@ -1043,20 +1071,44 @@ pub unsafe extern "C" fn __vsyslog_chk(
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __open_2(path: *const c_char, oflag: c_int) -> c_int {
     // _2 variants: O_CREAT not set, so mode=0 is ignored
-    unsafe { libc::syscall(libc::SYS_open, path, oflag, 0) as c_int }
+    match unsafe { raw_syscall::sys_open(path as *const u8, oflag, 0) } {
+        Ok(fd) => fd,
+        Err(e) => {
+            unsafe { crate::errno_abi::set_abi_errno(e) };
+            -1
+        }
+    }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __open64_2(path: *const c_char, oflag: c_int) -> c_int {
-    unsafe { libc::syscall(libc::SYS_open, path, oflag | libc::O_LARGEFILE, 0) as c_int }
+    match unsafe { raw_syscall::sys_open(path as *const u8, oflag | libc::O_LARGEFILE, 0) } {
+        Ok(fd) => fd,
+        Err(e) => {
+            unsafe { crate::errno_abi::set_abi_errno(e) };
+            -1
+        }
+    }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __openat_2(dirfd: c_int, path: *const c_char, oflag: c_int) -> c_int {
-    unsafe { libc::syscall(libc::SYS_openat, dirfd, path, oflag, 0) as c_int }
+    match unsafe { raw_syscall::sys_openat(dirfd, path as *const u8, oflag, 0) } {
+        Ok(fd) => fd,
+        Err(e) => {
+            unsafe { crate::errno_abi::set_abi_errno(e) };
+            -1
+        }
+    }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __openat64_2(dirfd: c_int, path: *const c_char, oflag: c_int) -> c_int {
-    unsafe { libc::syscall(libc::SYS_openat, dirfd, path, oflag | libc::O_LARGEFILE, 0) as c_int }
+    match unsafe { raw_syscall::sys_openat(dirfd, path as *const u8, oflag | libc::O_LARGEFILE, 0) } {
+        Ok(fd) => fd,
+        Err(e) => {
+            unsafe { crate::errno_abi::set_abi_errno(e) };
+            -1
+        }
+    }
 }

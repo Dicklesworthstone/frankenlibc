@@ -130,6 +130,8 @@ pub const SYS_CLOCK_GETRES: usize = 229;
 #[cfg(target_arch = "x86_64")]
 pub const SYS_CLOCK_NANOSLEEP: usize = 230;
 #[cfg(target_arch = "x86_64")]
+pub const SYS_RECVFROM: usize = 45;
+#[cfg(target_arch = "x86_64")]
 pub const SYS_FUTEX: usize = 202;
 #[cfg(target_arch = "x86_64")]
 pub const SYS_SET_TID_ADDRESS: usize = 218;
@@ -236,6 +238,8 @@ pub const SYS_CLOCK_GETRES: usize = 114;
 #[cfg(target_arch = "aarch64")]
 pub const SYS_CLOCK_NANOSLEEP: usize = 115;
 #[cfg(target_arch = "aarch64")]
+pub const SYS_RECVFROM: usize = 207;
+#[cfg(target_arch = "aarch64")]
 pub const SYS_FUTEX: usize = 98;
 #[cfg(target_arch = "aarch64")]
 pub const SYS_SET_TID_ADDRESS: usize = 96;
@@ -296,6 +300,21 @@ pub unsafe fn sys_write(fd: i32, buf: *const u8, count: usize) -> Result<usize, 
     // SAFETY: caller guarantees buf validity and count bounds.
     let ret = unsafe { raw::syscall3(SYS_WRITE, fd as usize, buf as usize, count) };
     syscall_result(ret)
+}
+
+/// `open(pathname, flags, mode)` — open a file.
+///
+/// # Safety
+///
+/// `pathname` must be a valid null-terminated C string.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_open(pathname: *const u8, flags: i32, mode: u32) -> Result<i32, i32> {
+    // SAFETY: caller guarantees pathname is a valid C string.
+    let ret = unsafe {
+        raw::syscall3(SYS_OPEN, pathname as usize, flags as usize, mode as usize)
+    };
+    syscall_result(ret).map(|v| v as i32)
 }
 
 /// `openat(dirfd, pathname, flags, mode)` — open a file relative to a directory fd.
@@ -855,6 +874,37 @@ pub unsafe fn sys_clock_nanosleep(
         )
     };
     syscall_result(ret).map(|_| ())
+}
+
+/// `recvfrom(fd, buf, len, flags, src_addr, addrlen)` — receive a message from a socket.
+///
+/// # Safety
+///
+/// `buf` must be a valid writable buffer of at least `len` bytes.
+/// `src_addr` and `addrlen` may be null, or must be valid pointers.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_recvfrom(
+    fd: i32,
+    buf: *mut u8,
+    len: usize,
+    flags: i32,
+    src_addr: *mut u8,
+    addrlen: *mut u32,
+) -> Result<isize, i32> {
+    // SAFETY: caller guarantees buffer validity.
+    let ret = unsafe {
+        raw::syscall6(
+            SYS_RECVFROM,
+            fd as usize,
+            buf as usize,
+            len,
+            flags as usize,
+            src_addr as usize,
+            addrlen as usize,
+        )
+    };
+    syscall_result(ret).map(|v| v as isize)
 }
 
 /// `mlock(addr, len)` — lock a range of memory.
