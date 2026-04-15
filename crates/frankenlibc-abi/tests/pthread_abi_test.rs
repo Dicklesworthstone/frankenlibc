@@ -3437,6 +3437,26 @@ fn timedjoin_np_times_out_before_thread_exit() {
 }
 
 #[test]
+fn timedjoin_np_succeeds_before_deadline() {
+    unsafe {
+        let _guard = ThreadingForceNativeGuard {
+            previous: pthread_threading_swap_force_native_for_tests(),
+        };
+        let mut thr: libc::pthread_t = 0;
+        assert_eq!(
+            pthread_create(&mut thr, ptr::null(), Some(sleepy_thread), ptr::null_mut()),
+            0
+        );
+
+        let mut ts: libc::timespec = std::mem::zeroed();
+        libc::clock_gettime(libc::CLOCK_REALTIME, &mut ts);
+        ts.tv_sec += 1;
+
+        assert_eq!(pthread_timedjoin_np(thr, ptr::null_mut(), &ts), 0);
+    }
+}
+
+#[test]
 fn timedjoin_np_rejects_invalid_abstime_nanoseconds() {
     unsafe {
         let _guard = ThreadingForceNativeGuard {
@@ -3547,6 +3567,29 @@ fn clockjoin_np_rejects_invalid_clockid() {
             libc::EINVAL
         );
         assert_eq!(pthread_join(thr, ptr::null_mut()), 0);
+    }
+}
+
+#[test]
+fn clockjoin_np_monotonic_succeeds_before_deadline() {
+    unsafe {
+        let _guard = ThreadingForceNativeGuard {
+            previous: pthread_threading_swap_force_native_for_tests(),
+        };
+        let mut thr: libc::pthread_t = 0;
+        assert_eq!(
+            pthread_create(&mut thr, ptr::null(), Some(sleepy_thread), ptr::null_mut()),
+            0
+        );
+
+        let mut ts: libc::timespec = std::mem::zeroed();
+        libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut ts);
+        ts.tv_sec += 1;
+
+        assert_eq!(
+            pthread_clockjoin_np(thr, ptr::null_mut(), libc::CLOCK_MONOTONIC, &ts),
+            0
+        );
     }
 }
 

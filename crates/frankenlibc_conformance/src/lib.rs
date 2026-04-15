@@ -5950,6 +5950,28 @@ fn detach_managed_pthread(thread: libc::pthread_t) -> Result<(), String> {
     }
 }
 
+fn wait_for_detached_pthread_exit(thread: libc::pthread_t) -> Result<(), String> {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    loop {
+        let rc = unsafe { frankenlibc_abi::pthread_abi::pthread_kill(thread, 0) };
+        if rc == libc::ESRCH {
+            return Ok(());
+        }
+        if rc != 0 {
+            return Err(format!(
+                "pthread_kill probe failed: {}",
+                format_pthread_status(rc)
+            ));
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err(String::from(
+                "timed out waiting for detached pthread to exit",
+            ));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+}
+
 fn parse_clock_id_input(inputs: &serde_json::Value) -> Result<c_int, String> {
     match inputs.get("clock_id") {
         Some(serde_json::Value::String(value)) => match value.as_str() {
@@ -7016,7 +7038,7 @@ fn execute_pthread_timedjoin_np_case(
                     &ts as *const libc::timespec,
                 )
             };
-            std::thread::sleep(std::time::Duration::from_millis(200));
+            wait_for_detached_pthread_exit(thread)?;
             format_pthread_status(rc)
         }
         "running" | "running_long" => {
@@ -7096,7 +7118,7 @@ fn execute_pthread_tryjoin_np_case(
             let rc = unsafe {
                 frankenlibc_abi::pthread_abi::pthread_tryjoin_np(thread, std::ptr::null_mut())
             };
-            std::thread::sleep(std::time::Duration::from_millis(200));
+            wait_for_detached_pthread_exit(thread)?;
             format_pthread_status(rc)
         }
         "invalid_handle" => {
@@ -7180,7 +7202,7 @@ fn execute_pthread_clockjoin_np_case(
                     &ts as *const libc::timespec,
                 )
             };
-            std::thread::sleep(std::time::Duration::from_millis(200));
+            wait_for_detached_pthread_exit(thread)?;
             format_pthread_status(rc)
         }
         other => return Err(format!("unsupported clockjoin thread alias: {other}")),
@@ -7285,7 +7307,7 @@ fn execute_pthread_getattr_np_case(
             } else {
                 String::from("0")
             };
-            std::thread::sleep(std::time::Duration::from_millis(250));
+            wait_for_detached_pthread_exit(thread)?;
             output
         }
         other => return Err(format!("unsupported getattr thread alias: {other}")),

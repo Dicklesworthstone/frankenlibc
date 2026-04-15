@@ -1355,10 +1355,11 @@ fn absolute_timespec_valid(abstime: *const libc::timespec) -> bool {
 /// Linux `FUTEX_WAIT` expects a relative timeout, so convert the caller's
 /// absolute pthread-style deadline to a per-call relative duration.
 #[cfg(target_os = "linux")]
-fn futex_wait_timed_private(
+fn futex_wait_timed(
     word: &AtomicI32,
     expected: i32,
     abstime: *const libc::timespec,
+    private: bool,
 ) -> c_int {
     let now = match clock_gettime_checked(libc::CLOCK_REALTIME) {
         Ok(now) => now,
@@ -1384,7 +1385,12 @@ fn futex_wait_timed_private(
         syscall4(
             libc::SYS_futex as usize,
             word as *const AtomicI32 as *const i32 as usize,
-            (libc::FUTEX_WAIT | libc::FUTEX_PRIVATE_FLAG) as usize,
+            (libc::FUTEX_WAIT as usize)
+                | if private {
+                    libc::FUTEX_PRIVATE_FLAG as usize
+                } else {
+                    0
+                },
             expected as usize,
             &rel as *const libc::timespec as usize,
         )
@@ -1396,6 +1402,24 @@ fn futex_wait_timed_private(
             -1
         }
     }
+}
+
+#[cfg(target_os = "linux")]
+fn futex_wait_timed_private(
+    word: &AtomicI32,
+    expected: i32,
+    abstime: *const libc::timespec,
+) -> c_int {
+    futex_wait_timed(word, expected, abstime, true)
+}
+
+#[cfg(target_os = "linux")]
+fn futex_wait_timed_shared(
+    word: &AtomicI32,
+    expected: i32,
+    abstime: *const libc::timespec,
+) -> c_int {
+    futex_wait_timed(word, expected, abstime, false)
 }
 
 #[allow(unsafe_code)]
@@ -5902,7 +5926,8 @@ pub unsafe extern "C" fn pthread_timedjoin_np(
         // Futex wait on the tid field with timeout.
         // SAFETY: handle_ptr is valid (from registry lookup above).
         let tid_ptr = unsafe { &(*handle_ptr).tid };
-        let ret = futex_wait_timed_private(tid_ptr, tid, abstime);
+        // CLONE_CHILD_CLEARTID wakes joiners with a non-private futex op.
+        let ret = futex_wait_timed_shared(tid_ptr, tid, abstime);
         if ret < 0 {
             let errno = unsafe { std::ptr::read_volatile(crate::errno_abi::__errno_location()) };
             if errno == libc::ETIMEDOUT {
