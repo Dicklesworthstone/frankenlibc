@@ -1494,8 +1494,8 @@ unsafe extern "C" fn trampoline_read(fp: *mut c_void, buf: *mut c_void, n: isize
     if fd < 0 {
         return -1;
     }
-    // Use raw read() syscall, not buffered fread
-    unsafe { libc::read(fd, buf, n as usize) }
+    // Use the raw-syscall-backed unistd helper, not buffered stdio.
+    unsafe { crate::unistd_abi::sys_read_fd(fd, buf, n as usize) }
 }
 
 /// Trampoline for `__write`: low-level write to fd.
@@ -1511,8 +1511,8 @@ unsafe extern "C" fn trampoline_write(fp: *mut c_void, buf: *const c_void, n: is
     if fd < 0 {
         return -1;
     }
-    // Use raw write() syscall, not buffered fwrite
-    unsafe { libc::write(fd, buf, n as usize) }
+    // Use the raw-syscall-backed unistd helper, not buffered stdio.
+    unsafe { crate::unistd_abi::sys_write_fd(fd, buf, n as usize) }
 }
 
 /// Trampoline for `__seek`: low-level lseek on fd.
@@ -1523,8 +1523,8 @@ unsafe extern "C" fn trampoline_seek(fp: *mut c_void, offset: i64, dir: c_int) -
     if fd < 0 {
         return -1;
     }
-    // Use raw lseek() syscall, not buffered fseeko
-    unsafe { libc::lseek(fd, offset, dir) }
+    // Route through the raw-syscall-backed lseek implementation.
+    unsafe { crate::unistd_abi::lseek(fd, offset, dir) }
 }
 
 /// Trampoline for `__close`: close underlying fd.
@@ -1537,8 +1537,8 @@ unsafe extern "C" fn trampoline_close(fp: *mut c_void) -> c_int {
     if fd < 0 {
         return -1;
     }
-    // Use raw close() syscall, not fclose
-    unsafe { libc::close(fd) }
+    // Only close the raw fd; do not recurse through fclose.
+    unsafe { crate::unistd_abi::close(fd) }
 }
 
 /// Trampoline for `__stat`: fstat underlying fd.
