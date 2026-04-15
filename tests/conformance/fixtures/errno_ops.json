@@ -1,8 +1,9 @@
 {
   "version": "v1",
   "family": "errno_ops",
-  "captured_at": "2026-02-13T00:00:00Z",
-  "description": "Mode-specific parity fixtures for errno operations (__errno_location). Implemented. Strict: host-glibc parity. Hardened: same behavior.",
+  "captured_at": "2026-04-15T00:50:00Z",
+  "description": "Comprehensive errno operations conformance: __errno_location, strerror, strerror_r, perror. POSIX.1-2017 + glibc extensions.",
+  "spec_reference": "POSIX.1-2017 errno.h, C11 7.5",
   "cases": [
     {
       "name": "errno_location_nonnull_strict",
@@ -12,7 +13,7 @@
       "expected_output": "NON_NULL_PTR",
       "expected_errno": 0,
       "mode": "strict",
-      "note": "Must return non-null pointer to thread-local errno"
+      "notes": "Must return non-null pointer to thread-local errno"
     },
     {
       "name": "errno_initially_zero_strict",
@@ -22,7 +23,7 @@
       "expected_output": "0",
       "expected_errno": 0,
       "mode": "strict",
-      "note": "errno should be 0 at start of well-formed program"
+      "notes": "errno should be 0 at start of well-formed program"
     },
     {
       "name": "errno_location_nonnull_hardened",
@@ -31,7 +32,210 @@
       "inputs": {},
       "expected_output": "NON_NULL_PTR",
       "expected_errno": 0,
-      "mode": "hardened"
+      "mode": "hardened",
+      "notes": "Hardened mode must also return valid errno pointer"
+    },
+    {
+      "name": "errno_set_read_roundtrip",
+      "function": "__errno_location",
+      "spec_section": "POSIX errno",
+      "inputs": { "set_value": 22, "then_read": true },
+      "expected_output": "22",
+      "expected_errno": 22,
+      "mode": "both",
+      "notes": "Setting errno via *__errno_location() = EINVAL must be readable back"
+    },
+    {
+      "name": "errno_thread_local_isolation",
+      "function": "__errno_location",
+      "spec_section": "POSIX errno thread-safety",
+      "inputs": { "thread_isolation_test": true },
+      "expected_output": "ISOLATED",
+      "expected_errno": 0,
+      "mode": "both",
+      "notes": "Each thread has its own errno - setting in one thread doesn't affect another"
+    },
+    {
+      "name": "strerror_einval",
+      "function": "strerror",
+      "spec_section": "POSIX.1-2017 strerror",
+      "inputs": { "errnum": 22 },
+      "expected_output": "Invalid argument",
+      "expected_errno": 0,
+      "mode": "both",
+      "notes": "EINVAL (22) must return 'Invalid argument' message"
+    },
+    {
+      "name": "strerror_enoent",
+      "function": "strerror",
+      "spec_section": "POSIX.1-2017 strerror",
+      "inputs": { "errnum": 2 },
+      "expected_output": "No such file or directory",
+      "expected_errno": 0,
+      "mode": "both",
+      "notes": "ENOENT (2) must return standard message"
+    },
+    {
+      "name": "strerror_eacces",
+      "function": "strerror",
+      "spec_section": "POSIX.1-2017 strerror",
+      "inputs": { "errnum": 13 },
+      "expected_output": "Permission denied",
+      "expected_errno": 0,
+      "mode": "both",
+      "notes": "EACCES (13) must return standard message"
+    },
+    {
+      "name": "strerror_eexist",
+      "function": "strerror",
+      "spec_section": "POSIX.1-2017 strerror",
+      "inputs": { "errnum": 17 },
+      "expected_output": "File exists",
+      "expected_errno": 0,
+      "mode": "both",
+      "notes": "EEXIST (17) must return standard message"
+    },
+    {
+      "name": "strerror_enosys",
+      "function": "strerror",
+      "spec_section": "POSIX.1-2017 strerror",
+      "inputs": { "errnum": 38 },
+      "expected_output": "Function not implemented",
+      "expected_errno": 0,
+      "mode": "both",
+      "notes": "ENOSYS (38) must return standard message"
+    },
+    {
+      "name": "strerror_etimedout",
+      "function": "strerror",
+      "spec_section": "POSIX.1-2017 strerror",
+      "inputs": { "errnum": 110 },
+      "expected_output": "Connection timed out",
+      "expected_errno": 0,
+      "mode": "both",
+      "notes": "ETIMEDOUT (110) must return standard message"
+    },
+    {
+      "name": "strerror_zero",
+      "function": "strerror",
+      "spec_section": "POSIX.1-2017 strerror",
+      "inputs": { "errnum": 0 },
+      "expected_output": "Success",
+      "expected_errno": 0,
+      "mode": "both",
+      "notes": "Error 0 should return 'Success'"
+    },
+    {
+      "name": "strerror_unknown_positive",
+      "function": "strerror",
+      "spec_section": "POSIX.1-2017 strerror",
+      "inputs": { "errnum": 9999 },
+      "expected_output": "Unknown error 9999",
+      "expected_errno": 22,
+      "mode": "both",
+      "notes": "Unknown positive error returns formatted message, may set errno to EINVAL"
+    },
+    {
+      "name": "strerror_negative",
+      "function": "strerror",
+      "spec_section": "POSIX.1-2017 strerror",
+      "inputs": { "errnum": -1 },
+      "expected_output": "Unknown error -1",
+      "expected_errno": 22,
+      "mode": "both",
+      "notes": "Negative error number returns formatted message, may set errno to EINVAL"
+    },
+    {
+      "name": "strerror_r_success",
+      "function": "strerror_r",
+      "spec_section": "POSIX.1-2017 strerror_r (XSI)",
+      "inputs": { "errnum": 22, "buflen": 256 },
+      "expected_output": "Invalid argument",
+      "expected_return": 0,
+      "expected_errno": 0,
+      "mode": "both",
+      "notes": "XSI strerror_r: returns 0 on success, fills buffer with message"
+    },
+    {
+      "name": "strerror_r_buffer_too_small",
+      "function": "strerror_r",
+      "spec_section": "POSIX.1-2017 strerror_r (XSI)",
+      "inputs": { "errnum": 22, "buflen": 5 },
+      "expected_output": "TRUNCATED_OR_ERANGE",
+      "expected_return": 34,
+      "expected_errno": 34,
+      "mode": "both",
+      "notes": "Buffer too small: returns ERANGE (34)"
+    },
+    {
+      "name": "strerror_r_null_buffer",
+      "function": "strerror_r",
+      "spec_section": "POSIX.1-2017 strerror_r (XSI)",
+      "inputs": { "errnum": 22, "buf": null },
+      "expected_return": 22,
+      "expected_errno": 22,
+      "mode": "both",
+      "notes": "NULL buffer: returns EINVAL (22)"
+    },
+    {
+      "name": "strerror_l_einval",
+      "function": "strerror_l",
+      "spec_section": "POSIX.1-2017 strerror_l",
+      "inputs": { "errnum": 22, "locale": "C" },
+      "expected_output": "Invalid argument",
+      "expected_errno": 0,
+      "mode": "both",
+      "notes": "Locale-specific strerror with C locale returns standard message"
+    },
+    {
+      "name": "perror_prefix",
+      "function": "perror",
+      "spec_section": "POSIX.1-2017 perror",
+      "inputs": { "s": "test_op", "errno_preset": 2 },
+      "expected_output": "test_op: No such file or directory",
+      "expected_errno": 2,
+      "mode": "both",
+      "notes": "perror outputs 's: <error message>' to stderr"
+    },
+    {
+      "name": "perror_null_prefix",
+      "function": "perror",
+      "spec_section": "POSIX.1-2017 perror",
+      "inputs": { "s": null, "errno_preset": 13 },
+      "expected_output": "Permission denied",
+      "expected_errno": 13,
+      "mode": "both",
+      "notes": "perror with NULL prefix outputs just the error message"
+    },
+    {
+      "name": "perror_empty_prefix",
+      "function": "perror",
+      "spec_section": "POSIX.1-2017 perror",
+      "inputs": { "s": "", "errno_preset": 17 },
+      "expected_output": "File exists",
+      "expected_errno": 17,
+      "mode": "both",
+      "notes": "perror with empty string prefix outputs just the error message"
+    },
+    {
+      "name": "errno_macro_all_standard_values",
+      "function": "errno_constants",
+      "spec_section": "POSIX.1-2017 errno.h",
+      "inputs": { "verify_constants": true },
+      "expected_output": "ALL_DEFINED",
+      "expected_errno": 0,
+      "mode": "both",
+      "notes": "All standard POSIX errno constants must be defined: EPERM(1), ENOENT(2), ESRCH(3), EINTR(4), EIO(5), ENXIO(6), E2BIG(7), ENOEXEC(8), EBADF(9), ECHILD(10), EAGAIN(11), ENOMEM(12), EACCES(13), EFAULT(14), ENOTBLK(15), EBUSY(16), EEXIST(17), EXDEV(18), ENODEV(19), ENOTDIR(20), EISDIR(21), EINVAL(22)"
+    },
+    {
+      "name": "errno_preserved_across_successful_call",
+      "function": "errno_preservation",
+      "spec_section": "POSIX errno semantics",
+      "inputs": { "preset_errno": 42, "successful_call": "strlen" },
+      "expected_output": "42",
+      "expected_errno": 42,
+      "mode": "both",
+      "notes": "Successful library calls must not modify errno. Pre-set errno=42, call strlen(), errno must still be 42."
     }
   ]
 }
