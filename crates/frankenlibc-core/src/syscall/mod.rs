@@ -136,6 +136,32 @@ pub const SYS_RECVFROM: usize = 45;
 #[cfg(target_arch = "x86_64")]
 pub const SYS_SETSOCKOPT: usize = 54;
 #[cfg(target_arch = "x86_64")]
+pub const SYS_READV: usize = 19;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_WRITEV: usize = 20;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_SENDFILE: usize = 40;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_SPLICE: usize = 275;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_TEE: usize = 276;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_VMSPLICE: usize = 278;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_DUP3: usize = 292;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_PREADV: usize = 295;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_PWRITEV: usize = 296;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_MEMFD_CREATE: usize = 319;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_COPY_FILE_RANGE: usize = 326;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_PREADV2: usize = 327;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_PWRITEV2: usize = 328;
+#[cfg(target_arch = "x86_64")]
 pub const SYS_FUTEX: usize = 202;
 #[cfg(target_arch = "x86_64")]
 pub const SYS_SET_TID_ADDRESS: usize = 218;
@@ -247,6 +273,32 @@ pub const SYS_SENDTO: usize = 206;
 pub const SYS_RECVFROM: usize = 207;
 #[cfg(target_arch = "aarch64")]
 pub const SYS_SETSOCKOPT: usize = 208;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_READV: usize = 65;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_WRITEV: usize = 66;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_PREADV: usize = 69;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_PWRITEV: usize = 70;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_SENDFILE: usize = 71;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_VMSPLICE: usize = 75;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_SPLICE: usize = 76;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_TEE: usize = 77;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_DUP3: usize = 24;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_MEMFD_CREATE: usize = 279;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_COPY_FILE_RANGE: usize = 285;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_PREADV2: usize = 286;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_PWRITEV2: usize = 287;
 #[cfg(target_arch = "aarch64")]
 pub const SYS_FUTEX: usize = 98;
 #[cfg(target_arch = "aarch64")]
@@ -985,6 +1037,251 @@ pub unsafe fn sys_setsockopt(
         )
     };
     syscall_result(ret).map(|_| ())
+}
+
+/// `dup3(oldfd, newfd, flags)` — duplicate a file descriptor with flags.
+#[inline]
+#[allow(unsafe_code)]
+pub fn sys_dup3(oldfd: i32, newfd: i32, flags: i32) -> Result<i32, i32> {
+    let ret = unsafe { raw::syscall3(SYS_DUP3, oldfd as usize, newfd as usize, flags as usize) };
+    syscall_result(ret).map(|v| v as i32)
+}
+
+/// `readv(fd, iov, iovcnt)` — read data into multiple buffers.
+///
+/// # Safety
+/// `iov` must point to a valid array of `iovcnt` iovec structures.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_readv(fd: i32, iov: *const u8, iovcnt: i32) -> Result<isize, i32> {
+    let ret = unsafe { raw::syscall3(SYS_READV, fd as usize, iov as usize, iovcnt as usize) };
+    syscall_result(ret).map(|v| v as isize)
+}
+
+/// `writev(fd, iov, iovcnt)` — write data from multiple buffers.
+///
+/// # Safety
+/// `iov` must point to a valid array of `iovcnt` iovec structures.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_writev(fd: i32, iov: *const u8, iovcnt: i32) -> Result<isize, i32> {
+    let ret = unsafe { raw::syscall3(SYS_WRITEV, fd as usize, iov as usize, iovcnt as usize) };
+    syscall_result(ret).map(|v| v as isize)
+}
+
+/// `sendfile(out_fd, in_fd, offset, count)` — transfer data between file descriptors.
+///
+/// # Safety
+/// `offset` may be null or a valid pointer.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_sendfile(
+    out_fd: i32,
+    in_fd: i32,
+    offset: *mut i64,
+    count: usize,
+) -> Result<isize, i32> {
+    let ret = unsafe {
+        raw::syscall4(
+            SYS_SENDFILE,
+            out_fd as usize,
+            in_fd as usize,
+            offset as usize,
+            count,
+        )
+    };
+    syscall_result(ret).map(|v| v as isize)
+}
+
+/// `copy_file_range(fd_in, off_in, fd_out, off_out, len, flags)` — copy a range of data.
+///
+/// # Safety
+/// Offset pointers may be null or valid pointers.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_copy_file_range(
+    fd_in: i32,
+    off_in: *mut i64,
+    fd_out: i32,
+    off_out: *mut i64,
+    len: usize,
+    flags: u32,
+) -> Result<isize, i32> {
+    let ret = unsafe {
+        raw::syscall6(
+            SYS_COPY_FILE_RANGE,
+            fd_in as usize,
+            off_in as usize,
+            fd_out as usize,
+            off_out as usize,
+            len,
+            flags as usize,
+        )
+    };
+    syscall_result(ret).map(|v| v as isize)
+}
+
+/// `preadv(fd, iov, iovcnt, offset)` — read data into multiple buffers at offset.
+///
+/// # Safety
+/// `iov` must point to a valid array of `iovcnt` iovec structures.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_preadv(fd: i32, iov: *const u8, iovcnt: i32, offset: i64) -> Result<isize, i32> {
+    let ret = unsafe {
+        raw::syscall4(
+            SYS_PREADV,
+            fd as usize,
+            iov as usize,
+            iovcnt as usize,
+            offset as usize,
+        )
+    };
+    syscall_result(ret).map(|v| v as isize)
+}
+
+/// `pwritev(fd, iov, iovcnt, offset)` — write data from multiple buffers at offset.
+///
+/// # Safety
+/// `iov` must point to a valid array of `iovcnt` iovec structures.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_pwritev(fd: i32, iov: *const u8, iovcnt: i32, offset: i64) -> Result<isize, i32> {
+    let ret = unsafe {
+        raw::syscall4(
+            SYS_PWRITEV,
+            fd as usize,
+            iov as usize,
+            iovcnt as usize,
+            offset as usize,
+        )
+    };
+    syscall_result(ret).map(|v| v as isize)
+}
+
+/// `preadv2(fd, iov, iovcnt, offset, flags)` — read data with extended flags.
+///
+/// # Safety
+/// `iov` must point to a valid array of `iovcnt` iovec structures.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_preadv2(
+    fd: i32,
+    iov: *const u8,
+    iovcnt: i32,
+    offset: i64,
+    flags: i32,
+) -> Result<isize, i32> {
+    let ret = unsafe {
+        raw::syscall5(
+            SYS_PREADV2,
+            fd as usize,
+            iov as usize,
+            iovcnt as usize,
+            offset as usize,
+            flags as usize,
+        )
+    };
+    syscall_result(ret).map(|v| v as isize)
+}
+
+/// `pwritev2(fd, iov, iovcnt, offset, flags)` — write data with extended flags.
+///
+/// # Safety
+/// `iov` must point to a valid array of `iovcnt` iovec structures.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_pwritev2(
+    fd: i32,
+    iov: *const u8,
+    iovcnt: i32,
+    offset: i64,
+    flags: i32,
+) -> Result<isize, i32> {
+    let ret = unsafe {
+        raw::syscall5(
+            SYS_PWRITEV2,
+            fd as usize,
+            iov as usize,
+            iovcnt as usize,
+            offset as usize,
+            flags as usize,
+        )
+    };
+    syscall_result(ret).map(|v| v as isize)
+}
+
+/// `splice(fd_in, off_in, fd_out, off_out, len, flags)` — splice data between pipes.
+///
+/// # Safety
+/// Offset pointers may be null or valid pointers.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_splice(
+    fd_in: i32,
+    off_in: *mut i64,
+    fd_out: i32,
+    off_out: *mut i64,
+    len: usize,
+    flags: u32,
+) -> Result<isize, i32> {
+    let ret = unsafe {
+        raw::syscall6(
+            SYS_SPLICE,
+            fd_in as usize,
+            off_in as usize,
+            fd_out as usize,
+            off_out as usize,
+            len,
+            flags as usize,
+        )
+    };
+    syscall_result(ret).map(|v| v as isize)
+}
+
+/// `tee(fd_in, fd_out, len, flags)` — duplicate pipe content.
+#[inline]
+#[allow(unsafe_code)]
+pub fn sys_tee(fd_in: i32, fd_out: i32, len: usize, flags: u32) -> Result<isize, i32> {
+    let ret = unsafe {
+        raw::syscall4(
+            SYS_TEE,
+            fd_in as usize,
+            fd_out as usize,
+            len,
+            flags as usize,
+        )
+    };
+    syscall_result(ret).map(|v| v as isize)
+}
+
+/// `vmsplice(fd, iov, nr_segs, flags)` — splice user pages to pipe.
+///
+/// # Safety
+/// `iov` must point to a valid array of `nr_segs` iovec structures.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_vmsplice(
+    fd: i32,
+    iov: *const u8,
+    nr_segs: usize,
+    flags: u32,
+) -> Result<isize, i32> {
+    let ret = unsafe {
+        raw::syscall4(SYS_VMSPLICE, fd as usize, iov as usize, nr_segs, flags as usize)
+    };
+    syscall_result(ret).map(|v| v as isize)
+}
+
+/// `memfd_create(name, flags)` — create anonymous file.
+///
+/// # Safety
+/// `name` must be a valid null-terminated C string.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_memfd_create(name: *const u8, flags: u32) -> Result<i32, i32> {
+    let ret = unsafe { raw::syscall2(SYS_MEMFD_CREATE, name as usize, flags as usize) };
+    syscall_result(ret).map(|v| v as i32)
 }
 
 /// `mlock(addr, len)` — lock a range of memory.

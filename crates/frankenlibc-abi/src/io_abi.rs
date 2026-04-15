@@ -189,17 +189,16 @@ pub unsafe extern "C" fn dup3(oldfd: c_int, newfd: c_int, flags: c_int) -> c_int
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
         return -1;
     }
-    let rc = unsafe { libc::syscall(libc::SYS_dup3, oldfd, newfd, flags) as c_int };
-    if rc < 0 {
-        let e = std::io::Error::last_os_error()
-            .raw_os_error()
-            .unwrap_or(errno::EBADF);
-        unsafe { set_abi_errno(e) };
-        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, true);
-        -1
-    } else {
-        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, false);
-        rc
+    match syscall::sys_dup3(oldfd, newfd, flags) {
+        Ok(fd) => {
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, false);
+            fd
+        }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, true);
+            -1
+        }
     }
 }
 
@@ -316,17 +315,16 @@ pub unsafe extern "C" fn readv(fd: c_int, iov: *const libc::iovec, iovcnt: c_int
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
         return -1;
     }
-    let rc = unsafe { libc::syscall(libc::SYS_readv, fd, iov, iovcnt) };
-    if rc < 0 {
-        let e = std::io::Error::last_os_error()
-            .raw_os_error()
-            .unwrap_or(errno::EIO);
-        unsafe { set_abi_errno(e) };
-        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
-        -1
-    } else {
-        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, false);
-        rc as libc::ssize_t
+    match unsafe { syscall::sys_readv(fd, iov as *const u8, iovcnt) } {
+        Ok(n) => {
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, false);
+            n as libc::ssize_t
+        }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+            -1
+        }
     }
 }
 
@@ -348,17 +346,16 @@ pub unsafe extern "C" fn writev(
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
         return -1;
     }
-    let rc = unsafe { libc::syscall(libc::SYS_writev, fd, iov, iovcnt) };
-    if rc < 0 {
-        let e = std::io::Error::last_os_error()
-            .raw_os_error()
-            .unwrap_or(errno::EIO);
-        unsafe { set_abi_errno(e) };
-        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
-        -1
-    } else {
-        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, false);
-        rc as libc::ssize_t
+    match unsafe { syscall::sys_writev(fd, iov as *const u8, iovcnt) } {
+        Ok(n) => {
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, false);
+            n as libc::ssize_t
+        }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+            -1
+        }
     }
 }
 
@@ -381,17 +378,16 @@ pub unsafe extern "C" fn sendfile(
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
         return -1;
     }
-    let rc = unsafe { libc::syscall(libc::SYS_sendfile, out_fd, in_fd, offset, count) };
-    if rc < 0 {
-        let e = std::io::Error::last_os_error()
-            .raw_os_error()
-            .unwrap_or(errno::EIO);
-        unsafe { set_abi_errno(e) };
-        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
-        -1
-    } else {
-        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, false);
-        rc as libc::ssize_t
+    match unsafe { syscall::sys_sendfile(out_fd, in_fd, offset, count) } {
+        Ok(n) => {
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, false);
+            n as libc::ssize_t
+        }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+            -1
+        }
     }
 }
 
@@ -416,27 +412,16 @@ pub unsafe extern "C" fn copy_file_range(
         return -1;
     }
 
-    let rc = unsafe {
-        libc::syscall(
-            libc::SYS_copy_file_range,
-            fd_in,
-            off_in,
-            fd_out,
-            off_out,
-            len,
-            flags,
-        )
-    };
-    if rc < 0 {
-        let e = std::io::Error::last_os_error()
-            .raw_os_error()
-            .unwrap_or(errno::EIO);
-        unsafe { set_abi_errno(e) };
-        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, true);
-        -1
-    } else {
-        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, false);
-        rc as libc::ssize_t
+    match unsafe { syscall::sys_copy_file_range(fd_in, off_in, fd_out, off_out, len, flags) } {
+        Ok(n) => {
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, false);
+            n as libc::ssize_t
+        }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, true);
+            -1
+        }
     }
 }
 
@@ -466,17 +451,16 @@ pub unsafe extern "C" fn preadv(
         return -1;
     }
 
-    let rc = unsafe { libc::syscall(libc::SYS_preadv, fd, iov, iovcnt, offset) };
-    if rc < 0 {
-        let e = std::io::Error::last_os_error()
-            .raw_os_error()
-            .unwrap_or(errno::EIO);
-        unsafe { set_abi_errno(e) };
-        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
-        -1
-    } else {
-        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, false);
-        rc as libc::ssize_t
+    match unsafe { syscall::sys_preadv(fd, iov as *const u8, iovcnt, offset) } {
+        Ok(n) => {
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, false);
+            n as libc::ssize_t
+        }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+            -1
+        }
     }
 }
 
@@ -496,17 +480,16 @@ pub unsafe extern "C" fn pwritev(
         return -1;
     }
 
-    let rc = unsafe { libc::syscall(libc::SYS_pwritev, fd, iov, iovcnt, offset) };
-    if rc < 0 {
-        let e = std::io::Error::last_os_error()
-            .raw_os_error()
-            .unwrap_or(errno::EIO);
-        unsafe { set_abi_errno(e) };
-        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
-        -1
-    } else {
-        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, false);
-        rc as libc::ssize_t
+    match unsafe { syscall::sys_pwritev(fd, iov as *const u8, iovcnt, offset) } {
+        Ok(n) => {
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, false);
+            n as libc::ssize_t
+        }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+            -1
+        }
     }
 }
 
@@ -533,17 +516,16 @@ pub unsafe extern "C" fn preadv2(
         return -1;
     }
 
-    let rc = unsafe { libc::syscall(libc::SYS_preadv2, fd, iov, iovcnt, offset, flags) };
-    if rc < 0 {
-        let e = std::io::Error::last_os_error()
-            .raw_os_error()
-            .unwrap_or(errno::EIO);
-        unsafe { set_abi_errno(e) };
-        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
-        -1
-    } else {
-        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, false);
-        rc as libc::ssize_t
+    match unsafe { syscall::sys_preadv2(fd, iov as *const u8, iovcnt, offset, flags) } {
+        Ok(n) => {
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, false);
+            n as libc::ssize_t
+        }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+            -1
+        }
     }
 }
 
@@ -564,17 +546,16 @@ pub unsafe extern "C" fn pwritev2(
         return -1;
     }
 
-    let rc = unsafe { libc::syscall(libc::SYS_pwritev2, fd, iov, iovcnt, offset, flags) };
-    if rc < 0 {
-        let e = std::io::Error::last_os_error()
-            .raw_os_error()
-            .unwrap_or(errno::EIO);
-        unsafe { set_abi_errno(e) };
-        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
-        -1
-    } else {
-        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, false);
-        rc as libc::ssize_t
+    match unsafe { syscall::sys_pwritev2(fd, iov as *const u8, iovcnt, offset, flags) } {
+        Ok(n) => {
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, false);
+            n as libc::ssize_t
+        }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+            -1
+        }
     }
 }
 
@@ -598,17 +579,16 @@ pub unsafe extern "C" fn splice(
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
         return -1;
     }
-    let rc = unsafe { libc::syscall(libc::SYS_splice, fd_in, off_in, fd_out, off_out, len, flags) };
-    if rc < 0 {
-        let e = std::io::Error::last_os_error()
-            .raw_os_error()
-            .unwrap_or(errno::EIO);
-        unsafe { set_abi_errno(e) };
-        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, true);
-        -1
-    } else {
-        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, false);
-        rc as libc::ssize_t
+    match unsafe { syscall::sys_splice(fd_in, off_in, fd_out, off_out, len, flags) } {
+        Ok(n) => {
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, false);
+            n as libc::ssize_t
+        }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, true);
+            -1
+        }
     }
 }
 
@@ -626,17 +606,16 @@ pub unsafe extern "C" fn tee(
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
         return -1;
     }
-    let rc = unsafe { libc::syscall(libc::SYS_tee, fd_in, fd_out, len, flags) };
-    if rc < 0 {
-        let e = std::io::Error::last_os_error()
-            .raw_os_error()
-            .unwrap_or(errno::EIO);
-        unsafe { set_abi_errno(e) };
-        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, true);
-        -1
-    } else {
-        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, false);
-        rc as libc::ssize_t
+    match syscall::sys_tee(fd_in, fd_out, len, flags) {
+        Ok(n) => {
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, false);
+            n as libc::ssize_t
+        }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, true);
+            -1
+        }
     }
 }
 
@@ -655,17 +634,16 @@ pub unsafe extern "C" fn vmsplice(
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
         return -1;
     }
-    let rc = unsafe { libc::syscall(libc::SYS_vmsplice, fd, iov, nr_segs, flags) };
-    if rc < 0 {
-        let e = std::io::Error::last_os_error()
-            .raw_os_error()
-            .unwrap_or(errno::EIO);
-        unsafe { set_abi_errno(e) };
-        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, true);
-        -1
-    } else {
-        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, false);
-        rc as libc::ssize_t
+    match unsafe { syscall::sys_vmsplice(fd, iov as *const u8, nr_segs, flags) } {
+        Ok(n) => {
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, false);
+            n as libc::ssize_t
+        }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, true);
+            -1
+        }
     }
 }
 
@@ -682,15 +660,15 @@ pub unsafe extern "C" fn memfd_create(name: *const std::ffi::c_char, flags: c_ui
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
         return -1;
     }
-    let rc = unsafe { libc::syscall(libc::SYS_memfd_create, name, flags) } as c_int;
-    if rc < 0 {
-        let e = std::io::Error::last_os_error()
-            .raw_os_error()
-            .unwrap_or(errno::EINVAL);
-        unsafe { set_abi_errno(e) };
-        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, true);
-    } else {
-        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, false);
+    match unsafe { syscall::sys_memfd_create(name as *const u8, flags) } {
+        Ok(fd) => {
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, false);
+            fd
+        }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, true);
+            -1
+        }
     }
-    rc
 }
