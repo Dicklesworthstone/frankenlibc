@@ -357,14 +357,14 @@ fn pthread_gnu_extensions_fixture_cases_match_execute_fixture_case() {
         };
 
         for mode in modes {
-            let result = frankenlibc_fixture_exec::execute_fixture_case(
-                &case.function,
-                &case.inputs,
-                mode,
-            )
-            .unwrap_or_else(|err| {
-                panic!("fixture case {} ({mode}) failed to execute: {err}", case.name)
-            });
+            let result =
+                frankenlibc_fixture_exec::execute_fixture_case(&case.function, &case.inputs, mode)
+                    .unwrap_or_else(|err| {
+                        panic!(
+                            "fixture case {} ({mode}) failed to execute: {err}",
+                            case.name
+                        )
+                    });
             assert_eq!(
                 result.impl_output, expected_output,
                 "fixture expected_output mismatch for {} ({mode})",

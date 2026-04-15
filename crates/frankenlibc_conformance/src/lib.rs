@@ -5993,7 +5993,9 @@ fn build_timespec_from_fixture(
             tv_nsec: 0,
         }),
         Some("future_long") => clock_abstime_after(deadline_basis_clock(clock_id), 500),
-        Some("future") | None => clock_abstime_after(deadline_basis_clock(clock_id), default_future_ms),
+        Some("future") | None => {
+            clock_abstime_after(deadline_basis_clock(clock_id), default_future_ms)
+        }
         Some(other) => Err(format!("unsupported deadline alias: {other}")),
     }
 }
@@ -6893,13 +6895,23 @@ fn execute_pthread_cond_clockwait_case(
             if lock_rc != 0 {
                 format!("lock_failed:{}", format_pthread_status(lock_rc))
             } else {
-                let wait_rc = if abstime_alias.as_deref() == Some("NULL") {
-                    frankenlibc_abi::pthread_abi::pthread_cond_clockwait(
+                if abstime_alias.as_deref() == Some("NULL") {
+                    let wait_rc = frankenlibc_abi::pthread_abi::pthread_cond_clockwait(
                         cond,
                         mutex,
                         clock_id,
                         std::ptr::null(),
-                    )
+                    );
+                    let unlock_rc = frankenlibc_abi::pthread_abi::pthread_mutex_unlock(mutex);
+                    if unlock_rc == 0 {
+                        format_pthread_status(wait_rc)
+                    } else {
+                        format!(
+                            "wait={};unlock={}",
+                            format_pthread_status(wait_rc),
+                            format_pthread_status(unlock_rc)
+                        )
+                    }
                 } else {
                     let abstime = build_timespec_from_fixture(inputs, clock_id, 200)?;
                     let notifier = if matches!(
@@ -6910,7 +6922,7 @@ fn execute_pthread_cond_clockwait_case(
                     } else {
                         None
                     };
-                    let rc = frankenlibc_abi::pthread_abi::pthread_cond_clockwait(
+                    let wait_rc = frankenlibc_abi::pthread_abi::pthread_cond_clockwait(
                         cond,
                         mutex,
                         clock_id,
@@ -6925,27 +6937,17 @@ fn execute_pthread_cond_clockwait_case(
                     };
                     let unlock_rc = frankenlibc_abi::pthread_abi::pthread_mutex_unlock(mutex);
                     if wait_rc == 0 && notify_rc == 0 && unlock_rc == 0 {
-                        return Ok(non_host_execution(String::from("0")));
+                        String::from("0")
+                    } else if notify_rc == 0 && unlock_rc == 0 {
+                        format_pthread_status(wait_rc)
+                    } else {
+                        format!(
+                            "wait={};notify={};unlock={}",
+                            format_pthread_status(wait_rc),
+                            format_pthread_status(notify_rc),
+                            format_pthread_status(unlock_rc)
+                        )
                     }
-                    if notify_rc == 0 && unlock_rc == 0 {
-                        return Ok(non_host_execution(format_pthread_status(wait_rc)));
-                    }
-                    return Ok(non_host_execution(format!(
-                        "wait={};notify={};unlock={}",
-                        format_pthread_status(wait_rc),
-                        format_pthread_status(notify_rc),
-                        format_pthread_status(unlock_rc)
-                    )));
-                };
-                let unlock_rc = frankenlibc_abi::pthread_abi::pthread_mutex_unlock(mutex);
-                if unlock_rc == 0 {
-                    format_pthread_status(wait_rc)
-                } else {
-                    format!(
-                        "wait={};unlock={}",
-                        format_pthread_status(wait_rc),
-                        format_pthread_status(unlock_rc)
-                    )
                 }
             }
         };
@@ -7018,7 +7020,11 @@ fn execute_pthread_timedjoin_np_case(
             format_pthread_status(rc)
         }
         "running" | "running_long" => {
-            let sleep_ms = if thread_alias == "running_long" { 250 } else { 25 };
+            let sleep_ms = if thread_alias == "running_long" {
+                250
+            } else {
+                25
+            };
             let thread = create_managed_pthread(sleep_ms)?;
             let abstime_storage;
             let abstime_ptr = if abstime_alias.as_deref() == Some("NULL") {
@@ -7136,7 +7142,11 @@ fn execute_pthread_clockjoin_np_case(
             })
         }
         "running" | "running_long" => {
-            let sleep_ms = if thread_alias == "running_long" { 250 } else { 25 };
+            let sleep_ms = if thread_alias == "running_long" {
+                250
+            } else {
+                25
+            };
             let thread = create_managed_pthread(sleep_ms)?;
             let abstime_storage;
             let abstime_ptr = if abstime_alias.as_deref() == Some("NULL") {
@@ -7210,7 +7220,7 @@ fn execute_pthread_getattr_np_case(
             if rc != 0 {
                 format_pthread_status(rc)
             } else if check.as_deref() == Some("stack") {
-                let mut stack_addr = std::ptr::null_mut();
+                let mut stack_addr: *mut c_void = std::ptr::null_mut();
                 let mut stack_size = 0usize;
                 let stack_rc = unsafe {
                     frankenlibc_abi::pthread_abi::pthread_attr_getstack(
