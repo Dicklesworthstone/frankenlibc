@@ -1708,6 +1708,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 };
             let payload = serde_json::to_vec(&envelope)?;
             std::io::stdout().write_all(&payload)?;
+            std::io::stdout().flush()?;
+            // This command is intentionally subprocess-only. Replacing the
+            // current process image skips the crashing fixture-exec teardown
+            // path after the result has already been flushed to stdout.
+            #[cfg(unix)]
+            {
+                use std::os::unix::process::CommandExt;
+
+                let exec_err = ProcCommand::new("/bin/true").exec();
+                return Err(
+                    format!("failed to exec /bin/true after case output: {exec_err}").into(),
+                );
+            }
         }
     }
 
