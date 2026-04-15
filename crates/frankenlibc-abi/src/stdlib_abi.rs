@@ -16,6 +16,7 @@ use crate::malloc_abi::known_remaining;
 use crate::runtime_policy;
 use crate::util::scan_c_string;
 use frankenlibc_core::errno;
+use frankenlibc_core::syscall as raw_syscall;
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 use libc::{intmax_t, uintmax_t};
 
@@ -1463,25 +1464,14 @@ pub unsafe extern "C" fn system(command: *const c_char) -> c_int {
     }
 
     // SAFETY: fork via clone(SIGCHLD).
-    let pid = unsafe {
-        libc::syscall(
-            libc::SYS_clone as c_long,
-            libc::SIGCHLD as c_long,
-            0 as c_long,
-            0 as c_long,
-            0 as c_long,
-            0 as c_long,
-        ) as i32
+    let pid = match raw_syscall::sys_clone_fork(libc::SIGCHLD as usize) {
+        Ok(p) => p,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 50, true);
+            return -1;
+        }
     };
-
-    if pid < 0 {
-        let e = std::io::Error::last_os_error()
-            .raw_os_error()
-            .unwrap_or(libc::ENOMEM);
-        unsafe { set_abi_errno(e) };
-        runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 50, true);
-        return -1;
-    }
 
     if pid == 0 {
         // Child process: exec /bin/sh -c command.
@@ -1490,18 +1480,13 @@ pub unsafe extern "C" fn system(command: *const c_char) -> c_int {
         let argv: [*const c_char; 4] = [sh, dash_c, command, ptr::null()];
         // SAFETY: argv is well-formed null-terminated array.
         unsafe {
-            libc::syscall(
-                libc::SYS_execve as c_long,
-                sh,
-                argv.as_ptr(),
-                HOST_ENVIRON as *const *const c_char,
+            let _ = raw_syscall::sys_execve(
+                sh as *const u8,
+                argv.as_ptr() as *const *const u8,
+                HOST_ENVIRON as *const *const u8,
             );
             // If execve returns, exit with 127.
-            libc::syscall(libc::SYS_exit_group as c_long, 127 as c_long);
-        }
-        // If execve/exit_group returns, keep attempting SYS_exit to avoid UB in child context.
-        loop {
-            unsafe { libc::syscall(libc::SYS_exit as c_long, 127 as c_long) };
+            raw_syscall::sys_exit_group(127);
         }
     }
 
@@ -1509,26 +1494,22 @@ pub unsafe extern "C" fn system(command: *const c_char) -> c_int {
     let mut wstatus: c_int = 0;
     loop {
         let ret = unsafe {
-            libc::syscall(
-                libc::SYS_wait4 as c_long,
+            raw_syscall::sys_wait4(
                 pid,
                 &mut wstatus as *mut c_int,
                 0,
-                ptr::null::<c_void>(),
+                core::ptr::null_mut(),
             )
         };
-        if ret == pid as i64 {
-            break;
-        }
-        if ret < 0 {
-            let e = std::io::Error::last_os_error()
-                .raw_os_error()
-                .unwrap_or(libc::EINTR);
-            if e != libc::EINTR {
+        match ret {
+            Ok(waited_pid) if waited_pid == pid => break,
+            Ok(_) => continue, // Spurious wakeup, keep waiting
+            Err(e) if e != libc::EINTR => {
                 unsafe { set_abi_errno(e) };
                 runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 50, true);
                 return -1;
             }
+            Err(_) => continue, // EINTR, retry
         }
     }
 
@@ -1688,24 +1669,20 @@ unsafe fn mkostemps_inner(template: *mut c_char, suffixlen: c_int, flags: c_int)
 
         // SAFETY: `template` now names a candidate pathname and points to NUL-terminated bytes.
         let fd = unsafe {
-            libc::syscall(
-                libc::SYS_openat,
+            raw_syscall::sys_openat(
                 libc::AT_FDCWD,
-                template as *const c_char,
+                template as *const u8,
                 libc::O_RDWR | libc::O_CREAT | libc::O_EXCL | flags,
                 0o600,
-            ) as c_int
+            )
         };
-        if fd >= 0 {
-            return (fd, false);
-        }
-
-        let err = std::io::Error::last_os_error()
-            .raw_os_error()
-            .unwrap_or(libc::EIO);
-        if err != libc::EEXIST {
-            unsafe { set_abi_errno(err) };
-            return (-1, true);
+        match fd {
+            Ok(f) => return (f as c_int, false),
+            Err(e) if e != libc::EEXIST => {
+                unsafe { set_abi_errno(e) };
+                return (-1, true);
+            }
+            Err(_) => {} // EEXIST, try next
         }
     }
 
@@ -2892,23 +2869,28 @@ pub unsafe extern "C" fn getauxval(type_: c_ulong) -> c_ulong {
     // Read from /proc/self/auxv using raw syscalls to avoid recursion
     // (libc::getauxval goes through our interposed getauxval).
     let fd = unsafe {
-        libc::syscall(
-            libc::SYS_openat,
+        raw_syscall::sys_openat(
             libc::AT_FDCWD,
-            c"/proc/self/auxv".as_ptr(),
+            c"/proc/self/auxv".as_ptr() as *const u8,
             libc::O_RDONLY,
             0,
         )
-    } as c_int;
-    if fd < 0 {
-        unsafe { set_abi_errno(libc::ENOENT) };
-        return 0;
-    }
+    };
+    let fd = match fd {
+        Ok(f) => f as c_int,
+        Err(_) => {
+            unsafe { set_abi_errno(libc::ENOENT) };
+            return 0;
+        }
+    };
     // auxv is pairs of (type: ulong, value: ulong)
     let entry_size = 2 * std::mem::size_of::<c_ulong>();
     let mut buf = [0u8; 4096];
-    let n = unsafe { libc::syscall(libc::SYS_read, fd, buf.as_mut_ptr(), buf.len()) } as isize;
-    unsafe { libc::syscall(libc::SYS_close, fd) };
+    let n = match unsafe { raw_syscall::sys_read(fd, buf.as_mut_ptr(), buf.len()) } {
+        Ok(bytes) => bytes as isize,
+        Err(_) => -1,
+    };
+    let _ = raw_syscall::sys_close(fd);
     if n <= 0 {
         return 0;
     }
@@ -3040,7 +3022,7 @@ pub unsafe extern "C" fn tmpnam_r(s: *mut c_char) -> *mut c_char {
     }
     // Generate /tmp/tmpXXXXXX pattern and check uniqueness
     static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    let pid = unsafe { libc::syscall(libc::SYS_getpid) as libc::pid_t };
+    let pid = raw_syscall::sys_getpid() as libc::pid_t;
     let cnt = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let name = format!("/tmp/tmp{pid:06}{cnt:06}\0");
     let name_bytes = name.as_bytes();
@@ -3987,19 +3969,21 @@ pub unsafe extern "C" fn realpath(
 
     // Open the path with O_PATH (no actual I/O, just get an fd for the kernel path).
     let fd = unsafe {
-        libc::syscall(
-            libc::SYS_openat,
+        raw_syscall::sys_openat(
             libc::AT_FDCWD,
-            path,
+            path as *const u8,
             libc::O_PATH | libc::O_CLOEXEC,
             0,
-        ) as i32
+        )
     };
-    if fd < 0 {
-        unsafe { set_abi_errno(errno::ENOENT) };
-        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 16, true);
-        return std::ptr::null_mut();
-    }
+    let fd = match fd {
+        Ok(f) => f as i32,
+        Err(_) => {
+            unsafe { set_abi_errno(errno::ENOENT) };
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 16, true);
+            return std::ptr::null_mut();
+        }
+    };
 
     // Read the kernel-resolved canonical path via /proc/self/fd/N.
     let mut proc_path = [0u8; 64];
@@ -4011,15 +3995,23 @@ pub unsafe extern "C" fn realpath(
 
     let mut buf = [0u8; libc::PATH_MAX as usize];
     let n = unsafe {
-        libc::syscall(
-            libc::SYS_readlinkat,
+        raw_syscall::sys_readlinkat(
             libc::AT_FDCWD,
             proc_path.as_ptr(),
             buf.as_mut_ptr(),
             buf.len() - 1,
-        ) as isize
+        )
     };
-    unsafe { libc::syscall(libc::SYS_close, fd) };
+    let _ = raw_syscall::sys_close(fd);
+
+    let n = match n {
+        Ok(len) => len,
+        Err(_) => {
+            unsafe { set_abi_errno(errno::ENOENT) };
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 16, true);
+            return std::ptr::null_mut();
+        }
+    };
 
     if n <= 0 {
         unsafe { set_abi_errno(errno::ENOENT) };

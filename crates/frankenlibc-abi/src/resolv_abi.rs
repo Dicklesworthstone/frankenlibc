@@ -581,7 +581,6 @@ fn udp_dns_query(
     use frankenlibc_core::resolv::dns::{
         DNS_HEADER_SIZE, DNS_MAX_UDP_SIZE, DnsMessage, parse_dns_response, rcode,
     };
-    use std::ffi::c_void;
 
     DNS_METRICS
         .queries_attempted

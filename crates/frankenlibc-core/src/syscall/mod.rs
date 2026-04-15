@@ -162,6 +162,8 @@ pub const SYS_PREADV2: usize = 327;
 #[cfg(target_arch = "x86_64")]
 pub const SYS_PWRITEV2: usize = 328;
 #[cfg(target_arch = "x86_64")]
+pub const SYS_READLINKAT: usize = 267;
+#[cfg(target_arch = "x86_64")]
 pub const SYS_FUTEX: usize = 202;
 #[cfg(target_arch = "x86_64")]
 pub const SYS_SET_TID_ADDRESS: usize = 218;
@@ -299,6 +301,8 @@ pub const SYS_COPY_FILE_RANGE: usize = 285;
 pub const SYS_PREADV2: usize = 286;
 #[cfg(target_arch = "aarch64")]
 pub const SYS_PWRITEV2: usize = 287;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_READLINKAT: usize = 78;
 #[cfg(target_arch = "aarch64")]
 pub const SYS_FUTEX: usize = 98;
 #[cfg(target_arch = "aarch64")]
@@ -1281,6 +1285,83 @@ pub unsafe fn sys_vmsplice(
 #[allow(unsafe_code)]
 pub unsafe fn sys_memfd_create(name: *const u8, flags: u32) -> Result<i32, i32> {
     let ret = unsafe { raw::syscall2(SYS_MEMFD_CREATE, name as usize, flags as usize) };
+    syscall_result(ret).map(|v| v as i32)
+}
+
+/// `wait4(pid, wstatus, options, rusage)` — wait for process to change state.
+///
+/// # Safety
+/// `wstatus` and `rusage` must be valid pointers or null.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_wait4(
+    pid: i32,
+    wstatus: *mut i32,
+    options: i32,
+    rusage: *mut u8,
+) -> Result<i32, i32> {
+    let ret = unsafe {
+        raw::syscall4(
+            SYS_WAIT4,
+            pid as usize,
+            wstatus as usize,
+            options as usize,
+            rusage as usize,
+        )
+    };
+    syscall_result(ret).map(|v| v as i32)
+}
+
+/// `execve(pathname, argv, envp)` — execute program.
+///
+/// # Safety
+/// All pointers must be valid null-terminated arrays.
+/// This function does not return on success.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_execve(
+    pathname: *const u8,
+    argv: *const *const u8,
+    envp: *const *const u8,
+) -> Result<(), i32> {
+    let ret = unsafe {
+        raw::syscall3(SYS_EXECVE, pathname as usize, argv as usize, envp as usize)
+    };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `readlinkat(dirfd, pathname, buf, bufsiz)` — read value of a symbolic link.
+///
+/// # Safety
+/// `pathname` must be a valid C string, `buf` must be a valid buffer.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_readlinkat(
+    dirfd: i32,
+    pathname: *const u8,
+    buf: *mut u8,
+    bufsiz: usize,
+) -> Result<isize, i32> {
+    let ret = unsafe {
+        raw::syscall4(
+            SYS_READLINKAT,
+            dirfd as usize,
+            pathname as usize,
+            buf as usize,
+            bufsiz,
+        )
+    };
+    syscall_result(ret).map(|v| v as isize)
+}
+
+/// `clone(flags, stack, ...)` — create a child process (simple fork variant).
+///
+/// For fork(), use flags=SIGCHLD and stack=0.
+#[inline]
+#[allow(unsafe_code)]
+pub fn sys_clone_fork(flags: usize) -> Result<i32, i32> {
+    // Simple clone for fork: flags=SIGCHLD, stack=0, no other args
+    let ret = unsafe { raw::syscall2(SYS_CLONE, flags, 0) };
     syscall_result(ret).map(|v| v as i32)
 }
 

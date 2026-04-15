@@ -172,16 +172,11 @@
         "functions": []
       },
       "glibc_internal_abi": {
-        "count": 39,
+        "count": 32,
         "functions": [
           "adjtime",
-          "bind",
-          "closedir",
           "endmntent",
-          "fdopendir",
           "fflush",
-          "fileno",
-          "fstat",
           "futimes",
           "fwrite",
           "getauxval",
@@ -195,10 +190,8 @@
           "mkostemps",
           "mkstemp",
           "mkstemps",
-          "openat",
           "posix_spawn",
           "posix_spawnp",
-          "readdir",
           "sbrk",
           "sethostid",
           "setrlimit",

@@ -5457,10 +5457,10 @@ pub unsafe extern "C" fn rresvport_af(port: *mut c_int, af: c_int) -> c_int {
                 addr.sin_family = libc::AF_INET as u16;
                 addr.sin_port = p.to_be();
                 unsafe {
-                    libc::bind(
+                    crate::socket_abi::bind(
                         fd,
                         &addr as *const _ as *const libc::sockaddr,
-                        std::mem::size_of::<libc::sockaddr_in>() as libc::socklen_t,
+                        std::mem::size_of::<libc::sockaddr_in>() as u32,
                     )
                 }
             }
@@ -5469,10 +5469,10 @@ pub unsafe extern "C" fn rresvport_af(port: *mut c_int, af: c_int) -> c_int {
                 addr.sin6_family = libc::AF_INET6 as u16;
                 addr.sin6_port = p.to_be();
                 unsafe {
-                    libc::bind(
+                    crate::socket_abi::bind(
                         fd,
                         &addr as *const _ as *const libc::sockaddr,
-                        std::mem::size_of::<libc::sockaddr_in6>() as libc::socklen_t,
+                        std::mem::size_of::<libc::sockaddr_in6>() as u32,
                     )
                 }
             }
@@ -5543,17 +5543,12 @@ pub unsafe extern "C" fn scandirat(
     compar: *mut c_void,
 ) -> c_int {
     // Open the directory relative to dirfd using openat + fdopendir
-    let fd = unsafe {
-        libc::openat(
-            dirfd,
-            dirp,
-            libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC,
-        )
-    };
+    let fd =
+        unsafe { crate::unistd_abi::openat(dirfd, dirp, libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC, 0) };
     if fd < 0 {
         return -1;
     }
-    let dir = unsafe { libc::fdopendir(fd) };
+    let dir = unsafe { crate::dirent_abi::fdopendir(fd) }.cast::<crate::dirent_abi::DIR>();
     if dir.is_null() {
         unsafe { libc::syscall(libc::SYS_close, fd) as c_int };
         return -1;
@@ -5569,7 +5564,7 @@ pub unsafe extern "C" fn scandirat(
     };
     let mut entries: Vec<*mut libc::dirent> = Vec::new();
     loop {
-        let entry = unsafe { libc::readdir(dir) };
+        let entry = unsafe { crate::dirent_abi::readdir(dir) };
         if entry.is_null() {
             break;
         }
@@ -5588,14 +5583,14 @@ pub unsafe extern "C" fn scandirat(
                 for e in &entries {
                     unsafe { crate::malloc_abi::raw_free(*e as *mut c_void) };
                 }
-                unsafe { libc::closedir(dir) };
+                unsafe { crate::dirent_abi::closedir(dir) };
                 return -1;
             }
             unsafe { std::ptr::copy_nonoverlapping(entry, copy, 1) };
             entries.push(copy);
         }
     }
-    unsafe { libc::closedir(dir) };
+    unsafe { crate::dirent_abi::closedir(dir) };
     if !compar.is_null() {
         let cmp: ComparFn = unsafe { std::mem::transmute::<*mut c_void, ComparFn>(compar) };
         entries.sort_by(|a, b| {
@@ -8062,13 +8057,13 @@ pub unsafe extern "C" fn __file_change_detection_for_fp(
     }
     let fcd = result as *mut FileChangeDetection;
     // Get fd from FILE* via fileno
-    let fd = unsafe { libc::fileno(fp as *mut libc::FILE) };
+    let fd = unsafe { crate::stdio_abi::fileno(fp) };
     if fd < 0 {
         unsafe { std::ptr::write_bytes(fcd, 0, 1) };
         return 0;
     }
     let mut st: libc::stat = unsafe { std::mem::zeroed() };
-    if unsafe { libc::fstat(fd, &mut st) } != 0 {
+    if unsafe { crate::unistd_abi::fstat(fd, &mut st) } != 0 {
         unsafe { std::ptr::write_bytes(fcd, 0, 1) };
         return 0;
     }
