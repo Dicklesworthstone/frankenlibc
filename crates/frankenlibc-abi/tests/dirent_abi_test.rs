@@ -229,6 +229,26 @@ fn readdir64_basic() {
     unsafe { closedir(dirp) };
 }
 
+#[test]
+fn readdir64_r_basic() {
+    let path = CString::new("/proc/self/fd").unwrap();
+    let dirp = unsafe { opendir(path.as_ptr()) };
+    assert!(!dirp.is_null());
+
+    let mut entry: libc::dirent64 = unsafe { std::mem::zeroed() };
+    let mut result: *mut libc::dirent64 = std::ptr::null_mut();
+
+    let rc =
+        unsafe { frankenlibc_abi::unistd_abi::readdir64_r(dirp.cast(), &mut entry, &mut result) };
+    assert_eq!(rc, 0, "readdir64_r should succeed");
+    assert!(!result.is_null(), "result should be set");
+
+    let name = unsafe { CStr::from_ptr(entry.d_name.as_ptr()) };
+    assert!(!name.to_str().unwrap().is_empty());
+
+    unsafe { closedir(dirp) };
+}
+
 // ===========================================================================
 // alphasort / versionsort
 // ===========================================================================

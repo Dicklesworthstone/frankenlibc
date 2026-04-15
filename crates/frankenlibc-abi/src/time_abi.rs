@@ -4,9 +4,9 @@
 //! (broken-down conversion) delegates to `frankenlibc_core::time`.
 
 use std::ffi::{c_int, c_void};
-use std::os::raw::c_long;
 
 use frankenlibc_core::errno;
+use frankenlibc_core::syscall as raw_syscall;
 use frankenlibc_core::time as time_core;
 use frankenlibc_membrane::MembraneAction;
 use frankenlibc_membrane::runtime_math::ApiFamily;
@@ -24,7 +24,13 @@ fn last_host_errno(default: c_int) -> c_int {
 
 #[inline]
 unsafe fn raw_clock_gettime(clock_id: c_int, tp: *mut libc::timespec) -> c_int {
-    unsafe { libc::syscall(libc::SYS_clock_gettime as c_long, clock_id, tp) as c_int }
+    match unsafe { raw_syscall::sys_clock_gettime(clock_id, tp as *mut u8) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -264,11 +270,13 @@ pub unsafe extern "C" fn clock_getres(clock_id: c_int, res: *mut libc::timespec)
         return -1;
     }
 
-    let rc = unsafe { libc::syscall(libc::SYS_clock_getres as c_long, clock_id, res) as c_int };
-    if rc != 0 {
-        unsafe { set_abi_errno(last_host_errno(errno::EINVAL)) };
+    match unsafe { raw_syscall::sys_clock_getres(clock_id, res as *mut u8) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc
 }
 
 // ---------------------------------------------------------------------------
@@ -283,17 +291,13 @@ pub unsafe extern "C" fn nanosleep(req: *const libc::timespec, rem: *mut libc::t
         return -1;
     }
 
-    let rc = unsafe { libc::syscall(libc::SYS_nanosleep as c_long, req, rem) as c_int };
-    if rc != 0 {
-        unsafe {
-            set_abi_errno(
-                std::io::Error::last_os_error()
-                    .raw_os_error()
-                    .unwrap_or(errno::EINTR),
-            )
-        };
+    match unsafe { raw_syscall::sys_nanosleep(req as *const u8, rem as *mut u8) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc
 }
 
 // ---------------------------------------------------------------------------
@@ -331,23 +335,17 @@ pub unsafe extern "C" fn clock_nanosleep(
         return errno::EINVAL;
     }
 
-    let rc = unsafe {
-        libc::syscall(
-            libc::SYS_clock_nanosleep as c_long,
+    // clock_nanosleep returns the error number directly (not via errno).
+    let result = match unsafe {
+        raw_syscall::sys_clock_nanosleep(
             clock_id,
             flags,
-            req,
-            rem,
-        ) as c_int
-    };
-    // clock_nanosleep returns the error number directly (not via errno).
-    // libc::syscall returns -1 on error and sets errno, so convert.
-    let result = if rc < 0 {
-        std::io::Error::last_os_error()
-            .raw_os_error()
-            .unwrap_or(errno::EINVAL)
-    } else {
-        0
+            req as *const u8,
+            rem as *mut u8,
+        )
+    } {
+        Ok(()) => 0,
+        Err(e) => e, // Return error code directly, not via errno
     };
     runtime_policy::observe(ApiFamily::Time, decision.profile, 6, result != 0);
     result
@@ -888,15 +886,13 @@ pub unsafe extern "C" fn clock_settime(
     clk_id: libc::clockid_t,
     tp: *const libc::timespec,
 ) -> std::ffi::c_int {
-    let rc = unsafe { libc::syscall(libc::SYS_clock_settime, clk_id, tp) } as std::ffi::c_int;
-    if rc < 0 {
-        let e = std::io::Error::last_os_error()
-            .raw_os_error()
-            .unwrap_or(libc::EPERM);
-        let p = unsafe { super::errno_abi::__errno_location() };
-        unsafe { *p = e };
+    match unsafe { raw_syscall::sys_clock_settime(clk_id, tp as *const u8) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc
 }
 
 // ---------------------------------------------------------------------------
@@ -949,8 +945,12 @@ pub unsafe extern "C" fn timespec_getres(ts: *mut libc::timespec, base: c_int) -
         runtime_policy::observe(ApiFamily::Time, decision.profile, 5, false);
         return base;
     }
-    let rc = unsafe { libc::syscall(libc::SYS_clock_getres, libc::CLOCK_REALTIME, ts) };
-    let result = if rc == 0 { base } else { 0 };
+    let result = match unsafe {
+        raw_syscall::sys_clock_getres(libc::CLOCK_REALTIME, ts as *mut u8)
+    } {
+        Ok(()) => base,
+        Err(_) => 0,
+    };
     runtime_policy::observe(ApiFamily::Time, decision.profile, 5, result == 0);
     result
 }

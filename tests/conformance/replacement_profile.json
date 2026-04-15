@@ -326,13 +326,12 @@
         "note": "In-file test helpers now route through native ABI entrypoints, so the replacement guard sees no direct libc call-throughs."
       },
       "unistd_abi": {
-        "count": 40,
+        "count": 29,
         "functions": [
           "backtrace",
           "backtrace_symbols",
           "backtrace_symbols_fd",
           "calloc",
-          "closedir",
           "dlsym",
           "fgets",
           "free",
@@ -341,10 +340,7 @@
           "getaddrinfo",
           "getenv",
           "mknodat",
-          "opendir",
           "raise",
-          "readdir",
-          "readdir64_r",
           "realpath",
           "sigaction",
           "sigaddset",

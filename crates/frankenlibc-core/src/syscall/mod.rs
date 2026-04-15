@@ -122,6 +122,14 @@ pub const SYS_SCHED_YIELD: usize = 24;
 #[cfg(target_arch = "x86_64")]
 pub const SYS_NANOSLEEP: usize = 35;
 #[cfg(target_arch = "x86_64")]
+pub const SYS_CLOCK_SETTIME: usize = 227;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_CLOCK_GETTIME: usize = 228;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_CLOCK_GETRES: usize = 229;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_CLOCK_NANOSLEEP: usize = 230;
+#[cfg(target_arch = "x86_64")]
 pub const SYS_FUTEX: usize = 202;
 #[cfg(target_arch = "x86_64")]
 pub const SYS_SET_TID_ADDRESS: usize = 218;
@@ -219,6 +227,14 @@ pub const SYS_PRLIMIT64: usize = 261;
 pub const SYS_SCHED_YIELD: usize = 124;
 #[cfg(target_arch = "aarch64")]
 pub const SYS_NANOSLEEP: usize = 101;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_CLOCK_SETTIME: usize = 112;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_CLOCK_GETTIME: usize = 113;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_CLOCK_GETRES: usize = 114;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_CLOCK_NANOSLEEP: usize = 115;
 #[cfg(target_arch = "aarch64")]
 pub const SYS_FUTEX: usize = 98;
 #[cfg(target_arch = "aarch64")]
@@ -773,6 +789,71 @@ pub fn sys_sched_yield() {
 pub unsafe fn sys_nanosleep(req: *const u8, rem: *mut u8) -> Result<(), i32> {
     // SAFETY: caller guarantees pointer validity.
     let ret = unsafe { raw::syscall2(SYS_NANOSLEEP, req as usize, rem as usize) };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `clock_gettime(clock_id, tp)` — get time of specified clock.
+///
+/// # Safety
+///
+/// `tp` must be a valid pointer to a timespec.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_clock_gettime(clock_id: i32, tp: *mut u8) -> Result<(), i32> {
+    // SAFETY: caller guarantees tp pointer validity.
+    let ret = unsafe { raw::syscall2(SYS_CLOCK_GETTIME, clock_id as usize, tp as usize) };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `clock_settime(clock_id, tp)` — set time of specified clock.
+///
+/// # Safety
+///
+/// `tp` must be a valid pointer to a timespec.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_clock_settime(clock_id: i32, tp: *const u8) -> Result<(), i32> {
+    // SAFETY: caller guarantees tp pointer validity.
+    let ret = unsafe { raw::syscall2(SYS_CLOCK_SETTIME, clock_id as usize, tp as usize) };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `clock_getres(clock_id, res)` — get resolution of specified clock.
+///
+/// # Safety
+///
+/// `res` may be null, or a valid pointer to a timespec.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_clock_getres(clock_id: i32, res: *mut u8) -> Result<(), i32> {
+    // SAFETY: caller guarantees res pointer validity if non-null.
+    let ret = unsafe { raw::syscall2(SYS_CLOCK_GETRES, clock_id as usize, res as usize) };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `clock_nanosleep(clock_id, flags, req, rem)` — high-resolution sleep on specified clock.
+///
+/// # Safety
+///
+/// `req` must be a valid pointer to a timespec. `rem` may be null or valid.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_clock_nanosleep(
+    clock_id: i32,
+    flags: i32,
+    req: *const u8,
+    rem: *mut u8,
+) -> Result<(), i32> {
+    // SAFETY: caller guarantees pointer validity.
+    let ret = unsafe {
+        raw::syscall4(
+            SYS_CLOCK_NANOSLEEP,
+            clock_id as usize,
+            flags as usize,
+            req as usize,
+            rem as usize,
+        )
+    };
     syscall_result(ret).map(|_| ())
 }
 

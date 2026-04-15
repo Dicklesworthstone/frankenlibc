@@ -3228,13 +3228,13 @@ unsafe fn ftw_walk_dir(
     }
 
     // Open and traverse the directory.
-    let dir = unsafe { libc::opendir(path) };
+    let dir = unsafe { crate::dirent_abi::opendir(path) }.cast::<libc::DIR>();
     if dir.is_null() {
         return unsafe { func(path, &st, FTW_DNR) };
     }
 
     loop {
-        let entry = unsafe { libc::readdir(dir) };
+        let entry = unsafe { crate::dirent_abi::readdir(dir.cast()) };
         if entry.is_null() {
             break;
         }
@@ -3251,7 +3251,7 @@ unsafe fn ftw_walk_dir(
         let child_len = path_len + 1 + name_bytes.len() + 1;
         let child_buf = unsafe { crate::malloc_abi::raw_alloc(child_len) as *mut u8 };
         if child_buf.is_null() {
-            unsafe { libc::closedir(dir) };
+            unsafe { crate::dirent_abi::closedir(dir.cast()) };
             return -1;
         }
         unsafe {
@@ -3275,12 +3275,12 @@ unsafe fn ftw_walk_dir(
         unsafe { crate::malloc_abi::raw_free(child_buf as *mut c_void) };
 
         if ret != 0 {
-            unsafe { libc::closedir(dir) };
+            unsafe { crate::dirent_abi::closedir(dir.cast()) };
             return ret;
         }
     }
 
-    unsafe { libc::closedir(dir) };
+    unsafe { crate::dirent_abi::closedir(dir.cast()) };
     0
 }
 
@@ -3429,7 +3429,7 @@ unsafe fn nftw_walk_dir(
     }
 
     // Open and traverse the directory.
-    let dir = unsafe { libc::opendir(path) };
+    let dir = unsafe { crate::dirent_abi::opendir(path) }.cast::<libc::DIR>();
     if dir.is_null() {
         let ret = unsafe {
             func(
@@ -3443,7 +3443,7 @@ unsafe fn nftw_walk_dir(
     }
 
     loop {
-        let entry = unsafe { libc::readdir(dir) };
+        let entry = unsafe { crate::dirent_abi::readdir(dir.cast()) };
         if entry.is_null() {
             break;
         }
@@ -3458,7 +3458,7 @@ unsafe fn nftw_walk_dir(
         let child_len = path_len + 1 + name_bytes.len() + 1;
         let child_buf = unsafe { crate::malloc_abi::raw_alloc(child_len) as *mut u8 };
         if child_buf.is_null() {
-            unsafe { libc::closedir(dir) };
+            unsafe { crate::dirent_abi::closedir(dir.cast()) };
             return -1;
         }
         unsafe {
@@ -3486,12 +3486,12 @@ unsafe fn nftw_walk_dir(
         unsafe { crate::malloc_abi::raw_free(child_buf as *mut c_void) };
 
         if ret != 0 {
-            unsafe { libc::closedir(dir) };
+            unsafe { crate::dirent_abi::closedir(dir.cast()) };
             return ret;
         }
     }
 
-    unsafe { libc::closedir(dir) };
+    unsafe { crate::dirent_abi::closedir(dir.cast()) };
 
     // Post-order callback (FTW_DEPTH)
     if flags & FTW_DEPTH != 0 {
@@ -11923,7 +11923,20 @@ pub unsafe extern "C" fn readdir64_r(
     if dirp.is_null() || entry.is_null() || result.is_null() {
         return libc::EINVAL;
     }
-    unsafe { libc::readdir64_r(dirp, entry, result) }
+    unsafe {
+        *result = std::ptr::null_mut();
+        *crate::errno_abi::__errno_location() = 0;
+    }
+    let next = unsafe { crate::dirent_abi::readdir64(dirp.cast()) } as *mut libc::dirent64;
+    if next.is_null() {
+        let err = unsafe { *crate::errno_abi::__errno_location() };
+        return if err == 0 { 0 } else { err };
+    }
+    unsafe {
+        std::ptr::copy_nonoverlapping(next, entry, 1);
+        *result = entry;
+    }
+    0
 }
 
 // ===========================================================================

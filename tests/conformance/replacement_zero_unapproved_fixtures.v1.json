@@ -41,18 +41,18 @@
       "evidence_source": "replacement_guard_source_scan"
     },
     {
-      "id": "interpose_allow_unistd_abi_opendir",
+      "id": "interpose_allow_unistd_abi_fgets",
       "mode": "interpose",
       "module": "unistd_abi",
-      "symbol": "opendir",
+      "symbol": "fgets",
       "expected_outcome": "allowed",
       "evidence_source": "replacement_guard_source_scan"
     },
     {
-      "id": "replacement_forbid_unistd_abi_readdir",
+      "id": "replacement_forbid_unistd_abi_freeaddrinfo",
       "mode": "replacement",
       "module": "unistd_abi",
-      "symbol": "readdir",
+      "symbol": "freeaddrinfo",
       "expected_outcome": "forbidden",
       "evidence_source": "replacement_guard_source_scan"
     }
