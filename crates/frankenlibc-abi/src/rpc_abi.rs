@@ -11,7 +11,7 @@
 
 use std::ffi::{c_char, c_int, c_uint, c_void};
 
-use frankenlibc_core::syscall::{syscall_result, syscall3};
+use frankenlibc_core::syscall::{self as raw_syscall, syscall_result, syscall3};
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
 use crate::errno_abi::set_abi_errno;
@@ -2785,7 +2785,8 @@ pub unsafe extern "C" fn getnetname(name: *mut c_char) -> c_int {
     if name.is_null() {
         return 0;
     }
-    let uid = unsafe { libc::syscall(libc::SYS_geteuid) as libc::uid_t };
+    // Use native syscall instead of libc::syscall (bd-h5x)
+    let uid = raw_syscall::sys_geteuid();
     // Format: "unix.<uid>@localhost"
     let netname = format!("unix.{}@localhost\0", uid);
     let bytes = netname.as_bytes();
@@ -3025,8 +3026,8 @@ pub unsafe extern "C" fn bindresvport(sd: c_int, sin: *mut c_void) -> c_int {
     };
 
     // Try ports 512..1024 (reserved range per glibc convention)
-    // Start from a "random" offset based on process ID for spread
-    let pid = unsafe { libc::syscall(libc::SYS_getpid) as libc::pid_t } as u16;
+    // Start from a "random" offset based on process ID for spread (bd-h5x)
+    let pid = raw_syscall::sys_getpid() as u16;
     let start = 600 + (pid % 424); // range [600, 1023]
 
     for i in 0..512 {

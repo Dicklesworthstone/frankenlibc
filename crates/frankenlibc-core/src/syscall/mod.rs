@@ -66,6 +66,8 @@ pub const SYS_DUP2: usize = 33;
 #[cfg(target_arch = "x86_64")]
 pub const SYS_GETPID: usize = 39;
 #[cfg(target_arch = "x86_64")]
+pub const SYS_GETEUID: usize = 107;
+#[cfg(target_arch = "x86_64")]
 pub const SYS_CLONE: usize = 56;
 #[cfg(target_arch = "x86_64")]
 pub const SYS_FORK: usize = 57;
@@ -141,6 +143,8 @@ pub const SYS_DUP: usize = 23;
 pub const SYS_DUP2: usize = 24;
 #[cfg(target_arch = "aarch64")]
 pub const SYS_GETPID: usize = 172;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_GETEUID: usize = 175;
 #[cfg(target_arch = "aarch64")]
 pub const SYS_CLONE: usize = 220;
 #[cfg(target_arch = "aarch64")]
@@ -381,6 +385,15 @@ pub fn sys_getpid() -> i32 {
     // SAFETY: getpid has no preconditions.
     let ret = unsafe { raw::syscall0(SYS_GETPID) };
     ret as i32
+}
+
+/// `geteuid()` — get effective user ID.
+#[inline]
+#[allow(unsafe_code)]
+pub fn sys_geteuid() -> u32 {
+    // SAFETY: geteuid has no preconditions.
+    let ret = unsafe { raw::syscall0(SYS_GETEUID) };
+    ret as u32
 }
 
 /// `pipe2(pipefd, flags)` — create a pipe with flags.

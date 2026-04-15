@@ -27,6 +27,7 @@ use crate::errno_abi::set_abi_errno;
 use crate::htm_fast_path::HtmSite;
 use crate::runtime_policy;
 use crate::signal_abi::{SignalCriticalSectionKind, enter_signal_critical_section};
+use frankenlibc_core::syscall as raw_syscall;
 
 type HostMallocFn = unsafe extern "C" fn(usize) -> *mut c_void;
 type HostCallocFn = unsafe extern "C" fn(usize, usize) -> *mut c_void;
@@ -187,21 +188,20 @@ unsafe fn mmap_alloc(size: usize) -> *mut c_void {
     // headroom on 16K/64K page systems).
     let page_size = 4096usize;
     let alloc_size = (size + page_size - 1) & !(page_size - 1);
-    let ptr = unsafe {
-        libc::syscall(
-            libc::SYS_mmap,
-            std::ptr::null::<c_void>(),
+    // Use native syscall instead of libc::syscall (bd-h5x)
+    let result = unsafe {
+        raw_syscall::sys_mmap(
+            std::ptr::null_mut(),
             alloc_size,
             libc::PROT_READ | libc::PROT_WRITE,
             libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
-            -1i32,
-            0i64,
-        ) as *mut c_void
+            -1,
+            0,
+        )
     };
-    if ptr == libc::MAP_FAILED {
-        std::ptr::null_mut()
-    } else {
-        ptr
+    match result {
+        Ok(ptr) => ptr as *mut c_void,
+        Err(_) => std::ptr::null_mut(),
     }
 }
 
