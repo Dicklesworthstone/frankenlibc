@@ -96,7 +96,11 @@ fn locale_ops_covers_setlocale() {
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     assert!(
-        case_names.iter().filter(|n| n.contains("setlocale")).count() >= 3,
+        case_names
+            .iter()
+            .filter(|n| n.contains("setlocale"))
+            .count()
+            >= 3,
         "setlocale needs at least 3 test cases"
     );
 }
@@ -126,7 +130,11 @@ fn locale_ops_covers_nl_langinfo() {
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     assert!(
-        case_names.iter().filter(|n| n.contains("nl_langinfo")).count() >= 2,
+        case_names
+            .iter()
+            .filter(|n| n.contains("nl_langinfo"))
+            .count()
+            >= 2,
         "nl_langinfo needs at least 2 test cases"
     );
 }
@@ -243,7 +251,9 @@ fn locale_ops_covers_hardened_fallbacks() {
 
     // Hardened mode should test unsupported/unknown locale fallbacks
     assert!(
-        case_names.iter().any(|n| n.contains("unsupported") || n.contains("unknown")),
+        case_names
+            .iter()
+            .any(|n| n.contains("unsupported") || n.contains("unknown")),
         "locale_ops must test unsupported locale fallbacks in hardened mode"
     );
 }
@@ -258,8 +268,7 @@ fn locale_ops_has_spec_references() {
 
     for case in &fixture.cases {
         assert!(
-            case.spec_section.contains("C11")
-                || case.spec_section.contains("POSIX"),
+            case.spec_section.contains("C11") || case.spec_section.contains("POSIX"),
             "Case {} spec_section should reference C11 or POSIX: {}",
             case.name,
             case.spec_section

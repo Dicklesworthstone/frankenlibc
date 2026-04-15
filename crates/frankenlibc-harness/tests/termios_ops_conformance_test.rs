@@ -96,7 +96,11 @@ fn termios_ops_covers_tcgetattr() {
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
     assert!(
-        case_names.iter().filter(|n| n.contains("tcgetattr")).count() >= 2,
+        case_names
+            .iter()
+            .filter(|n| n.contains("tcgetattr"))
+            .count()
+            >= 2,
         "tcgetattr needs at least 2 test cases"
     );
 }
@@ -201,10 +205,7 @@ fn termios_ops_case_count_stable() {
         EXPECTED_MIN_CASES
     );
 
-    eprintln!(
-        "termios_ops fixture has {} test cases",
-        fixture.cases.len()
-    );
+    eprintln!("termios_ops fixture has {} test cases", fixture.cases.len());
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

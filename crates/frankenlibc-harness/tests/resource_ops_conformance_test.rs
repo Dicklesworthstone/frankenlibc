@@ -178,10 +178,7 @@ fn resource_ops_covers_both_modes() {
     let has_strict = fixture.cases.iter().any(|c| c.mode == "strict");
     let has_hardened = fixture.cases.iter().any(|c| c.mode == "hardened");
 
-    assert!(
-        has_strict,
-        "resource_ops must have strict mode test cases"
-    );
+    assert!(has_strict, "resource_ops must have strict mode test cases");
     assert!(
         has_hardened,
         "resource_ops must have hardened mode test cases"
