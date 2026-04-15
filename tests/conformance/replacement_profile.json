@@ -123,7 +123,6 @@
       "glibc_internal_abi",
       "malloc_abi",
       "pthread_abi",
-      "stdio_abi",
       "unistd_abi"
     ],
     "require_fixture_coverage": true
@@ -316,11 +315,9 @@
         "functions": []
       },
       "stdio_abi": {
-        "count": 2,
-        "functions": [
-          "mkstemp",
-          "waitpid"
-        ]
+        "count": 0,
+        "functions": [],
+        "note": "tmpfile fallback now uses native mkstemp via wchar_abi, and popen cleanup reaps children through process_abi::waitpid."
       },
       "stdlib_abi": {
         "count": 0,

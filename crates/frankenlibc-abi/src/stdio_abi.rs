@@ -5170,7 +5170,7 @@ pub unsafe extern "C" fn tmpfile() -> *mut c_void {
         // Fallback: create a named temp file and unlink it.
         let template = b"/tmp/frankenlibc_XXXXXX\0";
         let mut path = *template;
-        let fd2 = unsafe { libc::mkstemp(path.as_mut_ptr().cast()) };
+        let fd2 = unsafe { crate::wchar_abi::mkstemp(path.as_mut_ptr().cast()) };
         if fd2 < 0 {
             let e = std::io::Error::last_os_error()
                 .raw_os_error()
@@ -5526,7 +5526,7 @@ pub unsafe extern "C" fn popen(command: *const c_char, typ: *const c_char) -> *m
     if fp.is_null() {
         // fdopen failed (registry full) - close fd and waitpid to reap child.
         unsafe { libc::syscall(libc::SYS_close as c_long, our_fd) };
-        unsafe { libc::waitpid(pid, std::ptr::null_mut(), 0) };
+        unsafe { crate::process_abi::waitpid(pid, std::ptr::null_mut(), 0) };
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 50, true);
         return std::ptr::null_mut();
     }
