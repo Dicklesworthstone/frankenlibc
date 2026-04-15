@@ -352,6 +352,19 @@ pub fn sys_close(fd: i32) -> Result<(), i32> {
     syscall_result(ret).map(|_| ())
 }
 
+/// `fstat(fd, statbuf)` — get file status by file descriptor.
+///
+/// # Safety
+///
+/// `statbuf` must be a valid pointer to a `stat` structure.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_fstat(fd: i32, statbuf: *mut u8) -> Result<(), i32> {
+    // SAFETY: caller guarantees statbuf validity.
+    let ret = unsafe { raw::syscall2(SYS_FSTAT, fd as usize, statbuf as usize) };
+    syscall_result(ret).map(|_| ())
+}
+
 /// `mmap(addr, length, prot, flags, fd, offset)` — map memory.
 ///
 /// # Safety

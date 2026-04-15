@@ -10,6 +10,8 @@ use std::mem::MaybeUninit;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use frankenlibc_core::syscall as raw_syscall;
+
 static HOST_PTHREAD_CREATE: AtomicUsize = AtomicUsize::new(0);
 static HOST_PTHREAD_JOIN: AtomicUsize = AtomicUsize::new(0);
 static HOST_PTHREAD_DETACH: AtomicUsize = AtomicUsize::new(0);
@@ -62,16 +64,21 @@ pub(crate) unsafe fn host_dlvsym_next_raw(
 }
 
 unsafe fn raw_read(fd: i32, buf: *mut u8, count: usize) -> isize {
-    unsafe { libc::syscall(libc::SYS_read, fd, buf, count) as isize }
+    match unsafe { raw_syscall::sys_read(fd, buf, count) } {
+        Ok(n) => n as isize,
+        Err(e) => -(e as isize),
+    }
 }
 unsafe fn raw_open(path: *const u8) -> i32 {
-    unsafe { libc::syscall(libc::SYS_openat, libc::AT_FDCWD, path, libc::O_RDONLY, 0) as i32 }
+    unsafe { raw_syscall::sys_openat(libc::AT_FDCWD, path, libc::O_RDONLY, 0) }.unwrap_or(-1)
 }
 unsafe fn raw_close(fd: i32) {
-    unsafe { libc::syscall(libc::SYS_close, fd) };
+    let _ = raw_syscall::sys_close(fd);
 }
 unsafe fn raw_fstat(fd: i32, stat: *mut libc::stat) -> i32 {
-    unsafe { libc::syscall(libc::SYS_fstat, fd, stat) as i32 }
+    unsafe { raw_syscall::sys_fstat(fd, stat as *mut u8) }
+        .map(|_| 0)
+        .unwrap_or(-1)
 }
 
 #[repr(C)]
@@ -369,22 +376,24 @@ fn load_glibc_image() -> Option<&'static LoadedGlibcImage> {
     }
     let len = stat.st_size as usize;
     // SAFETY: read-only private file mapping for ELF parsing.
-    // Use raw SYS_mmap syscall to avoid going through our interposed mmap.
-    let mapped = unsafe {
-        libc::syscall(
-            libc::SYS_mmap,
-            std::ptr::null::<c_void>(),
+    // Use raw syscall to avoid going through our interposed mmap.
+    let mapped = match unsafe {
+        raw_syscall::sys_mmap(
+            std::ptr::null_mut(),
             len,
             libc::PROT_READ,
             libc::MAP_PRIVATE,
             fd,
-            0i64,
-        ) as *mut c_void
+            0,
+        )
+    } {
+        Ok(ptr) => ptr as *mut c_void,
+        Err(_) => {
+            unsafe { raw_close(fd) };
+            return None;
+        }
     };
     unsafe { raw_close(fd) };
-    if std::ptr::eq(mapped, libc::MAP_FAILED) || (mapped as isize) < 0 {
-        return None;
-    }
     let image = LoadedGlibcImage {
         base,
         mapped: mapped as usize,
