@@ -344,8 +344,16 @@ fn pthread_gnu_extensions_case_count_stable() {
 #[test]
 fn pthread_gnu_extensions_fixture_cases_match_execute_fixture_case() {
     let fixture = load_fixture("pthread_gnu_extensions");
+    let case_filter = std::env::var("FRANKENLIBC_GNU_PTHREAD_CASE_FILTER").ok();
+    let mode_filter = std::env::var("FRANKENLIBC_GNU_PTHREAD_MODE_FILTER").ok();
 
     for case in fixture.cases {
+        if case_filter
+            .as_deref()
+            .is_some_and(|filter| !case.name.contains(filter))
+        {
+            continue;
+        }
         let expected_output = case
             .expected_output
             .as_deref()
@@ -357,6 +365,12 @@ fn pthread_gnu_extensions_fixture_cases_match_execute_fixture_case() {
         };
 
         for mode in modes {
+            if mode_filter
+                .as_deref()
+                .is_some_and(|filter| !mode.eq_ignore_ascii_case(filter))
+            {
+                continue;
+            }
             let result =
                 frankenlibc_fixture_exec::execute_fixture_case(&case.function, &case.inputs, mode)
                     .unwrap_or_else(|err| {
