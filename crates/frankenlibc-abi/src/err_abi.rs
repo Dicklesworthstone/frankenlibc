@@ -69,7 +69,7 @@ fn write_err_message(fmt_bytes: &[u8], arg_buf: &[u64], arg_count: usize, with_e
     // Write to stderr (fd 2) atomically.
     unsafe {
         crate::unistd_abi::write(2, out.as_ptr() as *const c_void, out.len());
-        *crate::errno_abi::__errno_location() = saved_errno;
+        crate::errno_abi::set_abi_errno(saved_errno);
     }
 }
 

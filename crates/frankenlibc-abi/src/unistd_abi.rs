@@ -12593,7 +12593,7 @@ pub unsafe extern "C" fn gethostbyname2_r(
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn ftok(pathname: *const c_char, proj_id: c_int) -> i32 {
     if pathname.is_null() {
-        unsafe { *super::errno_abi::__errno_location() = libc::EINVAL };
+        unsafe { super::errno_abi::set_abi_errno(libc::EINVAL) };
         return -1;
     }
     let mut st: libc::stat = unsafe { std::mem::zeroed() };
