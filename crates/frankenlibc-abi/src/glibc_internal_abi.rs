@@ -3075,7 +3075,7 @@ pub unsafe extern "C" fn __dup2(oldfd: c_int, newfd: c_int) -> c_int {
 // __endmntent: native — close mount table (libc forwarding)
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __endmntent(fp: *mut c_void) -> c_int {
-    unsafe { libc::endmntent(fp.cast()) }
+    unsafe { crate::unistd_abi::endmntent(fp) }
 }
 // --- stdio_ext.h functions: native stream queries ---
 // These query opaque FILE* internals. Since we don't control glibc's FILE struct,
@@ -4086,7 +4086,7 @@ pub unsafe extern "C" fn _dl_mcount_wrapper_check(_selfpc: c_ulong) {}
 // _flushlbf: native — flush all line-buffered streams
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn _flushlbf() {
-    unsafe { libc::fflush(std::ptr::null_mut()) };
+    let _ = unsafe { crate::stdio_abi::fflush(std::ptr::null_mut()) };
 }
 
 // _libc_intl_domainname
@@ -5223,7 +5223,7 @@ pub unsafe extern "C" fn putgrent(grp: *const c_void, fp: *mut c_void) -> c_int 
             std::str::from_utf8_unchecked(&member_str),
         )
     };
-    let written = unsafe { libc::fwrite(line.as_ptr().cast(), 1, line.len(), fp.cast()) };
+    let written = unsafe { crate::stdio_abi::fwrite(line.as_ptr().cast(), 1, line.len(), fp) };
     if written == line.len() { 0 } else { -1 }
 }
 // putmsg/putpmsg: STREAMS — not supported on Linux
@@ -5293,7 +5293,7 @@ pub unsafe extern "C" fn putpwent(pw: *const c_void, fp: *mut c_void) -> c_int {
         unsafe { std::str::from_utf8_unchecked(dir) },
         unsafe { std::str::from_utf8_unchecked(shell) },
     );
-    let written = unsafe { libc::fwrite(line.as_ptr().cast(), 1, line.len(), fp.cast()) };
+    let written = unsafe { crate::stdio_abi::fwrite(line.as_ptr().cast(), 1, line.len(), fp) };
     if written == line.len() { 0 } else { -1 }
 }
 // pwritev64v2: native syscall
@@ -5543,8 +5543,14 @@ pub unsafe extern "C" fn scandirat(
     compar: *mut c_void,
 ) -> c_int {
     // Open the directory relative to dirfd using openat + fdopendir
-    let fd =
-        unsafe { crate::unistd_abi::openat(dirfd, dirp, libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC, 0) };
+    let fd = unsafe {
+        crate::unistd_abi::openat(
+            dirfd,
+            dirp,
+            libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC,
+            0,
+        )
+    };
     if fd < 0 {
         return -1;
     }

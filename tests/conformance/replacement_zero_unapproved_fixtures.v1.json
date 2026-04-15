@@ -9,10 +9,10 @@
   },
   "fixtures": [
     {
-      "id": "interpose_allow_glibc_internal_abi_fflush",
+      "id": "interpose_allow_glibc_internal_abi_adjtime",
       "mode": "interpose",
       "module": "glibc_internal_abi",
-      "symbol": "fflush",
+      "symbol": "adjtime",
       "expected_outcome": "allowed",
       "evidence_source": "replacement_guard_source_scan"
     },

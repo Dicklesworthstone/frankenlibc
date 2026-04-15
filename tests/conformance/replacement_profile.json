@@ -172,13 +172,10 @@
         "functions": []
       },
       "glibc_internal_abi": {
-        "count": 32,
+        "count": 26,
         "functions": [
           "adjtime",
-          "endmntent",
-          "fflush",
           "futimes",
-          "fwrite",
           "getauxval",
           "getpwuid",
           "getgroups",
