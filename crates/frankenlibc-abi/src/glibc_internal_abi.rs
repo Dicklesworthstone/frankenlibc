@@ -4650,12 +4650,12 @@ pub unsafe extern "C" fn getipv4sourcefilter(
     }
     let mut optlen: u32 = buf_size as u32;
     let rc = unsafe {
-        libc::getsockopt(
+        crate::socket_abi::getsockopt(
             s,
             libc::IPPROTO_IP,
             IP_MSFILTER,
             buf.as_mut_ptr() as *mut c_void,
-            &mut optlen as *mut u32 as *mut libc::socklen_t,
+            &mut optlen,
         )
     };
     if rc < 0 {
@@ -4712,7 +4712,7 @@ pub unsafe extern "C" fn getpw(uid: c_uint, buf: *mut c_char) -> c_int {
     if buf.is_null() {
         return -1;
     }
-    let pw = unsafe { libc::getpwuid(uid) };
+    let pw = unsafe { crate::pwd_abi::getpwuid(uid as libc::uid_t) };
     if pw.is_null() {
         return -1;
     }
@@ -5749,12 +5749,12 @@ pub unsafe extern "C" fn setipv4sourcefilter(
         }
     }
     unsafe {
-        libc::setsockopt(
+        crate::socket_abi::setsockopt(
             s,
             libc::IPPROTO_IP,
             IP_MSFILTER,
             buf.as_ptr() as *const c_void,
-            buf_size as libc::socklen_t,
+            buf_size as u32,
         )
     }
 }
@@ -5801,12 +5801,12 @@ pub unsafe extern "C" fn setsourcefilter(
                 numsrc as usize * ss_size,
             );
         }
-        libc::setsockopt(
+        crate::socket_abi::setsockopt(
             s,
             libc::SOL_SOCKET,
             MCAST_MSFILTER,
             buf.as_ptr() as *const c_void,
-            buf_size as libc::socklen_t,
+            buf_size as u32,
         )
     }
 }
@@ -5839,12 +5839,12 @@ pub unsafe extern "C" fn getsourcefilter(
     }
     let mut optlen: u32 = buf_size as u32;
     let rc = unsafe {
-        libc::getsockopt(
+        crate::socket_abi::getsockopt(
             s,
             libc::SOL_SOCKET,
             MCAST_MSFILTER,
             buf.as_mut_ptr() as *mut c_void,
-            &mut optlen as *mut u32 as *mut libc::socklen_t,
+            &mut optlen,
         )
     };
     if rc < 0 {
@@ -6045,7 +6045,8 @@ pub unsafe extern "C" fn ulimit(cmd: c_int, newlimit: c_long) -> c_long {
     match cmd {
         UL_GETFSIZE => {
             let mut rlim: libc::rlimit = unsafe { std::mem::zeroed() };
-            if unsafe { libc::getrlimit(libc::RLIMIT_FSIZE, &mut rlim) } < 0 {
+            if unsafe { crate::resource_abi::getrlimit(libc::RLIMIT_FSIZE as c_int, &mut rlim) } < 0
+            {
                 return -1;
             }
             // ulimit returns in 512-byte blocks
@@ -6060,7 +6061,7 @@ pub unsafe extern "C" fn ulimit(cmd: c_int, newlimit: c_long) -> c_long {
                 rlim_cur: (newlimit as u64) * 512,
                 rlim_max: (newlimit as u64) * 512,
             };
-            if unsafe { libc::setrlimit(libc::RLIMIT_FSIZE, &rlim) } < 0 {
+            if unsafe { crate::resource_abi::setrlimit(libc::RLIMIT_FSIZE as c_int, &rlim) } < 0 {
                 return -1;
             }
             newlimit
