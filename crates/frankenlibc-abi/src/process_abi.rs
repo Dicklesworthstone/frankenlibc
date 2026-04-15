@@ -9,6 +9,7 @@ use std::os::raw::c_long;
 use std::os::unix::ffi::OsStrExt;
 
 use frankenlibc_core::process;
+use frankenlibc_core::syscall as raw_syscall;
 use frankenlibc_membrane::heal::{HealingAction, global_healing_policy};
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
@@ -63,11 +64,18 @@ unsafe fn execvp_via_execve(file: *const c_char, argv: *const *const c_char) -> 
     }
 
     if file_bytes.contains(&b'/') {
-        let rc = unsafe { libc::syscall(libc::SYS_execve as c_long, file, argv, environ) } as c_int;
-        if rc < 0 {
-            unsafe { set_abi_errno(last_host_errno(libc::ENOENT)) };
+        // execve only returns on failure
+        let err = unsafe {
+            raw_syscall::sys_execve(
+                file as *const u8,
+                argv as *const *const u8,
+                environ as *const *const u8,
+            )
         }
-        return rc;
+        .err()
+        .unwrap_or(libc::ENOENT);
+        unsafe { set_abi_errno(err) };
+        return -1;
     }
 
     let path =
@@ -84,17 +92,16 @@ unsafe fn execvp_via_execve(file: *const c_char, argv: *const *const c_char) -> 
         candidate.extend_from_slice(file_bytes);
         candidate.push(0);
 
-        let _rc = unsafe {
-            libc::syscall(
-                libc::SYS_execve as c_long,
-                candidate.as_ptr().cast::<c_char>(),
-                argv,
-                environ,
-            ) as c_int
-        };
-        // execve only returns on failure (rc == -1); on success the process is replaced.
-
-        let err = last_host_errno(libc::ENOENT);
+        // execve only returns on failure; on success the process is replaced.
+        let err = unsafe {
+            raw_syscall::sys_execve(
+                candidate.as_ptr(),
+                argv as *const *const u8,
+                environ as *const *const u8,
+            )
+        }
+        .err()
+        .unwrap_or(libc::ENOENT);
         match err {
             libc::ENOENT | libc::ENOTDIR => {}
             libc::EACCES => {
@@ -141,24 +148,26 @@ pub unsafe extern "C" fn fork() -> libc::pid_t {
     let _pipeline_guard =
         crate::membrane_state::try_global_pipeline().map(|pipeline| pipeline.atfork_prepare());
 
-    let rc = unsafe { libc::syscall(libc::SYS_clone as c_long, libc::SIGCHLD, 0, 0, 0, 0) };
-    let pid = rc as libc::pid_t;
+    let pid = match raw_syscall::sys_clone_fork(libc::SIGCHLD as usize) {
+        Ok(p) => p,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            runtime_policy::observe(ApiFamily::Process, decision.profile, 50, true);
+            return -1;
+        }
+    };
 
     drop(_pipeline_guard);
 
     if pid == 0 {
         // Child: run child handlers to reinitialize state.
         crate::pthread_abi::run_atfork_child();
-    } else if pid > 0 {
+    } else {
         // Parent: run parent handlers to release locks.
         crate::pthread_abi::run_atfork_parent();
     }
 
-    let adverse = pid < 0;
-    if adverse {
-        unsafe { set_abi_errno(last_host_errno(libc::EAGAIN)) };
-    }
-    runtime_policy::observe(ApiFamily::Process, decision.profile, 50, adverse);
+    runtime_policy::observe(ApiFamily::Process, decision.profile, 50, false);
     pid
 }
 
@@ -185,12 +194,7 @@ pub unsafe extern "C" fn _exit(status: c_int) -> ! {
     };
 
     runtime_policy::observe(ApiFamily::Process, decision.profile, 5, false);
-    unsafe { libc::syscall(libc::SYS_exit_group as c_long, clamped) };
-    // If exit_group returns, fall back to SYS_exit and keep retrying.
-    unsafe { libc::syscall(libc::SYS_exit as c_long, clamped) };
-    loop {
-        unsafe { libc::syscall(libc::SYS_exit as c_long, clamped) };
-    }
+    raw_syscall::sys_exit_group(clamped)
 }
 
 // ---------------------------------------------------------------------------
@@ -217,15 +221,19 @@ pub unsafe extern "C" fn execve(
         return -1;
     }
 
-    let rc = unsafe { libc::syscall(libc::SYS_execve as c_long, pathname, argv, envp) as c_int };
-
     // execve only returns on failure.
-    let e = std::io::Error::last_os_error()
-        .raw_os_error()
-        .unwrap_or(libc::ENOENT);
+    let e = unsafe {
+        raw_syscall::sys_execve(
+            pathname as *const u8,
+            argv as *const *const u8,
+            envp as *const *const u8,
+        )
+    }
+    .err()
+    .unwrap_or(libc::ENOENT);
     unsafe { set_abi_errno(e) };
     runtime_policy::observe(ApiFamily::Process, decision.profile, 40, true);
-    rc
+    -1
 }
 
 // ---------------------------------------------------------------------------
@@ -289,21 +297,20 @@ pub unsafe extern "C" fn waitpid(
     };
 
     let rc = unsafe {
-        libc::syscall(
-            libc::SYS_wait4 as c_long,
-            pid,
-            wstatus,
-            opts,
-            std::ptr::null::<c_void>(),
-        ) as libc::pid_t
+        raw_syscall::sys_wait4(pid, wstatus, opts, std::ptr::null_mut())
     };
 
-    let adverse = rc < 0;
-    if adverse {
-        unsafe { set_abi_errno(last_host_errno(libc::ECHILD)) };
+    match rc {
+        Ok(child_pid) => {
+            runtime_policy::observe(ApiFamily::Process, decision.profile, 30, false);
+            child_pid
+        }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            runtime_policy::observe(ApiFamily::Process, decision.profile, 30, true);
+            -1
+        }
     }
-    runtime_policy::observe(ApiFamily::Process, decision.profile, 30, adverse);
-    rc
 }
 
 // ---------------------------------------------------------------------------
@@ -353,14 +360,20 @@ pub unsafe extern "C" fn wait4(
     }
 
     let rc = unsafe {
-        libc::syscall(libc::SYS_wait4 as c_long, pid, wstatus, options, rusage) as libc::pid_t
+        raw_syscall::sys_wait4(pid, wstatus, options, rusage as *mut u8)
     };
-    let adverse = rc < 0;
-    if adverse {
-        unsafe { set_abi_errno(last_host_errno(libc::ECHILD)) };
+
+    match rc {
+        Ok(child_pid) => {
+            runtime_policy::observe(ApiFamily::Process, decision.profile, 30, false);
+            child_pid
+        }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            runtime_policy::observe(ApiFamily::Process, decision.profile, 30, true);
+            -1
+        }
     }
-    runtime_policy::observe(ApiFamily::Process, decision.profile, 30, adverse);
-    rc
 }
 
 // ---------------------------------------------------------------------------
@@ -384,21 +397,26 @@ pub unsafe extern "C" fn waitid(
     }
 
     let rc = unsafe {
-        libc::syscall(
-            libc::SYS_waitid as c_long,
+        raw_syscall::sys_waitid(
             idtype,
             id,
-            infop,
+            infop as *mut u8,
             options,
-            std::ptr::null_mut::<c_void>(), // rusage (5th arg)
-        ) as c_int
+            std::ptr::null_mut(), // rusage (5th arg)
+        )
     };
-    let adverse = rc < 0;
-    if adverse {
-        unsafe { set_abi_errno(last_host_errno(libc::ECHILD)) };
+
+    match rc {
+        Ok(()) => {
+            runtime_policy::observe(ApiFamily::Process, decision.profile, 30, false);
+            0
+        }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            runtime_policy::observe(ApiFamily::Process, decision.profile, 30, true);
+            -1
+        }
     }
-    runtime_policy::observe(ApiFamily::Process, decision.profile, 30, adverse);
-    rc
 }
 
 // ---------------------------------------------------------------------------
@@ -446,11 +464,18 @@ pub unsafe extern "C" fn execvpe(
 
     // If file contains '/', execute directly without PATH search.
     if file_bytes.contains(&b'/') {
-        let rc = unsafe { libc::syscall(libc::SYS_execve as c_long, file, argv, envp) } as c_int;
-        if rc < 0 {
-            unsafe { set_abi_errno(last_host_errno(libc::ENOENT)) };
+        // execve only returns on failure
+        let err = unsafe {
+            raw_syscall::sys_execve(
+                file as *const u8,
+                argv as *const *const u8,
+                envp as *const *const u8,
+            )
         }
-        return rc;
+        .err()
+        .unwrap_or(libc::ENOENT);
+        unsafe { set_abi_errno(err) };
+        return -1;
     }
 
     // Search PATH for the executable.
@@ -468,19 +493,16 @@ pub unsafe extern "C" fn execvpe(
         candidate.extend_from_slice(file_bytes);
         candidate.push(0);
 
-        let rc = unsafe {
-            libc::syscall(
-                libc::SYS_execve as c_long,
-                candidate.as_ptr().cast::<c_char>(),
-                argv,
-                envp,
-            ) as c_int
-        };
-        if rc == 0 {
-            return rc;
+        // execve only returns on failure; on success the process is replaced.
+        let err = unsafe {
+            raw_syscall::sys_execve(
+                candidate.as_ptr(),
+                argv as *const *const u8,
+                envp as *const *const u8,
+            )
         }
-
-        let err = last_host_errno(libc::ENOENT);
+        .err()
+        .unwrap_or(libc::ENOENT);
         match err {
             libc::ENOENT | libc::ENOTDIR => {}
             libc::EACCES => {
@@ -945,11 +967,8 @@ unsafe fn apply_spawn_attrs(attr: &SpawnAttrs) -> c_int {
     let flags = attr.flags as c_int;
 
     if flags & libc::POSIX_SPAWN_SETPGROUP != 0 {
-        let rc = unsafe { libc::syscall(libc::SYS_setpgid, 0, attr.pgroup) };
-        if rc < 0 {
-            return std::io::Error::last_os_error()
-                .raw_os_error()
-                .unwrap_or(libc::EINVAL);
+        if let Err(e) = raw_syscall::sys_setpgid(0, attr.pgroup) {
+            return e;
         }
     }
 
@@ -961,19 +980,15 @@ unsafe fn apply_spawn_attrs(attr: &SpawnAttrs) -> c_int {
                 unsafe { crate::signal_abi::sigaddset(&mut sigset, sig) };
             }
         }
-        let rc = unsafe {
-            libc::syscall(
-                libc::SYS_rt_sigprocmask,
+        if let Err(e) = unsafe {
+            raw_syscall::sys_rt_sigprocmask(
                 libc::SIG_SETMASK,
-                &sigset as *const libc::sigset_t,
-                std::ptr::null_mut::<libc::sigset_t>(),
+                &sigset as *const libc::sigset_t as *const u8,
+                std::ptr::null_mut(),
                 8, // kernel _NSIG / 8 (NOT sizeof(sigset_t))
             )
-        };
-        if rc < 0 {
-            return std::io::Error::last_os_error()
-                .raw_os_error()
-                .unwrap_or(libc::EINVAL);
+        } {
+            return e;
         }
     }
 
@@ -982,19 +997,15 @@ unsafe fn apply_spawn_attrs(attr: &SpawnAttrs) -> c_int {
         act.sa_sigaction = libc::SIG_DFL;
         for sig in 1..=63 {
             if attr.sigdefault & (1u64 << sig) != 0 {
-                let rc = unsafe {
-                    libc::syscall(
-                        libc::SYS_rt_sigaction,
-                        sig,
-                        &act as *const libc::sigaction,
-                        std::ptr::null_mut::<libc::sigaction>(),
+                if let Err(e) = unsafe {
+                    raw_syscall::sys_rt_sigaction(
+                        sig as i32,
+                        &act as *const libc::sigaction as *const u8,
+                        std::ptr::null_mut(),
                         8, // kernel _NSIG / 8 (NOT sizeof(sigset_t))
                     )
-                };
-                if rc < 0 {
-                    return std::io::Error::last_os_error()
-                        .raw_os_error()
-                        .unwrap_or(libc::EINVAL);
+                } {
+                    return e;
                 }
             }
         }
@@ -1005,74 +1016,56 @@ unsafe fn apply_spawn_attrs(attr: &SpawnAttrs) -> c_int {
         let param = libc::sched_param {
             sched_priority: attr.schedparam_priority,
         };
-        let rc = unsafe {
-            libc::syscall(
-                libc::SYS_sched_setscheduler,
+        if let Err(e) = unsafe {
+            raw_syscall::sys_sched_setscheduler(
                 0,
                 attr.schedpolicy,
-                &param as *const _,
+                &param as *const _ as *const u8,
             )
-        };
-        if rc < 0 {
-            return std::io::Error::last_os_error()
-                .raw_os_error()
-                .unwrap_or(libc::EINVAL);
+        } {
+            return e;
         }
     } else if flags & libc::POSIX_SPAWN_SETSCHEDPARAM != 0 {
         let param = libc::sched_param {
             sched_priority: attr.schedparam_priority,
         };
-        let rc = unsafe { libc::syscall(libc::SYS_sched_setparam, 0, &param as *const _) };
-        if rc < 0 {
-            return std::io::Error::last_os_error()
-                .raw_os_error()
-                .unwrap_or(libc::EINVAL);
+        if let Err(e) = unsafe {
+            raw_syscall::sys_sched_setparam(0, &param as *const _ as *const u8)
+        } {
+            return e;
         }
     }
 
     if flags & libc::POSIX_SPAWN_RESETIDS != 0 {
-        let egid = unsafe { libc::syscall(libc::SYS_getegid) };
-        let euid = unsafe { libc::syscall(libc::SYS_geteuid) };
-        let rc1 = unsafe { libc::syscall(libc::SYS_setgid, egid) };
-        let rc2 = unsafe { libc::syscall(libc::SYS_setuid, euid) };
-        if rc1 < 0 || rc2 < 0 {
-            return std::io::Error::last_os_error()
-                .raw_os_error()
-                .unwrap_or(libc::EINVAL);
+        let egid = raw_syscall::sys_getegid();
+        let euid = raw_syscall::sys_geteuid();
+        if let Err(e) = raw_syscall::sys_setgid(egid) {
+            return e;
+        }
+        if let Err(e) = raw_syscall::sys_setuid(euid) {
+            return e;
         }
     }
 
     if attr.has_cgroup {
         let cgroup_name = b"cgroup.procs\0";
-        let fd = unsafe {
-            libc::syscall(
-                libc::SYS_openat,
+        let fd = match unsafe {
+            raw_syscall::sys_openat(
                 attr.cgroup_fd,
-                cgroup_name.as_ptr().cast::<c_char>(),
+                cgroup_name.as_ptr(),
                 libc::O_WRONLY,
                 0,
             )
-        } as c_int;
-        if fd < 0 {
-            return std::io::Error::last_os_error()
-                .raw_os_error()
-                .unwrap_or(libc::EBADF);
-        }
+        } {
+            Ok(f) => f,
+            Err(e) => return e,
+        };
 
         let current = b"0";
-        let write_rc = unsafe {
-            libc::syscall(
-                libc::SYS_write,
-                fd,
-                current.as_ptr().cast::<c_void>(),
-                current.len(),
-            )
-        };
-        let close_rc = unsafe { libc::syscall(libc::SYS_close, fd) };
-        if write_rc < 0 || close_rc < 0 {
-            return std::io::Error::last_os_error()
-                .raw_os_error()
-                .unwrap_or(libc::EIO);
+        let write_res = unsafe { raw_syscall::sys_write(fd, current.as_ptr(), current.len()) };
+        let close_res = raw_syscall::sys_close(fd);
+        if write_res.is_err() || close_res.is_err() {
+            return write_res.err().or(close_res.err()).unwrap_or(libc::EIO);
         }
     }
 

@@ -419,6 +419,10 @@ pub const SYS_CLOSE_RANGE: usize = 436;
 pub const SYS_SCHED_SETPARAM: usize = 142;
 #[cfg(target_arch = "x86_64")]
 pub const SYS_UNLINKAT: usize = 263;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_WAITID: usize = 247;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_SCHED_SETSCHEDULER: usize = 144;
 
 // Process management syscalls - aarch64
 #[cfg(target_arch = "aarch64")]
@@ -441,6 +445,10 @@ pub const SYS_CLOSE_RANGE: usize = 436;
 pub const SYS_SCHED_SETPARAM: usize = 118;
 #[cfg(target_arch = "aarch64")]
 pub const SYS_UNLINKAT: usize = 35;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_WAITID: usize = 95;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_SCHED_SETSCHEDULER: usize = 119;
 
 // Socket syscalls - x86_64
 #[cfg(target_arch = "x86_64")]
@@ -2269,6 +2277,52 @@ pub unsafe fn sys_sched_setparam(pid: i32, param: *const u8) -> Result<(), i32> 
 #[allow(unsafe_code)]
 pub unsafe fn sys_unlinkat(dirfd: i32, pathname: *const u8, flags: i32) -> Result<(), i32> {
     let ret = unsafe { raw::syscall3(SYS_UNLINKAT, dirfd as usize, pathname as usize, flags as usize) };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `waitid(idtype, id, infop, options, rusage)` — wait for a child process to change state (extended).
+///
+/// # Safety
+///
+/// `infop` and `rusage` must be valid pointers or null.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_waitid(
+    idtype: i32,
+    id: u32,
+    infop: *mut u8,
+    options: i32,
+    rusage: *mut u8,
+) -> Result<(), i32> {
+    let ret = unsafe {
+        raw::syscall5(
+            SYS_WAITID,
+            idtype as usize,
+            id as usize,
+            infop as usize,
+            options as usize,
+            rusage as usize,
+        )
+    };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `sched_setscheduler(pid, policy, param)` — set scheduling policy and parameters.
+///
+/// # Safety
+///
+/// `param` must be a valid pointer to a sched_param structure.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_sched_setscheduler(pid: i32, policy: i32, param: *const u8) -> Result<(), i32> {
+    let ret = unsafe {
+        raw::syscall3(
+            SYS_SCHED_SETSCHEDULER,
+            pid as usize,
+            policy as usize,
+            param as usize,
+        )
+    };
     syscall_result(ret).map(|_| ())
 }
 
