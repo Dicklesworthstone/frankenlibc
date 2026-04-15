@@ -398,6 +398,58 @@ pub const SYS_TIMERFD_GETTIME: usize = 87;
 #[cfg(target_arch = "aarch64")]
 pub const SYS_PRCTL: usize = 167;
 
+// Socket syscalls - x86_64
+#[cfg(target_arch = "x86_64")]
+pub const SYS_BIND: usize = 49;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_LISTEN: usize = 50;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_ACCEPT: usize = 43;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_CONNECT: usize = 42;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_SHUTDOWN: usize = 48;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_GETSOCKOPT: usize = 55;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_GETPEERNAME: usize = 52;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_GETSOCKNAME: usize = 51;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_SOCKETPAIR: usize = 53;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_SENDMSG: usize = 46;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_RECVMSG: usize = 47;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_ACCEPT4: usize = 288;
+
+// Socket syscalls - aarch64
+#[cfg(target_arch = "aarch64")]
+pub const SYS_BIND: usize = 200;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_LISTEN: usize = 201;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_ACCEPT: usize = 202;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_CONNECT: usize = 203;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_SHUTDOWN: usize = 210;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_GETSOCKOPT: usize = 209;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_GETPEERNAME: usize = 205;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_GETSOCKNAME: usize = 204;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_SOCKETPAIR: usize = 199;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_SENDMSG: usize = 211;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_RECVMSG: usize = 212;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_ACCEPT4: usize = 242;
+
 // -------------------------------------------------------------------------
 // Error handling
 // -------------------------------------------------------------------------
@@ -921,6 +973,195 @@ pub fn sys_socket(domain: i32, socket_type: i32, protocol: i32) -> Result<i32, i
         )
     };
     syscall_result(ret).map(|v| v as i32)
+}
+
+/// `bind(sockfd, addr, addrlen)` — bind a name to a socket.
+///
+/// # Safety
+///
+/// `addr` must be a valid pointer to a sockaddr structure of size `addrlen`.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_bind(sockfd: i32, addr: *const u8, addrlen: u32) -> Result<(), i32> {
+    let ret = unsafe { raw::syscall3(SYS_BIND, sockfd as usize, addr as usize, addrlen as usize) };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `listen(sockfd, backlog)` — listen for connections on a socket.
+#[inline]
+#[allow(unsafe_code)]
+pub fn sys_listen(sockfd: i32, backlog: i32) -> Result<(), i32> {
+    let ret = unsafe { raw::syscall2(SYS_LISTEN, sockfd as usize, backlog as usize) };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `accept(sockfd, addr, addrlen)` — accept a connection on a socket.
+///
+/// # Safety
+///
+/// `addr` and `addrlen` must be valid pointers or null.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_accept(sockfd: i32, addr: *mut u8, addrlen: *mut u32) -> Result<i32, i32> {
+    let ret = unsafe {
+        raw::syscall3(SYS_ACCEPT, sockfd as usize, addr as usize, addrlen as usize)
+    };
+    syscall_result(ret).map(|v| v as i32)
+}
+
+/// `accept4(sockfd, addr, addrlen, flags)` — accept a connection with flags.
+///
+/// # Safety
+///
+/// `addr` and `addrlen` must be valid pointers or null.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_accept4(
+    sockfd: i32,
+    addr: *mut u8,
+    addrlen: *mut u32,
+    flags: i32,
+) -> Result<i32, i32> {
+    let ret = unsafe {
+        raw::syscall4(
+            SYS_ACCEPT4,
+            sockfd as usize,
+            addr as usize,
+            addrlen as usize,
+            flags as usize,
+        )
+    };
+    syscall_result(ret).map(|v| v as i32)
+}
+
+/// `connect(sockfd, addr, addrlen)` — initiate a connection on a socket.
+///
+/// # Safety
+///
+/// `addr` must be a valid pointer to a sockaddr structure of size `addrlen`.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_connect(sockfd: i32, addr: *const u8, addrlen: u32) -> Result<(), i32> {
+    let ret = unsafe {
+        raw::syscall3(SYS_CONNECT, sockfd as usize, addr as usize, addrlen as usize)
+    };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `shutdown(sockfd, how)` — shut down part of a full-duplex connection.
+#[inline]
+#[allow(unsafe_code)]
+pub fn sys_shutdown(sockfd: i32, how: i32) -> Result<(), i32> {
+    let ret = unsafe { raw::syscall2(SYS_SHUTDOWN, sockfd as usize, how as usize) };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `getsockopt(sockfd, level, optname, optval, optlen)` — get socket options.
+///
+/// # Safety
+///
+/// `optval` and `optlen` must be valid pointers.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_getsockopt(
+    sockfd: i32,
+    level: i32,
+    optname: i32,
+    optval: *mut u8,
+    optlen: *mut u32,
+) -> Result<(), i32> {
+    let ret = unsafe {
+        raw::syscall5(
+            SYS_GETSOCKOPT,
+            sockfd as usize,
+            level as usize,
+            optname as usize,
+            optval as usize,
+            optlen as usize,
+        )
+    };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `getpeername(sockfd, addr, addrlen)` — get name of connected peer socket.
+///
+/// # Safety
+///
+/// `addr` and `addrlen` must be valid pointers.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_getpeername(sockfd: i32, addr: *mut u8, addrlen: *mut u32) -> Result<(), i32> {
+    let ret = unsafe {
+        raw::syscall3(SYS_GETPEERNAME, sockfd as usize, addr as usize, addrlen as usize)
+    };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `getsockname(sockfd, addr, addrlen)` — get socket name.
+///
+/// # Safety
+///
+/// `addr` and `addrlen` must be valid pointers.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_getsockname(sockfd: i32, addr: *mut u8, addrlen: *mut u32) -> Result<(), i32> {
+    let ret = unsafe {
+        raw::syscall3(SYS_GETSOCKNAME, sockfd as usize, addr as usize, addrlen as usize)
+    };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `socketpair(domain, type, protocol, sv)` — create a pair of connected sockets.
+///
+/// # Safety
+///
+/// `sv` must be a valid pointer to an array of two i32.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_socketpair(
+    domain: i32,
+    socket_type: i32,
+    protocol: i32,
+    sv: *mut i32,
+) -> Result<(), i32> {
+    let ret = unsafe {
+        raw::syscall4(
+            SYS_SOCKETPAIR,
+            domain as usize,
+            socket_type as usize,
+            protocol as usize,
+            sv as usize,
+        )
+    };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `sendmsg(sockfd, msg, flags)` — send a message on a socket.
+///
+/// # Safety
+///
+/// `msg` must be a valid pointer to a msghdr structure.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_sendmsg(sockfd: i32, msg: *const u8, flags: i32) -> Result<isize, i32> {
+    let ret = unsafe {
+        raw::syscall3(SYS_SENDMSG, sockfd as usize, msg as usize, flags as usize)
+    };
+    syscall_result(ret).map(|v| v as isize)
+}
+
+/// `recvmsg(sockfd, msg, flags)` — receive a message from a socket.
+///
+/// # Safety
+///
+/// `msg` must be a valid pointer to a msghdr structure.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_recvmsg(sockfd: i32, msg: *mut u8, flags: i32) -> Result<isize, i32> {
+    let ret = unsafe {
+        raw::syscall3(SYS_RECVMSG, sockfd as usize, msg as usize, flags as usize)
+    };
+    syscall_result(ret).map(|v| v as isize)
 }
 
 /// `prlimit64(pid, resource, new_limit, old_limit)` — get/set resource limits.
