@@ -284,11 +284,8 @@ pub unsafe extern "C" fn if_nametoindex(ifname: *const c_char) -> libc::c_uint {
     let copy_len = name_bytes.len().min(15);
     ifr.ifr_name[..copy_len].copy_from_slice(&name_bytes[..copy_len]);
 
-    let rc = unsafe { raw_syscall::sys_ioctl(sock, SIOCGIFINDEX, &ifr as *const _ as usize) };
-    let failure_errno = match rc {
-        Ok(_) => None,
-        Err(err) => Some(err),
-    };
+    let failure_errno =
+        unsafe { raw_syscall::sys_ioctl(sock, SIOCGIFINDEX, &ifr as *const _ as usize) }.err();
     let _ = raw_syscall::sys_close(sock);
 
     if failure_errno.is_some() {
