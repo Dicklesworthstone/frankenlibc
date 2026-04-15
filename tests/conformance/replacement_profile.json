@@ -121,7 +121,6 @@
     "source": "replacement_guard_source_scan",
     "modules": [
       "glibc_internal_abi",
-      "malloc_abi",
       "pthread_abi",
       "unistd_abi"
     ],
@@ -215,12 +214,9 @@
         "functions": []
       },
       "malloc_abi": {
-        "count": 3,
-        "functions": [
-          "dlsym",
-          "free",
-          "malloc"
-        ]
+        "count": 0,
+        "functions": [],
+        "note": "Internal raw_alloc/raw_free now share the native host-resolution path, and allocator symbol fallback routes through dlfcn_abi::dlsym."
       },
       "process_abi": {
         "count": 0,

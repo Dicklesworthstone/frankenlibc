@@ -25,22 +25,6 @@
       "evidence_source": "replacement_guard_source_scan"
     },
     {
-      "id": "interpose_allow_malloc_abi_malloc",
-      "mode": "interpose",
-      "module": "malloc_abi",
-      "symbol": "malloc",
-      "expected_outcome": "allowed",
-      "evidence_source": "replacement_guard_source_scan"
-    },
-    {
-      "id": "replacement_forbid_malloc_abi_free",
-      "mode": "replacement",
-      "module": "malloc_abi",
-      "symbol": "free",
-      "expected_outcome": "forbidden",
-      "evidence_source": "replacement_guard_source_scan"
-    },
-    {
       "id": "interpose_allow_pthread_abi_dlsym",
       "mode": "interpose",
       "module": "pthread_abi",
@@ -92,12 +76,11 @@
     "artifact_refs"
   ],
   "summary": {
-    "fixture_count": 8,
-    "interpose_allowed_count": 4,
-    "replacement_forbidden_count": 4,
+    "fixture_count": 6,
+    "interpose_allowed_count": 3,
+    "replacement_forbidden_count": 3,
     "covered_callthrough_modules": [
       "glibc_internal_abi",
-      "malloc_abi",
       "pthread_abi",
       "unistd_abi"
     ]

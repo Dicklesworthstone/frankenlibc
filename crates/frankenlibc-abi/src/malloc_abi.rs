@@ -86,20 +86,18 @@ static BUMP_HEAP: BumpHeap = BumpHeap(std::cell::UnsafeCell::new([0u8; BUMP_SIZE
 
 /// Raw allocator for internal ABI use.
 ///
-/// Calls `libc::malloc` which routes through our interposed `malloc` under
-/// LD_PRELOAD (handled by the bump allocator reentry guard) or through the
-/// host allocator in non-interposition mode (cargo test).
+/// Uses the native host-resolution path with the same bump fallback and
+/// reentry protection as the public allocator entrypoints.
 pub(crate) unsafe fn raw_alloc(size: usize) -> *mut c_void {
-    unsafe { libc::malloc(size) }
+    unsafe { native_libc_malloc(size) }
 }
 
 /// Raw free for internally-allocated memory.
 ///
-/// Calls `libc::free` which routes through our interposed `free` under
-/// LD_PRELOAD (handles bump pointers) or through the host free in
-/// non-interposition mode.
+/// Uses the native host-resolution free path so internal allocations stay on
+/// the same ownership model as `raw_alloc`.
 pub(crate) unsafe fn raw_free(ptr: *mut c_void) {
-    unsafe { libc::free(ptr) }
+    unsafe { native_libc_free(ptr) }
 }
 
 /// Host allocator passthrough for ABI internals that must preserve libc heap ownership.
@@ -260,7 +258,9 @@ unsafe fn resolve_host_allocator_symbol(name: &'static [u8]) -> *mut c_void {
     }
     if ptr.is_null() {
         // SAFETY: unversioned RTLD_NEXT fallback for environments without versioned exports.
-        ptr = unsafe { libc::dlsym(libc::RTLD_NEXT, name.as_ptr().cast::<libc::c_char>()) };
+        ptr = unsafe {
+            crate::dlfcn_abi::dlsym(libc::RTLD_NEXT, name.as_ptr().cast::<libc::c_char>())
+        };
     }
     ptr
 }
