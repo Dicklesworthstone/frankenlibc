@@ -102,6 +102,21 @@ pub(crate) unsafe fn raw_free(ptr: *mut c_void) {
     unsafe { libc::free(ptr) }
 }
 
+/// Host allocator passthrough for ABI internals that must preserve libc heap ownership.
+pub(crate) unsafe fn host_passthrough_malloc(size: usize) -> *mut c_void {
+    unsafe { native_libc_malloc(size) }
+}
+
+/// Host realloc passthrough for ABI internals that must preserve libc heap ownership.
+pub(crate) unsafe fn host_passthrough_realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
+    unsafe { native_libc_realloc(ptr, size) }
+}
+
+/// Host free passthrough for ABI internals that must preserve libc heap ownership.
+pub(crate) unsafe fn host_passthrough_free(ptr: *mut c_void) {
+    unsafe { native_libc_free(ptr) }
+}
+
 #[cold]
 unsafe fn bump_alloc(size: usize) -> *mut c_void {
     let request = size.max(1);

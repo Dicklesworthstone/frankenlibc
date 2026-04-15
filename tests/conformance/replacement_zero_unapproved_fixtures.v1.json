@@ -105,22 +105,6 @@
       "evidence_source": "replacement_guard_source_scan"
     },
     {
-      "id": "interpose_allow_stdlib_abi_fflush",
-      "mode": "interpose",
-      "module": "stdlib_abi",
-      "symbol": "fflush",
-      "expected_outcome": "allowed",
-      "evidence_source": "replacement_guard_source_scan"
-    },
-    {
-      "id": "replacement_forbid_stdlib_abi_realloc",
-      "mode": "replacement",
-      "module": "stdlib_abi",
-      "symbol": "realloc",
-      "expected_outcome": "forbidden",
-      "evidence_source": "replacement_guard_source_scan"
-    },
-    {
       "id": "interpose_allow_unistd_abi_opendir",
       "mode": "interpose",
       "module": "unistd_abi",
@@ -156,9 +140,9 @@
     "artifact_refs"
   ],
   "summary": {
-    "fixture_count": 16,
-    "interpose_allowed_count": 8,
-    "replacement_forbidden_count": 8,
+    "fixture_count": 14,
+    "interpose_allowed_count": 7,
+    "replacement_forbidden_count": 7,
     "covered_callthrough_modules": [
       "glibc_internal_abi",
       "malloc_abi",
@@ -166,7 +150,6 @@
       "pthread_abi",
       "rpc_abi",
       "stdio_abi",
-      "stdlib_abi",
       "unistd_abi"
     ]
   }

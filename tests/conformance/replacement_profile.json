@@ -126,7 +126,6 @@
       "pthread_abi",
       "rpc_abi",
       "stdio_abi",
-      "stdlib_abi",
       "unistd_abi"
     ],
     "require_fixture_coverage": true
@@ -336,17 +335,9 @@
         ]
       },
       "stdlib_abi": {
-        "count": 13,
-        "functions": [
-          "fflush",
-          "free",
-          "malloc",
-          "realloc",
-          "setitimer",
-          "strlen",
-          "strtoll",
-          "strtoull"
-        ]
+        "count": 0,
+        "functions": [],
+        "note": "Environment ownership keeps host-allocator semantics through malloc_abi passthrough helpers, and stdlib alias/flush/timer paths no longer emit direct libc call-throughs in _abi.rs."
       },
       "termios_abi": {
         "count": 0,

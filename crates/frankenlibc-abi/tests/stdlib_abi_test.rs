@@ -9,7 +9,7 @@ use frankenlibc_abi::stdlib_abi::{
     get_avphys_pages, get_nprocs, get_nprocs_conf, get_phys_pages, getenv, getsubopt, initstate,
     jrand48, l64a, lcong48, lrand48, mkostemp, mkostemps, mkstemps, mrand48, nrand48, on_exit,
     qsort_r, random, reallocarray, seed48, setenv, setstate, srand48, srandom, strtold, strtoll,
-    strtoull, system, unsetenv,
+    strtoq, strtoull, strtouq, system, unsetenv,
 };
 use frankenlibc_abi::unistd_abi::{
     __sched_cpualloc, __sched_cpucount, __sched_cpufree, creat64, ctermid, ether_aton,
@@ -190,6 +190,34 @@ fn strtoull_sets_endptr_to_first_unparsed_byte() {
     // SAFETY: returned endptr points into the source buffer by contract.
     let offset = unsafe { endptr.offset_from(c"18446744073709551615!".as_ptr()) };
     assert_eq!(offset, 20);
+}
+
+#[test]
+fn strtoq_alias_tracks_native_strtoll_behavior() {
+    let mut endptr = ptr::null_mut();
+
+    // SAFETY: source is a static NUL-terminated C string and `endptr` is writable.
+    let value = unsafe { strtoq(c"-42rest".as_ptr(), &mut endptr, 10) };
+    assert_eq!(value, -42);
+    assert!(!endptr.is_null());
+
+    // SAFETY: returned endptr points into the source buffer by contract.
+    let offset = unsafe { endptr.offset_from(c"-42rest".as_ptr()) };
+    assert_eq!(offset, 3);
+}
+
+#[test]
+fn strtouq_alias_tracks_native_strtoull_behavior() {
+    let mut endptr = ptr::null_mut();
+
+    // SAFETY: source is a static NUL-terminated C string and `endptr` is writable.
+    let value = unsafe { strtouq(c"77suffix".as_ptr(), &mut endptr, 10) };
+    assert_eq!(value, 77);
+    assert!(!endptr.is_null());
+
+    // SAFETY: returned endptr points into the source buffer by contract.
+    let offset = unsafe { endptr.offset_from(c"77suffix".as_ptr()) };
+    assert_eq!(offset, 2);
 }
 
 #[test]

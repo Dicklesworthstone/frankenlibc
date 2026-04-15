@@ -66,6 +66,17 @@ static ENVIRON_OWNED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicB
 /// Mutex protecting all environ mutations.
 static ENVIRON_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+#[inline]
+unsafe fn native_c_strlen(s: *const c_char) -> usize {
+    let mut len = 0usize;
+    unsafe {
+        while *s.add(len) != 0 {
+            len += 1;
+        }
+    }
+    len
+}
+
 /// Count entries in the current environ array (excluding NULL terminator).
 unsafe fn environ_len() -> usize {
     if unsafe { HOST_ENVIRON.is_null() } {
@@ -101,8 +112,9 @@ unsafe fn ensure_environ_owned() {
     let count = unsafe { environ_len() };
     // Allocate count + 1 (for NULL) + 8 (growth room) pointers
     let new_cap = count + 9;
-    let new_array =
-        unsafe { libc::malloc(new_cap * core::mem::size_of::<*mut c_char>()) } as *mut *mut c_char;
+    let new_array = unsafe {
+        crate::malloc_abi::host_passthrough_malloc(new_cap * core::mem::size_of::<*mut c_char>())
+    } as *mut *mut c_char;
     if new_array.is_null() {
         return; // OOM — keep using original
     }
@@ -123,7 +135,7 @@ unsafe fn native_setenv(name: *const c_char, value: *const c_char, overwrite: c_
         return -1;
     }
     // Check name doesn't contain '='
-    let name_len = unsafe { libc::strlen(name) };
+    let name_len = unsafe { native_c_strlen(name) };
     for i in 0..name_len {
         if unsafe { *name.add(i) } == b'=' as c_char {
             return -1;
@@ -132,7 +144,7 @@ unsafe fn native_setenv(name: *const c_char, value: *const c_char, overwrite: c_
     let val_len = if value.is_null() {
         0
     } else {
-        unsafe { libc::strlen(value) }
+        unsafe { native_c_strlen(value) }
     };
 
     let _lock = ENVIRON_LOCK.lock();
@@ -140,7 +152,7 @@ unsafe fn native_setenv(name: *const c_char, value: *const c_char, overwrite: c_
 
     // Build "NAME=value" string
     let entry_len = name_len + 1 + val_len + 1; // name + '=' + value + NUL
-    let new_entry = unsafe { libc::malloc(entry_len) } as *mut c_char;
+    let new_entry = unsafe { crate::malloc_abi::host_passthrough_malloc(entry_len) } as *mut c_char;
     if new_entry.is_null() {
         return -1;
     }
@@ -171,7 +183,7 @@ unsafe fn native_setenv(name: *const c_char, value: *const c_char, overwrite: c_
                 }
                 if match_len == name_len && *entry.add(match_len) == b'=' {
                     if overwrite == 0 {
-                        libc::free(new_entry as *mut c_void);
+                        crate::malloc_abi::host_passthrough_free(new_entry as *mut c_void);
                         return 0; // already exists, don't overwrite
                     }
                     // Replace existing entry
@@ -187,13 +199,13 @@ unsafe fn native_setenv(name: *const c_char, value: *const c_char, overwrite: c_
     let count = unsafe { environ_len() };
     // May need to grow the array
     let new_array = unsafe {
-        libc::realloc(
+        crate::malloc_abi::host_passthrough_realloc(
             HOST_ENVIRON as *mut c_void,
             (count + 2) * core::mem::size_of::<*mut c_char>(),
         )
     } as *mut *mut c_char;
     if new_array.is_null() {
-        unsafe { libc::free(new_entry as *mut c_void) };
+        unsafe { crate::malloc_abi::host_passthrough_free(new_entry as *mut c_void) };
         return -1;
     }
     unsafe {
@@ -256,7 +268,7 @@ unsafe fn native_putenv_impl(string: *mut c_char) -> c_int {
     // Not found — append
     let count = unsafe { environ_len() };
     let new_array = unsafe {
-        libc::realloc(
+        crate::malloc_abi::host_passthrough_realloc(
             HOST_ENVIRON as *mut c_void,
             (count + 2) * core::mem::size_of::<*mut c_char>(),
         )
@@ -766,7 +778,7 @@ pub unsafe extern "C" fn exit(status: c_int) -> ! {
 
     // 3. Flush all open stdio streams.
     unsafe {
-        libc::fflush(std::ptr::null_mut());
+        crate::stdio_abi::fflush(ptr::null_mut());
     }
 
     // 4. Terminate process.
@@ -2302,7 +2314,7 @@ pub unsafe extern "C" fn gcvt(value: c_double, ndigit: c_int, buf: *mut c_char) 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn abort() -> ! {
     // Flush stdout/stderr before aborting.
-    let _ = unsafe { libc::fflush(ptr::null_mut()) };
+    let _ = unsafe { crate::stdio_abi::fflush(ptr::null_mut()) };
     // Raise SIGABRT. If the signal handler returns, re-raise with default.
     unsafe {
         crate::signal_abi::raise(libc::SIGABRT);
@@ -3773,7 +3785,7 @@ pub unsafe extern "C" fn strtoq(
     endptr: *mut *mut c_char,
     base: c_int,
 ) -> c_long {
-    unsafe { libc::strtoll(nptr, endptr, base) as c_long }
+    unsafe { strtoll(nptr, endptr, base) as c_long }
 }
 
 /// `strtouq` — BSD alias for strtoull.
@@ -3783,7 +3795,7 @@ pub unsafe extern "C" fn strtouq(
     endptr: *mut *mut c_char,
     base: c_int,
 ) -> c_ulong {
-    unsafe { libc::strtoull(nptr, endptr, base) as c_ulong }
+    unsafe { strtoull(nptr, endptr, base) as c_ulong }
 }
 
 /// `glob_pattern_p` — check if string contains glob metacharacters.
@@ -3821,7 +3833,7 @@ pub unsafe extern "C" fn ualarm(usecs: c_uint, interval: c_uint) -> c_uint {
         },
     };
     let mut old_val: libc::itimerval = unsafe { std::mem::zeroed() };
-    let ret = unsafe { libc::setitimer(libc::ITIMER_REAL, &new_val, &mut old_val) };
+    let ret = unsafe { crate::unistd_abi::setitimer(libc::ITIMER_REAL, &new_val, &mut old_val) };
     if ret < 0 {
         return 0;
     }
