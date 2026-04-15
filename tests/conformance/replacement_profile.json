@@ -172,21 +172,16 @@
         "functions": []
       },
       "glibc_internal_abi": {
-        "count": 26,
+        "count": 20,
         "functions": [
           "adjtime",
           "futimes",
-          "getauxval",
           "getpwuid",
           "getgroups",
           "getrlimit",
           "getsockopt",
           "lutimes",
           "malloc",
-          "mkostemp",
-          "mkostemps",
-          "mkstemp",
-          "mkstemps",
           "posix_spawn",
           "posix_spawnp",
           "sbrk",

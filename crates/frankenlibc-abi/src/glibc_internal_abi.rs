@@ -3149,7 +3149,7 @@ pub unsafe extern "C" fn __fwriting(fp: *mut c_void) -> c_int {
 // __getauxval: native — read from /proc/self/auxv
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __getauxval(typ: c_ulong) -> c_ulong {
-    unsafe { libc::getauxval(typ) }
+    unsafe { crate::stdlib_abi::getauxval(typ) }
 }
 // __getdelim: native — forward to our getdelim
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -3385,7 +3385,7 @@ pub unsafe extern "C" fn __sbrk(increment: isize) -> *mut c_void {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __secure_getenv(name: *const c_char) -> *mut c_char {
     // Check AT_SECURE — if set, return null for security
-    if unsafe { libc::getauxval(libc::AT_SECURE) } != 0 {
+    if unsafe { crate::stdlib_abi::getauxval(libc::AT_SECURE as c_ulong) } != 0 {
         return std::ptr::null_mut();
     }
     unsafe { crate::stdlib_abi::getenv(name) as *mut c_char }
@@ -4939,7 +4939,7 @@ pub unsafe extern "C" fn lutimes(filename: *const c_char, tv: *const c_void) -> 
 // mkostemp64/mkostemps64/mkstemp64/mkstemps64: forward to libc (64-bit aliases)
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn mkostemp64(template: *mut c_char, flags: c_int) -> c_int {
-    unsafe { libc::mkostemp(template, flags) }
+    unsafe { crate::stdlib_abi::mkostemp(template, flags) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn mkostemps64(
@@ -4947,15 +4947,15 @@ pub unsafe extern "C" fn mkostemps64(
     suffixlen: c_int,
     flags: c_int,
 ) -> c_int {
-    unsafe { libc::mkostemps(template, suffixlen, flags) }
+    unsafe { crate::stdlib_abi::mkostemps(template, suffixlen, flags) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn mkstemp64(template: *mut c_char) -> c_int {
-    unsafe { libc::mkstemp(template) }
+    unsafe { crate::stdlib_abi::mkstemps(template, 0) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn mkstemps64(template: *mut c_char, suffixlen: c_int) -> c_int {
-    unsafe { libc::mkstemps(template, suffixlen) }
+    unsafe { crate::stdlib_abi::mkstemps(template, suffixlen) }
 }
 // modfl: native — split into integer + fractional parts
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
