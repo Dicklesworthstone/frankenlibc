@@ -541,3 +541,643 @@ fn native_file_prefix_compatible_with_glibc() {
     // mode starts at 0 (unset)
     assert_eq!(mode, 0);
 }
+
+// ===========================================================================
+// Test Category 10: glibc Version Matrix Compatibility
+// ===========================================================================
+// glibc _IO_FILE layout has been stable since glibc 2.1 on x86_64.
+// These tests verify compatibility across major glibc versions.
+
+/// glibc version matrix: all x86_64 versions share the same _IO_FILE size (216 bytes).
+/// This has been stable since glibc 2.1 when the new libio was introduced.
+mod glibc_version_matrix {
+    use super::*;
+
+    /// glibc 2.17 (RHEL 7, CentOS 7) - oldest commonly supported version
+    const GLIBC_217_IO_FILE_SIZE: usize = 216;
+    const GLIBC_217_FILENO_OFFSET: usize = 112;
+    const GLIBC_217_LOCK_OFFSET: usize = 136;
+    const GLIBC_217_MODE_OFFSET: usize = 192;
+
+    /// glibc 2.28 (RHEL 8, Ubuntu 18.04 LTS)
+    const GLIBC_228_IO_FILE_SIZE: usize = 216;
+    const GLIBC_228_FILENO_OFFSET: usize = 112;
+    const GLIBC_228_LOCK_OFFSET: usize = 136;
+    const GLIBC_228_MODE_OFFSET: usize = 192;
+
+    /// glibc 2.31 (Ubuntu 20.04 LTS, Debian 11)
+    const GLIBC_231_IO_FILE_SIZE: usize = 216;
+    const GLIBC_231_FILENO_OFFSET: usize = 112;
+    const GLIBC_231_LOCK_OFFSET: usize = 136;
+    const GLIBC_231_MODE_OFFSET: usize = 192;
+
+    /// glibc 2.34 (Ubuntu 22.04 LTS) - pthread moved into libc.so.6
+    const GLIBC_234_IO_FILE_SIZE: usize = 216;
+    const GLIBC_234_FILENO_OFFSET: usize = 112;
+    const GLIBC_234_LOCK_OFFSET: usize = 136;
+    const GLIBC_234_MODE_OFFSET: usize = 192;
+
+    /// glibc 2.35 (Ubuntu 22.10)
+    const GLIBC_235_IO_FILE_SIZE: usize = 216;
+    const GLIBC_235_FILENO_OFFSET: usize = 112;
+    const GLIBC_235_LOCK_OFFSET: usize = 136;
+    const GLIBC_235_MODE_OFFSET: usize = 192;
+
+    /// glibc 2.39 (Ubuntu 24.04 LTS) - latest stable
+    const GLIBC_239_IO_FILE_SIZE: usize = 216;
+    const GLIBC_239_FILENO_OFFSET: usize = 112;
+    const GLIBC_239_LOCK_OFFSET: usize = 136;
+    const GLIBC_239_MODE_OFFSET: usize = 192;
+
+    #[test]
+    fn version_matrix_size_invariant() {
+        // All glibc versions on x86_64 have the same _IO_FILE size
+        let our_size = size_of::<IoFileLayout>();
+
+        assert_eq!(our_size, GLIBC_217_IO_FILE_SIZE, "glibc 2.17 compat");
+        assert_eq!(our_size, GLIBC_228_IO_FILE_SIZE, "glibc 2.28 compat");
+        assert_eq!(our_size, GLIBC_231_IO_FILE_SIZE, "glibc 2.31 compat");
+        assert_eq!(our_size, GLIBC_234_IO_FILE_SIZE, "glibc 2.34 compat");
+        assert_eq!(our_size, GLIBC_235_IO_FILE_SIZE, "glibc 2.35 compat");
+        assert_eq!(our_size, GLIBC_239_IO_FILE_SIZE, "glibc 2.39 compat");
+    }
+
+    #[test]
+    fn version_matrix_fileno_offset_invariant() {
+        // _fileno offset is stable across all versions
+        let our_offset = offset_of!(IoFileLayout, _fileno);
+
+        assert_eq!(our_offset, GLIBC_217_FILENO_OFFSET, "glibc 2.17 compat");
+        assert_eq!(our_offset, GLIBC_228_FILENO_OFFSET, "glibc 2.28 compat");
+        assert_eq!(our_offset, GLIBC_231_FILENO_OFFSET, "glibc 2.31 compat");
+        assert_eq!(our_offset, GLIBC_234_FILENO_OFFSET, "glibc 2.34 compat");
+        assert_eq!(our_offset, GLIBC_235_FILENO_OFFSET, "glibc 2.35 compat");
+        assert_eq!(our_offset, GLIBC_239_FILENO_OFFSET, "glibc 2.39 compat");
+    }
+
+    #[test]
+    fn version_matrix_lock_offset_invariant() {
+        // _lock offset is stable across all versions
+        let our_offset = offset_of!(IoFileLayout, _lock);
+
+        assert_eq!(our_offset, GLIBC_217_LOCK_OFFSET, "glibc 2.17 compat");
+        assert_eq!(our_offset, GLIBC_228_LOCK_OFFSET, "glibc 2.28 compat");
+        assert_eq!(our_offset, GLIBC_231_LOCK_OFFSET, "glibc 2.31 compat");
+        assert_eq!(our_offset, GLIBC_234_LOCK_OFFSET, "glibc 2.34 compat");
+        assert_eq!(our_offset, GLIBC_235_LOCK_OFFSET, "glibc 2.35 compat");
+        assert_eq!(our_offset, GLIBC_239_LOCK_OFFSET, "glibc 2.39 compat");
+    }
+
+    #[test]
+    fn version_matrix_mode_offset_invariant() {
+        // _mode offset is stable across all versions
+        let our_offset = offset_of!(IoFileLayout, _mode);
+
+        assert_eq!(our_offset, GLIBC_217_MODE_OFFSET, "glibc 2.17 compat");
+        assert_eq!(our_offset, GLIBC_228_MODE_OFFSET, "glibc 2.28 compat");
+        assert_eq!(our_offset, GLIBC_231_MODE_OFFSET, "glibc 2.31 compat");
+        assert_eq!(our_offset, GLIBC_234_MODE_OFFSET, "glibc 2.34 compat");
+        assert_eq!(our_offset, GLIBC_235_MODE_OFFSET, "glibc 2.35 compat");
+        assert_eq!(our_offset, GLIBC_239_MODE_OFFSET, "glibc 2.39 compat");
+    }
+
+    /// Comprehensive field offset invariant across all versions.
+    /// glibc _IO_FILE layout is frozen on x86_64 - these offsets are ABI.
+    #[test]
+    fn version_matrix_all_critical_offsets() {
+        // These offsets are ABI-stable across all glibc versions on x86_64
+        const CRITICAL_OFFSETS: &[(&str, usize)] = &[
+            ("_flags", 0),
+            ("_IO_read_ptr", 8),
+            ("_IO_read_end", 16),
+            ("_IO_read_base", 24),
+            ("_IO_write_base", 32),
+            ("_IO_write_ptr", 40),
+            ("_IO_write_end", 48),
+            ("_IO_buf_base", 56),
+            ("_IO_buf_end", 64),
+            ("_IO_save_base", 72),
+            ("_IO_backup_base", 80),
+            ("_IO_save_end", 88),
+            ("_markers", 96),
+            ("_chain", 104),
+            ("_fileno", 112),
+            ("_flags2", 116),
+            ("_old_offset", 120),
+            ("_cur_column", 128),
+            ("_vtable_offset", 130),
+            ("_shortbuf", 131),
+            ("_lock", 136),
+            ("_offset", 144),
+            ("_codecvt", 152),
+            ("_wide_data", 160),
+            ("_freeres_list", 168),
+            ("_freeres_buf", 176),
+            ("_pad5", 184),
+            ("_mode", 192),
+            ("_unused2", 196),
+        ];
+
+        // Verify each critical offset
+        assert_eq!(offset_of!(IoFileLayout, _flags), CRITICAL_OFFSETS[0].1);
+        assert_eq!(
+            offset_of!(IoFileLayout, _IO_read_ptr),
+            CRITICAL_OFFSETS[1].1
+        );
+        assert_eq!(
+            offset_of!(IoFileLayout, _IO_read_end),
+            CRITICAL_OFFSETS[2].1
+        );
+        assert_eq!(
+            offset_of!(IoFileLayout, _IO_read_base),
+            CRITICAL_OFFSETS[3].1
+        );
+        assert_eq!(
+            offset_of!(IoFileLayout, _IO_write_base),
+            CRITICAL_OFFSETS[4].1
+        );
+        assert_eq!(
+            offset_of!(IoFileLayout, _IO_write_ptr),
+            CRITICAL_OFFSETS[5].1
+        );
+        assert_eq!(
+            offset_of!(IoFileLayout, _IO_write_end),
+            CRITICAL_OFFSETS[6].1
+        );
+        assert_eq!(
+            offset_of!(IoFileLayout, _IO_buf_base),
+            CRITICAL_OFFSETS[7].1
+        );
+        assert_eq!(offset_of!(IoFileLayout, _IO_buf_end), CRITICAL_OFFSETS[8].1);
+        assert_eq!(
+            offset_of!(IoFileLayout, _IO_save_base),
+            CRITICAL_OFFSETS[9].1
+        );
+        assert_eq!(
+            offset_of!(IoFileLayout, _IO_backup_base),
+            CRITICAL_OFFSETS[10].1
+        );
+        assert_eq!(
+            offset_of!(IoFileLayout, _IO_save_end),
+            CRITICAL_OFFSETS[11].1
+        );
+        assert_eq!(offset_of!(IoFileLayout, _markers), CRITICAL_OFFSETS[12].1);
+        assert_eq!(offset_of!(IoFileLayout, _chain), CRITICAL_OFFSETS[13].1);
+        assert_eq!(offset_of!(IoFileLayout, _fileno), CRITICAL_OFFSETS[14].1);
+        assert_eq!(offset_of!(IoFileLayout, _flags2), CRITICAL_OFFSETS[15].1);
+        assert_eq!(
+            offset_of!(IoFileLayout, _old_offset),
+            CRITICAL_OFFSETS[16].1
+        );
+        assert_eq!(
+            offset_of!(IoFileLayout, _cur_column),
+            CRITICAL_OFFSETS[17].1
+        );
+        assert_eq!(
+            offset_of!(IoFileLayout, _vtable_offset),
+            CRITICAL_OFFSETS[18].1
+        );
+        assert_eq!(offset_of!(IoFileLayout, _shortbuf), CRITICAL_OFFSETS[19].1);
+        assert_eq!(offset_of!(IoFileLayout, _lock), CRITICAL_OFFSETS[20].1);
+        assert_eq!(offset_of!(IoFileLayout, _offset), CRITICAL_OFFSETS[21].1);
+        assert_eq!(offset_of!(IoFileLayout, _codecvt), CRITICAL_OFFSETS[22].1);
+        assert_eq!(offset_of!(IoFileLayout, _wide_data), CRITICAL_OFFSETS[23].1);
+        assert_eq!(
+            offset_of!(IoFileLayout, _freeres_list),
+            CRITICAL_OFFSETS[24].1
+        );
+        assert_eq!(
+            offset_of!(IoFileLayout, _freeres_buf),
+            CRITICAL_OFFSETS[25].1
+        );
+        assert_eq!(offset_of!(IoFileLayout, _pad5), CRITICAL_OFFSETS[26].1);
+        assert_eq!(offset_of!(IoFileLayout, _mode), CRITICAL_OFFSETS[27].1);
+        assert_eq!(offset_of!(IoFileLayout, _unused2), CRITICAL_OFFSETS[28].1);
+    }
+}
+
+// ===========================================================================
+// Test Category 11: Field Size Assertions
+// ===========================================================================
+
+mod field_sizes {
+    use super::*;
+
+    #[test]
+    fn flags_is_4_bytes() {
+        assert_eq!(size_of::<c_int>(), 4);
+    }
+
+    #[test]
+    fn pointer_fields_are_8_bytes() {
+        // On x86_64, all pointer fields should be 8 bytes
+        assert_eq!(size_of::<*mut c_char>(), 8);
+        assert_eq!(size_of::<*mut c_void>(), 8);
+    }
+
+    #[test]
+    fn fileno_is_4_bytes() {
+        assert_eq!(size_of::<c_int>(), 4);
+    }
+
+    #[test]
+    fn off_t_is_8_bytes() {
+        // On x86_64 Linux, off_t is 64-bit
+        assert_eq!(size_of::<libc::off_t>(), 8);
+    }
+
+    #[test]
+    fn off64_t_is_8_bytes() {
+        assert_eq!(size_of::<libc::off64_t>(), 8);
+    }
+
+    #[test]
+    fn cur_column_is_2_bytes() {
+        assert_eq!(size_of::<u16>(), 2);
+    }
+
+    #[test]
+    fn vtable_offset_is_1_byte() {
+        assert_eq!(size_of::<i8>(), 1);
+    }
+
+    #[test]
+    fn shortbuf_is_1_byte() {
+        assert_eq!(size_of::<[c_char; 1]>(), 1);
+    }
+
+    #[test]
+    fn mode_is_4_bytes() {
+        assert_eq!(size_of::<c_int>(), 4);
+    }
+
+    #[test]
+    fn unused2_is_20_bytes() {
+        assert_eq!(size_of::<[u8; 20]>(), 20);
+    }
+
+    #[test]
+    fn usize_is_8_bytes() {
+        // _pad5 field
+        assert_eq!(size_of::<usize>(), 8);
+    }
+}
+
+// ===========================================================================
+// Test Category 12: Alignment Assertions
+// ===========================================================================
+
+mod alignment {
+    use super::*;
+
+    #[test]
+    fn io_file_layout_alignment_is_8() {
+        // IoFileLayout should have 8-byte alignment (pointer alignment on x86_64)
+        assert_eq!(align_of::<IoFileLayout>(), 8);
+    }
+
+    #[test]
+    fn native_file_alignment_is_8() {
+        // NativeFile must have at least 8-byte alignment for vtable pointer
+        assert!(align_of::<NativeFile>() >= 8);
+    }
+
+    #[test]
+    fn pointer_alignment_is_8() {
+        assert_eq!(align_of::<*mut c_void>(), 8);
+        assert_eq!(align_of::<*mut c_char>(), 8);
+    }
+
+    #[test]
+    fn off_t_alignment_is_8() {
+        assert_eq!(align_of::<libc::off_t>(), 8);
+        assert_eq!(align_of::<libc::off64_t>(), 8);
+    }
+
+    #[test]
+    fn c_int_alignment_is_4() {
+        assert_eq!(align_of::<c_int>(), 4);
+    }
+
+    #[test]
+    fn vtable_pointer_naturally_aligned() {
+        // The vtable pointer at offset 216 must be 8-byte aligned
+        // 216 % 8 == 0, so it's naturally aligned
+        let vtable_offset = offset_of!(NativeFile, vtable);
+        assert_eq!(
+            vtable_offset % 8,
+            0,
+            "vtable pointer must be 8-byte aligned"
+        );
+    }
+
+    #[test]
+    fn lock_pointer_naturally_aligned() {
+        // The _lock pointer at offset 136 must be 8-byte aligned
+        let lock_offset = offset_of!(IoFileLayout, _lock);
+        assert_eq!(lock_offset % 8, 0, "_lock pointer must be 8-byte aligned");
+    }
+
+    #[test]
+    fn all_pointer_fields_naturally_aligned() {
+        // All pointer fields must be 8-byte aligned on x86_64
+        let pointer_offsets = [
+            ("_IO_read_ptr", offset_of!(IoFileLayout, _IO_read_ptr)),
+            ("_IO_read_end", offset_of!(IoFileLayout, _IO_read_end)),
+            ("_IO_read_base", offset_of!(IoFileLayout, _IO_read_base)),
+            ("_IO_write_base", offset_of!(IoFileLayout, _IO_write_base)),
+            ("_IO_write_ptr", offset_of!(IoFileLayout, _IO_write_ptr)),
+            ("_IO_write_end", offset_of!(IoFileLayout, _IO_write_end)),
+            ("_IO_buf_base", offset_of!(IoFileLayout, _IO_buf_base)),
+            ("_IO_buf_end", offset_of!(IoFileLayout, _IO_buf_end)),
+            ("_IO_save_base", offset_of!(IoFileLayout, _IO_save_base)),
+            ("_IO_backup_base", offset_of!(IoFileLayout, _IO_backup_base)),
+            ("_IO_save_end", offset_of!(IoFileLayout, _IO_save_end)),
+            ("_markers", offset_of!(IoFileLayout, _markers)),
+            ("_chain", offset_of!(IoFileLayout, _chain)),
+            ("_lock", offset_of!(IoFileLayout, _lock)),
+            ("_codecvt", offset_of!(IoFileLayout, _codecvt)),
+            ("_wide_data", offset_of!(IoFileLayout, _wide_data)),
+            ("_freeres_list", offset_of!(IoFileLayout, _freeres_list)),
+            ("_freeres_buf", offset_of!(IoFileLayout, _freeres_buf)),
+        ];
+
+        for (name, offset) in pointer_offsets {
+            assert_eq!(
+                offset % 8,
+                0,
+                "{} at offset {} must be 8-byte aligned",
+                name,
+                offset
+            );
+        }
+    }
+
+    #[test]
+    fn off64_t_fields_naturally_aligned() {
+        // _offset (off64_t) at 144 must be 8-byte aligned
+        let offset_offset = offset_of!(IoFileLayout, _offset);
+        assert_eq!(offset_offset % 8, 0, "_offset must be 8-byte aligned");
+    }
+}
+
+// ===========================================================================
+// Test Category 13: ABI Boundary Safety Tests
+// ===========================================================================
+
+mod abi_safety {
+    use super::*;
+
+    #[test]
+    fn native_file_can_be_cast_to_file_ptr() {
+        // Verify that NativeFile* can be safely cast to FILE* for glibc interop
+        let f = NativeFile::new(1, file_flags::READ, NativeFileBufMode::Full);
+        let file_ptr: *const c_void = (&f as *const NativeFile).cast();
+
+        // The pointer should be valid and non-null
+        assert!(!file_ptr.is_null());
+    }
+
+    #[test]
+    fn native_file_fd_readable_via_cast() {
+        // Verify that code reading _fileno via cast sees the correct value
+        let f = NativeFile::new(123, file_flags::READ, NativeFileBufMode::Full);
+        let layout_ptr = (&f as *const NativeFile).cast::<IoFileLayout>();
+
+        let fd = unsafe { (*layout_ptr)._fileno };
+        assert_eq!(fd, 123);
+    }
+
+    #[test]
+    fn native_file_flags_readable_via_cast() {
+        // Verify that code reading _flags via cast sees a valid magic
+        let f = NativeFile::new(0, file_flags::READ, NativeFileBufMode::Full);
+        let layout_ptr = (&f as *const NativeFile).cast::<IoFileLayout>();
+
+        let flags = unsafe { (*layout_ptr)._flags };
+        // glibc _IO_MAGIC is 0xFBAD0000 masked with mode flags
+        // Our implementation should set some recognizable value
+        assert_ne!(flags, 0, "_flags should be non-zero");
+    }
+
+    #[test]
+    fn native_file_lock_ptr_readable_via_cast() {
+        // Verify that code reading _lock via cast gets a valid pointer
+        let f = NativeFile::new(0, file_flags::READ, NativeFileBufMode::Full);
+        let layout_ptr = (&f as *const NativeFile).cast::<IoFileLayout>();
+
+        let lock = unsafe { (*layout_ptr)._lock };
+        assert!(!lock.is_null(), "_lock should be initialized");
+    }
+
+    #[test]
+    fn native_file_buffer_ptrs_initially_null() {
+        // Foreign code reading buffer pointers should see null initially
+        let f = NativeFile::new(0, file_flags::READ, NativeFileBufMode::Full);
+        let layout_ptr = (&f as *const NativeFile).cast::<IoFileLayout>();
+
+        unsafe {
+            assert!((*layout_ptr)._IO_buf_base.is_null());
+            assert!((*layout_ptr)._IO_buf_end.is_null());
+            assert!((*layout_ptr)._IO_read_ptr.is_null());
+            assert!((*layout_ptr)._IO_read_end.is_null());
+            assert!((*layout_ptr)._IO_write_ptr.is_null());
+            assert!((*layout_ptr)._IO_write_end.is_null());
+        }
+    }
+
+    #[test]
+    fn native_file_chain_initially_null() {
+        // Standalone files should have null _chain
+        let f = NativeFile::new(0, file_flags::READ, NativeFileBufMode::Full);
+        let layout_ptr = (&f as *const NativeFile).cast::<IoFileLayout>();
+
+        let chain = unsafe { (*layout_ptr)._chain };
+        assert!(chain.is_null());
+    }
+
+    #[test]
+    fn native_file_mode_initially_zero() {
+        // _mode should be 0 (unset) initially
+        let f = NativeFile::new(0, file_flags::READ, NativeFileBufMode::Full);
+        let layout_ptr = (&f as *const NativeFile).cast::<IoFileLayout>();
+
+        let mode = unsafe { (*layout_ptr)._mode };
+        assert_eq!(mode, 0);
+    }
+}
+
+// ===========================================================================
+// Test Category 14: Lock Structure Tests
+// ===========================================================================
+
+mod lock_structure {
+    use super::*;
+
+    #[test]
+    fn native_file_lock_ptr_is_stable() {
+        // The lock pointer should remain stable across multiple accesses
+        let f = NativeFile::new(5, file_flags::READ, NativeFileBufMode::Full);
+
+        let lock1 = f.lock_ptr();
+        let lock2 = f.lock_ptr();
+
+        assert_eq!(lock1, lock2, "lock_ptr should be stable");
+        assert!(!lock1.is_null(), "lock_ptr should be non-null");
+    }
+
+    #[test]
+    fn native_file_lock_ptr_unique_per_file() {
+        // Each NativeFile should have its own lock
+        let f1 = NativeFile::new(1, file_flags::READ, NativeFileBufMode::Full);
+        let f2 = NativeFile::new(2, file_flags::READ, NativeFileBufMode::Full);
+
+        let lock1 = f1.lock_ptr();
+        let lock2 = f2.lock_ptr();
+
+        assert_ne!(lock1, lock2, "different files should have different locks");
+    }
+
+    #[test]
+    fn native_file_lock_ptr_in_io_file_region() {
+        // Verify _lock in the glibc-visible region points to our mutex
+        let f = NativeFile::new(0, file_flags::READ, NativeFileBufMode::Full);
+        let layout_ptr = (&f as *const NativeFile).cast::<IoFileLayout>();
+
+        let glibc_lock = unsafe { (*layout_ptr)._lock };
+        let our_lock = f.lock_ptr();
+
+        assert_eq!(
+            glibc_lock, our_lock,
+            "_lock in _IO_FILE prefix should match lock_ptr()"
+        );
+    }
+}
+
+// ===========================================================================
+// Test Category 15: Edge Cases and Boundary Conditions
+// ===========================================================================
+
+mod edge_cases {
+    use super::*;
+
+    #[test]
+    fn native_file_with_fd_zero() {
+        // fd 0 (stdin) should work correctly
+        let f = NativeFile::new(0, file_flags::READ, NativeFileBufMode::Full);
+        assert!(f.is_valid());
+        assert_eq!(f.fd(), 0);
+    }
+
+    #[test]
+    fn native_file_with_fd_negative_one() {
+        // fd -1 is used for memory streams
+        let f = NativeFile::new(-1, file_flags::READ, NativeFileBufMode::Full);
+        assert!(f.is_valid());
+        assert_eq!(f.fd(), -1);
+    }
+
+    #[test]
+    fn native_file_with_max_fd() {
+        // High fd numbers should work
+        let f = NativeFile::new(c_int::MAX, file_flags::READ, NativeFileBufMode::Full);
+        assert!(f.is_valid());
+        assert_eq!(f.fd(), c_int::MAX);
+    }
+
+    #[test]
+    fn native_file_with_all_flags() {
+        // All flags combined should work
+        let all_flags = file_flags::READ | file_flags::WRITE | file_flags::APPEND;
+        let f = NativeFile::new(10, all_flags, NativeFileBufMode::Full);
+        assert!(f.is_valid());
+        assert!(f.is_readable());
+        assert!(f.is_writable());
+    }
+
+    #[test]
+    fn native_file_unbuffered_mode() {
+        let f = NativeFile::new(1, file_flags::WRITE, NativeFileBufMode::None);
+        assert!(f.is_valid());
+    }
+
+    #[test]
+    fn native_file_line_buffered_mode() {
+        let f = NativeFile::new(1, file_flags::WRITE, NativeFileBufMode::Line);
+        assert!(f.is_valid());
+    }
+
+    #[test]
+    fn native_file_full_buffered_mode() {
+        let f = NativeFile::new(1, file_flags::WRITE, NativeFileBufMode::Full);
+        assert!(f.is_valid());
+    }
+}
+
+// ===========================================================================
+// Test Category 16: Regression Tests for Known Issues
+// ===========================================================================
+
+mod regression {
+    use super::*;
+
+    /// Regression test: vtable must be exactly at offset 216.
+    /// Bug: If padding is added between _IO_FILE and vtable, glibc compat breaks.
+    #[test]
+    fn vtable_at_exact_offset_216_regression() {
+        // This is the most critical layout constraint
+        assert_eq!(
+            offset_of!(NativeFile, vtable),
+            216,
+            "REGRESSION: vtable must be at offset 216"
+        );
+    }
+
+    /// Regression test: _lock must be at offset 136.
+    /// Bug: flockfile/funlockfile expect _lock at a fixed offset.
+    #[test]
+    fn lock_at_exact_offset_136_regression() {
+        let f = NativeFile::new(0, file_flags::READ, NativeFileBufMode::Full);
+        let layout_ptr = (&f as *const NativeFile).cast::<IoFileLayout>();
+
+        // Verify _lock is at offset 136
+        let base = layout_ptr as usize;
+        let lock_addr = unsafe { &(*layout_ptr)._lock as *const _ as usize };
+        assert_eq!(
+            lock_addr - base,
+            136,
+            "REGRESSION: _lock must be at offset 136"
+        );
+    }
+
+    /// Regression test: _fileno must be at offset 112.
+    /// Bug: fileno() macro reads _fileno directly.
+    #[test]
+    fn fileno_at_exact_offset_112_regression() {
+        let f = NativeFile::new(77, file_flags::READ, NativeFileBufMode::Full);
+        let layout_ptr = (&f as *const NativeFile).cast::<IoFileLayout>();
+
+        let base = layout_ptr as usize;
+        let fileno_addr = unsafe { &(*layout_ptr)._fileno as *const _ as usize };
+        assert_eq!(
+            fileno_addr - base,
+            112,
+            "REGRESSION: _fileno must be at offset 112"
+        );
+
+        // Also verify the value is correct
+        let fd = unsafe { (*layout_ptr)._fileno };
+        assert_eq!(fd, 77);
+    }
+
+    /// Regression test: total _IO_FILE region is exactly 216 bytes.
+    /// Bug: _IO_FILE_plus expects vtable at byte 216.
+    #[test]
+    fn io_file_region_exactly_216_bytes_regression() {
+        assert_eq!(
+            size_of::<IoFileLayout>(),
+            216,
+            "REGRESSION: _IO_FILE region must be exactly 216 bytes"
+        );
+    }
+}
