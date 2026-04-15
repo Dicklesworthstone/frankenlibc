@@ -398,6 +398,50 @@ pub const SYS_TIMERFD_GETTIME: usize = 87;
 #[cfg(target_arch = "aarch64")]
 pub const SYS_PRCTL: usize = 167;
 
+// Process management syscalls - x86_64
+#[cfg(target_arch = "x86_64")]
+pub const SYS_SETPGID: usize = 109;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_GETPGRP: usize = 111;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_SETUID: usize = 105;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_SETGID: usize = 106;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_GETEGID: usize = 108;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_CHDIR: usize = 80;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_FCHDIR: usize = 81;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_CLOSE_RANGE: usize = 436;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_SCHED_SETPARAM: usize = 142;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_UNLINKAT: usize = 263;
+
+// Process management syscalls - aarch64
+#[cfg(target_arch = "aarch64")]
+pub const SYS_SETPGID: usize = 154;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_GETPGRP: usize = 155;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_SETUID: usize = 146;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_SETGID: usize = 144;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_GETEGID: usize = 177;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_CHDIR: usize = 49;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_FCHDIR: usize = 50;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_CLOSE_RANGE: usize = 436;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_SCHED_SETPARAM: usize = 118;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_UNLINKAT: usize = 35;
+
 // Socket syscalls - x86_64
 #[cfg(target_arch = "x86_64")]
 pub const SYS_BIND: usize = 49;
@@ -2130,6 +2174,102 @@ pub fn sys_prctl(option: i32, arg2: usize, arg3: usize, arg4: usize, arg5: usize
         )
     };
     syscall_result(ret).map(|v| v as i32)
+}
+
+// -------------------------------------------------------------------------
+// Process management syscalls
+// -------------------------------------------------------------------------
+
+/// `setpgid(pid, pgid)` — set process group ID.
+#[inline]
+#[allow(unsafe_code)]
+pub fn sys_setpgid(pid: i32, pgid: i32) -> Result<(), i32> {
+    let ret = unsafe { raw::syscall2(SYS_SETPGID, pid as usize, pgid as usize) };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `getpgrp()` — get process group ID.
+#[inline]
+#[allow(unsafe_code)]
+pub fn sys_getpgrp() -> i32 {
+    let ret = unsafe { raw::syscall0(SYS_GETPGRP) };
+    ret as i32
+}
+
+/// `setuid(uid)` — set user identity.
+#[inline]
+#[allow(unsafe_code)]
+pub fn sys_setuid(uid: u32) -> Result<(), i32> {
+    let ret = unsafe { raw::syscall1(SYS_SETUID, uid as usize) };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `setgid(gid)` — set group identity.
+#[inline]
+#[allow(unsafe_code)]
+pub fn sys_setgid(gid: u32) -> Result<(), i32> {
+    let ret = unsafe { raw::syscall1(SYS_SETGID, gid as usize) };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `getegid()` — get effective group ID.
+#[inline]
+#[allow(unsafe_code)]
+pub fn sys_getegid() -> u32 {
+    let ret = unsafe { raw::syscall0(SYS_GETEGID) };
+    ret as u32
+}
+
+/// `chdir(path)` — change working directory.
+///
+/// # Safety
+///
+/// `path` must be a valid null-terminated pathname.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_chdir(path: *const u8) -> Result<(), i32> {
+    let ret = unsafe { raw::syscall1(SYS_CHDIR, path as usize) };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `fchdir(fd)` — change working directory via file descriptor.
+#[inline]
+#[allow(unsafe_code)]
+pub fn sys_fchdir(fd: i32) -> Result<(), i32> {
+    let ret = unsafe { raw::syscall1(SYS_FCHDIR, fd as usize) };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `close_range(first, last, flags)` — close a range of file descriptors.
+#[inline]
+#[allow(unsafe_code)]
+pub fn sys_close_range(first: u32, last: u32, flags: u32) -> Result<(), i32> {
+    let ret = unsafe { raw::syscall3(SYS_CLOSE_RANGE, first as usize, last as usize, flags as usize) };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `sched_setparam(pid, param)` — set scheduling parameters.
+///
+/// # Safety
+///
+/// `param` must be a valid pointer to a sched_param structure.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_sched_setparam(pid: i32, param: *const u8) -> Result<(), i32> {
+    let ret = unsafe { raw::syscall2(SYS_SCHED_SETPARAM, pid as usize, param as usize) };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `unlinkat(dirfd, pathname, flags)` — remove a directory entry.
+///
+/// # Safety
+///
+/// `pathname` must be a valid null-terminated pathname.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_unlinkat(dirfd: i32, pathname: *const u8, flags: i32) -> Result<(), i32> {
+    let ret = unsafe { raw::syscall3(SYS_UNLINKAT, dirfd as usize, pathname as usize, flags as usize) };
+    syscall_result(ret).map(|_| ())
 }
 
 // -------------------------------------------------------------------------
