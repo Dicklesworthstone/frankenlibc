@@ -4949,16 +4949,18 @@ unsafe fn legacy_regex_write_regs(
     let regs = unsafe { &mut *(regs as *mut LegacyReRegisters) };
     let needed = matches.len().max(2);
     if regs.num_regs == 0 || regs.start.is_null() || regs.end.is_null() {
-        // SAFETY: libc allocation returns suitably aligned storage for c_int arrays.
-        let starts = unsafe { libc::calloc(needed, core::mem::size_of::<c_int>()) } as *mut c_int;
-        // SAFETY: libc allocation returns suitably aligned storage for c_int arrays.
-        let ends = unsafe { libc::calloc(needed, core::mem::size_of::<c_int>()) } as *mut c_int;
+        // SAFETY: ABI calloc returns suitably aligned zeroed storage for c_int arrays.
+        let starts = unsafe { crate::malloc_abi::calloc(needed, core::mem::size_of::<c_int>()) }
+            as *mut c_int;
+        // SAFETY: ABI calloc returns suitably aligned zeroed storage for c_int arrays.
+        let ends = unsafe { crate::malloc_abi::calloc(needed, core::mem::size_of::<c_int>()) }
+            as *mut c_int;
         if starts.is_null() || ends.is_null() {
             if !starts.is_null() {
-                unsafe { libc::free(starts.cast()) };
+                unsafe { crate::malloc_abi::free(starts.cast()) };
             }
             if !ends.is_null() {
-                unsafe { libc::free(ends.cast()) };
+                unsafe { crate::malloc_abi::free(ends.cast()) };
             }
             return;
         }

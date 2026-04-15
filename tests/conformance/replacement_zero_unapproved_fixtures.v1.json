@@ -9,100 +9,18 @@
   },
   "fixtures": [
     {
-      "id": "interpose_allow_errno_abi___errno_location",
-      "mode": "interpose",
-      "module": "errno_abi",
-      "symbol": "__errno_location",
-      "expected_outcome": "allowed",
-      "evidence_source": "replacement_guard_source_scan",
-      "note": "Intentional host errno sync in interpose mode; cfg-guarded out in standalone/replacement builds"
-    },
-    {
-      "id": "replacement_forbid_errno_abi___errno_location",
-      "mode": "replacement",
-      "module": "errno_abi",
-      "symbol": "__errno_location",
-      "expected_outcome": "forbidden",
-      "evidence_source": "replacement_guard_source_scan",
-      "note": "In standalone/replacement builds, libc::__errno_location call is cfg-guarded out"
-    },
-    {
-      "id": "interpose_allow_string_abi_calloc",
-      "mode": "interpose",
-      "module": "string_abi",
-      "symbol": "calloc",
-      "expected_outcome": "allowed",
-      "evidence_source": "replacement_guard_source_scan"
-    },
-    {
-      "id": "replacement_forbid_string_abi_free",
-      "mode": "replacement",
-      "module": "string_abi",
-      "symbol": "free",
-      "expected_outcome": "forbidden",
-      "evidence_source": "replacement_guard_source_scan"
-    },
-    {
-      "id": "interpose_allow_termios_abi_cfmakeraw",
-      "mode": "interpose",
-      "module": "termios_abi",
-      "symbol": "cfmakeraw",
-      "expected_outcome": "allowed",
-      "evidence_source": "replacement_guard_source_scan"
-    },
-    {
-      "id": "replacement_forbid_termios_abi_openpty",
-      "mode": "replacement",
-      "module": "termios_abi",
-      "symbol": "openpty",
-      "expected_outcome": "forbidden",
-      "evidence_source": "replacement_guard_source_scan"
-    },
-    {
-      "id": "interpose_allow_fortify_abi_pread",
-      "mode": "interpose",
-      "module": "fortify_abi",
-      "symbol": "pread",
-      "expected_outcome": "allowed",
-      "evidence_source": "replacement_guard_source_scan"
-    },
-    {
-      "id": "replacement_forbid_fortify_abi_pread64",
-      "mode": "replacement",
-      "module": "fortify_abi",
-      "symbol": "pread64",
-      "expected_outcome": "forbidden",
-      "evidence_source": "replacement_guard_source_scan"
-    },
-    {
-      "id": "interpose_allow_glibc_internal_abi_sched_get_priority_max",
+      "id": "interpose_allow_glibc_internal_abi_bind",
       "mode": "interpose",
       "module": "glibc_internal_abi",
-      "symbol": "sched_get_priority_max",
+      "symbol": "bind",
       "expected_outcome": "allowed",
       "evidence_source": "replacement_guard_source_scan"
     },
     {
-      "id": "replacement_forbid_glibc_internal_abi_sched_get_priority_min",
+      "id": "replacement_forbid_glibc_internal_abi_malloc",
       "mode": "replacement",
       "module": "glibc_internal_abi",
-      "symbol": "sched_get_priority_min",
-      "expected_outcome": "forbidden",
-      "evidence_source": "replacement_guard_source_scan"
-    },
-    {
-      "id": "interpose_allow_io_internal_abi_read",
-      "mode": "interpose",
-      "module": "io_internal_abi",
-      "symbol": "read",
-      "expected_outcome": "allowed",
-      "evidence_source": "replacement_guard_source_scan"
-    },
-    {
-      "id": "replacement_forbid_io_internal_abi_close",
-      "mode": "replacement",
-      "module": "io_internal_abi",
-      "symbol": "close",
+      "symbol": "malloc",
       "expected_outcome": "forbidden",
       "evidence_source": "replacement_guard_source_scan"
     },
@@ -171,22 +89,6 @@
       "evidence_source": "replacement_guard_source_scan"
     },
     {
-      "id": "interpose_allow_signal_abi_sigemptyset",
-      "mode": "interpose",
-      "module": "signal_abi",
-      "symbol": "sigemptyset",
-      "expected_outcome": "allowed",
-      "evidence_source": "replacement_guard_source_scan"
-    },
-    {
-      "id": "replacement_forbid_signal_abi_sigaddset",
-      "mode": "replacement",
-      "module": "signal_abi",
-      "symbol": "sigaddset",
-      "expected_outcome": "forbidden",
-      "evidence_source": "replacement_guard_source_scan"
-    },
-    {
       "id": "interpose_allow_stdio_abi_mkstemp",
       "mode": "interpose",
       "module": "stdio_abi",
@@ -211,26 +113,26 @@
       "evidence_source": "replacement_guard_source_scan"
     },
     {
-      "id": "replacement_forbid_stdlib_abi_cfmakeraw",
+      "id": "replacement_forbid_stdlib_abi_realloc",
       "mode": "replacement",
       "module": "stdlib_abi",
-      "symbol": "cfmakeraw",
+      "symbol": "realloc",
       "expected_outcome": "forbidden",
       "evidence_source": "replacement_guard_source_scan"
     },
     {
-      "id": "interpose_allow_unistd_abi_socket",
+      "id": "interpose_allow_unistd_abi_opendir",
       "mode": "interpose",
       "module": "unistd_abi",
-      "symbol": "socket",
+      "symbol": "opendir",
       "expected_outcome": "allowed",
       "evidence_source": "replacement_guard_source_scan"
     },
     {
-      "id": "replacement_forbid_unistd_abi_connect",
+      "id": "replacement_forbid_unistd_abi_readdir",
       "mode": "replacement",
       "module": "unistd_abi",
-      "symbol": "connect",
+      "symbol": "readdir",
       "expected_outcome": "forbidden",
       "evidence_source": "replacement_guard_source_scan"
     }
@@ -254,23 +156,17 @@
     "artifact_refs"
   ],
   "summary": {
-    "fixture_count": 28,
-    "interpose_allowed_count": 14,
-    "replacement_forbidden_count": 14,
+    "fixture_count": 16,
+    "interpose_allowed_count": 8,
+    "replacement_forbidden_count": 8,
     "covered_callthrough_modules": [
-      "errno_abi",
-      "fortify_abi",
       "glibc_internal_abi",
-      "io_internal_abi",
       "malloc_abi",
       "process_abi",
       "pthread_abi",
       "rpc_abi",
-      "signal_abi",
       "stdio_abi",
       "stdlib_abi",
-      "string_abi",
-      "termios_abi",
       "unistd_abi"
     ]
   }

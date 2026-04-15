@@ -7,7 +7,7 @@
     "support_matrix_path": "support_matrix.json",
     "support_matrix_sha256": "c1373d9a4106d619aa3c10e1d47f0bd09d282c1fec3d55486db666a340012b37",
     "replacement_profile_path": "tests/conformance/replacement_profile.json",
-    "replacement_profile_sha256": "cfca14c3d2c2c6f2288c141d3a67e221ab588379dafc3f555798c402e5e239cc",
+    "replacement_profile_sha256": "8c1307bf3a143a2db1f105310c84797e291b96ac69321872cdb9eda9c5b0a779",
     "scan_roots": [
       "crates/frankenlibc-core/src",
       "crates/frankenlibc-abi/src"
@@ -104,37 +104,27 @@
       "startup_abi",
       "stdio_abi",
       "stdlib_abi",
-      "string_abi",
-      "termios_abi",
       "time_abi",
       "unistd_abi",
       "wchar_abi"
     ],
     "declared_callthrough_family_modules": [
-      "c11threads_abi",
-      "fortify_abi",
       "glibc_internal_abi",
-      "io_internal_abi",
       "malloc_abi",
       "process_abi",
       "pthread_abi",
       "rpc_abi",
-      "signal_abi",
       "stdio_abi",
       "stdlib_abi",
       "unistd_abi"
     ],
     "actual_callthrough_modules": [],
     "declared_but_not_actual_callthrough_modules": [
-      "c11threads_abi",
-      "fortify_abi",
       "glibc_internal_abi",
-      "io_internal_abi",
       "malloc_abi",
       "process_abi",
       "pthread_abi",
       "rpc_abi",
-      "signal_abi",
       "stdio_abi",
       "stdlib_abi",
       "unistd_abi"

@@ -1465,8 +1465,8 @@ fn re_search_2_matches_across_split_boundary_and_reports_regs() {
     unsafe {
         assert_eq!(*regs.start.add(0), 0);
         assert_eq!(*regs.end.add(0), 3);
-        libc::free(regs.start.cast());
-        libc::free(regs.end.cast());
+        frankenlibc_abi::malloc_abi::free(regs.start.cast());
+        frankenlibc_abi::malloc_abi::free(regs.end.cast());
         regfree((&mut buffer as *mut PublicRegexBuffer).cast());
     }
 }
@@ -1855,8 +1855,8 @@ fn re_compile_pattern_honors_re_set_syntax_extended() {
         assert_eq!(*regs.end.add(1), 4);
         assert_eq!(*regs.start.add(2), 4);
         assert_eq!(*regs.end.add(2), 5);
-        libc::free(regs.start.cast());
-        libc::free(regs.end.cast());
+        frankenlibc_abi::malloc_abi::free(regs.start.cast());
+        frankenlibc_abi::malloc_abi::free(regs.end.cast());
         regfree((&mut buffer as *mut PublicRegexBuffer).cast());
     }
 }

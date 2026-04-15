@@ -581,6 +581,19 @@ pub(crate) fn host_errno_location_raw() -> Option<unsafe extern "C" fn() -> *mut
     load_host_symbol(&HOST_ERRNO_LOCATION).map(|addr| unsafe { core::mem::transmute(addr) })
 }
 
+#[inline]
+pub(crate) unsafe fn write_host_errno_if_available(val: c_int) {
+    let Some(host_errno_location) = host_errno_location_raw() else {
+        return;
+    };
+    // SAFETY: host `__errno_location` returns the thread-local errno pointer when available.
+    let ptr = unsafe { host_errno_location() };
+    if !ptr.is_null() {
+        // SAFETY: non-null pointer returned by host `__errno_location` is writable.
+        unsafe { std::ptr::write_volatile(ptr, val) };
+    }
+}
+
 /// Get the cached host `dl_iterate_phdr` address (non-blocking, no recursion).
 #[inline]
 pub(crate) fn host_dl_iterate_phdr_cached() -> Option<usize> {

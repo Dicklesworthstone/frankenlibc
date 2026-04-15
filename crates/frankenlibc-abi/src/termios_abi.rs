@@ -918,7 +918,7 @@ mod tests {
 
     fn raw_termios() -> libc::termios {
         let mut termios = cooked_termios();
-        unsafe { libc::cfmakeraw(&mut termios) };
+        unsafe { crate::stdlib_abi::cfmakeraw(&mut termios) };
         termios.c_cflag |= libc::CREAD as libc::tcflag_t;
         termios.c_ispeed = libc::B9600;
         termios.c_ospeed = libc::B9600;
@@ -929,7 +929,7 @@ mod tests {
         let mut master = -1;
         let mut slave = -1;
         let rc = unsafe {
-            libc::openpty(
+            crate::unistd_abi::openpty(
                 &mut master,
                 &mut slave,
                 std::ptr::null_mut(),
@@ -1057,7 +1057,7 @@ mod tests {
         // tmux/screen-like raw handoff: transition through a raw mode while
         // preserving the original baud coupling from the live PTY.
         let mut raw = cbreak;
-        unsafe { libc::cfmakeraw(&mut raw) };
+        unsafe { crate::stdlib_abi::cfmakeraw(&mut raw) };
         raw.c_cflag |= libc::CREAD as libc::tcflag_t;
         raw.c_ispeed = effective_input_speed(&original);
         raw.c_ospeed = effective_output_speed(&original);
@@ -1077,8 +1077,8 @@ mod tests {
         assert_eq!(summary.illegal_transition_count, 0);
 
         unsafe {
-            libc::close(master);
-            libc::close(slave);
+            crate::unistd_abi::close(master);
+            crate::unistd_abi::close(slave);
         }
     }
 

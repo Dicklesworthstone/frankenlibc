@@ -92,7 +92,6 @@
     "description": "Modules permitted to call through to host glibc in interpose (LD_PRELOAD) mode. These modules have not yet been fully reimplemented.",
     "modules": [
       "c11threads_abi",
-      "errno_abi",
       "fortify_abi",
       "glibc_internal_abi",
       "io_internal_abi",
@@ -108,13 +107,11 @@
       "dlfcn_abi",
       "io_abi",
       "time_abi",
-      "termios_abi",
       "resource_abi",
       "dirent_abi",
       "startup_abi",
       "inet_abi",
       "locale_abi",
-      "string_abi",
       "wchar_abi",
       "None"
     ],
@@ -123,19 +120,13 @@
   "callthrough_families": {
     "source": "replacement_guard_source_scan",
     "modules": [
-      "errno_abi",
-      "fortify_abi",
       "glibc_internal_abi",
-      "io_internal_abi",
       "malloc_abi",
       "process_abi",
       "pthread_abi",
       "rpc_abi",
-      "signal_abi",
       "stdio_abi",
       "stdlib_abi",
-      "string_abi",
-      "termios_abi",
       "unistd_abi"
     ],
     "require_fixture_coverage": true
@@ -177,224 +168,218 @@
     "description": "Current census of direct host libc/host pthread escape hatches by ABI module, as scanned by scripts/check_replacement_guard.sh.",
     "modules": {
       "errno_abi": {
-        "count": 1,
-        "functions": [
-          "__errno_location"
-        ],
-        "note": "Intentional host errno sync in interpose mode; cfg-guarded out in standalone/replacement builds."
+        "count": 0,
+        "functions": [],
+        "note": "Host errno mirroring is routed through host_resolve helper state; no _abi.rs scan hits remain."
       },
       "fortify_abi": {
-        "count": 14,
-        "functions": [
-          "pread",
-          "pread64",
-          "recv",
-          "recvfrom",
-          "realpath",
-          "getdomainname",
-          "ttyname_r",
-          "confstr",
-          "getgroups",
-          "ptsname_r",
-          "open",
-          "openat"
-        ]
+        "count": 0,
+        "functions": []
       },
       "glibc_internal_abi": {
-        "count": 158,
+        "count": 39,
         "functions": [
-          "sched_get_priority_max",
-          "sched_get_priority_min",
-          "__errno_location",
-          "getpgid",
-          "endmntent",
-          "fork",
-          "getauxval",
-          "sbrk",
-          "sigaction",
-          "sigsuspend",
-          "sigprocmask",
-          "sigdelset",
-          "mq_open",
-          "fflush",
           "adjtime",
-          "cfgetispeed",
-          "cfgetospeed",
-          "cfsetispeed",
-          "cfsetospeed",
+          "bind",
+          "closedir",
+          "endmntent",
+          "fdopendir",
+          "fflush",
+          "fileno",
+          "fstat",
           "futimes",
-          "getsockopt",
+          "fwrite",
+          "getauxval",
           "getpwuid",
           "getgroups",
-          "fstat",
+          "getrlimit",
+          "getsockopt",
           "lutimes",
+          "malloc",
           "mkostemp",
           "mkostemps",
           "mkstemp",
           "mkstemps",
+          "openat",
           "posix_spawn",
           "posix_spawnp",
-          "fwrite",
-          "socket",
-          "bind",
-          "openat",
-          "fdopendir",
           "readdir",
-          "closedir",
+          "sbrk",
           "sethostid",
+          "setrlimit",
           "setsockopt",
           "settimeofday",
           "sysctl",
-          "getrlimit",
-          "setrlimit",
           "utime",
-          "utimes",
-          "malloc",
-          "fileno"
+          "utimes"
         ]
       },
       "io_internal_abi": {
-        "count": 1,
-        "functions": [
-          "open"
-        ]
+        "count": 0,
+        "functions": []
       },
       "malloc_abi": {
         "count": 3,
         "functions": [
-          "malloc",
+          "dlsym",
           "free",
-          "dlsym"
+          "malloc"
         ]
       },
       "process_abi": {
         "count": 9,
         "functions": [
-          "sigemptyset",
           "sigaddset",
+          "sigemptyset",
           "sigismember",
           "sysconf"
         ]
       },
       "pthread_abi": {
-        "count": 95,
+        "count": 107,
         "functions": [
-          "pthread_self_raw",
-          "dlsym",
           "dlopen",
-          "pthread_self_fn",
-          "pthread_equal_fn",
+          "dlsym",
+          "pthread_attr_destroy",
+          "pthread_attr_getguardsize",
+          "pthread_attr_getinheritsched",
+          "pthread_attr_getschedparam",
+          "pthread_attr_getschedpolicy",
+          "pthread_attr_getstack",
+          "pthread_attr_getstacksize",
+          "pthread_attr_init",
+          "pthread_attr_setaffinity_np",
+          "pthread_attr_setdetachstate",
+          "pthread_attr_setguardsize",
+          "pthread_attr_setinheritsched",
+          "pthread_attr_setschedparam",
+          "pthread_attr_setschedpolicy",
+          "pthread_attr_setstack",
+          "pthread_attr_setstacksize",
+          "pthread_cancel_raw",
+          "pthread_cond_broadcast_fn",
+          "pthread_cond_destroy_fn",
+          "pthread_cond_init_fn",
+          "pthread_cond_signal_fn",
+          "pthread_cond_timedwait_fn",
+          "pthread_cond_wait_fn",
+          "pthread_condattr_destroy",
+          "pthread_condattr_getclock_fn",
+          "pthread_condattr_init",
+          "pthread_condattr_setclock",
           "pthread_create_fn",
-          "pthread_join_fn",
+          "pthread_create_raw",
+          "pthread_create_with_managed_attr",
           "pthread_detach_fn",
+          "pthread_detach_raw",
+          "pthread_equal_fn",
+          "pthread_exit_raw",
+          "pthread_getaffinity_np_raw",
+          "pthread_getcpuclockid_raw",
+          "pthread_getname_np_raw",
+          "pthread_getspecific_fn",
+          "pthread_gettid_np_raw",
+          "pthread_join_fn",
+          "pthread_join_raw",
           "pthread_key_create_fn",
           "pthread_key_delete_fn",
-          "pthread_getspecific_fn",
-          "pthread_setspecific_fn",
-          "pthread_mutex_init_fn",
+          "pthread_kill_raw",
           "pthread_mutex_destroy_fn",
+          "pthread_mutex_init_fn",
           "pthread_mutex_lock_fn",
+          "pthread_mutex_timedlock_fn",
           "pthread_mutex_trylock_fn",
           "pthread_mutex_unlock_fn",
-          "pthread_cond_init_fn",
-          "pthread_cond_destroy_fn",
-          "pthread_cond_wait_fn",
-          "pthread_cond_signal_fn",
-          "pthread_cond_broadcast_fn",
-          "pthread_cond_timedwait_fn",
-          "pthread_self_raw",
-          "pthread_equal_raw",
-          "pthread_create_raw",
-          "pthread_attr_getstacksize",
-          "pthread_join_raw",
-          "pthread_detach_raw",
-          "pthread_condattr_getclock",
-          "__errno_location",
+          "pthread_mutexattr_destroy_fn",
+          "pthread_mutexattr_getprotocol_fn",
+          "pthread_mutexattr_getpshared_fn",
+          "pthread_mutexattr_getrobust_fn",
+          "pthread_mutexattr_gettype_fn",
+          "pthread_mutexattr_init_fn",
+          "pthread_mutexattr_setprotocol_fn",
+          "pthread_mutexattr_setpshared_fn",
+          "pthread_mutexattr_setrobust_fn",
+          "pthread_mutexattr_settype_fn",
           "pthread_probe",
-          "pthread_symbols"
+          "pthread_self_fn",
+          "pthread_self_raw",
+          "pthread_setaffinity_np_raw",
+          "pthread_setcancelstate_raw",
+          "pthread_setcanceltype_raw",
+          "pthread_setname_np_raw",
+          "pthread_setspecific_fn",
+          "pthread_sigqueue_raw",
+          "pthread_symbols",
+          "pthread_testcancel_raw"
         ]
       },
       "rpc_abi": {
-        "count": 11,
+        "count": 8,
         "functions": [
-          "fread",
-          "fwrite",
-          "ftell",
-          "fseek",
           "fflush",
-          "getrlimit",
-          "bind",
-          "__errno_location"
+          "fread",
+          "fseek",
+          "ftell",
+          "fwrite",
+          "getrlimit"
         ]
       },
       "signal_abi": {
-        "count": 5,
-        "functions": [
-          "sigemptyset",
-          "sigaddset"
-        ]
+        "count": 0,
+        "functions": []
       },
       "stdio_abi": {
-        "count": 1,
+        "count": 2,
         "functions": [
-          "mkstemp"
+          "mkstemp",
+          "waitpid"
         ]
       },
       "stdlib_abi": {
-        "count": 16,
+        "count": 13,
         "functions": [
-          "malloc",
-          "strlen",
-          "free",
-          "realloc",
           "fflush",
-          "cfmakeraw",
-          "cfsetispeed",
-          "cfsetospeed",
+          "free",
+          "malloc",
+          "realloc",
+          "setitimer",
+          "strlen",
           "strtoll",
-          "strtoull",
-          "setitimer"
+          "strtoull"
         ]
       },
       "termios_abi": {
-        "count": 5,
-        "functions": [
-          "cfmakeraw",
-          "openpty",
-          "close"
-        ]
+        "count": 0,
+        "functions": [],
+        "note": "In-file test helpers now route through native ABI entrypoints, so the replacement guard sees no direct libc call-throughs."
       },
       "unistd_abi": {
-        "count": 70,
+        "count": 40,
         "functions": [
-          "socket",
-          "connect",
-          "send",
-          "fcntl",
-          "ioctl",
-          "mkdir",
-          "opendir",
-          "readdir",
-          "closedir",
-          "lstat",
-          "__errno_location",
-          "realpath",
-          "readdir64_r",
           "backtrace",
           "backtrace_symbols",
           "backtrace_symbols_fd",
-          "getaddrinfo",
-          "freeaddrinfo",
-          "fwrite",
+          "calloc",
+          "closedir",
           "dlsym",
           "fgets",
-          "sigprocmask",
+          "free",
+          "freeaddrinfo",
+          "fwrite",
+          "getaddrinfo",
+          "getenv",
           "mknodat",
-          "utimensat",
-          "sigsuspend",
+          "opendir",
+          "raise",
+          "readdir",
+          "readdir64_r",
+          "realpath",
           "sigaction",
-          "sched_setparam",
-          "sched_rr_get_interval"
+          "sigaddset",
+          "sigemptyset",
+          "sigprocmask",
+          "sigsuspend",
+          "utimensat"
         ]
       },
       "dlfcn_abi": {
@@ -402,14 +387,12 @@
         "functions": []
       },
       "string_abi": {
-        "count": 4,
-        "functions": [
-          "calloc",
-          "free"
-        ]
+        "count": 0,
+        "functions": [],
+        "note": "Legacy regex register allocation now uses the ABI allocator path instead of direct libc calloc/free."
       }
     },
-    "total_call_throughs": 293,
+    "total_call_throughs": 221,
     "note": "Census tracks direct host call-through scan patterns used by scripts/check_replacement_guard.sh."
   }
 }

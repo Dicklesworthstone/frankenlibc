@@ -46,11 +46,11 @@ pub unsafe fn set_abi_errno(val: c_int) {
     unsafe { std::ptr::write_volatile(p, val) };
 
     // In interpose mode, also set libc's errno so callers using
-    // libc::__errno_location see the same value. In standalone mode,
+    // the host libc's errno slot see the same value. In standalone mode,
     // we are the sole libc implementation, so this is unnecessary.
     #[cfg(not(feature = "standalone"))]
     unsafe {
-        std::ptr::write_volatile(libc::__errno_location(), val)
+        crate::host_resolve::write_host_errno_if_available(val)
     };
 }
 
@@ -71,5 +71,16 @@ mod tests {
         let handle = std::thread::spawn(|| fallback_errno_slot_for_current_thread() as usize);
         let other_ptr = handle.join().unwrap();
         assert_ne!(main_ptr, other_ptr);
+    }
+
+    #[test]
+    fn set_abi_errno_updates_thread_local_slot() {
+        let ptr = unsafe { __errno_location() };
+        let original = unsafe { std::ptr::read_volatile(ptr) };
+
+        unsafe { set_abi_errno(libc::ENOENT) };
+        assert_eq!(unsafe { std::ptr::read_volatile(ptr) }, libc::ENOENT);
+
+        unsafe { set_abi_errno(original) };
     }
 }
