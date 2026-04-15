@@ -736,10 +736,10 @@ pub unsafe extern "C" fn posix_spawnattr_getsigdefault(
     }
     // Store our u64 bitmask into sigset_t
     unsafe {
-        libc::sigemptyset(sigdefault);
+        crate::signal_abi::sigemptyset(sigdefault);
         for sig in 1..=63 {
             if attr.sigdefault & (1u64 << sig) != 0 {
-                libc::sigaddset(sigdefault, sig);
+                crate::signal_abi::sigaddset(sigdefault, sig);
             }
         }
     }
@@ -760,7 +760,7 @@ pub unsafe extern "C" fn posix_spawnattr_setsigdefault(
     }
     let mut mask = 0u64;
     for sig in 1..=63 {
-        if unsafe { libc::sigismember(sigdefault, sig) } == 1 {
+        if unsafe { crate::signal_abi::sigismember(sigdefault, sig) } == 1 {
             mask |= 1u64 << sig;
         }
     }
@@ -781,10 +781,10 @@ pub unsafe extern "C" fn posix_spawnattr_getsigmask(
         return libc::EINVAL;
     }
     unsafe {
-        libc::sigemptyset(sigmask);
+        crate::signal_abi::sigemptyset(sigmask);
         for sig in 1..=63 {
             if attr.sigmask & (1u64 << sig) != 0 {
-                libc::sigaddset(sigmask, sig);
+                crate::signal_abi::sigaddset(sigmask, sig);
             }
         }
     }
@@ -805,7 +805,7 @@ pub unsafe extern "C" fn posix_spawnattr_setsigmask(
     }
     let mut mask = 0u64;
     for sig in 1..=63 {
-        if unsafe { libc::sigismember(sigmask, sig) } == 1 {
+        if unsafe { crate::signal_abi::sigismember(sigmask, sig) } == 1 {
             mask |= 1u64 << sig;
         }
     }
@@ -955,10 +955,10 @@ unsafe fn apply_spawn_attrs(attr: &SpawnAttrs) -> c_int {
 
     if flags & libc::POSIX_SPAWN_SETSIGMASK != 0 {
         let mut sigset: libc::sigset_t = unsafe { std::mem::zeroed() };
-        unsafe { libc::sigemptyset(&mut sigset) };
+        unsafe { crate::signal_abi::sigemptyset(&mut sigset) };
         for sig in 1..=63 {
             if attr.sigmask & (1u64 << sig) != 0 {
-                unsafe { libc::sigaddset(&mut sigset, sig) };
+                unsafe { crate::signal_abi::sigaddset(&mut sigset, sig) };
             }
         }
         let rc = unsafe {
@@ -1141,7 +1141,7 @@ unsafe fn apply_file_actions(fa: &SpawnFileActions) -> c_int {
                         return err;
                     }
 
-                    let max_fd = unsafe { libc::sysconf(libc::_SC_OPEN_MAX) };
+                    let max_fd = unsafe { crate::unistd_abi::sysconf(libc::_SC_OPEN_MAX) };
                     let end = if max_fd > 0 { max_fd as c_int } else { 1024 };
                     for fd in *from..end {
                         let _ = unsafe { libc::syscall(libc::SYS_close, fd) };

@@ -41,22 +41,6 @@
       "evidence_source": "replacement_guard_source_scan"
     },
     {
-      "id": "interpose_allow_process_abi_sigemptyset",
-      "mode": "interpose",
-      "module": "process_abi",
-      "symbol": "sigemptyset",
-      "expected_outcome": "allowed",
-      "evidence_source": "replacement_guard_source_scan"
-    },
-    {
-      "id": "replacement_forbid_process_abi_sigaddset",
-      "mode": "replacement",
-      "module": "process_abi",
-      "symbol": "sigaddset",
-      "expected_outcome": "forbidden",
-      "evidence_source": "replacement_guard_source_scan"
-    },
-    {
       "id": "interpose_allow_pthread_abi_dlsym",
       "mode": "interpose",
       "module": "pthread_abi",
@@ -140,13 +124,12 @@
     "artifact_refs"
   ],
   "summary": {
-    "fixture_count": 14,
-    "interpose_allowed_count": 7,
-    "replacement_forbidden_count": 7,
+    "fixture_count": 12,
+    "interpose_allowed_count": 6,
+    "replacement_forbidden_count": 6,
     "covered_callthrough_modules": [
       "glibc_internal_abi",
       "malloc_abi",
-      "process_abi",
       "pthread_abi",
       "rpc_abi",
       "stdio_abi",

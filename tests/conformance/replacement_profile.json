@@ -122,7 +122,6 @@
     "modules": [
       "glibc_internal_abi",
       "malloc_abi",
-      "process_abi",
       "pthread_abi",
       "rpc_abi",
       "stdio_abi",
@@ -226,13 +225,9 @@
         ]
       },
       "process_abi": {
-        "count": 9,
-        "functions": [
-          "sigaddset",
-          "sigemptyset",
-          "sigismember",
-          "sysconf"
-        ]
+        "count": 0,
+        "functions": [],
+        "note": "Spawn-attribute signal-set roundtrips now use signal_abi helpers, and the closefrom fallback uses unistd_abi::sysconf."
       },
       "pthread_abi": {
         "count": 107,
