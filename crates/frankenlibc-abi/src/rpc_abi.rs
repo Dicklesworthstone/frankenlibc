@@ -312,7 +312,7 @@ pub unsafe extern "C" fn xdrmem_create(
 unsafe extern "C" fn stdio_gi32(x: *mut Xdr, ip: *mut i32) -> c_int {
     let f = unsafe { (*x).x_private };
     let mut buf = [0u8; 4];
-    if unsafe { libc::fread(buf.as_mut_ptr().cast(), 1, 4, f.cast()) } != 4 {
+    if unsafe { crate::stdio_abi::fread(buf.as_mut_ptr().cast(), 1, 4, f.cast()) } != 4 {
         return XDR_FALSE;
     }
     unsafe {
@@ -323,7 +323,7 @@ unsafe extern "C" fn stdio_gi32(x: *mut Xdr, ip: *mut i32) -> c_int {
 unsafe extern "C" fn stdio_pi32(x: *mut Xdr, ip: *const i32) -> c_int {
     let f = unsafe { (*x).x_private };
     let buf = unsafe { (*ip).to_be_bytes() };
-    if unsafe { libc::fwrite(buf.as_ptr().cast(), 1, 4, f.cast()) } != 4 {
+    if unsafe { crate::stdio_abi::fwrite(buf.as_ptr().cast(), 1, 4, f.cast()) } != 4 {
         return XDR_FALSE;
     }
     XDR_TRUE
@@ -347,7 +347,7 @@ unsafe extern "C" fn stdio_gb(x: *mut Xdr, a: *mut c_char, n: c_uint) -> c_int {
         return XDR_TRUE;
     }
     let f = unsafe { (*x).x_private };
-    if unsafe { libc::fread(a.cast(), 1, n as usize, f.cast()) } as c_uint != n {
+    if unsafe { crate::stdio_abi::fread(a.cast(), 1, n as usize, f.cast()) } as c_uint != n {
         return XDR_FALSE;
     }
     XDR_TRUE
@@ -357,16 +357,17 @@ unsafe extern "C" fn stdio_pb(x: *mut Xdr, a: *const c_char, n: c_uint) -> c_int
         return XDR_TRUE;
     }
     let f = unsafe { (*x).x_private };
-    if unsafe { libc::fwrite(a.cast(), 1, n as usize, f.cast()) } as c_uint != n {
+    if unsafe { crate::stdio_abi::fwrite(a.cast(), 1, n as usize, f.cast()) } as c_uint != n {
         return XDR_FALSE;
     }
     XDR_TRUE
 }
 unsafe extern "C" fn stdio_pos(x: *const Xdr) -> c_uint {
-    unsafe { libc::ftell((*x).x_private.cast()) as c_uint }
+    unsafe { crate::stdio_abi::ftell((*x).x_private.cast()) as c_uint }
 }
 unsafe extern "C" fn stdio_setpos(x: *mut Xdr, pos: c_uint) -> c_int {
-    if unsafe { libc::fseek((*x).x_private.cast(), pos as i64, libc::SEEK_SET) } == 0 {
+    if unsafe { crate::stdio_abi::fseek((*x).x_private.cast(), pos as c_long, libc::SEEK_SET) } == 0
+    {
         XDR_TRUE
     } else {
         XDR_FALSE
@@ -378,7 +379,7 @@ unsafe extern "C" fn stdio_inline(_x: *mut Xdr, _n: c_uint) -> *mut i32 {
 unsafe extern "C" fn stdio_destroy(x: *mut Xdr) {
     if !unsafe { (*x).x_private.is_null() } {
         unsafe {
-            libc::fflush((*x).x_private.cast());
+            crate::stdio_abi::fflush((*x).x_private.cast());
         }
     }
 }
@@ -2297,7 +2298,7 @@ rpc_native!(registerrpc(
 pub unsafe extern "C" fn _rpc_dtablesize() -> c_int {
     // SAFETY: zero-init rlimit struct, then getrlimit fills it.
     let mut rl: libc::rlimit = unsafe { std::mem::zeroed() };
-    let rc = unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut rl) };
+    let rc = unsafe { crate::resource_abi::getrlimit(libc::RLIMIT_NOFILE as c_int, &mut rl) };
     const FD_SETSIZE: c_int = libc::FD_SETSIZE as c_int;
     if rc == 0 && rl.rlim_cur > 0 {
         // Clamp to FD_SETSIZE to match glibc _rpc_dtablesize behavior.
