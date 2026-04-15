@@ -5872,17 +5872,68 @@ pub unsafe extern "C" fn setlinebuf(stream: *mut c_void) {
     let _ = unsafe { setvbuf(stream, std::ptr::null_mut(), 1, 0) };
 }
 
+/// Classify stream type for locking purposes.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum StreamType {
+    /// Native NativeFile stream (stdin/stdout/stderr) - has ReentrantMutex locking
+    NativeFile(usize), // slot index
+    /// Legacy StdioStream from our registry - no mutex support, locking is no-op
+    LegacyStdioStream,
+    /// Foreign stream from host glibc - delegate to host locking functions
+    Foreign,
+}
+
+/// Classify a stream pointer for locking purposes.
+fn classify_stream_for_locking(stream: *mut c_void) -> StreamType {
+    if stream.is_null() {
+        return StreamType::Foreign;
+    }
+    // Check for standard streams by sentinel or native pointer
+    let stdin_ptr = io_internal_abi::native_stdio_stream_ptr(libc::STDIN_FILENO);
+    let stdout_ptr = io_internal_abi::native_stdio_stream_ptr(libc::STDOUT_FILENO);
+    let stderr_ptr = io_internal_abi::native_stdio_stream_ptr(libc::STDERR_FILENO);
+
+    if stream == stdin_ptr || stream as usize == STDIN_SENTINEL {
+        return StreamType::NativeFile(0);
+    }
+    if stream == stdout_ptr || stream as usize == STDOUT_SENTINEL {
+        return StreamType::NativeFile(1);
+    }
+    if stream == stderr_ptr || stream as usize == STDERR_SENTINEL {
+        return StreamType::NativeFile(2);
+    }
+    // Check if registered in our legacy StdioStream registry
+    let id = canonical_stream_id(stream);
+    if registry_contains_stream(id) {
+        // This is our stream (from fopen, etc.) but using legacy StdioStream
+        // which doesn't have mutex support. Treat as no-op for locking.
+        return StreamType::LegacyStdioStream;
+    }
+    // Not our stream - must be a foreign glibc stream
+    StreamType::Foreign
+}
+
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn flockfile(stream: *mut c_void) {
     if stream.is_null() {
         return;
     }
-    let id = canonical_stream_id(stream);
-    if registry_contains_stream(id) {
-        return;
-    }
-    if let Some(host_flockfile) = unsafe { host_flockfile_fn() } {
-        unsafe { host_flockfile(stream) };
+    match classify_stream_for_locking(stream) {
+        StreamType::NativeFile(slot) => {
+            let reg = io_internal_abi::native_stream_registry();
+            if let Some(native_file) = reg.get(slot) {
+                native_file.explicit_lock();
+            }
+        }
+        StreamType::LegacyStdioStream => {
+            // Legacy StdioStream doesn't have mutex support.
+            // Per bd-9chy.17: locking for these is a no-op until fully migrated to NativeFile.
+        }
+        StreamType::Foreign => {
+            if let Some(host_flockfile) = unsafe { host_flockfile_fn() } {
+                unsafe { host_flockfile(stream) };
+            }
+        }
     }
 }
 
@@ -5891,14 +5942,29 @@ pub unsafe extern "C" fn ftrylockfile(stream: *mut c_void) -> c_int {
     if stream.is_null() {
         return -1;
     }
-    let id = canonical_stream_id(stream);
-    if registry_contains_stream(id) {
-        return 0;
+    match classify_stream_for_locking(stream) {
+        StreamType::NativeFile(slot) => {
+            let reg = io_internal_abi::native_stream_registry();
+            if let Some(native_file) = reg.get(slot) {
+                return if native_file.try_explicit_lock() {
+                    0
+                } else {
+                    -1
+                };
+            }
+            0 // Slot not found - treat as success
+        }
+        StreamType::LegacyStdioStream => {
+            // Legacy StdioStream: always succeeds (no actual lock)
+            0
+        }
+        StreamType::Foreign => {
+            if let Some(host_ftrylockfile) = unsafe { host_ftrylockfile_fn() } {
+                return unsafe { host_ftrylockfile(stream) };
+            }
+            -1
+        }
     }
-    if let Some(host_ftrylockfile) = unsafe { host_ftrylockfile_fn() } {
-        return unsafe { host_ftrylockfile(stream) };
-    }
-    -1
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -5906,12 +5972,24 @@ pub unsafe extern "C" fn funlockfile(stream: *mut c_void) {
     if stream.is_null() {
         return;
     }
-    let id = canonical_stream_id(stream);
-    if registry_contains_stream(id) {
-        return;
-    }
-    if let Some(host_funlockfile) = unsafe { host_funlockfile_fn() } {
-        unsafe { host_funlockfile(stream) };
+    match classify_stream_for_locking(stream) {
+        StreamType::NativeFile(slot) => {
+            let reg = io_internal_abi::native_stream_registry();
+            if let Some(native_file) = reg.get(slot) {
+                // SAFETY: Caller is responsible for having called flockfile/ftrylockfile first.
+                // This is the POSIX contract - funlockfile behavior is undefined if the caller
+                // doesn't hold the lock.
+                unsafe { native_file.explicit_unlock() };
+            }
+        }
+        StreamType::LegacyStdioStream => {
+            // Legacy StdioStream: no-op
+        }
+        StreamType::Foreign => {
+            if let Some(host_funlockfile) = unsafe { host_funlockfile_fn() } {
+                unsafe { host_funlockfile(stream) };
+            }
+        }
     }
 }
 
